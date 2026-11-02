@@ -66,7 +66,7 @@ fn ids_json(ids: &[String]) -> String {
     serde_json::Value::from(ids.to_vec()).to_string()
 }
 
-const ALBUM_ORDER: &str = "ORDER BY COALESCE(a.album_artist_name_folded, ''), a.title_folded, a.id";
+use crate::management::sql::ALBUM_ORDER;
 
 /// Albums a selection covers, in a stable order.
 pub fn albums(
@@ -119,12 +119,7 @@ pub fn albums(
 }
 
 fn track_albums(conn: &Connection, ids: &str) -> rusqlite::Result<Vec<AlbumScope>> {
-    let mut statement = conn.prepare(&format!(
-        "SELECT a.id, a.row_revision, t.id FROM local_tracks t \
-         JOIN local_albums a ON a.id = t.local_album_id \
-         WHERE t.id IN (SELECT value FROM json_each(?1)) AND t.availability = 'indexed' \
-         {ALBUM_ORDER}, t.disc_number, t.track_number, t.relative_path"
-    ))?;
+    let mut statement = conn.prepare(crate::management::sql::TRACK_ALBUMS.text())?;
     let rows = statement.query_map([ids], |row| {
         Ok((
             row.get::<_, String>(0)?,
@@ -198,12 +193,7 @@ fn filtered(
 
 /// The indexed files of one album in scope, in disc and track order.
 pub fn tracks(conn: &Connection, scope: &AlbumScope) -> Result<Vec<CatalogTrack>, ManagementError> {
-    let mut statement = conn.prepare_cached(
-        "SELECT id, root_id, relative_path, title, artist_name, album_title, track_number, \
-         disc_number, file_format, bit_rate, sample_rate, bit_depth FROM local_tracks \
-         WHERE local_album_id = ?1 AND availability = 'indexed' \
-         ORDER BY disc_number, track_number, relative_path",
-    )?;
+    let mut statement = conn.prepare_cached(crate::management::sql::TRACKS.text())?;
     let rows = statement.query_map([&scope.album_id], |row| {
         Ok(CatalogTrack {
             id: row.get(0)?,

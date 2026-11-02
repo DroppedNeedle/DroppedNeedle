@@ -24,10 +24,7 @@ pub fn is_custom(release: &Release) -> bool {
 pub fn active(conn: &Connection, album_id: &str) -> rusqlite::Result<Option<Release>> {
     let manifest: Option<(String, String, String, String, Option<String>, String)> = conn
         .query_row(
-            "SELECT m.id, m.release_group_mbid, m.album_title, m.album_artist_name, \
-             m.artist_mbid, m.album_metadata_json FROM library_custom_edition_active a \
-             JOIN library_custom_edition_manifests m ON m.id = a.manifest_id \
-             WHERE a.local_album_id = ?1",
+            crate::management::sql::ACTIVE_CUSTOM_EDITION.text(),
             params![album_id],
             |row| {
                 Ok((
@@ -45,11 +42,7 @@ pub fn active(conn: &Connection, album_id: &str) -> rusqlite::Result<Option<Rele
         return Ok(None);
     };
     let album: serde_json::Value = serde_json::from_str(&album_json).unwrap_or_default();
-    let mut statement = conn.prepare(
-        "SELECT local_track_id, title, artist_name, artist_mbid, disc_number, track_number, \
-         duration_seconds, metadata_json, recording_mbid FROM library_custom_edition_tracks \
-         WHERE manifest_id = ?1 ORDER BY ordinal",
-    )?;
+    let mut statement = conn.prepare(crate::management::sql::CUSTOM_EDITION_TRACKS.text())?;
     let rows = statement.query_map(params![manifest_id], |row| {
         Ok((
             row.get::<_, String>(0)?,
@@ -98,10 +91,7 @@ pub fn active(conn: &Connection, album_id: &str) -> rusqlite::Result<Option<Rele
     // The manifest must still be exactly the album's files.
     let mut sealed: Vec<&str> = tracks.iter().map(|track| track.id.as_str()).collect();
     sealed.sort_unstable();
-    let mut statement = conn.prepare(
-        "SELECT id FROM local_tracks WHERE local_album_id = ?1 AND availability = 'indexed' \
-         ORDER BY id",
-    )?;
+    let mut statement = conn.prepare(crate::management::sql::ALBUM_INDEXED_TRACK_IDS.text())?;
     let current: Vec<String> = statement
         .query_map(params![album_id], |row| row.get(0))?
         .collect::<rusqlite::Result<_>>()?;

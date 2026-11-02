@@ -66,10 +66,7 @@ fn moved_to_other_name(id: &str, folded: &str) -> String {
     )
 }
 
-/// `album` still has an indexed file and was not merged away: a display
-/// filter, so credits on albums with no file left keep no group open.
-const ACTIVE_ALBUM: &str = "album.retired_into_album_id IS NULL AND EXISTS (SELECT 1 \
-     FROM local_tracks live WHERE live.local_album_id = album.id AND live.availability = 'indexed')";
+use crate::reconcile::sql::ACTIVE_ALBUM;
 
 fn placeholders(n: usize) -> String {
     vec!["?"; n].join(",")
@@ -81,10 +78,7 @@ pub fn inputs(conn: &Connection) -> Result<GroupInputs, ReconcileError> {
     let moved = moved_groups(conn)?;
     let shared = shared_groups(conn)?;
     let dismissals = conn
-        .prepare(
-            "SELECT left_artist_id, right_artist_id, left_artist_revision, \
-             right_artist_revision FROM library_artist_reconciliation_dismissals",
-        )?
+        .prepare(crate::reconcile::sql::INPUTS.text())?
         .query_map([], |row| {
             Ok(Dismissal {
                 left_id: row.get(0)?,
@@ -95,11 +89,7 @@ pub fn inputs(conn: &Connection) -> Result<GroupInputs, ReconcileError> {
         })?
         .collect::<rusqlite::Result<_>>()?;
     let ambiguous_artist_ids = conn
-        .prepare(&format!(
-            "SELECT DISTINCT album.album_artist_id FROM library_artist_reconciliation_state state \
-             JOIN local_albums album ON album.id = state.local_album_id \
-             WHERE state.state = 'ambiguous_credit_structure' AND {ACTIVE_ALBUM}"
-        ))?
+        .prepare(crate::reconcile::sql::ARTISTS_OF_WAITING_ALBUMS.text())?
         .query_map([], |row| row.get(0))?
         .collect::<rusqlite::Result<_>>()?;
     let merges = merges(conn)?;
@@ -145,9 +135,7 @@ fn candidate_columns() -> String {
     )
 }
 
-/// The join that gives [`candidate_columns`] its `identity`.
-const IDENTITY_JOIN: &str = "LEFT JOIN local_artist_external_identities identity \
-     ON identity.local_artist_id = artist.id AND identity.provider = 'musicbrainz'";
+use crate::reconcile::sql::IDENTITY_JOIN;
 
 fn candidate_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Candidate> {
     Ok(Candidate {
@@ -260,15 +248,7 @@ fn moved_groups(conn: &Connection) -> Result<Vec<Vec<Candidate>>, ReconcileError
 /// records, the older first.
 fn shared_groups(conn: &Connection) -> Result<Vec<Vec<Candidate>>, ReconcileError> {
     let pairs: Vec<(String, String)> = conn
-        .prepare(
-            "SELECT pair.left_artist_id, pair.right_artist_id \
-             FROM local_artist_merge_candidates pair \
-             JOIN local_artists left_artist ON left_artist.id = pair.left_artist_id \
-              AND left_artist.retired_into_artist_id IS NULL \
-             JOIN local_artists right_artist ON right_artist.id = pair.right_artist_id \
-              AND right_artist.retired_into_artist_id IS NULL \
-             WHERE pair.reason_code = ?1 AND pair.state = 'open' ORDER BY pair.id",
-        )?
+        .prepare(crate::reconcile::sql::SHARED_GROUPS.text())?
         .query_map(params![reasons::SHARED_PROVIDER_IDENTITY.code], |row| {
             Ok((row.get(0)?, row.get(1)?))
         })?
@@ -297,33 +277,10 @@ fn shared_groups(conn: &Connection) -> Result<Vec<Vec<Candidate>>, ReconcileErro
 /// Fill in each record's proof artists and proven credit count, by the
 /// one current-proof rule merges use (`artist_links::CURRENT_PROOF`).
 fn with_proofs(conn: &Connection, rows: &mut [Candidate]) -> Result<(), ReconcileError> {
-    let mut proof_mbids = conn.prepare(&format!(
-        "SELECT DISTINCT p.artist_mbid FROM library_artist_credit_proofs p \
-         JOIN local_albums album ON album.id = p.local_album_id \
-         WHERE p.source_local_artist_id = ?1 AND {ACTIVE_ALBUM} AND ({CURRENT_PROOF}) \
-         ORDER BY p.artist_mbid"
-    ))?;
+    let mut proof_mbids = conn.prepare(crate::reconcile::sql::PROVEN_MBIDS_OF_ARTIST.text())?;
     // A credit is proven when a current proof sits at its exact position
     // and names its row.
-    let mut proven = conn.prepare(&format!(
-        "SELECT \
-           (SELECT COUNT(*) FROM local_album_artists credit \
-              JOIN local_albums album ON album.id = credit.local_album_id \
-              WHERE credit.local_artist_id = ?1 AND {ACTIVE_ALBUM} \
-              AND EXISTS (SELECT 1 FROM library_artist_credit_proofs p \
-               WHERE p.subject_kind = 'album' AND p.subject_id = credit.local_album_id \
-               AND p.credit_position = credit.position AND p.source_local_artist_id = ?1 \
-               AND ({CURRENT_PROOF}))) + \
-           (SELECT COUNT(*) FROM local_track_artists credit \
-              JOIN local_tracks track ON track.id = credit.local_track_id \
-              JOIN local_albums album ON album.id = track.local_album_id \
-              WHERE credit.local_artist_id = ?1 \
-                AND album.retired_into_album_id IS NULL AND track.availability = 'indexed' \
-              AND EXISTS (SELECT 1 FROM library_artist_credit_proofs p \
-               WHERE p.subject_kind = 'track' AND p.subject_id = credit.local_track_id \
-               AND p.credit_position = credit.position AND p.source_local_artist_id = ?1 \
-               AND ({CURRENT_PROOF})))"
-    ))?;
+    let mut proven = conn.prepare(crate::reconcile::sql::ARTIST_CREDIT_COUNTS.text())?;
     for row in rows.iter_mut() {
         let id = row.member.id.clone();
         row.proof_mbids = proof_mbids
@@ -585,8 +542,7 @@ pub fn dismiss(
     for id in &unique {
         let revision: Option<i64> = tx
             .query_row(
-                "SELECT row_revision FROM local_artists WHERE id = ?1 \
-                 AND retired_into_artist_id IS NULL",
+                crate::reconcile::sql::LIVE_ARTIST_REVISION.text(),
                 params![id],
                 |row| row.get(0),
             )
@@ -598,17 +554,7 @@ pub fn dismiss(
             _ => return Err(ReconcileError::Conflict(reasons::GROUP_STALE)),
         }
     }
-    let mut insert = tx.prepare(
-        "INSERT INTO library_artist_reconciliation_dismissals \
-         (left_artist_id, right_artist_id, left_artist_revision, right_artist_revision, \
-          dismissed_by_user_id, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6) \
-         ON CONFLICT(left_artist_id, right_artist_id) DO UPDATE SET \
-           left_artist_revision = excluded.left_artist_revision, \
-           right_artist_revision = excluded.right_artist_revision, \
-           dismissed_by_user_id = excluded.dismissed_by_user_id, \
-           updated_at = excluded.updated_at, \
-           row_revision = library_artist_reconciliation_dismissals.row_revision + 1",
-    )?;
+    let mut insert = tx.prepare(crate::reconcile::sql::WRITE_DISMISSAL.text())?;
     let mut pairs = 0;
     let pinned: Vec<(&str, i64)> = revisions.into_iter().collect();
     for (index, (left, left_revision)) in pinned.iter().enumerate() {

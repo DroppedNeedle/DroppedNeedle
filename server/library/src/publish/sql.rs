@@ -378,4 +378,94 @@ droppedneedle_kernel::sql! {
              WHERE state NOT IN ('cleaned', 'compensated', 'needs_attention') \
              OR (state = 'needs_attention' AND bundle_id NOT IN \
              (SELECT bundle_id FROM library_publish_resolutions)))";
+    pub(super) STAGING_SETTLED = "SELECT EXISTS (SELECT 1 FROM library_publish_journal \
+         WHERE bundle_id IN (SELECT bundle_id FROM library_publish_journal \
+         WHERE substr(source_rel, 1, length(?1)) = ?1) \
+         AND state NOT IN ('cleaned', 'compensated', 'cleanup_pending') \
+         AND NOT (state = 'needs_attention' AND bundle_id IN \
+         (SELECT bundle_id FROM library_publish_resolutions)))";
+    pub(super) STAGING_NEEDS_ATTENTION = "SELECT EXISTS (SELECT 1 FROM library_publish_journal \
+         WHERE bundle_id IN (SELECT bundle_id FROM library_publish_journal \
+         WHERE substr(source_rel, 1, length(?1)) = ?1) \
+         AND state = 'needs_attention' AND bundle_id NOT IN \
+         (SELECT bundle_id FROM library_publish_resolutions))";
+    pub(super) LOAD_OPERATION = "SELECT bundle_json FROM library_publish_operations WHERE bundle_id = ?1";
+    pub(super) APPLIED_BY = "SELECT applied_by_user_id FROM library_publish_operations WHERE bundle_id = ?1";
+    pub(super) READ_REVISION = "SELECT value FROM library_catalog_revision WHERE singleton = 1";
+    pub(super) LOCATE = "SELECT t.root_id, t.relative_path, COALESCE(m.applied_projection_hash, ''), \
+             m.last_outcome \
+             FROM local_tracks t \
+             LEFT JOIN library_track_management_state m ON m.local_track_id = t.id \
+             WHERE t.id = ?1";
+    pub(super) COMMIT_BUNDLE = "INSERT INTO library_track_management_state (local_track_id, managed_root_id, \
+                 applied_projection_hash, written_sha256, last_outcome, last_managed_at) \
+                 VALUES (?1, ?2, ?3, ?6, ?4, ?5) \
+                 ON CONFLICT (local_track_id) DO UPDATE SET \
+                 managed_root_id = excluded.managed_root_id, \
+                 applied_projection_hash = excluded.applied_projection_hash, \
+                 written_sha256 = excluded.written_sha256, \
+                 last_outcome = excluded.last_outcome, \
+                 last_managed_at = excluded.last_managed_at, \
+                 row_revision = library_track_management_state.row_revision + 1";
+    pub(super) MARK_MISSING = "UPDATE local_tracks SET availability = 'missing', missing_since = ?2 WHERE id = ?1";
+    pub(super) RETIRE_REPLACED_TRACK = "UPDATE local_tracks SET availability = 'missing', missing_since = ?5, \
+         relative_path = ?4, file_path = ?6, path_hash = ?7, \
+         row_revision = row_revision + 1 \
+         WHERE id = ?1 AND root_id = ?2 AND relative_path = ?3";
+    pub(super) FORGET_REPLACED_STATE = "UPDATE library_track_management_state SET written_sha256 = NULL, \
+         managed_path_revision = NULL, row_revision = row_revision + 1 \
+         WHERE local_track_id = ?1";
+    pub(super) GIVE_UP_DESTINATION = "SELECT id, availability FROM local_tracks \
+             WHERE root_id = ?1 AND relative_path = ?2 AND id <> ?3";
+    pub(super) WRITE_TRACK_PLACE = "UPDATE local_tracks SET root_id = ?2, relative_path = ?3, file_path = ?4, \
+         path_hash = ?5, row_revision = row_revision + 1 WHERE id = ?1";
+    pub(super) MOVE_ALBUM_ROOT = "UPDATE local_albums SET root_id = ?2, row_revision = row_revision + 1 \
+         WHERE id = (SELECT local_album_id FROM local_tracks WHERE id = ?1) \
+         AND root_id <> ?2 AND NOT EXISTS (SELECT 1 FROM local_tracks t \
+         WHERE t.local_album_id = local_albums.id AND t.root_id <> ?2 \
+         AND t.availability = 'indexed')";
+    pub(super) JOINED_ALBUM = "SELECT b.id, i.release_mbid, i.release_group_mbid FROM local_albums b \
+             LEFT JOIN local_album_external_identities i \
+             ON i.local_album_id = b.id AND i.provider = 'musicbrainz' \
+             WHERE b.id = (SELECT COALESCE(retired_into_album_id, id) FROM local_albums \
+             WHERE id = ?1)";
+    pub(super) COPY_FOLDER = "SELECT root_id, relative_path, disc_number FROM local_tracks \
+             WHERE local_album_id = ?1 AND availability = 'indexed'";
+    pub(super) TRACK_AT_PATH = "SELECT id, local_album_id FROM local_tracks \
+                 WHERE root_id = ?1 AND relative_path = ?2";
+    pub(super) LOCK_TRACK_MEMBERSHIP = "UPDATE local_tracks SET membership_source = 'manual', membership_locked = 1, \
+             row_revision = row_revision + 1 WHERE id = ?1";
+    pub(super) SET_TRACK_INGEST = "UPDATE local_tracks SET ingest_source = ?4, download_task_id = ?2, \
+         source_path = ?3 WHERE id = ?1";
+    pub(super) RECORD = "INSERT INTO library_publish_snapshots
+             (id, bundle_id, track_id, blob_sha256, created_day, expires_day)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)";
+    pub(super) ADD_REF = "INSERT OR IGNORE INTO library_publish_blob_refs (sha256, owner_kind, owner_id)
+             VALUES (?1, ?2, ?3)";
+    pub(super) SNAPSHOT_ROW = "SELECT track_id, blob_sha256, expires_day
+                 FROM library_publish_snapshots WHERE id = ?1";
+    pub(super) BUNDLE = "SELECT id, track_id, blob_sha256, expires_day
+             FROM library_publish_snapshots WHERE bundle_id = ?1 ORDER BY id";
+    pub(super) WRITE_BASELINE = "INSERT OR IGNORE INTO library_publish_baselines
+             (track_id, blob_sha256, original_root, original_rel, created_day)
+             VALUES (?1, ?2, ?3, ?4, ?5)";
+    pub(super) WRITE_BASELINE_BLOB_REF = "INSERT OR IGNORE INTO library_publish_blob_refs (sha256, owner_kind, owner_id)
+             VALUES (?1, 'baseline', ?2)";
+    pub(super) BASELINE_ROW = "SELECT blob_sha256, original_root, original_rel
+                 FROM library_publish_baselines WHERE track_id = ?1";
+    pub(super) V2_ORIGINAL_MISSING = "SELECT (EXISTS(SELECT 1 FROM library_track_management_state m \
+                 WHERE m.local_track_id = ?1 AND m.baseline_id IS NOT NULL) \
+                 OR EXISTS(SELECT 1 FROM library_management_baselines v \
+                 WHERE v.local_track_id = ?1)) \
+                 AND NOT EXISTS (SELECT 1 FROM library_publish_baselines b \
+                 WHERE b.track_id = ?1)";
+    pub(super) BASELINE_COUNT = "SELECT COUNT(*) FROM library_publish_baselines";
+    pub(super) BASELINE_BLOB_REFS = "SELECT COUNT(DISTINCT sha256) FROM library_publish_blob_refs WHERE owner_kind = 'baseline'";
+    /// True for a state row (alias `s`) that came from v2 with its record.
+    /// Every v3 writer of `managed_path_revision` sets the job too, and the
+    /// upgrade leaves v2's job behind.
+    pub(crate) fragment V2_ROW_SQL = "s.written_sha256 IS NULL AND s.managed_path_revision IS NOT NULL \
+     AND s.last_operation_job_id IS NULL AND s.last_outcome IN ('succeeded', 'undone')";
+    pub(super) TRACK_WRITTEN_STATE = "SELECT s.written_sha256, CASE WHEN " + V2_ROW_SQL + " THEN s.managed_path_revision END \
+             FROM library_track_management_state s WHERE s.local_track_id = ?1";
 }

@@ -19,8 +19,7 @@ impl SqliteScanStore {
     ) -> Result<(), ScanStoreError> {
         self.write(stop, Lane::Background, "scan_record_mount", |tx| {
             tx.execute(
-                "INSERT INTO library_scan_mounts (root_id, relative_path) VALUES (?1, ?2) \
-                 ON CONFLICT (root_id, relative_path) DO NOTHING",
+                crate::scan::sql::RECORD_MOUNT.text(),
                 params![root_id, relative_path],
             )?;
             Ok(())
@@ -54,7 +53,7 @@ impl SqliteScanStore {
                AND i.relative_path < m.relative_path || '0' \
                AND s.discovery_generation = i.discovery_generation)) \
              WHERE indexed > 0 ORDER BY relative_path",
-            super::commit::walked_past!("?3"),
+            crate::scan::sqlite_store::sql::walked_past!("?3"),
             super::held_scopes::covers("?2", "m.relative_path"),
         );
         let rows = self.read_long(stop, "scan_empty_mounts", |conn| {

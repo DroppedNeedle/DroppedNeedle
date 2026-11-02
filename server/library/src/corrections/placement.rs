@@ -51,41 +51,7 @@ use crate::matching::Release;
 use crate::publish::record::record_sql;
 use droppedneedle_kernel::db::savepoint;
 
-/// Indexed rows with an embedded release-track or recording id and no
-/// identity naming a release track, on albums whose match names a release
-/// and that have no custom edition, no queued placement and no match state
-/// but a choice that fitted no file. A row whose embedded release-track id
-/// an indexed row of the album already holds (a second copy) is left out.
-/// Starts from the albums' identities and reads each album's indexed rows
-/// by album.
-const CANDIDATES: &str = "SELECT t.local_album_id, t.id, \
-    lower(trim(COALESCE(t.embedded_release_track_mbid, ''))), \
-    lower(trim(COALESCE(t.embedded_recording_mbid, ''))), \
-    lower(trim(COALESCE(t.embedded_release_mbid, ''))), \
-    t.disc_number, t.track_number, t.imported_at, \
-    t.album_title_folded, COALESCE(t.album_artist_name_folded, '') \
-    FROM local_album_external_identities ae \
-    JOIN local_tracks t ON t.local_album_id = ae.local_album_id AND t.availability = 'indexed' \
-    WHERE ae.provider = 'musicbrainz' AND trim(COALESCE(ae.release_mbid, '')) <> '' \
-    AND (trim(COALESCE(t.embedded_release_track_mbid, '')) <> '' \
-      OR trim(COALESCE(t.embedded_recording_mbid, '')) <> '') \
-    AND NOT EXISTS (SELECT 1 FROM local_track_external_identities i \
-      WHERE i.local_track_id = t.id AND i.provider = 'musicbrainz' \
-      AND trim(COALESCE(i.release_track_mbid, '')) <> '') \
-    AND NOT EXISTS (SELECT 1 FROM library_custom_edition_active c \
-      WHERE c.local_album_id = ae.local_album_id) \
-    AND NOT EXISTS (SELECT 1 FROM library_edition_remap_queue q \
-      WHERE q.local_album_id = ae.local_album_id) \
-    AND NOT EXISTS (SELECT 1 FROM library_album_match_state s \
-      WHERE s.local_album_id = ae.local_album_id \
-      AND s.reason_code IS NOT 'CHOSEN_EDITION_FITS_NO_FILE') \
-    AND NOT EXISTS (SELECT 1 FROM local_tracks h \
-      JOIN local_track_external_identities hi \
-        ON hi.local_track_id = h.id AND hi.provider = 'musicbrainz' \
-      WHERE h.local_album_id = t.local_album_id AND h.availability = 'indexed' \
-      AND trim(COALESCE(t.embedded_release_track_mbid, '')) <> '' \
-      AND lower(trim(hi.release_track_mbid)) = lower(trim(t.embedded_release_track_mbid))) \
-    ORDER BY t.local_album_id, t.id";
+use crate::corrections::sql::CANDIDATES;
 
 /// One candidate row and what the scan read from its file.
 struct Candidate {
@@ -170,7 +136,7 @@ impl Edition {
 pub(crate) fn place_scanned(tx: &Transaction<'_>, now: f64) -> rusqlite::Result<()> {
     let mut albums: BTreeMap<String, Vec<Candidate>> = BTreeMap::new();
     {
-        let mut statement = tx.prepare_cached(CANDIDATES)?;
+        let mut statement = tx.prepare_cached(CANDIDATES.text())?;
         let rows = statement.query_map([], |row| {
             Ok((
                 row.get::<_, String>(0)?,
@@ -221,10 +187,7 @@ fn place_album(
     now: f64,
 ) -> rusqlite::Result<bool> {
     let (release, chosen_at): (String, f64) = tx
-        .prepare_cached(
-            "SELECT release_mbid, selected_at FROM local_album_external_identities \
-             WHERE local_album_id = ?1 AND provider = 'musicbrainz'",
-        )?
+        .prepare_cached(crate::corrections::sql::PLACE_ALBUM.text())?
         .query_row(params![album], |row| Ok((row.get(0)?, row.get(1)?)))?;
     let edition = edition(tx, album, &release)?;
     let held = held_tracks(tx, album)?;
@@ -316,16 +279,7 @@ fn edition(tx: &Connection, album: &str, release: &str) -> rusqlite::Result<Edit
     }
     let mut tracks: Vec<EditionTrack> = Vec::new();
     let mut conflicting = BTreeSet::new();
-    let mut statement = tx.prepare_cached(
-        "SELECT i.release_track_mbid, i.recording_mbid, i.medium_position, \
-         i.release_track_position FROM local_tracks t \
-         JOIN local_track_external_identities i \
-           ON i.local_track_id = t.id AND i.provider = 'musicbrainz' \
-         WHERE t.local_album_id = ?1 AND trim(COALESCE(i.release_track_mbid, '')) <> '' \
-         AND (trim(COALESCE(i.release_mbid, '')) = '' \
-           OR lower(trim(i.release_mbid)) = lower(trim(?2))) \
-         ORDER BY t.id",
-    )?;
+    let mut statement = tx.prepare_cached(crate::corrections::sql::EDITION.text())?;
     let rows = statement.query_map(params![album, release], |row| {
         Ok((
             row.get::<_, String>(0)?,
@@ -366,15 +320,9 @@ fn edition(tx: &Connection, album: &str, release: &str) -> rusqlite::Result<Edit
 
 /// The release tracks indexed rows of the album hold, lowercased.
 fn held_tracks(tx: &Connection, album: &str) -> rusqlite::Result<BTreeSet<String>> {
-    tx.prepare_cached(
-        "SELECT lower(trim(i.release_track_mbid)) FROM local_tracks t \
-         JOIN local_track_external_identities i \
-           ON i.local_track_id = t.id AND i.provider = 'musicbrainz' \
-         WHERE t.local_album_id = ?1 AND t.availability = 'indexed' \
-         AND trim(COALESCE(i.release_track_mbid, '')) <> ''",
-    )?
-    .query_map(params![album], |row| row.get(0))?
-    .collect()
+    tx.prepare_cached(crate::corrections::sql::HELD_TRACKS.text())?
+        .query_map(params![album], |row| row.get(0))?
+        .collect()
 }
 
 /// Whether a missing row of the album has a record of its bytes.
@@ -424,14 +372,7 @@ fn retagged_by_hand(
         return Ok(Retag::No);
     }
     let olds: Vec<(String, Option<f64>, String, String, i64, i64)> = tx
-        .prepare_cached(
-            "SELECT t.id, t.missing_since, t.album_title_folded, \
-             COALESCE(t.album_artist_name_folded, ''), t.disc_number, t.track_number \
-             FROM local_tracks t JOIN local_track_external_identities i \
-               ON i.local_track_id = t.id AND i.provider = 'musicbrainz' \
-             WHERE t.local_album_id = ?1 AND t.availability = 'missing' \
-             AND lower(trim(i.release_track_mbid)) = ?2 ORDER BY t.id",
-        )?
+        .prepare_cached(crate::corrections::sql::RETAGGED_BY_HAND.text())?
         .query_map(params![album, track.key], |r| {
             Ok((
                 r.get(0)?,

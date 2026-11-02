@@ -97,6 +97,9 @@ mod scope;
 pub mod scratch;
 pub(crate) mod sql;
 pub mod statement;
+pub mod time;
+#[cfg(test)]
+mod time_tests;
 pub mod undo_dir;
 pub mod writer;
 

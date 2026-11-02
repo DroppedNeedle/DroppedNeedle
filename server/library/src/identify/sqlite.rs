@@ -111,15 +111,7 @@ fn review_state_from(raw: &str) -> ReviewState {
     }
 }
 
-const JOB_COLUMNS: &str = "id, local_album_id, kind, priority, state, attempts, not_before_ms, \
-     input_revision, requested_by_user_id, failure_code, lease_expires_ms";
-
-/// Land a claimed job, only while the claim that ran it still holds it:
-/// a lease another worker took over after this one lapsed lands nothing.
-const LAND_JOB: &str = "UPDATE library_identify_jobs SET state = ?1, attempts = ?2, \
-     not_before_ms = ?3, input_revision = ?4, idempotency_key = ?5, failure_code = ?6, \
-     priority = ?7, updated_ms = ?8, lease_expires_ms = NULL \
-     WHERE id = ?9 AND state = 'running' AND lease_expires_ms = ?10";
+use crate::identify::sql::LAND_JOB;
 
 fn map_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<IdentifyJob> {
     Ok(IdentifyJob {
@@ -306,7 +298,7 @@ impl SqliteIdentifyStore {
                 changing(tx, |tx| {
                     if crate::identity::save_track(tx, &identity, self.clock.now_secs())? == 1 {
                         let album: String = tx.query_row(
-                            "SELECT local_album_id FROM local_tracks WHERE id = ?1",
+                            crate::identify::sql::SAVE_TRACK_IDENTITY.text(),
                             params![identity.local_track_id],
                             |row| row.get(0),
                         )?;
@@ -429,16 +421,7 @@ impl SqliteIdentifyStore {
         self.db
             .read_blocking("identify.edition_change_undone", |conn| {
                 Ok(conn.query_row(
-                    "SELECT EXISTS (SELECT 1 FROM library_catalog_actions \
-                 WHERE (local_album_id = ?1 \
-                     OR local_album_id IN (SELECT alias FROM local_album_aliases \
-                         WHERE local_album_id = ?1 AND kind = 'merged_album') \
-                     OR local_album_id IN (SELECT id FROM local_albums \
-                         WHERE retired_into_album_id = ?1)) \
-                 AND action_kind = 'undo_automatic_edition' \
-                 AND json_extract(after_json, '$.outcome') = 'restored' \
-                 AND lower(json_extract(before_json, '$.identity.release_group_mbid')) \
-                     = lower(?2))",
+                    crate::identify::sql::EDITION_CHANGE_UNDONE.text(),
                     params![local_album_id, release_group],
                     |row| row.get(0),
                 )?)
@@ -450,8 +433,7 @@ impl SqliteIdentifyStore {
         self.db.read_blocking("identify.match_flag", |conn| {
             Ok(conn
                 .query_row(
-                    "SELECT state, reason_code, release_mbid, candidates_json \
-                     FROM library_album_match_state WHERE local_album_id = ?1",
+                    crate::identify::sql::MATCH_FLAG.text(),
                     params![local_album_id],
                     |row| {
                         let state: String = row.get(0)?;
@@ -510,7 +492,7 @@ impl From<rusqlite::Error> for Landing {
 /// Land a claimed job on `tx`, under the lease it was claimed with.
 fn land_tx(tx: &Transaction<'_>, clock: &dyn Clock, job: &IdentifyJob) -> Result<(), Landing> {
     let key = idempotency_key(&job.local_album_id, &job.input_revision);
-    let landed = tx.prepare_cached(LAND_JOB)?.execute(params![
+    let landed = tx.prepare_cached(LAND_JOB.text())?.execute(params![
         state_str(job.state),
         job.attempts as i64,
         job.not_before_ms as i64,
@@ -542,8 +524,7 @@ impl SqliteIdentifyStore {
         self.db.read_blocking("identify.album_facts", |conn| {
             let album = conn
                 .query_row(
-                    "SELECT title, COALESCE(album_artist_name, ''), is_compilation, year \
-                     FROM local_albums WHERE id = ?1",
+                    crate::identify::sql::ALBUM_FACTS.text(),
                     params![local_album_id],
                     |row| {
                         Ok((
@@ -561,18 +542,7 @@ impl SqliteIdentifyStore {
             // In the same read as the facts, so a seal can tell whether the
             // files moved after they were read.
             let input_revision = album_input_revision(conn, local_album_id)?;
-            let mut stmt = conn.prepare(
-                "SELECT t.id, t.title, COALESCE(t.artist_name, ''), t.track_number, \
-                 t.disc_number, t.duration_seconds, t.embedded_recording_mbid, \
-                 t.embedded_release_track_mbid, t.embedded_release_mbid, \
-                 t.embedded_release_group_mbid, t.membership_locked, t.root_id, \
-                 t.relative_path, t.stat_revision, h.media, h.barcode, h.catalog_number, \
-                 h.release_country, h.total_discs, t.duration_measured \
-                 FROM local_tracks t LEFT JOIN local_track_edition_tags h \
-                 ON h.local_track_id = t.id \
-                 WHERE t.local_album_id = ?1 AND t.availability = 'indexed' \
-                 ORDER BY t.disc_number, t.track_number, t.relative_path",
-            )?;
+            let mut stmt = conn.prepare(crate::identify::sql::ALBUM_FACT_TRACKS.text())?;
             let mut tracks = Vec::new();
             let mut locked = Vec::new();
             let rows = stmt.query_map(params![local_album_id], |row| {
@@ -649,9 +619,7 @@ impl SqliteIdentifyStore {
         self.db.read_blocking("identify.fingerprint", |conn| {
             Ok(conn
                 .query_row(
-                    "SELECT fingerprint, duration_seconds FROM audio_fingerprint_outcomes \
-                     WHERE local_track_id = ?1 AND stat_revision = ?2 \
-                     AND fingerprinter_version = ?3 AND fingerprint IS NOT NULL",
+                    crate::identify::sql::FINGERPRINT.text(),
                     params![local_track_id, stat_revision, FINGERPRINTER_VERSION],
                     |row| {
                         Ok((
@@ -715,21 +683,11 @@ impl SqliteIdentifyStore {
                 changing(tx, |tx| {
                     // One print per track: older file revisions are stale.
                     tx.execute(
-                        "DELETE FROM audio_fingerprint_outcomes WHERE local_track_id = ?1 \
-                         AND (stat_revision != ?2 OR fingerprinter_version != ?3)",
+                        crate::identify::sql::DROP_STALE_FINGERPRINT.text(),
                         params![local_track_id, stat_revision, FINGERPRINTER_VERSION],
                     )?;
                     tx.execute(
-                        "INSERT INTO audio_fingerprint_outcomes (id, local_track_id, \
-                         stat_revision, fingerprinter_version, state, fingerprint, \
-                         duration_seconds, first_attempt_at, last_attempt_at) \
-                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8) \
-                         ON CONFLICT (local_track_id, stat_revision, fingerprinter_version) \
-                         DO UPDATE SET state = excluded.state, \
-                         fingerprint = excluded.fingerprint, \
-                         duration_seconds = excluded.duration_seconds, \
-                         last_attempt_at = excluded.last_attempt_at, \
-                         attempt_count = attempt_count + 1",
+                        crate::identify::sql::WRITE_FINGERPRINT.text(),
                         params![
                             hex_sha256(
                                 format!(
@@ -1288,14 +1246,11 @@ fn store_release(
     for entity in &entities {
         // Rows are immutable, so a refetch replaces the old row.
         tx.execute(
-            "DELETE FROM library_management_metadata_snapshots \
-             WHERE provider = ?1 AND entity_kind = ?2 AND entity_id = ?3",
+            crate::identify::sql::DROP_RELEASE_DOCUMENT.text(),
             params![PROVIDER, RELEASE_KIND, entity],
         )?;
         tx.execute(
-            "INSERT INTO library_management_metadata_snapshots (id, provider, \
-             entity_kind, entity_id, input_hash, canonical_payload_json, payload_sha256, \
-             fetched_at, expires_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            crate::identify::sql::WRITE_RELEASE_DOCUMENT.text(),
             params![
                 hex_sha256(format!("{entity}\0{payload_sha}").as_bytes()),
                 PROVIDER,
@@ -1315,16 +1270,7 @@ fn store_release(
     // review offers them to a curator. Merged-id rows share their
     // document's payload hash, so they go and stay with it.
     tx.execute(
-        "DELETE FROM library_management_metadata_snapshots \
-         WHERE provider = ?1 AND entity_kind = ?2 AND expires_at < ?3 \
-         AND payload_sha256 NOT IN (SELECT kept.payload_sha256 \
-         FROM library_management_metadata_snapshots AS kept \
-         WHERE kept.provider = ?1 AND kept.entity_kind = ?2 AND kept.entity_id IN ( \
-         SELECT lower(release_mbid) FROM local_album_external_identities \
-         WHERE release_mbid IS NOT NULL \
-         UNION SELECT lower(json_extract(candidate.value, '$.release_mbid')) \
-         FROM library_identify_reviews, json_each(candidates_json) AS candidate \
-         WHERE state = ?4 AND json_extract(candidate.value, '$.release_mbid') IS NOT NULL))",
+        crate::identify::sql::PRUNE_EXPIRED_DOCUMENTS.text(),
         params![
             PROVIDER,
             RELEASE_KIND,
@@ -1390,10 +1336,7 @@ fn rewrite_document(
     let entity = release_mbid.trim().to_ascii_lowercase();
     let current: Option<(String, String, f64, Option<f64>)> = tx
         .query_row(
-            "SELECT canonical_payload_json, payload_sha256, fetched_at, expires_at \
-             FROM library_management_metadata_snapshots \
-             WHERE provider = ?1 AND entity_kind = ?2 AND entity_id = ?3 \
-             AND input_hash = ?4 ORDER BY fetched_at DESC LIMIT 1",
+            crate::identify::sql::STORED_DOCUMENT.text(),
             params![PROVIDER, RELEASE_KIND, entity, release_input_hash()],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )
@@ -1418,11 +1361,7 @@ fn rewrite_document(
     };
     let payload_sha = hex_sha256(payload.as_bytes());
     let mut rows: Vec<(String, String, f64, Option<f64>)> = {
-        let mut statement = tx.prepare(
-            "SELECT entity_id, input_hash, fetched_at, expires_at \
-             FROM library_management_metadata_snapshots \
-             WHERE provider = ?1 AND entity_kind = ?2 AND payload_sha256 = ?3",
-        )?;
+        let mut statement = tx.prepare(crate::identify::sql::DOCUMENTS_WITH_PAYLOAD.text())?;
         statement
             .query_map(params![PROVIDER, RELEASE_KIND, old_sha], |row| {
                 Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
@@ -1442,20 +1381,16 @@ fn rewrite_document(
     // Rows are immutable, so each is replaced, along with any other
     // document an id it now answers to had.
     tx.execute(
-        "DELETE FROM library_management_metadata_snapshots \
-         WHERE provider = ?1 AND entity_kind = ?2 AND payload_sha256 = ?3",
+        crate::identify::sql::DROP_DOCUMENTS_WITH_PAYLOAD.text(),
         params![PROVIDER, RELEASE_KIND, old_sha],
     )?;
     for (entity, input_hash, fetched_at, expires_at) in rows {
         tx.execute(
-            "DELETE FROM library_management_metadata_snapshots \
-             WHERE provider = ?1 AND entity_kind = ?2 AND entity_id = ?3",
+            crate::identify::sql::DROP_RELEASE_DOCUMENT.text(),
             params![PROVIDER, RELEASE_KIND, entity],
         )?;
         tx.execute(
-            "INSERT INTO library_management_metadata_snapshots (id, provider, \
-             entity_kind, entity_id, input_hash, canonical_payload_json, payload_sha256, \
-             fetched_at, expires_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            crate::identify::sql::WRITE_RELEASE_DOCUMENT.text(),
             params![
                 hex_sha256(format!("{entity}\0{payload_sha}").as_bytes()),
                 PROVIDER,
@@ -1493,30 +1428,24 @@ pub(crate) fn retarget_references(
     // without ON UPDATE, so the key cannot change in place. Deleting the
     // old favorite cascades to its name.
     tx.execute(
-        "INSERT OR IGNORE INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
-         SELECT user_id, item_kind, ?1, created_at FROM library_user_favorites \
-         WHERE item_kind = ?2 AND item_id = ?3",
+        crate::identify::sql::COPY_FAVORITES_TO_ITEM.text(),
         params![surviving_id, item_kind, retired_id],
     )?;
     tx.execute(
-        "INSERT OR IGNORE INTO library_user_favorite_names (user_id, item_kind, item_id, \
-         display_name) SELECT user_id, item_kind, ?1, display_name \
-         FROM library_user_favorite_names WHERE item_kind = ?2 AND item_id = ?3",
+        crate::identify::sql::COPY_FAVORITE_NAMES_TO_ITEM.text(),
         params![surviving_id, item_kind, retired_id],
     )?;
     tx.execute(
-        "DELETE FROM library_user_favorites WHERE item_kind = ?1 AND item_id = ?2",
+        crate::identify::sql::DROP_ITEM_FAVORITES.text(),
         params![item_kind, retired_id],
     )?;
     // A person who rated both keeps the survivor's rating.
     tx.execute(
-        "INSERT OR IGNORE INTO library_user_ratings (user_id, item_kind, item_id, rating, \
-         rated_at) SELECT user_id, item_kind, ?1, rating, rated_at FROM library_user_ratings \
-         WHERE item_kind = ?2 AND item_id = ?3",
+        crate::identify::sql::COPY_RATINGS_TO_ITEM.text(),
         params![surviving_id, item_kind, retired_id],
     )?;
     tx.execute(
-        "DELETE FROM library_user_ratings WHERE item_kind = ?1 AND item_id = ?2",
+        crate::identify::sql::DROP_ITEM_RATINGS.text(),
         params![item_kind, retired_id],
     )?;
     tx.execute(
@@ -1578,7 +1507,7 @@ impl SqliteIdentifyStore {
                 changing(tx, |tx| {
                     let now = self.clock.now_ms();
                     let inserted = tx.execute(
-                        INSERT_JOB,
+                        INSERT_JOB.text(),
                         params![
                             job.id,
                             job.local_album_id,
@@ -1598,14 +1527,7 @@ impl SqliteIdentifyStore {
                         bump_identification_stream(tx)?;
                         return Ok(job.clone());
                     }
-                    Ok(tx.query_row(
-                        &format!(
-                            "SELECT {JOB_COLUMNS} FROM library_identify_jobs \
-                             WHERE idempotency_key = ?1 AND state IN ('queued','running','deferred')"
-                        ),
-                        params![key],
-                        map_job,
-                    )?)
+                    Ok(tx.query_row(crate::identify::sql::ENQUEUE.text(), params![key], map_job)?)
                 })
             })
             .map(|written| self.landed(written))
@@ -1622,14 +1544,7 @@ impl SqliteIdentifyStore {
                     // pause can never race a claim.
                     let job = tx
                         .query_row(
-                            &format!(
-                                "SELECT {JOB_COLUMNS} FROM library_identify_jobs \
-                                 WHERE ((state IN ('queued','deferred') AND not_before_ms <= ?1) \
-                                 OR (state = 'running' AND lease_expires_ms <= ?1)) \
-                                 AND NOT EXISTS (SELECT 1 FROM library_work_control \
-                                     WHERE queue_kind = 'identification' AND state = 'paused') \
-                                 ORDER BY priority, created_ms, rowid LIMIT 1"
-                            ),
+                            crate::identify::sql::NEXT_CLAIMABLE_JOB.text(),
                             params![now],
                             map_job,
                         )
@@ -1638,8 +1553,7 @@ impl SqliteIdentifyStore {
                         return Ok(None);
                     };
                     tx.execute(
-                        "UPDATE library_identify_jobs SET state = 'running', \
-                         lease_expires_ms = ?1, updated_ms = ?2 WHERE id = ?3",
+                        crate::identify::sql::CLAIM.text(),
                         params![now + lease_ms as i64, now, job.id],
                     )?;
                     bump_identification_stream(tx)?;
@@ -1673,21 +1587,14 @@ impl SqliteIdentifyStore {
     pub fn job(&self, job_id: &str) -> Result<Option<IdentifyJob>, StoreError> {
         self.db.read_blocking("identify.job", |conn| {
             Ok(conn
-                .query_row(
-                    &format!("SELECT {JOB_COLUMNS} FROM library_identify_jobs WHERE id = ?1"),
-                    params![job_id],
-                    map_job,
-                )
+                .query_row(crate::identify::sql::JOB.text(), params![job_id], map_job)
                 .optional()?)
         })
     }
 
     pub fn jobs_for_album(&self, local_album_id: &str) -> Result<Vec<IdentifyJob>, StoreError> {
         self.db.read_blocking("identify.jobs_for_album", |conn| {
-            let mut stmt = conn.prepare(&format!(
-                "SELECT {JOB_COLUMNS} FROM library_identify_jobs \
-                 WHERE local_album_id = ?1 ORDER BY created_ms, rowid"
-            ))?;
+            let mut stmt = conn.prepare(crate::identify::sql::JOBS_FOR_ALBUM.text())?;
             let rows = stmt.query_map(params![local_album_id], map_job)?;
             Ok(rows.collect::<rusqlite::Result<_>>()?)
         })
@@ -1700,8 +1607,7 @@ impl SqliteIdentifyStore {
             .write_blocking(Lane::Background, "identify.recover", |tx| {
                 changing(tx, |tx| {
                     let requeued = tx.execute(
-                        "UPDATE library_identify_jobs SET state = 'queued', \
-                         lease_expires_ms = NULL, updated_ms = ?1 WHERE state = 'running'",
+                        crate::identify::sql::RECOVER.text(),
                         params![self.clock.now_ms()],
                     )?;
                     if requeued > 0 {
@@ -1728,10 +1634,7 @@ impl SqliteIdentifyStore {
                 changing(tx, |tx| {
                     let now = self.clock.now_ms();
                     tx.execute(
-                        "INSERT OR REPLACE INTO library_identify_reviews (id, local_album_id, \
-                         reason_code, candidates_json, state, resolved_by_user_id, \
-                         selected_candidate_key, created_ms, updated_ms) \
-                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
+                        crate::identify::sql::FILE.text(),
                         params![
                             review.id,
                             review.local_album_id,
@@ -1755,7 +1658,7 @@ impl SqliteIdentifyStore {
         self.db.read_blocking("identify.review", |conn| {
             Ok(conn
                 .query_row(
-                    &format!("SELECT {REVIEW_COLUMNS} FROM library_identify_reviews WHERE id = ?1"),
+                    crate::identify::sql::GET.text(),
                     params![review_id],
                     map_review,
                 )
@@ -1766,10 +1669,7 @@ impl SqliteIdentifyStore {
 
     pub fn pending_for_album(&self, local_album_id: &str) -> Result<Vec<ReviewItem>, StoreError> {
         self.db.read_blocking("identify.pending_reviews", |conn| {
-            let mut stmt = conn.prepare(&format!(
-                "SELECT {REVIEW_COLUMNS} FROM library_identify_reviews \
-                 WHERE local_album_id = ?1 AND state = 'pending' ORDER BY created_ms, id"
-            ))?;
+            let mut stmt = conn.prepare(crate::identify::sql::PENDING_FOR_ALBUM.text())?;
             let rows = stmt.query_map(params![local_album_id], map_review)?;
             Ok(rows
                 .collect::<rusqlite::Result<Vec<_>>>()?
@@ -1791,9 +1691,7 @@ impl SqliteIdentifyStore {
             .write_blocking(Lane::Foreground, "identify.settle_review", |tx| {
                 changing(tx, |tx| {
                     let changed = tx.execute(
-                        "UPDATE library_identify_reviews SET state = ?1, \
-                         resolved_by_user_id = ?2, selected_candidate_key = ?3, updated_ms = ?4 \
-                         WHERE id = ?5",
+                        crate::identify::sql::SET_STATE.text(),
                         params![
                             review_state_str(state),
                             by_user_id,
@@ -1848,9 +1746,7 @@ fn approve_tx(
     // Only this review settles, only while it is still pending, and only
     // at the revision the person decided on.
     let settled = tx.execute(
-        "UPDATE library_identify_reviews SET state = 'approved', \
-         resolved_by_user_id = ?1, selected_candidate_key = ?2, updated_ms = ?3 \
-         WHERE id = ?4 AND state = 'pending' AND (?5 IS NULL OR row_revision = ?5)",
+        crate::identify::sql::APPROVE_TX.text(),
         params![
             approval.by_user_id,
             approval.candidate_key,
@@ -1875,9 +1771,6 @@ fn approve_tx(
     bump_identification_stream(tx)?;
     Ok(true)
 }
-
-const REVIEW_COLUMNS: &str = "id, local_album_id, reason_code, candidates_json, state, \
-     resolved_by_user_id, selected_candidate_key";
 
 /// One review row. Candidates that no longer decode drop the review with
 /// a log line instead of failing the whole listing.

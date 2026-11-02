@@ -451,12 +451,9 @@ impl Mutations {
             "CATALOG_REMOVAL"
         };
         let release_group_mbid = self.db.read_blocking("mutations.remove_album", |conn| {
-            conn.query_row(
-                "SELECT release_group_mbid FROM local_album_external_identities \
-                 WHERE local_album_id = ?1 AND release_group_mbid IS NOT NULL LIMIT 1",
-                [&canonical],
-                |row| row.get::<_, String>(0),
-            )
+            conn.query_row(crate::sql::REMOVE_ALBUM_WITH.text(), [&canonical], |row| {
+                row.get::<_, String>(0)
+            })
             .optional()
             .map_err(MutationError::from)
         })?;
@@ -663,9 +660,7 @@ impl Mutations {
         self.db
             .read_blocking("mutations.indexed_track", |conn| {
                 conn.query_row(
-                    "SELECT id, local_album_id, root_id, relative_path FROM local_tracks \
-                     WHERE id = ?1 AND availability = 'indexed' \
-                     AND (?2 IS NULL OR local_album_id = ?2)",
+                    crate::sql::INDEXED_TRACK.text(),
                     params![track_id, album_id],
                     track_row,
                 )
@@ -784,21 +779,16 @@ impl Mutations {
             .write_blocking(Lane::Foreground, "mutations.reenable_management", |tx| {
                 let removed: Option<(String, String, f64, i64)> = tx
                     .query_row(
-                        "DELETE FROM library_management_exclusions \
-                     WHERE local_album_id = ?1 AND row_revision = ?2 \
-                     RETURNING reason, excluded_by_user_id, excluded_at, row_revision",
+                        crate::sql::LIFT_EXCLUSION.text(),
                         params![canonical, expected_revision],
                         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
                     )
                     .optional()?;
                 let Some((reason, by, at, revision)) = removed else {
                     let exists: Option<i64> = tx
-                        .query_row(
-                            "SELECT row_revision FROM library_management_exclusions \
-                         WHERE local_album_id = ?1",
-                            [&canonical],
-                            |row| row.get(0),
-                        )
+                        .query_row(crate::sql::EXCLUSION_REVISION.text(), [&canonical], |row| {
+                            row.get(0)
+                        })
                         .optional()?;
                     return match exists {
                         Some(_) => Err(MutationError::Conflict(STALE_EXCLUSION)),
@@ -955,11 +945,9 @@ impl Mutations {
             let mut current = album_id.to_owned();
             for _ in 0..MAX_RETIRED_HOPS {
                 let row: Option<Option<String>> = conn
-                    .query_row(
-                        "SELECT retired_into_album_id FROM local_albums WHERE id = ?1",
-                        [&current],
-                        |row| row.get(0),
-                    )
+                    .query_row(crate::sql::ALBUM_RETIRED_INTO.text(), [&current], |row| {
+                        row.get(0)
+                    })
                     .optional()?;
                 match row {
                     Some(None) => return Ok(Some(current)),
@@ -968,10 +956,7 @@ impl Mutations {
                 }
             }
             conn.query_row(
-                "SELECT b.id FROM local_album_external_identities e \
-                 JOIN local_albums b ON b.id = e.local_album_id \
-                 WHERE lower(e.release_group_mbid) = lower(?1) \
-                 AND b.retired_into_album_id IS NULL ORDER BY b.created_at LIMIT 1",
+                crate::sql::LIVE_ALBUM_OF_RELEASE_GROUP.text(),
                 [album_id],
                 |row| row.get(0),
             )
@@ -982,11 +967,7 @@ impl Mutations {
 
     fn album_tracks(&self, album_id: &str) -> Result<Vec<TrackFile>, MutationError> {
         self.db.read_blocking("mutations.album_tracks", |conn| {
-            let mut statement = conn.prepare(
-                "SELECT id, local_album_id, root_id, relative_path FROM local_tracks \
-                 WHERE local_album_id = ?1 AND availability = 'indexed' \
-                 ORDER BY disc_number, track_number, id",
-            )?;
+            let mut statement = conn.prepare(crate::sql::ALBUM_TRACKS.text())?;
             let rows = statement.query_map([album_id], track_row)?;
             Ok::<_, MutationError>(rows.collect::<rusqlite::Result<_>>()?)
         })
@@ -1236,9 +1217,7 @@ fn record_action(
 ) -> rusqlite::Result<()> {
     // The actor column references auth_users; an unknown id stays NULL.
     tx.execute(
-        "INSERT INTO library_catalog_actions (id, actor_user_id, action_kind, local_album_id, \
-         local_track_id, before_json, after_json, reason_code, created_at) VALUES \
-         (?1, (SELECT id FROM auth_users WHERE id = ?2), ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        crate::sql::RECORD_ACTION.text(),
         params![
             uuid::Uuid::new_v4().to_string(),
             actor,

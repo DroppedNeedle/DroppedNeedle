@@ -131,19 +131,7 @@ pub(crate) fn converge_ids(tx: &Transaction<'_>, ids: &[String], now: f64) -> ru
 /// special-purpose ids are left out.
 fn candidate_ids(tx: &Transaction<'_>) -> rusqlite::Result<Vec<String>> {
     let ids: Vec<String> = tx
-        .prepare_cached(
-            "SELECT c.mbid FROM ( \
-             SELECT artist_mbid AS mbid, local_artist_id AS artist FROM local_track_artists \
-              WHERE artist_mbid IS NOT NULL \
-             UNION SELECT artist_mbid, local_artist_id FROM local_album_artists \
-              WHERE artist_mbid IS NOT NULL \
-             UNION SELECT lower(provider_artist_id), local_artist_id \
-              FROM local_artist_external_identities WHERE provider = 'musicbrainz' \
-             UNION SELECT artist_mbid, source_local_artist_id FROM library_artist_credit_proofs \
-              WHERE source_local_artist_id IS NOT NULL) c \
-             JOIN local_artists a ON a.id = c.artist AND a.retired_into_artist_id IS NULL \
-             GROUP BY c.mbid HAVING COUNT(*) > 1 ORDER BY c.mbid",
-        )?
+        .prepare_cached(crate::corrections::sql::CANDIDATE_IDS.text())?
         .query_map([], |row| row.get(0))?
         .collect::<rusqlite::Result<_>>()?;
     Ok(ids.into_iter().filter(|id| !placeholder(id)).collect())
@@ -224,18 +212,14 @@ pub(crate) fn follow_moved(
         match follow_one(tx, from, to, mbid, now)? {
             Followed::Merged => merged += 1,
             Followed::Waiting(survivor) => {
-                tx.prepare_cached(
-                    "INSERT OR IGNORE INTO local_artist_merge_candidates (id, left_artist_id, \
-                     right_artist_id, reason_code, created_at, updated_at) \
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
-                )?
-                .execute(params![
-                    waiting_id(from, mbid),
-                    from,
-                    survivor,
-                    CREDITS_MOVED,
-                    now
-                ])?;
+                tx.prepare_cached(crate::corrections::sql::FOLLOW_MOVED.text())?
+                    .execute(params![
+                        waiting_id(from, mbid),
+                        from,
+                        survivor,
+                        CREDITS_MOVED,
+                        now
+                    ])?;
             }
             Followed::Stays => {}
         }
@@ -248,11 +232,8 @@ pub(crate) fn follow_moved(
 
 /// Whether a row waits to follow its credits ([`follow_waiting`]).
 pub(crate) fn any_waiting(conn: &Connection) -> rusqlite::Result<bool> {
-    conn.prepare_cached(
-        "SELECT EXISTS (SELECT 1 FROM local_artist_merge_candidates \
-         WHERE reason_code = ?1 AND state = 'open')",
-    )?
-    .query_row(params![CREDITS_MOVED], |row| row.get(0))
+    conn.prepare_cached(crate::corrections::sql::ANY_WAITING.text())?
+        .query_row(params![CREDITS_MOVED], |row| row.get(0))
 }
 
 /// Look again at every row waiting to follow its credits
@@ -261,10 +242,7 @@ pub(crate) fn any_waiting(conn: &Connection) -> rusqlite::Result<bool> {
 /// still waiting stays open.
 pub(crate) fn follow_waiting(tx: &Transaction<'_>, now: f64) -> rusqlite::Result<()> {
     let waiting: Vec<(String, String, String)> = tx
-        .prepare_cached(
-            "SELECT id, left_artist_id, right_artist_id FROM local_artist_merge_candidates \
-             WHERE reason_code = ?1 AND state = 'open' ORDER BY id",
-        )?
+        .prepare_cached(crate::corrections::sql::FOLLOW_WAITING.text())?
         .query_map(params![CREDITS_MOVED], |row| {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?))
         })?
@@ -330,7 +308,7 @@ fn merge_group(
         retire_artist(tx, basis, now)?;
     }
     tx.execute(
-        "UPDATE local_artists SET updated_at = ?2, row_revision = row_revision + 1 WHERE id = ?1",
+        crate::corrections::sql::MERGE_GROUP.text(),
         params![survivor, now],
     )?;
     record_artist_action(
@@ -375,19 +353,14 @@ pub(crate) fn record_move(
     } else {
         (MOVED_BY_NAME, "moved-by-name")
     };
-    tx.prepare_cached(
-        "INSERT OR IGNORE INTO local_artist_merge_candidates (id, left_artist_id, \
-         right_artist_id, reason_code, created_at, updated_at) \
-         SELECT ?1, ?2, ?3, ?4, ?5, ?5 WHERE NOT EXISTS (SELECT 1 FROM local_artists \
-          WHERE id IN (?2, ?3) AND kind = 'various_artists')",
-    )?
-    .execute(params![
-        format!("{kind}:{from}:{to}"),
-        from,
-        to,
-        reason,
-        now
-    ])?;
+    tx.prepare_cached(crate::corrections::sql::RECORD_MOVE.text())?
+        .execute(params![
+            format!("{kind}:{from}:{to}"),
+            from,
+            to,
+            reason,
+            now
+        ])?;
     Ok(())
 }
 
@@ -398,17 +371,7 @@ pub(crate) fn record_move(
 /// duplicate artists list reads; a merge resolves them.
 pub(crate) fn follow_renamed(tx: &Transaction<'_>, now: f64) -> rusqlite::Result<()> {
     let rows: Vec<String> = tx
-        .prepare_cached(
-            "SELECT DISTINCT m.left_artist_id FROM local_artist_merge_candidates m \
-             WHERE m.reason_code IN (?1, ?2) AND m.state = 'open' \
-             AND NOT EXISTS (SELECT 1 FROM local_album_artists \
-              WHERE local_artist_id = m.left_artist_id) \
-             AND NOT EXISTS (SELECT 1 FROM local_track_artists \
-              WHERE local_artist_id = m.left_artist_id) \
-             AND NOT EXISTS (SELECT 1 FROM local_albums \
-              WHERE album_artist_id = m.left_artist_id) \
-             ORDER BY m.left_artist_id",
-        )?
+        .prepare_cached(crate::corrections::sql::FOLLOW_RENAMED.text())?
         .query_map(params![MOVED_BY_NAME, MOVED_WITH_ID], |row| row.get(0))?
         .collect::<rusqlite::Result<_>>()?;
     let mut merged = 0;

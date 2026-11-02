@@ -33,8 +33,7 @@ use crate::matching::model::Release;
 /// Whether the album is in the library and not merged into another.
 fn album_live(conn: &Connection, album_id: &str) -> rusqlite::Result<bool> {
     conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM local_albums WHERE id = ?1 \
-         AND retired_into_album_id IS NULL)",
+        crate::operations::sql::ALBUM_LIVE.text(),
         params![album_id],
         |row| row.get(0),
     )
@@ -43,7 +42,7 @@ fn album_live(conn: &Connection, album_id: &str) -> rusqlite::Result<bool> {
 /// Whether a custom edition is active on the album.
 fn custom_active(conn: &Connection, album_id: &str) -> rusqlite::Result<bool> {
     conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM library_custom_edition_active WHERE local_album_id = ?1)",
+        crate::operations::sql::CUSTOM_ACTIVE.text(),
         params![album_id],
         |row| row.get(0),
     )
@@ -52,8 +51,7 @@ fn custom_active(conn: &Connection, album_id: &str) -> rusqlite::Result<bool> {
 /// Whether `track_id` is an indexed file of the album.
 fn indexed_on(conn: &Connection, album_id: &str, track_id: &str) -> rusqlite::Result<bool> {
     conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM local_tracks WHERE id = ?1 AND local_album_id = ?2 \
-         AND availability = 'indexed')",
+        crate::operations::sql::INDEXED_ON.text(),
         params![track_id, album_id],
         |row| row.get(0),
     )
@@ -98,29 +96,18 @@ pub(super) fn stored_placements(
     conn: &Connection,
     album_id: &str,
 ) -> rusqlite::Result<Vec<StoredPlacement>> {
-    conn.prepare(
-        "SELECT t.id, i.release_mbid, i.release_track_mbid, \
-         CASE WHEN i.decision_source = 'manual' \
-         AND lower(h.release_mbid) = lower(i.release_mbid) \
-         AND lower(h.release_track_mbid) = lower(i.release_track_mbid) \
-         THEN h.matched_at END \
-         FROM local_tracks t JOIN local_track_external_identities i \
-         ON i.local_track_id = t.id AND i.provider = ?2 \
-         LEFT JOIN library_track_hand_matches h ON h.local_track_id = t.id \
-         WHERE t.local_album_id = ?1 AND t.availability = 'indexed' \
-         AND trim(COALESCE(i.release_track_mbid, '')) <> '' ORDER BY t.id",
-    )?
-    .query_map(params![album_id, PROVIDER], |row| {
-        let matched_at: Option<i64> = row.get(3)?;
-        Ok(StoredPlacement {
-            local_track_id: row.get(0)?,
-            release_mbid: row.get(1)?,
-            release_track_mbid: row.get(2)?,
-            by_hand: matched_at.is_some(),
-            matched_at,
-        })
-    })?
-    .collect()
+    conn.prepare(crate::operations::sql::STORED_PLACEMENTS.text())?
+        .query_map(params![album_id, PROVIDER], |row| {
+            let matched_at: Option<i64> = row.get(3)?;
+            Ok(StoredPlacement {
+                local_track_id: row.get(0)?,
+                release_mbid: row.get(1)?,
+                release_track_mbid: row.get(2)?,
+                by_hand: matched_at.is_some(),
+                matched_at,
+            })
+        })?
+        .collect()
 }
 
 /// Whether the app has written the file since a match made at `matched_at`
@@ -137,19 +124,7 @@ pub(super) fn written_since(
     matched_at: i64,
 ) -> rusqlite::Result<bool> {
     conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM library_management_plan_items p \
-         JOIN library_management_job_snapshots s ON s.job_id = p.job_id \
-         JOIN library_operation_jobs j ON j.id = p.job_id \
-         WHERE p.local_track_id = ?1 \
-         AND s.mode IN ('apply', 'automatic_apply', 'duplicate_resolution') \
-         AND j.state NOT IN ('failed', 'cancelled', 'stopped') \
-         AND p.eligibility IN ('eligible', 'warning') \
-         AND json_extract(p.desired_document_json, '$.plan') IS NOT NULL \
-         AND p.created_at * 1000 >= ?2 \
-         AND NOT EXISTS (SELECT 1 FROM library_management_job_snapshots u \
-         JOIN library_operation_work w ON w.job_id = u.job_id \
-         WHERE u.linked_operation_job_id = p.job_id AND u.mode = 'undo' \
-         AND w.ordinal = p.bundle_ordinal AND w.state = 'succeeded'))",
+        crate::operations::sql::WRITTEN_SINCE.text(),
         params![track_id, matched_at],
         |row| row.get(0),
     )
@@ -285,8 +260,7 @@ pub(super) fn unmatch_file(
     }
     let kept = tx
         .query_row(
-            "SELECT release_mbid, release_track_mbid, prior_identity_json, matched_at \
-             FROM library_track_hand_matches WHERE local_track_id = ?1",
+            crate::operations::sql::UNMATCH_FILE.text(),
             params![track_id],
             |row| {
                 Ok(Kept {

@@ -297,7 +297,7 @@ fn replay(tx: &Transaction<'_>, key: Option<&str>) -> Result<Option<Applied>, Co
     };
     let stored: Option<String> = tx
         .query_row(
-            "SELECT after_json FROM library_catalog_actions WHERE idempotency_key = ?1",
+            crate::corrections::sql::REPLAY.text(),
             params![key],
             |row| row.get(0),
         )
@@ -330,9 +330,7 @@ fn record(
         CorrectionError::Store(format!("correction result unwritable: {error}"))
     })?;
     tx.execute(
-        "INSERT INTO library_catalog_actions (id, idempotency_key, actor_user_id, action_kind, \
-         local_artist_id, local_album_id, before_json, after_json, reason_code, created_at) \
-         VALUES (?1, ?2, (SELECT id FROM auth_users WHERE id = ?3), ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        crate::corrections::sql::RECORD.text(),
         params![
             uuid::Uuid::new_v4().to_string(),
             audit.meta.idempotency_key,

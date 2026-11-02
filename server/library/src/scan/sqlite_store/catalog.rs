@@ -1,8 +1,8 @@
 //! Track catalog: classification, catalog commits, and missing detection.
 
-use super::commit::walked_past;
 use super::held_scopes::refused_scope;
 use super::*;
+use crate::scan::sqlite_store::sql::walked_past;
 
 /// The `scope_covers_path` rule in SQL for a catalog path column
 /// `relative_path` and a scope bound as `?2`: "." covers everything, else
@@ -149,8 +149,7 @@ impl SqliteScanStore {
         self.read("scan_track_album", |conn| {
             Ok(conn
                 .query_row(
-                    "SELECT local_album_id FROM local_tracks \
-                     WHERE id = ?1 AND availability = 'indexed'",
+                    crate::scan::sql::ALBUM_FOR_TRACK.text(),
                     params![track_id],
                     |row| row.get(0),
                 )
@@ -167,8 +166,7 @@ impl SqliteScanStore {
         self.read("scan_track_at", |conn| {
             Ok(conn
                 .query_row(
-                    "SELECT id FROM local_tracks \
-                     WHERE root_id = ?1 AND relative_path = ?2 AND availability = 'indexed'",
+                    crate::scan::sql::TRACK_AT.text(),
                     params![root_id, relative_path],
                     |row| row.get(0),
                 )
@@ -201,7 +199,7 @@ impl SqliteScanStore {
                 }
             }
             tx.execute(
-                "UPDATE library_scan_runs SET missing_count = missing_count + ?1 WHERE id = ?2",
+                crate::scan::sql::MARK_MISSING.text(),
                 params![marked as i64, run_id],
             )?;
             if marked > 0 {
@@ -257,10 +255,7 @@ impl SqliteScanStore {
             let mut pairs: Vec<(String, String)> = Vec::new();
             let mut gone = 0usize;
             {
-                let mut find = tx.prepare_cached(
-                    "SELECT id FROM local_tracks WHERE root_id = ?1 AND relative_path = ?2 \
-                     AND availability = 'indexed'",
-                )?;
+                let mut find = tx.prepare_cached(crate::scan::sql::TRACK_AT.text())?;
                 let mut mark = tx.prepare_cached(MARK_WALKED_PAST_MISSING)?;
                 for (path, home_root, home_path) in chunk {
                     let Some(home) = find
@@ -289,7 +284,7 @@ impl SqliteScanStore {
             }
             // A retired double's file is still there, under its home row.
             tx.execute(
-                "UPDATE library_scan_runs SET missing_count = missing_count + ?1 WHERE id = ?2",
+                crate::scan::sql::MARK_MISSING.text(),
                 params![gone as i64, run_id],
             )?;
             crate::catalog_revision::bump_catalog(tx)?;
@@ -375,8 +370,7 @@ impl SqliteScanStore {
     ) -> Result<bool, ScanStoreError> {
         self.read_long(stop, "scan_scope_guarded", |conn| {
             Ok(conn.query_row(
-                "SELECT EXISTS(SELECT 1 FROM library_scan_failures WHERE run_id = ?1 \
-                 AND root_id = ?2 AND relative_path = ?3 AND failure_code = ?4)",
+                crate::scan::sql::SCOPE_GUARDED.text(),
                 params![
                     run_id,
                     root_id,
@@ -432,21 +426,13 @@ impl SqliteScanStore {
     ) -> Result<bool, ScanStoreError> {
         self.write(stop, Lane::Background, "scan_refuse_link", |tx| {
             let holds: bool = tx.query_row(
-                "SELECT EXISTS (SELECT 1 FROM local_tracks WHERE root_id = ?1 \
-                 AND availability = 'indexed' \
-                 AND relative_path > ?2 || '/' AND relative_path < ?2 || '0')",
+                crate::scan::sql::FOLDER_HOLDS_INDEXED_TRACKS.text(),
                 params![scope.root_id, relative_path],
                 |row| row.get(0),
             )?;
             if holds {
                 tx.execute(
-                    "INSERT INTO library_scan_run_scopes (run_id, scope_sequence, root_id, \
-                     relative_path, root_path, effective_policy, policy_revision, \
-                     discovery_state, error_code) \
-                     SELECT ?1, COALESCE(MAX(scope_sequence), -1) + 1, ?2, ?3, ?4, ?5, ?6, \
-                     'unavailable', ?7 FROM library_scan_run_scopes WHERE run_id = ?1 \
-                     ON CONFLICT (run_id, root_id, relative_path) DO UPDATE SET \
-                     discovery_state = excluded.discovery_state, error_code = excluded.error_code",
+                    crate::scan::sql::ADD_REFUSED_SCOPE.text(),
                     params![
                         run_id,
                         scope.root_id,
@@ -473,8 +459,7 @@ impl SqliteScanStore {
     ) -> Result<bool, ScanStoreError> {
         self.read_long(stop, "scan_scope_renamed", |conn| {
             Ok(conn.query_row(
-                "SELECT EXISTS(SELECT 1 FROM library_scan_run_scopes WHERE run_id = ?1 \
-                 AND root_id = ?2 AND relative_path = ?3 AND error_code = ?4)",
+                crate::scan::sql::SCOPE_RENAMED.text(),
                 params![
                     run_id,
                     root_id,
@@ -503,7 +488,7 @@ impl SqliteScanStore {
             "SELECT t.relative_path, {} FROM local_tracks t \
              WHERE t.root_id = ?1 AND t.availability = 'indexed' AND {IN_SCOPE} \
              AND {} ORDER BY t.relative_path",
-            super::held_scopes::held_back!("?3", "t"),
+            crate::scan::sqlite_store::sql::held_back!("?3", "t"),
             walked_past!("?3"),
         );
         self.read_long(stop, "scan_missing_paths", |conn| {
@@ -615,18 +600,14 @@ impl SqliteScanStore {
         }
         self.write(stop, Lane::Bulk, "scan_classify_evidence", |tx| {
             let mut promote = tx.prepare_cached(
-                "UPDATE local_tracks SET stat_revision = ?1, file_size_bytes = ?2, \
-                 file_mtime_ns = ?3, stat_revision_kind = 'exact' \
-                 WHERE root_id = ?4 AND relative_path = ?5",
+                crate::scan::sql::REFRESH_TRACK_STAT.text(),
             )?;
             for (key, input) in &promotions {
                 promote.execute(params![input.4, input.1 as i64, input.2, root_id, key])?;
             }
             if let Some(run_id) = run_id {
                 let mut evidence = tx.prepare_cached(
-                    "INSERT OR IGNORE INTO library_scan_failures \
-                     (run_id, root_id, relative_path, failure_code, failure_detail, phase, \
-                     recorded_at) VALUES (?1, ?2, ?3, ?4, ?5, 'discovering', 0.0)",
+                    crate::scan::sql::RECORD_CLASSIFY_FAILURE.text(),
                 )?;
                 for relative_path in &skew {
                     evidence.execute(params![
@@ -693,7 +674,7 @@ impl SqliteScanStore {
 /// The catalog revision every catalog writer bumps (0 before the first).
 fn shared_catalog_revision(conn: &Connection) -> rusqlite::Result<i64> {
     conn.query_row(
-        "SELECT COALESCE((SELECT value FROM library_catalog_revision WHERE singleton = 1), 0)",
+        crate::scan::sql::SHARED_CATALOG_REVISION.text(),
         [],
         |row| row.get(0),
     )
@@ -706,11 +687,7 @@ fn load_catalog_map(
     conn: &Connection,
     root_id: &str,
 ) -> rusqlite::Result<HashMap<String, CatalogEntry>> {
-    let mut stmt = conn.prepare(
-        "SELECT relative_path, id, stat_revision, stat_revision_kind, file_size_bytes, \
-         file_mtime_ns, tags_read_at FROM local_tracks \
-         WHERE root_id = ?1 AND (availability = 'indexed' OR manual_excluded = 1)",
-    )?;
+    let mut stmt = conn.prepare(crate::scan::sql::LOAD_CATALOG_MAP.text())?;
     let rows = stmt.query_map(params![root_id], |row| {
         let kind: String = row.get("stat_revision_kind")?;
         Ok((

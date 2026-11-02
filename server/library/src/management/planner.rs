@@ -48,7 +48,7 @@ pub(crate) fn match_gate(
     }
     let state = conn
         .query_row(
-            "SELECT state, reason_code FROM library_album_match_state WHERE local_album_id = ?1",
+            crate::management::sql::MATCH_GATE.text(),
             params![album_id],
             |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
         )
@@ -73,7 +73,7 @@ pub(crate) fn remap_gate(
 ) -> rusqlite::Result<Option<ItemReason>> {
     let attempts: Option<i64> = conn
         .query_row(
-            "SELECT attempts FROM library_edition_remap_queue WHERE local_album_id = ?1",
+            crate::management::sql::EDITION_REMAP_ATTEMPTS.text(),
             params![album_id],
             |row| row.get(0),
         )
@@ -127,11 +127,7 @@ fn override_values(json: &str) -> Vec<String> {
 
 /// Saved overrides for one file.
 pub fn overrides(conn: &Connection, album_id: &str, track_id: &str) -> rusqlite::Result<Overrides> {
-    let mut statement = conn.prepare_cached(
-        "SELECT id, row_revision, field_name, mode, value_json FROM library_management_overrides \
-         WHERE local_album_id = ?1 OR local_track_id = ?2 \
-         ORDER BY subject_kind, field_name, id",
-    )?;
+    let mut statement = conn.prepare_cached(crate::management::sql::OVERRIDES.text())?;
     let rows = statement.query_map(params![album_id, track_id], |row| {
         Ok((
             row.get::<_, String>(0)?,
@@ -261,7 +257,7 @@ fn edition_held() -> ItemReason {
 fn left_unmanaged(conn: &Connection, album_id: &str) -> rusqlite::Result<bool> {
     let excluded = conn
         .query_row(
-            "SELECT 1 FROM library_management_exclusions WHERE local_album_id = ?1",
+            crate::management::sql::AUTOMATIC_GATE.text(),
             params![album_id],
             |_| Ok(()),
         )

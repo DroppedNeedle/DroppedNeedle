@@ -45,4 +45,322 @@ droppedneedle_kernel::sql! {
                  AND s.track_id = w.track_id AND s.expires_day > ?2)), \
                (SELECT MIN(s.expires_day) FROM library_publish_snapshots s JOIN bundles b \
                  ON b.bundle_id = s.bundle_id WHERE s.expires_day > ?2)";
+    pub(super) QUEUE = "INSERT INTO library_management_automatic_queue (local_album_id, queued_at, not_before) \
+         SELECT ?1, ?2, ?2 WHERE EXISTS (SELECT 1 FROM local_albums WHERE id = ?1) \
+         ON CONFLICT (local_album_id) DO UPDATE SET queued_at = excluded.queued_at, \
+         not_before = excluded.not_before, attempts = 0, last_reason_code = NULL";
+    pub(super) STAMP_RETAG_FOLLOWED = "UPDATE library_management_automatic_queue SET retag_followed_at = ?2 \
+         WHERE local_album_id = ?1";
+    pub(super) HAND_BACK_STAMPED = "SELECT 1 FROM library_album_takeovers \
+             WHERE local_album_id = ?1 AND handed_back_at IS NOT NULL";
+    pub(super) RETAG_FOLLOWED = "SELECT 1 FROM library_management_automatic_queue \
+             WHERE local_album_id = ?1 AND retag_followed_at IS NOT NULL";
+    pub(super) WAKE = "UPDATE library_management_automatic_queue SET not_before = ?1, attempts = 0 \
+         WHERE last_reason_code IS NOT NULL AND not_before > ?1 \
+         AND (?2 IS NULL OR last_reason_code = ?2)";
+    pub(super) ALBUM_FILES = "SELECT id, root_id, relative_path, ingest_source, stat_revision FROM local_tracks \
+         WHERE local_album_id = ?1 AND availability = 'indexed' ORDER BY id";
+    pub(super) WRITES_BY_ITSELF = "SELECT EXISTS(SELECT 1 FROM library_management_automatic_queue \
+                 WHERE local_album_id = ?1 AND not_before < ?2 \
+                 AND last_reason_code IS NOT 'PREVIEW_BLOCKED') \
+                 OR EXISTS(SELECT 1 FROM library_operation_jobs j \
+                 JOIN library_management_job_snapshots s ON s.job_id = j.id \
+                 WHERE j.kind = ?3 AND j.state IN ('queued', 'running', 'paused') \
+                 AND j.idempotency_key LIKE 'automatic:%' \
+                 AND EXISTS(SELECT 1 FROM json_each(s.selection_json, '$.ids') \
+                 WHERE value = ?1))";
+    pub(super) DROP_AUTOMATIC_QUEUE_ROW = "DELETE FROM library_management_automatic_queue WHERE local_album_id = ?1";
+    pub(super) PUT_OFF_AUTOMATIC_ALBUM = "UPDATE library_management_automatic_queue SET attempts = attempts + ?2, \
+                     not_before = ?3, last_reason_code = ?4 WHERE local_album_id = ?1";
+    pub(super) AUTOMATIC_SKIPPED = "SELECT q.local_album_id, a.title, a.album_artist_name, \
+                 COALESCE(q.last_reason_code, ?2), q.attempts, \
+                 q.queued_at FROM library_management_automatic_queue q \
+                 JOIN local_albums a ON a.id = q.local_album_id \
+                 WHERE q.last_reason_code IS NOT NULL OR EXISTS (SELECT 1 \
+                 FROM library_identify_jobs j WHERE j.local_album_id = q.local_album_id \
+                 AND j.state IN ('queued', 'running', 'deferred')) \
+                 ORDER BY q.queued_at DESC LIMIT ?1";
+    pub(super) AUTOMATIC_GATE = "SELECT 1 FROM library_management_exclusions WHERE local_album_id = ?1";
+    pub(super) ACTIVE_CUSTOM_EDITION = "SELECT m.id, m.release_group_mbid, m.album_title, m.album_artist_name, \
+             m.artist_mbid, m.album_metadata_json FROM library_custom_edition_active a \
+             JOIN library_custom_edition_manifests m ON m.id = a.manifest_id \
+             WHERE a.local_album_id = ?1";
+    pub(super) CUSTOM_EDITION_TRACKS = "SELECT local_track_id, title, artist_name, artist_mbid, disc_number, track_number, \
+         duration_seconds, metadata_json, recording_mbid FROM library_custom_edition_tracks \
+         WHERE manifest_id = ?1 ORDER BY ordinal";
+    pub(super) ALBUM_INDEXED_TRACK_IDS = "SELECT id FROM local_tracks WHERE local_album_id = ?1 AND +availability = 'indexed' \
+         ORDER BY id";
+    pub(super) PLAN_DUPLICATE = "SELECT id FROM local_tracks WHERE root_id = ?1 \
+                                 AND relative_path = ?2 AND availability = 'indexed'";
+    pub(super) ALBUM_TRACK_PATHS = "SELECT root_id, relative_path FROM local_tracks \
+         WHERE local_album_id = ?1 AND availability = 'indexed' ORDER BY root_id";
+    pub(super) ALBUM_HAS_CUSTOM_EDITION = "SELECT 1 FROM library_custom_edition_active WHERE local_album_id = ?1";
+    pub(super) EDITION_REMAP_ATTEMPTS = "SELECT attempts FROM library_edition_remap_queue WHERE local_album_id = ?1";
+    pub(super) MATCH_GATE = "SELECT state, reason_code FROM library_album_match_state WHERE local_album_id = ?1";
+    pub(super) OVERRIDES = "SELECT id, row_revision, field_name, mode, value_json FROM library_management_overrides \
+         WHERE local_album_id = ?1 OR local_track_id = ?2 \
+         ORDER BY subject_kind, field_name, id";
+    pub(super) DOWNLOAD_PUBLISH_SETTLED = "SELECT EXISTS (SELECT 1 FROM library_publish_journal \
+                 WHERE bundle_id IN (SELECT bundle_id FROM library_publish_journal \
+                 WHERE substr(source_rel, 1, length(?1)) = ?1) \
+                 AND state NOT IN ('cleaned', 'compensated', 'cleanup_pending') \
+                 AND NOT (state = 'needs_attention' AND bundle_id IN \
+                 (SELECT bundle_id FROM library_publish_resolutions)))";
+    pub(super) CLEANUP_PENDING_COUNT = "SELECT COUNT(*) FROM library_publish_journal WHERE state = 'cleanup_pending'";
+    pub(super) JOURNAL_COUNTS_BY_STATE = "SELECT state, COUNT(*) FROM library_publish_journal GROUP BY state ORDER BY state";
+    pub(super) BUNDLE_RESOLUTION = "SELECT verified_files, as_before_files, empty_files \
+                     FROM library_publish_resolutions WHERE bundle_id = ?1";
+    pub(super) RECORD_BUNDLE_RESOLUTION = "INSERT OR IGNORE INTO library_publish_resolutions (bundle_id, resolved_by_user_id, \
+                 verified_files, resolved_at, as_before_files, empty_files) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)";
+    pub(super) PURGE_OF_IDEMPOTENCY_KEY = "SELECT impact_token, purged_baseline_count, detached_reference_count \
+                     FROM library_management_baseline_purges WHERE idempotency_key = ?1";
+    pub(super) DROP_BASELINE_BLOB_REFS = "DELETE FROM library_publish_blob_refs WHERE owner_kind IN ('baseline', 'v2_baseline')";
+    pub(super) DROP_PUBLISH_BASELINES = "DELETE FROM library_publish_baselines";
+    pub(super) DETACH_BASELINES = "UPDATE library_track_management_state SET baseline_id = NULL, \
+                 row_revision = row_revision + 1 WHERE baseline_id IS NOT NULL";
+    pub(super) DROP_MANAGEMENT_BASELINES = "DELETE FROM library_management_baselines";
+    pub(super) RECORD_BASELINE_PURGE = "INSERT INTO library_management_baseline_purges (idempotency_key, impact_token, \
+                 actor_user_id, purged_baseline_count, detached_reference_count, created_at) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)";
+    pub(super) BASELINE_BLOB_SIZES = "SELECT r.sha256, (SELECT LENGTH(b.bytes) FROM library_publish_blobs b \
+         WHERE b.sha256 = r.sha256) FROM (SELECT DISTINCT sha256 FROM library_publish_blob_refs \
+         WHERE owner_kind IN ('baseline', 'v2_baseline')) r";
+    pub(super) PUBLISH_BASELINE_COUNT = "SELECT COUNT(*) FROM library_publish_baselines";
+    pub(super) OLD_BASELINE_COUNT = "SELECT COUNT(*) FROM library_management_baselines b WHERE NOT EXISTS \
+         (SELECT 1 FROM library_publish_baselines p WHERE p.track_id = b.local_track_id)";
+    pub(super) NEWEST_BASELINE_DAY = "SELECT COALESCE(MAX(created_day), 0) FROM library_publish_baselines";
+    pub(super) BASELINE_BLOB_COUNT = "SELECT COUNT(DISTINCT sha256) FROM library_publish_blob_refs \
+         WHERE owner_kind IN ('baseline', 'v2_baseline')";
+    pub(super) OPEN_JOURNAL_COUNT = "SELECT COUNT(*) FROM library_publish_journal \
+         WHERE state NOT IN ('cleaned', 'compensated', 'needs_attention')";
+    pub(super) ACTIVE_BASELINE_RESTORE_COUNT = "SELECT COUNT(*) FROM library_management_job_snapshots s \
+         JOIN library_operation_jobs j ON j.id = s.job_id \
+         WHERE s.mode = 'baseline_restore' AND j.state IN ('queued', 'running', 'paused', 'ready') \
+         AND (j.state <> 'ready' OR COALESCE(s.preview_expires_at, 0) > CAST(strftime('%s', 'now') AS REAL))";
+    pub(super) TRACKS = "SELECT id, root_id, relative_path, title, artist_name, album_title, track_number, \
+         disc_number, file_format, bit_rate, sample_rate, bit_depth FROM local_tracks \
+         WHERE local_album_id = ?1 AND availability = 'indexed' \
+         ORDER BY disc_number, track_number, relative_path";
+    pub(super) INSERT_JOB = "INSERT INTO library_management_job_snapshots (job_id, mode, origin, phase, \
+         selection_json, profile_revision, settings_revision, naming_revision, policy_revision, \
+         catalog_revision, profile_snapshot_json, preview_created_at, preview_expires_at, \
+         target_root_id, linked_operation_job_id, intent_json, summary_json, created_at, \
+         updated_at, proposed_settings_revision) \
+         VALUES (?1, ?2, ?16, ?18, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, \
+         ?14, ?15, ?10, ?10, ?17)";
+    pub(super) PHASE = "SELECT phase FROM library_management_job_snapshots WHERE job_id = ?1";
+    pub(super) SET_PHASE = "UPDATE library_management_job_snapshots SET phase = ?2, updated_at = ?3, \
+         row_revision = row_revision + 1 WHERE job_id = ?1";
+    pub(super) CLEAR_ITEMS = "DELETE FROM library_management_plan_items WHERE job_id = ?1";
+    pub(super) INSERT_ITEMS = "INSERT INTO library_management_plan_items (job_id, ordinal, bundle_ordinal, \
+         local_album_id, local_track_id, expected_album_revision, expected_identity_revision, \
+         expected_album_identity_revision, expected_override_revision, expected_catalog_revision, \
+         expected_policy_revision, expected_profile_revision, expected_root_id, \
+         expected_relative_path, expected_stat_revision, expected_tag_revision, \
+         expected_file_fingerprint, source_path_identity, destination_root_id, \
+         destination_relative_path, desired_document_json, desired_document_hash, diff_json, \
+         capability_json, eligibility, reason_code, estimated_temporary_bytes, created_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, '', ?16, ?17, \
+         ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27)";
+    pub(super) FINISH_PLANNING = "UPDATE library_management_job_snapshots SET phase = ?4, summary_json = ?2, \
+         updated_at = ?3, row_revision = row_revision + 1 WHERE job_id = ?1";
+    pub(super) WRITABLE_BUNDLES = "SELECT bundle_ordinal, MIN(local_album_id), COALESCE(MIN(expected_album_revision), 1) \
+         FROM library_management_plan_items WHERE job_id = ?1 \
+         GROUP BY bundle_ordinal \
+         HAVING SUM(eligibility NOT IN ('eligible', 'warning')) = 0 \
+         AND SUM(json_extract(desired_document_json, '$.plan') IS NOT NULL) > 0 \
+         ORDER BY bundle_ordinal";
+    pub(super) BEGIN_APPLY = "UPDATE library_management_job_snapshots SET mode = ?2, phase = ?3, \
+         apply_idempotency_key = ?4, updated_at = ?5, row_revision = row_revision + 1 \
+         WHERE job_id = ?1";
+    pub(super) APPLY_KEY = "SELECT apply_idempotency_key FROM library_management_job_snapshots WHERE job_id = ?1";
+    pub(super) RECORD_APPLY_KEY = "UPDATE library_management_job_snapshots SET apply_idempotency_key = ?2 \
+         WHERE job_id = ?1 AND apply_idempotency_key IS NULL";
+    pub(super) SET_JELLYFIN_REFRESH_JOB = "UPDATE library_management_job_snapshots SET jellyfin_refresh_job_id = ?2 \
+             WHERE job_id = ?1";
+    pub(super) SET_PLEX_REFRESH_JOB = "UPDATE library_management_job_snapshots SET plex_refresh_job_id = ?2 \
+             WHERE job_id = ?1";
+    pub(super) SET_NAVIDROME_REFRESH_JOB = "UPDATE library_management_job_snapshots SET navidrome_refresh_job_id = ?2 \
+             WHERE job_id = ?1";
+    pub(super) REFRESH_JOBS = "SELECT jellyfin_refresh_job_id, plex_refresh_job_id, navidrome_refresh_job_id \
+             FROM library_management_job_snapshots WHERE job_id = ?1";
+    pub(super) SET_MODE = "UPDATE library_management_job_snapshots SET mode = ?2, row_revision = row_revision + 1 \
+         WHERE job_id = ?1";
+    pub(super) BUNDLE_ORDINALS = "SELECT DISTINCT bundle_ordinal FROM library_management_plan_items WHERE job_id = ?1 \
+         ORDER BY bundle_ordinal";
+    pub(super) ALBUM_REVISION = "SELECT row_revision FROM local_albums WHERE id = ?1";
+    pub(super) ALBUM_INDEXED_TRACKS = "SELECT id FROM local_tracks WHERE local_album_id = ?1 AND +availability = 'indexed'";
+    pub(super) LIVE_UNDOS = "SELECT j.state, s.phase FROM library_management_job_snapshots s \
+         JOIN library_operation_jobs j ON j.id = s.job_id \
+         WHERE s.linked_operation_job_id = ?1 AND s.mode = 'undo' \
+         AND j.state NOT IN (?3, ?4, ?5) \
+         AND NOT (s.phase IN (?6, ?7) AND COALESCE(s.preview_expires_at, 0) <= ?2)";
+    pub(super) UNDONE_ORDINALS = "SELECT w.ordinal FROM library_operation_work w \
+         JOIN library_management_job_snapshots s ON s.job_id = w.job_id \
+         WHERE s.linked_operation_job_id = ?1 AND s.mode = 'undo' AND w.state = ?2";
+    pub(super) BASELINE_AVAILABLE = "SELECT COUNT(DISTINCT p.local_track_id) FROM library_management_plan_items p \
+         JOIN library_publish_baselines b ON b.track_id = p.local_track_id \
+         WHERE p.job_id = ?1";
+    pub(super) WRITE_MANAGED_STATE = "INSERT INTO library_track_management_state (local_track_id, applied_profile_id, \
+         applied_profile_revision, applied_naming_script_revision, applied_override_revision, \
+         last_operation_job_id, managed_root_id, last_managed_at, last_outcome, \
+         managed_path_revision, written_sha256) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'succeeded', ?9, ?10) \
+         ON CONFLICT (local_track_id) DO UPDATE SET \
+         written_sha256 = COALESCE(excluded.written_sha256, \
+         library_track_management_state.written_sha256), \
+         applied_profile_id = excluded.applied_profile_id, \
+         applied_profile_revision = excluded.applied_profile_revision, \
+         applied_naming_script_revision = excluded.applied_naming_script_revision, \
+         applied_override_revision = excluded.applied_override_revision, \
+         last_operation_job_id = excluded.last_operation_job_id, \
+         managed_root_id = excluded.managed_root_id, \
+         last_managed_at = excluded.last_managed_at, last_outcome = 'succeeded', \
+         managed_path_revision = excluded.managed_path_revision, \
+         last_reason_code = NULL, \
+         row_revision = library_track_management_state.row_revision + 1";
+    pub(super) WRITE_MANAGED_IDENTITY = "INSERT INTO library_track_management_identity (local_track_id, \
+         applied_album_identity_revision, applied_track_identity_revision) VALUES (?1, ?2, ?3) \
+         ON CONFLICT (local_track_id) DO UPDATE SET \
+         applied_album_identity_revision = excluded.applied_album_identity_revision, \
+         applied_track_identity_revision = excluded.applied_track_identity_revision";
+    pub(super) WRITE_RESTORED_STATE = "INSERT INTO library_track_management_state (local_track_id, last_operation_job_id, \
+         last_managed_at, last_outcome) VALUES (?1, ?2, ?3, 'restored') \
+         ON CONFLICT (local_track_id) DO UPDATE SET applied_profile_id = NULL, \
+         applied_profile_revision = NULL, applied_naming_script_revision = NULL, \
+         applied_override_revision = NULL, managed_path_revision = NULL, \
+         last_operation_job_id = excluded.last_operation_job_id, \
+         last_managed_at = excluded.last_managed_at, last_outcome = 'restored', \
+         row_revision = library_track_management_state.row_revision + 1";
+    pub(super) DROP_MANAGED_IDENTITY = "DELETE FROM library_track_management_identity WHERE local_track_id = ?1";
+    pub(super) TRACK_STATE = "SELECT s.applied_profile_id, s.applied_profile_revision, \
+         s.applied_naming_script_revision, s.applied_override_revision, s.managed_root_id, \
+         s.last_outcome, s.last_managed_at, i.applied_album_identity_revision, \
+         i.applied_track_identity_revision, s.managed_path_revision \
+         FROM library_track_management_state s \
+         LEFT JOIN library_track_management_identity i ON i.local_track_id = s.local_track_id \
+         WHERE s.local_track_id = ?1";
+    pub(super) EDIT_OVERRIDE_REVISIONS = "SELECT json_extract(result_json, '$.override_revisions') FROM library_operation_work \
+             WHERE job_id = ?1 AND ordinal = ?2";
+    pub(super) SUBJECT = "SELECT t.id, t.local_album_id, t.root_id, t.relative_path, t.row_revision, \
+                 a.row_revision FROM local_tracks t JOIN local_albums a ON a.id = t.local_album_id \
+                 WHERE t.id = ?1 AND t.availability = 'indexed'";
+    pub(super) SAVED_OVERRIDES = "SELECT subject_kind, field_name, id, mode, row_revision \
+                 FROM library_management_overrides \
+                 WHERE (subject_kind = 'album' AND local_album_id = ?1) \
+                 OR (subject_kind = 'track' AND local_track_id = ?2)";
+    pub(super) CREATE_TAG_EDIT = "SELECT value_json FROM library_management_overrides WHERE id = ?1";
+    pub(super) STATE_REVISIONS = "SELECT s.local_track_id, s.row_revision FROM library_track_management_state s \
+         JOIN local_tracks t ON t.id = s.local_track_id WHERE t.local_album_id = ?1";
+    pub(super) CHANGED_OUTSIDE = "SELECT row_revision FROM library_track_management_state \
+                 WHERE local_track_id = ?1";
+    pub(super) ACCEPT_WRITTEN_HASH = "UPDATE library_track_management_state SET written_sha256 = ?2, \
+                 row_revision = row_revision + 1 WHERE local_track_id = ?1 AND row_revision = ?3";
+    pub(super) ADD_WRITTEN_HASH = "INSERT INTO library_track_management_state (local_track_id, written_sha256) \
+                 VALUES (?1, ?2) ON CONFLICT (local_track_id) DO NOTHING";
+    pub(super) RECORDS_BEFORE = "SELECT json_extract(result_json, ?3) FROM library_operation_work \
+             WHERE job_id = ?1 AND ordinal = ?2 AND json_valid(result_json)";
+    pub(super) WRITTEN_HASH_OF_JOB = "SELECT written_sha256 FROM library_track_management_state \
+                 WHERE local_track_id = ?1 AND last_operation_job_id = ?2 \
+                 AND applied_projection_hash = ?3";
+    pub(super) SET_WRITTEN_HASH = "UPDATE library_track_management_state SET written_sha256 = ?2, \
+             row_revision = row_revision + 1 WHERE local_track_id = ?1";
+    pub(super) NOTE_WORK_RESULT = "UPDATE library_operation_work SET result_json = json_set(CASE \
+             WHEN json_valid(result_json) AND json_type(result_json) = 'object' \
+             THEN result_json ELSE '{}' END, ?3, json(?4)) \
+             WHERE job_id = ?1 AND ordinal = ?2";
+    pub(super) RESTORE_RECORDS = "UPDATE library_track_management_state SET written_sha256 = ?2, \
+             row_revision = row_revision + 1 WHERE local_track_id = ?1 \
+             AND written_sha256 IS applied_projection_hash";
+    pub(super) MARK_FOLLOWED = "UPDATE library_management_automatic_queue SET retag_followed_at = NULL \
+         WHERE local_album_id = ?1 AND retag_followed_at IS NOT NULL";
+    pub(super) IS_MARKED = "SELECT 1 FROM library_album_takeovers WHERE local_album_id = ?1";
+    pub(super) MARK_TAKEN_OVER = "INSERT INTO library_album_takeovers (local_album_id, cause, noticed_at) \
+         VALUES (?1, ?2, ?3) ON CONFLICT (local_album_id) DO NOTHING";
+    pub(super) QUEUE_AUTOMATIC_ALBUM = "INSERT INTO library_management_automatic_queue (local_album_id, queued_at, not_before, \
+         last_reason_code) VALUES (?1, ?2, ?3, ?4) \
+         ON CONFLICT (local_album_id) DO UPDATE SET not_before = excluded.not_before, \
+         attempts = 0, last_reason_code = excluded.last_reason_code";
+    pub(super) COPY_MARK = "INSERT OR IGNORE INTO library_album_takeovers (local_album_id, cause, noticed_at, \
+         handed_back_at) SELECT ?2, cause, noticed_at, handed_back_at \
+         FROM library_album_takeovers WHERE local_album_id = ?1";
+    pub(super) STAMP_ALL = "UPDATE library_album_takeovers SET handed_back_at = ?1, hand_back_tries = 0, \
+             hand_back_retry_at = NULL WHERE handed_back_at IS NULL RETURNING local_album_id";
+    pub(super) NEXT_STAMPED = "SELECT local_album_id FROM library_album_takeovers WHERE handed_back_at IS NOT NULL \
+         AND (hand_back_retry_at IS NULL OR hand_back_retry_at <= ?1) \
+         ORDER BY handed_back_at, local_album_id LIMIT 1";
+    pub(super) COUNT_HAND_BACK_TRY = "UPDATE library_album_takeovers SET hand_back_tries = hand_back_tries + 1 \
+         WHERE local_album_id = ?1 RETURNING hand_back_tries";
+    pub(super) REOPEN_TAKEOVER = "UPDATE library_album_takeovers SET handed_back_at = NULL, hand_back_tries = 0, \
+             hand_back_retry_at = NULL WHERE local_album_id = ?1";
+    pub(super) SET_HAND_BACK_RETRY = "UPDATE library_album_takeovers SET hand_back_retry_at = ?2 WHERE local_album_id = ?1";
+    pub(super) HAND_BACKS = "SELECT COUNT(*) FROM library_catalog_actions \
+         WHERE local_album_id = ?1 AND action_kind = 'management_handed_back'";
+    pub(super) ALBUM_INDEXED_TRACK_PLACES = "SELECT id, root_id, relative_path FROM local_tracks \
+             WHERE local_album_id = ?1 AND availability = 'indexed' ORDER BY id";
+    pub(super) DROP_TAKEOVER = "DELETE FROM library_album_takeovers WHERE local_album_id = ?1";
+    pub(super) FORGET_MANAGED_PATHS = "UPDATE library_track_management_state SET managed_path_revision = NULL, \
+             row_revision = row_revision + 1 WHERE managed_path_revision IS NOT NULL \
+             AND last_operation_job_id IS NULL AND local_track_id IN \
+             (SELECT id FROM local_tracks WHERE local_album_id = ?1)";
+    pub(super) FORGET_WRITTEN_HASHES = "UPDATE library_track_management_state SET written_sha256 = NULL \
+             WHERE written_sha256 IS NOT NULL AND local_track_id IN \
+             (SELECT id FROM local_tracks WHERE local_album_id = ?1)";
+    pub(super) ADOPT_WRITTEN_HASH = "INSERT INTO library_track_management_state (local_track_id, written_sha256) \
+                 SELECT id, ?4 FROM local_tracks WHERE id = ?1 AND local_album_id = ?5 \
+                 AND root_id = ?2 AND relative_path = ?3 AND availability = 'indexed' \
+                 ON CONFLICT (local_track_id) DO UPDATE SET \
+                 written_sha256 = excluded.written_sha256";
+    pub(super) CLEAR_RETAG_FOLLOWED = "UPDATE library_management_automatic_queue SET retag_followed_at = NULL \
+             WHERE local_album_id = ?1";
+    pub(super) TAKEOVER_COUNTS = "SELECT COALESCE(SUM(handed_back_at IS NULL), 0), \
+         COALESCE(SUM(handed_back_at IS NOT NULL), 0) FROM library_album_takeovers";
+    pub(super) WAITING_TAKEOVERS = "SELECT k.local_album_id, a.title, a.album_artist_name, k.cause, k.noticed_at, \
+         EXISTS(SELECT 1 FROM library_catalog_actions c \
+           WHERE c.local_album_id = k.local_album_id \
+           AND c.action_kind = 'management_hand_back_given_up' \
+           AND c.created_at * 1000 >= k.noticed_at) \
+         FROM library_album_takeovers k JOIN local_albums a ON a.id = k.local_album_id \
+         WHERE k.handed_back_at IS NULL \
+         ORDER BY k.noticed_at DESC, k.local_album_id LIMIT ?1";
+    pub(super) fragment ALBUM_ORDER = "ORDER BY COALESCE(a.album_artist_name_folded, ''), a.title_folded, a.id";
+    pub(super) fragment SNAPSHOT_COLUMNS = "s.mode, s.origin, s.phase, s.selection_json, s.profile_revision, \
+     s.settings_revision, s.naming_revision, s.policy_revision, s.catalog_revision, \
+     s.profile_snapshot_json, s.preview_created_at, s.preview_expires_at, \
+     s.target_root_id, s.linked_operation_job_id, s.intent_json, s.summary_json, \
+     j.idempotency_key, j.lease_expires_at, j.heartbeat_at, j.id, s.proposed_settings_revision";
+    pub(super) fragment ITEM_COLUMNS = "ordinal, bundle_ordinal, local_album_id, local_track_id, \
+     expected_album_revision, expected_root_id, expected_relative_path, destination_root_id, \
+     destination_relative_path, eligibility, estimated_temporary_bytes, expected_file_fingerprint, \
+     desired_document_json, diff_json, capability_json, reason_code";
+    pub(super) TRACK_ALBUMS = "SELECT a.id, a.row_revision, t.id FROM local_tracks t \
+         JOIN local_albums a ON a.id = t.local_album_id \
+         WHERE t.id IN (SELECT value FROM json_each(?1)) AND t.availability = 'indexed' \
+         " + ALBUM_ORDER + ", t.disc_number, t.track_number, t.relative_path";
+    pub(super) SNAPSHOT = "SELECT " + SNAPSHOT_COLUMNS + " FROM library_management_job_snapshots s \
+         JOIN library_operation_jobs j ON j.id = s.job_id WHERE s.job_id = ?1 AND j.kind = ?2";
+    pub(super) ITEMS_PAGE = "SELECT " + ITEM_COLUMNS + " FROM library_management_plan_items WHERE job_id = ?1 \
+         AND ordinal > ?2 AND (?3 IS NULL OR eligibility = ?3) \
+         AND (?4 IS NULL OR reason_code = ?4) AND (?5 IS NULL OR expected_root_id = ?5) \
+         AND (?6 IS NULL OR local_album_id = ?6) \
+         AND (?7 IS NULL OR json_extract(capability_json, '$.audio_format') = ?7) \
+         AND (?8 IS NULL \
+           OR (?8 = 'tags' AND json_extract(diff_json, '$.tags_changed') = 1) \
+           OR (?8 = 'path' AND json_extract(diff_json, '$.path_changed') = 1) \
+           OR (?8 = 'sidecars' AND json_array_length(diff_json, '$.sidecars') > 0) \
+           OR (?8 = 'no_change' AND COALESCE(json_extract(diff_json, '$.tags_changed'), 0) = 0 \
+               AND COALESCE(json_extract(diff_json, '$.path_changed'), 0) = 0)) \
+         ORDER BY ordinal LIMIT ?9";
+    pub(super) BUNDLE_ITEMS = "SELECT " + ITEM_COLUMNS + " FROM library_management_plan_items \
+         WHERE job_id = ?1 AND bundle_ordinal = ?2 ORDER BY ordinal";
+    pub(super) HISTORY = "SELECT " + SNAPSHOT_COLUMNS + " FROM library_management_job_snapshots s \
+         JOIN library_operation_jobs j ON j.id = s.job_id WHERE j.kind = ?1 \
+         AND (?2 IS NULL OR s.origin = ?2) AND (?3 IS NULL OR s.target_root_id = ?3 \
+           OR s.selection_json LIKE '%' || ?3 || '%') \
+         AND (?4 IS NULL OR j.state = ?4) AND (?5 IS NULL OR s.mode = ?5) \
+         AND (?6 IS NULL OR j.created_at >= ?6) AND (?7 IS NULL OR j.created_at <= ?7) \
+         AND (?8 IS NULL OR json_extract(s.profile_snapshot_json, '$.profile.id') = ?8) \
+         AND (?9 IS NULL OR j.created_at < ?9 OR (j.created_at = ?9 AND j.id < ?10)) \
+         ORDER BY j.created_at DESC, j.id DESC LIMIT ?11";
 }

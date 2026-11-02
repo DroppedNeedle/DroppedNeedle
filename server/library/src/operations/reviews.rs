@@ -147,10 +147,7 @@ fn map_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Option<ReviewRow>> {
 
 /// Fill in each row's file titles.
 fn with_tracks(conn: &Connection, rows: &mut [ReviewRow]) -> rusqlite::Result<()> {
-    let mut statement = conn.prepare_cached(
-        "SELECT id, title FROM local_tracks WHERE local_album_id = ?1 \
-         ORDER BY disc_number, track_number, id",
-    )?;
+    let mut statement = conn.prepare_cached(crate::operations::sql::WITH_TRACKS.text())?;
     for row in rows {
         row.tracks = statement
             .query_map([&row.review.local_album_id], |track| {
@@ -646,12 +643,9 @@ pub fn guard(
     settled: reasons::Reason,
 ) -> Result<String, OperationError> {
     let (album_id, state, revision): (String, String, i64) = tx
-        .query_row(
-            "SELECT local_album_id, state, row_revision FROM library_identify_reviews \
-             WHERE id = ?1",
-            [review_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        )
+        .query_row(crate::operations::sql::GUARD.text(), [review_id], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })
         .optional()?
         .ok_or(OperationError::NotFound(reasons::REVIEW_NOT_FOUND))?;
     if revision != expected_revision {
@@ -713,8 +707,7 @@ pub fn mark(
     now: f64,
 ) -> rusqlite::Result<bool> {
     let changed = tx.execute(
-        "UPDATE library_identify_reviews SET state = ?3, resolved_by_user_id = ?4, \
-         updated_ms = ?5 WHERE id = ?1 AND state = ?2",
+        crate::operations::sql::MARK.text(),
         params![
             review_id,
             from,
@@ -741,19 +734,12 @@ fn exclude(
     now: f64,
 ) -> Result<(), OperationError> {
     let changed: Vec<String> = tx
-        .prepare(
-            "UPDATE local_tracks SET manual_excluded = 1, \
-             availability = CASE WHEN availability = 'indexed' THEN 'excluded' \
-                            ELSE availability END, \
-             excluded_at = ?2, row_revision = row_revision + 1 \
-             WHERE local_album_id = ?1 AND manual_excluded = 0 RETURNING id",
-        )?
+        .prepare(crate::operations::sql::EXCLUDE_TRACK.text())?
         .query_map(params![album_id, now], |row| row.get(0))?
         .collect::<rusqlite::Result<_>>()?;
     for track_id in &changed {
         tx.execute(
-            "INSERT OR IGNORE INTO library_review_exclusions (review_id, local_track_id) \
-             VALUES (?1, ?2)",
+            crate::operations::sql::RECORD_REVIEW_EXCLUSION.text(),
             params![review_id, track_id],
         )?;
     }
@@ -771,7 +757,7 @@ fn restore(
     now: f64,
 ) -> Result<(), OperationError> {
     let recorded: i64 = tx.query_row(
-        "SELECT COUNT(*) FROM library_review_exclusions WHERE review_id = ?1",
+        crate::operations::sql::REVIEW_EXCLUSION_COUNT.text(),
         [review_id],
         |row| row.get(0),
     )?;
@@ -794,7 +780,7 @@ fn restore(
         params![review_id, album_id],
     )?;
     tx.execute(
-        "DELETE FROM library_review_exclusions WHERE review_id = ?1",
+        crate::operations::sql::CLEAR_REVIEW_EXCLUSIONS.text(),
         [review_id],
     )?;
     audit(tx, album_id, actor, false, changed, now)
@@ -990,11 +976,9 @@ pub fn requester(
     conn: &Connection,
     user_id: &str,
 ) -> rusqlite::Result<Option<droppedneedle_auth::Principal>> {
-    conn.query_row(
-        "SELECT role, username_display FROM auth_users WHERE id = ?1",
-        [user_id],
-        |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
-    )
+    conn.query_row(crate::operations::sql::REQUESTER.text(), [user_id], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+    })
     .optional()
     .map(|found| {
         found.map(|(role, name)| {

@@ -262,9 +262,7 @@ impl<'a> SnapshotStore<'a> {
         expires_day: i64,
     ) -> Result<(), PublishError> {
         self.conn.execute(
-            "INSERT INTO library_publish_snapshots
-             (id, bundle_id, track_id, blob_sha256, created_day, expires_day)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            crate::publish::sql::RECORD.text(),
             rusqlite::params![
                 id,
                 bundle_id,
@@ -287,8 +285,7 @@ impl<'a> SnapshotStore<'a> {
         owner_id: &str,
     ) -> Result<(), PublishError> {
         self.conn.execute(
-            "INSERT OR IGNORE INTO library_publish_blob_refs (sha256, owner_kind, owner_id)
-             VALUES (?1, ?2, ?3)",
+            crate::publish::sql::ADD_REF.text(),
             rusqlite::params![sha256, owner_kind, owner_id],
         )?;
         Ok(())
@@ -298,8 +295,7 @@ impl<'a> SnapshotStore<'a> {
     pub fn get(&self, id: &str) -> Result<Option<(String, String, i64)>, PublishError> {
         self.conn
             .query_row(
-                "SELECT track_id, blob_sha256, expires_day
-                 FROM library_publish_snapshots WHERE id = ?1",
+                crate::publish::sql::SNAPSHOT_ROW.text(),
                 rusqlite::params![id],
                 |row| {
                     Ok((
@@ -318,10 +314,7 @@ impl<'a> SnapshotStore<'a> {
         &self,
         bundle_id: &str,
     ) -> Result<Vec<(String, String, String, i64)>, PublishError> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, track_id, blob_sha256, expires_day
-             FROM library_publish_snapshots WHERE bundle_id = ?1 ORDER BY id",
-        )?;
+        let mut stmt = self.conn.prepare(crate::publish::sql::BUNDLE.text())?;
         let rows = stmt.query_map(rusqlite::params![bundle_id], |row| {
             Ok((
                 row.get::<_, String>(0)?,
@@ -425,9 +418,7 @@ impl<'a> BaselineStore<'a> {
         created_day: i64,
     ) -> Result<(), PublishError> {
         let changed = self.conn.execute(
-            "INSERT OR IGNORE INTO library_publish_baselines
-             (track_id, blob_sha256, original_root, original_rel, created_day)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+            crate::publish::sql::WRITE_BASELINE.text(),
             rusqlite::params![
                 track_id,
                 blob_sha256,
@@ -442,8 +433,7 @@ impl<'a> BaselineStore<'a> {
             ));
         }
         self.conn.execute(
-            "INSERT OR IGNORE INTO library_publish_blob_refs (sha256, owner_kind, owner_id)
-             VALUES (?1, 'baseline', ?2)",
+            crate::publish::sql::WRITE_BASELINE_BLOB_REF.text(),
             rusqlite::params![blob_sha256, track_id],
         )?;
         Ok(())
@@ -453,8 +443,7 @@ impl<'a> BaselineStore<'a> {
     pub fn get(&self, track_id: &str) -> Result<Option<(String, String, String)>, PublishError> {
         self.conn
             .query_row(
-                "SELECT blob_sha256, original_root, original_rel
-                 FROM library_publish_baselines WHERE track_id = ?1",
+                crate::publish::sql::BASELINE_ROW.text(),
                 rusqlite::params![track_id],
                 |row| {
                     Ok((
@@ -477,12 +466,7 @@ impl<'a> BaselineStore<'a> {
     pub fn v2_original_missing(&self, track_id: &str) -> Result<bool, PublishError> {
         self.conn
             .query_row(
-                "SELECT (EXISTS(SELECT 1 FROM library_track_management_state m \
-                 WHERE m.local_track_id = ?1 AND m.baseline_id IS NOT NULL) \
-                 OR EXISTS(SELECT 1 FROM library_management_baselines v \
-                 WHERE v.local_track_id = ?1)) \
-                 AND NOT EXISTS (SELECT 1 FROM library_publish_baselines b \
-                 WHERE b.track_id = ?1)",
+                crate::publish::sql::V2_ORIGINAL_MISSING.text(),
                 rusqlite::params![track_id],
                 |row| row.get(0),
             )
@@ -492,16 +476,16 @@ impl<'a> BaselineStore<'a> {
     /// Baseline count plus distinct referenced blob count for the purge
     /// impact report.
     pub fn impact(&self) -> Result<(usize, usize), PublishError> {
-        let baselines: i64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM library_publish_baselines",
-            [],
-            |row| row.get(0),
-        )?;
-        let blobs: i64 = self.conn.query_row(
-            "SELECT COUNT(DISTINCT sha256) FROM library_publish_blob_refs WHERE owner_kind = 'baseline'",
-            [],
-            |row| row.get(0),
-        )?;
+        let baselines: i64 =
+            self.conn
+                .query_row(crate::publish::sql::BASELINE_COUNT.text(), [], |row| {
+                    row.get(0)
+                })?;
+        let blobs: i64 =
+            self.conn
+                .query_row(crate::publish::sql::BASELINE_BLOB_REFS.text(), [], |row| {
+                    row.get(0)
+                })?;
         Ok((baselines as usize, blobs as usize))
     }
 }

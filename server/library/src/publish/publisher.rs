@@ -115,11 +115,9 @@ pub(super) fn enqueue_after_commit(
 /// changes catalog rows. Read caches key on it, so such a commit
 /// invalidates them.
 pub fn read_revision(conn: &Connection) -> Result<u64, PublishError> {
-    let rev: i64 = conn.query_row(
-        "SELECT value FROM library_catalog_revision WHERE singleton = 1",
-        [],
-        |row| row.get(0),
-    )?;
+    let rev: i64 = conn.query_row(crate::publish::sql::READ_REVISION.text(), [], |row| {
+        row.get(0)
+    })?;
     Ok(rev as u64)
 }
 
@@ -139,11 +137,7 @@ pub struct Located {
 /// `library_track_management_state`.
 pub fn locate(conn: &Connection, track_id: &str) -> Result<Option<Located>, PublishError> {
     conn.query_row(
-        "SELECT t.root_id, t.relative_path, COALESCE(m.applied_projection_hash, ''), \
-             m.last_outcome \
-             FROM local_tracks t \
-             LEFT JOIN library_track_management_state m ON m.local_track_id = t.id \
-             WHERE t.id = ?1",
+        crate::publish::sql::LOCATE.text(),
         rusqlite::params![track_id],
         |row| {
             Ok(Located {
@@ -256,16 +250,7 @@ pub(super) fn commit_bundle(
             move_track(conn, track)?;
         }
         conn.execute(
-            "INSERT INTO library_track_management_state (local_track_id, managed_root_id, \
-                 applied_projection_hash, written_sha256, last_outcome, last_managed_at) \
-                 VALUES (?1, ?2, ?3, ?6, ?4, ?5) \
-                 ON CONFLICT (local_track_id) DO UPDATE SET \
-                 managed_root_id = excluded.managed_root_id, \
-                 applied_projection_hash = excluded.applied_projection_hash, \
-                 written_sha256 = excluded.written_sha256, \
-                 last_outcome = excluded.last_outcome, \
-                 last_managed_at = excluded.last_managed_at, \
-                 row_revision = library_track_management_state.row_revision + 1",
+            crate::publish::sql::COMMIT_BUNDLE.text(),
             rusqlite::params![
                 track.track_id,
                 track.root_id,
@@ -295,7 +280,7 @@ pub(super) fn mark_missing(
     clock: &dyn Clock,
 ) -> Result<(), PublishError> {
     conn.execute(
-        "UPDATE local_tracks SET availability = 'missing', missing_since = ?2 WHERE id = ?1",
+        crate::publish::sql::MARK_MISSING.text(),
         rusqlite::params![track_id, clock.now_secs()],
     )?;
     crate::catalog_revision::bump_catalog(conn)?;
@@ -325,10 +310,7 @@ fn retire_replaced(
         track.rel_path
     );
     let retired_rows = conn.execute(
-        "UPDATE local_tracks SET availability = 'missing', missing_since = ?5, \
-         relative_path = ?4, file_path = ?6, path_hash = ?7, \
-         row_revision = row_revision + 1 \
-         WHERE id = ?1 AND root_id = ?2 AND relative_path = ?3",
+        crate::publish::sql::RETIRE_REPLACED_TRACK.text(),
         rusqlite::params![
             replaced,
             track.root_id,
@@ -345,9 +327,7 @@ fn retire_replaced(
     // Its file is in the recycle bin: no record of it may make a file on
     // its album look like it took its place.
     conn.execute(
-        "UPDATE library_track_management_state SET written_sha256 = NULL, \
-         managed_path_revision = NULL, row_revision = row_revision + 1 \
-         WHERE local_track_id = ?1",
+        crate::publish::sql::FORGET_REPLACED_STATE.text(),
         rusqlite::params![replaced],
     )?;
     Ok(())
@@ -368,8 +348,7 @@ fn changed_under(track_id: &str, bundle_id: &str) -> PublishError {
 fn give_up_destination(conn: &Connection, track: &TrackCommit) -> Result<(), PublishError> {
     let occupant: Option<(String, String)> = conn
         .query_row(
-            "SELECT id, availability FROM local_tracks \
-             WHERE root_id = ?1 AND relative_path = ?2 AND id <> ?3",
+            crate::publish::sql::GIVE_UP_DESTINATION.text(),
             rusqlite::params![track.root_id, track.rel_path, track.track_id],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
@@ -429,8 +408,7 @@ pub(super) fn give_up(
 /// track and album ids (and with them the identity) stay.
 fn move_track(conn: &Connection, track: &TrackCommit) -> Result<(), PublishError> {
     let moved = conn.execute(
-        "UPDATE local_tracks SET root_id = ?2, relative_path = ?3, file_path = ?4, \
-         path_hash = ?5, row_revision = row_revision + 1 WHERE id = ?1",
+        crate::publish::sql::WRITE_TRACK_PLACE.text(),
         rusqlite::params![
             track.track_id,
             track.root_id,
@@ -445,11 +423,7 @@ fn move_track(conn: &Connection, track: &TrackCommit) -> Result<(), PublishError
         ));
     }
     conn.execute(
-        "UPDATE local_albums SET root_id = ?2, row_revision = row_revision + 1 \
-         WHERE id = (SELECT local_album_id FROM local_tracks WHERE id = ?1) \
-         AND root_id <> ?2 AND NOT EXISTS (SELECT 1 FROM local_tracks t \
-         WHERE t.local_album_id = local_albums.id AND t.root_id <> ?2 \
-         AND t.availability = 'indexed')",
+        crate::publish::sql::MOVE_ALBUM_ROOT.text(),
         rusqlite::params![track.track_id, track.root_id],
     )?;
     Ok(())
@@ -472,11 +446,7 @@ pub(crate) fn joined_album(
 ) -> rusqlite::Result<Option<JoinedAlbum>> {
     let found: Option<(String, Option<String>, Option<String>)> = conn
         .query_row(
-            "SELECT b.id, i.release_mbid, i.release_group_mbid FROM local_albums b \
-             LEFT JOIN local_album_external_identities i \
-             ON i.local_album_id = b.id AND i.provider = 'musicbrainz' \
-             WHERE b.id = (SELECT COALESCE(retired_into_album_id, id) FROM local_albums \
-             WHERE id = ?1)",
+            crate::publish::sql::JOINED_ALBUM.text(),
             rusqlite::params![join.album_id],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
@@ -515,10 +485,7 @@ pub(crate) fn copy_folder(
     disc: u32,
 ) -> rusqlite::Result<Option<(String, String)>> {
     let rows: Vec<(String, String, i64)> = conn
-        .prepare(
-            "SELECT root_id, relative_path, disc_number FROM local_tracks \
-             WHERE local_album_id = ?1 AND availability = 'indexed'",
-        )?
+        .prepare(crate::publish::sql::COPY_FOLDER.text())?
         .query_map(rusqlite::params![album_id], |row| {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?))
         })?
@@ -595,8 +562,7 @@ fn adopt_track(
     if adoption.join.is_some() {
         let at_path: Option<(String, String)> = conn
             .query_row(
-                "SELECT id, local_album_id FROM local_tracks \
-                 WHERE root_id = ?1 AND relative_path = ?2",
+                crate::publish::sql::TRACK_AT_PATH.text(),
                 rusqlite::params![track.root_id, track.rel_path],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
@@ -643,16 +609,14 @@ fn adopt_track(
     }
     if joined.is_some() {
         conn.execute(
-            "UPDATE local_tracks SET membership_source = 'manual', membership_locked = 1, \
-             row_revision = row_revision + 1 WHERE id = ?1",
+            crate::publish::sql::LOCK_TRACK_MEMBERSHIP.text(),
             rusqlite::params![adopted],
         )?;
     }
     // Provenance, as v2 recorded it: how the file came in, and which
     // download (if any) brought it.
     conn.execute(
-        "UPDATE local_tracks SET ingest_source = ?4, download_task_id = ?2, \
-         source_path = ?3 WHERE id = ?1",
+        crate::publish::sql::SET_TRACK_INGEST.text(),
         rusqlite::params![
             adopted,
             adoption.download_task_id,

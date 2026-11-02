@@ -95,8 +95,7 @@ pub fn snapshot(
     type Row = (Option<String>, String, String, String, Option<String>);
     let row: Option<Row> = conn
         .query_row(
-            "SELECT purpose, phase, scope_json, target_matcher_version, result_json \
-             FROM library_repair_snapshots WHERE job_id = ?1",
+            crate::repairs::sql::SNAPSHOT.text(),
             params![job_id],
             |row| {
                 Ok((
@@ -259,7 +258,7 @@ pub fn create(
     }
     let existing: Option<String> = tx
         .query_row(
-            "SELECT id FROM library_operation_jobs WHERE idempotency_key = ?1",
+            crate::repairs::sql::JOB_OF_IDEMPOTENCY_KEY.text(),
             params![new.idempotency_key],
             |row| row.get(0),
         )
@@ -271,18 +270,16 @@ pub fn create(
         };
     }
     let catalog_revision: i64 = tx
-        .query_row(
-            "SELECT value FROM library_catalog_revision WHERE singleton = 1",
-            [],
-            |row| row.get(0),
-        )
+        .query_row(crate::repairs::sql::CATALOG_REVISION.text(), [], |row| {
+            row.get(0)
+        })
         .optional()?
         .unwrap_or(0);
     // A requester whose account is gone leaves the job unattributed.
     let requested_by: Option<String> = match &new.requested_by_user_id {
         Some(user_id) => tx
             .query_row(
-                "SELECT id FROM auth_users WHERE id = ?1",
+                crate::repairs::sql::USER_EXISTS.text(),
                 params![user_id],
                 |row| row.get(0),
             )
@@ -334,9 +331,7 @@ pub fn create(
         scan_run_id: new.scan_run_id.clone(),
     };
     tx.execute(
-        "INSERT INTO library_repair_snapshots (job_id, purpose, scope_json, \
-         source_matcher_version, target_matcher_version, created_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        crate::repairs::sql::CREATE_REPAIR_SNAPSHOT.text(),
         params![
             new.job_id,
             new.purpose,
@@ -348,9 +343,7 @@ pub fn create(
         ],
     )?;
     tx.execute(
-        "INSERT INTO library_repair_materialization (job_id, pinned_catalog_revision, \
-         eligibility_version, purpose, staging_cursor, staged_ordinal, staged_count, sealed, \
-         created_at, updated_at) VALUES (?1, ?2, ?3, ?4, NULL, ?5, ?6, 1, ?7, ?7)",
+        crate::repairs::sql::CREATE_REPAIR_MATERIALIZATION.text(),
         params![
             new.job_id,
             catalog_revision,
@@ -367,7 +360,7 @@ pub fn create(
         ],
     )?;
     tx.execute(
-        "UPDATE library_operation_jobs SET expected_work_count = ?2 WHERE id = ?1",
+        crate::repairs::sql::SET_EXPECTED_WORK_COUNT.text(),
         params![new.job_id, staged as i64],
     )?;
     job_after(tx, &new.job_id)
@@ -377,27 +370,11 @@ pub fn create(
 /// upgrade's leftovers are cleaned without anyone asking.
 pub const HYGIENE_BACKFILL_KEY: &str = "catalog-identity-hygiene:v1:backfill";
 
-/// Albums the cleanup could apply to: imported groupings, automatic
-/// albums with no file left, and albums whose row names the "Unknown
-/// Artist" placeholder while a file's tags name an artist, unless a
-/// curator undid that repair on the album.
-const HYGIENE_CANDIDATE: &str = "(a.grouping_source = 'legacy_import' \
-     OR (a.grouping_source = 'automatic' AND NOT EXISTS \
-     (SELECT 1 FROM local_tracks t WHERE t.local_album_id = a.id)) \
-     OR (a.album_artist_name = 'Unknown Artist' \
-     AND a.grouping_locked = 0 AND a.grouping_source <> 'manual' \
-     AND EXISTS (SELECT 1 FROM local_tracks t WHERE t.local_album_id = a.id \
-     AND t.availability = 'indexed' AND t.album_artist_provenance = 'tag' \
-     AND t.album_artist_name <> 'Unknown Artist') \
-     AND NOT EXISTS (SELECT 1 FROM library_catalog_actions u \
-     WHERE u.local_album_id = a.id AND u.action_kind = 'album_artist_undone')))";
+use crate::repairs::sql::HYGIENE_CANDIDATE;
 
 pub fn hygiene_candidates_exist(conn: &Connection) -> rusqlite::Result<bool> {
     conn.query_row(
-        &format!(
-            "SELECT EXISTS(SELECT 1 FROM local_albums a \
-             WHERE a.retired_into_album_id IS NULL AND {HYGIENE_CANDIDATE})"
-        ),
+        crate::repairs::sql::HYGIENE_CANDIDATES_EXIST.text(),
         [],
         |row| row.get(0),
     )
@@ -405,7 +382,7 @@ pub fn hygiene_candidates_exist(conn: &Connection) -> rusqlite::Result<bool> {
 
 pub fn queued(conn: &Connection, idempotency_key: &str) -> rusqlite::Result<bool> {
     conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM library_operation_jobs WHERE idempotency_key = ?1)",
+        crate::repairs::sql::QUEUED.text(),
         params![idempotency_key],
         |row| row.get(0),
     )
@@ -419,9 +396,6 @@ pub struct Watermark {
     pub job_id: String,
 }
 
-/// Identification states that end a job.
-const IDENTIFY_FINISHED: &str = "('succeeded','failed','attention')";
-
 /// Most finished identification jobs one cleanup covers.
 pub const IDENTIFIED_PAGE: usize = 200;
 
@@ -429,19 +403,12 @@ pub const IDENTIFIED_PAGE: usize = 200;
 /// there is none.
 fn newest_identified(conn: &Connection) -> rusqlite::Result<Watermark> {
     Ok(conn
-        .query_row(
-            &format!(
-                "SELECT updated_ms, id FROM library_identify_jobs \
-                 WHERE state IN {IDENTIFY_FINISHED} ORDER BY updated_ms DESC, id DESC LIMIT 1"
-            ),
-            [],
-            |row| {
-                Ok(Watermark {
-                    at_ms: row.get(0)?,
-                    job_id: row.get(1)?,
-                })
-            },
-        )
+        .query_row(crate::repairs::sql::NEWEST_IDENTIFIED.text(), [], |row| {
+            Ok(Watermark {
+                at_ms: row.get(0)?,
+                job_id: row.get(1)?,
+            })
+        })
         .optional()?
         .unwrap_or(Watermark {
             at_ms: 0,
@@ -455,8 +422,7 @@ fn newest_identified(conn: &Connection) -> rusqlite::Result<Watermark> {
 pub fn identified_watermark(conn: &Connection) -> rusqlite::Result<Result<Watermark, Watermark>> {
     let stored = conn
         .query_row(
-            "SELECT identified_at, identified_job_id FROM library_repair_watermarks \
-             WHERE singleton = 1",
+            crate::repairs::sql::IDENTIFIED_WATERMARK.text(),
             [],
             |row| {
                 Ok(Watermark {
@@ -479,9 +445,7 @@ pub fn identified_watermark(conn: &Connection) -> rusqlite::Result<Result<Waterm
 
 pub fn set_identified_watermark(tx: &Transaction<'_>, mark: &Watermark) -> rusqlite::Result<()> {
     tx.execute(
-        "INSERT INTO library_repair_watermarks (singleton, identified_at, identified_job_id) \
-         VALUES (1, ?1, ?2) ON CONFLICT (singleton) DO UPDATE SET \
-         identified_at = excluded.identified_at, identified_job_id = excluded.identified_job_id",
+        crate::repairs::sql::SET_IDENTIFIED_WATERMARK.text(),
         params![mark.at_ms, mark.job_id],
     )?;
     Ok(())
@@ -501,14 +465,7 @@ pub struct IdentifiedPage {
 /// The next [`IDENTIFIED_PAGE`] finished identification jobs after
 /// `after`, oldest first.
 pub fn identified_after(conn: &Connection, after: &Watermark) -> rusqlite::Result<IdentifiedPage> {
-    let mut stmt = conn.prepare(&format!(
-        "SELECT j.updated_ms, j.id, a.id, \
-         a.retired_into_album_id IS NULL AND {HYGIENE_CANDIDATE} \
-         FROM library_identify_jobs j JOIN local_albums a ON a.id = j.local_album_id \
-         WHERE j.state IN {IDENTIFY_FINISHED} \
-         AND (j.updated_ms > ?1 OR (j.updated_ms = ?1 AND j.id > ?2)) \
-         ORDER BY j.updated_ms, j.id LIMIT ?3"
-    ))?;
+    let mut stmt = conn.prepare(crate::repairs::sql::IDENTIFIED_AFTER.text())?;
     let rows = stmt
         .query_map(
             params![after.at_ms, after.job_id, IDENTIFIED_PAGE as i64],
@@ -543,13 +500,9 @@ pub fn identified_after(conn: &Connection, after: &Watermark) -> rusqlite::Resul
 /// failed or superseded): what it changed before it ended still needs the
 /// per-scan cleanup.
 pub fn latest_ended_scan(conn: &Connection) -> rusqlite::Result<Option<String>> {
-    conn.query_row(
-        "SELECT id FROM library_scan_runs WHERE terminal_at IS NOT NULL AND state IN \
-         ('completed','cancelled','failed','superseded_policy_changed') \
-         ORDER BY terminal_at DESC, id DESC LIMIT 1",
-        [],
-        |row| row.get(0),
-    )
+    conn.query_row(crate::repairs::sql::LATEST_ENDED_SCAN.text(), [], |row| {
+        row.get(0)
+    })
     .optional()
 }
 
@@ -577,7 +530,7 @@ pub fn hygiene_scan_key(run_id: &str) -> String {
 /// True once a v2 import has been committed into this database: the
 /// migration tool writes one `import_runs` row per committed import.
 pub fn carried_from_v2(conn: &Connection) -> rusqlite::Result<bool> {
-    conn.query_row("SELECT EXISTS(SELECT 1 FROM import_runs)", [], |row| {
+    conn.query_row(crate::repairs::sql::CARRIED_FROM_V2.text(), [], |row| {
         row.get(0)
     })
 }
@@ -597,41 +550,7 @@ pub const TRACK_ID_BACKFILL_KEY: &str = "track-id-elsewhere:v1:backfill";
 /// an album a person decided: a chosen or imported identity, a match taken
 /// off, or a review a person settled.
 pub fn track_id_backfill_albums(conn: &Connection) -> rusqlite::Result<Vec<String>> {
-    let mut stmt = conn.prepare(&format!(
-        "SELECT a.id FROM local_albums a \
-         LEFT JOIN local_album_external_identities i \
-             ON i.local_album_id = a.id AND i.provider = ?1 \
-         LEFT JOIN library_album_match_state m ON m.local_album_id = a.id \
-         WHERE a.retired_into_album_id IS NULL \
-         AND (i.local_album_id IS NOT NULL OR m.local_album_id IS NOT NULL) \
-         AND (i.decision_source IS NULL OR i.decision_source IN {REVISABLE}) \
-         AND COALESCE(m.reason_code, '') != 'DETACHED_BY_PERSON' \
-         AND NOT EXISTS (SELECT 1 FROM library_identify_reviews r \
-             WHERE r.local_album_id = a.id AND r.state IN ('rejected','dismissed','excluded')) \
-         AND ((i.local_album_id IS NOT NULL AND EXISTS (SELECT 1 FROM local_tracks t \
-             WHERE t.local_album_id = a.id AND t.availability = 'indexed' \
-             AND COALESCE(t.embedded_release_mbid, '') != '' \
-             AND COALESCE(t.embedded_release_track_mbid, '') != '' \
-             AND COALESCE(t.embedded_recording_mbid, '') != '' \
-             AND ((i.local_album_id IS NOT NULL \
-                 AND lower(t.embedded_release_mbid) != lower(COALESCE(i.release_mbid, '')) \
-                 AND NOT EXISTS (SELECT 1 FROM library_management_metadata_snapshots s, \
-                     json_each(s.canonical_payload_json, '$.old_ids') old \
-                     WHERE s.provider = ?1 AND s.entity_kind = 'release' \
-                     AND s.entity_id = lower(i.release_mbid) \
-                     AND lower(old.value) = lower(t.embedded_release_mbid))) \
-             OR EXISTS (SELECT 1 FROM library_management_metadata_snapshots s \
-                 WHERE s.provider = ?1 AND s.entity_kind = 'release' \
-                 AND s.entity_id = lower(t.embedded_release_mbid) \
-                 AND NOT EXISTS (SELECT 1 FROM json_each(s.canonical_payload_json, '$.tracks') rt \
-                     WHERE lower(json_extract(rt.value, '$.id')) \
-                         = lower(t.embedded_release_track_mbid)))))) \
-         OR EXISTS (SELECT 1 FROM json_each(m.candidates_json) candidate, \
-             json_each(candidate.value, '$.track_evidence') track, \
-             json_each(track.value, '$.evidence_kinds') kind \
-             WHERE kind.value = 'release_track_mbid_conflict')) \
-         ORDER BY a.id"
-    ))?;
+    let mut stmt = conn.prepare(crate::repairs::sql::TRACK_ID_BACKFILL_ALBUMS.text())?;
     stmt.query_map(params![PROVIDER], |row| row.get(0))?
         .collect()
 }
@@ -645,23 +564,7 @@ pub const GROUP_ONLY_BACKFILL_KEY: &str = "group-only-edition:v1:backfill";
 /// album a person decided: a chosen or imported match, a custom edition,
 /// or a review a person settled.
 pub fn group_only_backfill_albums(conn: &Connection) -> rusqlite::Result<Vec<String>> {
-    let mut stmt = conn.prepare(&format!(
-        "SELECT a.id FROM local_albums a \
-         JOIN local_album_external_identities i \
-             ON i.local_album_id = a.id AND i.provider = ?1 \
-         WHERE a.retired_into_album_id IS NULL \
-         AND i.release_mbid IS NULL AND i.decision_source IN {REVISABLE} \
-         AND NOT EXISTS (SELECT 1 FROM library_custom_edition_active c \
-             WHERE c.local_album_id = a.id) \
-         AND NOT EXISTS (SELECT 1 FROM library_identify_reviews r \
-             WHERE r.local_album_id = a.id AND r.state IN ('rejected','dismissed','excluded')) \
-         AND EXISTS (SELECT 1 FROM local_tracks t \
-             WHERE t.local_album_id = a.id AND t.availability = 'indexed') \
-         AND NOT EXISTS (SELECT 1 FROM local_tracks t \
-             WHERE t.local_album_id = a.id AND t.availability = 'indexed' \
-             AND t.applied_policy != 'automatic') \
-         ORDER BY a.id"
-    ))?;
+    let mut stmt = conn.prepare(crate::repairs::sql::GROUP_ONLY_BACKFILL_ALBUMS.text())?;
     stmt.query_map(params![PROVIDER], |row| row.get(0))?
         .collect()
 }
@@ -676,32 +579,11 @@ pub const OLDER_CONFIRMATIONS_BACKFILL_KEY: &str = "older-confirmations:v1:backf
 /// an album a person decided, detached or settled a review of, a custom
 /// edition, or one with a file in a folder not identified automatically.
 pub fn older_confirmation_albums(conn: &Connection) -> rusqlite::Result<Vec<String>> {
-    let mut stmt = conn.prepare(&format!(
-        "SELECT a.id, i.release_group_mbid FROM local_albums a \
-         JOIN local_album_external_identities i \
-             ON i.local_album_id = a.id AND i.provider = ?1 \
-         WHERE a.retired_into_album_id IS NULL \
-         AND i.release_mbid IS NOT NULL AND i.decision_source IN {REVISABLE} \
-         AND NOT EXISTS (SELECT 1 FROM library_album_match_state m \
-             WHERE m.local_album_id = a.id) \
-         AND NOT EXISTS (SELECT 1 FROM library_custom_edition_active c \
-             WHERE c.local_album_id = a.id) \
-         AND NOT EXISTS (SELECT 1 FROM library_identify_reviews r \
-             WHERE r.local_album_id = a.id AND r.state IN ('rejected','dismissed','excluded')) \
-         AND EXISTS (SELECT 1 FROM local_tracks t \
-             WHERE t.local_album_id = a.id AND t.availability = 'indexed') \
-         AND NOT EXISTS (SELECT 1 FROM local_tracks t \
-             WHERE t.local_album_id = a.id AND t.availability = 'indexed' \
-             AND t.applied_policy != 'automatic') \
-         ORDER BY a.id"
-    ))?;
+    let mut stmt = conn.prepare(crate::repairs::sql::CONFIRMED_ALBUMS_WITH_GROUP.text())?;
     let confirmed: Vec<(String, String)> = stmt
         .query_map(params![PROVIDER], |row| Ok((row.get(0)?, row.get(1)?)))?
         .collect::<rusqlite::Result<_>>()?;
-    let mut files = conn.prepare(
-        "SELECT embedded_release_group_mbid FROM local_tracks \
-         WHERE local_album_id = ?1 AND availability = 'indexed'",
-    )?;
+    let mut files = conn.prepare(crate::repairs::sql::OLDER_CONFIRMATION_ALBUMS.text())?;
     let mut albums = Vec::new();
     for (album, group) in confirmed {
         let tagged: Vec<Option<String>> = files
@@ -747,38 +629,7 @@ impl Backfill {
 /// start or after a scan) asks again. Settled once a look saw at least one
 /// such album and none of them waited, whether or not one moved.
 pub fn edition_id_albums(conn: &Connection) -> rusqlite::Result<Backfill> {
-    let mut stmt = conn.prepare(&format!(
-        "SELECT a.id, i.release_mbid, EXISTS (SELECT 1 FROM library_artist_reconciliation_state s \
-             WHERE s.local_album_id = a.id AND s.state = 'waiting_for_identity' \
-             AND s.reason_code = ?2), \
-         EXISTS (SELECT 1 FROM local_tracks t \
-             WHERE t.local_album_id = a.id AND t.availability = 'indexed' \
-             AND NOT EXISTS (SELECT 1 FROM local_track_edition_tags h \
-                 WHERE h.local_track_id = t.id)), \
-         EXISTS (SELECT 1 FROM local_tracks t \
-             JOIN local_track_edition_tags h ON h.local_track_id = t.id \
-             WHERE t.local_album_id = a.id AND t.availability = 'indexed' \
-             AND (trim(COALESCE(h.barcode, '')) <> '' \
-                 OR trim(COALESCE(h.catalog_number, '')) <> '')) \
-         FROM local_albums a \
-         JOIN local_album_external_identities i \
-             ON i.local_album_id = a.id AND i.provider = ?1 \
-         WHERE a.retired_into_album_id IS NULL \
-         AND i.release_mbid IS NOT NULL AND i.decision_source IN {REVISABLE} \
-         AND NOT EXISTS (SELECT 1 FROM library_album_match_state m \
-             WHERE m.local_album_id = a.id) \
-         AND NOT EXISTS (SELECT 1 FROM library_custom_edition_active c \
-             WHERE c.local_album_id = a.id) \
-         AND NOT EXISTS (SELECT 1 FROM library_identify_reviews r \
-             WHERE r.local_album_id = a.id AND r.state IN ('rejected','dismissed','excluded')) \
-         AND EXISTS (SELECT 1 FROM local_tracks t \
-             WHERE t.local_album_id = a.id AND t.availability = 'indexed') \
-         AND NOT EXISTS (SELECT 1 FROM local_tracks t \
-             WHERE t.local_album_id = a.id AND t.availability = 'indexed' \
-             AND (t.applied_policy != 'automatic' \
-                 OR trim(COALESCE(t.embedded_release_mbid, '')) != '')) \
-         ORDER BY a.id"
-    ))?;
+    let mut stmt = conn.prepare(crate::repairs::sql::EDITION_ID_ALBUMS.text())?;
     // Album, its release, its document still fetching, a file whose
     // edition tags are unread, a file with a barcode or catalog number.
     type Candidate = (String, String, bool, bool, bool);
@@ -794,11 +645,7 @@ pub fn edition_id_albums(conn: &Connection) -> rusqlite::Result<Backfill> {
         })?
         .collect::<rusqlite::Result<_>>()?;
     let candidates = confirmed.len();
-    let mut files = conn.prepare(
-        "SELECT h.barcode, h.catalog_number \
-         FROM local_tracks t JOIN local_track_edition_tags h ON h.local_track_id = t.id \
-         WHERE t.local_album_id = ?1 AND t.availability = 'indexed'",
-    )?;
+    let mut files = conn.prepare(crate::repairs::sql::ALBUM_EDITION_TAGS.text())?;
     let mut albums = Vec::new();
     let mut waiting = 0usize;
     for (album, release, fetching, unread, tagged) in confirmed {
@@ -884,10 +731,7 @@ pub fn mark_backfill(
 
 fn active_count(conn: &Connection, purpose: Purpose) -> rusqlite::Result<i64> {
     conn.query_row(
-        "SELECT COUNT(*) FROM library_operation_jobs j \
-         JOIN library_repair_snapshots s ON s.job_id = j.id \
-         WHERE j.kind = ?2 AND j.state IN (?3, ?4, ?5, ?6) \
-         AND s.purpose = ?1",
+        crate::repairs::sql::ACTIVE_COUNT.text(),
         params![
             purpose,
             OperationKind::Repair,
@@ -966,19 +810,7 @@ pub fn estimate_preparation(
     Ok(estimate)
 }
 
-/// True when album `a` has an active custom edition sealed against its
-/// current revisions and files.
-const CUSTOM_CURRENT: &str = "COALESCE((SELECT m.source_album_revision = a.row_revision \
-     AND COALESCE(m.source_identity_revision, 0) = COALESCE((SELECT ai.row_revision \
-       FROM local_album_external_identities ai WHERE ai.local_album_id = a.id \
-       AND ai.provider = 'musicbrainz'), 0) \
-     AND (SELECT COUNT(*) FROM library_custom_edition_tracks ct JOIN local_tracks ctt \
-       ON ctt.id = ct.local_track_id WHERE ct.manifest_id = m.id \
-       AND ctt.local_album_id = a.id AND ctt.availability = 'indexed' \
-       AND ct.stat_revision = ctt.stat_revision) = (SELECT COUNT(*) FROM local_tracks it \
-       WHERE it.local_album_id = a.id AND it.availability = 'indexed') \
-   FROM library_custom_edition_active ac JOIN library_custom_edition_manifests m \
-   ON m.id = ac.manifest_id WHERE ac.local_album_id = a.id), 0)";
+use crate::repairs::sql::CUSTOM_CURRENT;
 
 /// One page of a purpose's jobs with their snapshots, newest first.
 /// `before` is the last page's `(created_at, id)`.
@@ -989,14 +821,7 @@ pub fn history(
     before: Option<(f64, String)>,
 ) -> rusqlite::Result<Vec<(String, Result<RepairSnapshot, Unreadable>)>> {
     let (created, id) = before.unzip();
-    let mut stmt = conn.prepare(
-        "SELECT j.id, s.purpose, s.phase, s.scope_json, s.target_matcher_version, \
-         s.result_json FROM library_operation_jobs j \
-         JOIN library_repair_snapshots s ON s.job_id = j.id \
-         WHERE j.kind = ?5 AND s.purpose = ?1 \
-         AND (?2 IS NULL OR j.created_at < ?2 OR (j.created_at = ?2 AND j.id < ?3)) \
-         ORDER BY j.created_at DESC, j.id DESC LIMIT ?4",
-    )?;
+    let mut stmt = conn.prepare(crate::repairs::sql::HISTORY.text())?;
     stmt.query_map(
         params![purpose, created, id, limit as i64, OperationKind::Repair],
         |row| {
@@ -1043,8 +868,7 @@ pub fn subject(conn: &Connection, album_id: &str) -> rusqlite::Result<Option<Sub
     };
     let identity: Option<(IdentityState, i64)> = conn
         .query_row(
-            "SELECT release_group_mbid, release_mbid, decision_source, row_revision \
-             FROM local_album_external_identities WHERE local_album_id = ?1 AND provider = ?2",
+            crate::repairs::sql::SUBJECT_ALBUM_IDENTITY.text(),
             params![album_id, PROVIDER],
             |row| {
                 Ok((
@@ -1058,13 +882,7 @@ pub fn subject(conn: &Connection, album_id: &str) -> rusqlite::Result<Option<Sub
             },
         )
         .optional()?;
-    let mut stmt = conn.prepare(
-        "SELECT t.id, ti.recording_mbid, ti.release_mbid, ti.release_track_mbid, \
-         ti.medium_position, ti.release_track_position FROM local_tracks t \
-         LEFT JOIN local_track_external_identities ti ON ti.local_track_id = t.id \
-         AND ti.provider = ?2 WHERE t.local_album_id = ?1 AND t.availability = 'indexed' \
-         ORDER BY t.id",
-    )?;
+    let mut stmt = conn.prepare(crate::repairs::sql::SUBJECT_TRACK_IDENTITIES.text())?;
     let tracks = stmt
         .query_map(params![album_id, PROVIDER], |row| {
             Ok(TrackState {
@@ -1079,16 +897,13 @@ pub fn subject(conn: &Connection, album_id: &str) -> rusqlite::Result<Option<Sub
         .collect::<rusqlite::Result<Vec<_>>>()?;
     let custom_current: Option<bool> = conn
         .query_row(
-            &format!(
-                "SELECT {CUSTOM_CURRENT} FROM local_albums a WHERE a.id = ?1 AND EXISTS \
-                 (SELECT 1 FROM library_custom_edition_active ac WHERE ac.local_album_id = a.id)"
-            ),
+            crate::repairs::sql::SUBJECT.text(),
             params![album_id],
             |row| row.get(0),
         )
         .optional()?;
     let root_id: String = conn.query_row(
-        "SELECT root_id FROM local_albums WHERE id = ?1",
+        crate::repairs::sql::SUBJECT_ALBUM_ROOT.text(),
         params![album_id],
         |row| row.get(0),
     )?;
@@ -1137,7 +952,7 @@ pub fn claim_album(
         return Ok(None);
     };
     let album: Option<String> = tx.query_row(
-        "SELECT local_album_id FROM library_operation_work WHERE job_id = ?1 AND ordinal = ?2",
+        crate::repairs::sql::CLAIM_ALBUM.text(),
         params![job_id, ordinal],
         |row| row.get(0),
     )?;
@@ -1184,8 +999,7 @@ pub fn save_finding(
     now: f64,
 ) -> Result<(), OperationError> {
     let expected_album_revision: i64 = tx.query_row(
-        "SELECT expected_subject_revision FROM library_operation_work \
-         WHERE job_id = ?1 AND ordinal = ?2",
+        crate::repairs::sql::WORK_SUBJECT_REVISION.text(),
         params![job_id, ordinal],
         |row| row.get(0),
     )?;
@@ -1193,20 +1007,7 @@ pub fn save_finding(
     let payload = serde_json::to_string(&verdict.payload)
         .map_err(|error| OperationError::Store(error.to_string()))?;
     tx.execute(
-        "INSERT INTO library_identity_repair_findings (id, job_id, local_album_id, \
-         expected_album_revision, expected_identity_revision, finding_code, confidence, \
-         reason_code, apply_eligible, suggested_release_mbid, suggested_release_group_mbid, \
-         suggested_edition_json, state, created_at, updated_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?14, ?13, ?13) \
-         ON CONFLICT (job_id, local_album_id, finding_code) DO UPDATE SET \
-         expected_album_revision = excluded.expected_album_revision, \
-         expected_identity_revision = excluded.expected_identity_revision, \
-         confidence = excluded.confidence, reason_code = excluded.reason_code, \
-         apply_eligible = excluded.apply_eligible, \
-         suggested_release_mbid = excluded.suggested_release_mbid, \
-         suggested_release_group_mbid = excluded.suggested_release_group_mbid, \
-         suggested_edition_json = excluded.suggested_edition_json, state = excluded.state, \
-         apply_result = NULL, updated_at = excluded.updated_at, row_revision = row_revision + 1",
+        crate::repairs::sql::WRITE_FINDING.text(),
         params![
             uuid::Uuid::new_v4().to_string(),
             job_id,
@@ -1282,10 +1083,7 @@ pub fn auto_accept(
         return Ok(false);
     }
     tx.execute(
-        "UPDATE library_identity_repair_findings SET finding_code = ?4, \
-         reason_code = 'EXACT_EDITION_AUTO_ACCEPTED', apply_eligible = 0, state = ?5, \
-         apply_result = ?6, updated_at = ?3, row_revision = row_revision + 1 \
-         WHERE job_id = ?1 AND local_album_id = ?2 AND finding_code = ?7",
+        crate::repairs::sql::AUTO_ACCEPT.text(),
         params![
             job_id,
             album_id,
@@ -1311,7 +1109,7 @@ pub fn mark_ready(
     let summary = serde_json::to_string(&summary)
         .map_err(|error| rusqlite::Error::ToSqlConversionFailure(error.into()))?;
     tx.execute(
-        "UPDATE library_repair_snapshots SET result_json = ?2 WHERE job_id = ?1",
+        crate::repairs::sql::WRITE_SNAPSHOT_RESULT.text(),
         params![job_id, summary],
     )?;
     jobs::report_ready(tx, job_id, worker, "DRY_RUN_READY", now)?;
@@ -1334,10 +1132,7 @@ pub fn end(
 
 fn summarize(conn: &Connection, job_id: &str, snap: &RepairSnapshot) -> rusqlite::Result<Summary> {
     let mut summary = Summary::new(snap.purpose, snap.target_matcher_version.clone());
-    let mut stmt = conn.prepare(
-        "SELECT finding_code, reason_code, COUNT(*) FROM library_identity_repair_findings \
-         WHERE job_id = ?1 GROUP BY finding_code, reason_code",
-    )?;
+    let mut stmt = conn.prepare(crate::repairs::sql::FINDING_COUNTS.text())?;
     let mut rows = stmt.query(params![job_id])?;
     while let Some(row) = rows.next()? {
         let (finding, reason, count): (FindingCode, String, i64) =
@@ -1349,23 +1144,18 @@ fn summarize(conn: &Connection, job_id: &str, snap: &RepairSnapshot) -> rusqlite
         *summary.counts_by_reason.entry(reason).or_default() += count;
         summary.total_identities += count;
     }
-    let mut stmt = conn.prepare(
-        "SELECT a.root_id, COUNT(DISTINCT f.local_album_id) FROM library_identity_repair_findings f \
-         JOIN local_albums a ON a.id = f.local_album_id WHERE f.job_id = ?1 \
-         GROUP BY a.root_id ORDER BY a.root_id",
-    )?;
+    let mut stmt = conn.prepare(crate::repairs::sql::FINDING_ALBUMS_BY_ROOT.text())?;
     summary.album_counts_by_root = stmt
         .query_map(params![job_id], |row| Ok((row.get(0)?, row.get(1)?)))?
         .collect::<rusqlite::Result<BTreeMap<String, i64>>>()?;
     summary.input_track_count = conn.query_row(
-        "SELECT COUNT(*) FROM local_tracks WHERE availability = 'indexed' AND local_album_id IN \
-         (SELECT local_album_id FROM library_identity_repair_findings WHERE job_id = ?1)",
+        crate::repairs::sql::FINDING_TRACK_COUNT.text(),
         params![job_id],
         |row| row.get(0),
     )?;
     summary.playable_after_detach_track_count = summary.input_track_count;
     summary.catalog_snapshot_revision = conn.query_row(
-        "SELECT COALESCE(input_catalog_revision, 0) FROM library_operation_jobs WHERE id = ?1",
+        crate::repairs::sql::JOB_INPUT_REVISION.text(),
         params![job_id],
         |row| row.get(0),
     )?;
@@ -1425,23 +1215,14 @@ pub fn begin_apply(
     if job.state != OperationState::Ready || job.row_revision != expected_row_revision {
         return Err(OperationError::Conflict(reasons::REPORT_CHANGED));
     }
-    tx.execute(
-        "DELETE FROM library_operation_work WHERE job_id = ?1",
-        params![job_id],
-    )?;
+    tx.execute(crate::repairs::sql::CLEAR_JOB_WORK.text(), params![job_id])?;
     let staged = tx.execute(
-        "INSERT INTO library_operation_work (job_id, ordinal, local_album_id, \
-         expected_subject_revision, expected_input_revision, action, idempotency_key, \
-         updated_at) SELECT ?1, ROW_NUMBER() OVER (ORDER BY f.id) - 1, f.local_album_id, \
-         f.expected_album_revision, COALESCE(f.expected_identity_revision, '') || ':', \
-         'repair_apply', ?1 || ':' || f.id || ':apply', ?2 \
-         FROM library_identity_repair_findings f \
-         WHERE f.job_id = ?1 AND f.apply_eligible = 1 AND f.state = ?3",
+        crate::repairs::sql::ADD_APPLY_WORK.text(),
         params![job_id, now, FindingState::Open],
     )?;
     jobs::queue_work(tx, job_id, staged as i64, now)?;
     tx.execute(
-        "UPDATE library_repair_snapshots SET phase = ?2 WHERE job_id = ?1",
+        crate::repairs::sql::SET_SNAPSHOT_PHASE.text(),
         params![job_id, Phase::Apply],
     )?;
     job_after(tx, job_id)
@@ -1487,10 +1268,7 @@ pub fn open_finding(
 ) -> rusqlite::Result<Option<Result<OpenFinding, Unreadable>>> {
     let row: Option<(String, FindingCode, String)> = conn
         .query_row(
-            "SELECT id, finding_code, suggested_edition_json \
-             FROM library_identity_repair_findings \
-             WHERE job_id = ?1 AND local_album_id = ?2 AND apply_eligible = 1 AND state = ?3 \
-             ORDER BY id LIMIT 1",
+            crate::repairs::sql::OPEN_FINDING.text(),
             params![job_id, album_id, FindingState::Open],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
@@ -1515,8 +1293,7 @@ pub fn settle_finding(
     now: f64,
 ) -> rusqlite::Result<()> {
     tx.execute(
-        "UPDATE library_identity_repair_findings SET state = ?2, apply_result = ?3, \
-         updated_at = ?4, row_revision = row_revision + 1 WHERE id = ?1",
+        crate::repairs::sql::SETTLE_FINDING.text(),
         params![finding_id, state, apply_result, now],
     )?;
     Ok(())

@@ -28,11 +28,7 @@ use rusqlite::{Connection, OptionalExtension as _, params};
 
 use super::snapshots::sha256_hex;
 
-/// True for a state row (alias `s`) that came from v2 with its record.
-/// Every v3 writer of `managed_path_revision` sets the job too, and the
-/// upgrade leaves v2's job behind.
-pub(crate) const V2_ROW_SQL: &str = "s.written_sha256 IS NULL AND s.managed_path_revision IS NOT NULL \
-     AND s.last_operation_job_id IS NULL AND s.last_outcome IN ('succeeded', 'undone')";
+pub(crate) use crate::publish::sql::V2_ROW_SQL;
 
 /// SQL condition on a `library_track_management_state` row (alias `s`):
 /// the app has a record of the file's bytes.
@@ -84,10 +80,7 @@ pub fn v2_path_revision(root_id: &str, relative_path: &str, file_sha256: &str) -
 /// The app's record of one track's file.
 pub fn record(conn: &Connection, track_id: &str) -> rusqlite::Result<Record> {
     let row: Option<(Option<String>, Option<String>)> = conn
-        .prepare_cached(&format!(
-            "SELECT s.written_sha256, CASE WHEN {V2_ROW_SQL} THEN s.managed_path_revision END \
-             FROM library_track_management_state s WHERE s.local_track_id = ?1"
-        ))?
+        .prepare_cached(crate::publish::sql::TRACK_WRITTEN_STATE.text())?
         .query_row(params![track_id], |row| Ok((row.get(0)?, row.get(1)?)))
         .optional()?;
     Ok(

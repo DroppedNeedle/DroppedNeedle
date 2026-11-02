@@ -114,7 +114,7 @@ pub fn load_operation(
 ) -> Result<Option<PlanBundle>, PublishError> {
     let row: Option<String> = conn
         .query_row(
-            "SELECT bundle_json FROM library_publish_operations WHERE bundle_id = ?1",
+            crate::publish::sql::LOAD_OPERATION.text(),
             rusqlite::params![bundle_id],
             |row| row.get(0),
         )
@@ -131,7 +131,7 @@ pub fn applied_by(
     bundle_id: &str,
 ) -> Result<Option<Option<String>>, PublishError> {
     conn.query_row(
-        "SELECT applied_by_user_id FROM library_publish_operations WHERE bundle_id = ?1",
+        crate::publish::sql::APPLIED_BY.text(),
         rusqlite::params![bundle_id],
         |row| row.get(0),
     )

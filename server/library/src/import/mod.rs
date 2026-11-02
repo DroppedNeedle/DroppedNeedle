@@ -66,6 +66,7 @@
 //! state is the one the import wrote.
 
 pub mod naming;
+pub(crate) mod sql;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -1050,8 +1051,7 @@ impl Imports {
         }
         let at_path: Option<(String, String, String)> = conn
             .query_row(
-                "SELECT id, local_album_id, availability FROM local_tracks \
-                 WHERE root_id = ?1 AND relative_path = ?2",
+                crate::import::sql::PLANNED_TRACK_ID.text(),
                 rusqlite::params![root_id, dest_rel],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
@@ -1090,10 +1090,7 @@ impl Imports {
         let rows = self
             .db
             .read_blocking("import.replaced_rows", |conn| {
-                let mut statement = conn.prepare_cached(
-                    "SELECT root_id, relative_path FROM local_tracks \
-                     WHERE id = ?1 AND availability = 'indexed'",
-                )?;
+                let mut statement = conn.prepare_cached(crate::import::sql::OLD_COPIES.text())?;
                 let mut rows = Vec::with_capacity(replaces.len());
                 for id in replaces {
                     if let Some((root, rel)) = statement
@@ -1189,8 +1186,7 @@ fn indexed_among(
     conn: &rusqlite::Connection,
     ids: &[String],
 ) -> rusqlite::Result<std::collections::HashSet<String>> {
-    let mut statement = conn
-        .prepare_cached("SELECT 1 FROM local_tracks WHERE id = ?1 AND availability = 'indexed'")?;
+    let mut statement = conn.prepare_cached(crate::import::sql::INDEXED_AMONG.text())?;
     let mut indexed = std::collections::HashSet::new();
     for id in ids {
         if statement.exists([id])? {
@@ -1376,12 +1372,7 @@ fn group_held(conn: &rusqlite::Connection, group: &str) -> rusqlite::Result<bool
         return Ok(false);
     }
     conn.query_row(
-        "SELECT EXISTS (SELECT 1 FROM local_tracks t \
-         JOIN local_albums b ON b.id = t.local_album_id AND b.retired_into_album_id IS NULL \
-         LEFT JOIN local_album_external_identities ai ON ai.local_album_id = b.id \
-         WHERE t.availability = 'indexed' \
-         AND (lower(ai.release_group_mbid) = ?1 \
-         OR (ai.local_album_id IS NULL AND lower(t.embedded_release_group_mbid) = ?1)))",
+        crate::import::sql::GROUP_HELD.text(),
         rusqlite::params![group.to_ascii_lowercase()],
         |row| row.get(0),
     )

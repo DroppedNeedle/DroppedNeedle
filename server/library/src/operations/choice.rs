@@ -149,7 +149,7 @@ fn placed_files(tx: &Transaction<'_>, placed: &[String]) -> rusqlite::Result<Vec
     for track_id in placed {
         let file = tx
             .query_row(
-                "SELECT root_id, relative_path FROM local_tracks WHERE id = ?1",
+                crate::operations::sql::PLACED_FILES.text(),
                 params![track_id],
                 |row| {
                     Ok(PlacedFile {
@@ -374,12 +374,7 @@ pub(crate) fn place_imported(
     let (mut placed, mut left) = (0usize, 0usize);
     for (track_id, track) in files {
         let held: bool = tx.query_row(
-            "SELECT EXISTS(SELECT 1 FROM local_tracks t \
-             JOIN local_track_external_identities i \
-             ON i.local_track_id = t.id AND i.provider = ?2 \
-             WHERE t.local_album_id = ?1 AND t.availability = 'indexed' AND t.id <> ?3 \
-             AND lower(i.release_track_mbid) = lower(?4) \
-             AND (i.release_mbid IS NULL OR lower(i.release_mbid) = lower(?5)))",
+            crate::operations::sql::PLACE_IMPORTED.text(),
             params![
                 album_id,
                 PROVIDER,

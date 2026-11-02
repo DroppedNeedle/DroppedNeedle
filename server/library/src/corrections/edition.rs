@@ -73,9 +73,7 @@ impl Identity {
 
 pub(super) fn identity(conn: &Connection, album_id: &str) -> rusqlite::Result<Option<Identity>> {
     conn.query_row(
-        "SELECT release_group_mbid, release_mbid, decision_source, row_revision, \
-         EXISTS(SELECT 1 FROM library_custom_edition_active c WHERE c.local_album_id = ?1) \
-         FROM local_album_external_identities WHERE local_album_id = ?1 AND provider = ?2",
+        crate::corrections::sql::IDENTITY.text(),
         params![album_id, PROVIDER],
         |row| {
             Ok(Identity {
@@ -114,7 +112,7 @@ pub(super) fn identity_token(identity: Option<&Identity>) -> String {
 pub(super) fn album_title(conn: &Connection, album_id: &str) -> rusqlite::Result<String> {
     Ok(conn
         .query_row(
-            "SELECT title FROM local_albums WHERE id = ?1",
+            crate::corrections::sql::ALBUM_TITLE.text(),
             params![album_id],
             |row| row.get(0),
         )
@@ -409,8 +407,7 @@ pub(crate) fn open_review(
         .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
     let now_ms = crate::clock::ms(now);
     tx.execute(
-        "INSERT INTO library_identify_reviews (id, local_album_id, reason_code, candidates_json, \
-         state, created_ms, updated_ms) VALUES (?1, ?2, ?3, ?4, 'pending', ?5, ?5)",
+        crate::corrections::sql::OPEN_REVIEW.text(),
         params![
             uuid::Uuid::new_v4().to_string(),
             album_id,
@@ -423,7 +420,7 @@ pub(crate) fn open_review(
 }
 
 fn album_tracks(tx: &Transaction<'_>, album_id: &str) -> rusqlite::Result<Vec<String>> {
-    tx.prepare("SELECT id FROM local_tracks WHERE local_album_id = ?1")?
+    tx.prepare(crate::corrections::sql::ALBUM_TRACKS.text())?
         .query_map(params![album_id], |row| row.get(0))?
         .collect()
 }

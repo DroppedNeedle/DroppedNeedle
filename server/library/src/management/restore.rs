@@ -381,8 +381,7 @@ impl Management {
         let outcome = self.parts.db.write_blocking(Lane::Foreground, "management.purge", |tx| {
             let earlier = tx
                 .query_row(
-                    "SELECT impact_token, purged_baseline_count, detached_reference_count \
-                     FROM library_management_baseline_purges WHERE idempotency_key = ?1",
+                    crate::management::sql::PURGE_OF_IDEMPOTENCY_KEY.text(),
                     params![request.idempotency_key],
                     |row| {
                         Ok((
@@ -419,22 +418,19 @@ impl Management {
                 ));
             }
             let detached = tx.execute(
-                "DELETE FROM library_publish_blob_refs WHERE owner_kind IN ('baseline', 'v2_baseline')",
+                crate::management::sql::DROP_BASELINE_BLOB_REFS.text(),
                 [],
             )? as i64;
-            tx.execute("DELETE FROM library_publish_baselines", [])?;
+            tx.execute(crate::management::sql::DROP_PUBLISH_BASELINES.text(), [])?;
             // Originals v2 recorded: without this, files v2 managed
             // would wait for an original that will never come.
             tx.execute(
-                "UPDATE library_track_management_state SET baseline_id = NULL, \
-                 row_revision = row_revision + 1 WHERE baseline_id IS NOT NULL",
+                crate::management::sql::DETACH_BASELINES.text(),
                 [],
             )?;
-            tx.execute("DELETE FROM library_management_baselines", [])?;
+            tx.execute(crate::management::sql::DROP_MANAGEMENT_BASELINES.text(), [])?;
             tx.execute(
-                "INSERT INTO library_management_baseline_purges (idempotency_key, impact_token, \
-                 actor_user_id, purged_baseline_count, detached_reference_count, created_at) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                crate::management::sql::RECORD_BASELINE_PURGE.text(),
                 params![
                     request.idempotency_key,
                     request.impact_token,
@@ -475,11 +471,7 @@ impl Management {
 fn baseline_blob_sizes(
     conn: &rusqlite::Connection,
 ) -> rusqlite::Result<Vec<(String, Option<i64>)>> {
-    let mut stmt = conn.prepare(
-        "SELECT r.sha256, (SELECT LENGTH(b.bytes) FROM library_publish_blobs b \
-         WHERE b.sha256 = r.sha256) FROM (SELECT DISTINCT sha256 FROM library_publish_blob_refs \
-         WHERE owner_kind IN ('baseline', 'v2_baseline')) r",
-    )?;
+    let mut stmt = conn.prepare(crate::management::sql::BASELINE_BLOB_SIZES.text())?;
     let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
     rows.collect()
 }
@@ -488,26 +480,12 @@ fn baseline_blob_sizes(
 /// size of the copies is filled in by the caller, outside any write.
 fn purge_impact(conn: &rusqlite::Connection) -> rusqlite::Result<PurgeImpact> {
     let count = |sql: &str| conn.query_row(sql, [], |row| row.get::<_, i64>(0));
-    let v3 = count("SELECT COUNT(*) FROM library_publish_baselines")?;
-    let v2 = count(
-        "SELECT COUNT(*) FROM library_management_baselines b WHERE NOT EXISTS \
-         (SELECT 1 FROM library_publish_baselines p WHERE p.track_id = b.local_track_id)",
-    )?;
-    let newest = count("SELECT COALESCE(MAX(created_day), 0) FROM library_publish_baselines")?;
-    let blobs = count(
-        "SELECT COUNT(DISTINCT sha256) FROM library_publish_blob_refs \
-         WHERE owner_kind IN ('baseline', 'v2_baseline')",
-    )?;
-    let journals = count(
-        "SELECT COUNT(*) FROM library_publish_journal \
-         WHERE state NOT IN ('cleaned', 'compensated', 'needs_attention')",
-    )?;
-    let restores = count(
-        "SELECT COUNT(*) FROM library_management_job_snapshots s \
-         JOIN library_operation_jobs j ON j.id = s.job_id \
-         WHERE s.mode = 'baseline_restore' AND j.state IN ('queued', 'running', 'paused', 'ready') \
-         AND (j.state <> 'ready' OR COALESCE(s.preview_expires_at, 0) > CAST(strftime('%s', 'now') AS REAL))",
-    )?;
+    let v3 = count(crate::management::sql::PUBLISH_BASELINE_COUNT.text())?;
+    let v2 = count(crate::management::sql::OLD_BASELINE_COUNT.text())?;
+    let newest = count(crate::management::sql::NEWEST_BASELINE_DAY.text())?;
+    let blobs = count(crate::management::sql::BASELINE_BLOB_COUNT.text())?;
+    let journals = count(crate::management::sql::OPEN_JOURNAL_COUNT.text())?;
+    let restores = count(crate::management::sql::ACTIVE_BASELINE_RESTORE_COUNT.text())?;
     let baseline_count = v3 + v2;
     let material = format!("{baseline_count}:{newest}:{blobs}:{journals}:{restores}");
     Ok(PurgeImpact {

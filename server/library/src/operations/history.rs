@@ -141,24 +141,7 @@ struct OtherAlbum {
     source_album_id: Option<String>,
 }
 
-const ROWS: &str = "SELECT a.id, a.actor_user_id, a.action_kind, a.reason_code, \
-    a.before_json, a.after_json, a.created_at FROM library_catalog_actions a \
-    WHERE (a.local_album_id = ?1 OR a.local_album_id IN \
-      (SELECT r.id FROM local_albums r WHERE r.retired_into_album_id = ?1)) \
-    AND a.created_at >= ?2 \
-    AND (a.action_kind IN ('continue_tracks', 'other_music_at_path', 'new_copy_at_path') \
-      OR (a.action_kind = 'merge_album' AND a.reason_code IN ('RETAG_JOINED_ACROSS_SCANS', \
-        'RETAG_JOINED_SAME_RELEASE', 'AUTOMATIC_EMPTY_ALBUM_SHELL_CONVERGENCE', \
-        'AUTOMATIC_PROVIDER_CONTRADICTION_CATALOG_REPAIR')) \
-      OR (a.action_kind = 'retag_first_half' \
-        AND a.reason_code = 'RETAG_FIRST_HALF_LEFT_AS_IT_WAS') \
-      OR a.action_kind = 'retag_dismissal_ended' \
-      OR (a.action_kind = 'album_artist' AND a.local_album_id = ?1 \
-        AND a.reason_code = 'PLACEHOLDER_ARTIST_FROM_TRACKS') \
-      OR a.action_kind IN ('automatic_exact_edition', 'automatic_match_sealed', \
-        'automatic_match_withdrawn', 'undo_automatic_edition', 'fold_undone', \
-        'management_hand_back_given_up')) \
-    ORDER BY a.created_at DESC, a.rowid DESC LIMIT 50";
+use crate::operations::sql::ROWS;
 
 struct Row {
     id: String,
@@ -179,8 +162,7 @@ pub fn album_history(
     now: f64,
 ) -> rusqlite::Result<Option<Vec<HistoryEntry>>> {
     let live: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM local_albums WHERE id = ?1 \
-         AND retired_into_album_id IS NULL)",
+        crate::operations::sql::ALBUM_LIVE.text(),
         params![album_id],
         |row| row.get(0),
     )?;
@@ -188,7 +170,7 @@ pub fn album_history(
         return Ok(None);
     }
     let rows: Vec<Row> = conn
-        .prepare_cached(ROWS)?
+        .prepare_cached(ROWS.text())?
         .query_map(params![album_id, now - MAX_AGE_SECS], |row| {
             Ok(Row {
                 id: row.get(0)?,
@@ -437,7 +419,7 @@ fn album_title(conn: &Connection, album_id: Option<&str>) -> rusqlite::Result<Op
         return Ok(None);
     };
     conn.query_row(
-        "SELECT title FROM local_albums WHERE id = ?1",
+        crate::operations::sql::ALBUM_TITLE.text(),
         params![album_id],
         |row| row.get(0),
     )
@@ -454,29 +436,24 @@ fn fold_undone(
     caller_user_id: &str,
     since: f64,
 ) -> rusqlite::Result<Option<HistoryEntry>> {
-    conn.prepare_cached(
-        "SELECT actor_user_id, created_at FROM library_catalog_actions \
-         WHERE local_album_id = ?1 AND action_kind = ?2 \
-         AND json_extract(after_json, '$.fold_action_id') = ?3 AND created_at >= ?4 \
-         ORDER BY created_at DESC LIMIT 1",
-    )?
-    .query_row(
-        params![source, identity::FOLD_UNDONE, fold_id, since],
-        |row| {
-            let actor: Option<String> = row.get(0)?;
-            let created_at: f64 = row.get(1)?;
-            Ok(HistoryEntry {
-                kind: HistoryKind::FoldUndone,
-                at: (created_at * 1000.0) as i64,
-                by: person(actor.as_deref(), caller_user_id),
-                track_count: 0,
-                track_titles: Vec::new(),
-                other_album_title: source_title,
-                undo_id: None,
-            })
-        },
-    )
-    .optional()
+    conn.prepare_cached(crate::operations::sql::FOLD_UNDONE.text())?
+        .query_row(
+            params![source, identity::FOLD_UNDONE, fold_id, since],
+            |row| {
+                let actor: Option<String> = row.get(0)?;
+                let created_at: f64 = row.get(1)?;
+                Ok(HistoryEntry {
+                    kind: HistoryKind::FoldUndone,
+                    at: (created_at * 1000.0) as i64,
+                    by: person(actor.as_deref(), caller_user_id),
+                    track_count: 0,
+                    track_titles: Vec::new(),
+                    other_album_title: source_title,
+                    undo_id: None,
+                })
+            },
+        )
+        .optional()
 }
 
 /// The edition a seal moved the album to, as its audit row keeps it.

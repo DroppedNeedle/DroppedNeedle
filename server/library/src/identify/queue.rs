@@ -51,20 +51,12 @@ pub(crate) fn idempotency_key(local_album_id: &str, input_revision: &str) -> Str
     format!("{local_album_id}:{input_revision}")
 }
 
-/// Store one identify job. A live job on the same album and input
-/// revision (the partial unique index on its key) keeps its place.
-pub(crate) const INSERT_JOB: &str = "INSERT INTO library_identify_jobs (id, local_album_id, kind, \
-     priority, state, attempts, not_before_ms, input_revision, idempotency_key, \
-     requested_by_user_id, failure_code, created_ms, updated_ms) \
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12) ON CONFLICT DO NOTHING";
+pub(crate) use crate::identify::sql::INSERT_JOB;
 
 /// Content revision of one album: a hash over its indexed members and
 /// their stat revisions. Any added, removed, or changed file moves it.
 pub fn album_input_revision(conn: &Connection, local_album_id: &str) -> rusqlite::Result<String> {
-    let mut stmt = conn.prepare_cached(
-        "SELECT id, stat_revision FROM local_tracks \
-         WHERE local_album_id = ?1 AND availability = 'indexed' ORDER BY id",
-    )?;
+    let mut stmt = conn.prepare_cached(crate::identify::sql::ALBUM_INPUT_REVISION.text())?;
     let mut hasher = Sha256::new();
     let mut rows = stmt.query(params![local_album_id])?;
     while let Some(row) = rows.next()? {
@@ -92,24 +84,20 @@ pub fn offer_album(conn: &Connection, local_album_id: &str, now_ms: i64) -> rusq
     let key = idempotency_key(local_album_id, &revision);
     let waiting: Option<String> = conn
         .query_row(
-            "SELECT id FROM library_identify_jobs \
-             WHERE local_album_id = ?1 AND state IN ('queued','deferred') \
-             ORDER BY created_ms LIMIT 1",
+            crate::identify::sql::OLDEST_WAITING_JOB.text(),
             params![local_album_id],
             |row| row.get(0),
         )
         .optional()?;
     if let Some(job_id) = waiting {
         conn.execute(
-            "UPDATE OR IGNORE library_identify_jobs SET input_revision = ?1, \
-             idempotency_key = ?2, updated_ms = ?3 WHERE id = ?4",
+            crate::identify::sql::REVISE_WAITING_JOB.text(),
             params![revision, key, now_ms, job_id],
         )?;
         return Ok(false);
     }
     let settled: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM library_identify_jobs \
-             WHERE idempotency_key = ?1 AND state IN ('running','succeeded'))",
+        crate::identify::sql::INPUT_ALREADY_HANDLED.text(),
         params![key],
         |row| row.get(0),
     )?;
@@ -117,10 +105,7 @@ pub fn offer_album(conn: &Connection, local_album_id: &str, now_ms: i64) -> rusq
         return Ok(false);
     }
     let inserted = conn.execute(
-        "INSERT INTO library_identify_jobs (id, local_album_id, kind, priority, state, \
-         attempts, not_before_ms, input_revision, idempotency_key, created_ms, updated_ms) \
-         VALUES (?1, ?2, 'automatic', ?3, 'queued', 0, ?4, ?5, ?6, ?4, ?4) \
-         ON CONFLICT DO NOTHING",
+        crate::identify::sql::ADD_OFFERED_JOB.text(),
         params![
             uuid::Uuid::new_v4().to_string(),
             local_album_id,
@@ -147,7 +132,7 @@ pub(crate) fn offer_again(
 ) -> rusqlite::Result<bool> {
     let revision = album_input_revision(conn, local_album_id)?;
     let inserted = conn.execute(
-        INSERT_JOB,
+        INSERT_JOB.text(),
         params![
             uuid::Uuid::new_v4().to_string(),
             local_album_id,
@@ -184,18 +169,14 @@ pub(crate) fn queue_retry(
     let key = idempotency_key(local_album_id, &revision);
     let waiting: Option<String> = conn
         .query_row(
-            "SELECT id FROM library_identify_jobs \
-             WHERE local_album_id = ?1 AND state IN ('queued','deferred') \
-             ORDER BY input_revision <> ?2, created_ms LIMIT 1",
+            crate::identify::sql::WAITING_JOB_FOR_RETRY.text(),
             params![local_album_id, revision],
             |row| row.get(0),
         )
         .optional()?;
     if let Some(job_id) = waiting {
         let woken = conn.execute(
-            "UPDATE OR IGNORE library_identify_jobs SET input_revision = ?1, \
-             idempotency_key = ?2, not_before_ms = MIN(not_before_ms, ?3), \
-             priority = MIN(priority, ?5), updated_ms = ?3 WHERE id = ?4",
+            crate::identify::sql::BRING_RETRY_FORWARD.text(),
             params![revision, key, now_ms, job_id, PRIORITY_REVIEW_RETRY as i64],
         )?;
         if woken == 1 {
@@ -203,7 +184,7 @@ pub(crate) fn queue_retry(
         }
     }
     let inserted = conn.execute(
-        INSERT_JOB,
+        INSERT_JOB.text(),
         params![
             uuid::Uuid::new_v4().to_string(),
             local_album_id,
@@ -229,12 +210,7 @@ pub(crate) fn queue_retry(
 /// or the review list calls this inside its own transaction, so the
 /// revision poller sends `activity.changed` and open tabs refetch.
 pub(crate) fn bump_identification_stream(conn: &Connection) -> rusqlite::Result<()> {
-    conn.execute(
-        "INSERT INTO library_event_stream_revisions (stream_kind, value) \
-         VALUES ('identification', 1) \
-         ON CONFLICT (stream_kind) DO UPDATE SET value = value + 1",
-        [],
-    )?;
+    conn.execute(crate::identify::sql::BUMP_IDENTIFICATION_STREAM.text(), [])?;
     Ok(())
 }
 

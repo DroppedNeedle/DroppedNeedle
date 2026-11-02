@@ -1,0 +1,354 @@
+//! The SQL of the repairs module.
+
+use crate::identity::sql::REVISABLE;
+
+droppedneedle_kernel::sql! {
+    pub(super) EXPORT_RUN = "SELECT * FROM library_scan_runs WHERE id = ?1";
+    pub(super) EXPORT_RUN_SCOPES = "SELECT root_id, relative_path, effective_policy, policy_revision, estimated_count, \
+         discovered_count, discovery_state, reconciliation_state, phase_timings_json, error_code \
+         FROM library_scan_run_scopes WHERE run_id = ?1 ORDER BY scope_sequence";
+    pub(super) EXPORT_RUN_INVENTORY = "SELECT root_id, relative_path, comparison_result, processing_state, failure_code, \
+         file_size_bytes FROM library_scan_inventory WHERE run_id = ?1 \
+         ORDER BY root_id, relative_path";
+    pub(super) EXPORT_RUN_FAILURES = "SELECT root_id, relative_path, failure_code, phase, recorded_at \
+         FROM library_scan_failures WHERE run_id = ?1 ORDER BY recorded_at, root_id, relative_path";
+    pub(super) EXPORT_JOB_COUNTS = "SELECT json_group_object(state, n) FROM \
+             (SELECT state, COUNT(*) AS n FROM library_identify_jobs GROUP BY state)";
+    pub(super) ALBUM = "SELECT id, root_id, title_folded, COALESCE(album_artist_name, ''), \
+         COALESCE(album_artist_name_folded, ''), grouping_source, grouping_locked \
+         FROM local_albums \
+         WHERE id = ?1 AND retired_into_album_id IS NULL";
+    pub(super) IDENTITY = "SELECT release_group_mbid, release_mbid, decision_source \
+         FROM local_album_external_identities WHERE local_album_id = ?1 AND provider = ?2";
+    pub(super) ALBUM_HAS_TRACKS = "SELECT EXISTS(SELECT 1 FROM local_tracks WHERE local_album_id = ?1)";
+    pub(super) SHELL_TARGET = "SELECT target.id FROM local_albums target WHERE target.id <> ?1 \
+         AND target.retired_into_album_id IS NULL AND target.root_id = ?2 \
+         AND target.title_folded = ?3 AND COALESCE(target.album_artist_name_folded, '') = ?4 \
+         AND EXISTS (SELECT 1 FROM local_tracks t WHERE t.local_album_id = target.id \
+         AND t.availability = 'indexed') ORDER BY target.id LIMIT 2";
+    pub(super) TRACKS = "SELECT t.id, t.relative_path, COALESCE(t.disc_number, 0), COALESCE(t.track_number, 0), \
+         t.tag_album_title, t.tag_album_artist_name, t.embedded_release_group_mbid, \
+         ti.release_track_mbid, ti.release_mbid, ti.decision_source, \
+         t.availability = 'indexed' FROM local_tracks t \
+         LEFT JOIN local_track_external_identities ti ON ti.local_track_id = t.id \
+         AND ti.provider = ?2 WHERE t.local_album_id = ?1 ORDER BY t.id";
+    pub(super) LEGACY_SPLIT_TARGET = "SELECT target.id FROM local_albums target JOIN local_album_external_identities ti \
+         ON ti.local_album_id = target.id AND ti.provider = 'musicbrainz' \
+         WHERE target.id <> ?1 AND target.retired_into_album_id IS NULL \
+         AND target.root_id = ?2 AND target.title_folded = ?3 \
+         AND COALESCE(target.album_artist_name_folded, '') = ?4 \
+         AND ti.release_group_mbid = ?5 AND EXISTS (SELECT 1 FROM local_tracks t \
+         WHERE t.local_album_id = target.id AND t.availability = 'indexed') \
+         ORDER BY target.id LIMIT 2";
+    pub(super) BUMP_ALBUM_REVISION = "UPDATE local_albums SET updated_at = ?2, row_revision = row_revision + 1 WHERE id = ?1";
+    pub(super) WRITE_ALBUM_CREDITS = "DELETE FROM local_album_artists WHERE local_album_id = ?1";
+    pub(super) TRACK_ARTIST_TAGS = "SELECT id, COALESCE(album_artist_name, ''), album_artist_provenance = 'tag', \
+             album_artist_sort, COALESCE(artist_name, '') FROM local_tracks \
+             WHERE local_album_id = ?1 AND availability = 'indexed' \
+             ORDER BY disc_number, track_number, id";
+    pub(super) ALBUM_HAS_PERSON_CHOICE = "SELECT EXISTS(SELECT 1 FROM library_catalog_actions \
+         WHERE local_album_id = ?1 AND actor_user_id IS NOT NULL) \
+         OR EXISTS(SELECT 1 FROM library_identify_jobs \
+         WHERE local_album_id = ?1 AND state = 'running')";
+    pub(super) ALBUM_ARTIST_ID_AND_SORT = "SELECT album_artist_id, album_artist_sort_name FROM local_albums WHERE id = ?1";
+    pub(super) WRITE_ALBUM_ARTIST = "UPDATE local_albums SET album_artist_name = ?2, album_artist_name_folded = ?3, \
+         album_artist_id = ?4, album_artist_sort_name = ?5, updated_at = ?6, \
+         row_revision = row_revision + 1 WHERE id = ?1";
+    pub(super) ARTIST_REPAIR_UNDONE = "SELECT EXISTS(SELECT 1 FROM library_catalog_actions \
+         WHERE local_album_id = ?1 AND action_kind = ?2)";
+    pub(super) ARTIST_REPAIR_ACTION = "SELECT local_album_id, before_json, after_json FROM library_catalog_actions \
+             WHERE id = ?1 AND action_kind = 'album_artist' AND reason_code = ?2";
+    pub(super) LIVE_ALBUM_ARTIST = "SELECT album_artist_id, album_artist_name, album_artist_name_folded, \
+             album_artist_sort_name FROM local_albums \
+             WHERE id = ?1 AND retired_into_album_id IS NULL";
+    pub(super) ARTIST_IS_LIVE = "SELECT EXISTS(SELECT 1 FROM local_artists \
+                 WHERE id = ?1 AND retired_into_artist_id IS NULL)";
+    pub(super) DROP_REPAIR_IDENTIFY_JOB = "DELETE FROM library_identify_jobs WHERE local_album_id = ?1 \
+                 AND state = 'queued' AND kind = 'historical' \
+                 AND requested_by_user_id IS NULL AND created_ms = ?2";
+    pub(super) BY_RECORDING = "SELECT t.id, COALESCE(ti.recording_mbid, t.embedded_recording_mbid) = ?1 \
+         FROM local_tracks t \
+         LEFT JOIN local_track_external_identities ti ON ti.local_track_id = t.id \
+         WHERE t.id IN (SELECT local_track_id FROM local_track_external_identities \
+                        WHERE recording_mbid = ?1 \
+                        UNION SELECT id FROM local_tracks WHERE embedded_recording_mbid = ?1) \
+         AND t.availability = 'indexed' ORDER BY t.id";
+    pub(super) NAME_FITS = "SELECT t.id, t.duration_seconds, ti.recording_mbid, t.embedded_recording_mbid \
+         FROM local_tracks t \
+         LEFT JOIN local_track_external_identities ti ON ti.local_track_id = t.id \
+         WHERE t.title_folded = ?1 AND t.artist_name_folded = ?2 \
+         AND (?3 IS NULL OR t.album_title_folded = ?3) AND t.availability = 'indexed' \
+         ORDER BY t.id LIMIT 2";
+    pub(super) REPAIR_ALREADY_ACTIVE = "SELECT EXISTS(SELECT 1 FROM library_operation_jobs j \
+         JOIN library_repair_snapshots s ON s.job_id = j.id \
+         WHERE j.kind = 'repair' AND j.state IN ('queued','running','paused') \
+         AND s.purpose = ?1)";
+    pub(super) CATALOG_REVISION = "SELECT value FROM library_catalog_revision WHERE singleton = 1";
+    pub(super) QUEUE_REPAIR_JOB = "INSERT INTO library_operation_jobs (id, kind, state, input_catalog_revision, \
+         expected_work_count, idempotency_key, created_at, updated_at) \
+         VALUES (?1, 'repair', 'queued', ?2, ?3, ?4, ?5, ?5) \
+         ON CONFLICT (idempotency_key) DO NOTHING";
+    pub(super) QUEUE_REPAIR_SNAPSHOT = "INSERT INTO library_repair_snapshots (job_id, purpose, scope_json, \
+         target_matcher_version, created_at) VALUES (?1, ?2, ?3, ?4, ?5)";
+    pub(super) QUEUE_REPAIR_MATERIALIZATION = "INSERT INTO library_repair_materialization (job_id, pinned_catalog_revision, \
+         eligibility_version, purpose, sealed, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, 1, ?5, ?5)";
+    pub(super) FILE = "UPDATE library_play_history SET local_track_id = t.id, \
+         local_album_id = t.local_album_id, \
+         local_artist_id = COALESCE((SELECT x.local_artist_id FROM local_track_artists x \
+                                     WHERE x.local_track_id = t.id ORDER BY x.position LIMIT 1), \
+                                    a.album_artist_id) \
+         FROM local_tracks t JOIN local_albums a ON a.id = t.local_album_id \
+         WHERE t.id = ?2 AND library_play_history.rowid = ?1 \
+         AND library_play_history.local_track_id IS NULL \
+         AND library_play_history.local_album_id IS NULL \
+         AND library_play_history.local_artist_id IS NULL";
+    pub(super) STAGING_CURSOR = "SELECT staging_cursor FROM library_repair_materialization WHERE job_id = ?1";
+    pub(super) SNAPSHOT_RESULT = "SELECT result_json FROM library_repair_snapshots WHERE job_id = ?1";
+    pub(super) ADVANCE_STAGING_CURSOR = "UPDATE library_repair_materialization SET staging_cursor = ?2, updated_at = ?3 \
+             WHERE job_id = ?1";
+    pub(super) WRITE_SNAPSHOT_RESULT = "UPDATE library_repair_snapshots SET result_json = ?2 WHERE job_id = ?1";
+    pub(super) ADD_JOB_COUNTS = "UPDATE library_operation_jobs SET completed_count = completed_count + ?2, \
+         succeeded_count = succeeded_count + ?3, skipped_count = skipped_count + ?4, \
+         updated_at = ?5, row_revision = row_revision + 1, \
+         event_revision = event_revision + 1 WHERE id = ?1";
+    pub(super) SNAPSHOT = "SELECT purpose, phase, scope_json, target_matcher_version, result_json \
+             FROM library_repair_snapshots WHERE job_id = ?1";
+    pub(super) JOB_OF_IDEMPOTENCY_KEY = "SELECT id FROM library_operation_jobs WHERE idempotency_key = ?1";
+    pub(super) USER_EXISTS = "SELECT id FROM auth_users WHERE id = ?1";
+    pub(super) CREATE_REPAIR_SNAPSHOT = "INSERT INTO library_repair_snapshots (job_id, purpose, scope_json, \
+         source_matcher_version, target_matcher_version, created_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)";
+    pub(super) CREATE_REPAIR_MATERIALIZATION = "INSERT INTO library_repair_materialization (job_id, pinned_catalog_revision, \
+         eligibility_version, purpose, staging_cursor, staged_ordinal, staged_count, sealed, \
+         created_at, updated_at) VALUES (?1, ?2, ?3, ?4, NULL, ?5, ?6, 1, ?7, ?7)";
+    pub(super) SET_EXPECTED_WORK_COUNT = "UPDATE library_operation_jobs SET expected_work_count = ?2 WHERE id = ?1";
+    pub(super) QUEUED = "SELECT EXISTS(SELECT 1 FROM library_operation_jobs WHERE idempotency_key = ?1)";
+    pub(super) IDENTIFIED_WATERMARK = "SELECT identified_at, identified_job_id FROM library_repair_watermarks \
+             WHERE singleton = 1";
+    pub(super) SET_IDENTIFIED_WATERMARK = "INSERT INTO library_repair_watermarks (singleton, identified_at, identified_job_id) \
+         VALUES (1, ?1, ?2) ON CONFLICT (singleton) DO UPDATE SET \
+         identified_at = excluded.identified_at, identified_job_id = excluded.identified_job_id";
+    pub(super) LATEST_ENDED_SCAN = "SELECT id FROM library_scan_runs WHERE terminal_at IS NOT NULL AND state IN \
+         ('completed','cancelled','failed','superseded_policy_changed') \
+         ORDER BY terminal_at DESC, id DESC LIMIT 1";
+    pub(super) CARRIED_FROM_V2 = "SELECT EXISTS(SELECT 1 FROM import_runs)";
+    pub(super) OLDER_CONFIRMATION_ALBUMS = "SELECT embedded_release_group_mbid FROM local_tracks \
+         WHERE local_album_id = ?1 AND availability = 'indexed'";
+    pub(super) ALBUM_EDITION_TAGS = "SELECT h.barcode, h.catalog_number \
+         FROM local_tracks t JOIN local_track_edition_tags h ON h.local_track_id = t.id \
+         WHERE t.local_album_id = ?1 AND +t.availability = 'indexed'";
+    pub(super) ACTIVE_COUNT = "SELECT COUNT(*) FROM library_operation_jobs j \
+         JOIN library_repair_snapshots s ON s.job_id = j.id \
+         WHERE j.kind = ?2 AND j.state IN (?3, ?4, ?5, ?6) \
+         AND s.purpose = ?1";
+    pub(super) HISTORY = "SELECT j.id, s.purpose, s.phase, s.scope_json, s.target_matcher_version, \
+         s.result_json FROM library_operation_jobs j \
+         JOIN library_repair_snapshots s ON s.job_id = j.id \
+         WHERE j.kind = ?5 AND s.purpose = ?1 \
+         AND (?2 IS NULL OR j.created_at < ?2 OR (j.created_at = ?2 AND j.id < ?3)) \
+         ORDER BY j.created_at DESC, j.id DESC LIMIT ?4";
+    pub(super) SUBJECT_ALBUM_IDENTITY = "SELECT release_group_mbid, release_mbid, decision_source, row_revision \
+             FROM local_album_external_identities WHERE local_album_id = ?1 AND provider = ?2";
+    pub(super) SUBJECT_TRACK_IDENTITIES = "SELECT t.id, ti.recording_mbid, ti.release_mbid, ti.release_track_mbid, \
+         ti.medium_position, ti.release_track_position FROM local_tracks t \
+         LEFT JOIN local_track_external_identities ti ON ti.local_track_id = t.id \
+         AND ti.provider = ?2 WHERE t.local_album_id = ?1 AND +t.availability = 'indexed' \
+         ORDER BY t.id";
+    pub(super) SUBJECT_ALBUM_ROOT = "SELECT root_id FROM local_albums WHERE id = ?1";
+    pub(super) CLAIM_ALBUM = "SELECT local_album_id FROM library_operation_work WHERE job_id = ?1 AND ordinal = ?2";
+    pub(super) WORK_SUBJECT_REVISION = "SELECT expected_subject_revision FROM library_operation_work \
+         WHERE job_id = ?1 AND ordinal = ?2";
+    pub(super) WRITE_FINDING = "INSERT INTO library_identity_repair_findings (id, job_id, local_album_id, \
+         expected_album_revision, expected_identity_revision, finding_code, confidence, \
+         reason_code, apply_eligible, suggested_release_mbid, suggested_release_group_mbid, \
+         suggested_edition_json, state, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?14, ?13, ?13) \
+         ON CONFLICT (job_id, local_album_id, finding_code) DO UPDATE SET \
+         expected_album_revision = excluded.expected_album_revision, \
+         expected_identity_revision = excluded.expected_identity_revision, \
+         confidence = excluded.confidence, reason_code = excluded.reason_code, \
+         apply_eligible = excluded.apply_eligible, \
+         suggested_release_mbid = excluded.suggested_release_mbid, \
+         suggested_release_group_mbid = excluded.suggested_release_group_mbid, \
+         suggested_edition_json = excluded.suggested_edition_json, state = excluded.state, \
+         apply_result = NULL, updated_at = excluded.updated_at, row_revision = row_revision + 1";
+    pub(super) AUTO_ACCEPT = "UPDATE library_identity_repair_findings SET finding_code = ?4, \
+         reason_code = 'EXACT_EDITION_AUTO_ACCEPTED', apply_eligible = 0, state = ?5, \
+         apply_result = ?6, updated_at = ?3, row_revision = row_revision + 1 \
+         WHERE job_id = ?1 AND local_album_id = ?2 AND finding_code = ?7";
+    pub(super) FINDING_COUNTS = "SELECT finding_code, reason_code, COUNT(*) FROM library_identity_repair_findings \
+         WHERE job_id = ?1 GROUP BY finding_code, reason_code";
+    pub(super) FINDING_ALBUMS_BY_ROOT = "SELECT a.root_id, COUNT(DISTINCT f.local_album_id) FROM library_identity_repair_findings f \
+         JOIN local_albums a ON a.id = f.local_album_id WHERE f.job_id = ?1 \
+         GROUP BY a.root_id ORDER BY a.root_id";
+    pub(super) FINDING_TRACK_COUNT = "SELECT COUNT(*) FROM local_tracks WHERE availability = 'indexed' AND local_album_id IN \
+         (SELECT local_album_id FROM library_identity_repair_findings WHERE job_id = ?1)";
+    pub(super) JOB_INPUT_REVISION = "SELECT COALESCE(input_catalog_revision, 0) FROM library_operation_jobs WHERE id = ?1";
+    pub(super) CLEAR_JOB_WORK = "DELETE FROM library_operation_work WHERE job_id = ?1";
+    pub(super) ADD_APPLY_WORK = "INSERT INTO library_operation_work (job_id, ordinal, local_album_id, \
+         expected_subject_revision, expected_input_revision, action, idempotency_key, \
+         updated_at) SELECT ?1, ROW_NUMBER() OVER (ORDER BY f.id) - 1, f.local_album_id, \
+         f.expected_album_revision, COALESCE(f.expected_identity_revision, '') || ':', \
+         'repair_apply', ?1 || ':' || f.id || ':apply', ?2 \
+         FROM library_identity_repair_findings f \
+         WHERE f.job_id = ?1 AND f.apply_eligible = 1 AND f.state = ?3";
+    pub(super) SET_SNAPSHOT_PHASE = "UPDATE library_repair_snapshots SET phase = ?2 WHERE job_id = ?1";
+    pub(super) OPEN_FINDING = "SELECT id, finding_code, suggested_edition_json \
+             FROM library_identity_repair_findings \
+             WHERE job_id = ?1 AND local_album_id = ?2 AND apply_eligible = 1 AND state = ?3 \
+             ORDER BY id LIMIT 1";
+    pub(super) SETTLE_FINDING = "UPDATE library_identity_repair_findings SET state = ?2, apply_result = ?3, \
+         updated_at = ?4, row_revision = row_revision + 1 WHERE id = ?1";
+    pub(super) INSERT_ALBUM_CREDIT = "INSERT INTO local_album_artists (local_album_id, position, \
+     local_artist_id, role, credited_name, join_phrase, artist_mbid) \
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)";
+    pub(super) TRACK_CREDITS = "SELECT local_artist_id, credited_name, join_phrase, artist_mbid, \
+     'main' FROM local_track_artists WHERE local_track_id = ?1 ORDER BY position";
+    pub(super) ALBUM_CREDITS = "SELECT local_artist_id, credited_name, join_phrase, artist_mbid, \
+     role FROM local_album_artists WHERE local_album_id = ?1 ORDER BY position";
+    /// A row no repair has filed: it names no track, album or artist.
+    pub(super) fragment UNFILED = "local_track_id IS NULL AND local_album_id IS NULL AND local_artist_id IS NULL";
+    /// Albums the cleanup could apply to: imported groupings, automatic
+    /// albums with no file left, and albums whose row names the "Unknown
+    /// Artist" placeholder while a file's tags name an artist, unless a
+    /// curator undid that repair on the album.
+    pub(super) fragment HYGIENE_CANDIDATE = "(a.grouping_source = 'legacy_import' \
+     OR (a.grouping_source = 'automatic' AND NOT EXISTS \
+     (SELECT 1 FROM local_tracks t WHERE t.local_album_id = a.id)) \
+     OR (a.album_artist_name = 'Unknown Artist' \
+     AND a.grouping_locked = 0 AND a.grouping_source <> 'manual' \
+     AND EXISTS (SELECT 1 FROM local_tracks t WHERE t.local_album_id = a.id \
+     AND t.availability = 'indexed' AND t.album_artist_provenance = 'tag' \
+     AND t.album_artist_name <> 'Unknown Artist') \
+     AND NOT EXISTS (SELECT 1 FROM library_catalog_actions u \
+     WHERE u.local_album_id = a.id AND u.action_kind = 'album_artist_undone')))";
+    /// Identification states that end a job.
+    pub(super) fragment IDENTIFY_FINISHED = "('succeeded','failed','attention')";
+    /// True when album `a` has an active custom edition sealed against its
+    /// current revisions and files.
+    pub(super) fragment CUSTOM_CURRENT = "COALESCE((SELECT m.source_album_revision = a.row_revision \
+     AND COALESCE(m.source_identity_revision, 0) = COALESCE((SELECT ai.row_revision \
+       FROM local_album_external_identities ai WHERE ai.local_album_id = a.id \
+       AND ai.provider = 'musicbrainz'), 0) \
+     AND (SELECT COUNT(*) FROM library_custom_edition_tracks ct JOIN local_tracks ctt \
+       ON ctt.id = ct.local_track_id WHERE ct.manifest_id = m.id \
+       AND ctt.local_album_id = a.id AND ctt.availability = 'indexed' \
+       AND ct.stat_revision = ctt.stat_revision) = (SELECT COUNT(*) FROM local_tracks it \
+       WHERE it.local_album_id = a.id AND it.availability = 'indexed') \
+   FROM library_custom_edition_active ac JOIN library_custom_edition_manifests m \
+   ON m.id = ac.manifest_id WHERE ac.local_album_id = a.id), 0)";
+    pub(super) UNFILED_COUNT = "SELECT COUNT(*) FROM library_play_history WHERE " + UNFILED;
+    pub(super) STEP = "SELECT rowid, CAST(track_name AS TEXT), CAST(artist_name AS TEXT), \
+             CAST(album_name AS TEXT), CAST(recording_mbid AS TEXT), \
+             CAST(release_group_mbid AS TEXT), CAST(duration_ms AS INTEGER), \
+             CAST(source AS TEXT) FROM library_play_history \
+             WHERE " + UNFILED + " AND rowid > ?1 ORDER BY rowid LIMIT ?2";
+    pub(super) HYGIENE_CANDIDATES_EXIST = "SELECT EXISTS(SELECT 1 FROM local_albums a \
+             WHERE a.retired_into_album_id IS NULL AND " + HYGIENE_CANDIDATE + ")";
+    pub(super) NEWEST_IDENTIFIED = "SELECT updated_ms, id FROM library_identify_jobs \
+                 WHERE state IN " + IDENTIFY_FINISHED + " ORDER BY updated_ms DESC, id DESC LIMIT 1";
+    pub(super) IDENTIFIED_AFTER = "SELECT j.updated_ms, j.id, a.id, \
+         a.retired_into_album_id IS NULL AND " + HYGIENE_CANDIDATE + " \
+         FROM library_identify_jobs j JOIN local_albums a ON a.id = j.local_album_id \
+         WHERE j.state IN " + IDENTIFY_FINISHED + " \
+         AND (j.updated_ms > ?1 OR (j.updated_ms = ?1 AND j.id > ?2)) \
+         ORDER BY j.updated_ms, j.id LIMIT ?3";
+    pub(super) SUBJECT = "SELECT " + CUSTOM_CURRENT + " FROM local_albums a WHERE a.id = ?1 AND EXISTS \
+                 (SELECT 1 FROM library_custom_edition_active ac WHERE ac.local_album_id = a.id)";
+    pub(super) TRACK_ID_BACKFILL_ALBUMS = "SELECT a.id FROM local_albums a \
+         LEFT JOIN local_album_external_identities i \
+             ON i.local_album_id = a.id AND i.provider = ?1 \
+         LEFT JOIN library_album_match_state m ON m.local_album_id = a.id \
+         WHERE a.retired_into_album_id IS NULL \
+         AND (i.local_album_id IS NOT NULL OR m.local_album_id IS NOT NULL) \
+         AND (i.decision_source IS NULL OR i.decision_source IN " + REVISABLE + ") \
+         AND COALESCE(m.reason_code, '') != 'DETACHED_BY_PERSON' \
+         AND NOT EXISTS (SELECT 1 FROM library_identify_reviews r \
+             WHERE r.local_album_id = a.id AND r.state IN ('rejected','dismissed','excluded')) \
+         AND ((i.local_album_id IS NOT NULL AND EXISTS (SELECT 1 FROM local_tracks t \
+             WHERE t.local_album_id = a.id AND t.availability = 'indexed' \
+             AND COALESCE(t.embedded_release_mbid, '') != '' \
+             AND COALESCE(t.embedded_release_track_mbid, '') != '' \
+             AND COALESCE(t.embedded_recording_mbid, '') != '' \
+             AND ((i.local_album_id IS NOT NULL \
+                 AND lower(t.embedded_release_mbid) != lower(COALESCE(i.release_mbid, '')) \
+                 AND NOT EXISTS (SELECT 1 FROM library_management_metadata_snapshots s, \
+                     json_each(s.canonical_payload_json, '$.old_ids') old \
+                     WHERE s.provider = ?1 AND s.entity_kind = 'release' \
+                     AND s.entity_id = lower(i.release_mbid) \
+                     AND lower(old.value) = lower(t.embedded_release_mbid))) \
+             OR EXISTS (SELECT 1 FROM library_management_metadata_snapshots s \
+                 WHERE s.provider = ?1 AND s.entity_kind = 'release' \
+                 AND s.entity_id = lower(t.embedded_release_mbid) \
+                 AND NOT EXISTS (SELECT 1 FROM json_each(s.canonical_payload_json, '$.tracks') rt \
+                     WHERE lower(json_extract(rt.value, '$.id')) \
+                         = lower(t.embedded_release_track_mbid)))))) \
+         OR EXISTS (SELECT 1 FROM json_each(m.candidates_json) candidate, \
+             json_each(candidate.value, '$.track_evidence') track, \
+             json_each(track.value, '$.evidence_kinds') kind \
+             WHERE kind.value = 'release_track_mbid_conflict')) \
+         ORDER BY a.id";
+    pub(super) GROUP_ONLY_BACKFILL_ALBUMS = "SELECT a.id FROM local_albums a \
+         JOIN local_album_external_identities i \
+             ON i.local_album_id = a.id AND i.provider = ?1 \
+         WHERE a.retired_into_album_id IS NULL \
+         AND i.release_mbid IS NULL AND i.decision_source IN " + REVISABLE + " \
+         AND NOT EXISTS (SELECT 1 FROM library_custom_edition_active c \
+             WHERE c.local_album_id = a.id) \
+         AND NOT EXISTS (SELECT 1 FROM library_identify_reviews r \
+             WHERE r.local_album_id = a.id AND r.state IN ('rejected','dismissed','excluded')) \
+         AND EXISTS (SELECT 1 FROM local_tracks t \
+             WHERE t.local_album_id = a.id AND t.availability = 'indexed') \
+         AND NOT EXISTS (SELECT 1 FROM local_tracks t \
+             WHERE t.local_album_id = a.id AND t.availability = 'indexed' \
+             AND t.applied_policy != 'automatic') \
+         ORDER BY a.id";
+    pub(super) CONFIRMED_ALBUMS_WITH_GROUP = "SELECT a.id, i.release_group_mbid FROM local_albums a \
+         JOIN local_album_external_identities i \
+             ON i.local_album_id = a.id AND i.provider = ?1 \
+         WHERE a.retired_into_album_id IS NULL \
+         AND i.release_mbid IS NOT NULL AND i.decision_source IN " + REVISABLE + " \
+         AND NOT EXISTS (SELECT 1 FROM library_album_match_state m \
+             WHERE m.local_album_id = a.id) \
+         AND NOT EXISTS (SELECT 1 FROM library_custom_edition_active c \
+             WHERE c.local_album_id = a.id) \
+         AND NOT EXISTS (SELECT 1 FROM library_identify_reviews r \
+             WHERE r.local_album_id = a.id AND r.state IN ('rejected','dismissed','excluded')) \
+         AND EXISTS (SELECT 1 FROM local_tracks t \
+             WHERE t.local_album_id = a.id AND t.availability = 'indexed') \
+         AND NOT EXISTS (SELECT 1 FROM local_tracks t \
+             WHERE t.local_album_id = a.id AND t.availability = 'indexed' \
+             AND t.applied_policy != 'automatic') \
+         ORDER BY a.id";
+    pub(super) EDITION_ID_ALBUMS = "SELECT a.id, i.release_mbid, EXISTS (SELECT 1 FROM library_artist_reconciliation_state s \
+             WHERE s.local_album_id = a.id AND s.state = 'waiting_for_identity' \
+             AND s.reason_code = ?2), \
+         EXISTS (SELECT 1 FROM local_tracks t \
+             WHERE t.local_album_id = a.id AND +t.availability = 'indexed' \
+             AND NOT EXISTS (SELECT 1 FROM local_track_edition_tags h \
+                 WHERE h.local_track_id = t.id)), \
+         EXISTS (SELECT 1 FROM local_tracks t \
+             JOIN local_track_edition_tags h ON h.local_track_id = t.id \
+             WHERE t.local_album_id = a.id AND +t.availability = 'indexed' \
+             AND (trim(COALESCE(h.barcode, '')) <> '' \
+                 OR trim(COALESCE(h.catalog_number, '')) <> '')) \
+         FROM local_albums a \
+         JOIN local_album_external_identities i \
+             ON i.local_album_id = a.id AND i.provider = ?1 \
+         WHERE a.retired_into_album_id IS NULL \
+         AND i.release_mbid IS NOT NULL AND i.decision_source IN " + REVISABLE + " \
+         AND NOT EXISTS (SELECT 1 FROM library_album_match_state m \
+             WHERE m.local_album_id = a.id) \
+         AND NOT EXISTS (SELECT 1 FROM library_custom_edition_active c \
+             WHERE c.local_album_id = a.id) \
+         AND NOT EXISTS (SELECT 1 FROM library_identify_reviews r \
+             WHERE r.local_album_id = a.id AND r.state IN ('rejected','dismissed','excluded')) \
+         AND EXISTS (SELECT 1 FROM local_tracks t \
+             WHERE t.local_album_id = a.id AND +t.availability = 'indexed') \
+         AND NOT EXISTS (SELECT 1 FROM local_tracks t \
+             WHERE t.local_album_id = a.id AND +t.availability = 'indexed' \
+             AND (t.applied_policy != 'automatic' \
+                 OR trim(COALESCE(t.embedded_release_mbid, '')) != '')) \
+         ORDER BY a.id";
+}

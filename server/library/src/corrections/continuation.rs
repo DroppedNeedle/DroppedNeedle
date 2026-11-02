@@ -37,6 +37,7 @@
 //! field overrides described its own recording, so they stay on it; the
 //! rest moves.
 
+pub use crate::corrections::sql::CURRENT_TRACK;
 use std::collections::{BTreeMap, BTreeSet};
 
 use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
@@ -46,16 +47,6 @@ use crate::catalog_revision::bump_catalog;
 use crate::identify::sqlite::retarget_references;
 use crate::operations::decisions::{CatalogAction, record_action};
 use droppedneedle_kernel::db::savepoint;
-
-/// The track a local id names now: the track itself while its file is
-/// indexed, else the track its alias names (a missing track that
-/// continued into another), else the id itself, so a read's own
-/// availability test answers for it as for any id.
-pub const CURRENT_TRACK: &str = "SELECT id FROM ( \
-    SELECT id, 0 AS rank FROM local_tracks WHERE id = ?1 AND availability = 'indexed' \
-    UNION ALL SELECT local_track_id, 1 FROM local_track_aliases WHERE alias = ?1 \
-    UNION ALL SELECT ?1, 2) \
-    ORDER BY rank LIMIT 1";
 
 /// Audit kind and reason of a continuation.
 const KIND: &str = "continue_tracks";
@@ -75,42 +66,9 @@ pub(crate) enum Scope<'a> {
     Library,
 }
 
-/// Albums with a missing, unaliased row mapped to a release track that an
-/// indexed row of the same album is also mapped to. Starts from the
-/// missing rows and reads each album's indexed rows by album.
-const CANDIDATE_ALBUMS: &str = "SELECT DISTINCT o.local_album_id FROM local_tracks o \
-    JOIN local_track_external_identities oi \
-      ON oi.local_track_id = o.id AND oi.provider = 'musicbrainz' \
-    WHERE o.availability = 'missing' AND oi.release_track_mbid IS NOT NULL \
-    AND (?1 IS NULL OR o.local_album_id = ?1) \
-    AND NOT EXISTS (SELECT 1 FROM local_track_aliases x WHERE x.alias = o.id) \
-    AND EXISTS (SELECT 1 FROM local_tracks n \
-      JOIN local_track_external_identities ni \
-        ON ni.local_track_id = n.id AND ni.provider = 'musicbrainz' \
-      WHERE n.local_album_id = o.local_album_id AND n.availability = 'indexed' \
-      AND lower(ni.release_track_mbid) = lower(oi.release_track_mbid))";
+use crate::corrections::sql::CANDIDATE_ALBUMS;
 
-/// Aliases whose own row is not indexed and that still hold something a
-/// person made: one statement per table. A track override that the
-/// target already has for its field, or on an alias whose overrides stay
-/// (a replaced version), stays on the old row and does not count.
-const HOLDING_ALIASES: &str = "WITH dead AS (SELECT x.alias FROM local_track_aliases x \
-      JOIN local_tracks t ON t.id = x.alias WHERE t.availability <> 'indexed') \
-    SELECT local_track_id FROM library_play_history WHERE local_track_id IN dead \
-    UNION SELECT item_id FROM library_user_favorites \
-      WHERE item_kind = 'track' AND item_id IN dead \
-    UNION SELECT item_id FROM library_user_ratings \
-      WHERE item_kind = 'track' AND item_id IN dead \
-    UNION SELECT library_file_id FROM playlist_tracks WHERE library_file_id IN dead \
-    UNION SELECT file_id FROM compat_bookmarks WHERE file_id IN dead \
-    UNION SELECT local_track_id FROM library_user_play_marks WHERE local_track_id IN dead \
-    UNION SELECT file_id FROM compat_play_queue_items WHERE file_id IN dead \
-    UNION SELECT o.local_track_id FROM library_management_overrides o \
-      JOIN local_track_aliases x ON x.alias = o.local_track_id \
-      WHERE o.subject_kind = 'track' AND o.local_track_id IN dead \
-      AND x.moves_overrides = 1 AND NOT EXISTS (SELECT 1 FROM library_management_overrides w \
-        WHERE w.subject_kind = 'track' AND w.local_track_id = x.local_track_id \
-        AND w.field_name = o.field_name)";
+use crate::corrections::sql::HOLDING_ALIASES;
 
 /// How many aliases a pass inside another write moves, besides the pairs
 /// that write itself made on its album: each alias costs about half a
@@ -169,11 +127,7 @@ pub(crate) fn continue_replaced(
     let mut made = Vec::new();
     for (old, new) in replaced {
         let fits: bool = tx.query_row(
-            "SELECT EXISTS(SELECT 1 FROM local_tracks o JOIN local_tracks n \
-             ON n.id = ?2 AND n.local_album_id = o.local_album_id \
-             AND n.availability = 'indexed' \
-             WHERE o.id = ?1 AND o.local_album_id = ?3 AND o.availability = 'missing' \
-             AND NOT EXISTS (SELECT 1 FROM local_track_aliases x WHERE x.alias = o.id))",
+            crate::corrections::sql::CONTINUE_REPLACED.text(),
             params![old, new, album],
             |row| row.get(0),
         )?;
@@ -223,10 +177,7 @@ fn continue_given(
         let mut made = BTreeSet::new();
         for (old, new) in pairs {
             let fits: bool = tx.query_row(
-                "SELECT EXISTS(SELECT 1 FROM local_tracks o JOIN local_tracks n \
-                 ON n.id = ?2 AND n.availability = 'indexed' \
-                 WHERE o.id = ?1 AND o.availability = 'missing' \
-                 AND NOT EXISTS (SELECT 1 FROM local_track_aliases x WHERE x.alias = o.id))",
+                crate::corrections::sql::CONTINUE_GIVEN.text(),
                 params![old, new],
                 |row| row.get(0),
             )?;
@@ -259,13 +210,11 @@ fn add_alias(
     created_ms: i64,
 ) -> rusqlite::Result<()> {
     tx.execute(
-        "INSERT INTO local_track_aliases (alias, local_track_id, created_at, \
-         moves_overrides) VALUES (?1, ?2, ?3, ?4)",
+        crate::corrections::sql::ADD_TRACK_ALIAS.text(),
         params![old, new, created_ms, moves_overrides],
     )?;
     tx.execute(
-        "UPDATE local_track_aliases SET local_track_id = ?2, \
-         moves_overrides = moves_overrides AND ?3 WHERE local_track_id = ?1",
+        crate::corrections::sql::REPOINT_TRACK_ALIASES.text(),
         params![old, new, moves_overrides],
     )?;
     Ok(())
@@ -346,11 +295,7 @@ fn pass(
 ) -> rusqlite::Result<bool> {
     // An old row whose file is back answers for itself again. What moved
     // stays where it went.
-    tx.execute(
-        "DELETE FROM local_track_aliases WHERE EXISTS (SELECT 1 FROM local_tracks t \
-         WHERE t.id = local_track_aliases.alias AND t.availability = 'indexed')",
-        [],
-    )?;
+    tx.execute(crate::corrections::sql::DROP_LIVE_TRACK_ALIASES.text(), [])?;
     let only = match scope {
         Scope::Album(album) => Some(album),
         Scope::Library => None,
@@ -367,7 +312,7 @@ fn pass(
         add_alias(tx, old, new, moves_overrides, created_ms)
     };
     let albums: Vec<String> = if discover {
-        tx.prepare_cached(CANDIDATE_ALBUMS)?
+        tx.prepare_cached(CANDIDATE_ALBUMS.text())?
             .query_map(params![only], |row| row.get(0))?
             .collect::<rusqlite::Result<_>>()?
     } else {
@@ -384,7 +329,7 @@ fn pass(
     }
 
     let holding: BTreeSet<String> = tx
-        .prepare_cached(HOLDING_ALIASES)?
+        .prepare_cached(HOLDING_ALIASES.text())?
         .query_map([], |row| row.get(0))?
         .collect::<rusqlite::Result<_>>()?;
     // The pairs made on the pass's own album move in full, so the write
@@ -435,7 +380,7 @@ fn pass(
     }
     for old in &moving {
         let (new, moves_overrides): (String, bool) = tx.query_row(
-            "SELECT local_track_id, moves_overrides FROM local_track_aliases WHERE alias = ?1",
+            crate::corrections::sql::TRACK_ALIAS_TARGET.text(),
             params![old],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )?;
@@ -511,17 +456,9 @@ fn pairs_on(conn: &Connection, album: &str) -> rusqlite::Result<Vec<(String, Str
 /// state (no best guess, no unplaced or failed choice) and no custom
 /// edition. Any decision source counts.
 pub(crate) fn accepted_release(conn: &Connection, album: &str) -> rusqlite::Result<Option<String>> {
-    conn.prepare_cached(
-        "SELECT lower(trim(e.release_mbid)) FROM local_album_external_identities e \
-         WHERE e.local_album_id = ?1 AND e.provider = 'musicbrainz' \
-         AND trim(COALESCE(e.release_mbid, '')) <> '' \
-         AND NOT EXISTS (SELECT 1 FROM library_album_match_state s \
-           WHERE s.local_album_id = e.local_album_id) \
-         AND NOT EXISTS (SELECT 1 FROM library_custom_edition_active c \
-           WHERE c.local_album_id = e.local_album_id)",
-    )?
-    .query_row(params![album], |row| row.get(0))
-    .optional()
+    conn.prepare_cached(crate::corrections::sql::ACCEPTED_RELEASE.text())?
+        .query_row(params![album], |row| row.get(0))
+        .optional()
 }
 
 /// A missing row and the indexed row the rule pairs it with, with the
@@ -556,16 +493,7 @@ pub(crate) fn pairs_among(
     let albums = serde_json::to_string(albums)
         .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
     let mut by_track: BTreeMap<String, Vec<Row>> = BTreeMap::new();
-    let mut statement = conn.prepare_cached(
-        "SELECT t.id, t.local_album_id, t.availability, lower(trim(i.release_track_mbid)), \
-         lower(NULLIF(trim(i.release_mbid), '')), \
-         (SELECT x.local_track_id FROM local_track_aliases x WHERE x.alias = t.id) \
-         FROM local_tracks t \
-         JOIN local_track_external_identities i \
-           ON i.local_track_id = t.id AND i.provider = 'musicbrainz' \
-         WHERE t.local_album_id IN (SELECT value FROM json_each(?1)) \
-         AND trim(COALESCE(i.release_track_mbid, '')) <> ''",
-    )?;
+    let mut statement = conn.prepare_cached(crate::corrections::sql::PAIRS_AMONG.text())?;
     let rows = statement.query_map(params![albums], |row| {
         let availability: String = row.get(2)?;
         Ok((
@@ -619,7 +547,7 @@ pub(crate) fn pairs_among(
 
 fn album_of(conn: &Connection, track: &str) -> rusqlite::Result<String> {
     conn.query_row(
-        "SELECT local_album_id FROM local_tracks WHERE id = ?1",
+        crate::corrections::sql::ALBUM_OF.text(),
         params![track],
         |row| row.get(0),
     )
@@ -638,27 +566,18 @@ fn sweep(
 ) -> rusqlite::Result<Value> {
     let plays = strings(
         tx,
-        "SELECT id FROM library_play_history WHERE local_track_id = ?1",
+        crate::corrections::sql::PLAYS_OF_TRACK.text(),
         params![old],
     )?;
     // A star the user already has on the new row keeps its date; the old
     // one is deleted, kept here with its date and name.
     let stars_moved = strings(
         tx,
-        "SELECT f.user_id FROM library_user_favorites f WHERE f.item_kind = 'track' \
-         AND f.item_id = ?1 AND NOT EXISTS (SELECT 1 FROM library_user_favorites g \
-         WHERE g.user_id = f.user_id AND g.item_kind = 'track' AND g.item_id = ?2)",
+        crate::corrections::sql::FAVORITES_TO_MOVE.text(),
         params![old, new],
     )?;
     let stars_deleted: Vec<Value> = tx
-        .prepare(
-            "SELECT f.user_id, f.created_at, n.display_name FROM library_user_favorites f \
-             LEFT JOIN library_user_favorite_names n ON n.user_id = f.user_id \
-             AND n.item_kind = f.item_kind AND n.item_id = f.item_id \
-             WHERE f.item_kind = 'track' AND f.item_id = ?1 \
-             AND EXISTS (SELECT 1 FROM library_user_favorites g WHERE g.user_id = f.user_id \
-             AND g.item_kind = 'track' AND g.item_id = ?2)",
-        )?
+        .prepare(crate::corrections::sql::FAVORITES_IN_BOTH.text())?
         .query_map(params![old, new], |row| {
             Ok(json!({
                 "user_id": row.get::<_, String>(0)?,
@@ -670,14 +589,7 @@ fn sweep(
     // A star the user already has on the new row with no name takes the
     // old star's name.
     let names_copied: Vec<Value> = tx
-        .prepare(
-            "SELECT n.user_id, n.display_name FROM library_user_favorite_names n \
-             WHERE n.item_kind = 'track' AND n.item_id = ?1 \
-             AND EXISTS (SELECT 1 FROM library_user_favorites g WHERE g.user_id = n.user_id \
-             AND g.item_kind = 'track' AND g.item_id = ?2) \
-             AND NOT EXISTS (SELECT 1 FROM library_user_favorite_names m \
-             WHERE m.user_id = n.user_id AND m.item_kind = 'track' AND m.item_id = ?2)",
-        )?
+        .prepare(crate::corrections::sql::FAVORITE_NAMES_IN_BOTH.text())?
         .query_map(params![old, new], |row| {
             Ok(json!({
                 "user_id": row.get::<_, String>(0)?,
@@ -689,18 +601,11 @@ fn sweep(
     // deleted, kept here as it was.
     let ratings_moved = strings(
         tx,
-        "SELECT r.user_id FROM library_user_ratings r WHERE r.item_kind = 'track' \
-         AND r.item_id = ?1 AND NOT EXISTS (SELECT 1 FROM library_user_ratings s \
-         WHERE s.user_id = r.user_id AND s.item_kind = 'track' AND s.item_id = ?2)",
+        crate::corrections::sql::RATINGS_TO_MOVE.text(),
         params![old, new],
     )?;
     let ratings_deleted: Vec<Value> = tx
-        .prepare(
-            "SELECT r.user_id, r.rating, r.rated_at FROM library_user_ratings r \
-             WHERE r.item_kind = 'track' AND r.item_id = ?1 \
-             AND EXISTS (SELECT 1 FROM library_user_ratings s WHERE s.user_id = r.user_id \
-             AND s.item_kind = 'track' AND s.item_id = ?2)",
-        )?
+        .prepare(crate::corrections::sql::RATINGS_IN_BOTH.text())?
         .query_map(params![old, new], |row| {
             Ok(json!({
                 "user_id": row.get::<_, String>(0)?,
@@ -713,14 +618,11 @@ fn sweep(
 
     let entries = strings(
         tx,
-        "SELECT id FROM playlist_tracks WHERE library_file_id = ?1 \
-         ORDER BY playlist_id, position",
+        crate::corrections::sql::PLAYLIST_ROWS_OF_TRACK.text(),
         params![old],
     )?;
     tx.execute(
-        "UPDATE playlist_tracks SET library_file_id = ?2, track_source_id = \
-         CASE WHEN track_source_id = ?1 THEN ?2 ELSE track_source_id END \
-         WHERE library_file_id = ?1",
+        crate::corrections::sql::REPOINT_PLAYLIST_ROWS.text(),
         params![old, new],
     )?;
 
@@ -728,11 +630,7 @@ fn sweep(
     let mut bookmarks_moved = Vec::new();
     let mut bookmarks_deleted = Vec::new();
     let bookmarks: Vec<(String, f64, Option<f64>)> = tx
-        .prepare(
-            "SELECT b.user_id, b.changed_at, (SELECT c.changed_at FROM compat_bookmarks c \
-             WHERE c.user_id = b.user_id AND c.file_id = ?2) \
-             FROM compat_bookmarks b WHERE b.file_id = ?1",
-        )?
+        .prepare(crate::corrections::sql::BOOKMARKS_OF_TRACK.text())?
         .query_map(params![old, new], |row| {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?))
         })?
@@ -745,8 +643,7 @@ fn sweep(
         };
         if let Some(loser) = loser {
             bookmarks_deleted.push(tx.query_row(
-                "SELECT file_id, position_ms, comment, created_at, changed_at \
-                 FROM compat_bookmarks WHERE user_id = ?1 AND file_id = ?2",
+                crate::corrections::sql::BOOKMARK_ROW.text(),
                 params![user, loser],
                 |row| {
                     Ok(json!({
@@ -760,13 +657,13 @@ fn sweep(
                 },
             )?);
             tx.execute(
-                "DELETE FROM compat_bookmarks WHERE user_id = ?1 AND file_id = ?2",
+                crate::corrections::sql::DROP_BOOKMARK.text(),
                 params![user, loser],
             )?;
         }
         if loser != Some(old) {
             tx.execute(
-                "UPDATE compat_bookmarks SET file_id = ?3 WHERE user_id = ?1 AND file_id = ?2",
+                crate::corrections::sql::REPOINT_BOOKMARK.text(),
                 params![user, old, new],
             )?;
             bookmarks_moved.push(user);
@@ -782,13 +679,7 @@ fn sweep(
     let mut marks_deleted = Vec::new();
     type Mark = (Option<i64>, Option<i64>);
     let marks: Vec<(String, Mark, Option<Mark>)> = tx
-        .prepare(
-            "SELECT m.user_id, m.marked_played_at, m.marked_unplayed_at, \
-             n.local_track_id IS NOT NULL, n.marked_played_at, n.marked_unplayed_at \
-             FROM library_user_play_marks m LEFT JOIN library_user_play_marks n \
-             ON n.user_id = m.user_id AND n.local_track_id = ?2 \
-             WHERE m.local_track_id = ?1",
-        )?
+        .prepare(crate::corrections::sql::PLAY_MARKS_OF_TRACK.text())?
         .query_map(params![old, new], |row| {
             let theirs: bool = row.get(3)?;
             Ok((
@@ -811,8 +702,7 @@ fn sweep(
     for (user, mine, theirs) in marks {
         let Some(theirs) = theirs else {
             tx.execute(
-                "UPDATE library_user_play_marks SET local_track_id = ?3 \
-                 WHERE user_id = ?1 AND local_track_id = ?2",
+                crate::corrections::sql::REPOINT_PLAY_MARK.text(),
                 params![user, old, new],
             )?;
             marks_moved.push(user);
@@ -824,12 +714,11 @@ fn sweep(
             .max(theirs.0)
             .filter(|at| unplayed.is_none_or(|cut| *at >= cut));
         tx.execute(
-            "UPDATE library_user_play_marks SET marked_played_at = ?3, marked_unplayed_at = ?4 \
-             WHERE user_id = ?1 AND local_track_id = ?2",
+            crate::corrections::sql::WRITE_PLAY_MARK.text(),
             params![user, new, played, unplayed],
         )?;
         tx.execute(
-            "DELETE FROM library_user_play_marks WHERE user_id = ?1 AND local_track_id = ?2",
+            crate::corrections::sql::DROP_PLAY_MARK.text(),
             params![user, old],
         )?;
         marks_merged.push(mark_json(&user, new, theirs));
@@ -837,10 +726,7 @@ fn sweep(
     }
 
     let queue: Vec<Value> = tx
-        .prepare(
-            "SELECT user_id, item_index FROM compat_play_queue_items WHERE file_id = ?1 \
-             ORDER BY user_id, item_index",
-        )?
+        .prepare(crate::corrections::sql::QUEUE_ITEMS_OF_TRACK.text())?
         .query_map(params![old], |row| {
             Ok(json!({
                 "user_id": row.get::<_, String>(0)?,
@@ -849,31 +735,24 @@ fn sweep(
         })?
         .collect::<rusqlite::Result<_>>()?;
     tx.execute(
-        "UPDATE compat_play_queue_items SET file_id = ?2 WHERE file_id = ?1",
+        crate::corrections::sql::REPOINT_QUEUE_ITEMS.text(),
         params![old, new],
     )?;
 
     // The new row's own override for a field wins; the old one stays on
     // the old row.
     let overrides: Vec<(String, f64, i64)> = if moves_overrides {
-        tx.prepare(
-            "SELECT o.id, o.updated_at, o.row_revision FROM library_management_overrides o \
-             WHERE o.subject_kind = 'track' AND o.local_track_id = ?1 \
-             AND NOT EXISTS (SELECT 1 FROM library_management_overrides w \
-             WHERE w.subject_kind = 'track' AND w.local_track_id = ?2 \
-             AND w.field_name = o.field_name)",
-        )?
-        .query_map(params![old, new], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-        })?
-        .collect::<rusqlite::Result<_>>()?
+        tx.prepare(crate::corrections::sql::OVERRIDES_TO_MOVE.text())?
+            .query_map(params![old, new], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })?
+            .collect::<rusqlite::Result<_>>()?
     } else {
         Vec::new()
     };
     for (id, _, _) in &overrides {
         tx.execute(
-            "UPDATE library_management_overrides SET local_track_id = ?2, updated_at = ?3, \
-             row_revision = row_revision + 1 WHERE id = ?1",
+            crate::corrections::sql::REPOINT_OVERRIDE.text(),
             params![id, new, now],
         )?;
     }

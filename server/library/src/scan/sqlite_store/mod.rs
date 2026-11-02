@@ -275,13 +275,6 @@ fn spelled_opt<T>(
         .transpose()
 }
 
-pub(in crate::scan) const RUN_COLUMNS: &str = "id, kind, trigger, requested_by_user_id, state, phase, \
-    resume_phase, requested_control, aggregate_scope, total_count, discovered_count, \
-    inspected_count, new_count, changed_count, indexed_count, unchanged_count, \
-    excluded_count, missing_count, errored_count, identification_enqueued_count, \
-    coalesced_request_count, queued_at, started_at, updated_at, terminal_at, \
-    terminal_code, phase_timings_json, row_revision, event_revision";
-
 fn map_run(row: &rusqlite::Row<'_>) -> rusqlite::Result<ScanRun> {
     let state: String = row.get("state")?;
     let phase: String = row.get("phase")?;
@@ -358,43 +351,25 @@ fn map_failure(row: &rusqlite::Row<'_>) -> rusqlite::Result<ScanFailureRecord> {
 }
 
 fn load_scopes(conn: &Connection, run_id: &str) -> rusqlite::Result<Vec<ScanScope>> {
-    let mut stmt = conn.prepare(
-        "SELECT root_id, scope_id, relative_path, root_path, effective_policy, \
-         policy_revision, estimated_count FROM library_scan_run_scopes \
-         WHERE run_id = ?1 ORDER BY scope_sequence",
-    )?;
+    let mut stmt = conn.prepare(crate::scan::sql::LOAD_SCOPES.text())?;
     stmt.query_map(params![run_id], map_scope)?.collect()
 }
 
 fn load_run(conn: &Connection, run_id: &str) -> rusqlite::Result<Option<ScanRun>> {
-    conn.query_row(
-        &format!("SELECT {RUN_COLUMNS} FROM library_scan_runs WHERE id = ?1"),
-        params![run_id],
-        map_run,
-    )
-    .optional()
+    conn.query_row(crate::scan::sql::LOAD_RUN.text(), params![run_id], map_run)
+        .optional()
 }
 
 fn bump_scan_stream(conn: &Connection) -> rusqlite::Result<()> {
-    conn.execute(
-        "INSERT INTO library_event_stream_revisions (stream_kind, value) \
-         VALUES ('scan', 0) ON CONFLICT (stream_kind) DO NOTHING",
-        [],
-    )?;
-    conn.execute(
-        "UPDATE library_event_stream_revisions SET value = value + 1 \
-         WHERE stream_kind = 'scan'",
-        [],
-    )?;
+    conn.execute(crate::scan::sql::ENSURE_SCAN_STREAM.text(), [])?;
+    conn.execute(crate::scan::sql::BUMP_SCAN_STREAM.text(), [])?;
     Ok(())
 }
 
 fn read_scan_stream(conn: &Connection) -> rusqlite::Result<u64> {
-    conn.query_row(
-        "SELECT value FROM library_event_stream_revisions WHERE stream_kind = 'scan'",
-        [],
-        |row| row.get::<_, i64>(0),
-    )
+    conn.query_row(crate::scan::sql::READ_SCAN_STREAM.text(), [], |row| {
+        row.get::<_, i64>(0)
+    })
     .optional()
     .map(|value| value.unwrap_or(0).max(0) as u64)
 }
@@ -409,6 +384,7 @@ fn scope_covers(existing: &ScanScope, requested_root: &str, requested: &ScanScop
 
 pub(crate) mod artists;
 mod artwork;
+pub(crate) mod sql;
 pub use artwork::ArtworkSweep;
 mod catalog;
 mod commit;

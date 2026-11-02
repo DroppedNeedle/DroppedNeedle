@@ -135,12 +135,7 @@ impl Management {
             .db
             .read_blocking("management.download_publish_settled", |conn| {
                 let unsettled: bool = conn.query_row(
-                    "SELECT EXISTS (SELECT 1 FROM library_publish_journal \
-                 WHERE bundle_id IN (SELECT bundle_id FROM library_publish_journal \
-                 WHERE substr(source_rel, 1, length(?1)) = ?1) \
-                 AND state NOT IN ('cleaned', 'compensated', 'cleanup_pending') \
-                 AND NOT (state = 'needs_attention' AND bundle_id IN \
-                 (SELECT bundle_id FROM library_publish_resolutions)))",
+                    crate::management::sql::DOWNLOAD_PUBLISH_SETTLED.text(),
                     params![folder],
                     |row| row.get(0),
                 )?;
@@ -150,58 +145,59 @@ impl Management {
 
     /// What the publish journal holds. Blocking.
     pub fn recovery_diagnostics(&self) -> Result<Diagnostics, ManagementError> {
-        self.parts.db.read_blocking("management.recovery_diagnostics", |conn| {
-            let count = |sql: &str| conn.query_row(sql, [], |row| row.get::<_, i64>(0));
-            let open = "state NOT IN ('cleaned', 'compensated', 'needs_attention')";
-            let attention = "state = 'needs_attention' AND bundle_id NOT IN \
+        self.parts
+            .db
+            .read_blocking("management.recovery_diagnostics", |conn| {
+                let count = |sql: &str| conn.query_row(sql, [], |row| row.get::<_, i64>(0));
+                let open = "state NOT IN ('cleaned', 'compensated', 'needs_attention')";
+                let attention = "state = 'needs_attention' AND bundle_id NOT IN \
                  (SELECT bundle_id FROM library_publish_resolutions)";
-            let mut diagnostics = Diagnostics {
-                recoverable_bundle_count: count(&format!(
-                    "SELECT COUNT(DISTINCT bundle_id) FROM library_publish_journal WHERE {open}"
-                ))?,
-                nonterminal_journal_count: count(&format!(
-                    "SELECT COUNT(*) FROM library_publish_journal WHERE {open}"
-                ))?,
-                needs_attention_count: count(&format!(
-                    "SELECT COUNT(*) FROM library_publish_journal WHERE {attention}"
-                ))?,
-                cleanup_pending_count: count(
-                    "SELECT COUNT(*) FROM library_publish_journal WHERE state = 'cleanup_pending'",
-                )?,
-                ..Diagnostics::default()
-            };
-            diagnostics.oldest_updated_at = conn
-                .prepare_cached(crate::publish::sql::OLDEST_OPEN_WRITE.text())?
-                .query_row([], |row| row.get::<_, Option<i64>>(0))?
-                .map(|ms| ms as f64 / 1000.0);
-            let mut states = conn.prepare(
-                "SELECT state, COUNT(*) FROM library_publish_journal GROUP BY state ORDER BY state",
-            )?;
-            for row in states.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))? {
-                let (state, count): (String, i64) = row?;
-                diagnostics.state_counts.insert(state, count);
-            }
-            let mut bundles = conn.prepare(&format!(
-                "SELECT bundle_id, COUNT(*), GROUP_CONCAT(dest_rel, char(10)), \
+                let mut diagnostics = Diagnostics {
+                    recoverable_bundle_count: count(&format!(
+                        "SELECT COUNT(DISTINCT bundle_id) FROM library_publish_journal WHERE {open}"
+                    ))?,
+                    nonterminal_journal_count: count(&format!(
+                        "SELECT COUNT(*) FROM library_publish_journal WHERE {open}"
+                    ))?,
+                    needs_attention_count: count(&format!(
+                        "SELECT COUNT(*) FROM library_publish_journal WHERE {attention}"
+                    ))?,
+                    cleanup_pending_count: count(
+                        crate::management::sql::CLEANUP_PENDING_COUNT.text(),
+                    )?,
+                    ..Diagnostics::default()
+                };
+                diagnostics.oldest_updated_at = conn
+                    .prepare_cached(crate::publish::sql::OLDEST_OPEN_WRITE.text())?
+                    .query_row([], |row| row.get::<_, Option<i64>>(0))?
+                    .map(|ms| ms as f64 / 1000.0);
+                let mut states =
+                    conn.prepare(crate::management::sql::JOURNAL_COUNTS_BY_STATE.text())?;
+                for row in states.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))? {
+                    let (state, count): (String, i64) = row?;
+                    diagnostics.state_counts.insert(state, count);
+                }
+                let mut bundles = conn.prepare(&format!(
+                    "SELECT bundle_id, COUNT(*), GROUP_CONCAT(dest_rel, char(10)), \
                  GROUP_CONCAT(source_rel, char(10)) \
                  FROM library_publish_journal WHERE {attention} \
                  GROUP BY bundle_id ORDER BY bundle_id LIMIT ?1"
-            ))?;
-            for row in bundles.query_map(params![ATTENTION_LIST_MAX], attention_bundle)? {
-                diagnostics.needs_attention_bundles.push(row?);
-            }
-            diagnostics.retrying_bundles = retrying_bundles(conn, self.parts.clock.now_ms())?;
-            Ok(diagnostics)
-        })
-        .and_then(|mut diagnostics| {
-            let report = self
-                .parts
-                .leftover_files
-                .report(&self.parts.core.live_registry())?;
-            diagnostics.leftover_file_count = i64::try_from(report.count).unwrap_or(i64::MAX);
-            diagnostics.leftover_files = report.files;
-            Ok(diagnostics)
-        })
+                ))?;
+                for row in bundles.query_map(params![ATTENTION_LIST_MAX], attention_bundle)? {
+                    diagnostics.needs_attention_bundles.push(row?);
+                }
+                diagnostics.retrying_bundles = retrying_bundles(conn, self.parts.clock.now_ms())?;
+                Ok(diagnostics)
+            })
+            .and_then(|mut diagnostics| {
+                let report = self
+                    .parts
+                    .leftover_files
+                    .report(&self.parts.core.live_registry())?;
+                diagnostics.leftover_file_count = i64::try_from(report.count).unwrap_or(i64::MAX);
+                diagnostics.leftover_files = report.files;
+                Ok(diagnostics)
+            })
     }
 
     /// Close a write that needs an administrator, once each destination
@@ -233,8 +229,7 @@ impl Management {
                 .read_blocking("management.resolution", |conn| {
                     Ok::<_, ManagementError>(
                         conn.query_row(
-                            "SELECT verified_files, as_before_files, empty_files \
-                     FROM library_publish_resolutions WHERE bundle_id = ?1",
+                            crate::management::sql::BUNDLE_RESOLUTION.text(),
                             params![bundle_id],
                             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
                         )
@@ -290,22 +285,22 @@ impl Management {
             )));
         }
         let verified = pending.len() as i64;
-        self.parts.db.write_blocking(Lane::Foreground, "management.resolve_bundle", |conn| {
-            conn.execute(
-                "INSERT OR IGNORE INTO library_publish_resolutions (bundle_id, resolved_by_user_id, \
-                 verified_files, resolved_at, as_before_files, empty_files) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                params![
-                    bundle_id,
-                    actor,
-                    verified,
-                    self.parts.clock.now_secs(),
-                    as_before,
-                    empty
-                ],
-            )?;
-            Ok::<_, ManagementError>(())
-        })?;
+        self.parts
+            .db
+            .write_blocking(Lane::Foreground, "management.resolve_bundle", |conn| {
+                conn.execute(
+                    crate::management::sql::RECORD_BUNDLE_RESOLUTION.text(),
+                    params![
+                        bundle_id,
+                        actor,
+                        verified,
+                        self.parts.clock.now_secs(),
+                        as_before,
+                        empty
+                    ],
+                )?;
+                Ok::<_, ManagementError>(())
+            })?;
         // The fence is lifted, so a scan can now settle these tracks.
         for journal in &pending {
             self.parts.core.dirty.mark(&journal.dest_root);

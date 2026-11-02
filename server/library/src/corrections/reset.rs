@@ -56,7 +56,7 @@ pub(super) fn reset(
         };
         if dest != track.album_id {
             tx.execute(
-                "UPDATE local_tracks SET local_album_id = ?2 WHERE id = ?1",
+                crate::corrections::sql::SET_TRACK_ALBUM.text(),
                 params![track.id, dest],
             )?;
         }
@@ -84,15 +84,12 @@ pub(super) fn reset(
         }
     } else {
         let locked: bool = tx.query_row(
-            "SELECT EXISTS(SELECT 1 FROM local_tracks WHERE local_album_id = ?1 \
-             AND membership_locked = 1)",
+            crate::corrections::sql::ALBUM_HAS_LOCKED_MEMBER.text(),
             params![album.id],
             |row| row.get(0),
         )?;
         tx.execute(
-            "UPDATE local_albums SET grouping_source = CASE WHEN ?2 THEN grouping_source \
-             ELSE 'automatic' END, grouping_locked = ?2, updated_at = ?3, \
-             row_revision = row_revision + 1 WHERE id = ?1",
+            crate::corrections::sql::RESET_ALBUM_GROUPING.text(),
             params![album.id, locked, now],
         )?;
     }

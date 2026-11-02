@@ -41,6 +41,7 @@ pub mod models;
 pub mod plays;
 pub mod reasons;
 pub mod service;
+pub(crate) mod sql;
 pub mod store;
 
 use std::time::Duration;

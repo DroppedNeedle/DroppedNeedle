@@ -42,19 +42,13 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use rusqlite::{OptionalExtension as _, Transaction, params};
 
-use super::commit::{DURATION_TOLERANCE_SECONDS, WALKED_PAST};
+use super::commit::DURATION_TOLERANCE_SECONDS;
 use super::retag_pairs::{self, RetagPairReason};
 use crate::identify::sqlite::match_chosen;
 use crate::management::takeover::{self, Cause};
 use crate::publish::HIDDEN_PREFIX;
 use crate::scan::naming::grouping_directory;
 use droppedneedle_kernel::db::savepoint;
-
-/// Albums a person keeps their hands on: left unmanaged, kept as a custom
-/// edition, or stepped back from and not handed back.
-const HANDS_OFF: &str = "SELECT local_album_id FROM library_management_exclusions \
-    UNION SELECT local_album_id FROM library_custom_edition_active \
-    UNION SELECT local_album_id FROM library_album_takeovers WHERE handed_back_at IS NULL";
 
 /// A track row of a hands-off album that went away in this run.
 struct Lost {
@@ -89,11 +83,9 @@ pub(super) fn hold_replacements(
 
 fn pass(tx: &Transaction<'_>, run_id: &str, now: f64) -> rusqlite::Result<()> {
     let started: Option<f64> = tx
-        .query_row(
-            "SELECT started_at FROM library_scan_runs WHERE id = ?1",
-            params![run_id],
-            |row| row.get(0),
-        )
+        .query_row(crate::scan::sql::PASS.text(), params![run_id], |row| {
+            row.get(0)
+        })
         .optional()?
         .flatten();
     let Some(started) = started else {
@@ -123,15 +115,8 @@ fn pass(tx: &Transaction<'_>, run_id: &str, now: f64) -> rusqlite::Result<()> {
 fn lost_rows(tx: &Transaction<'_>, run_id: &str, started: f64) -> rusqlite::Result<Vec<Lost>> {
     // CROSS JOIN keeps the order: the few hands-off albums first, never a
     // walk over every live album.
-    let sql = format!(
-        "SELECT t.id, t.local_album_id, t.root_id, t.relative_path, t.duration_seconds \
-         FROM ({HANDS_OFF}) h \
-         CROSS JOIN local_albums a ON a.id = h.local_album_id \
-         CROSS JOIN local_tracks t ON t.local_album_id = a.id \
-         WHERE a.retired_into_album_id IS NULL AND ((t.availability = 'missing' \
-         AND t.missing_since >= ?2) OR (t.availability = 'indexed' AND {WALKED_PAST}))"
-    );
-    tx.prepare_cached(&sql)?
+    let sql = crate::scan::sql::LOST_ROWS.text();
+    tx.prepare_cached(sql)?
         .query_map(params![run_id, started], |row| {
             let id: String = row.get(0)?;
             let path: String = row.get(3)?;
@@ -154,20 +139,15 @@ fn new_albums_at(
     root_id: &str,
     place: &str,
 ) -> rusqlite::Result<BTreeSet<String>> {
-    const NEW: &str = "SELECT t.id, t.local_album_id, t.relative_path FROM local_tracks t \
-         WHERE t.root_id = ?2 AND t.availability = 'indexed' AND t.ingest_source = 'scan' \
-         AND t.imported_at >= ?3 \
-         AND EXISTS (SELECT 1 FROM library_scan_inventory i WHERE i.run_id = ?1 \
-           AND i.root_id = t.root_id AND i.relative_path = t.relative_path)";
     let (sql, below) = if place == "." {
-        (NEW.to_owned(), None)
+        (crate::scan::sql::NEW_EVERYWHERE.text(), None)
     } else {
         (
-            format!("{NEW} AND t.relative_path >= ?4 AND t.relative_path < ?5"),
+            crate::scan::sql::NEW_BELOW.text(),
             Some((format!("{place}/"), format!("{place}0"))),
         )
     };
-    let mut statement = tx.prepare_cached(&sql)?;
+    let mut statement = tx.prepare_cached(sql)?;
     let map = |row: &rusqlite::Row<'_>| -> rusqlite::Result<(String, String, String)> {
         Ok((row.get(0)?, row.get(1)?, row.get(2)?))
     };
@@ -189,14 +169,9 @@ fn new_albums_at(
 /// Albums already held with this cause that no pair names as the new
 /// album.
 fn held_unpaired(tx: &Transaction<'_>) -> rusqlite::Result<Vec<String>> {
-    tx.prepare_cached(
-        "SELECT k.local_album_id FROM library_album_takeovers k \
-         WHERE k.cause = ?1 AND k.handed_back_at IS NULL \
-         AND NOT EXISTS (SELECT 1 FROM library_retag_pairs p \
-           WHERE p.new_album_id = k.local_album_id)",
-    )?
-    .query_map(params![Cause::ReplacedHandsOff.as_str()], |row| row.get(0))?
-    .collect()
+    tx.prepare_cached(crate::scan::sql::HELD_UNPAIRED.text())?
+        .query_map(params![Cause::ReplacedHandsOff.as_str()], |row| row.get(0))?
+        .collect()
 }
 
 /// Hold `album_id` and record its pair when the rule says so.
@@ -208,16 +183,7 @@ fn settle(
     now: f64,
 ) -> rusqlite::Result<()> {
     let Some((created, live, foreign, excluded, held)) = tx
-        .prepare_cached(
-            "SELECT b.created_at, b.retired_into_album_id IS NULL, \
-             EXISTS (SELECT 1 FROM local_tracks t WHERE t.local_album_id = b.id \
-               AND (t.ingest_source <> 'scan' OR t.imported_at < b.created_at)), \
-             EXISTS (SELECT 1 FROM library_management_exclusions e \
-               WHERE e.local_album_id = b.id), \
-             EXISTS (SELECT 1 FROM library_album_takeovers k WHERE k.local_album_id = b.id \
-               AND k.cause = ?2 AND k.handed_back_at IS NULL) \
-             FROM local_albums b WHERE b.id = ?1",
-        )?
+        .prepare_cached(crate::scan::sql::HANDS_OFF_ALBUM_STATE.text())?
         .query_row(params![album_id, Cause::ReplacedHandsOff.as_str()], |row| {
             Ok((
                 row.get::<_, f64>(0)?,
@@ -238,10 +204,7 @@ fn settle(
         return Ok(());
     }
     let rows: Vec<(String, String, String, Option<f64>)> = tx
-        .prepare_cached(
-            "SELECT id, root_id, relative_path, duration_seconds FROM local_tracks \
-             WHERE local_album_id = ?1 ORDER BY id",
-        )?
+        .prepare_cached(crate::scan::sql::ALBUM_TRACK_PLACES.text())?
         .query_map(params![album_id], |row| {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
         })?
@@ -275,10 +238,7 @@ fn settle(
     let mut fitting = Vec::new();
     for old in beside.keys() {
         let missing: Vec<Option<f64>> = tx
-            .prepare_cached(
-                "SELECT duration_seconds FROM local_tracks \
-                 WHERE local_album_id = ?1 AND availability = 'missing'",
-            )?
+            .prepare_cached(crate::scan::sql::MISSING_TRACK_LENGTHS.text())?
             .query_map(params![old], |row| row.get(0))?
             .collect::<rusqlite::Result<_>>()?;
         if fits(&lengths, &missing) {
@@ -288,10 +248,7 @@ fn settle(
     let mut paired = None;
     if let [old] = fitting.as_slice() {
         let present: bool = tx
-            .prepare_cached(
-                "SELECT EXISTS (SELECT 1 FROM local_tracks \
-                 WHERE local_album_id = ?1 AND availability = 'indexed')",
-            )?
+            .prepare_cached(crate::scan::sql::ALBUM_HAS_INDEXED_TRACK.text())?
             .query_row(params![old], |row| row.get(0))?;
         if !present
             && retag_pairs::record(

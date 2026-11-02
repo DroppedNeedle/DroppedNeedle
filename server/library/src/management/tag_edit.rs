@@ -197,9 +197,7 @@ impl Management {
     fn subject(&self, track_id: &str) -> Result<Subject, ManagementError> {
         self.parts.db.read_blocking("management.subject", |conn| {
             conn.query_row(
-                "SELECT t.id, t.local_album_id, t.root_id, t.relative_path, t.row_revision, \
-                 a.row_revision FROM local_tracks t JOIN local_albums a ON a.id = t.local_album_id \
-                 WHERE t.id = ?1 AND t.availability = 'indexed'",
+                crate::management::sql::SUBJECT.text(),
                 params![track_id],
                 |row| {
                     Ok(Subject {
@@ -223,12 +221,7 @@ impl Management {
         self.parts
             .db
             .read_blocking("management.saved_overrides", |conn| {
-                let mut statement = conn.prepare(
-                    "SELECT subject_kind, field_name, id, mode, row_revision \
-                 FROM library_management_overrides \
-                 WHERE (subject_kind = 'album' AND local_album_id = ?1) \
-                 OR (subject_kind = 'track' AND local_track_id = ?2)",
-                )?;
+                let mut statement = conn.prepare(crate::management::sql::SAVED_OVERRIDES.text())?;
                 let rows =
                     statement.query_map(params![subject.album_id, subject.track_id], |row| {
                         Ok((
@@ -379,14 +372,15 @@ impl Management {
                         self.parts
                             .db
                             .read_blocking("management.create_tag_edit", |conn| {
-                                Ok::<_, ManagementError>(conn
-                            .query_row(
-                                "SELECT value_json FROM library_management_overrides WHERE id = ?1",
-                                params![id],
-                                |row| row.get::<_, String>(0),
-                            )
-                            .optional()?
-                            .map(|value| (value, mode.clone())))
+                                Ok::<_, ManagementError>(
+                                    conn.query_row(
+                                        crate::management::sql::CREATE_TAG_EDIT.text(),
+                                        params![id],
+                                        |row| row.get::<_, String>(0),
+                                    )
+                                    .optional()?
+                                    .map(|value| (value, mode.clone())),
+                                )
                             })?
                     }
                     None => None,

@@ -62,38 +62,9 @@ use crate::scan::sqlite_store::retag_pairs::{RetagPairReason, RetagPairState};
 use crate::scan::sqlite_store::{RetagPair, holds, tried, waits_for_the_rest};
 use droppedneedle_kernel::db::savepoint;
 
-/// The scan run that started last, as a SQL expression.
-const LATEST_RUN: &str = "(SELECT id FROM library_scan_runs WHERE started_at IS NOT NULL \
-    ORDER BY started_at DESC LIMIT 1)";
+use crate::corrections::sql::LATEST_RUN;
 
-/// Old and new albums on one accepted exact release: the old one with no
-/// indexed track and a mapped track that went missing since the oldest
-/// run on record began, the new one with an indexed track. Starts from the
-/// missing rows and joins the two albums through their release.
-const CANDIDATES: &str = "SELECT DISTINCT a.id, b.id FROM local_tracks o \
-    JOIN local_albums a ON a.id = o.local_album_id AND a.retired_into_album_id IS NULL \
-    JOIN local_album_external_identities ae \
-      ON ae.local_album_id = a.id AND ae.provider = 'musicbrainz' \
-    JOIN local_album_external_identities be \
-      ON lower(be.release_mbid) = lower(ae.release_mbid) AND be.provider = 'musicbrainz' \
-      AND be.local_album_id <> a.id \
-    JOIN local_albums b ON b.id = be.local_album_id AND b.retired_into_album_id IS NULL \
-    WHERE o.availability = 'missing' \
-    AND o.missing_since >= (SELECT MIN(started_at) FROM library_scan_runs) \
-    AND (?1 IS NULL OR a.id = ?1) AND (?2 IS NULL OR b.id = ?2) \
-    AND trim(COALESCE(ae.release_mbid, '')) <> '' \
-    AND EXISTS (SELECT 1 FROM local_track_external_identities oi \
-      WHERE oi.local_track_id = o.id AND oi.provider = 'musicbrainz' \
-      AND trim(COALESCE(oi.release_track_mbid, '')) <> '') \
-    AND NOT EXISTS (SELECT 1 FROM local_tracks t \
-      WHERE t.local_album_id = a.id AND t.availability = 'indexed') \
-    AND EXISTS (SELECT 1 FROM local_tracks t \
-      WHERE t.local_album_id = b.id AND t.availability = 'indexed') \
-    AND NOT EXISTS (SELECT 1 FROM library_album_match_state s \
-      WHERE s.local_album_id IN (a.id, b.id)) \
-    AND NOT EXISTS (SELECT 1 FROM library_custom_edition_active c \
-      WHERE c.local_album_id IN (a.id, b.id)) \
-    ORDER BY a.id, b.id";
+use crate::corrections::sql::RELEASE_JOIN_CANDIDATES as CANDIDATES;
 
 /// Join every album whose files another album replaced on the same
 /// edition, in a savepoint of the caller's transaction. With
@@ -127,7 +98,7 @@ fn candidates(
     old: Option<&str>,
     new: Option<&str>,
 ) -> rusqlite::Result<Vec<(String, String)>> {
-    conn.prepare_cached(CANDIDATES)?
+    conn.prepare_cached(CANDIDATES.text())?
         .query_map(params![old, new], |row| Ok((row.get(0)?, row.get(1)?)))?
         .collect()
 }
@@ -237,10 +208,7 @@ fn replaced_by(
         return Ok(None);
     }
     let dismissed: bool = tx
-        .prepare_cached(
-            "SELECT EXISTS(SELECT 1 FROM library_retag_pairs \
-             WHERE old_album_id = ?1 AND state = ?2)",
-        )?
+        .prepare_cached(crate::corrections::sql::REPLACED_BY.text())?
         .query_row(params![old, RetagPairState::Dismissed.as_str()], |row| {
             row.get(0)
         })?;
@@ -271,16 +239,12 @@ fn replaced_by(
 /// identities. Times are seconds.
 pub(crate) fn judge(tx: &Transaction<'_>, pair: &Pair, now: f64) -> rusqlite::Result<Verdict> {
     let (missing_since, old_root, old_path): (Option<f64>, String, String) = tx
-        .prepare_cached(
-            "SELECT missing_since, root_id, relative_path FROM local_tracks WHERE id = ?1",
-        )?
+        .prepare_cached(crate::corrections::sql::GONE_TRACK_FACTS.text())?
         .query_row(params![pair.old], |row| {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?))
         })?;
     let (imported_at, new_root, new_path): (Option<f64>, String, String) = tx
-        .prepare_cached(
-            "SELECT imported_at, root_id, relative_path FROM local_tracks WHERE id = ?1",
-        )?
+        .prepare_cached(crate::corrections::sql::NEW_TRACK_FACTS.text())?
         .query_row(params![pair.new], |row| {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?))
         })?;
@@ -288,12 +252,7 @@ pub(crate) fn judge(tx: &Transaction<'_>, pair: &Pair, now: f64) -> rusqlite::Re
         return Ok(Verdict::Stayed);
     };
     let (by_scan, removed): (bool, bool) = tx
-        .prepare_cached(
-            "SELECT EXISTS(SELECT 1 FROM library_scan_runs \
-               WHERE started_at <= ?2 AND ?2 <= COALESCE(terminal_at, ?3)), \
-             EXISTS(SELECT 1 FROM library_catalog_actions WHERE local_album_id = ?4 \
-               AND action_kind = 'remove_track' AND local_track_id = ?1)",
-        )?
+        .prepare_cached(crate::corrections::sql::SCAN_OVERLAP_AND_CHANGE.text())?
         .query_row(params![pair.old, gone, now, pair.old_album], |row| {
             Ok((row.get(0)?, row.get(1)?))
         })?;
@@ -304,7 +263,7 @@ pub(crate) fn judge(tx: &Transaction<'_>, pair: &Pair, now: f64) -> rusqlite::Re
         return Ok(Verdict::Veto);
     };
     let reaches: bool = tx
-        .prepare_cached("SELECT EXISTS(SELECT 1 FROM library_scan_runs WHERE terminal_at <= ?1)")?
+        .prepare_cached(crate::corrections::sql::RUN_ENDED_BY.text())?
         .query_row(params![arrived], |row| row.get(0))?;
     // A row that gave its path up to a file placed there is read at the
     // path it had.
@@ -337,15 +296,7 @@ pub(crate) fn judge(tx: &Transaction<'_>, pair: &Pair, now: f64) -> rusqlite::Re
 /// mass-missing guard held back does not count as walked.
 fn walked(conn: &Connection, root: &str, path: &str, from: f64, to: f64) -> rusqlite::Result<bool> {
     let scopes: Vec<String> = conn
-        .prepare_cached(
-            "SELECT s.relative_path FROM library_scan_runs r \
-             JOIN library_scan_run_scopes s ON s.run_id = r.id AND s.root_id = ?1 \
-               AND s.discovery_state = 'completed' \
-             WHERE r.state = 'completed' AND r.terminal_at >= ?2 AND r.terminal_at < ?3 \
-             AND NOT EXISTS (SELECT 1 FROM library_scan_failures f WHERE f.run_id = r.id \
-               AND f.root_id = s.root_id AND f.relative_path = s.relative_path \
-               AND f.failure_code = 'MASS_MISSING_GUARD')",
-        )?
+        .prepare_cached(crate::corrections::sql::WALKED.text())?
         .query_map(params![root, from, to], |row| row.get(0))?
         .collect::<rusqlite::Result<_>>()?;
     Ok(scopes.iter().any(|scope| scope_covers_path(scope, path)))

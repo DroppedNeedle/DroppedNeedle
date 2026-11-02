@@ -119,15 +119,7 @@ struct RecordingFit {
 /// The playable tracks that hold `recording`, as their accepted recording
 /// or in their tags.
 fn by_recording(conn: &Connection, recording: &str) -> rusqlite::Result<Vec<RecordingFit>> {
-    let mut stmt = conn.prepare_cached(
-        "SELECT t.id, COALESCE(ti.recording_mbid, t.embedded_recording_mbid) = ?1 \
-         FROM local_tracks t \
-         LEFT JOIN local_track_external_identities ti ON ti.local_track_id = t.id \
-         WHERE t.id IN (SELECT local_track_id FROM local_track_external_identities \
-                        WHERE recording_mbid = ?1 \
-                        UNION SELECT id FROM local_tracks WHERE embedded_recording_mbid = ?1) \
-         AND t.availability = 'indexed' ORDER BY t.id",
-    )?;
+    let mut stmt = conn.prepare_cached(crate::repairs::sql::BY_RECORDING.text())?;
     stmt.query_map(params![recording], |row| {
         Ok(RecordingFit {
             id: row.get(0)?,
@@ -153,14 +145,7 @@ fn name_fits(conn: &Connection, keys: &PlayKeys) -> rusqlite::Result<Vec<NameFit
         return Ok(Vec::new());
     }
     let album = text(keys.album_name.as_deref()).map(fold_text);
-    let mut stmt = conn.prepare_cached(
-        "SELECT t.id, t.duration_seconds, ti.recording_mbid, t.embedded_recording_mbid \
-         FROM local_tracks t \
-         LEFT JOIN local_track_external_identities ti ON ti.local_track_id = t.id \
-         WHERE t.title_folded = ?1 AND t.artist_name_folded = ?2 \
-         AND (?3 IS NULL OR t.album_title_folded = ?3) AND t.availability = 'indexed' \
-         ORDER BY t.id LIMIT 2",
-    )?;
+    let mut stmt = conn.prepare_cached(crate::repairs::sql::NAME_FITS.text())?;
     stmt.query_map(params![title, artist, album], |row| {
         Ok(NameFit {
             id: row.get(0)?,
@@ -235,17 +220,11 @@ pub fn match_play(conn: &Connection, keys: &PlayKeys) -> rusqlite::Result<Matche
     })
 }
 
-/// A row no repair has filed: it names no track, album or artist.
-const UNFILED: &str =
-    "local_track_id IS NULL AND local_album_id IS NULL AND local_artist_id IS NULL";
-
 /// How many play rows name no track, album or artist.
 pub fn unfiled(conn: &Connection) -> rusqlite::Result<i64> {
-    conn.query_row(
-        &format!("SELECT COUNT(*) FROM library_play_history WHERE {UNFILED}"),
-        [],
-        |row| row.get(0),
-    )
+    conn.query_row(crate::repairs::sql::UNFILED_COUNT.text(), [], |row| {
+        row.get(0)
+    })
 }
 
 /// Queue a filing job when a row is unfiled: after scan run `scan_run`,
@@ -265,10 +244,7 @@ pub fn queue(
     // A job stopped by a restart goes on by itself; the rows it has filed
     // since have changed the count the start key is made of.
     let at_work: bool = tx.query_row(
-        "SELECT EXISTS(SELECT 1 FROM library_operation_jobs j \
-         JOIN library_repair_snapshots s ON s.job_id = j.id \
-         WHERE j.kind = 'repair' AND j.state IN ('queued','running','paused') \
-         AND s.purpose = ?1)",
+        crate::repairs::sql::REPAIR_ALREADY_ACTIVE.text(),
         params![Purpose::PlayHistoryFiling],
         |row| row.get(0),
     )?;
@@ -276,11 +252,9 @@ pub fn queue(
         return Ok(false);
     }
     let catalog_revision: i64 = tx
-        .query_row(
-            "SELECT value FROM library_catalog_revision WHERE singleton = 1",
-            [],
-            |row| row.get(0),
-        )
+        .query_row(crate::repairs::sql::CATALOG_REVISION.text(), [], |row| {
+            row.get(0)
+        })
         .optional()?
         .unwrap_or(0);
     let key = match scan_run {
@@ -288,10 +262,7 @@ pub fn queue(
         None => format!("play-history-filing:v1:start:{catalog_revision}:{unfiled}"),
     };
     let queued = tx.execute(
-        "INSERT INTO library_operation_jobs (id, kind, state, input_catalog_revision, \
-         expected_work_count, idempotency_key, created_at, updated_at) \
-         VALUES (?1, 'repair', 'queued', ?2, ?3, ?4, ?5, ?5) \
-         ON CONFLICT (idempotency_key) DO NOTHING",
+        crate::repairs::sql::QUEUE_REPAIR_JOB.text(),
         params![job_id, catalog_revision, unfiled, key, now],
     )?;
     if queued == 0 {
@@ -301,14 +272,11 @@ pub fn queue(
     let scope = serde_json::to_string(&Scope::default())
         .map_err(|error| rusqlite::Error::ToSqlConversionFailure(error.into()))?;
     tx.execute(
-        "INSERT INTO library_repair_snapshots (job_id, purpose, scope_json, \
-         target_matcher_version, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+        crate::repairs::sql::QUEUE_REPAIR_SNAPSHOT.text(),
         params![job_id, purpose, scope, PLAYS_VERSION, now],
     )?;
     tx.execute(
-        "INSERT INTO library_repair_materialization (job_id, pinned_catalog_revision, \
-         eligibility_version, purpose, sealed, created_at, updated_at) \
-         VALUES (?1, ?2, ?3, ?4, 1, ?5, ?5)",
+        crate::repairs::sql::QUEUE_REPAIR_MATERIALIZATION.text(),
         params![job_id, catalog_revision, PLAYS_VERSION, purpose, now],
     )?;
     Ok(true)
@@ -319,16 +287,7 @@ pub fn queue(
 /// False when the row has been filed since, or the track is gone.
 fn file(tx: &Transaction<'_>, play_rowid: i64, track_id: &str) -> rusqlite::Result<bool> {
     let changed = tx.execute(
-        "UPDATE library_play_history SET local_track_id = t.id, \
-         local_album_id = t.local_album_id, \
-         local_artist_id = COALESCE((SELECT x.local_artist_id FROM local_track_artists x \
-                                     WHERE x.local_track_id = t.id ORDER BY x.position LIMIT 1), \
-                                    a.album_artist_id) \
-         FROM local_tracks t JOIN local_albums a ON a.id = t.local_album_id \
-         WHERE t.id = ?2 AND library_play_history.rowid = ?1 \
-         AND library_play_history.local_track_id IS NULL \
-         AND library_play_history.local_album_id IS NULL \
-         AND library_play_history.local_artist_id IS NULL",
+        crate::repairs::sql::FILE.text(),
         params![play_rowid, track_id],
     )?;
     Ok(changed == 1)
@@ -346,7 +305,7 @@ fn file(tx: &Transaction<'_>, play_rowid: i64, track_id: &str) -> rusqlite::Resu
 pub fn step(tx: &Transaction<'_>, job_id: &str, limit: usize, now: f64) -> rusqlite::Result<bool> {
     // No cursor yet: no row was looked at.
     let cursor: Option<String> = tx.query_row(
-        "SELECT staging_cursor FROM library_repair_materialization WHERE job_id = ?1",
+        crate::repairs::sql::STAGING_CURSOR.text(),
         params![job_id],
         |row| row.get(0),
     )?;
@@ -356,7 +315,7 @@ pub fn step(tx: &Transaction<'_>, job_id: &str, limit: usize, now: f64) -> rusql
     };
     // No summary yet: the first batch starts it.
     let summary: Option<String> = tx.query_row(
-        "SELECT result_json FROM library_repair_snapshots WHERE job_id = ?1",
+        crate::repairs::sql::SNAPSHOT_RESULT.text(),
         params![job_id],
         |row| row.get(0),
     )?;
@@ -367,13 +326,7 @@ pub fn step(tx: &Transaction<'_>, job_id: &str, limit: usize, now: f64) -> rusql
     };
 
     let rows = {
-        let mut stmt = tx.prepare_cached(&format!(
-            "SELECT rowid, CAST(track_name AS TEXT), CAST(artist_name AS TEXT), \
-             CAST(album_name AS TEXT), CAST(recording_mbid AS TEXT), \
-             CAST(release_group_mbid AS TEXT), CAST(duration_ms AS INTEGER), \
-             CAST(source AS TEXT) FROM library_play_history \
-             WHERE {UNFILED} AND rowid > ?1 ORDER BY rowid LIMIT ?2"
-        ))?;
+        let mut stmt = tx.prepare_cached(crate::repairs::sql::STEP.text())?;
         stmt.query_map(params![cursor, limit as i64], |row| {
             Ok((
                 row.get::<_, i64>(0)?,
@@ -424,22 +377,18 @@ pub fn step(tx: &Transaction<'_>, job_id: &str, limit: usize, now: f64) -> rusql
 
     if let Some((last, _)) = rows.last() {
         tx.execute(
-            "UPDATE library_repair_materialization SET staging_cursor = ?2, updated_at = ?3 \
-             WHERE job_id = ?1",
+            crate::repairs::sql::ADVANCE_STAGING_CURSOR.text(),
             params![job_id, last.to_string(), now],
         )?;
     }
     let summary = serde_json::to_string(&summary)
         .map_err(|error| rusqlite::Error::ToSqlConversionFailure(error.into()))?;
     tx.execute(
-        "UPDATE library_repair_snapshots SET result_json = ?2 WHERE job_id = ?1",
+        crate::repairs::sql::WRITE_SNAPSHOT_RESULT.text(),
         params![job_id, summary],
     )?;
     tx.execute(
-        "UPDATE library_operation_jobs SET completed_count = completed_count + ?2, \
-         succeeded_count = succeeded_count + ?3, skipped_count = skipped_count + ?4, \
-         updated_at = ?5, row_revision = row_revision + 1, \
-         event_revision = event_revision + 1 WHERE id = ?1",
+        crate::repairs::sql::ADD_JOB_COUNTS.text(),
         params![job_id, looked_at, filed, left, now],
     )?;
     Ok(rows.len() < limit)

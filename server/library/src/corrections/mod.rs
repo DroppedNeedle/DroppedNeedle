@@ -43,5 +43,6 @@ mod reset;
 pub(crate) mod retag_merge;
 mod retag_pairs;
 pub mod service;
+pub(crate) mod sql;
 
 pub use service::Corrections;

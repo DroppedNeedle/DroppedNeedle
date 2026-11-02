@@ -206,13 +206,7 @@ pub fn skip_reason(code: &str) -> ItemReason {
 /// identification settled, or its edition changed). A queued album is
 /// looked at again from the start.
 pub fn queue(conn: &Connection, album_id: &str, now: f64) -> rusqlite::Result<()> {
-    conn.execute(
-        "INSERT INTO library_management_automatic_queue (local_album_id, queued_at, not_before) \
-         SELECT ?1, ?2, ?2 WHERE EXISTS (SELECT 1 FROM local_albums WHERE id = ?1) \
-         ON CONFLICT (local_album_id) DO UPDATE SET queued_at = excluded.queued_at, \
-         not_before = excluded.not_before, attempts = 0, last_reason_code = NULL",
-        params![album_id, now],
-    )?;
+    conn.execute(crate::management::sql::QUEUE.text(), params![album_id, now])?;
     Ok(())
 }
 
@@ -229,8 +223,7 @@ pub(crate) fn stamp_retag_followed(
 ) -> rusqlite::Result<()> {
     queue(conn, album_id, now)?;
     conn.execute(
-        "UPDATE library_management_automatic_queue SET retag_followed_at = ?2 \
-         WHERE local_album_id = ?1",
+        crate::management::sql::STAMP_RETAG_FOLLOWED.text(),
         params![album_id, (now * 1000.0) as i64],
     )?;
     Ok(())
@@ -241,8 +234,7 @@ pub(crate) fn stamp_retag_followed(
 fn hand_back_stamped(conn: &Connection, album_id: &str) -> rusqlite::Result<bool> {
     Ok(conn
         .query_row(
-            "SELECT 1 FROM library_album_takeovers \
-             WHERE local_album_id = ?1 AND handed_back_at IS NOT NULL",
+            crate::management::sql::HAND_BACK_STAMPED.text(),
             params![album_id],
             |_| Ok(()),
         )
@@ -254,8 +246,7 @@ fn hand_back_stamped(conn: &Connection, album_id: &str) -> rusqlite::Result<bool
 fn retag_followed(conn: &Connection, album_id: &str) -> rusqlite::Result<bool> {
     Ok(conn
         .query_row(
-            "SELECT 1 FROM library_management_automatic_queue \
-             WHERE local_album_id = ?1 AND retag_followed_at IS NOT NULL",
+            crate::management::sql::RETAG_FOLLOWED.text(),
             params![album_id],
             |_| Ok(()),
         )
@@ -266,12 +257,7 @@ fn retag_followed(conn: &Connection, album_id: &str) -> rusqlite::Result<bool> {
 /// Look again at the skipped albums whose reason may have gone (`None`
 /// wakes every one).
 pub fn wake(conn: &Connection, code: Option<&str>, now: f64) -> rusqlite::Result<usize> {
-    conn.execute(
-        "UPDATE library_management_automatic_queue SET not_before = ?1, attempts = 0 \
-         WHERE last_reason_code IS NOT NULL AND not_before > ?1 \
-         AND (?2 IS NULL OR last_reason_code = ?2)",
-        params![now, code],
-    )
+    conn.execute(crate::management::sql::WAKE.text(), params![now, code])
 }
 
 /// A file's place and stat signature: changes when the file is moved,
@@ -319,10 +305,7 @@ struct AlbumFile {
 }
 
 fn album_files(conn: &Connection, album_id: &str) -> rusqlite::Result<Vec<AlbumFile>> {
-    let mut statement = conn.prepare_cached(
-        "SELECT id, root_id, relative_path, ingest_source, stat_revision FROM local_tracks \
-         WHERE local_album_id = ?1 AND availability = 'indexed' ORDER BY id",
-    )?;
+    let mut statement = conn.prepare_cached(crate::management::sql::ALBUM_FILES.text())?;
     let rows = statement.query_map(params![album_id], |row| {
         Ok(AlbumFile {
             id: row.get(0)?,
@@ -411,15 +394,7 @@ impl Management {
             .db
             .read_blocking("management.pending_writes", |conn| {
                 Ok::<_, ManagementError>(conn.query_row(
-                    "SELECT EXISTS(SELECT 1 FROM library_management_automatic_queue \
-                 WHERE local_album_id = ?1 AND not_before < ?2 \
-                 AND last_reason_code IS NOT 'PREVIEW_BLOCKED') \
-                 OR EXISTS(SELECT 1 FROM library_operation_jobs j \
-                 JOIN library_management_job_snapshots s ON s.job_id = j.id \
-                 WHERE j.kind = ?3 AND j.state IN ('queued', 'running', 'paused') \
-                 AND j.idempotency_key LIKE 'automatic:%' \
-                 AND EXISTS(SELECT 1 FROM json_each(s.selection_json, '$.ids') \
-                 WHERE value = ?1))",
+                    crate::management::sql::WRITES_BY_ITSELF.text(),
                     params![album_id, PARKED, store::KIND],
                     |row| row.get(0),
                 )?)
@@ -606,12 +581,11 @@ impl Management {
             .write_blocking(Lane::Background, "management.automatic_settle", |conn| {
                 match next {
                     None => conn.execute(
-                        "DELETE FROM library_management_automatic_queue WHERE local_album_id = ?1",
+                        crate::management::sql::DROP_AUTOMATIC_QUEUE_ROW.text(),
                         params![album_id],
                     )?,
                     Some((at, added, code)) => conn.execute(
-                        "UPDATE library_management_automatic_queue SET attempts = attempts + ?2, \
-                     not_before = ?3, last_reason_code = ?4 WHERE local_album_id = ?1",
+                        crate::management::sql::PUT_OFF_AUTOMATIC_ALBUM.text(),
                         params![album_id, added, at, code],
                     )?,
                 };
@@ -625,16 +599,8 @@ impl Management {
         self.parts
             .db
             .read_blocking("management.automatic_skipped", |conn| {
-                let mut statement = conn.prepare(
-                    "SELECT q.local_album_id, a.title, a.album_artist_name, \
-                 COALESCE(q.last_reason_code, ?2), q.attempts, \
-                 q.queued_at FROM library_management_automatic_queue q \
-                 JOIN local_albums a ON a.id = q.local_album_id \
-                 WHERE q.last_reason_code IS NOT NULL OR EXISTS (SELECT 1 \
-                 FROM library_identify_jobs j WHERE j.local_album_id = q.local_album_id \
-                 AND j.state IN ('queued', 'running', 'deferred')) \
-                 ORDER BY q.queued_at DESC LIMIT ?1",
-                )?;
+                let mut statement =
+                    conn.prepare(crate::management::sql::AUTOMATIC_SKIPPED.text())?;
                 let rows =
                     statement.query_map(params![limit.clamp(1, 200), IDENTIFYING], |row| {
                         Ok(SkippedAlbum {
@@ -727,7 +693,7 @@ impl Management {
         let excluded = self.parts.db.read_blocking("management.excluded", |conn| {
             Ok::<_, ManagementError>(
                 conn.query_row(
-                    "SELECT 1 FROM library_management_exclusions WHERE local_album_id = ?1",
+                    crate::management::sql::AUTOMATIC_GATE.text(),
                     params![album_id],
                     |_| Ok(()),
                 )

@@ -33,7 +33,6 @@ use super::worker::{Completion, VERIFY};
 use crate::identify::artist_links::{LINK_SET_BY_PERSON, audit_link, placeholder, would_group};
 use crate::identify::merged_ids;
 use crate::identity;
-use crate::identity::sql::PERSONS;
 use crate::scan::sqlite_store::artists::SENTINEL_ARTIST_IDS;
 
 const PROVIDER: &str = "musicbrainz";
@@ -143,20 +142,14 @@ struct AlbumInput {
 /// `_active_album_input`).
 fn album_input(conn: &Connection, album_id: &str) -> rusqlite::Result<Option<AlbumInput>> {
     let album: Option<(i64, String)> = conn
-        .prepare_cached(
-            "SELECT row_revision, album_artist_id FROM local_albums \
-             WHERE id = ?1 AND retired_into_album_id IS NULL",
-        )?
+        .prepare_cached(crate::contrib::sql::ALBUM_INPUT.text())?
         .query_row(params![album_id], |row| Ok((row.get(0)?, row.get(1)?)))
         .optional()?;
     let Some((row_revision, artist_id)) = album else {
         return Ok(None);
     };
     let tracks: Vec<(String, TrackInput)> = conn
-        .prepare_cached(
-            "SELECT id, tag_revision, stat_revision, applied_policy_revision, applied_policy \
-             FROM local_tracks WHERE local_album_id = ?1 AND availability = 'indexed'",
-        )?
+        .prepare_cached(crate::contrib::sql::ALBUM_INPUT_TRACKS.text())?
         .query_map(params![album_id], |row| {
             Ok((
                 row.get(0)?,
@@ -180,13 +173,6 @@ fn album_input(conn: &Connection, album_id: &str) -> rusqlite::Result<Option<Alb
         input_revision: format!("{tag}:{file}:{policy}"),
     }))
 }
-
-const ROW_COLUMNS: &str = "id, local_album_id, created_by_user_id, updated_by_user_id, state, \
-     album_row_revision, input_revision, local_snapshot_json, resolved_draft_json, \
-     source_selection_json, provider_snapshot_expires_at, duplicate_result_json, \
-     duplicate_checked_at, duplicate_input_revision, result_release_mbid, result_source, \
-     result_received_at, seed_snapshot_json, seed_hash, seeded_at, terminal_at, created_at, \
-     updated_at, row_revision, last_verification_failure";
 
 /// Raw column values; JSON decodes after the statement finishes.
 struct RawRow {
@@ -253,9 +239,7 @@ fn load_row(
     contribution_id: &str,
 ) -> Result<Option<ContributionRow>, ContribError> {
     let raw = conn
-        .prepare_cached(&format!(
-            "SELECT {ROW_COLUMNS} FROM library_contribution_drafts WHERE id = ?1"
-        ))?
+        .prepare_cached(crate::contrib::sql::LOAD_ROW.text())?
         .query_row(params![contribution_id], raw_row)
         .optional()?;
     let Some(raw) = raw else {
@@ -321,12 +305,9 @@ fn require_row(conn: &Connection, contribution_id: &str) -> Result<ContributionR
 }
 
 fn active_id_for_album(conn: &Connection, album_id: &str) -> rusqlite::Result<Option<String>> {
-    conn.prepare_cached(
-        "SELECT id FROM library_contribution_drafts WHERE local_album_id = ?1 \
-         AND state NOT IN ('linked','cancelled','stale') ORDER BY created_at DESC LIMIT 1",
-    )?
-    .query_row(params![album_id], |row| row.get(0))
-    .optional()
+    conn.prepare_cached(crate::contrib::sql::ACTIVE_ID_FOR_ALBUM.text())?
+        .query_row(params![album_id], |row| row.get(0))
+        .optional()
 }
 
 /// Write every mutable column of `row` back under the revision it was read
@@ -334,16 +315,7 @@ fn active_id_for_album(conn: &Connection, album_id: &str) -> rusqlite::Result<Op
 /// already holds the new revision.
 fn save_row(conn: &Connection, row: &ContributionRow, expected: i64) -> Result<(), ContribError> {
     let changed = conn
-        .prepare_cached(
-            "UPDATE library_contribution_drafts SET state = ?3, updated_by_user_id = ?4, \
-             album_row_revision = ?5, input_revision = ?6, resolved_draft_json = ?7, \
-             source_selection_json = ?8, provider_snapshot_expires_at = ?9, \
-             duplicate_result_json = ?10, duplicate_checked_at = ?11, \
-             duplicate_input_revision = ?12, result_release_mbid = ?13, result_source = ?14, \
-             result_received_at = ?15, seed_snapshot_json = ?16, seed_hash = ?17, \
-             seeded_at = ?18, terminal_at = ?19, updated_at = ?20, row_revision = ?21, \
-             last_verification_failure = ?22 WHERE id = ?1 AND row_revision = ?2",
-        )?
+        .prepare_cached(crate::contrib::sql::SAVE_ROW.text())?
         .execute(params![
             row.id,
             expected,
@@ -389,23 +361,18 @@ fn insert_row(
     now: f64,
 ) -> Result<String, ContribError> {
     let id = uuid::Uuid::new_v4().to_string();
-    conn.prepare_cached(
-        "INSERT INTO library_contribution_drafts (id, local_album_id, created_by_user_id, \
-         updated_by_user_id, state, album_row_revision, input_revision, local_snapshot_json, \
-         resolved_draft_json, source_selection_json, created_at, updated_at) \
-         VALUES (?1, ?2, ?3, ?3, 'draft', ?4, ?5, ?6, ?7, ?8, ?9, ?9)",
-    )?
-    .execute(params![
-        id,
-        local_album_id,
-        actor_user_id,
-        album_row_revision,
-        input_revision,
-        to_json(snapshot)?,
-        to_json(draft)?,
-        to_json(selection)?,
-        now,
-    ])?;
+    conn.prepare_cached(crate::contrib::sql::INSERT_ROW.text())?
+        .execute(params![
+            id,
+            local_album_id,
+            actor_user_id,
+            album_row_revision,
+            input_revision,
+            to_json(snapshot)?,
+            to_json(draft)?,
+            to_json(selection)?,
+            now,
+        ])?;
     Ok(id)
 }
 
@@ -414,11 +381,8 @@ fn insert_row(
 // ---------------------------------------------------------------------------
 
 fn consume_tokens(conn: &Connection, contribution_id: &str, now: f64) -> rusqlite::Result<()> {
-    conn.prepare_cached(
-        "UPDATE library_contribution_callback_tokens SET consumed_at = ?2 \
-         WHERE contribution_id = ?1 AND consumed_at IS NULL",
-    )?
-    .execute(params![contribution_id, now])?;
+    conn.prepare_cached(crate::contrib::sql::CONSUME_TOKENS.text())?
+        .execute(params![contribution_id, now])?;
     Ok(())
 }
 
@@ -443,51 +407,38 @@ fn album_identity(
     conn: &Connection,
     album_id: &str,
 ) -> rusqlite::Result<Option<(Option<String>, String)>> {
-    conn.prepare_cached(
-        "SELECT release_mbid, release_group_mbid FROM local_album_external_identities \
-         WHERE local_album_id = ?1 AND provider = ?2",
-    )?
-    .query_row(params![album_id, PROVIDER], |row| {
-        Ok((row.get(0)?, row.get(1)?))
-    })
-    .optional()
+    conn.prepare_cached(crate::contrib::sql::ALBUM_IDENTITY.text())?
+        .query_row(params![album_id, PROVIDER], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })
+        .optional()
 }
 
 fn artist_identity(conn: &Connection, artist_id: &str) -> rusqlite::Result<Option<String>> {
-    conn.prepare_cached(
-        "SELECT provider_artist_id FROM local_artist_external_identities \
-         WHERE local_artist_id = ?1 AND provider = ?2",
-    )?
-    .query_row(params![artist_id, PROVIDER], |row| row.get(0))
-    .optional()
+    conn.prepare_cached(crate::contrib::sql::ARTIST_IDENTITY.text())?
+        .query_row(params![artist_id, PROVIDER], |row| row.get(0))
+        .optional()
 }
 
 /// The artist's MusicBrainz link when a person or v2 made it. The app's
 /// own links are revisable, so a contribution may replace them.
 fn chosen_artist_identity(conn: &Connection, artist_id: &str) -> rusqlite::Result<Option<String>> {
-    conn.prepare_cached(&format!(
-        "SELECT provider_artist_id FROM local_artist_external_identities \
-         WHERE local_artist_id = ?1 AND provider = ?2 AND decision_source IN {PERSONS}"
-    ))?
-    .query_row(params![artist_id, PROVIDER], |row| row.get(0))
-    .optional()
+    conn.prepare_cached(crate::contrib::sql::CHOSEN_ARTIST_IDENTITY.text())?
+        .query_row(params![artist_id, PROVIDER], |row| row.get(0))
+        .optional()
 }
 
 /// Offer records `a` and `b` as one artist in an open merge candidate,
 /// for an admin to merge or tell apart.
 fn offer_merge(conn: &Connection, a: &str, b: &str, now: f64) -> rusqlite::Result<()> {
     let (left, right) = if a < b { (a, b) } else { (b, a) };
-    conn.prepare_cached(
-        "INSERT OR IGNORE INTO local_artist_merge_candidates (id, left_artist_id, \
-         right_artist_id, reason_code, created_at, updated_at) \
-         VALUES (?1, ?2, ?3, 'SHARED_PROVIDER_IDENTITY', ?4, ?4)",
-    )?
-    .execute(params![
-        format!("provider:{left}:{right}"),
-        left,
-        right,
-        now
-    ])?;
+    conn.prepare_cached(crate::contrib::sql::OFFER_MERGE.text())?
+        .execute(params![
+            format!("provider:{left}:{right}"),
+            left,
+            right,
+            now
+        ])?;
     Ok(())
 }
 
@@ -505,28 +456,23 @@ fn insert_attempt(
     let tag = parts.next().unwrap_or("");
     let file = parts.next().unwrap_or("");
     let policy = parts.next().unwrap_or("");
-    conn.prepare_cached(
-        "INSERT INTO library_identification_attempts (id, local_album_id, trigger, \
-         requested_by_user_id, input_tag_revision, input_policy_revision, input_file_revision, \
-         matcher_version, state, terminal_reason_code, selected_candidate_key, candidate_count, \
-         started_at, completed_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
-    )?
-    .execute(params![
-        attempt.id,
-        attempt.local_album_id,
-        ATTEMPT_TRIGGER,
-        attempt.requested_by_user_id,
-        tag,
-        policy,
-        file,
-        attempt.matcher_version,
-        state,
-        reason.unwrap_or(""),
-        selected_key,
-        attempt.candidate_count as i64,
-        attempt.started_at,
-        attempt.completed_at,
-    ])?;
+    conn.prepare_cached(crate::contrib::sql::INSERT_ATTEMPT.text())?
+        .execute(params![
+            attempt.id,
+            attempt.local_album_id,
+            ATTEMPT_TRIGGER,
+            attempt.requested_by_user_id,
+            tag,
+            policy,
+            file,
+            attempt.matcher_version,
+            state,
+            reason.unwrap_or(""),
+            selected_key,
+            attempt.candidate_count as i64,
+            attempt.started_at,
+            attempt.completed_at,
+        ])?;
     Ok(())
 }
 
@@ -558,10 +504,7 @@ fn commit_link(
     let album_unlinked = album_identity(conn, link.album_id)?.is_none();
     if album_unlinked {
         album_revision = conn
-            .prepare_cached(
-                "UPDATE local_albums SET updated_at = ?3, row_revision = row_revision + 1 \
-                 WHERE id = ?1 AND row_revision = ?2 RETURNING row_revision",
-            )?
+            .prepare_cached(crate::contrib::sql::BUMP_ALBUM_IF_REVISION.text())?
             .query_row(params![link.album_id, link.album_revision, now], |row| {
                 row.get(0)
             })
@@ -581,10 +524,7 @@ fn commit_link(
         let linkable = !placeholder(&mbid)
             && uuid::Uuid::parse_str(&mbid).is_ok()
             && conn
-                .prepare_cached(
-                    "SELECT kind <> 'various_artists' AND id NOT IN (?2, ?3) \
-                     AND retired_into_artist_id IS NULL FROM local_artists WHERE id = ?1",
-                )?
+                .prepare_cached(crate::contrib::sql::ARTIST_CAN_LINK.text())?
                 .query_row(
                     params![
                         link.artist_id,
@@ -599,7 +539,7 @@ fn commit_link(
         // while that account exists to be named in the audit.
         let actor: Option<String> = match link.owner {
             Some(user) => conn
-                .prepare_cached("SELECT id FROM auth_users WHERE id = ?1")?
+                .prepare_cached(crate::contrib::sql::USER_EXISTS.text())?
                 .query_row(params![user], |row| row.get(0))
                 .optional()?,
             None => None,
@@ -618,31 +558,17 @@ fn commit_link(
             && chosen_artist_identity(conn, link.artist_id)?.is_none()
         {
             let before = artist_identity(conn, link.artist_id)?;
-            conn.prepare_cached(
-                "UPDATE local_artists SET updated_at = ?2, row_revision = row_revision + 1 \
-                 WHERE id = ?1",
-            )?
-            .execute(params![link.artist_id, now])?;
-            conn.prepare_cached(
-                "INSERT INTO local_artist_external_identities (local_artist_id, provider, \
-                 provider_artist_id, decision_source, attempt_id, selected_by_user_id, \
-                 selected_at) VALUES (?1, ?2, ?3, 'manual', ?4, ?5, ?6) \
-                 ON CONFLICT (local_artist_id, provider) DO UPDATE SET \
-                 provider_artist_id = excluded.provider_artist_id, \
-                 decision_source = excluded.decision_source, \
-                 attempt_id = excluded.attempt_id, \
-                 selected_by_user_id = excluded.selected_by_user_id, \
-                 selected_at = excluded.selected_at, \
-                 row_revision = local_artist_external_identities.row_revision + 1",
-            )?
-            .execute(params![
-                link.artist_id,
-                PROVIDER,
-                mbid,
-                link.attempt.id,
-                actor,
-                now
-            ])?;
+            conn.prepare_cached(crate::contrib::sql::BUMP_ARTIST_REVISION.text())?
+                .execute(params![link.artist_id, now])?;
+            conn.prepare_cached(crate::contrib::sql::WRITE_ARTIST_LINK.text())?
+                .execute(params![
+                    link.artist_id,
+                    PROVIDER,
+                    mbid,
+                    link.attempt.id,
+                    actor,
+                    now
+                ])?;
             audit_link(
                 conn,
                 &actor,
@@ -684,17 +610,13 @@ fn commit_link(
         now,
     )?;
     // An identify review left open for this album is settled by the link.
-    conn.prepare_cached(
-        "UPDATE library_identify_reviews SET state = 'approved', resolved_by_user_id = ?2, \
-         selected_candidate_key = ?3, updated_ms = ?4 \
-         WHERE local_album_id = ?1 AND state = 'pending'",
-    )?
-    .execute(params![
-        link.album_id,
-        link.selected_by,
-        format!("{}:{}", link.release_group_mbid, link.release_mbid),
-        (now * 1000.0) as i64,
-    ])?;
+    conn.prepare_cached(crate::contrib::sql::APPROVE_PENDING_REVIEW.text())?
+        .execute(params![
+            link.album_id,
+            link.selected_by,
+            format!("{}:{}", link.release_group_mbid, link.release_mbid),
+            (now * 1000.0) as i64,
+        ])?;
     Ok(album_revision)
 }
 
@@ -733,18 +655,14 @@ fn apply(
                 requested_by_user_id,
                 expires_at,
             } => {
-                conn.prepare_cached(
-                    "INSERT INTO library_contribution_callback_tokens (token_hash, \
-                     contribution_id, requested_by_user_id, expires_at, created_at) \
-                     VALUES (?1, ?2, ?3, ?4, ?5)",
-                )?
-                .execute(params![
-                    token_hash,
-                    next.id,
-                    requested_by_user_id,
-                    expires_at,
-                    now
-                ])?;
+                conn.prepare_cached(crate::contrib::sql::APPLY.text())?
+                    .execute(params![
+                        token_hash,
+                        next.id,
+                        requested_by_user_id,
+                        expires_at,
+                        now
+                    ])?;
             }
             Effect::CancelJobs => cancel_jobs(queue, conn, &next.id)?,
             Effect::EnqueueJob => enqueue_job(queue, conn, &next.id)?,
@@ -941,10 +859,7 @@ impl SqliteContributions {
             "contrib.consume_callback_token",
             move |conn| {
                 let token: Option<String> = conn
-                    .prepare_cached(
-                        "SELECT contribution_id FROM library_contribution_callback_tokens \
-                     WHERE token_hash = ?1 AND consumed_at IS NULL AND expires_at >= ?2",
-                    )?
+                    .prepare_cached(crate::contrib::sql::CONSUME_CALLBACK_TOKEN.text())?
                     .query_row(params![hash, now], |row| row.get(0))
                     .optional()?;
                 let Some(contribution_id) = token else {
@@ -974,11 +889,7 @@ impl SqliteContributions {
             self.db.read("contrib.list_for_provider_purge", move |conn| {
                 let ids: Vec<String> = conn
                     .prepare_cached(
-                        "SELECT id FROM library_contribution_drafts \
-                         WHERE provider_snapshot_expires_at IS NOT NULL \
-                         AND (provider_snapshot_expires_at <= ?1 \
-                         OR state IN ('linked','cancelled','stale')) \
-                         ORDER BY provider_snapshot_expires_at, id LIMIT ?2",
+                        crate::contrib::sql::LIST_FOR_PROVIDER_PURGE.text(),
                     )?
                     .query_map(params![now, bounded], |row| row.get(0))?
                     .collect::<rusqlite::Result<_>>()?;
@@ -1100,19 +1011,12 @@ impl SqliteContributions {
             self.db
                 .write(Lane::Background, "contrib.clean_records", move |conn| {
                     conn.execute(
-                        "DELETE FROM library_contribution_callback_tokens WHERE \
-                         (consumed_at IS NOT NULL AND consumed_at < ?1) OR \
-                         (consumed_at IS NULL AND expires_at < ?2)",
+                        crate::contrib::sql::PRUNE_CALLBACK_TOKENS.text(),
                         params![now - 30.0 * DAY, now - 7.0 * DAY],
                     )?;
                     let ids: Vec<String> = conn
                         .prepare_cached(
-                            "SELECT id FROM library_contribution_drafts \
-                             WHERE seed_snapshot_json IS NOT NULL \
-                             AND (state IN ('linked','cancelled','stale') OR (seeded_at IS NOT NULL \
-                             AND NOT EXISTS (SELECT 1 FROM library_contribution_callback_tokens t \
-                             WHERE t.contribution_id = library_contribution_drafts.id \
-                             AND t.consumed_at IS NULL AND t.expires_at >= ?1))) ORDER BY id",
+                            crate::contrib::sql::DRAFTS_WITH_OLD_SEEDS.text(),
                         )?
                         .query_map(params![now], |row| row.get(0))?
                         .collect::<rusqlite::Result<_>>()?;
@@ -1126,17 +1030,14 @@ impl SqliteContributions {
                                 // A row that no longer decodes still loses its snapshot.
                                 tracing::warn!(%error, contribution = id, "contribution row does not decode; clearing its seed snapshot directly");
                                 conn.execute(
-                                    "UPDATE library_contribution_drafts SET seed_snapshot_json = NULL, \
-                                     row_revision = row_revision + 1 WHERE id = ?1",
+                                    crate::contrib::sql::DROP_DRAFT_SEED.text(),
                                     params![id],
                                 )?;
                             }
                         }
                     }
                     conn.execute(
-                        "DELETE FROM library_contribution_drafts \
-                         WHERE state IN ('cancelled','stale') AND result_release_mbid IS NULL \
-                         AND terminal_at < ?1",
+                        crate::contrib::sql::PRUNE_ENDED_DRAFTS.text(),
                         params![now - 90.0 * DAY],
                     )?;
                     Ok(())
@@ -1155,11 +1056,7 @@ fn album_context(
     album_id: &str,
 ) -> Result<Option<AlbumIdentificationContext>, ContribError> {
     let album = conn
-        .prepare_cached(
-            "SELECT id, row_revision, title, album_artist_name, album_artist_id, \
-             original_release_date, year, is_compilation FROM local_albums \
-             WHERE id = ?1 AND retired_into_album_id IS NULL",
-        )?
+        .prepare_cached(crate::contrib::sql::ALBUM_CONTEXT.text())?
         .query_row(params![album_id], |row| {
             Ok(IdentityAlbumRow {
                 id: row.get(0)?,
@@ -1184,7 +1081,7 @@ fn album_context(
         })
         .unwrap_or_default();
     let kind: String = conn
-        .prepare_cached("SELECT kind FROM local_artists WHERE id = ?1")?
+        .prepare_cached(crate::contrib::sql::ARTIST_KIND.text())?
         .query_row(params![album.album_artist_id], |row| row.get(0))
         .optional()?
         .unwrap_or_else(|| "unknown".to_owned());
@@ -1193,15 +1090,7 @@ fn album_context(
         provider_artist_id: artist_identity(conn, &album.album_artist_id)?,
     };
     let tracks = conn
-        .prepare_cached(
-            "SELECT t.id, t.disc_number, t.track_number, t.title, t.artist_name, \
-             t.duration_seconds, t.availability, t.disc_subtitle, t.relative_path, \
-             i.recording_mbid, t.embedded_recording_mbid, t.tag_revision, t.stat_revision, \
-             t.applied_policy_revision, t.applied_policy \
-             FROM local_tracks t LEFT JOIN local_track_external_identities i \
-             ON i.local_track_id = t.id AND i.provider = 'musicbrainz' \
-             WHERE t.local_album_id = ?1 ORDER BY t.disc_number, t.track_number, t.id",
-        )?
+        .prepare_cached(crate::contrib::sql::ALBUM_CONTEXT_TRACKS.text())?
         .query_map(params![album_id], |row| {
             Ok(IdentityTrack {
                 id: row.get(0)?,

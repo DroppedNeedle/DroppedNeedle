@@ -72,7 +72,7 @@ pub fn edition_status(
     album_id: &str,
 ) -> rusqlite::Result<Option<EditionStatus>> {
     let known: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM local_albums WHERE id = ?1)",
+        crate::operations::sql::ALBUM_EXISTS.text(),
         params![album_id],
         |row| row.get(0),
     )?;
@@ -81,9 +81,7 @@ pub fn edition_status(
     }
     let identity: Option<IdentityRow> = conn
         .query_row(
-            "SELECT release_group_mbid, release_mbid, decision_source, selected_by_user_id, \
-             selected_at, row_revision FROM local_album_external_identities \
-             WHERE local_album_id = ?1 AND provider = ?2",
+            crate::operations::sql::ALBUM_EDITION_IDENTITY.text(),
             params![album_id, PROVIDER],
             |row| {
                 Ok((
@@ -99,8 +97,7 @@ pub fn edition_status(
         .optional()?;
     let flagged: Option<(String, String, String)> = conn
         .query_row(
-            "SELECT state, reason_code, candidates_json FROM library_album_match_state \
-             WHERE local_album_id = ?1",
+            crate::operations::sql::ALBUM_MATCH_STATE.text(),
             params![album_id],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
@@ -114,7 +111,7 @@ pub fn edition_status(
             .is_some_and(crate::identity::DecisionSource::is_persons_choice)
     });
     let custom: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM library_custom_edition_active WHERE local_album_id = ?1)",
+        crate::operations::sql::CUSTOM_ACTIVE.text(),
         params![album_id],
         |row| row.get(0),
     )?;
@@ -183,7 +180,7 @@ pub fn edition_status(
 /// (its `library_edition_remap_queue` row); `None` once it is placed.
 pub(crate) fn placing_attempts(conn: &Connection, album_id: &str) -> rusqlite::Result<Option<u32>> {
     conn.query_row(
-        "SELECT attempts FROM library_edition_remap_queue WHERE local_album_id = ?1",
+        crate::operations::sql::PLACING_ATTEMPTS.text(),
         params![album_id],
         |row| row.get(0),
     )
@@ -195,8 +192,7 @@ pub(crate) fn placing_attempts(conn: &Connection, album_id: &str) -> rusqlite::R
 /// waits on a person, and the rest have ended.
 pub(crate) fn identifying(conn: &Connection, album_id: &str) -> rusqlite::Result<bool> {
     conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM library_identify_jobs WHERE local_album_id = ?1 \
-         AND state IN ('queued', 'running', 'deferred'))",
+        crate::operations::sql::IDENTIFYING.text(),
         params![album_id],
         |row| row.get(0),
     )
@@ -244,22 +240,11 @@ pub fn waiting_albums(
         "unconfirmed"
     };
     let total: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM library_album_match_state s \
-         JOIN local_albums a ON a.id = s.local_album_id \
-         WHERE s.state = ?1 AND a.retired_into_album_id IS NULL",
+        crate::operations::sql::WAITING_ALBUM_COUNT.text(),
         params![state],
         |row| row.get(0),
     )?;
-    let mut stmt = conn.prepare(
-        "SELECT s.local_album_id, a.title, COALESCE(a.album_artist_name, ''), s.reason_code, \
-         e.release_mbid, e.release_group_mbid, s.updated_at, COALESCE(e.row_revision, 0) \
-         FROM library_album_match_state s \
-         JOIN local_albums a ON a.id = s.local_album_id \
-         LEFT JOIN local_album_external_identities e \
-           ON e.local_album_id = s.local_album_id AND e.provider = ?2 \
-         WHERE s.state = ?1 AND a.retired_into_album_id IS NULL \
-         ORDER BY s.updated_at DESC, s.local_album_id LIMIT ?3 OFFSET ?4",
-    )?;
+    let mut stmt = conn.prepare(crate::operations::sql::WAITING_ALBUM_PAGE.text())?;
     let rows = stmt
         .query_map(params![state, PROVIDER, limit, offset], |row| {
             let code: String = row.get(3)?;

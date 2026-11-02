@@ -487,8 +487,7 @@ impl Management {
                             .read_blocking("management.duplicate_tracked", |conn| {
                                 Ok::<_, ManagementError>(
                                     conn.query_row(
-                                        "SELECT id FROM local_tracks WHERE root_id = ?1 \
-                                 AND relative_path = ?2 AND availability = 'indexed'",
+                                        crate::management::sql::PLAN_DUPLICATE.text(),
                                         rusqlite::params![
                                             intent.existing_root_id,
                                             intent.existing_relative_path

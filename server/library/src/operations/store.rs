@@ -38,10 +38,7 @@ pub(crate) fn job_after(conn: &Connection, job_id: &str) -> Result<OperationJob,
 
 /// The first work results of a job, and whether more exist.
 pub fn work_results(conn: &Connection, job_id: &str) -> rusqlite::Result<(Vec<WorkResult>, bool)> {
-    let mut stmt = conn.prepare(
-        "SELECT ordinal, local_album_id, local_track_id, action, state, failure_code, \
-         result_json FROM library_operation_work WHERE job_id = ?1 ORDER BY ordinal LIMIT ?2",
-    )?;
+    let mut stmt = conn.prepare(crate::operations::sql::WORK_RESULTS.text())?;
     let rows = stmt.query_map(params![job_id, (RESULTS_SHOWN + 1) as i64], |row| {
         let raw: Option<String> = row.get(6)?;
         Ok(WorkResult {
@@ -78,10 +75,7 @@ pub struct Snapshot {
 
 pub fn snapshot(conn: &Connection, job_id: &str) -> rusqlite::Result<Option<Snapshot>> {
     conn.query_row(
-        "SELECT local_album_id, expected_album_revision, expected_input_revision, \
-         expected_identity_revision, requested_release_mbid, selected_candidate_key, \
-         result_json, one_off_local_metadata FROM library_reidentification_snapshots \
-         WHERE job_id = ?1",
+        crate::operations::sql::SNAPSHOT.text(),
         params![job_id],
         |row| {
             let raw: Option<String> = row.get(6)?;
@@ -127,8 +121,7 @@ pub fn album_revisions(
 ) -> rusqlite::Result<Option<AlbumRevisions>> {
     let album_revision: Option<i64> = conn
         .query_row(
-            "SELECT row_revision FROM local_albums WHERE id = ?1 \
-             AND retired_into_album_id IS NULL",
+            crate::operations::sql::LIVE_ALBUM_REVISION.text(),
             params![album_id],
             |row| row.get(0),
         )
@@ -136,10 +129,7 @@ pub fn album_revisions(
     let Some(album_revision) = album_revision else {
         return Ok(None);
     };
-    let mut stmt = conn.prepare(
-        "SELECT DISTINCT applied_policy FROM local_tracks \
-         WHERE local_album_id = ?1 AND availability = 'indexed' ORDER BY applied_policy",
-    )?;
+    let mut stmt = conn.prepare(crate::operations::sql::ALBUM_APPLIED_POLICIES.text())?;
     let policies = stmt
         .query_map(params![album_id], |row| row.get::<_, String>(0))?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -207,10 +197,7 @@ fn local_metadata_managed(
     management: &Live<LibraryManagement>,
     album_id: &str,
 ) -> Result<bool, OperationError> {
-    let mut stmt = conn.prepare(
-        "SELECT DISTINCT root_id FROM local_tracks WHERE local_album_id = ?1 \
-         AND availability = 'indexed' AND applied_policy = 'local_metadata'",
-    )?;
+    let mut stmt = conn.prepare(crate::operations::sql::LOCAL_METADATA_MANAGED.text())?;
     let roots = stmt
         .query_map(params![album_id], |row| row.get::<_, String>(0))?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -300,10 +287,7 @@ pub fn create_reidentification(
         },
     )?;
     tx.execute(
-        "INSERT INTO library_reidentification_snapshots (job_id, local_album_id, \
-         expected_album_revision, expected_input_revision, expected_identity_revision, \
-         one_off_local_metadata, requested_release_mbid, created_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        crate::operations::sql::CREATE_REIDENTIFICATION.text(),
         params![
             new.job_id,
             new.local_album_id,
@@ -343,11 +327,7 @@ fn live_reidentification(
 ) -> rusqlite::Result<Option<OperationJob>> {
     let id: Option<String> = conn
         .query_row(
-            "SELECT id FROM library_operation_jobs \
-             WHERE kind = ?1 AND state IN (?3, ?4) AND id IN \
-             (SELECT job_id FROM library_reidentification_snapshots WHERE local_album_id = ?2 \
-              AND one_off_local_metadata >= ?5) \
-             ORDER BY created_at LIMIT 1",
+            crate::operations::sql::LIVE_REIDENTIFICATION.text(),
             params![
                 OperationKind::ExplicitReidentification,
                 album_id,
@@ -386,8 +366,7 @@ pub fn request_control(
         }
         let prior: Option<(String, String)> = tx
             .query_row(
-                "SELECT job_id, control FROM library_operation_control_idempotency \
-                 WHERE idempotency_key = ?1",
+                crate::operations::sql::CONTROL_OF_IDEMPOTENCY_KEY.text(),
                 params![key],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
@@ -404,8 +383,7 @@ pub fn request_control(
     }
     if let Some(key) = idempotency_key {
         tx.execute(
-            "INSERT INTO library_operation_control_idempotency \
-             (idempotency_key, job_id, control, requested_at) VALUES (?1, ?2, ?3, ?4)",
+            crate::operations::sql::RECORD_CONTROL_REQUEST.text(),
             params![key, job_id, control.as_str(), now],
         )?;
     }
@@ -415,8 +393,7 @@ pub fn request_control(
         ControlPlan::StopNow => ControlChange::StopNow,
         ControlPlan::Requeue(Requeue::Restart) => {
             tx.execute(
-                "UPDATE library_reidentification_snapshots SET result_json = NULL, \
-                 selected_candidate_key = NULL WHERE job_id = ?1",
+                crate::operations::sql::CLEAR_REIDENTIFICATION_RESULT.text(),
                 params![job_id],
             )?;
             ControlChange::Restart

@@ -16,8 +16,7 @@ impl SqliteScanStore {
         let state: Option<String> = self.read_long(stop, "scan_scope_state", |conn| {
             Ok(conn
                 .query_row(
-                    "SELECT discovery_state FROM library_scan_run_scopes \
-                     WHERE run_id = ?1 AND root_id = ?2 AND relative_path = ?3",
+                    crate::scan::sql::SCOPE_DISCOVERY_STATE.text(),
                     params![run_id, root_id, relative_path],
                     |row| row.get::<_, String>(0),
                 )
@@ -40,8 +39,7 @@ impl SqliteScanStore {
         let generation: Option<i64> = self.read_long(stop, "scan_scope_generation", |conn| {
             Ok(conn
                 .query_row(
-                    "SELECT discovery_generation FROM library_scan_run_scopes \
-                     WHERE run_id = ?1 AND root_id = ?2 AND relative_path = ?3",
+                    crate::scan::sql::SCOPE_DISCOVERY_GENERATION.text(),
                     params![run_id, root_id, relative_path],
                     |row| row.get::<_, i64>(0),
                 )
@@ -63,8 +61,7 @@ impl SqliteScanStore {
     ) -> Result<(), ScanStoreError> {
         self.write(stop, Lane::Background, "scan_scope_done", |tx| {
             tx.execute(
-                "UPDATE library_scan_run_scopes SET discovery_state = ?1, error_code = ?2 \
-                 WHERE run_id = ?3 AND root_id = ?4 AND relative_path = ?5",
+                crate::scan::sql::COMPLETE_SCOPE_DISCOVERY.text(),
                 params![state.as_str(), error_code, run_id, root_id, relative_path],
             )?;
             Ok(())
@@ -84,9 +81,7 @@ impl SqliteScanStore {
     ) -> Result<(), ScanStoreError> {
         self.write(stop, Lane::Background, "scan_scope_walk_start", |tx| {
             tx.execute(
-                "UPDATE library_scan_run_scopes SET walk_revision = COALESCE(walk_revision, \
-                 (SELECT revision FROM library_scan_fences WHERE singleton = 1)) \
-                 WHERE run_id = ?1 AND root_id = ?2 AND relative_path = ?3",
+                crate::scan::sql::BEGIN_SCOPE_WALK.text(),
                 params![run_id, root_id, relative_path],
             )?;
             Ok(())
@@ -102,9 +97,7 @@ impl SqliteScanStore {
     ) -> Result<(), ScanStoreError> {
         self.write(stop, Lane::Background, "scan_scope_restart", |tx| {
             tx.execute(
-                "UPDATE library_scan_run_scopes SET discovery_state = 'pending', error_code = NULL, \
-                 discovery_generation = discovery_generation + 1, walk_revision = NULL \
-                 WHERE run_id = ?1 AND root_id = ?2 AND relative_path = ?3",
+                crate::scan::sql::RESTART_SCOPE_DISCOVERY.text(),
                 params![run_id, root_id, relative_path],
             )?;
             Ok(())
@@ -118,21 +111,10 @@ impl SqliteScanStore {
     ) -> Result<(), ScanStoreError> {
         self.write(stop, Lane::Background, "scan_discovery_resume", |tx| {
             tx.execute(
-                "UPDATE library_scan_run_scopes SET discovery_state = 'pending', \
-                 error_code = NULL, discovery_generation = discovery_generation + 1, \
-                 walk_revision = NULL \
-                 WHERE run_id = ?1 AND discovery_state != 'completed'",
+                crate::scan::sql::RESET_SCOPES_FOR_RESUME.text(),
                 params![run_id],
             )?;
-            tx.execute(
-                "UPDATE library_scan_runs SET discovered_count = ( \
-                 SELECT COUNT(*) FROM library_scan_inventory i \
-                 JOIN library_scan_run_scopes s ON s.run_id = i.run_id \
-                 AND s.root_id = i.root_id AND s.relative_path = i.scope_relative_path \
-                 WHERE i.run_id = ?1 AND s.discovery_generation = i.discovery_generation \
-                 ), row_revision = row_revision + 1 WHERE id = ?1",
-                params![run_id],
-            )?;
+            tx.execute(crate::scan::sql::RECOUNT_DISCOVERED.text(), params![run_id])?;
             Ok(())
         })
     }
@@ -150,18 +132,7 @@ impl SqliteScanStore {
                 });
             }
             tx.execute(
-                "UPDATE library_scan_runs SET total_count = ( \
-                 SELECT COUNT(*) FROM library_scan_inventory i \
-                 JOIN library_scan_run_scopes s ON s.run_id = i.run_id \
-                 AND s.root_id = i.root_id AND s.relative_path = i.scope_relative_path \
-                 WHERE i.run_id = ?1 AND s.discovery_generation = i.discovery_generation \
-                 ), discovered_count = ( \
-                 SELECT COUNT(*) FROM library_scan_inventory i \
-                 JOIN library_scan_run_scopes s ON s.run_id = i.run_id \
-                 AND s.root_id = i.root_id AND s.relative_path = i.scope_relative_path \
-                 WHERE i.run_id = ?1 AND s.discovery_generation = i.discovery_generation \
-                 ), updated_at = ?2, row_revision = row_revision + 1, \
-                 event_revision = event_revision + 1 WHERE id = ?1",
+                crate::scan::sql::FINALIZE_DISCOVERY.text(),
                 params![run_id, updated_at],
             )?;
             bump_scan_stream(tx)?;
@@ -246,19 +217,7 @@ impl SqliteScanStore {
         // Inventory rows freeze at discovery; the track id lands in the
         // catalog at index time, so it comes from there when missing.
         let mut rows = self.read("scan_run_files", |conn| {
-            let mut stmt = conn.prepare(
-                "SELECT i.root_id, i.relative_path, i.absolute_path, i.file_size_bytes, \
-                 i.file_mtime_ns, i.stat_revision, i.effective_policy, i.comparison_result, \
-                 i.policy_revision, COALESCE(i.local_track_id, t.id) AS local_track_id, \
-                 i.scope_relative_path \
-                 FROM library_scan_inventory i \
-                 JOIN library_scan_run_scopes s ON s.run_id = i.run_id \
-                 AND s.root_id = i.root_id AND s.relative_path = i.scope_relative_path \
-                 LEFT JOIN local_tracks t ON t.root_id = i.root_id \
-                 AND t.relative_path = i.relative_path \
-                 WHERE i.run_id = ?1 AND s.discovery_generation = i.discovery_generation \
-                 ORDER BY i.rowid DESC LIMIT ?2",
-            )?;
+            let mut stmt = conn.prepare(crate::scan::sql::INVENTORY_FOR_RUN.text())?;
             let rows = stmt
                 .query_map(params![run_id, limit as i64], map_inventory)?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -289,18 +248,7 @@ impl SqliteScanStore {
         // probes the tiny scopes table per row; no sort, no offset rescan.
         let (after_root, after_path) = after.unwrap_or(("", ""));
         let items = self.read_long(stop, "scan_inventory_page", |conn| {
-            let mut stmt = conn.prepare_cached(
-                "SELECT i.root_id, i.relative_path, i.absolute_path, i.file_size_bytes, \
-                 i.file_mtime_ns, i.stat_revision, i.effective_policy, i.comparison_result, \
-                 i.policy_revision, i.local_track_id, i.scope_relative_path \
-                 FROM library_scan_inventory i \
-                 JOIN library_scan_run_scopes s ON s.run_id = i.run_id \
-                 AND s.root_id = i.root_id AND s.relative_path = i.scope_relative_path \
-                 WHERE i.run_id = ?1 AND s.discovery_generation = i.discovery_generation \
-                 AND i.processing_state = 'pending' \
-                 AND (i.root_id, i.relative_path) > (?2, ?3) \
-                 ORDER BY i.root_id, i.relative_path LIMIT ?4",
-            )?;
+            let mut stmt = conn.prepare_cached(crate::scan::sql::INVENTORY_PAGE.text())?;
             let rows = stmt
                 .query_map(
                     params![run_id, after_root, after_path, limit.max(1) as i64],
@@ -327,29 +275,8 @@ fn write_inventory(
     generation: u64,
     isolate: bool,
 ) -> rusqlite::Result<(u64, usize)> {
-    let mut insert = tx.prepare_cached(
-        "INSERT INTO library_scan_inventory (run_id, root_id, relative_path, \
-         scope_relative_path, discovery_generation, absolute_path, file_size_bytes, \
-         file_mtime_ns, stat_revision, policy_revision, effective_policy, \
-         comparison_result, local_track_id) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13) \
-         ON CONFLICT (run_id, root_id, relative_path) DO UPDATE SET \
-         scope_relative_path = excluded.scope_relative_path, \
-         discovery_generation = excluded.discovery_generation, \
-         absolute_path = excluded.absolute_path, \
-         file_size_bytes = excluded.file_size_bytes, \
-         file_mtime_ns = excluded.file_mtime_ns, \
-         stat_revision = excluded.stat_revision, \
-         policy_revision = excluded.policy_revision, \
-         effective_policy = excluded.effective_policy, \
-         comparison_result = excluded.comparison_result, \
-         local_track_id = excluded.local_track_id, processing_state = 'pending'",
-    )?;
-    let mut failure = tx.prepare_cached(
-        "INSERT OR IGNORE INTO library_scan_failures \
-         (run_id, root_id, relative_path, failure_code, failure_detail, phase, \
-         recorded_at) VALUES (?1, ?2, ?3, ?4, ?5, 'discovering', ?6)",
-    )?;
+    let mut insert = tx.prepare_cached(crate::scan::sql::WRITE_INVENTORY_ROW.text())?;
+    let mut failure = tx.prepare_cached(crate::scan::sql::RECORD_INVENTORY_FAILURE.text())?;
     let mut seen: HashSet<&str> = HashSet::new();
     let mut landed = 0i64;
     let mut refused = 0usize;
@@ -402,12 +329,11 @@ fn write_inventory(
         }
     }
     tx.execute(
-        "UPDATE library_scan_runs SET discovered_count = discovered_count + ?1, \
-         updated_at = ?2, row_revision = row_revision + 1 WHERE id = ?3",
+        crate::scan::sql::ADD_DISCOVERED_COUNT.text(),
         params![landed, updated_at, run_id],
     )?;
     let revision: i64 = tx.query_row(
-        "SELECT row_revision FROM library_scan_runs WHERE id = ?1",
+        crate::scan::sql::RUN_REVISION.text(),
         params![run_id],
         |row| row.get(0),
     )?;

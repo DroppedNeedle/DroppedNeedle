@@ -83,7 +83,7 @@ pub fn export(conn: &Connection, run_id: &str) -> Result<(String, Vec<u8>), Oper
     if !valid_run_id(run_id) {
         return Err(OperationError::Invalid(reasons::RUN_ID_INVALID));
     }
-    let mut stmt = conn.prepare("SELECT * FROM library_scan_runs WHERE id = ?1")?;
+    let mut stmt = conn.prepare(crate::repairs::sql::EXPORT_RUN.text())?;
     let (run, _) = rows(
         &mut stmt,
         params![run_id],
@@ -93,17 +93,9 @@ pub fn export(conn: &Connection, run_id: &str) -> Result<(String, Vec<u8>), Oper
     let Some(run) = run.into_iter().next() else {
         return Err(OperationError::NotFound(reasons::RUN_NOT_FOUND));
     };
-    let mut stmt = conn.prepare(
-        "SELECT root_id, relative_path, effective_policy, policy_revision, estimated_count, \
-         discovered_count, discovery_state, reconciliation_state, phase_timings_json, error_code \
-         FROM library_scan_run_scopes WHERE run_id = ?1 ORDER BY scope_sequence",
-    )?;
+    let mut stmt = conn.prepare(crate::repairs::sql::EXPORT_RUN_SCOPES.text())?;
     let (scopes, scopes_truncated) = rows(&mut stmt, params![run_id], MAX_ROWS, &[])?;
-    let mut stmt = conn.prepare(
-        "SELECT root_id, relative_path, comparison_result, processing_state, failure_code, \
-         file_size_bytes FROM library_scan_inventory WHERE run_id = ?1 \
-         ORDER BY root_id, relative_path",
-    )?;
+    let mut stmt = conn.prepare(crate::repairs::sql::EXPORT_RUN_INVENTORY.text())?;
     let (inventory, inventory_truncated) = rows(
         &mut stmt,
         params![run_id],
@@ -111,18 +103,12 @@ pub fn export(conn: &Connection, run_id: &str) -> Result<(String, Vec<u8>), Oper
         &[],
     )?;
     // The failure detail is error text, which the report leaves out.
-    let mut stmt = conn.prepare(
-        "SELECT root_id, relative_path, failure_code, phase, recorded_at \
-         FROM library_scan_failures WHERE run_id = ?1 ORDER BY recorded_at, root_id, relative_path",
-    )?;
+    let mut stmt = conn.prepare(crate::repairs::sql::EXPORT_RUN_FAILURES.text())?;
     let (failures, failures_truncated) = rows(&mut stmt, params![run_id], MAX_ROWS, &[])?;
     let identification: Option<Value> = conn
-        .query_row(
-            "SELECT json_group_object(state, n) FROM \
-             (SELECT state, COUNT(*) AS n FROM library_identify_jobs GROUP BY state)",
-            [],
-            |row| row.get::<_, String>(0),
-        )
+        .query_row(crate::repairs::sql::EXPORT_JOB_COUNTS.text(), [], |row| {
+            row.get::<_, String>(0)
+        })
         .optional()?
         .and_then(|raw| serde_json::from_str(&raw).ok());
     let document = json!({

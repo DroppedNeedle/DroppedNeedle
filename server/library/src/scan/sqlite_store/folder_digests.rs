@@ -20,10 +20,7 @@ impl SqliteScanStore {
         root_id: &str,
     ) -> Result<HashMap<String, FolderDigest>, ScanStoreError> {
         self.read_long(&RunStop::never(), "scan_folder_digests", |conn| {
-            let mut stmt = conn.prepare(
-                "SELECT relative_path, digest, audio_files FROM library_folder_digests \
-                 WHERE root_id = ?1",
-            )?;
+            let mut stmt = conn.prepare(crate::scan::sql::FOLDER_DIGESTS.text())?;
             let rows = stmt
                 .query_map(params![root_id], |row| {
                     Ok((
@@ -55,15 +52,11 @@ impl SqliteScanStore {
                 for (folder, digest) in rows {
                     match digest {
                         Some(digest) => tx.execute(
-                            "INSERT INTO library_folder_digests \
-                             (root_id, relative_path, digest, audio_files) VALUES (?1, ?2, ?3, ?4) \
-                             ON CONFLICT (root_id, relative_path) DO UPDATE SET \
-                             digest = excluded.digest, audio_files = excluded.audio_files",
+                            crate::scan::sql::WRITE_FOLDER_DIGEST.text(),
                             params![root_id, folder, digest.digest, digest.audio_files],
                         )?,
                         None => tx.execute(
-                            "DELETE FROM library_folder_digests \
-                             WHERE root_id = ?1 AND relative_path = ?2",
+                            crate::scan::sql::DROP_FOLDER_DIGEST.text(),
                             params![root_id, folder],
                         )?,
                     };

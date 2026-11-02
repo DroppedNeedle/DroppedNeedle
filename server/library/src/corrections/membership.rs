@@ -222,8 +222,7 @@ pub(super) fn load_album(
 ) -> Result<Option<AlbumRow>, CorrectionError> {
     Ok(tx
         .query_row(
-            "SELECT id, title, COALESCE(album_artist_name, ''), row_revision, grouping_source \
-             FROM local_albums WHERE id = ?1 AND retired_into_album_id IS NULL",
+            crate::corrections::sql::LOAD_ALBUM.text(),
             params![album_id],
             |row| {
                 Ok(AlbumRow {
@@ -242,7 +241,7 @@ pub(super) fn album_track_ids(
     tx: &Transaction<'_>,
     album_id: &str,
 ) -> rusqlite::Result<Vec<String>> {
-    tx.prepare("SELECT id FROM local_tracks WHERE local_album_id = ?1 ORDER BY relative_path, id")?
+    tx.prepare(crate::corrections::sql::ALBUM_TRACK_IDS.text())?
         .query_map(params![album_id], |row| row.get(0))?
         .collect()
 }
@@ -289,7 +288,7 @@ pub(super) fn identity_state(
     for album in albums {
         let revision: i64 = tx
             .query_row(
-                "SELECT row_revision FROM local_albums WHERE id = ?1",
+                crate::corrections::sql::IDENTITY_STATE.text(),
                 params![album],
                 |row| row.get(0),
             )
@@ -314,25 +313,23 @@ pub(crate) fn retire(
     now: f64,
 ) -> rusqlite::Result<()> {
     tx.execute(
-        "UPDATE local_albums SET retired_into_album_id = ?2, grouping_locked = 1, \
-         updated_at = ?3, row_revision = row_revision + 1 WHERE id = ?1",
+        crate::corrections::sql::RETIRE_ALBUM.text(),
         params![album_id, successor, now],
     )?;
     tx.execute(
-        "UPDATE local_albums SET retired_into_album_id = ?2 WHERE retired_into_album_id = ?1",
+        crate::corrections::sql::REPOINT_RETIRED_ALBUMS.text(),
         params![album_id, successor],
     )?;
     tx.execute(
-        "DELETE FROM library_retag_pairs WHERE old_album_id = ?1 AND state = 'open'",
+        crate::corrections::sql::DROP_OPEN_RETAG_PAIRS.text(),
         params![album_id],
     )?;
     tx.execute(
-        "UPDATE local_album_aliases SET local_album_id = ?2 WHERE local_album_id = ?1",
+        crate::corrections::sql::REPOINT_ALBUM_ALIASES.text(),
         params![album_id, successor],
     )?;
     tx.execute(
-        "INSERT OR IGNORE INTO local_album_aliases (alias, local_album_id, kind, created_at) \
-         VALUES (?1, ?2, 'merged_album', ?3)",
+        crate::corrections::sql::ADD_MERGED_ALBUM_ALIAS.text(),
         params![album_id, successor, now],
     )?;
     retarget_references(tx, "album", album_id, successor)?;
@@ -341,33 +338,27 @@ pub(crate) fn retire(
     // album field overrides. So does the app's own step back from it.
     takeover::copy_mark(tx, album_id, successor)?;
     tx.execute(
-        "DELETE FROM library_album_takeovers WHERE local_album_id = ?1",
+        crate::corrections::sql::DROP_ALBUM_TAKEOVER.text(),
         params![album_id],
     )?;
     tx.execute(
-        "INSERT OR IGNORE INTO library_management_exclusions (local_album_id, reason, \
-         excluded_by_user_id, excluded_at) SELECT ?2, reason, excluded_by_user_id, excluded_at \
-         FROM library_management_exclusions WHERE local_album_id = ?1",
+        crate::corrections::sql::COPY_EXCLUSION.text(),
         params![album_id, successor],
     )?;
     tx.execute(
-        "DELETE FROM library_management_exclusions WHERE local_album_id = ?1",
+        crate::corrections::sql::DROP_EXCLUSION.text(),
         params![album_id],
     )?;
     tx.execute(
-        "UPDATE OR IGNORE library_management_overrides SET local_album_id = ?2, \
-         updated_at = ?3, row_revision = row_revision + 1 \
-         WHERE local_album_id = ?1 AND subject_kind = 'album'",
+        crate::corrections::sql::REPOINT_ALBUM_OVERRIDES.text(),
         params![album_id, successor, now],
     )?;
     tx.execute(
-        "UPDATE library_identify_reviews SET state = 'rejected', updated_ms = ?2 \
-         WHERE local_album_id = ?1 AND state = 'pending'",
+        crate::corrections::sql::REJECT_PENDING_REVIEWS.text(),
         params![album_id, crate::clock::ms(now)],
     )?;
     tx.execute(
-        "DELETE FROM library_identify_jobs WHERE local_album_id = ?1 \
-         AND state IN ('queued', 'deferred')",
+        crate::corrections::sql::DROP_WAITING_JOBS.text(),
         params![album_id],
     )?;
     // Its reviews and queued jobs went: open review screens refetch.
@@ -396,8 +387,7 @@ pub(super) fn offer(tx: &Transaction<'_>, albums: &[String], now: f64) -> rusqli
     let now_ms = crate::clock::ms(now);
     for album in albums {
         let live: bool = tx.query_row(
-            "SELECT EXISTS(SELECT 1 FROM local_albums WHERE id = ?1 \
-             AND retired_into_album_id IS NULL)",
+            crate::corrections::sql::OFFER.text(),
             params![album],
             |row| row.get(0),
         )?;
@@ -519,11 +509,7 @@ pub(super) fn regroup(
         }
     }
     for album in live_sources.iter().chain(std::iter::once(&dest.id)) {
-        tx.execute(
-            "UPDATE local_albums SET grouping_source = 'manual', grouping_locked = 1, \
-             updated_at = ?2, row_revision = row_revision + 1 WHERE id = ?1",
-            params![album, now],
-        )?;
+        tx.execute(crate::corrections::sql::REGROUP.text(), params![album, now])?;
     }
     let settled = edition::settle(
         tx,
@@ -592,13 +578,7 @@ fn create_split_album(
         .unwrap_or(&source.album_artist_name)
         .to_owned();
     tx.execute(
-        "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
-         album_artist_name, album_artist_name_folded, album_artist_id, album_artist_sort_name, \
-         year, original_release_date, primary_genre, is_compilation, grouping_source, \
-         grouping_locked, created_at, updated_at) \
-         SELECT ?1, root_id, 'manual:' || ?1, ?2, ?3, ?4, ?5, album_artist_id, \
-         album_artist_sort_name, year, original_release_date, primary_genre, is_compilation, \
-         'manual', 1, ?6, ?6 FROM local_albums WHERE id = ?7",
+        crate::corrections::sql::ADD_SPLIT_ALBUM.text(),
         params![
             id,
             title,
@@ -610,9 +590,7 @@ fn create_split_album(
         ],
     )?;
     tx.execute(
-        "INSERT INTO local_album_artists (local_album_id, position, local_artist_id, role, \
-         credited_name, join_phrase) SELECT ?1, position, local_artist_id, role, credited_name, \
-         join_phrase FROM local_album_artists WHERE local_album_id = ?2",
+        crate::corrections::sql::COPY_SPLIT_ALBUM_CREDITS.text(),
         params![id, source.id],
     )?;
     Ok(AlbumRow {

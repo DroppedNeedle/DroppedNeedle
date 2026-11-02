@@ -18,8 +18,8 @@
 //! contributions and the publish journal (with its snapshots and
 //! baselines) all live in the application database.
 
-// The identity module's one `sql!` block expands one level per statement.
-#![recursion_limit = "256"]
+// A `sql!` block expands one level per statement.
+#![recursion_limit = "4096"]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
@@ -36,6 +36,7 @@ pub mod identity;
 pub mod import;
 pub mod jobs;
 mod loops;
+mod sql;
 pub use loops::{LEFTOVERS_JOB, LOOPS};
 pub mod manage;
 pub mod management;
@@ -60,7 +61,16 @@ pub mod wiring;
 #[cfg(any(test, feature = "test-support"))]
 pub fn statement_files() -> Vec<droppedneedle_kernel::db::statement::StatementFile> {
     vec![
+        sql::registered(),
+        activity::sql::registered(),
+        corrections::sql::registered(),
+        identify::sql::registered(),
+        import::sql::registered(),
+        operations::sql::registered(),
+        reconcile::sql::registered(),
+        repairs::sql::registered(),
         scan::sql::registered(),
+        scan::sqlite_store::sql::registered(),
         identity::sql::registered(),
         contrib::sql::registered(),
         publish::sql::registered(),

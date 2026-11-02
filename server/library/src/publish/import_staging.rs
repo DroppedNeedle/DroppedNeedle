@@ -47,12 +47,7 @@ pub(crate) fn staging_settled(
 ) -> rusqlite::Result<bool> {
     let folder = format!("{task_dir}/");
     let unsettled: bool = conn.query_row(
-        "SELECT EXISTS (SELECT 1 FROM library_publish_journal \
-         WHERE bundle_id IN (SELECT bundle_id FROM library_publish_journal \
-         WHERE substr(source_rel, 1, length(?1)) = ?1) \
-         AND state NOT IN ('cleaned', 'compensated', 'cleanup_pending') \
-         AND NOT (state = 'needs_attention' AND bundle_id IN \
-         (SELECT bundle_id FROM library_publish_resolutions)))",
+        crate::publish::sql::STAGING_SETTLED.text(),
         rusqlite::params![folder],
         |row| row.get(0),
     )?;
@@ -67,11 +62,7 @@ pub(crate) fn staging_needs_attention(
 ) -> rusqlite::Result<bool> {
     let folder = format!("{task_dir}/");
     conn.query_row(
-        "SELECT EXISTS (SELECT 1 FROM library_publish_journal \
-         WHERE bundle_id IN (SELECT bundle_id FROM library_publish_journal \
-         WHERE substr(source_rel, 1, length(?1)) = ?1) \
-         AND state = 'needs_attention' AND bundle_id NOT IN \
-         (SELECT bundle_id FROM library_publish_resolutions))",
+        crate::publish::sql::STAGING_NEEDS_ATTENTION.text(),
         rusqlite::params![folder],
         |row| row.get(0),
     )

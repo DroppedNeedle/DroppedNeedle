@@ -138,23 +138,17 @@ impl SqliteScanStore {
             let mut marked = 0;
             for checked in pending.iter() {
                 tx.execute(
-                    "DELETE FROM local_track_lyrics WHERE local_track_id IN \
-                     (SELECT id FROM local_tracks WHERE local_album_id = ?1)",
+                    crate::scan::sql::DROP_ALBUM_LYRICS.text(),
                     params![checked.album_id],
                 )?;
                 for (track_id, source) in &checked.marks {
                     marked += tx.execute(
-                        "INSERT INTO local_track_lyrics (local_track_id, source) \
-                         SELECT ?1, ?2 WHERE EXISTS (SELECT 1 FROM local_tracks WHERE id = ?1) \
-                         ON CONFLICT(local_track_id) DO UPDATE SET source = excluded.source",
+                        crate::scan::sql::WRITE_TRACK_LYRICS.text(),
                         params![track_id, source.as_str()],
                     )?;
                 }
                 tx.execute(
-                    "INSERT INTO local_album_lyrics_checks (local_album_id, signature, checked_at) \
-                     SELECT ?1, ?2, ?3 WHERE EXISTS (SELECT 1 FROM local_albums WHERE id = ?1) \
-                     ON CONFLICT(local_album_id) DO UPDATE SET \
-                     signature = excluded.signature, checked_at = excluded.checked_at",
+                    crate::scan::sql::WRITE_LYRICS_CHECK.text(),
                     params![checked.album_id, checked.signature, now],
                 )?;
             }

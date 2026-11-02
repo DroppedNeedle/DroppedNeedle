@@ -8,6 +8,7 @@
 //! poller.
 
 pub mod feed;
+pub(crate) mod sql;
 pub mod store;
 
 use std::sync::Arc;

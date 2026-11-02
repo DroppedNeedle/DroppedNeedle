@@ -106,8 +106,7 @@ pub(super) fn merge(
     for id in &all {
         let revision: i64 = tx
             .query_row(
-                "SELECT row_revision FROM local_artists WHERE id = ?1 \
-                 AND retired_into_artist_id IS NULL",
+                crate::corrections::sql::LIVE_ARTIST_REVISION.text(),
                 params![id],
                 |row| row.get(0),
             )
@@ -153,23 +152,21 @@ pub(super) fn merge(
     match request.provider_choice {
         ProviderChoice::Detach => {
             tx.execute(
-                "DELETE FROM local_artist_external_identities WHERE local_artist_id = ?1",
+                crate::corrections::sql::DROP_ARTIST_LINKS.text(),
                 params![survivor],
             )?;
         }
         ProviderChoice::RetainSurvivor => {
             if let Some(row) = carried_row.flatten() {
                 tx.execute(
-                    "INSERT INTO local_artist_external_identities (local_artist_id, provider, \
-                     provider_artist_id, decision_source, selected_at) VALUES (?1, 'musicbrainz', \
-                     ?2, ?3, ?4)",
+                    crate::corrections::sql::WRITE_MERGED_ARTIST_LINK.text(),
                     params![survivor, row.0, row.1, now],
                 )?;
             }
         }
     }
     tx.execute(
-        "UPDATE local_artists SET updated_at = ?2, row_revision = row_revision + 1 WHERE id = ?1",
+        crate::corrections::sql::MERGE_GROUP.text(),
         params![survivor, now],
     )?;
     let material = serde_json::to_string(&Material {
@@ -213,8 +210,7 @@ fn identity_row(
     artist_id: &str,
 ) -> rusqlite::Result<Option<(String, String)>> {
     tx.query_row(
-        "SELECT provider_artist_id, decision_source FROM local_artist_external_identities \
-         WHERE local_artist_id = ?1 AND provider = 'musicbrainz'",
+        crate::corrections::sql::IDENTITY_ROW.text(),
         params![artist_id],
         |row| Ok((row.get(0)?, row.get(1)?)),
     )
@@ -270,23 +266,17 @@ pub(super) fn retire_artist(
     // A row waiting to follow its credits to `artist`, or whose credits a
     // scan moved to it, follows them on to the survivor; every other open
     // candidate naming `artist` is resolved below.
-    tx.prepare_cached(
-        "UPDATE OR IGNORE local_artist_merge_candidates SET right_artist_id = ?2, \
-         updated_at = ?3, row_revision = row_revision + 1 \
-         WHERE reason_code IN (?4, ?5, ?6) AND state = 'open' AND right_artist_id = ?1 \
-         AND left_artist_id <> ?2",
-    )?
-    .execute(params![
-        artist,
-        survivor,
-        now,
-        CREDITS_MOVED,
-        MOVED_BY_NAME,
-        MOVED_WITH_ID
-    ])?;
+    tx.prepare_cached(crate::corrections::sql::REPOINT_MERGE_CANDIDATES.text())?
+        .execute(params![
+            artist,
+            survivor,
+            now,
+            CREDITS_MOVED,
+            MOVED_BY_NAME,
+            MOVED_WITH_ID
+        ])?;
     let moves = [
-        "UPDATE local_album_artists SET local_artist_id = ?2, row_revision = row_revision + 1 \
-         WHERE local_artist_id = ?1",
+        crate::corrections::sql::REPOINT_ALBUM_CREDITS.text(),
         "UPDATE local_track_artists SET local_artist_id = ?2, row_revision = row_revision + 1 \
          WHERE local_artist_id = ?1",
         "UPDATE local_albums SET album_artist_id = ?2, updated_at = ?3, \

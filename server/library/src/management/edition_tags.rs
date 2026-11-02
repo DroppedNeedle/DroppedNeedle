@@ -121,10 +121,7 @@ struct Album {
 }
 
 fn album(conn: &Connection, album_id: &str, release_mbid: &str) -> rusqlite::Result<Option<Album>> {
-    let mut statement = conn.prepare(
-        "SELECT root_id, relative_path FROM local_tracks \
-         WHERE local_album_id = ?1 AND availability = 'indexed' ORDER BY root_id",
-    )?;
+    let mut statement = conn.prepare(crate::management::sql::ALBUM_TRACK_PATHS.text())?;
     let files = statement
         .query_map(params![album_id], |row| Ok((row.get(0)?, row.get(1)?)))?
         .collect::<rusqlite::Result<Vec<(String, String)>>>()?;
@@ -135,7 +132,7 @@ fn album(conn: &Connection, album_id: &str, release_mbid: &str) -> rusqlite::Res
     roots.dedup();
     let custom = conn
         .query_row(
-            "SELECT 1 FROM library_custom_edition_active WHERE local_album_id = ?1",
+            crate::management::sql::ALBUM_HAS_CUSTOM_EDITION.text(),
             params![album_id],
             |_| Ok(()),
         )
@@ -143,7 +140,7 @@ fn album(conn: &Connection, album_id: &str, release_mbid: &str) -> rusqlite::Res
         .is_some();
     let excluded = conn
         .query_row(
-            "SELECT 1 FROM library_management_exclusions WHERE local_album_id = ?1",
+            crate::management::sql::AUTOMATIC_GATE.text(),
             params![album_id],
             |_| Ok(()),
         )
@@ -151,7 +148,7 @@ fn album(conn: &Connection, album_id: &str, release_mbid: &str) -> rusqlite::Res
         .is_some();
     let placing = conn
         .query_row(
-            "SELECT attempts FROM library_edition_remap_queue WHERE local_album_id = ?1",
+            crate::management::sql::EDITION_REMAP_ATTEMPTS.text(),
             params![album_id],
             |row| row.get(0),
         )

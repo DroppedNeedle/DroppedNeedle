@@ -86,12 +86,6 @@ impl Snapshot {
     }
 }
 
-const SNAPSHOT_COLUMNS: &str = "s.mode, s.origin, s.phase, s.selection_json, s.profile_revision, \
-     s.settings_revision, s.naming_revision, s.policy_revision, s.catalog_revision, \
-     s.profile_snapshot_json, s.preview_created_at, s.preview_expires_at, \
-     s.target_root_id, s.linked_operation_job_id, s.intent_json, s.summary_json, \
-     j.idempotency_key, j.lease_expires_at, j.heartbeat_at, j.id, s.proposed_settings_revision";
-
 fn map_snapshot(conn: &Connection, row: &rusqlite::Row<'_>) -> rusqlite::Result<Option<Snapshot>> {
     let job_id: String = row.get(19)?;
     let Some(job) = jobs::job(conn, &job_id)? else {
@@ -124,10 +118,7 @@ fn map_snapshot(conn: &Connection, row: &rusqlite::Row<'_>) -> rusqlite::Result<
 
 /// One management job, or `None` when the id names no management job.
 pub fn snapshot(conn: &Connection, job_id: &str) -> rusqlite::Result<Option<Snapshot>> {
-    let mut statement = conn.prepare_cached(&format!(
-        "SELECT {SNAPSHOT_COLUMNS} FROM library_management_job_snapshots s \
-         JOIN library_operation_jobs j ON j.id = s.job_id WHERE s.job_id = ?1 AND j.kind = ?2"
-    ))?;
+    let mut statement = conn.prepare_cached(crate::management::sql::SNAPSHOT.text())?;
     let mut rows = statement.query(params![job_id, KIND])?;
     match rows.next()? {
         Some(row) => map_snapshot(conn, row),
@@ -178,13 +169,7 @@ pub fn insert_job(
         },
     )?;
     tx.execute(
-        "INSERT INTO library_management_job_snapshots (job_id, mode, origin, phase, \
-         selection_json, profile_revision, settings_revision, naming_revision, policy_revision, \
-         catalog_revision, profile_snapshot_json, preview_created_at, preview_expires_at, \
-         target_root_id, linked_operation_job_id, intent_json, summary_json, created_at, \
-         updated_at, proposed_settings_revision) \
-         VALUES (?1, ?2, ?16, ?18, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, \
-         ?14, ?15, ?10, ?10, ?17)",
+        crate::management::sql::INSERT_JOB.text(),
         params![
             job.id,
             job.mode,
@@ -215,7 +200,7 @@ pub fn insert_job(
 /// A job's phase, or `None` when the id names no management job.
 pub fn phase(conn: &Connection, job_id: &str) -> rusqlite::Result<Option<ManagementPhase>> {
     conn.query_row(
-        "SELECT phase FROM library_management_job_snapshots WHERE job_id = ?1",
+        crate::management::sql::PHASE.text(),
         params![job_id],
         |row| row.get(0),
     )
@@ -230,8 +215,7 @@ fn set_phase(
     now: f64,
 ) -> rusqlite::Result<()> {
     tx.execute(
-        "UPDATE library_management_job_snapshots SET phase = ?2, updated_at = ?3, \
-         row_revision = row_revision + 1 WHERE job_id = ?1",
+        crate::management::sql::SET_PHASE.text(),
         params![job_id, phase, now],
     )?;
     Ok(())
@@ -239,10 +223,7 @@ fn set_phase(
 
 /// Drop planned files before (re)planning.
 pub fn clear_items(conn: &Connection, job_id: &str) -> rusqlite::Result<()> {
-    conn.execute(
-        "DELETE FROM library_management_plan_items WHERE job_id = ?1",
-        params![job_id],
-    )?;
+    conn.execute(crate::management::sql::CLEAR_ITEMS.text(), params![job_id])?;
     Ok(())
 }
 
@@ -254,18 +235,7 @@ pub fn insert_items(
     items: &[PlannedItem],
     now: f64,
 ) -> Result<(), super::models::ManagementError> {
-    let mut statement = tx.prepare_cached(
-        "INSERT INTO library_management_plan_items (job_id, ordinal, bundle_ordinal, \
-         local_album_id, local_track_id, expected_album_revision, expected_identity_revision, \
-         expected_album_identity_revision, expected_override_revision, expected_catalog_revision, \
-         expected_policy_revision, expected_profile_revision, expected_root_id, \
-         expected_relative_path, expected_stat_revision, expected_tag_revision, \
-         expected_file_fingerprint, source_path_identity, destination_root_id, \
-         destination_relative_path, desired_document_json, desired_document_hash, diff_json, \
-         capability_json, eligibility, reason_code, estimated_temporary_bytes, created_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, '', ?16, ?17, \
-         ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27)",
-    )?;
+    let mut statement = tx.prepare_cached(crate::management::sql::INSERT_ITEMS.text())?;
     for item in items {
         let plan = item.desired.plan.as_ref();
         let positive = |value: u64| i64::try_from(value).ok().filter(|value| *value >= 1);
@@ -316,8 +286,7 @@ pub fn finish_planning(
         return Ok(false);
     }
     tx.execute(
-        "UPDATE library_management_job_snapshots SET phase = ?4, summary_json = ?2, \
-         updated_at = ?3, row_revision = row_revision + 1 WHERE job_id = ?1",
+        crate::management::sql::FINISH_PLANNING.text(),
         params![
             job_id,
             serde_json::to_string(summary)?,
@@ -327,11 +296,6 @@ pub fn finish_planning(
     )?;
     Ok(true)
 }
-
-const ITEM_COLUMNS: &str = "ordinal, bundle_ordinal, local_album_id, local_track_id, \
-     expected_album_revision, expected_root_id, expected_relative_path, destination_root_id, \
-     destination_relative_path, eligibility, estimated_temporary_bytes, expected_file_fingerprint, \
-     desired_document_json, diff_json, capability_json, reason_code";
 
 fn map_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<PlannedItem> {
     let parse_or_default = |index: usize| -> rusqlite::Result<String> { row.get(index) };
@@ -377,20 +341,7 @@ pub fn items_page(
     filter: &ItemFilter,
 ) -> rusqlite::Result<ItemPage> {
     let change = filter.change_kind.as_deref();
-    let mut statement = conn.prepare_cached(&format!(
-        "SELECT {ITEM_COLUMNS} FROM library_management_plan_items WHERE job_id = ?1 \
-         AND ordinal > ?2 AND (?3 IS NULL OR eligibility = ?3) \
-         AND (?4 IS NULL OR reason_code = ?4) AND (?5 IS NULL OR expected_root_id = ?5) \
-         AND (?6 IS NULL OR local_album_id = ?6) \
-         AND (?7 IS NULL OR json_extract(capability_json, '$.audio_format') = ?7) \
-         AND (?8 IS NULL \
-           OR (?8 = 'tags' AND json_extract(diff_json, '$.tags_changed') = 1) \
-           OR (?8 = 'path' AND json_extract(diff_json, '$.path_changed') = 1) \
-           OR (?8 = 'sidecars' AND json_array_length(diff_json, '$.sidecars') > 0) \
-           OR (?8 = 'no_change' AND COALESCE(json_extract(diff_json, '$.tags_changed'), 0) = 0 \
-               AND COALESCE(json_extract(diff_json, '$.path_changed'), 0) = 0)) \
-         ORDER BY ordinal LIMIT ?9"
-    ))?;
+    let mut statement = conn.prepare_cached(crate::management::sql::ITEMS_PAGE.text())?;
     let rows = statement.query_map(
         params![
             job_id,
@@ -425,10 +376,7 @@ pub fn bundle_items(
     job_id: &str,
     bundle_ordinal: i64,
 ) -> rusqlite::Result<Vec<PlannedItem>> {
-    let mut statement = conn.prepare_cached(&format!(
-        "SELECT {ITEM_COLUMNS} FROM library_management_plan_items \
-         WHERE job_id = ?1 AND bundle_ordinal = ?2 ORDER BY ordinal"
-    ))?;
+    let mut statement = conn.prepare_cached(crate::management::sql::BUNDLE_ITEMS.text())?;
     let rows = statement.query_map(params![job_id, bundle_ordinal], map_item)?;
     rows.collect()
 }
@@ -439,14 +387,7 @@ pub fn writable_bundles(
     conn: &Connection,
     job_id: &str,
 ) -> rusqlite::Result<Vec<(i64, String, i64)>> {
-    let mut statement = conn.prepare(
-        "SELECT bundle_ordinal, MIN(local_album_id), COALESCE(MIN(expected_album_revision), 1) \
-         FROM library_management_plan_items WHERE job_id = ?1 \
-         GROUP BY bundle_ordinal \
-         HAVING SUM(eligibility NOT IN ('eligible', 'warning')) = 0 \
-         AND SUM(json_extract(desired_document_json, '$.plan') IS NOT NULL) > 0 \
-         ORDER BY bundle_ordinal",
-    )?;
+    let mut statement = conn.prepare(crate::management::sql::WRITABLE_BUNDLES.text())?;
     let rows = statement.query_map(params![job_id], |row| {
         Ok((row.get(0)?, row.get(1)?, row.get(2)?))
     })?;
@@ -481,9 +422,7 @@ pub fn begin_apply(
         )?;
     }
     tx.execute(
-        "UPDATE library_management_job_snapshots SET mode = ?2, phase = ?3, \
-         apply_idempotency_key = ?4, updated_at = ?5, row_revision = row_revision + 1 \
-         WHERE job_id = ?1",
+        crate::management::sql::BEGIN_APPLY.text(),
         params![job_id, mode, phase, idempotency_key, now],
     )?;
     jobs::queue_work(tx, job_id, bundles.len() as i64, now)
@@ -538,7 +477,7 @@ pub fn finish_apply(
 /// The request key a job was applied with, if any.
 pub fn apply_key(conn: &Connection, job_id: &str) -> rusqlite::Result<Option<String>> {
     conn.query_row(
-        "SELECT apply_idempotency_key FROM library_management_job_snapshots WHERE job_id = ?1",
+        crate::management::sql::APPLY_KEY.text(),
         params![job_id],
         |row| row.get(0),
     )
@@ -549,8 +488,7 @@ pub fn apply_key(conn: &Connection, job_id: &str) -> rusqlite::Result<Option<Str
 /// Remember the request key a job was applied with.
 pub fn record_apply_key(tx: &Transaction<'_>, job_id: &str, key: &str) -> rusqlite::Result<()> {
     tx.execute(
-        "UPDATE library_management_job_snapshots SET apply_idempotency_key = ?2 \
-         WHERE job_id = ?1 AND apply_idempotency_key IS NULL",
+        crate::management::sql::RECORD_APPLY_KEY.text(),
         params![job_id, key],
     )?;
     Ok(())
@@ -564,18 +502,9 @@ pub fn record_refresh_job(
     queued: i64,
 ) -> rusqlite::Result<()> {
     let sql = match target {
-        RefreshTarget::Jellyfin => {
-            "UPDATE library_management_job_snapshots SET jellyfin_refresh_job_id = ?2 \
-             WHERE job_id = ?1"
-        }
-        RefreshTarget::Plex => {
-            "UPDATE library_management_job_snapshots SET plex_refresh_job_id = ?2 \
-             WHERE job_id = ?1"
-        }
-        RefreshTarget::Navidrome => {
-            "UPDATE library_management_job_snapshots SET navidrome_refresh_job_id = ?2 \
-             WHERE job_id = ?1"
-        }
+        RefreshTarget::Jellyfin => crate::management::sql::SET_JELLYFIN_REFRESH_JOB.text(),
+        RefreshTarget::Plex => crate::management::sql::SET_PLEX_REFRESH_JOB.text(),
+        RefreshTarget::Navidrome => crate::management::sql::SET_NAVIDROME_REFRESH_JOB.text(),
     };
     tx.execute(sql, params![job_id, queued])?;
     Ok(())
@@ -588,8 +517,7 @@ pub fn refresh_jobs(
 ) -> rusqlite::Result<Vec<(RefreshTarget, i64)>> {
     let ids: Option<[Option<i64>; 3]> = conn
         .query_row(
-            "SELECT jellyfin_refresh_job_id, plex_refresh_job_id, navidrome_refresh_job_id \
-             FROM library_management_job_snapshots WHERE job_id = ?1",
+            crate::management::sql::REFRESH_JOBS.text(),
             params![job_id],
             |row| Ok([row.get(0)?, row.get(1)?, row.get(2)?]),
         )
@@ -613,8 +541,7 @@ pub fn refresh_jobs(
 /// Change a job's mode.
 pub fn set_mode(tx: &Transaction<'_>, job_id: &str, mode: &str) -> rusqlite::Result<()> {
     tx.execute(
-        "UPDATE library_management_job_snapshots SET mode = ?2, row_revision = row_revision + 1 \
-         WHERE job_id = ?1",
+        crate::management::sql::SET_MODE.text(),
         params![job_id, mode],
     )?;
     Ok(())
@@ -622,10 +549,7 @@ pub fn set_mode(tx: &Transaction<'_>, job_id: &str, mode: &str) -> rusqlite::Res
 
 /// The album bundles a job planned.
 pub fn bundle_ordinals(conn: &Connection, job_id: &str) -> rusqlite::Result<Vec<i64>> {
-    let mut statement = conn.prepare(
-        "SELECT DISTINCT bundle_ordinal FROM library_management_plan_items WHERE job_id = ?1 \
-         ORDER BY bundle_ordinal",
-    )?;
+    let mut statement = conn.prepare(crate::management::sql::BUNDLE_ORDINALS.text())?;
     let rows = statement.query_map(params![job_id], |row| row.get(0))?;
     rows.collect()
 }
@@ -747,14 +671,12 @@ pub fn album_state(
 ) -> rusqlite::Result<(Option<i64>, Vec<String>)> {
     let revision = conn
         .query_row(
-            "SELECT row_revision FROM local_albums WHERE id = ?1",
+            crate::management::sql::ALBUM_REVISION.text(),
             params![album_id],
             |row| row.get(0),
         )
         .optional()?;
-    let mut statement = conn.prepare_cached(
-        "SELECT id FROM local_tracks WHERE local_album_id = ?1 AND availability = 'indexed'",
-    )?;
+    let mut statement = conn.prepare_cached(crate::management::sql::ALBUM_INDEXED_TRACKS.text())?;
     let tracks = statement
         .query_map(params![album_id], |row| row.get(0))?
         .collect::<rusqlite::Result<Vec<String>>>()?;
@@ -768,13 +690,7 @@ pub fn live_undos(
     job_id: &str,
     now: f64,
 ) -> rusqlite::Result<Vec<(OperationState, ManagementPhase)>> {
-    let mut statement = conn.prepare(
-        "SELECT j.state, s.phase FROM library_management_job_snapshots s \
-         JOIN library_operation_jobs j ON j.id = s.job_id \
-         WHERE s.linked_operation_job_id = ?1 AND s.mode = 'undo' \
-         AND j.state NOT IN (?3, ?4, ?5) \
-         AND NOT (s.phase IN (?6, ?7) AND COALESCE(s.preview_expires_at, 0) <= ?2)",
-    )?;
+    let mut statement = conn.prepare(crate::management::sql::LIVE_UNDOS.text())?;
     let rows = statement.query_map(
         params![
             job_id,
@@ -795,11 +711,7 @@ pub fn undone_ordinals(
     conn: &Connection,
     job_id: &str,
 ) -> rusqlite::Result<std::collections::HashSet<i64>> {
-    let mut statement = conn.prepare(
-        "SELECT w.ordinal FROM library_operation_work w \
-         JOIN library_management_job_snapshots s ON s.job_id = w.job_id \
-         WHERE s.linked_operation_job_id = ?1 AND s.mode = 'undo' AND w.state = ?2",
-    )?;
+    let mut statement = conn.prepare(crate::management::sql::UNDONE_ORDINALS.text())?;
     let rows = statement.query_map(params![job_id, WorkState::Succeeded], |row| row.get(0))?;
     rows.collect()
 }
@@ -844,9 +756,7 @@ pub fn undo_counts(conn: &Connection, job_id: &str, today: i64) -> rusqlite::Res
 /// Files of a job with a saved original a baseline restore could use.
 pub fn baseline_available(conn: &Connection, job_id: &str) -> rusqlite::Result<i64> {
     conn.query_row(
-        "SELECT COUNT(DISTINCT p.local_track_id) FROM library_management_plan_items p \
-         JOIN library_publish_baselines b ON b.track_id = p.local_track_id \
-         WHERE p.job_id = ?1",
+        crate::management::sql::BASELINE_AVAILABLE.text(),
         params![job_id],
         |row| row.get(0),
     )
@@ -861,17 +771,7 @@ pub fn history(
         .cursor
         .clone()
         .map_or((None, None), |(at, id)| (Some(at), Some(id)));
-    let mut statement = conn.prepare(&format!(
-        "SELECT {SNAPSHOT_COLUMNS} FROM library_management_job_snapshots s \
-         JOIN library_operation_jobs j ON j.id = s.job_id WHERE j.kind = ?1 \
-         AND (?2 IS NULL OR s.origin = ?2) AND (?3 IS NULL OR s.target_root_id = ?3 \
-           OR s.selection_json LIKE '%' || ?3 || '%') \
-         AND (?4 IS NULL OR j.state = ?4) AND (?5 IS NULL OR s.mode = ?5) \
-         AND (?6 IS NULL OR j.created_at >= ?6) AND (?7 IS NULL OR j.created_at <= ?7) \
-         AND (?8 IS NULL OR json_extract(s.profile_snapshot_json, '$.profile.id') = ?8) \
-         AND (?9 IS NULL OR j.created_at < ?9 OR (j.created_at = ?9 AND j.id < ?10)) \
-         ORDER BY j.created_at DESC, j.id DESC LIMIT ?11"
-    ))?;
+    let mut statement = conn.prepare(crate::management::sql::HISTORY.text())?;
     let mut rows = statement.query(params![
         KIND,
         filter.origin,
@@ -951,24 +851,7 @@ pub fn mark_managed(
 ) -> rusqlite::Result<()> {
     let revision = |value: Option<u64>| value.and_then(|value| i64::try_from(value).ok());
     tx.execute(
-        "INSERT INTO library_track_management_state (local_track_id, applied_profile_id, \
-         applied_profile_revision, applied_naming_script_revision, applied_override_revision, \
-         last_operation_job_id, managed_root_id, last_managed_at, last_outcome, \
-         managed_path_revision, written_sha256) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'succeeded', ?9, ?10) \
-         ON CONFLICT (local_track_id) DO UPDATE SET \
-         written_sha256 = COALESCE(excluded.written_sha256, \
-         library_track_management_state.written_sha256), \
-         applied_profile_id = excluded.applied_profile_id, \
-         applied_profile_revision = excluded.applied_profile_revision, \
-         applied_naming_script_revision = excluded.applied_naming_script_revision, \
-         applied_override_revision = excluded.applied_override_revision, \
-         last_operation_job_id = excluded.last_operation_job_id, \
-         managed_root_id = excluded.managed_root_id, \
-         last_managed_at = excluded.last_managed_at, last_outcome = 'succeeded', \
-         managed_path_revision = excluded.managed_path_revision, \
-         last_reason_code = NULL, \
-         row_revision = library_track_management_state.row_revision + 1",
+        crate::management::sql::WRITE_MANAGED_STATE.text(),
         params![
             mark.track_id,
             mark.profile_id,
@@ -983,11 +866,7 @@ pub fn mark_managed(
         ],
     )?;
     tx.execute(
-        "INSERT INTO library_track_management_identity (local_track_id, \
-         applied_album_identity_revision, applied_track_identity_revision) VALUES (?1, ?2, ?3) \
-         ON CONFLICT (local_track_id) DO UPDATE SET \
-         applied_album_identity_revision = excluded.applied_album_identity_revision, \
-         applied_track_identity_revision = excluded.applied_track_identity_revision",
+        crate::management::sql::WRITE_MANAGED_IDENTITY.text(),
         params![
             mark.track_id,
             revision(mark.album_identity_revision),
@@ -1006,18 +885,11 @@ pub fn mark_restored(
     now: f64,
 ) -> rusqlite::Result<()> {
     tx.execute(
-        "INSERT INTO library_track_management_state (local_track_id, last_operation_job_id, \
-         last_managed_at, last_outcome) VALUES (?1, ?2, ?3, 'restored') \
-         ON CONFLICT (local_track_id) DO UPDATE SET applied_profile_id = NULL, \
-         applied_profile_revision = NULL, applied_naming_script_revision = NULL, \
-         applied_override_revision = NULL, managed_path_revision = NULL, \
-         last_operation_job_id = excluded.last_operation_job_id, \
-         last_managed_at = excluded.last_managed_at, last_outcome = 'restored', \
-         row_revision = library_track_management_state.row_revision + 1",
+        crate::management::sql::WRITE_RESTORED_STATE.text(),
         params![track_id, job_id, now],
     )?;
     tx.execute(
-        "DELETE FROM library_track_management_identity WHERE local_track_id = ?1",
+        crate::management::sql::DROP_MANAGED_IDENTITY.text(),
         params![track_id],
     )?;
     Ok(())
@@ -1040,13 +912,7 @@ pub struct TrackState {
 
 pub fn track_state(conn: &Connection, track_id: &str) -> rusqlite::Result<Option<TrackState>> {
     conn.query_row(
-        "SELECT s.applied_profile_id, s.applied_profile_revision, \
-         s.applied_naming_script_revision, s.applied_override_revision, s.managed_root_id, \
-         s.last_outcome, s.last_managed_at, i.applied_album_identity_revision, \
-         i.applied_track_identity_revision, s.managed_path_revision \
-         FROM library_track_management_state s \
-         LEFT JOIN library_track_management_identity i ON i.local_track_id = s.local_track_id \
-         WHERE s.local_track_id = ?1",
+        crate::management::sql::TRACK_STATE.text(),
         params![track_id],
         |row| {
             Ok(TrackState {
@@ -1161,8 +1027,7 @@ pub fn edit_override_revisions(
 ) -> rusqlite::Result<std::collections::HashMap<String, (u64, u64)>> {
     let raw: Option<String> = conn
         .query_row(
-            "SELECT json_extract(result_json, '$.override_revisions') FROM library_operation_work \
-             WHERE job_id = ?1 AND ordinal = ?2",
+            crate::management::sql::EDIT_OVERRIDE_REVISIONS.text(),
             params![job_id, ordinal],
             |row| row.get(0),
         )

@@ -221,22 +221,7 @@ impl SqliteScanStore {
                         });
                         if !same {
                             changed += tx.execute(
-                                "INSERT INTO local_album_artwork \
-                                 (local_album_id, source, source_locator, content_hash, \
-                                  updated_at, version) \
-                                 SELECT ?1, ?2, ?3, ?4, ?5, COALESCE((SELECT art_version \
-                                     FROM local_album_artwork_checks \
-                                     WHERE local_album_id = ?1), 0) + 1 \
-                                 WHERE EXISTS (SELECT 1 FROM local_albums WHERE id = ?1) \
-                                 ON CONFLICT(local_album_id) DO UPDATE SET \
-                                 source = excluded.source, \
-                                 source_locator = excluded.source_locator, \
-                                 cover_url = NULL, \
-                                 version = CASE WHEN content_hash IS excluded.content_hash \
-                                     THEN version ELSE MAX(version + 1, excluded.version) END, \
-                                 content_hash = excluded.content_hash, \
-                                 updated_at = excluded.updated_at, \
-                                 row_revision = row_revision + 1",
+                                crate::scan::sql::WRITE_ARTWORK_ROW.text(),
                                 params![
                                     checked.album_id,
                                     found.source,
@@ -249,21 +234,13 @@ impl SqliteScanStore {
                     }
                     None => {
                         cleared += tx.execute(
-                            "DELETE FROM local_album_artwork \
-                             WHERE local_album_id = ?1 AND source IN ('folder', 'embedded')",
+                            crate::scan::sql::DROP_FILE_ARTWORK.text(),
                             params![checked.album_id],
                         )?;
                     }
                 }
                 tx.execute(
-                    "INSERT INTO local_album_artwork_checks \
-                     (local_album_id, signature, checked_at, art_version) \
-                     SELECT ?1, ?2, ?3, COALESCE((SELECT version FROM local_album_artwork \
-                         WHERE local_album_id = ?1), 0) \
-                     WHERE EXISTS (SELECT 1 FROM local_albums WHERE id = ?1) \
-                     ON CONFLICT(local_album_id) DO UPDATE SET \
-                     signature = excluded.signature, checked_at = excluded.checked_at, \
-                     art_version = MAX(art_version, excluded.art_version)",
+                    crate::scan::sql::WRITE_ARTWORK_CHECK.text(),
                     params![checked.album_id, checked.signature, now],
                 )?;
             }
@@ -287,12 +264,7 @@ pub(super) fn album_tracks(
     conn: &rusqlite::Connection,
 ) -> rusqlite::Result<Vec<(String, Vec<TrackFile>)>> {
     let mut albums: Vec<(String, Vec<TrackFile>)> = Vec::new();
-    let mut tracks = conn.prepare(
-        "SELECT t.local_album_id, t.id, t.file_path, t.stat_revision \
-         FROM local_tracks t JOIN local_albums a ON a.id = t.local_album_id \
-         WHERE t.availability = 'indexed' AND a.retired_into_album_id IS NULL \
-         ORDER BY t.local_album_id, t.disc_number, t.track_number, t.id",
-    )?;
+    let mut tracks = conn.prepare(crate::scan::sql::ALBUM_TRACKS.text())?;
     let mut rows = tracks.query([])?;
     while let Some(row) = rows.next()? {
         let album_id: String = row.get(0)?;
@@ -475,9 +447,7 @@ fn sweep_snapshot(conn: &rusqlite::Connection) -> rusqlite::Result<Snapshot> {
         albums: album_tracks(conn)?,
         ..Snapshot::default()
     };
-    let mut current = conn.prepare(
-        "SELECT local_album_id, source, source_locator, content_hash FROM local_album_artwork",
-    )?;
+    let mut current = conn.prepare(crate::scan::sql::ALL_ARTWORK.text())?;
     let mut rows = current.query([])?;
     while let Some(row) = rows.next()? {
         snapshot.current.insert(
@@ -489,14 +459,12 @@ fn sweep_snapshot(conn: &rusqlite::Connection) -> rusqlite::Result<Snapshot> {
             },
         );
     }
-    let mut checks =
-        conn.prepare("SELECT local_album_id, signature FROM local_album_artwork_checks")?;
+    let mut checks = conn.prepare(crate::scan::sql::ALL_ARTWORK_CHECKS.text())?;
     let mut rows = checks.query([])?;
     while let Some(row) = rows.next()? {
         snapshot.checks.insert(row.get(0)?, row.get(1)?);
     }
-    let mut checks =
-        conn.prepare("SELECT local_album_id, signature FROM local_album_lyrics_checks")?;
+    let mut checks = conn.prepare(crate::scan::sql::ALL_LYRICS_CHECKS.text())?;
     let mut rows = checks.query([])?;
     while let Some(row) = rows.next()? {
         snapshot.lyrics_checks.insert(row.get(0)?, row.get(1)?);

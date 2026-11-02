@@ -136,9 +136,7 @@ pub fn undo_automatic_edition(
         AutomaticUndone::Restored => None,
         AutomaticUndone::ClearedToReview => {
             tx.execute(
-                "INSERT INTO library_identify_reviews (id, local_album_id, reason_code, \
-                 candidates_json, state, created_ms, updated_ms) \
-                 VALUES (?1, ?2, 'AUTOMATIC_EDITION_CLEARED_TO_REVIEW', '[]', 'pending', ?3, ?3)",
+                crate::operations::sql::UNDO_AUTOMATIC_EDITION.text(),
                 params![review_id, album_id, crate::clock::ms(now)],
             )?;
             Some(review_id)
@@ -161,9 +159,7 @@ pub(crate) fn settle_reviews(
     now: f64,
 ) -> rusqlite::Result<()> {
     tx.execute(
-        "UPDATE library_identify_reviews SET state = ?2, resolved_by_user_id = ?3, \
-         selected_candidate_key = ?4, updated_ms = ?5 \
-         WHERE local_album_id = ?1 AND state = 'pending'",
+        crate::operations::sql::SETTLE_REVIEWS.text(),
         params![album_id, state, actor, selected, crate::clock::ms(now)],
     )?;
     Ok(())
@@ -187,9 +183,7 @@ pub(crate) fn record_action(
 ) -> rusqlite::Result<String> {
     let id = uuid::Uuid::new_v4().to_string();
     tx.execute(
-        "INSERT INTO library_catalog_actions (id, actor_user_id, action_kind, local_album_id, \
-         operation_job_id, before_json, after_json, reason_code, created_at) \
-         VALUES (?1, (SELECT id FROM auth_users WHERE id = ?2), ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        crate::operations::sql::RECORD_ACTION.text(),
         params![
             id,
             action.actor,
@@ -222,9 +216,7 @@ pub(crate) fn record_artist_action(
 ) -> rusqlite::Result<String> {
     let id = uuid::Uuid::new_v4().to_string();
     tx.execute(
-        "INSERT INTO library_catalog_actions (id, actor_user_id, action_kind, local_artist_id, \
-         before_json, after_json, reason_code, created_at) \
-         VALUES (?1, (SELECT id FROM auth_users WHERE id = ?2), ?3, ?4, ?5, ?6, ?7, ?8)",
+        crate::operations::sql::RECORD_ARTIST_ACTION.text(),
         params![
             id,
             action.actor,

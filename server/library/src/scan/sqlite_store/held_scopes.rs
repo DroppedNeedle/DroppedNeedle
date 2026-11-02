@@ -40,12 +40,12 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
 
-use super::commit::WALKED_PAST;
 use crate::corrections::continuation::accepted_release;
 use crate::corrections::retag_merge::album_has_record;
 use crate::identify::sqlite::{match_chosen, release_chosen};
 use crate::management::automatic;
 use crate::management::takeover::{self, Cause};
+use crate::scan::sqlite_store::sql::{WALKED_PAST, held_back};
 use droppedneedle_kernel::db::savepoint;
 
 /// Whether the folder at the SQL expression `ancestor` covers the path at
@@ -57,31 +57,6 @@ pub(super) fn covers(ancestor: &str, descendant: &str) -> String {
          OR substr({descendant}, 1, length({ancestor}) + 1) = {ancestor} || '/')"
     )
 }
-
-/// Whether run `$run` held back a folder covering the row aliased `$row`: a
-/// mass-missing guard failure on its root at a folder that [`covers`] its
-/// path, a scan scope or a mount found empty. Nothing under a held-back
-/// folder counts as walked: it is not missing, gone or moved. The guard
-/// index is named: SQLite would otherwise read every failure of the run on
-/// the root through the primary key, since that one covers the query.
-macro_rules! held_back {
-    ($run:literal, $row:literal) => {
-        concat!(
-            "EXISTS (SELECT 1 FROM library_scan_failures g \
-             INDEXED BY idx_scan_failures_guard WHERE g.run_id = ",
-            $run,
-            " AND g.root_id = ",
-            $row,
-            ".root_id AND g.failure_code = 'MASS_MISSING_GUARD' \
-             AND (g.relative_path = '.' OR ",
-            $row,
-            ".relative_path = g.relative_path OR substr(",
-            $row,
-            ".relative_path, 1, length(g.relative_path) + 1) = g.relative_path || '/'))"
-        )
-    };
-}
-pub(super) use held_back;
 
 /// Whether run `$run` refused a scope covering the row aliased `$row` because
 /// it is a link or reached through one, asked for or met by a walk
@@ -176,15 +151,7 @@ pub(super) fn settle(tx: &Transaction<'_>, run_id: &str, now: f64) -> rusqlite::
     } else {
         0
     };
-    tx.execute(
-        "INSERT INTO library_scan_held_scopes (root_id, relative_path, held_at) \
-         SELECT DISTINCT f.root_id, f.relative_path, \
-           CAST(COALESCE(r.started_at, ?2) * 1000 AS INTEGER) \
-         FROM library_scan_failures f JOIN library_scan_runs r ON r.id = f.run_id \
-         WHERE f.run_id = ?1 AND f.failure_code = 'MASS_MISSING_GUARD' \
-         ON CONFLICT (root_id, relative_path) DO NOTHING",
-        params![run_id, now],
-    )?;
+    tx.execute(crate::scan::sql::SETTLE.text(), params![run_id, now])?;
     if lifted > 0 {
         automatic::wake(tx, Some(automatic::SCAN_HELD_BACK), now)?;
         tracing::info!(
@@ -376,19 +343,13 @@ fn mark_replaced(
 /// `old` and nobody chose its edition, so `new` may be written.
 fn step_back(conn: &Connection, old: &str, new: &str) -> rusqlite::Result<Option<Cause>> {
     let taken_over: bool = conn
-        .prepare_cached(
-            "SELECT EXISTS (SELECT 1 FROM library_album_takeovers \
-             WHERE local_album_id = ?1 AND handed_back_at IS NULL)",
-        )?
+        .prepare_cached(crate::scan::sql::ALBUM_IS_TAKEN_OVER.text())?
         .query_row(params![old], |row| row.get(0))?;
     if taken_over || album_has_record(conn, old)? {
         return Ok(Some(Cause::FilesChanged));
     }
     let left_unmanaged: bool = conn
-        .prepare_cached(
-            "SELECT EXISTS (SELECT 1 FROM library_management_exclusions \
-             WHERE local_album_id = ?1)",
-        )?
+        .prepare_cached(crate::scan::sql::ALBUM_IS_EXCLUDED.text())?
         .query_row(params![old], |row| row.get(0))?;
     if (release_chosen(conn, old)? || left_unmanaged) && !match_chosen(conn, new)? {
         return Ok(Some(Cause::RetagFollowed));
@@ -425,10 +386,7 @@ fn remember(tx: &Transaction<'_>, run_id: &str, now: f64) -> rusqlite::Result<()
             albums.entry(album).or_default().push((track, held_at));
         }
     }
-    let mut insert = tx.prepare_cached(
-        "INSERT INTO library_scan_unjudged_tracks (local_track_id, held_at) VALUES (?1, ?2) \
-         ON CONFLICT (local_track_id) DO UPDATE SET held_at = min(held_at, excluded.held_at)",
-    )?;
+    let mut insert = tx.prepare_cached(crate::scan::sql::REMEMBER.text())?;
     for (album, tracks) in &albums {
         if takeover::is_marked(tx, album)? || album_has_record(tx, album)? {
             continue;
@@ -443,12 +401,8 @@ fn remember(tx: &Transaction<'_>, run_id: &str, now: f64) -> rusqlite::Result<()
 /// Whether a lifted hold let some of the album's files go before the album
 /// was judged: automatic management judges it before it first writes it.
 pub(crate) fn remembered(conn: &Connection, album_id: &str) -> rusqlite::Result<bool> {
-    conn.prepare_cached(
-        "SELECT EXISTS (SELECT 1 FROM local_tracks t \
-         CROSS JOIN library_scan_unjudged_tracks u ON u.local_track_id = t.id \
-         WHERE t.local_album_id = ?1)",
-    )?
-    .query_row(params![album_id], |row| row.get(0))
+    conn.prepare_cached(crate::scan::sql::REMEMBERED.text())?
+        .query_row(params![album_id], |row| row.get(0))
 }
 
 /// Judge an album a lifted hold let go before automatic management first
@@ -485,24 +439,17 @@ pub(crate) fn judge_remembered(
             "new album from a held folder left unmanaged as a retag of the album it replaced"
         );
     }
-    tx.prepare_cached(
-        "DELETE FROM library_scan_unjudged_tracks WHERE local_track_id IN \
-         (SELECT id FROM local_tracks WHERE local_album_id = ?1)",
-    )?
-    .execute(params![album_id])?;
+    tx.prepare_cached(crate::scan::sql::JUDGE_REMEMBERED.text())?
+        .execute(params![album_id])?;
     Ok(marked.is_some())
 }
 
 /// The release the album's match names, lowercased: the edition automatic
 /// management writes.
 fn edition_release(conn: &Connection, album_id: &str) -> rusqlite::Result<Option<String>> {
-    conn.prepare_cached(
-        "SELECT lower(trim(release_mbid)) FROM local_album_external_identities \
-         WHERE local_album_id = ?1 AND provider = 'musicbrainz' \
-         AND trim(COALESCE(release_mbid, '')) <> ''",
-    )?
-    .query_row(params![album_id], |row| row.get(0))
-    .optional()
+    conn.prepare_cached(crate::scan::sql::EDITION_RELEASE.text())?
+        .query_row(params![album_id], |row| row.get(0))
+        .optional()
 }
 
 /// Whether automatic management leaves the album alone because the scan

@@ -71,11 +71,7 @@ impl SqliteScanStore {
             None => (None, None),
         };
         self.read("scan_history", |conn| {
-            let mut stmt = conn.prepare(&format!(
-                "SELECT {RUN_COLUMNS} FROM library_scan_runs WHERE terminal_at IS NOT NULL \
-                 AND (?2 IS NULL OR terminal_at < ?2 OR (terminal_at = ?2 AND id < ?3)) \
-                 ORDER BY terminal_at DESC, id DESC LIMIT ?1"
-            ))?;
+            let mut stmt = conn.prepare(crate::scan::sql::LIST_HISTORY.text())?;
             let runs = stmt
                 .query_map(params![limit.max(1) as i64, before_at, before_id], map_run)?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -85,10 +81,7 @@ impl SqliteScanStore {
 
     pub fn latest_filesystem_terminal(&self) -> Result<Option<ScanRun>, ScanStoreError> {
         let rows = self.read("scan_latest_terminal", |conn| {
-            let mut stmt = conn.prepare(&format!(
-                "SELECT {RUN_COLUMNS} FROM library_scan_runs WHERE terminal_at IS NOT NULL \
-                 ORDER BY terminal_at DESC, id DESC"
-            ))?;
+            let mut stmt = conn.prepare(crate::scan::sql::LATEST_FILESYSTEM_TERMINAL.text())?;
             let runs = stmt
                 .query_map([], map_run)?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -110,15 +103,7 @@ impl SqliteScanStore {
     pub fn resumable(&self, stop: &RunStop) -> Result<Option<ScanRun>, ScanStoreError> {
         self.read_long(stop, "scan_resumable", |conn| {
             Ok(conn
-                .query_row(
-                    &format!(
-                        "SELECT {RUN_COLUMNS} FROM library_scan_runs \
-                         WHERE state IN ('discovering','indexing','reconciling','pausing','stopping') \
-                         ORDER BY started_at, id LIMIT 1"
-                    ),
-                    [],
-                    map_run,
-                )
+                .query_row(crate::scan::sql::RESUMABLE.text(), [], map_run)
                 .optional()?)
         })
     }
@@ -247,7 +232,7 @@ impl SqliteScanStore {
         self.read("scan_stream_revision", |conn| {
             Ok(conn
                 .query_row(
-                    "SELECT value FROM library_event_stream_revisions WHERE stream_kind = ?1",
+                    crate::scan::sql::STREAM_REVISION.text(),
                     params![kind],
                     |row| row.get::<_, i64>(0),
                 )
@@ -268,11 +253,7 @@ impl SqliteScanStore {
     pub fn recover(&self, stop: &RunStop, now: f64) -> Result<Vec<ScanRun>, ScanStoreError> {
         self.write(stop, Lane::Background, "scan_recover", |tx| {
             settle_all(tx, "state IN ('pausing','stopping')", now)?;
-            let mut stmt = tx.prepare(&format!(
-                "SELECT {RUN_COLUMNS} FROM library_scan_runs \
-                 WHERE state IN ('queued','discovering','indexing','reconciling','paused') \
-                 ORDER BY queued_at, id"
-            ))?;
+            let mut stmt = tx.prepare(crate::scan::sql::RECOVER.text())?;
             let runs = stmt
                 .query_map([], map_run)?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -641,11 +622,7 @@ pub(super) fn delete_rowids(
 
 /// The active and queued runs, the active one first.
 fn current_runs(conn: &Connection) -> Result<Vec<ScanRun>, ScanStoreError> {
-    let mut stmt = conn.prepare(&format!(
-        "SELECT {RUN_COLUMNS} FROM library_scan_runs \
-         WHERE state NOT IN ('completed','cancelled','superseded_policy_changed','failed') \
-         ORDER BY CASE WHEN state = 'queued' THEN 1 ELSE 0 END, queued_at, id"
-    ))?;
+    let mut stmt = conn.prepare(crate::scan::sql::CURRENT_RUNS.text())?;
     let runs = stmt
         .query_map([], map_run)?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -691,7 +668,7 @@ fn prune_compat_orphans(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
     for user in &users {
         let current: Option<i64> = conn
             .query_row(
-                "SELECT current_index FROM compat_play_queues WHERE user_id = ?1",
+                crate::scan::sql::QUEUE_CURRENT_INDEX.text(),
                 params![user],
                 |row| row.get(0),
             )
@@ -714,19 +691,15 @@ fn prune_compat_orphans(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
         let new_current = current
             .and_then(|old| kept.iter().position(|(index, _)| *index >= old))
             .and_then(|position| i64::try_from(position).ok());
-        conn.execute(
-            "DELETE FROM compat_play_queue_items WHERE user_id = ?1",
-            params![user],
-        )?;
+        conn.execute(crate::scan::sql::CLEAR_QUEUE_ITEMS.text(), params![user])?;
         for (position, (_, file_id)) in (0_i64..).zip(&kept) {
             conn.execute(
-                "INSERT INTO compat_play_queue_items (user_id, item_index, file_id) \
-                 VALUES (?1, ?2, ?3)",
+                crate::scan::sql::ADD_QUEUE_ITEM.text(),
                 params![user, position, file_id],
             )?;
         }
         conn.execute(
-            "UPDATE compat_play_queues SET current_index = ?2 WHERE user_id = ?1",
+            crate::scan::sql::SET_QUEUE_CURRENT_INDEX.text(),
             params![user, new_current],
         )?;
     }
@@ -855,11 +828,7 @@ fn request_run_inner(
     run_id: &str,
     requested_at: f64,
 ) -> rusqlite::Result<ScanRequestResult> {
-    let mut stmt = conn.prepare(&format!(
-        "SELECT {RUN_COLUMNS} FROM library_scan_runs \
-         WHERE state NOT IN ('completed','cancelled','superseded_policy_changed','failed') \
-         ORDER BY CASE WHEN state = 'queued' THEN 1 ELSE 0 END, rowid"
-    ))?;
+    let mut stmt = conn.prepare(crate::scan::sql::OPEN_RUN_TO_JOIN.text())?;
     let current: Vec<ScanRun> = stmt
         .query_map([], map_run)?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -892,14 +861,12 @@ fn request_run_inner(
     });
     if let Some(covering) = covering {
         conn.execute(
-            "UPDATE library_scan_runs SET coalesced_request_count = coalesced_request_count + 1, \
-             updated_at = ?1, row_revision = row_revision + 1, event_revision = event_revision + 1 \
-             WHERE id = ?2",
+            crate::scan::sql::COALESCE_RUN_REQUEST.text(),
             params![requested_at, covering.id],
         )?;
         bump_scan_stream(conn)?;
         let revision: i64 = conn.query_row(
-            "SELECT row_revision FROM library_scan_runs WHERE id = ?1",
+            crate::scan::sql::RUN_REVISION.text(),
             params![covering.id],
             |row| row.get(0),
         )?;
@@ -948,7 +915,7 @@ fn request_run_inner(
             .cloned()
             .collect();
         let mut sequence: i64 = conn.query_row(
-            "SELECT COALESCE(MAX(scope_sequence), -1) FROM library_scan_run_scopes WHERE run_id = ?1",
+            crate::scan::sql::LAST_SCOPE_SEQUENCE.text(),
             params![queued_id],
             |row| row.get(0),
         )?;
@@ -960,17 +927,14 @@ fn request_run_inner(
             })
         }) {
             conn.execute(
-                "DELETE FROM library_scan_run_scopes \
-                 WHERE run_id = ?1 AND root_id = ?2 AND relative_path = ?3",
+                crate::scan::sql::DROP_RUN_SCOPE.text(),
                 params![queued_id, existing.root_id, existing.relative_path],
             )?;
         }
         for scope in &additions {
             sequence += 1;
             conn.execute(
-                "INSERT INTO library_scan_run_scopes (run_id, scope_sequence, root_id, scope_id, \
-                 relative_path, root_path, effective_policy, policy_revision, estimated_count) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                crate::scan::sql::ADD_RUN_SCOPE.text(),
                 params![
                     queued_id,
                     sequence,
@@ -995,13 +959,12 @@ fn request_run_inner(
             "selected"
         };
         conn.execute(
-            "UPDATE library_scan_runs SET aggregate_scope = ?1, updated_at = ?2, \
-             row_revision = row_revision + 1, event_revision = event_revision + 1 WHERE id = ?3",
+            crate::scan::sql::SET_RUN_AGGREGATE_SCOPE.text(),
             params![aggregate, requested_at, queued_id],
         )?;
         bump_scan_stream(conn)?;
         let revision: i64 = conn.query_row(
-            "SELECT row_revision FROM library_scan_runs WHERE id = ?1",
+            crate::scan::sql::RUN_REVISION.text(),
             params![queued_id],
             |row| row.get(0),
         )?;
@@ -1035,10 +998,7 @@ fn fresh_run(
         "selected"
     };
     conn.execute(
-        "INSERT INTO library_scan_runs (id, kind, trigger, requested_by_user_id, state, phase, \
-         aggregate_scope, queued_at, updated_at, inventory_cleanup_pending, \
-         row_revision, event_revision) \
-         VALUES (?1, ?2, ?3, ?4, 'queued', 'queued', ?5, ?6, ?6, 1, 1, 0)",
+        crate::scan::sql::ADD_RUN.text(),
         params![
             run_id,
             request.kind.as_str(),
@@ -1050,9 +1010,7 @@ fn fresh_run(
     )?;
     for (sequence, scope) in request.scopes.iter().enumerate() {
         conn.execute(
-            "INSERT INTO library_scan_run_scopes (run_id, scope_sequence, root_id, scope_id, \
-             relative_path, root_path, effective_policy, policy_revision, estimated_count) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            crate::scan::sql::ADD_RUN_SCOPE.text(),
             params![
                 run_id,
                 sequence as i64,
@@ -1086,21 +1044,16 @@ fn fresh_run(
 }
 
 fn claim_next_inner(tx: &Transaction<'_>, now: f64) -> Result<Option<ScanRun>, ScanStoreError> {
-    let blocked: i64 = tx.query_row(
-        "SELECT COUNT(*) FROM library_scan_runs \
-         WHERE state IN ('discovering','indexing','reconciling','pausing','paused','stopping')",
-        [],
-        |row| row.get(0),
-    )?;
+    let blocked: i64 = tx.query_row(crate::scan::sql::ACTIVE_RUN_COUNT.text(), [], |row| {
+        row.get(0)
+    })?;
     if blocked > 0 {
         return Ok(None);
     }
     let candidate: Option<String> = tx
-        .query_row(
-            "SELECT id FROM library_scan_runs WHERE state = 'queued' ORDER BY rowid LIMIT 1",
-            [],
-            |row| row.get(0),
-        )
+        .query_row(crate::scan::sql::NEXT_QUEUED_RUN.text(), [], |row| {
+            row.get(0)
+        })
         .optional()?;
     candidate
         .map(|candidate| apply_event(tx, &candidate, None, Event::Claim, now, None))

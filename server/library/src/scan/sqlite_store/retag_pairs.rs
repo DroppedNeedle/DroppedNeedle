@@ -119,10 +119,7 @@ pub(super) fn recorded(
     new_album_id: &str,
 ) -> rusqlite::Result<Option<(RetagPairReason, RetagPairState)>> {
     let stored: Option<(String, String)> = conn
-        .prepare_cached(
-            "SELECT reason, state FROM library_retag_pairs \
-             WHERE old_album_id = ?1 AND new_album_id = ?2",
-        )?
+        .prepare_cached(crate::scan::sql::RECORDED.text())?
         .query_row(params![old_album_id, new_album_id], |row| {
             Ok((row.get(0)?, row.get(1)?))
         })
@@ -157,15 +154,7 @@ pub(super) fn record(
     now_ms: i64,
 ) -> rusqlite::Result<bool> {
     let written = conn
-        .prepare_cached(
-            "INSERT INTO library_retag_pairs (old_album_id, new_album_id, reason, state, \
-             recorded_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?5) \
-             ON CONFLICT (old_album_id, new_album_id) DO UPDATE SET \
-             reason = excluded.reason, updated_at = excluded.updated_at \
-             WHERE library_retag_pairs.reason IN (?6, ?7, ?8) \
-             AND library_retag_pairs.state = ?4 \
-             AND excluded.reason <> library_retag_pairs.reason",
-        )?
+        .prepare_cached(crate::scan::sql::RECORD.text())?
         .execute(params![
             old_album_id,
             new_album_id,
@@ -190,20 +179,10 @@ pub(super) fn end_dismissed_returned(
     run_id: &str,
     album_id: &str,
 ) -> rusqlite::Result<Vec<(String, String)>> {
-    conn.prepare_cached(
-        "DELETE FROM library_retag_pairs WHERE state = ?3 AND new_album_id IN \
-         (SELECT id FROM local_albums WHERE id = ?2 OR retired_into_album_id = ?2) \
-         AND NOT EXISTS (SELECT 1 FROM local_tracks t WHERE t.local_album_id = ?2 \
-           AND t.availability = 'indexed') \
-         AND EXISTS (SELECT 1 FROM library_scan_album_moves m \
-           JOIN local_tracks t ON t.id = m.local_track_id \
-           WHERE m.run_id = ?1 AND m.previous_album_id = ?2 \
-           AND t.local_album_id = library_retag_pairs.old_album_id) \
-         RETURNING old_album_id, new_album_id",
-    )?
-    .query_map(
-        params![run_id, album_id, RetagPairState::Dismissed.as_str()],
-        |row| Ok((row.get(0)?, row.get(1)?)),
-    )?
-    .collect()
+    conn.prepare_cached(crate::scan::sql::END_DISMISSED_RETURNED.text())?
+        .query_map(
+            params![run_id, album_id, RetagPairState::Dismissed.as_str()],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?
+        .collect()
 }

@@ -267,12 +267,8 @@ pub fn queue_work(
 // The lease.
 // ---------------------------------------------------------------------------
 
-fn millis(seconds: f64) -> i64 {
-    (seconds * 1000.0).round() as i64
-}
-
 fn lease_until(now: f64) -> i64 {
-    millis(now + LEASE_SECS)
+    crate::clock::ms(now + LEASE_SECS)
 }
 
 /// The lease core's error as the database error it carries. The core
@@ -298,7 +294,7 @@ pub fn recover_expired(
 ) -> Result<u64, DbError> {
     // The work and the job compare against the same rounded time, so a
     // job requeued here never leaves its work running.
-    let now_ms = millis(now);
+    let now_ms = crate::clock::ms(now);
     tx.prepare_cached(sql::WORK_RECOVER_EXPIRED.text())?
         .execute(named_params! { ":kind": kind, ":now": now_ms as f64 / 1000.0 })?;
     lease::recover_expired(tx, &STATEMENTS, kind.as_str(), now_ms).map_err(db_error)
@@ -314,7 +310,7 @@ pub fn recover_at_start(
 ) -> Result<u64, DbError> {
     tx.prepare_cached(sql::WORK_RECOVER_AT_START.text())?
         .execute(named_params! { ":kind": kind, ":now": now })?;
-    lease::recover_at_start(tx, &STATEMENTS, kind.as_str(), millis(now)).map_err(db_error)
+    lease::recover_at_start(tx, &STATEMENTS, kind.as_str(), crate::clock::ms(now)).map_err(db_error)
 }
 
 /// Requeue the jobs of `kind` whose lease ran out, then claim the next due
@@ -331,7 +327,7 @@ pub fn claim(
         &STATEMENTS,
         kind.as_str(),
         owner,
-        millis(now),
+        crate::clock::ms(now),
         lease_until(now),
     )
     .map_err(db_error)?;
@@ -355,7 +351,15 @@ pub fn heartbeat(
     let Some(rowid) = rowid(tx, job_id)? else {
         return Ok(false);
     };
-    lease::heartbeat(tx, &STATEMENTS, rowid, owner, millis(now), lease_until(now)).map_err(db_error)
+    lease::heartbeat(
+        tx,
+        &STATEMENTS,
+        rowid,
+        owner,
+        crate::clock::ms(now),
+        lease_until(now),
+    )
+    .map_err(db_error)
 }
 
 /// Hand `owner`'s running job back to the queue, its running work back to
@@ -369,7 +373,7 @@ pub fn release(tx: &Transaction<'_>, job_id: &str, owner: &str, now: f64) -> Res
         return Ok(false);
     };
     work_back_to_pending(tx, job_id, None, now)?;
-    lease::release(tx, &STATEMENTS, rowid, owner, millis(now)).map_err(db_error)
+    lease::release(tx, &STATEMENTS, rowid, owner, crate::clock::ms(now)).map_err(db_error)
 }
 
 /// As [`release`], but no claim takes the job again before `retry_at`,
@@ -390,7 +394,7 @@ pub fn release_until(
         return Ok(false);
     };
     work_back_to_pending(tx, job_id, reason, now)?;
-    if !lease::release(tx, &STATEMENTS, rowid, owner, millis(now)).map_err(db_error)? {
+    if !lease::release(tx, &STATEMENTS, rowid, owner, crate::clock::ms(now)).map_err(db_error)? {
         return Ok(false);
     }
     tx.prepare_cached(sql::RETRY_AT.text())?

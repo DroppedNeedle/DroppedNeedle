@@ -105,7 +105,7 @@ pub(crate) fn merge_retagged(
         return refused(RetagPairReason::ChosenMatchesDiffer);
     }
     let custom: bool = tx.query_row(
-        "SELECT EXISTS(SELECT 1 FROM library_custom_edition_active WHERE local_album_id = ?1)",
+        crate::corrections::sql::ALBUM_HAS_CUSTOM_EDITION.text(),
         params![old],
         |row| row.get(0),
     )?;
@@ -121,22 +121,19 @@ pub(crate) fn merge_retagged(
         settle_merged_match(tx, old, new, now)?;
         drop_edition(tx, old)?;
         tx.execute(
-            "DELETE FROM library_management_automatic_queue WHERE local_album_id = ?1",
+            crate::corrections::sql::DROP_AUTOMATIC_QUEUE_ROW.text(),
             params![old],
         )?;
         tx.execute(
-            "UPDATE local_tracks SET local_album_id = ?2 WHERE local_album_id = ?1",
+            crate::corrections::sql::MOVE_ALBUM_TRACKS.text(),
             params![old, new],
         )?;
         if new_chosen {
-            tx.execute(
-                "DELETE FROM library_management_exclusions WHERE local_album_id = ?1",
-                params![old],
-            )?;
+            tx.execute(crate::corrections::sql::DROP_EXCLUSION.text(), params![old])?;
         }
         retire(tx, old, new, now)?;
         tx.execute(
-            "UPDATE playlist_tracks SET album_id = ?2 WHERE album_id = ?1",
+            crate::corrections::sql::MOVE_ALBUM_PLAYLIST_ROWS.text(),
             params![old, new],
         )?;
         let stamped = chosen_release && !new_chosen && !album_has_record(tx, new)?;
@@ -167,8 +164,7 @@ pub(crate) fn merge_retagged(
             return Ok(MergeOutcome::Merged { offered: false });
         }
         let automatic: bool = tx.query_row(
-            "SELECT EXISTS(SELECT 1 FROM local_tracks WHERE local_album_id = ?1 \
-             AND availability = 'indexed' AND applied_policy = 'automatic')",
+            crate::corrections::sql::ALBUM_IS_AUTOMATIC.text(),
             params![new],
             |row| row.get(0),
         )?;

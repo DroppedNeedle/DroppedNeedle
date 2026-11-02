@@ -25,6 +25,7 @@ pub mod reasons;
 pub mod reidentify;
 pub mod reviews;
 pub mod service;
+pub(crate) mod sql;
 pub mod status;
 pub mod store;
 

@@ -34,7 +34,7 @@ use std::collections::BTreeMap;
 
 use super::artists::{self, Credit, Own, upsert_artist};
 use super::hands_off::hold_replacements;
-use super::held_scopes::{self, held_back};
+use super::held_scopes;
 use super::retag_pairs::{self, RetagPairReason, RetagPairState};
 use super::*;
 use crate::catalog_revision::bump_catalog;
@@ -56,6 +56,7 @@ use crate::publish::HIDDEN_PREFIX;
 use crate::scan::naming::{
     album_grouping_key, album_name_key, grouping_directory, parse_names_for_row,
 };
+use crate::scan::sqlite_store::sql::{awaits_admin, fenced_by};
 use crate::scan::store::{EditionFill, IndexWindow, LengthFill, WindowOutcome};
 use crate::tags::{AudioArtistCredit, AudioTag};
 use droppedneedle_kernel::db::savepoint;
@@ -107,81 +108,6 @@ struct Place<'a> {
     directory: &'a str,
 }
 
-/// Journal row `j` keeps scope `s` from judging its track: it is still
-/// open, or it moved after the scope's walk began. The states listed are
-/// the publisher's terminal ones (`JournalState::is_terminal`).
-macro_rules! fenced_by {
-    () => {
-        "(j.state NOT IN ('cleaned', 'compensated', 'needs_attention') \
-          OR j.fence_revision > s.walk_revision)"
-    };
-}
-pub(super) use fenced_by;
-
-/// Journal row `j` needs attention and no administrator has marked its
-/// write handled. It holds its track back from being judged gone, and a
-/// move's destination back from being listed (`FENCED_PATHS`). A scan
-/// still indexes a file it finds at the track's path, unless that path is
-/// such a destination.
-macro_rules! awaits_admin {
-    () => {
-        "(j.state = 'needs_attention' \
-          AND j.bundle_id NOT IN (SELECT bundle_id FROM library_publish_resolutions))"
-    };
-}
-pub(super) use awaits_admin;
-
-/// The one rule for "this run walked past the track" (aliased `t`; the
-/// run id is the parameter `$run`): the walk did not see the file, and a
-/// scope of the run covering its path finished its walk with a recorded
-/// walk revision, no scope of the run covering it was refused as a link, and
-/// no library write naming the track is still open,
-/// needs attention and is not marked handled, or moved after that walk
-/// began. A write names a track by its journal row's `track_id`, or, for
-/// a removal or a replaced file, by the row's replacement. The journal
-/// probe runs last: it is the rarest to match.
-macro_rules! walked_past {
-    ($run:literal) => {
-        concat!(
-            "(NOT EXISTS (SELECT 1 FROM library_scan_inventory i WHERE i.run_id = ",
-            $run,
-            " AND i.root_id = t.root_id AND i.relative_path = t.relative_path) \
-             AND EXISTS (SELECT 1 FROM library_scan_run_scopes s WHERE s.run_id = ",
-            $run,
-            " AND s.root_id = t.root_id AND s.discovery_state = 'completed' \
-              AND s.walk_revision IS NOT NULL \
-              AND (s.relative_path = '.' OR t.relative_path = s.relative_path \
-                OR substr(t.relative_path, 1, length(s.relative_path) + 1) = s.relative_path || '/') \
-              AND NOT ",
-            $crate::scan::sqlite_store::held_scopes::refused_scope!($run, "t"),
-            " AND NOT EXISTS (SELECT 1 FROM library_publish_journal j \
-                WHERE j.track_id = t.id AND (",
-            $crate::scan::sqlite_store::commit::fenced_by!(),
-            " OR ",
-            $crate::scan::sqlite_store::commit::awaits_admin!(),
-            ")) AND NOT EXISTS (SELECT 1 FROM library_publish_replacements r \
-                JOIN library_publish_journal j ON j.id = r.journal_id \
-                WHERE r.replaced_track_id = t.id AND (",
-            $crate::scan::sqlite_store::commit::fenced_by!(),
-            " OR ",
-            $crate::scan::sqlite_store::commit::awaits_admin!(),
-            "))))"
-        )
-    };
-}
-pub(super) use walked_past;
-
-/// A track still counts as present unless it is missing or this run
-/// walked its folder to the end without seeing it, and did not hold back a
-/// folder covering it.
-const TRACK_PRESENT: &str = concat!(
-    "(t.availability = 'indexed' AND NOT (",
-    walked_past!("?1"),
-    " AND NOT ",
-    held_back!("?1", "t"),
-    "))"
-);
-
 /// Where an album's tracks are, seen from one folder.
 #[derive(Default)]
 struct Presence {
@@ -198,10 +124,7 @@ fn album_presence(
     place: &Place<'_>,
     album_id: &str,
 ) -> rusqlite::Result<Presence> {
-    let mut stmt = tx.prepare_cached(&format!(
-        "SELECT t.root_id, t.relative_path, {TRACK_PRESENT} FROM local_tracks t \
-         WHERE t.local_album_id = ?2 AND t.availability = 'indexed'"
-    ))?;
+    let mut stmt = tx.prepare_cached(crate::scan::sql::ALBUM_PRESENCE.text())?;
     let mut rows = stmt.query(params![place.run_id, album_id])?;
     let mut presence = Presence::default();
     while let Some(row) = rows.next()? {
@@ -249,11 +172,7 @@ fn resolve_album(
 ) -> rusqlite::Result<String> {
     if legacy && let Some(previous) = previous {
         let named: bool = tx
-            .prepare_cached(
-                "SELECT EXISTS(SELECT 1 FROM local_albums WHERE id = ?1 \
-                 AND retired_into_album_id IS NULL AND title_folded = ?2 \
-                 AND COALESCE(album_artist_name_folded, '') = ?3)",
-            )?
+            .prepare_cached(crate::scan::sql::PINNED_ALBUM_STILL_FITS.text())?
             .query_row(
                 params![previous, names.title_folded, names.artist_folded],
                 |row| row.get(0),
@@ -265,9 +184,7 @@ fn resolve_album(
     let key = names.key();
     if let Some(previous) = previous {
         let same: bool = tx
-            .prepare_cached(
-                "SELECT EXISTS(SELECT 1 FROM local_albums WHERE id = ?1 AND grouping_key = ?2)",
-            )?
+            .prepare_cached(crate::scan::sql::ALBUM_HAS_GROUPING_KEY.text())?
             .query_row(params![previous, key], |row| row.get(0))?;
         if same && !album_presence(tx, place, previous)?.elsewhere {
             return Ok(previous.to_owned());
@@ -283,13 +200,7 @@ fn resolve_album(
         }
     });
     let candidates: Vec<(String, bool)> = {
-        let mut stmt = tx.prepare_cached(
-            "SELECT id, grouping_key = ?1 FROM local_albums \
-             WHERE retired_into_album_id IS NULL AND (grouping_key = ?1 \
-             OR (?2 IS NOT NULL AND title_folded = ?3 AND album_artist_name_folded = ?4 \
-               AND (grouping_key = ?2 OR (?2 = 'mbid:' AND grouping_key LIKE 'mbid:%')))) \
-             ORDER BY created_at, id",
-        )?;
+        let mut stmt = tx.prepare_cached(crate::scan::sql::ALBUMS_FOR_GROUPING.text())?;
         stmt.query_map(
             params![
                 key,
@@ -323,7 +234,7 @@ fn resolve_album(
     ] {
         let stable = stable_id(&seed);
         let taken: bool = tx
-            .prepare_cached("SELECT EXISTS(SELECT 1 FROM local_albums WHERE id = ?1)")?
+            .prepare_cached(crate::scan::sql::ALBUM_EXISTS.text())?
             .query_row(params![stable], |row| row.get(0))?;
         if !taken {
             return Ok(stable);
@@ -344,22 +255,6 @@ struct TrackKey<'a> {
     duration_seconds: Option<f64>,
 }
 
-/// A track this run walked past, whether or not the mass-missing guard
-/// held its scope back.
-pub(super) const WALKED_PAST: &str = walked_past!("?1");
-
-/// A track is gone when it is already marked missing, or when this run
-/// walked its folder to the end without seeing the file. A folder the
-/// mass-missing guard held back (an unmounted share looks like that), a
-/// scope or a mount found empty, does not count as walked.
-pub(super) const TRACK_GONE: &str = concat!(
-    "(t.availability = 'missing' OR (t.availability = 'indexed' AND ",
-    walked_past!("?1"),
-    " AND NOT ",
-    held_back!("?1", "t"),
-    "))"
-);
-
 /// Durations closer than this are the same recording.
 pub(super) const DURATION_TOLERANCE_SECONDS: f64 = 1.0;
 
@@ -369,8 +264,7 @@ pub(super) const DURATION_TOLERANCE_SECONDS: f64 = 1.0;
 /// the other, 2 seconds on most discs.
 const OTHER_MUSIC_SECONDS: f64 = 5.0;
 
-/// Audit kind of the tracks whose paths other music took.
-const OTHER_MUSIC_KIND: &str = "other_music_at_path";
+use crate::scan::sql::OTHER_MUSIC_KIND;
 
 /// Audit kind of the tracks whose files were replaced by new copies of
 /// the same recordings.
@@ -587,39 +481,15 @@ fn give_up_path(tx: &Connection, track_id: &str, item: &CommitIndexedItem) -> ru
         .nth(depth)
         .ok_or_else(|| rusqlite::Error::InvalidPath(item.absolute_path.clone().into()))?;
     let file_path = root_dir.join(&hidden).to_string_lossy().into_owned();
-    tx.prepare_cached(
-        "UPDATE local_tracks SET availability = 'missing', \
-         missing_since = CASE WHEN availability = 'missing' THEN missing_since ELSE ?2 END, \
-         relative_path = ?3, file_path = ?4, path_hash = ?5, row_revision = row_revision + 1 \
-         WHERE id = ?1",
-    )?
-    .execute(params![
-        track_id,
-        item.tags_read_at,
-        hidden,
-        file_path,
-        sha256_hex(&hidden)
-    ])?;
+    tx.prepare_cached(crate::scan::sql::GIVE_UP_PATH.text())?
+        .execute(params![
+            track_id,
+            item.tags_read_at,
+            hidden,
+            file_path,
+            sha256_hex(&hidden)
+        ])?;
     Ok(())
-}
-
-/// The place a moved file must keep for the gone track `t` to continue
-/// into it: the same folded album title and album artist, disc and track
-/// number, each given as the new file's SQL value.
-macro_rules! same_place {
-    ($title:literal, $artist:literal, $disc:literal, $track:literal) => {
-        concat!(
-            "(t.album_title_folded = ",
-            $title,
-            " AND COALESCE(t.album_artist_name_folded, '') = ",
-            $artist,
-            " AND t.disc_number = ",
-            $disc,
-            " AND t.track_number = ",
-            $track,
-            ")"
-        )
-    };
 }
 
 /// The gone track a newly seen file continues, as (track id, album id):
@@ -636,17 +506,14 @@ fn find_moved_track(
         album_id: String,
         same_place: bool,
     }
-    const SAME_PLACE: &str = same_place!("?3", "?4", "?5", "?6");
-    let columns = format!(
-        "SELECT t.id, t.local_album_id, {SAME_PLACE}, t.duration_seconds FROM local_tracks t"
-    );
+
     let sql = match key.recording_mbid {
-        Some(_) => format!("{columns} WHERE t.embedded_recording_mbid = ?2 AND {TRACK_GONE}"),
-        None => format!("{columns} WHERE t.title_folded = ?2 AND {SAME_PLACE} AND {TRACK_GONE}"),
+        Some(_) => crate::scan::sql::FIND_MOVED_BY_RECORDING.text(),
+        None => crate::scan::sql::FIND_MOVED_BY_TITLE.text(),
     };
     let first = key.recording_mbid.unwrap_or(key.title_folded);
     let mut candidates = Vec::new();
-    let mut stmt = tx.prepare_cached(&sql)?;
+    let mut stmt = tx.prepare_cached(sql)?;
     let mut rows = stmt.query(params![
         run_id,
         first,
@@ -711,14 +578,8 @@ fn credit_rows(
     subject: &str,
 ) -> rusqlite::Result<Vec<CreditRow>> {
     let sql = match side {
-        CreditSide::Album => {
-            "SELECT position, local_artist_id, credited_name, artist_mbid \
-             FROM local_album_artists WHERE local_album_id = ?1 ORDER BY position"
-        }
-        CreditSide::Track => {
-            "SELECT position, local_artist_id, credited_name, artist_mbid \
-             FROM local_track_artists WHERE local_track_id = ?1 ORDER BY position"
-        }
+        CreditSide::Album => crate::scan::sql::ALBUM_CREDIT_ROWS.text(),
+        CreditSide::Track => crate::scan::sql::TRACK_CREDIT_ROWS.text(),
     };
     tx.prepare_cached(sql)?
         .query_map(params![subject], |row| {
@@ -811,11 +672,7 @@ fn record_moves(
         let with_id = from_mbid.is_some()
             || to_mbid.is_some()
             || tx
-                .prepare_cached(
-                    "SELECT EXISTS (SELECT 1 FROM library_artist_credit_proofs \
-                     WHERE subject_kind = ?1 AND subject_id = ?2 AND credit_position = ?3 \
-                     AND source_local_artist_id = ?4)",
-                )?
+                .prepare_cached(crate::scan::sql::RECORD_MOVES.text())?
                 .query_row(params![kind, subject, position, from], |row| row.get(0))?;
         record_move(tx, from, to, with_id, now)?;
     }
@@ -844,52 +701,27 @@ fn write_album(
         .first()
         .cloned()
         .unwrap_or_else(|| UNKNOWN_ARTIST_ID.to_owned());
-    tx.prepare_cached(
-        "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
-         album_artist_name, album_artist_name_folded, tag_album_title, tag_album_artist_name, \
-         album_artist_id, album_artist_sort_name, year, original_release_date, primary_genre, \
-         is_compilation, grouping_source, created_at, updated_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, \
-         'automatic', ?16, ?16) \
-         ON CONFLICT (id) DO UPDATE SET root_id = excluded.root_id, title = excluded.title, \
-         title_folded = excluded.title_folded, album_artist_name = excluded.album_artist_name, \
-         album_artist_name_folded = excluded.album_artist_name_folded, \
-         tag_album_title = excluded.tag_album_title, \
-         tag_album_artist_name = excluded.tag_album_artist_name, \
-         album_artist_id = excluded.album_artist_id, \
-         album_artist_sort_name = excluded.album_artist_sort_name, \
-         year = COALESCE(excluded.year, local_albums.year), \
-         original_release_date = COALESCE(excluded.original_release_date, \
-         local_albums.original_release_date), \
-         primary_genre = COALESCE(excluded.primary_genre, local_albums.primary_genre), \
-         is_compilation = excluded.is_compilation, updated_at = excluded.updated_at",
-    )?
-    .execute(params![
-        album_id,
-        item.root_id,
-        grouping_key,
-        album_title,
-        fold_text(album_title),
-        album_artist,
-        fold_text(album_artist),
-        raw_album,
-        tag.album_artist.as_deref().unwrap_or("").trim(),
-        primary_artist,
-        tag.album_artist_sort,
-        year,
-        tag.original_release_date,
-        tag.genre,
-        tag.compilation,
-        now,
-    ])?;
+    tx.prepare_cached(crate::scan::sql::WRITE_ALBUM_ROW.text())?
+        .execute(params![
+            album_id,
+            item.root_id,
+            grouping_key,
+            album_title,
+            fold_text(album_title),
+            album_artist,
+            fold_text(album_artist),
+            raw_album,
+            tag.album_artist.as_deref().unwrap_or("").trim(),
+            primary_artist,
+            tag.album_artist_sort,
+            year,
+            tag.original_release_date,
+            tag.genre,
+            tag.compilation,
+            now,
+        ])?;
     let rows_before = credit_rows(tx, CreditSide::Album, album_id)?;
-    let mut album_artist_rows = tx.prepare_cached(
-        "INSERT INTO local_album_artists (local_album_id, position, local_artist_id, role, \
-         credited_name, join_phrase, artist_mbid) VALUES (?1, ?2, ?3, 'main', ?4, ?5, ?6) \
-         ON CONFLICT (local_album_id, position) DO UPDATE SET \
-         local_artist_id = excluded.local_artist_id, credited_name = excluded.credited_name, \
-         join_phrase = excluded.join_phrase, artist_mbid = excluded.artist_mbid",
-    )?;
+    let mut album_artist_rows = tx.prepare_cached(crate::scan::sql::WRITE_ALBUM_CREDIT.text())?;
     let mut written = 0i64;
     for (position, (credit, id)) in album_credits.iter().zip(album_artist_ids).enumerate() {
         album_artist_rows.execute(params![
@@ -902,10 +734,8 @@ fn write_album(
         ])?;
         written += 1;
     }
-    tx.prepare_cached(
-        "DELETE FROM local_album_artists WHERE local_album_id = ?1 AND position >= ?2",
-    )?
-    .execute(params![album_id, written])?;
+    tx.prepare_cached(crate::scan::sql::DROP_ALBUM_CREDITS_FROM.text())?
+        .execute(params![album_id, written])?;
     let rows_after = credit_rows(tx, CreditSide::Album, album_id)?;
     if rows_after != rows_before {
         mark_stale(tx, album_id)?;
@@ -1204,12 +1034,7 @@ fn write_item(
     // path continues a track whose file went away when the keys agree:
     // the old row moves here and the upsert below refreshes it.
     let at_path: Option<AtPath> = tx
-        .prepare_cached(
-            "SELECT id, local_album_id, availability, duration_seconds, \
-             embedded_recording_mbid, title_folded, title_provenance, disc_number, \
-             track_number, sample_rate, bit_depth, channels \
-             FROM local_tracks WHERE root_id = ?1 AND relative_path = ?2",
-        )?
+        .prepare_cached(crate::scan::sql::TRACK_AT_PATH_FACTS.text())?
         .query_row(params![item.root_id, item.relative_path], |row| {
             Ok(AtPath {
                 id: row.get(0)?,
@@ -1261,17 +1086,14 @@ fn write_item(
             duration_seconds: header.duration_seconds,
         };
         if let Some((moved_id, moved_album)) = find_moved_track(tx, run_id, &key)? {
-            tx.prepare_cached(
-                "UPDATE local_tracks SET root_id = ?2, relative_path = ?3, path_hash = ?4, \
-                 file_path = ?5, row_revision = row_revision + 1 WHERE id = ?1",
-            )?
-            .execute(params![
-                moved_id,
-                item.root_id,
-                item.relative_path,
-                sha256_hex(&item.relative_path),
-                item.absolute_path,
-            ])?;
+            tx.prepare_cached(crate::scan::sql::MOVE_TRACK_PATH.text())?
+                .execute(params![
+                    moved_id,
+                    item.root_id,
+                    item.relative_path,
+                    sha256_hex(&item.relative_path),
+                    item.absolute_path,
+                ])?;
             previous = Some((moved_id, moved_album));
         }
     }
@@ -1280,9 +1102,7 @@ fn write_item(
     // file still names the album.
     let membership: Option<(String, bool)> = match &previous {
         Some((id, _)) => tx
-            .prepare_cached(
-                "SELECT membership_source, membership_locked = 1 FROM local_tracks WHERE id = ?1",
-            )?
+            .prepare_cached(crate::scan::sql::TRACK_MEMBERSHIP.text())?
             .query_row(params![id], |row| Ok((row.get(0)?, row.get(1)?)))
             .optional()?,
         None => None,
@@ -1344,7 +1164,7 @@ fn write_item(
         (None, None) => {
             let stable = stable_id(&format!("track:{}:{}", item.root_id, item.relative_path));
             let taken: bool = tx
-                .prepare_cached("SELECT EXISTS(SELECT 1 FROM local_tracks WHERE id = ?1)")?
+                .prepare_cached(crate::scan::sql::TRACK_EXISTS.text())?
                 .query_row(params![stable], |row| row.get(0))?;
             if taken {
                 uuid::Uuid::new_v4().to_string()
@@ -1358,135 +1178,67 @@ fn write_item(
         .map(|format| format.as_str().to_owned())
         .unwrap_or_else(|_| "unknown".to_owned());
     let policy = item.effective_policy.as_str();
-    tx.prepare_cached(
-        "INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
-         path_hash, file_size_bytes, file_mtime_ns, stat_revision, stat_revision_kind, \
-         tag_revision, tags_read_at, title, title_folded, artist_name, artist_name_folded, \
-         album_title, album_title_folded, album_artist_name, album_artist_name_folded, \
-         tag_album_title, tag_album_artist_name, disc_number, track_number, year, genre, \
-         genre_folded, release_type, title_sort, artist_sort, album_sort, album_artist_sort, \
-         disc_subtitle, is_compilation, embedded_release_group_mbid, embedded_release_mbid, \
-         embedded_recording_mbid, embedded_release_track_mbid, embedded_artist_mbid, \
-         embedded_album_artist_mbid, duration_seconds, file_format, bit_rate, sample_rate, \
-         bit_depth, channels, replaygain_track_gain, replaygain_album_gain, \
-         replaygain_track_peak, replaygain_album_peak, availability, ingest_source, \
-         imported_at, membership_source, desired_policy_revision, applied_policy_revision, \
-         applied_policy, title_provenance, album_title_provenance, album_artist_provenance, \
-         duration_measured) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'exact', ?10, ?11, ?12, ?13, ?14, ?15, \
-         ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, \
-         ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?41, ?42, ?43, ?44, ?45, ?46, ?47, ?48, ?49, \
-         'indexed', 'scan', ?11, 'automatic', ?50, ?50, ?51, ?52, ?53, ?54, ?55) \
-         ON CONFLICT (root_id, relative_path) DO UPDATE SET \
-         local_album_id = CASE WHEN local_tracks.membership_locked = 1 \
-           THEN local_tracks.local_album_id ELSE excluded.local_album_id END, \
-         membership_source = CASE WHEN local_tracks.membership_locked = 1 \
-           OR local_tracks.local_album_id = excluded.local_album_id \
-           THEN local_tracks.membership_source ELSE 'automatic' END, \
-         file_path = excluded.file_path, file_size_bytes = excluded.file_size_bytes, \
-         file_mtime_ns = excluded.file_mtime_ns, stat_revision = excluded.stat_revision, \
-         stat_revision_kind = excluded.stat_revision_kind, tag_revision = excluded.tag_revision, \
-         tags_read_at = excluded.tags_read_at, title = excluded.title, \
-         title_folded = excluded.title_folded, artist_name = excluded.artist_name, \
-         artist_name_folded = excluded.artist_name_folded, album_title = excluded.album_title, \
-         album_title_folded = excluded.album_title_folded, \
-         album_artist_name = excluded.album_artist_name, \
-         album_artist_name_folded = excluded.album_artist_name_folded, \
-         tag_album_title = excluded.tag_album_title, \
-         tag_album_artist_name = excluded.tag_album_artist_name, \
-         disc_number = excluded.disc_number, track_number = excluded.track_number, \
-         year = excluded.year, genre = excluded.genre, genre_folded = excluded.genre_folded, \
-         release_type = excluded.release_type, title_sort = excluded.title_sort, \
-         artist_sort = excluded.artist_sort, album_sort = excluded.album_sort, \
-         album_artist_sort = excluded.album_artist_sort, \
-         disc_subtitle = excluded.disc_subtitle, is_compilation = excluded.is_compilation, \
-         embedded_release_group_mbid = excluded.embedded_release_group_mbid, \
-         embedded_release_mbid = excluded.embedded_release_mbid, \
-         embedded_recording_mbid = excluded.embedded_recording_mbid, \
-         embedded_release_track_mbid = excluded.embedded_release_track_mbid, \
-         embedded_artist_mbid = excluded.embedded_artist_mbid, \
-         embedded_album_artist_mbid = excluded.embedded_album_artist_mbid, \
-         duration_seconds = excluded.duration_seconds, \
-         duration_measured = excluded.duration_measured, file_format = excluded.file_format, \
-         bit_rate = excluded.bit_rate, sample_rate = excluded.sample_rate, \
-         bit_depth = excluded.bit_depth, channels = excluded.channels, \
-         replaygain_track_gain = excluded.replaygain_track_gain, \
-         replaygain_album_gain = excluded.replaygain_album_gain, \
-         replaygain_track_peak = excluded.replaygain_track_peak, \
-         replaygain_album_peak = excluded.replaygain_album_peak, \
-         desired_policy_revision = excluded.desired_policy_revision, \
-         applied_policy_revision = excluded.applied_policy_revision, \
-         applied_policy = excluded.applied_policy, \
-         title_provenance = excluded.title_provenance, \
-         album_title_provenance = excluded.album_title_provenance, \
-         album_artist_provenance = excluded.album_artist_provenance, \
-         availability = CASE WHEN local_tracks.manual_excluded = 1 THEN 'excluded' \
-           ELSE 'indexed' END, missing_since = NULL, \
-         excluded_at = CASE WHEN local_tracks.manual_excluded = 1 \
-           THEN COALESCE(local_tracks.excluded_at, excluded.tags_read_at) END",
-    )?
-    .execute(params![
-        track_id,
-        album_id,
-        item.root_id,
-        item.absolute_path,
-        item.relative_path,
-        sha256_hex(&item.relative_path),
-        item.size_bytes as i64,
-        item.mtime_ns,
-        exact_stat_revision(item.size_bytes, item.mtime_ns),
-        tag_revision,
-        now,
-        title,
-        title_folded,
-        track_artist,
-        fold_text(&track_artist),
-        album_title,
-        fold_text(&album_title),
-        album_artist,
-        fold_text(&album_artist),
-        raw_album,
-        tag.album_artist.as_deref().unwrap_or("").trim(),
-        disc_number,
-        i64::from(track_number),
-        year,
-        tag.genre,
-        tag.genre.as_deref().map(fold_text),
-        tag.release_type,
-        tag.title_sort,
-        tag.artist_sort,
-        tag.album_sort,
-        tag.album_artist_sort,
-        tag.disc_subtitle,
-        tag.compilation,
-        tag.musicbrainz_release_group_id,
-        tag.musicbrainz_release_id,
-        tag.musicbrainz_recording_id,
-        tag.musicbrainz_release_track_id,
-        tag.musicbrainz_artist_id,
-        tag.musicbrainz_album_artist_id,
-        header.duration_seconds,
-        file_format,
-        header.bitrate_kbps,
-        header.sample_rate,
-        header.bit_depth,
-        header.channels,
-        tag.replaygain_track_gain,
-        tag.replaygain_album_gain,
-        tag.replaygain_track_peak,
-        tag.replaygain_album_peak,
-        item.policy_revision,
-        policy,
-        title_provenance,
-        album_title_provenance,
-        album_artist_provenance,
-        header.duration_measured,
-    ])?;
+    tx.prepare_cached(crate::scan::sql::WRITE_TRACK_ROW.text())?
+        .execute(params![
+            track_id,
+            album_id,
+            item.root_id,
+            item.absolute_path,
+            item.relative_path,
+            sha256_hex(&item.relative_path),
+            item.size_bytes as i64,
+            item.mtime_ns,
+            exact_stat_revision(item.size_bytes, item.mtime_ns),
+            tag_revision,
+            now,
+            title,
+            title_folded,
+            track_artist,
+            fold_text(&track_artist),
+            album_title,
+            fold_text(&album_title),
+            album_artist,
+            fold_text(&album_artist),
+            raw_album,
+            tag.album_artist.as_deref().unwrap_or("").trim(),
+            disc_number,
+            i64::from(track_number),
+            year,
+            tag.genre,
+            tag.genre.as_deref().map(fold_text),
+            tag.release_type,
+            tag.title_sort,
+            tag.artist_sort,
+            tag.album_sort,
+            tag.album_artist_sort,
+            tag.disc_subtitle,
+            tag.compilation,
+            tag.musicbrainz_release_group_id,
+            tag.musicbrainz_release_id,
+            tag.musicbrainz_recording_id,
+            tag.musicbrainz_release_track_id,
+            tag.musicbrainz_artist_id,
+            tag.musicbrainz_album_artist_id,
+            header.duration_seconds,
+            file_format,
+            header.bitrate_kbps,
+            header.sample_rate,
+            header.bit_depth,
+            header.channels,
+            tag.replaygain_track_gain,
+            tag.replaygain_album_gain,
+            tag.replaygain_track_peak,
+            tag.replaygain_album_peak,
+            item.policy_revision,
+            policy,
+            title_provenance,
+            album_title_provenance,
+            album_artist_provenance,
+            header.duration_measured,
+        ])?;
     // The row's id and album as stored (a locked membership keeps its album).
     let (track_id, stored_album): (String, String) = tx
-        .prepare_cached(
-            "SELECT id, local_album_id FROM local_tracks WHERE root_id = ?1 AND relative_path = ?2",
-        )?
+        .prepare_cached(crate::scan::sql::TRACK_AND_ALBUM_AT_PATH.text())?
         .query_row(params![item.root_id, item.relative_path], |row| {
             Ok((row.get(0)?, row.get(1)?))
         })?;
@@ -1526,30 +1278,20 @@ fn write_item(
             .filter(|value| !value.is_empty())
             .map(str::to_owned)
     };
-    tx.prepare_cached(
-        "INSERT INTO local_track_edition_tags (local_track_id, media, barcode, catalog_number, \
-         release_country, total_discs, release_date) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
-         ON CONFLICT (local_track_id) DO UPDATE SET media = excluded.media, \
-         barcode = excluded.barcode, catalog_number = excluded.catalog_number, \
-         release_country = excluded.release_country, total_discs = excluded.total_discs, \
-         release_date = excluded.release_date",
-    )?
-    .execute(params![
-        track_id,
-        blank(&edition.media),
-        blank(&edition.barcode),
-        blank(&edition.catalog_number),
-        blank(&edition.release_country),
-        edition.total_discs,
-        edition.release_date,
-    ])?;
+    tx.prepare_cached(crate::scan::sql::WRITE_EDITION_TAGS.text())?
+        .execute(params![
+            track_id,
+            blank(&edition.media),
+            blank(&edition.barcode),
+            blank(&edition.catalog_number),
+            blank(&edition.release_country),
+            edition.total_discs,
+            edition.release_date,
+        ])?;
     let rows_before = credit_rows(tx, CreditSide::Track, &track_id)?;
-    tx.prepare_cached("DELETE FROM local_track_artists WHERE local_track_id = ?1")?
+    tx.prepare_cached(crate::scan::sql::DROP_TRACK_CREDITS.text())?
         .execute(params![track_id])?;
-    let mut track_artist_rows = tx.prepare_cached(
-        "INSERT INTO local_track_artists (local_track_id, position, local_artist_id, role, \
-         credited_name, join_phrase, artist_mbid) VALUES (?1, ?2, ?3, 'main', ?4, ?5, ?6)",
-    )?;
+    let mut track_artist_rows = tx.prepare_cached(crate::scan::sql::WRITE_TRACK_CREDIT.text())?;
     for (position, (credit, id)) in track_credits.iter().zip(&track_artist_ids).enumerate() {
         track_artist_rows.execute(params![
             track_id,
@@ -1563,7 +1305,7 @@ fn write_item(
     let rows_after = credit_rows(tx, CreditSide::Track, &track_id)?;
     if rows_after != rows_before {
         let album: String = tx
-            .prepare_cached("SELECT local_album_id FROM local_tracks WHERE id = ?1")?
+            .prepare_cached(crate::scan::sql::ALBUM_OF_TRACK.text())?
             .query_row(params![track_id], |row| row.get(0))?;
         mark_stale(tx, &album)?;
         record_moves(
@@ -1575,19 +1317,14 @@ fn write_item(
             now,
         )?;
     }
-    tx.prepare_cached(
-        "DELETE FROM local_track_genres WHERE local_track_id = ?1 AND source = 'local'",
-    )?
-    .execute(params![track_id])?;
+    tx.prepare_cached(crate::scan::sql::DROP_LOCAL_GENRES.text())?
+        .execute(params![track_id])?;
     let genres: Vec<&String> = if tag.genres.is_empty() {
         tag.genre.iter().collect()
     } else {
         tag.genres.iter().collect()
     };
-    let mut genre_rows = tx.prepare_cached(
-        "INSERT OR IGNORE INTO local_track_genres (local_track_id, position, name, folded_name, \
-         source, source_document_revision) VALUES (?1, ?2, ?3, ?4, 'local', ?5)",
-    )?;
+    let mut genre_rows = tx.prepare_cached(crate::scan::sql::WRITE_LOCAL_GENRE.text())?;
     for (position, genre) in genres
         .into_iter()
         .filter(|genre| !genre.trim().is_empty())
@@ -1609,20 +1346,14 @@ fn write_item(
     {
         // Recorded now, not with the window's marks: a later item in this
         // window may empty the album this one left.
-        tx.prepare_cached(
-            "INSERT INTO library_scan_album_moves (run_id, root_id, relative_path, \
-             local_track_id, previous_album_id) VALUES (?1, ?2, ?3, ?4, ?5) \
-             ON CONFLICT (run_id, root_id, relative_path) DO UPDATE SET \
-             local_track_id = excluded.local_track_id, \
-             previous_album_id = excluded.previous_album_id",
-        )?
-        .execute(params![
-            run_id,
-            item.root_id,
-            item.relative_path,
-            track_id,
-            left
-        ])?;
+        tx.prepare_cached(crate::scan::sql::RECORD_ALBUM_MOVE.text())?
+            .execute(params![
+                run_id,
+                item.root_id,
+                item.relative_path,
+                track_id,
+                left
+            ])?;
     }
     let other_music = replaced.map(|row| OtherMusic {
         old_track_id: row.id,
@@ -1729,11 +1460,7 @@ fn follow_regrouped(
         return Ok(None);
     }
     let destinations: Vec<String> = tx
-        .prepare_cached(
-            "SELECT DISTINCT t.local_album_id FROM library_scan_album_moves m \
-             JOIN local_tracks t ON t.id = m.local_track_id \
-             WHERE m.run_id = ?1 AND m.previous_album_id = ?2",
-        )?
+        .prepare_cached(crate::scan::sql::ALBUMS_TRACKS_MOVED_TO.text())?
         .query_map(params![run_id, album_id], |row| row.get(0))?
         .collect::<rusqlite::Result<_>>()?;
     let [target] = destinations.as_slice() else {
@@ -1764,12 +1491,7 @@ fn follow_regrouped(
     // Files added with the retag never left the album: only the tracks
     // that moved from it count against those that stayed.
     let (moved, stayed): (i64, i64) = tx
-        .prepare_cached(
-            "SELECT (SELECT COUNT(DISTINCT m.local_track_id) FROM library_scan_album_moves m \
-               JOIN local_tracks t ON t.id = m.local_track_id \
-               WHERE m.run_id = ?1 AND m.previous_album_id = ?2 AND t.local_album_id = ?3), \
-             (SELECT COUNT(*) FROM local_tracks WHERE local_album_id = ?2)",
-        )?
+        .prepare_cached(crate::scan::sql::REGROUPED_COUNTS.text())?
         .query_row(params![run_id, album_id, target], |row| {
             Ok((row.get(0)?, row.get(1)?))
         })?;
@@ -1782,38 +1504,24 @@ fn follow_regrouped(
     }
     let followed = savepoint(tx, "follow_album", || {
         tx.execute(
-            "UPDATE local_albums SET (root_id, grouping_key, title, title_folded, \
-             album_artist_name, album_artist_name_folded, tag_album_title, \
-             tag_album_artist_name, album_artist_id, album_artist_sort_name, year, \
-             original_release_date, primary_genre, is_compilation, updated_at) = \
-             (SELECT root_id, grouping_key, title, title_folded, album_artist_name, \
-             album_artist_name_folded, tag_album_title, tag_album_artist_name, \
-             album_artist_id, album_artist_sort_name, year, original_release_date, \
-             primary_genre, is_compilation, updated_at FROM local_albums WHERE id = ?2), \
-             row_revision = row_revision + 1 WHERE id = ?1",
+            crate::scan::sql::COPY_ALBUM_GROUPING.text(),
             params![album_id, target],
         )?;
         tx.execute(
-            "UPDATE local_tracks SET local_album_id = ?1 WHERE local_album_id = ?2",
+            crate::scan::sql::MOVE_ALBUM_TRACKS.text(),
             params![album_id, target],
         )?;
         tx.execute(
-            "DELETE FROM local_album_artists WHERE local_album_id = ?1",
+            crate::scan::sql::DROP_ALBUM_CREDITS.text(),
             params![album_id],
         )?;
         tx.execute(
-            "UPDATE local_album_artists SET local_album_id = ?1 WHERE local_album_id = ?2",
+            crate::scan::sql::MOVE_ALBUM_CREDITS.text(),
             params![album_id, target],
         )?;
         mark_stale(tx, album_id)?;
-        tx.execute(
-            "DELETE FROM local_album_artwork WHERE local_album_id = ?1",
-            params![target],
-        )?;
-        tx.execute(
-            "DELETE FROM library_identify_jobs WHERE local_album_id = ?1",
-            params![target],
-        )?;
+        tx.execute(crate::scan::sql::DROP_ALBUM_ARTWORK.text(), params![target])?;
+        tx.execute(crate::scan::sql::DROP_ALBUM_JOBS.text(), params![target])?;
         settle_followed_match(tx, target, album_id, now)?;
         // What people made of the new row since an earlier window of this
         // run created it. Every play filed under the new row names one of
@@ -1821,18 +1529,15 @@ fn follow_regrouped(
         // row. Written by track all the same: a play must never be parted
         // from its track should the new row ever hold another album's.
         tx.execute(
-            "UPDATE library_play_history SET local_album_id = COALESCE( \
-             (SELECT t.local_album_id FROM local_tracks t \
-              WHERE t.id = library_play_history.local_track_id), ?1) \
-             WHERE local_album_id = ?2",
+            crate::scan::sql::MOVE_ALBUM_PLAYS.text(),
             params![album_id, target],
         )?;
         retarget_references(tx, "album", target, album_id)?;
         tx.execute(
-            "UPDATE playlist_tracks SET album_id = ?1 WHERE album_id = ?2",
+            crate::scan::sql::MOVE_ALBUM_PLAYLIST_TRACKS.text(),
             params![album_id, target],
         )?;
-        tx.execute("DELETE FROM local_albums WHERE id = ?1", params![target])?;
+        tx.execute(crate::scan::sql::DROP_ALBUM.text(), params![target])?;
         stamp_if_retagged_by_hand(tx, album_id, album_id, now)
     })?;
     match followed {
@@ -1864,9 +1569,7 @@ fn stamp_if_retagged_by_hand(
     now: f64,
 ) -> rusqlite::Result<bool> {
     let custom: bool = tx
-        .prepare_cached(
-            "SELECT EXISTS(SELECT 1 FROM library_custom_edition_active WHERE local_album_id = ?1)",
-        )?
+        .prepare_cached(crate::scan::sql::STAMP_IF_RETAGGED_BY_HAND.text())?
         .query_row(params![edition_of], |row| row.get(0))?;
     if !custom && !release_chosen(tx, edition_of)? {
         return Ok(false);
@@ -1889,19 +1592,7 @@ fn holds_only_its_retag(
     album_id: &str,
 ) -> rusqlite::Result<bool> {
     let (foreign, older): (bool, bool) = tx
-        .prepare_cached(
-            "WITH run AS (SELECT started_at FROM library_scan_runs WHERE id = ?1), \
-             other AS (SELECT t.imported_at, t.root_id, t.relative_path FROM local_tracks t \
-               WHERE t.local_album_id = ?2 AND NOT EXISTS ( \
-                 SELECT 1 FROM library_scan_album_moves m WHERE m.run_id = ?1 \
-                 AND m.local_track_id = t.id AND m.previous_album_id = ?3)) \
-             SELECT EXISTS(SELECT 1 FROM other), \
-             EXISTS(SELECT 1 FROM local_albums a, run WHERE a.id = ?2 \
-               AND a.created_at < run.started_at) \
-             OR EXISTS(SELECT 1 FROM other, run WHERE other.imported_at < run.started_at \
-               OR NOT EXISTS (SELECT 1 FROM library_scan_inventory i WHERE i.run_id = ?1 \
-                 AND i.root_id = other.root_id AND i.relative_path = other.relative_path))",
-        )?
+        .prepare_cached(crate::scan::sql::HOLDS_ONLY_ITS_RETAG.text())?
         .query_row(params![run_id, target, album_id], |row| {
             Ok((row.get(0)?, row.get(1)?))
         })?;
@@ -1934,26 +1625,16 @@ pub(crate) fn waits_for_the_rest(
     }
     let moved_ids = serde_json::to_string(moved_ids)
         .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
-    tx.prepare_cached(&format!(
-        "SELECT EXISTS(SELECT 1 FROM local_tracks t WHERE t.local_album_id = ?1 \
-         AND t.id NOT IN (SELECT value FROM json_each(?3)) \
-         AND ((substr(t.relative_path, 1, length(?4) + length(t.id) + 1) = ?4 || t.id || '/' \
-           AND EXISTS (SELECT 1 FROM library_catalog_actions a, \
-             json_each(a.after_json, '$.pairs') p \
-             WHERE a.local_album_id = ?1 AND a.action_kind = '{OTHER_MUSIC_KIND}' \
-             AND json_extract(p.value, '$.old_track_id') = t.id)) \
-         OR (t.availability != 'excluded' AND NOT (t.availability = 'missing' \
-           AND (t.missing_since IS NULL OR t.missing_since <= ?2)))))"
-    ))?
-    .query_row(
-        params![
-            album_id,
-            now - LONG_GONE_SECONDS,
-            moved_ids,
-            format!("{HIDDEN_PREFIX}gone/")
-        ],
-        |row| row.get(0),
-    )
+    tx.prepare_cached(crate::scan::sql::WAITS_FOR_THE_REST.text())?
+        .query_row(
+            params![
+                album_id,
+                now - LONG_GONE_SECONDS,
+                moved_ids,
+                format!("{HIDDEN_PREFIX}gone/")
+            ],
+            |row| row.get(0),
+        )
 }
 
 /// Whether a statement failed because a row elsewhere still names the row
@@ -2014,28 +1695,21 @@ impl RetagPair<'_> {
 /// they go with it then.
 fn drop_if_empty(tx: &Connection, album_id: &str) -> rusqlite::Result<()> {
     let kept: bool = tx
-        .prepare_cached(
-            "SELECT EXISTS(SELECT 1 FROM local_tracks WHERE local_album_id = ?1) \
-             OR EXISTS(SELECT 1 FROM library_user_favorites \
-               WHERE item_kind = 'album' AND item_id = ?1) \
-             OR EXISTS(SELECT 1 FROM library_user_ratings \
-               WHERE item_kind = 'album' AND item_id = ?1) \
-             OR EXISTS(SELECT 1 FROM playlist_tracks WHERE album_id = ?1)",
-        )?
+        .prepare_cached(crate::scan::sql::ALBUM_STILL_HELD.text())?
         .query_row(params![album_id], |row| row.get(0))?;
     if kept {
         return Ok(());
     }
     let dropped = savepoint(tx, "drop_album", || {
         tx.execute(
-            "DELETE FROM local_album_artists WHERE local_album_id = ?1",
+            crate::scan::sql::DROP_ALBUM_CREDITS.text(),
             params![album_id],
         )?;
         tx.execute(
-            "DELETE FROM local_album_artwork WHERE local_album_id = ?1",
+            crate::scan::sql::DROP_ALBUM_ARTWORK.text(),
             params![album_id],
         )?;
-        tx.execute("DELETE FROM local_albums WHERE id = ?1", params![album_id])
+        tx.execute(crate::scan::sql::DROP_ALBUM.text(), params![album_id])
     })?;
     if let Err(error) = dropped {
         tracing::debug!(%error, album_id, "emptied album still referenced; kept");
@@ -2130,13 +1804,9 @@ pub(super) enum EndWork {
 
 /// Albums the run moved tracks off that are still live.
 pub(super) fn albums_left(conn: &Connection, run_id: &str) -> rusqlite::Result<Vec<String>> {
-    conn.prepare_cached(
-        "SELECT DISTINCT m.previous_album_id FROM library_scan_album_moves m \
-         JOIN local_albums a ON a.id = m.previous_album_id \
-         WHERE m.run_id = ?1 AND a.retired_into_album_id IS NULL ORDER BY 1",
-    )?
-    .query_map(params![run_id], |row| row.get(0))?
-    .collect()
+    conn.prepare_cached(crate::scan::sql::ALBUMS_LEFT.text())?
+        .query_map(params![run_id], |row| row.get(0))?
+        .collect()
 }
 
 /// What a run settles once it has ended, however it ended, while its move
@@ -2243,30 +1913,6 @@ pub(super) fn owe_end_passes(tx: &Connection, run_id: &str, now: f64) -> rusqlit
     Ok(())
 }
 
-/// How a gone track `t` and an indexed track `n` match: `same_place!`,
-/// then the recording id `n`'s file holds, or with none the same title,
-/// both read from the tags. The lengths of a pair without a recording id
-/// are compared after ([`same_length`]). As [`find_moved_track`] reads
-/// `n`'s file, so a file read before its old copy went pairs as one read
-/// after.
-const MOVED_MATCH: &str = concat!(
-    same_place!(
-        "n.album_title_folded",
-        "COALESCE(n.album_artist_name_folded, '')",
-        "n.disc_number",
-        "n.track_number"
-    ),
-    " AND CASE WHEN trim(COALESCE(n.embedded_recording_mbid, '')) <> '' \
-     THEN t.embedded_recording_mbid = trim(n.embedded_recording_mbid) \
-     ELSE t.title_folded = n.title_folded AND t.title_provenance = 'tag' \
-       AND n.title_provenance = 'tag' END"
-);
-
-/// What [`MOVED_MATCH`] leaves to compare: the pair's ids and albums,
-/// whether `n` holds a recording id, and the two lengths.
-const MOVED_COLUMNS: &str = "t.id, t.local_album_id, n.id, n.local_album_id, \
-    trim(COALESCE(n.embedded_recording_mbid, '')) <> '', t.duration_seconds, n.duration_seconds";
-
 /// One row [`MOVED_COLUMNS`] reads.
 struct MovedRow {
     old: String,
@@ -2347,42 +1993,25 @@ fn continue_moved(tx: &rusqlite::Transaction<'_>, now: f64) -> rusqlite::Result<
 fn continue_moved_pass(tx: &rusqlite::Transaction<'_>, now: f64) -> rusqlite::Result<()> {
     let replaced = format!("{HIDDEN_PREFIX}replaced/");
     let olds: Vec<String> = tx
-        .prepare_cached(
-            "SELECT t.id FROM local_tracks t WHERE t.availability = 'missing' \
-             AND t.missing_since >= (SELECT MIN(started_at) FROM library_scan_runs) \
-             AND NOT EXISTS (SELECT 1 FROM local_track_aliases x WHERE x.alias = t.id) \
-             AND substr(t.relative_path, 1, length(?1)) <> ?1 \
-             ORDER BY t.id",
-        )?
+        .prepare_cached(crate::scan::sql::RECENTLY_MISSING_TRACKS.text())?
         .query_map(params![replaced], |row| row.get(0))?
         .collect::<rusqlite::Result<_>>()?;
     if olds.is_empty() {
         return Ok(());
     }
-    let into = format!(
-        "SELECT {MOVED_COLUMNS} FROM local_tracks t JOIN local_tracks n \
-         ON n.availability = 'indexed' AND n.album_title_folded = t.album_title_folded \
-         AND {MOVED_MATCH} WHERE t.id = ?1"
-    );
-    let from = format!(
-        "SELECT {MOVED_COLUMNS} FROM local_tracks n JOIN local_tracks t \
-         ON t.availability = 'missing' AND t.album_title_folded = n.album_title_folded \
-         AND {MOVED_MATCH} WHERE n.id = ?1"
-    );
+    let into = crate::scan::sql::MOVED_PAIRS_OF_GONE_TRACK.text();
+    let from = crate::scan::sql::MOVED_PAIRS_OF_NEW_TRACK.text();
     let mut pairs: Vec<(String, String)> = Vec::new();
     for old in olds {
-        let mut matched = moved_rows(tx, &into, &old)?;
+        let mut matched = moved_rows(tx, into, &old)?;
         let (Some(pair), true) = (matched.pop(), matched.is_empty()) else {
             continue;
         };
-        if moved_rows(tx, &from, &pair.new)?.len() != 1 {
+        if moved_rows(tx, from, &pair.new)?.len() != 1 {
             continue;
         }
         let dismissed: bool = tx
-            .prepare_cached(
-                "SELECT EXISTS(SELECT 1 FROM library_retag_pairs \
-                 WHERE old_album_id = ?1 AND new_album_id = ?2 AND state = ?3)",
-            )?
+            .prepare_cached(crate::scan::sql::RETAG_PAIR_IN_STATE.text())?
             .query_row(
                 params![
                     pair.old_album,
@@ -2406,15 +2035,10 @@ fn continue_moved_pass(tx: &rusqlite::Transaction<'_>, now: f64) -> rusqlite::Re
         let before = credit_rows(tx, CreditSide::Track, &judged.old)?;
         let after = credit_rows(tx, CreditSide::Track, &judged.new)?;
         if before != after {
-            tx.prepare_cached("DELETE FROM local_track_artists WHERE local_track_id = ?1")?
+            tx.prepare_cached(crate::scan::sql::DROP_TRACK_CREDITS.text())?
                 .execute(params![judged.old])?;
-            tx.prepare_cached(
-                "INSERT INTO local_track_artists (local_track_id, position, local_artist_id, \
-                 role, credited_name, join_phrase, artist_mbid) \
-                 SELECT ?1, position, local_artist_id, role, credited_name, join_phrase, \
-                 artist_mbid FROM local_track_artists WHERE local_track_id = ?2",
-            )?
-            .execute(params![judged.old, judged.new])?;
+            tx.prepare_cached(crate::scan::sql::COPY_TRACK_CREDITS.text())?
+                .execute(params![judged.old, judged.new])?;
             mark_stale(tx, &judged.old_album)?;
             record_moves(tx, CreditSide::Track, &judged.old, &before, &after, now)?;
         }
@@ -2446,35 +2070,16 @@ fn departed_from(
     album_id: &str,
     now: f64,
 ) -> rusqlite::Result<Vec<Departed>> {
-    tx.prepare_cached(
-        "WITH run AS (SELECT CAST(COALESCE(started_at, ?3) * 1000 AS INTEGER) AS start_ms \
-           FROM library_scan_runs WHERE id = ?1), \
-         moved_now AS (SELECT m.local_track_id, m.previous_album_id \
-           FROM library_scan_album_moves m JOIN local_tracks t ON t.id = m.local_track_id \
-           WHERE m.run_id = ?1 AND t.local_album_id <> m.previous_album_id), \
-         left_it AS (SELECT local_track_id FROM library_album_departures \
-           WHERE previous_album_id = ?2 \
-           UNION SELECT local_track_id FROM library_scan_album_moves \
-           WHERE run_id = ?1 AND previous_album_id = ?2) \
-         SELECT t.id, t.local_album_id, \
-         CASE WHEN EXISTS (SELECT 1 FROM moved_now WHERE moved_now.local_track_id = t.id) \
-           THEN (SELECT start_ms FROM run) \
-           ELSE COALESCE((SELECT MAX(d.arrived_at) FROM library_album_departures d \
-             WHERE d.local_track_id = t.id), (SELECT start_ms FROM run)) END, \
-         EXISTS (SELECT 1 FROM moved_now WHERE moved_now.local_track_id = t.id \
-           AND moved_now.previous_album_id = ?2) \
-         FROM left_it JOIN local_tracks t ON t.id = left_it.local_track_id \
-         WHERE t.local_album_id <> ?2 ORDER BY t.id",
-    )?
-    .query_map(params![run_id, album_id, now], |row| {
-        Ok(Departed {
-            track_id: row.get(0)?,
-            album_id: row.get(1)?,
-            arrived_ms: row.get(2)?,
-            this_run: row.get(3)?,
-        })
-    })?
-    .collect()
+    tx.prepare_cached(crate::scan::sql::DEPARTED_FROM.text())?
+        .query_map(params![run_id, album_id, now], |row| {
+            Ok(Departed {
+                track_id: row.get(0)?,
+                album_id: row.get(1)?,
+                arrived_ms: row.get(2)?,
+                this_run: row.get(3)?,
+            })
+        })?
+        .collect()
 }
 
 /// The tracks that left `album_id` and sit on a piece of it, by the piece.
@@ -2502,14 +2107,7 @@ fn pieces(
     for (piece, tracks) in by_album {
         let first_ms = tracks.iter().map(|track| track.arrived_ms).min();
         let foreign: bool = tx
-            .prepare_cached(
-                "SELECT EXISTS(SELECT 1 FROM local_tracks o WHERE o.local_album_id = ?3 \
-                 AND o.id NOT IN (SELECT local_track_id FROM library_album_departures \
-                   WHERE previous_album_id = ?2 \
-                   UNION SELECT local_track_id FROM library_scan_album_moves \
-                   WHERE run_id = ?1 AND previous_album_id = ?2) \
-                 AND (o.imported_at IS NULL OR o.imported_at * 1000 < ?4))",
-            )?
+            .prepare_cached(crate::scan::sql::PIECES.text())?
             .query_row(params![run_id, album_id, piece, first_ms], |row| row.get(0))?;
         if !foreign {
             kept.insert(piece, tracks);
@@ -2529,9 +2127,7 @@ fn has_counted_departure(
     now: f64,
 ) -> rusqlite::Result<bool> {
     let earlier: bool = tx
-        .prepare_cached(
-            "SELECT EXISTS(SELECT 1 FROM library_album_departures WHERE previous_album_id = ?1)",
-        )?
+        .prepare_cached(crate::scan::sql::HAS_COUNTED_DEPARTURE.text())?
         .query_row(params![album_id], |row| row.get(0))?;
     Ok(earlier
         && pieces(tx, run_id, album_id, now)?
@@ -2550,11 +2146,8 @@ fn held(tx: &Connection, run_id: &str, album_id: &str) -> rusqlite::Result<bool>
 }
 
 fn retired(tx: &Connection, album_id: &str) -> rusqlite::Result<bool> {
-    tx.prepare_cached(
-        "SELECT EXISTS(SELECT 1 FROM local_albums WHERE id = ?1 \
-         AND retired_into_album_id IS NOT NULL)",
-    )?
-    .query_row(params![album_id], |row| row.get(0))
+    tx.prepare_cached(crate::scan::sql::RETIRED.text())?
+        .query_row(params![album_id], |row| row.get(0))
 }
 
 /// Albums retagged across scans, decided once when a run ends: every album
@@ -2609,7 +2202,7 @@ fn join_across_scans(
                     continue;
                 };
                 let stayed: i64 = tx
-                    .prepare_cached("SELECT COUNT(*) FROM local_tracks WHERE local_album_id = ?1")?
+                    .prepare_cached(crate::scan::sql::JOIN_ACROSS_SCANS.text())?
                     .query_row(params![album_id], |row| row.get(0))?;
                 if waits_for_the_rest(tx, album_id, tracks.len() as i64, stayed, &[], now)? {
                     continue;
@@ -2671,10 +2264,7 @@ fn join_one(
     offered: &mut i64,
 ) -> rusqlite::Result<bool> {
     let dismissed: bool = tx
-        .prepare_cached(
-            "SELECT EXISTS(SELECT 1 FROM library_retag_pairs \
-             WHERE old_album_id = ?1 AND state = ?2)",
-        )?
+        .prepare_cached(crate::scan::sql::JOIN_ONE.text())?
         .query_row(params![old, RetagPairState::Dismissed.as_str()], |row| {
             row.get(0)
         })?;
@@ -2713,12 +2303,7 @@ fn join_passed_through(
     let mut rows = std::collections::BTreeSet::new();
     for track in tracks {
         let passed: Vec<String> = tx
-            .prepare_cached(
-                "SELECT previous_album_id FROM library_album_departures \
-                 WHERE local_track_id = ?2 \
-                 UNION SELECT previous_album_id FROM library_scan_album_moves \
-                 WHERE run_id = ?1 AND local_track_id = ?2",
-            )?
+            .prepare_cached(crate::scan::sql::ALBUMS_TRACK_LEFT.text())?
             .query_map(params![run_id, track], |row| row.get(0))?
             .collect::<rusqlite::Result<_>>()?;
         rows.extend(passed);
@@ -2728,9 +2313,7 @@ fn join_passed_through(
             continue;
         }
         let empty: bool = tx
-            .prepare_cached(
-                "SELECT NOT EXISTS(SELECT 1 FROM local_tracks WHERE local_album_id = ?1)",
-            )?
+            .prepare_cached(crate::scan::sql::ALBUM_IS_EMPTY.text())?
             .query_row(params![row], |found| found.get(0))?;
         if !empty {
             continue;
@@ -2759,15 +2342,8 @@ fn left_at(
     album_id: &str,
     now: f64,
 ) -> rusqlite::Result<Option<i64>> {
-    tx.prepare_cached(
-        "SELECT CASE WHEN EXISTS (SELECT 1 FROM library_scan_album_moves \
-           WHERE run_id = ?1 AND local_track_id = ?2 AND previous_album_id = ?3) \
-         THEN (SELECT CAST(COALESCE(started_at, ?4) * 1000 AS INTEGER) \
-           FROM library_scan_runs WHERE id = ?1) \
-         ELSE (SELECT departed_at FROM library_album_departures \
-           WHERE local_track_id = ?2 AND previous_album_id = ?3) END",
-    )?
-    .query_row(params![run_id, track_id, album_id, now], |row| row.get(0))
+    tx.prepare_cached(crate::scan::sql::LEFT_AT.text())?
+        .query_row(params![run_id, track_id, album_id, now], |row| row.get(0))
 }
 
 /// The half of an album retagged in a first sitting, while the rest still
@@ -2797,14 +2373,7 @@ fn carry_to_first_half(
     now: f64,
 ) -> rusqlite::Result<()> {
     let failed: Vec<(String, String)> = tx
-        .prepare_cached(
-            "SELECT p.old_album_id, p.new_album_id FROM library_retag_pairs p \
-             JOIN local_albums old ON old.id = p.old_album_id \
-             JOIN local_albums new ON new.id = p.new_album_id \
-             WHERE p.state = ?1 AND p.reason = ?2 \
-             AND old.retired_into_album_id IS NULL AND new.retired_into_album_id IS NULL \
-             ORDER BY 1, 2",
-        )?
+        .prepare_cached(crate::scan::sql::CHAINED_RETAG_PAIRS.text())?
         .query_map(
             params![
                 RetagPairState::Open.as_str(),
@@ -2815,26 +2384,11 @@ fn carry_to_first_half(
         .collect::<rusqlite::Result<_>>()?;
     for (old, new) in &failed {
         if held(tx, run_id, old)? && carry_in_savepoint(tx, old, new, now)?.is_none() {
-            tx.execute(
-                "DELETE FROM library_retag_pairs WHERE old_album_id = ?1 AND new_album_id = ?2",
-                params![old, new],
-            )?;
+            tx.execute(crate::scan::sql::DROP_RETAG_PAIR.text(), params![old, new])?;
         }
     }
     let pairs: Vec<(String, String)> = tx
-        .prepare_cached(
-            "SELECT DISTINCT m.previous_album_id, t.local_album_id \
-             FROM library_scan_album_moves m JOIN local_tracks t ON t.id = m.local_track_id \
-             JOIN local_albums old ON old.id = m.previous_album_id \
-             JOIN local_albums new ON new.id = t.local_album_id \
-             WHERE m.run_id = ?1 AND t.local_album_id <> m.previous_album_id \
-             AND old.retired_into_album_id IS NULL AND new.retired_into_album_id IS NULL \
-             AND NOT EXISTS (SELECT 1 FROM library_album_departures d \
-               JOIN local_tracks earlier ON earlier.id = d.local_track_id \
-               WHERE d.previous_album_id = m.previous_album_id \
-               AND earlier.local_album_id = t.local_album_id) \
-             ORDER BY 1, 2",
-        )?
+        .prepare_cached(crate::scan::sql::RUN_ALBUM_MOVES.text())?
         .query_map(params![run_id], |row| Ok((row.get(0)?, row.get(1)?)))?
         .collect::<rusqlite::Result<_>>()?;
     for (old, new) in &pairs {
@@ -2882,13 +2436,8 @@ fn carry_one(
     now: f64,
 ) -> rusqlite::Result<()> {
     let chosen_there = match_chosen(tx, new)?;
-    let excluded = !chosen_there
-        && tx.execute(
-            "INSERT OR IGNORE INTO library_management_exclusions (local_album_id, reason, \
-             excluded_by_user_id, excluded_at) SELECT ?2, reason, excluded_by_user_id, \
-             excluded_at FROM library_management_exclusions WHERE local_album_id = ?1",
-            params![old, new],
-        )? > 0;
+    let excluded =
+        !chosen_there && tx.execute(crate::scan::sql::CARRY_ONE.text(), params![old, new])? > 0;
     let unmarked = !takeover::is_marked(tx, new)?;
     takeover::copy_mark(tx, old, new)?;
     let marked = unmarked && takeover::is_marked(tx, new)?;
@@ -2931,14 +2480,8 @@ fn keep_departures_of(
 ) -> rusqlite::Result<()> {
     for track in pieces(tx, run_id, album_id, now)?.values().flatten() {
         if track.this_run {
-            tx.prepare_cached(
-                "INSERT OR IGNORE INTO library_album_departures (local_track_id, \
-                 previous_album_id, departed_at, arrived_at) SELECT ?2, ?3, \
-                 CAST(COALESCE(started_at, ?4) * 1000 AS INTEGER), \
-                 CAST(COALESCE(started_at, ?4) * 1000 AS INTEGER) \
-                 FROM library_scan_runs WHERE id = ?1",
-            )?
-            .execute(params![run_id, track.track_id, album_id, now])?;
+            tx.prepare_cached(crate::scan::sql::KEEP_DEPARTURES_OF.text())?
+                .execute(params![run_id, track.track_id, album_id, now])?;
         }
     }
     Ok(())
@@ -2949,24 +2492,10 @@ fn keep_departures_of(
 /// one statement, drop the rows whose track is back on the album it left,
 /// and those of an album merged into another.
 fn tidy_departures(tx: &Connection, run_id: &str, now: f64) -> rusqlite::Result<()> {
-    tx.prepare_cached(
-        "UPDATE library_album_departures SET arrived_at = ( \
-           SELECT CAST(COALESCE(started_at, ?2) * 1000 AS INTEGER) FROM library_scan_runs \
-           WHERE id = ?1) \
-         WHERE local_track_id IN (SELECT m.local_track_id FROM library_scan_album_moves m \
-           JOIN local_tracks t ON t.id = m.local_track_id \
-           WHERE m.run_id = ?1 AND t.local_album_id <> m.previous_album_id)",
-    )?
-    .execute(params![run_id, now])?;
-    tx.prepare_cached(
-        "DELETE FROM library_album_departures WHERE EXISTS (SELECT 1 FROM local_tracks t \
-           WHERE t.id = library_album_departures.local_track_id \
-           AND t.local_album_id = library_album_departures.previous_album_id) \
-         OR EXISTS (SELECT 1 FROM local_albums a \
-           WHERE a.id = library_album_departures.previous_album_id \
-           AND a.retired_into_album_id IS NOT NULL)",
-    )?
-    .execute([])?;
+    tx.prepare_cached(crate::scan::sql::STAMP_DEPARTURE_ARRIVALS.text())?
+        .execute(params![run_id, now])?;
+    tx.prepare_cached(crate::scan::sql::DROP_RETURNED_DEPARTURES.text())?
+        .execute([])?;
     Ok(())
 }
 
@@ -2977,14 +2506,7 @@ fn tidy_departures(tx: &Connection, run_id: &str, now: f64) -> rusqlite::Result<
 /// is not queued twice. Returns how many were queued.
 fn offer_held_back(conn: &Connection, run_id: &str, now: f64) -> rusqlite::Result<i64> {
     let albums: Vec<String> = conn
-        .prepare_cached(
-            "SELECT DISTINCT t.local_album_id FROM library_scan_album_moves m \
-             JOIN local_tracks t ON t.id = m.local_track_id \
-             JOIN library_scan_inventory i ON i.run_id = m.run_id AND i.root_id = m.root_id \
-               AND i.relative_path = m.relative_path \
-             WHERE m.run_id = ?1 AND t.local_album_id <> m.previous_album_id \
-             AND i.effective_policy = 'automatic'",
-        )?
+        .prepare_cached(crate::scan::sql::OFFER_HELD_BACK.text())?
         .query_map(params![run_id], |row| row.get(0))?
         .collect::<rusqlite::Result<_>>()?;
     let mut enqueued = 0i64;
@@ -3006,17 +2528,11 @@ fn mark_window(
     failed: &[(String, String, &'static str)],
     extra_counters: &[(Counter, i64)],
 ) -> rusqlite::Result<()> {
-    let mut mark_indexed = tx.prepare_cached(
-        "UPDATE library_scan_inventory SET processing_state = 'indexed', local_track_id = ?4 \
-         WHERE run_id = ?1 AND root_id = ?2 AND relative_path = ?3",
-    )?;
+    let mut mark_indexed = tx.prepare_cached(crate::scan::sql::MARK_INVENTORY_INDEXED.text())?;
     for (root, path, track_id) in indexed {
         mark_indexed.execute(params![window.run_id, root, path, track_id])?;
     }
-    let mut mark_failed = tx.prepare_cached(
-        "UPDATE library_scan_inventory SET processing_state = ?4 \
-         WHERE run_id = ?1 AND root_id = ?2 AND relative_path = ?3",
-    )?;
+    let mut mark_failed = tx.prepare_cached(crate::scan::sql::MARK_INVENTORY_STATE.text())?;
     for (root, path, state) in failed {
         mark_failed.execute(params![window.run_id, root, path, state])?;
     }
@@ -3025,18 +2541,14 @@ fn mark_window(
         .as_ref()
         .map(|(root, path)| (root.as_str(), path.as_str()))
         .unwrap_or(("", ""));
-    tx.prepare_cached(
-        "UPDATE library_scan_inventory SET processing_state = 'skipped' \
-         WHERE run_id = ?1 AND processing_state = 'pending' \
-         AND (root_id, relative_path) > (?2, ?3) AND (root_id, relative_path) <= (?4, ?5)",
-    )?
-    .execute(params![
-        window.run_id,
-        after_root,
-        after_path,
-        window.through.0,
-        window.through.1
-    ])?;
+    tx.prepare_cached(crate::scan::sql::SKIP_PENDING_INVENTORY.text())?
+        .execute(params![
+            window.run_id,
+            after_root,
+            after_path,
+            window.through.0,
+            window.through.1
+        ])?;
     let mut summed: HashMap<&'static str, i64> = HashMap::new();
     let window_counters = window
         .counters
@@ -3631,10 +3143,7 @@ pub(crate) fn automatic_album_for(
     }
     let stored = tx
         .query_row(
-            "SELECT local_album_id, root_id, relative_path, embedded_release_mbid, album_title, \
-             COALESCE(album_artist_name, ?2), \
-             album_title_provenance = 'tag' AND album_artist_provenance = 'tag', \
-             album_artist_sort, year, genre, is_compilation FROM local_tracks WHERE id = ?1",
+            crate::scan::sql::TRACK_ALBUM_TAGS.text(),
             params![track_id, UNKNOWN_ARTIST],
             |row| {
                 Ok(Stored {
@@ -3675,7 +3184,7 @@ pub(crate) fn automatic_album_for(
     };
     let album_id = resolve_album(tx, &names, &place, Some(&stored.album_id), false)?;
     let exists: bool = tx
-        .prepare_cached("SELECT EXISTS(SELECT 1 FROM local_albums WHERE id = ?1)")?
+        .prepare_cached(crate::scan::sql::ALBUM_EXISTS.text())?
         .query_row(params![album_id], |row| row.get(0))?;
     if exists {
         return Ok(Some((album_id, false)));
@@ -3683,20 +3192,15 @@ pub(crate) fn automatic_album_for(
     let key = names.key();
     let retired: Option<String> = tx
         .query_row(
-            "SELECT id FROM local_albums WHERE grouping_key = ?1 AND retired_into_album_id = ?2 \
-             ORDER BY created_at, id LIMIT 1",
+            crate::scan::sql::RETIRED_ALBUM_WITH_KEY.text(),
             params![key, stored.album_id],
             |row| row.get(0),
         )
         .optional()?;
     if let Some(revived) = retired {
+        tx.execute(crate::scan::sql::REVIVE_ALBUM.text(), params![revived, now])?;
         tx.execute(
-            "UPDATE local_albums SET retired_into_album_id = NULL, grouping_source = 'automatic', \
-             grouping_locked = 0, updated_at = ?2, row_revision = row_revision + 1 WHERE id = ?1",
-            params![revived, now],
-        )?;
-        tx.execute(
-            "DELETE FROM local_album_aliases WHERE alias = ?1 AND kind = 'merged_album'",
+            crate::scan::sql::DROP_MERGED_ALBUM_ALIAS.text(),
             params![revived],
         )?;
         return Ok(Some((revived, false)));
@@ -3713,10 +3217,7 @@ pub(crate) fn automatic_album_for(
     };
     let artist_id = album_artist_row(tx, track_id, &credit, now)?;
     tx.execute(
-        "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
-         album_artist_name, album_artist_name_folded, album_artist_id, album_artist_sort_name, \
-         year, primary_genre, is_compilation, grouping_source, created_at, updated_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 'automatic', ?13, ?13)",
+        crate::scan::sql::ADD_AUTOMATIC_ALBUM.text(),
         params![
             album_id,
             stored.root_id,
@@ -3734,8 +3235,7 @@ pub(crate) fn automatic_album_for(
         ],
     )?;
     tx.execute(
-        "INSERT INTO local_album_artists (local_album_id, position, local_artist_id, role, \
-         credited_name, join_phrase) VALUES (?1, 0, ?2, 'main', ?3, '')",
+        crate::scan::sql::ADD_AUTOMATIC_ALBUM_CREDIT.text(),
         params![album_id, artist_id, stored.album_artist],
     )?;
     Ok(Some((album_id, true)))
@@ -3753,12 +3253,7 @@ fn album_artist_row(
 ) -> rusqlite::Result<String> {
     let folded = fold_text(&credit.name);
     let shared = tx
-        .prepare_cached(
-            "SELECT c.local_artist_id, c.artist_mbid, c.credited_name \
-             FROM local_track_artists c JOIN local_artists a ON a.id = c.local_artist_id \
-             WHERE c.local_track_id = ?1 AND c.artist_mbid IS NOT NULL \
-             AND a.retired_into_artist_id IS NULL ORDER BY c.position",
-        )?
+        .prepare_cached(crate::scan::sql::ALBUM_ARTIST_ROW.text())?
         .query_map(params![track_id], |row| {
             Ok((
                 row.get::<_, String>(0)?,
@@ -3788,7 +3283,7 @@ pub(crate) fn adoptable_track_id(
 ) -> rusqlite::Result<Option<String>> {
     let existing: Option<String> = conn
         .query_row(
-            "SELECT id FROM local_tracks WHERE root_id = ?1 AND relative_path = ?2",
+            crate::scan::sql::TRACK_ID_AT_PATH.text(),
             params![root_id, relative_path],
             |row| row.get(0),
         )
@@ -3798,7 +3293,7 @@ pub(crate) fn adoptable_track_id(
     }
     let stable = stable_id(&format!("track:{root_id}:{relative_path}"));
     let taken: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM local_tracks WHERE id = ?1)",
+        crate::scan::sql::TRACK_EXISTS.text(),
         params![stable],
         |row| row.get(0),
     )?;

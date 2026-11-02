@@ -4138,8 +4138,15 @@ fn every_registered_statement_prepares() {
 /// tracks (the album and recording quality checks and "the library holds
 /// it") walk only because no index covers lowered release-group or
 /// recording ids; the expression indexes that cover them take them off
-/// this list.
+/// this list. The library's four: the scan's pass over every indexed track
+/// of a live album, the search for a release group across every indexed
+/// track, the continuation sweep's walk of every missing track when no
+/// album is named, and the remap sweep over every identified album's tracks.
 const TRACK_WALKS: &[&str] = &[
+    "droppedneedle_library::scan::sql::ALBUM_TRACKS",
+    "droppedneedle_library::import::sql::GROUP_HELD",
+    "droppedneedle_library::corrections::sql::CANDIDATE_ALBUMS",
+    "droppedneedle_library::corrections::sql::CANDIDATES",
     "droppedneedle_catalog::reads::library::sql::TRACK_PAGE_LIKE",
     "droppedneedle_catalog::reads::library::sql::TRACK_PAGE_WORDS",
     "droppedneedle_catalog::reads::library::sql::TRACK_COUNT_LIKE",
