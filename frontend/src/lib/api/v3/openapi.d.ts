@@ -12266,9 +12266,8 @@ export interface components {
              */
             download_stall_timeout_minutes: number;
             /**
-             * @description Reject non-FLAC/MP3 candidates. A v2 recipe requires this on: v2
-             *     gates recipe saves on it, the quality snapshot carries it, and the
-             *     matcher and orchestrator consumers all read it.
+             * @description Always on. Other formats are still accepted, but rank after FLAC and
+             *     MP3 of the same completeness.
              * @default true
              */
             flac_mp3_only: boolean;
@@ -12325,20 +12324,20 @@ export interface components {
              */
             quality_cutoff: string;
             /**
-             * @description Best accepted tier label.
+             * @description Best accepted tier label, set from the recipe.
              * @default lossless
              */
             quality_max: string;
             /**
-             * @description Worst accepted tier label.
+             * @description Worst accepted tier label, set from the recipe.
              * @default mp3_320
              */
             quality_min: string;
             /**
-             * @description Closed v2 quality recipe (empty means a v1 policy).
-             * @default []
+             * @description Ordered quality recipe, earlier entries preferred. A save needs at
+             *     least one entry.
              */
-            quality_recipe: components["schemas"]["QualityRecipeEntry"][];
+            quality_recipe?: components["schemas"]["QualityRecipeEntry"][];
             /**
              * @description Terms a candidate must carry.
              * @default []
@@ -18922,12 +18921,11 @@ export interface components {
             sample_rate_hz?: number | null;
         };
         /**
-         * @description How the stored quality settings read: a v1 tier range, a v2 recipe, a
-         *     policy with codecs a recipe cannot express, or a recipe that does not
-         *     validate.
+         * @description How the stored quality settings read: a usable recipe, or a section or
+         *     recipe that does not validate.
          * @enum {string}
          */
-        QualityRecipeStatus: "v1" | "v2" | "non_convertible" | "invalid";
+        QualityRecipeStatus: "v2" | "invalid";
         /** @description One blocklisted release. */
         QuarantineEntry: {
             /** @description The client label: `slskd`, `sabnzbd`, or the source for plugins. */

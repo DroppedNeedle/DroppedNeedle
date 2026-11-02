@@ -99,25 +99,7 @@
 	const migration = $derived(section.saved ? recipeFromPolicy(section.saved) : null);
 	const baselineRecipe = $derived(section.saved?.recipe ?? []);
 
-	// A stored policy that is not in the shape this form saves (a projected v1
-	// recipe, or a quality range the recipe no longer implies) can be saved as is.
-	const needsRewrite = $derived.by(() => {
-		const saved = section.saved;
-		if (!saved) return false;
-		if (saved.quality_recipe_status !== 'v2') return true;
-		const range = legacyRangeFromRecipe(saved.recipe);
-		return (
-			range !== null &&
-			(range.quality_min !== saved.quality_min || range.quality_max !== saved.quality_max)
-		);
-	});
-
-	// The quality range is worked out from the recipe, so all three show under it.
-	const qualityRefusal = $derived(
-		section.fieldError('quality_recipe', 'Quality order') ??
-			section.fieldError('quality_min', 'Quality order') ??
-			section.fieldError('quality_max', 'Quality order')
-	);
+	const qualityRefusal = $derived(section.fieldError('quality_recipe', 'Quality order'));
 
 	function recipeError(recipe: RecipeDraftEntry[]): string | null {
 		for (let index = 0; index < recipe.length; index += 1) {
@@ -168,7 +150,7 @@
 					bind:qualityRecipe={draft.recipe}
 					baseline={recipeFingerprint(baselineRecipe)}
 					{baselineRecipe}
-					migrationStatus={migration?.status === 'v1' ? 'projected' : (migration?.status ?? null)}
+					migrationStatus={migration?.status ?? null}
 					migrationMessage={migration?.message || null}
 					saving={section.saving}
 					ondiscard={() => (draft.recipe = cloneRecipe(baselineRecipe))}
@@ -230,7 +212,7 @@
 				<div class="border-t border-base-300 pt-4">
 					<SaveBar
 						{...section.bar}
-						dirty={section.dirty || needsRewrite}
+						dirty={section.dirty}
 						ondiscard={undefined}
 						disabled={draft.recipe.length === 0 || recipeError(draft.recipe) !== null}
 						saveLabel="Save acquisition policy"

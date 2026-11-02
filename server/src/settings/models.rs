@@ -57,15 +57,12 @@ pub struct UsenetSearchBackend {
     pub backend: UsenetBackend,
 }
 
-/// How the stored quality settings read: a v1 tier range, a v2 recipe, a
-/// policy with codecs a recipe cannot express, or a recipe that does not
-/// validate.
+/// How the stored quality settings read: a usable recipe, or a section or
+/// recipe that does not validate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum QualityRecipeStatus {
-    V1,
     V2,
-    NonConvertible,
     Invalid,
 }
 

@@ -23,7 +23,6 @@ use super::models::{
     SabnzbdTestResponse, SourcePriorityOrder, TestConnectionResponse, UsenetSearchBackend,
     VerifyConnectionResponse,
 };
-use super::quality;
 use super::verify::{VerifyProbes, check_hibp_file, require_service_url};
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::runtime_config::secret_sections::{
@@ -353,45 +352,13 @@ impl SettingsService {
         }
     }
 
-    /// Save the acquisition policy. A submitted recipe derives the legacy
-    /// range, the legacy order, and the cutoff clamp (v2 save semantics).
+    /// Save the acquisition policy. The section refuses an empty recipe and
+    /// sets the range and the cutoff clamp from the one it stores.
     pub async fn save_policy(
         &self,
         policy: DownloadPolicy,
     ) -> Result<DownloadPolicyView, SettingsError> {
-        let policy = self.apply_recipe(policy, true)?;
         Ok(policy_view(self.save(policy).await?))
-    }
-
-    /// A submitted recipe owns the legacy fields: the range, the FLAC/MP3
-    /// switch, and (on save) the cutoff clamp.
-    fn apply_recipe(
-        &self,
-        mut policy: DownloadPolicy,
-        clamp_cutoff: bool,
-    ) -> Result<DownloadPolicy, SettingsError> {
-        if policy.quality_recipe.is_empty() {
-            return Ok(policy);
-        }
-        if !policy.flac_mp3_only {
-            return Err(SettingsError::InvalidInput {
-                message: "A v2 recipe cannot be saved while non-FLAC/MP3 formats are enabled"
-                    .to_owned(),
-            });
-        }
-        validate_quality_recipe(&policy.quality_recipe).map_err(|error| self.config(error))?;
-        let (quality_min, quality_max) = quality::legacy_range_from_recipe(&policy.quality_recipe);
-        policy.quality_min = quality_min;
-        policy.quality_max = quality_max;
-        policy.flac_mp3_only = true;
-        if clamp_cutoff {
-            policy.quality_cutoff = quality::clamp_cutoff(
-                &policy.quality_cutoff,
-                &policy.quality_min,
-                &policy.quality_max,
-            );
-        }
-        Ok(policy)
     }
 
     // --- indexers ---------------------------------------------------------------------
@@ -700,19 +667,18 @@ fn plex_sections(libraries: Vec<(String, String)>) -> Vec<PlexLibrarySectionInfo
 
 /// The policy plus its recipe verdict, recomputed on every read.
 fn policy_view(policy: DownloadPolicy) -> DownloadPolicyView {
-    let recipe_error = validate_quality_recipe(&policy.quality_recipe)
+    let quality_recipe_error = validate_quality_recipe(&policy.quality_recipe)
         .err()
         .map(|error| error.to_string());
-    let (status, error) = quality::recipe_status(
-        &policy.quality_recipe,
-        policy.flac_mp3_only,
-        recipe_error.is_none(),
-        recipe_error.as_deref(),
-    );
+    let quality_recipe_status = if quality_recipe_error.is_some() {
+        QualityRecipeStatus::Invalid
+    } else {
+        QualityRecipeStatus::V2
+    };
     DownloadPolicyView {
         policy,
-        quality_recipe_status: status,
-        quality_recipe_error: error,
+        quality_recipe_status,
+        quality_recipe_error,
     }
 }
 

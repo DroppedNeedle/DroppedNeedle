@@ -347,14 +347,14 @@ machine and its data folders can run it.
     queue's lifetime, card details cache and status polling interval, the
     genre section lifetime, request concurrency and the orphan cover
     cadence.
-  - Settings > Download Client: slskd's own copies of the quality,
-    verification, scoring, timeout, retry and concurrency settings (the
-    download policy's are the ones that apply), and SABnzbd's client type
-    and post-processing level.
+  - Settings > Download Client: slskd's verification setting and SABnzbd's
+    client type and post-processing level. slskd's own copies of the
+    quality, scoring, timeout, retry and concurrency settings are not listed:
+    they move into the download policy on an install that has none, and v2
+    did not read them on one that has.
   - Download policy: "Verify downloads", the Usenet release age before
-    blocklisting, the source selection mode, the legacy quality order,
-    lossy bounds and lossless preferences, the unknown-quality choice, and
-    the target bitrate of a custom MP3 recipe step.
+    blocklisting, the source selection mode and the target bitrate of a
+    custom MP3 recipe step.
   - The server-wide scrobble targets (each user's own scrobble switches
     stay), the server-wide home page section settings (each user's own
     section choices stay), "Scrobble to Plex" (a Plex track
@@ -379,6 +379,14 @@ machine and its data folders can run it.
 
 ### Changed
 
+- **Quality settings.** A v2 quality range becomes the matching quality
+  recipe, with FLAC at every resolution for "lossless". A policy capped at
+  16-bit and 48 kHz or lower, as v2's default was from August 2026, gets FLAC
+  up to CD quality instead, so a 24-bit folder ranks after MP3 rather than
+  being refused. Other formats are still accepted, but rank after FLAC and MP3
+  of the same completeness. The other lossless caps and preferences, the lossy
+  bitrate bounds and the unknown-quality setting are not applied, and the
+  import report names any you had changed.
 - **Reverse proxy headers.** v2 accepted a change from the web UI whatever
   address the page was on. v3 only accepts it from the address it believes
   it is served at, so your proxy has to tell it the truth. List the proxy

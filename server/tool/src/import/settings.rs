@@ -20,6 +20,7 @@ use serde_json::Value;
 
 use super::apply::ImportError;
 use super::envelope::is_sealed;
+use super::quality_carry;
 use super::report::{DROPPED_SETTING, ReportBuilder};
 use super::schedule_carry::carry_frequency;
 use super::validate::strip_removed;
@@ -149,6 +150,15 @@ pub(super) fn stage_settings(
         Value::String(doc.instance_id.clone()),
     );
     let exported = &doc.settings;
+    let client_policy = quality_carry::policy_from_client(exported);
+    if client_policy.is_some() {
+        report.note(
+            "settings",
+            "download_policy".to_owned(),
+            "imported",
+            "moved from the download client, where this v2 install kept it".to_owned(),
+        );
+    }
 
     for section in removed_sections() {
         if exported.contains_key(section) {
@@ -156,11 +166,22 @@ pub(super) fn stage_settings(
         }
     }
     for section in replaced_sections() {
-        match exported.get(section) {
+        let carried = client_policy
+            .as_ref()
+            .filter(|_| section == "download_policy");
+        match exported.get(section).or(carried) {
             Some(value) => {
                 let mut filtered = filter_section(section, value);
+                let v2_quality = (section == "download_policy")
+                    .then(|| quality_carry::take_v2_quality(&mut filtered));
                 for path in strip_removed(section, &mut filtered) {
                     note_dropped_setting(report, path);
+                }
+                if let Some(v2_quality) = v2_quality {
+                    quality_carry::convert_policy(&mut filtered, v2_quality, report)?;
+                }
+                if section == "download_client" {
+                    quality_carry::strip_client_policy(&mut filtered);
                 }
                 if section == "plugins" {
                     note_unflagged_plugin_settings(&filtered, report);

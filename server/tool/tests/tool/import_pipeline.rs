@@ -1272,6 +1272,231 @@ async fn v2_profile_that_ticked_other_gets_the_role_fields() {
     }
 }
 
+/// Every shape a v2 download policy can reach the importer in ends as a
+/// recipe that keeps the range it accepted, and the report says what changed.
+#[tokio::test]
+async fn a_v2_policy_lands_as_a_recipe_with_its_range() {
+    let fixture = Fixture::shared();
+    let steps = |policy: &Value| -> Vec<String> {
+        policy["quality_recipe"]
+            .as_array()
+            .expect("a recipe")
+            .iter()
+            .map(|step| format!("{} {}", step["format"], step["quality"]).replace('"', ""))
+            .collect()
+    };
+    let import = async |name: &str, settings: Value| {
+        let mut export = fixture.shell();
+        for (section, value) in settings.as_object().expect("sections") {
+            export["settings"][section] = value.clone();
+        }
+        let (pool, _target) = migrated_pool().await;
+        let (_dir, config_path, crypto) = scratch_config(name);
+        let report = run_import(import_request(&export, pool.clone(), config_path, crypto)).await;
+        assert_eq!(report.exit.code, ExitCode::Ok, "{}", report.to_json());
+        let details: Vec<(String, String)> = report
+            .items
+            .iter()
+            .filter(|item| item.entity == "settings" && item.key.starts_with("download_policy"))
+            .map(|item| (item.key.clone(), item.detail.clone()))
+            .collect();
+        (
+            stored_settings(&pool).await["download_policy"].clone(),
+            details,
+        )
+    };
+
+    // v2's preference order is kept when it fits the range. The settings a
+    // recipe cannot hold are named once, only those changed from v2's default.
+    let (policy, lines) = import(
+        "policy-order",
+        json!({"download_policy": {
+            "quality_min": "mp3_192",
+            "quality_max": "lossless",
+            "quality_cutoff": "mp3_320",
+            "flac_mp3_only": false,
+            "quality_recipe": [],
+            "quality_preference_order": ["mp3_320", "lossless", "mp3_256", "mp3_192"],
+            "lossless_preference": "cd",
+            "lossless_max_bit_depth": 16,
+            "lossy_min_bitrate_kbps": null,
+            "unknown_quality_behavior": "allow_as_fallback",
+        }}),
+    )
+    .await;
+    assert_eq!(
+        steps(&policy),
+        ["mp3 320_plus", "flac hi_res", "mp3 256_319", "mp3 192_255"]
+    );
+    assert_eq!(policy["quality_min"], "mp3_192");
+    assert_eq!(policy["quality_max"], "lossless");
+    assert_eq!(policy["quality_cutoff"], "mp3_320");
+    assert_eq!(policy["flac_mp3_only"], true);
+    assert!(policy.get("lossless_preference").is_none());
+    let line = |key: &str| {
+        lines
+            .iter()
+            .find(|(found, _)| found == key)
+            .map(|(_, detail)| detail.clone())
+    };
+    assert!(line("download_policy.flac_mp3_only").is_some(), "{lines:?}");
+    assert_eq!(
+        line("download_policy.quality_settings").as_deref(),
+        Some("these v2 settings are not applied: lossless_preference, lossless_max_bit_depth")
+    );
+
+    // An order that does not fit the range gives best first, and is named.
+    // A recipe v3 cannot read gets the conversion of its range.
+    let (policy, lines) = import(
+        "policy-bad-recipe",
+        json!({"download_policy": {
+            "quality_min": "low",
+            "quality_max": "mp3_256",
+            "quality_recipe": [{"format": "flac", "quality": "lossless"}],
+            "quality_preference_order": ["lossless", "low"],
+        }}),
+    )
+    .await;
+    assert_eq!(
+        steps(&policy),
+        ["mp3 256_319", "mp3 192_255", "mp3 below_192"]
+    );
+    assert_eq!(policy["quality_max"], "mp3_256");
+    assert!(
+        lines
+            .iter()
+            .any(|(key, detail)| key == "download_policy.quality_recipe"
+                && detail.starts_with("v3 cannot read the v2 recipe")),
+        "{lines:?}"
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|(_, detail)| detail.ends_with("not applied: quality_preference_order")),
+        "{lines:?}"
+    );
+
+    // Both caps at CD quality, v2's seed for a new install, give FLAC up to CD
+    // quality: only the settings the recipe does not hold are named.
+    let (policy, lines) = import(
+        "policy-capped",
+        json!({"download_policy": {
+            "quality_min": "mp3_192",
+            "quality_max": "lossless",
+            "flac_mp3_only": true,
+            "quality_preference_order": ["lossless", "mp3_320", "mp3_256", "mp3_192"],
+            "preferred_lossy_bitrate_kbps": 320,
+            "lossless_preference": "cd",
+            "lossless_max_bit_depth": 16,
+            "lossless_max_sample_rate_hz": 48000,
+            "unknown_quality_behavior": "review",
+            "source_selection_mode": "source_first",
+        }}),
+    )
+    .await;
+    assert_eq!(
+        steps(&policy),
+        ["flac cd", "mp3 320_plus", "mp3 256_319", "mp3 192_255"]
+    );
+    assert_eq!(policy["quality_max"], "lossless");
+    assert!(
+        lines
+            .iter()
+            .any(|(key, detail)| key == "download_policy.quality_recipe"
+                && detail.contains("the recipe FLAC, up to CD quality, then MP3 320_plus")),
+        "{lines:?}"
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|(key, detail)| key == "download_policy.quality_settings"
+                && detail.ends_with(
+                    "not applied: preferred_lossy_bitrate_kbps, unknown_quality_behavior"
+                )),
+        "{lines:?}"
+    );
+
+    // A recipe keeps its own FLAC step, so the caps are named instead.
+    let (policy, lines) = import(
+        "policy-capped-recipe",
+        json!({"download_policy": {
+            "quality_recipe": [{"format": "flac", "quality": "hi_res"}],
+            "lossless_max_bit_depth": 16,
+            "lossless_max_sample_rate_hz": 48000,
+        }}),
+    )
+    .await;
+    assert_eq!(steps(&policy), ["flac hi_res"]);
+    assert!(
+        lines.iter().any(|(_, detail)| detail
+            .ends_with("not applied: lossless_max_bit_depth, lossless_max_sample_rate_hz")),
+        "{lines:?}"
+    );
+
+    // v2 ran on the range while other formats were allowed, recipe or not.
+    let (policy, lines) = import(
+        "policy-formats-open",
+        json!({"download_policy": {
+            "quality_min": "mp3_320",
+            "quality_max": "mp3_320",
+            "flac_mp3_only": false,
+            "quality_recipe": [{"format": "flac", "quality": "cd"}],
+        }}),
+    )
+    .await;
+    assert_eq!(steps(&policy), ["mp3 320_plus"]);
+    assert_eq!(policy["quality_max"], "mp3_320");
+    assert!(
+        lines
+            .iter()
+            .any(|(key, detail)| key == "download_policy.quality_recipe"
+                && detail.starts_with("v2 did not use its recipe")),
+        "{lines:?}"
+    );
+
+    // A recipe v3 can read stays, and sets the range.
+    let recipe = json!([{"format": "mp3", "quality": "256_319"}]);
+    let (policy, lines) = import(
+        "policy-kept",
+        json!({"download_policy": {"quality_min": "low", "quality_recipe": recipe}}),
+    )
+    .await;
+    assert_eq!(steps(&policy), ["mp3 256_319"]);
+    assert_eq!(policy["quality_min"], "mp3_256");
+    assert_eq!(policy["quality_max"], "mp3_256");
+    assert!(lines.is_empty(), "{lines:?}");
+
+    // With no policy section v2 ran on the copies under the download client.
+    let client = json!({
+        "enabled": true,
+        "quality_min": "mp3_256",
+        "quality_max": "mp3_320",
+        "preflight_score_auto_accept": 0.9,
+        "preflight_score_manual_min": 0.6,
+        "download_stall_timeout_minutes": 45,
+        "download_queued_timeout_minutes": 300,
+        "preferred_quality_wait_minutes": 5,
+        "max_failover_attempts": 7,
+    });
+    let (policy, _) = import("policy-client", json!({"download_client": client})).await;
+    assert_eq!(steps(&policy), ["mp3 320_plus", "mp3 256_319"]);
+    assert_eq!(policy["preflight_score_auto_accept"], 0.9);
+    assert_eq!(policy["preflight_score_manual_min"], 0.6);
+    assert_eq!(policy["download_stall_timeout_minutes"], 45);
+    assert_eq!(policy["download_queued_timeout_minutes"], 300);
+    assert_eq!(policy["preferred_quality_wait_minutes"], 5);
+    assert_eq!(policy["max_failover_attempts"], 7);
+
+    // Beside a policy section v2 never read them, so they do not win.
+    let (policy, _) = import(
+        "policy-both",
+        json!({"download_client": client, "download_policy": {"quality_max": "lossless"}}),
+    )
+    .await;
+    assert_eq!(steps(&policy), ["flac hi_res", "mp3 320_plus"]);
+    assert!(policy.get("preflight_score_auto_accept").is_none());
+}
+
 /// A v2 export carrying settings v3 removed imports, never refused: the
 /// report names each removed setting as dropped, the fields kept beside
 /// them land, and the stored download policy still decodes. Its recycle

@@ -3,14 +3,12 @@
 //! the search timings.
 //!
 //! The band is the gate at the pick, so a folder the landing would refuse
-//! is never fetched. The saved recipe orders the folders that are left;
-//! a policy saved without one prefers the band's tiers, best first.
+//! is never fetched. The saved recipe orders the folders that are left.
 
 use std::time::Duration;
 
 use droppedneedle_kernel::runtime_config::sections::{
     DownloadPolicy as SavedPolicy, QualityRecipeEntry, RecipeFormat, RecipeQuality,
-    derive_default_order,
 };
 
 use crate::landing::quality::{in_range, tier_for};
@@ -68,8 +66,7 @@ pub struct DownloadPolicy {
     pub quality_min: String,
     /// Highest tier the landing keeps.
     pub quality_max: String,
-    /// The saved recipe, earlier entries preferred. Empty means the band's
-    /// tiers, best first.
+    /// The saved recipe, earlier entries preferred.
     pub quality_recipe: Vec<QualityRecipeEntry>,
     /// Search window handed to slskd per query rung.
     pub search_timeout: Duration,
@@ -109,8 +106,7 @@ impl DownloadPolicy {
     }
 
     /// Rank one file by preference: the index of the first recipe entry it
-    /// satisfies (or of its tier in the band when there is no recipe), or
-    /// `None` when nothing admits it.
+    /// satisfies, or `None` when nothing admits it.
     ///
     /// `bitrate_kbps` counts for lossy files only: FLAC bitrate varies with
     /// compression. A FLAC file whose resolution the search does not show
@@ -126,12 +122,6 @@ impl DownloadPolicy {
         let extension = extension.to_ascii_lowercase();
         if NOT_IMPORTABLE_EXTENSIONS.contains(&extension.as_str()) {
             return None;
-        }
-        if self.quality_recipe.is_empty() {
-            let tier = search_tier(&extension, bitrate_kbps, bit_depth)?;
-            return derive_default_order(&self.quality_min, &self.quality_max)
-                .iter()
-                .position(|key| key == tier);
         }
         self.quality_recipe.iter().position(|entry| {
             if entry.format == RecipeFormat::Mp3 {

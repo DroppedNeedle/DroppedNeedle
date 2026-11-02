@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { DownloadPolicySettings } from '$lib/queries/downloads/DownloadClientsQueries.svelte';
 
 import {
+	FLAC_OPTIONS,
 	customFlacError,
 	customMp3Error,
 	legacyRangeFromRecipe,
@@ -19,19 +20,13 @@ const basePolicy = {
 } as DownloadPolicySettings;
 
 describe('quality recipe model', () => {
-	it('projects a FLAC/MP3-only v1 policy into every FLAC bucket at the lossless position', () => {
-		const result = recipeFromPolicy(basePolicy);
-		expect(result.status).toBe('projected');
-		expect(result.recipe.map(({ format, quality }) => ({ format, quality }))).toEqual([
-			{ format: 'flac', quality: 'hi_res' },
-			{ format: 'flac', quality: '24_192' },
-			{ format: 'flac', quality: '24_96' },
-			{ format: 'flac', quality: '24_48' },
-			{ format: 'flac', quality: 'cd' },
-			{ format: 'mp3', quality: '320_plus' },
-			{ format: 'mp3', quality: '256_319' },
-			{ format: 'mp3', quality: '192_255' }
-		]);
+	it('says the widest FLAC step takes every resolution', () => {
+		expect(FLAC_OPTIONS.find((option) => option.quality === 'hi_res')?.label).toBe(
+			'Any resolution'
+		);
+	});
+
+	it('fills the standard MP3 bounds', () => {
 		expect(standardRecipeEntry('mp3', 'below_192')).toMatchObject({
 			min_bitrate_kbps: 16,
 			max_bitrate_kbps: 191
@@ -48,24 +43,6 @@ describe('quality recipe model', () => {
 			min_bitrate_kbps: 320,
 			max_bitrate_kbps: null
 		});
-	});
-
-	it('refuses to project a v1 policy that allowed non-FLAC/MP3 formats', () => {
-		const result = recipeFromPolicy({ ...basePolicy, flac_mp3_only: false });
-		expect(result.status).toBe('non_convertible');
-		expect(result.recipe).toEqual([]);
-	});
-	it('requires replacement when a saved recipe is non-convertible despite valid entries', () => {
-		const result = recipeFromPolicy({
-			...basePolicy,
-			flac_mp3_only: false,
-			quality_recipe_status: 'non_convertible',
-			quality_recipe_error: 'The saved policy allows additional formats.',
-			quality_recipe: [{ format: 'flac', quality: 'cd' }]
-		});
-		expect(result.status).toBe('non_convertible');
-		expect(result.recipe).toEqual([]);
-		expect(result.message).toBe('The saved policy allows additional formats.');
 	});
 
 	it('validates custom bounds and inclusive MP3 overlap', () => {

@@ -9,7 +9,7 @@ export type QualityRecipeEntry = components['schemas']['QualityRecipeEntry'];
 
 export type QualityRecipeStatus = components['schemas']['QualityRecipeStatus'];
 
-export type RecipeMigrationStatus = QualityRecipeStatus | 'projected' | 'current';
+export type RecipeMigrationStatus = QualityRecipeStatus | 'current';
 
 export type RecipeDraftEntry = QualityRecipeEntry & { id: string };
 
@@ -34,8 +34,8 @@ export const FLAC_OPTIONS: readonly RecipeOption[] = [
 	{ quality: '24_192', label: '24-bit / 192 kHz', detail: 'High-resolution detail up to 192 kHz' },
 	{
 		quality: 'hi_res',
-		label: 'Above 24-bit / 192 kHz',
-		detail: 'The highest FLAC detail available'
+		label: 'Any resolution',
+		detail: 'Every FLAC, up to the highest available'
 	}
 ];
 
@@ -75,13 +75,6 @@ const MP3_REGIONS: Record<
 	'192_255': { min_bitrate_kbps: 192, max_bitrate_kbps: 255 },
 	'256_319': { min_bitrate_kbps: 256, max_bitrate_kbps: 319 },
 	'320_plus': { min_bitrate_kbps: 320, max_bitrate_kbps: null }
-};
-
-const LEGACY_TO_RECIPE: Record<string, QualityRecipeQuality> = {
-	low: 'below_192',
-	mp3_192: '192_255',
-	mp3_256: '256_319',
-	mp3_320: '320_plus'
 };
 
 const RECIPE_TO_LEGACY: Record<
@@ -375,46 +368,8 @@ function migrationStatusFromPolicy(
 	return null;
 }
 
-function legacyOrder(policy: DownloadPolicySettings): string[] {
-	const keys = ['low', 'mp3_192', 'mp3_256', 'mp3_320', 'lossless'];
-	const low = keys.indexOf(policy.quality_min);
-	const high = keys.indexOf(policy.quality_max);
-	if (low < 0 || high < 0) return ['mp3_320', 'lossless'];
-	return keys.slice(Math.min(low, high), Math.max(low, high) + 1).reverse();
-}
-
-type FlacStandardQuality = 'cd' | '24_48' | '24_96' | '24_192' | 'hi_res';
-
-/** A v1 policy's lossless tier projects to every FLAC detail, best first. */
-const LOSSLESS_PROJECTION: readonly FlacStandardQuality[] = [
-	'hi_res',
-	'24_192',
-	'24_96',
-	'24_48',
-	'cd'
-];
-
-function migrateLegacyEntries(key: string): QualityRecipeEntry[] | null {
-	if (key === 'lossless') {
-		return LOSSLESS_PROJECTION.map((quality) => ({
-			format: 'flac',
-			quality
-		}));
-	}
-	const quality = LEGACY_TO_RECIPE[key];
-	if (!quality) return null;
-	const region = MP3_REGIONS[quality as keyof typeof MP3_REGIONS];
-	return [{ format: 'mp3', quality, ...region }];
-}
-function statusMessage(status: RecipeMigrationStatus): string {
-	if (status === 'non_convertible')
-		return 'This saved v1 policy also accepted formats outside FLAC and MP3, so it could not be converted safely.';
-	if (status === 'invalid')
-		return 'The saved quality recipe is incomplete. Your saved policy is unchanged until you choose a replacement.';
-	if (status === 'projected')
-		return 'This v1 policy was projected into a FLAC and MP3 recipe for editing; save to adopt it.';
-	return '';
-}
+const INVALID_MESSAGE =
+	'The saved quality recipe is incomplete. Your saved policy is unchanged until you choose a replacement.';
 
 export interface RecipeMigrationResult {
 	recipe: RecipeDraftEntry[];
@@ -455,47 +410,18 @@ function validStoredEntry(entry: QualityRecipeEntry): boolean {
 export function recipeFromPolicy(policy: DownloadPolicySettings): RecipeMigrationResult {
 	const metadata = migrationStatusFromPolicy(policy);
 	if (metadata?.status === 'invalid') {
-		return {
-			recipe: [],
-			status: 'invalid',
-			message: metadata.message ?? statusMessage('invalid')
-		};
+		return { recipe: [], status: 'invalid', message: metadata.message ?? INVALID_MESSAGE };
 	}
-	if (metadata?.status === 'non_convertible' || policy.flac_mp3_only === false) {
-		return {
-			recipe: [],
-			status: 'non_convertible',
-			message: metadata?.message ?? statusMessage('non_convertible')
-		};
+	// Each stored entry is checked before the editor takes it.
+	const stored = recipeWithIds(policy.quality_recipe ?? []);
+	const hasInvalidEntry = stored.some(
+		(entry, index) =>
+			!validStoredEntry(entry) || validateRecipeEntry(entry, stored.slice(0, index)) !== null
+	);
+	if (!stored.length || hasInvalidEntry) {
+		return { recipe: [], status: 'invalid', message: INVALID_MESSAGE };
 	}
-	if (policy.quality_recipe && policy.quality_recipe.length > 0) {
-		// Each stored entry is checked below before the editor takes it.
-		const stored = recipeWithIds(policy.quality_recipe);
-		const hasInvalidEntry = stored.some(
-			(entry, index) =>
-				!validStoredEntry(entry) || validateRecipeEntry(entry, stored.slice(0, index)) !== null
-		);
-		if (hasInvalidEntry) {
-			return { recipe: [], status: 'invalid', message: statusMessage('invalid') };
-		}
-		const status = metadata?.status === 'projected' ? 'projected' : 'current';
-		return {
-			recipe: stored,
-			status,
-			message: metadata?.message ?? statusMessage(status)
-		};
-	}
-	const legacyEntries = legacyOrder(policy).map((key) => migrateLegacyEntries(key));
-	if (legacyEntries.some((entries) => entries === null)) {
-		return { recipe: [], status: 'invalid', message: statusMessage('invalid') };
-	}
-	const recipe = legacyEntries.flatMap((entries) => entries ?? []);
-	if (!recipe.length) return { recipe: [], status: 'invalid', message: statusMessage('invalid') };
-	return {
-		recipe: recipeWithIds(recipe),
-		status: 'projected',
-		message: statusMessage('projected')
-	};
+	return { recipe: stored, status: 'current', message: metadata?.message ?? '' };
 }
 
 const LEGACY_TIER_RANGES = [

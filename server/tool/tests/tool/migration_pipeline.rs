@@ -369,7 +369,7 @@ async fn reimport_writes_nothing() {
     let root = scratch_dir("reimport");
     let (_fixture, text) = repaired_export(&root);
     let (v3_root, pool) = seeded_target(&root).await;
-    run_pipeline(&text, PASSPHRASE, &v3_root, &pool, false).await;
+    let first = run_pipeline(&text, PASSPHRASE, &v3_root, &pool, false).await;
     let runs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM import_runs")
         .fetch_one(&pool)
         .await
@@ -378,7 +378,35 @@ async fn reimport_writes_nothing() {
 
     let rows_before = settings_revisions(&pool).await;
     assert!(!rows_before.is_empty());
+    let policy = &v3_settings(&v3_root)["download_policy"];
+    assert_eq!(policy["quality_min"], "mp3_320");
+    assert_eq!(policy["quality_max"], "lossless");
+    assert_eq!(policy["quality_cutoff"], "lossless");
+    let steps: Vec<(&str, &str)> = policy["quality_recipe"]
+        .as_array()
+        .expect("the policy holds a recipe")
+        .iter()
+        .map(|step| {
+            (
+                step["format"].as_str().expect("format"),
+                step["quality"].as_str().expect("quality"),
+            )
+        })
+        .collect();
+    assert_eq!(steps, [("flac", "hi_res"), ("mp3", "320_plus")]);
+    let line = "the v2 quality range mp3_320 to lossless is now the recipe FLAC, every \
+                resolution, then MP3 320_plus";
     let again = run_pipeline(&text, PASSPHRASE, &v3_root, &pool, false).await;
+    for report in [&first, &again] {
+        assert!(
+            report
+                .items
+                .iter()
+                .any(|item| item.key == "download_policy.quality_recipe" && item.detail == line),
+            "{}",
+            report.to_json()
+        );
+    }
     for (entity, counts) in &again.entities {
         assert_eq!(counts.imported, 0, "entity {entity} wrote nothing twice");
     }

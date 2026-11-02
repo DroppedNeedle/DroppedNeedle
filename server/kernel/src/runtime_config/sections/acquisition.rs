@@ -256,13 +256,11 @@ impl Section for GetIt {
 }
 
 // --- download_policy ------------------------------------------------------
-// Dropped from storage: quality_recipe_status / quality_recipe_error. In v2
-// those are read-only projections computed at GET time (route surfaces
-// "v2"/"non_convertible"/"invalid"); persisting them would pin stale
-// verdicts, so readers recompute the verdict instead.
-// The save-time cross-check stays live here: a v2 recipe requires
-// flac_mp3_only, and validate() refuses anything else (v2 gates recipe
-// saves in both settings.py and save_download_policy).
+// Dropped from storage: quality_recipe_status / quality_recipe_error. They are
+// read-only verdicts computed at GET time; persisting them would pin stale
+// verdicts.
+// A policy always holds a recipe, and the recipe owns the tier range:
+// normalize() converts a row with none and sets the range from the recipe.
 
 /// Lossy bitrate bound limits (v2 `_QUALITY_KBPS_MIN/MAX`).
 pub const QUALITY_KBPS_MIN: i64 = 16;
@@ -511,10 +509,13 @@ fn intervals_overlap(
     (left_max.is_none_or(|max| right_min <= max)) && (right_max.is_none_or(|max| left_min <= max))
 }
 
-/// List-level recipe validation (v2 `validate_quality_recipe`): standard
-/// duplicates, MP3 range overlaps, and custom FLAC duplicates rejected. An
-/// empty recipe is valid (a v1 policy); only submitted entries are checked.
+/// List-level recipe validation (v2 `validate_quality_recipe`): an empty
+/// recipe, standard duplicates, MP3 range overlaps, and custom FLAC
+/// duplicates rejected.
 pub fn validate_quality_recipe(entries: &[QualityRecipeEntry]) -> Result<(), ConfigError> {
+    if entries.is_empty() {
+        return Err(recipe_error("needs at least one quality".to_owned()));
+    }
     for entry in entries {
         entry.validate_entry()?;
     }
@@ -570,18 +571,110 @@ pub fn validate_quality_recipe(entries: &[QualityRecipeEntry]) -> Result<(), Con
     Ok(())
 }
 
+/// The tiers one recipe entry touches. A custom MP3 range can touch several.
+fn entry_tiers(entry: &QualityRecipeEntry) -> Vec<&'static str> {
+    if entry.format == RecipeFormat::Flac {
+        return vec!["lossless"];
+    }
+    match entry.quality {
+        RecipeQuality::Below192 => return vec!["low"],
+        RecipeQuality::Kbps192To255 => return vec!["mp3_192"],
+        RecipeQuality::Kbps256To319 => return vec!["mp3_256"],
+        RecipeQuality::Kbps320Plus => return vec!["mp3_320"],
+        _ => {}
+    }
+    let minimum = entry.min_bitrate_kbps.unwrap_or(QUALITY_KBPS_MIN);
+    let upper = entry.max_bitrate_kbps.unwrap_or(QUALITY_KBPS_MAX);
+    let mut touched = Vec::new();
+    if minimum <= 191 && upper >= QUALITY_KBPS_MIN {
+        touched.push("low");
+    }
+    if minimum <= 255 && upper >= 192 {
+        touched.push("mp3_192");
+    }
+    if minimum <= 319 && upper >= 256 {
+        touched.push("mp3_256");
+    }
+    if upper >= 320 {
+        touched.push("mp3_320");
+    }
+    if touched.is_empty() {
+        touched.push("low");
+    }
+    touched
+}
+
+/// The closest contiguous tier range, (worst, best), that covers a recipe.
+/// `None` for an empty recipe, which has no range.
+fn range_from_recipe(entries: &[QualityRecipeEntry]) -> Option<(&'static str, &'static str)> {
+    let ranks: Vec<usize> = entries
+        .iter()
+        .flat_map(entry_tiers)
+        .filter_map(tier_rank)
+        .collect();
+    let worst = *ranks.iter().min()?;
+    let best = *ranks.iter().max()?;
+    Some((TIER_KEYS_WORST_FIRST[worst], TIER_KEYS_WORST_FIRST[best]))
+}
+
+/// The recipe entry one tier converts to. `lossless` takes every FLAC
+/// resolution, as the tier itself does.
+fn tier_entry(tier: &str) -> Option<QualityRecipeEntry> {
+    let (format, quality) = match tier {
+        "lossless" => (RecipeFormat::Flac, RecipeQuality::HiRes),
+        "mp3_320" => (RecipeFormat::Mp3, RecipeQuality::Kbps320Plus),
+        "mp3_256" => (RecipeFormat::Mp3, RecipeQuality::Kbps256To319),
+        "mp3_192" => (RecipeFormat::Mp3, RecipeQuality::Kbps192To255),
+        "low" => (RecipeFormat::Mp3, RecipeQuality::Below192),
+        _ => return None,
+    };
+    let mut entry = QualityRecipeEntry {
+        format,
+        quality,
+        min_bitrate_kbps: None,
+        max_bitrate_kbps: None,
+        bit_depth: None,
+        sample_rate_hz: None,
+    };
+    entry.canonicalize();
+    Some(entry)
+}
+
+/// Whether a preference order lists exactly the accepted tiers, once each.
+#[must_use]
+pub fn order_fits(preference: &[String], accepted: &[String]) -> bool {
+    preference.len() == accepted.len() && accepted.iter().all(|tier| preference.contains(tier))
+}
+
+/// The one conversion of a tier range to a recipe: one entry per accepted
+/// tier, in `preference` when that fits the range, else best first. The
+/// recipe's range reads back as the range it came from.
+#[must_use]
+pub fn recipe_for_range(
+    quality_min: &str,
+    quality_max: &str,
+    preference: &[String],
+) -> Vec<QualityRecipeEntry> {
+    let accepted = derive_default_order(quality_min, quality_max);
+    let order = if order_fits(preference, &accepted) {
+        preference
+    } else {
+        &accepted
+    };
+    order.iter().filter_map(|tier| tier_entry(tier)).collect()
+}
+
 /// Download policy: quality tiers, recipe v2, timeouts, retry, retention,
 /// quotas, and the upgrade scan.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(default)]
 pub struct DownloadPolicy {
-    /// Worst accepted tier label.
+    /// Worst accepted tier label, set from the recipe.
     pub quality_min: String,
-    /// Best accepted tier label.
+    /// Best accepted tier label, set from the recipe.
     pub quality_max: String,
-    /// Reject non-FLAC/MP3 candidates. A v2 recipe requires this on: v2
-    /// gates recipe saves on it, the quality snapshot carries it, and the
-    /// matcher and orchestrator consumers all read it.
+    /// Always on. Other formats are still accepted, but rank after FLAC and
+    /// MP3 of the same completeness.
     pub flac_mp3_only: bool,
     /// Preflight auto-accept score.
     pub preflight_score_auto_accept: f64,
@@ -629,7 +722,13 @@ pub struct DownloadPolicy {
     pub background_upgrade_scan_interval_hours: i64,
     /// Sweep upgrades per run.
     pub background_upgrade_max_per_run: i64,
-    /// Closed v2 quality recipe (empty means a v1 policy).
+    // A row or request without the key decodes as empty, never as the default
+    // policy's recipe: a stored row is then converted from its own range, and
+    // a save is refused.
+    /// Ordered quality recipe, earlier entries preferred. A save needs at
+    /// least one entry.
+    #[serde(default)]
+    #[schema(default)]
     pub quality_recipe: Vec<QualityRecipeEntry>,
     /// When an automatic download waits for a hand pick: `when_unsure`
     /// (no candidate looks like the whole album in an accepted quality),
@@ -666,13 +765,19 @@ impl Default for DownloadPolicy {
             background_upgrade_scan_enabled: false,
             background_upgrade_scan_interval_hours: 12,
             background_upgrade_max_per_run: 3,
-            quality_recipe: Vec::new(),
+            quality_recipe: recipe_for_range("mp3_320", "lossless", &[]),
             search_review: "when_unsure".to_owned(),
         }
     }
 }
 
 impl DownloadPolicy {
+    /// Replace the recipe with the conversion of the healed tier range.
+    pub fn convert_range(&mut self, preference: &[String]) {
+        self.heal_tiers();
+        self.quality_recipe = recipe_for_range(&self.quality_min, &self.quality_max, preference);
+    }
+
     fn heal_tiers(&mut self) {
         if tier_rank(&self.quality_min).is_none() {
             self.quality_min = "mp3_320".to_owned();
@@ -827,34 +932,11 @@ impl Section for DownloadPolicy {
                 ),
             ));
         }
-        if tier_rank(&self.quality_min).is_none() {
-            return Err(validation(
-                key,
-                "quality_min",
-                format!("unknown quality tier {:?}", self.quality_min),
-            ));
-        }
-        if tier_rank(&self.quality_max).is_none() {
-            return Err(validation(
-                key,
-                "quality_max",
-                format!("unknown quality tier {:?}", self.quality_max),
-            ));
-        }
-        let min_rank = tier_rank(&self.quality_min).unwrap_or(0);
-        let max_rank = tier_rank(&self.quality_max).unwrap_or(0);
-        if min_rank > max_rank {
-            return Err(validation(
-                key,
-                "quality_min",
-                "the lowest quality ranks above the highest".to_owned(),
-            ));
-        }
-        if !self.quality_recipe.is_empty() && !self.flac_mp3_only {
+        if !self.flac_mp3_only {
             return Err(validation(
                 key,
                 "quality_recipe",
-                "only works with FLAC and MP3 only on; replace the old policy first".to_owned(),
+                "only works with FLAC and MP3 only on".to_owned(),
             ));
         }
         validate_quality_recipe(&self.quality_recipe)?;
@@ -872,7 +954,9 @@ impl Section for DownloadPolicy {
     }
 
     fn normalize(&mut self) {
-        self.heal_tiers();
+        if self.quality_recipe.is_empty() {
+            self.convert_range(&[]);
+        }
         if !matches!(
             self.search_review.as_str(),
             "when_unsure" | "always" | "off"
@@ -882,5 +966,84 @@ impl Section for DownloadPolicy {
         for entry in &mut self.quality_recipe {
             entry.canonicalize();
         }
+        // A recipe that does not validate keeps the stored range: the
+        // settings screen reports it, and it says nothing about the range.
+        if validate_quality_recipe(&self.quality_recipe).is_ok()
+            && let Some((worst, best)) = range_from_recipe(&self.quality_recipe)
+        {
+            worst.clone_into(&mut self.quality_min);
+            best.clone_into(&mut self.quality_max);
+        }
+        self.heal_tiers();
+        self.flac_mp3_only = true;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    /// Worst tier first, what each one converts to.
+    const CONVERTED: [(RecipeFormat, RecipeQuality); 5] = [
+        (RecipeFormat::Mp3, RecipeQuality::Below192),
+        (RecipeFormat::Mp3, RecipeQuality::Kbps192To255),
+        (RecipeFormat::Mp3, RecipeQuality::Kbps256To319),
+        (RecipeFormat::Mp3, RecipeQuality::Kbps320Plus),
+        (RecipeFormat::Flac, RecipeQuality::HiRes),
+    ];
+
+    fn steps(policy: &DownloadPolicy) -> Vec<(RecipeFormat, RecipeQuality)> {
+        policy
+            .quality_recipe
+            .iter()
+            .map(|entry| (entry.format, entry.quality))
+            .collect()
+    }
+
+    // The range is what the landing, Usenet and plugin sources read, so a
+    // conversion that moved it would change what gets downloaded. A stored
+    // row may hold an empty recipe or no recipe key at all.
+    #[test]
+    fn a_v1_range_converts_to_a_recipe_with_the_same_range() {
+        let mut ranges = 0;
+        for (low, quality_min) in TIER_KEYS_WORST_FIRST.iter().enumerate() {
+            for (high, quality_max) in TIER_KEYS_WORST_FIRST.iter().enumerate().skip(low) {
+                ranges += 1;
+                let row = json!({
+                    "quality_min": quality_min,
+                    "quality_max": quality_max,
+                    "quality_cutoff": quality_min,
+                });
+                let mut with_empty = row.clone();
+                with_empty["quality_recipe"] = json!([]);
+                for stored in [row, with_empty] {
+                    let mut policy: DownloadPolicy =
+                        serde_json::from_value(stored).expect("the row decodes");
+                    policy.normalize();
+                    let label = format!("{quality_min} to {quality_max}");
+                    assert!(!policy.quality_recipe.is_empty(), "{label}");
+                    validate_quality_recipe(&policy.quality_recipe).expect(&label);
+                    assert_eq!(policy.quality_min, *quality_min, "{label}");
+                    assert_eq!(policy.quality_max, *quality_max, "{label}");
+                    assert_eq!(policy.quality_cutoff, *quality_min, "{label}");
+                    let best_first: Vec<_> = CONVERTED[low..=high].iter().rev().copied().collect();
+                    assert_eq!(steps(&policy), best_first, "{label}");
+                }
+            }
+        }
+        assert_eq!(ranges, 15);
+
+        let fresh = DownloadPolicy::default();
+        assert_eq!(
+            (fresh.quality_min.as_str(), fresh.quality_max.as_str()),
+            ("mp3_320", "lossless")
+        );
+        assert_eq!(steps(&fresh), [CONVERTED[4], CONVERTED[3]]);
+
+        let mut no_recipe = fresh;
+        no_recipe.quality_recipe.clear();
+        assert!(no_recipe.validate().is_err(), "a save needs a recipe");
     }
 }
