@@ -17,34 +17,19 @@
 //! every import and is never marked, so a later import that
 //! brings the catalog settles links an earlier one left waiting.
 
-use sqlx::SqliteConnection;
+use droppedneedle_kernel::db::statement::Choice as _;
+use rusqlite::Connection;
 
 use super::{CarryError, SectionResult};
-use crate::export::sections::{ALL, LinkMode, Target};
+use crate::import::sql::{self, WaitingColumn};
 
 /// Report entity name.
 pub(crate) const ENTITY: &str = "library_link";
 
-/// SQL that is true when pending link `p` names an item the catalog has. A
-/// tombstone link an earlier import left has nothing to wait for any more.
-const RESOLVED: &str = "CASE p.ref_kind \
-     WHEN 'track' THEN EXISTS (SELECT 1 FROM main.local_tracks c WHERE c.id = p.v2_id) \
-     WHEN 'album' THEN EXISTS (SELECT 1 FROM main.local_albums c WHERE c.id = p.v2_id) \
-     WHEN 'artist' THEN EXISTS (SELECT 1 FROM main.local_artists c WHERE c.id = p.v2_id) \
-     WHEN 'tombstone' THEN 1 \
-     ELSE 0 END";
-
 /// Settle every pending link whose item now exists. On a dry run, count.
-pub(crate) async fn apply(
-    conn: &mut SqliteConnection,
-    dry_run: bool,
-) -> Result<SectionResult, CarryError> {
+pub(crate) fn apply(conn: &Connection, dry_run: bool) -> Result<SectionResult, CarryError> {
     let mut result = SectionResult::default();
-    let resolvable: i64 = sqlx::query_scalar(&format!(
-        "SELECT COUNT(*) FROM main.import_pending_links p WHERE {RESOLVED}"
-    ))
-    .fetch_one(&mut *conn)
-    .await?;
+    let resolvable: i64 = conn.query_row(sql::LINKS_RESOLVABLE.text(), [], |row| row.get(0))?;
     if dry_run || resolvable == 0 {
         // A dry run writes no pending links to settle; it only says how
         // many earlier imports left that the catalog now answers.
@@ -57,51 +42,17 @@ pub(crate) async fn apply(
         }
         return Ok(result);
     }
-    for section in ALL {
-        let Target::Table(table) = section.target else {
-            continue;
-        };
-        let key = section
-            .key
-            .iter()
-            .map(|column| format!("t.\"{column}\""))
-            .collect::<Vec<_>>()
-            .join(", ");
-        for column in section.columns {
-            if !matches!(column.link, Some(link) if link.mode == LinkMode::UntilResolved) {
-                continue;
-            }
-            let name = column.name;
-            let pending = format!(
-                "FROM main.import_pending_links p WHERE p.target_table = '{table}' \
-                 AND p.ref_column = '{name}' AND p.mode = 'until_resolved' \
-                 AND p.target_key = json_array({key}) AND {RESOLVED}"
-            );
-            sqlx::query(&format!(
-                "UPDATE main.\"{table}\" AS t SET \"{name}\" = (SELECT p.v2_id {pending}) \
-                 WHERE t.\"{name}\" IS NULL AND EXISTS (SELECT 1 {pending})"
-            ))
-            .persistent(false)
-            .execute(&mut *conn)
-            .await?;
-        }
+    for column in WaitingColumn::all() {
+        conn.execute(&sql::link_settle(column), [])?;
     }
-    let settled = sqlx::query(&format!(
-        "DELETE FROM main.import_pending_links WHERE rowid IN \
-         (SELECT p.rowid FROM main.import_pending_links p WHERE {RESOLVED})"
-    ))
-    .execute(&mut *conn)
-    .await?
-    .rows_affected();
+    let settled = conn.execute(sql::LINKS_SETTLED.text(), [])? as u64;
     result.written = settled;
     result.note(
         String::new(),
         "settled",
         format!("{settled} reference(s) to v2 library items now point at the carried catalog"),
     );
-    let waiting: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM main.import_pending_links")
-        .fetch_one(&mut *conn)
-        .await?;
+    let waiting: i64 = conn.query_row(sql::LINKS_WAITING.text(), [], |row| row.get(0))?;
     if waiting > 0 {
         result.note(
             String::new(),

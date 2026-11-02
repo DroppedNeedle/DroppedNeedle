@@ -6,9 +6,10 @@
 
 use std::path::{Path, PathBuf};
 
-use sqlx::SqliteConnection;
+use rusqlite::Connection;
 
 use super::{CarryError, SectionResult};
+use crate::import::sql;
 
 /// Extensions v3's avatar store serves.
 const EXTENSIONS: &[&str] = &["jpg", "png", "webp", "gif"];
@@ -86,16 +87,12 @@ pub(crate) fn write_atomically(path: &Path, bytes: &[u8]) -> std::io::Result<()>
 }
 
 /// Decide and (on a real run) write every avatar in the bundle.
-pub(crate) async fn apply(
-    conn: &mut SqliteConnection,
+pub(crate) fn apply(
+    conn: &Connection,
     cache_dir: Option<&Path>,
     dry_run: bool,
 ) -> Result<SectionResult, CarryError> {
-    let rows: Vec<(String, String, Vec<u8>)> =
-        sqlx::query_as("SELECT user_id, ext, image FROM bundle.\"avatar\" ORDER BY user_id")
-            .persistent(false)
-            .fetch_all(&mut *conn)
-            .await?;
+    let rows = sql::all_rows(conn, sql::AVATARS, sql::AvatarRow::read)?;
     let mut result = SectionResult {
         rows: rows.len() as u64,
         ..SectionResult::default()
@@ -113,20 +110,20 @@ pub(crate) async fn apply(
         return Ok(result);
     };
     let dir = cache_dir.join("avatars");
-    for (user_id, ext, image) in rows {
+    for sql::AvatarRow {
+        user_id,
+        ext,
+        image,
+    } in rows
+    {
         // v3 serves JPEG avatars under `.jpg`.
         let ext = if ext.eq_ignore_ascii_case("jpeg") {
             "jpg".to_owned()
         } else {
             ext.to_ascii_lowercase()
         };
-        let (decide_dir, decide_user, decide_ext) = (dir.clone(), user_id.clone(), ext.clone());
-        let (decision, image) = tokio::task::spawn_blocking(move || {
-            decide(&decide_dir, &decide_user, &decide_ext, &image).map(|decision| (decision, image))
-        })
-        .await
-        .map_err(|error| CarryError::Io(error.to_string()))?
-        .map_err(|error| CarryError::Io(error.to_string()))?;
+        let decision = decide(&dir, &user_id, &ext, &image)
+            .map_err(|error| CarryError::Io(error.to_string()))?;
         match decision {
             Decision::Identical => result.counts.skipped_identical += 1,
             Decision::Conflict => {
@@ -147,9 +144,7 @@ pub(crate) async fn apply(
                 if dry_run {
                     continue;
                 }
-                tokio::task::spawn_blocking(move || write_atomically(&path, &image))
-                    .await
-                    .map_err(|error| CarryError::Io(error.to_string()))?
+                write_atomically(&path, &image)
                     .map_err(|error| CarryError::Io(error.to_string()))?;
                 result.written += 1;
             }

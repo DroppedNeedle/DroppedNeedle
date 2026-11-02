@@ -64,7 +64,7 @@ const OPENS: &[Place] = &[
     ),
     place(
         "tool/src/import/pipeline.rs",
-        "the offline import runs its rows in one sqlx transaction on the pool the upgrade hands it",
+        "the offline import runs on a connection of its own, with its bundle attached",
     ),
     place(
         "src/admin/backups.rs",
@@ -489,7 +489,7 @@ const PLUGIN_CHILD: &str =
 const PROVIDER_FETCH: &str = "a provider fetch shared by its callers, which stores its answer when they stop waiting and logs a panic";
 const BOOT_STEP: &str = "boot-time file work, awaited before serving";
 const HTTP_SERVER: &str = "the HTTP server, joined by serve at the shutdown deadline";
-const OFFLINE_TOOL: &str = "the offline tool's file work, awaited";
+const OFFLINE_TOOL: &str = "the offline tool's file and database work, awaited";
 
 const SPAWN_SITES: &[(&str, usize, &str)] = &[
     ("acquire/src/drop_import/http.rs", 1, UPLOAD_CLEANUP),
@@ -569,9 +569,7 @@ const SPAWN_SITES: &[(&str, usize, &str)] = &[
     ("src/settings/library_policy_service.rs", 1, REQUEST),
     ("src/settings/services.rs", 3, REQUEST),
     ("src/settings/wiring.rs", 2, REQUEST),
-    ("tool/src/import/carry/avatars.rs", 2, OFFLINE_TOOL),
-    ("tool/src/import/carry/bundle.rs", 1, OFFLINE_TOOL),
-    ("tool/src/import/carry/held.rs", 2, OFFLINE_TOOL),
+    ("tool/src/import/pipeline.rs", 1, OFFLINE_TOOL),
     ("tool/src/tooling/reset_key.rs", 1, OFFLINE_TOOL),
     ("tool/src/tooling/upgrade.rs", 1, OFFLINE_TOOL),
 ];

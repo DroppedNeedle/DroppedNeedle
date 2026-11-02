@@ -30,6 +30,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
+use droppedneedle_kernel::db::open_connection;
 use droppedneedle_kernel::runtime_config::ingest::{
     move_recycle_bin, move_recycle_retention, read_legacy, retire_fast_scan_schedule,
 };
@@ -37,9 +38,9 @@ use droppedneedle_kernel::runtime_config::sql as settings_sql;
 use droppedneedle_kernel::runtime_config::store::{decode_text, encode_text};
 use droppedneedle_kernel::runtime_config::{ConfigError, LegacyConfig};
 
+use rusqlite::{Connection, TransactionBehavior, params};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use sqlx::SqlitePool;
 use thiserror::Error;
 
 use super::carry::bundle::{Bundle, BundleRejection};
@@ -48,6 +49,9 @@ use super::report::{
     DROPPED_SETTING, ExitCode, ExportProvenance, ImportReport, ReportBuilder, utc_now_iso,
 };
 use super::schedule_carry::carry_frequency;
+use super::sql::{
+    self, AppPasswordRow, ApprovalRow, EventCityRow, FollowRow, ProviderRow, RecoveryRow, UserRow,
+};
 use super::validate::{REMOVED_SECTIONS, ValidationIssue, strip_removed, validate_export};
 use droppedneedle_auth::Role;
 use droppedneedle_auth::federated::password_import::HashScheme;
@@ -101,13 +105,13 @@ const MUSICBRAINZ_TRANSIENT: &[&str] = &[
     "quarantine_reason",
 ];
 
-/// Internal import failure. Messages stay secret-free: sqlx errors echo
+/// Internal import failure. Messages stay secret-free: rusqlite errors echo
 /// SQL text, never bind values; crypto errors are fixed strings.
 #[derive(Debug, Error)]
 enum ImportError {
     /// A database read or write failed.
     #[error("database failure: {0}")]
-    Db(#[from] sqlx::Error),
+    Db(#[from] rusqlite::Error),
     /// The settings cannot be read or staged.
     #[error("settings failure: {reason}")]
     Config {
@@ -137,8 +141,10 @@ pub struct ImportRequest {
     pub export_bytes: Vec<u8>,
     /// Operator passphrase unlocking the secret envelope.
     pub passphrase: String,
-    /// Target v3 database. Tests use scratch pools only.
-    pub pool: SqlitePool,
+    /// Target v3 database file, already migrated. The import opens its own
+    /// connection on it, which runs the import's transactions and has the
+    /// bundle attached. Tests use scratch files only.
+    pub db_path: PathBuf,
     /// Target v3 config folder. While the target stores no settings yet,
     /// its `config.json` (from before settings moved into the database) is
     /// what the import starts from, as the server's first start would.
@@ -169,6 +175,22 @@ pub struct ImportRequest {
 /// not print; the CLI prints [`ImportReport::to_json`].
 pub async fn run_import(request: ImportRequest) -> ImportReport {
     let provenance = lenient_provenance(&request.export_bytes);
+    let dry_run = request.dry_run;
+    let for_task = provenance.clone();
+    match tokio::task::spawn_blocking(move || import_blocking(request, for_task)).await {
+        Ok(report) => report,
+        Err(error) => {
+            tracing::error!(%error, "the import task failed");
+            ReportBuilder::new(dry_run, provenance).finish(
+                ExitCode::FailedInternal,
+                "the import stopped unexpectedly; run it again".to_owned(),
+            )
+        }
+    }
+}
+
+/// The pipeline, on a thread that may wait on files and on SQLite.
+fn import_blocking(request: ImportRequest, provenance: ExportProvenance) -> ImportReport {
     let mut report = ReportBuilder::new(request.dry_run, provenance);
 
     let parsed = match ExportFile::parse(&request.export_bytes) {
@@ -249,9 +271,28 @@ pub async fn run_import(request: ImportRequest) -> ImportReport {
         report.set_notes(notes);
     }
 
+    let mut conn = match open_connection(&request.db_path) {
+        Ok(conn) => conn,
+        Err(error) => {
+            return report.finish(
+                ExitCode::FailedInternal,
+                format!("cannot open the target database: {error}"),
+            );
+        }
+    };
+    // A section insert reads the table it writes, so SQLite holds its new rows
+    // in a temporary table first. On disk, memory stays flat however many
+    // listens v2 had; in memory, a large one could kill a small host every run.
+    if let Err(error) = conn.pragma_update(None, "temp_store", "FILE") {
+        return report.finish(
+            ExitCode::FailedInternal,
+            format!("cannot open the target database: {error}"),
+        );
+    }
+
     // The bundle is checked whole before anything is written: a missing,
     // swapped or inconsistent bundle refuses the import with zero writes.
-    let bundle = match prepare_bundle(&request, &parsed.root).await {
+    let bundle = match prepare_bundle(&conn, &request, &parsed.root) {
         Ok(bundle) => bundle,
         Err(BundleRejection::Invalid(reason)) => {
             report.note("export", "attachments".to_owned(), "error", reason.clone());
@@ -263,13 +304,13 @@ pub async fn run_import(request: ImportRequest) -> ImportReport {
     };
 
     let outcome = run_guarded(
+        &mut conn,
         &request,
         &parsed.root,
         &unsealed,
         bundle.as_ref(),
         &mut report,
-    )
-    .await;
+    );
     if outcome.is_err() && !report.committed() {
         report.discard_counts();
     }
@@ -292,16 +333,16 @@ pub async fn run_import(request: ImportRequest) -> ImportReport {
 
 /// Find the export's bundle, check its hash, then check its content
 /// against the export.
-async fn prepare_bundle(
+fn prepare_bundle(
+    conn: &Connection,
     request: &ImportRequest,
     root: &Value,
 ) -> Result<Option<Bundle>, BundleRejection> {
-    let Some(found) =
-        super::carry::bundle::locate(root, request.attachments_dir.as_deref()).await?
+    let Some(found) = super::carry::bundle::locate(root, request.attachments_dir.as_deref())?
     else {
         return Ok(None);
     };
-    super::carry::check_bundle(&request.pool, &found, root).await?;
+    super::carry::check_bundle(conn, &found, root)?;
     Ok(Some(found))
 }
 
@@ -427,7 +468,8 @@ fn unseal_consumed(root: &Value, opener: &Opener) -> Result<HashMap<String, Stri
 /// before the commit leaves prior state untouched. Carried sections commit
 /// one by one after that; a failure there keeps the sections already
 /// applied, and a rerun resumes.
-async fn run_guarded(
+fn run_guarded(
+    conn: &mut Connection,
     request: &ImportRequest,
     root: &Value,
     unsealed: &HashMap<String, String>,
@@ -435,7 +477,6 @@ async fn run_guarded(
     report: &mut ReportBuilder,
 ) -> Result<(), ImportError> {
     let carry = |dry_run: bool| super::carry::CarryRun {
-        pool: &request.pool,
         root,
         bundle,
         unsealed,
@@ -444,7 +485,7 @@ async fn run_guarded(
         dry_run,
         stop_after: request.fault_after_sections,
     };
-    let current_config = current_settings(&request.pool, &request.legacy).await?;
+    let current_config = current_settings(conn, &request.legacy)?;
     let secrets_before = report.secrets_counted();
     let staged_config = stage_settings(
         root,
@@ -464,41 +505,46 @@ async fn run_guarded(
 
     if request.dry_run {
         // One read transaction, so the snapshot is consistent.
-        let mut tx = request.pool.begin().await?;
-        let snapshot = DatabaseSnapshot::load(&mut tx).await?;
-        tx.rollback().await?;
+        let tx = conn.transaction()?;
+        let snapshot = DatabaseSnapshot::load(&tx)?;
+        tx.rollback()?;
         Plan::decide(root, &snapshot, unsealed, report);
-        super::carry::run(carry(true), report).await?;
+        super::carry::run(conn, carry(true), report)?;
         return Ok(());
     }
 
     // The write lock comes first and the snapshot is read under it, so no
     // other writer can change a row between the plan and the apply. The
-    // pool's connect options keep foreign keys on.
-    let mut tx = request.pool.begin_with("BEGIN IMMEDIATE").await?;
-    let snapshot = DatabaseSnapshot::load(&mut tx).await?;
+    // connection keeps foreign keys on.
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let snapshot = DatabaseSnapshot::load(&tx)?;
     let plan = Plan::decide(root, &snapshot, unsealed, report);
-    plan.apply(&mut tx, &request.crypto, unsealed).await?;
-    let settings_written = write_settings(&mut tx, &staged_config, &request.crypto).await?;
+    plan.apply(&tx, &request.crypto, unsealed)?;
+    let settings_written = write_settings(&tx, &staged_config, &request.crypto)?;
     // A pure re-import (every record and setting identical) writes nothing
     // at all, not even an audit row: idempotency means zero writes.
     let run_id = if plan.has_writes() || settings_written > 0 {
-        Some(record_import_run(&mut tx, root, report, completed_exit(report)).await?)
+        Some(record_import_run(
+            &tx,
+            root,
+            report,
+            completed_exit(report),
+        )?)
     } else {
         None
     };
     if request.fault_before_commit {
-        tx.rollback().await?;
+        tx.rollback()?;
         return Err(ImportError::FaultBeforeCommit);
     }
-    tx.commit().await?;
+    tx.commit()?;
     report.mark_committed();
     if request.fault_after_commit {
         // No audit fix-up: a real crash could not run one either.
         return Err(ImportError::FaultAfterCommit);
     }
 
-    let carried = super::carry::run(carry(false), report).await;
+    let carried = super::carry::run(conn, carry(false), report);
     // The audit row carries the whole run's real counts, the carried
     // sections included, and a failed run says so. A run whose only writes
     // were carried sections (a resume) records its own row.
@@ -507,10 +553,8 @@ async fn run_guarded(
         Err(_) => "FAILED_INTERNAL",
     };
     let audited = match run_id {
-        Some(id) => update_import_run(&request.pool, &id, exit, report).await,
-        None if report.carried_writes() > 0 => {
-            insert_import_run(&request.pool, root, exit, report).await
-        }
+        Some(id) => update_import_run(conn, &id, exit, report),
+        None if report.carried_writes() > 0 => insert_import_run(conn, root, exit, report),
         None => Ok(()),
     };
     match (carried, audited) {
@@ -531,13 +575,11 @@ async fn run_guarded(
 /// while it stores none and has recorded no copy of `config.json`, what a
 /// first start would copy in from that file. A file that does not read
 /// refuses the import before anything is written.
-async fn current_settings(pool: &SqlitePool, legacy: &LegacyConfig) -> Result<Value, ImportError> {
-    let settled: bool = sqlx::query_scalar(settings_sql::ANY_SETTINGS.text())
-        .fetch_one(pool)
-        .await?;
+fn current_settings(conn: &Connection, legacy: &LegacyConfig) -> Result<Value, ImportError> {
+    let settled: bool = conn.query_row(settings_sql::ANY_SETTINGS.text(), [], |row| row.get(0))?;
     let mut current = serde_json::Map::new();
     if settled {
-        for (key, value) in stored_settings(pool).await? {
+        for (key, value) in stored_settings(conn)? {
             current.insert(key, value);
         }
         return Ok(Value::Object(current));
@@ -554,15 +596,15 @@ async fn current_settings(pool: &SqlitePool, legacy: &LegacyConfig) -> Result<Va
 }
 
 /// Every stored settings row, decoded.
-async fn stored_settings<'c, E>(executor: E) -> Result<Vec<(String, Value)>, ImportError>
-where
-    E: sqlx::SqliteExecutor<'c>,
-{
-    let rows: Vec<(String, String, i64)> = sqlx::query_as(settings_sql::ALL_SECTIONS.text())
-        .fetch_all(executor)
-        .await?;
+fn stored_settings(conn: &Connection) -> Result<Vec<(String, Value)>, ImportError> {
+    let mut statement = conn.prepare(settings_sql::ALL_SECTIONS.text())?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
     rows.into_iter()
-        .map(|(key, text, _)| {
+        .map(|(key, text)| {
             decode_text(&text)
                 .map(|value| (key, value))
                 .map_err(|error| ImportError::Config {
@@ -577,15 +619,11 @@ where
 /// stored at its next revision, and a stored row the staged settings no
 /// longer hold (a replaced section the export lacks) is deleted, so it
 /// reads as its default. Returns how many rows changed.
-async fn write_settings(
-    tx: &mut sqlx::SqliteConnection,
-    staged: &Value,
-    crypto: &Crypto,
-) -> Result<usize, ImportError> {
+fn write_settings(tx: &Connection, staged: &Value, crypto: &Crypto) -> Result<usize, ImportError> {
     let staged = staged.as_object().ok_or_else(|| ImportError::Config {
         reason: "staged settings are not a JSON object".to_owned(),
     })?;
-    let stored: HashMap<String, Value> = stored_settings(&mut *tx).await?.into_iter().collect();
+    let stored: HashMap<String, Value> = stored_settings(tx)?.into_iter().collect();
     let now = unix_millis();
     let mut changed = 0;
     for (key, value) in staged {
@@ -598,12 +636,11 @@ async fn write_settings(
         let text = encode_text(value).map_err(|error| ImportError::Config {
             reason: error.to_string(),
         })?;
-        sqlx::query(settings_sql::PUT_SECTION.text())
-            .bind(key)
-            .bind(text)
-            .bind(now)
-            .fetch_one(&mut *tx)
-            .await?;
+        tx.query_row(
+            settings_sql::PUT_SECTION.text(),
+            params![key, text, now],
+            |row| row.get::<_, i64>(0),
+        )?;
         changed += 1;
     }
     // Only a replaced section is ever removed: rows outside the replace
@@ -612,10 +649,7 @@ async fn write_settings(
         .keys()
         .filter(|key| !staged.contains_key(*key) && REPLACE_UNIVERSE.contains(&key.as_str()))
     {
-        sqlx::query(settings_sql::DELETE_SECTION.text())
-            .bind(key)
-            .execute(&mut *tx)
-            .await?;
+        tx.execute(settings_sql::DELETE_SECTION.text(), params![key])?;
         changed += 1;
     }
     Ok(changed)
@@ -996,69 +1030,6 @@ fn rekey_section(
 
 // --- database snapshot -----------------------------------------------------
 
-#[derive(Debug, Clone, sqlx::FromRow)]
-struct UserRow {
-    id: String,
-    display_name: String,
-    email: Option<String>,
-    avatar_url: Option<String>,
-    role: String,
-    created_at: i64,
-    last_login_at: Option<i64>,
-    username: Option<String>,
-    username_display: Option<String>,
-}
-
-#[derive(Debug, Clone, sqlx::FromRow)]
-struct ProviderRow {
-    user_id: String,
-    provider: String,
-    provider_uid: String,
-    provider_data: Option<String>,
-    password_hash: Option<String>,
-    hash_scheme: Option<String>,
-    created_at: i64,
-}
-
-#[derive(Debug, Clone, sqlx::FromRow)]
-struct AppPasswordRow {
-    user_id: String,
-    name: String,
-    secret_sha256: String,
-    created_at: i64,
-    last_used_at: Option<i64>,
-    last_client: Option<String>,
-    revoked: i64,
-}
-
-#[derive(Debug, Clone, sqlx::FromRow)]
-struct RecoveryRow {
-    user_id: String,
-    code_hash: String,
-    created_at: i64,
-    expires_at: i64,
-}
-
-#[derive(Debug, Clone, sqlx::FromRow)]
-struct FollowRow {
-    user_id: String,
-    artist_mbid_lower: String,
-    auto_download: i64,
-    followed_at: i64,
-    updated_at: i64,
-}
-
-#[derive(Debug, Clone, sqlx::FromRow)]
-struct EventCityRow {
-    user_id: String,
-    city_name: String,
-    country_code: Option<String>,
-    latitude: f64,
-    longitude: f64,
-    radius_km: f64,
-    position: i64,
-}
-
 /// Concerts city key: the table's (user, latitude, longitude) primary key.
 type CityKey = (String, u64, u64);
 
@@ -1088,19 +1059,6 @@ fn coord_bits(value: f64) -> u64 {
     (value + 0.0).to_bits()
 }
 
-#[derive(Debug, Clone, sqlx::FromRow)]
-struct ApprovalRow {
-    user_id: String,
-    artist_mbid_lower: String,
-    state: String,
-    requested_at: i64,
-    reviewed_by_id: Option<String>,
-    reviewed_by_name: Option<String>,
-    reviewed_at: Option<i64>,
-    batch_id: Option<String>,
-    source: Option<String>,
-}
-
 /// An approval time from the export (REAL epoch seconds) as the table
 /// stores it: integer milliseconds.
 fn approval_ms(seconds: f64) -> i64 {
@@ -1123,54 +1081,15 @@ struct DatabaseSnapshot {
 }
 
 impl DatabaseSnapshot {
-    async fn load(conn: &mut sqlx::SqliteConnection) -> Result<Self, ImportError> {
-        let users: Vec<UserRow> = sqlx::query_as(
-            "SELECT id, display_name, email, avatar_url, role, created_at, \
-             last_login_at, username, username_display FROM auth_users",
-        )
-        .fetch_all(&mut *conn)
-        .await?;
-        let providers: Vec<ProviderRow> = sqlx::query_as(
-            "SELECT user_id, provider, provider_uid, provider_data, password_hash, \
-             hash_scheme, created_at FROM auth_providers",
-        )
-        .fetch_all(&mut *conn)
-        .await?;
-        let app_passwords: Vec<AppPasswordRow> = sqlx::query_as(
-            "SELECT user_id, name, secret_sha256, created_at, last_used_at, \
-             last_client, revoked FROM auth_app_passwords",
-        )
-        .fetch_all(&mut *conn)
-        .await?;
-        let recoveries: Vec<RecoveryRow> = sqlx::query_as(
-            "SELECT user_id, code_hash, created_at, expires_at \
-             FROM auth_password_recovery_codes",
-        )
-        .fetch_all(&mut *conn)
-        .await?;
-        let follows: Vec<FollowRow> = sqlx::query_as(
-            "SELECT user_id, artist_mbid_lower, auto_download, followed_at, \
-             updated_at FROM acquire_followed_artists",
-        )
-        .fetch_all(&mut *conn)
-        .await?;
-        let approvals: Vec<ApprovalRow> = sqlx::query_as(
-            "SELECT user_id, artist_mbid_lower, state, requested_at, \
-             reviewed_by_id, reviewed_by_name, reviewed_at, batch_id, source \
-             FROM auto_download_approvals",
-        )
-        .fetch_all(&mut *conn)
-        .await?;
-        let event_cities: Vec<EventCityRow> = sqlx::query_as(
-            "SELECT user_id, city_name, country_code, latitude, longitude, radius_km, \
-             position FROM user_event_cities",
-        )
-        .fetch_all(&mut *conn)
-        .await?;
-        let event_seen: Vec<(String, f64)> =
-            sqlx::query_as("SELECT user_id, seen_at FROM user_event_seen")
-                .fetch_all(&mut *conn)
-                .await?;
+    fn load(conn: &Connection) -> Result<Self, ImportError> {
+        let users = sql::all_rows(conn, sql::USERS, UserRow::read)?;
+        let providers = sql::all_rows(conn, sql::PROVIDERS, ProviderRow::read)?;
+        let app_passwords = sql::all_rows(conn, sql::APP_PASSWORDS, AppPasswordRow::read)?;
+        let recoveries = sql::all_rows(conn, sql::RECOVERY_CODES, RecoveryRow::read)?;
+        let follows = sql::all_rows(conn, sql::FOLLOWS, FollowRow::read)?;
+        let approvals = sql::all_rows(conn, sql::APPROVALS, ApprovalRow::read)?;
+        let event_cities = sql::all_rows(conn, sql::EVENT_CITIES, EventCityRow::read)?;
+        let event_seen = sql::all_rows(conn, sql::EVENT_SEEN, sql::EventSeenRow::read)?;
 
         let mut snapshot = Self {
             users: HashMap::new(),
@@ -1183,7 +1102,10 @@ impl DatabaseSnapshot {
             follows: HashMap::new(),
             approvals: HashMap::new(),
             event_cities: HashMap::new(),
-            event_seen: event_seen.into_iter().collect(),
+            event_seen: event_seen
+                .into_iter()
+                .map(|seen| (seen.user_id, seen.seen_at))
+                .collect(),
         };
         for city in event_cities {
             snapshot.event_cities.insert(
@@ -2033,9 +1955,9 @@ impl Plan {
     }
 
     /// Execute the decided writes inside the caller's transaction.
-    async fn apply(
+    fn apply(
         &self,
-        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        tx: &Connection,
         crypto: &Crypto,
         unsealed: &HashMap<String, String>,
     ) -> Result<(), ImportError> {
@@ -2045,9 +1967,9 @@ impl Plan {
                     record,
                     email_nulled,
                     username_nulled,
-                } => insert_user(tx, record, *email_nulled, *username_nulled).await?,
+                } => insert_user(tx, record, *email_nulled, *username_nulled)?,
                 Planned::InsertProvider { record, user_id } => {
-                    insert_provider(tx, record, user_id).await?;
+                    insert_provider(tx, record, user_id)?;
                 }
                 Planned::InsertAppPassword {
                     record,
@@ -2056,24 +1978,24 @@ impl Plan {
                     secret_path,
                 } => {
                     let plaintext = unsealed.get(secret_path).ok_or(ImportError::Rekey)?;
-                    insert_app_password(tx, crypto, record, user_id, name, plaintext).await?;
+                    insert_app_password(tx, crypto, record, user_id, name, plaintext)?;
                 }
                 Planned::InsertRecovery { record, user_id } => {
-                    insert_recovery(tx, record, user_id).await?;
+                    insert_recovery(tx, record, user_id)?;
                 }
-                Planned::InsertFollow { record } => insert_follow(tx, record).await?,
+                Planned::InsertFollow { record } => insert_follow(tx, record)?,
                 Planned::MergeFollow {
                     key,
                     auto_download,
                     followed_at,
                     updated_at,
                 } => {
-                    merge_follow(tx, key, *auto_download, *followed_at, *updated_at).await?;
+                    merge_follow(tx, key, *auto_download, *followed_at, *updated_at)?;
                 }
                 Planned::InsertApproval {
                     record,
                     reviewer_nulled,
-                } => insert_approval(tx, record, *reviewer_nulled).await?,
+                } => insert_approval(tx, record, *reviewer_nulled)?,
                 Planned::MergeApproval {
                     key,
                     state,
@@ -2094,16 +2016,15 @@ impl Plan {
                         *reviewed_at,
                         batch_id.clone(),
                         source.clone(),
-                    )
-                    .await?;
+                    )?;
                 }
                 Planned::InsertEventCity {
                     record,
                     radius_km,
                     position,
-                } => insert_event_city(tx, record, *radius_km, *position).await?,
+                } => insert_event_city(tx, record, *radius_km, *position)?,
                 Planned::SetEventSeen { user_id, seen_at } => {
-                    set_event_seen(tx, user_id, *seen_at).await?;
+                    set_event_seen(tx, user_id, *seen_at)?;
                 }
             }
         }
@@ -2230,8 +2151,8 @@ fn sha_hex(plaintext: &str) -> String {
     format!("{digest:x}")
 }
 
-async fn insert_user(
-    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+fn insert_user(
+    tx: &Connection,
     record: &Value,
     email_nulled: bool,
     username_nulled: bool,
@@ -2242,52 +2163,44 @@ async fn insert_user(
         .flatten();
     let id = str_or(record, "id", "");
     let avatar_url = v3_avatar_url(&id, opt_str(record, "avatar_url"));
-    sqlx::query(
-        "INSERT INTO auth_users (id, display_name, email, avatar_url, role, \
-         created_at, last_login_at, username, username_display) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    )
-    .bind(&id)
-    .bind(str_or(record, "display_name", ""))
-    .bind(email)
-    .bind(avatar_url)
-    .bind(role_of(record))
-    .bind(time_ms(record, "created_at"))
-    .bind(opt_time_ms(record, "last_login_at"))
-    .bind(username)
-    .bind(opt_str(record, "username_display"))
-    .execute(&mut **tx)
-    .await?;
+    tx.execute(
+        sql::INSERT_USER.text(),
+        params![
+            id,
+            str_or(record, "display_name", ""),
+            email,
+            avatar_url,
+            role_of(record),
+            time_ms(record, "created_at"),
+            opt_time_ms(record, "last_login_at"),
+            username,
+            opt_str(record, "username_display"),
+        ],
+    )?;
     Ok(())
 }
 
-async fn insert_provider(
-    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
-    record: &Value,
-    user_id: &str,
-) -> Result<(), ImportError> {
+fn insert_provider(tx: &Connection, record: &Value, user_id: &str) -> Result<(), ImportError> {
     let (provider_data, password) = provider_columns(record);
     let (scheme, hash) = password.unzip();
-    sqlx::query(
-        "INSERT INTO auth_providers (id, user_id, provider, provider_uid, \
-         provider_data, password_hash, hash_scheme, created_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-    )
-    .bind(uuid::Uuid::new_v4().to_string())
-    .bind(user_id)
-    .bind(str_or(record, "provider", ""))
-    .bind(str_or(record, "provider_uid", ""))
-    .bind(provider_data)
-    .bind(hash)
-    .bind(scheme)
-    .bind(time_ms(record, "created_at"))
-    .execute(&mut **tx)
-    .await?;
+    tx.execute(
+        sql::INSERT_PROVIDER.text(),
+        params![
+            uuid::Uuid::new_v4().to_string(),
+            user_id,
+            str_or(record, "provider", ""),
+            str_or(record, "provider_uid", ""),
+            provider_data,
+            hash,
+            scheme,
+            time_ms(record, "created_at"),
+        ],
+    )?;
     Ok(())
 }
 
-async fn insert_app_password(
-    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+fn insert_app_password(
+    tx: &Connection,
     crypto: &Crypto,
     record: &Value,
     user_id: &str,
@@ -2296,126 +2209,101 @@ async fn insert_app_password(
 ) -> Result<(), ImportError> {
     let ciphertext = crypto.encrypt(plaintext).map_err(|_| ImportError::Rekey)?;
     let sha = sha_hex(plaintext);
-    sqlx::query(
-        "INSERT INTO auth_app_passwords (id, user_id, name, secret_sha256, \
-         secret_encrypted, created_at, last_used_at, last_client, revoked) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    )
-    .bind(uuid::Uuid::new_v4().to_string())
-    .bind(user_id)
-    .bind(name)
-    .bind(sha)
-    .bind(ciphertext)
-    .bind(time_ms(record, "created_at"))
-    .bind(opt_time_ms(record, "last_used_at"))
-    .bind(opt_str(record, "last_client"))
-    .bind(i64::from(bool_or(record, "revoked", false)))
-    .execute(&mut **tx)
-    .await?;
+    tx.execute(
+        sql::INSERT_APP_PASSWORD.text(),
+        params![
+            uuid::Uuid::new_v4().to_string(),
+            user_id,
+            name,
+            sha,
+            ciphertext,
+            time_ms(record, "created_at"),
+            opt_time_ms(record, "last_used_at"),
+            opt_str(record, "last_client"),
+            i64::from(bool_or(record, "revoked", false)),
+        ],
+    )?;
     Ok(())
 }
 
-async fn insert_recovery(
-    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
-    record: &Value,
-    user_id: &str,
-) -> Result<(), ImportError> {
-    sqlx::query(
-        "INSERT INTO auth_password_recovery_codes (user_id, code_hash, \
-         created_at, expires_at) VALUES (?, ?, ?, ?)",
-    )
-    .bind(user_id)
-    .bind(str_or(record, "code_hash", ""))
-    .bind(time_ms(record, "created_at"))
-    .bind(time_ms(record, "expires_at"))
-    .execute(&mut **tx)
-    .await?;
+fn insert_recovery(tx: &Connection, record: &Value, user_id: &str) -> Result<(), ImportError> {
+    tx.execute(
+        sql::INSERT_RECOVERY_CODE.text(),
+        params![
+            user_id,
+            str_or(record, "code_hash", ""),
+            time_ms(record, "created_at"),
+            time_ms(record, "expires_at"),
+        ],
+    )?;
     Ok(())
 }
 
-async fn insert_follow(
-    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
-    record: &Value,
-) -> Result<(), ImportError> {
+fn insert_follow(tx: &Connection, record: &Value) -> Result<(), ImportError> {
     let mbid = str_or(record, "artist_mbid", "");
-    sqlx::query(
-        "INSERT INTO acquire_followed_artists (user_id, artist_mbid, \
-         artist_mbid_lower, artist_name, auto_download, followed_at, \
-         updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-    )
-    .bind(str_or(record, "user_id", ""))
-    .bind(mbid.trim().to_owned())
-    .bind(mbid.trim().to_lowercase())
-    .bind(str_or(record, "artist_name", ""))
-    .bind(i64::from(bool_or(record, "auto_download", false)))
-    .bind(approval_ms(num_or(record, "followed_at", 0.0)))
-    .bind(approval_ms(num_or(record, "updated_at", 0.0)))
-    .execute(&mut **tx)
-    .await?;
+    tx.execute(
+        sql::INSERT_FOLLOW.text(),
+        params![
+            str_or(record, "user_id", ""),
+            mbid.trim().to_owned(),
+            mbid.trim().to_lowercase(),
+            str_or(record, "artist_name", ""),
+            i64::from(bool_or(record, "auto_download", false)),
+            approval_ms(num_or(record, "followed_at", 0.0)),
+            approval_ms(num_or(record, "updated_at", 0.0)),
+        ],
+    )?;
     Ok(())
 }
 
-async fn merge_follow(
-    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+fn merge_follow(
+    tx: &Connection,
     key: &(String, String),
     auto_download: bool,
     followed_at: i64,
     updated_at: i64,
 ) -> Result<(), ImportError> {
-    sqlx::query(
-        "UPDATE acquire_followed_artists SET auto_download = ?, followed_at = ?, \
-         updated_at = ? WHERE user_id = ? AND artist_mbid_lower = ?",
-    )
-    .bind(i64::from(auto_download))
-    .bind(followed_at)
-    .bind(updated_at)
-    .bind(&key.0)
-    .bind(&key.1)
-    .execute(&mut **tx)
-    .await?;
+    tx.execute(
+        sql::MERGE_FOLLOW.text(),
+        params![
+            i64::from(auto_download),
+            followed_at,
+            updated_at,
+            key.0,
+            key.1,
+        ],
+    )?;
     Ok(())
 }
 
-async fn insert_event_city(
-    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+fn insert_event_city(
+    tx: &Connection,
     record: &Value,
     radius_km: f64,
     position: i64,
 ) -> Result<(), ImportError> {
-    sqlx::query(
-        "INSERT INTO user_event_cities (user_id, city_name, country_code, latitude, \
-         longitude, radius_km, position) VALUES (?, ?, ?, ?, ?, ?, ?)",
-    )
-    .bind(str_or(record, "user_id", ""))
-    .bind(str_or(record, "city_name", "").trim().to_owned())
-    .bind(opt_str(record, "country_code"))
-    .bind(num_or(record, "latitude", 0.0))
-    .bind(num_or(record, "longitude", 0.0))
-    .bind(radius_km)
-    .bind(position)
-    .execute(&mut **tx)
-    .await?;
+    tx.execute(
+        sql::INSERT_EVENT_CITY.text(),
+        params![
+            str_or(record, "user_id", ""),
+            str_or(record, "city_name", "").trim().to_owned(),
+            opt_str(record, "country_code"),
+            num_or(record, "latitude", 0.0),
+            num_or(record, "longitude", 0.0),
+            radius_km,
+            position,
+        ],
+    )?;
     Ok(())
 }
 
-async fn set_event_seen(
-    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
-    user_id: &str,
-    seen_at: f64,
-) -> Result<(), ImportError> {
-    sqlx::query(
-        "INSERT INTO user_event_seen (user_id, seen_at) VALUES (?, ?) \
-         ON CONFLICT(user_id) DO UPDATE SET seen_at = excluded.seen_at",
-    )
-    .bind(user_id)
-    .bind(seen_at)
-    .execute(&mut **tx)
-    .await?;
+fn set_event_seen(tx: &Connection, user_id: &str, seen_at: f64) -> Result<(), ImportError> {
+    tx.execute(sql::SET_EVENT_SEEN.text(), params![user_id, seen_at])?;
     Ok(())
 }
 
-async fn insert_approval(
-    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+fn insert_approval(
+    tx: &Connection,
     record: &Value,
     reviewer_nulled: bool,
 ) -> Result<(), ImportError> {
@@ -2423,31 +2311,28 @@ async fn insert_approval(
     let reviewer = (!reviewer_nulled)
         .then(|| opt_str(record, "reviewed_by_id"))
         .flatten();
-    sqlx::query(
-        "INSERT INTO auto_download_approvals (user_id, artist_mbid, \
-         artist_mbid_lower, artist_name, state, requested_at, reviewed_by_id, \
-         reviewed_by_name, reviewed_at, batch_id, source) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    )
-    .bind(str_or(record, "user_id", ""))
-    .bind(mbid.trim().to_owned())
-    .bind(mbid.trim().to_lowercase())
-    .bind(str_or(record, "artist_name", ""))
-    .bind(str_or(record, "state", "pending"))
-    .bind(approval_ms(num_or(record, "requested_at", 0.0)))
-    .bind(reviewer)
-    .bind(opt_str(record, "reviewed_by_name"))
-    .bind(opt_num(record, "reviewed_at").map(approval_ms))
-    .bind(opt_str(record, "batch_id"))
-    .bind(opt_str(record, "source"))
-    .execute(&mut **tx)
-    .await?;
+    tx.execute(
+        sql::INSERT_APPROVAL.text(),
+        params![
+            str_or(record, "user_id", ""),
+            mbid.trim().to_owned(),
+            mbid.trim().to_lowercase(),
+            str_or(record, "artist_name", ""),
+            str_or(record, "state", "pending"),
+            approval_ms(num_or(record, "requested_at", 0.0)),
+            reviewer,
+            opt_str(record, "reviewed_by_name"),
+            opt_num(record, "reviewed_at").map(approval_ms),
+            opt_str(record, "batch_id"),
+            opt_str(record, "source"),
+        ],
+    )?;
     Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn merge_approval(
-    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+fn merge_approval(
+    tx: &Connection,
     key: &(String, String),
     state: &str,
     requested_at: i64,
@@ -2457,22 +2342,20 @@ async fn merge_approval(
     batch_id: Option<String>,
     source: Option<String>,
 ) -> Result<(), ImportError> {
-    sqlx::query(
-        "UPDATE auto_download_approvals SET state = ?, requested_at = ?, \
-         reviewed_by_id = ?, reviewed_by_name = ?, reviewed_at = ?, \
-         batch_id = ?, source = ? WHERE user_id = ? AND artist_mbid_lower = ?",
-    )
-    .bind(state)
-    .bind(requested_at)
-    .bind(reviewed_by_id)
-    .bind(reviewed_by_name)
-    .bind(reviewed_at)
-    .bind(batch_id)
-    .bind(source)
-    .bind(&key.0)
-    .bind(&key.1)
-    .execute(&mut **tx)
-    .await?;
+    tx.execute(
+        sql::MERGE_APPROVAL.text(),
+        params![
+            state,
+            requested_at,
+            reviewed_by_id,
+            reviewed_by_name,
+            reviewed_at,
+            batch_id,
+            source,
+            key.0,
+            key.1,
+        ],
+    )?;
     Ok(())
 }
 
@@ -2485,8 +2368,8 @@ fn completed_exit(report: &ReportBuilder) -> &'static str {
     }
 }
 
-async fn record_import_run(
-    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+fn record_import_run(
+    tx: &Connection,
     root: &Value,
     report: &ReportBuilder,
     exit: &str,
@@ -2495,48 +2378,45 @@ async fn record_import_run(
     // row back too. The carry and a post-commit config failure correct it
     // afterwards.
     let id = uuid::Uuid::new_v4().to_string();
-    sqlx::query(
-        "INSERT INTO import_runs (id, instance_id, exported_at, exit_code, \
-         entity_counts, applied_at) VALUES (?, ?, ?, ?, ?, ?)",
-    )
-    .bind(&id)
-    .bind(str_or(root, "instance_id", ""))
-    .bind(str_or(root, "exported_at", ""))
-    .bind(exit)
-    .bind(report.counts_json())
-    .bind(utc_now_iso())
-    .execute(&mut **tx)
-    .await?;
+    tx.execute(
+        sql::INSERT_IMPORT_RUN.text(),
+        params![
+            id,
+            str_or(root, "instance_id", ""),
+            str_or(root, "exported_at", ""),
+            exit,
+            report.counts_json(),
+            utc_now_iso(),
+        ],
+    )?;
     Ok(id)
 }
 
 /// Audit row for a run whose only writes were carried sections.
-async fn insert_import_run(
-    pool: &SqlitePool,
+fn insert_import_run(
+    conn: &mut Connection,
     root: &Value,
     exit: &str,
     report: &ReportBuilder,
 ) -> Result<(), ImportError> {
-    let mut tx = pool.begin().await?;
-    record_import_run(&mut tx, root, report, exit).await?;
-    tx.commit().await?;
+    let tx = conn.transaction()?;
+    record_import_run(&tx, root, report, exit)?;
+    tx.commit()?;
     Ok(())
 }
 
 /// Refresh the audit row with the counts of the carried sections, which
 /// commit after the row was first written.
-async fn update_import_run(
-    pool: &SqlitePool,
+fn update_import_run(
+    conn: &Connection,
     run_id: &str,
     exit: &str,
     report: &ReportBuilder,
 ) -> Result<(), ImportError> {
-    sqlx::query("UPDATE import_runs SET exit_code = ?, entity_counts = ? WHERE id = ?")
-        .bind(exit)
-        .bind(report.counts_json())
-        .bind(run_id)
-        .execute(pool)
-        .await?;
+    conn.execute(
+        sql::UPDATE_IMPORT_RUN.text(),
+        params![exit, report.counts_json(), run_id],
+    )?;
     Ok(())
 }
 

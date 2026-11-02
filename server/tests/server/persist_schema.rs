@@ -4008,6 +4008,39 @@ fn declarations_in(text: &str) -> usize {
     .count()
 }
 
+/// The importer's statements run on the target with the export bundle
+/// attached.
+const IMPORT_MODULE: &str = "droppedneedle_tool::import::";
+
+/// A copy of the migrated template with a bundle attached that holds every
+/// column of every section spec.
+fn import_target(dir: &crate::common::ScratchDir) -> rusqlite::Connection {
+    let bundle_path = dir.join("bundle.db");
+    let bundle = rusqlite::Connection::open(&bundle_path).expect("bundle opens");
+    for section in droppedneedle_tool::export::sections::ALL {
+        let columns = section
+            .columns
+            .iter()
+            .map(|column| format!("\"{}\"", column.name))
+            .collect::<Vec<_>>()
+            .join(", ");
+        bundle
+            .execute_batch(&format!("CREATE TABLE \"{}\" ({columns})", section.name))
+            .expect("section table builds");
+    }
+    drop(bundle);
+    let path = dir.join("import-target.db");
+    crate::common::migrated_db(&path);
+    let target = rusqlite::Connection::open(&path).expect("template copy opens");
+    target
+        .execute(
+            "ATTACH DATABASE ?1 AS bundle",
+            [bundle_path.to_string_lossy()],
+        )
+        .expect("bundle attaches");
+    target
+}
+
 /// Prepare one statement, and refuse a text holding more than one:
 /// `prepare` alone compiles the first and ignores the rest.
 fn prepare_one(connection: &rusqlite::Connection, name: &str, text: &str) -> Option<String> {
@@ -4045,7 +4078,8 @@ fn row_mismatch(
 
 /// Decision 5: every declared statement, and every statement a family can
 /// make, prepares against the migrated schema, or a `schema = V2` block's
-/// against the v2 fixture database, so a renamed column or a dropped table
+/// against the v2 fixture database, or the importer's against the migrated
+/// schema with a bundle attached, so a renamed column or a dropped table
 /// fails here. Every `sql.rs` on disk is registered under the
 /// module its path names, with as many declarations as its text holds.
 /// Preparing does not check how many values a call site binds, that a
@@ -4128,12 +4162,13 @@ fn every_registered_statement_prepares() {
     cache
         .execute_batch(droppedneedle_kernel::db::cache::SCHEMA)
         .expect("cache schema builds");
+    let import = import_target(&dir);
     let (mut statements, mut families, mut made) = (0, 0, 0);
-    for (schema, declared) in registered
-        .values()
-        .flat_map(|(schema, declared)| declared.iter().map(move |one| (*schema, one)))
-    {
+    for (module, schema, declared) in registered.iter().flat_map(|(module, (schema, declared))| {
+        declared.iter().map(move |one| (*module, *schema, one))
+    }) {
         let connection = match schema {
+            Schema::App if module.starts_with(IMPORT_MODULE) => &import,
             Schema::App => &app,
             Schema::V2 => &v2,
             Schema::Cache => &cache,
@@ -4238,7 +4273,9 @@ const TRACK_WALKS: &[&str] = &[
 /// statistics, and an index led by `availability` can look as good as a
 /// key: a read of one album's tracks then walks every indexed track. Every
 /// registered statement outside [`TRACK_WALKS`] reaches the track table by
-/// a key, never by a walk of it or of an index led by `availability`.
+/// a key, never by a walk of it or of an index led by `availability`. The
+/// importer's are left out: they run offline, on the bundle's rows, with
+/// nothing waiting on them.
 #[test]
 fn registered_statements_reach_tracks_by_key() {
     let dir = crate::common::ScratchDir::new("track-plans");
@@ -4268,7 +4305,7 @@ fn registered_statements_reach_tracks_by_key() {
     let mut wrong = Vec::new();
     for (_, list) in REGISTRIES {
         for file in list() {
-            if !matches!(file.schema, Schema::App) {
+            if !matches!(file.schema, Schema::App) || file.module.starts_with(IMPORT_MODULE) {
                 continue;
             }
             for declared in file.declared {

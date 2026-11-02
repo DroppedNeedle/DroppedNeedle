@@ -40,8 +40,7 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use rusqlite::{Connection, OpenFlags};
-use sqlx::SqlitePool;
+use rusqlite::{Connection, OpenFlags, TransactionBehavior};
 use thiserror::Error;
 
 use crate::export::v2dir::{self, V2Dirs};
@@ -56,12 +55,12 @@ use droppedneedle::bootstrap::data_dirs::{
 };
 use droppedneedle_kernel::db::backup::{WalState, wal_path, wal_state};
 use droppedneedle_kernel::db::datalock::{DataLock, DataLockError, lock_path, server_lock_path};
-use droppedneedle_kernel::db::{DbConfig, open_runtime};
+use droppedneedle_kernel::db::error::DbError;
+use droppedneedle_kernel::db::{DbConfig, open_connection, open_runtime};
 use droppedneedle_kernel::runtime_config::crypto::{CryptoError, KEY_FILE_NAME};
 use droppedneedle_kernel::runtime_config::ingest::{LEGACY_CONFIG_FILE_NAME, mark_skip};
 use droppedneedle_kernel::runtime_config::key_check::{Assessment, KeyCheck, assess, enforce};
 use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto, KeyOrigin, LegacyConfig, Secret};
-use droppedneedle_kernel::schema::SchemaError;
 
 /// Work folder in `cache/` for the export file and its bundle.
 const WORK_DIR_NAME: &str = ".upgrade-work";
@@ -481,11 +480,8 @@ pub fn delete_orphan_rows(db_path: &Path) -> rusqlite::Result<usize> {
     db.pragma_update(None, "foreign_keys", true)?;
     let tx = db.transaction()?;
     let mut removed = 0;
-    for table in ["user_followed_artists", "auto_download_approvals"] {
-        removed += tx.execute(
-            &format!("DELETE FROM {table} WHERE user_id NOT IN (SELECT id FROM auth_users)"),
-            [],
-        )?;
+    for orphans in [super::sql::ORPHAN_FOLLOWS, super::sql::ORPHAN_APPROVALS] {
+        removed += tx.execute(orphans.text(), [])?;
     }
     tx.commit()?;
     db.close().map_err(|(_, error)| error)?;
@@ -1009,16 +1005,13 @@ pub struct OfflineImport {
 pub enum OfflineImportError {
     /// The target database cannot be opened.
     #[error("cannot open target database: {0}")]
-    Open(sqlx::Error),
-    /// The target schema could not be migrated.
-    #[error(transparent)]
-    Schema(#[from] SchemaError),
+    Open(DbError),
     /// Another writer holds the target database.
     #[error("target database is locked (stop the server before importing)")]
     DatabaseLocked,
     /// The write-lock probe could not be released.
     #[error("cannot probe target database: {0}")]
-    Probe(sqlx::Error),
+    Probe(rusqlite::Error),
     /// The v3 key could not be loaded or created.
     #[error(transparent)]
     Key(#[from] CryptoError),
@@ -1036,9 +1029,10 @@ pub enum OfflineImportError {
 /// run the import pipeline. The caller holds the data lock for the whole
 /// run; `_lock` is the proof.
 ///
-/// The pool is writable and not the serving runtime's, which turns
-/// read-only after boot: an offline import owns its writes. It is closed
-/// before this returns, so the database is left cleanly closed.
+/// The target is opened and migrated through the factory, then the import
+/// runs on a connection of its own: its bundle is attached to it, and a
+/// large section outlasts the writer lane's time budget. The connection is
+/// closed before this returns, so the database is left cleanly closed.
 pub async fn run_offline_import(
     _lock: &DataLock,
     job: OfflineImport,
@@ -1054,6 +1048,8 @@ pub async fn run_offline_import(
         // a key that does not belong shows before the real run.
         if !key_absent && job.db_path.is_file() {
             prepare_target(&job.db_path, &job.config_dir, None, false).await?;
+        } else {
+            migrate_target(&job.db_path).await?;
         }
         (
             Crypto::from_key_bytes(&[42u8; 32])?,
@@ -1069,14 +1065,8 @@ pub async fn run_offline_import(
         prepare_target(&job.db_path, &job.config_dir, Some(&legacy), false).await?;
         (crypto, legacy)
     };
-    let pool = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(5)
-        .connect(&format!("sqlite:{}?mode=rwc", job.db_path.display()))
-        .await
-        .map_err(OfflineImportError::Open)?;
     let (dry_run, db_path, config_dir) = (job.dry_run, job.db_path.clone(), job.config_dir.clone());
-    let outcome = import_into(&pool, job, crypto, legacy).await;
-    pool.close().await;
+    let outcome = import_into(job, crypto, legacy).await;
     // A finished import stores the key's check value; a refused one
     // leaves the settings as they were.
     if let Ok(report) = &outcome
@@ -1086,6 +1076,15 @@ pub async fn run_offline_import(
         prepare_target(&db_path, &config_dir, None, true).await?;
     }
     outcome
+}
+
+/// Create and migrate the target through the factory, and close it again.
+async fn migrate_target(db_path: &Path) -> Result<(), OfflineImportError> {
+    let runtime = open_runtime(&DbConfig::new(db_path))
+        .await
+        .map_err(OfflineImportError::Open)?;
+    runtime.shutdown().await;
+    Ok(())
 }
 
 /// Ready the target the way the server's start does, with no other pool
@@ -1146,17 +1145,15 @@ async fn prepare_target(
 }
 
 async fn import_into(
-    pool: &SqlitePool,
     job: OfflineImport,
     crypto: Crypto,
     legacy: LegacyConfig,
 ) -> Result<ImportReport, OfflineImportError> {
-    droppedneedle_kernel::schema::apply_migrations(pool).await?;
-    probe_write_lock(pool).await?;
+    probe_write_lock(&job.db_path)?;
     Ok(run_import(ImportRequest {
         export_bytes: job.export_bytes,
         passphrase: job.passphrase.expose().to_owned(),
-        pool: pool.clone(),
+        db_path: job.db_path,
         legacy,
         crypto,
         v2_config_path: job.v2_config,
@@ -1173,15 +1170,13 @@ async fn import_into(
 /// Refuse a database another writer holds: one connection takes an
 /// immediate lock and releases it, so a live server fails the import
 /// before anything is decided.
-async fn probe_write_lock(pool: &SqlitePool) -> Result<(), OfflineImportError> {
-    let mut connection = pool.acquire().await.map_err(OfflineImportError::Open)?;
-    sqlx::query("BEGIN IMMEDIATE")
-        .execute(&mut *connection)
-        .await
+fn probe_write_lock(db_path: &Path) -> Result<(), OfflineImportError> {
+    let mut connection = open_connection(db_path).map_err(|error| match error {
+        DbError::Busy { .. } => OfflineImportError::DatabaseLocked,
+        other => OfflineImportError::Open(other),
+    })?;
+    let probe = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|_| OfflineImportError::DatabaseLocked)?;
-    sqlx::query("ROLLBACK")
-        .execute(&mut *connection)
-        .await
-        .map_err(OfflineImportError::Probe)?;
-    Ok(())
+    probe.rollback().map_err(OfflineImportError::Probe)
 }

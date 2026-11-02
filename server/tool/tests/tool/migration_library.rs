@@ -298,7 +298,7 @@ async fn managed_identified_album_keeps_ids_identity_and_original() {
         droppedneedle_tool::r#import::run_import(droppedneedle_tool::r#import::ImportRequest {
             export_bytes: std::fs::read(&export_path).expect("export reads"),
             passphrase: PASSPHRASE.to_owned(),
-            pool: pool.clone(),
+            db_path: pool.connect_options().get_filename().to_owned(),
             legacy: droppedneedle_kernel::runtime_config::LegacyConfig::at(&config_dir, false),
             crypto: Crypto::load_or_generate(&config_dir).expect("v3 key").0,
             v2_config_path: None,

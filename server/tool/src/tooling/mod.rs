@@ -27,4 +27,5 @@ pub mod host_settings;
 pub mod recovery_code;
 pub mod reset_key;
 pub mod restore;
+pub(crate) mod sql;
 pub mod upgrade;

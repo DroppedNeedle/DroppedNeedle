@@ -24,7 +24,6 @@ rusqlite.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
-sqlx.workspace = true
 thiserror.workspace = true
 time.workspace = true
 tokio.workspace = true
@@ -53,6 +52,7 @@ droppedneedle-providers.workspace = true
 droppedneedle-testkit = { path = "../testkit", version = "0.1.0" }
 axum.workspace = true
 regex.workspace = true
+sqlx.workspace = true
 tower.workspace = true
 tracing-subscriber.workspace = true
 utoipa.workspace = true

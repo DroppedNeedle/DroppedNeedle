@@ -14,11 +14,12 @@
 
 use std::collections::HashMap;
 
+use rusqlite::{Connection, params};
 use serde_json::{Value, json};
-use sqlx::SqliteConnection;
 
 use super::{CarryError, SectionResult};
 use crate::export::envelope::ConnectionRecord;
+use crate::import::sql;
 use droppedneedle_kernel::runtime_config::Crypto;
 
 /// Report entity for this section.
@@ -101,8 +102,8 @@ fn stored_view(service: &str, data: &str, crypto: &Crypto) -> Option<Value> {
 }
 
 /// Decide and (on a real run) write every link.
-pub(crate) async fn apply(
-    conn: &mut SqliteConnection,
+pub(crate) fn apply(
+    conn: &Connection,
     root: &Value,
     unsealed: &HashMap<String, String>,
     crypto: &Crypto,
@@ -113,28 +114,21 @@ pub(crate) async fn apply(
         .cloned()
         .and_then(|value| serde_json::from_value(value).ok())
         .unwrap_or_default();
-    let rows: Vec<(String, String, String, i64, String, String)> = sqlx::query_as(
-        "SELECT user_id, service, connection_data, enabled, created_at, updated_at \
-         FROM user_connections",
-    )
-    .fetch_all(&mut *conn)
-    .await?;
-    let stored: HashMap<(String, String), Stored> = rows
-        .into_iter()
-        .map(
-            |(user_id, service, data, enabled, created_at, updated_at)| {
+    let stored: HashMap<(String, String), Stored> =
+        sql::all_rows(conn, sql::CONNECTIONS, sql::ConnectionRow::read)?
+            .into_iter()
+            .map(|row| {
                 (
-                    (user_id, service),
+                    (row.user_id, row.service),
                     Stored {
-                        data,
-                        enabled: enabled != 0,
-                        created_at,
-                        updated_at,
+                        data: row.connection_data,
+                        enabled: row.enabled != 0,
+                        created_at: row.created_at,
+                        updated_at: row.updated_at,
                     },
                 )
-            },
-        )
-        .collect();
+            })
+            .collect();
     let mut result = SectionResult {
         rows: records.len() as u64,
         ..SectionResult::default()
@@ -178,18 +172,17 @@ pub(crate) async fn apply(
         if dry_run {
             continue;
         }
-        sqlx::query(
-            "INSERT INTO user_connections (user_id, service, connection_data, enabled, \
-             created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        )
-        .bind(&record.user_id)
-        .bind(&record.service)
-        .bind(data)
-        .bind(i64::from(record.enabled))
-        .bind(&record.created_at)
-        .bind(&record.updated_at)
-        .execute(&mut *conn)
-        .await?;
+        conn.execute(
+            sql::INSERT_CONNECTION.text(),
+            params![
+                record.user_id,
+                record.service,
+                data,
+                i64::from(record.enabled),
+                record.created_at,
+                record.updated_at,
+            ],
+        )?;
         result.written += 1;
     }
     Ok(result)

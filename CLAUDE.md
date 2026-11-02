@@ -226,6 +226,10 @@ Run from the repo root. `make help` lists every target.
 - All writes go through the single writer lane, one transaction per atomic
   change. No network calls inside one: writes run one at a time, so a slow one
   stalls the rest.
+  The offline upgrade tool is the one exception: with the server stopped and the
+  data lock held, the importer writes on one connection, because it attaches
+  the export (which a transaction refuses) and a large section outlasts the
+  lane's time limit.
 - A write closure fails with the caller's own error type
   (`E: From<DbError>`); an outcome a caller branches on is a variant of that
   type, never the text of a database error. A chunked write commits chunk by
@@ -247,6 +251,9 @@ Run from the repo root. `make help` lists every target.
 - `db::time` (`kernel/src/db/time.rs`) says what a stored time is: a row reads
   an `_at` column it turns into seconds as `Millis`, whose decode fails on
   anything but an integer, and the library converts it with `clock::at_secs`.
+- SQLite is built with its memory counters off (`SQLITE_DEFAULT_MEMSTATUS=0`), in
+  `.cargo/config.toml` and the Dockerfile: on every allocation they take one
+  process-wide mutex. `persist_schema` holds it.
 - Migrations are numbered and forward-only. Never edit or renumber a shipped
   one. Each new one ships an upgrade test. They land on `v3` in number
   order: the runner skips any migration below the database's version, so a

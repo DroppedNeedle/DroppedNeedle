@@ -784,7 +784,7 @@ async fn run_pipeline_with(
     droppedneedle_tool::r#import::run_import(droppedneedle_tool::r#import::ImportRequest {
         export_bytes: export_text.as_bytes().to_vec(),
         passphrase: passphrase.to_owned(),
-        pool: pool.clone(),
+        db_path: pool.connect_options().get_filename().to_owned(),
         legacy: droppedneedle_kernel::runtime_config::LegacyConfig::at(&config_dir, false),
         crypto,
         v2_config_path: Some(

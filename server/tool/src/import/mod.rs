@@ -23,6 +23,7 @@ pub mod envelope;
 pub mod pipeline;
 pub mod report;
 pub mod schedule_carry;
+pub(crate) mod sql;
 pub mod validate;
 
 pub use envelope::{ExportFile, Opener, unseal_value, verify_content_digest};

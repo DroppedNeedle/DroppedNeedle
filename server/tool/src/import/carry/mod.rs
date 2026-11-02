@@ -17,11 +17,10 @@
 //! The work is set-based SQL against the attached bundle, so memory stays
 //! flat however many listens or downloads v2 had.
 //!
-//! Section transactions are deferred (`BEGIN`), not `BEGIN IMMEDIATE`: with
-//! the bundle attached, an immediate begin also takes a write lock on the
-//! bundle, which fails when the bundle sits on a read-only mount. The
-//! import already holds the database alone (the data lock plus the write
-//! probe), so nothing else can write between a section's read and write.
+//! Section transactions are deferred: the import already holds the database
+//! alone (the data lock plus the write probe), so nothing else can write
+//! between a section's read and write, and an immediate begin would also touch
+//! the attached bundle, which may be on a read-only mount.
 
 pub(crate) mod avatars;
 pub(crate) mod baselines;
@@ -34,12 +33,13 @@ pub(crate) mod links;
 use std::collections::HashMap;
 use std::path::Path;
 
+use rusqlite::{Connection, OptionalExtension as _, params};
 use serde_json::Value;
-use sqlx::{SqliteConnection, SqlitePool};
 use thiserror::Error;
 
 use crate::export::sections::{ALL, Column, TableSection, Target};
 use crate::import::report::{EntityCounts, ReportBuilder, utc_now_iso};
+use crate::import::sql;
 use droppedneedle_kernel::runtime_config::Crypto;
 
 /// How the carry can fail. Messages stay free of row contents and secrets.
@@ -47,7 +47,7 @@ use droppedneedle_kernel::runtime_config::Crypto;
 pub(crate) enum CarryError {
     /// A database read or write failed.
     #[error("database failure: {0}")]
-    Db(#[from] sqlx::Error),
+    Db(#[from] rusqlite::Error),
     /// A file read or write failed.
     #[error("file failure: {0}")]
     Io(String),
@@ -87,8 +87,6 @@ impl SectionResult {
 
 /// One carry run's inputs.
 pub(crate) struct CarryRun<'a> {
-    /// Target database.
-    pub pool: &'a SqlitePool,
     /// The parsed export document.
     pub root: &'a Value,
     /// The checked bundle, when the export has one.
@@ -130,14 +128,13 @@ impl Work {
     }
 }
 
-/// Check the bundle before anything is written: attach it to a pool
-/// connection, run [`bundle::check`], detach.
-pub(crate) async fn check_bundle(
-    pool: &SqlitePool,
+/// Check the bundle before anything is written: attach it, run
+/// [`bundle::check`], detach.
+pub(crate) fn check_bundle(
+    conn: &Connection,
     found: &bundle::Bundle,
     root: &Value,
 ) -> Result<(), bundle::BundleRejection> {
-    let internal = |error: sqlx::Error| bundle::BundleRejection::Internal(error.to_string());
     let user_ids: Vec<&str> = root
         .get("users")
         .and_then(Value::as_array)
@@ -149,30 +146,31 @@ pub(crate) async fn check_bundle(
         })
         .unwrap_or_default();
     let user_ids_json = serde_json::to_string(&user_ids).unwrap_or_else(|_| "[]".to_owned());
-    let mut conn = pool.acquire().await.map_err(internal)?;
-    bundle::attach(&mut conn, &found.path)
-        .await
+    bundle::attach(conn, &found.path)
         .map_err(|error| bundle::BundleRejection::Invalid(format!("BUNDLE_UNREADABLE: {error}")))?;
-    let outcome = bundle::check(&mut conn, found, &user_ids_json).await;
-    bundle::detach(&mut conn).await;
+    let outcome = bundle::check(conn, found, &user_ids_json);
+    bundle::detach(conn);
     outcome
 }
 
 /// Carry every section. Returns how many rows and files were written.
-pub(crate) async fn run(run: CarryRun<'_>, report: &mut ReportBuilder) -> Result<u64, CarryError> {
-    let mut conn = run.pool.acquire().await?;
+pub(crate) fn run(
+    conn: &mut Connection,
+    run: CarryRun<'_>,
+    report: &mut ReportBuilder,
+) -> Result<u64, CarryError> {
     if let Some(found) = run.bundle {
-        bundle::attach(&mut conn, &found.path).await?;
+        bundle::attach(conn, &found.path)?;
     }
-    let outcome = run_sections(&mut conn, &run, report).await;
+    let outcome = run_sections(conn, &run, report);
     if run.bundle.is_some() {
-        bundle::detach(&mut conn).await;
+        bundle::detach(conn);
     }
     outcome
 }
 
-async fn run_sections(
-    conn: &mut SqliteConnection,
+fn run_sections(
+    conn: &mut Connection,
     run: &CarryRun<'_>,
     report: &mut ReportBuilder,
 ) -> Result<u64, CarryError> {
@@ -199,7 +197,7 @@ async fn run_sections(
     work.push(Work::Links);
     let mut written = 0;
     for (done, unit) in work.into_iter().enumerate() {
-        written += carry_section(conn, run, &marker, unit, report).await?;
+        written += carry_section(conn, run, &marker, unit, report)?;
         if run.stop_after == Some(done + 1) {
             return Err(CarryError::Fault(done + 1));
         }
@@ -216,21 +214,21 @@ struct Marker {
 
 /// Apply one section in its own transaction, or skip it when an earlier
 /// import from the same v2 instance already carried it.
-async fn carry_section(
-    conn: &mut SqliteConnection,
+fn carry_section(
+    conn: &mut Connection,
     run: &CarryRun<'_>,
     marker: &Marker,
     unit: Work,
     report: &mut ReportBuilder,
 ) -> Result<u64, CarryError> {
     let name = unit.name();
-    let carried: Option<i64> = sqlx::query_scalar(
-        "SELECT rows_written FROM import_progress WHERE instance_id = ?1 AND section = ?2",
-    )
-    .bind(&marker.instance_id)
-    .bind(name)
-    .fetch_optional(&mut *conn)
-    .await?;
+    let carried: Option<i64> = conn
+        .query_row(
+            sql::SECTION_CARRIED.text(),
+            params![marker.instance_id, name],
+            |row| row.get(0),
+        )
+        .optional()?;
     if let Some(rows) = carried {
         report.note(
             "section",
@@ -241,20 +239,20 @@ async fn carry_section(
         return Ok(0);
     }
     if run.dry_run {
-        let result = apply(conn, run, unit).await?;
+        let result = apply(conn, run, unit)?;
         record(report, name, result);
         return Ok(0);
     }
-    sqlx::query("BEGIN").execute(&mut *conn).await?;
-    match apply_with_marker(conn, run, marker, unit).await {
+    let transaction = conn.transaction()?;
+    match apply_with_marker(&transaction, run, marker, unit) {
         Ok(result) => {
-            sqlx::query("COMMIT").execute(&mut *conn).await?;
+            transaction.commit()?;
             let written = result.written;
             record(report, name, result);
             Ok(written)
         }
         Err(error) => {
-            if let Err(rollback) = sqlx::query("ROLLBACK").execute(&mut *conn).await {
+            if let Err(rollback) = transaction.rollback() {
                 tracing::warn!(section = name, %rollback, "import section rollback failed");
             }
             Err(error)
@@ -264,52 +262,47 @@ async fn carry_section(
 
 /// Apply a section and, when it held any rows, mark it carried for this
 /// instance in the same transaction.
-async fn apply_with_marker(
-    conn: &mut SqliteConnection,
+fn apply_with_marker(
+    conn: &Connection,
     run: &CarryRun<'_>,
     marker: &Marker,
     unit: Work,
 ) -> Result<SectionResult, CarryError> {
-    let result = apply(conn, run, unit).await?;
+    let result = apply(conn, run, unit)?;
     if result.rows > 0 {
-        sqlx::query(
-            "INSERT INTO import_progress (instance_id, section, export_digest, rows_written, \
-             applied_at) VALUES (?1, ?2, ?3, ?4, ?5)",
-        )
-        .bind(&marker.instance_id)
-        .bind(unit.name())
-        .bind(&marker.digest)
-        .bind(i64::try_from(result.written).unwrap_or(i64::MAX))
-        .bind(utc_now_iso())
-        .execute(&mut *conn)
-        .await?;
+        conn.execute(
+            sql::MARK_SECTION_CARRIED.text(),
+            params![
+                marker.instance_id,
+                unit.name(),
+                marker.digest,
+                i64::try_from(result.written).unwrap_or(i64::MAX),
+                utc_now_iso(),
+            ],
+        )?;
     }
     Ok(result)
 }
 
-async fn apply(
-    conn: &mut SqliteConnection,
-    run: &CarryRun<'_>,
-    unit: Work,
-) -> Result<SectionResult, CarryError> {
+fn apply(conn: &Connection, run: &CarryRun<'_>, unit: Work) -> Result<SectionResult, CarryError> {
     let section = match unit {
         Work::Connections => {
-            return connections::apply(conn, run.root, run.unsealed, run.crypto, run.dry_run).await;
+            return connections::apply(conn, run.root, run.unsealed, run.crypto, run.dry_run);
         }
-        Work::Editions => return editions::apply(conn, run.dry_run).await,
-        Work::Baselines => return baselines::apply(conn, run.dry_run).await,
-        Work::Links => return links::apply(conn, run.dry_run).await,
+        Work::Editions => return editions::apply(conn, run.dry_run),
+        Work::Baselines => return baselines::apply(conn, run.dry_run),
+        Work::Links => return links::apply(conn, run.dry_run),
         Work::Section(section) => section,
     };
     // A section this bundle does not hold (an older exporter) is empty.
-    let present = bundle::present_columns(conn, section).await?;
+    let present = bundle::present_columns(conn, section)?;
     if present.is_empty() {
         return Ok(SectionResult::default());
     }
     match section.target {
-        Target::Table(table) => apply_table(conn, section, table, &present, run.dry_run).await,
-        Target::AvatarFiles => avatars::apply(conn, run.cache_dir, run.dry_run).await,
-        Target::HeldFiles => held::apply(conn, section, &present, run.cache_dir, run.dry_run).await,
+        Target::Table(table) => apply_table(conn, section, table, &present, run.dry_run),
+        Target::AvatarFiles => avatars::apply(conn, run.cache_dir, run.dry_run),
+        Target::HeldFiles => held::apply(conn, &present, run.cache_dir, run.dry_run),
         // A later step reads these rows from the bundle and reports them.
         Target::BundleOnly => Ok(SectionResult::default()),
     }
@@ -320,18 +313,23 @@ fn to_count(value: i64) -> u64 {
 }
 
 /// Apply one table section with set-based SQL.
-async fn apply_table(
-    conn: &mut SqliteConnection,
+fn apply_table(
+    conn: &Connection,
     section: &'static TableSection,
     table: &str,
     present: &[&'static Column],
     dry_run: bool,
 ) -> Result<SectionResult, CarryError> {
-    let sql = bundle::section_sql(section, table, present, dry_run);
-    let (total, orphans, new, identical): (i64, i64, i64, i64) = sqlx::query_as(&sql.count)
-        .persistent(false)
-        .fetch_one(&mut *conn)
-        .await?;
+    let sql::SectionCounts {
+        total,
+        orphans,
+        new,
+        identical,
+    } = conn.query_row(
+        &sql::section_count(section, table, present, dry_run),
+        [],
+        sql::SectionCounts::read,
+    )?;
     let mut result = SectionResult {
         rows: to_count(total),
         ..SectionResult::default()
@@ -339,28 +337,24 @@ async fn apply_table(
     result.counts.skipped_identical = to_count(identical);
     result.counts.dropped_invalid = to_count(orphans);
     let landed = if dry_run {
-        for count in &sql.link_counts {
-            let links: i64 = sqlx::query_scalar(count)
-                .persistent(false)
-                .fetch_one(&mut *conn)
-                .await?;
+        for column in present {
+            let Some(count) = sql::link_count(section, column, dry_run) else {
+                continue;
+            };
+            let links: i64 = conn.query_row(&count, [], |row| row.get(0))?;
             result.pending_links += to_count(links);
         }
         to_count(new)
     } else {
-        for link in &sql.links {
-            let done = sqlx::query(link)
-                .persistent(false)
-                .execute(&mut *conn)
-                .await?;
-            result.pending_links += done.rows_affected();
+        for column in present {
+            let Some(link) = sql::link_insert(section, table, column, dry_run) else {
+                continue;
+            };
+            result.pending_links += conn.execute(&link, [])? as u64;
         }
-        let done = sqlx::query(&sql.insert)
-            .persistent(false)
-            .execute(&mut *conn)
-            .await?;
-        result.written = done.rows_affected();
-        done.rows_affected()
+        let inserted = conn.execute(&sql::section_insert(section, table, present, dry_run), [])?;
+        result.written = inserted as u64;
+        inserted as u64
     };
     result.counts.imported = landed;
     let conflicts = to_count(total)

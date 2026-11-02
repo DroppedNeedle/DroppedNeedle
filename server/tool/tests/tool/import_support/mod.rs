@@ -3,8 +3,8 @@
 //!
 //! Fixtures seal through the real exporter sealer
 //! (`droppedneedle_tool::export::seal::Sealer`), so every test also proves the
-//! exporter and importer agree on the wire format. Databases are in-memory
-//! pools; config files live in a `ScratchDir` that is removed on drop.
+//! exporter and importer agree on the wire format. Databases and config
+//! files live in a `ScratchDir` that is removed on drop.
 
 use crate::common::ScratchDir;
 use std::path::PathBuf;
@@ -14,7 +14,6 @@ use droppedneedle_kernel::runtime_config::{Crypto, LegacyConfig};
 use droppedneedle_tool::export::seal::{DIGEST_KEY, Opener, Sealer};
 use serde_json::{Value, json};
 use sqlx::SqlitePool;
-use sqlx::sqlite::SqlitePoolOptions;
 
 /// Operator passphrase sealing every fixture.
 pub const PASSPHRASE: &str = "correct horse battery staple for tests";
@@ -148,17 +147,10 @@ impl Default for Fixture {
     }
 }
 
-/// One-connection in-memory pool with migrations applied.
-pub async fn migrated_pool() -> SqlitePool {
-    let pool = SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect("sqlite::memory:")
-        .await
-        .unwrap();
-    droppedneedle_kernel::schema::apply_migrations(&pool)
-        .await
-        .unwrap();
-    pool
+/// One-connection pool on a private migrated database file. Hold the guard:
+/// dropping it removes the file.
+pub async fn migrated_pool() -> (SqlitePool, ScratchDir) {
+    crate::common::migrated_pool("import-target").await
 }
 
 /// Deterministic v3 key for tests. `Crypto` is not cloneable by
@@ -190,7 +182,7 @@ pub fn import_request(
     droppedneedle_tool::import::ImportRequest {
         export_bytes: signed(export),
         passphrase: PASSPHRASE.to_owned(),
-        pool,
+        db_path: pool.connect_options().get_filename().to_owned(),
         legacy: LegacyConfig::at(&config_dir, false),
         crypto,
         v2_config_path: None,

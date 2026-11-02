@@ -1340,7 +1340,7 @@ async fn run_merge(
     droppedneedle_tool::r#import::run_import(droppedneedle_tool::r#import::ImportRequest {
         export_bytes: std::fs::read(export).expect("export reads"),
         passphrase: "operator-passphrase".to_owned(),
-        pool: pool.clone(),
+        db_path: pool.connect_options().get_filename().to_owned(),
         legacy: droppedneedle_kernel::runtime_config::LegacyConfig::at(config_dir, false),
         crypto,
         v2_config_path: None,

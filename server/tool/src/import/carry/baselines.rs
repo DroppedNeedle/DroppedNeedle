@@ -14,38 +14,21 @@
 //! its first managed write would otherwise record the file as v2 left it
 //! as the "original".
 
-use sqlx::SqliteConnection;
+use rusqlite::{Connection, OptionalExtension as _, params};
 
-use super::bundle::SCHEMA;
 use super::{CarryError, SectionResult};
-use crate::export::sections::library::TRACKS;
 use crate::export::sections::management::{BASELINES, BLOB_BYTES};
+use crate::import::sql;
 use droppedneedle_library::publish::snapshots::sha256_hex;
 use droppedneedle_library::publish::v2_baseline::translate;
 
 /// Report entity and section marker name.
 pub(crate) const ENTITY: &str = "original_baseline";
 
-/// One carried v2 baseline row.
-#[derive(sqlx::FromRow)]
-struct Candidate {
-    local_track_id: String,
-    original_root_id: String,
-    original_relative_path: String,
-    format: String,
-    semantic_snapshot_blob_sha256: String,
-    created_at: i64,
-    ancillary_snapshot_json: Option<String>,
-}
-
-async fn bundle_has(conn: &mut SqliteConnection, table: &str) -> Result<bool, sqlx::Error> {
-    sqlx::query_scalar(&format!(
-        "SELECT EXISTS(SELECT 1 FROM {SCHEMA}.sqlite_master WHERE type = 'table' AND name = ?1)"
-    ))
-    .bind(table)
-    .persistent(false)
-    .fetch_one(&mut *conn)
-    .await
+fn bundle_has(conn: &Connection, table: &str) -> rusqlite::Result<bool> {
+    conn.query_row(sql::BUNDLE_HAS_TABLE.text(), params![table], |row| {
+        row.get(0)
+    })
 }
 
 /// Blob hashes an ancillary snapshot lists.
@@ -64,41 +47,21 @@ fn ancillary_blobs(json: Option<&str>) -> Vec<String> {
 }
 
 /// Translate and store every carried baseline. On a dry run, count only.
-pub(crate) async fn apply(
-    conn: &mut SqliteConnection,
-    dry_run: bool,
-) -> Result<SectionResult, CarryError> {
-    let (baselines, bytes) = (BASELINES.name, BLOB_BYTES.name);
+pub(crate) fn apply(conn: &Connection, dry_run: bool) -> Result<SectionResult, CarryError> {
     let mut result = SectionResult::default();
-    if !bundle_has(conn, baselines).await? || !bundle_has(conn, bytes).await? {
+    if !bundle_has(conn, BASELINES.name)? || !bundle_has(conn, BLOB_BYTES.name)? {
         return Ok(result);
     }
-    let candidates: Vec<Candidate> = sqlx::query_as(&format!(
-        "SELECT local_track_id, original_root_id, original_relative_path, format, \
-         semantic_snapshot_blob_sha256, CAST(created_at AS INTEGER) AS created_at, \
-         ancillary_snapshot_json FROM {SCHEMA}.\"{baselines}\" ORDER BY id"
-    ))
-    .persistent(false)
-    .fetch_all(&mut *conn)
-    .await?;
+    let candidates = sql::all_rows(conn, sql::BASELINE_CANDIDATES, sql::BaselineCandidate::read)?;
     result.rows = candidates.len() as u64;
     let track_landed = if dry_run {
-        format!(
-            "EXISTS (SELECT 1 FROM main.local_tracks WHERE id = ?1) \
-             OR EXISTS (SELECT 1 FROM {SCHEMA}.\"{}\" WHERE id = ?1)",
-            TRACKS.name
-        )
+        sql::BASELINE_TRACK_WOULD_LAND
     } else {
-        "EXISTS (SELECT 1 FROM main.library_management_baselines WHERE local_track_id = ?1)"
-            .to_owned()
+        sql::BASELINE_TRACK_LANDED
     };
     for candidate in candidates {
         let track = candidate.local_track_id.clone();
-        let landed: bool = sqlx::query_scalar(&format!("SELECT {track_landed}"))
-            .bind(&track)
-            .persistent(false)
-            .fetch_one(&mut *conn)
-            .await?;
+        let landed: bool = conn.query_row(track_landed.text(), params![track], |row| row.get(0))?;
         if !landed {
             result.counts.dropped_invalid += 1;
             result.note(
@@ -110,13 +73,13 @@ pub(crate) async fn apply(
             );
             continue;
         }
-        let snapshot: Option<Vec<u8>> = sqlx::query_scalar(&format!(
-            "SELECT bytes FROM {SCHEMA}.\"{bytes}\" WHERE sha256 = ?1"
-        ))
-        .bind(&candidate.semantic_snapshot_blob_sha256)
-        .persistent(false)
-        .fetch_optional(&mut *conn)
-        .await?;
+        let snapshot: Option<Vec<u8>> = conn
+            .query_row(
+                sql::BUNDLE_BLOB.text(),
+                params![candidate.semantic_snapshot_blob_sha256],
+                |row| row.get(0),
+            )
+            .optional()?;
         let Some(snapshot) = snapshot else {
             result.counts.dropped_invalid += 1;
             result.note(
@@ -151,12 +114,9 @@ pub(crate) async fn apply(
         let blob =
             serde_json::to_vec(&before).map_err(|error| CarryError::Io(error.to_string()))?;
         let blob_sha = sha256_hex(&blob);
-        let existing: Option<String> = sqlx::query_scalar(
-            "SELECT blob_sha256 FROM main.library_publish_baselines WHERE track_id = ?1",
-        )
-        .bind(&track)
-        .fetch_optional(&mut *conn)
-        .await?;
+        let existing: Option<String> = conn
+            .query_row(sql::BASELINE_BLOB.text(), params![track], |row| row.get(0))
+            .optional()?;
         match existing {
             Some(kept) if kept == blob_sha => {
                 result.counts.skipped_identical += 1;
@@ -179,25 +139,17 @@ pub(crate) async fn apply(
         if dry_run {
             continue;
         }
-        sqlx::query(
-            "INSERT OR IGNORE INTO main.library_publish_blobs (sha256, bytes) VALUES (?1, ?2)",
-        )
-        .bind(&blob_sha)
-        .bind(&blob)
-        .execute(&mut *conn)
-        .await?;
-        sqlx::query(
-            "INSERT INTO main.library_publish_baselines \
-             (track_id, blob_sha256, original_root, original_rel, created_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5)",
-        )
-        .bind(&track)
-        .bind(&blob_sha)
-        .bind(&candidate.original_root_id)
-        .bind(&candidate.original_relative_path)
-        .bind(candidate.created_at)
-        .execute(&mut *conn)
-        .await?;
+        conn.execute(sql::INSERT_BLOB.text(), params![blob_sha, blob])?;
+        conn.execute(
+            sql::INSERT_BASELINE.text(),
+            params![
+                track,
+                blob_sha,
+                candidate.original_root_id,
+                candidate.original_relative_path,
+                candidate.created_at,
+            ],
+        )?;
         let mut owned = vec![(blob_sha, "baseline")];
         owned.push((
             candidate.semantic_snapshot_blob_sha256.clone(),
@@ -207,16 +159,7 @@ pub(crate) async fn apply(
             owned.push((sha, "v2_baseline"));
         }
         for (sha, kind) in owned {
-            sqlx::query(
-                "INSERT OR IGNORE INTO main.library_publish_blob_refs (sha256, owner_kind, owner_id) \
-                 SELECT ?1, ?2, ?3 WHERE EXISTS \
-                 (SELECT 1 FROM main.library_publish_blobs WHERE sha256 = ?1)",
-            )
-            .bind(&sha)
-            .bind(kind)
-            .bind(&track)
-            .execute(&mut *conn)
-            .await?;
+            conn.execute(sql::INSERT_BLOB_REF.text(), params![sha, kind, track])?;
         }
         result.written += 1;
     }
