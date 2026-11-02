@@ -143,14 +143,13 @@ droppedneedle_kernel::sql! {
     pub(super) DELETE_COVER = "DELETE FROM catalog_playlist_covers WHERE playlist_id = ?1";
 
     /// A user's favorites, of one kind `?2` or every kind, newest first.
-    pub(super) FAVORITES = "SELECT f.item_kind AS item_kind, f.item_id AS item_id, \
+    pub(super) FAVORITES = "SELECT f.item_id AS item_id, \
          n.display_name AS display_name, f.created_at AS created_at \
          FROM library_user_favorites f LEFT JOIN library_user_favorite_names n \
          ON n.user_id = f.user_id AND n.item_kind = f.item_kind AND n.item_id = f.item_id \
          WHERE f.user_id = ?1 AND (?2 IS NULL OR f.item_kind = ?2) \
          ORDER BY f.created_at DESC, f.item_kind, f.item_id";
     pub(super) row FavoriteColumns for [FAVORITES] {
-        item_kind: String,
         item_id: String,
         display_name: Option<String>,
         created_at: f64,

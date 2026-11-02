@@ -82,7 +82,7 @@ pub struct RadioInputs {
     /// The advanced settings the queue settings come from, read per call.
     pub settings: Live<AdvancedSettings>,
     /// The catalog database.
-    pub pool: sqlx::SqlitePool,
+    pub db: droppedneedle_kernel::db::Db,
     /// Album pages: similar albums, more by the artist, top songs.
     pub catalog: Catalog,
     /// Keyless previews (Deezer, then iTunes).
@@ -198,8 +198,8 @@ impl LiveRadio {
             listening: inputs.listening,
             queue_db: inputs.queue_db,
             settings: inputs.settings,
-            genres: LibraryReads::new(inputs.pool.clone()),
-            tracks: RadioLibrary::new(inputs.pool),
+            genres: LibraryReads::new(inputs.db.clone()),
+            tracks: RadioLibrary::new(inputs.db),
             catalog: inputs.catalog,
             previews: inputs.previews,
             cache: inputs.cache,

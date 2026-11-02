@@ -10,10 +10,9 @@
 use std::sync::Arc;
 
 use rusqlite::{Connection, Transaction};
-use sqlx::SqlitePool;
 
 use droppedneedle_kernel::clock::Clock;
-use droppedneedle_kernel::db::{Db, DbError, Lane, map_sqlx_busy};
+use droppedneedle_kernel::db::{Db, DbError, Lane};
 
 /// Every way a store call can fail. The text goes to the log only.
 #[derive(Debug, thiserror::Error)]
@@ -26,18 +25,12 @@ pub enum StoreError {
     Internal(String),
 }
 
-impl StoreError {
-    fn from_db(error: DbError) -> Self {
+impl From<DbError> for StoreError {
+    fn from(error: DbError) -> Self {
         match error {
             DbError::Busy { operation } => Self::Busy(operation),
             other => Self::Internal(other.to_string()),
         }
-    }
-
-    /// Map a reader-pool error from the compat adapters, keeping busy
-    /// distinct.
-    pub fn read(operation: &str, error: sqlx::Error) -> Self {
-        Self::from_db(map_sqlx_busy(operation, error))
     }
 }
 
@@ -78,9 +71,9 @@ impl CollectionsDb {
         self.clock.now_ms().max(0) as f64 / 1000.0
     }
 
-    /// The reader pool the compat adapters' own statements read through.
-    pub fn pool(&self) -> Result<&SqlitePool, StoreError> {
-        Ok(self.db.sqlx())
+    /// The database, for the compat adapters' own statements.
+    pub fn db(&self) -> &Db {
+        &self.db
     }
 
     /// One request-path read on a pooled connection.
@@ -89,7 +82,7 @@ impl CollectionsDb {
         F: FnOnce(&Connection) -> Result<R, DbError> + Send + 'static,
         R: Send + 'static,
     {
-        self.db.read(name, op).await.map_err(StoreError::from_db)
+        self.db.read(name, op).await.map_err(StoreError::from)
     }
 
     /// One request-path write transaction.
@@ -101,7 +94,7 @@ impl CollectionsDb {
         self.db
             .write(Lane::Foreground, name, op)
             .await
-            .map_err(StoreError::from_db)
+            .map_err(StoreError::from)
     }
 }
 

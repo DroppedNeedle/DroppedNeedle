@@ -27,8 +27,32 @@ pub mod radio;
 pub mod scheduler;
 pub mod sections;
 pub mod services;
+pub(crate) mod sql;
 pub mod wiring;
 pub mod youtube;
 
 pub use handlers::routes;
 pub use services::ReadsDeps;
+
+/// Every row of one statement, on a pooled reader connection.
+pub(crate) async fn read_all<T, P, F>(
+    db: &droppedneedle_kernel::db::Db,
+    name: &'static str,
+    statement: impl AsRef<str> + Send + 'static,
+    params: P,
+    map: F,
+) -> Result<Vec<T>, droppedneedle_kernel::db::DbError>
+where
+    T: Send + 'static,
+    P: rusqlite::Params + Send + 'static,
+    F: FnMut(&rusqlite::Row<'_>) -> rusqlite::Result<T> + Send + 'static,
+{
+    db.read(name, move |conn| {
+        let rows = conn
+            .prepare(statement.as_ref())?
+            .query_map(params, map)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    })
+    .await
+}

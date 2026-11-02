@@ -25,7 +25,6 @@ use library::stores::{
     StoreError, TrackFilter, TrackSort,
 };
 use serde_json::Value;
-use sqlx::SqlitePool;
 use tower::ServiceExt as _;
 
 /// Lyrics answered from a fixed set of docs.
@@ -1027,14 +1026,7 @@ async fn one_album_set_everywhere() {
         sorted_ids(&releases["items"], "release_group_mbid"),
         not_owned
     );
-    let pool = SqlitePool::connect_with(
-        sqlx::sqlite::SqliteConnectOptions::new()
-            .filename(&rig.app.config.library_db_path)
-            .read_only(true),
-    )
-    .await
-    .expect("reader opens");
-    let mut discover: Vec<String> = LibraryReads::new(pool.clone())
+    let mut discover: Vec<String> = LibraryReads::new(rig.app.state().library.db.clone())
         .followed_releases(&player_id, 50)
         .await
         .expect("followed releases read")
@@ -1043,7 +1035,6 @@ async fn one_album_set_everywhere() {
         .collect();
     discover.sort();
     assert_eq!(discover, not_owned);
-    pool.close().await;
 
     // Player apps: owned albums only, listed, by id and in artist counts.
     let subsonic_json = |body: Vec<u8>| -> Value {

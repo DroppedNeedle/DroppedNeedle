@@ -4185,6 +4185,9 @@ fn every_registered_statement_prepares() {
 /// of a live album, the search for a release group across every indexed
 /// track, the continuation sweep's walk of every missing track when no
 /// album is named, and the remap sweep over every identified album's tracks.
+/// Discover's three: radio's two track reads, which filter on ids worked out
+/// per track over the whole library, and the check for any local file, which
+/// stops at the first row.
 const TRACK_WALKS: &[&str] = &[
     "droppedneedle_library::scan::sql::ALBUM_TRACKS",
     "droppedneedle_library::import::sql::GROUP_HELD",
@@ -4209,6 +4212,9 @@ const TRACK_WALKS: &[&str] = &[
     "droppedneedle_compat::adapters::jellyfin_ids::sql::GENRE_NAMES",
     "droppedneedle_acquire::flows::sql::IDENTIFIED_TRACKS",
     "droppedneedle_acquire::requests::sql::LIBRARY_BYTES",
+    "droppedneedle_catalog::reads::discover::sql::RADIO_TRACKS_BY_ARTISTS",
+    "droppedneedle_catalog::reads::discover::sql::RADIO_TRACKS_OF_ALBUMS",
+    "droppedneedle_catalog::reads::discover::sql::HAS_LOCAL_FILES",
 ];
 
 /// Before the first ANALYZE (a fresh install) the planner has no

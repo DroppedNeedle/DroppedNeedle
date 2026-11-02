@@ -8,7 +8,9 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::reads::discover::models::{IgnoredRelease, QueueIgnoreRequest};
-use crate::reads::discover::ownership;
+use crate::reads::discover::{ownership, read_all, sql};
+use droppedneedle_kernel::db::statement::ListLen;
+use droppedneedle_kernel::db::time::Millis;
 use droppedneedle_kernel::db::{Db, DbError, writer::Lane};
 
 /// Most ids one resolution read binds.
@@ -28,43 +30,41 @@ impl QueueDb {
 
     /// Lowercased release-group ids the user ignored.
     pub async fn ignored_mbids(&self, user_id: &str) -> Result<HashSet<String>, String> {
-        let rows: Vec<(String,)> = sqlx::query_as(
-            "SELECT release_group_mbid_lower FROM catalog_ignored_releases WHERE user_id = ?1",
+        let rows: Vec<String> = read_all(
+            &self.db,
+            "discover.queue.ignored_mbids",
+            sql::IGNORED_MBIDS.text(),
+            (user_id.to_owned(),),
+            |row| row.get(0),
         )
-        .bind(user_id)
-        .fetch_all(self.db.sqlx())
         .await
         .map_err(|error| format!("ignored releases read: {error}"))?;
-        Ok(rows
-            .into_iter()
-            .map(|(mbid,)| mbid)
-            .filter(|mbid| !mbid.is_empty())
-            .collect())
+        Ok(rows.into_iter().filter(|mbid| !mbid.is_empty()).collect())
     }
 
     /// The user's ignore ledger, newest first.
     pub async fn ignored(&self, user_id: &str) -> Result<Vec<IgnoredRelease>, String> {
-        let rows: Vec<(String, String, String, String, i64)> = sqlx::query_as(
-            "SELECT release_group_mbid, artist_mbid, release_name, artist_name, ignored_at \
-             FROM catalog_ignored_releases WHERE user_id = ?1 ORDER BY ignored_at DESC",
+        let rows = read_all(
+            &self.db,
+            "discover.queue.ignored",
+            sql::IGNORED_RELEASES.text(),
+            (user_id.to_owned(),),
+            sql::IgnoredColumns::read,
         )
-        .bind(user_id)
-        .fetch_all(self.db.sqlx())
         .await
         .map_err(|error| format!("ignored releases read: {error}"))?;
         Ok(rows
             .into_iter()
-            .map(
-                |(release_group_mbid, artist_mbid, release_name, artist_name, ignored_at)| {
-                    IgnoredRelease {
-                        release_group_mbid,
-                        artist_mbid,
-                        release_name,
-                        artist_name,
-                        ignored_at: ignored_at / 1000,
-                    }
-                },
-            )
+            .map(|row| {
+                let Millis(ignored_at) = row.ignored_at;
+                IgnoredRelease {
+                    release_group_mbid: row.release_group_mbid,
+                    artist_mbid: row.artist_mbid,
+                    release_name: row.release_name,
+                    artist_name: row.artist_name,
+                    ignored_at: ignored_at / 1000,
+                }
+            })
             .collect())
     }
 
@@ -82,16 +82,7 @@ impl QueueDb {
         self.db
             .write(Lane::Foreground, "discover.queue.ignore", move |tx| {
                 tx.execute(
-                    "INSERT INTO catalog_ignored_releases (user_id, release_group_mbid_lower, \
-                         release_group_mbid, artist_mbid, release_name, artist_name, ignored_at) \
-                     SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7 \
-                     WHERE EXISTS (SELECT 1 FROM auth_users WHERE id = ?1) \
-                     ON CONFLICT(user_id, release_group_mbid_lower) DO UPDATE SET \
-                         release_group_mbid = excluded.release_group_mbid, \
-                         artist_mbid = excluded.artist_mbid, \
-                         release_name = excluded.release_name, \
-                         artist_name = excluded.artist_name, \
-                         ignored_at = excluded.ignored_at",
+                    sql::IGNORE_RELEASE.text(),
                     rusqlite::params![
                         user_id,
                         release.release_group_mbid.trim().to_ascii_lowercase(),
@@ -120,8 +111,7 @@ impl QueueDb {
         self.db
             .write(Lane::Foreground, "discover.queue.unignore", move |tx| {
                 tx.execute(
-                    "DELETE FROM catalog_ignored_releases \
-                     WHERE user_id = ?1 AND release_group_mbid_lower = ?2",
+                    sql::UNIGNORE_RELEASE.text(),
                     rusqlite::params![user_id, release_group_mbid_lower],
                 )?;
                 Ok(())
@@ -136,12 +126,7 @@ impl QueueDb {
             .write(
                 Lane::Background,
                 "discover.queue.prune_ignored",
-                move |tx| {
-                    Ok(tx.execute(
-                        "DELETE FROM catalog_ignored_releases WHERE ignored_at < ?1",
-                        rusqlite::params![before],
-                    )?)
-                },
+                move |tx| Ok(tx.execute(sql::PRUNE_IGNORED.text(), rusqlite::params![before])?),
             )
             .await
             .map_err(|error: DbError| format!("ignore prune: {error}"))
@@ -155,21 +140,20 @@ impl QueueDb {
     ) -> Result<HashMap<String, Option<String>>, String> {
         let mut found = HashMap::new();
         for chunk in release_mbids.chunks(MAX_BIND) {
-            let sql = format!(
-                "SELECT source_mbid_lower, release_group_mbid FROM catalog_mbid_resolutions \
-                 WHERE source_mbid_lower IN ({})",
-                vec!["?"; chunk.len()].join(",")
-            );
-            let mut query = sqlx::query_as::<_, (String, Option<String>)>(&sql);
-            for mbid in chunk {
-                query = query.bind(mbid);
-            }
-            let rows = query
-                .fetch_all(self.db.sqlx())
-                .await
-                .map_err(|error| format!("resolution map read: {error}"))?;
-            for (release, group) in rows {
-                found.insert(release, group.filter(|group| !group.is_empty()));
+            let rows = read_all(
+                &self.db,
+                "discover.queue.resolutions_read",
+                sql::resolutions(ListLen::new(chunk.len())),
+                rusqlite::params_from_iter(chunk.to_vec()),
+                sql::ResolutionColumns::read,
+            )
+            .await
+            .map_err(|error| format!("resolution map read: {error}"))?;
+            for row in rows {
+                found.insert(
+                    row.source_mbid_lower,
+                    row.release_group_mbid.filter(|group| !group.is_empty()),
+                );
             }
         }
         Ok(found)
@@ -181,11 +165,7 @@ impl QueueDb {
             .db
             .write(Lane::Background, "discover.queue.resolutions", move |tx| {
                 tx.execute(
-                    "INSERT INTO catalog_mbid_resolutions \
-                         (source_mbid_lower, source_mbid, release_group_mbid) \
-                     VALUES (?1, ?1, ?2) \
-                     ON CONFLICT(source_mbid_lower) DO UPDATE SET \
-                         release_group_mbid = excluded.release_group_mbid",
+                    sql::SAVE_RESOLUTION.text(),
                     rusqlite::params![release, group],
                 )?;
                 Ok(())
@@ -200,7 +180,7 @@ impl QueueDb {
     /// identified as.
     pub async fn owned(&self, release_group_mbids: &[String]) -> Result<HashSet<String>, String> {
         let wanted: Vec<&str> = release_group_mbids.iter().map(String::as_str).collect();
-        ownership::owned_albums(self.db.sqlx(), &wanted)
+        ownership::owned_albums(&self.db, &wanted)
             .await
             .map(|owned| owned.into_keys().collect())
             .map_err(|failure| failure.to_string())
@@ -223,16 +203,12 @@ impl QueueDb {
                             continue;
                         }
                         tx.execute(
-                            "INSERT INTO catalog_artist_genres \
-                             (artist_mbid, genre_folded, genre, learned_at) \
-                         VALUES (?1, ?2, ?3, ?4) \
-                         ON CONFLICT(artist_mbid, genre_folded) DO UPDATE SET \
-                             genre = excluded.genre, learned_at = excluded.learned_at",
+                            sql::LEARN_ARTIST_GENRE.text(),
                             rusqlite::params![artist, folded, genre, at],
                         )?;
                     }
                     tx.execute(
-                        "DELETE FROM catalog_artist_genres WHERE learned_at < ?1",
+                        sql::FORGET_ARTIST_GENRES.text(),
                         rusqlite::params![forget_before],
                     )?;
                     Ok(())

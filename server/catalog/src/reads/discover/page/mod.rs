@@ -125,7 +125,6 @@ struct Inner {
     advanced: Live<AdvancedSettings>,
     integrations: IntegrationSettings,
     warm: Option<CoverWarm>,
-    pool: sqlx::SqlitePool,
 }
 
 /// The discover pages: their cache and their build.
@@ -153,8 +152,7 @@ impl DiscoverPages {
         };
         Self {
             inner: Arc::new(Inner {
-                library: LibraryReads::new(inputs.db.sqlx().clone()),
-                pool: inputs.db.sqlx().clone(),
+                library: LibraryReads::new(inputs.db.clone()),
                 cache: UserPageCache::new(
                     inputs.db.clone(),
                     inputs.clock.clone(),
@@ -255,7 +253,7 @@ impl DiscoverPages {
         generation: i64,
         settings: PageSettings,
     ) -> Option<BuiltPage> {
-        let off = sections::switched_off(&self.inner.pool, user_id, Page::Discover).await;
+        let off = sections::switched_off(self.inner.library.db(), user_id, Page::Discover).await;
         let source = self.inner.listening.source();
         let now = self.inner.cache.now_ms() as f64 / 1000.0;
         let (today, year) = today(now);
@@ -338,7 +336,7 @@ impl LiveDiscover {
     /// more than an hour old.
     pub async fn page(&self, user_id: &str, status: IntegrationStatus) -> DiscoverResponse {
         let inner = &self.pages.inner;
-        let off = sections::switched_off(&inner.pool, user_id, Page::Discover).await;
+        let off = sections::switched_off(inner.library.db(), user_id, Page::Discover).await;
         let variant = Variant::for_user(&inner.listening, user_id).await;
         let saved = inner.cache.load(user_id, &variant).await;
         // A page that left out a section switched on since, or one built
@@ -358,7 +356,7 @@ impl LiveDiscover {
             Some(saved) => {
                 let mut page = saved.value.page;
                 page.sections.retain(|section| !off.contains(&section.key));
-                mark_ownership(inner.library.pool(), &mut page).await;
+                mark_ownership(inner.library.db(), &mut page).await;
                 page
             }
             None => {

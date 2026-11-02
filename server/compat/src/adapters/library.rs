@@ -893,12 +893,11 @@ impl CompatLibrary {
                OR (w.source = 'embedded' AND t.file_path IS NOT NULL)",
         )
         .bind(ids)
-        .fetch_all(self.collections.db.pool()?)
+        .fetch_all(self.collections.db.db().sqlx())
         .await
         .map_err(|error| {
-            droppedneedle_catalog::reads::collections::db::StoreError::read(
-                "compat.artist_art",
-                error,
+            droppedneedle_catalog::reads::collections::db::StoreError::from(
+                droppedneedle_kernel::db::map_sqlx_busy("compat.artist_art", error),
             )
         })?;
         Ok(found.into_iter().collect())

@@ -8,18 +8,18 @@
 
 use std::sync::Arc;
 
-use sqlx::SqlitePool;
-
 use crate::reads::discover::genre::artwork::GenreArt;
 use crate::reads::discover::home::{self, LiveHome, genre_names};
 use crate::reads::discover::page::{LiveDiscover, shelves::shelf_of};
 use crate::reads::discover::scheduler::{ArtistDetail, Feature};
+use crate::reads::discover::sql;
 use crate::reads::discover::{
     models::{
         DiscoverActivityResponse, DiscoverResponse, HomeResponse, IntegrationStatus, SectionKey,
     },
     ports::{BoxFuture, ProviderFailure},
 };
+use droppedneedle_kernel::db::{Db, DbError};
 use droppedneedle_kernel::runtime_config::{
     ConfigStore, Listed, Live, Plain,
     secret_sections::{
@@ -117,19 +117,19 @@ impl IntegrationSettings {
 /// the real integration status.
 pub struct LiveContent {
     settings: IntegrationSettings,
-    pool: SqlitePool,
+    db: Db,
     page: LiveDiscover,
     home: Option<(LiveHome, Arc<GenreArt>)>,
 }
 
 impl LiveContent {
     /// Read the integration flags from `settings` and the catalog from
-    /// `pool`; discover comes from `page`. Home has no shelves until
+    /// `db`; discover comes from `page`. Home has no shelves until
     /// [`Self::with_home`].
-    pub fn new(settings: IntegrationSettings, pool: SqlitePool, page: LiveDiscover) -> Self {
+    pub fn new(settings: IntegrationSettings, db: Db, page: LiveDiscover) -> Self {
         Self {
             settings,
-            pool,
+            db,
             page,
             home: None,
         }
@@ -201,12 +201,16 @@ impl LiveContent {
     /// Whether local files back playback (refines the status row).
     pub fn has_local_files(&self) -> BoxFuture<'_, Result<bool, ProviderFailure>> {
         Box::pin(async move {
-            sqlx::query_scalar::<_, bool>(
-                "SELECT EXISTS(SELECT 1 FROM local_tracks WHERE availability = 'indexed')",
-            )
-            .fetch_one(&self.pool)
-            .await
-            .map_err(|error| ProviderFailure::failed(format!("local files check: {error}")))
+            self.db
+                .read("discover.has_local_files", |conn| {
+                    let exists =
+                        conn.query_row(sql::HAS_LOCAL_FILES.text(), [], |row| row.get(0))?;
+                    Ok(exists)
+                })
+                .await
+                .map_err(|error: DbError| {
+                    ProviderFailure::failed(format!("local files check: {error}"))
+                })
         })
     }
 

@@ -122,12 +122,12 @@ async fn home_and_genre_pages_build_from_library_and_listening() {
         })
         .await
         .expect("seed");
-    let pool = runtime.db().sqlx().clone();
+    let db = runtime.db().clone();
     let listening = ListeningData::new(
         Arc::new(home_script()),
         droppedneedle_providers::Providers::closed().cache,
     );
-    let art = Arc::new(GenreArt::new(HomeLibrary::new(pool.clone())));
+    let art = Arc::new(GenreArt::new(HomeLibrary::new(db.clone())));
     let home_over = || {
         LiveHome::new(HomeInputs {
             listening: listening.clone(),
@@ -194,7 +194,7 @@ async fn home_and_genre_pages_build_from_library_and_listening() {
     assert!(shelf_of(&restarted.sections, SectionKey::RecentlyPlayed).is_some());
 
     // The genre page: owned and popular rows side by side.
-    let genre = GenrePages::new(pool.clone(), listening, art.clone(), None)
+    let genre = GenrePages::new(db.clone(), listening, art.clone(), None)
         .detail("Shoegaze", 50, 0, 0)
         .await;
     let library = genre.library.expect("library lane");

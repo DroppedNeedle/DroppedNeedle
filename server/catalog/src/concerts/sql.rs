@@ -5,6 +5,11 @@ droppedneedle_kernel::sql! {
     pub(super) FOLLOWED_ARTISTS = "SELECT artist_mbid_lower, MIN(artist_mbid) AS artist_mbid, \
              MIN(artist_name) AS artist_name FROM user_followed_artists \
              GROUP BY artist_mbid_lower ORDER BY artist_mbid_lower";
+    pub(super) row FollowedArtist for [FOLLOWED_ARTISTS] {
+        artist_mbid_lower: String,
+        artist_mbid: String,
+        artist_name: String,
+    }
     /// Library artists with a MusicBrainz identity on a live album with indexed tracks.
     pub(super) LIBRARY_ARTISTS = "SELECT lower(e.provider_artist_id) AS mbid_lower, \
              MIN(e.provider_artist_id) AS mbid, MIN(a.display_name) AS name \
@@ -17,15 +22,29 @@ droppedneedle_kernel::sql! {
              AND EXISTS (SELECT 1 FROM local_tracks t WHERE t.local_album_id = b.id \
              AND t.availability = 'indexed') \
              GROUP BY lower(e.provider_artist_id) ORDER BY 1";
+    pub(super) row LibraryArtist for [LIBRARY_ARTISTS] {
+        mbid_lower: String,
+        mbid: String,
+        name: String,
+    }
     /// Last check time per checked artist.
     pub(super) CURSOR_AGES = "SELECT artist_mbid_lower, last_checked_at FROM artist_event_check \
              WHERE last_checked_at IS NOT NULL";
+    pub(super) row CursorAge for [CURSOR_AGES] {
+        artist_mbid_lower: String,
+        last_checked_at: f64,
+    }
     /// Users following an artist.
     pub(super) FOLLOWERS = "SELECT user_id FROM user_followed_artists WHERE artist_mbid_lower = ? \
              ORDER BY user_id";
     /// Cached Ticketmaster resolution.
     pub(super) TM_RESOLUTION = "SELECT attraction_id, match_basis, resolved_at FROM artist_tm_attraction \
              WHERE artist_mbid_lower = ?";
+    pub(super) row TmColumns for [TM_RESOLUTION] {
+        attraction_id: Option<String>,
+        match_basis: String,
+        resolved_at: f64,
+    }
     /// When the Skiddle resolution was cached.
     pub(super) SKIDDLE_RESOLVED_AT = "SELECT resolved_at FROM artist_skiddle_resolution WHERE artist_mbid_lower = ?";
     /// Cached Skiddle artist ids.
@@ -48,6 +67,10 @@ droppedneedle_kernel::sql! {
                      resolved_at = excluded.resolved_at";
     /// The (source, listing) keys stored for one artist.
     pub(super) EVENT_KEYS = "SELECT source, source_event_id FROM live_event_feed WHERE artist_mbid_lower = ?";
+    pub(super) row EventKey for [EVENT_KEYS] {
+        source: String,
+        source_event_id: String,
+    }
     /// Delete one feed row.
     pub(super) DELETE_EVENT = "DELETE FROM live_event_feed WHERE source = ?1 AND source_event_id = ?2 \
                          AND artist_mbid_lower = ?3";
@@ -72,6 +95,13 @@ droppedneedle_kernel::sql! {
     /// A user's cities in picker order.
     pub(super) CITIES = "SELECT city_name, country_code, latitude, longitude, radius_km \
              FROM user_event_cities WHERE user_id = ? ORDER BY position";
+    pub(super) row CityColumns for [CITIES] {
+        city_name: String,
+        country_code: Option<String>,
+        latitude: f64,
+        longitude: f64,
+        radius_km: f64,
+    }
     /// Forget a user's cities.
     pub(super) DELETE_CITIES = "DELETE FROM user_event_cities WHERE user_id = ?1";
     /// Add one city; a repeated coordinate keeps its first entry.
@@ -89,7 +119,7 @@ droppedneedle_kernel::sql! {
          last_error) VALUES (?1, ?2, ?3, ?4) ON CONFLICT(artist_mbid_lower) DO UPDATE SET \
          last_checked_at = excluded.last_checked_at, last_status = excluded.last_status, \
          last_error = excluded.last_error";
-    /// The feed row columns, read by `event_from_row`.
+    /// The feed row columns.
     fragment FEED_COLUMNS = "f.source, f.source_event_id, f.artist_mbid_lower, f.artist_name, \
     f.event_name, f.venue_name, f.city, f.region, f.country_code, f.latitude, f.longitude, \
     f.starts_at, f.local_date, f.status, f.ticket_url, f.match_confidence";
@@ -106,6 +136,25 @@ droppedneedle_kernel::sql! {
     fragment FEED_ORDER = " ORDER BY f.local_date ASC, f.event_name ASC";
     /// Feed rows on or after a day.
     family FEED = feed;
+    pub(super) row FeedColumns for family [feed] {
+        source: String,
+        source_event_id: String,
+        artist_mbid_lower: String,
+        artist_name: String,
+        event_name: String,
+        venue_name: Option<String>,
+        city: Option<String>,
+        region: Option<String>,
+        country_code: Option<String>,
+        latitude: Option<f64>,
+        longitude: Option<f64>,
+        starts_at: Option<String>,
+        local_date: String,
+        status: String,
+        ticket_url: Option<String>,
+        match_confidence: String,
+        link_mbid: String,
+    }
 }
 
 /// Feed rows on or after a day, oldest first: one user's follows or the

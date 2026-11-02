@@ -9,10 +9,13 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use sqlx::SqlitePool;
+use droppedneedle_kernel::db::Db;
+use droppedneedle_kernel::db::statement::ListLen;
+use rusqlite::types::Value;
 
 use crate::reads::discover::page::library::fold;
-use crate::reads::platform::artwork::local::{art_tracks_column, library_folder};
+use crate::reads::discover::{read_all, sql};
+use crate::reads::platform::artwork::local::library_folder;
 
 /// One library album on a shelf.
 #[derive(Debug, Clone, PartialEq)]
@@ -103,82 +106,45 @@ pub struct GenreCandidates {
 /// Library reads over the reader pool.
 #[derive(Clone, Debug)]
 pub struct HomeLibrary {
-    pool: SqlitePool,
+    db: Db,
 }
 
-const ALBUM_SELECT: &str = "SELECT a.id, a.title, \
-     COALESCE(an.display_name, a.album_artist_name) AS artist_name, \
-     (SELECT ae.release_group_mbid FROM local_album_external_identities ae \
-      WHERE ae.local_album_id = a.id AND ae.provider = 'musicbrainz' \
-      AND ae.release_group_mbid IS NOT NULL ORDER BY ae.release_group_mbid LIMIT 1) AS rg, \
-     (SELECT aie.provider_artist_id FROM local_artist_external_identities aie \
-      WHERE aie.local_artist_id = a.album_artist_id AND aie.provider = 'musicbrainz' \
-      ORDER BY aie.provider_artist_id LIMIT 1) AS artist_mbid, \
-     a.year, \
-     (SELECT w.version FROM local_album_artwork w WHERE w.local_album_id = a.id \
-      AND w.source IN ('folder','embedded')) AS art_version \
-     FROM local_albums a LEFT JOIN local_artists an ON an.id = a.album_artist_id \
-     WHERE a.retired_into_album_id IS NULL";
-
-type AlbumTuple = (
-    String,
-    String,
-    Option<String>,
-    Option<String>,
-    Option<String>,
-    Option<i64>,
-    Option<i64>,
-);
-
-fn album(row: AlbumTuple) -> HomeAlbum {
-    let (local_id, title, artist_name, release_group_mbid, artist_mbid, year, art_version) = row;
+fn album(row: sql::HomeAlbumColumns) -> HomeAlbum {
     HomeAlbum {
-        local_id,
-        title,
-        artist_name: artist_name.filter(|name| !name.is_empty()),
-        release_group_mbid,
-        artist_mbid,
-        year,
-        art_version,
+        local_id: row.id,
+        title: row.title,
+        artist_name: row.artist_name.filter(|name| !name.is_empty()),
+        release_group_mbid: row.rg,
+        artist_mbid: row.artist_mbid,
+        year: row.year,
+        art_version: row.art_version,
     }
 }
 
-/// Artists credited on the albums (track, album or album artist) of
-/// indexed tracks tagged with one genre (v2's target genre index).
-const GENRE_ARTISTS: &str = "WITH genre_tracks AS (SELECT track.id, track.local_album_id \
-     FROM local_tracks track JOIN local_track_genres genre ON genre.local_track_id = track.id \
-     WHERE track.availability = 'indexed' AND genre.folded_name = ?1), \
-     genre_credits(local_artist_id, local_album_id) AS (\
-     SELECT lta.local_artist_id, gt.local_album_id FROM genre_tracks gt \
-     JOIN local_track_artists lta ON lta.local_track_id = gt.id UNION \
-     SELECT laa.local_artist_id, gt.local_album_id FROM genre_tracks gt \
-     JOIN local_album_artists laa ON laa.local_album_id = gt.local_album_id UNION \
-     SELECT a.album_artist_id, gt.local_album_id FROM genre_tracks gt \
-     JOIN local_albums a ON a.id = gt.local_album_id) \
-     SELECT ar.id, ar.display_name, \
-     (SELECT aie.provider_artist_id FROM local_artist_external_identities aie \
-      WHERE aie.local_artist_id = ar.id AND aie.provider = 'musicbrainz' \
-      ORDER BY aie.provider_artist_id LIMIT 1) AS mbid, \
-     COUNT(DISTINCT gc.local_album_id) AS album_count \
-     FROM genre_credits gc JOIN local_artists ar ON ar.id = gc.local_artist_id \
-     WHERE ar.retired_into_artist_id IS NULL \
-     GROUP BY ar.id ORDER BY ar.display_name COLLATE NOCASE, ar.id LIMIT ?2";
+fn artist(row: sql::HomeArtistColumns) -> HomeArtist {
+    HomeArtist {
+        local_id: row.id,
+        name: row.display_name,
+        mbid: row.mbid,
+        album_count: row.album_count,
+    }
+}
 
 impl HomeLibrary {
-    /// Read over `pool`.
-    pub fn new(pool: SqlitePool) -> Self {
-        Self { pool }
+    /// Read over `db`.
+    pub fn new(db: Db) -> Self {
+        Self { db }
     }
 
     /// The newest albums in the library.
     pub async fn recent_albums(&self, limit: i64) -> Result<Vec<HomeAlbum>, String> {
-        let rows: Vec<AlbumTuple> = sqlx::query_as(&format!(
-            "{ALBUM_SELECT} AND EXISTS (SELECT 1 FROM local_tracks t \
-             WHERE t.local_album_id = a.id AND t.availability = 'indexed') \
-             ORDER BY a.created_at DESC, a.id LIMIT ?1"
-        ))
-        .bind(limit.max(1))
-        .fetch_all(&self.pool)
+        let rows = read_all(
+            &self.db,
+            "discover.home.recent_albums",
+            sql::RECENT_ALBUMS.text(),
+            (limit.max(1),),
+            sql::HomeAlbumColumns::read,
+        )
         .await
         .map_err(|error| format!("recent albums read: {error}"))?;
         Ok(rows.into_iter().map(album).collect())
@@ -186,76 +152,39 @@ impl HomeLibrary {
 
     /// The artists with the most albums in the library.
     pub async fn top_artists(&self, limit: i64) -> Result<Vec<HomeArtist>, String> {
-        let rows: Vec<(String, String, Option<String>, i64)> = sqlx::query_as(
-            "SELECT ar.id, ar.display_name, \
-             (SELECT aie.provider_artist_id FROM local_artist_external_identities aie \
-              WHERE aie.local_artist_id = ar.id AND aie.provider = 'musicbrainz' \
-              ORDER BY aie.provider_artist_id LIMIT 1) AS mbid, \
-             COUNT(DISTINCT credit.local_album_id) AS album_count \
-             FROM local_album_artists credit \
-             JOIN local_albums album ON album.id = credit.local_album_id \
-               AND album.retired_into_album_id IS NULL \
-             JOIN local_artists ar ON ar.id = credit.local_artist_id \
-               AND ar.retired_into_artist_id IS NULL \
-             WHERE EXISTS (SELECT 1 FROM local_tracks t WHERE t.local_album_id = album.id \
-               AND t.availability = 'indexed') \
-             GROUP BY ar.id \
-             ORDER BY album_count DESC, ar.display_name COLLATE NOCASE, ar.id LIMIT ?1",
+        let rows = read_all(
+            &self.db,
+            "discover.home.top_artists",
+            sql::TOP_ARTISTS.text(),
+            (limit.max(1),),
+            sql::HomeArtistColumns::read,
         )
-        .bind(limit.max(1))
-        .fetch_all(&self.pool)
         .await
         .map_err(|error| format!("library artists read: {error}"))?;
-        Ok(rows
-            .into_iter()
-            .map(|(local_id, name, mbid, album_count)| HomeArtist {
-                local_id,
-                name,
-                mbid,
-                album_count,
-            })
-            .collect())
+        Ok(rows.into_iter().map(artist).collect())
     }
 
     /// The user's latest plays, newest first.
     pub async fn recent_plays(&self, user_id: &str, limit: i64) -> Result<Vec<Play>, String> {
-        type PlayTuple = (
-            String,
-            String,
-            Option<String>,
-            Option<String>,
-            Option<String>,
-            String,
-        );
-        let rows: Vec<PlayTuple> = sqlx::query_as(
-            "SELECT track_name, artist_name, album_name, recording_mbid, \
-             release_group_mbid, played_at FROM library_play_history WHERE user_id = ?1 \
-             ORDER BY played_at DESC, id LIMIT ?2",
+        let rows = read_all(
+            &self.db,
+            "discover.home.recent_plays",
+            sql::RECENT_PLAYS.text(),
+            (user_id.to_owned(), limit.max(1)),
+            sql::PlayColumns::read,
         )
-        .bind(user_id)
-        .bind(limit.max(1))
-        .fetch_all(&self.pool)
         .await
         .map_err(|error| format!("play history read: {error}"))?;
         Ok(rows
             .into_iter()
-            .map(
-                |(
-                    track_name,
-                    artist_name,
-                    album_name,
-                    recording_mbid,
-                    release_group_mbid,
-                    played_at,
-                )| Play {
-                    track_name,
-                    artist_name,
-                    album_name,
-                    recording_mbid,
-                    release_group_mbid,
-                    played_at,
-                },
-            )
+            .map(|row| Play {
+                track_name: row.track_name,
+                artist_name: row.artist_name,
+                album_name: row.album_name,
+                recording_mbid: row.recording_mbid,
+                release_group_mbid: row.release_group_mbid,
+                played_at: row.played_at,
+            })
             .collect())
     }
 
@@ -265,21 +194,16 @@ impl HomeLibrary {
         if folded.is_empty() {
             return Ok(Vec::new());
         }
-        let rows: Vec<(String, String, Option<String>, i64)> = sqlx::query_as(GENRE_ARTISTS)
-            .bind(folded)
-            .bind(limit.max(1))
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|error| format!("genre artists read: {error}"))?;
-        Ok(rows
-            .into_iter()
-            .map(|(local_id, name, mbid, album_count)| HomeArtist {
-                local_id,
-                name,
-                mbid,
-                album_count,
-            })
-            .collect())
+        let rows = read_all(
+            &self.db,
+            "discover.home.genre_artists",
+            sql::GENRE_ARTISTS.text(),
+            (folded, limit.max(1)),
+            sql::HomeArtistColumns::read,
+        )
+        .await
+        .map_err(|error| format!("genre artists read: {error}"))?;
+        Ok(rows.into_iter().map(artist).collect())
     }
 
     /// Owned albums with tracks tagged with one genre, recently changed
@@ -289,16 +213,13 @@ impl HomeLibrary {
         if folded.is_empty() {
             return Ok(Vec::new());
         }
-        let rows: Vec<AlbumTuple> = sqlx::query_as(&format!(
-            "{ALBUM_SELECT} AND EXISTS (SELECT 1 FROM local_tracks t \
-             WHERE t.local_album_id = a.id AND t.availability = 'indexed' \
-             AND EXISTS (SELECT 1 FROM local_track_genres g \
-             WHERE g.local_track_id = t.id AND g.folded_name = ?1)) \
-             ORDER BY a.updated_at DESC, a.title COLLATE NOCASE, a.id LIMIT ?2"
-        ))
-        .bind(folded)
-        .bind(limit.max(1))
-        .fetch_all(&self.pool)
+        let rows = read_all(
+            &self.db,
+            "discover.home.genre_albums",
+            sql::GENRE_ALBUMS.text(),
+            (folded, limit.max(1)),
+            sql::HomeAlbumColumns::read,
+        )
         .await
         .map_err(|error| format!("genre albums read: {error}"))?;
         Ok(rows.into_iter().map(album).collect())
@@ -309,20 +230,19 @@ impl HomeLibrary {
         if folded.is_empty() {
             return Ok(HashMap::new());
         }
-        let sql = format!(
-            "SELECT genre_folded, value FROM library_genre_artwork_revisions \
-             WHERE genre_folded IN ({})",
-            vec!["?"; folded.len()].join(",")
-        );
-        let mut query = sqlx::query_as::<_, (String, i64)>(&sql);
-        for genre in folded {
-            query = query.bind(genre);
-        }
-        let rows = query
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|error| format!("genre artwork revisions read: {error}"))?;
-        Ok(rows.into_iter().collect())
+        let rows = read_all(
+            &self.db,
+            "discover.home.genre_revisions",
+            sql::genre_revisions(ListLen::new(folded.len())),
+            rusqlite::params_from_iter(folded.to_vec()),
+            sql::GenreRevision::read,
+        )
+        .await
+        .map_err(|error| format!("genre artwork revisions read: {error}"))?;
+        Ok(rows
+            .into_iter()
+            .map(|row| (row.genre_folded, row.value))
+            .collect())
     }
 
     /// Collage candidates for each genre (folded, deduplicated, at most
@@ -339,73 +259,30 @@ impl HomeLibrary {
         if folded.is_empty() {
             return Ok(Vec::new());
         }
-        let values = vec!["(?,?)"; folded.len()].join(",");
-        let sql = format!(
-            "WITH requested(genre_folded, ordinal) AS (VALUES {values}), \
-             candidates AS (SELECT r.genre_folded, a.id AS album_id, a.title AS album_title, \
-               a.album_artist_name, a.album_artist_id, COUNT(*) AS match_count, \
-               w.version AS cover_version, w.content_hash, w.source, \
-               CASE WHEN w.source = 'embedded' THEN emb.file_path ELSE w.source_locator END AS path, \
-               {tracks} AS tracks \
-             FROM requested r JOIN local_track_genres g ON g.folded_name = r.genre_folded \
-             JOIN local_tracks t ON t.id = g.local_track_id AND t.availability = 'indexed' \
-             JOIN local_albums a ON a.id = t.local_album_id AND a.retired_into_album_id IS NULL \
-             JOIN local_album_artwork w ON w.local_album_id = a.id \
-               AND w.source IN ('folder','embedded') \
-             LEFT JOIN local_tracks emb ON emb.id = w.source_locator AND w.source = 'embedded' \
-               AND emb.availability = 'indexed' \
-             GROUP BY r.genre_folded, a.id) \
-             SELECT r.genre_folded, COALESCE(rev.value, 0), c.album_id, c.album_title, \
-               c.album_artist_name, c.album_artist_id, c.match_count, c.cover_version, \
-               c.content_hash, c.source, c.path, c.tracks \
-             FROM requested r \
-             LEFT JOIN library_genre_artwork_revisions rev ON rev.genre_folded = r.genre_folded \
-             LEFT JOIN candidates c ON c.genre_folded = r.genre_folded \
-             ORDER BY r.ordinal, c.match_count DESC, c.album_id",
-            tracks = art_tracks_column("emb")
-        );
-        type Row = (
-            String,
-            i64,
-            Option<String>,
-            Option<String>,
-            Option<String>,
-            Option<String>,
-            Option<i64>,
-            Option<i64>,
-            Option<String>,
-            Option<String>,
-            Option<String>,
-            Option<String>,
-        );
-        let mut query = sqlx::query_as::<_, Row>(&sql);
-        for (ordinal, genre) in folded.iter().enumerate() {
-            query = query.bind(genre).bind(ordinal as i64);
-        }
-        let rows = query
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|error| format!("genre artwork read: {error}"))?;
+        let statement = sql::art_candidates(ListLen::new(folded.len()));
+        let binds: Vec<Value> = folded
+            .into_iter()
+            .enumerate()
+            .flat_map(|(ordinal, genre)| [Value::Text(genre), Value::Integer(ordinal as i64)])
+            .collect();
+        let rows = read_all(
+            &self.db,
+            "discover.home.art_candidates",
+            statement,
+            rusqlite::params_from_iter(binds),
+            sql::ArtCandidateColumns::read,
+        )
+        .await
+        .map_err(|error| format!("genre artwork read: {error}"))?;
         let mut out: Vec<GenreCandidates> = Vec::new();
         for row in rows {
-            let (
-                genre,
-                revision,
-                album_id,
-                title,
-                artist_name,
-                artist_id,
-                matches,
-                version,
-                hash,
-                source,
-                path,
-                tracks,
-            ) = row;
-            if out.last().is_none_or(|last| last.folded != genre) {
+            if out
+                .last()
+                .is_none_or(|last| last.folded != row.genre_folded)
+            {
                 out.push(GenreCandidates {
-                    folded: genre,
-                    revision,
+                    folded: row.genre_folded,
+                    revision: row.revision,
                     candidates: Vec::new(),
                 });
             }
@@ -416,19 +293,26 @@ impl HomeLibrary {
                 Some(source),
                 Some(path),
                 Some(last),
-            ) = (album_id, title, version, source, path, out.last_mut())
+            ) = (
+                row.album_id,
+                row.album_title,
+                row.cover_version,
+                row.source,
+                row.path,
+                out.last_mut(),
+            )
             else {
                 continue;
             };
-            let root = library_folder(Path::new(&path), tracks.as_deref());
+            let root = library_folder(Path::new(&path), row.tracks.as_deref());
             last.candidates.push(ArtCandidate {
                 album_id,
                 album_title,
-                album_artist_name: artist_name,
-                album_artist_id: artist_id,
-                match_count: matches.unwrap_or(0),
+                album_artist_name: row.album_artist_name,
+                album_artist_id: row.album_artist_id,
+                match_count: row.match_count.unwrap_or(0),
                 cover_version,
-                content_hash: hash,
+                content_hash: row.content_hash,
                 source,
                 path,
                 root,

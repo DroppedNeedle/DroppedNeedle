@@ -14,13 +14,13 @@
 
 use std::collections::{HashMap, HashSet};
 
-use rusqlite::params;
-use sqlx::{Row, sqlite::SqliteRow};
+use rusqlite::types::Value;
+use rusqlite::{Connection, OptionalExtension as _, params};
 
 use super::matching::{Confidence, EventRow, StoredConcert, SweepArtist, TmBasis};
 use super::models::{ConcertStatus, EventCity, EventSource};
 use super::sql;
-use droppedneedle_kernel::db::{Db, DbError, Lane, map_sqlx_busy};
+use droppedneedle_kernel::db::{Db, DbError, Lane};
 
 /// A store failure. The text goes to the log only.
 #[derive(Debug, thiserror::Error)]
@@ -40,10 +40,6 @@ impl From<DbError> for StoreError {
             other => Self::Internal(other.to_string()),
         }
     }
-}
-
-fn read_error(operation: &str) -> impl FnOnce(sqlx::Error) -> StoreError + '_ {
-    move |error| StoreError::from(map_sqlx_busy(operation, error))
 }
 
 /// Cached Ticketmaster resolution for one artist.
@@ -66,35 +62,33 @@ pub struct SkiddleResolution {
     pub resolved_at: f64,
 }
 
-fn event_from_row(row: &SqliteRow) -> Result<Option<EventRow>, sqlx::Error> {
-    let source: String = row.try_get("source")?;
-    let Some(source) = EventSource::parse(&source) else {
-        return Ok(None);
-    };
-    let confidence: String = row.try_get("match_confidence")?;
-    let status: String = row.try_get("status")?;
-    Ok(Some(EventRow {
-        source,
-        source_event_id: row.try_get("source_event_id")?,
-        artist_mbid_lower: row.try_get("artist_mbid_lower")?,
-        artist_name: row.try_get("artist_name")?,
-        event_name: row.try_get("event_name")?,
-        local_date: row.try_get("local_date")?,
-        status: ConcertStatus::parse(&status),
-        confidence: if confidence == "mbid" {
-            Confidence::Mbid
-        } else {
-            Confidence::Name
+fn stored_concert(row: sql::FeedColumns) -> Option<StoredConcert> {
+    let source = EventSource::parse(&row.source)?;
+    Some(StoredConcert {
+        event: EventRow {
+            source,
+            source_event_id: row.source_event_id,
+            artist_mbid_lower: row.artist_mbid_lower,
+            artist_name: row.artist_name,
+            event_name: row.event_name,
+            local_date: row.local_date,
+            status: ConcertStatus::parse(&row.status),
+            confidence: if row.match_confidence == "mbid" {
+                Confidence::Mbid
+            } else {
+                Confidence::Name
+            },
+            venue_name: row.venue_name,
+            city: row.city,
+            region: row.region,
+            country_code: row.country_code,
+            latitude: row.latitude,
+            longitude: row.longitude,
+            starts_at: row.starts_at,
+            ticket_url: row.ticket_url,
         },
-        venue_name: row.try_get("venue_name")?,
-        city: row.try_get("city")?,
-        region: row.try_get("region")?,
-        country_code: row.try_get("country_code")?,
-        latitude: row.try_get("latitude")?,
-        longitude: row.try_get("longitude")?,
-        starts_at: row.try_get("starts_at")?,
-        ticket_url: row.try_get("ticket_url")?,
-    }))
+        artist_mbid: row.link_mbid,
+    })
 }
 
 /// The concerts tables in the application database.
@@ -109,70 +103,80 @@ impl ConcertsStore {
         Self { db }
     }
 
+    async fn read<R, F>(&self, name: &'static str, op: F) -> Result<R, StoreError>
+    where
+        F: FnOnce(&Connection) -> Result<R, DbError> + Send + 'static,
+        R: Send + 'static,
+    {
+        self.db.read(name, op).await.map_err(StoreError::from)
+    }
+
     // -- sweep set -----------------------------------------------------------
 
     /// Every distinct followed artist, keyed by lowercase MBID.
     pub async fn followed_artists(&self) -> Result<Vec<SweepArtist>, StoreError> {
-        let rows = sqlx::query(sql::FOLLOWED_ARTISTS.text())
-            .fetch_all(self.db.sqlx())
-            .await
-            .map_err(read_error("concerts followed artists"))?;
-        rows.iter()
-            .map(|row| {
-                Ok(SweepArtist {
-                    mbid: row.try_get("artist_mbid")?,
-                    mbid_lower: row.try_get("artist_mbid_lower")?,
-                    name: row.try_get("artist_name")?,
+        self.read("concerts followed artists", |conn| {
+            let artists = conn
+                .prepare(sql::FOLLOWED_ARTISTS.text())?
+                .query_map([], sql::FollowedArtist::read)?
+                .map(|row| {
+                    row.map(|row| SweepArtist {
+                        mbid: row.artist_mbid,
+                        mbid_lower: row.artist_mbid_lower,
+                        name: row.artist_name,
+                    })
                 })
-            })
-            .collect::<Result<_, sqlx::Error>>()
-            .map_err(read_error("concerts followed artists"))
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(artists)
+        })
+        .await
     }
 
     /// Every library artist with a MusicBrainz identity that leads or is
     /// credited on a live album with indexed tracks (library sweep scope).
     pub async fn library_artists(&self) -> Result<Vec<SweepArtist>, StoreError> {
-        let rows = sqlx::query(sql::LIBRARY_ARTISTS.text())
-            .fetch_all(self.db.sqlx())
-            .await
-            .map_err(read_error("concerts library artists"))?;
-        rows.iter()
-            .map(|row| {
-                Ok(SweepArtist {
-                    mbid: row.try_get("mbid")?,
-                    mbid_lower: row.try_get("mbid_lower")?,
-                    name: row.try_get("name")?,
+        self.read("concerts library artists", |conn| {
+            let artists = conn
+                .prepare(sql::LIBRARY_ARTISTS.text())?
+                .query_map([], sql::LibraryArtist::read)?
+                .map(|row| {
+                    row.map(|row| SweepArtist {
+                        mbid: row.mbid,
+                        mbid_lower: row.mbid_lower,
+                        name: row.name,
+                    })
                 })
-            })
-            .collect::<Result<_, sqlx::Error>>()
-            .map_err(read_error("concerts library artists"))
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(artists)
+        })
+        .await
     }
 
     /// Lowercase MBID to last check time, for least-recently-checked-first
     /// rotation. Never-checked artists are absent.
     pub async fn cursor_ages(&self) -> Result<HashMap<String, f64>, StoreError> {
-        let rows = sqlx::query(sql::CURSOR_AGES.text())
-            .fetch_all(self.db.sqlx())
-            .await
-            .map_err(read_error("concerts cursor ages"))?;
-        rows.iter()
-            .map(|row| {
-                Ok((
-                    row.try_get("artist_mbid_lower")?,
-                    row.try_get("last_checked_at")?,
-                ))
-            })
-            .collect::<Result<_, sqlx::Error>>()
-            .map_err(read_error("concerts cursor ages"))
+        self.read("concerts cursor ages", |conn| {
+            let ages = conn
+                .prepare(sql::CURSOR_AGES.text())?
+                .query_map([], sql::CursorAge::read)?
+                .map(|row| row.map(|row| (row.artist_mbid_lower, row.last_checked_at)))
+                .collect::<rusqlite::Result<HashMap<_, _>>>()?;
+            Ok(ages)
+        })
+        .await
     }
 
     /// Users following an artist, for the `concerts_new` fan-out.
     pub async fn followers(&self, artist_mbid_lower: &str) -> Result<Vec<String>, StoreError> {
-        sqlx::query_scalar(sql::FOLLOWERS.text())
-            .bind(artist_mbid_lower)
-            .fetch_all(self.db.sqlx())
-            .await
-            .map_err(read_error("concerts followers"))
+        let artist = artist_mbid_lower.to_owned();
+        self.read("concerts followers", move |conn| {
+            let users = conn
+                .prepare(sql::FOLLOWERS.text())?
+                .query_map(params![artist], |row| row.get(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(users)
+        })
+        .await
     }
 
     // -- source resolutions --------------------------------------------------
@@ -182,21 +186,24 @@ impl ConcertsStore {
         &self,
         artist_mbid_lower: &str,
     ) -> Result<Option<TmResolution>, StoreError> {
-        let row = sqlx::query(sql::TM_RESOLUTION.text())
-            .bind(artist_mbid_lower)
-            .fetch_optional(self.db.sqlx())
-            .await
-            .map_err(read_error("concerts tm resolution"))?;
-        row.map(|row| {
-            let basis: String = row.try_get("match_basis")?;
-            Ok(TmResolution {
-                attraction_id: row.try_get("attraction_id")?,
-                basis: TmBasis::parse(&basis),
-                resolved_at: row.try_get("resolved_at")?,
+        let artist = artist_mbid_lower.to_owned();
+        let row = self
+            .read("concerts tm resolution", move |conn| {
+                let row = conn
+                    .query_row(
+                        sql::TM_RESOLUTION.text(),
+                        params![artist],
+                        sql::TmColumns::read,
+                    )
+                    .optional()?;
+                Ok(row)
             })
-        })
-        .transpose()
-        .map_err(read_error("concerts tm resolution"))
+            .await?;
+        Ok(row.map(|row| TmResolution {
+            attraction_id: row.attraction_id,
+            basis: TmBasis::parse(&row.match_basis),
+            resolved_at: row.resolved_at,
+        }))
     }
 
     /// Cached Skiddle resolution, if any.
@@ -204,19 +211,30 @@ impl ConcertsStore {
         &self,
         artist_mbid_lower: &str,
     ) -> Result<Option<SkiddleResolution>, StoreError> {
-        let marker: Option<f64> = sqlx::query_scalar(sql::SKIDDLE_RESOLVED_AT.text())
-            .bind(artist_mbid_lower)
-            .fetch_optional(self.db.sqlx())
-            .await
-            .map_err(read_error("concerts skiddle resolution"))?;
+        let artist = artist_mbid_lower.to_owned();
+        let marker: Option<f64> = self
+            .read("concerts skiddle resolution", move |conn| {
+                let marker = conn
+                    .query_row(sql::SKIDDLE_RESOLVED_AT.text(), params![artist], |row| {
+                        row.get(0)
+                    })
+                    .optional()?;
+                Ok(marker)
+            })
+            .await?;
         let Some(resolved_at) = marker else {
             return Ok(None);
         };
-        let artist_ids = sqlx::query_scalar(sql::SKIDDLE_IDS.text())
-            .bind(artist_mbid_lower)
-            .fetch_all(self.db.sqlx())
-            .await
-            .map_err(read_error("concerts skiddle ids"))?;
+        let artist = artist_mbid_lower.to_owned();
+        let artist_ids = self
+            .read("concerts skiddle ids", move |conn| {
+                let ids = conn
+                    .prepare(sql::SKIDDLE_IDS.text())?
+                    .query_map(params![artist], |row| row.get(0))?
+                    .collect::<rusqlite::Result<Vec<String>>>()?;
+                Ok(ids)
+            })
+            .await?;
         Ok(Some(SkiddleResolution {
             artist_ids,
             resolved_at,
@@ -273,24 +291,20 @@ impl ConcertsStore {
         &self,
         artist_mbid_lower: &str,
     ) -> Result<HashSet<(EventSource, String)>, StoreError> {
-        let rows = sqlx::query(sql::EVENT_KEYS.text())
-            .bind(artist_mbid_lower)
-            .fetch_all(self.db.sqlx())
-            .await
-            .map_err(read_error("concerts event keys"))?;
-        let mut keys = HashSet::with_capacity(rows.len());
-        for row in &rows {
-            let source: String = row
-                .try_get("source")
-                .map_err(read_error("concerts event keys"))?;
-            let id: String = row
-                .try_get("source_event_id")
-                .map_err(read_error("concerts event keys"))?;
-            if let Some(source) = EventSource::parse(&source) {
-                keys.insert((source, id));
-            }
-        }
-        Ok(keys)
+        let artist = artist_mbid_lower.to_owned();
+        let rows = self
+            .read("concerts event keys", move |conn| {
+                let rows = conn
+                    .prepare(sql::EVENT_KEYS.text())?
+                    .query_map(params![artist], sql::EventKey::read)?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                Ok(rows)
+            })
+            .await?;
+        Ok(rows
+            .into_iter()
+            .filter_map(|row| Some((EventSource::parse(&row.source)?, row.source_event_id)))
+            .collect())
     }
 
     /// Apply one artist's sweep in one transaction: delete the vanished
@@ -382,52 +396,48 @@ impl ConcertsStore {
         discovered_after: Option<f64>,
     ) -> Result<Vec<StoredConcert>, StoreError> {
         let statement = sql::feed(user_id.is_some(), discovered_after.is_some());
-        let mut query = sqlx::query(&statement);
+        let mut binds: Vec<Value> = Vec::with_capacity(3);
         if let Some(user_id) = user_id {
-            query = query.bind(user_id);
+            binds.push(Value::Text(user_id.to_owned()));
         }
-        query = query.bind(min_local_date);
+        binds.push(Value::Text(min_local_date.to_owned()));
         if let Some(after) = discovered_after {
-            query = query.bind(after);
+            binds.push(Value::Real(after));
         }
-        let rows = query
-            .fetch_all(self.db.sqlx())
-            .await
-            .map_err(read_error("concerts list"))?;
-        let mut concerts = Vec::with_capacity(rows.len());
-        for row in &rows {
-            let Some(event) = event_from_row(row).map_err(read_error("concerts list"))? else {
-                continue;
-            };
-            let artist_mbid: String = row
-                .try_get("link_mbid")
-                .map_err(read_error("concerts list"))?;
-            concerts.push(StoredConcert { event, artist_mbid });
-        }
-        Ok(concerts)
+        let rows = self
+            .read("concerts list", move |conn| {
+                let rows = conn
+                    .prepare(&statement)?
+                    .query_map(rusqlite::params_from_iter(binds), sql::FeedColumns::read)?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                Ok(rows)
+            })
+            .await?;
+        Ok(rows.into_iter().filter_map(stored_concert).collect())
     }
 
     // -- per user ------------------------------------------------------------
 
     /// The user's cities in picker order.
     pub async fn cities(&self, user_id: &str) -> Result<Vec<EventCity>, StoreError> {
-        let rows = sqlx::query(sql::CITIES.text())
-            .bind(user_id)
-            .fetch_all(self.db.sqlx())
-            .await
-            .map_err(read_error("concerts cities"))?;
-        rows.iter()
-            .map(|row| {
-                Ok(EventCity {
-                    city_name: row.try_get("city_name")?,
-                    latitude: row.try_get("latitude")?,
-                    longitude: row.try_get("longitude")?,
-                    radius_km: row.try_get("radius_km")?,
-                    country_code: row.try_get("country_code")?,
+        let user_id = user_id.to_owned();
+        self.read("concerts cities", move |conn| {
+            let cities = conn
+                .prepare(sql::CITIES.text())?
+                .query_map(params![user_id], sql::CityColumns::read)?
+                .map(|row| {
+                    row.map(|row| EventCity {
+                        city_name: row.city_name,
+                        latitude: row.latitude,
+                        longitude: row.longitude,
+                        radius_km: row.radius_km,
+                        country_code: row.country_code,
+                    })
                 })
-            })
-            .collect::<Result<_, sqlx::Error>>()
-            .map_err(read_error("concerts cities"))
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(cities)
+        })
+        .await
     }
 
     /// Replace the user's cities. A repeated coordinate keeps its first entry.
@@ -462,11 +472,15 @@ impl ConcertsStore {
 
     /// When the user last opened the events page; 0 for never.
     pub async fn seen_at(&self, user_id: &str) -> Result<f64, StoreError> {
-        let seen: Option<f64> = sqlx::query_scalar(sql::SEEN_AT.text())
-            .bind(user_id)
-            .fetch_optional(self.db.sqlx())
-            .await
-            .map_err(read_error("concerts seen at"))?;
+        let user_id = user_id.to_owned();
+        let seen: Option<f64> = self
+            .read("concerts seen at", move |conn| {
+                let seen = conn
+                    .query_row(sql::SEEN_AT.text(), params![user_id], |row| row.get(0))
+                    .optional()?;
+                Ok(seen)
+            })
+            .await?;
         Ok(seen.unwrap_or(0.0))
     }
 

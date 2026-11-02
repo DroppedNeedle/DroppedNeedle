@@ -9,6 +9,12 @@ use sqlx::Row as _;
 
 use crate::subsonic::store::{BookmarkRecord, QueueState};
 use droppedneedle_catalog::reads::collections::db::{CollectionsDb, StoreError};
+use droppedneedle_kernel::db::map_sqlx_busy;
+
+/// A reader-pool error, keeping busy distinct.
+fn read_failed(operation: &str, error: sqlx::Error) -> StoreError {
+    StoreError::from(map_sqlx_busy(operation, error))
+}
 
 /// Durable per-user play queues and bookmarks.
 #[derive(Debug, Clone)]
@@ -24,7 +30,7 @@ impl CompatQueues {
 
     /// Saved queue for a user (empty when never saved).
     pub async fn get_queue(&self, user_id: &str) -> Result<QueueState, StoreError> {
-        let pool = self.db.pool()?;
+        let pool = self.db.db().sqlx();
         let head = sqlx::query(
             "SELECT current_index, position_ms, updated_at, changed_by_client \
              FROM compat_play_queues WHERE user_id = ?",
@@ -32,7 +38,7 @@ impl CompatQueues {
         .bind(user_id)
         .fetch_optional(pool)
         .await
-        .map_err(|error| StoreError::read("compat.queue", error))?;
+        .map_err(|error| read_failed("compat.queue", error))?;
         let Some(head) = head else {
             return Ok(QueueState::default());
         };
@@ -42,8 +48,8 @@ impl CompatQueues {
         .bind(user_id)
         .fetch_all(pool)
         .await
-        .map_err(|error| StoreError::read("compat.queue.items", error))?;
-        let read = |error| StoreError::read("compat.queue", error);
+        .map_err(|error| read_failed("compat.queue.items", error))?;
+        let read = |error| read_failed("compat.queue", error);
         let current_index: Option<i64> = head.try_get("current_index").map_err(read)?;
         Ok(QueueState {
             file_ids,
@@ -103,7 +109,7 @@ impl CompatQueues {
 
     /// Bookmarks for a user, most recently changed first.
     pub async fn list_bookmarks(&self, user_id: &str) -> Result<Vec<BookmarkRecord>, StoreError> {
-        let pool = self.db.pool()?;
+        let pool = self.db.db().sqlx();
         let rows = sqlx::query(
             "SELECT file_id, position_ms, comment, created_at, changed_at \
              FROM compat_bookmarks WHERE user_id = ? ORDER BY changed_at DESC, file_id",
@@ -111,7 +117,7 @@ impl CompatQueues {
         .bind(user_id)
         .fetch_all(pool)
         .await
-        .map_err(|error| StoreError::read("compat.bookmarks", error))?;
+        .map_err(|error| read_failed("compat.bookmarks", error))?;
         rows.iter()
             .map(|row| {
                 Ok(BookmarkRecord {
@@ -123,7 +129,7 @@ impl CompatQueues {
                 })
             })
             .collect::<Result<Vec<_>, sqlx::Error>>()
-            .map_err(|error| StoreError::read("compat.bookmarks", error))
+            .map_err(|error| read_failed("compat.bookmarks", error))
     }
 
     /// Create or update a bookmark.

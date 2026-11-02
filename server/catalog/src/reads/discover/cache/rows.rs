@@ -6,6 +6,7 @@
 //! leaves no row behind.
 
 use super::{PageKind, Variant};
+use crate::reads::discover::sql;
 use droppedneedle_kernel::db::{Db, DbError, writer::Lane};
 
 /// One stored page.
@@ -17,10 +18,12 @@ pub(super) struct Row {
 
 /// The clear generation now.
 pub(super) async fn generation(db: &Db) -> Result<i64, String> {
-    sqlx::query_scalar("SELECT generation FROM catalog_page_generations WHERE singleton = 1")
-        .fetch_one(db.sqlx())
-        .await
-        .map_err(|error| format!("page generation read: {error}"))
+    db.read("discover.page_cache.generation", |conn| {
+        let generation = conn.query_row(sql::PAGE_GENERATION.text(), [], |row| row.get(0))?;
+        Ok(generation)
+    })
+    .await
+    .map_err(|error: DbError| format!("page generation read: {error}"))
 }
 
 /// The clear generation and the user's row, read together.
@@ -29,26 +32,25 @@ pub(super) async fn load(
     user_id: &str,
     kind: PageKind,
 ) -> Result<(i64, Option<Row>), String> {
-    type Read = (
-        i64,
-        Option<String>,
-        Option<bool>,
-        Option<bool>,
-        Option<Vec<u8>>,
-        Option<i64>,
-    );
-    let (generation, source, listenbrainz, lastfm, payload, built_at): Read = sqlx::query_as(
-        "SELECT g.generation, p.source, p.listenbrainz, p.lastfm, p.payload, p.built_at \
-         FROM catalog_page_generations g \
-         LEFT JOIN catalog_cached_pages p ON p.user_id = ?1 AND p.page = ?2 \
-         WHERE g.singleton = 1",
-    )
-    .bind(user_id)
-    .bind(kind.as_str())
-    .fetch_one(db.sqlx())
-    .await
-    .map_err(|error| format!("cached page read: {error}"))?;
-    let row = match (source, listenbrainz, lastfm, payload, built_at) {
+    let user_id = user_id.to_owned();
+    let read = db
+        .read("discover.page_cache.load", move |conn| {
+            let read = conn.query_row(
+                sql::CACHED_PAGE.text(),
+                rusqlite::params![user_id, kind.as_str()],
+                sql::CachedPageColumns::read,
+            )?;
+            Ok(read)
+        })
+        .await
+        .map_err(|error: DbError| format!("cached page read: {error}"))?;
+    let row = match (
+        read.source,
+        read.listenbrainz,
+        read.lastfm,
+        read.payload,
+        read.built_at,
+    ) {
         (Some(source), Some(listenbrainz), Some(lastfm), Some(payload), Some(built_at)) => {
             Some(Row {
                 variant: Variant {
@@ -57,12 +59,12 @@ pub(super) async fn load(
                     lastfm,
                 },
                 payload,
-                built_at,
+                built_at: built_at.0,
             })
         }
         _ => None,
     };
-    Ok((generation, row))
+    Ok((read.generation, row))
 }
 
 /// Keep `row` as the user's page when the cache is still at `generation`.
@@ -76,15 +78,7 @@ pub(super) async fn save(
     let user_id = user_id.to_owned();
     db.write(Lane::Background, "discover.page_cache.save", move |tx| {
         tx.execute(
-            "INSERT INTO catalog_cached_pages \
-                 (user_id, page, source, listenbrainz, lastfm, payload, built_at) \
-             SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7 \
-             WHERE EXISTS (SELECT 1 FROM auth_users WHERE id = ?1) \
-               AND (SELECT generation FROM catalog_page_generations WHERE singleton = 1) = ?8 \
-             ON CONFLICT(user_id, page) DO UPDATE SET \
-                 source = excluded.source, listenbrainz = excluded.listenbrainz, \
-                 lastfm = excluded.lastfm, payload = excluded.payload, \
-                 built_at = excluded.built_at",
+            sql::SAVE_CACHED_PAGE.text(),
             rusqlite::params![
                 user_id,
                 kind.as_str(),
@@ -105,7 +99,7 @@ pub(super) async fn forget(db: &Db, user_id: &str, kind: PageKind) -> Result<(),
     let user_id = user_id.to_owned();
     db.write(Lane::Background, "discover.page_cache.forget", move |tx| {
         tx.execute(
-            "DELETE FROM catalog_cached_pages WHERE user_id = ?1 AND page = ?2",
+            sql::FORGET_CACHED_PAGE.text(),
             rusqlite::params![user_id, kind.as_str()],
         )?;
         Ok(())
@@ -116,12 +110,8 @@ pub(super) async fn forget(db: &Db, user_id: &str, kind: PageKind) -> Result<(),
 /// Drop every page and move to the next generation, in one transaction.
 pub(super) async fn clear_all(db: &Db) -> Result<usize, DbError> {
     db.write(Lane::Foreground, "discover.page_cache.clear", |tx| {
-        let cleared = tx.execute("DELETE FROM catalog_cached_pages", [])?;
-        tx.execute(
-            "UPDATE catalog_page_generations SET generation = generation + 1 \
-             WHERE singleton = 1",
-            [],
-        )?;
+        let cleared = tx.execute(sql::CLEAR_CACHED_PAGES.text(), [])?;
+        tx.execute(sql::NEXT_PAGE_GENERATION.text(), [])?;
         Ok(cleared)
     })
     .await

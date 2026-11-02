@@ -24,6 +24,8 @@ use super::library::{LibraryReads, fold};
 use super::memo::{BuildMemo, MemoKey};
 use super::picks::{self, Candidate};
 use super::shelves::{self, RowMut, SHELF_SIZE, album, artist, genre, one, shelf};
+use droppedneedle_kernel::db::Db;
+
 use crate::reads::discover::cache::Variant;
 use crate::reads::discover::listening::{
     AlbumRow, ArtistRow, Ask, LastFmChartAlbum, ListenSource, ListenedAlbum, ListeningData,
@@ -551,10 +553,6 @@ impl Builder<'_> {
             )),
             _ => None,
         }
-    }
-
-    fn library_pool(&self) -> &sqlx::SqlitePool {
-        self.library.pool()
     }
 
     fn memo_key<'k>(
@@ -1419,7 +1417,7 @@ impl Builder<'_> {
             .iter()
             .map(|c| c.release_group_mbid.clone())
             .collect();
-        let owned = owned_album_ids(self.library_pool(), &ids)
+        let owned = owned_album_ids(self.library.db(), &ids)
             .await
             .unwrap_or_default();
         candidates.retain(|candidate| !owned.contains_key(&candidate.release_group_mbid));
@@ -2255,14 +2253,11 @@ pub fn genre_list(genres: Option<&[(String, i64)]>) -> Option<ChartSection> {
 
 /// Owned release groups among `ids`, lowercased, mapped to local ids.
 /// `None` when the library could not be read.
-async fn owned_album_ids(
-    pool: &sqlx::SqlitePool,
-    ids: &[String],
-) -> Option<HashMap<String, String>> {
+async fn owned_album_ids(db: &Db, ids: &[String]) -> Option<HashMap<String, String>> {
     let mut owned = HashMap::new();
     for chunk in ids.chunks(200) {
         let refs: Vec<&str> = chunk.iter().map(String::as_str).collect();
-        match ownership::owned_albums(pool, &refs).await {
+        match ownership::owned_albums(db, &refs).await {
             Ok(found) => owned.extend(found),
             Err(error) => {
                 tracing::warn!(%error, "album ownership unreadable; marks left as built");
@@ -2275,14 +2270,11 @@ async fn owned_album_ids(
 
 /// Owned artists among `ids`, lowercased, mapped to local ids. `None`
 /// when the library could not be read.
-async fn owned_artist_ids(
-    pool: &sqlx::SqlitePool,
-    ids: &[String],
-) -> Option<HashMap<String, String>> {
+async fn owned_artist_ids(db: &Db, ids: &[String]) -> Option<HashMap<String, String>> {
     let mut owned = HashMap::new();
     for chunk in ids.chunks(200) {
         let refs: Vec<&str> = chunk.iter().map(String::as_str).collect();
-        match ownership::owned_artists(pool, &refs).await {
+        match ownership::owned_artists(db, &refs).await {
             Ok(found) => owned.extend(found),
             Err(error) => {
                 tracing::warn!(%error, "artist ownership unreadable; marks left as built");
@@ -2319,7 +2311,7 @@ fn mark(
 /// Mark which albums and artists on the page the library holds now, and
 /// drop owned albums from the sections that hide them. Run on every
 /// serve.
-pub async fn mark_ownership(pool: &sqlx::SqlitePool, page: &mut DiscoverResponse) {
+pub async fn mark_ownership(db: &Db, page: &mut DiscoverResponse) {
     let mut album_ids: Vec<String> = Vec::new();
     let mut artist_ids: Vec<String> = Vec::new();
     for section in &mut page.sections {
@@ -2330,8 +2322,8 @@ pub async fn mark_ownership(pool: &sqlx::SqlitePool, page: &mut DiscoverResponse
             }
         }
     }
-    let owned_albums = owned_album_ids(pool, &album_ids).await;
-    let owned_artists = owned_artist_ids(pool, &artist_ids).await;
+    let owned_albums = owned_album_ids(db, &album_ids).await;
+    let owned_artists = owned_artist_ids(db, &artist_ids).await;
     for section in &mut page.sections {
         for row in section.content.rows_mut() {
             let (owned, row_mbid, in_library, local_id) = match row {

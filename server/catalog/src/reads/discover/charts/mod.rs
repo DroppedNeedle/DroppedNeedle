@@ -25,7 +25,7 @@
 //! has linked, and a user with neither gets an empty page. Genre pages are
 //! served by the genre pages in front of this source.
 
-use sqlx::SqlitePool;
+use droppedneedle_kernel::db::Db;
 
 use super::ownership::{owned_albums, owned_artists};
 use crate::reads::discover::listening::{
@@ -46,13 +46,13 @@ const LASTFM_OFF: &str = "Last.fm charts need Last.fm switched on and an API key
 /// Live charts over the listening data and the catalog.
 pub struct LiveCharts {
     listening: ListeningData,
-    pool: SqlitePool,
+    db: Db,
 }
 
 impl LiveCharts {
-    /// Charts over `listening`, marked against the catalog in `pool`.
-    pub fn new(listening: ListeningData, pool: SqlitePool) -> Self {
-        Self { listening, pool }
+    /// Charts over `listening`, marked against the catalog in `db`.
+    pub fn new(listening: ListeningData, db: Db) -> Self {
+        Self { listening, db }
     }
 
     async fn artist_page(
@@ -66,7 +66,7 @@ impl LiveCharts {
             .iter()
             .filter_map(|a| a.musicbrainz_id.as_deref())
             .collect();
-        let owned = best_effort(owned_artists(&self.pool, &mbids).await);
+        let owned = best_effort(owned_artists(&self.db, &mbids).await);
         for artist in &mut artists {
             if let Some(local) = artist
                 .musicbrainz_id
@@ -100,7 +100,7 @@ impl LiveCharts {
             .iter()
             .filter_map(|a| a.musicbrainz_id.as_deref())
             .collect();
-        let owned = best_effort(owned_albums(&self.pool, &mbids).await);
+        let owned = best_effort(owned_albums(&self.db, &mbids).await);
         for album in &mut albums {
             if let Some(local) = album
                 .musicbrainz_id

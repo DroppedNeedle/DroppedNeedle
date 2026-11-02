@@ -8,9 +8,11 @@
 
 use std::collections::HashSet;
 
+use droppedneedle_kernel::db::Db;
 use serde::{Deserialize, Serialize};
-use sqlx::SqlitePool;
 use utoipa::ToSchema;
+
+use crate::reads::discover::{read_all, sql};
 
 /// A page with sections.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -563,14 +565,14 @@ pub fn find(page: Page, key: SectionKey) -> Option<&'static SectionDef> {
 
 /// The sections of `page` the user switched off. A failed read shows
 /// every section, with a log line.
-pub async fn switched_off(pool: &SqlitePool, user_id: &str, page: Page) -> HashSet<SectionKey> {
-    let rows: Vec<String> = sqlx::query_scalar(
-        "SELECT section_key FROM user_section_prefs \
-         WHERE user_id = ?1 AND page = ?2 AND enabled = 0",
+pub async fn switched_off(db: &Db, user_id: &str, page: Page) -> HashSet<SectionKey> {
+    let rows: Vec<String> = read_all(
+        db,
+        "discover.sections.switched_off",
+        sql::SECTIONS_SWITCHED_OFF.text(),
+        (user_id.to_owned(), page.as_str()),
+        |row| row.get(0),
     )
-    .bind(user_id)
-    .bind(page.as_str())
-    .fetch_all(pool)
     .await
     .unwrap_or_else(|error| {
         tracing::warn!(%error, page = page.as_str(), "section settings unreadable; showing every section");

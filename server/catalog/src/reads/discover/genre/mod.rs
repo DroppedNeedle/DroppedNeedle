@@ -9,7 +9,7 @@ pub mod artwork;
 
 use std::sync::Arc;
 
-use sqlx::SqlitePool;
+use droppedneedle_kernel::db::Db;
 
 use crate::reads::discover::charts::LiveCharts;
 use crate::reads::discover::home::library::HomeLibrary;
@@ -33,24 +33,24 @@ const LIBRARY_ROWS: i64 = 50;
 /// Builds genre pages.
 pub struct GenrePages {
     library: HomeLibrary,
-    pool: SqlitePool,
+    db: Db,
     listening: ListeningData,
     art: Arc<GenreArt>,
     warm: Option<CoverWarm>,
 }
 
 impl GenrePages {
-    /// Pages over the library in `pool` and the provider reads in
+    /// Pages over the library in `db` and the provider reads in
     /// `listening`; `warm`, when given, warms the popular rows' images.
     pub fn new(
-        pool: SqlitePool,
+        db: Db,
         listening: ListeningData,
         art: Arc<GenreArt>,
         warm: Option<CoverWarm>,
     ) -> Self {
         Self {
-            library: HomeLibrary::new(pool.clone()),
-            pool,
+            library: HomeLibrary::new(db.clone()),
+            db,
             listening,
             art,
             warm,
@@ -122,7 +122,7 @@ impl GenrePages {
             })
             .collect();
         mark_owned(
-            &self.pool,
+            &self.db,
             albums.iter_mut().collect(),
             artists.iter_mut().collect(),
         )

@@ -32,7 +32,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use sqlx::SqlitePool;
 
 use super::cache::{PageKind, Timing, UserPageCache, Variant};
 use super::content::IntegrationSettings;
@@ -89,11 +88,7 @@ async fn bounded<T: Default, E: std::fmt::Display>(
 }
 
 /// Mark which albums and artists the library holds.
-pub(super) async fn mark_owned(
-    pool: &SqlitePool,
-    albums: Vec<&mut AlbumRef>,
-    artists: Vec<&mut ArtistRef>,
-) {
+pub(super) async fn mark_owned(db: &Db, albums: Vec<&mut AlbumRef>, artists: Vec<&mut ArtistRef>) {
     let album_ids: Vec<&str> = albums
         .iter()
         .filter_map(|row| row.musicbrainz_id.as_deref())
@@ -105,7 +100,7 @@ pub(super) async fn mark_owned(
     let owned_albums = if album_ids.is_empty() {
         HashMap::new()
     } else {
-        ownership::owned_albums(pool, &album_ids)
+        ownership::owned_albums(db, &album_ids)
             .await
             .unwrap_or_else(|error| {
                 tracing::warn!(%error, "album ownership unreadable; marking none owned");
@@ -115,7 +110,7 @@ pub(super) async fn mark_owned(
     let owned_artists = if artist_ids.is_empty() {
         HashMap::new()
     } else {
-        ownership::owned_artists(pool, &artist_ids)
+        ownership::owned_artists(db, &artist_ids)
             .await
             .unwrap_or_else(|error| {
                 tracing::warn!(%error, "artist ownership unreadable; marking none owned");
@@ -145,7 +140,7 @@ pub(super) async fn mark_owned(
 }
 
 /// Mark ownership on every album and artist row of a page.
-async fn mark_page(pool: &SqlitePool, page: &mut HomeResponse) {
+async fn mark_page(db: &Db, page: &mut HomeResponse) {
     let mut albums: Vec<&mut AlbumRef> = Vec::new();
     let mut artists: Vec<&mut ArtistRef> = Vec::new();
     for section in &mut page.sections {
@@ -159,7 +154,7 @@ async fn mark_page(pool: &SqlitePool, page: &mut HomeResponse) {
     if let Some(preview) = page.discover_preview.as_mut() {
         artists.extend(preview.items.iter_mut());
     }
-    mark_owned(pool, albums, artists).await;
+    mark_owned(db, albums, artists).await;
 }
 
 /// The covers and artist images a home page shows, top to bottom.
@@ -210,7 +205,7 @@ impl ProviderShelves {
 struct Inner {
     listening: ListeningData,
     library: HomeLibrary,
-    pool: SqlitePool,
+    db: Db,
     art: Arc<GenreArt>,
     integrations: IntegrationSettings,
     warm: Option<CoverWarm>,
@@ -250,13 +245,13 @@ fn ranked(rows: Vec<ListenedAlbum>) -> Vec<super::listening::RankedAlbum> {
 impl LiveHome {
     /// Home over its inputs.
     pub fn new(inputs: HomeInputs) -> Self {
-        let pool = inputs.db.sqlx().clone();
+        let db = inputs.db.clone();
         Self {
             inner: Arc::new(Inner {
                 cache: UserPageCache::new(inputs.db, inputs.clock, PageKind::Home, TIMING),
                 listening: inputs.listening,
-                library: HomeLibrary::new(pool.clone()),
-                pool,
+                library: HomeLibrary::new(db.clone()),
+                db,
                 art: inputs.art,
                 integrations: inputs.integrations,
                 warm: inputs.warm,
@@ -268,7 +263,7 @@ impl LiveHome {
     /// The user's home page: the local shelves now, the provider shelves
     /// from their last build.
     pub async fn page(&self, user_id: &str) -> HomeResponse {
-        let off = sections::switched_off(&self.inner.pool, user_id, Page::Home).await;
+        let off = sections::switched_off(&self.inner.db, user_id, Page::Home).await;
         let music = self.inner.listening.accounts(user_id).await;
         let variant = Variant::of(&self.inner.listening, &music);
         let saved = self.inner.cache.load(user_id, &variant).await;
@@ -294,7 +289,7 @@ impl LiveHome {
                 })
                 .collect();
         }
-        mark_page(&self.inner.pool, &mut page).await;
+        mark_page(&self.inner.db, &mut page).await;
         page.refreshing = refreshing;
         self.apply_artwork(&mut page).await;
         page
@@ -329,7 +324,7 @@ impl LiveHome {
     /// One build. `None` when it found nothing or the MusicBrainz source
     /// changed while it ran.
     async fn build(&self, user_id: &str) -> Option<ProviderShelves> {
-        let off = sections::switched_off(&self.inner.pool, user_id, Page::Home).await;
+        let off = sections::switched_off(&self.inner.db, user_id, Page::Home).await;
         let source = self.inner.listening.namespace();
         let music = self.inner.listening.accounts(user_id).await;
         let shelves = self.build_shelves(user_id, &music, &off).await;
@@ -594,8 +589,8 @@ pub struct HomeWiring {
 /// Production home: the page, the genre artwork shared with discover, and
 /// the charts with genre pages.
 pub fn wire(wiring: HomeWiring) -> (LiveHome, Arc<GenreArt>, genre::WithGenrePages) {
-    let pool = wiring.db.sqlx().clone();
-    let art = Arc::new(GenreArt::new(HomeLibrary::new(pool.clone())));
+    let db = wiring.db.clone();
+    let art = Arc::new(GenreArt::new(HomeLibrary::new(db.clone())));
     let home = LiveHome::new(HomeInputs {
         listening: wiring.listening.clone(),
         db: wiring.db,
@@ -606,7 +601,7 @@ pub fn wire(wiring: HomeWiring) -> (LiveHome, Arc<GenreArt>, genre::WithGenrePag
         discover: Some(wiring.discover),
     });
     let pages = Arc::new(genre::GenrePages::new(
-        pool,
+        db,
         wiring.listening,
         art.clone(),
         wiring.warm,

@@ -19,8 +19,6 @@ pub const KINDS: [&str; 3] = ["album", "artist", "track"];
 /// One favorite row.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FavoriteRow {
-    /// Item kind.
-    pub kind: String,
     /// Item id (a local library id).
     pub item_id: String,
     /// Display name saved with the favorite, if any.
@@ -56,7 +54,6 @@ impl FavoriteStore {
                     .query_map(params![user_id, kind], |row| {
                         let row = sql::FavoriteColumns::read(row)?;
                         Ok(FavoriteRow {
-                            kind: row.item_kind,
                             item_id: row.item_id,
                             name: row.display_name,
                             created_at: row.created_at,

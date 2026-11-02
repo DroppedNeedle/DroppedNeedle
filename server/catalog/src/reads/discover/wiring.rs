@@ -82,7 +82,7 @@ pub fn deps_over(
     network: Arc<dyn ListeningNetwork>,
 ) -> ReadsDeps {
     let listening = ListeningData::new(network, inputs.providers.cache.clone());
-    let charts = charts::LiveCharts::new(listening.clone(), inputs.db.sqlx().clone());
+    let charts = charts::LiveCharts::new(listening.clone(), inputs.db.clone());
     let client = match YouTubeClient::new(
         inputs.providers.youtube.clone(),
         inputs.youtube_quota_path.clone(),
@@ -119,7 +119,7 @@ pub fn deps_over(
         listening: listening.clone(),
         queue_db: queue::store::QueueDb::new(inputs.db.clone()),
         settings,
-        pool: inputs.db.sqlx().clone(),
+        db: inputs.db.clone(),
         catalog: Catalog::new(
             live_upstream(&inputs, config),
             LocalCatalog::new(inputs.db.clone()),
@@ -162,7 +162,7 @@ pub fn deps_over(
         content: Arc::new(
             content::LiveContent::new(
                 content::IntegrationSettings::new(config, inputs.download_readiness.clone()),
-                inputs.db.sqlx().clone(),
+                inputs.db.clone(),
                 page,
             )
             .with_home(home, genre_art),
