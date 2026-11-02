@@ -2,6 +2,7 @@
 //! crate's family builders share.
 
 use droppedneedle_kernel::db::statement::ListLen;
+use droppedneedle_kernel::db::time::Millis;
 
 droppedneedle_kernel::sql! {
     pub(super) RELEASE_GROUP_OF_ALBUM = "SELECT release_group_mbid FROM local_album_external_identities \
@@ -16,6 +17,12 @@ droppedneedle_kernel::sql! {
     pub(super) LIFT_EXCLUSION = "DELETE FROM library_management_exclusions \
                      WHERE local_album_id = ?1 AND row_revision = ?2 \
                      RETURNING reason, excluded_by_user_id, excluded_at, row_revision";
+    pub(super) row LiftedExclusion for [LIFT_EXCLUSION] {
+        reason: String,
+        excluded_by_user_id: Option<String>,
+        excluded_at: Millis,
+        row_revision: i64,
+    }
     pub(super) EXCLUSION_REVISION = "SELECT row_revision FROM library_management_exclusions \
                          WHERE local_album_id = ?1";
     pub(super) ALBUM_RETIRED_INTO = "SELECT retired_into_album_id FROM local_albums WHERE id = ?1";

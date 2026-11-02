@@ -630,20 +630,21 @@ fn own_rows<'a>(
     let ids = serde_json::to_string(&track_ids.collect::<Vec<_>>())?;
     let mut stmt = conn.prepare_cached(super::sql::OWN_ROWS.text())?;
     let rows = stmt.query_map([ids], |row| {
+        let row = super::sql::OwnRowRead::read(row)?;
         Ok((
-            row.get::<_, String>(0)?,
+            row.id,
             OwnRow {
-                root_id: row.get(1)?,
-                relative_path: row.get(2)?,
-                availability: row.get(3)?,
-                stat_revision: row.get(4)?,
-                album_id: row.get(5)?,
-                album_revision: row.get(6)?,
-                album_release_group_mbid: row.get(7)?,
-                album_release_mbid: row.get(8)?,
-                mapping_revision: row.get(9)?,
-                recording_mbid: row.get(10)?,
-                release_track_mbid: row.get(11)?,
+                root_id: row.root_id,
+                relative_path: row.relative_path,
+                availability: row.availability,
+                stat_revision: row.stat_revision,
+                album_id: row.local_album_id,
+                album_revision: row.album_revision,
+                album_release_group_mbid: row.release_group_mbid,
+                album_release_mbid: row.release_mbid,
+                mapping_revision: row.mapping_revision,
+                recording_mbid: row.recording_mbid,
+                release_track_mbid: row.release_track_mbid,
             },
         ))
     })?;

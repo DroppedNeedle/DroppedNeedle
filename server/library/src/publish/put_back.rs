@@ -162,15 +162,21 @@ pub fn removals(db: &Db, album_id: &str) -> Result<Vec<Listed>, PublishError> {
     let rows: Vec<(String, Option<String>, i64, u32, bool)> =
         db.read_blocking("publish.album_removals", |conn| {
             let mut statement = conn.prepare_cached(sql::ALBUM_REMOVALS.text())?;
-            let rows = statement.query_map(params![album_id], |row| {
-                Ok((
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get(4)?,
-                ))
-            })?;
+            let rows = statement.query_map(
+                params![
+                    album_id,
+                    JournalKind::Remove,
+                    JournalState::NeedsAttention,
+                    JournalState::Prepared,
+                    JournalState::Staged,
+                    JournalState::Published,
+                    JournalState::Compensated,
+                ],
+                |row| {
+                    let row = sql::AlbumRemoval::read(row)?;
+                    Ok((row.id, row.reason_code, row.created_at, row.files, row.held))
+                },
+            )?;
             Ok::<_, PublishError>(rows.collect::<rusqlite::Result<Vec<_>>>()?)
         })?;
     Ok(rows
@@ -250,7 +256,10 @@ fn read_removal(
         let track = match row.replaces.as_ref().and_then(|r| r.track_id.as_deref()) {
             Some(track_id) => conn
                 .prepare_cached(sql::TRACK_PLACE.text())?
-                .query_row(params![track_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+                .query_row(params![track_id], |row| {
+                    let row = sql::TrackPlace::read(row)?;
+                    Ok((row.root_id, row.relative_path, row.availability))
+                })
                 .optional()?,
             None => None,
         };
@@ -574,7 +583,9 @@ fn listed_at(db: &Db, root: &str, rel: &str) -> Result<bool, PublishError> {
     db.read_blocking("publish.put_back_listed_at", |conn| {
         let availability: Option<String> = conn
             .prepare_cached(sql::TRACK_AT.text())?
-            .query_row(params![root, rel], |row| row.get(1))
+            .query_row(params![root, rel], |row| {
+                Ok(sql::TrackAvailability::read(row)?.availability)
+            })
             .optional()?;
         Ok::<_, PublishError>(availability.as_deref() == Some("indexed"))
     })
@@ -985,7 +996,8 @@ pub(super) fn commit(
         let place: Option<(String, String, String)> = conn
             .prepare_cached(sql::TRACK_PLACE.text())?
             .query_row(params![item.track_id], |row| {
-                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                let row = sql::TrackPlace::read(row)?;
+                Ok((row.root_id, row.relative_path, row.availability))
             })
             .optional()?;
         let Some((root, rel, availability)) = place else {
@@ -1001,7 +1013,8 @@ pub(super) fn commit(
             let occupant: Option<(String, String)> = conn
                 .prepare_cached(sql::TRACK_AT.text())?
                 .query_row(params![item.root_id, item.relative_path], |row| {
-                    Ok((row.get(0)?, row.get(1)?))
+                    let row = sql::TrackAvailability::read(row)?;
+                    Ok((row.id, row.availability))
                 })
                 .optional()?;
             if let Some((occupant, availability)) = occupant {

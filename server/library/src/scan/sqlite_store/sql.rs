@@ -245,7 +245,9 @@ droppedneedle_kernel::sql! {
        AND n.title_provenance = 'tag' END";
     /// What [`MOVED_MATCH`] leaves to compare: the pair's ids and albums,
     /// whether `n` holds a recording id, and the two lengths.
-    pub(crate) fragment MOVED_COLUMNS = "t.id, t.local_album_id, n.id, n.local_album_id, \
-    trim(COALESCE(n.embedded_recording_mbid, '')) <> '', t.duration_seconds, n.duration_seconds";
+    pub(crate) fragment MOVED_COLUMNS = "t.id AS old_id, t.local_album_id AS old_album_id, n.id AS new_id, \
+    n.local_album_id AS new_album_id, \
+    trim(COALESCE(n.embedded_recording_mbid, '')) <> '' AS recording, \
+    t.duration_seconds AS old_seconds, n.duration_seconds AS new_seconds";
     pub(crate) fragment SAME_PLACE = (same_place!("?3", "?4", "?5", "?6"));
 }

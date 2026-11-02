@@ -8,6 +8,7 @@
 use std::path::{Path, PathBuf};
 
 use super::HIDDEN_PREFIX;
+use super::journal::JournalState;
 use super::planner::FileFingerprint;
 
 /// The hidden folder, relative to its library root, that an import
@@ -48,7 +49,13 @@ pub(crate) fn staging_settled(
     let folder = format!("{task_dir}/");
     let unsettled: bool = conn.query_row(
         crate::publish::sql::STAGING_SETTLED.text(),
-        rusqlite::params![folder],
+        rusqlite::params![
+            folder,
+            JournalState::Cleaned,
+            JournalState::Compensated,
+            JournalState::CleanupPending,
+            JournalState::NeedsAttention,
+        ],
         |row| row.get(0),
     )?;
     Ok(!unsettled)
@@ -63,7 +70,7 @@ pub(crate) fn staging_needs_attention(
     let folder = format!("{task_dir}/");
     conn.query_row(
         crate::publish::sql::STAGING_NEEDS_ATTENTION.text(),
-        rusqlite::params![folder],
+        rusqlite::params![folder, JournalState::NeedsAttention],
         |row| row.get(0),
     )
 }

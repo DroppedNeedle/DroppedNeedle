@@ -30,6 +30,7 @@ use droppedneedle_kernel::db::{CancelFlag, Db, Lane};
 use rusqlite::params;
 use sha2::{Digest as _, Sha256};
 
+use super::journal::{JournalKind, JournalState};
 use super::paths::{FileStat, Sandbox, incoming_temp};
 use super::{PublishError, sql};
 
@@ -404,7 +405,18 @@ pub(super) fn held_tracks(db: &Db) -> Result<HashSet<String>, PublishError> {
     db.read_long("publish.expiry_held", &CancelFlag::never(), |conn| {
         let mut statement = conn.prepare_cached(sql::EXPIRY_HELD_TRACKS.text())?;
         let tracks = statement
-            .query_map([], |row| row.get::<_, String>(0))?
+            .query_map(
+                params![
+                    JournalState::Prepared,
+                    JournalState::Staged,
+                    JournalState::Published,
+                    JournalState::Committed,
+                    JournalState::CleanupPending,
+                    JournalState::NeedsAttention,
+                    JournalKind::PutBack,
+                ],
+                |row| row.get::<_, String>(0),
+            )?
             .collect::<Result<HashSet<_>, _>>()?;
         Ok::<_, PublishError>(tracks)
     })
@@ -428,15 +440,22 @@ fn due_rows(db: &Db, cutoff: f64, page: usize) -> Result<Vec<DueRow>, PublishErr
             let mut statement = conn.prepare_cached(sql::EXPIRY_DUE.text())?;
             let found = statement
                 .query_map(
-                    params![crate::clock::ms(cutoff), cursor.0, cursor.1, page as i64],
+                    params![
+                        crate::clock::ms(cutoff),
+                        cursor.0,
+                        cursor.1,
+                        page as i64,
+                        JournalState::Cleaned,
+                    ],
                     |row| {
+                        let row = sql::ExpiryDueRow::read(row)?;
                         Ok((
-                            row.get(0)?,
-                            row.get(1)?,
-                            row.get(2)?,
-                            row.get(3)?,
-                            row.get(4)?,
-                            row.get(5)?,
+                            row.journal_id,
+                            row.recycle_to,
+                            row.replaced_sha256,
+                            row.recycled_at,
+                            row.replaced_track_id,
+                            row.binned_stat_json,
                         ))
                     },
                 )?
@@ -824,7 +843,8 @@ fn entry_names(db: &Db) -> Result<HashMap<String, bool>, PublishError> {
         let mut statement = conn.prepare_cached(sql::EXPIRY_ENTRIES.text())?;
         let rows = statement
             .query_map([], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, bool>(1)?))
+                let row = sql::BinEntry::read(row)?;
+                Ok((row.recycle_to, row.left_bin))
             })?
             .collect::<Result<Vec<_>, _>>()?;
         let mut names: HashMap<String, bool> = HashMap::new();

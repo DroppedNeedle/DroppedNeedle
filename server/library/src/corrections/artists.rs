@@ -173,7 +173,8 @@ fn identities(tx: &Transaction<'_>, ids: &[String]) -> rusqlite::Result<Vec<(Str
         ids.len(),
     )))?
     .query_map(params_from_iter(ids.iter()), |row| {
-        Ok((row.get(0)?, row.get(1)?))
+        let row = sql::ArtistLink::read(row)?;
+        Ok((row.local_artist_id, row.provider_artist_id))
     })?
     .collect()
 }
@@ -186,7 +187,10 @@ fn identity_row(
     tx.query_row(
         crate::corrections::sql::IDENTITY_ROW.text(),
         params![artist_id],
-        |row| Ok((row.get(0)?, row.get(1)?)),
+        |row| {
+            let row = sql::IdentityRow::read(row)?;
+            Ok((row.provider_artist_id, row.decision_source))
+        },
     )
     .optional()
 }
@@ -199,7 +203,9 @@ fn reference_counts(
     for (label, kind) in REFERENCE_KINDS {
         let mut total = 0;
         let mut stmt = tx.prepare(&sql::references_of(kind, ListLen::new(ids.len())))?;
-        let rows = stmt.query_map(params_from_iter(ids.iter()), |row| row.get::<_, i64>(1))?;
+        let rows = stmt.query_map(params_from_iter(ids.iter()), |row| {
+            Ok(sql::ReferenceCount::read(row)?.count)
+        })?;
         for count in rows {
             total += count?;
         }

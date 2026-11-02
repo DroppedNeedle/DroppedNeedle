@@ -53,13 +53,3 @@ pub(crate) fn secs(ms: i64) -> f64 {
 pub(crate) fn at_secs(at: Millis) -> f64 {
     secs(at.0)
 }
-
-/// A stored `_at` column, as unix seconds.
-pub(crate) fn secs_at(row: &rusqlite::Row<'_>, index: usize) -> rusqlite::Result<f64> {
-    Ok(secs(row.get::<_, Millis>(index)?.0))
-}
-
-/// A stored nullable `_at` column, as unix seconds.
-pub(crate) fn opt_secs_at(row: &rusqlite::Row<'_>, index: usize) -> rusqlite::Result<Option<f64>> {
-    Ok(row.get::<_, Option<Millis>>(index)?.map(|at| secs(at.0)))
-}

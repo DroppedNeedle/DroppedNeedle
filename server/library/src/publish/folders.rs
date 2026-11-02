@@ -121,7 +121,8 @@ fn listed(db: &Db, bundle_id: &str) -> Result<Vec<(String, String)>, PublishErro
     long_read(db, "publish.folders_made", |conn| {
         let mut stmt = conn.prepare_cached(sql::CREATED_FOLDERS.text())?;
         let rows = stmt.query_map(rusqlite::params![bundle_id], |row| {
-            Ok((row.get(0)?, row.get(1)?))
+            let row = sql::CreatedFolder::read(row)?;
+            Ok((row.root_id, row.folder_rel))
         })?;
         Ok(rows.collect::<Result<_, _>>()?)
     })

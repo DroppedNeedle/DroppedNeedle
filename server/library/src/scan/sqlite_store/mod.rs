@@ -28,10 +28,9 @@ use rusqlite::{Connection, OptionalExtension as _, Transaction, params, params_f
 use sha2::{Digest as _, Sha256};
 
 use super::models::{
-    Counter, Counters, Disposition, EffectivePolicy, Event, FailureCode, PhaseTimings,
-    RequestedControl, RunState, ScanFailureRecord, ScanInventoryItem, ScanKind, ScanPhase,
-    ScanRequest, ScanRequestResult, ScanRun, ScanScope, ScanState, ScanTrigger,
-    ScopeDiscoveryState, Verdict, scope_covers_path,
+    Counter, Counters, Disposition, EffectivePolicy, Event, FailureCode, PhaseTimings, RunState,
+    ScanFailureRecord, ScanInventoryItem, ScanKind, ScanPhase, ScanRequest, ScanRequestResult,
+    ScanRun, ScanScope, ScanState, ScopeDiscoveryState, Verdict, scope_covers_path,
 };
 use super::revision::{exact_stat_revision, legacy_mtime_eps_seconds};
 use super::stop::{Backoff, RunStop, retry_busy};
@@ -39,8 +38,8 @@ use super::store::{
     CatalogEntry, ClassifyInput, CommitIndexedItem, IndexWindow, InventoryPage, RevisionKind,
     ScanStoreError, UnreadRows, WindowOutcome,
 };
+use crate::scan::sql::{FailureRow, InventoryRow, RunRow, ScopeRow};
 pub use artwork::ArtworkSweep;
-use droppedneedle_kernel::db::time::Millis;
 use droppedneedle_kernel::db::writer::Lane;
 use droppedneedle_kernel::db::{ChunkedError, Db, fold_text};
 pub(crate) use held_scopes::{holds_new_files, judge_remembered, remembered};
@@ -258,111 +257,86 @@ fn unknown(column: &str, value: &str) -> rusqlite::Error {
     )
 }
 
-/// Column `column` read through `parse`.
-fn spelled<T>(
-    row: &rusqlite::Row<'_>,
-    column: &str,
-    parse: fn(&str) -> Option<T>,
-) -> rusqlite::Result<T> {
-    let text: String = row.get(column)?;
-    parse(&text).ok_or_else(|| unknown(column, &text))
-}
-
-/// Nullable column `column` read through `parse`.
-fn spelled_opt<T>(
-    row: &rusqlite::Row<'_>,
-    column: &str,
-    parse: fn(&str) -> Option<T>,
-) -> rusqlite::Result<Option<T>> {
-    let text: Option<String> = row.get(column)?;
-    text.map(|text| parse(&text).ok_or_else(|| unknown(column, &text)))
-        .transpose()
-}
-
-/// A stored `_at` column, by name, as unix seconds.
-fn secs_named(row: &rusqlite::Row<'_>, name: &str) -> rusqlite::Result<f64> {
-    Ok(crate::clock::secs(row.get::<_, Millis>(name)?.0))
-}
-
-/// A stored nullable `_at` column, by name, as unix seconds.
-fn opt_secs_named(row: &rusqlite::Row<'_>, name: &str) -> rusqlite::Result<Option<f64>> {
-    Ok(row
-        .get::<_, Option<Millis>>(name)?
-        .map(|at| crate::clock::secs(at.0)))
-}
-
 fn map_run(row: &rusqlite::Row<'_>) -> rusqlite::Result<ScanRun> {
-    let state: String = row.get("state")?;
-    let phase: String = row.get("phase")?;
-    let run_state = RunState::from_columns(&state, &phase)
-        .ok_or_else(|| unknown("state", &format!("{state} in phase {phase}")))?;
-    // Both follow from the state; they are read only so a word no release
-    // wrote fails the read.
-    spelled_opt(row, "resume_phase", ScanPhase::parse)?;
-    spelled(row, "requested_control", RequestedControl::parse)?;
-    let mut counters = Counters::default();
-    for counter in Counter::ALL {
-        *counters.slot(counter) = row.get(counter.column())?;
-    }
-    let timings: String = row.get("phase_timings_json")?;
-    let phase_timings: PhaseTimings =
-        serde_json::from_str(&timings).map_err(|_| unknown("phase_timings_json", &timings))?;
+    let row = RunRow::read(row)?;
+    let run_state = RunState::from_columns(&row.state, &row.phase)
+        .ok_or_else(|| unknown("state", &format!("{} in phase {}", row.state, row.phase)))?;
+    // Both follow from the state; reading the row fails on a word no release
+    // wrote, and nothing else looks at them.
+    let (_resume_phase, _requested_control) = (row.resume_phase, row.requested_control);
+    let phase_timings: PhaseTimings = serde_json::from_str(&row.phase_timings_json)
+        .map_err(|_| unknown("phase_timings_json", &row.phase_timings_json))?;
     Ok(ScanRun {
-        id: row.get("id")?,
-        kind: spelled(row, "kind", ScanKind::parse)?,
-        trigger: spelled(row, "trigger", ScanTrigger::parse)?,
+        id: row.id,
+        kind: row.kind,
+        trigger: row.trigger,
         state: run_state,
-        requested_by_user_id: row.get("requested_by_user_id")?,
-        aggregate_scope: row.get("aggregate_scope")?,
-        queued_at: secs_named(row, "queued_at")?,
-        started_at: opt_secs_named(row, "started_at")?,
-        updated_at: secs_named(row, "updated_at")?,
-        terminal_at: opt_secs_named(row, "terminal_at")?,
-        terminal_code: spelled_opt(row, "terminal_code", FailureCode::parse)?,
-        coalesced_request_count: row.get("coalesced_request_count")?,
-        row_revision: row.get::<_, i64>("row_revision")? as u64,
-        event_revision: row.get::<_, i64>("event_revision")? as u64,
-        counters,
+        requested_by_user_id: row.requested_by_user_id,
+        aggregate_scope: row.aggregate_scope,
+        queued_at: crate::clock::at_secs(row.queued_at),
+        started_at: row.started_at.map(crate::clock::at_secs),
+        updated_at: crate::clock::at_secs(row.updated_at),
+        terminal_at: row.terminal_at.map(crate::clock::at_secs),
+        terminal_code: row.terminal_code,
+        coalesced_request_count: row.coalesced_request_count,
+        row_revision: row.row_revision as u64,
+        event_revision: row.event_revision as u64,
+        counters: Counters {
+            total_count: row.total_count,
+            discovered_count: row.discovered_count,
+            inspected_count: row.inspected_count,
+            new_count: row.new_count,
+            changed_count: row.changed_count,
+            indexed_count: row.indexed_count,
+            unchanged_count: row.unchanged_count,
+            excluded_count: row.excluded_count,
+            missing_count: row.missing_count,
+            errored_count: row.errored_count,
+            identification_enqueued_count: row.identification_enqueued_count,
+        },
         phase_timings,
     })
 }
 
 fn map_scope(row: &rusqlite::Row<'_>) -> rusqlite::Result<ScanScope> {
+    let row = ScopeRow::read(row)?;
     Ok(ScanScope {
-        root_id: row.get("root_id")?,
-        scope_id: row.get("scope_id")?,
-        relative_path: row.get("relative_path")?,
-        root_path: row.get("root_path")?,
-        effective_policy: spelled(row, "effective_policy", EffectivePolicy::parse)?,
-        policy_revision: row.get("policy_revision")?,
-        estimated_count: row.get("estimated_count")?,
+        root_id: row.root_id,
+        scope_id: row.scope_id,
+        relative_path: row.relative_path,
+        root_path: row.root_path,
+        effective_policy: row.effective_policy,
+        policy_revision: row.policy_revision,
+        estimated_count: row.estimated_count,
     })
 }
 
 fn map_inventory(row: &rusqlite::Row<'_>) -> rusqlite::Result<ScanInventoryItem> {
+    let row = InventoryRow::read(row)?;
     Ok(ScanInventoryItem {
-        root_id: row.get("root_id")?,
-        relative_path: row.get("relative_path")?,
-        absolute_path: row.get("absolute_path")?,
-        file_size_bytes: row.get::<_, i64>("file_size_bytes")? as u64,
-        file_mtime_ns: row.get("file_mtime_ns")?,
-        stat_revision: row.get("stat_revision")?,
-        effective_policy: spelled(row, "effective_policy", EffectivePolicy::parse)?,
-        comparison_result: spelled(row, "comparison_result", Verdict::parse)?,
-        policy_revision: row.get("policy_revision")?,
-        local_track_id: row.get("local_track_id")?,
-        scope_relative_path: row.get("scope_relative_path")?,
+        root_id: row.root_id,
+        relative_path: row.relative_path,
+        absolute_path: row.absolute_path,
+        file_size_bytes: row.file_size_bytes as u64,
+        file_mtime_ns: row.file_mtime_ns,
+        stat_revision: row.stat_revision,
+        effective_policy: row.effective_policy,
+        comparison_result: row.comparison_result,
+        policy_revision: row.policy_revision,
+        local_track_id: row.local_track_id,
+        scope_relative_path: row.scope_relative_path,
     })
 }
 
 fn map_failure(row: &rusqlite::Row<'_>) -> rusqlite::Result<ScanFailureRecord> {
+    let row = FailureRow::read(row)?;
     Ok(ScanFailureRecord {
-        root_id: row.get("root_id")?,
-        relative_path: row.get("relative_path")?,
-        failure_code: spelled(row, "failure_code", FailureCode::parse)?,
-        recorded_at: secs_named(row, "recorded_at")?,
-        failure_detail: row.get("failure_detail")?,
-        phase: spelled(row, "phase", ScanPhase::parse)?,
+        root_id: row.root_id,
+        relative_path: row.relative_path,
+        failure_code: row.failure_code,
+        recorded_at: crate::clock::at_secs(row.recorded_at),
+        failure_detail: row.failure_detail,
+        phase: row.phase,
     })
 }
 

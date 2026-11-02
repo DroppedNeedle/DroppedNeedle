@@ -12,7 +12,9 @@ use droppedneedle_kernel::db::Durable;
 use rusqlite::{Connection, OptionalExtension};
 
 use super::paths::FileStat;
+use super::sql::JournalRow;
 use super::{PublishError, sql};
+use crate::scan::models::spelled;
 
 /// Monotonic journal states. Terminal states are `Cleaned`,
 /// `Compensated`, and `NeedsAttention`; recovery never moves a
@@ -38,38 +40,18 @@ pub enum JournalState {
     CleanupPending,
 }
 
+spelled!(JournalState {
+    Prepared => "prepared",
+    Staged => "staged",
+    Published => "published",
+    Committed => "committed",
+    Cleaned => "cleaned",
+    Compensated => "compensated",
+    NeedsAttention => "needs_attention",
+    CleanupPending => "cleanup_pending",
+});
+
 impl JournalState {
-    /// Text form stored in SQLite.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Prepared => "prepared",
-            Self::Staged => "staged",
-            Self::Published => "published",
-            Self::Committed => "committed",
-            Self::Cleaned => "cleaned",
-            Self::Compensated => "compensated",
-            Self::NeedsAttention => "needs_attention",
-            Self::CleanupPending => "cleanup_pending",
-        }
-    }
-
-    /// Parse the stored text form.
-    pub fn parse(text: &str) -> Result<Self, PublishError> {
-        match text {
-            "prepared" => Ok(Self::Prepared),
-            "staged" => Ok(Self::Staged),
-            "published" => Ok(Self::Published),
-            "committed" => Ok(Self::Committed),
-            "cleaned" => Ok(Self::Cleaned),
-            "compensated" => Ok(Self::Compensated),
-            "needs_attention" => Ok(Self::NeedsAttention),
-            "cleanup_pending" => Ok(Self::CleanupPending),
-            other => Err(PublishError::Journal(
-                format!("unknown journal state {other}").into(),
-            )),
-        }
-    }
-
     /// Whether the state ends the protocol without further work.
     pub fn is_terminal(self) -> bool {
         matches!(
@@ -118,26 +100,10 @@ pub enum MgmtState {
     Imported,
 }
 
-impl MgmtState {
-    /// Text form stored in SQLite.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Managed => "managed",
-            Self::Imported => "imported",
-        }
-    }
-
-    /// Parse the stored text form.
-    pub fn parse(text: &str) -> Result<Self, PublishError> {
-        match text {
-            "managed" => Ok(Self::Managed),
-            "imported" => Ok(Self::Imported),
-            other => Err(PublishError::Journal(
-                format!("unknown management state {other}").into(),
-            )),
-        }
-    }
-}
+spelled!(MgmtState {
+    Managed => "managed",
+    Imported => "imported",
+});
 
 /// What one journal row publishes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -167,38 +133,16 @@ pub enum JournalKind {
     Add,
 }
 
-impl JournalKind {
-    /// Text form stored in SQLite.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Audio => "audio",
-            Self::Sidecar => "sidecar",
-            Self::Artwork => "artwork",
-            Self::Output => "output",
-            Self::Delete => "delete",
-            Self::Remove => "remove",
-            Self::PutBack => "put_back",
-            Self::Add => "add",
-        }
-    }
-
-    /// Parse the stored text form.
-    pub fn parse(text: &str) -> Result<Self, PublishError> {
-        match text {
-            "audio" => Ok(Self::Audio),
-            "sidecar" => Ok(Self::Sidecar),
-            "artwork" => Ok(Self::Artwork),
-            "output" => Ok(Self::Output),
-            "delete" => Ok(Self::Delete),
-            "remove" => Ok(Self::Remove),
-            "put_back" => Ok(Self::PutBack),
-            "add" => Ok(Self::Add),
-            other => Err(PublishError::Journal(
-                format!("unknown journal kind {other}").into(),
-            )),
-        }
-    }
-}
+spelled!(JournalKind {
+    Audio => "audio",
+    Sidecar => "sidecar",
+    Artwork => "artwork",
+    Output => "output",
+    Delete => "delete",
+    Remove => "remove",
+    PutBack => "put_back",
+    Add => "add",
+});
 
 /// One durable file intent: every path plus the fingerprints that let
 /// recovery decide by byte comparison instead of path existence.
@@ -300,7 +244,19 @@ impl<'a> JournalStore<'a> {
         Ok(self
             .conn
             .prepare_cached(sql::UNSETTLED_FOR_TRACK.text())?
-            .query_row(rusqlite::params![track_id, except_bundle], |row| row.get(0))
+            .query_row(
+                rusqlite::params![
+                    track_id,
+                    except_bundle,
+                    JournalState::Cleaned,
+                    JournalState::Compensated,
+                    JournalState::NeedsAttention,
+                    JournalState::Prepared,
+                    JournalState::Staged,
+                    JournalState::Published,
+                ],
+                |row| row.get(0),
+            )
             .optional()?)
     }
 
@@ -308,7 +264,14 @@ impl<'a> JournalStore<'a> {
     /// ordered for deterministic startup recovery.
     pub fn active_bundles(&self) -> Result<Vec<String>, PublishError> {
         let mut stmt = self.conn.prepare_cached(sql::ACTIVE_BUNDLES.text())?;
-        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+        let rows = stmt.query_map(
+            rusqlite::params![
+                JournalState::Cleaned,
+                JournalState::Compensated,
+                JournalState::NeedsAttention,
+            ],
+            |row| row.get::<_, String>(0),
+        )?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
 }
@@ -510,54 +473,31 @@ fn legal(expected: JournalState, next: JournalState) -> Result<(), PublishError>
 }
 
 fn read_journal(row: &rusqlite::Row<'_>) -> Result<FileJournal, rusqlite::Error> {
-    let state_text: String = row.get(13)?;
-    let kind_text: String = row.get(2)?;
-    let state = JournalState::parse(&state_text).map_err(|err| {
-        rusqlite::Error::FromSqlConversionFailure(13, rusqlite::types::Type::Text, Box::new(err))
-    })?;
-    let kind = JournalKind::parse(&kind_text).map_err(|err| {
-        rusqlite::Error::FromSqlConversionFailure(2, rusqlite::types::Type::Text, Box::new(err))
-    })?;
-    let commit_as = row
-        .get::<_, Option<String>>(12)?
-        .map(|text| MgmtState::parse(&text))
-        .transpose()
-        .map_err(|err| {
-            rusqlite::Error::FromSqlConversionFailure(
-                12,
-                rusqlite::types::Type::Text,
-                Box::new(err),
-            )
-        })?;
-    let source_root: Option<String> = row.get(3)?;
-    let source_rel: Option<String> = row.get(4)?;
-    let replaced_rel: Option<String> = row.get(15)?;
-    let replaced_sha: Option<String> = row.get(16)?;
-    let recycle_to: Option<String> = row.get(18)?;
-    let replaces = match (replaced_rel, replaced_sha, recycle_to) {
+    let row = JournalRow::read(row)?;
+    let replaces = match (row.replaced_rel, row.replaced_sha256, row.recycle_to) {
         (Some(rel), Some(sha256), Some(recycle_to)) => Some(JournalReplacement {
             rel,
             sha256,
-            track_id: row.get(17)?,
+            track_id: row.replaced_track_id,
             recycle_to,
         }),
         _ => None,
     };
     Ok(FileJournal {
-        id: row.get(0)?,
-        bundle_id: row.get(1)?,
-        kind,
-        source: source_root.zip(source_rel),
-        dest_root: row.get(5)?,
-        dest_rel: row.get(6)?,
-        staged: row.get(7)?,
-        backup: row.get(8)?,
-        source_sha256: row.get(9)?,
-        staged_sha256: row.get(10)?,
-        track_id: row.get(11)?,
-        commit_as,
-        state,
-        seq: row.get(14)?,
+        id: row.id,
+        bundle_id: row.bundle_id,
+        kind: row.kind,
+        source: row.source_root.zip(row.source_rel),
+        dest_root: row.dest_root,
+        dest_rel: row.dest_rel,
+        staged: row.staged,
+        backup: row.backup,
+        source_sha256: row.source_sha256,
+        staged_sha256: row.staged_sha256,
+        track_id: row.track_id,
+        commit_as: row.commit_as,
+        state: row.state,
+        seq: row.seq,
         replaces,
     })
 }

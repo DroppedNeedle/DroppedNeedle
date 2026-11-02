@@ -117,7 +117,14 @@ pub fn retrying_bundles(
 ) -> rusqlite::Result<Vec<AttentionBundle>> {
     conn.prepare_cached(crate::publish::sql::RETRYING_BUNDLES.text())?
         .query_map(
-            params![now_ms - RETRYING_AFTER_MS, ATTENTION_LIST_MAX],
+            params![
+                now_ms - RETRYING_AFTER_MS,
+                ATTENTION_LIST_MAX,
+                JournalState::Prepared,
+                JournalState::Staged,
+                JournalState::Published,
+                JournalState::Committed,
+            ],
             attention_bundle,
         )?
         .collect()
@@ -167,7 +174,14 @@ impl Management {
                 };
                 diagnostics.oldest_updated_at = conn
                     .prepare_cached(crate::publish::sql::OLDEST_OPEN_WRITE.text())?
-                    .query_row([], |row| row.get::<_, Option<i64>>(0))?
+                    .query_row(
+                        params![
+                            JournalState::Cleaned,
+                            JournalState::Compensated,
+                            JournalState::NeedsAttention,
+                        ],
+                        |row| row.get::<_, Option<i64>>(0),
+                    )?
                     .map(|ms| ms as f64 / 1000.0);
                 let mut states =
                     conn.prepare(crate::management::sql::JOURNAL_COUNTS_BY_STATE.text())?;

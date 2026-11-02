@@ -21,6 +21,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::manage::Publishing;
 use crate::publish::expiry::{ExpiryReport, KeptWhy};
+use crate::publish::journal::JournalState;
 use crate::publish::sql;
 
 /// The job that empties the bin.
@@ -127,7 +128,7 @@ async fn bin_holds_files(publishing: &Publishing) -> Result<bool, DbError> {
         .read("recycle_bin.holds_files", |conn| {
             let count: i64 = conn
                 .prepare_cached(sql::BIN_COUNT.text())?
-                .query_row([], |row| row.get(0))?;
+                .query_row(params![JournalState::NeedsAttention], |row| row.get(0))?;
             Ok::<_, DbError>(count > 0)
         })
         .await
@@ -142,15 +143,16 @@ pub fn last_emptied(publishing: &Publishing) -> Result<Option<Emptied>, DbError>
             Ok::<_, DbError>(
                 conn.prepare_cached(sql::BIN_EMPTIED_LAST.text())?
                     .query_row([], |row| {
+                        let row = sql::BinEmptiedRow::read(row)?;
                         Ok((
-                            row.get(0)?,
-                            row.get(1)?,
-                            row.get(2)?,
-                            row.get(3)?,
-                            row.get(4)?,
-                            row.get(5)?,
-                            row.get(6)?,
-                            row.get(7)?,
+                            row.finished_at,
+                            row.display_name,
+                            row.deleted,
+                            row.freed_bytes,
+                            row.older_folders,
+                            row.kept,
+                            row.waited,
+                            row.kept_json,
                         ))
                     })
                     .optional()?,

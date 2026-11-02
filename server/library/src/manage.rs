@@ -13,7 +13,7 @@ use std::sync::Arc;
 use super::adapters::FsSpaceProbe;
 use super::clock::LibraryClock as _;
 use super::publish::bin::BinSource;
-use super::publish::journal::JournalStore;
+use super::publish::journal::{JournalState, JournalStore};
 use super::publish::paths::{ResolvedRoot, Root, left_out};
 use super::publish::planner::{
     Capability, CollisionGate, DiskPreflight, FileFingerprint, PlanBundle, PlanItem, PlanKind,
@@ -385,7 +385,11 @@ impl LeftoverFiles {
             let mut statement = conn.prepare_cached(super::publish::sql::SCAN_MOUNTS.text())?;
             let mut rows = statement.query([])?;
             while let Some(row) = rows.next()? {
-                mounts.entry(row.get(0)?).or_default().insert(row.get(1)?);
+                let row = super::publish::sql::ScanMount::read(row)?;
+                mounts
+                    .entry(row.root_id)
+                    .or_default()
+                    .insert(row.relative_path);
             }
             Ok::<_, DbError>(mounts)
         })
@@ -399,10 +403,10 @@ impl LeftoverFiles {
                 conn.prepare_cached(super::publish::sql::LEFTOVER_CHECKS.text())?;
             let mut rows = statement.query([])?;
             while let Some(row) = rows.next()? {
-                let root_id: String = row.get(0)?;
-                let mut checked_at: i64 = row.get(1)?;
-                let files: String = row.get(3)?;
-                let files = serde_json::from_str(&files).unwrap_or_else(|error| {
+                let row = super::publish::sql::LeftoverCheck::read(row)?;
+                let root_id = row.root_id;
+                let mut checked_at = row.checked_at;
+                let files = serde_json::from_str(&row.files_json).unwrap_or_else(|error| {
                     tracing::warn!(root = root_id, %error, "a kept leftover list does not read; it is checked again");
                     checked_at = 0;
                     Vec::new()
@@ -411,7 +415,7 @@ impl LeftoverFiles {
                     root_id,
                     KeptCheck {
                         checked_at,
-                        count: usize::try_from(row.get::<_, i64>(2)?).unwrap_or(0),
+                        count: usize::try_from(row.file_count).unwrap_or(0),
                         files,
                     },
                 );
@@ -508,7 +512,14 @@ impl PublishCell {
             .read_long("publish.held", &CancelFlag::never(), |conn| {
                 Ok(conn
                     .prepare_cached(super::publish::sql::ANY_ACTIVE.text())?
-                    .query_row([], |row| row.get(0))?)
+                    .query_row(
+                        rusqlite::params![
+                            JournalState::Cleaned,
+                            JournalState::Compensated,
+                            JournalState::NeedsAttention,
+                        ],
+                        |row| row.get(0),
+                    )?)
             })
     }
 

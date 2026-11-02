@@ -1,6 +1,24 @@
 //! The publish journal's statements, the operation record, and the
 //! maintenance tick's purge and sweep.
 
+// `sql!` needs a macro call in parentheses to take it as one part.
+#![allow(unused_parens, clippy::double_parens)]
+
+use super::journal::{JournalKind, JournalState, MgmtState};
+
+/// Where a file is in the recycle bin: its copy's row is not marked as gone,
+/// and its copy reached the bin or its row waits for an admin, the state
+/// `$needs_attention` binds.
+macro_rules! in_bin {
+    ($needs_attention:literal) => {
+        concat!(
+            "r.expired_at IS NULL AND (r.recycled_at IS NOT NULL OR j.state = ",
+            $needs_attention,
+            ")"
+        )
+    };
+}
+
 droppedneedle_kernel::sql! {
     /// One journal row with the file it replaces, if any.
     pub(super) fragment JOURNAL_ROWS = "SELECT j.id, j.bundle_id, j.kind, j.source_root, \
@@ -57,18 +75,19 @@ droppedneedle_kernel::sql! {
     /// bin before `?1` (unix milliseconds), are not expired yet and whose row
     /// is done, after the cursor (`?2` recycled at, `?3` journal id), at
     /// most `?4`, each with its track and its copy's identity on landing.
+    /// `?5` is the state of a row that is done.
     pub(super) EXPIRY_DUE = "SELECT r.journal_id, r.recycle_to, r.replaced_sha256, \
              r.recycled_at, r.replaced_track_id, r.binned_stat_json \
              FROM library_publish_replacements r \
              JOIN library_publish_journal j ON j.id = r.journal_id \
              WHERE r.expired_at IS NULL AND r.recycled_at IS NOT NULL AND r.recycled_at < ?1 \
-             AND j.state = 'cleaned' \
+             AND j.state = ?5 \
              AND (r.recycled_at > ?2 OR (r.recycled_at = ?2 AND r.journal_id > ?3)) \
              ORDER BY r.recycled_at, r.journal_id LIMIT ?4";
-    /// The tracks a put-back not yet settled holds.
+    /// The tracks a put-back not yet settled holds: `?1` to `?6` are the
+    /// unsettled states, `?7` the put-back kind.
     pub(super) EXPIRY_HELD_TRACKS = "SELECT DISTINCT track_id FROM library_publish_journal \
-             WHERE state IN ('prepared', 'staged', 'published', 'committed', \
-             'cleanup_pending', 'needs_attention') AND kind = 'put_back' \
+             WHERE state IN (?1, ?2, ?3, ?4, ?5, ?6) AND kind = ?7 \
              AND track_id IS NOT NULL";
     /// Record that row `?1`'s copy left the bin at `?2` (unix
     /// milliseconds): expired, found gone, or put back.
@@ -76,23 +95,24 @@ droppedneedle_kernel::sql! {
              WHERE journal_id = ?1 AND expired_at IS NULL";
     /// Every bin entry a row names, with whether that row's copy has left
     /// the bin.
-    pub(super) EXPIRY_ENTRIES = "SELECT recycle_to, expired_at IS NOT NULL \
+    pub(super) EXPIRY_ENTRIES = "SELECT recycle_to, expired_at IS NOT NULL AS left_bin \
              FROM library_publish_replacements";
     /// Another bundle (not `?2`) still unsettled for a track (`?1`): one
     /// writing the track's file, or one that set the file aside to replace
     /// or remove it and has not committed yet. A committed row waiting for
-    /// its bin holds no track.
+    /// its bin holds no track. `?3` to `?5` are the settled states, `?6` to
+    /// `?8` those before the commit.
     pub(super) UNSETTLED_FOR_TRACK = "SELECT bundle_id FROM library_publish_journal \
              WHERE track_id = ?1 AND bundle_id <> ?2 \
-             AND state NOT IN ('cleaned', 'compensated', 'needs_attention') \
+             AND state NOT IN (?3, ?4, ?5) \
              UNION ALL SELECT j.bundle_id FROM library_publish_journal j \
              JOIN library_publish_replacements r ON r.journal_id = j.id \
              WHERE r.replaced_track_id = ?1 AND j.bundle_id <> ?2 \
-             AND j.state IN ('prepared', 'staged', 'published') LIMIT 1";
+             AND j.state IN (?6, ?7, ?8) LIMIT 1";
     /// Bundles with unsettled rows, or with folders an unwind has not
-    /// removed yet, in order.
+    /// removed yet, in order. `?1` to `?3` are the settled states.
     pub(super) ACTIVE_BUNDLES = "SELECT bundle_id FROM library_publish_journal \
-             WHERE state NOT IN ('cleaned', 'compensated', 'needs_attention') \
+             WHERE state NOT IN (?1, ?2, ?3) \
              UNION SELECT bundle_id FROM library_publish_created_folders ORDER BY bundle_id";
     /// Record a folder a bundle (`?1`) made under root `?2` at `?3`.
     pub(super) CREATED_FOLDER_INSERT = "INSERT OR IGNORE INTO library_publish_created_folders \
@@ -103,9 +123,10 @@ droppedneedle_kernel::sql! {
     /// Forget the folders a bundle (`?1`) made.
     pub(super) CREATED_FOLDERS_DELETE = "DELETE FROM library_publish_created_folders \
              WHERE bundle_id = ?1";
-    /// How many bundles have a row that has not committed yet.
+    /// How many bundles have a row that has not committed yet: `?1` to `?3`
+    /// are the states before the commit.
     pub(super) PRECOMMIT_BUNDLE_COUNT = "SELECT COUNT(DISTINCT bundle_id) \
-             FROM library_publish_journal WHERE state IN ('prepared', 'staged', 'published')";
+             FROM library_publish_journal WHERE state IN (?1, ?2, ?3)";
     /// Mark an indexed track (`?1`) missing since `?2`; answers its new
     /// row revision.
     pub(crate) TRACK_MARK_MISSING = "UPDATE local_tracks SET availability = 'missing', \
@@ -134,7 +155,8 @@ droppedneedle_kernel::sql! {
     /// The removals of album `?1` (or of an album merged into it) that can
     /// still be put back: unspent, every file row settled or held for an
     /// admin, newest first. `files` counts the copies still in the bin; a
-    /// held row never expires.
+    /// held row never expires. `?2` is the removal kind, `?3` the held state
+    /// and `?4` to `?7` the states of a row still being written.
     pub(crate) ALBUM_REMOVALS = "WITH RECURSIVE albums(id, hops) AS ( \
              SELECT ?1, 0 UNION SELECT b.id, albums.hops + 1 FROM local_albums b \
              JOIN albums ON b.retired_into_album_id = albums.id WHERE albums.hops < 8) \
@@ -142,10 +164,10 @@ droppedneedle_kernel::sql! {
              SELECT a.id, a.reason_code, a.created_at, \
              (SELECT count(*) FROM library_publish_journal j \
               JOIN library_publish_replacements r ON r.journal_id = j.id \
-              WHERE j.bundle_id = a.id AND j.kind = 'remove' \
-              AND (r.expired_at IS NULL OR j.state = 'needs_attention')) AS files, \
+              WHERE j.bundle_id = a.id AND j.kind = ?2 \
+              AND (r.expired_at IS NULL OR j.state = ?3)) AS files, \
              EXISTS (SELECT 1 FROM library_publish_journal j WHERE j.bundle_id = a.id \
-              AND j.kind = 'remove' AND j.state = 'needs_attention') AS held \
+              AND j.kind = ?2 AND j.state = ?3) AS held \
              FROM library_catalog_actions a \
              WHERE a.action_kind = 'files_recycled' \
              AND a.local_album_id IN (SELECT id FROM albums) \
@@ -153,42 +175,41 @@ droppedneedle_kernel::sql! {
               WHERE p.action_kind = 'files_put_back' \
               AND json_extract(p.before_json, '$.undoes') = a.id) \
              AND NOT EXISTS (SELECT 1 FROM library_publish_journal j WHERE j.bundle_id = a.id \
-              AND j.kind = 'remove' \
-              AND j.state IN ('prepared', 'staged', 'published', 'compensated'))) \
+              AND j.kind = ?2 \
+              AND j.state IN (?4, ?5, ?6, ?7))) \
              WHERE files > 0 ORDER BY created_at DESC, id";
-    /// Where a file is in the recycle bin: its copy's row is not marked as
-    /// gone, and its copy reached the bin or its row waits for an admin.
-    pub(super) fragment IN_BIN = "r.expired_at IS NULL \
-             AND (r.recycled_at IS NOT NULL OR j.state = 'needs_attention')";
     /// One page of what the recycle bin holds, grouped by the removal or
     /// change that put it there, newest first, before the cursor (`?1`
     /// unix ms, then bundle id `?2`), at most `?3`: each bundle with when
     /// it was made, when its first copy reached the bin (unix milliseconds),
-    /// and whether its rows are removals.
+    /// and whether its rows are removals (`?4`, the removal kind; `?5`, the
+    /// state of a row that waits for an admin).
     pub(super) BIN_PAGE = "SELECT bundle_id, removed_at, first_binned, removal FROM ( \
              SELECT j.bundle_id AS bundle_id, \
              COALESCE(o.created_at, MIN(r.recycled_at), 0) AS removed_at, \
-             MIN(r.recycled_at) AS first_binned, MAX(j.kind = 'remove') AS removal \
+             MIN(r.recycled_at) AS first_binned, MAX(j.kind = ?4) AS removal \
              FROM library_publish_replacements r \
              JOIN library_publish_journal j ON j.id = r.journal_id \
              LEFT JOIN library_publish_operations o ON o.bundle_id = j.bundle_id \
-             WHERE " + IN_BIN + " GROUP BY j.bundle_id) \
+             WHERE " + (in_bin!("?5")) + " GROUP BY j.bundle_id) \
              WHERE removed_at < ?1 OR (removed_at = ?1 AND bundle_id < ?2) \
              ORDER BY removed_at DESC, bundle_id DESC LIMIT ?3";
     /// The files in the bin of the bundles in the JSON array `?1`: each
-    /// copy, its row's state and its track's album.
+    /// copy, its row's state and its track's album. `?2` is the state of a
+    /// row that waits for an admin.
     pub(super) BIN_FILES = "SELECT j.bundle_id, r.recycle_to, j.state, t.local_album_id \
              FROM library_publish_replacements r \
              JOIN library_publish_journal j ON j.id = r.journal_id \
              LEFT JOIN local_tracks t ON t.id = r.replaced_track_id \
-             WHERE j.bundle_id IN (SELECT value FROM json_each(?1)) AND " + IN_BIN + " \
+             WHERE j.bundle_id IN (SELECT value FROM json_each(?1)) AND " + (in_bin!("?2")) + " \
              ORDER BY j.bundle_id, r.journal_id";
     /// The undo records of the bundles in the JSON array `?1`: reason,
-    /// album, and whether a removal row of it is still being written.
+    /// album, and whether a removal row (`?2`, the kind) of it is still being
+    /// written (`?3` to `?6`, the states).
     pub(super) BIN_RECORDS = "SELECT a.id, a.reason_code, a.local_album_id, \
              EXISTS (SELECT 1 FROM library_publish_journal j WHERE j.bundle_id = a.id \
-             AND j.kind = 'remove' \
-             AND j.state IN ('prepared', 'staged', 'published', 'compensated')) \
+             AND j.kind = ?2 \
+             AND j.state IN (?3, ?4, ?5, ?6)) AS writing \
              FROM library_catalog_actions a WHERE a.action_kind = 'files_recycled' \
              AND a.id IN (SELECT value FROM json_each(?1))";
     /// Which of the undo records in the JSON array `?1` a put-back spent.
@@ -204,19 +225,22 @@ droppedneedle_kernel::sql! {
              JOIN chain ON b.id = chain.next WHERE chain.hops < 8) \
              SELECT a.id, a.title, a.album_artist_name, a.has_indexed_track, \
              (SELECT e.release_group_mbid FROM local_album_external_identities e \
-             WHERE e.local_album_id = a.id AND e.provider = 'musicbrainz'), \
+             WHERE e.local_album_id = a.id AND e.provider = 'musicbrainz') AS release_group_mbid, \
              EXISTS (SELECT 1 FROM local_album_artwork w WHERE w.local_album_id = a.id) \
+             AS cover_available \
              FROM chain JOIN local_albums a ON a.id = chain.id WHERE chain.next IS NULL";
-    /// How many files the bin holds.
+    /// How many files the bin holds. `?1` is the state of a row that waits
+    /// for an admin.
     pub(crate) BIN_COUNT = "SELECT COUNT(*) FROM library_publish_replacements r \
-             JOIN library_publish_journal j ON j.id = r.journal_id WHERE " + IN_BIN;
+             JOIN library_publish_journal j ON j.id = r.journal_id WHERE " + (in_bin!("?1"));
     /// The copies an empty at `?1` (unix milliseconds) would try: the expiry's
-    /// due rows with no retention, each with its track.
+    /// due rows with no retention, each with its track. `?2` is the state of
+    /// a row that is done.
     pub(super) BIN_DUE = "SELECT r.recycle_to, r.replaced_track_id \
              FROM library_publish_replacements r \
              JOIN library_publish_journal j ON j.id = r.journal_id \
              WHERE r.expired_at IS NULL AND r.recycled_at IS NOT NULL AND r.recycled_at < ?1 \
-             AND j.state = 'cleaned'";
+             AND j.state = ?2";
     /// What one attempt of an empty of the bin did, added to its run's row
     /// (`?1`, the job's id): deletes, bytes and older folders sum; kept,
     /// waited and their names are the latest attempt's; `?4` is set when it
@@ -236,24 +260,26 @@ droppedneedle_kernel::sql! {
              LEFT JOIN auth_users u ON u.id = e.actor_user_id \
              WHERE e.finished_at IS NOT NULL ORDER BY e.finished_at DESC, e.id DESC LIMIT 1";
     /// Whether an undo of an added file, recorded with the text `?1`, landed
-    /// or is still settling.
+    /// or is still settling: a row of the delete kind (`?2`) not unwound
+    /// (`?3`).
     pub(super) TAKE_BACK_EXISTS = "SELECT EXISTS (SELECT 1 FROM library_publish_operations o \
              JOIN library_publish_journal j ON j.bundle_id = o.bundle_id \
-             WHERE instr(o.bundle_json, ?1) > 0 AND j.kind = 'delete' \
-             AND j.state <> 'compensated')";
+             WHERE instr(o.bundle_json, ?1) > 0 AND j.kind = ?2 \
+             AND j.state <> ?3)";
     /// The landed files plugin `?1` added, newest first, before the point
     /// (`?2` unix milliseconds, then bundle id `?3`), at most `?4`: each
     /// bundle with when it was made and whether an undo took the file
-    /// away or is still settling.
+    /// away or is still settling. `?5` and `?6` are the delete kind and the
+    /// unwound state, `?7` the add kind, `?8` to `?10` a landed row's states.
     pub(super) PLUGIN_FILES = "SELECT o.bundle_id, o.created_at, o.bundle_json, \
              EXISTS (SELECT 1 FROM library_publish_operations t \
              JOIN library_publish_journal d ON d.bundle_id = t.bundle_id \
-             WHERE d.kind = 'delete' AND d.state <> 'compensated' \
+             WHERE d.kind = ?5 AND d.state <> ?6 \
              AND instr(t.bundle_json, '\"undoes\":') > 0 \
-             AND json_extract(t.bundle_json, '$.added.undoes') = o.bundle_id) \
+             AND json_extract(t.bundle_json, '$.added.undoes') = o.bundle_id) AS taken_back \
              FROM library_publish_journal a \
              JOIN library_publish_operations o ON o.bundle_id = a.bundle_id \
-             WHERE a.kind = 'add' AND a.state IN ('committed', 'cleanup_pending', 'cleaned') \
+             WHERE a.kind = ?7 AND a.state IN (?8, ?9, ?10) \
              AND json_extract(o.bundle_json, '$.added.origin.plugin') = ?1 \
              AND (o.created_at < ?2 OR (o.created_at = ?2 AND o.bundle_id < ?3)) \
              ORDER BY o.created_at DESC, o.bundle_id DESC LIMIT ?4";
@@ -271,9 +297,9 @@ droppedneedle_kernel::sql! {
     pub(super) TRACK_SET_PATH = "UPDATE local_tracks SET relative_path = ?2, file_path = ?3, \
              path_hash = ?4, row_revision = row_revision + 1 WHERE id = ?1";
     /// Whether any bundle has unsettled rows, or folders an unwind has not
-    /// removed yet.
+    /// removed yet. `?1` to `?3` are the settled states.
     pub(crate) ANY_ACTIVE = "SELECT EXISTS (SELECT 1 FROM library_publish_journal \
-             WHERE state NOT IN ('cleaned', 'compensated', 'needs_attention')) \
+             WHERE state NOT IN (?1, ?2, ?3)) \
              OR EXISTS (SELECT 1 FROM library_publish_created_folders)";
     /// Every hidden name the journal records, with the root and path of
     /// the destination it sits beside.
@@ -299,8 +325,8 @@ droppedneedle_kernel::sql! {
     /// identity.
     pub(super) OWN_ROWS = "SELECT t.id, t.root_id, t.relative_path, t.availability, \
              t.stat_revision, t.local_album_id, \
-             ai.row_revision, ai.release_group_mbid, ai.release_mbid, \
-             ti.row_revision, ti.recording_mbid, ti.release_track_mbid \
+             ai.row_revision AS album_revision, ai.release_group_mbid, ai.release_mbid, \
+             ti.row_revision AS mapping_revision, ti.recording_mbid, ti.release_track_mbid \
              FROM local_tracks t \
              LEFT JOIN local_album_external_identities ai \
              ON ai.local_album_id = t.local_album_id AND ai.provider = 'musicbrainz' \
@@ -364,35 +390,43 @@ droppedneedle_kernel::sql! {
     /// The marker row again.
     pub(super) SYNC_MARK_DELETE = "DELETE FROM library_publish_blobs WHERE sha256 = 'sync'";
     /// Writes made at or before `?1` (unix milliseconds) that recovery has
-    /// neither finished nor undone, at most `?2`.
-    pub(crate) RETRYING_BUNDLES = "SELECT j.bundle_id, COUNT(*), \
-             GROUP_CONCAT(j.dest_rel, char(10)), GROUP_CONCAT(j.source_rel, char(10)) \
+    /// neither finished nor undone, at most `?2`. `?3` to `?6` are the states
+    /// of such a write.
+    pub(crate) RETRYING_BUNDLES = "SELECT j.bundle_id, COUNT(*) AS file_count, \
+             GROUP_CONCAT(j.dest_rel, char(10)) AS sample_paths, \
+             GROUP_CONCAT(j.source_rel, char(10)) AS source_paths \
              FROM library_publish_journal j \
              JOIN library_publish_operations o ON o.bundle_id = j.bundle_id \
-             WHERE j.state IN ('prepared', 'staged', 'published', 'committed') \
+             WHERE j.state IN (?3, ?4, ?5, ?6) \
              AND o.created_at <= ?1 \
              GROUP BY j.bundle_id ORDER BY j.bundle_id LIMIT ?2";
-    /// When the oldest write still open or needing attention was made.
+    /// When the oldest write still open or needing attention was made: `?1`
+    /// to `?3` are the settled states, `?3` also the state that needs attention.
     pub(crate) OLDEST_OPEN_WRITE = "SELECT MIN(o.created_at) FROM library_publish_operations o \
              WHERE o.bundle_id IN (SELECT bundle_id FROM library_publish_journal \
-             WHERE state NOT IN ('cleaned', 'compensated', 'needs_attention') \
-             OR (state = 'needs_attention' AND bundle_id NOT IN \
+             WHERE state NOT IN (?1, ?2, ?3) \
+             OR (state = ?3 AND bundle_id NOT IN \
              (SELECT bundle_id FROM library_publish_resolutions)))";
+    /// Whether a bundle that took files from folder `?1` is unsettled: `?2`
+    /// to `?4` are the settled states, `?5` the one that needs attention.
     pub(super) STAGING_SETTLED = "SELECT EXISTS (SELECT 1 FROM library_publish_journal \
          WHERE bundle_id IN (SELECT bundle_id FROM library_publish_journal \
          WHERE substr(source_rel, 1, length(?1)) = ?1) \
-         AND state NOT IN ('cleaned', 'compensated', 'cleanup_pending') \
-         AND NOT (state = 'needs_attention' AND bundle_id IN \
+         AND state NOT IN (?2, ?3, ?4) \
+         AND NOT (state = ?5 AND bundle_id IN \
          (SELECT bundle_id FROM library_publish_resolutions)))";
+    /// Whether a bundle that took files from folder `?1` needs a person: `?2`
+    /// is the state that needs attention.
     pub(super) STAGING_NEEDS_ATTENTION = "SELECT EXISTS (SELECT 1 FROM library_publish_journal \
          WHERE bundle_id IN (SELECT bundle_id FROM library_publish_journal \
          WHERE substr(source_rel, 1, length(?1)) = ?1) \
-         AND state = 'needs_attention' AND bundle_id NOT IN \
+         AND state = ?2 AND bundle_id NOT IN \
          (SELECT bundle_id FROM library_publish_resolutions))";
     pub(super) LOAD_OPERATION = "SELECT bundle_json FROM library_publish_operations WHERE bundle_id = ?1";
     pub(super) APPLIED_BY = "SELECT applied_by_user_id FROM library_publish_operations WHERE bundle_id = ?1";
     pub(super) READ_REVISION = "SELECT value FROM library_catalog_revision WHERE singleton = 1";
-    pub(super) LOCATE = "SELECT t.root_id, t.relative_path, COALESCE(m.applied_projection_hash, ''), \
+    pub(super) LOCATE = "SELECT t.root_id, t.relative_path, \
+             COALESCE(m.applied_projection_hash, '') AS applied_projection_hash, \
              m.last_outcome \
              FROM local_tracks t \
              LEFT JOIN library_track_management_state m ON m.local_track_id = t.id \
@@ -442,9 +476,9 @@ droppedneedle_kernel::sql! {
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)";
     pub(super) ADD_REF = "INSERT OR IGNORE INTO library_publish_blob_refs (sha256, owner_kind, owner_id)
              VALUES (?1, ?2, ?3)";
-    pub(super) SNAPSHOT_ROW = "SELECT track_id, blob_sha256, expires_at / 86400000
+    pub(super) SNAPSHOT_ROW = "SELECT track_id, blob_sha256, expires_at / 86400000 AS expiry_day
                  FROM library_publish_snapshots WHERE id = ?1";
-    pub(super) BUNDLE = "SELECT id, track_id, blob_sha256, expires_at / 86400000
+    pub(super) BUNDLE = "SELECT id, track_id, blob_sha256, expires_at / 86400000 AS expiry_day
              FROM library_publish_snapshots WHERE bundle_id = ?1 ORDER BY id";
     pub(super) WRITE_BASELINE = "INSERT OR IGNORE INTO library_publish_baselines
              (track_id, blob_sha256, original_root, original_rel, created_at)
@@ -469,7 +503,7 @@ droppedneedle_kernel::sql! {
     /// On a `library_track_management_state` row (alias `s`): the app has a
     /// record of the file's bytes.
     pub(crate) fragment HAS_BYTES_RECORD = "(s.written_sha256 IS NOT NULL OR (" + V2_ROW_SQL + "))";
-    pub(super) TRACK_WRITTEN_STATE = "SELECT s.written_sha256, CASE WHEN " + V2_ROW_SQL + " THEN s.managed_path_revision END \
+    pub(super) TRACK_WRITTEN_STATE = "SELECT s.written_sha256, CASE WHEN " + V2_ROW_SQL + " THEN s.managed_path_revision END AS v2_path_revision \
              FROM library_track_management_state s WHERE s.local_track_id = ?1";
     /// Forget the record of track `?1`'s file. `managed_path_revision` goes only where no job wrote it: such a value is v2's.
     pub(super) FORGET_RECORD = "UPDATE library_track_management_state AS s SET written_sha256 = NULL, \
@@ -482,4 +516,193 @@ droppedneedle_kernel::sql! {
              AND +o.availability = 'missing' \
              JOIN library_track_management_state s ON s.local_track_id = o.id \
              WHERE t.id = ?1 AND " + HAS_BYTES_RECORD + " LIMIT 1";
+
+    pub(super) row JournalRow for [JOURNAL_BY_ID, JOURNAL_BY_BUNDLE] {
+        id: String,
+        bundle_id: String,
+        kind: JournalKind,
+        source_root: Option<String>,
+        source_rel: Option<String>,
+        dest_root: String,
+        dest_rel: String,
+        staged: String,
+        backup: Option<String>,
+        source_sha256: Option<String>,
+        staged_sha256: String,
+        track_id: Option<String>,
+        commit_as: Option<MgmtState>,
+        state: JournalState,
+        seq: i64,
+        replaced_rel: Option<String>,
+        replaced_sha256: Option<String>,
+        replaced_track_id: Option<String>,
+        recycle_to: Option<String>,
+    }
+    pub(super) row ExpiryDueRow for [EXPIRY_DUE] {
+        journal_id: String,
+        recycle_to: String,
+        replaced_sha256: String,
+        recycled_at: i64,
+        replaced_track_id: Option<String>,
+        binned_stat_json: Option<String>,
+    }
+    pub(super) row BinEntry for [EXPIRY_ENTRIES] {
+        recycle_to: String,
+        left_bin: bool,
+    }
+    pub(super) row CreatedFolder for [CREATED_FOLDERS] {
+        root_id: String,
+        folder_rel: String,
+    }
+    pub(super) row AlbumRemoval for [ALBUM_REMOVALS] {
+        id: String,
+        reason_code: Option<String>,
+        created_at: i64,
+        files: u32,
+        held: bool,
+    }
+    pub(super) row BinPageRow for [BIN_PAGE] {
+        bundle_id: String,
+        removed_at: i64,
+        first_binned: Option<i64>,
+        removal: bool,
+    }
+    pub(super) row BinFile for [BIN_FILES] {
+        bundle_id: String,
+        recycle_to: String,
+        state: String,
+        local_album_id: Option<String>,
+    }
+    pub(super) row BinRecord for [BIN_RECORDS] {
+        id: String,
+        reason_code: Option<String>,
+        local_album_id: Option<String>,
+        writing: bool,
+    }
+    pub(super) row BinAlbumRow for [BIN_ALBUM] {
+        id: String,
+        title: String,
+        album_artist_name: Option<String>,
+        has_indexed_track: bool,
+        release_group_mbid: Option<String>,
+        cover_available: bool,
+    }
+    pub(super) row BinDueRow for [BIN_DUE] {
+        recycle_to: String,
+        replaced_track_id: Option<String>,
+    }
+    pub(crate) row BinEmptiedRow for [BIN_EMPTIED_LAST] {
+        finished_at: i64,
+        display_name: Option<String>,
+        deleted: u32,
+        freed_bytes: i64,
+        older_folders: u32,
+        kept: u32,
+        waited: u32,
+        kept_json: String,
+    }
+    pub(super) row PluginFileRow for [PLUGIN_FILES] {
+        bundle_id: String,
+        created_at: i64,
+        bundle_json: String,
+        taken_back: bool,
+    }
+    pub(super) row TrackPlace for [TRACK_PLACE] {
+        root_id: String,
+        relative_path: String,
+        availability: String,
+    }
+    pub(super) row TrackAvailability for [TRACK_AT, GIVE_UP_DESTINATION] {
+        id: String,
+        availability: String,
+    }
+    pub(super) row JournalName for [JOURNAL_NAMES] {
+        dest_root: String,
+        dest_rel: String,
+        staged: String,
+        backup: Option<String>,
+    }
+    pub(crate) row LeftoverCheck for [LEFTOVER_CHECKS] {
+        root_id: String,
+        checked_at: i64,
+        file_count: i64,
+        files_json: String,
+    }
+    pub(crate) row ScanMount for [SCAN_MOUNTS] {
+        root_id: String,
+        relative_path: String,
+    }
+    pub(super) row OwnRowRead for [OWN_ROWS] {
+        id: String,
+        root_id: String,
+        relative_path: String,
+        availability: String,
+        stat_revision: String,
+        local_album_id: String,
+        album_revision: Option<i64>,
+        release_group_mbid: Option<String>,
+        release_mbid: Option<String>,
+        mapping_revision: Option<i64>,
+        recording_mbid: Option<String>,
+        release_track_mbid: Option<String>,
+    }
+    pub(super) row TrackOutput for [OUTPUTS_FOR_TRACK] {
+        dest_root: String,
+        dest_rel: String,
+        sha256: String,
+        size: u64,
+        kind: String,
+    }
+    pub(super) row BundleOutput for [OUTPUTS_OF_BUNDLE] {
+        track_id: String,
+        dest_root: String,
+        dest_rel: String,
+        sha256: String,
+        size: u64,
+        kind: String,
+    }
+    pub(super) row LegacyBlob for [LEGACY_BLOBS_AFTER] {
+        sha256: String,
+        bytes: Vec<u8>,
+    }
+    pub(super) row LocateRow for [LOCATE] {
+        root_id: String,
+        relative_path: String,
+        applied_projection_hash: String,
+        last_outcome: Option<String>,
+    }
+    pub(super) row JoinedAlbumRow for [JOINED_ALBUM] {
+        id: String,
+        release_mbid: Option<String>,
+        release_group_mbid: Option<String>,
+    }
+    pub(super) row CopyFolderRow for [COPY_FOLDER] {
+        root_id: String,
+        relative_path: String,
+        disc_number: i64,
+    }
+    pub(super) row TrackAtPath for [TRACK_AT_PATH] {
+        id: String,
+        local_album_id: String,
+    }
+    pub(super) row SnapshotRow for [SNAPSHOT_ROW] {
+        track_id: String,
+        blob_sha256: String,
+        expiry_day: i64,
+    }
+    pub(super) row BundleSnapshot for [BUNDLE] {
+        id: String,
+        track_id: String,
+        blob_sha256: String,
+        expiry_day: i64,
+    }
+    pub(super) row BaselineRow for [BASELINE_ROW] {
+        blob_sha256: String,
+        original_root: String,
+        original_rel: String,
+    }
+    pub(super) row WrittenState for [TRACK_WRITTEN_STATE] {
+        written_sha256: Option<String>,
+        v2_path_revision: Option<String>,
+    }
 }

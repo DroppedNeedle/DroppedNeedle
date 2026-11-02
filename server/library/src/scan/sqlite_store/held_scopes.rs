@@ -120,11 +120,8 @@ fn replacements(tx: &Transaction<'_>, source: HeldRows, key: &str) -> rusqlite::
     let mut found = Found::new();
     let mut statement = tx.prepare_cached(&crate::scan::sql::replacements_sql(source))?;
     let rows = statement.query_map(params![key], |row| {
-        Ok((
-            row.get::<_, String>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, String>(2)?,
-        ))
+        let row = crate::scan::sql::ReplacementRow::read(row)?;
+        Ok((row.new_album_id, row.old_album_id, row.track_id))
     })?;
     for row in rows {
         let (new, old, track) = row?;
@@ -225,11 +222,8 @@ fn remember(tx: &Transaction<'_>, run_id: &str, now: f64) -> rusqlite::Result<()
     {
         let mut statement = tx.prepare_cached(crate::scan::sql::ROWS_LET_GO.text())?;
         let rows = statement.query_map(params![run_id, crate::clock::ms(now)], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, i64>(2)?,
-            ))
+            let row = crate::scan::sql::LetGoRow::read(row)?;
+            Ok((row.local_album_id, row.id, row.first_held_at))
         })?;
         for row in rows {
             let (album, track, held_at) = row?;

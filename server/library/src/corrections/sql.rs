@@ -4,6 +4,7 @@
 #![allow(unused_parens, clippy::double_parens)]
 
 use droppedneedle_kernel::db::statement::ListLen;
+use droppedneedle_kernel::db::time::Millis;
 
 use crate::identify::sql::CURRENT_PROOF;
 use crate::jobs::sql::live_job;
@@ -255,7 +256,7 @@ droppedneedle_kernel::sql! {
          WHERE t.local_album_id = ?1 AND +t.availability = 'indexed' \
          AND trim(COALESCE(i.release_track_mbid, '')) <> ''";
     pub(super) RETAGGED_BY_HAND = "SELECT t.id, t.missing_at, t.album_title_folded, \
-             COALESCE(t.album_artist_name_folded, ''), t.disc_number, t.track_number \
+             COALESCE(t.album_artist_name_folded, '') AS album_artist, t.disc_number, t.track_number \
              FROM local_tracks t JOIN local_track_external_identities i \
                ON i.local_track_id = t.id AND i.provider = 'musicbrainz' \
              WHERE t.local_album_id = ?1 AND t.availability = 'missing' \
@@ -437,11 +438,11 @@ droppedneedle_kernel::sql! {
     /// Starts from the albums' identities and reads each album's indexed rows
     /// by album.
     pub(super) CANDIDATES = "SELECT t.local_album_id, t.id, \
-    lower(trim(COALESCE(t.embedded_release_track_mbid, ''))), \
-    lower(trim(COALESCE(t.embedded_recording_mbid, ''))), \
-    lower(trim(COALESCE(t.embedded_release_mbid, ''))), \
+    lower(trim(COALESCE(t.embedded_release_track_mbid, ''))) AS release_track, \
+    lower(trim(COALESCE(t.embedded_recording_mbid, ''))) AS recording, \
+    lower(trim(COALESCE(t.embedded_release_mbid, ''))) AS release, \
     t.disc_number, t.track_number, t.imported_at, \
-    t.album_title_folded, COALESCE(t.album_artist_name_folded, '') \
+    t.album_title_folded, COALESCE(t.album_artist_name_folded, '') AS album_artist \
     FROM local_album_external_identities ae \
     JOIN local_tracks t ON t.local_album_id = ae.local_album_id AND +t.availability = 'indexed' \
     WHERE ae.provider = 'musicbrainz' AND trim(COALESCE(ae.release_mbid, '')) <> '' \
@@ -521,6 +522,53 @@ droppedneedle_kernel::sql! {
     family ARTIST_LINKS_OF = artist_links_of;
     /// References of one kind to each artist of a list: (artist, count).
     family REFERENCES_OF = references_of;
+    pub(super) row ArtistLink for family [artist_links_of] {
+        local_artist_id: String,
+        provider_artist_id: String,
+    }
+    pub(super) row IdentityRow for [IDENTITY_ROW] {
+        provider_artist_id: String,
+        decision_source: String,
+    }
+    pub(super) row PlaceAlbum for [PLACE_ALBUM] {
+        release_mbid: String,
+        selected_at: Millis,
+    }
+    pub(super) row Retagged for [RETAGGED_BY_HAND] {
+        id: String,
+        missing_at: Option<Millis>,
+        album_title_folded: String,
+        album_artist: String,
+        disc_number: i64,
+        track_number: i64,
+    }
+    pub(super) row OverrideToMove for [OVERRIDES_TO_MOVE] {
+        id: String,
+        updated_at: Millis,
+        row_revision: i64,
+    }
+    pub(super) row GoneFacts for [GONE_TRACK_FACTS] {
+        missing_at: Option<Millis>,
+        root_id: String,
+        relative_path: String,
+    }
+    pub(super) row NewFacts for [NEW_TRACK_FACTS] {
+        imported_at: Option<Millis>,
+        root_id: String,
+        relative_path: String,
+    }
+    pub(super) row PlacementCandidate for [CANDIDATES] {
+        local_album_id: String,
+        id: String,
+        release_track: String,
+        recording: String,
+        release: String,
+        disc_number: i64,
+        track_number: i64,
+        imported_at: Option<Millis>,
+        album_title_folded: String,
+        album_artist: String,
+    }
     /// One artist's count of one kind of reference.
     pub(crate) row ReferenceCount for family [references_of] {
         id: String,

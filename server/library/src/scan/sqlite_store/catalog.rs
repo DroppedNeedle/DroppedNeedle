@@ -324,9 +324,14 @@ impl SqliteScanStore {
                 .query_row(
                     crate::scan::sql::VANISH_COUNTS.text(),
                     params![root_id, scope_relative_path, run_id],
-                    |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+                    crate::scan::sql::VanishCounts::read,
                 )
-                .map(|(missing, total)| (missing.max(0) as usize, total.max(0) as usize))?)
+                .map(|row| {
+                    (
+                        row.walked_past_count.max(0) as usize,
+                        row.total.max(0) as usize,
+                    )
+                })?)
         })
     }
 
@@ -452,7 +457,8 @@ impl SqliteScanStore {
             let mut stmt = conn.prepare(crate::scan::sql::MISSING_CATALOG_PATHS.text())?;
             let rows = stmt
                 .query_map(params![root_id, scope_relative_path, run_id], |row| {
-                    Ok((row.get::<_, String>(0)?, row.get::<_, bool>(1)?))
+                    let row = crate::scan::sql::MissingCatalogPath::read(row)?;
+                    Ok((row.relative_path, row.held_back))
                 })?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
             Ok(rows)
@@ -633,20 +639,20 @@ fn load_catalog_map(
 ) -> rusqlite::Result<HashMap<String, CatalogEntry>> {
     let mut stmt = conn.prepare(crate::scan::sql::LOAD_CATALOG_MAP.text())?;
     let rows = stmt.query_map(params![root_id], |row| {
-        let kind: String = row.get("stat_revision_kind")?;
+        let row = crate::scan::sql::CatalogRow::read(row)?;
         Ok((
-            row.get::<_, String>("relative_path")?,
+            row.relative_path,
             CatalogEntry {
-                track_id: row.get("id")?,
-                revision: row.get("stat_revision")?,
-                size_bytes: row.get::<_, i64>("file_size_bytes")? as u64,
-                mtime_ns: row.get("file_mtime_ns")?,
-                revision_kind: if kind == "exact" {
+                track_id: row.id,
+                revision: row.stat_revision,
+                size_bytes: row.file_size_bytes as u64,
+                mtime_ns: row.file_mtime_ns,
+                revision_kind: if row.stat_revision_kind == "exact" {
                     RevisionKind::Exact
                 } else {
                     RevisionKind::LegacyFloat
                 },
-                tags_read_at: super::opt_secs_named(row, "tags_read_at")?,
+                tags_read_at: row.tags_read_at.map(crate::clock::at_secs),
             },
         ))
     })?;

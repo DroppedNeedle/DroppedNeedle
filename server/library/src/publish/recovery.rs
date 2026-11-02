@@ -260,15 +260,13 @@ pub fn find_leftovers(
                 let mut named = conn.prepare_cached(super::sql::JOURNAL_NAMES.text())?;
                 let mut rows = named.query([])?;
                 while let Some(row) = rows.next()? {
-                    let root: String = row.get(0)?;
+                    let row = super::sql::JournalName::read(row)?;
+                    let root = row.dest_root;
                     let Some(found) = walked.get_mut(&root) else {
                         continue;
                     };
-                    let dest_rel: String = row.get(1)?;
-                    let folder = Path::new(&dest_rel).parent().unwrap_or(Path::new(""));
-                    let staged: String = row.get(2)?;
-                    let backup: Option<String> = row.get(3)?;
-                    for hidden in std::iter::once(staged).chain(backup) {
+                    let folder = Path::new(&row.dest_rel).parent().unwrap_or(Path::new(""));
+                    for hidden in std::iter::once(row.staged).chain(row.backup) {
                         if let Some(name) = Path::new(&hidden).file_name() {
                             found.remove(&folded(&root, &folder.join(name)));
                         }
@@ -308,7 +306,14 @@ fn gate(db: &Db) -> Result<(), PublishError> {
     let precommit: i64 = long_read(db, "publish.recovery_gate", |conn| {
         Ok(conn
             .prepare_cached(super::sql::PRECOMMIT_BUNDLE_COUNT.text())?
-            .query_row([], |row| row.get(0))?)
+            .query_row(
+                rusqlite::params![
+                    JournalState::Prepared,
+                    JournalState::Staged,
+                    JournalState::Published,
+                ],
+                |row| row.get(0),
+            )?)
     })?;
     if precommit > super::STARTUP_RECOVERY_LIMIT as i64 {
         return Err(PublishError::Journal(

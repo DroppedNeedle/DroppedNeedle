@@ -41,7 +41,8 @@ impl SqliteScanStore {
             let mut stmt = conn.prepare(crate::scan::sql::EMPTY_MOUNTS.text())?;
             let rows = stmt
                 .query_map(params![root_id, scope_relative_path, run_id], |row| {
-                    Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+                    let row = crate::scan::sql::EmptyMount::read(row)?;
+                    Ok((row.relative_path, row.indexed))
                 })?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
             Ok(rows)

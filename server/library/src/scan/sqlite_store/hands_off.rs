@@ -118,13 +118,12 @@ fn lost_rows(tx: &Transaction<'_>, run_id: &str, started: i64) -> rusqlite::Resu
     let sql = crate::scan::sql::LOST_ROWS.text();
     tx.prepare_cached(sql)?
         .query_map(params![run_id, started], |row| {
-            let id: String = row.get(0)?;
-            let path: String = row.get(3)?;
+            let row = crate::scan::sql::LostRow::read(row)?;
             Ok(Lost {
-                place: place_of(&id, &path),
-                album_id: row.get(1)?,
-                root_id: row.get(2)?,
-                duration: row.get(4)?,
+                place: place_of(&row.id, &row.relative_path),
+                album_id: row.local_album_id,
+                root_id: row.root_id,
+                duration: row.duration_seconds,
             })
         })?
         .collect()
@@ -149,7 +148,8 @@ fn new_albums_at(
     };
     let mut statement = tx.prepare_cached(sql)?;
     let map = |row: &rusqlite::Row<'_>| -> rusqlite::Result<(String, String, String)> {
-        Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        let row = crate::scan::sql::NewTrackRow::read(row)?;
+        Ok((row.id, row.local_album_id, row.relative_path))
     };
     let rows = match &below {
         Some((from, to)) => statement
@@ -185,12 +185,13 @@ fn settle(
     let Some((created, live, foreign, excluded, held)) = tx
         .prepare_cached(crate::scan::sql::HANDS_OFF_ALBUM_STATE.text())?
         .query_row(params![album_id, Cause::ReplacedHandsOff.as_str()], |row| {
+            let row = crate::scan::sql::HandsOffState::read(row)?;
             Ok((
-                row.get::<_, i64>(0)?,
-                row.get::<_, bool>(1)?,
-                row.get::<_, bool>(2)?,
-                row.get::<_, bool>(3)?,
-                row.get::<_, bool>(4)?,
+                row.created_at,
+                row.live,
+                row.foreign_rows,
+                row.is_excluded,
+                row.is_held,
             ))
         })
         .optional()?
@@ -206,7 +207,8 @@ fn settle(
     let rows: Vec<(String, String, String, Option<f64>)> = tx
         .prepare_cached(crate::scan::sql::ALBUM_TRACK_PLACES.text())?
         .query_map(params![album_id], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+            let row = crate::scan::sql::TrackPlaceRow::read(row)?;
+            Ok((row.id, row.root_id, row.relative_path, row.duration_seconds))
         })?
         .collect::<rusqlite::Result<_>>()?;
     let places: BTreeSet<(String, String)> = rows

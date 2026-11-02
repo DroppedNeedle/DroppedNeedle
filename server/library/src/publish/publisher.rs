@@ -140,13 +140,12 @@ pub fn locate(conn: &Connection, track_id: &str) -> Result<Option<Located>, Publ
         crate::publish::sql::LOCATE.text(),
         rusqlite::params![track_id],
         |row| {
+            let row = crate::publish::sql::LocateRow::read(row)?;
             Ok(Located {
-                root_id: row.get(0)?,
-                rel_path: row.get(1)?,
-                published_sha256: row.get(2)?,
-                last_outcome: row
-                    .get::<_, Option<String>>(3)?
-                    .filter(|outcome| !outcome.is_empty()),
+                root_id: row.root_id,
+                rel_path: row.relative_path,
+                published_sha256: row.applied_projection_hash,
+                last_outcome: row.last_outcome.filter(|outcome| !outcome.is_empty()),
             })
         },
     )
@@ -350,7 +349,10 @@ fn give_up_destination(conn: &Connection, track: &TrackCommit) -> Result<(), Pub
         .query_row(
             crate::publish::sql::GIVE_UP_DESTINATION.text(),
             rusqlite::params![track.root_id, track.rel_path, track.track_id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| {
+                let row = crate::publish::sql::TrackAvailability::read(row)?;
+                Ok((row.id, row.availability))
+            },
         )
         .optional()?;
     let Some((occupant, availability)) = occupant else {
@@ -448,7 +450,10 @@ pub(crate) fn joined_album(
         .query_row(
             crate::publish::sql::JOINED_ALBUM.text(),
             rusqlite::params![join.album_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            |row| {
+                let row = crate::publish::sql::JoinedAlbumRow::read(row)?;
+                Ok((row.id, row.release_mbid, row.release_group_mbid))
+            },
         )
         .optional()?;
     let Some((album_id, release, group)) = found else {
@@ -487,7 +492,8 @@ pub(crate) fn copy_folder(
     let rows: Vec<(String, String, i64)> = conn
         .prepare(crate::publish::sql::COPY_FOLDER.text())?
         .query_map(rusqlite::params![album_id], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            let row = crate::publish::sql::CopyFolderRow::read(row)?;
+            Ok((row.root_id, row.relative_path, row.disc_number))
         })?
         .collect::<rusqlite::Result<_>>()?;
     let disc = i64::from(disc.max(1));
@@ -564,7 +570,10 @@ fn adopt_track(
             .query_row(
                 crate::publish::sql::TRACK_AT_PATH.text(),
                 rusqlite::params![track.root_id, track.rel_path],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| {
+                    let row = crate::publish::sql::TrackAtPath::read(row)?;
+                    Ok((row.id, row.local_album_id))
+                },
             )
             .optional()?;
         match at_path {
@@ -1237,7 +1246,8 @@ impl<P: SpaceProbe> Publisher<P> {
                         let place: Option<(String, String, String)> = conn
                             .prepare_cached(super::sql::TRACK_PLACE.text())?
                             .query_row(rusqlite::params![item.track_id], |row| {
-                                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                                let row = super::sql::TrackPlace::read(row)?;
+                                Ok((row.root_id, row.relative_path, row.availability))
                             })
                             .optional()?;
                         let ready = place.is_some_and(|(root, rel, availability)| {

@@ -121,7 +121,8 @@ pub(super) fn recorded(
     let stored: Option<(String, String)> = conn
         .prepare_cached(crate::scan::sql::RECORDED.text())?
         .query_row(params![old_album_id, new_album_id], |row| {
-            Ok((row.get(0)?, row.get(1)?))
+            let row = crate::scan::sql::RetagPairRow::read(row)?;
+            Ok((row.reason, row.state))
         })
         .optional()?;
     let unknown = |column: usize, value: &str| {
@@ -182,7 +183,10 @@ pub(super) fn end_dismissed_returned(
     conn.prepare_cached(crate::scan::sql::END_DISMISSED_RETURNED.text())?
         .query_map(
             params![run_id, album_id, RetagPairState::Dismissed.as_str()],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| {
+                let row = crate::scan::sql::RetagAlbums::read(row)?;
+                Ok((row.old_album_id, row.new_album_id))
+            },
         )?
         .collect()
 }

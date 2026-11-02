@@ -128,12 +128,12 @@ fn album_presence(
     let mut rows = stmt.query(params![place.run_id, album_id])?;
     let mut presence = Presence::default();
     while let Some(row) = rows.next()? {
-        let root: String = row.get(0)?;
-        let path: String = row.get(1)?;
-        let present: bool = row.get(2)?;
-        if !present {
+        let row = crate::scan::sql::AlbumPresenceRow::read(row)?;
+        if !row.present {
             presence.gone_this_run = true;
-        } else if root == place.root_id && grouping_directory(&path) == place.directory {
+        } else if row.root_id == place.root_id
+            && grouping_directory(&row.relative_path) == place.directory
+        {
             presence.here = true;
         } else {
             presence.elsewhere = true;
@@ -208,7 +208,10 @@ fn resolve_album(
                 names.title_folded,
                 names.artist_folded
             ],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| {
+                let row = crate::scan::sql::GroupingCandidate::read(row)?;
+                Ok((row.id, row.exact))
+            },
         )?
         .collect::<rusqlite::Result<_>>()?
     };
@@ -521,8 +524,8 @@ fn find_moved_track(
         key.track_number
     ])?;
     while let Some(row) = rows.next()? {
-        let duration: Option<f64> = row.get(3)?;
-        let same_length = match (duration, key.duration_seconds) {
+        let row = crate::scan::sql::MovedCandidate::read(row)?;
+        let same_length = match (row.duration_seconds, key.duration_seconds) {
             (Some(old), Some(new)) => (old - new).abs() < DURATION_TOLERANCE_SECONDS,
             (None, None) => true,
             _ => false,
@@ -531,9 +534,9 @@ fn find_moved_track(
             continue;
         }
         candidates.push(Candidate {
-            id: row.get(0)?,
-            album_id: row.get(1)?,
-            same_place: row.get(2)?,
+            id: row.id,
+            album_id: row.local_album_id,
+            same_place: row.same_place,
         });
     }
     // The same recording on another album (or disc, or track number) is
@@ -581,7 +584,13 @@ fn credit_rows(
     };
     tx.prepare_cached(sql)?
         .query_map(params![subject], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+            let row = crate::scan::sql::CreditRead::read(row)?;
+            Ok((
+                row.position,
+                row.local_artist_id,
+                row.credited_name,
+                row.artist_mbid,
+            ))
         })?
         .collect()
 }
@@ -1034,19 +1043,20 @@ fn write_item(
     let at_path: Option<AtPath> = tx
         .prepare_cached(crate::scan::sql::TRACK_AT_PATH_FACTS.text())?
         .query_row(params![item.root_id, item.relative_path], |row| {
+            let row = crate::scan::sql::TrackFacts::read(row)?;
             Ok(AtPath {
-                id: row.get(0)?,
-                album_id: row.get(1)?,
-                availability: row.get(2)?,
-                duration_seconds: row.get(3)?,
-                recording_mbid: row.get(4)?,
-                title_folded: row.get(5)?,
-                title_provenance: row.get(6)?,
-                disc_number: row.get(7)?,
-                track_number: row.get(8)?,
-                sample_rate: row.get(9)?,
-                bit_depth: row.get(10)?,
-                channels: row.get(11)?,
+                id: row.id,
+                album_id: row.local_album_id,
+                availability: row.availability,
+                duration_seconds: row.duration_seconds,
+                recording_mbid: row.embedded_recording_mbid,
+                title_folded: row.title_folded,
+                title_provenance: row.title_provenance,
+                disc_number: row.disc_number,
+                track_number: row.track_number,
+                sample_rate: row.sample_rate,
+                bit_depth: row.bit_depth,
+                channels: row.channels,
             })
         })
         .optional()?;
@@ -1101,7 +1111,10 @@ fn write_item(
     let membership: Option<(String, bool)> = match &previous {
         Some((id, _)) => tx
             .prepare_cached(crate::scan::sql::TRACK_MEMBERSHIP.text())?
-            .query_row(params![id], |row| Ok((row.get(0)?, row.get(1)?)))
+            .query_row(params![id], |row| {
+                let row = crate::scan::sql::TrackMembership::read(row)?;
+                Ok((row.membership_source, row.locked))
+            })
             .optional()?,
         None => None,
     };
@@ -1238,7 +1251,8 @@ fn write_item(
     let (track_id, stored_album): (String, String) = tx
         .prepare_cached(crate::scan::sql::TRACK_AND_ALBUM_AT_PATH.text())?
         .query_row(params![item.root_id, item.relative_path], |row| {
-            Ok((row.get(0)?, row.get(1)?))
+            let row = crate::scan::sql::TrackAndAlbum::read(row)?;
+            Ok((row.id, row.local_album_id))
         })?;
     // A new copy of the recording the row describes is a file the app
     // never wrote: its record goes, unless the app has stepped back from
@@ -1465,7 +1479,8 @@ fn follow_regrouped(
     let (moved, stayed): (i64, i64) = tx
         .prepare_cached(crate::scan::sql::REGROUPED_COUNTS.text())?
         .query_row(params![run_id, album_id, target], |row| {
-            Ok((row.get(0)?, row.get(1)?))
+            let row = crate::scan::sql::RegroupedCounts::read(row)?;
+            Ok((row.moved, row.stayed))
         })?;
     if waits_for_the_rest(tx, album_id, moved, stayed, &[], now)? {
         return Ok(None);
@@ -1566,7 +1581,8 @@ fn holds_only_its_retag(
     let (foreign, older): (bool, bool) = tx
         .prepare_cached(crate::scan::sql::HOLDS_ONLY_ITS_RETAG.text())?
         .query_row(params![run_id, target, album_id], |row| {
-            Ok((row.get(0)?, row.get(1)?))
+            let row = crate::scan::sql::RetagHolds::read(row)?;
+            Ok((row.foreign_rows, row.older))
         })?;
     Ok(!(foreign && older))
 }
@@ -1863,13 +1879,13 @@ fn moved_rows(conn: &Connection, sql: &str, id: &str) -> rusqlite::Result<Vec<Mo
     let mut stmt = conn.prepare_cached(sql)?;
     let mut found = stmt.query(params![id])?;
     while let Some(row) = found.next()? {
-        let recording: bool = row.get(4)?;
-        if recording || same_length(row.get(5)?, row.get(6)?) {
+        let row = crate::scan::sql::MovedPair::read(row)?;
+        if row.recording || same_length(row.old_seconds, row.new_seconds) {
             rows.push(MovedRow {
-                old: row.get(0)?,
-                old_album: row.get(1)?,
-                new: row.get(2)?,
-                new_album: row.get(3)?,
+                old: row.old_id,
+                old_album: row.old_album_id,
+                new: row.new_id,
+                new_album: row.new_album_id,
             });
         }
     }
@@ -1997,11 +2013,12 @@ fn departed_from(
 ) -> rusqlite::Result<Vec<Departed>> {
     tx.prepare_cached(crate::scan::sql::DEPARTED_FROM.text())?
         .query_map(params![run_id, album_id, crate::clock::ms(now)], |row| {
+            let row = crate::scan::sql::DepartedRow::read(row)?;
             Ok(Departed {
-                track_id: row.get(0)?,
-                album_id: row.get(1)?,
-                arrived_ms: row.get(2)?,
-                this_run: row.get(3)?,
+                track_id: row.id,
+                album_id: row.local_album_id,
+                arrived_ms: row.arrived_ms,
+                this_run: row.this_run,
             })
         })?
         .collect()
@@ -2297,7 +2314,10 @@ fn carry_to_first_half(
                 RetagPairState::Open.as_str(),
                 RetagPairReason::StoreError.as_str()
             ],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| {
+                let row = crate::scan::sql::RetagAlbums::read(row)?;
+                Ok((row.old_album_id, row.new_album_id))
+            },
         )?
         .collect::<rusqlite::Result<_>>()?;
     for (old, new) in &failed {
@@ -2307,7 +2327,10 @@ fn carry_to_first_half(
     }
     let pairs: Vec<(String, String)> = tx
         .prepare_cached(crate::scan::sql::RUN_ALBUM_MOVES.text())?
-        .query_map(params![run_id], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .query_map(params![run_id], |row| {
+            let row = crate::scan::sql::AlbumMove::read(row)?;
+            Ok((row.previous_album_id, row.local_album_id))
+        })?
         .collect::<rusqlite::Result<_>>()?;
     for (old, new) in &pairs {
         if !holds_only_its_retag(tx, run_id, new, old)? {
@@ -2578,7 +2601,10 @@ fn record_new_copies(
 
 fn fenced_paths(tx: &Connection, run_id: &str) -> rusqlite::Result<HashSet<(String, String)>> {
     let mut statement = tx.prepare_cached(crate::scan::sql::FENCED_PATHS.text())?;
-    let rows = statement.query_map(params![run_id], |row| Ok((row.get(0)?, row.get(1)?)))?;
+    let rows = statement.query_map(params![run_id], |row| {
+        let row = crate::scan::sql::FencedPath::read(row)?;
+        Ok((row.root_id, row.relative_path))
+    })?;
     rows.collect()
 }
 
@@ -3020,18 +3046,19 @@ pub(crate) fn automatic_album_for(
             crate::scan::sql::TRACK_ALBUM_TAGS.text(),
             params![track_id, UNKNOWN_ARTIST],
             |row| {
+                let row = crate::scan::sql::TrackAlbumTags::read(row)?;
                 Ok(Stored {
-                    album_id: row.get(0)?,
-                    root_id: row.get(1)?,
-                    relative_path: row.get(2)?,
-                    release_mbid: row.get(3)?,
-                    album_title: row.get(4)?,
-                    album_artist: row.get(5)?,
-                    from_tags: row.get(6)?,
-                    album_artist_sort: row.get(7)?,
-                    year: row.get(8)?,
-                    genre: row.get(9)?,
-                    is_compilation: row.get(10)?,
+                    album_id: row.local_album_id,
+                    root_id: row.root_id,
+                    relative_path: row.relative_path,
+                    release_mbid: row.embedded_release_mbid,
+                    album_title: row.album_title,
+                    album_artist: row.album_artist,
+                    from_tags: row.from_tags,
+                    album_artist_sort: row.album_artist_sort,
+                    year: row.year,
+                    genre: row.genre,
+                    is_compilation: row.is_compilation,
                 })
             },
         )
@@ -3132,11 +3159,8 @@ fn album_artist_row(
     let shared = tx
         .prepare_cached(crate::scan::sql::ALBUM_ARTIST_ROW.text())?
         .query_map(params![track_id], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-            ))
+            let row = crate::scan::sql::AlbumArtistRow::read(row)?;
+            Ok((row.local_artist_id, row.artist_mbid, row.credited_name))
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?
         .into_iter()

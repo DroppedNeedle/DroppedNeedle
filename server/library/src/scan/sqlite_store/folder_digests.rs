@@ -23,11 +23,12 @@ impl SqliteScanStore {
             let mut stmt = conn.prepare(crate::scan::sql::FOLDER_DIGESTS.text())?;
             let rows = stmt
                 .query_map(params![root_id], |row| {
+                    let row = crate::scan::sql::FolderDigestRow::read(row)?;
                     Ok((
-                        row.get::<_, String>(0)?,
+                        row.relative_path,
                         FolderDigest {
-                            digest: row.get(1)?,
-                            audio_files: row.get(2)?,
+                            digest: row.digest,
+                            audio_files: row.audio_files,
                         },
                     ))
                 })?

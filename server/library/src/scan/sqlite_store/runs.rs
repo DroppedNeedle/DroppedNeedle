@@ -5,6 +5,7 @@ use crate::clock::LibraryClock as _;
 use crate::scan::models::transition;
 use crate::scan::sql;
 use droppedneedle_kernel::db::statement::Statement;
+use droppedneedle_kernel::db::time::Millis;
 
 /// Scan runs: requests, claims, state transitions, control, failures,
 /// counters, and boot recovery.
@@ -214,7 +215,18 @@ impl SqliteScanStore {
             let mut stmt = conn.prepare(sql::RUN_FAILURES_PAGE.text())?;
             let rows = stmt
                 .query_map(params![run_id, after, (limit + 1) as i64], |row| {
-                    Ok((row.get::<_, i64>("rowid")?, map_failure(row)?))
+                    let row = sql::FailurePageRow::read(row)?;
+                    Ok((
+                        row.rowid,
+                        ScanFailureRecord {
+                            root_id: row.root_id,
+                            relative_path: row.relative_path,
+                            failure_code: row.failure_code,
+                            recorded_at: crate::clock::at_secs(row.recorded_at),
+                            failure_detail: row.failure_detail,
+                            phase: row.phase,
+                        },
+                    ))
                 })?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
             Ok(rows)
@@ -298,12 +310,13 @@ impl SqliteScanStore {
                 let rows = conn
                     .prepare(sql::OWED_END_PASSES.text())?
                     .query_map([], |row| {
+                        let row = sql::OwedEndPass::read(row)?;
                         Ok((
-                            row.get(0)?,
-                            row.get(1)?,
-                            crate::clock::secs_at(row, 2)?,
-                            row.get(3)?,
-                            crate::clock::opt_secs_at(row, 4)?,
+                            row.id,
+                            row.next_end_pass,
+                            crate::clock::at_secs(row.terminal_at),
+                            row.end_pass_waits_used,
+                            row.end_pass_retry_at.map(crate::clock::at_secs),
                         ))
                     })?
                     .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -617,7 +630,8 @@ fn prune_compat_orphans(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
         let items: Vec<(i64, String, bool)> = conn
             .prepare(crate::scan::sql::QUEUE_ITEMS_OF_USER.text())?
             .query_map(params![user], |row| {
-                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                let row = crate::scan::sql::QueueItem::read(row)?;
+                Ok((row.item_index, row.file_id, row.gone))
             })?
             .collect::<rusqlite::Result<_>>()?;
         let kept: Vec<(i64, String)> = items
@@ -722,7 +736,7 @@ fn apply_event(
     let mut timings = run.phase_timings.clone();
     let mut phase_started_at: Option<f64> =
         tx.query_row(sql::PHASE_STARTED_AT.text(), params![run_id], |row| {
-            crate::clock::opt_secs_at(row, 0)
+            Ok(row.get::<_, Option<Millis>>(0)?.map(crate::clock::at_secs))
         })?;
     if run.state.timed() != next.timed() {
         if let (Some(phase), Some(started)) = (run.state.timed(), phase_started_at) {

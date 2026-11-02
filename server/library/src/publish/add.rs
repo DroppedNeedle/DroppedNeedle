@@ -193,9 +193,14 @@ pub fn plan_take_back(
     }
     let taken: bool = conn
         .prepare_cached(sql::TAKE_BACK_EXISTS.text())?
-        .query_row(rusqlite::params![undoes_marker(bundle_id)], |row| {
-            row.get(0)
-        })?;
+        .query_row(
+            rusqlite::params![
+                undoes_marker(bundle_id),
+                JournalKind::Delete,
+                JournalState::Compensated,
+            ],
+            |row| row.get(0),
+        )?;
     if taken {
         return Ok(Err(TakeBackRefusal::AlreadyTakenBack));
     }
@@ -245,9 +250,29 @@ pub fn plugin_files(
     let (at, id) = before.unwrap_or((i64::MAX, ""));
     let rows: Vec<(String, i64, String, bool)> = conn
         .prepare_cached(sql::PLUGIN_FILES.text())?
-        .query_map(rusqlite::params![plugin, at, id, limit], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
-        })?
+        .query_map(
+            rusqlite::params![
+                plugin,
+                at,
+                id,
+                limit,
+                JournalKind::Delete,
+                JournalState::Compensated,
+                JournalKind::Add,
+                JournalState::Committed,
+                JournalState::CleanupPending,
+                JournalState::Cleaned,
+            ],
+            |row| {
+                let row = sql::PluginFileRow::read(row)?;
+                Ok((
+                    row.bundle_id,
+                    row.created_at,
+                    row.bundle_json,
+                    row.taken_back,
+                ))
+            },
+        )?
         .collect::<Result<_, _>>()?;
     rows.into_iter()
         .map(|(bundle_id, added_at, json, taken_back)| {

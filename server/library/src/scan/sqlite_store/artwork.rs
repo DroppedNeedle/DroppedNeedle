@@ -308,12 +308,13 @@ pub(super) fn album_tracks(
     let mut tracks = conn.prepare(crate::scan::sql::ALBUM_TRACKS.text())?;
     let mut rows = tracks.query([])?;
     while let Some(row) = rows.next()? {
-        let album_id: String = row.get(0)?;
+        let row = crate::scan::sql::AlbumTrackFile::read(row)?;
+        let album_id = row.local_album_id;
         let track = TrackFile {
-            id: row.get(1)?,
-            path: PathBuf::from(row.get::<_, String>(2)?),
-            stat_revision: row.get(3)?,
-            size_bytes: row.get(4)?,
+            id: row.id,
+            path: PathBuf::from(row.file_path),
+            stat_revision: row.stat_revision,
+            size_bytes: row.file_size_bytes,
         };
         match albums.last_mut() {
             Some((last, files)) if *last == album_id => files.push(track),
@@ -540,24 +541,29 @@ fn sweep_snapshot(conn: &rusqlite::Connection) -> rusqlite::Result<Snapshot> {
     let mut current = conn.prepare(crate::scan::sql::ALL_ARTWORK.text())?;
     let mut rows = current.query([])?;
     while let Some(row) = rows.next()? {
+        let row = crate::scan::sql::ArtworkRow::read(row)?;
         snapshot.current.insert(
-            row.get(0)?,
+            row.local_album_id,
             CurrentArt {
-                source: row.get(1)?,
-                locator: row.get(2)?,
-                content_hash: row.get(3)?,
+                source: row.source,
+                locator: row.source_locator,
+                content_hash: row.content_hash,
             },
         );
     }
     let mut checks = conn.prepare(crate::scan::sql::ALL_ARTWORK_CHECKS.text())?;
     let mut rows = checks.query([])?;
     while let Some(row) = rows.next()? {
-        snapshot.checks.insert(row.get(0)?, row.get(1)?);
+        let row = crate::scan::sql::AlbumCheck::read(row)?;
+        snapshot.checks.insert(row.local_album_id, row.signature);
     }
     let mut checks = conn.prepare(crate::scan::sql::ALL_LYRICS_CHECKS.text())?;
     let mut rows = checks.query([])?;
     while let Some(row) = rows.next()? {
-        snapshot.lyrics_checks.insert(row.get(0)?, row.get(1)?);
+        let row = crate::scan::sql::AlbumCheck::read(row)?;
+        snapshot
+            .lyrics_checks
+            .insert(row.local_album_id, row.signature);
     }
     Ok(snapshot)
 }

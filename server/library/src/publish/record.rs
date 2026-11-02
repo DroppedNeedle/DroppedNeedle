@@ -73,7 +73,10 @@ pub fn v2_path_revision(root_id: &str, relative_path: &str, file_sha256: &str) -
 pub fn record(conn: &Connection, track_id: &str) -> rusqlite::Result<Record> {
     let row: Option<(Option<String>, Option<String>)> = conn
         .prepare_cached(crate::publish::sql::TRACK_WRITTEN_STATE.text())?
-        .query_row(params![track_id], |row| Ok((row.get(0)?, row.get(1)?)))
+        .query_row(params![track_id], |row| {
+            let row = crate::publish::sql::WrittenState::read(row)?;
+            Ok((row.written_sha256, row.v2_path_revision))
+        })
         .optional()?;
     Ok(
         row.map_or_else(Record::default, |(written_sha256, v2_path_revision)| {

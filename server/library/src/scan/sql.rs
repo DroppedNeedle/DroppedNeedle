@@ -6,9 +6,13 @@
 #![allow(unused_parens, clippy::double_parens)]
 
 use droppedneedle_kernel::db::statement::{Choice, ListLen};
+use droppedneedle_kernel::db::time::Millis;
 
 use crate::identity::sql::PERSONS;
-use crate::scan::models::Counter;
+use crate::scan::models::{
+    Counter, EffectivePolicy, FailureCode, RequestedControl, ScanKind, ScanPhase, ScanTrigger,
+    Verdict,
+};
 use crate::scan::sqlite_store::sql::{
     MOVED_COLUMNS, MOVED_MATCH, SAME_PLACE, TRACK_GONE, TRACK_PRESENT, WALKED_PAST, awaits_admin,
     covers, fenced_by, held, held_back, holds, refused_scope, walked_past,
@@ -263,7 +267,7 @@ droppedneedle_kernel::sql! {
                  AND retired_into_album_id IS NULL AND title_folded = ?2 \
                  AND COALESCE(album_artist_name_folded, '') = ?3)";
     pub(super) ALBUM_HAS_GROUPING_KEY = "SELECT EXISTS(SELECT 1 FROM local_albums WHERE id = ?1 AND grouping_key = ?2)";
-    pub(super) ALBUMS_FOR_GROUPING = "SELECT id, grouping_key = ?1 FROM local_albums \
+    pub(super) ALBUMS_FOR_GROUPING = "SELECT id, grouping_key = ?1 AS exact FROM local_albums \
              WHERE retired_into_album_id IS NULL AND (grouping_key = ?1 \
              OR (?2 IS NOT NULL AND title_folded = ?3 AND album_artist_name_folded = ?4 \
                AND (grouping_key = ?2 OR (?2 = 'mbid:' AND grouping_key LIKE 'mbid:%')))) \
@@ -310,7 +314,7 @@ droppedneedle_kernel::sql! {
              FROM local_tracks WHERE root_id = ?1 AND relative_path = ?2";
     pub(super) MOVE_TRACK_PATH = "UPDATE local_tracks SET root_id = ?2, relative_path = ?3, path_hash = ?4, \
                  file_path = ?5, row_revision = row_revision + 1 WHERE id = ?1";
-    pub(super) TRACK_MEMBERSHIP = "SELECT membership_source, membership_locked = 1 FROM local_tracks WHERE id = ?1";
+    pub(super) TRACK_MEMBERSHIP = "SELECT membership_source, membership_locked = 1 AS locked FROM local_tracks WHERE id = ?1";
     pub(super) TRACK_EXISTS = "SELECT EXISTS(SELECT 1 FROM local_tracks WHERE id = ?1)";
     pub(super) WRITE_TRACK_ROW = "INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
          path_hash, file_size_bytes, file_mtime_ns, stat_revision, stat_revision_kind, \
@@ -402,8 +406,8 @@ droppedneedle_kernel::sql! {
              WHERE m.run_id = ?1 AND m.previous_album_id = ?2";
     pub(super) REGROUPED_COUNTS = "SELECT (SELECT COUNT(DISTINCT m.local_track_id) FROM library_scan_album_moves m \
                JOIN local_tracks t ON t.id = m.local_track_id \
-               WHERE m.run_id = ?1 AND m.previous_album_id = ?2 AND t.local_album_id = ?3), \
-             (SELECT COUNT(*) FROM local_tracks WHERE local_album_id = ?2)";
+               WHERE m.run_id = ?1 AND m.previous_album_id = ?2 AND t.local_album_id = ?3) AS moved, \
+             (SELECT COUNT(*) FROM local_tracks WHERE local_album_id = ?2) AS stayed";
     pub(super) COPY_ALBUM_GROUPING = "UPDATE local_albums SET (root_id, grouping_key, title, title_folded, \
              album_artist_name, album_artist_name_folded, tag_album_title, \
              tag_album_artist_name, album_artist_id, album_artist_sort_name, year, \
@@ -430,12 +434,12 @@ droppedneedle_kernel::sql! {
                WHERE t.local_album_id = ?2 AND NOT EXISTS ( \
                  SELECT 1 FROM library_scan_album_moves m WHERE m.run_id = ?1 \
                  AND m.local_track_id = t.id AND m.previous_album_id = ?3)) \
-             SELECT EXISTS(SELECT 1 FROM other), \
+             SELECT EXISTS(SELECT 1 FROM other) AS foreign_rows, \
              EXISTS(SELECT 1 FROM local_albums a, run WHERE a.id = ?2 \
                AND a.created_at < run.started_at) \
              OR EXISTS(SELECT 1 FROM other, run WHERE other.imported_at < run.started_at \
                OR NOT EXISTS (SELECT 1 FROM library_scan_inventory i WHERE i.run_id = ?1 \
-                 AND i.root_id = other.root_id AND i.relative_path = other.relative_path))";
+                 AND i.root_id = other.root_id AND i.relative_path = other.relative_path)) AS older";
     pub(super) ALBUM_STILL_HELD = "SELECT EXISTS(SELECT 1 FROM local_tracks WHERE local_album_id = ?1) \
              OR EXISTS(SELECT 1 FROM library_user_favorites \
                WHERE item_kind = 'album' AND item_id = ?1) \
@@ -469,9 +473,9 @@ droppedneedle_kernel::sql! {
          CASE WHEN EXISTS (SELECT 1 FROM moved_now WHERE moved_now.local_track_id = t.id) \
            THEN (SELECT start_ms FROM run) \
            ELSE COALESCE((SELECT MAX(d.arrived_at) FROM library_album_departures d \
-             WHERE d.local_track_id = t.id), (SELECT start_ms FROM run)) END, \
+             WHERE d.local_track_id = t.id), (SELECT start_ms FROM run)) END AS arrived_ms, \
          EXISTS (SELECT 1 FROM moved_now WHERE moved_now.local_track_id = t.id \
-           AND moved_now.previous_album_id = ?2) \
+           AND moved_now.previous_album_id = ?2) AS this_run \
          FROM left_it JOIN local_tracks t ON t.id = left_it.local_track_id \
          WHERE t.local_album_id <> ?2 ORDER BY t.id";
     pub(super) PIECES = "SELECT EXISTS(SELECT 1 FROM local_tracks o WHERE o.local_album_id = ?3 \
@@ -549,8 +553,8 @@ droppedneedle_kernel::sql! {
          WHERE run_id = ?1 AND processing_state = 'pending' \
          AND (root_id, relative_path) > (?2, ?3) AND (root_id, relative_path) <= (?4, ?5)";
     pub(super) TRACK_ALBUM_TAGS = "SELECT local_album_id, root_id, relative_path, embedded_release_mbid, album_title, \
-             COALESCE(album_artist_name, ?2), \
-             album_title_provenance = 'tag' AND album_artist_provenance = 'tag', \
+             COALESCE(album_artist_name, ?2) AS album_artist, \
+             album_title_provenance = 'tag' AND album_artist_provenance = 'tag' AS from_tags, \
              album_artist_sort, year, genre, is_compilation FROM local_tracks WHERE id = ?1";
     pub(super) RETIRED_ALBUM_WITH_KEY = "SELECT id FROM local_albums WHERE grouping_key = ?1 AND retired_into_album_id = ?2 \
              ORDER BY created_at, id LIMIT 1";
@@ -581,13 +585,13 @@ droppedneedle_kernel::sql! {
          WHERE k.cause = ?1 AND k.handed_back_at IS NULL \
          AND NOT EXISTS (SELECT 1 FROM library_retag_pairs p \
            WHERE p.new_album_id = k.local_album_id)";
-    pub(super) HANDS_OFF_ALBUM_STATE = "SELECT b.created_at, b.retired_into_album_id IS NULL, \
+    pub(super) HANDS_OFF_ALBUM_STATE = "SELECT b.created_at, b.retired_into_album_id IS NULL AS live, \
              EXISTS (SELECT 1 FROM local_tracks t WHERE t.local_album_id = b.id \
-               AND (t.ingest_source <> 'scan' OR t.imported_at < b.created_at)), \
+               AND (t.ingest_source <> 'scan' OR t.imported_at < b.created_at)) AS foreign_rows, \
              EXISTS (SELECT 1 FROM library_management_exclusions e \
-               WHERE e.local_album_id = b.id), \
+               WHERE e.local_album_id = b.id) AS is_excluded, \
              EXISTS (SELECT 1 FROM library_album_takeovers k WHERE k.local_album_id = b.id \
-               AND k.cause = ?2 AND k.handed_back_at IS NULL) \
+               AND k.cause = ?2 AND k.handed_back_at IS NULL) AS is_held \
              FROM local_albums b WHERE b.id = ?1";
     pub(super) ALBUM_TRACK_PLACES = "SELECT id, root_id, relative_path, duration_seconds FROM local_tracks \
              WHERE local_album_id = ?1 ORDER BY id";
@@ -810,10 +814,10 @@ droppedneedle_kernel::sql! {
                  AND c.local_album_id <> ?5 AND a.retired_into_album_id IS NULL \
                  AND EXISTS(SELECT 1 FROM local_tracks t WHERE t.local_album_id = a.id \
                  AND t.availability = 'indexed' AND t.id IS NOT ?4 AND NOT " + TRACK_GONE + "))";
-    pub(super) ALBUM_PRESENCE = "SELECT t.root_id, t.relative_path, " + TRACK_PRESENT + " FROM local_tracks t \
+    pub(super) ALBUM_PRESENCE = "SELECT t.root_id, t.relative_path, " + TRACK_PRESENT + " AS present FROM local_tracks t \
          WHERE t.local_album_id = ?2 AND t.availability = 'indexed'";
-    pub(super) FIND_MOVED_BY_RECORDING = "SELECT t.id, t.local_album_id, " + SAME_PLACE + ", t.duration_seconds FROM local_tracks t" + " WHERE t.embedded_recording_mbid = ?2 AND " + TRACK_GONE;
-    pub(super) FIND_MOVED_BY_TITLE = "SELECT t.id, t.local_album_id, " + SAME_PLACE + ", t.duration_seconds FROM local_tracks t" + " WHERE t.title_folded = ?2 AND " + SAME_PLACE + " AND " + TRACK_GONE;
+    pub(super) FIND_MOVED_BY_RECORDING = "SELECT t.id, t.local_album_id, " + SAME_PLACE + " AS same_place, t.duration_seconds FROM local_tracks t" + " WHERE t.embedded_recording_mbid = ?2 AND " + TRACK_GONE;
+    pub(super) FIND_MOVED_BY_TITLE = "SELECT t.id, t.local_album_id, " + SAME_PLACE + " AS same_place, t.duration_seconds FROM local_tracks t" + " WHERE t.title_folded = ?2 AND " + SAME_PLACE + " AND " + TRACK_GONE;
     pub(super) MOVED_PAIRS_OF_GONE_TRACK = "SELECT " + MOVED_COLUMNS + " FROM local_tracks t JOIN local_tracks n \
          ON n.availability = 'indexed' AND n.album_title_folded = t.album_title_folded \
          AND " + MOVED_MATCH + " WHERE t.id = ?1";
@@ -923,7 +927,7 @@ droppedneedle_kernel::sql! {
     /// Lift the holds run `?1` settled (`?2` is now).
     pub(super) LIFT_SETTLED_HOLDS = "DELETE FROM library_scan_held_scopes AS h WHERE " + HOLD_LIFTS;
     /// The held rows of live albums the holds run `?1` lifts let go, with each one's earliest hold.
-    pub(super) ROWS_LET_GO = "SELECT n.local_album_id, n.id, MIN(h.held_at) \
+    pub(super) ROWS_LET_GO = "SELECT n.local_album_id, n.id, MIN(h.held_at) AS first_held_at \
              FROM library_scan_held_scopes h \
              CROSS JOIN local_tracks n \
              CROSS JOIN local_albums b ON b.id = n.local_album_id \
@@ -964,12 +968,12 @@ droppedneedle_kernel::sql! {
     /// Indexed rows run `?3` walked past under one scope, and the rows the scope holds once its new files index.
     pub(super) VANISH_COUNTS = "SELECT \
                          (SELECT COUNT(*) FROM local_tracks t WHERE t.root_id = ?1 \
-                          AND +t.availability = 'indexed' AND " + IN_SCOPE_T + " AND " + (walked_past!("?3")) + "), \
+                          AND +t.availability = 'indexed' AND " + IN_SCOPE_T + " AND " + (walked_past!("?3")) + ") AS walked_past_count, \
                          (SELECT COUNT(*) FROM local_tracks t WHERE t.root_id = ?1 \
                           AND +t.availability = 'indexed' AND " + IN_SCOPE_T + " AND NOT " + (refused_scope!("?3", "t")) + ") \
                          + (SELECT COUNT(*) FROM library_scan_inventory i WHERE i.run_id = ?3 \
                           AND i.root_id = ?1 AND i.scope_relative_path = ?2 \
-                          AND i.comparison_result = 'new')";
+                          AND i.comparison_result = 'new') AS total";
     /// Rows walked past under the scope whose file the run's inventory holds at the same place below a twin in `?4`.
     pub(super) ROWS_FOUND_AT_TWINS = "SELECT COUNT(*) FROM local_tracks t WHERE t.root_id = ?1 \
              AND +t.availability = 'indexed' AND " + IN_SCOPE_T + " AND " + (walked_past!("?3")) + " \
@@ -977,7 +981,7 @@ droppedneedle_kernel::sql! {
                ON i.run_id = ?3 AND i.root_id = ?1 \
                AND i.relative_path = w.value || substr(t.relative_path, length(?2) + 1))";
     /// Indexed paths run `?3` walked past under one scope, and whether a folder covering each was held back.
-    pub(super) MISSING_CATALOG_PATHS = "SELECT t.relative_path, " + (held_back!("?3", "t")) + " FROM local_tracks t \
+    pub(super) MISSING_CATALOG_PATHS = "SELECT t.relative_path, " + (held_back!("?3", "t")) + " AS held_back FROM local_tracks t \
              WHERE t.root_id = ?1 AND t.availability = 'indexed' AND " + IN_SCOPE + " \
              AND " + (walked_past!("?3")) + " ORDER BY t.relative_path";
     /// Catalog tracks under any of a list of scopes, each counted once. Each scope binds its root and path.
@@ -986,7 +990,7 @@ droppedneedle_kernel::sql! {
     pub(super) DROP_ORPHAN_BOOKMARKS = "DELETE FROM compat_bookmarks WHERE " + (track_gone!("compat_bookmarks"));
     pub(super) USERS_WITH_ORPHAN_QUEUE_ITEMS = "SELECT DISTINCT user_id FROM compat_play_queue_items WHERE " + (track_gone!("compat_play_queue_items"));
     /// User `?1`'s queue in order, and whether each entry's track row is gone.
-    pub(super) QUEUE_ITEMS_OF_USER = "SELECT item_index, file_id, " + (track_gone!("compat_play_queue_items")) + " FROM compat_play_queue_items \
+    pub(super) QUEUE_ITEMS_OF_USER = "SELECT item_index, file_id, " + (track_gone!("compat_play_queue_items")) + " AS gone FROM compat_play_queue_items \
                  WHERE user_id = ?1 ORDER BY item_index";
     pub(super) RUNS_PAUSING_OR_STOPPING = "SELECT id FROM library_scan_runs WHERE state IN ('pausing','stopping') ORDER BY queued_at, id";
     pub(super) RUNS_STOPPING = "SELECT id FROM library_scan_runs WHERE state = 'stopping' ORDER BY queued_at, id";
@@ -1020,6 +1024,284 @@ droppedneedle_kernel::sql! {
          WHERE k.local_album_id = a.id AND k.availability = 'indexed'))";
      fragment WALKED_PAST_INDEXED = " OR (t.availability = 'indexed' AND " + WALKED_PAST + ")";
     family REPLACEMENT_ROWS = replacements_sql;
+
+    pub(super) row OwedEndPass for [OWED_END_PASSES] {
+        id: String,
+        next_end_pass: String,
+        terminal_at: Millis,
+        end_pass_waits_used: i64,
+        end_pass_retry_at: Option<Millis>,
+    }
+    pub(super) row RunRow for [
+        RUNS_OWING_END_PASSES,
+        LOAD_RUN,
+        LIST_HISTORY,
+        LATEST_FILESYSTEM_TERMINAL,
+        RESUMABLE,
+        RECOVER,
+        CURRENT_RUNS,
+        OPEN_RUN_TO_JOIN,
+    ] {
+        id: String,
+        kind: ScanKind,
+        trigger: ScanTrigger,
+        requested_by_user_id: Option<String>,
+        state: String,
+        phase: String,
+        resume_phase: Option<ScanPhase>,
+        requested_control: RequestedControl,
+        aggregate_scope: String,
+        total_count: i64,
+        discovered_count: i64,
+        inspected_count: i64,
+        new_count: i64,
+        changed_count: i64,
+        indexed_count: i64,
+        unchanged_count: i64,
+        excluded_count: i64,
+        missing_count: i64,
+        errored_count: i64,
+        identification_enqueued_count: i64,
+        coalesced_request_count: i64,
+        queued_at: Millis,
+        started_at: Option<Millis>,
+        updated_at: Millis,
+        terminal_at: Option<Millis>,
+        terminal_code: Option<FailureCode>,
+        phase_timings_json: String,
+        row_revision: i64,
+        event_revision: i64,
+    }
+    pub(super) row ScopeRow for [LOAD_SCOPES] {
+        root_id: String,
+        scope_id: Option<String>,
+        relative_path: String,
+        root_path: Option<String>,
+        effective_policy: EffectivePolicy,
+        policy_revision: String,
+        estimated_count: Option<i64>,
+    }
+    pub(super) row InventoryRow for [INVENTORY_FOR_RUN, INVENTORY_PAGE] {
+        root_id: String,
+        relative_path: String,
+        absolute_path: String,
+        file_size_bytes: i64,
+        file_mtime_ns: i64,
+        stat_revision: String,
+        effective_policy: EffectivePolicy,
+        comparison_result: Verdict,
+        policy_revision: String,
+        local_track_id: Option<String>,
+        scope_relative_path: String,
+    }
+    pub(super) row FailureRow for [RUN_FAILURES] {
+        root_id: String,
+        relative_path: String,
+        failure_code: FailureCode,
+        recorded_at: Millis,
+        failure_detail: String,
+        phase: ScanPhase,
+    }
+    pub(super) row FailurePageRow for [RUN_FAILURES_PAGE] {
+        rowid: i64,
+        root_id: String,
+        relative_path: String,
+        failure_code: FailureCode,
+        recorded_at: Millis,
+        failure_detail: String,
+        phase: ScanPhase,
+    }
+    pub(super) row ArtistNames for [ARTIST_NAMES] {
+        display_name: String,
+        sort_name: Option<String>,
+    }
+    pub(super) row AlbumTrackFile for [ALBUM_TRACKS] {
+        local_album_id: String,
+        id: String,
+        file_path: String,
+        stat_revision: String,
+        file_size_bytes: i64,
+    }
+    pub(super) row ArtworkRow for [ALL_ARTWORK] {
+        local_album_id: String,
+        source: String,
+        source_locator: Option<String>,
+        content_hash: Option<String>,
+    }
+    pub(super) row AlbumCheck for [ALL_ARTWORK_CHECKS, ALL_LYRICS_CHECKS] {
+        local_album_id: String,
+        signature: String,
+    }
+    pub(super) row CatalogRow for [LOAD_CATALOG_MAP] {
+        relative_path: String,
+        id: String,
+        stat_revision: String,
+        stat_revision_kind: String,
+        file_size_bytes: i64,
+        file_mtime_ns: i64,
+        tags_read_at: Option<Millis>,
+    }
+    pub(super) row GroupingCandidate for [ALBUMS_FOR_GROUPING] {
+        id: String,
+        exact: bool,
+    }
+    pub(super) row CreditRead for [ALBUM_CREDIT_ROWS, TRACK_CREDIT_ROWS] {
+        position: i64,
+        local_artist_id: String,
+        credited_name: Option<String>,
+        artist_mbid: Option<String>,
+    }
+    pub(super) row TrackFacts for [TRACK_AT_PATH_FACTS] {
+        id: String,
+        local_album_id: String,
+        availability: String,
+        duration_seconds: Option<f64>,
+        embedded_recording_mbid: Option<String>,
+        title_folded: String,
+        title_provenance: String,
+        disc_number: i64,
+        track_number: i64,
+        sample_rate: Option<i64>,
+        bit_depth: Option<i64>,
+        channels: Option<i64>,
+    }
+    pub(super) row TrackMembership for [TRACK_MEMBERSHIP] {
+        membership_source: String,
+        locked: bool,
+    }
+    pub(super) row TrackAndAlbum for [TRACK_AND_ALBUM_AT_PATH] {
+        id: String,
+        local_album_id: String,
+    }
+    pub(super) row RegroupedCounts for [REGROUPED_COUNTS] {
+        moved: i64,
+        stayed: i64,
+    }
+    pub(super) row RetagHolds for [HOLDS_ONLY_ITS_RETAG] {
+        foreign_rows: bool,
+        older: bool,
+    }
+    pub(super) row DepartedRow for [DEPARTED_FROM] {
+        id: String,
+        local_album_id: String,
+        arrived_ms: i64,
+        this_run: bool,
+    }
+    pub(super) row RetagAlbums for [CHAINED_RETAG_PAIRS, END_DISMISSED_RETURNED] {
+        old_album_id: String,
+        new_album_id: String,
+    }
+    pub(super) row AlbumMove for [RUN_ALBUM_MOVES] {
+        previous_album_id: String,
+        local_album_id: String,
+    }
+    pub(super) row TrackAlbumTags for [TRACK_ALBUM_TAGS] {
+        local_album_id: String,
+        root_id: String,
+        relative_path: String,
+        embedded_release_mbid: Option<String>,
+        album_title: String,
+        album_artist: String,
+        from_tags: bool,
+        album_artist_sort: Option<String>,
+        year: Option<i64>,
+        genre: Option<String>,
+        is_compilation: i64,
+    }
+    pub(super) row AlbumArtistRow for [ALBUM_ARTIST_ROW] {
+        local_artist_id: String,
+        artist_mbid: String,
+        credited_name: String,
+    }
+    pub(super) row FolderDigestRow for [FOLDER_DIGESTS] {
+        relative_path: String,
+        digest: i64,
+        audio_files: i64,
+    }
+    pub(super) row HandsOffState for [HANDS_OFF_ALBUM_STATE] {
+        created_at: i64,
+        live: bool,
+        foreign_rows: bool,
+        is_excluded: bool,
+        is_held: bool,
+    }
+    pub(super) row TrackPlaceRow for [ALBUM_TRACK_PLACES] {
+        id: String,
+        root_id: String,
+        relative_path: String,
+        duration_seconds: Option<f64>,
+    }
+    pub(super) row RetagPairRow for [RECORDED] {
+        reason: String,
+        state: String,
+    }
+    pub(super) row AlbumPresenceRow for [ALBUM_PRESENCE] {
+        root_id: String,
+        relative_path: String,
+        present: bool,
+    }
+    pub(super) row MovedCandidate for [FIND_MOVED_BY_RECORDING, FIND_MOVED_BY_TITLE] {
+        id: String,
+        local_album_id: String,
+        same_place: bool,
+        duration_seconds: Option<f64>,
+    }
+    pub(super) row MovedPair for [MOVED_PAIRS_OF_GONE_TRACK, MOVED_PAIRS_OF_NEW_TRACK] {
+        old_id: String,
+        old_album_id: String,
+        new_id: String,
+        new_album_id: String,
+        recording: bool,
+        old_seconds: Option<f64>,
+        new_seconds: Option<f64>,
+    }
+    pub(super) row LostRow for [LOST_ROWS] {
+        id: String,
+        local_album_id: String,
+        root_id: String,
+        relative_path: String,
+        duration_seconds: Option<f64>,
+    }
+    pub(super) row NewTrackRow for [NEW_EVERYWHERE, NEW_BELOW] {
+        id: String,
+        local_album_id: String,
+        relative_path: String,
+    }
+    pub(super) row FencedPath for [FENCED_PATHS] {
+        root_id: String,
+        relative_path: String,
+    }
+    pub(super) row LetGoRow for [ROWS_LET_GO] {
+        local_album_id: String,
+        id: String,
+        first_held_at: i64,
+    }
+    pub(super) row EmptyMount for [EMPTY_MOUNTS] {
+        relative_path: String,
+        indexed: i64,
+    }
+    pub(super) row ProvenRow for [ROWS_PROVEN_AS_MBID] {
+        id: String,
+        chosen: bool,
+    }
+    pub(super) row VanishCounts for [VANISH_COUNTS] {
+        walked_past_count: i64,
+        total: i64,
+    }
+    pub(super) row MissingCatalogPath for [MISSING_CATALOG_PATHS] {
+        relative_path: String,
+        held_back: bool,
+    }
+    pub(super) row QueueItem for [QUEUE_ITEMS_OF_USER] {
+        item_index: i64,
+        file_id: String,
+        gone: bool,
+    }
+    pub(super) row ReplacementRow for family [replacements_sql] {
+        new_album_id: String,
+        old_album_id: String,
+        track_id: String,
+    }
 }
 
 pub(super) fn scopes_track_count(scopes: ListLen) -> String {
@@ -1066,7 +1348,7 @@ pub(super) fn replacements_sql(source: HeldRows) -> String {
         ),
     };
     format!(
-        "SELECT DISTINCT n.local_album_id, a.id, n.id \
+        "SELECT DISTINCT n.local_album_id AS new_album_id, a.id AS old_album_id, n.id AS track_id \
          FROM {from} \
          CROSS JOIN local_albums b ON b.id = n.local_album_id \
          CROSS JOIN local_track_external_identities ni \

@@ -234,12 +234,22 @@ pub(crate) fn judge(tx: &Transaction<'_>, pair: &Pair, now: f64) -> rusqlite::Re
     let (missing_at, old_root, old_path): (Option<f64>, String, String) = tx
         .prepare_cached(crate::corrections::sql::GONE_TRACK_FACTS.text())?
         .query_row(params![pair.old], |row| {
-            Ok((crate::clock::opt_secs_at(row, 0)?, row.get(1)?, row.get(2)?))
+            let row = crate::corrections::sql::GoneFacts::read(row)?;
+            Ok((
+                row.missing_at.map(crate::clock::at_secs),
+                row.root_id,
+                row.relative_path,
+            ))
         })?;
     let (imported_at, new_root, new_path): (Option<f64>, String, String) = tx
         .prepare_cached(crate::corrections::sql::NEW_TRACK_FACTS.text())?
         .query_row(params![pair.new], |row| {
-            Ok((crate::clock::opt_secs_at(row, 0)?, row.get(1)?, row.get(2)?))
+            let row = crate::corrections::sql::NewFacts::read(row)?;
+            Ok((
+                row.imported_at.map(crate::clock::at_secs),
+                row.root_id,
+                row.relative_path,
+            ))
         })?;
     let Some(gone) = missing_at else {
         return Ok(Verdict::Stayed);

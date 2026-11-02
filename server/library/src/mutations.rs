@@ -832,11 +832,12 @@ impl Mutations {
                         crate::sql::LIFT_EXCLUSION.text(),
                         params![canonical, expected_revision],
                         |row| {
+                            let row = crate::sql::LiftedExclusion::read(row)?;
                             Ok((
-                                row.get(0)?,
-                                row.get(1)?,
-                                crate::clock::secs_at(row, 2)?,
-                                row.get(3)?,
+                                row.reason,
+                                row.excluded_by_user_id,
+                                crate::clock::at_secs(row.excluded_at),
+                                row.row_revision,
                             ))
                         },
                     )

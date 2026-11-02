@@ -137,18 +137,19 @@ pub(crate) fn place_scanned(tx: &Transaction<'_>, now: f64) -> rusqlite::Result<
     {
         let mut statement = tx.prepare_cached(CANDIDATES.text())?;
         let rows = statement.query_map([], |row| {
+            let row = crate::corrections::sql::PlacementCandidate::read(row)?;
             Ok((
-                row.get::<_, String>(0)?,
+                row.local_album_id,
                 Candidate {
-                    id: row.get(1)?,
-                    release_track: row.get(2)?,
-                    recording: row.get(3)?,
-                    release: row.get(4)?,
-                    disc: row.get(5)?,
-                    track: row.get(6)?,
-                    imported_at: crate::clock::opt_secs_at(row, 7)?,
-                    album_title: row.get(8)?,
-                    album_artist: row.get(9)?,
+                    id: row.id,
+                    release_track: row.release_track,
+                    recording: row.recording,
+                    release: row.release,
+                    disc: row.disc_number,
+                    track: row.track_number,
+                    imported_at: row.imported_at.map(crate::clock::at_secs),
+                    album_title: row.album_title_folded,
+                    album_artist: row.album_artist,
                 },
             ))
         })?;
@@ -188,7 +189,8 @@ fn place_album(
     let (release, chosen_at): (String, f64) = tx
         .prepare_cached(crate::corrections::sql::PLACE_ALBUM.text())?
         .query_row(params![album], |row| {
-            Ok((row.get(0)?, crate::clock::secs_at(row, 1)?))
+            let row = crate::corrections::sql::PlaceAlbum::read(row)?;
+            Ok((row.release_mbid, crate::clock::at_secs(row.selected_at)))
         })?;
     let edition = edition(tx, album, &release)?;
     let held = held_tracks(tx, album)?;
@@ -365,14 +367,15 @@ fn retagged_by_hand(
     }
     let olds: Vec<(String, Option<f64>, String, String, i64, i64)> = tx
         .prepare_cached(crate::corrections::sql::RETAGGED_BY_HAND.text())?
-        .query_map(params![album, track.key], |r| {
+        .query_map(params![album, track.key], |row| {
+            let row = crate::corrections::sql::Retagged::read(row)?;
             Ok((
-                r.get(0)?,
-                crate::clock::opt_secs_at(r, 1)?,
-                r.get(2)?,
-                r.get(3)?,
-                r.get(4)?,
-                r.get(5)?,
+                row.id,
+                row.missing_at.map(crate::clock::at_secs),
+                row.album_title_folded,
+                row.album_artist,
+                row.disc_number,
+                row.track_number,
             ))
         })?
         .collect::<rusqlite::Result<_>>()?;

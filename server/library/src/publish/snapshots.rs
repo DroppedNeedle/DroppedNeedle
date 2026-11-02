@@ -184,9 +184,9 @@ impl BlobStore {
                     let (mut chunk, mut size) = (Vec::new(), 0);
                     while size < MOVE_CHUNK_BYTES {
                         let Some(row) = rows.next()? else { break };
-                        let bytes: Vec<u8> = row.get(1)?;
-                        size += bytes.len().max(1);
-                        chunk.push((row.get(0)?, bytes));
+                        let row = sql::LegacyBlob::read(row)?;
+                        size += row.bytes.len().max(1);
+                        chunk.push((row.sha256, row.bytes));
                     }
                     Ok::<_, PublishError>(chunk)
                 })?;
@@ -298,11 +298,8 @@ impl<'a> SnapshotStore<'a> {
                 crate::publish::sql::SNAPSHOT_ROW.text(),
                 rusqlite::params![id],
                 |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, i64>(2)?,
-                    ))
+                    let row = sql::SnapshotRow::read(row)?;
+                    Ok((row.track_id, row.blob_sha256, row.expiry_day))
                 },
             )
             .optional()
@@ -316,12 +313,8 @@ impl<'a> SnapshotStore<'a> {
     ) -> Result<Vec<(String, String, String, i64)>, PublishError> {
         let mut stmt = self.conn.prepare(crate::publish::sql::BUNDLE.text())?;
         let rows = stmt.query_map(rusqlite::params![bundle_id], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, i64>(3)?,
-            ))
+            let row = sql::BundleSnapshot::read(row)?;
+            Ok((row.id, row.track_id, row.blob_sha256, row.expiry_day))
         })?;
         let mut out = Vec::new();
         for row in rows {
@@ -452,11 +445,8 @@ impl<'a> BaselineStore<'a> {
                 crate::publish::sql::BASELINE_ROW.text(),
                 rusqlite::params![track_id],
                 |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, String>(2)?,
-                    ))
+                    let row = sql::BaselineRow::read(row)?;
+                    Ok((row.blob_sha256, row.original_root, row.original_rel))
                 },
             )
             .optional()

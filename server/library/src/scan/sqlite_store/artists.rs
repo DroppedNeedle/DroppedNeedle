@@ -197,11 +197,11 @@ pub(crate) fn proven_rows(tx: &Connection, mbid: &str) -> rusqlite::Result<Vec<P
                 UNKNOWN_ARTIST_ID
             ],
             |row| {
-                let chosen: bool = row.get(1)?;
+                let row = crate::scan::sql::ProvenRow::read(row)?;
                 Ok(Proven {
-                    id: row.get(0)?,
+                    id: row.id,
                     linked: true,
-                    automatic: !chosen,
+                    automatic: !row.chosen,
                 })
             },
         )?
@@ -369,7 +369,10 @@ impl Resolver<'_> {
         let (display, sort): (String, Option<String>) = self
             .tx
             .prepare_cached(crate::scan::sql::ARTIST_NAMES.text())?
-            .query_row(params![artist], |row| Ok((row.get(0)?, row.get(1)?)))?;
+            .query_row(params![artist], |row| {
+                let row = crate::scan::sql::ArtistNames::read(row)?;
+                Ok((row.display_name, row.sort_name))
+            })?;
         let renamed = display != credit.name && !self.still_named(artist, &display)?;
         let name = if renamed { &credit.name } else { &display };
         let new_sort = match &credit.sort_name {

@@ -10,6 +10,7 @@ use std::path::Path;
 use droppedneedle_kernel::db::{CancelFlag, Db};
 use rusqlite::{Connection, OptionalExtension, params};
 
+use super::journal::{JournalKind, JournalState};
 use super::paths::Sandbox;
 use super::put_back::RemovalKind;
 use super::{PublishError, sql};
@@ -147,9 +148,19 @@ pub fn page(
         db.read_long("publish.bin_page", &CancelFlag::never(), |conn| {
             let mut rows: Vec<Row> = conn
                 .prepare_cached(sql::BIN_PAGE.text())?
-                .query_map(params![at, after, limit as i64 + 1], |row| {
-                    Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
-                })?
+                .query_map(
+                    params![
+                        at,
+                        after,
+                        limit as i64 + 1,
+                        JournalKind::Remove,
+                        JournalState::NeedsAttention,
+                    ],
+                    |row| {
+                        let row = sql::BinPageRow::read(row)?;
+                        Ok((row.bundle_id, row.removed_at, row.first_binned, row.removal))
+                    },
+                )?
                 .collect::<Result<_, _>>()?;
             let more = rows.len() > limit;
             rows.truncate(limit);
@@ -158,15 +169,27 @@ pub fn page(
                     .to_string();
             let files: Vec<File> = conn
                 .prepare_cached(sql::BIN_FILES.text())?
-                .query_map([&ids], |row| {
-                    Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+                .query_map(params![ids, JournalState::NeedsAttention], |row| {
+                    let row = sql::BinFile::read(row)?;
+                    Ok((row.bundle_id, row.recycle_to, row.state, row.local_album_id))
                 })?
                 .collect::<Result<_, _>>()?;
             let records: Vec<Record> = conn
                 .prepare_cached(sql::BIN_RECORDS.text())?
-                .query_map([&ids], |row| {
-                    Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
-                })?
+                .query_map(
+                    params![
+                        ids,
+                        JournalKind::Remove,
+                        JournalState::Prepared,
+                        JournalState::Staged,
+                        JournalState::Published,
+                        JournalState::Compensated,
+                    ],
+                    |row| {
+                        let row = sql::BinRecord::read(row)?;
+                        Ok((row.id, row.reason_code, row.local_album_id, row.writing))
+                    },
+                )?
                 .collect::<Result<_, _>>()?;
             let spent: HashSet<String> = conn
                 .prepare_cached(sql::BIN_SPENT.text())?
@@ -251,14 +274,14 @@ fn album(conn: &Connection, id: &str) -> Result<Option<BinAlbum>, PublishError> 
     Ok(conn
         .prepare_cached(sql::BIN_ALBUM.text())?
         .query_row([id], |row| {
-            let release_group_mbid: Option<String> = row.get(4)?;
+            let row = sql::BinAlbumRow::read(row)?;
             Ok(BinAlbum {
-                id: row.get(0)?,
-                title: row.get(1)?,
-                artist: row.get(2)?,
-                has_page: row.get::<_, bool>(3)? || release_group_mbid.is_some(),
-                release_group_mbid,
-                cover_available: row.get(5)?,
+                id: row.id,
+                title: row.title,
+                artist: row.album_artist_name,
+                has_page: row.has_indexed_track || row.release_group_mbid.is_some(),
+                release_group_mbid: row.release_group_mbid,
+                cover_available: row.cover_available,
             })
         })
         .optional()?)
@@ -278,10 +301,13 @@ pub fn summary(
     let (count, due) = db.read_long("publish.bin_summary", &CancelFlag::never(), |conn| {
         let count: u32 = conn
             .prepare_cached(sql::BIN_COUNT.text())?
-            .query_row([], |row| row.get(0))?;
+            .query_row(params![JournalState::NeedsAttention], |row| row.get(0))?;
         let due: Vec<(String, Option<String>)> = conn
             .prepare_cached(sql::BIN_DUE.text())?
-            .query_map([as_of_ms], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .query_map(params![as_of_ms, JournalState::Cleaned], |row| {
+                let row = sql::BinDueRow::read(row)?;
+                Ok((row.recycle_to, row.replaced_track_id))
+            })?
             .collect::<Result<_, _>>()?;
         Ok::<_, PublishError>((count, due))
     })?;
