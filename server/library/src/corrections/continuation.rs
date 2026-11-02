@@ -43,10 +43,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
 use serde_json::{Value, json};
 
+use crate::catalog_actions::CatalogAction;
+use crate::catalog_actions::record_action;
 use crate::catalog_revision::bump_catalog;
 use crate::corrections::sql::HOLDING_ALIASES;
 use crate::identify::sqlite::retarget_references;
-use crate::operations::decisions::{CatalogAction, record_action};
 use droppedneedle_kernel::db::savepoint;
 
 /// Audit kind and reason of a continuation.

@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::identity::DecisionSource;
-use crate::operations::reasons::Reason;
+use crate::reasons::Reason;
 
 /// Which album membership change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

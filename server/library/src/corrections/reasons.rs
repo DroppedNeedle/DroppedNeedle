@@ -1,7 +1,7 @@
 //! Why a catalog correction was refused, or what it did to an album's
 //! edition: one stable code, one plain sentence, and what to do next.
 
-use crate::operations::reasons::Reason;
+use crate::reasons::Reason;
 
 const fn reason(code: &'static str, message: &'static str, action: &'static str) -> Reason {
     Reason {

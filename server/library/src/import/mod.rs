@@ -56,7 +56,7 @@
 //! other row there gives up its path and keeps its id and history. The
 //! commit applies the same rule again, and on an album whose match is a
 //! person's it places each file on its release track
-//! ([`crate::operations::choice::place_imported`]); what people
+//! ([`crate::edition::choice::place_imported`]); what people
 //! made on a replaced track moves to the file that replaced it. The join
 //! and each file's place ride in the provenance record, so a commit
 //! resumed after a crash joins and places them the same way.
@@ -68,6 +68,7 @@
 pub mod naming;
 pub(crate) mod sql;
 
+use crate::identity::ReleaseIdentity;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -82,8 +83,8 @@ use super::publish::import_staging::{
 };
 use super::publish::paths::{ResolvedRoot, left_out};
 use super::publish::planner::{
-    AlbumJoin, Capability, CopySeal, JoinedTrack, PlanBundle, PlanItem, PlanKind, ReleaseIdentity,
-    Removal, RemoveItem, SealRecheck, SealedPreview,
+    AlbumJoin, Capability, CopySeal, JoinedTrack, PlanBundle, PlanItem, PlanKind, Removal,
+    RemoveItem, SealRecheck, SealedPreview,
 };
 use super::publish::publisher::{JoinedAlbum, copy_folder, joined_album};
 use super::publish::remove::{self, Probe, Refusal, Target};
@@ -547,7 +548,7 @@ impl Imports {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         // Read under the lock, so an import that waited out another write
         // sees the switch as it is now. It waits like a missing folder.
-        if super::manage::switched_off(&self.core.live_registry()) {
+        if crate::publish::session::switched_off(&self.core.live_registry()) {
             tracing::info!("a landing waits: the library is switched off");
             return Err(ImportError::LibraryOff);
         }
@@ -913,7 +914,7 @@ impl Imports {
                 items,
                 profile_revision: PINNED_REVISION,
                 naming_revision: PINNED_REVISION,
-                policy_revision: super::manage::policy_revision_u64(&registry),
+                policy_revision: crate::publish::session::policy_revision_u64(&registry),
                 put_back: None,
                 added: None,
                 removal: (!removals.is_empty()).then(|| Removal {
@@ -1108,7 +1109,7 @@ impl Imports {
         let mut targets = Vec::with_capacity(rows.len());
         for (track_id, root_id, relative_path) in rows {
             let path = registry.resolve(&root_id).and_then(|root| {
-                super::mutations::join_inside(&root.path, &relative_path).map(|path| (root, path))
+                crate::removal::join_inside(&root.path, &relative_path).map(|path| (root, path))
             });
             let Some((root, path)) = path else {
                 return Ok(Err(OUTSIDE_ROOT.to_owned()));
@@ -1206,7 +1207,7 @@ fn blocked_reason(refusal: &Refusal) -> String {
         Refusal::Changed => "Your copy changed while it was being checked.".to_owned(),
         Refusal::OutsideRoot => OUTSIDE_ROOT.to_owned(),
         Refusal::BinsUnknown(cause) => {
-            crate::mutations::bins_unknown(*cause, crate::mutations::BinUse::Wait)
+            crate::removal::bins_unknown(*cause, crate::removal::BinUse::Wait)
                 .message
                 .to_owned()
         }

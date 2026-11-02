@@ -21,22 +21,25 @@
 
 use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
 
-use super::models::{OperationError, ReidentificationCandidate};
-use super::plan::{StoredPlacement, seat};
-use super::reasons;
-use super::sql::{HandMatchRow, StoredPlacementRow};
-use super::store::PROVIDER;
+use crate::edition::PROVIDER;
+use crate::edition::plan::StoredPlacement;
+use crate::edition::plan::seat;
+use crate::edition::sql::HandMatchRow;
+use crate::edition::sql::StoredPlacementRow;
 use crate::identify::models::PriorTrackIdentity;
 use crate::identity::reads::{album_identity_row, identity_revision, indexed_track_ids, track_row};
 use crate::identity::{self, DecisionSource, Matched};
+use crate::jobs::models::OperationError;
 use crate::jobs::{OperationState, WorkState};
 use crate::management::models::{Eligibility, JobMode};
 use crate::matching::model::Release;
+use crate::reasons;
+use crate::reidentify::models::ReidentificationCandidate;
 
 /// Whether the album is in the library and not merged into another.
 fn album_live(conn: &Connection, album_id: &str) -> rusqlite::Result<bool> {
     conn.query_row(
-        crate::operations::sql::ALBUM_LIVE.text(),
+        crate::edition::sql::ALBUM_LIVE.text(),
         params![album_id],
         |row| row.get(0),
     )
@@ -45,7 +48,7 @@ fn album_live(conn: &Connection, album_id: &str) -> rusqlite::Result<bool> {
 /// Whether a custom edition is active on the album.
 fn custom_active(conn: &Connection, album_id: &str) -> rusqlite::Result<bool> {
     conn.query_row(
-        crate::operations::sql::CUSTOM_ACTIVE.text(),
+        crate::edition::sql::CUSTOM_ACTIVE.text(),
         params![album_id],
         |row| row.get(0),
     )
@@ -54,7 +57,7 @@ fn custom_active(conn: &Connection, album_id: &str) -> rusqlite::Result<bool> {
 /// Whether `track_id` is an indexed file of the album.
 fn indexed_on(conn: &Connection, album_id: &str, track_id: &str) -> rusqlite::Result<bool> {
     conn.query_row(
-        crate::operations::sql::INDEXED_ON.text(),
+        crate::edition::sql::INDEXED_ON.text(),
         params![track_id, album_id],
         |row| row.get(0),
     )
@@ -99,7 +102,7 @@ pub(super) fn stored_placements(
     conn: &Connection,
     album_id: &str,
 ) -> rusqlite::Result<Vec<StoredPlacement>> {
-    conn.prepare(crate::operations::sql::STORED_PLACEMENTS.text())?
+    conn.prepare(crate::edition::sql::STORED_PLACEMENTS.text())?
         .query_map(params![album_id, PROVIDER], StoredPlacementRow::read)?
         .map(|row| {
             row.map(|row| StoredPlacement {
@@ -127,7 +130,7 @@ pub(super) fn written_since(
     matched_at: i64,
 ) -> rusqlite::Result<bool> {
     conn.query_row(
-        crate::operations::sql::WRITTEN_SINCE.text(),
+        crate::edition::sql::WRITTEN_SINCE.text(),
         params![
             track_id,
             matched_at,
@@ -276,7 +279,7 @@ pub(super) fn unmatch_file(
     }
     let kept = tx
         .query_row(
-            crate::operations::sql::UNMATCH_FILE.text(),
+            crate::edition::sql::UNMATCH_FILE.text(),
             params![track_id],
             HandMatchRow::read,
         )

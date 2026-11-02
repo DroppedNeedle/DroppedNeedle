@@ -15,12 +15,13 @@
 //! pre-DroppedNeedle state, and purge is a separate global
 //! retention removal behind its own confirmation contract.
 
+use crate::identity::ReleaseIdentity;
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
 use super::PublishError;
-use super::planner::{FileFingerprint, ReleaseIdentity};
+use super::planner::FileFingerprint;
 use super::tags_seam::TagDocument;
 
 /// Exact before state captured by a successful publisher call: the

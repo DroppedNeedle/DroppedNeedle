@@ -1,33 +1,10 @@
-//! Library operation jobs: long-running administrator work an
-//! administrator can watch, pause, resume, and stop.
+//! The operations worker: long-running work an administrator can watch,
+//! pause, resume, and stop.
 //!
-//! Jobs are claimed, kept and recovered through [`crate::jobs`]. The
-//! worker here runs re-identifications (a person retries a review, and the
-//! job hands the album to the identification queue, which settles it by
-//! its usual rules) and review jobs, which settle or retry many reviews
-//! one at a time. The same module undoes an automatic edition and
-//! searches MusicBrainz releases for the edition finder.
-//!
-//! Layout: `models` holds the types, `control` the pause, resume, and stop
-//! rules, `store` the re-identification SQL, `decisions` the administrator's catalog
-//! decisions, `reidentify` the candidate evaluation, and `service` the
-//! entry points the HTTP handlers and the loop call.
-
-pub mod choice;
-pub mod control;
-pub mod decisions;
-mod hand_match;
-pub mod history;
-pub mod models;
-pub mod plan;
-pub mod port;
-pub mod reasons;
-pub mod reidentify;
-pub mod reviews;
-pub mod service;
-pub(crate) mod sql;
-pub mod status;
-pub mod store;
+//! It runs re-identifications (a person retries a review, and the job hands
+//! the album to the identification queue, which settles it by its usual
+//! rules), review jobs, which settle or retry many reviews one at a time,
+//! and edition remaps.
 
 use std::time::Duration;
 
@@ -37,8 +14,8 @@ use droppedneedle_kernel::jobs::{
 };
 
 use crate::jobs::OPERATIONS_WAKEUP;
+use crate::jobs::service::Operations;
 use crate::wiring::LibrarySetup;
-use service::Operations;
 
 /// How long the worker waits for a wakeup before it looks anyway: a
 /// queued re-identification wakes it, while edition remaps are found by
@@ -164,15 +141,15 @@ async fn review_tick(setup: &LibrarySetup, ops: &Operations, owner: &str) -> Opt
     let stepped = blocking("review job step", move || {
         if !setup.coordinator.current().is_empty() {
             ops.release_review_job(&owner)?;
-            return Ok(service::ReviewStep::Idle);
+            return Ok(crate::reviews::service::ReviewStep::Idle);
         }
         ops.run_review_step(&owner)
     })
     .await?;
     match stepped {
-        service::ReviewStep::Idle => None,
-        service::ReviewStep::Worked(_) => Some(true),
-        service::ReviewStep::Ended(job) => {
+        crate::reviews::service::ReviewStep::Idle => None,
+        crate::reviews::service::ReviewStep::Worked(_) => Some(true),
+        crate::reviews::service::ReviewStep::Ended(job) => {
             tracing::info!(
                 job_id = job.id,
                 state = job.state.as_str(),
@@ -188,7 +165,7 @@ async fn review_tick(setup: &LibrarySetup, ops: &Operations, owner: &str) -> Opt
 /// logged as `what`.
 async fn blocking<T: Send + 'static>(
     what: &'static str,
-    work: impl FnOnce() -> Result<T, models::OperationError> + Send + 'static,
+    work: impl FnOnce() -> Result<T, crate::jobs::models::OperationError> + Send + 'static,
 ) -> Option<T> {
     match tokio::task::spawn_blocking(work).await {
         Ok(Ok(value)) => Some(value),

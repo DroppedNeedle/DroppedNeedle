@@ -1,69 +1,31 @@
-//! Durable operation state over the 0001 tables.
+//! Durable re-identification state.
 //!
-//! A job is a `library_operation_jobs` row with one row per work item in
-//! `library_operation_work`, both written through [`crate::jobs`]. A
-//! re-identification also keeps a snapshot in
+//! A re-identification keeps a snapshot in
 //! `library_reidentification_snapshots`: the album, input, and identity
 //! revisions it was started against and whether a Local metadata lookup
 //! was confirmed. Its worker hands the album to the identification queue
 //! and finishes, so no re-identification waits on a choice.
 //!
 //! The functions here are plain SQL on a caller's connection or
-//! transaction; [`super::service`] owns the transactions. The catalog
-//! decisions a person makes on an album live in [`super::decisions`].
+//! transaction; the service owns the transactions.
 
 use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
 
-use super::control::{ControlPlan, Requeue, plan};
-use super::models::{
-    Control, Evaluation, OperationError, OperationJob, OperationKind, OperationState, WorkResult,
-};
-use super::reasons;
-use super::sql::{ControlKey, SnapshotRow, WorkResultRow};
 use crate::identify::queue::album_input_revision;
 use crate::identity::DecisionSource;
 use crate::identity::reads::{album_identity_row, identity_hash};
-use crate::jobs::{self, ControlChange, NewJob, NewWork, Tally, WorkState};
+use crate::jobs::OperationJob;
+use crate::jobs::OperationKind;
+use crate::jobs::OperationState;
+use crate::jobs::models::OperationError;
+use crate::jobs::store::job_after;
+use crate::jobs::{self, NewJob, NewWork, Tally, WorkState};
 use crate::management::profile::root_assignment;
+use crate::reasons;
+use crate::reidentify::models::Evaluation;
+use crate::reidentify::sql::SnapshotRow;
 use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::sections::LibraryManagement;
-
-/// Work results a job detail shows; the rest are counted, not listed.
-const RESULTS_SHOWN: usize = 100;
-pub(super) const PROVIDER: &str = "musicbrainz";
-
-/// The job after a write that must have found it.
-pub(crate) fn job_after(conn: &Connection, job_id: &str) -> Result<OperationJob, OperationError> {
-    jobs::job(conn, job_id)?.ok_or(OperationError::NotFound(reasons::OPERATION_NOT_FOUND))
-}
-
-/// The first work results of a job, and whether more exist.
-pub fn work_results(conn: &Connection, job_id: &str) -> rusqlite::Result<(Vec<WorkResult>, bool)> {
-    let mut stmt = conn.prepare(crate::operations::sql::WORK_RESULTS.text())?;
-    let rows = stmt.query_map(
-        params![job_id, (RESULTS_SHOWN + 1) as i64],
-        WorkResultRow::read,
-    )?;
-    let mut results = rows
-        .map(|row| {
-            row.map(|row| WorkResult {
-                ordinal: row.ordinal,
-                local_album_id: row.local_album_id,
-                local_track_id: row.local_track_id,
-                action: row.action,
-                state: row.state,
-                failure_code: row.failure_code,
-                result: row
-                    .result_json
-                    .and_then(|raw| serde_json::from_str(&raw).ok())
-                    .unwrap_or_else(|| serde_json::json!({})),
-            })
-        })
-        .collect::<rusqlite::Result<Vec<_>>>()?;
-    let truncated = results.len() > RESULTS_SHOWN;
-    results.truncate(RESULTS_SHOWN);
-    Ok((results, truncated))
-}
 
 /// A re-identification's sealed inputs, and the evaluation a job made
 /// before re-identifications were handed to identification.
@@ -81,7 +43,7 @@ pub struct Snapshot {
 
 pub fn snapshot(conn: &Connection, job_id: &str) -> rusqlite::Result<Option<Snapshot>> {
     conn.query_row(
-        crate::operations::sql::SNAPSHOT.text(),
+        crate::reidentify::sql::SNAPSHOT.text(),
         params![job_id],
         SnapshotRow::read,
     )
@@ -129,7 +91,7 @@ pub fn album_revisions(
 ) -> rusqlite::Result<Option<AlbumRevisions>> {
     let album_revision: Option<i64> = conn
         .query_row(
-            crate::operations::sql::LIVE_ALBUM_REVISION.text(),
+            crate::reidentify::sql::LIVE_ALBUM_REVISION.text(),
             params![album_id],
             |row| row.get(0),
         )
@@ -137,7 +99,7 @@ pub fn album_revisions(
     let Some(album_revision) = album_revision else {
         return Ok(None);
     };
-    let mut stmt = conn.prepare(crate::operations::sql::ALBUM_APPLIED_POLICIES.text())?;
+    let mut stmt = conn.prepare(crate::reidentify::sql::ALBUM_APPLIED_POLICIES.text())?;
     let policies = stmt
         .query_map(params![album_id], |row| row.get::<_, String>(0))?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -159,7 +121,7 @@ pub fn album_revisions(
 /// Whether the album may be identified again on a person's request, and
 /// its revisions when it may. Checked when the request is stored and
 /// again when the worker hands the album to identification.
-pub(super) fn retry_gate(
+pub(crate) fn retry_gate(
     conn: &Connection,
     management: &Live<LibraryManagement>,
     album_id: &str,
@@ -204,7 +166,7 @@ fn local_metadata_managed(
     management: &Live<LibraryManagement>,
     album_id: &str,
 ) -> Result<bool, OperationError> {
-    let mut stmt = conn.prepare(crate::operations::sql::LOCAL_METADATA_MANAGED.text())?;
+    let mut stmt = conn.prepare(crate::reidentify::sql::LOCAL_METADATA_MANAGED.text())?;
     let roots = stmt
         .query_map(params![album_id], |row| row.get::<_, String>(0))?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -294,7 +256,7 @@ pub fn create_reidentification(
         },
     )?;
     tx.execute(
-        crate::operations::sql::CREATE_REIDENTIFICATION.text(),
+        crate::reidentify::sql::CREATE_REIDENTIFICATION.text(),
         params![
             new.job_id,
             new.local_album_id,
@@ -334,7 +296,7 @@ fn live_reidentification(
 ) -> rusqlite::Result<Option<OperationJob>> {
     let id: Option<String> = conn
         .query_row(
-            crate::operations::sql::LIVE_REIDENTIFICATION.text(),
+            crate::reidentify::sql::LIVE_REIDENTIFICATION.text(),
             params![
                 OperationKind::ExplicitReidentification,
                 album_id,
@@ -349,69 +311,6 @@ fn live_reidentification(
         Some(id) => jobs::job(conn, &id),
         None => Ok(None),
     }
-}
-
-// ---------------------------------------------------------------------------
-// Controls.
-// ---------------------------------------------------------------------------
-
-/// Apply one control under the caller's revision. A repeated idempotency
-/// key answers with the job as it is now.
-pub fn request_control(
-    tx: &Transaction<'_>,
-    job_id: &str,
-    control: Control,
-    expected_row_revision: i64,
-    idempotency_key: Option<&str>,
-    now: f64,
-) -> Result<OperationJob, OperationError> {
-    let current =
-        jobs::job(tx, job_id)?.ok_or(OperationError::NotFound(reasons::OPERATION_NOT_FOUND))?;
-    if let Some(key) = idempotency_key {
-        if key.trim().is_empty() {
-            return Err(OperationError::Invalid(reasons::CONTROL_KEY_EMPTY));
-        }
-        let prior = tx
-            .query_row(
-                crate::operations::sql::CONTROL_OF_IDEMPOTENCY_KEY.text(),
-                params![key],
-                ControlKey::read,
-            )
-            .optional()?;
-        if let Some(prior) = prior {
-            if prior.job_id != job_id || prior.control != control.as_str() {
-                return Err(OperationError::Conflict(reasons::CONTROL_KEY_REUSED));
-            }
-            return Ok(current);
-        }
-    }
-    if current.row_revision != expected_row_revision {
-        return Err(OperationError::Conflict(reasons::OPERATION_CHANGED));
-    }
-    if let Some(key) = idempotency_key {
-        tx.execute(
-            crate::operations::sql::RECORD_CONTROL_REQUEST.text(),
-            params![key, job_id, control.as_str(), crate::clock::ms(now)],
-        )?;
-    }
-    let change = match plan(&current, control) {
-        ControlPlan::Unchanged => return Ok(current),
-        ControlPlan::Request(request) => ControlChange::Request(request),
-        ControlPlan::StopNow => ControlChange::StopNow,
-        ControlPlan::Requeue(Requeue::Restart) => {
-            tx.execute(
-                crate::operations::sql::CLEAR_REIDENTIFICATION_RESULT.text(),
-                params![job_id],
-            )?;
-            ControlChange::Restart
-        }
-        ControlPlan::Requeue(Requeue::RetryFailed) => ControlChange::RetryFailed,
-        ControlPlan::Requeue(Requeue::Continue) => ControlChange::Continue,
-    };
-    if !jobs::control(tx, job_id, change, expected_row_revision, now)? {
-        return Err(OperationError::Conflict(reasons::OPERATION_CHANGED));
-    }
-    job_after(tx, job_id)
 }
 
 // ---------------------------------------------------------------------------

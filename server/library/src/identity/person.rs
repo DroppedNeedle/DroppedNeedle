@@ -17,11 +17,13 @@ use super::remap::queue_remap;
 use super::sql;
 use super::undo::{Snapshot, keep_choice_undo, record_and_keep, restore_track_row, snapshot};
 use super::{DecisionSource, IdentityError, PROVIDER, Placed, Refusal, Rows, delete_album_row};
+use crate::catalog_actions::CatalogAction;
+use crate::catalog_actions::record_action;
 use crate::catalog_revision::bump_catalog;
 use crate::corrections::continuation::{Scope, continue_tracks};
 use crate::corrections::release_join::join_replaced;
 use crate::identify::models::PriorTrackIdentity;
-use crate::operations::decisions::{CatalogAction, record_action, settle_reviews};
+use crate::reviews::settle_reviews;
 
 /// Reason code on an album whose chosen edition fits none of its files.
 pub(crate) const CHOSEN_FITS_NO_FILE: &str = "CHOSEN_EDITION_FITS_NO_FILE";

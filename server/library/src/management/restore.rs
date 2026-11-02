@@ -19,8 +19,8 @@ use super::sql::{BaselinePurge, BlobSize};
 use super::store::Snapshot;
 use crate::clock::LibraryClock as _;
 use crate::jobs::OperationState;
-use crate::manage::BaselineSkip;
 use crate::publish::record::changed_since_written;
+use crate::publish::session::BaselineSkip;
 use crate::publish::snapshots::sha256_hex;
 use crate::publish::undo::BaselineBlock;
 

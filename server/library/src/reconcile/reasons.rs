@@ -1,7 +1,7 @@
 //! Why a duplicate group needs a look, or why a request was refused: one
 //! stable code, one plain sentence, and what to do about it.
 
-pub use crate::operations::reasons::Reason;
+pub use crate::reasons::Reason;
 
 const fn reason(code: &'static str, message: &'static str, action: &'static str) -> Reason {
     Reason {

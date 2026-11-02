@@ -9,7 +9,6 @@
 
 use std::sync::{Arc, Mutex};
 
-use super::manage::publish_error;
 use super::scan::coordinator::ScanRequestError;
 use super::scan::models::{
     EffectivePolicy, Event, RunState, ScanFailureRecord, ScanInventoryItem, ScanKind, ScanRequest,
@@ -24,6 +23,7 @@ use super::scan::watcher::WatcherState;
 use super::service::ServiceError;
 use super::settings::LibrarySettings;
 use super::wiring::{LibraryCore, ScanCoordinator};
+use crate::publish::session::publish_error;
 use droppedneedle_kernel::page::TimeKey;
 use droppedneedle_kernel::runtime_config::Plain;
 use droppedneedle_kernel::runtime_config::secret_sections::TypedLibrary;

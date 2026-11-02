@@ -42,6 +42,8 @@ use sha2::{Digest as _, Sha256};
 use super::merged_ids;
 use super::sqlite::stored_release;
 use super::stores::StoreError;
+use crate::catalog_actions::ArtistAction;
+use crate::catalog_actions::record_artist_action;
 use crate::catalog_revision::bump_catalog;
 use crate::corrections::artist_convergence::{CREDITS_MOVED, MOVED_BY_NAME, MOVED_WITH_ID};
 use crate::corrections::continuation::accepted_release;
@@ -55,7 +57,6 @@ use crate::identify::sql::{
 use crate::identity::DecisionSource;
 use crate::identity::reads::release_input_hash;
 use crate::matching::model::{ArtistNames, CreditedArtist, Release, VARIOUS_ARTISTS_MBID};
-use crate::operations::decisions::{ArtistAction, record_artist_action};
 use crate::scan::sqlite_store::artists::SENTINEL_ARTIST_IDS;
 use droppedneedle_kernel::db::statement::Statement;
 use droppedneedle_kernel::db::{DbError, fold_text, savepoint};

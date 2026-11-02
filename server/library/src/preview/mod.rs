@@ -11,7 +11,7 @@
 //! expiry is part of the MAC either way. The comparison takes the same
 //! time wherever the tokens differ.
 
-use crate::operations::reasons::Reason;
+use crate::reasons::Reason;
 use crate::settings::LibrarySettings;
 use droppedneedle_auth::session::tokens::secret_eq;
 

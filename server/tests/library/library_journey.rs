@@ -901,8 +901,8 @@ async fn an_artist_renamed_by_a_managed_run_keeps_its_row() {
 /// is refused there and undone from History.
 #[tokio::test]
 async fn a_managed_change_is_undone_only_by_its_writer_or_an_admin() {
-    use droppedneedle_library::manage::PreviewItemInput;
     use droppedneedle_library::publish::planner::PlanKind;
+    use droppedneedle_library::publish::session::PreviewItemInput;
     use droppedneedle_library::tags::read_fields;
 
     let rig = Rig::start("lib-manage-undo-roles").await;
@@ -2690,7 +2690,7 @@ async fn automatic_write_keeps_a_manual_identity() {
 /// caller gets the error and the review stays pending.
 #[tokio::test]
 async fn failed_approval_leaves_the_review_pending() {
-    use droppedneedle_library::operations::models::OperationError;
+    use droppedneedle_library::jobs::models::OperationError;
 
     let (scratch, library, music) = bare_library("lib-approve-fail").await;
     plant(&music, "album/01.flac", "flac_full_01.flac");
@@ -3092,7 +3092,7 @@ fn publish_one(
     dest_rel: Option<&str>,
     updates: &[(&str, &str)],
 ) -> String {
-    use droppedneedle_library::manage::PreviewItemInput;
+    use droppedneedle_library::publish::session::PreviewItemInput;
     let sealed = library
         .publishing
         .plan_preview(
@@ -3345,8 +3345,8 @@ async fn baseline_restore_removes_fields_added_later() {
 /// recorded or staged.
 #[tokio::test]
 async fn a_publish_checks_its_own_rows() {
-    use droppedneedle_library::manage::PreviewItemInput;
     use droppedneedle_library::publish::planner::PlanKind;
+    use droppedneedle_library::publish::session::PreviewItemInput;
     use droppedneedle_library::service::ServiceError;
     use droppedneedle_library::tags::{TagField, read_fields};
 
@@ -3839,7 +3839,7 @@ fn track_row(db: &Path, track_id: &str) -> TrackRow {
 /// automatic one returns to its earlier release.
 #[tokio::test]
 async fn library_journey_undo_automatic_edition() {
-    use droppedneedle_library::operations::decisions::live_automatic_edition_undo;
+    use droppedneedle_library::edition::decisions::live_automatic_edition_undo;
 
     let rig = Rig::start("lib-operations").await;
     let app = &rig.app;
@@ -4217,7 +4217,7 @@ async fn artist_duplicate_groups_list_open_and_dismiss() {
 /// covers the album's folder.
 #[tokio::test]
 async fn removal_recycles_files_and_rescan_targets_the_album() {
-    use droppedneedle_library::mutations::Mutations;
+    use droppedneedle_library::removal::Mutations;
 
     let (scratch, library, music) = bare_library("lib-remove").await;
     let first = plant(&music, "Band/LP/01.flac", "flac_full_01.flac");
@@ -4294,7 +4294,7 @@ async fn removal_recycles_files_and_rescan_targets_the_album() {
 async fn removals_use_the_bin_library_management_names() {
     use droppedneedle_kernel::db::DurableLane;
     use droppedneedle_kernel::runtime_config::sections::LibraryManagement;
-    use droppedneedle_library::mutations::{MutationError, Mutations, RECYCLE_BIN_UNKNOWN};
+    use droppedneedle_library::removal::{MutationError, Mutations, RECYCLE_BIN_UNKNOWN};
     use std::os::unix::fs::PermissionsExt as _;
 
     let (scratch, library, music) = bare_library("lib-remove-named-bin").await;
@@ -4363,7 +4363,7 @@ async fn removals_use_the_bin_library_management_names() {
 #[tokio::test]
 async fn an_unreadable_section_can_be_repaired_from_the_page() {
     use droppedneedle_library::management::settings::service::LibraryManagementService;
-    use droppedneedle_library::mutations::{MutationError, Mutations, RECYCLE_BIN_UNKNOWN};
+    use droppedneedle_library::removal::{MutationError, Mutations, RECYCLE_BIN_UNKNOWN};
 
     let (_scratch, library, music) = bare_library("lib-remove-repair").await;
     let file = plant(&music, "Band/LP/01.flac", "flac_full_01.flac");
@@ -4431,7 +4431,7 @@ async fn an_unreadable_section_can_be_repaired_from_the_page() {
 /// commit, the clean-up still runs once after the restart.
 #[tokio::test]
 async fn album_cleanup_survives_a_stop_after_the_removal() {
-    use droppedneedle_library::mutations::Mutations;
+    use droppedneedle_library::removal::Mutations;
 
     let rig = Rig::start("lib-remove-cleanup").await;
     let music = rig.app.config.root_app_dir.join("music");
@@ -4670,7 +4670,7 @@ async fn an_upgrade_held_for_one_file_keeps_that_files_old_copy() {
 /// stays in the recycle bin, where a later "Put back" still finds it.
 #[tokio::test]
 async fn put_back_refuses_an_occupied_path() {
-    use droppedneedle_library::mutations::{MutationError, Mutations};
+    use droppedneedle_library::removal::{MutationError, Mutations};
 
     let (scratch, library, music) = bare_library("lib-put-back").await;
     let original = plant(&music, "Band/LP/01.flac", "flac_full_01.flac");
@@ -4757,8 +4757,8 @@ async fn put_back_refuses_an_occupied_path() {
 /// A removal whose tracks change while it waits for recovery is put back.
 #[tokio::test]
 async fn a_stopped_removal_keeps_each_file_with_its_track() {
-    use droppedneedle_library::mutations::Mutations;
     use droppedneedle_library::publish::CrashPoint;
+    use droppedneedle_library::removal::Mutations;
 
     let (scratch, library, music) = bare_library("lib-remove-stopped").await;
     // (where it stops, Remove extras, the rows change before recovery)
@@ -4902,7 +4902,7 @@ fn removed_extras(
     conn: &rusqlite::Connection,
     folder: &str,
 ) -> (String, Vec<String>, Vec<PathBuf>, String) {
-    use droppedneedle_library::mutations::Mutations;
+    use droppedneedle_library::removal::Mutations;
 
     let names = ["01.flac", "02.flac"];
     let paths: Vec<PathBuf> = names
@@ -4981,7 +4981,7 @@ fn no_hidden_files(dir: &Path) -> bool {
 /// not offered, and putting it back changes nothing.
 #[tokio::test]
 async fn a_removed_album_is_put_back_from_its_page() {
-    use droppedneedle_library::mutations::{MutationError, Mutations, RemovalKind};
+    use droppedneedle_library::removal::{MutationError, Mutations, RemovalKind};
 
     let (scratch, library, music) = bare_library("lib-put-back-album").await;
     plant(&music, "Back/01.flac", "flac_no_tags.flac");
@@ -5121,8 +5121,8 @@ async fn a_removed_album_is_put_back_from_its_page() {
 async fn a_switched_off_library_takes_no_file_changes() {
     use droppedneedle_kernel::runtime_config::secret_sections::TypedLibrary;
     use droppedneedle_library::import::{DownloadImport, ImportError, ImportOrigin, ImportSource};
-    use droppedneedle_library::manage::PluginFileRefusal;
-    use droppedneedle_library::mutations::{MutationError, Mutations};
+    use droppedneedle_library::publish::session::PluginFileRefusal;
+    use droppedneedle_library::removal::{MutationError, Mutations};
 
     let (scratch, library, music) = bare_library("lib-switched-off").await;
     plant(&music, "Kept/01.flac", "flac_no_tags.flac");
@@ -5268,7 +5268,7 @@ fn left_bin(conn: &rusqlite::Connection, journal_id: &str) -> bool {
 /// default.
 #[tokio::test]
 async fn expiry_waits_on_a_retention_that_does_not_read() {
-    use droppedneedle_library::mutations::Mutations;
+    use droppedneedle_library::removal::Mutations;
 
     let (scratch, library, music) = bare_library("lib-retention-waits").await;
     plant(&music, "A/01.flac", "flac_no_tags.flac");
@@ -5322,8 +5322,8 @@ async fn expiry_waits_on_a_retention_that_does_not_read() {
 /// untouched.
 #[tokio::test]
 async fn emptying_the_bin_deletes_unchanged_copies_and_keeps_the_rest() {
-    use droppedneedle_library::mutations::Mutations;
     use droppedneedle_library::publish::expiry::KeptWhy;
+    use droppedneedle_library::removal::Mutations;
 
     let (scratch, library, music) = bare_library("lib-empty-bin").await;
     for folder in ["A", "B", "C", "D"] {
@@ -5406,8 +5406,8 @@ async fn emptying_the_bin_deletes_unchanged_copies_and_keeps_the_rest() {
 #[tokio::test]
 async fn expiry_and_an_empty_at_once_mark_every_copy() {
     use droppedneedle_kernel::jobs::queue::{Handlers, JobQueue, start_runners};
-    use droppedneedle_library::mutations::Mutations;
-    use droppedneedle_library::recycle_bin::{self, EmptyingState};
+    use droppedneedle_library::removal::Mutations;
+    use droppedneedle_library::removal::recycle_bin::{self, EmptyingState};
 
     let (scratch, library, music) = bare_library("lib-empty-and-expiry").await;
     for folder in ["A", "B", "C", "D"] {
@@ -5530,8 +5530,8 @@ async fn expiry_and_an_empty_at_once_mark_every_copy() {
 /// Put back, and lists it no more once its files are back.
 #[tokio::test]
 async fn the_bin_lists_a_removal_until_it_is_put_back() {
-    use droppedneedle_library::mutations::Mutations;
     use droppedneedle_library::publish::bin_contents::{self, BinKind};
+    use droppedneedle_library::removal::Mutations;
 
     let (scratch, library, music) = bare_library("lib-bin-page").await;
     plant(&music, "Back/01.flac", "flac_no_tags.flac");
@@ -5601,9 +5601,9 @@ async fn the_bin_lists_a_removal_until_it_is_put_back() {
 /// where each file is copied.
 #[tokio::test]
 async fn a_put_back_stopped_at_any_step_ends_in_the_bin_or_home() {
-    use droppedneedle_library::mutations::Mutations;
     use droppedneedle_library::publish::CrashPoint;
     use droppedneedle_library::publish::place::Seams;
+    use droppedneedle_library::removal::Mutations;
     use std::os::unix::fs::MetadataExt as _;
 
     let (scratch, library, music) = bare_library("lib-put-back-stopped").await;
@@ -5718,7 +5718,7 @@ async fn a_put_back_stopped_at_any_step_ends_in_the_bin_or_home() {
 /// still takes the tracks out of the library.
 #[tokio::test]
 async fn recycling_tracks_whose_files_are_gone_takes_them_out() {
-    use droppedneedle_library::mutations::Mutations;
+    use droppedneedle_library::removal::Mutations;
 
     let (scratch, library, music) = bare_library("lib-recycle-all-gone").await;
     plant(&music, "Gone/01.flac", "flac_no_tags.flac");
@@ -5759,7 +5759,7 @@ async fn recycling_tracks_whose_files_are_gone_takes_them_out() {
 /// file, but lists their tracks again and spends the undo.
 #[tokio::test]
 async fn putting_back_files_already_home_lists_them_again() {
-    use droppedneedle_library::mutations::Mutations;
+    use droppedneedle_library::removal::Mutations;
 
     let (scratch, library, music) = bare_library("lib-put-back-all-home").await;
     plant(&music, "Home/01.flac", "flac_no_tags.flac");
@@ -5792,7 +5792,7 @@ async fn putting_back_files_already_home_lists_them_again() {
 /// stays in the recycle bin.
 #[tokio::test]
 async fn a_file_that_lands_just_before_a_put_back_survives() {
-    use droppedneedle_library::mutations::{MutationError, Mutations};
+    use droppedneedle_library::removal::{MutationError, Mutations};
 
     let (scratch, library, music) = bare_library("lib-put-back-late").await;
     plant(&music, "Late/01.flac", "flac_no_tags.flac");
@@ -5842,7 +5842,7 @@ async fn a_file_that_lands_just_before_a_put_back_survives() {
 /// When no copy is left, nothing is put back and the undo stays.
 #[tokio::test]
 async fn put_back_names_a_file_gone_from_the_bin() {
-    use droppedneedle_library::mutations::{MutationError, Mutations};
+    use droppedneedle_library::removal::{MutationError, Mutations};
     use std::os::unix::fs::PermissionsExt as _;
 
     let (scratch, library, music) = bare_library("lib-put-back-gone").await;
@@ -5928,7 +5928,7 @@ async fn put_back_names_a_file_gone_from_the_bin() {
 /// modified time is not put back, and is named; the rest come back.
 #[tokio::test]
 async fn put_back_names_a_copy_changed_in_the_bin() {
-    use droppedneedle_library::mutations::Mutations;
+    use droppedneedle_library::removal::Mutations;
 
     let (scratch, library, music) = bare_library("lib-put-back-edited").await;
     plant(&music, "Edited/01.flac", "flac_no_tags.flac");
@@ -5984,7 +5984,7 @@ async fn put_back_names_a_copy_changed_in_the_bin() {
 /// reaches it, and the removal's own row settles.
 #[tokio::test]
 async fn put_back_takes_a_file_still_waiting_for_the_bin() {
-    use droppedneedle_library::mutations::Mutations;
+    use droppedneedle_library::removal::Mutations;
 
     let (scratch, library, music) = bare_library("lib-put-back-waiting").await;
     plant(&music, "Wait/01.flac", "flac_no_tags.flac");
@@ -6047,7 +6047,7 @@ async fn put_back_takes_a_file_still_waiting_for_the_bin() {
 /// id, listed at its old place.
 #[tokio::test]
 async fn put_back_returns_a_track_that_gave_its_path_up() {
-    use droppedneedle_library::mutations::Mutations;
+    use droppedneedle_library::removal::Mutations;
 
     let (scratch, library, music) = bare_library("lib-put-back-gone-row").await;
     plant(&music, "Moved/01.flac", "flac_no_tags.flac");
@@ -6086,7 +6086,7 @@ async fn put_back_returns_a_track_that_gave_its_path_up() {
 /// the link is gone.
 #[tokio::test]
 async fn put_back_never_follows_a_link_in_the_library() {
-    use droppedneedle_library::mutations::{MutationError, Mutations};
+    use droppedneedle_library::removal::{MutationError, Mutations};
 
     let (scratch, library, music) = bare_library("lib-put-back-link").await;
     plant(&music, "Linked/LP/01.flac", "flac_no_tags.flac");
@@ -6168,7 +6168,7 @@ fn removed_with_path_taken(
 /// to do rather than refusing on every try.
 #[tokio::test]
 async fn a_file_back_by_hand_under_another_track_is_put_back_once() {
-    use droppedneedle_library::mutations::{MutationError, Mutations};
+    use droppedneedle_library::removal::{MutationError, Mutations};
 
     let (scratch, library, music) = bare_library("lib-put-back-home-other").await;
     plant(&music, "Twin/01.flac", "flac_no_tags.flac");
@@ -6210,7 +6210,7 @@ async fn a_file_back_by_hand_under_another_track_is_put_back_once() {
 /// there takes it back: the other track gives the path up in turn.
 #[tokio::test]
 async fn put_back_moves_a_missing_track_off_the_path() {
-    use droppedneedle_library::mutations::Mutations;
+    use droppedneedle_library::removal::Mutations;
 
     let (scratch, library, music) = bare_library("lib-put-back-occupant").await;
     plant(&music, "Held/01.flac", "flac_no_tags.flac");
@@ -6304,7 +6304,7 @@ fn removed_after_an_edit(
 /// was edited, since its copy is still exactly the file that landed there.
 #[tokio::test]
 async fn put_back_returns_a_file_edited_before_it_was_binned() {
-    use droppedneedle_library::mutations::Mutations;
+    use droppedneedle_library::removal::Mutations;
 
     let (scratch, library, music) = bare_library("lib-put-back-edited-early").await;
     plant(&music, "Early/01.flac", "flac_no_tags.flac");
@@ -6338,7 +6338,7 @@ async fn put_back_returns_a_file_edited_before_it_was_binned() {
 /// leaves them as they landed: emptying the bin still deletes them.
 #[tokio::test]
 async fn an_undone_put_back_leaves_edited_copies_to_expire() {
-    use droppedneedle_library::mutations::{MutationError, Mutations};
+    use droppedneedle_library::removal::{MutationError, Mutations};
 
     let (scratch, library, music) = bare_library("lib-put-back-edited-undone").await;
     plant(&music, "Undone/01.flac", "flac_no_tags.flac");
@@ -6505,7 +6505,7 @@ async fn a_library_folder_reached_through_a_symlink_takes_writes() {
     use droppedneedle_library::management::service::Management;
     use droppedneedle_library::management::settings as lm;
     use droppedneedle_library::management::tag_edit::TagEditRequest;
-    use droppedneedle_library::mutations::Mutations;
+    use droppedneedle_library::removal::Mutations;
     use droppedneedle_library::tags::{TagField, read_fields};
 
     let (scratch, library, _music) = bare_library("lib-linked-folder").await;
@@ -6647,7 +6647,7 @@ async fn a_library_folder_reached_through_a_symlink_takes_writes() {
     assert!(
         matches!(
             &refused,
-            Err(droppedneedle_library::mutations::MutationError::Conflict(reason))
+            Err(droppedneedle_library::removal::MutationError::Conflict(reason))
                 if reason.code == "LIBRARY_FOLDER_LEFT_OUT"
         ),
         "{refused:?}"
@@ -10449,7 +10449,7 @@ async fn library_management_tools_journey() {
         crate::common::library::operations(&library)
             .control(
                 job_id,
-                droppedneedle_library::operations::models::Control::Stop,
+                droppedneedle_library::jobs::models::Control::Stop,
                 management.detail(job_id).expect("detail").job.row_revision,
                 None,
             )
@@ -12959,7 +12959,7 @@ async fn a_merge_and_a_split_carry_the_step_back() {
 /// is one made after the app wrote the album again.
 #[tokio::test]
 async fn handing_an_album_back_lets_the_app_write_again() {
-    use droppedneedle_library::mutations::Mutations;
+    use droppedneedle_library::removal::Mutations;
     use droppedneedle_library::tags::{TagField, read_fields};
 
     let managed = ManagedLibrary::start("lib-takeover-hand-back", |_| {}).await;
@@ -13054,8 +13054,8 @@ async fn handing_an_album_back_lets_the_app_write_again() {
 /// record at all, never v2's stale one.
 #[tokio::test]
 async fn handing_back_spends_a_carried_v2_record() {
-    use droppedneedle_library::mutations::Mutations;
     use droppedneedle_library::publish::record::record;
+    use droppedneedle_library::removal::Mutations;
 
     let managed = ManagedLibrary::start("lib-takeover-hand-back-v2", |_| {}).await;
     let (album, tracks) = managed.add_album("first", 2).await;
@@ -13099,7 +13099,7 @@ async fn handing_back_spends_a_carried_v2_record() {
 async fn handing_every_album_back_takes_one_step_each() {
     use droppedneedle_library::management::automatic::Settle;
     use droppedneedle_library::management::service::Management;
-    use droppedneedle_library::mutations::Mutations;
+    use droppedneedle_library::removal::Mutations;
 
     let (scratch, library, music) = bare_library("lib-takeover-hand-back-all").await;
     for folder in ["a", "b", "c"] {
@@ -13298,7 +13298,7 @@ async fn left_unmanaged_albums_read_back_and_hand_back() {
 async fn a_hand_back_that_cannot_read_the_files_keeps_the_mark() {
     use droppedneedle_library::management::automatic::Settle;
     use droppedneedle_library::management::service::Management;
-    use droppedneedle_library::mutations::{MutationError, Mutations};
+    use droppedneedle_library::removal::{MutationError, Mutations};
 
     let (scratch, library, music) = bare_library("lib-takeover-hand-back-fails").await;
     let file = plant(&music, "a/01.flac", "management_full.flac");
@@ -13359,7 +13359,7 @@ async fn a_hand_back_that_cannot_read_the_files_keeps_the_mark() {
 /// changed in the catalog since the first run.
 #[tokio::test]
 async fn a_handed_back_album_is_looked_at_afresh() {
-    use droppedneedle_library::mutations::Mutations;
+    use droppedneedle_library::removal::Mutations;
 
     let managed = ManagedLibrary::start("lib-takeover-afresh", |_| {}).await;
     let (album, tracks) = managed.add_album("first", 1).await;
@@ -13528,7 +13528,7 @@ async fn the_apps_own_regroup_of_a_mostly_missing_album_is_followed_unmarked() {
 /// the worker writes the edition and does not mark it again.
 #[tokio::test]
 async fn a_hand_renamed_album_with_a_chosen_edition_is_left_unmanaged() {
-    use droppedneedle_library::mutations::Mutations;
+    use droppedneedle_library::removal::Mutations;
 
     let managed = ManagedLibrary::start("lib-takeover-renamed", |_| {}).await;
     managed.add_album("first", 1).await;
@@ -13735,8 +13735,8 @@ impl ManagedLibrary {
 /// preview made before the change is refused when applied after it.
 #[tokio::test]
 async fn a_persons_write_over_a_hand_edit_leaves_it_the_users() {
-    use droppedneedle_library::manage::PreviewItemInput;
     use droppedneedle_library::publish::planner::PlanKind;
+    use droppedneedle_library::publish::session::PreviewItemInput;
     use droppedneedle_library::tags::{TagField, read_fields};
 
     let managed = ManagedLibrary::start("lib-takeover-own-write", |_| {}).await;
@@ -13953,7 +13953,7 @@ async fn an_unmanaged_change_stays_accepted_through_every_write() {
 /// away mark nothing.
 #[tokio::test]
 async fn a_file_retagged_and_renamed_together_is_still_the_users() {
-    use droppedneedle_library::mutations::Mutations;
+    use droppedneedle_library::removal::Mutations;
     use droppedneedle_library::tags::{TagEdit, TagField, save_tags};
 
     let managed = ManagedLibrary::start("lib-takeover-retag-rename", |_| {}).await;
@@ -15506,7 +15506,7 @@ async fn library_journey_review_exclude_restore_dismiss() {
 /// stopped so the journey takes each step itself.
 #[tokio::test]
 async fn bulk_review_changes_and_folder_retries_run_as_one_pausable_job() {
-    use droppedneedle_library::operations::service::ReviewStep;
+    use droppedneedle_library::reviews::service::ReviewStep;
 
     let rig = Rig::start("lib-review-jobs").await;
     let app = &rig.app;
@@ -15534,7 +15534,7 @@ async fn bulk_review_changes_and_folder_retries_run_as_one_pausable_job() {
         .jobs
         .supervisor()
         .cancel(
-            droppedneedle_library::operations::JOB_NAME,
+            droppedneedle_library::jobs::worker::JOB_NAME,
             std::time::Duration::from_secs(5),
         )
         .await;
@@ -15721,7 +15721,7 @@ async fn bulk_review_changes_and_folder_retries_run_as_one_pausable_job() {
 /// ends with a review it skipped over.
 #[tokio::test]
 async fn a_review_job_step_that_fails_to_record_does_the_review_again() {
-    use droppedneedle_library::operations::service::ReviewStep;
+    use droppedneedle_library::reviews::service::ReviewStep;
 
     let rig = Rig::start("lib-review-job-retake").await;
     let app = &rig.app;
@@ -15745,7 +15745,7 @@ async fn a_review_job_step_that_fails_to_record_does_the_review_again() {
         .jobs
         .supervisor()
         .cancel(
-            droppedneedle_library::operations::JOB_NAME,
+            droppedneedle_library::jobs::worker::JOB_NAME,
             std::time::Duration::from_secs(5),
         )
         .await;
@@ -15836,7 +15836,7 @@ async fn a_review_job_step_that_fails_to_record_does_the_review_again() {
 /// worker finishes every review.
 #[tokio::test]
 async fn a_review_job_left_running_by_a_restart_finishes_its_reviews() {
-    use droppedneedle_library::operations::service::ReviewStep;
+    use droppedneedle_library::reviews::service::ReviewStep;
 
     let rig = Rig::start("lib-review-job-recovery").await;
     let app = &rig.app;
@@ -15860,7 +15860,7 @@ async fn a_review_job_left_running_by_a_restart_finishes_its_reviews() {
         .jobs
         .supervisor()
         .cancel(
-            droppedneedle_library::operations::JOB_NAME,
+            droppedneedle_library::jobs::worker::JOB_NAME,
             std::time::Duration::from_secs(5),
         )
         .await;
@@ -16609,7 +16609,7 @@ async fn placing_files_never_gives_the_edition_up() {
     for _ in 0..2 {
         let tx = db.transaction().expect("transaction opens");
         assert!(
-            droppedneedle_library::operations::choice::queue_placement(&tx, &album, 1.0)
+            droppedneedle_library::edition::choice::queue_placement(&tx, &album, 1.0)
                 .expect("files queued")
         );
         tx.commit().expect("queued for good");
@@ -18487,7 +18487,7 @@ impl ManagedLibrary {
 /// again" then writes the new album.
 #[tokio::test]
 async fn a_retag_that_deleted_a_file_is_left_alone_while_its_folder_stays_held() {
-    use droppedneedle_library::mutations::Mutations;
+    use droppedneedle_library::removal::Mutations;
 
     let managed = ManagedLibrary::start("lib-held-gone", |_| {}).await;
     let (album, old) = managed.add_album("first", 12).await;
@@ -18585,7 +18585,7 @@ async fn a_retag_that_deleted_a_file_is_left_alone_while_its_folder_stays_held()
 /// look.
 #[tokio::test]
 async fn a_held_album_is_left_alone_where_the_retag_join_would_leave_it() {
-    use droppedneedle_library::mutations::Mutations;
+    use droppedneedle_library::removal::Mutations;
 
     let managed = ManagedLibrary::start("lib-held-judged", |_| {}).await;
     let cases = [
@@ -18752,7 +18752,7 @@ async fn a_held_album_is_left_alone_where_the_retag_join_would_leave_it() {
 /// anything is written; "Manage it again" then writes it.
 #[tokio::test]
 async fn a_best_guess_confirmed_after_its_folder_is_let_go_is_left_alone() {
-    use droppedneedle_library::mutations::Mutations;
+    use droppedneedle_library::removal::Mutations;
 
     let managed = ManagedLibrary::start("lib-held-later", |_| {}).await;
     let (album, old) = managed.add_album("first", 12).await;
@@ -18847,7 +18847,7 @@ async fn a_best_guess_confirmed_after_its_folder_is_let_go_is_left_alone() {
 async fn a_held_album_matched_after_its_folder_is_let_go_is_judged_at_its_look() {
     use droppedneedle_kernel::runtime_config::sections::EditionPreferences;
     use droppedneedle_library::management::models::{Eligibility, SelectionKind};
-    use droppedneedle_library::mutations::Mutations;
+    use droppedneedle_library::removal::Mutations;
 
     let managed = ManagedLibrary::start("lib-held-look", |_| {}).await;
     // (case, the new album's mark, its runs)
@@ -19448,8 +19448,8 @@ async fn a_rename_during_a_scan_keeps_the_tracks_history() {
 /// is not marked missing and keeps its favourite.
 #[tokio::test]
 async fn a_removal_open_across_a_walk_is_not_judged_gone() {
-    use droppedneedle_library::mutations::Mutations;
     use droppedneedle_library::publish::CrashPoint;
+    use droppedneedle_library::removal::Mutations;
 
     let (scratch, library, music, album, original, copy) =
         album_with_a_copy("lib-fence-removal").await;
@@ -19506,8 +19506,8 @@ fn publish_stopped(
     dest_rel: Option<&str>,
     updates: &[(&str, &str)],
 ) -> String {
-    use droppedneedle_library::manage::PreviewItemInput;
     use droppedneedle_library::publish::CrashPoint;
+    use droppedneedle_library::publish::session::PreviewItemInput;
     let rel_path: String = db
         .query_row(
             "SELECT relative_path FROM local_tracks WHERE id = ?1",
@@ -21369,8 +21369,8 @@ fn stray_second(release: &Release, other: &Release) -> Vec<String> {
 /// is not placed on R, and the plan says why.
 #[tokio::test]
 async fn a_track_id_from_another_edition_is_corrected() {
+    use droppedneedle_library::edition::plan::EditionPlan;
     use droppedneedle_library::management::models::SelectionKind;
-    use droppedneedle_library::operations::plan::EditionPlan;
     use droppedneedle_library::tags::TagField;
 
     let managed = ManagedLibrary::start("lib-stray-track-id", |_| {}).await;
@@ -21734,7 +21734,7 @@ async fn albums_an_older_matcher_misplaced_are_looked_at_once() {
 /// once per database.
 #[tokio::test]
 async fn albums_matched_to_a_group_only_get_an_edition_once() {
-    use droppedneedle_library::operations::status::edition_status;
+    use droppedneedle_library::edition::status::edition_status;
 
     use droppedneedle_library::tags::TagField;
     use droppedneedle_library::tags::save::{TagEdit, save_tags};
@@ -22034,11 +22034,10 @@ async fn albums_confirmed_before_the_newer_rules_are_checked_once() {
 /// release ID outranks the barcode.
 #[tokio::test]
 async fn an_album_moves_to_the_edition_its_barcode_names_once() {
+    use droppedneedle_library::edition::decisions::live_automatic_edition_undo;
+    use droppedneedle_library::edition::decisions::undo_automatic_edition;
     use droppedneedle_library::identify::models::IdentifyKind;
     use droppedneedle_library::matching::ReleaseMedium;
-    use droppedneedle_library::operations::decisions::{
-        live_automatic_edition_undo, undo_automatic_edition,
-    };
     use droppedneedle_library::tags::TagField;
     use droppedneedle_library::tags::save::{TagEdit, save_tags};
 
@@ -22324,7 +22323,7 @@ async fn every_identified_album_gets_its_cleanup_across_restarts() {
 #[tokio::test]
 async fn an_album_left_on_the_placeholder_artist_takes_its_tracks_artist() {
     use droppedneedle_library::http::history::album_history_view;
-    use droppedneedle_library::operations::models::OperationError;
+    use droppedneedle_library::jobs::models::OperationError;
     use droppedneedle_library::tags::TagField;
     use droppedneedle_library::tags::save::{TagEdit, save_tags};
 
@@ -24438,7 +24437,7 @@ async fn a_custom_edition_passes_over_the_apps_artist_link() {
         .seal_custom_edition(&album, &release_id, revision, "admin")
         .await
         .expect_err("a person's link stands");
-    let conflict = droppedneedle_library::operations::reasons::CUSTOM_EDITION_ARTIST_CONFLICT;
+    let conflict = droppedneedle_library::reasons::CUSTOM_EDITION_ARTIST_CONFLICT;
     assert!(
         format!("{refused:?}").contains(conflict.message),
         "{refused:?}"
@@ -24666,7 +24665,7 @@ impl ManagedLibrary {
 #[tokio::test]
 async fn files_retagged_in_place_of_an_unmanaged_album_are_left_alone() {
     use droppedneedle_library::corrections::models::PairReason;
-    use droppedneedle_library::mutations::Mutations;
+    use droppedneedle_library::removal::Mutations;
 
     let managed = ManagedLibrary::start("lib-hands-off-replaced", |_| {}).await;
     let (album, old) = managed.add_album("first", 2).await;
@@ -25859,7 +25858,8 @@ fn lengthen_flac(path: &Path, seconds: f64) {
 /// copy, and undoing that run gives the copy back as it came.
 #[tokio::test]
 async fn a_re_ripped_track_is_managed_again_and_undo_gives_it_back() {
-    use droppedneedle_library::operations::history::{HistoryKind, album_history};
+    use droppedneedle_library::catalog_actions::history::HistoryKind;
+    use droppedneedle_library::catalog_actions::history::album_history;
     use droppedneedle_library::publish::record::record;
     use droppedneedle_library::tags::read::read_scan_metadata;
     use droppedneedle_library::tags::{AudioFormat, TagField, read_fields, save_tags};

@@ -12,16 +12,25 @@
 //! back). Each runs inside the caller's transaction, and only while the
 //! review is still at the revision the person saw.
 
+pub mod service;
+pub(crate) mod sql;
+
 use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
 
-use super::choice;
-use super::decisions::{CatalogAction, record_action};
-use super::models::OperationError;
-use super::reasons;
-use super::sql::{RequesterRow, ReviewById, ReviewCount, ReviewGuard, ReviewPageRow, TrackTitle};
+use crate::catalog_actions::CatalogAction;
+use crate::catalog_actions::record_action;
 use crate::catalog_revision::bump_catalog;
+use crate::edition::choice;
 use crate::identify::models::{ReviewItem, ReviewState};
 use crate::identify::sqlite::{bump_identification_stream, review_item};
+use crate::jobs::models::OperationError;
+use crate::reasons;
+use crate::reviews::sql::RequesterRow;
+use crate::reviews::sql::ReviewById;
+use crate::reviews::sql::ReviewCount;
+use crate::reviews::sql::ReviewGuard;
+use crate::reviews::sql::ReviewPageRow;
+use crate::reviews::sql::TrackTitle;
 
 /// The match-state reason a detached album shows.
 const DETACHED: &str = "DETACHED_BY_PERSON";
@@ -157,7 +166,7 @@ fn map_row_by_id(row: &rusqlite::Row<'_>) -> rusqlite::Result<Option<ReviewRow>>
 
 /// Fill in each row's file titles.
 fn with_tracks(conn: &Connection, rows: &mut [ReviewRow]) -> rusqlite::Result<()> {
-    let mut statement = conn.prepare_cached(crate::operations::sql::WITH_TRACKS.text())?;
+    let mut statement = conn.prepare_cached(crate::reviews::sql::WITH_TRACKS.text())?;
     for row in rows {
         row.tracks = statement
             .query_map([&row.review.local_album_id], TrackTitle::read)?
@@ -266,11 +275,10 @@ pub fn list(conn: &Connection, filter: &ReviewFilter) -> rusqlite::Result<Review
         ":updated_to": filter.updated_to,
         ":with_candidates": filter.with_candidates,
     };
-    let total: i64 =
-        conn.query_row(crate::operations::sql::REVIEW_COUNT.text(), params, |row| {
-            row.get(0)
-        })?;
-    let page = crate::operations::sql::review_page(filter.order);
+    let total: i64 = conn.query_row(crate::reviews::sql::REVIEW_COUNT.text(), params, |row| {
+        row.get(0)
+    })?;
+    let page = crate::reviews::sql::review_page(filter.order);
     let mut statement = conn.prepare(&page)?;
     let paged: Vec<(&str, &dyn rusqlite::ToSql)> = params
         .iter()
@@ -290,7 +298,7 @@ pub fn list(conn: &Connection, filter: &ReviewFilter) -> rusqlite::Result<Review
     // every bucket's count.
     let reason_counts = buckets(
         conn,
-        crate::operations::sql::REVIEW_COUNT_BY_REASON.text(),
+        crate::reviews::sql::REVIEW_COUNT_BY_REASON.text(),
         rusqlite::named_params! {
             ":states": states,
             ":album": filter.album_id,
@@ -310,7 +318,7 @@ pub fn list(conn: &Connection, filter: &ReviewFilter) -> rusqlite::Result<Review
     )?;
     let state_counts = buckets(
         conn,
-        crate::operations::sql::REVIEW_COUNT_BY_STATE.text(),
+        crate::reviews::sql::REVIEW_COUNT_BY_STATE.text(),
         rusqlite::named_params! {
             ":states": Option::<String>::None,
             ":album": filter.album_id,
@@ -578,7 +586,7 @@ pub fn plan_bulk(
 /// One review by id.
 pub fn get(conn: &Connection, review_id: &str) -> rusqlite::Result<Option<ReviewRow>> {
     conn.query_row(
-        crate::operations::sql::REVIEW_BY_ID.text(),
+        crate::reviews::sql::REVIEW_BY_ID.text(),
         [review_id],
         map_row_by_id,
     )
@@ -605,7 +613,7 @@ pub fn guard(
 ) -> Result<String, OperationError> {
     let guard = tx
         .query_row(
-            crate::operations::sql::REVIEW_GUARD_ROW.text(),
+            crate::reviews::sql::REVIEW_GUARD_ROW.text(),
             [review_id],
             ReviewGuard::read,
         )
@@ -670,7 +678,7 @@ pub fn mark(
     now: f64,
 ) -> rusqlite::Result<bool> {
     let changed = tx.execute(
-        crate::operations::sql::MARK.text(),
+        crate::reviews::sql::MARK.text(),
         params![
             review_id,
             from,
@@ -697,12 +705,12 @@ fn exclude(
     now: f64,
 ) -> Result<(), OperationError> {
     let changed: Vec<String> = tx
-        .prepare(crate::operations::sql::EXCLUDE_TRACK.text())?
+        .prepare(crate::reviews::sql::EXCLUDE_TRACK.text())?
         .query_map(params![album_id, crate::clock::ms(now)], |row| row.get(0))?
         .collect::<rusqlite::Result<_>>()?;
     for track_id in &changed {
         tx.execute(
-            crate::operations::sql::RECORD_REVIEW_EXCLUSION.text(),
+            crate::reviews::sql::RECORD_REVIEW_EXCLUSION.text(),
             params![review_id, track_id],
         )?;
     }
@@ -720,20 +728,20 @@ fn restore(
     now: f64,
 ) -> Result<(), OperationError> {
     let recorded: i64 = tx.query_row(
-        crate::operations::sql::REVIEW_EXCLUSION_COUNT.text(),
+        crate::reviews::sql::REVIEW_EXCLUSION_COUNT.text(),
         [review_id],
         |row| row.get(0),
     )?;
     let changed = tx.execute(
         if recorded > 0 {
-            crate::operations::sql::LIFT_RECORDED_EXCLUSIONS.text()
+            crate::reviews::sql::LIFT_RECORDED_EXCLUSIONS.text()
         } else {
-            crate::operations::sql::LIFT_ALBUM_EXCLUSIONS.text()
+            crate::reviews::sql::LIFT_ALBUM_EXCLUSIONS.text()
         },
         params![review_id, album_id],
     )?;
     tx.execute(
-        crate::operations::sql::CLEAR_REVIEW_EXCLUSIONS.text(),
+        crate::reviews::sql::CLEAR_REVIEW_EXCLUSIONS.text(),
         [review_id],
     )?;
     audit(tx, album_id, actor, false, changed, now)
@@ -877,7 +885,7 @@ pub fn queue_job(
             &input,
         )?;
     }
-    super::store::job_after(tx, job_id)
+    crate::jobs::store::job_after(tx, job_id)
 }
 
 /// The review a work item acts on, read back from what [`queue_job`] kept.
@@ -908,7 +916,7 @@ pub fn retry(
         ReviewState::Pending,
         reasons::REVIEW_SETTLED,
     )?;
-    super::store::retry_gate(tx, management, &album_id, work.confirm_local_metadata)?;
+    crate::reidentify::store::retry_gate(tx, management, &album_id, work.confirm_local_metadata)?;
     if !mark(
         tx,
         &work.review_id,
@@ -930,7 +938,7 @@ pub fn requester(
     user_id: &str,
 ) -> rusqlite::Result<Option<droppedneedle_auth::Principal>> {
     conn.query_row(
-        crate::operations::sql::REQUESTER.text(),
+        crate::reviews::sql::REQUESTER.text(),
         [user_id],
         RequesterRow::read,
     )
@@ -980,6 +988,22 @@ pub fn job_skips(conn: &Connection, job_id: &str) -> rusqlite::Result<Vec<(reaso
         .into_iter()
         .map(|(code, count)| (skip_reason(&code), u32::try_from(count).unwrap_or(u32::MAX)))
         .collect())
+}
+
+/// Close the album's pending reviews: the administrator decided.
+pub(crate) fn settle_reviews(
+    tx: &Transaction<'_>,
+    album_id: &str,
+    state: &str,
+    selected: Option<&str>,
+    actor: &str,
+    now: f64,
+) -> rusqlite::Result<()> {
+    tx.execute(
+        crate::reviews::sql::SETTLE_REVIEWS.text(),
+        params![album_id, state, actor, selected, crate::clock::ms(now)],
+    )?;
+    Ok(())
 }
 
 #[cfg(test)]

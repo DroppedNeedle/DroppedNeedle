@@ -21,9 +21,11 @@ use serde::Serialize;
 use utoipa::ToSchema;
 
 use super::blocking;
-use crate::operations::history::{HistoryActor, HistoryEntry, HistoryKind};
-use crate::operations::models::OperationError;
-use crate::operations::service::Operations;
+use crate::catalog_actions::history::HistoryActor;
+use crate::catalog_actions::history::HistoryEntry;
+use crate::catalog_actions::history::HistoryKind;
+use crate::jobs::models::OperationError;
+use crate::jobs::service::Operations;
 use crate::wiring::LibraryServices;
 use droppedneedle_auth::{Curator, User};
 

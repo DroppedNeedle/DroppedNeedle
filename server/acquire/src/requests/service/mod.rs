@@ -63,7 +63,7 @@ pub struct RequestsService {
     /// The personal-mix builder, when there is one.
     mixer: Option<Arc<super::mix::PersonalMixBuilder>>,
     /// The library's edition plans, when wired.
-    edition_plans: Option<Arc<dyn droppedneedle_library::operations::port::EditionPlans>>,
+    edition_plans: Option<Arc<dyn droppedneedle_library::edition::port::EditionPlans>>,
     /// The upgrade policy reader, when wired.
     upgrade_policy: Option<
         droppedneedle_kernel::runtime_config::Live<

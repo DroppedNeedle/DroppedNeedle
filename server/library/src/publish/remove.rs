@@ -556,7 +556,7 @@ pub(super) struct Action<'a> {
 }
 
 pub(super) fn record_action(conn: &Connection, action: &Action<'_>) -> rusqlite::Result<()> {
-    conn.prepare_cached(sql::CATALOG_ACTION_INSERT.text())?
+    conn.prepare_cached(crate::catalog_actions::sql::RECORD_REMOVAL_ACTION.text())?
         .execute(rusqlite::params![
             action.id,
             action.actor,

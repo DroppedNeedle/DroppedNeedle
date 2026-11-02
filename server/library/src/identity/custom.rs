@@ -12,7 +12,7 @@ use super::sql;
 use super::undo::{record_and_keep, snapshot};
 use super::{IdentityError, PROVIDER, Refusal};
 use crate::catalog_revision::bump_catalog;
-use crate::operations::decisions::settle_reviews;
+use crate::reviews::settle_reviews;
 
 /// What a person seals as a custom edition.
 #[derive(Debug, Clone, Copy)]

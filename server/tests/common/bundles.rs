@@ -140,7 +140,7 @@ pub fn acquire_landing_at(
             plugins,
             collections: collections.clone(),
             providers,
-            albums: droppedneedle_library::mutations::Mutations::new(library),
+            albums: droppedneedle_library::removal::Mutations::new(library),
             listening: super::listening_store(platform),
         },
         droppedneedle_kernel::jobs::queue::JobQueue::new(

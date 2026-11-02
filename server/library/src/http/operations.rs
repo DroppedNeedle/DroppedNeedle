@@ -21,13 +21,20 @@ use utoipa::{IntoParams, ToSchema};
 use super::blocking;
 use super::error::refused;
 use super::models::PenaltyView;
+use crate::edition::service::RELEASE_PAGE_MAX;
 use crate::identify::models::EvidenceClass;
-use crate::operations::models::{
-    AutomaticUndone, Control, ControlRequest, OperationDetail, OperationError, OperationJob,
-    OperationState, ReidentificationCandidate, WorkState,
-};
-use crate::operations::reasons::{self, Reason};
-use crate::operations::service::{Operations, RELEASE_PAGE_MAX};
+use crate::identity::AutomaticUndone;
+use crate::jobs::ControlRequest;
+use crate::jobs::OperationJob;
+use crate::jobs::OperationState;
+use crate::jobs::WorkState;
+use crate::jobs::models::Control;
+use crate::jobs::models::OperationDetail;
+use crate::jobs::models::OperationError;
+use crate::jobs::service::Operations;
+use crate::reasons;
+use crate::reasons::Reason;
+use crate::reidentify::models::ReidentificationCandidate;
 use crate::repairs::models::Summary;
 use crate::wiring::LibraryServices;
 use droppedneedle_auth::{Admin, Curator};

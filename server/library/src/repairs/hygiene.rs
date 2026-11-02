@@ -27,13 +27,14 @@ use std::path::Path;
 
 use rusqlite::{Connection, OptionalExtension as _, Transaction, params, params_from_iter};
 
+use crate::catalog_actions::CatalogAction;
+use crate::catalog_actions::record_action;
 use crate::catalog_revision::bump_catalog;
 use crate::corrections::membership::retire;
 use crate::identify::artist_links::mark_stale;
 use crate::identify::queue::offer_again;
 use crate::identify::sqlite::offer_album;
 use crate::identity::{self, DecisionSource, Rows};
-use crate::operations::decisions::{CatalogAction, record_action};
 use crate::repairs::sql::ALBUM_CREDITS;
 use crate::repairs::sql::INSERT_ALBUM_CREDIT;
 use crate::repairs::sql::TRACK_CREDITS;

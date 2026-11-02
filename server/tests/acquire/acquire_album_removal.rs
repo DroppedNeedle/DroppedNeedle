@@ -10,7 +10,7 @@ use droppedneedle_acquire::wiring::AcquireStores;
 use droppedneedle_kernel::db::{DbError, Lane};
 use droppedneedle_kernel::jobs::queue::{Handlers, JobQueue, State, start_runners};
 use droppedneedle_kernel::platform::Platform;
-use droppedneedle_library::mutations::{ALBUM_REMOVED, AlbumRemovedJob};
+use droppedneedle_library::removal::{ALBUM_REMOVED, AlbumRemovedJob};
 
 use crate::common::TestPlatform;
 use crate::common::bundles::quiet_ticks;

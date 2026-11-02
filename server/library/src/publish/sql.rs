@@ -132,12 +132,6 @@ droppedneedle_kernel::sql! {
     pub(crate) TRACK_MARK_MISSING = "UPDATE local_tracks SET availability = 'missing', \
              missing_at = ?2, row_revision = row_revision + 1 \
              WHERE id = ?1 AND availability = 'indexed' RETURNING row_revision";
-    /// One catalog action. The actor (`?2`) stays NULL when it is no
-    /// account.
-    pub(crate) CATALOG_ACTION_INSERT = "INSERT INTO library_catalog_actions (id, actor_user_id, \
-             action_kind, local_album_id, local_track_id, before_json, after_json, reason_code, \
-             created_at) VALUES (?1, (SELECT id FROM auth_users WHERE id = ?2), ?3, ?4, ?5, ?6, \
-             ?7, ?8, ?9)";
     /// A removal's undo record (`?1`) on album `?2`, or on an album merged
     /// into it, that no put-back has spent yet: its `after_json`.
     pub(super) RECYCLED_ACTION_OPEN = "WITH RECURSIVE albums(id, hops) AS ( \

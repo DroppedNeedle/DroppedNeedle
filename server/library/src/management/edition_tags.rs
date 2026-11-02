@@ -15,7 +15,7 @@ use super::models::{
 use super::service::{ApplyRequest, JobSpec, Management, PAGE_MAX};
 use super::store::Snapshot;
 use super::{profile, reasons, takeover};
-use crate::operations::reasons::Reason;
+use crate::reasons::Reason;
 
 /// Why an edition's tags were not queued or reached.
 #[derive(Debug)]
@@ -161,7 +161,7 @@ fn album(conn: &Connection, album_id: &str, release_mbid: &str) -> rusqlite::Res
         custom,
         held: excluded || takeover::is_marked(conn, album_id)?,
         placing,
-        mapped: crate::operations::choice::mapped_track_ids(conn, album_id, release_mbid)?,
+        mapped: crate::edition::choice::mapped_track_ids(conn, album_id, release_mbid)?,
     }))
 }
 

@@ -1607,21 +1607,23 @@ struct PlannedEdition {
     complete: bool,
 }
 
-impl droppedneedle_library::operations::port::EditionPlans for PlannedEdition {
+impl droppedneedle_library::edition::port::EditionPlans for PlannedEdition {
     fn group_plan<'a>(
         &'a self,
         _album_id: Option<&'a str>,
         _release_group_mbid: &'a str,
-    ) -> droppedneedle_library::operations::port::BoxFuture<
+    ) -> droppedneedle_library::edition::port::BoxFuture<
         'a,
         Result<
-            Option<droppedneedle_library::operations::plan::EditionPlan>,
-            droppedneedle_library::operations::models::OperationError,
+            Option<droppedneedle_library::edition::plan::EditionPlan>,
+            droppedneedle_library::jobs::models::OperationError,
         >,
     > {
-        use droppedneedle_library::operations::plan::{
-            EditionFacts, EditionPlan, FileFate, PlanFile, PlanTrack,
-        };
+        use droppedneedle_library::edition::plan::EditionFacts;
+        use droppedneedle_library::edition::plan::EditionPlan;
+        use droppedneedle_library::edition::plan::FileFate;
+        use droppedneedle_library::edition::plan::PlanFile;
+        use droppedneedle_library::edition::plan::PlanTrack;
         let track = |position: u32, file: Option<&str>| PlanTrack {
             disc: 1,
             position,
@@ -1928,21 +1930,21 @@ async fn edition_acquire_asks_once_for_missing_and_below_cutoff_tracks() {
 /// The library's plan, unavailable (MusicBrainz down).
 struct NoPlan;
 
-impl droppedneedle_library::operations::port::EditionPlans for NoPlan {
+impl droppedneedle_library::edition::port::EditionPlans for NoPlan {
     fn group_plan<'a>(
         &'a self,
         _album_id: Option<&'a str>,
         _release_group_mbid: &'a str,
-    ) -> droppedneedle_library::operations::port::BoxFuture<
+    ) -> droppedneedle_library::edition::port::BoxFuture<
         'a,
         Result<
-            Option<droppedneedle_library::operations::plan::EditionPlan>,
-            droppedneedle_library::operations::models::OperationError,
+            Option<droppedneedle_library::edition::plan::EditionPlan>,
+            droppedneedle_library::jobs::models::OperationError,
         >,
     > {
         Box::pin(async {
             Err(
-                droppedneedle_library::operations::models::OperationError::Unavailable(
+                droppedneedle_library::jobs::models::OperationError::Unavailable(
                     "MusicBrainz is down".into(),
                 ),
             )
@@ -2023,21 +2025,23 @@ struct LibraryPlan {
     db: AcquireDb,
 }
 
-impl droppedneedle_library::operations::port::EditionPlans for LibraryPlan {
+impl droppedneedle_library::edition::port::EditionPlans for LibraryPlan {
     fn group_plan<'a>(
         &'a self,
         _album_id: Option<&'a str>,
         _release_group_mbid: &'a str,
-    ) -> droppedneedle_library::operations::port::BoxFuture<
+    ) -> droppedneedle_library::edition::port::BoxFuture<
         'a,
         Result<
-            Option<droppedneedle_library::operations::plan::EditionPlan>,
-            droppedneedle_library::operations::models::OperationError,
+            Option<droppedneedle_library::edition::plan::EditionPlan>,
+            droppedneedle_library::jobs::models::OperationError,
         >,
     > {
-        use droppedneedle_library::operations::plan::{
-            EditionFacts, EditionPlan, FileFate, PlanFile, PlanTrack,
-        };
+        use droppedneedle_library::edition::plan::EditionFacts;
+        use droppedneedle_library::edition::plan::EditionPlan;
+        use droppedneedle_library::edition::plan::FileFate;
+        use droppedneedle_library::edition::plan::PlanFile;
+        use droppedneedle_library::edition::plan::PlanTrack;
         Box::pin(async move {
             let files: Vec<String> =
                 sqlx::query_scalar("SELECT id FROM local_tracks WHERE local_album_id = 'al1'")

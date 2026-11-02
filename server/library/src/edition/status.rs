@@ -4,11 +4,15 @@
 
 use rusqlite::{Connection, OptionalExtension as _, params};
 
-use super::reasons::{self, Reason};
-use super::sql::{EditionIdentity, MatchStateRow, WaitingAlbumRow};
-use super::store::{self, PROVIDER};
+use crate::edition::PROVIDER;
+use crate::edition::sql::EditionIdentity;
+use crate::edition::sql::MatchStateRow;
+use crate::edition::sql::WaitingAlbumRow;
 use crate::identify::models::CandidateEvidence;
 use crate::identity::reads::undo_available;
+use crate::reasons;
+use crate::reasons::Reason;
+use crate::reidentify::store;
 
 /// Where an album's edition stands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, utoipa::ToSchema)]
@@ -73,7 +77,7 @@ pub fn edition_status(
     album_id: &str,
 ) -> rusqlite::Result<Option<EditionStatus>> {
     let known: bool = conn.query_row(
-        crate::operations::sql::ALBUM_EXISTS.text(),
+        crate::edition::sql::ALBUM_EXISTS.text(),
         params![album_id],
         |row| row.get(0),
     )?;
@@ -82,7 +86,7 @@ pub fn edition_status(
     }
     let identity: Option<IdentityRow> = conn
         .query_row(
-            crate::operations::sql::ALBUM_EDITION_IDENTITY.text(),
+            crate::edition::sql::ALBUM_EDITION_IDENTITY.text(),
             params![album_id, PROVIDER],
             EditionIdentity::read,
         )
@@ -99,7 +103,7 @@ pub fn edition_status(
         });
     let flagged: Option<(String, String, String)> = conn
         .query_row(
-            crate::operations::sql::ALBUM_MATCH_STATE.text(),
+            crate::edition::sql::ALBUM_MATCH_STATE.text(),
             params![album_id],
             MatchStateRow::read,
         )
@@ -114,7 +118,7 @@ pub fn edition_status(
             .is_some_and(crate::identity::DecisionSource::is_persons_choice)
     });
     let custom: bool = conn.query_row(
-        crate::operations::sql::CUSTOM_ACTIVE.text(),
+        crate::edition::sql::CUSTOM_ACTIVE.text(),
         params![album_id],
         |row| row.get(0),
     )?;
@@ -183,7 +187,7 @@ pub fn edition_status(
 /// (its `library_edition_remap_queue` row); `None` once it is placed.
 pub(crate) fn placing_attempts(conn: &Connection, album_id: &str) -> rusqlite::Result<Option<u32>> {
     conn.query_row(
-        crate::operations::sql::PLACING_ATTEMPTS.text(),
+        crate::edition::sql::PLACING_ATTEMPTS.text(),
         params![album_id],
         |row| row.get(0),
     )
@@ -195,7 +199,7 @@ pub(crate) fn placing_attempts(conn: &Connection, album_id: &str) -> rusqlite::R
 /// waits on a person, and the rest have ended.
 pub(crate) fn identifying(conn: &Connection, album_id: &str) -> rusqlite::Result<bool> {
     conn.query_row(
-        crate::operations::sql::IDENTIFYING.text(),
+        crate::edition::sql::IDENTIFYING.text(),
         params![album_id],
         |row| row.get(0),
     )
@@ -243,11 +247,11 @@ pub fn waiting_albums(
         "unconfirmed"
     };
     let total: i64 = conn.query_row(
-        crate::operations::sql::WAITING_ALBUM_COUNT.text(),
+        crate::edition::sql::WAITING_ALBUM_COUNT.text(),
         params![state],
         |row| row.get(0),
     )?;
-    let mut stmt = conn.prepare(crate::operations::sql::WAITING_ALBUM_PAGE.text())?;
+    let mut stmt = conn.prepare(crate::edition::sql::WAITING_ALBUM_PAGE.text())?;
     let rows = stmt
         .query_map(
             params![state, PROVIDER, limit, offset],

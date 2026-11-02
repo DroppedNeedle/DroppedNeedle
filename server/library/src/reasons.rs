@@ -2,7 +2,7 @@
 //! a note on a planned file: one stable code, one plain sentence, and what
 //! to do about it.
 //!
-//! Refusals travel in [`super::models::OperationError`]; job endings are
+//! Refusals travel in [`crate::jobs::models::OperationError`]; job endings are
 //! looked up from the stored `terminal_code` with [`terminal`]. Several
 //! refusals of one kind share a code (every "it changed under you" refusal
 //! is `STALE_REVISION`) and differ only in the sentence.

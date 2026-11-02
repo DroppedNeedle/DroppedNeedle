@@ -8,8 +8,8 @@ use droppedneedle_kernel::runtime_config::secret_sections::TypedLibrary;
 
 use super::models::ManagementError;
 use super::service::Management;
-use crate::manage::{PlacementCheck, PublishCell, RootPlacement};
 use crate::publish::PlacementMode;
+use crate::publish::session::{PlacementCheck, PublishCell, RootPlacement};
 
 impl Management {
     /// Every saved root files can be written under, with its placement
@@ -42,7 +42,7 @@ impl Management {
         }
         let left_out = crate::settings::registry(&self.parts.settings.library)
             .map(|registry| {
-                crate::manage::left_out_now(&registry)
+                crate::publish::session::left_out_now(&registry)
                     .iter()
                     .any(|id| id == root_id)
             })

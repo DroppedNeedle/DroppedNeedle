@@ -12,7 +12,6 @@ use droppedneedle_kernel::jobs::{
 use tokio::runtime::Handle;
 
 use super::clock::LibraryClock as _;
-use super::manage::Publishing;
 use super::publish::PublishError;
 use super::publish::expiry::{self, ExpiryPass, ExpiryReport};
 use super::publish::paths::{Root, Sandbox};
@@ -28,6 +27,7 @@ use super::scan::watcher::{Asked, WatcherAction, WatcherSettings, WatcherState, 
 use super::scans::Scans;
 use super::service::Identification;
 use super::wiring::LibraryServices;
+use crate::publish::session::Publishing;
 
 /// The library's always-on loops on the supervisor.
 pub const SCAN_JOB: &str = "library-scan";
@@ -54,7 +54,7 @@ pub const LOOPS: &[&str] = &[
     WATCHER_JOB,
     IDENTIFY_JOB,
     super::contrib::worker::UPKEEP_JOB,
-    super::operations::JOB_NAME,
+    crate::jobs::worker::JOB_NAME,
     super::management::JOB_NAME,
     super::repairs::JOB_NAME,
     PUBLISH_JOB,
@@ -511,7 +511,8 @@ impl Publishing {
         // renames. Held bundles wait while the library is switched off.
         let session = cell.session(&registry);
         let reopen = cell.needs_refresh(&session);
-        let retry = !reopen && !super::manage::switched_off(&registry) && cell.has_held()?;
+        let retry =
+            !reopen && !crate::publish::session::switched_off(&registry) && cell.has_held()?;
         cell.refresh_to(session, &self.core.root_dirs)?;
         if retry {
             cell.retry_held()?;
@@ -718,7 +719,7 @@ pub(crate) fn start_loops(
         identify_tick(services.identification.clone(), handle),
     )?;
     super::contrib::worker::start_upkeep(supervisor, setup.contrib_worker.clone())?;
-    super::operations::start(setup, services.operations.clone(), supervisor)?;
+    crate::jobs::worker::start(setup, services.operations.clone(), supervisor)?;
     super::management::start(services.management.clone(), supervisor)?;
     super::repairs::start(services.repair_worker(), supervisor)?;
     let (core, leftovers) = (setup.core.clone(), setup.leftover_files.clone());

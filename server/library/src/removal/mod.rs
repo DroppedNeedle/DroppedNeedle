@@ -20,6 +20,8 @@
 //! and what to do next. All functions here block; callers run them off
 //! the async workers.
 
+pub mod recycle_bin;
+
 use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
@@ -28,23 +30,23 @@ use droppedneedle_kernel::db::Lane;
 use droppedneedle_kernel::jobs::queue::JobError;
 use rusqlite::{OptionalExtension, Transaction, params};
 
-use super::catalog_revision::bump_catalog;
-use super::clock::LibraryClock as _;
-use super::manage::{RemovalDone, RemovalEntry};
-use super::management::takeover;
-use super::operations::reasons::Reason;
-use super::publish::PublishError;
-use super::publish::bin::{BinsUnknown, fresh_entry, serving};
-use super::publish::paths::Root;
-use super::publish::planner::UndoRecord;
-pub use super::publish::planner::{ALBUM_REMOVED, AlbumRemoved, AlbumRemovedJob};
-use super::publish::put_back::Refusal as PutBackRefusal;
-pub use super::publish::put_back::{Listed as AlbumRemoval, RemovalKind};
-use super::publish::remove::{self, Refusal, Target};
-use super::scan::coordinator::ScanRequestError;
-use super::scan::models::{ScanKind, ScanRequest, ScanRequestResult, ScanScope, ScanTrigger};
-use super::scan::roots::RootRegistry;
-use super::wiring::LibrarySetup;
+use crate::catalog_revision::bump_catalog;
+use crate::clock::LibraryClock as _;
+use crate::management::takeover;
+use crate::publish::PublishError;
+use crate::publish::bin::{BinsUnknown, fresh_entry, serving};
+use crate::publish::paths::Root;
+use crate::publish::planner::UndoRecord;
+pub use crate::publish::planner::{ALBUM_REMOVED, AlbumRemoved, AlbumRemovedJob};
+use crate::publish::put_back::Refusal as PutBackRefusal;
+pub use crate::publish::put_back::{Listed as AlbumRemoval, RemovalKind};
+use crate::publish::remove::{self, Refusal, Target};
+use crate::publish::session::{RemovalDone, RemovalEntry};
+use crate::reasons::Reason;
+use crate::scan::coordinator::ScanRequestError;
+use crate::scan::models::{ScanKind, ScanRequest, ScanRequestResult, ScanScope, ScanTrigger};
+use crate::scan::roots::RootRegistry;
+use crate::wiring::LibrarySetup;
 
 /// Most hops followed through merged (retired) albums.
 const MAX_RETIRED_HOPS: usize = 8;
@@ -346,7 +348,7 @@ impl From<rusqlite::Error> for MutationError {
 pub enum ExtrasError {
     /// Nothing was picked, a picked file keeps its place on the edition,
     /// or the edition plan could not be read.
-    Plan(super::operations::models::OperationError),
+    Plan(crate::jobs::models::OperationError),
     /// The removal itself was refused or failed.
     Remove(MutationError),
 }
@@ -385,11 +387,11 @@ struct TrackFile {
 pub struct Mutations {
     db: droppedneedle_kernel::db::Db,
     clock: Arc<dyn droppedneedle_kernel::clock::Clock>,
-    core: super::wiring::LibraryCore,
-    coordinator: Arc<super::wiring::ScanCoordinator>,
+    core: crate::wiring::LibraryCore,
+    coordinator: Arc<crate::wiring::ScanCoordinator>,
     jobs: droppedneedle_kernel::jobs::queue::JobQueue,
-    publishing: super::manage::Publishing,
-    operations: super::operations::service::Operations,
+    publishing: crate::publish::session::Publishing,
+    operations: crate::jobs::service::Operations,
 }
 
 impl Mutations {
@@ -402,7 +404,7 @@ impl Mutations {
             coordinator: setup.coordinator.clone(),
             jobs: setup.jobs.clone(),
             publishing: setup.publishing.clone(),
-            operations: super::wiring::operations(setup),
+            operations: crate::wiring::operations(setup),
         }
     }
 
@@ -620,9 +622,9 @@ impl Mutations {
         expected_identity_revision: i64,
         actor: &str,
     ) -> Result<Removed, ExtrasError> {
-        use super::operations::models::OperationError;
-        use super::operations::plan::FileFate;
-        use super::operations::reasons;
+        use crate::edition::plan::FileFate;
+        use crate::jobs::models::OperationError;
+        use crate::reasons;
         if track_ids.is_empty() {
             return Err(ExtrasError::Plan(OperationError::Invalid(
                 reasons::NOTHING_PICKED,
@@ -726,7 +728,7 @@ impl Mutations {
         let canonical = self
             .canonical_album(album_id)?
             .ok_or(MutationError::NotFound(ALBUM_NOT_FOUND))?;
-        super::publish::put_back::removals(&self.db, &canonical)
+        crate::publish::put_back::removals(&self.db, &canonical)
             .map_err(|error| MutationError::Store(error.to_string()))
     }
 
@@ -886,10 +888,10 @@ impl Mutations {
             .ok_or(MutationError::NotFound(ALBUM_NOT_FOUND))?;
         takeover::hand_back(&self.publishing, &canonical, Some(actor)).map_err(
             |error| match error {
-                super::management::models::ManagementError::Conflict(_) => {
+                crate::management::models::ManagementError::Conflict(_) => {
                     MutationError::Conflict(HAND_BACK_UNREADABLE)
                 }
-                super::management::models::ManagementError::Busy(cause) => {
+                crate::management::models::ManagementError::Busy(cause) => {
                     MutationError::Busy(cause)
                 }
                 other => MutationError::Store(other.to_string()),
@@ -947,7 +949,7 @@ impl Mutations {
             });
         }
         let registry = self.core.live_registry();
-        let left_out = super::manage::left_out_now(&registry);
+        let left_out = crate::publish::session::left_out_now(&registry);
         if tracks.iter().any(|track| left_out.contains(&track.root_id)) {
             return Err(MutationError::Conflict(LIBRARY_FOLDER_LEFT_OUT));
         }
@@ -1333,7 +1335,7 @@ fn record_action(
 ) -> rusqlite::Result<()> {
     // The actor column references auth_users; an unknown id stays NULL.
     tx.execute(
-        crate::sql::RECORD_ACTION.text(),
+        crate::catalog_actions::sql::RECORD_TRACK_ACTION.text(),
         params![
             uuid::Uuid::new_v4().to_string(),
             actor,

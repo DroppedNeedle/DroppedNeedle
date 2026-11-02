@@ -70,9 +70,9 @@ use droppedneedle_kernel::runtime_config::sections::{
     DownloadPolicy, UsenetBackend, UsenetBackendSetting,
 };
 use droppedneedle_kernel::runtime_config::{ConfigStore, Live, Section};
-use droppedneedle_library::mutations::Mutations;
-use droppedneedle_library::operations::port::EditionPlans;
+use droppedneedle_library::edition::port::EditionPlans;
 use droppedneedle_library::publish::bin::DownloadTrees;
+use droppedneedle_library::removal::Mutations;
 use droppedneedle_media::playback::listening::ListeningStore;
 use droppedneedle_plugins::host::PluginHost;
 use droppedneedle_providers::Providers;

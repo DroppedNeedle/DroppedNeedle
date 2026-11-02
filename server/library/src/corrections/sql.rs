@@ -303,9 +303,6 @@ droppedneedle_kernel::sql! {
     pub(super) RETIRED_INTO = "SELECT retired_into_album_id FROM local_albums WHERE id = ?1";
     pub(super) SUCCESSOR = "SELECT COALESCE(retired_into_album_id, id) FROM local_albums WHERE id = ?1";
     pub(super) REPLAY = "SELECT after_json FROM library_catalog_actions WHERE idempotency_key = ?1";
-    pub(super) RECORD = "INSERT INTO library_catalog_actions (id, idempotency_key, actor_user_id, action_kind, \
-         local_artist_id, local_album_id, before_json, after_json, reason_code, created_at) \
-         VALUES (?1, ?2, (SELECT id FROM auth_users WHERE id = ?3), ?4, ?5, ?6, ?7, ?8, ?9, ?10)";
     /// The track a local id names now: the track itself while its file is
     /// indexed, else the track its alias names (a missing track that
     /// continued into another), else the id itself, so a read's own

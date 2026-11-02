@@ -19,9 +19,9 @@ use futures_util::future::BoxFuture;
 use rusqlite::{OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
-use crate::manage::Publishing;
 use crate::publish::expiry::{ExpiryReport, KeptWhy};
 use crate::publish::journal::JournalState;
+use crate::publish::session::Publishing;
 use crate::publish::sql;
 
 /// The job that empties the bin.

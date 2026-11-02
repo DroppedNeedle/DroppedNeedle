@@ -30,13 +30,20 @@ use super::models::{
 };
 use super::operations::{OperationView, job_view};
 use crate::identify::models::{AlbumIdentity, CandidateEvidence, ReviewState};
-use crate::operations::models::{Control, OperationError};
-use crate::operations::reasons::{self, review_reason};
-use crate::operations::reviews::{
-    BulkAction, FolderScope, ReviewAction, ReviewFilter, ReviewJobAction, ReviewOrder, ReviewRow,
-    parse_state,
-};
-use crate::operations::service::{Operations, ReviewJob};
+use crate::jobs::models::Control;
+use crate::jobs::models::OperationError;
+use crate::jobs::service::Operations;
+use crate::reasons;
+use crate::reasons::review_reason;
+use crate::reviews::BulkAction;
+use crate::reviews::FolderScope;
+use crate::reviews::ReviewAction;
+use crate::reviews::ReviewFilter;
+use crate::reviews::ReviewJobAction;
+use crate::reviews::ReviewOrder;
+use crate::reviews::ReviewRow;
+use crate::reviews::parse_state;
+use crate::reviews::service::ReviewJob;
 use crate::wiring::LibraryServices;
 use droppedneedle_auth::{Admin, Curator, User};
 
@@ -606,7 +613,7 @@ pub async fn retry_pending_reviews(
     Ok(Json(answer))
 }
 
-fn work_count(job: &crate::operations::models::OperationJob) -> u32 {
+fn work_count(job: &crate::jobs::OperationJob) -> u32 {
     u32::try_from(job.expected_work_count).unwrap_or(u32::MAX)
 }
 

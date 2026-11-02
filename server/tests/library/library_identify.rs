@@ -1570,7 +1570,7 @@ fn another_spelling_links_only_through_the_artists_names() {
 /// next sweep links its artist.
 #[test]
 fn a_best_guess_links_once_it_looks_right() {
-    use droppedneedle_library::operations::choice;
+    use droppedneedle_library::edition::choice;
 
     let links = Links::new();
     links.artist("ar-a", "Alpha", 1.0);
@@ -1632,7 +1632,7 @@ fn files_naming_another_artist_keep_the_row_unlinked() {
 /// proofs, its state and the links they made.
 #[test]
 fn detaching_the_match_takes_its_links_away() {
-    use droppedneedle_library::operations::choice;
+    use droppedneedle_library::edition::choice;
 
     let links = Links::new();
     links.artist("ar-a", "Alpha", 1.0);
@@ -2689,8 +2689,7 @@ impl Rig {
         &self,
         change: impl FnOnce(
             &rusqlite::Transaction<'_>,
-        )
-            -> Result<T, droppedneedle_library::operations::models::OperationError>,
+        ) -> Result<T, droppedneedle_library::jobs::models::OperationError>,
     ) -> Result<T, String> {
         droppedneedle_kernel::db::Db::open_for_tests(&self.path())
             .expect("db opens")
@@ -2881,9 +2880,8 @@ async fn a_withdrawn_match_keeps_one_undo() {
         "INSERT INTO auth_users (id, display_name, role, created_at) \
          VALUES ('curator-1', 'Curator', 'admin', 0);",
     );
-    let undone = rig.change(|tx| {
-        droppedneedle_library::operations::choice::undo(tx, "album-1", "curator-1", 2.0)
-    });
+    let undone = rig
+        .change(|tx| droppedneedle_library::edition::choice::undo(tx, "album-1", "curator-1", 2.0));
     assert_eq!(undone, Ok(()));
     assert_eq!(
         rig.identity_tables("album-1")[..2],
@@ -3166,9 +3164,10 @@ async fn a_moved_release_names_its_own_group() {
 /// keeps both undo rows, and moves the catalog revision.
 #[test]
 fn accept_automatic_keeps_a_v2_choice_and_seals_an_automatic_match() {
+    use droppedneedle_library::edition::choice::accept_automatic;
     use droppedneedle_library::identify::models::{EvidenceClass, TrackEvidence};
-    use droppedneedle_library::operations::choice::accept_automatic;
-    use droppedneedle_library::operations::models::{CandidateTrack, ReidentificationCandidate};
+    use droppedneedle_library::reidentify::models::CandidateTrack;
+    use droppedneedle_library::reidentify::models::ReidentificationCandidate;
 
     let rig = rig_with_recall(RecallResult::default());
     for album in ["album-1", "album-2"] {
@@ -3241,7 +3240,7 @@ fn accept_automatic_keeps_a_v2_choice_and_seals_an_automatic_match() {
             droppedneedle_kernel::db::Lane::Background,
             "test.accept",
             |tx| {
-                Ok::<_, droppedneedle_library::operations::models::OperationError>((
+                Ok::<_, droppedneedle_library::jobs::models::OperationError>((
                     accept_automatic(tx, "album-1", &candidate("t1", "t2"), "R", None, None, 1.0)?,
                     accept_automatic(tx, "album-2", &candidate("t3", "t4"), "R", None, None, 1.0)?,
                 ))
@@ -3281,7 +3280,7 @@ fn accept_automatic_keeps_a_v2_choice_and_seals_an_automatic_match() {
 /// `manual`.
 #[test]
 fn an_automatic_accept_leaves_a_persons_track_rows() {
-    use droppedneedle_library::operations::choice::accept_automatic;
+    use droppedneedle_library::edition::choice::accept_automatic;
 
     let rig = rig_with_recall(RecallResult::default());
     rig.seed_album(&album_facts("album-1", &[("t1", None), ("t2", None)]));
@@ -3387,7 +3386,7 @@ fn resealing_an_unchanged_match_writes_nothing() {
 /// the album's next one.
 #[test]
 fn undoing_back_to_no_match_leaves_no_undo() {
-    use droppedneedle_library::operations::choice;
+    use droppedneedle_library::edition::choice;
 
     let rig = rig_with_recall(RecallResult::default());
     rig.seed_album(&album_facts("album-1", &[("t1", None), ("t2", None)]));
@@ -3412,7 +3411,7 @@ fn undoing_back_to_no_match_leaves_no_undo() {
 /// is held twice.
 #[test]
 fn an_automatic_placement_never_takes_a_persons_track() {
-    use droppedneedle_library::operations::choice::accept_automatic;
+    use droppedneedle_library::edition::choice::accept_automatic;
 
     let rig = rig_with_recall(RecallResult::default());
     rig.seed_album(&album_facts("album-1", &[("t1", None), ("t2", None)]));
@@ -3474,7 +3473,8 @@ fn an_automatic_placement_never_takes_a_persons_track() {
 /// before the seal keeps the person's undo instead of its own.
 #[test]
 fn an_admin_undo_keeps_the_persons_undo() {
-    use droppedneedle_library::operations::{choice, decisions};
+    use droppedneedle_library::edition::choice;
+    use droppedneedle_library::edition::decisions;
 
     let rig = rig_with_recall(RecallResult::default());
     rig.run(
@@ -3620,9 +3620,10 @@ fn an_admin_undo_keeps_the_persons_undo() {
 /// album row as it was keeps no undo, so it moves no other file's row.
 #[test]
 fn no_revisable_row_is_left_on_a_release_the_album_left() {
+    use droppedneedle_library::edition::choice;
+    use droppedneedle_library::edition::decisions;
     use droppedneedle_library::identify::models::{MatchFlag, MatchFlagState};
     use droppedneedle_library::identity::{AutomaticUndone, Inputs, retract};
-    use droppedneedle_library::operations::{choice, decisions};
 
     let rig = rig_with_recall(RecallResult::default());
     rig.run(
@@ -3862,9 +3863,10 @@ fn a_match_by_hand_ends_once_the_album_leaves_its_release() {
 /// already holds writes no audit row.
 #[test]
 fn album_history_lists_sealed_editions_and_a_withdrawn_match() {
+    use droppedneedle_library::catalog_actions::history::HistoryKind;
+    use droppedneedle_library::catalog_actions::history::album_history;
     use droppedneedle_library::identify::models::{MatchFlag, MatchFlagState};
     use droppedneedle_library::identity::{Inputs, retract};
-    use droppedneedle_library::operations::history::{HistoryKind, album_history};
 
     let rig = rig_with_recall(RecallResult::default());
     rig.seed_album(&album_facts("album-1", &[("t1", Some(RECORDING_1))]));
@@ -4014,7 +4016,7 @@ fn a_rechosen_edition_makes_a_merge_preview_stale() {
     use droppedneedle_library::corrections::models::{
         ApplyMeta, CorrectionError, MembershipKind, MembershipRequest,
     };
-    use droppedneedle_library::operations::choice;
+    use droppedneedle_library::edition::choice;
 
     let rig = rig_with_recall(RecallResult::default());
     rig.seed_album(&album_facts("album-1", &[("t1", Some(RECORDING_1))]));
@@ -4093,7 +4095,8 @@ fn a_rechosen_edition_makes_a_merge_preview_stale() {
 #[test]
 fn the_existing_matches_repair_reports_a_v2_choice_as_a_persons() {
     use droppedneedle_library::identify::models::{EvidenceClass, TrackEvidence};
-    use droppedneedle_library::operations::models::{CandidateTrack, ReidentificationCandidate};
+    use droppedneedle_library::reidentify::models::CandidateTrack;
+    use droppedneedle_library::reidentify::models::ReidentificationCandidate;
     use droppedneedle_library::repairs::{classify, store};
 
     let rig = rig_with_recall(RecallResult::default());
@@ -4228,9 +4231,10 @@ fn offering(
     release: &str,
     supported: &[&str],
     other: &[&str],
-) -> droppedneedle_library::operations::models::ReidentificationCandidate {
+) -> droppedneedle_library::reidentify::models::ReidentificationCandidate {
     use droppedneedle_library::identify::models::{EvidenceClass, TrackEvidence};
-    use droppedneedle_library::operations::models::{CandidateTrack, ReidentificationCandidate};
+    use droppedneedle_library::reidentify::models::CandidateTrack;
+    use droppedneedle_library::reidentify::models::ReidentificationCandidate;
     let evidence = |file: &str, class: EvidenceClass| TrackEvidence {
         local_track_id: file.to_owned(),
         classification: class,
@@ -4310,7 +4314,8 @@ fn offering(
 /// Every row is checked and every difference reported together.
 #[tokio::test]
 async fn person_commands_leave_what_their_rule_says() {
-    use droppedneedle_library::operations::{choice, decisions};
+    use droppedneedle_library::edition::choice;
+    use droppedneedle_library::edition::decisions;
 
     let rig = rig_with_recall(recall(vec![release(
         GROUP_A,

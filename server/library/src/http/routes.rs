@@ -19,7 +19,7 @@ pub fn library_routes() -> Routes<LibraryServices> {
         .merge(super::reconcile::routes())
         .merge(super::repairs::routes())
         .merge(super::reviews::routes())
-        .merge(super::mutations::routes())
+        .merge(super::removal::routes())
         .merge(super::recycle_bin::routes())
         .merge(super::edition::routes())
         .merge(super::history::routes())

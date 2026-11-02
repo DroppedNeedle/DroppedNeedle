@@ -31,7 +31,7 @@ use super::models::{
 use super::reasons;
 use super::retag_merge::{JoinCause, MergeOutcome, merge_retagged};
 use crate::identify::sqlite::chosen_matches_differ;
-use crate::operations::reasons::Reason;
+use crate::reasons::Reason;
 use crate::scan::sqlite_store::retag_pairs::{RetagPairReason, RetagPairState};
 
 /// The reasons a person decides on. The app settles every other one by

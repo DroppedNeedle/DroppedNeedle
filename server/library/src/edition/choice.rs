@@ -10,15 +10,18 @@
 
 use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
 
-use super::models::{EditionChoice, OperationError, PlacedFile, ReidentificationCandidate};
-use super::reasons;
-use super::store::PROVIDER;
 use crate::corrections::continuation::continue_replaced;
+use crate::edition::PROVIDER;
+use crate::edition::models::EditionChoice;
+use crate::edition::models::PlacedFile;
 use crate::identify::models::EvidenceClass;
 use crate::identify::queue::queue_retry;
 use crate::identity::{
     self, IdentityError, Offer, Placed, Refusal, Removal, TrackRow, upsert_track_identity,
 };
+use crate::jobs::models::OperationError;
+use crate::reasons;
+use crate::reidentify::models::ReidentificationCandidate;
 
 pub(crate) use crate::identity::reads::mapped_track_ids;
 pub use crate::identity::reads::{identity_revision, undo_available};
@@ -149,9 +152,9 @@ fn placed_files(tx: &Transaction<'_>, placed: &[String]) -> rusqlite::Result<Vec
     for track_id in placed {
         let file = tx
             .query_row(
-                crate::operations::sql::PLACED_FILES.text(),
+                crate::edition::sql::PLACED_FILES.text(),
                 params![track_id],
-                super::sql::PlacedFileRow::read,
+                crate::edition::sql::PlacedFileRow::read,
             )
             .optional()?
             .map(|row| PlacedFile {
@@ -351,7 +354,7 @@ pub(crate) fn place_imported(
 ) -> rusqlite::Result<(usize, usize)> {
     let chosen: Option<String> = tx
         .query_row(
-            crate::operations::sql::RELEASE_A_PERSON_CHOSE.text(),
+            crate::edition::sql::RELEASE_A_PERSON_CHOSE.text(),
             params![album_id, PROVIDER, release_mbid],
             |row| row.get(0),
         )
@@ -365,7 +368,7 @@ pub(crate) fn place_imported(
     let (mut placed, mut left) = (0usize, 0usize);
     for (track_id, track) in files {
         let held: bool = tx.query_row(
-            crate::operations::sql::PLACE_IMPORTED.text(),
+            crate::edition::sql::PLACE_IMPORTED.text(),
             params![
                 album_id,
                 PROVIDER,

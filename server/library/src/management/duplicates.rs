@@ -17,8 +17,8 @@ use super::reasons::ItemReason;
 use super::selection;
 use super::service::{JobSpec, Management, Refused, stale};
 use super::store::{self, Snapshot};
-use crate::mutations::{MutationError, NO_RECYCLE_BIN, RECYCLE_BIN_UNKNOWN, REMOVAL_CHANGED};
 use crate::publish::planner::PlanKind;
+use crate::removal::{MutationError, NO_RECYCLE_BIN, RECYCLE_BIN_UNKNOWN, REMOVAL_CHANGED};
 use rusqlite::OptionalExtension as _;
 
 /// A request to settle one blocked file.

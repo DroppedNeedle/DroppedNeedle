@@ -21,14 +21,17 @@ use super::models::{
     Summary, Verdict,
 };
 use super::reasons;
+use crate::edition::decisions::live_automatic_edition_undo;
 use crate::identify::artist_links::RELEASE_DOCUMENT_MISSING;
 use crate::identify::evidence::edition_ids_of;
 use crate::identity::reads::stored_release;
+use crate::jobs::OperationJob;
+use crate::jobs::OperationKind;
+use crate::jobs::models::OperationError;
+use crate::jobs::store::job_after;
 use crate::jobs::{self, NewJob, OperationState, Tally, WorkState};
 use crate::matching::decide::{IdStance, id_stance};
-use crate::operations::decisions::live_automatic_edition_undo;
-use crate::operations::models::{OperationError, OperationJob, OperationKind};
-use crate::operations::store::{album_revisions, job_after};
+use crate::reidentify::store::album_revisions;
 use crate::repairs::sql::{
     ConfirmedAlbum, CurrentFindingCount, EditionCandidate, EditionTags, FindingCount,
     FindingPageRow, HistoryRow, IdentifiedRow, OpenFindingRow, PreparationRow, RepairScope,
@@ -996,7 +999,7 @@ pub fn auto_accept(
         input_revision: guard.input_revision.clone(),
         identity_revision: guard.identity_revision.clone(),
     };
-    let accepted = crate::operations::choice::accept_automatic(
+    let accepted = crate::edition::choice::accept_automatic(
         tx,
         album_id,
         candidate,

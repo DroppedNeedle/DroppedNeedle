@@ -584,7 +584,7 @@ impl DownloadWorker {
                 .unwrap_or(false);
             if off {
                 return Err(ReimportError::Unavailable(
-                    droppedneedle_library::mutations::LIBRARY_OFF_TEXT.to_owned(),
+                    droppedneedle_library::removal::LIBRARY_OFF_TEXT.to_owned(),
                 ));
             }
         }

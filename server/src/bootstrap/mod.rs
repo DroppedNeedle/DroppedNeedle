@@ -456,8 +456,8 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         library.contrib_worker.handler(),
     )
     .with_job(
-        droppedneedle_library::recycle_bin::SPEC,
-        droppedneedle_library::recycle_bin::handler(&library.publishing),
+        droppedneedle_library::removal::recycle_bin::SPEC,
+        droppedneedle_library::removal::recycle_bin::handler(&library.publishing),
     )
     .with_mixer(mix_hooks)
     .with_precache_sources_from(&reads, config_store, listening.clone())

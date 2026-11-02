@@ -2,7 +2,6 @@
 //! files, with the evidence for each, as the edition plan and repairs
 //! show them.
 
-use super::models::{CandidateTrack, Evaluation, ReidentificationCandidate};
 use crate::identify::models::{
     EvidenceClass, IdentificationOutcome, LocalAlbumFacts, RecallResult,
 };
@@ -11,6 +10,9 @@ use crate::matching::model::VARIOUS_ARTISTS_MBID;
 use crate::matching::score::NAME_GATE;
 use crate::matching::strings::{string_dist, strip_edition_words};
 use crate::matching::{Release, ReleaseMatch};
+use crate::reidentify::models::CandidateTrack;
+use crate::reidentify::models::Evaluation;
+use crate::reidentify::models::ReidentificationCandidate;
 
 /// Reason on candidates of a release an administrator named: they always
 /// need confirmation.

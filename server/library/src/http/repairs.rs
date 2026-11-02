@@ -20,7 +20,7 @@ use utoipa::{IntoParams, ToSchema};
 
 use super::blocking;
 use super::operations::{OperationControlBody, OperationView, ReasonView, detail_view, job_view};
-use crate::operations::models::OperationJob;
+use crate::jobs::OperationJob;
 use crate::repairs::models::{
     FindingRow, FindingState, MANAGEMENT_MAPPING_VERSION, Purpose, REPAIR_TARGET_VERSION,
 };

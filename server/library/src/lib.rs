@@ -8,6 +8,12 @@
 //! publisher; `contrib` owns MusicBrainz contributions plus the
 //! verification worker.
 //!
+//! Beside them sit what people ask of the catalog: `edition` (choosing an
+//! album's edition), `reidentify`, `reviews`, `removal`, `corrections` and
+//! `repairs`. `jobs` runs the long work an administrator can watch and
+//! stop, `catalog_actions` keeps the audit rows and the history read from
+//! them, and `reasons` holds the sentences a refusal answers with.
+//!
 //! [`adapters`] implements the seams between them (tag reads,
 //! identify enqueue, tag staging, contribution ports) and [`wiring`]
 //! owns the [`wiring::LibrarySetup`] bundle `create_app` mounts:
@@ -25,10 +31,12 @@
 
 pub mod activity;
 pub mod adapters;
+pub mod catalog_actions;
 mod catalog_revision;
 mod clock;
 pub mod contrib;
 pub mod corrections;
+pub mod edition;
 pub mod edition_prefs;
 pub mod http;
 pub mod identify;
@@ -38,17 +46,17 @@ pub mod jobs;
 mod loops;
 mod sql;
 pub use loops::{LEFTOVERS_JOB, LOOPS};
-pub mod manage;
 pub mod management;
 pub mod matching;
-pub mod mutations;
-pub mod operations;
 pub mod policy;
 pub mod preview;
 pub mod publish;
+pub mod reasons;
 pub mod reconcile;
-pub mod recycle_bin;
+pub mod reidentify;
+pub mod removal;
 pub mod repairs;
+pub mod reviews;
 pub mod scan;
 pub mod scans;
 pub mod service;
@@ -66,7 +74,10 @@ pub fn statement_files() -> Vec<droppedneedle_kernel::db::statement::StatementFi
         corrections::sql::registered(),
         identify::sql::registered(),
         import::sql::registered(),
-        operations::sql::registered(),
+        catalog_actions::sql::registered(),
+        edition::sql::registered(),
+        reidentify::sql::registered(),
+        reviews::sql::registered(),
         reconcile::sql::registered(),
         repairs::sql::registered(),
         scan::sql::registered(),

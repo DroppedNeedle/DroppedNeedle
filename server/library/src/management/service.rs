@@ -23,12 +23,12 @@ use super::selection;
 use super::store::{self, NewJob, Snapshot};
 use super::takeover;
 use crate::clock::LibraryClock as _;
+use crate::jobs::OperationJob;
 use crate::jobs::{self, ManagementPhase, OperationKind, OperationState};
-use crate::manage::SealPins;
-use crate::operations::models::OperationJob;
 use crate::preview::{self, TokenFault};
 use crate::publish::JournalStore;
 use crate::publish::publisher::read_revision;
+use crate::publish::session::SealPins;
 use crate::scan::roots::RootRegistry;
 use crate::wiring::LibrarySetup;
 use droppedneedle_kernel::page::TimeKey;
@@ -88,14 +88,14 @@ pub(crate) struct ManagementParts {
     pub(crate) identify_store: Arc<crate::identify::sqlite::SqliteIdentifyStore>,
     pub(crate) enrichment: Option<Arc<dyn super::enrich::EnrichmentPort>>,
     pub(crate) management_settings: Arc<super::settings::service::LibraryManagementService>,
-    pub(crate) publishing: crate::manage::Publishing,
-    pub(crate) mutations: crate::mutations::Mutations,
+    pub(crate) publishing: crate::publish::session::Publishing,
+    pub(crate) mutations: crate::removal::Mutations,
     pub(crate) jobs: droppedneedle_kernel::jobs::queue::JobQueue,
     pub(crate) wakeups: crate::scan::watcher::WorkWakeups,
-    pub(crate) publish: Arc<std::sync::Mutex<crate::manage::PublishCell>>,
-    pub(crate) placement: crate::manage::RootPlacement,
-    pub(crate) held_bundles: crate::manage::HeldBundles,
-    pub(crate) leftover_files: crate::manage::LeftoverFiles,
+    pub(crate) publish: Arc<std::sync::Mutex<crate::publish::session::PublishCell>>,
+    pub(crate) placement: crate::publish::session::RootPlacement,
+    pub(crate) held_bundles: crate::publish::session::HeldBundles,
+    pub(crate) leftover_files: crate::publish::session::LeftoverFiles,
     pub(crate) root_dirs: crate::wiring::RootDirs,
 }
 
@@ -119,7 +119,7 @@ pub(super) fn stale(message: &str) -> ManagementError {
 
 /// The refusal while the library-wide switch is off: the same answer a
 /// scan gets (409 `CONFLICT`).
-pub(super) const LIBRARY_OFF: &str = crate::mutations::LIBRARY_OFF_TEXT;
+pub(super) const LIBRARY_OFF: &str = crate::removal::LIBRARY_OFF_TEXT;
 
 impl Management {
     pub fn new(setup: &LibrarySetup) -> Self {
@@ -135,7 +135,7 @@ impl Management {
                 enrichment: setup.enrichment.clone(),
                 management_settings: setup.management_settings.clone(),
                 publishing: setup.publishing.clone(),
-                mutations: crate::mutations::Mutations::new(setup),
+                mutations: crate::removal::Mutations::new(setup),
                 jobs: setup.jobs.clone(),
                 wakeups: setup.wakeups.clone(),
                 publish: setup.publish.clone(),
@@ -1752,15 +1752,15 @@ impl Management {
         for (track_id, skip) in &files.blocked {
             let mut item = template(track_id, first_ordinal + items.len() as i64);
             item.block(match skip {
-                crate::manage::UndoSkip::Plan(block) => reasons::undo_block(block),
-                crate::manage::UndoSkip::Gone => ItemReason {
+                crate::publish::session::UndoSkip::Plan(block) => reasons::undo_block(block),
+                crate::publish::session::UndoSkip::Gone => ItemReason {
                     code: "FILE_CHANGED".to_owned(),
                     message:
                         "This file is no longer where the change left it, or no longer matched."
                             .to_owned(),
                     action: "Rescan the library, then make a new undo preview.".to_owned(),
                 },
-                crate::manage::UndoSkip::CopyMissing => ItemReason {
+                crate::publish::session::UndoSkip::CopyMissing => ItemReason {
                     code: UNDO_COPY_MISSING.to_owned(),
                     message: "The saved copy of this file's earlier tags is missing.".to_owned(),
                     action: "This file stays as it is.".to_owned(),
@@ -2145,7 +2145,7 @@ impl Management {
         undo: bool,
         organizes: bool,
         bundle_id: &str,
-    ) -> Result<crate::manage::AppliedBundle, Refused> {
+    ) -> Result<crate::publish::session::AppliedBundle, Refused> {
         if !undo {
             self.album_gate(snapshot, items, organizes)?;
         }
@@ -2187,7 +2187,7 @@ impl Management {
                 }
                 if let crate::publish::PublishError::BinsUnknown(cause) = error {
                     return Refused::Busy(ManagementError::BinsUnknown(
-                        crate::mutations::bins_unknown(cause, crate::mutations::BinUse::Run),
+                        crate::removal::bins_unknown(cause, crate::removal::BinUse::Run),
                     ));
                 }
                 let reason = reasons::from_publish(&error);

@@ -13,12 +13,13 @@ use super::reads::{album_identity_row, identity_hash, identity_revision, track_i
 use super::sql;
 use super::undo::{Snapshot, carry_undo, keep_choice_undo, snapshot};
 use super::{DecisionSource, PROVIDER, Rows, delete_album_row};
+use crate::catalog_actions::CatalogAction;
+use crate::catalog_actions::record_action;
 use crate::catalog_revision::bump_catalog;
 use crate::corrections::continuation::{Scope, continue_tracks};
 use crate::corrections::release_join::join_replaced;
 use crate::identify::models::{AutomaticSeal, MatchFlag, PriorAlbumIdentity, PriorTrackIdentity};
 use crate::identify::queue::{album_input_revision, offer_album};
-use crate::operations::decisions::{CatalogAction, record_action};
 
 /// What automatic work read the album at.
 #[derive(Debug, Clone, Copy)]

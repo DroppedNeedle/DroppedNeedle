@@ -3,9 +3,9 @@
 use std::future::Future;
 use std::pin::Pin;
 
-use super::models::OperationError;
-use super::plan::EditionPlan;
-use super::service::Operations;
+use crate::edition::plan::EditionPlan;
+use crate::jobs::models::OperationError;
+use crate::jobs::service::Operations;
 
 /// Boxed future for dyn-compatible methods.
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;

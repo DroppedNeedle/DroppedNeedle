@@ -18,6 +18,7 @@ use utoipa::{IntoParams, ToSchema};
 
 use super::blocking;
 use super::operations::{OperationView, ReasonView, job_view};
+use crate::jobs::OperationState;
 use crate::jobs::{ControlRequest, ManagementPhase};
 use crate::management::after_apply::ExternalRefresh;
 use crate::management::models::{
@@ -26,7 +27,6 @@ use crate::management::models::{
 };
 use crate::management::reasons::ItemReason;
 use crate::management::service::{ApplyRequest, HISTORY_MAX, Management, PAGE_MAX, PreviewRequest};
-use crate::operations::models::OperationState;
 use crate::wiring::LibraryServices;
 use droppedneedle_auth::Admin;
 use droppedneedle_kernel::runtime_config::sections::LibraryManagementRootOverrides;
@@ -211,7 +211,7 @@ impl From<JobDetail> for ManagementJobView {
             terminal_reason: job
                 .terminal_code
                 .as_deref()
-                .map(|code| crate::operations::reasons::terminal(code).into()),
+                .map(|code| crate::reasons::terminal(code).into()),
             terminal_code: job.terminal_code.clone(),
             worker_heartbeat_at: detail.heartbeat_at,
             worker_lease_expires_at: detail.lease_expires_at,

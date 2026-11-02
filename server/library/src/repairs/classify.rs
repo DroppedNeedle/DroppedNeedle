@@ -10,7 +10,7 @@ use std::collections::{HashMap, HashSet};
 
 use super::models::{EditionSummary, FindingCode, FindingPayload, Mapping, Verdict};
 use crate::identify::models::EvidenceClass;
-use crate::operations::models::ReidentificationCandidate;
+use crate::reidentify::models::ReidentificationCandidate;
 
 /// The album's identity as the check found it.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -290,7 +290,7 @@ pub fn readiness_suggest(
 mod tests {
     use super::*;
     use crate::identify::models::{CandidateEvidence, TrackEvidence};
-    use crate::operations::models::CandidateTrack;
+    use crate::reidentify::models::CandidateTrack;
 
     fn candidate(classes: &[EvidenceClass], safe: bool) -> ReidentificationCandidate {
         let evidence = CandidateEvidence {

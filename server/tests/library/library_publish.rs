@@ -12,6 +12,7 @@
 //! wrapper; publish-path briefs plant real
 //! committed fixtures, never fake bytes with audio extensions.
 
+use droppedneedle_library::identity::ReleaseIdentity;
 use droppedneedle_library::publish;
 
 use droppedneedle_library::tags;
@@ -29,8 +30,7 @@ use publish::paths::Root;
 use publish::place::{PlacementMode, Seams};
 use publish::planner::{
     Capability, CapabilityGate, CollisionGate, FileFingerprint, OutputKind, PlanBundle, PlanItem,
-    PlanKind, ReleaseIdentity, SealError, SealRecheck, SealedPreview, SealedRow, SidecarPlan,
-    SpaceProbe,
+    PlanKind, SealError, SealRecheck, SealedPreview, SealedRow, SidecarPlan, SpaceProbe,
 };
 use publish::publisher::{locate, read_revision};
 use publish::remove;
@@ -984,7 +984,7 @@ fn a_write_counts_as_stuck_after_24_hours() {
 /// report is kept across a restart, and a file someone removed leaves it.
 #[test]
 fn leftover_pass_reports_old_unjournaled_hidden_files_and_keeps_them() {
-    use droppedneedle_library::manage::LeftoverFiles;
+    use droppedneedle_library::publish::session::LeftoverFiles;
     use droppedneedle_library::scan::models::EffectivePolicy;
     use droppedneedle_library::scan::roots::{LibraryRoot, RootRegistry};
 

@@ -28,12 +28,9 @@ use super::corrections::service::Corrections;
 use super::identify::service::{IdentifyDeps, IdentifyService};
 use super::identify::sqlite::SqliteIdentifyStore;
 use super::import::Imports;
-use super::manage::{PublishCell, Publishing};
 use super::management::enrich::EnrichmentPort;
 use super::management::service::Management;
 use super::management::settings::service::LibraryManagementService;
-use super::mutations::Mutations;
-use super::operations::service::Operations;
 use super::reconcile::service::Reconcile;
 use super::repairs::service::{RepairWorker, Repairs};
 use super::scan::coordinator::{
@@ -46,6 +43,9 @@ use super::scan::watcher::{DirtyScopes, WatcherState, WorkWakeups};
 use super::scans::Scans;
 use super::service::{Identification, ServiceError};
 use super::settings::LibrarySettings;
+use crate::jobs::service::Operations;
+use crate::publish::session::{PublishCell, Publishing};
+use crate::removal::Mutations;
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::runtime_config::secret_sections::TypedLibrary;
 use droppedneedle_kernel::runtime_config::{Live, Plain};
@@ -127,8 +127,8 @@ pub struct LibraryCore {
     pub(crate) dirty: DirtyScopes,
     pub(crate) wakeups: WorkWakeups,
     pub(crate) publish: Arc<std::sync::Mutex<PublishCell>>,
-    pub(crate) placement: super::manage::RootPlacement,
-    pub(crate) held_bundles: super::manage::HeldBundles,
+    pub(crate) placement: crate::publish::session::RootPlacement,
+    pub(crate) held_bundles: crate::publish::session::HeldBundles,
     pub(crate) bins: super::publish::bin::BinSource,
     /// Wall time: the kernel clock.
     pub(crate) clock: Arc<dyn droppedneedle_kernel::clock::Clock>,
@@ -188,7 +188,7 @@ impl LibraryCore {
             wakeups: WorkWakeups::new(),
             placement: publish.placement(),
             publish: Arc::new(std::sync::Mutex::new(publish)),
-            held_bundles: super::manage::HeldBundles::new(platform.db.clone()),
+            held_bundles: crate::publish::session::HeldBundles::new(platform.db.clone()),
             bins,
             clock: platform.clock.clone(),
             blobs,
@@ -314,12 +314,12 @@ pub struct LibrarySetup {
     pub publish: Arc<std::sync::Mutex<PublishCell>>,
     /// Placement modes of the open publish session, readable without the
     /// cell.
-    pub placement: super::manage::RootPlacement,
+    pub placement: crate::publish::session::RootPlacement,
     /// Unsettled publish bundles, read from the journal; their tracks
     /// take no new managed writes until a pass settles them.
-    pub held_bundles: super::manage::HeldBundles,
+    pub held_bundles: crate::publish::session::HeldBundles,
     /// Hidden files no journal row names, from the pass after startup.
-    pub leftover_files: super::manage::LeftoverFiles,
+    pub leftover_files: crate::publish::session::LeftoverFiles,
     /// Shared root-directory lookup.
     pub root_dirs: RootDirs,
     /// The jobs table: a removed album's clean-up is queued here in the
@@ -593,7 +593,10 @@ impl LibrarySetup {
             publish: core.publish.clone(),
             placement: core.placement.clone(),
             held_bundles: core.held_bundles.clone(),
-            leftover_files: super::manage::LeftoverFiles::new(db.clone(), platform.clock.clone()),
+            leftover_files: crate::publish::session::LeftoverFiles::new(
+                db.clone(),
+                platform.clock.clone(),
+            ),
             root_dirs,
             jobs,
             bins: core.bins.clone(),

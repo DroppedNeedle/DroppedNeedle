@@ -7,9 +7,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::operations::reasons::Reason;
 use crate::publish::PublishError;
 use crate::publish::undo::UndoBlock;
+use crate::reasons::Reason;
 
 /// One reason, as the user reads it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

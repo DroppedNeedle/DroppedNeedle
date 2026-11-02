@@ -6,8 +6,8 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use super::reasons::ItemReason;
+use crate::jobs::OperationJob;
 use crate::jobs::{ManagementPhase, WorkState};
-use crate::operations::models::OperationJob;
 use crate::publish::planner::PlanItem;
 use droppedneedle_kernel::runtime_config::sections::{
     LibraryManagementProfile, LibraryManagementRootOverrides, NamingScript, TaggingScript,
@@ -762,7 +762,7 @@ pub enum ManagementError {
     Forbidden(&'static str),
     /// A request that cannot be acted on as sent, with its own code (400).
     #[error("{}", .0.message)]
-    Refused(crate::operations::reasons::Reason),
+    Refused(crate::reasons::Reason),
     #[error("store: {0}")]
     Store(String),
     /// The database was too busy to answer, or is shutting down.
@@ -773,7 +773,7 @@ pub enum ManagementError {
     /// database. The bins' source logs this once per cause, so a wait on
     /// it is not logged again. The reason says why.
     #[error("{}", .0.message)]
-    BinsUnknown(crate::operations::reasons::Reason),
+    BinsUnknown(crate::reasons::Reason),
 }
 
 impl From<droppedneedle_kernel::db::DbError> for ManagementError {

@@ -35,8 +35,10 @@ use crate::requests::models::{
 use crate::requests::sql;
 use droppedneedle_auth::Curator;
 use droppedneedle_kernel::db::DbError;
-use droppedneedle_library::operations::models::OperationError;
-use droppedneedle_library::operations::plan::{EditionPlan, FileFate, PlanTrack};
+use droppedneedle_library::edition::plan::EditionPlan;
+use droppedneedle_library::edition::plan::FileFate;
+use droppedneedle_library::edition::plan::PlanTrack;
+use droppedneedle_library::jobs::models::OperationError;
 use rusqlite::OptionalExtension;
 
 /// Bytes a track takes in staging, at least.
@@ -685,7 +687,9 @@ impl RequestsService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use droppedneedle_library::operations::plan::{EditionFacts, FileFate, PlanFile};
+    use droppedneedle_library::edition::plan::EditionFacts;
+    use droppedneedle_library::edition::plan::FileFate;
+    use droppedneedle_library::edition::plan::PlanFile;
 
     fn track(position: u32, file: Option<&str>) -> PlanTrack {
         PlanTrack {

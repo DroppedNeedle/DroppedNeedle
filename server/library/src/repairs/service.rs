@@ -25,12 +25,14 @@ use crate::clock::LibraryClock as _;
 use crate::identify::models::{IdentifyKind, LocalAlbumFacts, RecallResult};
 use crate::identify::service::IdentifyService;
 use crate::identify::sqlite::{SqliteIdentifyStore, album_input_revision};
+use crate::jobs::OperationJob;
+use crate::jobs::OperationKind;
+use crate::jobs::models::OperationDetail;
+use crate::jobs::models::OperationError;
+use crate::jobs::service::job_detail;
 use crate::jobs::{self, OperationState, WorkState};
-use crate::operations::models::{
-    OperationDetail, OperationError, OperationJob, OperationKind, ReidentificationCandidate,
-};
-use crate::operations::reidentify::evaluation;
-use crate::operations::service::job_detail;
+use crate::reidentify::candidates::evaluation;
+use crate::reidentify::models::ReidentificationCandidate;
 use crate::scan::watcher::WorkWakeups;
 use crate::wiring::ScanCoordinator;
 use droppedneedle_kernel::db::{Db, DbError, Lane};

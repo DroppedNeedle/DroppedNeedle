@@ -37,7 +37,7 @@ use std::time::{Duration, Instant};
 use super::super::host::PluginHost;
 use super::super::manifest::Capability;
 use super::super::protocol::MAX_MESSAGE_BYTES;
-use droppedneedle_library::manage::PluginFileRefusal;
+use droppedneedle_library::publish::session::PluginFileRefusal;
 use droppedneedle_library::publish::{PublishError, add};
 
 /// Bytes one plugin may write per rolling day.

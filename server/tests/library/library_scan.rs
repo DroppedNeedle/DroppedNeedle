@@ -3008,7 +3008,7 @@ async fn cleanup_leaves_a_half_retagged_album_alone_mid_scan() {
 async fn a_folded_v2_split_comes_back_on_undo() {
     use droppedneedle_library::http::history::album_history_view;
     use droppedneedle_library::identity::FOLD_REASON;
-    use droppedneedle_library::operations::models::OperationError;
+    use droppedneedle_library::jobs::models::OperationError;
 
     const SPLIT_GROUP: &str = "1d1b2a6e-8e1a-4c4f-9b7e-0f4f8c3b2a10";
     const TAGGED_GROUP: &str = "2e2c3b7f-9f2b-4d5a-8c8f-1a5a9d4c3b21";
@@ -6375,7 +6375,7 @@ async fn a_store_error_holds_the_continuation_not_the_seal() {
 /// continuation runs after the extras are cleared.
 #[tokio::test]
 async fn an_edition_choice_moves_nothing_onto_a_file_it_leaves_out() {
-    use droppedneedle_library::operations::models::ReidentificationCandidate;
+    use droppedneedle_library::reidentify::models::ReidentificationCandidate;
 
     let (rig, album, t) = continuation_album("scan-continue-choice-extra", 3).await;
     let (old, extra, placed) = (t[0].clone(), t[1].clone(), t[2].clone());
@@ -6416,9 +6416,8 @@ async fn an_edition_choice_moves_nothing_onto_a_file_it_leaves_out() {
     .expect("candidate");
     let mut db = droppedneedle_kernel::db::open_connection(&rig.db()).expect("db opens");
     let tx = db.transaction().expect("transaction");
-    let choice =
-        droppedneedle_library::operations::choice::choose(&tx, &album, &candidate, None, 1.0)
-            .expect("edition chosen");
+    let choice = droppedneedle_library::edition::choice::choose(&tx, &album, &candidate, None, 1.0)
+        .expect("edition chosen");
     tx.commit().expect("committed");
     assert_eq!(choice.extra_track_ids, vec![extra.clone()]);
     assert_eq!(rig.stars_and_aliases(&old), (1, 0));
@@ -10277,7 +10276,8 @@ async fn another_album_copied_over_an_old_one_comes_in_as_new_tracks() {
         .duration_since(std::time::UNIX_EPOCH)
         .expect("after 1970")
         .as_secs_f64();
-    use droppedneedle_library::operations::history::{HistoryKind, album_history};
+    use droppedneedle_library::catalog_actions::history::HistoryKind;
+    use droppedneedle_library::catalog_actions::history::album_history;
     let told: Vec<(HistoryKind, usize, Vec<String>)> =
         album_history(&conn, &album, "listener", now)
             .expect("history reads")
@@ -10580,7 +10580,8 @@ impl RegroupRig {
 /// it. One file per folder; each line is a row of the task's table.
 #[tokio::test]
 async fn a_new_copy_at_a_path_needs_the_same_recording_and_new_audio() {
-    use droppedneedle_library::operations::history::{HistoryKind, album_history};
+    use droppedneedle_library::catalog_actions::history::HistoryKind;
+    use droppedneedle_library::catalog_actions::history::album_history;
     use droppedneedle_library::publish::record::record;
 
     const V3: &str = "INSERT INTO library_track_management_state (local_track_id, \

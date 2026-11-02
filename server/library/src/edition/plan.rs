@@ -5,7 +5,7 @@
 //! track of it keeps that track first (a person's match by hand before any
 //! other), so the plan shows what automatic management writes from. The
 //! rest are lined up against the edition's tracklist with the same
-//! placement a choice writes ([`super::choice::place`]). Other editions
+//! placement a choice writes ([`crate::edition::choice::place`]). Other editions
 //! are lined up by that placement alone. Each file keeps its place on an
 //! edition track, is a second copy of a
 //! song the edition already has a file for, is another version of a track
@@ -18,13 +18,15 @@
 
 use std::collections::HashSet;
 
-use super::choice::place;
-use super::models::ReidentificationCandidate;
-use super::reasons::{Reason, TRACK_ID_CORRECTED, TRACK_ID_ELSEWHERE};
+use crate::edition::choice::place;
 use crate::identify::models::{LocalAlbumFacts, LocalTrackFacts};
 use crate::matching::model::{Release, credit_text};
 use crate::matching::score::{ConflictKind, Support};
 use crate::matching::strings::fold;
+use crate::reasons::Reason;
+use crate::reasons::TRACK_ID_CORRECTED;
+use crate::reasons::TRACK_ID_ELSEWHERE;
+use crate::reidentify::models::ReidentificationCandidate;
 
 /// What happens to one file when the album takes the edition. Choosing
 /// never deletes a file.

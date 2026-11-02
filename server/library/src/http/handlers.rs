@@ -4,9 +4,9 @@
 //! publisher runs on a blocking thread; only the in-memory root registry
 //! answers inline.
 
-use crate::manage::Publishing;
 use crate::management::after_apply::UndoBundleError;
 use crate::management::service::Management;
+use crate::publish::session::Publishing;
 use crate::scans::Scans;
 use axum::{
     Json,
@@ -123,7 +123,7 @@ impl From<UndoBundleError> for ApiError {
         match error {
             UndoBundleError::RunBundle => refused(
                 axum::http::StatusCode::CONFLICT,
-                crate::operations::reasons::UNDO_RUN_FROM_HISTORY,
+                crate::reasons::UNDO_RUN_FROM_HISTORY,
             ),
             UndoBundleError::Service(error) => error.into(),
         }

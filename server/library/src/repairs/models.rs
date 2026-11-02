@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ToSql, ToSqlOutput, ValueRef};
 use serde::{Deserialize, Serialize};
 
-use crate::operations::models::ReidentificationCandidate;
+use crate::reidentify::models::ReidentificationCandidate;
 
 /// One SQL conversion for a closed set stored as text: the value is its
 /// `as_str`, and text outside the set fails decoding.

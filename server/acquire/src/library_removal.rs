@@ -30,7 +30,7 @@ use droppedneedle_kernel::db::{Db, DbError, Lane};
 use droppedneedle_kernel::jobs::queue::{
     JobCtx, JobError, JobHandler, KindSpec, Outcome, PAYLOAD_INVALID,
 };
-use droppedneedle_library::mutations::{ALBUM_REMOVED, AlbumRemovedJob};
+use droppedneedle_library::removal::{ALBUM_REMOVED, AlbumRemovedJob};
 
 use super::downloads::store::{DownloadStore, StoreError};
 use super::held::store::HeldRows;

@@ -34,6 +34,7 @@ mod import;
 mod moves;
 mod person;
 pub mod reads;
+mod release;
 pub mod remap;
 pub(crate) mod sql;
 mod undo;
@@ -62,6 +63,7 @@ pub use person::{
     leave_unmanaged, place, remove, unmatch,
 };
 pub(crate) use person::{TrackRow, drop_edition, upsert_track_identity};
+pub use release::ReleaseIdentity;
 pub use undo::{AutomaticUndo, AutomaticUndone, undo, undo_automatic};
 
 /// Why a person's identity command wrote nothing.

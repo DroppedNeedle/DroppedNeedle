@@ -26,8 +26,9 @@ use serde::{Deserialize, Serialize};
 use super::reads::{album_identity_row, identity_revision, indexed_track_ids, track_identity_rows};
 use super::sql;
 use super::{DecisionSource, IdentityError, PROVIDER, Refusal, Rows, delete_album_row};
+use crate::catalog_actions::CatalogAction;
+use crate::catalog_actions::record_action;
 use crate::identify::models::{PriorAlbumIdentity, PriorTrackIdentity};
-use crate::operations::decisions::{CatalogAction, record_action};
 
 /// An album's match state row, as the undo snapshot keeps it.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]

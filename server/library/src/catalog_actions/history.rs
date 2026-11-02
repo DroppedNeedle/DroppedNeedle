@@ -8,12 +8,18 @@
 //! album or track ids, no reason codes, no counts of what moved. The one id
 //! is the audit row of a fold or of an artist repair, as its undo handle.
 
+use crate::clock::LibraryClock as _;
+use crate::jobs::models::OperationError;
+use crate::jobs::service::Operations;
+use crate::reasons;
+use droppedneedle_kernel::db::Lane;
 use std::collections::BTreeSet;
 
 use rusqlite::{Connection, OptionalExtension as _, params, params_from_iter};
 use serde::Deserialize;
 
-use super::sql::{FoldUndo, HistoryRow};
+use crate::catalog_actions::sql::FoldUndo;
+use crate::catalog_actions::sql::HistoryRow;
 use crate::corrections::continuation::SAME_FILE;
 use crate::identify::models::PriorAlbumIdentity;
 use crate::identity;
@@ -162,7 +168,7 @@ pub fn album_history(
     now: f64,
 ) -> rusqlite::Result<Option<Vec<HistoryEntry>>> {
     let live: bool = conn.query_row(
-        crate::operations::sql::ALBUM_LIVE.text(),
+        crate::edition::sql::ALBUM_LIVE.text(),
         params![album_id],
         |row| row.get(0),
     )?;
@@ -170,7 +176,7 @@ pub fn album_history(
         return Ok(None);
     }
     let rows: Vec<Row> = conn
-        .prepare_cached(crate::operations::sql::ALBUM_HISTORY_ROWS.text())?
+        .prepare_cached(crate::catalog_actions::sql::ALBUM_HISTORY_ROWS.text())?
         .query_map(
             params![album_id, crate::clock::ms(now - MAX_AGE_SECS)],
             HistoryRow::read,
@@ -423,7 +429,7 @@ fn album_title(conn: &Connection, album_id: Option<&str>) -> rusqlite::Result<Op
         return Ok(None);
     };
     conn.query_row(
-        crate::operations::sql::ALBUM_TITLE.text(),
+        crate::catalog_actions::sql::ALBUM_TITLE.text(),
         params![album_id],
         |row| row.get(0),
     )
@@ -440,7 +446,7 @@ fn fold_undone(
     caller_user_id: &str,
     since: f64,
 ) -> rusqlite::Result<Option<HistoryEntry>> {
-    conn.prepare_cached(crate::operations::sql::FOLD_UNDONE.text())?
+    conn.prepare_cached(crate::catalog_actions::sql::FOLD_UNDONE.text())?
         .query_row(
             params![
                 source,
@@ -494,9 +500,59 @@ fn sealed_edition(row: &Row) -> Option<HistoryKind> {
 
 /// The first titles of `tracks`, by disc and track number.
 fn titles(conn: &Connection, tracks: &BTreeSet<&str>) -> rusqlite::Result<Vec<String>> {
-    conn.prepare(&crate::operations::sql::titles_of_tracks(ListLen::new(
-        tracks.len(),
-    )))?
+    conn.prepare(&crate::catalog_actions::sql::titles_of_tracks(
+        ListLen::new(tracks.len()),
+    ))?
     .query_map(params_from_iter(tracks.iter()), |row| row.get(0))?
     .collect()
+}
+
+impl Operations {
+    /// What the app did by itself to the album, newest first, as
+    /// `caller_user_id` may see it. Blocking.
+    pub fn album_history(
+        &self,
+        album_id: &str,
+        caller_user_id: &str,
+    ) -> Result<Vec<HistoryEntry>, OperationError> {
+        self.db.read_blocking("operations.album_history", |conn| {
+            album_history(conn, album_id, caller_user_id, self.clock.now_secs())?
+                .ok_or(OperationError::NotFound(reasons::ALBUM_NOT_FOUND))
+        })
+    }
+
+    /// Undo the fold of a leftover album recorded as `fold_id`, for
+    /// `actor`: the album and its v2 match come back. Blocking.
+    pub fn undo_fold(&self, fold_id: &str, actor: &str) -> Result<(), OperationError> {
+        use crate::identity::{FoldUndo, undo_fold};
+
+        self.db.write_blocking(
+            Lane::Foreground,
+            "operations.undo_fold",
+            |tx| match undo_fold(tx, fold_id, Some(actor), self.clock.now_secs())? {
+                FoldUndo::Restored => Ok(()),
+                FoldUndo::Stale => Err(OperationError::Conflict(reasons::FOLD_STALE)),
+                FoldUndo::Unknown => Err(OperationError::NotFound(reasons::FOLD_NOT_FOUND)),
+            },
+        )
+    }
+
+    /// Undo the placeholder-artist repair recorded as `repair_id`, for
+    /// `actor`: the album's earlier artist and credits come back. Blocking.
+    pub fn undo_artist_repair(&self, repair_id: &str, actor: &str) -> Result<(), OperationError> {
+        use crate::repairs::hygiene::{ArtistRepairUndo, undo_artist_from_tracks};
+
+        self.db
+            .write_blocking(Lane::Foreground, "operations.undo_artist_repair", |tx| {
+                match undo_artist_from_tracks(tx, repair_id, actor, self.clock.now_secs())? {
+                    ArtistRepairUndo::Restored => Ok(()),
+                    ArtistRepairUndo::Stale => {
+                        Err(OperationError::Conflict(reasons::ARTIST_REPAIR_STALE))
+                    }
+                    ArtistRepairUndo::Unknown => {
+                        Err(OperationError::NotFound(reasons::ARTIST_REPAIR_NOT_FOUND))
+                    }
+                }
+            })
+    }
 }

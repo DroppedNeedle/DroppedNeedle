@@ -13,7 +13,7 @@ use serde_json::{Map, Value, json};
 use sha2::{Digest as _, Sha256};
 
 use super::reasons;
-use crate::operations::models::OperationError;
+use crate::jobs::models::OperationError;
 
 pub const MAX_ROWS: usize = 5_000;
 pub const MAX_BYTES: usize = 2 * 1024 * 1024;

@@ -48,9 +48,10 @@ use rusqlite::{Connection, Transaction, params};
 use super::artists::retire_artist;
 pub(crate) use super::artists::{CREDITS_MOVED, MERGED_BY_NAME, MOVED_BY_NAME, MOVED_WITH_ID};
 use super::merge_basis::{Follow, MergeBasis};
+use crate::catalog_actions::ArtistAction;
+use crate::catalog_actions::record_artist_action;
 use crate::catalog_revision::bump_catalog;
 use crate::identify::artist_links::{MovedProof, placeholder, settle_holders};
-use crate::operations::decisions::{ArtistAction, record_artist_action};
 use crate::scan::sqlite_store::artists::SENTINEL_ARTIST_IDS;
 use droppedneedle_kernel::db::savepoint;
 

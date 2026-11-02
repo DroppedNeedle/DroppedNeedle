@@ -1884,7 +1884,7 @@ async fn held_scopes_arrive_with_the_holds_that_stand() {
 /// code names, in both directions.
 #[tokio::test]
 async fn remap_origin_check_lists_exactly_the_code_values() {
-    use droppedneedle_library::operations::choice::RemapOrigin;
+    use droppedneedle_library::edition::choice::RemapOrigin;
 
     let pool = migrated_pool().await;
     let sql: String = sqlx::query_scalar(
@@ -10432,9 +10432,11 @@ async fn compat_user_settings_start_off_and_go_with_their_user() {
 #[tokio::test]
 async fn library_tables_rebuild_to_conventions_on_upgrade() {
     use droppedneedle_kernel::db::Lane;
-    use droppedneedle_library::operations::models::OperationError;
-    use droppedneedle_library::operations::reviews::{self, ReviewAction};
-    use droppedneedle_library::operations::{choice, decisions};
+    use droppedneedle_library::edition::choice;
+    use droppedneedle_library::edition::decisions;
+    use droppedneedle_library::jobs::models::OperationError;
+    use droppedneedle_library::reviews;
+    use droppedneedle_library::reviews::ReviewAction;
 
     const REBUILT: [&str; 27] = [
         "library_scan_runs",

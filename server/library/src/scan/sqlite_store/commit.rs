@@ -37,6 +37,8 @@ use super::hands_off::hold_replacements;
 use super::held_scopes;
 use super::retag_pairs::{self, RetagPairReason, RetagPairState};
 use super::*;
+use crate::catalog_actions::CatalogAction;
+use crate::catalog_actions::record_action;
 use crate::catalog_revision::bump_catalog;
 use crate::corrections::artist_convergence::{converge_artists, record_move};
 use crate::corrections::continuation::{Pair, Scope, continue_tracks};
@@ -51,7 +53,6 @@ use crate::identify::sqlite::{
 };
 use crate::management::{automatic, takeover};
 use crate::matching::model::EditionHints;
-use crate::operations::decisions::{CatalogAction, record_action};
 use crate::publish::HIDDEN_PREFIX;
 use crate::scan::naming::{
     album_grouping_key, album_name_key, grouping_directory, parse_names_for_row,

@@ -11,6 +11,7 @@
 //! steps so the tests can prove that restart recovery always resumes
 //! or compensates. Production never sets a crash point.
 
+use crate::identity::ReleaseIdentity;
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -28,7 +29,7 @@ use super::journal::{
 use super::paths::Sandbox;
 use super::planner::{
     AlbumJoin, CapabilityGate, CollisionGate, CommitSeal, DiskPreflight, JoinedTrack, PlanBundle,
-    ReleaseIdentity, SealError, SealRecheck, SealedPreview, SpaceProbe,
+    SealError, SealRecheck, SealedPreview, SpaceProbe,
 };
 use super::snapshots::{BlobStore, SnapshotStore, sha256_hex};
 use super::step::{AdoptionFrom, Advanced, Hooks, Run};
@@ -261,7 +262,7 @@ pub(super) fn commit_bundle(
         )?;
     }
     for (album, (release, files)) in &placing {
-        crate::operations::choice::place_imported(tx, album, release, files, now)?;
+        crate::edition::choice::place_imported(tx, album, release, files, now)?;
     }
     // After the placements: a person's edition keeps them, and the
     // seal never writes over a person's rows.

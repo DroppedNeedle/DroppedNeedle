@@ -1,7 +1,7 @@
 //! What each repair finding means, in words, with what to do about it.
 //! Codes are v2's, so reports carried over from v2 read the same.
 
-use crate::operations::reasons::Reason;
+use crate::reasons::Reason;
 
 const fn reason(code: &'static str, message: &'static str, action: &'static str) -> Reason {
     Reason {

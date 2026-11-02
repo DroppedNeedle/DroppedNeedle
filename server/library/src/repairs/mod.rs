@@ -52,7 +52,7 @@ use droppedneedle_kernel::jobs::{
 };
 
 use crate::jobs::REPAIRS_WAKEUP;
-use crate::operations::models::OperationError;
+use crate::jobs::models::OperationError;
 use service::RepairWorker;
 
 /// How long the worker waits for a wakeup before it looks anyway: a

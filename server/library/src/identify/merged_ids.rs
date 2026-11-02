@@ -20,7 +20,8 @@ use super::artist_links::{
     LINK_GAVE_WAY, drop_app_link, mark_stale, placeholder, settle, touch_artist,
 };
 use super::sources::ArtistAnswer;
-use crate::operations::decisions::{ArtistAction, record_artist_action};
+use crate::catalog_actions::ArtistAction;
+use crate::catalog_actions::record_artist_action;
 
 /// A kept id is asked about again after this long, while it still
 /// disagrees with another id on a record.

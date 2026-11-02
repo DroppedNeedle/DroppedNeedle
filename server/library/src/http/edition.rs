@@ -45,18 +45,23 @@ use super::blocking;
 use super::error::refused;
 use super::models::PenaltyView;
 use super::operations::ReasonView;
+use crate::edition::models::EditionChoice;
+use crate::edition::plan::FileFate;
+use crate::edition::plan::PlanReading;
+use crate::edition::status::EditionKind;
+use crate::edition::status::EditionState;
+use crate::edition::status::EditionStatus;
+use crate::edition::status::WaitingAlbum;
 use crate::identify::models::CandidateEvidence;
+use crate::jobs::models::OperationError;
+use crate::jobs::service::Operations;
 use crate::jobs::{ManagementPhase, OperationState};
 use crate::management::automatic::AutomaticWrites;
 use crate::management::edition_tags::{EditionTagsError, EditionTagsJob};
 use crate::management::models::{FieldMutation, ManagementError, PlannedItem, PreviewHandle};
 use crate::management::service::{ApplyRequest, Management};
-use crate::mutations::{ExtrasError, Mutations};
-use crate::operations::models::{EditionChoice, OperationError};
-use crate::operations::plan::{FileFate, PlanReading};
-use crate::operations::reasons;
-use crate::operations::service::Operations;
-use crate::operations::status::{EditionKind, EditionState, EditionStatus, WaitingAlbum};
+use crate::reasons;
+use crate::removal::{ExtrasError, Mutations};
 use crate::wiring::LibraryServices;
 use droppedneedle_auth::{Admin, Curator, User};
 
@@ -1194,7 +1199,7 @@ impl From<EditionTagsJob> for EditionTagsJobView {
                 .terminal_code
                 .as_deref()
                 .filter(|_| step == EditionTagsStep::Failed)
-                .map(|code| crate::operations::reasons::terminal(code).into()),
+                .map(|code| crate::reasons::terminal(code).into()),
             stale_reasons: detail.stale_reasons,
             files: found.items.into_iter().map(Into::into).collect(),
         }

@@ -383,23 +383,13 @@ const IDENTITY_USES: &[(&str, &str)] = &[
         "offers the album to identification and reads its input revision",
     ),
     ("identify::models", "the identity rows' data types"),
+    ("catalog_actions::CatalogAction", "the audit row"),
+    ("catalog_actions::record_action", "the audit row"),
     (
-        "operations::decisions::CatalogAction",
-        "the audit row, until the audit writer has a module of its own",
-    ),
-    (
-        "operations::decisions::record_action",
-        "the audit row, until the audit writer has a module of its own",
-    ),
-    (
-        "operations::decisions::settle_reviews",
-        "review writes, until reviews have a service of their own",
+        "reviews::settle_reviews",
+        "closes an album's pending reviews",
     ),
     ("matching::Release", "the stored release document's type"),
-    (
-        "publish::planner::ReleaseIdentity",
-        "an import's journaled match, a data type",
-    ),
 ];
 
 /// The identity module uses only what [`IDENTITY_USES`] lists from the
@@ -552,15 +542,15 @@ const SPAWN_SITES: &[(&str, usize, &str)] = &[
     ("kernel/src/schema/template.rs", 1, TEST_TEMPLATE),
     ("library/src/contrib/live.rs", 1, LOOP_STEP),
     ("library/src/http/mod.rs", 1, REQUEST),
+    ("library/src/edition/service.rs", 9, LOOP_STEP),
     ("library/src/identify/sources.rs", 3, LOOP_STEP),
     ("library/src/identify/stores.rs", 2, LOOP_STEP),
+    ("library/src/jobs/worker.rs", 2, LOOP_STEP),
     ("library/src/loops.rs", 3, LOOP_STEP),
-    ("library/src/manage.rs", 1, LOOP_STEP),
     ("library/src/management/mod.rs", 2, LOOP_STEP),
-    ("library/src/mutations.rs", 1, REQUEST),
-    ("library/src/operations/mod.rs", 2, LOOP_STEP),
-    ("library/src/operations/service.rs", 9, LOOP_STEP),
-    ("library/src/recycle_bin.rs", 1, JOB_STEP),
+    ("library/src/publish/session.rs", 1, LOOP_STEP),
+    ("library/src/removal/mod.rs", 1, REQUEST),
+    ("library/src/removal/recycle_bin.rs", 1, JOB_STEP),
     ("library/src/repairs/mod.rs", 1, LOOP_STEP),
     ("library/src/scan/coordinator.rs", 1, LOOP_STEP),
     ("library/src/scan/pool.rs", 1, LOOP_STEP),

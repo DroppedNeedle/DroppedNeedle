@@ -38,7 +38,7 @@ pub struct RequestsState {
     pub mixer: Option<Arc<super::mix::PersonalMixBuilder>>,
     /// The library's edition plans: "get missing tracks" fetches only what
     /// the chosen edition lacks. `None` in tests that run the routes alone.
-    pub edition_plans: Option<Arc<dyn droppedneedle_library::operations::port::EditionPlans>>,
+    pub edition_plans: Option<Arc<dyn droppedneedle_library::edition::port::EditionPlans>>,
     /// The download policy the upgrade cutoff comes from: "get missing
     /// tracks" also asks for the edition's owned tracks below the cutoff.
     pub upgrade_policy: Option<
@@ -50,7 +50,7 @@ pub struct RequestsState {
     pub readiness: Option<AcquireReadiness>,
     /// The library's album removal: an admin removing a discovery batch
     /// recycles the albums it brought in. `None` leaves them in place.
-    pub albums: Option<droppedneedle_library::mutations::Mutations>,
+    pub albums: Option<droppedneedle_library::removal::Mutations>,
     /// Users' notices: a follower hears when someone else's ask starts
     /// their followed artist's release. `None` in tests that run the
     /// routes alone.

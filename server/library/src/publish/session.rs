@@ -6,29 +6,30 @@
 //! `POST /library/manage/undo` (a plugin file's take-back) uses the undo,
 //! and the tests drive single-file publishes through the rest.
 
+use crate::identity::ReleaseIdentity;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use super::adapters::FsSpaceProbe;
-use super::clock::LibraryClock as _;
-use super::publish::bin::BinSource;
-use super::publish::journal::{JournalState, JournalStore};
-use super::publish::paths::{ResolvedRoot, Root, left_out};
-use super::publish::planner::{
+use crate::adapters::FsSpaceProbe;
+use crate::clock::LibraryClock as _;
+use crate::publish::bin::BinSource;
+use crate::publish::journal::{JournalState, JournalStore};
+use crate::publish::paths::{ResolvedRoot, Root, left_out};
+use crate::publish::planner::{
     Capability, CollisionGate, DiskPreflight, FileFingerprint, PlanBundle, PlanItem, PlanKind,
-    ReleaseIdentity, STAGED_HEADROOM_BYTES, SealRecheck, SealedPreview,
+    STAGED_HEADROOM_BYTES, SealRecheck, SealedPreview,
 };
-use super::publish::publisher::{PublishOutcome, Publisher, locate};
-use super::publish::recovery::{LEFTOVER_LIST_MAX, Leftover, LeftoverReport};
-use super::publish::snapshots::{BaselineStore, BlobStore, SnapshotStore, sha256_hex};
-use super::publish::tags_seam::{TagDocument, TagUpdates};
-use super::publish::{PlacementMode, PublishError, Sandbox};
-use super::scan::models::EffectivePolicy;
-use super::scan::roots::RootRegistry;
-use super::service::ServiceError;
-use super::tags::AudioFormat;
-use super::wiring::RootDirs;
+use crate::publish::publisher::{PublishOutcome, Publisher, locate};
+use crate::publish::recovery::{LEFTOVER_LIST_MAX, Leftover, LeftoverReport};
+use crate::publish::snapshots::{BaselineStore, BlobStore, SnapshotStore, sha256_hex};
+use crate::publish::tags_seam::{TagDocument, TagUpdates};
+use crate::publish::{PlacementMode, PublishError, Sandbox};
+use crate::scan::models::EffectivePolicy;
+use crate::scan::roots::RootRegistry;
+use crate::service::ServiceError;
+use crate::tags::AudioFormat;
+use crate::wiring::RootDirs;
 use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::db::{CancelFlag, Db, DbError, Lane};
 use droppedneedle_kernel::jobs::queue::JobQueue;
@@ -45,7 +46,7 @@ const PINNED_OVERRIDE: u64 = 0;
 
 /// Policy revision as the seal's u64: the registry fingerprint is
 /// 16 hex chars by construction.
-pub(super) fn policy_revision_u64(registry: &RootRegistry) -> u64 {
+pub(crate) fn policy_revision_u64(registry: &RootRegistry) -> u64 {
     u64::from_str_radix(registry.fingerprint(), 16).unwrap_or(0)
 }
 
@@ -80,7 +81,7 @@ pub(crate) struct SessionRoots {
     remove_only: Vec<Root>,
     /// Each root's real folder by id; `None` while it does not resolve.
     resolved: Vec<(String, Option<PathBuf>)>,
-    bins: Result<Vec<Root>, super::publish::bin::BinsUnknown>,
+    bins: Result<Vec<Root>, crate::publish::bin::BinsUnknown>,
 }
 
 impl SessionRoots {
@@ -183,7 +184,7 @@ impl HeldBundles {
     /// True when the publisher committed `bundle_id`: its files changed
     /// even if whoever asked never heard back. Blocking.
     pub fn committed(&self, bundle_id: &str) -> Result<bool, PublishError> {
-        use super::publish::JournalState;
+        use crate::publish::JournalState;
         self.db
             .read_long("publish.held_committed", &CancelFlag::never(), |conn| {
                 let journals = JournalStore::new(conn).bundle(bundle_id)?;
@@ -222,7 +223,7 @@ impl HeldBundles {
     /// recovery has not decided yet whether it finishes or unwinds.
     /// Blocking.
     pub fn unsettled(&self, bundle_id: &str) -> Result<bool, PublishError> {
-        use super::publish::JournalState;
+        use crate::publish::JournalState;
         let journals =
             self.db
                 .read_long("publish.held_unsettled", &CancelFlag::never(), |conn| {
@@ -296,7 +297,7 @@ impl LeftoverFiles {
             })
             .cloned()
             .collect();
-        let Some(found) = super::publish::recovery::find_leftovers(
+        let Some(found) = crate::publish::recovery::find_leftovers(
             &self.db,
             &due,
             &mounts,
@@ -340,7 +341,7 @@ impl LeftoverFiles {
                 for (root_id, checked_at, count, files) in &writes {
                     let files = serde_json::to_string(files)
                         .map_err(|error| PublishError::Journal(error.to_string().into()))?;
-                    tx.prepare_cached(super::publish::sql::LEFTOVER_KEEP.text())?
+                    tx.prepare_cached(crate::publish::sql::LEFTOVER_KEEP.text())?
                         .execute(rusqlite::params![
                             root_id,
                             checked_at,
@@ -349,7 +350,7 @@ impl LeftoverFiles {
                         ])?;
                 }
                 if forget {
-                    tx.prepare_cached(super::publish::sql::LEFTOVER_FORGET.text())?
+                    tx.prepare_cached(crate::publish::sql::LEFTOVER_FORGET.text())?
                         .execute(rusqlite::params![set])?;
                 }
                 Ok::<_, PublishError>(())
@@ -382,10 +383,10 @@ impl LeftoverFiles {
     fn mounts(&self) -> Result<BTreeMap<String, BTreeSet<String>>, DbError> {
         self.db.read_blocking("publish.leftover_mounts", |conn| {
             let mut mounts: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-            let mut statement = conn.prepare_cached(super::publish::sql::SCAN_MOUNTS.text())?;
+            let mut statement = conn.prepare_cached(crate::publish::sql::SCAN_MOUNTS.text())?;
             let mut rows = statement.query([])?;
             while let Some(row) = rows.next()? {
-                let row = super::publish::sql::ScanMount::read(row)?;
+                let row = crate::publish::sql::ScanMount::read(row)?;
                 mounts
                     .entry(row.root_id)
                     .or_default()
@@ -400,10 +401,10 @@ impl LeftoverFiles {
         self.db.read_blocking("publish.leftover_checks", |conn| {
             let mut checks = BTreeMap::new();
             let mut statement =
-                conn.prepare_cached(super::publish::sql::LEFTOVER_CHECKS.text())?;
+                conn.prepare_cached(crate::publish::sql::LEFTOVER_CHECKS.text())?;
             let mut rows = statement.query([])?;
             while let Some(row) = rows.next()? {
-                let row = super::publish::sql::LeftoverCheck::read(row)?;
+                let row = crate::publish::sql::LeftoverCheck::read(row)?;
                 let root_id = row.root_id;
                 let mut checked_at = row.checked_at;
                 let files = serde_json::from_str(&row.files_json).unwrap_or_else(|error| {
@@ -511,7 +512,7 @@ impl PublishCell {
         self.db
             .read_long("publish.held", &CancelFlag::never(), |conn| {
                 Ok(conn
-                    .prepare_cached(super::publish::sql::ANY_ACTIVE.text())?
+                    .prepare_cached(crate::publish::sql::ANY_ACTIVE.text())?
                     .query_row(
                         rusqlite::params![
                             JournalState::Cleaned,
@@ -527,19 +528,19 @@ impl PublishCell {
     /// retry for held bundles. No-op while no usable root exists.
     pub(crate) fn retry_held(
         &mut self,
-    ) -> Result<Vec<super::publish::recovery::BundleRecovery>, PublishError> {
+    ) -> Result<Vec<crate::publish::recovery::BundleRecovery>, PublishError> {
         let Some(open) = self.cell.as_ref() else {
             return Ok(Vec::new());
         };
         let results =
-            super::publish::recovery::reconcile(&self.db, &open.sandbox, &self.jobs, &*self.clock)?;
+            crate::publish::recovery::reconcile(&self.db, &open.sandbox, &self.jobs, &*self.clock)?;
         self.log_waiting(&results);
         Ok(results)
     }
 
     /// Warn once for each bundle that starts waiting for its library
     /// folder, rather than on every pass while the folder stays away.
-    fn log_waiting(&mut self, results: &[super::publish::recovery::BundleRecovery]) {
+    fn log_waiting(&mut self, results: &[crate::publish::recovery::BundleRecovery]) {
         let waiting: BTreeSet<(String, String)> = results
             .iter()
             .filter_map(|result| {
@@ -619,7 +620,7 @@ impl PublishCell {
         &mut self,
         registry: &RootRegistry,
         space_roots: &RootDirs,
-    ) -> Result<Vec<super::publish::recovery::BundleRecovery>, PublishError> {
+    ) -> Result<Vec<crate::publish::recovery::BundleRecovery>, PublishError> {
         let session = self.session(registry);
         self.refresh_to(session, space_roots)
     }
@@ -631,7 +632,7 @@ impl PublishCell {
         &mut self,
         session: SessionRoots,
         space_roots: &RootDirs,
-    ) -> Result<Vec<super::publish::recovery::BundleRecovery>, PublishError> {
+    ) -> Result<Vec<crate::publish::recovery::BundleRecovery>, PublishError> {
         if session.is_empty() {
             self.cell = None;
             self.placement.follow(None);
@@ -653,7 +654,7 @@ impl PublishCell {
         // journal lives in the application database, so root order never
         // decides where it is.
         let recoveries =
-            super::publish::recovery::reconcile(&self.db, &sandbox, &self.jobs, &*self.clock)?;
+            crate::publish::recovery::reconcile(&self.db, &sandbox, &self.jobs, &*self.clock)?;
         self.log_waiting(&recoveries);
         let publisher = Publisher::new(
             sandbox.clone(),
@@ -737,7 +738,7 @@ pub type AdmitPluginFile<'a> = &'a dyn Fn(&rusqlite::Connection, i64) -> Result<
 /// How long a plugin write pauses between tries for a busy library.
 const PLUGIN_RETRY_PAUSE: std::time::Duration = std::time::Duration::from_millis(100);
 
-impl super::wiring::LibraryCore {
+impl crate::wiring::LibraryCore {
     /// Whether the library-wide switch is off, so nothing may be written
     /// to a library folder. Blocking: it reads the folders.
     pub fn switched_off(&self) -> bool {
@@ -763,7 +764,7 @@ impl super::wiring::LibraryCore {
         deadline: std::time::Instant,
         cancelled: &std::sync::Arc<std::sync::atomic::AtomicBool>,
         admit: AdmitPluginFile<'_>,
-        on_record: super::publish::publisher::OnRecord<'_>,
+        on_record: crate::publish::publisher::OnRecord<'_>,
     ) -> Result<AddedPluginFile, PluginFileRefusal> {
         use std::sync::atomic::Ordering;
         let now_ms = self.clock.now_ms();
@@ -794,7 +795,7 @@ impl super::wiring::LibraryCore {
             if cancelled.load(Ordering::SeqCst) {
                 return Err(PluginFileRefusal::Cancelled);
             }
-            let terms = || super::publish::publisher::AddTerms {
+            let terms = || crate::publish::publisher::AddTerms {
                 deadline,
                 cancelled: cancelled.clone(),
                 on_record,
@@ -820,7 +821,7 @@ impl super::wiring::LibraryCore {
         relative_path: &str,
         first: &str,
         bytes: &mut Option<Vec<u8>>,
-        terms: impl FnOnce() -> super::publish::publisher::AddTerms<'a>,
+        terms: impl FnOnce() -> crate::publish::publisher::AddTerms<'a>,
     ) -> Option<Result<AddedPluginFile, PluginFileRefusal>> {
         let mut cell = match self.publish.try_lock() {
             Ok(cell) => cell,
@@ -878,9 +879,9 @@ impl super::wiring::LibraryCore {
         registry: &RootRegistry,
         (plugin, relative_path, first): (&str, &str, &str),
         bytes: Vec<u8>,
-        terms: super::publish::publisher::AddTerms<'_>,
+        terms: crate::publish::publisher::AddTerms<'_>,
     ) -> Result<AddedPluginFile, PluginFileRefusal> {
-        use super::publish::add::{Added, AddedFile, Origin};
+        use crate::publish::add::{Added, AddedFile, Origin};
         cell.refresh_to(session, &self.root_dirs)
             .map_err(PluginFileRefusal::Publish)?;
         let unusable = PluginFileRefusal::FolderUnusable(
@@ -1048,7 +1049,7 @@ impl SealPins {
 /// Why undo leaves one file of a bundle alone.
 #[derive(Debug, Clone)]
 pub(crate) enum UndoSkip {
-    Plan(super::publish::undo::UndoBlock),
+    Plan(crate::publish::undo::UndoBlock),
     /// The file is no longer in the library, unreadable, or unmatched.
     Gone,
     /// The saved copy of its earlier tags is missing or damaged.
@@ -1075,7 +1076,7 @@ pub(crate) struct UndoFiles {
 /// Why a baseline restore leaves one file alone.
 #[derive(Debug, Clone)]
 pub(crate) enum BaselineSkip {
-    Plan(super::publish::undo::BaselineBlock),
+    Plan(crate::publish::undo::BaselineBlock),
     /// The file is no longer in the library, unreadable, or unmatched.
     Gone,
     /// The saved copy of its original tags is missing or damaged.
@@ -1180,7 +1181,7 @@ pub(crate) fn publish_error(error: PublishError) -> ServiceError {
         },
         PublishError::Interrupted(cause) => ServiceError::Busy { cause },
         PublishError::BinsUnknown(cause) => ServiceError::Conflict {
-            message: super::mutations::bins_unknown(cause, super::mutations::BinUse::Change)
+            message: crate::removal::bins_unknown(cause, crate::removal::BinUse::Change)
                 .message
                 .to_owned(),
         },
@@ -1200,14 +1201,14 @@ pub(crate) fn publish_error(error: PublishError) -> ServiceError {
 pub struct Publishing {
     pub(crate) db: Db,
     /// The publish cell, the roots and the recycle bins.
-    pub core: super::wiring::LibraryCore,
-    pub(crate) identify_store: Arc<super::identify::sqlite::SqliteIdentifyStore>,
-    pub(crate) scan_store: Arc<super::scan::sqlite_store::SqliteScanStore>,
-    pub(crate) settings: super::settings::LibrarySettings,
+    pub core: crate::wiring::LibraryCore,
+    pub(crate) identify_store: Arc<crate::identify::sqlite::SqliteIdentifyStore>,
+    pub(crate) scan_store: Arc<crate::scan::sqlite_store::SqliteScanStore>,
+    pub(crate) settings: crate::settings::LibrarySettings,
     /// Sealed previews awaiting apply, keyed by token hash.
     pub(crate) previews: Arc<std::sync::Mutex<HashMap<String, PreviewEntry>>>,
     /// What recycle-bin expiry remembers between passes.
-    pub(crate) expiry: Arc<super::publish::expiry::ExpiryMemory>,
+    pub(crate) expiry: Arc<crate::publish::expiry::ExpiryMemory>,
     /// The jobs table: a removed album's clean-up is queued here in the
     /// removal's own commit, and emptying the recycle bin is a job.
     pub(crate) jobs: JobQueue,
@@ -1248,7 +1249,7 @@ impl Publishing {
                 true
             });
             let settled = cell.cell.is_some() && !held;
-            super::publish::import_staging::sweep_import_leftovers(&roots, settled);
+            crate::publish::import_staging::sweep_import_leftovers(&roots, settled);
             recoveries
         })
         .await;
@@ -1268,10 +1269,10 @@ impl Publishing {
         plugin: &str,
         before: Option<(i64, String)>,
         limit: u32,
-    ) -> Result<Vec<super::publish::add::PluginFile>, ServiceError> {
+    ) -> Result<Vec<crate::publish::add::PluginFile>, ServiceError> {
         self.db
             .read_blocking("publish.plugin_files", |conn| {
-                super::publish::add::plugin_files(
+                crate::publish::add::plugin_files(
                     conn,
                     plugin,
                     before.as_ref().map(|(at, id)| (*at, id.as_str())),
@@ -1314,7 +1315,7 @@ impl Publishing {
         let reason = self
             .db
             .read_blocking("management.match_gate", |conn| {
-                Ok::<_, DbError>(super::management::planner::match_gate(
+                Ok::<_, DbError>(crate::management::planner::match_gate(
                     conn, album_id, allowed,
                 )?)
             })
@@ -1336,7 +1337,7 @@ impl Publishing {
         let reason = self
             .db
             .read_blocking("management.remap_gate", |conn| {
-                Ok::<_, DbError>(super::management::planner::remap_gate(conn, album_id)?)
+                Ok::<_, DbError>(crate::management::planner::remap_gate(conn, album_id)?)
             })
             .map_err(|error| {
                 tracing::error!(%error, album = album_id, "edition remap state unreadable; management refused");
@@ -1373,7 +1374,7 @@ impl Publishing {
             let custom = self
                 .db
                 .read_blocking("management.custom_edition", |conn| {
-                    Ok::<_, DbError>(super::management::custom::active(conn, album_id)?)
+                    Ok::<_, DbError>(crate::management::custom::active(conn, album_id)?)
                 })
                 .map_err(gate_error)?
                 .ok_or_else(|| {
@@ -1470,7 +1471,7 @@ impl Publishing {
             .resolve_no_symlink(root_id, rel_path)
             .map_err(publish_error)?;
         let hashed =
-            super::publish::paths::hash_regular_file(&path).map_err(|error| match error {
+            crate::publish::paths::hash_regular_file(&path).map_err(|error| match error {
                 PublishError::Validation(detail) => ServiceError::Conflict {
                     message: detail.message,
                 },
@@ -1491,7 +1492,7 @@ impl Publishing {
         let path = sandbox
             .resolve_no_symlink(root_id, rel_path)
             .map_err(publish_error)?;
-        super::publish::staging::document_from_file(&path).map_err(publish_error)
+        crate::publish::staging::document_from_file(&path).map_err(publish_error)
     }
 
     /// The before-state document for a write: the file's fields plus an
@@ -1505,7 +1506,7 @@ impl Publishing {
         let path = sandbox
             .resolve_no_symlink(root_id, rel_path)
             .map_err(publish_error)?;
-        super::publish::staging::document_for_write(&path, managed_updates).map_err(publish_error)
+        crate::publish::staging::document_for_write(&path, managed_updates).map_err(publish_error)
     }
 
     /// The tags a retag writes: the identified release's full tag set
@@ -1518,8 +1519,8 @@ impl Publishing {
         rel_path: &str,
         explicit: &TagUpdates,
     ) -> Result<TagUpdates, ServiceError> {
-        let writable = super::tags::format_for_path(PathBuf::from(rel_path).as_path())
-            .is_ok_and(super::tags::save::writable);
+        let writable = crate::tags::format_for_path(PathBuf::from(rel_path).as_path())
+            .is_ok_and(crate::tags::save::writable);
         if !writable {
             return Ok(explicit.clone());
         }
@@ -1542,12 +1543,12 @@ impl Publishing {
             );
             return Ok(explicit.clone());
         };
-        let mut tags = super::tags::picard::release_tags(&release, track);
+        let mut tags = crate::tags::picard::release_tags(&release, track);
         // A value the writer would refuse is dropped here, at preview,
         // rather than failing the publish.
         tags.retain(|name, values| {
-            super::tags::TagField::from_name(name).is_some_and(|field| {
-                super::tags::save::accepts(&super::tags::TagEdit::new(field, values.clone()))
+            crate::tags::TagField::from_name(name).is_some_and(|field| {
+                crate::tags::save::accepts(&crate::tags::TagEdit::new(field, values.clone()))
             })
         });
         let mut tags = TagUpdates::from_fields(tags).map_err(publish_error)?;
@@ -1557,7 +1558,7 @@ impl Publishing {
 
     /// Lowercase container format for one rel path.
     fn live_format(rel_path: &str) -> Result<AudioFormat, ServiceError> {
-        super::tags::format_for_path(PathBuf::from(rel_path).as_path()).map_err(|_| {
+        crate::tags::format_for_path(PathBuf::from(rel_path).as_path()).map_err(|_| {
             ServiceError::InvalidInput {
                 message: format!("Unsupported audio format for {rel_path}"),
             }
@@ -1580,7 +1581,7 @@ impl Publishing {
                 message: "Preview needs at least one file".to_owned(),
             });
         }
-        if items.len() > super::publish::MAX_PLAN_SUBJECTS {
+        if items.len() > crate::publish::MAX_PLAN_SUBJECTS {
             return Err(ServiceError::InvalidInput {
                 message: "Preview exceeds the per-bundle file limit".to_owned(),
             });
@@ -1623,7 +1624,7 @@ impl Publishing {
                     message: "Preview items need a root and a relative path".to_owned(),
                 });
             }
-            let requested = super::publish::staging::from_request(&item.managed_updates)
+            let requested = crate::publish::staging::from_request(&item.managed_updates)
                 .map_err(publish_error)?;
             let track_id = self.scan_track(&item.root_id, &item.rel_path)?;
             if self.track_album(&track_id)? != album_id {
@@ -1724,7 +1725,7 @@ impl Publishing {
             removal: None,
         };
         // The tracks' rows as previewed: Apply is refused if they move.
-        super::publish::planner::seal_rows(&self.db, &mut bundle).map_err(publish_error)?;
+        crate::publish::planner::seal_rows(&self.db, &mut bundle).map_err(publish_error)?;
         CollisionGate::check_bundle(&sandbox, &bundle).map_err(publish_error)?;
         DiskPreflight::check(&bundle, &FsSpaceProbe::new(self.core.root_dirs.clone()))
             .map_err(publish_error)?;
@@ -1891,7 +1892,7 @@ impl Publishing {
     /// Arm (or clear) a crash point on the open publisher, so a test can
     /// stop a publish part way as a killed process would. Tests only.
     #[cfg(any(test, feature = "test-support"))]
-    pub fn arm_publish_crash(&self, point: Option<super::publish::CrashPoint>) {
+    pub fn arm_publish_crash(&self, point: Option<crate::publish::CrashPoint>) {
         let registry = self.core.live_registry();
         let mut cell = self
             .core
@@ -1908,7 +1909,7 @@ impl Publishing {
     /// Make placement on the open publisher behave like a filesystem
     /// without one of its steps. Tests only.
     #[cfg(any(test, feature = "test-support"))]
-    pub fn set_publish_seams(&self, seams: super::publish::place::Seams) {
+    pub fn set_publish_seams(&self, seams: crate::publish::place::Seams) {
         let registry = self.core.live_registry();
         let mut cell = self
             .core
@@ -1928,8 +1929,8 @@ impl Publishing {
     #[cfg(any(test, feature = "test-support"))]
     pub fn set_publish_hooks(
         &self,
-        before_place: Option<super::publish::publisher::BeforePlace>,
-        before_set_aside: Option<super::publish::publisher::BeforePlace>,
+        before_place: Option<crate::publish::publisher::BeforePlace>,
+        before_set_aside: Option<crate::publish::publisher::BeforePlace>,
     ) {
         let registry = self.core.live_registry();
         let mut cell = self
@@ -2011,15 +2012,15 @@ impl Publishing {
     /// the removal's commit. Blocking.
     pub(crate) fn publish_removal(
         &self,
-        targets: &[super::publish::remove::Target],
+        targets: &[crate::publish::remove::Target],
         reason_code: &str,
         actor: Option<&str>,
-        undo: Option<super::publish::planner::UndoRecord>,
-        album_removed: Option<super::publish::planner::AlbumRemoved>,
+        undo: Option<crate::publish::planner::UndoRecord>,
+        album_removed: Option<crate::publish::planner::AlbumRemoved>,
         entry: RemovalEntry,
-    ) -> Result<RemovalDone, super::publish::remove::Refusal> {
-        use super::publish::JournalState;
-        use super::publish::remove::{self, Refusal};
+    ) -> Result<RemovalDone, crate::publish::remove::Refusal> {
+        use crate::publish::JournalState;
+        use crate::publish::remove::{self, Refusal};
         let mut cell = match entry {
             RemovalEntry::Wait => self
                 .core
@@ -2154,8 +2155,8 @@ impl Publishing {
         removal_id: &str,
         album_id: &str,
         actor: &str,
-    ) -> Result<Vec<String>, super::publish::put_back::Refusal> {
-        use super::publish::put_back::{self, Refusal};
+    ) -> Result<Vec<String>, crate::publish::put_back::Refusal> {
+        use crate::publish::put_back::{self, Refusal};
         let (roots, prehashed) = put_back::prepare(&self.db, removal_id, album_id)?;
         let mut cell = match self.core.publish.try_lock() {
             Ok(cell) => cell,
@@ -2258,7 +2259,7 @@ impl Publishing {
                 .resolve_no_symlink(&item.source_root, &item.source_rel)?;
             docs.insert(
                 item.track_id.clone(),
-                super::publish::staging::document_for_write(&path, &item.managed_updates)?,
+                crate::publish::staging::document_for_write(&path, &item.managed_updates)?,
             );
         }
         open.publisher.set_undo_retention_days(retention);
@@ -2275,7 +2276,7 @@ impl Publishing {
         // What moved since planning is caught by the seal recheck below;
         // the rows are sealed now, so the commit refuses only what moves
         // while the album is being saved.
-        super::publish::planner::seal_rows(&self.db, &mut bundle)?;
+        crate::publish::planner::seal_rows(&self.db, &mut bundle)?;
         let token_hash = sha256_hex(self.core.ids.new_id().as_bytes());
         let sealed = SealedPreview::seal(
             bundle,
@@ -2333,7 +2334,7 @@ impl Publishing {
             let applied_by = self
                 .db
                 .read_blocking("publish.applied_by", |conn| {
-                    super::publish::operations::applied_by(conn, bundle_id)
+                    crate::publish::operations::applied_by(conn, bundle_id)
                 })
                 .map_err(publish_error)?;
             if applied_by.flatten().as_deref() != Some(caller) {
@@ -2345,10 +2346,10 @@ impl Publishing {
         let added = self
             .db
             .read_blocking("publish.undo_added", |conn| {
-                super::publish::add::plan_take_back(conn, bundle_id)
+                crate::publish::add::plan_take_back(conn, bundle_id)
             })
             .map_err(publish_error)?;
-        if !matches!(added, Err(super::publish::add::TakeBackRefusal::NotAnAdd)) {
+        if !matches!(added, Err(crate::publish::add::TakeBackRefusal::NotAnAdd)) {
             return self.take_back(open, &registry, added);
         }
         let files = self.undo_files_in(open, bundle_id, &|_| PINNED_OVERRIDE)?;
@@ -2372,7 +2373,7 @@ impl Publishing {
                 .map_err(publish_error)?;
             docs.insert(
                 file.plan.track_id.clone(),
-                super::publish::staging::document_for_write(&path, &file.plan.managed_updates)
+                crate::publish::staging::document_for_write(&path, &file.plan.managed_updates)
                     .map_err(publish_error)?,
             );
             plan_items.push(file.plan);
@@ -2389,9 +2390,9 @@ impl Publishing {
         &self,
         open: &mut OpenPublish,
         registry: &RootRegistry,
-        planned: Result<super::publish::add::Added, super::publish::add::TakeBackRefusal>,
+        planned: Result<crate::publish::add::Added, crate::publish::add::TakeBackRefusal>,
     ) -> Result<AppliedBundle, ServiceError> {
-        use super::publish::add::TakeBackRefusal;
+        use crate::publish::add::TakeBackRefusal;
         let blocked = |why: String| ServiceError::Conflict {
             message: format!("Undo blocked: {why}"),
         };
@@ -2413,7 +2414,7 @@ impl Publishing {
             }
         };
         let added = planned.map_err(refused)?;
-        super::publish::add::check_take_back(&open.sandbox, &added.file).map_err(refused)?;
+        crate::publish::add::check_take_back(&open.sandbox, &added.file).map_err(refused)?;
         let root_id = added.file.root_id.clone();
         let policy_revision = policy_revision_u64(registry);
         let bundle = PlanBundle {
@@ -2484,19 +2485,19 @@ impl Publishing {
     /// The others stay where they are and are named in the second list.
     fn undo_sidecars(
         sandbox: &Sandbox,
-        moved: &[super::publish::planner::SidecarPlan],
-    ) -> (Vec<super::publish::planner::SidecarPlan>, Vec<String>) {
+        moved: &[crate::publish::planner::SidecarPlan],
+    ) -> (Vec<crate::publish::planner::SidecarPlan>, Vec<String>) {
         let mut back = Vec::new();
         let mut left = Vec::new();
         for sidecar in moved {
             let unchanged = sandbox
                 .resolve_no_symlink(&sidecar.dest_root, &sidecar.dest_rel)
-                .is_ok_and(|path| super::publish::paths::holds(&path, &sidecar.fingerprint.sha256));
+                .is_ok_and(|path| crate::publish::paths::holds(&path, &sidecar.fingerprint.sha256));
             let free = sandbox
                 .resolve_no_symlink(&sidecar.source_root, &sidecar.source_rel)
                 .is_ok_and(|path| path.symlink_metadata().is_err());
             if unchanged && free {
-                back.push(super::publish::planner::SidecarPlan {
+                back.push(crate::publish::planner::SidecarPlan {
                     source_root: sidecar.dest_root.clone(),
                     source_rel: sidecar.dest_rel.clone(),
                     dest_root: sidecar.source_root.clone(),
@@ -2517,14 +2518,14 @@ impl Publishing {
         bundle_id: &str,
         override_of: &dyn Fn(&str) -> u64,
     ) -> Result<UndoFiles, ServiceError> {
-        use super::publish::undo::{UndoInput, UndoLive, plan_undo};
+        use crate::publish::undo::{UndoInput, UndoLive, plan_undo};
 
         // Everything the undo reads from the database, in one read that
         // ends before any file is looked at.
         let (sources, outputs) = self
             .db
             .read_blocking("publish.undo_sources", |conn| {
-                let Some(source) = super::publish::operations::load_operation(conn, bundle_id)?
+                let Some(source) = crate::publish::operations::load_operation(conn, bundle_id)?
                 else {
                     return Ok(None);
                 };
@@ -2554,7 +2555,7 @@ impl Publishing {
                         located,
                     ));
                 }
-                let outputs = super::publish::operations::outputs_of(conn, bundle_id)?;
+                let outputs = crate::publish::operations::outputs_of(conn, bundle_id)?;
                 Ok::<_, PublishError>(Some((rows, outputs)))
             })
             .map_err(publish_error)?
@@ -2571,8 +2572,8 @@ impl Publishing {
             locations_read.insert(track_id.clone(), located);
             by_track.insert(track_id.clone(), item.clone());
             let before =
-                super::publish::undo::BeforeState::from_bytes(&bytes).map_err(publish_error)?;
-            let staged_size = super::publish::paths::FileStat::read(
+                crate::publish::undo::BeforeState::from_bytes(&bytes).map_err(publish_error)?;
+            let staged_size = crate::publish::paths::FileStat::read(
                 &open
                     .sandbox
                     .resolve_no_symlink(&journal.dest_root, &journal.dest_rel)
@@ -2608,7 +2609,7 @@ impl Publishing {
         for input in inputs {
             let located = locations_read.remove(&input.track_id).flatten();
             let live = match located {
-                Some(super::publish::publisher::Located {
+                Some(crate::publish::publisher::Located {
                     root_id, rel_path, ..
                 }) => match Self::live_fingerprint(&open.sandbox, &root_id, &rel_path) {
                     Ok(fingerprint) => self
@@ -2649,7 +2650,7 @@ impl Publishing {
                     path.symlink_metadata().is_ok()
                         && !live_paths
                             .iter()
-                            .any(|live| super::publish::paths::same_file(live, &path))
+                            .any(|live| crate::publish::paths::same_file(live, &path))
                 }
                 // An unresolvable restore target fails closed as
                 // occupied: undo never writes through a symlink.
@@ -2703,7 +2704,7 @@ impl Publishing {
                 let unchanged = open
                     .sandbox
                     .resolve_no_symlink(&output.dest_root, &output.dest_rel)
-                    .is_ok_and(|path| super::publish::paths::holds(&path, &output.sha256));
+                    .is_ok_and(|path| crate::publish::paths::holds(&path, &output.sha256));
                 if unchanged {
                     removals.push(output.clone());
                 } else {
@@ -2822,7 +2823,7 @@ impl Publishing {
         track_ids: &[String],
         override_of: &dyn Fn(&str) -> u64,
     ) -> Result<BaselineFiles, ServiceError> {
-        use super::publish::undo::{BaselineInput, plan_baseline_restore};
+        use crate::publish::undo::{BaselineInput, plan_baseline_restore};
 
         // Each track's baseline bytes and catalog place, in one read that
         // ends before any file is looked at.
@@ -2851,7 +2852,7 @@ impl Publishing {
         for (track_id, (bytes, located)) in track_ids.iter().zip(sources) {
             let baseline = match bytes {
                 Some(Some(bytes)) => Some(
-                    super::publish::undo::BeforeState::from_bytes(&bytes).map_err(publish_error)?,
+                    crate::publish::undo::BeforeState::from_bytes(&bytes).map_err(publish_error)?,
                 ),
                 Some(None) => {
                     files
@@ -2862,7 +2863,7 @@ impl Publishing {
                 None => None,
             };
             let state = match located {
-                Some(super::publish::publisher::Located {
+                Some(crate::publish::publisher::Located {
                     root_id, rel_path, ..
                 }) => {
                     match (
@@ -2937,20 +2938,20 @@ impl Publishing {
             };
             let same_path = live_loc.0 == before.source_root && live_loc.1 == before.source_rel;
             let updates =
-                super::publish::staging::restore_updates(&before.doc, &current, &live_loc.1);
+                crate::publish::staging::restore_updates(&before.doc, &current, &live_loc.1);
             // Files management generated for the track (a cover, an
             // `.lrc`) go too, while they still hold the bytes it wrote.
             let removals: Vec<_> = self
                 .db
                 .read_blocking("publish.generated_for_track", |conn| {
-                    super::publish::operations::generated_for_track(conn, &track_id)
+                    crate::publish::operations::generated_for_track(conn, &track_id)
                 })
                 .map_err(publish_error)?
                 .into_iter()
                 .filter(|output| {
                     sandbox
                         .resolve_no_symlink(&output.dest_root, &output.dest_rel)
-                        .is_ok_and(|path| super::publish::paths::holds(&path, &output.sha256))
+                        .is_ok_and(|path| crate::publish::paths::holds(&path, &output.sha256))
                 })
                 .collect();
             let mut capabilities = Vec::new();
@@ -3018,7 +3019,7 @@ impl Publishing {
             added: None,
             removal: None,
         };
-        super::publish::planner::seal_rows(&self.db, &mut bundle).map_err(publish_error)?;
+        crate::publish::planner::seal_rows(&self.db, &mut bundle).map_err(publish_error)?;
         // Restoration bundles re-run the dry-run gates: a restore
         // onto an occupied path blocks instead of overwriting.
         CollisionGate::check_bundle(&open.sandbox, &bundle).map_err(publish_error)?;
@@ -3071,14 +3072,14 @@ fn undo_blocks(blocked: &[(String, UndoSkip)]) -> String {
         .join(", ")
 }
 
-fn undo_block_label(block: &super::publish::undo::UndoBlock) -> &'static str {
+fn undo_block_label(block: &crate::publish::undo::UndoBlock) -> &'static str {
     match block {
-        super::publish::undo::UndoBlock::ExternallyChanged => "externally_changed",
-        super::publish::undo::UndoBlock::Moved => "moved",
-        super::publish::undo::UndoBlock::IdentityChanged => "identity_changed",
-        super::publish::undo::UndoBlock::OverrideChanged => "override_changed",
-        super::publish::undo::UndoBlock::SnapshotExpired => "snapshot_expired",
-        super::publish::undo::UndoBlock::RestoreOccupied => "restore_occupied",
+        crate::publish::undo::UndoBlock::ExternallyChanged => "externally_changed",
+        crate::publish::undo::UndoBlock::Moved => "moved",
+        crate::publish::undo::UndoBlock::IdentityChanged => "identity_changed",
+        crate::publish::undo::UndoBlock::OverrideChanged => "override_changed",
+        crate::publish::undo::UndoBlock::SnapshotExpired => "snapshot_expired",
+        crate::publish::undo::UndoBlock::RestoreOccupied => "restore_occupied",
     }
 }
 
@@ -3109,14 +3110,14 @@ fn baseline_blocks(blocked: &[(String, BaselineSkip)]) -> String {
         .join(", ")
 }
 
-fn baseline_block_label(block: &super::publish::undo::BaselineBlock) -> &'static str {
+fn baseline_block_label(block: &crate::publish::undo::BaselineBlock) -> &'static str {
     match block {
-        super::publish::undo::BaselineBlock::MissingBaseline => "missing_baseline",
-        super::publish::undo::BaselineBlock::MissingRoot => "missing_root",
-        super::publish::undo::BaselineBlock::FormatMismatch => "format_mismatch",
-        super::publish::undo::BaselineBlock::CurrentChanged => "current_changed",
-        super::publish::undo::BaselineBlock::IdentityChanged => "identity_changed",
-        super::publish::undo::BaselineBlock::OriginalOccupied => "original_occupied",
+        crate::publish::undo::BaselineBlock::MissingBaseline => "missing_baseline",
+        crate::publish::undo::BaselineBlock::MissingRoot => "missing_root",
+        crate::publish::undo::BaselineBlock::FormatMismatch => "format_mismatch",
+        crate::publish::undo::BaselineBlock::CurrentChanged => "current_changed",
+        crate::publish::undo::BaselineBlock::IdentityChanged => "identity_changed",
+        crate::publish::undo::BaselineBlock::OriginalOccupied => "original_occupied",
     }
 }
 

@@ -109,7 +109,7 @@ impl From<StoreError> for crate::service::ServiceError {
     }
 }
 
-impl From<StoreError> for crate::operations::models::OperationError {
+impl From<StoreError> for crate::jobs::models::OperationError {
     fn from(error: StoreError) -> Self {
         match error {
             StoreError::Busy(_) | StoreError::Closed => Self::Busy(error.to_string()),

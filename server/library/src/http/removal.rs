@@ -2,7 +2,7 @@
 //! rescan one album (admin), re-enable management on an excluded album
 //! (admin), and hand albums the app stepped back from to automatic
 //! management again (admin). File removal always goes through the recycle bin; see
-//! [`crate::mutations`]. An album's removals whose files are still in the
+//! [`crate::removal`]. An album's removals whose files are still in the
 //! recycle bin are listed, and put back, by curators.
 
 use axum::{
@@ -18,7 +18,7 @@ use utoipa::{IntoParams, ToSchema};
 
 use super::blocking;
 use super::error::refused;
-use crate::mutations::{MutationError, Mutations, RemovalKind, SeenAlbum};
+use crate::removal::{MutationError, Mutations, RemovalKind, SeenAlbum};
 use crate::scan::models::{Disposition, ScanState};
 use crate::wiring::LibraryServices;
 use droppedneedle_auth::{Admin, Curator};

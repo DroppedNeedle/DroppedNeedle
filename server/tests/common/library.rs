@@ -19,8 +19,8 @@ use droppedneedle_library::identify::sources::{
     ArtistAnswer, EditionPage, EditionQuery, Prioritised, ReleaseAnswer, ReleaseSource,
     SourceError, Unanswered,
 };
+use droppedneedle_library::jobs::service::Operations;
 use droppedneedle_library::management::enrich::EnrichmentPort;
-use droppedneedle_library::operations::service::Operations;
 use droppedneedle_library::repairs::service::RepairWorker;
 use droppedneedle_library::wiring::{LibraryCore, LibraryPorts, LibraryServices, LibrarySetup};
 use droppedneedle_providers::Providers;

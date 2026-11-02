@@ -6,6 +6,7 @@
 //! that moved underneath. An album is all or nothing: when one file is
 //! blocked, the others wait with a reason saying so.
 
+use crate::identity::ReleaseIdentity;
 use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 
@@ -25,7 +26,7 @@ use super::{automatic, takeover};
 use crate::matching::model::Release;
 use crate::publish::planner::{
     Capability, CollisionGate, DiskPreflight, FileFingerprint, OutputKind, PlanBundle, PlanItem,
-    PlanKind, ReleaseIdentity, STAGED_HEADROOM_BYTES,
+    PlanKind, STAGED_HEADROOM_BYTES,
 };
 use crate::publish::snapshots::sha256_hex;
 use crate::publish::{MAX_PLAN_SUBJECTS, PublishError, Sandbox, collision_key};
@@ -56,7 +57,7 @@ pub(crate) fn match_gate(
         .map(|row| (row.state, row.reason_code));
     Ok(match state {
         Some((_, code)) if code.starts_with("CHOSEN_") => {
-            Some(crate::operations::reasons::match_reason(&code).into())
+            Some(crate::reasons::match_reason(&code).into())
         }
         Some((state, _)) if state == "unconfirmed" => Some(reasons::unconfirmed_match()),
         Some((state, _)) if state == "unmatched" => Some(reasons::unmatched_album()),

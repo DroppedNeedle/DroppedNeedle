@@ -5,7 +5,10 @@
 //! with the job). A running job is never stopped under its worker: the
 //! request is recorded and the worker honors it at its next checkpoint.
 
-use super::models::{Control, ControlRequest, OperationJob, OperationState};
+use crate::jobs::ControlRequest;
+use crate::jobs::OperationJob;
+use crate::jobs::OperationState;
+use crate::jobs::models::Control;
 
 /// Terminal code a failed job may be resumed from: the provider was down,
 /// so trying again can succeed.

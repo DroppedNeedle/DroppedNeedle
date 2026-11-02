@@ -9,7 +9,7 @@ use axum::http::StatusCode;
 use droppedneedle_kernel::error::{ApiError, Unavailable};
 use serde_json::json;
 
-use crate::operations::reasons::Reason;
+use crate::reasons::Reason;
 
 /// Handler-layer errors with their status mapping.
 #[derive(Debug)]

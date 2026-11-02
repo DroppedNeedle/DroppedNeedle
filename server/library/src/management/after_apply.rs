@@ -239,7 +239,7 @@ impl Management {
     }
 
     /// Undo one published bundle (see
-    /// [`Publishing::undo_bundle`](crate::manage::Publishing::undo_bundle)):
+    /// [`Publishing::undo_bundle`](crate::publish::session::Publishing::undo_bundle)):
     /// a plugin's added file or a change published outside a job. A bundle
     /// a Library Management run wrote is refused: the run is undone from
     /// History, whose undo job also gives back what the run replaced. A
@@ -249,7 +249,7 @@ impl Management {
         &self,
         bundle_id: &str,
         only_by: Option<&str>,
-    ) -> Result<crate::manage::AppliedBundle, UndoBundleError> {
+    ) -> Result<crate::publish::session::AppliedBundle, UndoBundleError> {
         if self.library_off() {
             return Err(ServiceError::Conflict {
                 message: super::service::LIBRARY_OFF.to_owned(),
@@ -264,7 +264,7 @@ impl Management {
                 let applied_by = crate::publish::operations::applied_by(conn, bundle_id)?;
                 Ok::<_, PublishError>((run, applied_by))
             })
-            .map_err(crate::manage::publish_error)?;
+            .map_err(crate::publish::session::publish_error)?;
         if run.is_some() {
             if only_by.is_some_and(|caller| applied_by.flatten().as_deref() != Some(caller)) {
                 return Err(ServiceError::NotFound.into());

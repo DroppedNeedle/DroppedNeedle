@@ -330,7 +330,7 @@ fn record(
         CorrectionError::Store(format!("correction result unwritable: {error}"))
     })?;
     tx.execute(
-        crate::corrections::sql::RECORD.text(),
+        crate::catalog_actions::sql::RECORD_CORRECTION.text(),
         params![
             uuid::Uuid::new_v4().to_string(),
             audit.meta.idempotency_key,

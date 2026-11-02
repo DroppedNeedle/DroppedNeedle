@@ -13,12 +13,13 @@ use rusqlite::Transaction;
 
 use super::models::{ApplyResult, FindingCode, FindingState};
 use super::store::{self, OpenFinding};
+use crate::catalog_actions::CatalogAction;
+use crate::catalog_actions::record_action;
 use crate::catalog_revision::bump_catalog;
+use crate::edition::choice;
 use crate::identify::queue::queue_retry;
 use crate::jobs::WorkState;
-use crate::operations::choice;
-use crate::operations::decisions::{CatalogAction, record_action};
-use crate::operations::models::OperationError;
+use crate::jobs::models::OperationError;
 
 /// Reason an album's match state carries after a recheck detached it.
 pub const DETACH_REASON: &str = "IDENTITY_FAILED_RECHECK";

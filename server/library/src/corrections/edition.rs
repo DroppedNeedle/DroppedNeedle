@@ -29,10 +29,10 @@ use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
 
 use super::models::{DroppedEdition, EditionChange, EditionChangeKind, IdentityChoice};
 use super::reasons;
+use crate::edition::choice::queue_placement;
 use crate::identify::models::CandidateEvidence;
 use crate::identity::{self, DecisionSource};
-use crate::operations::choice::queue_placement;
-use crate::operations::reasons::Reason;
+use crate::reasons::Reason;
 
 const PROVIDER: &str = "musicbrainz";
 

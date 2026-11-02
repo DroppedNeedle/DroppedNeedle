@@ -113,6 +113,7 @@ pub mod put_back;
 pub mod record;
 pub mod recovery;
 pub mod remove;
+pub mod session;
 pub mod snapshots;
 pub(crate) mod sql;
 pub mod staging;
@@ -130,8 +131,7 @@ pub use paths::{CollisionKey, Sandbox, collision_key};
 pub use place::{PlaceError, Placed, PlacementMode, place_from_hidden};
 pub use planner::{
     Capability, CapabilityGate, DiskPreflight, FileFingerprint, GeneratedOutput, OutputKind,
-    PlanBundle, PlanItem, PlanKind, ReleaseIdentity, Replacement, SealError, SealedPreview,
-    SpaceProbe,
+    PlanBundle, PlanItem, PlanKind, Replacement, SealError, SealedPreview, SpaceProbe,
 };
 pub use publisher::{CrashPoint, PublishOutcome, Publisher};
 pub use recovery::{BundleRecovery, RecoveryAction, reconcile, startup_gate};

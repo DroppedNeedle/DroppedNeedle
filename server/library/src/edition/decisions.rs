@@ -1,16 +1,17 @@
 //! A person's decisions on the catalog: a custom edition or "leave
 //! unmanaged" made directly on an album, and undoing an automatic edition.
 //! Each checks what the person was shown and runs the identity module's
-//! command in the caller's transaction. Also the audit rows every catalog
-//! decision writes, and closing an album's pending reviews.
+//! command in the caller's transaction.
 
 use rusqlite::{Transaction, params};
 
-use super::models::{OperationError, ReidentificationCandidate, UndoOutcome};
-use super::reasons;
-use super::store::album_revisions;
+use crate::edition::models::UndoOutcome;
 use crate::identify::models::EvidenceClass;
 use crate::identity::{self, AutomaticUndo, AutomaticUndone, Custom};
+use crate::jobs::models::OperationError;
+use crate::reasons;
+use crate::reidentify::models::ReidentificationCandidate;
+use crate::reidentify::store::album_revisions;
 
 pub(crate) use crate::identity::reads::indexed_track_ids;
 pub use crate::identity::reads::live_automatic_edition_undo;
@@ -136,7 +137,7 @@ pub fn undo_automatic_edition(
         AutomaticUndone::Restored => None,
         AutomaticUndone::ClearedToReview => {
             tx.execute(
-                crate::operations::sql::UNDO_AUTOMATIC_EDITION.text(),
+                crate::edition::sql::UNDO_AUTOMATIC_EDITION.text(),
                 params![review_id, album_id, crate::clock::ms(now)],
             )?;
             Some(review_id)
@@ -147,86 +148,4 @@ pub fn undo_automatic_edition(
         outcome,
         review_id,
     })
-}
-
-/// Close the album's pending reviews: the administrator decided.
-pub(crate) fn settle_reviews(
-    tx: &Transaction<'_>,
-    album_id: &str,
-    state: &str,
-    selected: Option<&str>,
-    actor: &str,
-    now: f64,
-) -> rusqlite::Result<()> {
-    tx.execute(
-        crate::operations::sql::SETTLE_REVIEWS.text(),
-        params![album_id, state, actor, selected, crate::clock::ms(now)],
-    )?;
-    Ok(())
-}
-
-/// One audit row for a catalog decision.
-pub(crate) struct CatalogAction<'a> {
-    pub actor: &'a str,
-    pub kind: &'a str,
-    pub album_id: &'a str,
-    pub job_id: Option<&'a str>,
-    pub before: serde_json::Value,
-    pub after: serde_json::Value,
-    pub reason: &'a str,
-}
-
-pub(crate) fn record_action(
-    tx: &Transaction<'_>,
-    action: CatalogAction<'_>,
-    now: f64,
-) -> rusqlite::Result<String> {
-    let id = uuid::Uuid::new_v4().to_string();
-    tx.execute(
-        crate::operations::sql::RECORD_ACTION.text(),
-        params![
-            id,
-            action.actor,
-            action.kind,
-            action.album_id,
-            action.job_id,
-            action.before.to_string(),
-            action.after.to_string(),
-            action.reason,
-            crate::clock::ms(now),
-        ],
-    )?;
-    Ok(id)
-}
-
-/// One audit row for a catalog decision about an artist.
-pub(crate) struct ArtistAction<'a> {
-    pub actor: &'a str,
-    pub kind: &'a str,
-    pub artist_id: &'a str,
-    pub before: serde_json::Value,
-    pub after: serde_json::Value,
-    pub reason: &'a str,
-}
-
-pub(crate) fn record_artist_action(
-    tx: &Transaction<'_>,
-    action: ArtistAction<'_>,
-    now: f64,
-) -> rusqlite::Result<String> {
-    let id = uuid::Uuid::new_v4().to_string();
-    tx.execute(
-        crate::operations::sql::RECORD_ARTIST_ACTION.text(),
-        params![
-            id,
-            action.actor,
-            action.kind,
-            action.artist_id,
-            action.before.to_string(),
-            action.after.to_string(),
-            action.reason,
-            crate::clock::ms(now),
-        ],
-    )?;
-    Ok(id)
 }

@@ -1515,7 +1515,7 @@ async fn the_1001st_file_in_a_day_is_refused_and_shown() {
 /// allowance is refused at once without waiting for the library.
 #[tokio::test]
 async fn a_held_library_refuses_late_and_over_allowance_writes() {
-    use droppedneedle_library::manage::PluginFileRefusal;
+    use droppedneedle_library::publish::session::PluginFileRefusal;
     use droppedneedle_plugins::capabilities::library_files::QUOTA_FILES_PER_DAY;
     use std::sync::atomic::AtomicBool;
     use std::time::Instant;

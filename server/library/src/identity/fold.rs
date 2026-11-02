@@ -15,10 +15,11 @@ use super::undo::{
     ExclusionRow, exclusion_row, restore_album_row, restore_exclusion, restore_track_row,
 };
 use super::{DecisionSource, PROVIDER, Rows, delete_album_row};
+use crate::catalog_actions::CatalogAction;
+use crate::catalog_actions::record_action;
 use crate::catalog_revision::bump_catalog;
 use crate::identify::models::{PriorAlbumIdentity, PriorTrackIdentity};
 use crate::identify::queue::offer_album;
-use crate::operations::decisions::{CatalogAction, record_action};
 
 /// The reason code of a fold's audit row.
 pub const FOLD_REASON: &str = "AUTOMATIC_PROVIDER_CONTRADICTION_CATALOG_REPAIR";

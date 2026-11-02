@@ -17,8 +17,13 @@
 //! integer milliseconds. A caller that
 //! queues a job wakes its kind's loop with [`wake`] once the write is in.
 
+pub mod control;
+pub mod models;
+pub mod service;
 pub(crate) mod sql;
 mod states;
+pub mod store;
+pub mod worker;
 
 use droppedneedle_kernel::db::DbError;
 use droppedneedle_kernel::jobs::queue::JobError;

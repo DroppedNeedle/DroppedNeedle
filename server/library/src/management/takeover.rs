@@ -18,9 +18,10 @@ use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
 use super::models::{ManagementError, PlannedItem};
 use super::reasons::ItemReason;
 use super::sql::{StateRevision, TakeoverCounts, TrackPlace, WaitingTakeover};
+use crate::catalog_actions::CatalogAction;
+use crate::catalog_actions::record_action;
 use crate::catalog_revision::bump_catalog;
 use crate::clock::LibraryClock as _;
-use crate::operations::decisions::{CatalogAction, record_action};
 use crate::publish::record::changed_since_written;
 use droppedneedle_kernel::db::Lane;
 
@@ -477,7 +478,7 @@ pub(crate) fn hand_backs(conn: &Connection, album_id: &str) -> rusqlite::Result<
 /// album has no mark. Blocking: reads every file of the album, outside any
 /// transaction. Writes no file.
 pub(crate) fn hand_back(
-    publishing: &crate::manage::Publishing,
+    publishing: &crate::publish::session::Publishing,
     album_id: &str,
     actor: Option<&str>,
 ) -> Result<bool, ManagementError> {
