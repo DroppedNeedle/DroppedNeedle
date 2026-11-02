@@ -417,6 +417,8 @@ Run from the repo root. `make help` lists every target.
   there.
 - The audio stack is decided: lofty behind its save
   wrapper, symphonia, rusty-chromaprint, ffmpeg for transcoding, no WMA.
+  The image's ffmpeg is a slim LGPL-only build: a new codec goes on its lists in
+  the Dockerfile with a transcode in `server/scripts/e2e-container.sh`.
   Unrelated tags survive every mutation.
 - Prefer a healthy, maintained crate over home-made parser, crypto or retry
   code. New licenses and advisory ignores are reviewed edits to

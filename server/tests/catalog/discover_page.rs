@@ -513,12 +513,20 @@ async fn both_services_blend_unless_the_server_turns_it_off() {
 }
 
 /// The user's saved discover page, once no build is running.
-async fn settled_page(rig: &AuthRig, app: &Router, what: &str) -> Value {
-    after_commits(&rig.platform.db, what, || async {
-        let (_, page) = call(app, "GET", "/api/v3/discover", None).await;
-        (page["refreshing"] == false && page["generated_at"].is_number()).then_some(page)
+async fn settled_page(_rig: &AuthRig, app: &Router, what: &str) -> Value {
+    // The build's last write comes before its in-flight mark clears, so no
+    // commit follows the clear: this asks until the page says it has settled.
+    tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        loop {
+            let (_, page) = call(app, "GET", "/api/v3/discover", None).await;
+            if page["refreshing"] == false && page["generated_at"].is_number() {
+                return page;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
     })
     .await
+    .unwrap_or_else(|_| panic!("never happened: {what}"))
 }
 
 /// While the advanced settings cannot be read no build starts, asked for
