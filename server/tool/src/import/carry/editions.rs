@@ -33,7 +33,10 @@ use crate::export::sections::management::EDITION_ACTIVE;
 /// Report entity and section marker name.
 pub(crate) const ENTITY: &str = "sticky_edition";
 
-fn bundle_rows(conn: &Connection, section: &'static TableSection) -> rusqlite::Result<i64> {
+pub(super) fn bundle_rows(
+    conn: &Connection,
+    section: &'static TableSection,
+) -> rusqlite::Result<i64> {
     let present: bool =
         conn.query_row(sql::BUNDLE_HAS_TABLE.text(), params![section.name], |row| {
             row.get(0)

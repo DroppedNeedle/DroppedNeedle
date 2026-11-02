@@ -55,9 +55,11 @@ droppedneedle_kernel::sql! {
         WHERE jellyfin_id = ?1 AND kind = ?2 AND internal_id = ?3 AND current = 0 \
         AND NOT EXISTS (SELECT 1 FROM compat_jellyfin_ids c \
         WHERE c.kind = ?2 AND c.internal_id = ?3 AND c.current = 1)";
-    /// The current ids of albums and artists, which depend on the data key.
-    pub(super) KEYED_CURRENT = "SELECT jellyfin_id, kind, internal_id FROM compat_jellyfin_ids \
-        WHERE current = 1 AND kind IN ('album', 'artist')";
+    /// The current ids of every kind that can differ from the computed id:
+    /// albums and artists depend on the data key, and the upgrade carries
+    /// v2's ids of tracks and playlists.
+    pub(super) CURRENT_CAN_DIFFER = "SELECT jellyfin_id, kind, internal_id FROM compat_jellyfin_ids \
+        WHERE current = 1 AND kind IN ('album', 'artist', 'track', 'playlist')";
     /// What some Jellyfin ids name, by primary key.
     family LOOKUP = lookup;
 }

@@ -417,6 +417,7 @@ pub const ALL: &[&TableSection] = &[
     &compat::PLAY_QUEUES,
     &compat::PLAY_QUEUE_ITEMS,
     &compat::BOOKMARKS,
+    &compat::JELLYFIN_IDS,
     &releases::KNOWN_RELEASES,
     &releases::NEW_RELEASE_FEED,
     &releases::IGNORED_RELEASES,

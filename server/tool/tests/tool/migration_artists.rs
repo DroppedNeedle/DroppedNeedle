@@ -81,7 +81,7 @@ fn plant(music: &Path, relative: &str, fields: &[(TagField, &str)]) {
 }
 
 /// The fixture v2 instance with the extra artist tables, its database open.
-fn v2_instance(root: &Path) -> (PathBuf, String, Connection) {
+pub(crate) fn v2_instance(root: &Path) -> (PathBuf, String, Connection) {
     let v2_root = root.join("v2");
     let fixture = build_v2_fixture(&v2_root).expect("fixture builds");
     let db_path = v2_root.join("cache").join("library.db");
@@ -91,7 +91,13 @@ fn v2_instance(root: &Path) -> (PathBuf, String, Connection) {
     (v2_root, fixture.alice_id, db)
 }
 
-fn v2_artist(db: &Connection, id: &str, name: &str, sort: Option<&str>, into: Option<&str>) {
+pub(crate) fn v2_artist(
+    db: &Connection,
+    id: &str,
+    name: &str,
+    sort: Option<&str>,
+    into: Option<&str>,
+) {
     db.execute(
         "INSERT INTO local_artists (id, display_name, sort_name, folded_name, normalized_name,
              kind, retired_into_artist_id, created_at, updated_at)
@@ -121,7 +127,13 @@ fn v2_album(db: &Connection, id: &str, title: &str, artist: (&str, &str)) {
 
 /// A v2 track whose file v3 reads again (v2's stat differs), credited to
 /// `artist` under `credited`.
-fn v2_track(db: &Connection, id: &str, album: &str, relative: &str, artist: (&str, &str)) {
+pub(crate) fn v2_track(
+    db: &Connection,
+    id: &str,
+    album: &str,
+    relative: &str,
+    artist: (&str, &str),
+) {
     db.execute(
         "INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path,
              path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded,
@@ -141,7 +153,7 @@ fn v2_track(db: &Connection, id: &str, album: &str, relative: &str, artist: (&st
     .expect("track credit");
 }
 
-fn export(root: &Path, v2_root: &Path) -> PathBuf {
+pub(crate) fn export(root: &Path, v2_root: &Path) -> PathBuf {
     let export_path = root.join("export.json");
     droppedneedle_tool::export::export_v2_to_file(
         &droppedneedle_tool::export::ExportRequest {
@@ -159,7 +171,16 @@ fn export(root: &Path, v2_root: &Path) -> PathBuf {
 
 /// Import the export into a fresh v3 data folder. Returns the report and
 /// the v3 database.
-async fn import(root: &Path, export_path: &Path) -> (ImportReport, PathBuf) {
+pub(crate) async fn import(root: &Path, export_path: &Path) -> (ImportReport, PathBuf) {
+    import_with(root, export_path, false).await
+}
+
+/// As [`import`], counting only when `dry_run`.
+pub(crate) async fn import_with(
+    root: &Path,
+    export_path: &Path,
+    dry_run: bool,
+) -> (ImportReport, PathBuf) {
     let v3 = root.join("v3");
     let config_dir = v3.join("config");
     std::fs::create_dir_all(&config_dir).expect("v3 config dir");
@@ -183,7 +204,7 @@ async fn import(root: &Path, export_path: &Path) -> (ImportReport, PathBuf) {
             v2_config_path: None,
             attachments_dir: Some(root.to_owned()),
             cache_dir: Some(v3.join("cache")),
-            dry_run: false,
+            dry_run,
             fault_before_commit: false,
             fault_after_commit: false,
             fault_after_sections: None,

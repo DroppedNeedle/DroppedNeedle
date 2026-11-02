@@ -159,6 +159,57 @@ droppedneedle_kernel::sql! {
              AND NOT EXISTS (SELECT 1 FROM main.local_album_external_identities e \
              WHERE e.local_album_id = a.local_album_id AND e.provider = 'musicbrainz')";
 
+    /// The carried Jellyfin ids that can land, each with whether it names
+    /// anything in v3.
+    family JELLYFIN_ID_ROWS = jellyfin_id_rows;
+    /// One carried Jellyfin id.
+    pub(super) row JellyfinIdRow for family [jellyfin_id_rows] {
+        jf_id: String,
+        kind: String,
+        internal_id: String,
+        named: bool,
+    }
+    /// The live items the fill will store an unkeyed id for.
+    family JELLYFIN_LIVE_ITEMS = jellyfin_live_items;
+    /// One live item.
+    pub(super) row JellyfinLiveItem for family [jellyfin_live_items] {
+        kind: String,
+        id: String,
+    }
+    /// Whether the bundle holds this id (?1) for this item (?2, ?3).
+    pub(super) JELLYFIN_ID_HELD = "SELECT EXISTS (SELECT 1 FROM bundle.\"jellyfin_id\" \
+             WHERE jf_id = ?1 AND kind = ?2 AND internal_id = ?3)";
+    /// The JSON list in ?1 as rows: id, kind, item, wants to be current.
+    fragment JELLYFIN_PLAN_ROWS = "WITH plan AS (SELECT json_extract(value, '$[0]') AS id, \
+             json_extract(value, '$[1]') AS kind, json_extract(value, '$[2]') AS internal, \
+             json_extract(value, '$[3]') AS wanted FROM json_each(?1)) ";
+    /// Row `p`'s id is stored already.
+    fragment JELLYFIN_STORED = "EXISTS (SELECT 1 FROM main.compat_jellyfin_ids j \
+             WHERE j.jellyfin_id = p.id)";
+    /// Row `p`'s item has a current id already.
+    fragment JELLYFIN_HAS_CURRENT = "EXISTS (SELECT 1 FROM main.compat_jellyfin_ids j \
+             WHERE j.kind = p.kind AND j.internal_id = p.internal AND j.current = 1)";
+    /// What the plan in ?1 comes to against the rows stored now.
+    pub(super) JELLYFIN_ID_PLAN = JELLYFIN_PLAN_ROWS + "SELECT \
+             COALESCE(SUM(NOT " + JELLYFIN_STORED + "), 0) AS landing, \
+             COALESCE(SUM(EXISTS (SELECT 1 FROM main.compat_jellyfin_ids j \
+             WHERE j.jellyfin_id = p.id AND (j.kind <> p.kind OR j.internal_id <> p.internal))), 0) \
+             AS taken, \
+             COALESCE(SUM(p.wanted AND NOT " + JELLYFIN_STORED + " AND " + JELLYFIN_HAS_CURRENT + "), 0) \
+             AS demoted FROM plan p";
+    /// What the plan comes to.
+    pub(super) row JellyfinIdPlan for [JELLYFIN_ID_PLAN] {
+        landing: i64,
+        taken: i64,
+        demoted: i64,
+    }
+    /// Store the plan in ?1. An item that has a current id keeps it, and a
+    /// stored id is never changed.
+    pub(super) INSERT_JELLYFIN_IDS = "INSERT INTO main.compat_jellyfin_ids \
+             (jellyfin_id, kind, internal_id, current) " + JELLYFIN_PLAN_ROWS + "SELECT p.id, p.kind, \
+             p.internal, p.wanted AND NOT " + JELLYFIN_HAS_CURRENT + " FROM plan p WHERE true \
+             ON CONFLICT DO NOTHING";
+
     /// The ids of the held rows in the bundle.
     pub(super) HELD_IDS = "SELECT id FROM bundle.\"held_import\" ORDER BY id";
     /// One held row's owner, time, name and bytes.
@@ -882,5 +933,78 @@ pub(super) fn held_file_insert(has: &dyn Fn(&str) -> bool) -> String {
         source = SOURCE_RULE.sql(&col("source")),
         task = col("source_task_id"),
         detail = col("reason_detail"),
+    )
+}
+
+/// Whether bundle row `b` names an item in one of `places`: its v3 table, the
+/// bundle section that fills it (read on a dry run only) and the column.
+fn jellyfin_named(places: &[(&str, &str, &str)], dry_run: bool) -> String {
+    joined(
+        places.iter().map(|(table, section, column)| {
+            let in_v3 =
+                format!("EXISTS (SELECT 1 FROM main.{table} c WHERE c.{column} = b.internal_id)");
+            if dry_run {
+                format!(
+                    "{in_v3} OR EXISTS (SELECT 1 FROM bundle.\"{section}\" c \
+                     WHERE c.{column} = b.internal_id)"
+                )
+            } else {
+                in_v3
+            }
+        }),
+        " OR ",
+    )
+}
+
+/// The bundle's Jellyfin ids the store's checks would take: text, 32 lowercase
+/// hex, a kind from the closed list. v2 also wrote raw kinds for tombstones;
+/// those stay out here, since a failed CHECK would roll the step back on every
+/// run. `named` says the row names something in v3, or on a dry run something
+/// the bundle would land.
+pub(super) fn jellyfin_id_rows(dry_run: bool) -> String {
+    let track = jellyfin_named(&[("local_tracks", "library_track", "id")], dry_run);
+    let playlist = jellyfin_named(&[("catalog_playlists", "playlist", "id")], dry_run);
+    let album = jellyfin_named(
+        &[
+            ("local_albums", "library_album", "id"),
+            ("local_album_aliases", "library_album_alias", "alias"),
+        ],
+        dry_run,
+    );
+    let artist = jellyfin_named(
+        &[
+            ("local_artists", "library_artist", "id"),
+            ("local_artist_aliases", "library_artist_alias", "alias"),
+        ],
+        dry_run,
+    );
+    format!(
+        "SELECT b.jf_id AS jf_id, b.kind AS kind, b.internal_id AS internal_id, \
+         CASE b.kind WHEN 'track' THEN {track} WHEN 'playlist' THEN {playlist} \
+         WHEN 'album' THEN {album} WHEN 'artist' THEN {artist} ELSE 1 END AS named \
+         FROM bundle.\"jellyfin_id\" b \
+         WHERE typeof(b.jf_id) = 'text' AND length(b.jf_id) = 32 \
+         AND b.jf_id NOT GLOB '*[^0-9a-f]*' AND typeof(b.internal_id) = 'text' \
+         AND b.kind IN ('album', 'artist', 'track', 'genre', 'playlist', 'library')"
+    )
+}
+
+/// Live tracks, albums, artists and playlists, on a dry run also those the
+/// bundle would land.
+pub(super) fn jellyfin_live_items(dry_run: bool) -> String {
+    let live = "SELECT 'track' AS kind, id AS id FROM main.local_tracks \
+         UNION ALL SELECT 'album', id FROM main.local_albums WHERE retired_into_album_id IS NULL \
+         UNION ALL SELECT 'artist', id FROM main.local_artists WHERE retired_into_artist_id IS NULL \
+         UNION ALL SELECT 'playlist', id FROM main.catalog_playlists";
+    if !dry_run {
+        return live.to_owned();
+    }
+    format!(
+        "{live} UNION ALL SELECT 'track', id FROM bundle.\"library_track\" \
+         UNION ALL SELECT 'album', id FROM bundle.\"library_album\" \
+         WHERE retired_into_album_id IS NULL \
+         UNION ALL SELECT 'artist', id FROM bundle.\"library_artist\" \
+         WHERE retired_into_artist_id IS NULL \
+         UNION ALL SELECT 'playlist', id FROM bundle.\"playlist\""
     )
 }

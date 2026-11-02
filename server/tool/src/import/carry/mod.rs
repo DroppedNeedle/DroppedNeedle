@@ -28,6 +28,7 @@ pub(crate) mod bundle;
 pub(crate) mod connections;
 pub(crate) mod editions;
 pub(crate) mod held;
+pub(crate) mod jellyfin_ids;
 pub(crate) mod links;
 pub(crate) mod sql;
 
@@ -112,6 +113,8 @@ enum Work {
     Editions,
     /// Translate the carried v2 baselines (after the catalog and blobs).
     Baselines,
+    /// Store the Jellyfin ids v2 handed out (after the catalog).
+    JellyfinIds,
     /// Settle pending library links (last, on every import).
     Links,
 }
@@ -123,6 +126,7 @@ impl Work {
             Self::Section(section) => section.name,
             Self::Editions => editions::ENTITY,
             Self::Baselines => baselines::ENTITY,
+            Self::JellyfinIds => jellyfin_ids::ENTITY,
             Self::Links => links::ENTITY,
         }
     }
@@ -178,6 +182,7 @@ fn run_sections(
         work.extend(ALL.iter().copied().map(Work::Section));
         work.push(Work::Editions);
         work.push(Work::Baselines);
+        work.push(Work::JellyfinIds);
     }
     work.push(Work::Links);
     let mut written = 0;
@@ -282,6 +287,7 @@ fn apply(conn: &Connection, run: &CarryRun<'_>, unit: Work) -> Result<SectionRes
         }
         Work::Editions => return editions::apply(conn, run.dry_run),
         Work::Baselines => return baselines::apply(conn, run.dry_run),
+        Work::JellyfinIds => return jellyfin_ids::apply(conn, run.dry_run),
         Work::Links => return links::apply(conn, run.dry_run),
         Work::Section(section) => section,
     };

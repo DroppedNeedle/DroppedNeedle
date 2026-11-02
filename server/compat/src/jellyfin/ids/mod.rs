@@ -5,21 +5,23 @@
 //! account can work one out; every other id is `sha256("kind:internal")`.
 //! Every id handed out has a row, written by the fill loop
 //! ([`JOB_NAME`]) after the catalog or the playlists change, never by a
-//! request. So an id an app cached before a restart resolves with one
-//! read by primary key, and nothing on a request path lists the catalog.
+//! request, or carried from v2 by the upgrade. So an id an app cached before
+//! a restart resolves with one read by primary key, and nothing on a request
+//! path lists the catalog.
 //!
 //! A stored id is the id. The fill only adds rows for items that have
 //! none, so a change of the data key (`reset-key`, or a backup restored
 //! under another key) changes no stored album or artist id: only items
-//! added afterwards get ids under the new key. The first pass of each
-//! process loads the stored ids that differ from the computed ones into a
-//! small map, and until it has committed, [`JellyfinIds::ready`] is false
-//! and the Jellyfin routes answer busy.
+//! added afterwards get ids under the new key. A track or playlist v2 gave
+//! another id keeps it the same way. The first pass of each process loads
+//! the stored ids that differ from the computed ones into a small map, and
+//! until it has committed, [`JellyfinIds::ready`] is false and the Jellyfin
+//! routes answer busy.
 //!
 //! Aliases (`current = 0`) keep resolving for signed-in callers: the old
-//! unkeyed id of every album and artist, and both ids of every album and
-//! artist a merge retired. An alias row names the alias itself; the caller
-//! follows it to the item that holds it now.
+//! unkeyed id of every album and artist, both ids of every album and artist
+//! a merge retired, and the other ids v2 stored. An alias row names the
+//! alias itself; the caller follows it to the item that holds it now.
 
 pub mod sql;
 
@@ -114,11 +116,6 @@ impl IdKind {
         .into_iter()
         .find(|kind| kind.as_str() == name)
     }
-
-    /// Whether its ids are made with the data key.
-    fn keyed(self) -> bool {
-        matches!(self, Self::Album | Self::Artist)
-    }
 }
 
 /// A read or write of the id table that did not complete.
@@ -167,8 +164,9 @@ struct Row {
 /// without its alias.
 type Item = Vec<Row>;
 
-/// Current ids stored under another data key than today's, by item.
-type Keyed = HashMap<(IdKind, String), String>;
+/// Current ids that differ from the computed one, by item: made under
+/// another data key than today's, or carried from v2.
+type Exceptions = HashMap<(IdKind, String), String>;
 
 /// What the fill has done in this process.
 #[derive(Debug, Default)]
@@ -177,7 +175,7 @@ struct Progress {
     /// everything committed up to it has its ids stored.
     covered: Option<u64>,
     /// Loaded by the first pass; `None` until it has committed.
-    keyed: Option<Arc<Keyed>>,
+    exceptions: Option<Arc<Exceptions>>,
 }
 
 /// The stored ids (see module docs). Cloneable; clones share the progress
@@ -231,16 +229,16 @@ impl JellyfinIds {
 
     /// Whether this process's first fill pass has committed.
     pub fn ready(&self) -> bool {
-        self.progress.borrow().keyed.is_some()
+        self.progress.borrow().exceptions.is_some()
     }
 
-    /// The id handed out for an item: the stored one where it was made
-    /// under another key, else the computed one. Reads nothing.
+    /// The id handed out for an item: the stored one where it differs from
+    /// the computed one, else the computed one. Reads nothing.
     pub fn handed_out(&self, kind: &str, internal: &str) -> String {
         let stored = IdKind::named(kind).and_then(|named| {
             let progress = self.progress.borrow();
             progress
-                .keyed
+                .exceptions
                 .as_ref()?
                 .get(&(named, internal.to_owned()))
                 .cloned()
@@ -440,10 +438,10 @@ impl Fill {
             items.sort_by(|a, b| a[0].jellyfin_id.cmp(&b[0].jellyfin_id));
             rows += self.write(items).await?;
         }
-        let loaded = self.ids.progress.borrow().keyed.clone();
-        let keyed = match loaded {
-            Some(keyed) => keyed,
-            None => Arc::new(self.keyed().await?),
+        let loaded = self.ids.progress.borrow().exceptions.clone();
+        let exceptions = match loaded {
+            Some(exceptions) => exceptions,
+            None => Arc::new(self.exceptions().await?),
         };
         if catalog {
             self.done = Some(revision);
@@ -451,7 +449,7 @@ impl Fill {
         }
         self.ids.progress.send_modify(|progress| {
             progress.covered = Some(progress.covered.map_or(start, |seen| seen.max(start)));
-            progress.keyed = Some(keyed);
+            progress.exceptions = Some(exceptions);
         });
         Ok(PassReport { catalog, rows })
     }
@@ -583,27 +581,30 @@ impl Fill {
         }
     }
 
-    /// Current album and artist ids stored under another key than today's.
-    async fn keyed(&self) -> Result<Keyed, IdsError> {
-        let rows: Vec<(String, String, String)> = self
-            .ids
+    /// The stored current ids that differ from the computed ones. Compared
+    /// inside the read, so the async thread hashes nothing.
+    async fn exceptions(&self) -> Result<Exceptions, IdsError> {
+        let ids = self.ids.clone();
+        self.ids
             .db
-            .read("compat.jellyfin_ids.keyed", |conn| {
-                let mut statement = conn.prepare_cached(sql::KEYED_CURRENT.text())?;
-                let rows = statement
-                    .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
-                    .collect::<Result<Vec<_>, _>>()?;
-                Ok::<_, IdsError>(rows)
+            .read("compat.jellyfin_ids.exceptions", move |conn| {
+                let mut statement = conn.prepare_cached(sql::CURRENT_CAN_DIFFER.text())?;
+                let mut rows = statement.query([])?;
+                let mut exceptions = Exceptions::new();
+                while let Some(row) = rows.next()? {
+                    let jellyfin_id: String = row.get(0)?;
+                    let kind: String = row.get(1)?;
+                    let internal: String = row.get(2)?;
+                    if ids.computed(&kind, &internal) == jellyfin_id {
+                        continue;
+                    }
+                    if let Some(kind) = IdKind::named(&kind) {
+                        exceptions.insert((kind, internal), jellyfin_id);
+                    }
+                }
+                Ok::<_, IdsError>(exceptions)
             })
-            .await?;
-        Ok(rows
-            .into_iter()
-            .filter_map(|(jellyfin_id, kind, internal)| {
-                let kind = IdKind::named(&kind).filter(|kind| kind.keyed())?;
-                (self.ids.computed(kind.as_str(), &internal) != jellyfin_id)
-                    .then_some(((kind, internal), jellyfin_id))
-            })
-            .collect())
+            .await
     }
 }
 

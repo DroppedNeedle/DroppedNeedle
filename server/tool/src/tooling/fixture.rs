@@ -1022,6 +1022,8 @@ const USER_DATA_SCHEMA: &str = "
 /// tables in v2's final shape (constraints that only point at tables the
 /// fixture leaves out are dropped).
 const V2_LIBRARY_SCHEMA: &str = "
+    CREATE TABLE library_compat_id_map (
+        jf_id TEXT PRIMARY KEY, kind TEXT NOT NULL, internal_id TEXT NOT NULL);
     CREATE TABLE local_artists (
         id TEXT PRIMARY KEY, display_name TEXT NOT NULL, sort_name TEXT,
         folded_name TEXT NOT NULL, normalized_name TEXT NOT NULL DEFAULT '',

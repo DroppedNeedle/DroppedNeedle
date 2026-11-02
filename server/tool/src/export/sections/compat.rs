@@ -4,6 +4,9 @@
 //! the same id in `file_id`. The v2 id is written as is and recorded as a
 //! pending link until the library carry confirms it. v3 keeps these times
 //! in integer milliseconds where v2 had REAL seconds.
+//!
+//! The Jellyfin ids v2 stored travel too, keyed by catalog id, so an artist's
+//! rows follow its new id. The import decides which of them land.
 
 use super::requests::{millis, whole, whole_or};
 use super::{Column, LinkKind, LinkMode, Parent, Source, TableSection, Target, col};
@@ -81,4 +84,26 @@ pub const BOOKMARKS: TableSection = TableSection {
     parents: &[],
     user_column: Some("user_id"),
     left_behind: "bookmarks of deleted users; nothing to do, those accounts were deleted in v2",
+};
+
+/// The Jellyfin ids v2 stored. Every row travels: what lands in v3 is the
+/// import's call (`import/carry/jellyfin_ids.rs`).
+pub const JELLYFIN_IDS: TableSection = TableSection {
+    name: "jellyfin_id",
+    source: Source::Table {
+        table: "library_compat_id_map",
+        filter: "",
+        requires: &[],
+    },
+    target: Target::BundleOnly,
+    columns: &[
+        col("jf_id"),
+        col("kind"),
+        Column::new("internal_id").link(LinkKind::ByColumn("kind"), LinkMode::AsWritten),
+    ],
+    key: &["jf_id"],
+    unique: &[],
+    parents: &[],
+    user_column: None,
+    left_behind: "",
 };

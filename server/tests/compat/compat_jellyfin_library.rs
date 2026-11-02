@@ -2000,6 +2000,66 @@ async fn a_revoked_app_password_does_not_lock_out_its_address() {
     rig.stop().await;
 }
 
+/// A track id the upgrade carried from v2 is the id: after a restart the
+/// listing answers it, since Finamp matches answers by the id it asked for,
+/// and it streams with ranges and its auth. Before the row lands it is a 404.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_track_id_carried_from_v2_streams_and_is_handed_out() {
+    const CARRIED: &str = "c0ffeec0ffeec0ffeec0ffeec0ffee00";
+    let mut rig = CompatApp::start("jf-carried-id").await;
+    let auth = finamp(&rig.secret);
+    let one = track_id(&rig, &auth, "One").await;
+    let stream = format!("/jellyfin/Audio/{CARRIED}/stream");
+    assert_eq!(get(&rig, &stream, Some(&auth)).await.status, 404);
+
+    let track: String = rig
+        .app
+        .db()
+        .query_row(
+            "SELECT internal_id FROM compat_jellyfin_ids WHERE jellyfin_id = ?1",
+            [&one],
+            |row| row.get(0),
+        )
+        .expect("the track's id is stored");
+    rig.app
+        .seed_with(
+            "DELETE FROM compat_jellyfin_ids WHERE jellyfin_id = ?1",
+            [&one],
+        )
+        .await;
+    rig.app
+        .seed_with(
+            "INSERT INTO compat_jellyfin_ids (jellyfin_id, kind, internal_id, current) \
+             VALUES (?1, 'track', ?2, 1)",
+            [CARRIED, track.as_str()],
+        )
+        .await;
+    rig.app = rig.app.restart().await;
+    rig.jellyfin_ids_caught_up().await;
+
+    assert_eq!(track_id(&rig, &auth, "One").await, CARRIED);
+    let file = rig.file("one");
+    assert_eq!(
+        refused(&rig, "GET", &stream, None, None).await.status,
+        StatusCode::UNAUTHORIZED
+    );
+    let whole = get(&rig, &stream, Some(&auth)).await;
+    assert_eq!(whole.status, StatusCode::OK);
+    assert!(whole.body == file, "stream serves another file");
+    let part = raw(
+        &rig,
+        "GET",
+        &stream,
+        vec![("range", "bytes=0-9")],
+        Some(&auth),
+        None,
+    )
+    .await;
+    assert_eq!(part.status, StatusCode::PARTIAL_CONTENT);
+    assert!(part.body == file[..10], "the range serves another part");
+    rig.stop().await;
+}
+
 /// The sign-in layer hands each handler its own caller: a private
 /// playlist answers its owner, is not found for another user, and needs a
 /// token.

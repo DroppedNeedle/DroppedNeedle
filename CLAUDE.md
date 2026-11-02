@@ -541,8 +541,9 @@ Run from the repo root. `make help` lists every target.
 - Which Jellyfin routes are public is the one route table in
   `compat/src/jellyfin/router.rs`; every other row is signed in by its
   layer before the handler runs, and the limiter reads the same table.
-- A Jellyfin id is stored in `compat_jellyfin_ids` by compat's fill loop
-  and never minted again, a data-key reset included. A request resolves
+- A Jellyfin id is stored in `compat_jellyfin_ids` by compat's fill loop,
+  or carried from v2 by the upgrade, and never minted again, a data-key
+  reset included. A request resolves
   ids from that table and never lists the catalog.
 - A plugin is trusted, unsandboxed code. Nothing runs until an admin enables
   it. `PLUGINS.md` is the public contract: change the manifest, protocol or
