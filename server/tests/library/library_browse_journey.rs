@@ -100,13 +100,13 @@ async fn fixture() -> Fixture {
          (local_track_id, provider, recording_mbid, decision_source, selected_at) VALUES \
          ('t1', 'musicbrainz', 'rec-opener', 'manual', 1000)",
         "INSERT INTO library_identify_reviews (id, local_album_id, reason_code, candidates_json, \
-         state, created_ms, updated_ms) VALUES \
+         state, created_at, updated_at) VALUES \
          ('rv1', 'al2', 'low_confidence', '[]', 'pending', 1, 1), \
          ('rv2', 'al1', 'low_confidence', '[]', 'approved', 1, 1)",
         "INSERT INTO library_scan_runs (id, kind, trigger, state, phase, aggregate_scope, \
          queued_at, updated_at, terminal_at) VALUES \
-         ('run1', 'incremental', 'manual', 'completed', 'reconciling', '{}', 10, 20, 2000.5), \
-         ('run2', 'incremental', 'manual', 'failed', 'reconciling', '{}', 30, 40, 9000000000.0)",
+         ('run1', 'incremental', 'manual', 'completed', 'reconciling', '{}', 10, 20, 2000500), \
+         ('run2', 'incremental', 'manual', 'failed', 'reconciling', '{}', 30, 40, 9000000000000)",
         "INSERT INTO request_history (musicbrainz_id_lower, musicbrainz_id, artist_name, album_title, \
          requested_at, status) VALUES ('rg-req', 'RG-REQ', 'Someone', 'Wanted', 1704067200000, 'pending')",
     ]
@@ -253,7 +253,7 @@ async fn browse_gaps_journey() {
         .app
         .db()
         .query_row(
-            "SELECT MAX(terminal_at) FROM library_scan_runs WHERE state = 'completed'",
+            "SELECT MAX(terminal_at) / 1000.0 FROM library_scan_runs WHERE state = 'completed'",
             [],
             |row| row.get(0),
         )

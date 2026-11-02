@@ -256,7 +256,7 @@ pub(super) fn commit_bundle(
                 track.root_id,
                 track.fingerprint,
                 track.mgmt_state.as_str(),
-                now,
+                crate::clock::ms(now),
                 written
             ],
         )?;

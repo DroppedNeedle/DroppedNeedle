@@ -99,7 +99,7 @@ droppedneedle_kernel::sql! {
                  WHERE id = ?1 AND retired_into_artist_id IS NULL)";
     pub(super) DROP_REPAIR_IDENTIFY_JOB = "DELETE FROM library_identify_jobs WHERE local_album_id = ?1 \
                  AND state = 'queued' AND kind = 'historical' \
-                 AND requested_by_user_id IS NULL AND created_ms = ?2";
+                 AND requested_by_user_id IS NULL AND created_at = ?2";
     pub(super) BY_RECORDING = "SELECT t.id, COALESCE(ti.recording_mbid, t.embedded_recording_mbid) = ?1 \
          FROM local_tracks t \
          LEFT JOIN local_track_external_identities ti ON ti.local_track_id = t.id \
@@ -280,14 +280,14 @@ droppedneedle_kernel::sql! {
              WHERE " + UNFILED + " AND rowid > ?1 ORDER BY rowid LIMIT ?2";
     pub(super) HYGIENE_CANDIDATES_EXIST = "SELECT EXISTS(SELECT 1 FROM local_albums a \
              WHERE a.retired_into_album_id IS NULL AND " + HYGIENE_CANDIDATE + ")";
-    pub(super) NEWEST_IDENTIFIED = "SELECT updated_ms, id FROM library_identify_jobs \
-                 WHERE state IN " + IDENTIFY_FINISHED + " ORDER BY updated_ms DESC, id DESC LIMIT 1";
-    pub(super) IDENTIFIED_AFTER = "SELECT j.updated_ms, j.id, a.id, \
+    pub(super) NEWEST_IDENTIFIED = "SELECT updated_at, id FROM library_identify_jobs \
+                 WHERE state IN " + IDENTIFY_FINISHED + " ORDER BY updated_at DESC, id DESC LIMIT 1";
+    pub(super) IDENTIFIED_AFTER = "SELECT j.updated_at, j.id, a.id, \
          a.retired_into_album_id IS NULL AND " + HYGIENE_CANDIDATE + " \
          FROM library_identify_jobs j JOIN local_albums a ON a.id = j.local_album_id \
          WHERE j.state IN " + IDENTIFY_FINISHED + " \
-         AND (j.updated_ms > ?1 OR (j.updated_ms = ?1 AND j.id > ?2)) \
-         ORDER BY j.updated_ms, j.id LIMIT ?3";
+         AND (j.updated_at > ?1 OR (j.updated_at = ?1 AND j.id > ?2)) \
+         ORDER BY j.updated_at, j.id LIMIT ?3";
     pub(super) CUSTOM_EDITION_IS_CURRENT = "SELECT " + CUSTOM_CURRENT + " FROM local_albums a WHERE a.id = ?1 AND EXISTS \
                  (SELECT 1 FROM library_custom_edition_active ac WHERE ac.local_album_id = a.id)";
     pub(super) TRACK_ID_BACKFILL_ALBUMS = "SELECT a.id FROM local_albums a \
@@ -560,7 +560,7 @@ pub(super) fn findings_page(
          (EXISTS (SELECT 1 FROM local_album_artwork w WHERE w.local_album_id = a.id) \
           OR i.release_group_mbid IS NOT NULL), \
          (SELECT r.id FROM library_identify_reviews r WHERE r.local_album_id = f.local_album_id \
-          ORDER BY r.updated_ms DESC, r.id DESC LIMIT 1), \
+          ORDER BY r.updated_at DESC, r.id DESC LIMIT 1), \
          f.finding_code, f.reason_code, f.confidence, f.apply_eligible, f.state, \
          f.apply_result, f.suggested_release_mbid, f.suggested_release_group_mbid, \
          f.suggested_edition_json, f.updated_at, f.row_revision \

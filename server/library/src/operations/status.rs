@@ -260,7 +260,7 @@ pub fn waiting_albums(
                 reason: reasons::match_reason(&code),
                 release_mbid: row.get(4)?,
                 release_group_mbid: row.get(5)?,
-                updated_at: row.get(6)?,
+                updated_at: crate::clock::secs_at(row, 6)?,
                 identity_revision: row.get(7)?,
             })
         })?

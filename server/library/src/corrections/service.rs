@@ -341,7 +341,7 @@ fn record(
             audit.before.to_string(),
             after,
             audit.reason,
-            audit.now,
+            crate::clock::ms(audit.now),
         ],
     )?;
     Ok(())

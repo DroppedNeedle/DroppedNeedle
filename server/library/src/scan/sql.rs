@@ -67,43 +67,37 @@ droppedneedle_kernel::sql! {
     pub(super) RECORD_FAILURE = "INSERT OR IGNORE INTO library_scan_failures \
              (run_id, root_id, relative_path, failure_code, failure_detail, phase, recorded_at) \
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)";
-    /// Note that run `?1` owes the end passes `?2` names (code `?3`, at `?4`).
-    pub(super) OWE_END_PASSES = "INSERT OR IGNORE INTO library_scan_failures \
-             (run_id, root_id, relative_path, failure_code, failure_detail, phase, recorded_at) \
-             VALUES (?1, '', ?2, ?3, 'The scan is settling what it found.', 'reconciling', ?4)";
-    /// The ended runs that owe end passes (code `?1`): run, the passes
-    /// owed, end time, and the note's detail, which says when a pass put
-    /// off is tried again.
-    pub(super) OWED_END_PASSES = "SELECT run_id, relative_path, recorded_at, failure_detail \
-             FROM library_scan_failures WHERE failure_code = ?1 ORDER BY recorded_at, run_id";
-    /// The ended runs that still owe end passes (code `?1`), oldest first.
-    pub(super) RUNS_OWING_END_PASSES = "SELECT " + RUN_COLUMNS + " FROM library_scan_runs r \
-             WHERE terminal_at IS NOT NULL AND EXISTS (SELECT 1 FROM library_scan_failures f \
-               WHERE f.run_id = r.id AND f.failure_code = ?1) \
+    /// Note that run `?1` owes its end passes, from pass `?2`.
+    pub(super) OWE_END_PASSES = "UPDATE library_scan_runs SET next_end_pass = ?2, \
+             end_pass_waits_used = 0, end_pass_retry_at = NULL WHERE id = ?1";
+    /// The ended runs that owe end passes, oldest first: run, the next
+    /// pass, end time, the waits used on it and when it is tried again.
+    pub(super) OWED_END_PASSES = "SELECT id, next_end_pass, terminal_at, end_pass_waits_used, \
+             end_pass_retry_at FROM library_scan_runs \
+             WHERE next_end_pass IS NOT NULL AND terminal_at IS NOT NULL \
              ORDER BY terminal_at, id";
-    /// Move run `?1`'s note on to the passes `?2` names (code `?3`).
-    pub(super) NEXT_END_PASS = "UPDATE library_scan_failures SET relative_path = ?2, \
-             failure_detail = 'The scan is settling what it found.' \
-             WHERE run_id = ?1 AND failure_code = ?3";
-    /// Note that run `?1`'s next pass is put off (code `?2`, detail `?3`).
-    pub(super) PUT_OFF_END_PASS = "UPDATE library_scan_failures SET failure_detail = ?3 \
-             WHERE run_id = ?1 AND failure_code = ?2";
-    /// Run `?1` owes no more end passes (code `?2`).
-    pub(super) END_PASSES_DONE = "DELETE FROM library_scan_failures WHERE run_id = ?1 AND failure_code = ?2";
+    /// The ended runs that still owe end passes, oldest first.
+    pub(super) RUNS_OWING_END_PASSES = "SELECT " + RUN_COLUMNS + " FROM library_scan_runs \
+             WHERE terminal_at IS NOT NULL AND next_end_pass IS NOT NULL \
+             ORDER BY terminal_at, id";
+    /// Move run `?1` on to pass `?2`, or to none.
+    pub(super) NEXT_END_PASS = "UPDATE library_scan_runs SET next_end_pass = ?2, \
+             end_pass_waits_used = 0, end_pass_retry_at = NULL WHERE id = ?1";
+    /// Run `?1`'s next pass is put off: `?2` waits used, tried again at `?3`.
+    pub(super) PUT_OFF_END_PASS = "UPDATE library_scan_runs SET end_pass_waits_used = ?2, \
+             end_pass_retry_at = ?3 WHERE id = ?1";
     /// The oldest finished run whose inventory waits for clean-up and that
-    /// owes no end passes (code `?1`).
-    pub(super) CLEANUP_TARGET = "SELECT id FROM library_scan_runs r \
+    /// owes no end passes.
+    pub(super) CLEANUP_TARGET = "SELECT id FROM library_scan_runs \
              WHERE terminal_at IS NOT NULL AND inventory_cleanup_pending = 1 \
-             AND NOT EXISTS (SELECT 1 FROM library_scan_failures f \
-               WHERE f.run_id = r.id AND f.failure_code = ?1) \
-             ORDER BY terminal_at, id LIMIT 1";
-    /// A run's failure rows, oldest first, without the internal note (code `?2`).
+             AND next_end_pass IS NULL ORDER BY terminal_at, id LIMIT 1";
+    /// A run's failure rows, oldest first.
     pub(super) RUN_FAILURES = "SELECT root_id, relative_path, failure_code, recorded_at, failure_detail, phase \
-             FROM library_scan_failures WHERE run_id = ?1 AND failure_code != ?2 ORDER BY rowid";
-    /// One keyset page of a run's failure rows, without the internal note (code `?4`).
+             FROM library_scan_failures WHERE run_id = ?1 ORDER BY rowid";
+    /// One keyset page of a run's failure rows.
     pub(super) RUN_FAILURES_PAGE = "SELECT rowid, root_id, relative_path, failure_code, recorded_at, \
              failure_detail, phase FROM library_scan_failures \
-             WHERE run_id = ?1 AND (?2 IS NULL OR rowid > ?2) AND failure_code != ?4 \
+             WHERE run_id = ?1 AND (?2 IS NULL OR rowid > ?2) \
              ORDER BY rowid LIMIT ?3";
     /// The rowids of one finished run's album moves.
     pub(super) ALBUM_MOVE_ROWIDS = "SELECT rowid FROM library_scan_album_moves WHERE run_id = ?1";
@@ -260,7 +254,7 @@ droppedneedle_kernel::sql! {
                  WHERE root_id = ?4 AND relative_path = ?5";
     pub(super) RECORD_CLASSIFY_FAILURE = "INSERT OR IGNORE INTO library_scan_failures \
                      (run_id, root_id, relative_path, failure_code, failure_detail, phase, \
-                     recorded_at) VALUES (?1, ?2, ?3, ?4, ?5, 'discovering', 0.0)";
+                     recorded_at) VALUES (?1, ?2, ?3, ?4, ?5, 'discovering', 0)";
     pub(super) SHARED_CATALOG_REVISION = "SELECT COALESCE((SELECT value FROM library_catalog_revision WHERE singleton = 1), 0)";
     pub(super) LOAD_CATALOG_MAP = "SELECT relative_path, id, stat_revision, stat_revision_kind, file_size_bytes, \
          file_mtime_ns, tags_read_at FROM local_tracks \
@@ -430,7 +424,7 @@ droppedneedle_kernel::sql! {
     pub(super) MOVE_ALBUM_PLAYLIST_TRACKS = "UPDATE playlist_tracks SET album_id = ?1 WHERE album_id = ?2";
     pub(super) DROP_ALBUM = "DELETE FROM local_albums WHERE id = ?1";
     pub(super) STAMP_IF_RETAGGED_BY_HAND = "SELECT EXISTS(SELECT 1 FROM library_custom_edition_active WHERE local_album_id = ?1)";
-    pub(super) HOLDS_ONLY_ITS_RETAG = "WITH run AS (SELECT started_at FROM library_scan_runs WHERE id = ?1), \
+    pub(super) HOLDS_ONLY_ITS_RETAG = "WITH run AS (SELECT (started_at - 0.5) / 1000.0 AS started_at FROM library_scan_runs WHERE id = ?1), \
              other AS (SELECT t.imported_at, t.root_id, t.relative_path FROM local_tracks t \
                WHERE t.local_album_id = ?2 AND NOT EXISTS ( \
                  SELECT 1 FROM library_scan_album_moves m WHERE m.run_id = ?1 \
@@ -451,7 +445,7 @@ droppedneedle_kernel::sql! {
          JOIN local_albums a ON a.id = m.previous_album_id \
          WHERE m.run_id = ?1 AND a.retired_into_album_id IS NULL ORDER BY 1";
     pub(super) RECENTLY_MISSING_TRACKS = "SELECT t.id FROM local_tracks t WHERE t.availability = 'missing' \
-             AND t.missing_since >= (SELECT MIN(started_at) FROM library_scan_runs) \
+             AND t.missing_since >= (SELECT (MIN(started_at) - 0.5) / 1000.0 FROM library_scan_runs) \
              AND NOT EXISTS (SELECT 1 FROM local_track_aliases x WHERE x.alias = t.id) \
              AND substr(t.relative_path, 1, length(?1)) <> ?1 \
              ORDER BY t.id";
@@ -461,7 +455,7 @@ droppedneedle_kernel::sql! {
                  role, credited_name, join_phrase, artist_mbid) \
                  SELECT ?1, position, local_artist_id, role, credited_name, join_phrase, \
                  artist_mbid FROM local_track_artists WHERE local_track_id = ?2";
-    pub(super) DEPARTED_FROM = "WITH run AS (SELECT CAST(COALESCE(started_at, ?3) * 1000 AS INTEGER) AS start_ms \
+    pub(super) DEPARTED_FROM = "WITH run AS (SELECT COALESCE(started_at, ?3) AS start_ms \
            FROM library_scan_runs WHERE id = ?1), \
          moved_now AS (SELECT m.local_track_id, m.previous_album_id \
            FROM library_scan_album_moves m JOIN local_tracks t ON t.id = m.local_track_id \
@@ -498,7 +492,7 @@ droppedneedle_kernel::sql! {
     pub(super) ALBUM_IS_EMPTY = "SELECT NOT EXISTS(SELECT 1 FROM local_tracks WHERE local_album_id = ?1)";
     pub(super) LEFT_AT = "SELECT CASE WHEN EXISTS (SELECT 1 FROM library_scan_album_moves \
            WHERE run_id = ?1 AND local_track_id = ?2 AND previous_album_id = ?3) \
-         THEN (SELECT CAST(COALESCE(started_at, ?4) * 1000 AS INTEGER) \
+         THEN (SELECT COALESCE(started_at, ?4) \
            FROM library_scan_runs WHERE id = ?1) \
          ELSE (SELECT departed_at FROM library_album_departures \
            WHERE local_track_id = ?2 AND previous_album_id = ?3) END";
@@ -525,11 +519,11 @@ droppedneedle_kernel::sql! {
              excluded_at FROM library_management_exclusions WHERE local_album_id = ?1";
     pub(super) KEEP_DEPARTURES_OF = "INSERT OR IGNORE INTO library_album_departures (local_track_id, \
                  previous_album_id, departed_at, arrived_at) SELECT ?2, ?3, \
-                 CAST(COALESCE(started_at, ?4) * 1000 AS INTEGER), \
-                 CAST(COALESCE(started_at, ?4) * 1000 AS INTEGER) \
+                 COALESCE(started_at, ?4), \
+                 COALESCE(started_at, ?4) \
                  FROM library_scan_runs WHERE id = ?1";
     pub(super) STAMP_DEPARTURE_ARRIVALS = "UPDATE library_album_departures SET arrived_at = ( \
-           SELECT CAST(COALESCE(started_at, ?2) * 1000 AS INTEGER) FROM library_scan_runs \
+           SELECT COALESCE(started_at, ?2) FROM library_scan_runs \
            WHERE id = ?1) \
          WHERE local_track_id IN (SELECT m.local_track_id FROM library_scan_album_moves m \
            JOIN local_tracks t ON t.id = m.local_track_id \
@@ -602,7 +596,7 @@ droppedneedle_kernel::sql! {
                  WHERE local_album_id = ?1 AND availability = 'indexed')";
     pub(super) SETTLE = "INSERT INTO library_scan_held_scopes (root_id, relative_path, held_at) \
          SELECT DISTINCT f.root_id, f.relative_path, \
-           CAST(COALESCE(r.started_at, ?2) * 1000 AS INTEGER) \
+           COALESCE(r.started_at, ?2) \
          FROM library_scan_failures f JOIN library_scan_runs r ON r.id = f.run_id \
          WHERE f.run_id = ?1 AND f.failure_code = 'MASS_MISSING_GUARD' \
          ON CONFLICT (root_id, relative_path) DO NOTHING";
@@ -1018,7 +1012,7 @@ droppedneedle_kernel::sql! {
      AND NOT EXISTS (SELECT 1 FROM local_tracks t \
        JOIN local_albums a ON a.id = t.local_album_id \
        WHERE t.availability = 'missing' AND t.root_id = h.root_id \
-       AND t.missing_since >= (SELECT COALESCE(started_at, ?2) \
+       AND t.missing_since >= (SELECT (COALESCE(started_at, ?2) - 0.5) / 1000.0 \
          FROM library_scan_runs WHERE id = ?1) \
        AND " + (covers!("h.relative_path", "t.relative_path")) + " AND a.retired_into_album_id IS NULL \
        AND NOT EXISTS (SELECT 1 FROM local_tracks k \

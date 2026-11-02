@@ -84,10 +84,11 @@ pub(super) fn hold_replacements(
 fn pass(tx: &Transaction<'_>, run_id: &str, now: f64) -> rusqlite::Result<()> {
     let started: Option<f64> = tx
         .query_row(crate::scan::sql::PASS.text(), params![run_id], |row| {
-            row.get(0)
+            row.get::<_, Option<i64>>(0)
         })
         .optional()?
-        .flatten();
+        .flatten()
+        .map(crate::clock::earliest_secs);
     let Some(started) = started else {
         return Ok(());
     };

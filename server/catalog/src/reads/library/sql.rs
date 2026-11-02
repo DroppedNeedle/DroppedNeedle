@@ -405,7 +405,7 @@ droppedneedle_kernel::sql! {
         (SELECT COUNT(*) FROM local_albums a WHERE " + (owned_album!("a"))
         + " AND NOT EXISTS (SELECT 1 FROM local_album_external_identities i \
         WHERE i.local_album_id = a.id AND " + (musicbrainz!("i")) + ")) AS local_only, \
-        (SELECT MAX(terminal_at) FROM library_scan_runs WHERE state = 'completed') AS last_scan";
+        (SELECT MAX(terminal_at) / 1000.0 FROM library_scan_runs WHERE state = 'completed') AS last_scan";
 
     /// Which of a page of ids a user favorited, for one kind.
     family FAVORITES_IN = favorites_in;

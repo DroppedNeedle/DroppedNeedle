@@ -701,9 +701,6 @@ pub enum FailureCode {
     /// in it. Rows whose file the other spelling holds are excused from the
     /// mass-missing guard. Never a failure.
     ScopeRenamed,
-    /// Internal: the run has ended and still owes the end passes named by
-    /// the row's path. Never listed among the run's failures.
-    RunEndPending,
 }
 
 spelled!(FailureCode {
@@ -741,7 +738,6 @@ spelled!(FailureCode {
     CatalogCommitFailed => "CATALOG_COMMIT_FAILED",
     ScopeThroughLink => "SCOPE_THROUGH_LINK",
     ScopeRenamed => "SCOPE_RENAMED",
-    RunEndPending => "RUN_END_PENDING",
 });
 
 impl rusqlite::types::ToSql for FailureCode {

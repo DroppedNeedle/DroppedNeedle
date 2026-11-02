@@ -298,7 +298,7 @@ fn write_manifest(
             content_hash,
             custom.candidate_key,
             actor,
-            now,
+            crate::clock::ms(now),
         ])?;
     let mut ordered: Vec<&ManifestTrack> = frozen.tracks.iter().collect();
     ordered.sort_by(|a, b| {
@@ -336,7 +336,7 @@ fn write_manifest(
             ])?;
     }
     tx.prepare_cached(sql::ACTIVATE_CUSTOM.text())?
-        .execute(params![album_id, manifest_id, now])?;
+        .execute(params![album_id, manifest_id, crate::clock::ms(now)])?;
     Ok(manifest_id)
 }
 

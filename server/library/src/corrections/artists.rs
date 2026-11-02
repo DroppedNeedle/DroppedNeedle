@@ -243,7 +243,7 @@ pub(super) fn retire_artist(
         .execute(params![
             artist,
             survivor,
-            now,
+            crate::clock::ms(now),
             CREDITS_MOVED,
             MOVED_BY_NAME,
             MOVED_WITH_ID

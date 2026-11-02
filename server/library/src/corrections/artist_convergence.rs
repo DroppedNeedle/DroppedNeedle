@@ -218,7 +218,7 @@ pub(crate) fn follow_moved(
                         from,
                         survivor,
                         CREDITS_MOVED,
-                        now
+                        crate::clock::ms(now)
                     ])?;
             }
             Followed::Stays => {}
@@ -359,7 +359,7 @@ pub(crate) fn record_move(
             from,
             to,
             reason,
-            now
+            crate::clock::ms(now)
         ])?;
     Ok(())
 }

@@ -70,7 +70,7 @@ async fn fresh_migrate_marks_version_and_seeds() {
         .unwrap();
     assert_eq!(applied, migration_count());
 
-    assert_eq!(table_names(&pool).await.len(), 174);
+    assert_eq!(table_names(&pool).await.len(), 172);
     let triggers: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'")
             .fetch_one(&pool)
@@ -581,7 +581,8 @@ async fn unused_tables_drop_and_live_rows_survive() {
 
     let finding: (String, String, i64, i64, String, f64, f64) = sqlx::query_as(
         "SELECT job_id, local_album_id, expected_album_revision, expected_identity_revision, \
-         state, created_at, updated_at FROM library_identity_repair_findings WHERE id = 'f1'",
+         state, created_at / 1000.0, updated_at / 1000.0 \
+         FROM library_identity_repair_findings WHERE id = 'f1'",
     )
     .fetch_one(&pool)
     .await
@@ -1217,7 +1218,7 @@ async fn edition_undo_keeps_its_rows_and_gains_the_hold() {
     );
     let rows: Vec<UndoRow> = sqlx::query_as(
         "SELECT id, action_id, prior_identity_json, prior_tracks_json, \
-         expected_identity_revision, created_at, prior_hold_json \
+         expected_identity_revision, created_at / 1000.0, prior_hold_json \
          FROM library_edition_choice_undo",
     )
     .fetch_all(&pool)
@@ -1578,7 +1579,8 @@ async fn remap_queue_keeps_its_rows_and_takes_place_only() {
 
     type QueueRow = (String, String, f64, i64, f64, Option<String>, String);
     let rows: Vec<QueueRow> = sqlx::query_as(
-        "SELECT local_album_id, release_mbid, queued_at, attempts, not_before, last_code, \
+        "SELECT local_album_id, release_mbid, queued_at / 1000.0, attempts, \
+         not_before_at / 1000.0, last_code, \
          origin FROM library_edition_remap_queue ORDER BY local_album_id",
     )
     .fetch_all(&pool)
@@ -1638,7 +1640,8 @@ async fn remap_queue_keeps_its_rows_and_takes_place_only() {
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert_eq!(chosen_by.as_deref(), Some("u1"));
+    // No account has that id here, and the column now keys on accounts.
+    assert_eq!(chosen_by, None);
     let sql: String = sqlx::query_scalar(
         "SELECT sql FROM sqlite_master WHERE name = 'library_edition_remap_queue'",
     )
@@ -7794,7 +7797,7 @@ async fn reviews_gain_a_revision_on_upgrade() {
     };
     assert_eq!(revision().await, ("pending".to_owned(), 1));
     for (change, expected) in [
-        ("UPDATE library_identify_reviews SET updated_ms = 9", 1),
+        ("UPDATE library_identify_reviews SET updated_at = 9", 1),
         ("UPDATE library_identify_reviews SET state = 'pending'", 1),
         (
             "UPDATE library_identify_reviews SET candidates_json = '[1]'",
@@ -10315,4 +10318,695 @@ async fn the_primary_source_section_goes_on_upgrade() {
             4
         )]
     );
+}
+
+/// Migration 0117 rebuilds the rest of the library's tables, except the catalog
+/// parents, to the schema conventions. From a database before it holding a
+/// row of each kind: rowids, times, renames and bad rows take their stated
+/// form, and Undo of an automatic edition, Undo of a choice and a review's
+/// restore all work on rows and kept JSON from before the upgrade.
+#[tokio::test]
+async fn library_tables_rebuild_to_conventions_on_upgrade() {
+    use droppedneedle_kernel::db::Lane;
+    use droppedneedle_library::operations::models::OperationError;
+    use droppedneedle_library::operations::reviews::{self, ReviewAction};
+    use droppedneedle_library::operations::{choice, decisions};
+
+    const REBUILT: [&str; 27] = [
+        "library_scan_runs",
+        "library_scan_run_scopes",
+        "library_scan_inventory",
+        "library_scan_failures",
+        "library_scan_album_moves",
+        "library_identify_jobs",
+        "library_identify_reviews",
+        "library_review_exclusions",
+        "library_identification_attempts",
+        "library_reidentification_snapshots",
+        "library_automatic_edition_undo",
+        "library_album_match_state",
+        "library_custom_edition_manifests",
+        "library_custom_edition_tracks",
+        "library_custom_edition_active",
+        "library_edition_choice_undo",
+        "library_edition_remap_queue",
+        "library_contribution_drafts",
+        "library_contribution_callback_tokens",
+        "library_repair_materialization",
+        "library_repair_snapshots",
+        "library_identity_repair_findings",
+        "library_catalog_actions",
+        "library_artist_reconciliation_dismissals",
+        "local_artist_merge_candidates",
+        "library_track_management_identity",
+        "library_track_management_state",
+    ];
+    const T: &str = "1700000000.1236";
+    let dir = droppedneedle_kernel::db::scratch::ScratchDir::new("library-0117").unwrap();
+    let path = dir.join("library.db");
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(
+            sqlx::sqlite::SqliteConnectOptions::new()
+                .filename(&path)
+                .create_if_missing(true)
+                .foreign_keys(true)
+                .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal),
+        )
+        .await
+        .unwrap();
+    run_migrations(&pool, &migrator_through(116)).await.unwrap();
+    let kept_state = format!(
+        r#"{{"state":"unconfirmed","reason_code":"R","release_mbid":null,"candidates_json":"[]","updated_at":{T}}}"#
+    );
+    let remap = |at: &str| {
+        format!(
+            r#"{{"exclusion":null,"custom_manifest_id":null,"remap":{{"release_mbid":"rel-b","chosen_by_user_id":null,"origin":"album_pin","queued_at":{at}}}}}"#
+        )
+    };
+    let kept_hold = format!(
+        r#"{{"before":{},"after":{},"carried":false}}"#,
+        remap("1700000001.1236"),
+        remap("1700000002.1236")
+    );
+    let hash = "a".repeat(64);
+    sqlx::raw_sql(&format!(
+        "INSERT INTO auth_users (id, display_name, role, created_at) VALUES ('u1', 'U', 'admin', 1); \
+         INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) \
+             VALUES ('a1', 'A', 'a', 'group', 1, 1), ('a2', 'B', 'b', 'group', 1, 1); \
+         INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+             album_artist_id, grouping_source, created_at, updated_at) VALUES \
+             ('al1', 'r1', 'g1', 'T', 't', 'a1', 'automatic', 1, 1), \
+             ('al2', 'r1', 'g2', 'T', 't', 'a1', 'automatic', 1, 1), \
+             ('al3', 'r1', 'g3', 'T', 't', 'a1', 'automatic', 1, 1), \
+             ('al4', 'r1', 'g4', 'T', 't', 'a1', 'automatic', 1, 1); \
+         INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
+             path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
+             album_title, album_title_folded, file_format, ingest_source, imported_at, \
+             membership_source) VALUES \
+             ('t1', 'al3', 'r1', '/m/1.flac', '1.flac', 'h1', 1, 0, 's', 'T', 't', 'T', 't', \
+             'flac', 'scan', 0, 'automatic'); \
+         INSERT INTO library_scan_runs (rowid, id, kind, trigger, requested_by_user_id, state, \
+             phase, aggregate_scope, queued_at, started_at, updated_at, terminal_at, \
+             phase_started_at) VALUES \
+             (7, 'owes', 'incremental', 'manual', 'u1', 'completed', 'reconciling', '[]', 10.5, \
+             11.5, 12.5, 13.5, 11.25), \
+             (3, 'waits', 'incremental', 'manual', NULL, 'completed', 'reconciling', '[]', 20.5, \
+             21.5, 22.5, 23.5, NULL), \
+             (4, 'odd', 'incremental', 'manual', NULL, 'completed', 'reconciling', '[]', 1e300, \
+             NULL, 'soon', 1.0, NULL), \
+             (5, 'done', 'incremental', 'manual', NULL, 'completed', 'reconciling', '[]', 30.5, \
+             NULL, 30.5, 31.5, NULL); \
+         INSERT INTO library_scan_failures (run_id, root_id, relative_path, failure_code, \
+             failure_detail, phase, recorded_at) VALUES \
+             ('owes', '', 'scan_end_gone_pass scan_end_place_scanned scan_end_held_scopes', \
+             'RUN_END_PENDING', 'The scan is settling what it found.', 'reconciling', 13.5), \
+             ('waits', '', 'scan_end_held_scopes', 'RUN_END_PENDING', 'put off 2 1800000000.5', \
+             'reconciling', 23.5), \
+             ('odd', '', 'scan_end_gone_pass', 'RUN_END_PENDING', 'x', 'reconciling', 1.0), \
+             ('done', 'r1', 'a.flac', 'WALK_TIMEOUT', '', 'discovering', 31.25); \
+         INSERT INTO library_scan_run_scopes (rowid, run_id, scope_sequence, root_id, \
+             relative_path, effective_policy, policy_revision, discovery_state) VALUES \
+             (9, 'done', 0, 'r1', '.', 'automatic', 'p', 'completed'), \
+             (8, 'done', 1, 'r1', 'x', 'automatic', 'p', 'mystery'); \
+         INSERT INTO library_scan_inventory (run_id, root_id, relative_path, absolute_path, \
+             file_size_bytes, file_mtime_ns, stat_revision, policy_revision, effective_policy, \
+             comparison_result) VALUES ('done', 'r1', 'a.flac', '/m/a.flac', 1, 1700000000123456789, \
+             's', 'p', 'automatic', 'new'); \
+         INSERT INTO library_scan_album_moves VALUES ('done', 'r1', 'a.flac', 't1', 'al1'); \
+         INSERT INTO library_identify_jobs (rowid, id, local_album_id, kind, priority, state, \
+             not_before_ms, lease_expires_ms, input_revision, idempotency_key, \
+             requested_by_user_id, created_ms, updated_ms) VALUES \
+             (6, 'j1', 'al4', 'manual', 30, 'running', 1000, 5000, 'r', 'k1', 'u1', 2000, 3000), \
+             (2, 'j2', 'al4', 'manual', 30, 'succeeded', 0, NULL, 'r', 'k2', 'gone', 4000, 4000); \
+         INSERT INTO library_identify_reviews (rowid, id, local_album_id, reason_code, \
+             candidates_json, state, resolved_by_user_id, created_ms, updated_ms) VALUES \
+             (5, 'rv1', 'al3', 'R', '[]', 'excluded', 'gone', 6000, 7000); \
+         INSERT INTO library_review_exclusions VALUES ('rv1', 't1'); \
+         INSERT INTO library_identification_attempts (id, local_album_id, trigger, \
+             input_tag_revision, input_policy_revision, input_file_revision, matcher_version, \
+             state, terminal_reason_code, started_at, completed_at) VALUES \
+             ('at1', 'al4', 'x', 't', 'p', 'f', 'm', 's', 'r', 40.5, 41.5); \
+         INSERT INTO library_operation_jobs (id, kind, state, created_at, updated_at) \
+             VALUES ('op', 'repair', 'succeeded', 1, 1), \
+             ('ri', 'explicit_reidentification', 'succeeded', 1, 1); \
+         INSERT INTO library_reidentification_snapshots (job_id, local_album_id, \
+             expected_album_revision, expected_input_revision, created_at) \
+             VALUES ('ri', 'al4', 1, 'r', 42.5); \
+         INSERT INTO local_album_external_identities (local_album_id, release_group_mbid, \
+             release_mbid, decision_source, selected_at, row_revision) VALUES \
+             ('al1', 'rg-new', 'rel-new', 'automatic', 50.5, 5), \
+             ('al2', 'rg-chosen', 'rel-chosen', 'manual', 51.5, 3); \
+         INSERT INTO library_automatic_edition_undo (id, local_album_id, prior_identity_json, \
+             expected_post_album_revision, expected_post_identity_revision, reason_code, \
+             created_at) VALUES ('au1', 'al1', '{{\"release_group_mbid\":\"rg-old\",\
+             \"release_mbid\":\"rel-old\",\"decision_source\":\"automatic\",\
+             \"selected_at\":49.25,\"row_revision\":1}}', 1, 5, 'R', {T}); \
+         INSERT INTO library_automatic_edition_undo (id, local_album_id, \
+             expected_post_album_revision, expected_post_identity_revision, reason_code, \
+             created_at, consumed_at, consumed_action_id) VALUES \
+             ('au2', 'al4', 1, 1, 'R', 1.5, 55.5, 'used'); \
+         INSERT INTO library_edition_choice_undo (id, local_album_id, action_id, \
+             prior_tracks_json, prior_match_state_json, expected_identity_revision, created_at, \
+             prior_hold_json) VALUES ('cu1', 'al2', 'act', '[]', '{kept_state}', 3, {T}, \
+             '{kept_hold}'); \
+         INSERT INTO library_edition_remap_queue (local_album_id, release_mbid, chosen_by_user_id, \
+             queued_at, attempts, not_before, origin) VALUES \
+             ('al2', 'rel-b', 'gone', 1700000002.1236, 1, 1e15, 'album_pin'); \
+         INSERT INTO library_album_match_state (local_album_id, state, reason_code, updated_at) \
+             VALUES ('al4', 'unmatched', 'R', 60.5); \
+         INSERT INTO library_custom_edition_manifests (rowid, id, local_album_id, version, \
+             release_group_mbid, album_title, album_artist_name, source_album_revision, \
+             input_revision, content_hash, sealed_by_user_id, sealed_at) VALUES \
+             (4, 'm1', 'al4', 1, 'rg', 'T', 'A', 1, 'r', 'h', 'u1', 61.5); \
+         INSERT INTO library_custom_edition_tracks (manifest_id, ordinal, local_track_id, \
+             source_track_revision, stat_revision, tag_revision, title, artist_name, album_title, \
+             album_artist_name, disc_number, track_number, duration_seconds) VALUES \
+             ('m1', 0, 't1', 1, 's', 't', 'T', 'A', 'T', 'A', 1, 1, 200.25); \
+         INSERT INTO library_custom_edition_active (local_album_id, manifest_id, activated_at) \
+             VALUES ('al4', 'm1', 62.5); \
+         INSERT INTO library_contribution_drafts (id, local_album_id, state, album_row_revision, \
+             input_revision, local_snapshot_json, resolved_draft_json, source_selection_json, \
+             provider_snapshot_expires_at, duplicate_checked_at, result_received_at, seeded_at, \
+             terminal_at, created_at, updated_at) VALUES ('d1', 'al4', 'draft', 1, 'r', '{{}}', \
+             '{{}}', '{{}}', 70.5, 70.25, 70.125, 70.625, 70.75, 71.5, 72.5); \
+         INSERT INTO library_contribution_callback_tokens (token_hash, contribution_id, \
+             requested_by_user_id, expires_at, consumed_at, created_at) VALUES \
+             ('tk', 'd1', 'u1', 73.5, 73.75, 74.5); \
+         INSERT INTO library_repair_snapshots (job_id, scope_json, target_matcher_version, \
+             created_at) VALUES ('op', '{{}}', 'v', 80.5); \
+         INSERT INTO library_repair_materialization (job_id, pinned_catalog_revision, \
+             eligibility_version, purpose, created_at, updated_at) \
+             VALUES ('op', 0, 'v', 'p', 81.5, 82.5); \
+         INSERT INTO library_identity_repair_findings (id, job_id, local_album_id, \
+             expected_album_revision, finding_code, confidence, created_at, updated_at) \
+             VALUES ('fi', 'op', 'al4', 1, 'c', 'complete', 83.5, 84.5); \
+         INSERT INTO library_catalog_actions (rowid, id, actor_user_id, action_kind, local_album_id, \
+             before_json, after_json, created_at) VALUES \
+             (11, 'put1', 'u1', 'files_put_back', 'al4', '{{\"undoes\":\"rm1\"}}', '{{}}', 90.5), \
+             (12, 'put2', NULL, 'files_put_back', 'al4', 'not json', '{{}}', 91.5), \
+             (13, 'other', NULL, 'kept', 'al4', 'not json', '{{}}', 92.5); \
+         INSERT INTO library_artist_reconciliation_dismissals (left_artist_id, right_artist_id, \
+             left_artist_revision, right_artist_revision, dismissed_by_user_id, created_at, \
+             updated_at) VALUES ('a1', 'a2', 1, 1, 'u1', 93.5, 94.5); \
+         INSERT INTO local_artist_merge_candidates (id, left_artist_id, right_artist_id, \
+             reason_code, created_at, updated_at) VALUES ('mc', 'a1', 'a2', 'R', 95.5, 96.5); \
+         INSERT INTO audio_fingerprint_outcomes (rowid, id, local_track_id, stat_revision, \
+             fingerprinter_version, state, duration_seconds, first_attempt_at, last_attempt_at, \
+             retry_after) VALUES (3, 'fp', 't1', 's', 'v', 'matched', 200.25, 97.5, 98.5, 99.5); \
+         INSERT INTO audio_fingerprint_outcomes (id, local_track_id, stat_revision, \
+             fingerprinter_version, state, attempt_count, first_attempt_at, last_attempt_at) \
+             VALUES ('count-word', 't1', 's1', 'v', 'matched', 'abc', 1, 1), \
+             ('count-empty', 't1', 's2', 'v', 'matched', '', 1, 1), \
+             ('count-blob', 't1', 's3', 'v', 'matched', x'41', 1, 1); \
+         INSERT INTO library_track_management_identity VALUES ('t1', 1, 2); \
+         INSERT INTO library_track_management_state (local_track_id, last_managed_at, \
+             written_sha256) VALUES ('t1', 100.5, '{hash}'); \
+         INSERT INTO library_album_release_pins (local_album_id, release_group_mbid, release_mbid) \
+             VALUES ('al4', 'rg', 'rel'); \
+         INSERT INTO library_reference_tombstones (id, source_kind, source_key, title, created_at) \
+             VALUES ('ts', 'k', 'key', 'T', 1.0); \
+         INSERT INTO import_pending_links VALUES ('playlist_tracks', '[1]', \
+             'reference_tombstone_id', 'tombstone', 'ts', 'link_only');"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    async fn number(pool: &SqlitePool, sql: &str) -> Option<i64> {
+        sqlx::query_scalar(sql).fetch_one(pool).await.unwrap()
+    }
+    async fn text(pool: &SqlitePool, sql: &str) -> Option<String> {
+        sqlx::query_scalar(sql).fetch_one(pool).await.unwrap()
+    }
+    type SchemaRow = (String, String, String, Option<String>);
+    async fn triggers(pool: &SqlitePool) -> Vec<SchemaRow> {
+        sqlx::query_as(
+            "SELECT type, name, tbl_name, sql FROM sqlite_schema WHERE type = 'trigger' ORDER BY name",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    }
+    async fn rowids(pool: &SqlitePool) -> BTreeMap<&'static str, Vec<i64>> {
+        let mut out = BTreeMap::new();
+        for table in REBUILT {
+            let ids = sqlx::query_scalar(&format!("SELECT rowid FROM {table} ORDER BY rowid"))
+                .fetch_all(pool)
+                .await
+                .unwrap();
+            out.insert(table, ids);
+        }
+        out
+    }
+    let triggers_before = triggers(&pool).await;
+    let mut rows_before = rowids(&pool).await;
+    // The notes move onto their runs.
+    let scan_failures = rows_before.get_mut("library_scan_failures").unwrap();
+    let last_failure = *scan_failures.last().unwrap();
+    *scan_failures = vec![last_failure];
+
+    // Rows no read can name, and the rows that point at them: none is kept
+    // and none refuses the upgrade.
+    sqlx::raw_sql(
+        "INSERT INTO library_scan_runs (id, kind, trigger, state, phase, aggregate_scope, \
+             queued_at, updated_at) VALUES (x'72', 'incremental', 'manual', 'completed', \
+             'reconciling', '[]', 1, 1); \
+         INSERT INTO library_scan_failures (run_id, root_id, relative_path, failure_code, phase, \
+             recorded_at) VALUES (x'72', 'r1', 'a', 'WALK_TIMEOUT', 'discovering', 1); \
+         INSERT INTO library_identification_attempts (id, local_album_id, trigger, \
+             input_tag_revision, input_policy_revision, input_file_revision, matcher_version, \
+             state, terminal_reason_code, started_at, completed_at) VALUES \
+             (x'61', 'al4', 'x', 't', 'p', 'f', 'm', 's', 'r', 1, 1); \
+         PRAGMA foreign_keys=OFF; \
+         INSERT INTO library_identify_jobs (id, local_album_id, kind, priority, state, \
+             input_revision, idempotency_key, created_ms, updated_ms) VALUES \
+             ('orphan', 'no-album', 'manual', 30, 'succeeded', 'r', 'k9', 1, 1); \
+         INSERT INTO audio_fingerprint_outcomes (id, local_track_id, stat_revision, \
+             fingerprinter_version, state, first_attempt_at, last_attempt_at) VALUES \
+             ('orphan', 'no-track', 's', 'v', 'matched', 1, 1); \
+         PRAGMA foreign_keys=ON; \
+         INSERT INTO local_album_external_identities (local_album_id, release_group_mbid, \
+             decision_source, selected_at, attempt_id) VALUES ('al3', 'rg', 'automatic', 1, x'61'); \
+         INSERT INTO library_custom_edition_manifests (id, local_album_id, version, \
+             release_group_mbid, album_title, album_artist_name, source_album_revision, \
+             input_revision, content_hash, sealed_by_user_id, sealed_at) VALUES \
+             (x'6d', 'al3', 1, 'rg', 'T', 'A', 1, 'r', 'h', 'u1', 1); \
+         INSERT INTO library_custom_edition_active (local_album_id, manifest_id, activated_at) \
+             VALUES ('al3', x'6d', 1);",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    run_migrations(&pool, &migrator_through(117)).await.unwrap();
+
+    assert_eq!(number(&pool, "PRAGMA foreign_keys").await, Some(1));
+    assert_eq!(number(&pool, "PRAGMA user_version").await, Some(117));
+    // Two old orphans, one in a table that gained a key and one in a table
+    // renamed, stay and refuse nothing.
+    assert_eq!(
+        number(&pool, "SELECT COUNT(*) FROM pragma_foreign_key_check").await,
+        Some(2)
+    );
+    let jobs = rows_before.get_mut("library_identify_jobs").unwrap();
+    let next = jobs.iter().max().unwrap() + 1;
+    jobs.push(next);
+    assert_eq!(rowids(&pool).await, rows_before, "rows and rowids");
+    assert_eq!(
+        triggers(&pool).await,
+        triggers_before,
+        "triggers word for word"
+    );
+    for table in REBUILT
+        .iter()
+        .chain(&["library_audio_fingerprint_outcomes"])
+    {
+        assert_eq!(
+            number(
+                &pool,
+                &format!("SELECT strict FROM pragma_table_list WHERE name = '{table}'")
+            )
+            .await,
+            Some(1),
+            "{table}"
+        );
+    }
+    for gone in [
+        "library_album_release_pins",
+        "library_reference_tombstones",
+        "audio_fingerprint_outcomes",
+    ] {
+        assert_eq!(
+            number(
+                &pool,
+                &format!("SELECT COUNT(*) FROM sqlite_schema WHERE name = '{gone}'")
+            )
+            .await,
+            Some(0),
+            "{gone}"
+        );
+    }
+
+    for (sql, want) in [
+        (
+            "SELECT queued_at FROM library_scan_runs WHERE id = 'owes'",
+            10_500,
+        ),
+        (
+            "SELECT started_at FROM library_scan_runs WHERE id = 'owes'",
+            11_500,
+        ),
+        (
+            "SELECT updated_at FROM library_scan_runs WHERE id = 'owes'",
+            12_500,
+        ),
+        (
+            "SELECT terminal_at FROM library_scan_runs WHERE id = 'owes'",
+            13_500,
+        ),
+        (
+            "SELECT phase_started_at FROM library_scan_runs WHERE id = 'owes'",
+            11_250,
+        ),
+        (
+            "SELECT queued_at FROM library_scan_runs WHERE id = 'odd'",
+            i64::MAX,
+        ),
+        (
+            "SELECT updated_at FROM library_scan_runs WHERE id = 'odd'",
+            0,
+        ),
+        (
+            "SELECT end_pass_waits_used FROM library_scan_runs WHERE id = 'waits'",
+            2,
+        ),
+        (
+            "SELECT end_pass_retry_at FROM library_scan_runs WHERE id = 'waits'",
+            1_800_000_000_500,
+        ),
+        (
+            "SELECT end_pass_waits_used FROM library_scan_runs WHERE id = 'owes'",
+            0,
+        ),
+        ("SELECT recorded_at FROM library_scan_failures", 31_250),
+        (
+            "SELECT file_mtime_ns FROM library_scan_inventory",
+            1_700_000_000_123_456_789,
+        ),
+        (
+            "SELECT not_before_at FROM library_identify_jobs WHERE id = 'j1'",
+            1000,
+        ),
+        (
+            "SELECT lease_expires_at FROM library_identify_jobs WHERE id = 'j1'",
+            5000,
+        ),
+        (
+            "SELECT created_at FROM library_identify_jobs WHERE id = 'j1'",
+            2000,
+        ),
+        (
+            "SELECT updated_at FROM library_identify_jobs WHERE id = 'j1'",
+            3000,
+        ),
+        ("SELECT created_at FROM library_identify_reviews", 6000),
+        (
+            "SELECT started_at FROM library_identification_attempts",
+            40_500,
+        ),
+        (
+            "SELECT completed_at FROM library_identification_attempts",
+            41_500,
+        ),
+        (
+            "SELECT created_at FROM library_reidentification_snapshots",
+            42_500,
+        ),
+        (
+            "SELECT created_at FROM library_automatic_edition_undo",
+            1_700_000_000_124,
+        ),
+        (
+            "SELECT created_at FROM library_edition_choice_undo",
+            1_700_000_000_124,
+        ),
+        (
+            "SELECT not_before_at FROM library_edition_remap_queue",
+            1_000_000_000_000_000_000,
+        ),
+        ("SELECT updated_at FROM library_album_match_state", 60_500),
+        (
+            "SELECT sealed_at FROM library_custom_edition_manifests",
+            61_500,
+        ),
+        (
+            "SELECT activated_at FROM library_custom_edition_active",
+            62_500,
+        ),
+        (
+            "SELECT provider_snapshot_expires_at FROM library_contribution_drafts",
+            70_500,
+        ),
+        ("SELECT created_at FROM library_contribution_drafts", 71_500),
+        ("SELECT updated_at FROM library_contribution_drafts", 72_500),
+        (
+            "SELECT expires_at FROM library_contribution_callback_tokens",
+            73_500,
+        ),
+        (
+            "SELECT created_at FROM library_contribution_callback_tokens",
+            74_500,
+        ),
+        ("SELECT created_at FROM library_repair_snapshots", 80_500),
+        (
+            "SELECT updated_at FROM library_repair_materialization",
+            82_500,
+        ),
+        (
+            "SELECT created_at FROM library_identity_repair_findings",
+            83_500,
+        ),
+        (
+            "SELECT updated_at FROM library_identity_repair_findings",
+            84_500,
+        ),
+        (
+            "SELECT created_at FROM library_catalog_actions WHERE id = 'put1'",
+            90_500,
+        ),
+        (
+            "SELECT updated_at FROM library_artist_reconciliation_dismissals",
+            94_500,
+        ),
+        (
+            "SELECT updated_at FROM local_artist_merge_candidates",
+            96_500,
+        ),
+        (
+            "SELECT first_attempt_at FROM library_audio_fingerprint_outcomes WHERE id = 'fp'",
+            97_500,
+        ),
+        (
+            "SELECT retry_at FROM library_audio_fingerprint_outcomes WHERE id = 'fp'",
+            99_500,
+        ),
+        (
+            "SELECT MIN(rowid) FROM library_audio_fingerprint_outcomes",
+            3,
+        ),
+        (
+            "SELECT last_managed_at FROM library_track_management_state",
+            100_500,
+        ),
+        (
+            "SELECT applied_track_identity_revision FROM library_track_management_identity",
+            2,
+        ),
+    ] {
+        assert_eq!(number(&pool, sql).await, Some(want), "{sql}");
+    }
+    for (sql, want) in [
+        (
+            "SELECT consumed_at FROM library_automatic_edition_undo WHERE id = 'au2'",
+            55_500,
+        ),
+        (
+            "SELECT consumed_at FROM library_contribution_callback_tokens",
+            73_750,
+        ),
+        (
+            "SELECT duplicate_checked_at FROM library_contribution_drafts",
+            70_250,
+        ),
+        (
+            "SELECT result_received_at FROM library_contribution_drafts",
+            70_125,
+        ),
+        ("SELECT seeded_at FROM library_contribution_drafts", 70_625),
+        (
+            "SELECT terminal_at FROM library_contribution_drafts",
+            70_750,
+        ),
+        (
+            "SELECT last_attempt_at FROM library_audio_fingerprint_outcomes WHERE id = 'fp'",
+            98_500,
+        ),
+        (
+            "SELECT COUNT(*) FROM library_audio_fingerprint_outcomes \
+             WHERE id LIKE 'count-%' AND attempt_count = 1",
+            3,
+        ),
+    ] {
+        assert_eq!(number(&pool, sql).await, Some(want), "{sql}");
+    }
+    let duration: f64 =
+        sqlx::query_scalar("SELECT duration_seconds FROM library_custom_edition_tracks")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(duration, 200.25, "a length stays a length");
+
+    for (sql, want) in [
+        (
+            "SELECT next_end_pass FROM library_scan_runs WHERE id = 'owes'",
+            Some("scan_end_place_scanned"),
+        ),
+        (
+            "SELECT next_end_pass FROM library_scan_runs WHERE id = 'waits'",
+            Some("scan_end_held_scopes"),
+        ),
+        (
+            "SELECT next_end_pass FROM library_scan_runs WHERE id = 'odd'",
+            None,
+        ),
+        (
+            "SELECT next_end_pass FROM library_scan_runs WHERE id = 'done'",
+            None,
+        ),
+        (
+            "SELECT discovery_state FROM library_scan_run_scopes WHERE scope_sequence = 1",
+            Some("partially_read"),
+        ),
+        (
+            "SELECT requested_by_user_id FROM library_identify_jobs WHERE id = 'j1'",
+            Some("u1"),
+        ),
+        (
+            "SELECT requested_by_user_id FROM library_identify_jobs WHERE id = 'j2'",
+            None,
+        ),
+        (
+            "SELECT resolved_by_user_id FROM library_identify_reviews",
+            None,
+        ),
+        (
+            "SELECT chosen_by_user_id FROM library_edition_remap_queue",
+            None,
+        ),
+        (
+            "SELECT before_json FROM library_catalog_actions WHERE id = 'put2'",
+            Some("{}"),
+        ),
+        (
+            "SELECT before_json FROM library_catalog_actions WHERE id = 'other'",
+            Some("not json"),
+        ),
+    ] {
+        assert_eq!(text(&pool, sql).await.as_deref(), want, "{sql}");
+    }
+
+    // The blob-keyed rows and what pointed at them.
+    for (sql, want) in [
+        (
+            "SELECT COUNT(*) FROM library_scan_runs WHERE typeof(id) <> 'text'",
+            0,
+        ),
+        (
+            "SELECT COUNT(*) FROM library_custom_edition_active WHERE local_album_id = 'al3'",
+            0,
+        ),
+        (
+            "SELECT COUNT(*) FROM local_album_external_identities \
+             WHERE local_album_id = 'al3' AND attempt_id IS NULL",
+            1,
+        ),
+    ] {
+        assert_eq!(number(&pool, sql).await, Some(want), "{sql}");
+    }
+
+    // The put-back lookup reads the index.
+    let plan: Vec<(i64, i64, i64, String)> = sqlx::query_as(
+        "EXPLAIN QUERY PLAN SELECT 1 FROM library_catalog_actions \
+         WHERE action_kind = 'files_put_back' AND json_extract(before_json, '$.undoes') = 'rm1'",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert!(
+        plan.iter()
+            .any(|row| row.3.contains("idx_library_catalog_actions_undoes")),
+        "{plan:?}"
+    );
+
+    // A state and a time the rebuilt tables refuse, and a trigger that came
+    // back.
+    for refused in [
+        "UPDATE library_scan_runs SET next_end_pass = 'mystery' WHERE id = 'done'",
+        "UPDATE library_scan_run_scopes SET discovery_state = 'mystery'",
+        "UPDATE library_identify_jobs SET created_at = 1.5 WHERE id = 'j1'",
+        "UPDATE library_custom_edition_manifests SET album_title = 'x'",
+    ] {
+        assert!(
+            sqlx::raw_sql(refused).execute(&pool).await.is_err(),
+            "{refused}"
+        );
+    }
+    apply_migrations(&pool).await.unwrap();
+    pool.close().await;
+
+    // Through the production code, on rows and kept JSON from before.
+    let runtime = open_runtime(&DbConfig::new(&path)).await.unwrap();
+    let db = runtime.db();
+    const NOW: f64 = 1_800_000_000.5;
+    db.write_blocking(Lane::Foreground, "test", |tx| {
+        decisions::undo_automatic_edition(tx, "al1", 1, 5, "u1", NOW)?;
+        choice::undo(tx, "al2", "u1", NOW)?;
+        reviews::settle(tx, "rv1", ReviewAction::Restore, 1, "u1", NOW)?;
+        Ok::<_, OperationError>(())
+    })
+    .unwrap();
+    let read = |sql: &'static str| {
+        db.read_blocking("test", move |conn| {
+            Ok::<_, droppedneedle_kernel::db::DbError>(
+                conn.query_row(sql, [], |row| row.get::<_, rusqlite::types::Value>(0))?,
+            )
+        })
+        .unwrap()
+    };
+    use rusqlite::types::Value;
+    for (sql, want) in [
+        (
+            "SELECT release_mbid FROM local_album_external_identities WHERE local_album_id = 'al1'",
+            Value::Text("rel-old".to_owned()),
+        ),
+        (
+            "SELECT consumed_at FROM library_automatic_edition_undo WHERE id = 'au1'",
+            Value::Integer(1_800_000_000_500),
+        ),
+        // The kept seconds are written back as milliseconds.
+        (
+            "SELECT updated_at FROM library_album_match_state WHERE local_album_id = 'al2'",
+            Value::Integer(1_700_000_000_124),
+        ),
+        // The queue row, rounded by the upgrade, is still the one the change
+        // left, so the kept ask comes back.
+        (
+            "SELECT queued_at FROM library_edition_remap_queue WHERE local_album_id = 'al2'",
+            Value::Integer(1_700_000_001_124),
+        ),
+        (
+            "SELECT state FROM library_identify_reviews WHERE id = 'rv1'",
+            Value::Text("dismissed".to_owned()),
+        ),
+        (
+            "SELECT updated_at FROM library_identify_reviews WHERE id = 'rv1'",
+            Value::Integer(1_800_000_000_500),
+        ),
+        (
+            "SELECT row_revision FROM library_identify_reviews WHERE id = 'rv1'",
+            Value::Integer(2),
+        ),
+        (
+            "SELECT COUNT(*) FROM library_review_exclusions",
+            Value::Integer(0),
+        ),
+        (
+            "SELECT created_at FROM library_catalog_actions WHERE action_kind = 'review_restore'",
+            Value::Integer(1_800_000_000_500),
+        ),
+    ] {
+        assert_eq!(read(sql), want, "{sql}");
+    }
+    runtime.shutdown().await;
 }

@@ -1410,7 +1410,7 @@ fn an_approval_without_its_document_waits_and_the_sweep_links_later() {
         .db
         .execute(
             "INSERT INTO library_identify_reviews (id, local_album_id, reason_code, \
-             candidates_json, state, created_ms, updated_ms) \
+             candidates_json, state, created_at, updated_at) \
              VALUES ('rv', 'al', 'R', '[]', 'pending', 0, 0)",
             [],
         )
@@ -4159,7 +4159,7 @@ async fn an_attempt_whose_lease_was_taken_over_lands_nothing() {
     let service = service_during_recall(
         &rig,
         recall(vec![release(GROUP_A, RELEASE_A1, &[RECORDING_1])]),
-        "UPDATE library_identify_jobs SET lease_expires_ms = 120000 WHERE id = 'job-1'",
+        "UPDATE library_identify_jobs SET lease_expires_at = 120000 WHERE id = 'job-1'",
     );
 
     let report = rig.attempt(&service, "job-1", "album-1").await;
@@ -4168,7 +4168,7 @@ async fn an_attempt_whose_lease_was_taken_over_lands_nothing() {
     assert_eq!(rig.identity_tables("album-1"), Vec::<String>::new());
     assert_eq!(
         rig.texts(
-            "SELECT state || ' ' || lease_expires_ms FROM library_identify_jobs WHERE id = ?1",
+            "SELECT state || ' ' || lease_expires_at FROM library_identify_jobs WHERE id = ?1",
             "job-1"
         ),
         vec!["running 120000".to_owned()]

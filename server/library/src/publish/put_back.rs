@@ -159,7 +159,7 @@ pub struct Listed {
 /// reason this does not know is left out, with one warning per process.
 pub fn removals(db: &Db, album_id: &str) -> Result<Vec<Listed>, PublishError> {
     static UNKNOWN_WARNED: std::sync::Once = std::sync::Once::new();
-    let rows: Vec<(String, Option<String>, f64, u32, bool)> =
+    let rows: Vec<(String, Option<String>, i64, u32, bool)> =
         db.read_blocking("publish.album_removals", |conn| {
             let mut statement = conn.prepare_cached(sql::ALBUM_REMOVALS.text())?;
             let rows = statement.query_map(params![album_id], |row| {
@@ -188,7 +188,7 @@ pub fn removals(db: &Db, album_id: &str) -> Result<Vec<Listed>, PublishError> {
             Some(Listed {
                 id,
                 kind,
-                removed_at: (at * 1000.0) as i64,
+                removed_at: at,
                 files,
                 held,
             })

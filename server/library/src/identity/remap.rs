@@ -89,7 +89,7 @@ pub const CHOSEN_NOT_LISTED: &str = "CHOSEN_EDITION_NOT_LISTED";
 /// The next album due for a remap, if any.
 pub fn next_remap(conn: &Connection, now: f64) -> rusqlite::Result<Option<PendingRemap>> {
     conn.prepare_cached(sql::NEXT_REMAP.text())?
-        .query_row(params![now], |row| {
+        .query_row(params![crate::clock::ms(now)], |row| {
             Ok(PendingRemap {
                 local_album_id: row.get(0)?,
                 release_mbid: row.get(1)?,
@@ -152,7 +152,11 @@ pub fn retry_remap(
     let steps = pending.attempts.clamp(0, 16) as i32;
     let wait = (REMAP_RETRY_SECS * 2f64.powi(steps)).min(REMAP_RETRY_MAX_SECS);
     tx.prepare_cached(sql::RETRY_REMAP.text())?
-        .execute(params![pending.local_album_id, now + wait, code])?;
+        .execute(params![
+            pending.local_album_id,
+            crate::clock::ms(now + wait),
+            code
+        ])?;
     Ok(())
 }
 
@@ -212,7 +216,7 @@ pub fn keep_unplaceable_choice(
             pending.local_album_id,
             state_code,
             pending.release_mbid,
-            now
+            crate::clock::ms(now)
         ])?;
     drop_satellite(tx, &pending.local_album_id, sql::DROP_REMAP)
 }
@@ -232,7 +236,7 @@ pub fn queue_remap(
             album_id,
             release_mbid,
             chosen_by,
-            now,
+            crate::clock::ms(now),
             RemapOrigin::AlbumPin.as_str()
         ])?;
     Ok(())
@@ -263,7 +267,7 @@ pub fn queue_placement(tx: &Transaction<'_>, album_id: &str, now: f64) -> rusqli
         .execute(params![
             album_id,
             release,
-            now,
+            crate::clock::ms(now),
             RemapOrigin::PlaceOnly.as_str()
         ])?;
     Ok(true)

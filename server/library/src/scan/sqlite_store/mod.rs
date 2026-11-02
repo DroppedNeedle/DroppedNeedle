@@ -40,6 +40,7 @@ use super::store::{
     ScanStoreError, UnreadRows, WindowOutcome,
 };
 pub use artwork::ArtworkSweep;
+use droppedneedle_kernel::db::time::Millis;
 use droppedneedle_kernel::db::writer::Lane;
 use droppedneedle_kernel::db::{ChunkedError, Db, fold_text};
 pub(crate) use held_scopes::{holds_new_files, judge_remembered, remembered};
@@ -278,6 +279,18 @@ fn spelled_opt<T>(
         .transpose()
 }
 
+/// A stored `_at` column, by name, as unix seconds.
+fn secs_named(row: &rusqlite::Row<'_>, name: &str) -> rusqlite::Result<f64> {
+    Ok(crate::clock::secs(row.get::<_, Millis>(name)?.0))
+}
+
+/// A stored nullable `_at` column, by name, as unix seconds.
+fn opt_secs_named(row: &rusqlite::Row<'_>, name: &str) -> rusqlite::Result<Option<f64>> {
+    Ok(row
+        .get::<_, Option<Millis>>(name)?
+        .map(|at| crate::clock::secs(at.0)))
+}
+
 fn map_run(row: &rusqlite::Row<'_>) -> rusqlite::Result<ScanRun> {
     let state: String = row.get("state")?;
     let phase: String = row.get("phase")?;
@@ -301,10 +314,10 @@ fn map_run(row: &rusqlite::Row<'_>) -> rusqlite::Result<ScanRun> {
         state: run_state,
         requested_by_user_id: row.get("requested_by_user_id")?,
         aggregate_scope: row.get("aggregate_scope")?,
-        queued_at: row.get("queued_at")?,
-        started_at: row.get("started_at")?,
-        updated_at: row.get("updated_at")?,
-        terminal_at: row.get("terminal_at")?,
+        queued_at: secs_named(row, "queued_at")?,
+        started_at: opt_secs_named(row, "started_at")?,
+        updated_at: secs_named(row, "updated_at")?,
+        terminal_at: opt_secs_named(row, "terminal_at")?,
         terminal_code: spelled_opt(row, "terminal_code", FailureCode::parse)?,
         coalesced_request_count: row.get("coalesced_request_count")?,
         row_revision: row.get::<_, i64>("row_revision")? as u64,
@@ -347,7 +360,7 @@ fn map_failure(row: &rusqlite::Row<'_>) -> rusqlite::Result<ScanFailureRecord> {
         root_id: row.get("root_id")?,
         relative_path: row.get("relative_path")?,
         failure_code: spelled(row, "failure_code", FailureCode::parse)?,
-        recorded_at: row.get("recorded_at")?,
+        recorded_at: secs_named(row, "recorded_at")?,
         failure_detail: row.get("failure_detail")?,
         phase: spelled(row, "phase", ScanPhase::parse)?,
     })

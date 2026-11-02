@@ -490,7 +490,7 @@ pub(crate) fn write_match_flag(
                 flag.reason_code,
                 flag.release_mbid,
                 candidates,
-                now,
+                crate::clock::ms(now),
             ])
         }
     }
@@ -515,7 +515,7 @@ fn keep_automatic_undo(
             uuid::Uuid::new_v4().to_string(),
             kept.prior.map(to_json).transpose()?,
             to_json(&kept.prior_tracks)?,
-            kept.now,
+            crate::clock::ms(kept.now),
             album_id,
             PROVIDER,
             kept.job_id,

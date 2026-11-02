@@ -279,11 +279,17 @@ pub fn queue(
         .map_err(|error| rusqlite::Error::ToSqlConversionFailure(error.into()))?;
     tx.execute(
         crate::repairs::sql::QUEUE_REPAIR_SNAPSHOT.text(),
-        params![job_id, purpose, scope, PLAYS_VERSION, now],
+        params![job_id, purpose, scope, PLAYS_VERSION, crate::clock::ms(now)],
     )?;
     tx.execute(
         crate::repairs::sql::QUEUE_REPAIR_MATERIALIZATION.text(),
-        params![job_id, catalog_revision, PLAYS_VERSION, purpose, now],
+        params![
+            job_id,
+            catalog_revision,
+            PLAYS_VERSION,
+            purpose,
+            crate::clock::ms(now)
+        ],
     )?;
     Ok(true)
 }
@@ -384,7 +390,7 @@ pub fn step(tx: &Transaction<'_>, job_id: &str, limit: usize, now: f64) -> rusql
     if let Some((last, _)) = rows.last() {
         tx.execute(
             crate::repairs::sql::ADVANCE_STAGING_CURSOR.text(),
-            params![job_id, last.to_string(), now],
+            params![job_id, last.to_string(), crate::clock::ms(now)],
         )?;
     }
     let summary = serde_json::to_string(&summary)

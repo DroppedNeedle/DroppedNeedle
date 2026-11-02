@@ -58,12 +58,15 @@ pub(super) fn settle(tx: &Transaction<'_>, run_id: &str, now: f64) -> rusqlite::
     let lifted = if judged {
         tx.execute(
             crate::scan::sql::LIFT_SETTLED_HOLDS.text(),
-            params![run_id, now],
+            params![run_id, crate::clock::ms(now)],
         )?
     } else {
         0
     };
-    tx.execute(crate::scan::sql::SETTLE.text(), params![run_id, now])?;
+    tx.execute(
+        crate::scan::sql::SETTLE.text(),
+        params![run_id, crate::clock::ms(now)],
+    )?;
     if lifted > 0 {
         automatic::wake(tx, Some(automatic::SCAN_HELD_BACK), now)?;
         tracing::info!(
@@ -221,7 +224,7 @@ fn remember(tx: &Transaction<'_>, run_id: &str, now: f64) -> rusqlite::Result<()
     let mut albums: BTreeMap<String, Vec<(String, i64)>> = BTreeMap::new();
     {
         let mut statement = tx.prepare_cached(crate::scan::sql::ROWS_LET_GO.text())?;
-        let rows = statement.query_map(params![run_id, now], |row| {
+        let rows = statement.query_map(params![run_id, crate::clock::ms(now)], |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,

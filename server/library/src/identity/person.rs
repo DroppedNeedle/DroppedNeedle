@@ -530,7 +530,7 @@ pub fn remove(
         drop_satellite(tx, album_id, statement)?;
     }
     tx.prepare_cached(sql::MARK_UNMATCHED.text())?
-        .execute(params![album_id, reason, now])?;
+        .execute(params![album_id, reason, crate::clock::ms(now)])?;
     let action = record_action(
         tx,
         CatalogAction {

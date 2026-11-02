@@ -69,13 +69,15 @@ pub(crate) struct RemapRow {
     queued_at: f64,
 }
 
-/// The same queued ask; when it was queued is compared to the microsecond.
+/// The same queued ask. When it was queued is compared to the millisecond,
+/// what the row keeps: an undo's JSON may hold it at the finer resolution it
+/// had when written.
 impl PartialEq for RemapRow {
     fn eq(&self, other: &Self) -> bool {
         self.release_mbid == other.release_mbid
             && self.chosen_by_user_id == other.chosen_by_user_id
             && self.origin == other.origin
-            && (self.queued_at - other.queued_at).abs() < 1e-6
+            && crate::clock::ms(self.queued_at) == crate::clock::ms(other.queued_at)
     }
 }
 
@@ -167,7 +169,7 @@ fn hold(conn: &Connection, album_id: &str) -> rusqlite::Result<Hold> {
                 release_mbid: row.get(0)?,
                 chosen_by_user_id: row.get(1)?,
                 origin: row.get(2)?,
-                queued_at: row.get(3)?,
+                queued_at: crate::clock::secs_at(row, 3)?,
             })
         })
         .optional()?;
@@ -230,7 +232,7 @@ fn match_state_row(conn: &Connection, album_id: &str) -> rusqlite::Result<Option
                 reason_code: row.get(1)?,
                 release_mbid: row.get(2)?,
                 candidates_json: row.get(3)?,
-                updated_at: row.get(4)?,
+                updated_at: crate::clock::secs_at(row, 4)?,
             })
         })
         .optional()
@@ -303,7 +305,7 @@ pub(crate) fn keep_choice_undo(
             to_json(&before.tracks)?,
             state,
             revision,
-            now,
+            crate::clock::ms(now),
             held,
         ])?;
     Ok(())
@@ -384,7 +386,7 @@ fn restore_hold(
             Some(manifest) => {
                 // A manifest that is gone since is not put back.
                 tx.prepare_cached(sql::RESTORE_CUSTOM.text())?
-                    .execute(params![album_id, manifest, now])?;
+                    .execute(params![album_id, manifest, crate::clock::ms(now)])?;
             }
         }
     }
@@ -400,7 +402,7 @@ fn restore_hold(
                         album_id,
                         row.release_mbid,
                         row.chosen_by_user_id,
-                        row.queued_at,
+                        crate::clock::ms(row.queued_at),
                         row.origin
                     ])?;
             }
@@ -424,7 +426,7 @@ fn put_match_state(
                 state.reason_code,
                 state.release_mbid,
                 state.candidates_json,
-                state.updated_at,
+                crate::clock::ms(state.updated_at),
             ])?;
     }
     Ok(())
@@ -752,7 +754,7 @@ pub fn undo_automatic(
         now,
     )?;
     tx.prepare_cached(sql::CONSUME_AUTOMATIC_UNDO.text())?
-        .execute(params![undo_id, now, action])?;
+        .execute(params![undo_id, crate::clock::ms(now), action])?;
     if outcome == AutomaticUndone::Restored {
         carry_undo(
             tx,

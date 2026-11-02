@@ -602,7 +602,7 @@ impl SqliteIdentifyStore {
 /// Version tag for stored prints: the Chromaprint pipeline in
 /// `tags::fingerprint` (test2 preset, 120 s window).
 ///
-/// `audio_fingerprint_outcomes` references `local_tracks` with
+/// `library_audio_fingerprint_outcomes` references `local_tracks` with
 /// `ON DELETE RESTRICT`: a future purge of missing tracks must delete a
 /// track's rows here before the track itself.
 const FINGERPRINTER_VERSION: &str = "chromaprint-test2-120s";
@@ -701,7 +701,7 @@ impl SqliteIdentifyStore {
                             state,
                             fingerprint,
                             f64::from(duration_seconds),
-                            now,
+                            crate::clock::ms(now),
                         ],
                     )?;
                     Ok(())

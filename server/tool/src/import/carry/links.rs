@@ -25,13 +25,13 @@ use crate::export::sections::{ALL, LinkMode, Target};
 /// Report entity name.
 pub(crate) const ENTITY: &str = "library_link";
 
-/// SQL that is true when pending link `p` names an item the catalog has.
+/// SQL that is true when pending link `p` names an item the catalog has. A
+/// tombstone link an earlier import left has nothing to wait for any more.
 const RESOLVED: &str = "CASE p.ref_kind \
      WHEN 'track' THEN EXISTS (SELECT 1 FROM main.local_tracks c WHERE c.id = p.v2_id) \
      WHEN 'album' THEN EXISTS (SELECT 1 FROM main.local_albums c WHERE c.id = p.v2_id) \
      WHEN 'artist' THEN EXISTS (SELECT 1 FROM main.local_artists c WHERE c.id = p.v2_id) \
-     WHEN 'tombstone' THEN EXISTS (SELECT 1 FROM main.library_reference_tombstones c \
-       WHERE c.id = p.v2_id) \
+     WHEN 'tombstone' THEN 1 \
      ELSE 0 END";
 
 /// Settle every pending link whose item now exists. On a dry run, count.

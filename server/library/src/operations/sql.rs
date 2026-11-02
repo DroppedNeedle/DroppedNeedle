@@ -15,10 +15,10 @@ droppedneedle_kernel::sql! {
              AND lower(i.release_track_mbid) = lower(?4) \
              AND (i.release_mbid IS NULL OR lower(i.release_mbid) = lower(?5)))";
     pub(super) UNDO_AUTOMATIC_EDITION = "INSERT INTO library_identify_reviews (id, local_album_id, reason_code, \
-                 candidates_json, state, created_ms, updated_ms) \
+                 candidates_json, state, created_at, updated_at) \
                  VALUES (?1, ?2, 'AUTOMATIC_EDITION_CLEARED_TO_REVIEW', '[]', 'pending', ?3, ?3)";
-    pub(super) SETTLE_REVIEWS = "UPDATE library_identify_reviews SET state = ?2, resolved_by_user_id = ?3, \
-         selected_candidate_key = ?4, updated_ms = ?5 \
+    pub(super) SETTLE_REVIEWS = "UPDATE library_identify_reviews SET state = ?2, resolved_by_user_id = (SELECT id FROM auth_users WHERE id = ?3), \
+         selected_candidate_key = ?4, updated_at = ?5 \
          WHERE local_album_id = ?1 AND state = 'pending'";
     pub(super) RECORD_ACTION = "INSERT INTO library_catalog_actions (id, actor_user_id, action_kind, local_album_id, \
          operation_job_id, before_json, after_json, reason_code, created_at) \
@@ -65,8 +65,8 @@ droppedneedle_kernel::sql! {
          ORDER BY disc_number, track_number, id";
     pub(super) REVIEW_GUARD_ROW = "SELECT local_album_id, state, row_revision FROM library_identify_reviews \
              WHERE id = ?1";
-    pub(super) MARK = "UPDATE library_identify_reviews SET state = ?3, resolved_by_user_id = ?4, \
-         updated_ms = ?5 WHERE id = ?1 AND state = ?2";
+    pub(super) MARK = "UPDATE library_identify_reviews SET state = ?3, resolved_by_user_id = (SELECT id FROM auth_users WHERE id = ?4), \
+         updated_at = ?5 WHERE id = ?1 AND state = ?2";
     pub(super) EXCLUDE_TRACK = "UPDATE local_tracks SET manual_excluded = 1, \
              availability = CASE WHEN availability = 'indexed' THEN 'excluded' \
                             ELSE availability END, \
@@ -161,7 +161,7 @@ droppedneedle_kernel::sql! {
     /// A review row's columns; the one before the revision says whether a person's choice, made now or carried over from v2, holds the album.
     pub(super) fragment REVIEW_COLUMNS = "r.id, r.local_album_id, r.reason_code, r.candidates_json, r.state, \
          r.resolved_by_user_id, r.selected_candidate_key, COALESCE(a.title, ''), \
-         COALESCE(a.album_artist_name, ''), r.created_ms, r.updated_ms, \
+         COALESCE(a.album_artist_name, ''), r.created_at, r.updated_at, \
          EXISTS (SELECT 1 FROM local_album_external_identities e \
                  WHERE e.local_album_id = r.local_album_id AND e.decision_source IN " + PERSONS + "), \
          r.row_revision";
@@ -188,10 +188,10 @@ droppedneedle_kernel::sql! {
          AND (:no_active = 0 OR NOT EXISTS (SELECT 1 FROM library_identify_jobs j \
               WHERE j.local_album_id = r.local_album_id \
               AND j.state IN ('queued', 'running', 'deferred'))) \
-         AND (:created_from IS NULL OR r.created_ms >= :created_from) \
-         AND (:created_to IS NULL OR r.created_ms <= :created_to) \
-         AND (:updated_from IS NULL OR r.updated_ms >= :updated_from) \
-         AND (:updated_to IS NULL OR r.updated_ms <= :updated_to) \
+         AND (:created_from IS NULL OR r.created_at >= :created_from) \
+         AND (:created_to IS NULL OR r.created_at <= :created_to) \
+         AND (:updated_from IS NULL OR r.updated_at >= :updated_from) \
+         AND (:updated_to IS NULL OR r.updated_at <= :updated_to) \
          AND (:with_candidates = 0 OR json_array_length(r.candidates_json) > 0)";
     pub(super) fragment LIFT_EXCLUSIONS = "UPDATE local_tracks SET manual_excluded = 0, \
              availability = CASE WHEN availability = 'excluded' AND applied_policy <> 'excluded' \
@@ -217,13 +217,13 @@ pub(super) fn titles_of_tracks(tracks: ListLen) -> String {
 
 pub(super) fn review_page(order: ReviewOrder) -> String {
     let order = match order {
-        ReviewOrder::Newest => "r.updated_ms DESC",
-        ReviewOrder::Oldest => "r.updated_ms ASC",
+        ReviewOrder::Newest => "r.updated_at DESC",
+        ReviewOrder::Oldest => "r.updated_at ASC",
         ReviewOrder::MostTracks => {
             "(SELECT COUNT(*) FROM local_tracks t WHERE t.local_album_id = r.local_album_id) DESC, \
-             r.updated_ms DESC"
+             r.updated_at DESC"
         }
-        ReviewOrder::Title => "a.title COLLATE NOCASE ASC, r.updated_ms DESC",
+        ReviewOrder::Title => "a.title COLLATE NOCASE ASC, r.updated_at DESC",
         ReviewOrder::Artist => {
             "COALESCE(a.album_artist_name, '') COLLATE NOCASE ASC, a.title COLLATE NOCASE ASC"
         }
@@ -231,7 +231,7 @@ pub(super) fn review_page(order: ReviewOrder) -> String {
             "(SELECT MIN(t.root_id) FROM local_tracks t WHERE t.local_album_id = r.local_album_id), \
              a.title COLLATE NOCASE ASC"
         }
-        ReviewOrder::Reason => "r.reason_code ASC, r.updated_ms DESC",
+        ReviewOrder::Reason => "r.reason_code ASC, r.updated_at DESC",
     };
     format!(
         "SELECT {REVIEW_COLUMNS} {REVIEW_LISTING} ORDER BY {order}, r.id LIMIT :limit OFFSET :offset"

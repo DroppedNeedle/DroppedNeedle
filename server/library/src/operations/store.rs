@@ -296,7 +296,7 @@ pub fn create_reidentification(
             revisions.identity_revision,
             new.one_off_local_metadata,
             None::<String>,
-            now,
+            crate::clock::ms(now),
         ],
     )?;
     jobs::insert_work(

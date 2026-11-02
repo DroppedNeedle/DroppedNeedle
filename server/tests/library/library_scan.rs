@@ -586,7 +586,7 @@ async fn a_held_back_folder_is_held_until_a_scan_finds_it_again() {
         query(
             &library,
             &format!(
-                "SELECT CAST(started_at * 1000 AS INTEGER) FROM library_scan_runs \
+                "SELECT started_at FROM library_scan_runs \
                  WHERE id = '{}'",
                 first.id
             ),
@@ -3315,7 +3315,7 @@ fn automatic_leftovers(album: &str, tag: &str) -> String {
          INSERT INTO library_management_automatic_queue (local_album_id, queued_at, not_before_at) \
          SELECT {album}, 0, 0 WHERE {album} IS NOT NULL; \
          INSERT INTO library_identify_reviews (id, local_album_id, reason_code, \
-         candidates_json, state, created_ms, updated_ms) \
+         candidates_json, state, created_at, updated_at) \
          SELECT 'pending-{tag}', {album}, 'R', '[]', 'pending', 0, 0 WHERE {album} IS NOT NULL;"
     )
 }
@@ -3400,7 +3400,7 @@ async fn automatic_match_made_mid_scan_replaces_a_revisable_one() {
         let new_row = new_row(&album);
         rig.meanwhile_sql(format!(
             "{} {} INSERT INTO library_identify_reviews (id, local_album_id, reason_code, \
-             candidates_json, state, created_ms, updated_ms) \
+             candidates_json, state, created_at, updated_at) \
              SELECT 'closed', {new_row}, 'R', '[]', 'dismissed', 0, 0;",
             match_sql(&new_row, "automatic", "rel-half"),
             automatic_leftovers(&new_row, "half"),
@@ -3713,11 +3713,11 @@ async fn run_cancelled_while_queued_is_not_ended_again_at_startup() {
     rig.coordinator
         .control(&run.id, Event::Stop, run.row_revision)
         .expect("stop is taken");
-    let stamp = "SELECT CAST(terminal_at * 1000 AS INTEGER) + row_revision \
+    let stamp = "SELECT terminal_at + row_revision \
                  FROM library_scan_runs WHERE state = 'cancelled'";
     let ended = rig.count(stamp);
 
-    let later = rig.count("SELECT CAST(terminal_at AS INTEGER) FROM library_scan_runs") + 3600;
+    let later = rig.count("SELECT terminal_at / 1000 FROM library_scan_runs") + 3600;
     rig.coordinator
         .store()
         .recover(&droppedneedle_library::scan::RunStop::never(), later as f64)
@@ -4435,7 +4435,7 @@ async fn match_across_two_scans_lands_on_the_row_that_stays() {
         |old, _| {
             format!(
                 "INSERT INTO library_identify_reviews (id, local_album_id, reason_code, \
-                 candidates_json, state, created_ms, updated_ms) \
+                 candidates_json, state, created_at, updated_at) \
                  VALUES ('closed-old', '{old}', 'R', '[]', 'approved', 0, 0);"
             )
         },
@@ -4570,7 +4570,7 @@ async fn match_across_two_scans_lands_on_the_row_that_stays() {
         |_, new| {
             format!(
                 "INSERT INTO library_identify_reviews (id, local_album_id, reason_code, \
-                 candidates_json, state, created_ms, updated_ms) \
+                 candidates_json, state, created_at, updated_at) \
                  VALUES ('half', '{new}', 'R', '[]', 'pending', 0, 0);"
             )
         },
@@ -6558,7 +6558,7 @@ async fn tell(name: &str, story: Story) -> (RegroupRig, String, String, String, 
         rig.run(&format!(
             "UPDATE local_tracks SET missing_since = \
              ((SELECT terminal_at FROM library_scan_runs WHERE id = '{}') \
-             + (SELECT started_at FROM library_scan_runs WHERE id = '{}')) / 2 \
+             + (SELECT started_at FROM library_scan_runs WHERE id = '{}')) / 2000.0 \
              WHERE local_album_id = '{old}' AND availability = 'missing';",
             runs[0], runs[1]
         ));
@@ -6973,7 +6973,7 @@ async fn a_share_that_goes_empty_keeps_its_album() {
     assert_eq!(
         rig.count(&format!(
             "SELECT COUNT(*) FROM library_scan_held_scopes WHERE root_id = 'music' \
-             AND relative_path = 'a' AND held_at = (SELECT CAST(started_at * 1000 AS INTEGER) \
+             AND relative_path = 'a' AND held_at = (SELECT started_at \
              FROM library_scan_runs WHERE id = '{first}')"
         )),
         1,
@@ -10064,7 +10064,7 @@ impl RegroupRig {
 use droppedneedle_library::publish::HIDDEN_PREFIX;
 
 /// When the latest scan run started.
-const LATEST_START: &str = "(SELECT MAX(started_at) FROM library_scan_runs)";
+const LATEST_START: &str = "(SELECT (MAX(started_at) - 0.5) / 1000.0 FROM library_scan_runs)";
 
 /// Another album copied over an old one with the same file names: the
 /// three files whose length moved more than five seconds come in as new

@@ -146,21 +146,21 @@ droppedneedle_kernel::sql! {
          WHERE local_album_id = ?1 AND availability = 'indexed' ORDER BY id";
     pub(super) OLDEST_WAITING_JOB = "SELECT id FROM library_identify_jobs \
              WHERE local_album_id = ?1 AND state IN ('queued','deferred') \
-             ORDER BY created_ms LIMIT 1";
+             ORDER BY created_at LIMIT 1";
     pub(super) REVISE_WAITING_JOB = "UPDATE OR IGNORE library_identify_jobs SET input_revision = ?1, \
-             idempotency_key = ?2, updated_ms = ?3 WHERE id = ?4";
+             idempotency_key = ?2, updated_at = ?3 WHERE id = ?4";
     pub(super) INPUT_ALREADY_HANDLED = "SELECT EXISTS(SELECT 1 FROM library_identify_jobs \
              WHERE idempotency_key = ?1 AND state IN ('running','succeeded'))";
     pub(super) ADD_OFFERED_JOB = "INSERT INTO library_identify_jobs (id, local_album_id, kind, priority, state, \
-         attempts, not_before_ms, input_revision, idempotency_key, created_ms, updated_ms) \
+         attempts, not_before_at, input_revision, idempotency_key, created_at, updated_at) \
          VALUES (?1, ?2, 'automatic', ?3, 'queued', 0, ?4, ?5, ?6, ?4, ?4) \
          ON CONFLICT DO NOTHING";
     pub(super) WAITING_JOB_FOR_RETRY = "SELECT id FROM library_identify_jobs \
              WHERE local_album_id = ?1 AND state IN ('queued','deferred') \
-             ORDER BY input_revision <> ?2, created_ms LIMIT 1";
+             ORDER BY input_revision <> ?2, created_at LIMIT 1";
     pub(super) BRING_RETRY_FORWARD = "UPDATE OR IGNORE library_identify_jobs SET input_revision = ?1, \
-             idempotency_key = ?2, not_before_ms = MIN(not_before_ms, ?3), \
-             priority = MIN(priority, ?5), updated_ms = ?3 WHERE id = ?4";
+             idempotency_key = ?2, not_before_at = MIN(not_before_at, ?3), \
+             priority = MIN(priority, ?5), updated_at = ?3 WHERE id = ?4";
     pub(super) BUMP_IDENTIFICATION_STREAM = "INSERT INTO library_event_stream_revisions (stream_kind, value) \
          VALUES ('identification', 1) \
          ON CONFLICT (stream_kind) DO UPDATE SET value = value + 1";
@@ -189,12 +189,12 @@ droppedneedle_kernel::sql! {
                  ON h.local_track_id = t.id \
                  WHERE t.local_album_id = ?1 AND t.availability = 'indexed' \
                  ORDER BY t.disc_number, t.track_number, t.relative_path";
-    pub(super) FINGERPRINT = "SELECT fingerprint, duration_seconds FROM audio_fingerprint_outcomes \
+    pub(super) FINGERPRINT = "SELECT fingerprint, duration_seconds FROM library_audio_fingerprint_outcomes \
                      WHERE local_track_id = ?1 AND stat_revision = ?2 \
                      AND fingerprinter_version = ?3 AND fingerprint IS NOT NULL";
-    pub(super) DROP_STALE_FINGERPRINT = "DELETE FROM audio_fingerprint_outcomes WHERE local_track_id = ?1 \
+    pub(super) DROP_STALE_FINGERPRINT = "DELETE FROM library_audio_fingerprint_outcomes WHERE local_track_id = ?1 \
                          AND (stat_revision != ?2 OR fingerprinter_version != ?3)";
-    pub(super) WRITE_FINGERPRINT = "INSERT INTO audio_fingerprint_outcomes (id, local_track_id, \
+    pub(super) WRITE_FINGERPRINT = "INSERT INTO library_audio_fingerprint_outcomes (id, local_track_id, \
                          stat_revision, fingerprinter_version, state, fingerprint, \
                          duration_seconds, first_attempt_at, last_attempt_at) \
                          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8) \
@@ -240,18 +240,18 @@ droppedneedle_kernel::sql! {
          WHERE item_kind = ?2 AND item_id = ?3";
     pub(super) DROP_ITEM_RATINGS = "DELETE FROM library_user_ratings WHERE item_kind = ?1 AND item_id = ?2";
     pub(super) CLAIM = "UPDATE library_identify_jobs SET state = 'running', \
-                         lease_expires_ms = ?1, updated_ms = ?2 WHERE id = ?3";
+                         lease_expires_at = ?1, updated_at = ?2 WHERE id = ?3";
     pub(super) RECOVER = "UPDATE library_identify_jobs SET state = 'queued', \
-                         lease_expires_ms = NULL, updated_ms = ?1 WHERE state = 'running'";
+                         lease_expires_at = NULL, updated_at = ?1 WHERE state = 'running'";
     pub(super) FILE_REVIEW = "INSERT OR REPLACE INTO library_identify_reviews (id, local_album_id, \
                          reason_code, candidates_json, state, resolved_by_user_id, \
-                         selected_candidate_key, created_ms, updated_ms) \
-                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)";
+                         selected_candidate_key, created_at, updated_at) \
+                         VALUES (?1, ?2, ?3, ?4, ?5, (SELECT id FROM auth_users WHERE id = ?6), ?7, ?8, ?8)";
     pub(super) SET_STATE = "UPDATE library_identify_reviews SET state = ?1, \
-                         resolved_by_user_id = ?2, selected_candidate_key = ?3, updated_ms = ?4 \
+                         resolved_by_user_id = (SELECT id FROM auth_users WHERE id = ?2), selected_candidate_key = ?3, updated_at = ?4 \
                          WHERE id = ?5";
     pub(super) APPROVE_TX = "UPDATE library_identify_reviews SET state = 'approved', \
-         resolved_by_user_id = ?1, selected_candidate_key = ?2, updated_ms = ?3 \
+         resolved_by_user_id = (SELECT id FROM auth_users WHERE id = ?1), selected_candidate_key = ?2, updated_at = ?3 \
          WHERE id = ?4 AND state = 'pending' AND (?5 IS NULL OR row_revision = ?5)";
     /// SQL that is true while the proof row `p` still counts: its album is
     /// live and its match accepted and unchanged, the credit it proves still
@@ -353,17 +353,17 @@ droppedneedle_kernel::sql! {
     /// Store one identify job. A live job on the same album and input
     /// revision (the partial unique index on its key) keeps its place.
     pub(crate) INSERT_JOB = "INSERT INTO library_identify_jobs (id, local_album_id, kind, \
-     priority, state, attempts, not_before_ms, input_revision, idempotency_key, \
-     requested_by_user_id, failure_code, created_ms, updated_ms) \
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12) ON CONFLICT DO NOTHING";
-    pub(super) fragment JOB_COLUMNS = "id, local_album_id, kind, priority, state, attempts, not_before_ms, \
-     input_revision, requested_by_user_id, failure_code, lease_expires_ms";
+     priority, state, attempts, not_before_at, input_revision, idempotency_key, \
+     requested_by_user_id, failure_code, created_at, updated_at) \
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, (SELECT id FROM auth_users WHERE id = ?10), ?11, ?12, ?12) ON CONFLICT DO NOTHING";
+    pub(super) fragment JOB_COLUMNS = "id, local_album_id, kind, priority, state, attempts, not_before_at, \
+     input_revision, requested_by_user_id, failure_code, lease_expires_at";
     /// Land a claimed job, only while the claim that ran it still holds it:
     /// a lease another worker took over after this one lapsed lands nothing.
     pub(super) LAND_JOB = "UPDATE library_identify_jobs SET state = ?1, attempts = ?2, \
-     not_before_ms = ?3, input_revision = ?4, idempotency_key = ?5, failure_code = ?6, \
-     priority = ?7, updated_ms = ?8, lease_expires_ms = NULL \
-     WHERE id = ?9 AND state = 'running' AND lease_expires_ms = ?10";
+     not_before_at = ?3, input_revision = ?4, idempotency_key = ?5, failure_code = ?6, \
+     priority = ?7, updated_at = ?8, lease_expires_at = NULL \
+     WHERE id = ?9 AND state = 'running' AND lease_expires_at = ?10";
     pub(super) fragment REVIEW_COLUMNS = "id, local_album_id, reason_code, candidates_json, state, \
      resolved_by_user_id, selected_candidate_key";
     pub(super) SETTLED_REASON = "SELECT s.reason_code FROM library_artist_reconciliation_state s \
@@ -374,17 +374,17 @@ droppedneedle_kernel::sql! {
     pub(super) ENQUEUE = "SELECT " + JOB_COLUMNS + " FROM library_identify_jobs \
                              WHERE idempotency_key = ?1 AND state IN ('queued','running','deferred')";
     pub(super) NEXT_CLAIMABLE_JOB = "SELECT " + JOB_COLUMNS + " FROM library_identify_jobs \
-                                 WHERE ((state IN ('queued','deferred') AND not_before_ms <= ?1) \
-                                 OR (state = 'running' AND lease_expires_ms <= ?1)) \
+                                 WHERE ((state IN ('queued','deferred') AND not_before_at <= ?1) \
+                                 OR (state = 'running' AND lease_expires_at <= ?1)) \
                                  AND NOT EXISTS (SELECT 1 FROM library_work_control \
                                      WHERE queue_kind = 'identification' AND state = 'paused') \
-                                 ORDER BY priority, created_ms, rowid LIMIT 1";
+                                 ORDER BY priority, created_at, rowid LIMIT 1";
     pub(super) JOB = "SELECT " + JOB_COLUMNS + " FROM library_identify_jobs WHERE id = ?1";
     pub(super) JOBS_FOR_ALBUM = "SELECT " + JOB_COLUMNS + " FROM library_identify_jobs \
-                 WHERE local_album_id = ?1 ORDER BY created_ms, rowid";
+                 WHERE local_album_id = ?1 ORDER BY created_at, rowid";
     pub(super) GET = "SELECT " + REVIEW_COLUMNS + " FROM library_identify_reviews WHERE id = ?1";
     pub(super) PENDING_FOR_ALBUM = "SELECT " + REVIEW_COLUMNS + " FROM library_identify_reviews \
-                 WHERE local_album_id = ?1 AND state = 'pending' ORDER BY created_ms, id";
+                 WHERE local_album_id = ?1 AND state = 'pending' ORDER BY created_at, id";
     /// The rows the app linked, in id order after `?1`, at most `?2`. Every
     /// link is MusicBrainz's (a CHECK), so the walk goes by the primary key.
     pub(super) AUTOMATIC_LINKS_FROM = "SELECT local_artist_id FROM local_artist_external_identities \

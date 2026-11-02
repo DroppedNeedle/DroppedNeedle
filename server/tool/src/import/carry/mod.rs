@@ -310,6 +310,8 @@ async fn apply(
         Target::Table(table) => apply_table(conn, section, table, &present, run.dry_run).await,
         Target::AvatarFiles => avatars::apply(conn, run.cache_dir, run.dry_run).await,
         Target::HeldFiles => held::apply(conn, section, &present, run.cache_dir, run.dry_run).await,
+        // A later step reads these rows from the bundle and reports them.
+        Target::BundleOnly => Ok(SectionResult::default()),
     }
 }
 

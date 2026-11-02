@@ -193,7 +193,7 @@ pub(crate) fn record_action(
             action.before.to_string(),
             action.after.to_string(),
             action.reason,
-            now,
+            crate::clock::ms(now),
         ],
     )?;
     Ok(id)
@@ -225,7 +225,7 @@ pub(crate) fn record_artist_action(
             action.before.to_string(),
             action.after.to_string(),
             action.reason,
-            now,
+            crate::clock::ms(now),
         ],
     )?;
     Ok(id)

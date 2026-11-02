@@ -140,10 +140,6 @@ fn text(code: Code) -> (&'static str, &'static str) {
             "This folder's name changed only in its capitals.",
             "Nothing to do: the scan reads it under the new name.",
         ),
-        Code::RunEndPending => (
-            "The scan could not finish with this path.",
-            SCAN_AGAIN_OR_REPORT,
-        ),
     }
 }
 

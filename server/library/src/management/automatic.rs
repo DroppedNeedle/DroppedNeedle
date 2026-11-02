@@ -44,7 +44,7 @@ const IDENTIFYING: &str = "IDENTIFYING";
 const MAX_ATTEMPTS: i64 = 8;
 /// First wait before looking again; it doubles each time, up to six hours.
 const FIRST_RETRY_SECONDS: f64 = 60.0;
-/// `not_before` of an album skipped until something changes.
+/// `not_before_at` of an album skipped until something changes.
 pub(super) const PARKED: i64 = 1_000_000_000_000_000_000;
 /// Skip code of an album with files a scan found in a folder it holds
 /// back.

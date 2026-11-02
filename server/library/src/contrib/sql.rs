@@ -56,8 +56,8 @@ droppedneedle_kernel::sql! {
                  selected_by_user_id = excluded.selected_by_user_id, \
                  selected_at = excluded.selected_at, \
                  row_revision = local_artist_external_identities.row_revision + 1";
-    pub(super) APPROVE_PENDING_REVIEW = "UPDATE library_identify_reviews SET state = 'approved', resolved_by_user_id = ?2, \
-         selected_candidate_key = ?3, updated_ms = ?4 \
+    pub(super) APPROVE_PENDING_REVIEW = "UPDATE library_identify_reviews SET state = 'approved', resolved_by_user_id = (SELECT id FROM auth_users WHERE id = ?2), \
+         selected_candidate_key = ?3, updated_at = ?4 \
          WHERE local_album_id = ?1 AND state = 'pending'";
     pub(super) APPLY = "INSERT INTO library_contribution_callback_tokens (token_hash, \
                      contribution_id, requested_by_user_id, expires_at, created_at) \

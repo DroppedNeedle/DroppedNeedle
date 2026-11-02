@@ -246,9 +246,15 @@ pub(crate) fn judge(tx: &Transaction<'_>, pair: &Pair, now: f64) -> rusqlite::Re
     };
     let (by_scan, removed): (bool, bool) = tx
         .prepare_cached(crate::corrections::sql::SCAN_OVERLAP_AND_CHANGE.text())?
-        .query_row(params![pair.old, gone, now, pair.old_album], |row| {
-            Ok((row.get(0)?, row.get(1)?))
-        })?;
+        .query_row(
+            params![
+                pair.old,
+                crate::clock::ms(gone),
+                crate::clock::ms(now),
+                pair.old_album
+            ],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
     if !by_scan || removed {
         return Ok(Verdict::Stayed);
     }
@@ -257,7 +263,7 @@ pub(crate) fn judge(tx: &Transaction<'_>, pair: &Pair, now: f64) -> rusqlite::Re
     };
     let reaches: bool = tx
         .prepare_cached(crate::corrections::sql::RUN_ENDED_BY.text())?
-        .query_row(params![arrived], |row| row.get(0))?;
+        .query_row(params![crate::clock::ms(arrived)], |row| row.get(0))?;
     // A row that gave its path up to a file placed there is read at the
     // path it had.
     let hidden = format!("{HIDDEN_PREFIX}gone/{}/", pair.old);
@@ -273,7 +279,10 @@ pub(crate) fn judge(tx: &Transaction<'_>, pair: &Pair, now: f64) -> rusqlite::Re
     // a share back in time keeps the two apart.
     let waits: bool = tx
         .prepare_cached(crate::corrections::sql::WAITS_FOR_A_SCAN.text())?
-        .query_row(params![arrived, gone, pair.old], |row| row.get(0))?;
+        .query_row(
+            params![crate::clock::ms(arrived), crate::clock::ms(gone), pair.old],
+            |row| row.get(0),
+        )?;
     if waits {
         return Ok(Verdict::Wait);
     }
@@ -286,7 +295,10 @@ pub(crate) fn judge(tx: &Transaction<'_>, pair: &Pair, now: f64) -> rusqlite::Re
 fn walked(conn: &Connection, root: &str, path: &str, from: f64, to: f64) -> rusqlite::Result<bool> {
     let scopes: Vec<String> = conn
         .prepare_cached(crate::corrections::sql::WALKED.text())?
-        .query_map(params![root, from, to], |row| row.get(0))?
+        .query_map(
+            params![root, crate::clock::ms(from), crate::clock::ms(to)],
+            |row| row.get(0),
+        )?
         .collect::<rusqlite::Result<_>>()?;
     Ok(scopes.iter().any(|scope| scope_covers_path(scope, path)))
 }

@@ -112,7 +112,7 @@ pub fn export(conn: &Connection, run_id: &str) -> Result<(String, Vec<u8>), Oper
         .optional()?
         .and_then(|raw| serde_json::from_str(&raw).ok());
     let document = json!({
-        "format": "droppedneedle-library-diagnostic-v1",
+        "format": "droppedneedle-library-diagnostic-v2",
         "run": run,
         "scopes": scopes,
         "scopes_truncated": scopes_truncated,

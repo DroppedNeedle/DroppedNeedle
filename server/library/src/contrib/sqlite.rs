@@ -215,19 +215,19 @@ fn raw_row(row: &Row<'_>) -> rusqlite::Result<RawRow> {
         snapshot: row.get(7)?,
         draft: row.get(8)?,
         selection: row.get(9)?,
-        provider_expires: row.get(10)?,
+        provider_expires: crate::clock::opt_secs_at(row, 10)?,
         duplicate: row.get(11)?,
-        duplicate_checked_at: row.get(12)?,
+        duplicate_checked_at: crate::clock::opt_secs_at(row, 12)?,
         duplicate_input_revision: row.get(13)?,
         result_release_mbid: row.get(14)?,
         result_source: row.get(15)?,
-        result_received_at: row.get(16)?,
+        result_received_at: crate::clock::opt_secs_at(row, 16)?,
         seed_snapshot: row.get(17)?,
         seed_hash: row.get(18)?,
-        seeded_at: row.get(19)?,
-        terminal_at: row.get(20)?,
-        created_at: row.get(21)?,
-        updated_at: row.get(22)?,
+        seeded_at: crate::clock::opt_secs_at(row, 19)?,
+        terminal_at: crate::clock::opt_secs_at(row, 20)?,
+        created_at: crate::clock::secs_at(row, 21)?,
+        updated_at: crate::clock::secs_at(row, 22)?,
         row_revision: row.get(23)?,
         last_verification_failure: row.get(24)?,
     })
@@ -325,18 +325,18 @@ fn save_row(conn: &Connection, row: &ContributionRow, expected: i64) -> Result<(
             row.input_revision,
             to_json(&row.draft)?,
             to_json(&row.source_selection)?,
-            row.provider_snapshot_expires_at,
+            row.provider_snapshot_expires_at.map(crate::clock::ms),
             row.duplicate_result.as_ref().map(to_json).transpose()?,
-            row.duplicate_checked_at,
+            row.duplicate_checked_at.map(crate::clock::ms),
             row.duplicate_input_revision,
             row.result_release_mbid,
             row.result_source,
-            row.result_received_at,
+            row.result_received_at.map(crate::clock::ms),
             row.seed_snapshot_json,
             row.seed_hash,
-            row.seeded_at,
-            row.terminal_at,
-            row.updated_at,
+            row.seeded_at.map(crate::clock::ms),
+            row.terminal_at.map(crate::clock::ms),
+            crate::clock::ms(row.updated_at),
             row.row_revision,
             row.last_verification_failure,
         ])?;
@@ -371,7 +371,7 @@ fn insert_row(
             to_json(snapshot)?,
             to_json(draft)?,
             to_json(selection)?,
-            now,
+            crate::clock::ms(now),
         ])?;
     Ok(id)
 }
@@ -382,7 +382,7 @@ fn insert_row(
 
 fn consume_tokens(conn: &Connection, contribution_id: &str, now: f64) -> rusqlite::Result<()> {
     conn.prepare_cached(crate::contrib::sql::CONSUME_TOKENS.text())?
-        .execute(params![contribution_id, now])?;
+        .execute(params![contribution_id, crate::clock::ms(now)])?;
     Ok(())
 }
 
@@ -437,7 +437,7 @@ fn offer_merge(conn: &Connection, a: &str, b: &str, now: f64) -> rusqlite::Resul
             format!("provider:{left}:{right}"),
             left,
             right,
-            now
+            crate::clock::ms(now)
         ])?;
     Ok(())
 }
@@ -470,8 +470,8 @@ fn insert_attempt(
             reason.unwrap_or(""),
             selected_key,
             attempt.candidate_count as i64,
-            attempt.started_at,
-            attempt.completed_at,
+            crate::clock::ms(attempt.started_at),
+            crate::clock::ms(attempt.completed_at),
         ])?;
     Ok(())
 }
@@ -660,8 +660,8 @@ fn apply(
                         token_hash,
                         next.id,
                         requested_by_user_id,
-                        expires_at,
-                        now
+                        crate::clock::ms(expires_at),
+                        crate::clock::ms(now)
                     ])?;
             }
             Effect::CancelJobs => cancel_jobs(queue, conn, &next.id)?,
@@ -860,7 +860,7 @@ impl SqliteContributions {
             move |conn| {
                 let token: Option<String> = conn
                     .prepare_cached(crate::contrib::sql::CONSUME_CALLBACK_TOKEN.text())?
-                    .query_row(params![hash, now], |row| row.get(0))
+                    .query_row(params![hash, crate::clock::ms(now)], |row| row.get(0))
                     .optional()?;
                 let Some(contribution_id) = token else {
                     return Ok(None);
@@ -891,7 +891,7 @@ impl SqliteContributions {
                     .prepare_cached(
                         crate::contrib::sql::LIST_FOR_PROVIDER_PURGE.text(),
                     )?
-                    .query_map(params![now, bounded], |row| row.get(0))?
+                    .query_map(params![crate::clock::ms(now), bounded], |row| row.get(0))?
                     .collect::<rusqlite::Result<_>>()?;
                 let mut rows = Vec::with_capacity(ids.len());
                 for id in ids {
@@ -1012,13 +1012,16 @@ impl SqliteContributions {
                 .write(Lane::Background, "contrib.clean_records", move |conn| {
                     conn.execute(
                         crate::contrib::sql::PRUNE_CALLBACK_TOKENS.text(),
-                        params![now - 30.0 * DAY, now - 7.0 * DAY],
+                        params![
+                            crate::clock::ms(now - 30.0 * DAY),
+                            crate::clock::ms(now - 7.0 * DAY)
+                        ],
                     )?;
                     let ids: Vec<String> = conn
                         .prepare_cached(
                             crate::contrib::sql::DRAFTS_WITH_OLD_SEEDS.text(),
                         )?
-                        .query_map(params![now], |row| row.get(0))?
+                        .query_map(params![crate::clock::ms(now)], |row| row.get(0))?
                         .collect::<rusqlite::Result<_>>()?;
                     for id in ids {
                         match load_row(conn, &id) {
@@ -1038,7 +1041,7 @@ impl SqliteContributions {
                     }
                     conn.execute(
                         crate::contrib::sql::PRUNE_ENDED_DRAFTS.text(),
-                        params![now - 90.0 * DAY],
+                        params![crate::clock::ms(now - 90.0 * DAY)],
                     )?;
                     Ok(())
                 })

@@ -39,6 +39,10 @@ const PRE_UPGRADE_COPIES: &[&str] = &[
 /// keeps no such index.
 const DERIVED_FROM_CARRIED: &[&str] = &["download_landed_groups"];
 
+/// Stand-ins for playlist entries whose track left the library. Each entry
+/// is carried with its own names, and v3 reads nothing else.
+const PLAYLIST_STAND_INS: &[&str] = &["library_reference_tombstones"];
+
 /// Sign-in state: everyone signs in again on v3.
 const SIGN_IN_STATE: &[&str] = &["auth_oidc_states", "auth_tokens", "spotify_oauth_states"];
 
@@ -105,6 +109,9 @@ pub fn reason_for(table: &str) -> &'static str {
     if PRE_UPGRADE_COPIES.contains(&table) || table.contains("__") {
         "older copy from before v2's own library upgrade; v2 no longer reads it. Nothing \
          to do"
+    } else if PLAYLIST_STAND_INS.contains(&table) {
+        "stand-ins for playlist entries whose track left the library. Nothing to do: \
+         each entry moves with its own names"
     } else if SIGN_IN_STATE.contains(&table) {
         "sign-in sessions. Nothing to do: everyone signs in again on v3"
     } else if JOB_STATE.contains(&table) || table.starts_with("download_activity_") {

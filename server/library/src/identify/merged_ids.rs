@@ -196,7 +196,7 @@ fn suggest_merge(tx: &Transaction<'_>, artist: &str, mbid: &str, now: f64) -> ru
             format!("provider:{left}:{right}"),
             left,
             right,
-            now
+            crate::clock::ms(now)
         ])?;
     Ok(())
 }

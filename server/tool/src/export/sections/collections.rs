@@ -46,7 +46,7 @@ pub const PLAYLISTS: TableSection = TableSection {
 
 /// Playlist entries. v3 reads the local track id from `library_file_id`.
 /// v2's own `library_file_id` (an older file id on entries v2 could not
-/// match) and the entry's album, artist and tombstone ids travel as
+/// match) and the entry's album and artist ids travel as
 /// pending links only.
 pub const PLAYLIST_TRACKS: TableSection = TableSection {
     name: "playlist_track",
@@ -83,7 +83,6 @@ pub const PLAYLIST_TRACKS: TableSection = TableSection {
             .link(LinkKind::Track, LinkMode::LinkOnly),
         col("local_album_id").link(LinkKind::Album, LinkMode::LinkOnly),
         col("local_artist_id").link(LinkKind::Artist, LinkMode::LinkOnly),
-        col("reference_tombstone_id").link(LinkKind::Tombstone, LinkMode::LinkOnly),
     ],
     key: &["id"],
     unique: &[&["playlist_id", "position"]],

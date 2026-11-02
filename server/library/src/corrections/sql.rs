@@ -161,7 +161,7 @@ droppedneedle_kernel::sql! {
          FROM local_album_external_identities WHERE local_album_id = ?1 AND provider = ?2";
     pub(super) ALBUM_TITLE = "SELECT title FROM local_albums WHERE id = ?1";
     pub(super) OPEN_REVIEW = "INSERT INTO library_identify_reviews (id, local_album_id, reason_code, candidates_json, \
-         state, created_ms, updated_ms) VALUES (?1, ?2, ?3, ?4, 'pending', ?5, ?5)";
+         state, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, 'pending', ?5, ?5)";
     pub(super) ALBUM_TRACKS = "SELECT id FROM local_tracks WHERE local_album_id = ?1";
     pub(super) LOAD_ALBUM = "SELECT id, title, COALESCE(album_artist_name, ''), row_revision, grouping_source \
              FROM local_albums WHERE id = ?1 AND retired_into_album_id IS NULL";
@@ -182,7 +182,7 @@ droppedneedle_kernel::sql! {
     pub(super) REPOINT_ALBUM_OVERRIDES = "UPDATE OR IGNORE library_management_overrides SET local_album_id = ?2, \
          updated_at = ?3, row_revision = row_revision + 1 \
          WHERE local_album_id = ?1 AND subject_kind = 'album'";
-    pub(super) REJECT_PENDING_REVIEWS = "UPDATE library_identify_reviews SET state = 'rejected', updated_ms = ?2 \
+    pub(super) REJECT_PENDING_REVIEWS = "UPDATE library_identify_reviews SET state = 'rejected', updated_at = ?2 \
          WHERE local_album_id = ?1 AND state = 'pending'";
     pub(super) DROP_WAITING_JOBS = "DELETE FROM library_identify_jobs WHERE local_album_id = ?1 \
          AND state IN ('queued', 'deferred')";
@@ -480,7 +480,7 @@ droppedneedle_kernel::sql! {
       AND be.local_album_id <> a.id \
     JOIN local_albums b ON b.id = be.local_album_id AND b.retired_into_album_id IS NULL \
     WHERE o.availability = 'missing' \
-    AND o.missing_since >= (SELECT MIN(started_at) FROM library_scan_runs) \
+    AND o.missing_since >= (SELECT (MIN(started_at) - 0.5) / 1000.0 FROM library_scan_runs) \
     AND (?1 IS NULL OR a.id = ?1) AND (?2 IS NULL OR b.id = ?2) \
     AND trim(COALESCE(ae.release_mbid, '')) <> '' \
     AND EXISTS (SELECT 1 FROM local_track_external_identities oi \
@@ -546,7 +546,8 @@ droppedneedle_kernel::sql! {
          ELSE source_local_artist_id END, updated_at = CAST(?3 * 1000 AS INTEGER), \
          row_revision = row_revision + 1 \
          WHERE local_artist_id = ?1 OR source_local_artist_id = ?1";
-    pub(super) RESOLVE_MERGE_CANDIDATES = "UPDATE local_artist_merge_candidates SET state = 'resolved', updated_at = ?3, \
+    pub(super) RESOLVE_MERGE_CANDIDATES = "UPDATE local_artist_merge_candidates SET state = 'resolved', \
+             updated_at = CAST(round(?3 * 1000) AS INTEGER), \
          row_revision = row_revision + 1 WHERE state = 'open' \
          AND (left_artist_id = ?1 OR right_artist_id = ?1)";
     /// The rows of a list of tracks, in path order.

@@ -98,7 +98,8 @@ pub const BASELINES: TableSection = TableSection {
         col("identity_revision"),
         Column::new("created_at").from_sql(concat!("COALESCE(", millis!("created_at"), ", 0)")),
         col("restore_status"),
-        Column::new("last_verified_at").from_sql(millis!("last_verified_at")),
+        Column::new("last_verified_at")
+            .from_sql_of("last_verified_at", millis!("last_verified_at")),
         col("catalog_document_json"),
         col("catalog_document_hash"),
         col("row_revision"),
@@ -136,7 +137,7 @@ pub const TRACK_STATE: TableSection = TableSection {
         col("applied_override_revision"),
         col("managed_root_id"),
         col("managed_path_revision"),
-        col("last_managed_at"),
+        Column::new("last_managed_at").from_sql_of("last_managed_at", millis!("last_managed_at")),
         col("last_outcome"),
         col("last_reason_code"),
         col("row_revision"),
@@ -175,7 +176,10 @@ pub const EDITION_MANIFESTS: TableSection = TableSection {
         col("content_hash"),
         col("selected_candidate_key"),
         col("sealed_by_user_id"),
-        col("sealed_at"),
+        Column::new("sealed_at").from_sql_of(
+            "sealed_at",
+            concat!("COALESCE(", millis!("sealed_at"), ", 0)"),
+        ),
     ],
     key: &["id"],
     unique: &[&["local_album_id", "version"]],
@@ -236,7 +240,10 @@ pub const EDITION_ACTIVE: TableSection = TableSection {
     columns: &[
         col("local_album_id"),
         col("manifest_id"),
-        col("activated_at"),
+        Column::new("activated_at").from_sql_of(
+            "activated_at",
+            concat!("COALESCE(", millis!("activated_at"), ", 0)"),
+        ),
         col("row_revision"),
     ],
     key: &["local_album_id"],

@@ -859,7 +859,7 @@ pub fn mark_managed(
             mark.override_revision.to_string(),
             mark.job_id,
             mark.root_id,
-            now,
+            crate::clock::ms(now),
             mark.path_revision,
             mark.found_sha256,
         ],
@@ -885,7 +885,7 @@ pub fn mark_restored(
 ) -> rusqlite::Result<()> {
     tx.execute(
         crate::management::sql::WRITE_RESTORED_STATE.text(),
-        params![track_id, job_id, now],
+        params![track_id, job_id, crate::clock::ms(now)],
     )?;
     tx.execute(
         crate::management::sql::DROP_MANAGED_IDENTITY.text(),
@@ -921,7 +921,7 @@ pub fn track_state(conn: &Connection, track_id: &str) -> rusqlite::Result<Option
                 override_revision: row.get(3)?,
                 root_id: row.get(4)?,
                 outcome: row.get(5)?,
-                managed_at: row.get(6)?,
+                managed_at: crate::clock::opt_secs_at(row, 6)?,
                 album_identity_revision: row.get(7)?,
                 track_identity_revision: row.get(8)?,
                 path_revision: row.get(9)?,

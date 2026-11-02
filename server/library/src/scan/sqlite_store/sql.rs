@@ -104,7 +104,7 @@ macro_rules! holds {
             $track,
             ".availability = 'missing' AND ",
             $track,
-            ".missing_since >= (SELECT started_at FROM library_scan_runs WHERE id = ",
+            ".missing_since >= (SELECT (started_at - 0.5) / 1000.0 FROM library_scan_runs WHERE id = ",
             $run,
             ")))"
         )

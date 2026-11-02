@@ -301,7 +301,7 @@ pub fn create(
                 .map_err(|error| OperationError::Store(error.to_string()))?,
             new.source_matcher_version,
             new.target_matcher_version,
-            now
+            crate::clock::ms(now)
         ],
     )?;
     tx.execute(
@@ -318,7 +318,7 @@ pub fn create(
             new.purpose.as_str(),
             staged as i64 - 1,
             staged as i64,
-            now
+            crate::clock::ms(now)
         ],
     )?;
     tx.execute(
@@ -349,7 +349,7 @@ pub fn queued(conn: &Connection, idempotency_key: &str) -> rusqlite::Result<bool
 }
 
 /// Where the cleanup after identification has looked up to: the
-/// finished identification job last seen, by `(updated_ms, id)`.
+/// finished identification job last seen, by `(updated_at, id)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Watermark {
     pub at_ms: i64,
@@ -970,7 +970,7 @@ pub fn save_finding(
             candidate.and_then(|candidate| candidate.evidence.release_mbid.clone()),
             candidate.map(|candidate| candidate.evidence.release_group_mbid.clone()),
             payload,
-            now,
+            crate::clock::ms(now),
             FindingState::Open
         ],
     )?;
@@ -1032,7 +1032,7 @@ pub fn auto_accept(
         params![
             job_id,
             album_id,
-            now,
+            crate::clock::ms(now),
             FindingCode::ExactReleaseAutoAccepted,
             FindingState::Applied,
             ApplyResult::EditionAutoAccepted,
@@ -1239,7 +1239,7 @@ pub fn settle_finding(
 ) -> rusqlite::Result<()> {
     tx.execute(
         crate::repairs::sql::SETTLE_FINDING.text(),
-        params![finding_id, state, apply_result, now],
+        params![finding_id, state, apply_result, crate::clock::ms(now)],
     )?;
     Ok(())
 }
@@ -1293,7 +1293,12 @@ pub fn findings_page(
     }
     let after_cursor = cursor.is_some();
     if let Some((updated, id)) = cursor {
-        values.extend([Value::Real(updated), Value::Real(updated), Value::Text(id)]);
+        let updated = crate::clock::ms(updated);
+        values.extend([
+            Value::Integer(updated),
+            Value::Integer(updated),
+            Value::Text(id),
+        ]);
     }
     values.push(Value::Integer(limit as i64 + 1));
     let page = crate::repairs::sql::findings_page(
@@ -1333,7 +1338,7 @@ pub fn findings_page(
                 suggested_release_group_mbid: row.get(14)?,
                 payload,
                 automatic_undo: None,
-                updated_at: row.get(16)?,
+                updated_at: crate::clock::secs_at(row, 16)?,
                 row_revision: row.get(17)?,
             })
         })?

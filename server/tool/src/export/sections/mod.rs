@@ -36,8 +36,6 @@ pub enum LinkKind {
     Album,
     /// A `local_artists` id.
     Artist,
-    /// A `library_reference_tombstones` id.
-    Tombstone,
     /// Named per row by another column holding `track`, `album` or
     /// `artist` (favorites).
     ByColumn(&'static str),
@@ -232,6 +230,8 @@ pub enum Target {
     /// `held_imports` rows whose files land under the v3 cache dir's
     /// `held` folder first.
     HeldFiles,
+    /// Rows no v3 table holds: a later import step reads them from the bundle.
+    BundleOnly,
 }
 
 /// A v3 row a carried row hangs off (a foreign key). A carried row whose
@@ -352,7 +352,6 @@ pub const ALL: &[&TableSection] = &[
     &library::TRACKS,
     &library::TRACK_ARTISTS,
     &library::TRACK_GENRES,
-    &library::TOMBSTONES,
     &library::SOURCE_LINKS,
     &library::ARTIST_ALIASES,
     &library::ALBUM_ALIASES,

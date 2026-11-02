@@ -280,7 +280,6 @@ fn catalog_table(kind: &str) -> &'static str {
     match kind {
         "album" => "local_albums",
         "artist" => "local_artists",
-        "tombstone" => "library_reference_tombstones",
         _ => "local_tracks",
     }
 }
@@ -291,7 +290,6 @@ fn kind_sql(kind: LinkKind) -> String {
         LinkKind::Track => "'track'".to_owned(),
         LinkKind::Album => "'album'".to_owned(),
         LinkKind::Artist => "'artist'".to_owned(),
-        LinkKind::Tombstone => "'tombstone'".to_owned(),
         LinkKind::ByColumn(column) => format!("b.{}", quote(column)),
     }
 }
@@ -308,7 +306,6 @@ fn resolved_sql(kind: LinkKind, id: &str) -> String {
         LinkKind::Track => exists("track"),
         LinkKind::Album => exists("album"),
         LinkKind::Artist => exists("artist"),
-        LinkKind::Tombstone => exists("tombstone"),
         LinkKind::ByColumn(column) => format!(
             "CASE b.{} WHEN 'track' THEN {} WHEN 'album' THEN {} WHEN 'artist' THEN {} ELSE 0 END",
             quote(column),
@@ -437,7 +434,7 @@ fn rule_match(rule: &[&str], alias: &str, row: &str) -> String {
 fn is_new_sql(section: &TableSection, row: &str, dry_run: bool) -> String {
     let target_table = match section.target {
         Target::Table(table) => format!("main.{}", quote(table)),
-        Target::AvatarFiles | Target::HeldFiles => return "1".to_owned(),
+        Target::AvatarFiles | Target::HeldFiles | Target::BundleOnly => return "1".to_owned(),
     };
     let mut tests = vec![v3_free_sql(section, row, &target_table)];
     let earlier = format!("{row}e");

@@ -406,7 +406,7 @@ droppedneedle_kernel::sql! {
              VALUES (?1, ?2, (SELECT id FROM auth_users WHERE id = ?3), ?4, ?5) \
              ON CONFLICT (local_album_id) DO UPDATE SET release_mbid = excluded.release_mbid, \
              chosen_by_user_id = excluded.chosen_by_user_id, queued_at = excluded.queued_at, \
-             attempts = 0, not_before = 0, last_code = NULL, origin = excluded.origin";
+             attempts = 0, not_before_at = 0, last_code = NULL, origin = excluded.origin";
     pub(super) PUT_MATCH_STATE = "INSERT INTO library_album_match_state (local_album_id, \
              state, reason_code, release_mbid, candidates_json, updated_at) \
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)";
@@ -649,7 +649,7 @@ droppedneedle_kernel::sql! {
     // -----------------------------------------------------------------
 
     pub(super) NEXT_REMAP = "SELECT local_album_id, release_mbid, chosen_by_user_id, attempts, \
-             origin FROM library_edition_remap_queue WHERE not_before <= ?1 \
+             origin FROM library_edition_remap_queue WHERE not_before_at <= ?1 \
              ORDER BY queued_at, local_album_id LIMIT 1";
     pub(super) REMAP_ASK = "SELECT release_mbid, origin FROM library_edition_remap_queue \
              WHERE local_album_id = ?1";
@@ -659,7 +659,7 @@ droppedneedle_kernel::sql! {
              WHERE local_album_id = ?1 AND provider = ?2 AND decision_source IN " + PERSONS
              + " AND lower(release_mbid) = lower(?3))";
     pub(super) RETRY_REMAP = "UPDATE library_edition_remap_queue SET attempts = attempts + 1, \
-             not_before = ?2, last_code = ?3 WHERE local_album_id = ?1";
+             not_before_at = ?2, last_code = ?3 WHERE local_album_id = ?1";
     /// Hand the remap's own sealed row (`?1`, release `?4`, provider `?3`)
     /// back to automatic choice at `?2`. Only a row this app sealed as a
     /// person's (`manual`) goes back; a v2 choice is never handed back.
@@ -681,10 +681,10 @@ droppedneedle_kernel::sql! {
              updated_at = excluded.updated_at";
     pub(super) QUEUE_REMAP = "INSERT INTO library_edition_remap_queue (local_album_id, \
              release_mbid, chosen_by_user_id, queued_at, origin) \
-             VALUES (?1, lower(?2), ?3, ?4, ?5) \
+             VALUES (?1, lower(?2), (SELECT id FROM auth_users WHERE id = ?3), ?4, ?5) \
              ON CONFLICT (local_album_id) DO UPDATE SET release_mbid = excluded.release_mbid, \
              chosen_by_user_id = excluded.chosen_by_user_id, queued_at = excluded.queued_at, \
-             attempts = 0, not_before = 0, last_code = NULL, origin = excluded.origin";
+             attempts = 0, not_before_at = 0, last_code = NULL, origin = excluded.origin";
     /// The release a person's match of the album (`?1`, provider `?2`)
     /// names, while no custom edition is active on it.
     pub(super) PLACEMENT_RELEASE = "SELECT lower(release_mbid) \
@@ -733,7 +733,7 @@ droppedneedle_kernel::sql! {
     /// Close the album's (`?1`) waiting reviews as dismissed by nobody, at
     /// `?2` ms.
     pub(super) DISMISS_PENDING_REVIEWS = "UPDATE library_identify_reviews \
-             SET state = 'dismissed', resolved_by_user_id = NULL, updated_ms = ?2 \
+             SET state = 'dismissed', resolved_by_user_id = NULL, updated_at = ?2 \
              WHERE local_album_id = ?1 AND state = 'pending'";
     pub(super) REMAP_TO_CARRY = "SELECT release_mbid, chosen_by_user_id, origin \
              FROM library_edition_remap_queue WHERE local_album_id = ?1";

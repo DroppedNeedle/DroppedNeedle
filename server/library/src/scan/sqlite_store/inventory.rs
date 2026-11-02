@@ -133,7 +133,7 @@ impl SqliteScanStore {
             }
             tx.execute(
                 crate::scan::sql::FINALIZE_DISCOVERY.text(),
-                params![run_id, updated_at],
+                params![run_id, crate::clock::ms(updated_at)],
             )?;
             bump_scan_stream(tx)?;
             load_run(tx, run_id)?.ok_or_else(|| ScanStoreError::NotFound {
@@ -288,7 +288,7 @@ fn write_inventory(
                 item.relative_path,
                 FailureCode::NfcTwinCollision,
                 "Two on-disk names normalize to the same inventory key; the first file won and this twin was skipped.",
-                updated_at,
+                crate::clock::ms(updated_at),
             ])?;
             continue;
         }
@@ -322,7 +322,7 @@ fn write_inventory(
                     item.relative_path,
                     FailureCode::WalkError,
                     format!("The inventory row could not be stored: {error}"),
-                    updated_at,
+                    crate::clock::ms(updated_at),
                 ])?;
                 refused += 1;
             }
@@ -330,7 +330,7 @@ fn write_inventory(
     }
     tx.execute(
         crate::scan::sql::ADD_DISCOVERED_COUNT.text(),
-        params![landed, updated_at, run_id],
+        params![landed, crate::clock::ms(updated_at), run_id],
     )?;
     let revision: i64 = tx.query_row(
         crate::scan::sql::RUN_REVISION.text(),

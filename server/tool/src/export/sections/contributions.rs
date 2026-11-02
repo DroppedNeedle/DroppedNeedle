@@ -14,6 +14,7 @@
 //! verification that failed moves onto the contribution.
 
 use super::library::live_user;
+use super::requests::millis;
 use super::{Column, Parent, Source, TableSection, Target, col};
 
 /// Contribution states that are still in progress.
@@ -49,19 +50,24 @@ pub const DRAFTS: TableSection = TableSection {
         col("local_snapshot_json"),
         col("resolved_draft_json"),
         col("source_selection_json"),
-        col("provider_snapshot_expires_at"),
+        Column::new("provider_snapshot_expires_at").from_sql_of(
+            "provider_snapshot_expires_at",
+            millis!("provider_snapshot_expires_at"),
+        ),
         col("duplicate_result_json"),
-        col("duplicate_checked_at"),
+        Column::new("duplicate_checked_at")
+            .from_sql_of("duplicate_checked_at", millis!("duplicate_checked_at")),
         col("duplicate_input_revision"),
         col("result_release_mbid"),
         col("result_source"),
-        col("result_received_at"),
+        Column::new("result_received_at")
+            .from_sql_of("result_received_at", millis!("result_received_at")),
         col("seed_snapshot_json"),
         col("seed_hash"),
-        col("seeded_at"),
-        col("terminal_at"),
-        col("created_at"),
-        col("updated_at"),
+        Column::new("seeded_at").from_sql_of("seeded_at", millis!("seeded_at")),
+        Column::new("terminal_at").from_sql_of("terminal_at", millis!("terminal_at")),
+        Column::new("created_at").from_sql(concat!("COALESCE(", millis!("created_at"), ", 0)")),
+        Column::new("updated_at").from_sql(concat!("COALESCE(", millis!("updated_at"), ", 0)")),
         col("row_revision"),
         Column::new("last_verification_failure").from_sql(LAST_FAILURE),
     ],
@@ -93,9 +99,12 @@ pub const CALLBACK_TOKENS: TableSection = TableSection {
         col("token_hash"),
         col("contribution_id"),
         col("requested_by_user_id"),
-        col("expires_at"),
-        col("consumed_at"),
-        col("created_at"),
+        Column::new("expires_at").from_sql_of(
+            "expires_at",
+            concat!("COALESCE(", millis!("expires_at"), ", 0)"),
+        ),
+        Column::new("consumed_at").from_sql_of("consumed_at", millis!("consumed_at")),
+        Column::new("created_at").from_sql(concat!("COALESCE(", millis!("created_at"), ", 0)")),
     ],
     key: &["token_hash"],
     unique: &[],

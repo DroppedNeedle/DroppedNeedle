@@ -157,14 +157,13 @@ youtube_links
 youtube_track_links
 
 [library]
-audio_fingerprint_outcomes
 library_album_departures
 library_album_match_state
-library_album_release_pins
 library_album_takeovers
 library_artist_credit_proofs
 library_artist_reconciliation_dismissals
 library_artist_reconciliation_state
+library_audio_fingerprint_outcomes
 library_automatic_edition_undo
 library_catalog_actions
 library_catalog_revision
@@ -206,7 +205,6 @@ library_publish_replacements
 library_publish_resolutions
 library_publish_snapshots
 library_recycle_bin_empties
-library_reference_tombstones
 library_reidentification_snapshots
 library_repair_materialization
 library_repair_snapshots

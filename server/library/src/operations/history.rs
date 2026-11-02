@@ -149,7 +149,7 @@ struct Row {
     reason: Option<String>,
     before: String,
     after: String,
-    created_at: f64,
+    created_at: i64,
 }
 
 /// The album's history, newest first. `None` when `album_id` is not a
@@ -170,22 +170,25 @@ pub fn album_history(
     }
     let rows: Vec<Row> = conn
         .prepare_cached(crate::operations::sql::ALBUM_HISTORY_ROWS.text())?
-        .query_map(params![album_id, now - MAX_AGE_SECS], |row| {
-            Ok(Row {
-                id: row.get(0)?,
-                actor: row.get(1)?,
-                kind: row.get(2)?,
-                reason: row.get(3)?,
-                before: row.get(4)?,
-                after: row.get(5)?,
-                created_at: row.get(6)?,
-            })
-        })?
+        .query_map(
+            params![album_id, crate::clock::ms(now - MAX_AGE_SECS)],
+            |row| {
+                Ok(Row {
+                    id: row.get(0)?,
+                    actor: row.get(1)?,
+                    kind: row.get(2)?,
+                    reason: row.get(3)?,
+                    before: row.get(4)?,
+                    after: row.get(5)?,
+                    created_at: row.get(6)?,
+                })
+            },
+        )?
         .collect::<rusqlite::Result<_>>()?;
     let since = now - MAX_AGE_SECS;
     let mut entries = Vec::new();
     for row in rows {
-        let at = (row.created_at * 1000.0) as i64;
+        let at = row.created_at;
         if let Some(kind) = album_event(&row) {
             let other_album_title = match kind {
                 HistoryKind::UnfoldedFrom => {
@@ -437,13 +440,18 @@ fn fold_undone(
 ) -> rusqlite::Result<Option<HistoryEntry>> {
     conn.prepare_cached(crate::operations::sql::FOLD_UNDONE.text())?
         .query_row(
-            params![source, identity::FOLD_UNDONE, fold_id, since],
+            params![
+                source,
+                identity::FOLD_UNDONE,
+                fold_id,
+                crate::clock::ms(since)
+            ],
             |row| {
                 let actor: Option<String> = row.get(0)?;
-                let created_at: f64 = row.get(1)?;
+                let at: i64 = row.get(1)?;
                 Ok(HistoryEntry {
                     kind: HistoryKind::FoldUndone,
-                    at: (created_at * 1000.0) as i64,
+                    at,
                     by: person(actor.as_deref(), caller_user_id),
                     track_count: 0,
                     track_titles: Vec::new(),

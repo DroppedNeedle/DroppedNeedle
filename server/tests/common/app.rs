@@ -469,9 +469,8 @@ impl TestApp {
             let owing: bool = self
                 .db()
                 .query_row(
-                    "SELECT EXISTS(SELECT 1 FROM library_scan_failures \
-                     WHERE run_id = ?1 AND failure_code = ?2)",
-                    [run, FailureCode::RunEndPending.as_str()],
+                    "SELECT next_end_pass IS NOT NULL FROM library_scan_runs WHERE id = ?1",
+                    [run],
                     |row| row.get(0),
                 )
                 .expect("end passes read");

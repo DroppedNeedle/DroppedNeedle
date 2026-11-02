@@ -52,7 +52,7 @@ impl SqliteScanStore {
             let mut runs = current_runs(conn)?;
             let owing = conn
                 .prepare(sql::RUNS_OWING_END_PASSES.text())?
-                .query_map(params![FailureCode::RunEndPending], map_run)?
+                .query_map([], map_run)?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
             runs.extend(owing);
             Ok(runs)
@@ -73,7 +73,14 @@ impl SqliteScanStore {
         self.read("scan_history", |conn| {
             let mut stmt = conn.prepare(crate::scan::sql::LIST_HISTORY.text())?;
             let runs = stmt
-                .query_map(params![limit.max(1) as i64, before_at, before_id], map_run)?
+                .query_map(
+                    params![
+                        limit.max(1) as i64,
+                        before_at.map(crate::clock::ms),
+                        before_id
+                    ],
+                    map_run,
+                )?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
             Ok(runs)
         })
@@ -175,7 +182,7 @@ impl SqliteScanStore {
                     failure.failure_code,
                     failure.failure_detail,
                     failure.phase.as_str(),
-                    failure.recorded_at,
+                    crate::clock::ms(failure.recorded_at),
                 ])?;
             }
             Ok(())
@@ -186,7 +193,7 @@ impl SqliteScanStore {
         self.read("scan_failures", |conn| {
             let mut stmt = conn.prepare(sql::RUN_FAILURES.text())?;
             let rows = stmt
-                .query_map(params![run_id, FailureCode::RunEndPending], map_failure)?
+                .query_map(params![run_id], map_failure)?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
             Ok(rows)
         })
@@ -206,15 +213,9 @@ impl SqliteScanStore {
         let mut rows = self.read("scan_failures_page", |conn| {
             let mut stmt = conn.prepare(sql::RUN_FAILURES_PAGE.text())?;
             let rows = stmt
-                .query_map(
-                    params![
-                        run_id,
-                        after,
-                        (limit + 1) as i64,
-                        FailureCode::RunEndPending
-                    ],
-                    |row| Ok((row.get::<_, i64>("rowid")?, map_failure(row)?)),
-                )?
+                .query_map(params![run_id, after, (limit + 1) as i64], |row| {
+                    Ok((row.get::<_, i64>("rowid")?, map_failure(row)?))
+                })?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
             Ok(rows)
         })?;
@@ -292,25 +293,33 @@ impl SqliteScanStore {
     /// Answers whether every owed pass is settled.
     pub fn settle_ended_runs(&self, stop: &RunStop) -> Result<bool, ScanStoreError> {
         use super::commit::END_PASSES;
-        let owed: Vec<(String, String, f64, Option<String>)> =
+        let owed: Vec<(String, String, f64, i64, Option<f64>)> =
             self.read_long(stop, "scan_end_owed", |conn| {
                 let rows = conn
                     .prepare(sql::OWED_END_PASSES.text())?
-                    .query_map(params![FailureCode::RunEndPending], |row| {
-                        Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+                    .query_map([], |row| {
+                        Ok((
+                            row.get(0)?,
+                            row.get(1)?,
+                            crate::clock::secs_at(row, 2)?,
+                            row.get(3)?,
+                            crate::clock::opt_secs_at(row, 4)?,
+                        ))
                     })?
                     .collect::<rusqlite::Result<Vec<_>>>()?;
                 Ok(rows)
             })?;
-        for (run_id, note, ended_at, detail) in owed {
-            let mut waits_used = 0;
-            if let Some((used, retry_at)) = detail.as_deref().and_then(read_put_off) {
-                if still_waiting(self.clock.now_secs(), retry_at) {
-                    return Ok(false);
-                }
-                waits_used = used;
+        for (run_id, next, ended_at, used, retry_at) in owed {
+            if retry_at.is_some_and(|at| still_waiting(self.clock.now_secs(), at)) {
+                return Ok(false);
             }
-            let Some(start) = resume_at(&run_id, &note) else {
+            let mut waits_used = usize::try_from(used).unwrap_or(0);
+            let Some(start) = END_PASSES.iter().position(|pass| pass.name == next) else {
+                tracing::warn!(
+                    run_id,
+                    pass = next,
+                    "a scan owes an end pass this release does not have; skipped"
+                );
                 self.write(stop, Lane::Background, "scan_end_passes_done", |tx| {
                     advance(tx, &run_id, END_PASSES.len())
                 })?;
@@ -341,11 +350,11 @@ impl SqliteScanStore {
                             wait_secs = wait,
                             "a scan's end pass is put off; no new scan starts until it settles"
                         );
-                        let detail = put_off_detail(waits_used + 1, self.clock.now_secs() + wait);
+                        let retry_at = crate::clock::ms(self.clock.now_secs() + wait);
                         self.write(stop, Lane::Background, "scan_end_pass_put_off", |tx| {
                             tx.execute(
                                 sql::PUT_OFF_END_PASS.text(),
-                                params![run_id, FailureCode::RunEndPending, detail],
+                                params![run_id, (waits_used + 1) as i64, retry_at],
                             )?;
                             Ok(())
                         })?;
@@ -364,7 +373,7 @@ impl SqliteScanStore {
                     }
                 }
                 // The waits are the pass's own, and moving on cleared the
-                // note's record of them.
+                // run's record of them.
                 waits_used = 0;
             }
         }
@@ -462,11 +471,7 @@ impl SqliteScanStore {
         loop {
             let target: Option<String> = self.read_long(stop, "scan_cleanup_target", |conn| {
                 Ok(conn
-                    .query_row(
-                        sql::CLEANUP_TARGET.text(),
-                        params![FailureCode::RunEndPending],
-                        |row| row.get(0),
-                    )
+                    .query_row(sql::CLEANUP_TARGET.text(), [], |row| row.get(0))
                     .optional()?)
             })?;
             let Some(target) = target else {
@@ -528,24 +533,6 @@ const END_PASS_ALBUMS: usize = 50;
 /// that can never finish must not hold them for good.
 const PUT_OFF_WAITS_SECS: [f64; 5] = [60.0, 120.0, 240.0, 480.0, 900.0];
 
-/// The start of a note's detail while its next pass is put off. The note
-/// is never listed as a failure; its recorded time is the run's end, which
-/// the passes read, so the retry time is kept here.
-const PUT_OFF_PREFIX: &str = "put off ";
-
-/// A note's detail for a pass that has used `used` waits and is tried again
-/// at `retry_at`, in seconds.
-fn put_off_detail(used: usize, retry_at: f64) -> String {
-    format!("{PUT_OFF_PREFIX}{used} {retry_at}")
-}
-
-/// The waits used and the retry time of a put-off note, or `None` for
-/// any other detail.
-fn read_put_off(detail: &str) -> Option<(usize, f64)> {
-    let (used, retry_at) = detail.strip_prefix(PUT_OFF_PREFIX)?.split_once(' ')?;
-    Some((used.parse().ok()?, retry_at.parse().ok()?))
-}
-
 /// Whether a pass put off until `retry_at` still waits at `now`. A retry
 /// time further off than the longest wait means the clock moved back, and
 /// the pass is due rather than holding new scans until the clock catches up.
@@ -563,42 +550,11 @@ fn tried_again(error: &ScanStoreError) -> bool {
     )
 }
 
-/// Move run `run_id`'s note on to the passes from `at`, or clear it once
-/// none is left.
+/// Move run `run_id` on to the pass at `at`, or to none once none is left.
 fn advance(tx: &Transaction<'_>, run_id: &str, at: usize) -> Result<(), ScanStoreError> {
-    let owed = super::commit::owed_from(at);
-    if owed.is_empty() {
-        tx.execute(
-            sql::END_PASSES_DONE.text(),
-            params![run_id, FailureCode::RunEndPending],
-        )?;
-    } else {
-        tx.execute(
-            sql::NEXT_END_PASS.text(),
-            params![run_id, owed, FailureCode::RunEndPending],
-        )?;
-    }
+    let next = super::commit::END_PASSES.get(at).map(|pass| pass.name);
+    tx.execute(sql::NEXT_END_PASS.text(), params![run_id, next])?;
     Ok(())
-}
-
-/// Where run `run_id` resumes: the first pass its note names that this
-/// build knows. A name it does not know (a pass another release had) is
-/// logged and skipped. `None` when the note names no pass this build has.
-fn resume_at(run_id: &str, note: &str) -> Option<usize> {
-    use super::commit::END_PASSES;
-    note.split(' ')
-        .filter(|name| !name.is_empty())
-        .find_map(|name| {
-            let at = END_PASSES.iter().position(|pass| pass.name == name);
-            if at.is_none() {
-                tracing::warn!(
-                    run_id,
-                    pass = name,
-                    "a scan's note names an end pass this release does not have; skipped"
-                );
-            }
-            at
-        })
 }
 
 /// Delete one chunk of a run's rows by rowid.
@@ -766,7 +722,7 @@ fn apply_event(
     let mut timings = run.phase_timings.clone();
     let mut phase_started_at: Option<f64> =
         tx.query_row(sql::PHASE_STARTED_AT.text(), params![run_id], |row| {
-            row.get(0)
+            crate::clock::opt_secs_at(row, 0)
         })?;
     if run.state.timed() != next.timed() {
         if let (Some(phase), Some(started)) = (run.state.timed(), phase_started_at) {
@@ -786,16 +742,16 @@ fn apply_event(
             next.phase().as_str(),
             next.resume_phase().map(ScanPhase::as_str),
             next.requested_control().as_str(),
-            (event == Event::Claim).then_some(now),
-            ended.then_some(now),
+            (event == Event::Claim).then_some(crate::clock::ms(now)),
+            ended.then_some(crate::clock::ms(now)),
             terminal_code.filter(|_| ended).map(FailureCode::as_str),
-            phase_started_at,
+            phase_started_at.map(crate::clock::ms),
             timings,
-            now,
+            crate::clock::ms(now),
         ],
     )?;
     if ended {
-        super::commit::owe_end_passes(tx, run_id, now)?;
+        super::commit::owe_end_passes(tx, run_id)?;
     }
     bump_scan_stream(tx)?;
     load_run(tx, run_id)?.ok_or_else(|| not_found(run_id))
@@ -841,7 +797,7 @@ fn request_run_inner(
     if let Some(covering) = covering {
         conn.execute(
             crate::scan::sql::COALESCE_RUN_REQUEST.text(),
-            params![requested_at, covering.id],
+            params![crate::clock::ms(requested_at), covering.id],
         )?;
         bump_scan_stream(conn)?;
         let revision: i64 = conn.query_row(
@@ -939,7 +895,7 @@ fn request_run_inner(
         };
         conn.execute(
             crate::scan::sql::SET_RUN_AGGREGATE_SCOPE.text(),
-            params![aggregate, requested_at, queued_id],
+            params![aggregate, crate::clock::ms(requested_at), queued_id],
         )?;
         bump_scan_stream(conn)?;
         let revision: i64 = conn.query_row(
@@ -984,7 +940,7 @@ fn fresh_run(
             request.trigger.as_str(),
             request.requested_by_user_id,
             aggregate,
-            requested_at,
+            crate::clock::ms(requested_at),
         ],
     )?;
     for (sequence, scope) in request.scopes.iter().enumerate() {

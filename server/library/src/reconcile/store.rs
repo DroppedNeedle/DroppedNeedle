@@ -182,7 +182,12 @@ fn merges(conn: &Connection) -> Result<Vec<MergeAction>, ReconcileError> {
     let rows: Vec<(String, String, Option<String>, f64)> = conn
         .prepare(crate::reconcile::sql::AUTOMATIC_MERGE_ACTIONS.text())?
         .query_map([], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                crate::clock::secs_at(row, 3)?,
+            ))
         })?
         .collect::<rusqlite::Result<_>>()?;
     Ok(rows
@@ -379,12 +384,12 @@ pub fn dismiss(
                 left_revision,
                 right_revision,
                 actor_user_id,
-                now
+                crate::clock::ms(now)
             ])?;
             pairs += 1;
         }
     }
-    let mut values: Vec<rusqlite::types::Value> = vec![now.into()];
+    let mut values: Vec<rusqlite::types::Value> = vec![crate::clock::ms(now).into()];
     for _ in 0..2 {
         values.extend(unique.iter().map(|id| (*id).to_owned().into()));
     }

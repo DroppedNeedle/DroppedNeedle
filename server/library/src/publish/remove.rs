@@ -564,7 +564,7 @@ pub(super) fn record_action(conn: &Connection, action: &Action<'_>) -> rusqlite:
             action.before,
             action.after,
             action.reason_code,
-            action.at,
+            crate::clock::ms(action.at),
         ])?;
     Ok(())
 }

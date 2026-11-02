@@ -27,6 +27,7 @@
 //! a reference to a user v2 no longer has is emptied, as v2's own
 //! `ON DELETE SET NULL` would have done.
 
+use super::requests::millis;
 use super::{Column, Parent, Source, TableSection, Target, col};
 
 /// The value of a user column, or NULL when v2 no longer has that user.
@@ -268,30 +269,6 @@ pub const TRACK_GENRES: TableSection = TableSection {
     left_behind: "",
 };
 
-/// Stand-ins v2 keeps for playlist entries whose track left the library.
-pub const TOMBSTONES: TableSection = TableSection {
-    name: "library_tombstone",
-    source: table("library_reference_tombstones"),
-    target: Target::Table("library_reference_tombstones"),
-    columns: &[
-        col("id"),
-        col("source_kind"),
-        col("source_key"),
-        col("legacy_file_id"),
-        col("title"),
-        col("artist_name"),
-        col("album_name"),
-        col("source_type"),
-        col("created_at"),
-        col("row_revision"),
-    ],
-    key: &["id"],
-    unique: &[&["source_kind", "source_key"]],
-    parents: &[],
-    user_column: None,
-    left_behind: "",
-};
-
 /// Links from artists, albums and tracks to pages on other services.
 pub const SOURCE_LINKS: TableSection = TableSection {
     name: "library_source_link",
@@ -460,9 +437,14 @@ pub const KEPT_TAGGED: TableSection = TableSection {
         Column::new("state")
             .from_sql("CASE s.state WHEN 'excluded' THEN 'excluded' ELSE 'rejected' END"),
         Column::new("resolved_by_user_id").from_sql(live_user!("decided_by_user_id")),
-        Column::new("created_ms").from_sql("CAST(s.created_at * 1000 AS INTEGER)"),
-        Column::new("updated_ms")
-            .from_sql("CAST(COALESCE(s.decided_at, s.updated_at) * 1000 AS INTEGER)"),
+        Column::new("created_at").from_sql(concat!("COALESCE(", millis!("created_at"), ", 0)")),
+        Column::new("updated_at").from_sql(concat!(
+            "COALESCE(",
+            millis!("decided_at"),
+            ", ",
+            millis!("updated_at"),
+            ", 0)"
+        )),
     ],
     key: &["id"],
     unique: &[],
@@ -492,11 +474,11 @@ pub const REQUEUED_REVIEWS: TableSection = TableSection {
         Column::new("priority").from_sql("40"),
         Column::new("state").from_sql("'queued'"),
         Column::new("attempts").from_sql("0"),
-        Column::new("not_before_ms").from_sql("0"),
+        Column::new("not_before_at").from_sql("0"),
         Column::new("input_revision").from_sql("'v2-review'"),
         Column::new("idempotency_key").from_sql("s.local_album_id || ':v2-review'"),
-        Column::new("created_ms").from_sql("CAST(s.created_at * 1000 AS INTEGER)"),
-        Column::new("updated_ms").from_sql("CAST(s.updated_at * 1000 AS INTEGER)"),
+        Column::new("created_at").from_sql(concat!("COALESCE(", millis!("created_at"), ", 0)")),
+        Column::new("updated_at").from_sql(concat!("COALESCE(", millis!("updated_at"), ", 0)")),
     ],
     key: &["id"],
     unique: &[&["idempotency_key"]],
@@ -509,7 +491,7 @@ pub const REQUEUED_REVIEWS: TableSection = TableSection {
 pub const ALBUM_PINS: TableSection = TableSection {
     name: "album_pin",
     source: table("library_album_release_pins"),
-    target: Target::Table("library_album_release_pins"),
+    target: Target::BundleOnly,
     columns: &[
         col("local_album_id"),
         col("release_group_mbid"),
@@ -535,8 +517,8 @@ pub const MERGE_CANDIDATES: TableSection = TableSection {
         col("right_artist_id"),
         col("reason_code"),
         col("state"),
-        col("created_at"),
-        col("updated_at"),
+        Column::new("created_at").from_sql(concat!("COALESCE(", millis!("created_at"), ", 0)")),
+        Column::new("updated_at").from_sql(concat!("COALESCE(", millis!("updated_at"), ", 0)")),
         col("row_revision"),
     ],
     key: &["id"],
@@ -561,8 +543,8 @@ pub const ARTIST_DISMISSALS: TableSection = TableSection {
         col("right_artist_revision"),
         col("dismissed_by_user_id"),
         col("reason_code"),
-        col("created_at"),
-        col("updated_at"),
+        Column::new("created_at").from_sql(concat!("COALESCE(", millis!("created_at"), ", 0)")),
+        Column::new("updated_at").from_sql(concat!("COALESCE(", millis!("updated_at"), ", 0)")),
         col("row_revision"),
     ],
     key: &["left_artist_id", "right_artist_id"],

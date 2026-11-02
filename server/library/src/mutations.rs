@@ -1235,7 +1235,7 @@ fn record_action(
             before.to_string(),
             after.to_string(),
             reason_code,
-            now,
+            crate::clock::ms(now),
         ],
     )?;
     Ok(())

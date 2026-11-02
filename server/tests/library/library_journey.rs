@@ -271,8 +271,8 @@ impl Rig {
                 let (open, ended, latest): (i64, i64, i64) = db
                     .query_row(
                         "SELECT COALESCE(SUM(state IN ('queued', 'running')), 0), \
-                         COALESCE(SUM(state NOT IN ('queued', 'running') AND updated_ms > ?1), 0), \
-                         COALESCE(MAX(updated_ms), 0) FROM library_identify_jobs \
+                         COALESCE(SUM(state NOT IN ('queued', 'running') AND updated_at > ?1), 0), \
+                         COALESCE(MAX(updated_at), 0) FROM library_identify_jobs \
                          WHERE local_album_id = ?2",
                         rusqlite::params![since, album],
                         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
@@ -1384,8 +1384,8 @@ async fn an_editions_tags_are_written_as_the_folders_profile_says() {
     .await;
     app.seed_with(
         "INSERT INTO library_edition_remap_queue \
-         (local_album_id, release_mbid, queued_at, attempts, not_before, origin) \
-         VALUES (?1, ?2, 0, 0, 1e12, 'album_pin')",
+         (local_album_id, release_mbid, queued_at, attempts, not_before_at, origin) \
+         VALUES (?1, ?2, 0, 0, 1e15, 'album_pin')",
         rusqlite::params![album, fit.id],
     )
     .await;
@@ -3848,7 +3848,7 @@ async fn library_journey_undo_automatic_edition() {
     .await;
     app.seed_with(
         "INSERT INTO library_identify_reviews (id, local_album_id, reason_code, \
-         candidates_json, state, created_ms, updated_ms) \
+         candidates_json, state, created_at, updated_at) \
          VALUES ('rev-chosen', ?1, 'EDITION_KEPT_OVER_CONFLICT', '[]', 'pending', 5, 5)",
         [&album],
     )
@@ -6875,8 +6875,8 @@ async fn leave_unmanaged_on_the_album_and_undo() {
 
     app.seed_with(
         "INSERT INTO library_edition_remap_queue \
-         (local_album_id, release_mbid, queued_at, attempts, not_before, origin) \
-         VALUES (?1, ?2, 0, 0, 1e12, 'album_pin')",
+         (local_album_id, release_mbid, queued_at, attempts, not_before_at, origin) \
+         VALUES (?1, ?2, 0, 0, 1e15, 'album_pin')",
         rusqlite::params![album, fit.id],
     )
     .await;
@@ -7048,12 +7048,12 @@ async fn edition_status_says_what_happens_next() {
     assert_eq!(body["files_by_itself"], json!(false), "a manual folder");
     assert_eq!(body["writing"], json!(false));
 
-    // A remap row seeded with a far-off `not_before`, so the loop never
+    // A remap row seeded with a far-off `not_before_at`, so the loop never
     // takes it: placing, then waiting on MusicBrainz, then done.
     app.seed_with(
         "INSERT INTO library_edition_remap_queue \
-         (local_album_id, release_mbid, queued_at, attempts, not_before, origin) \
-         VALUES (?1, ?2, 0, 0, 1e12, 'album_pin')",
+         (local_album_id, release_mbid, queued_at, attempts, not_before_at, origin) \
+         VALUES (?1, ?2, 0, 0, 1e15, 'album_pin')",
         rusqlite::params![album, fit.id],
     )
     .await;
@@ -9108,7 +9108,7 @@ async fn library_journey_identity_repair_and_preparation() {
         .call("GET", &format!("{run_path}/diagnostics"), &headers, None)
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["format"], json!("droppedneedle-library-diagnostic-v1"));
+    assert_eq!(body["format"], json!("droppedneedle-library-diagnostic-v2"));
     assert!(!body.to_string().contains(&*music.to_string_lossy()));
     let (status, _) = app
         .call(
@@ -11297,7 +11297,7 @@ async fn automatic_management_settles_per_album() {
         .db()
         .execute(
             "INSERT INTO library_identify_jobs (id, local_album_id, kind, priority, state, \
-             input_revision, idempotency_key, created_ms, updated_ms) \
+             input_revision, idempotency_key, created_at, updated_at) \
              VALUES ('live-job', ?1, 'automatic', 0, 'queued', 'r', 'live-job', 0, 0)",
             [&identifying],
         )
@@ -15072,7 +15072,7 @@ async fn library_journey_review_exclude_restore_dismiss() {
     let conn = app.db();
     app.seed_with(
         "INSERT INTO library_identify_reviews (id, local_album_id, reason_code, \
-         candidates_json, state, created_ms, updated_ms) \
+         candidates_json, state, created_at, updated_at) \
          VALUES ('rev-1', ?1, 'AUTOMATIC_EDITION_CLEARED_TO_REVIEW', '[]', 'pending', 1, 1)",
         [&album],
     )
@@ -15168,7 +15168,7 @@ async fn library_journey_review_exclude_restore_dismiss() {
     // A bulk keep-as-tagged previews first, and applies only that preview.
     app.seed_with(
         "INSERT INTO library_identify_reviews (id, local_album_id, reason_code, \
-         candidates_json, state, created_ms, updated_ms) \
+         candidates_json, state, created_at, updated_at) \
          VALUES ('rev-2', ?1, 'EDITION_CLEARED_CONFLICT', '[]', 'pending', 2, 2)",
         [&album],
     )
@@ -15258,7 +15258,7 @@ async fn library_journey_review_exclude_restore_dismiss() {
     }]);
     app.seed_with(
         "INSERT INTO library_identify_reviews (id, local_album_id, reason_code, \
-         candidates_json, state, created_ms, updated_ms) \
+         candidates_json, state, created_at, updated_at) \
          VALUES ('rev-3', ?1, 'WEAK_MATCH', ?2, 'pending', 3, 3)",
         rusqlite::params![album, candidates.to_string()],
     )
@@ -15333,7 +15333,7 @@ async fn bulk_review_changes_and_folder_retries_run_as_one_pausable_job() {
     let file = |id: String, album: String| {
         app.seed_with(
             "INSERT INTO library_identify_reviews (id, local_album_id, reason_code, \
-             candidates_json, state, created_ms, updated_ms) \
+             candidates_json, state, created_at, updated_at) \
              VALUES (?1, ?2, 'AUTOMATIC_EDITION_CLEARED_TO_REVIEW', '[]', 'pending', 1, 1)",
             [id, album],
         )
@@ -15543,7 +15543,7 @@ async fn a_review_job_step_that_fails_to_record_does_the_review_again() {
     for n in 0..3 {
         app.seed_with(
             "INSERT INTO library_identify_reviews (id, local_album_id, reason_code, \
-             candidates_json, state, created_ms, updated_ms) \
+             candidates_json, state, created_at, updated_at) \
              VALUES (?1, ?2, 'AUTOMATIC_EDITION_CLEARED_TO_REVIEW', '[]', 'pending', 1, 1)",
             [format!("keep-{n}"), album.clone()],
         )
@@ -15659,7 +15659,7 @@ async fn a_review_job_left_running_by_a_restart_finishes_its_reviews() {
     for n in 0..3 {
         app.seed_with(
             "INSERT INTO library_identify_reviews (id, local_album_id, reason_code, \
-             candidates_json, state, created_ms, updated_ms) \
+             candidates_json, state, created_at, updated_at) \
              VALUES (?1, ?2, 'AUTOMATIC_EDITION_CLEARED_TO_REVIEW', '[]', 'pending', 1, 1)",
             [format!("keep-{n}"), album.clone()],
         )
@@ -15772,7 +15772,7 @@ async fn a_review_action_on_a_stale_revision_is_refused() {
         .expect("album");
     app.seed_with(
         "INSERT INTO library_identify_reviews (id, local_album_id, reason_code, \
-             candidates_json, state, created_ms, updated_ms) \
+             candidates_json, state, created_at, updated_at) \
              VALUES ('rev-s', ?1, 'WEAK_MATCH', '[]', 'pending', 1, 1)",
         [&album],
     )
@@ -15855,8 +15855,8 @@ async fn management_preview_blocks_an_album_whose_edition_is_being_placed() {
         .db()
         .execute(
             "INSERT INTO library_edition_remap_queue \
-             (local_album_id, release_mbid, queued_at, attempts, not_before, origin) \
-             VALUES (?1, ?2, 0, 0, 1e12, 'album_pin')",
+             (local_album_id, release_mbid, queued_at, attempts, not_before_at, origin) \
+             VALUES (?1, ?2, 0, 0, 1e15, 'album_pin')",
             rusqlite::params![waiting, REL_1],
         )
         .expect("remap row queued");
@@ -15916,8 +15916,8 @@ async fn automatic_run_is_not_held_by_an_edition_being_placed() {
         .db()
         .execute(
             "INSERT INTO library_edition_remap_queue \
-             (local_album_id, release_mbid, queued_at, attempts, not_before, origin) \
-             VALUES (?1, ?2, 0, 0, 1e12, 'album_pin')",
+             (local_album_id, release_mbid, queued_at, attempts, not_before_at, origin) \
+             VALUES (?1, ?2, 0, 0, 1e15, 'album_pin')",
             rusqlite::params![album, REL_1],
         )
         .expect("remap row queued");
@@ -18026,7 +18026,7 @@ async fn new_files_wait_while_a_scan_holds_their_folder_back() {
     assert_ne!(own_row, album);
     let defer_two = |not_before: i64| {
         db.execute(
-            "UPDATE library_identify_jobs SET not_before_ms = ?2 WHERE local_album_id = ?1 \
+            "UPDATE library_identify_jobs SET not_before_at = ?2 WHERE local_album_id = ?1 \
              AND state IN ('queued', 'deferred')",
             rusqlite::params![own_row_two, not_before],
         )
@@ -18406,7 +18406,7 @@ async fn a_held_album_is_left_alone_where_the_retag_join_would_leave_it() {
         match cases[index].0 {
             "not matched yet" => {
                 db.execute(
-                    "UPDATE library_identify_jobs SET not_before_ms = ?2 \
+                    "UPDATE library_identify_jobs SET not_before_at = ?2 \
                      WHERE local_album_id = ?1 AND state IN ('queued', 'deferred')",
                     rusqlite::params![replacement, i64::MAX],
                 )
@@ -18509,7 +18509,7 @@ async fn a_held_album_is_left_alone_where_the_retag_join_would_leave_it() {
 
     let (waiting, _) = &news[5];
     db.execute(
-        "UPDATE library_identify_jobs SET not_before_ms = 0 WHERE local_album_id = ?1",
+        "UPDATE library_identify_jobs SET not_before_at = 0 WHERE local_album_id = ?1",
         [waiting],
     )
     .expect("job due");
@@ -18662,7 +18662,7 @@ async fn a_held_album_matched_after_its_folder_is_let_go_is_judged_at_its_look()
         let new = indexed_at(&managed.library, &paths[0]);
         let replacement = managed.album_of(&new);
         db.execute(
-            "UPDATE library_identify_jobs SET not_before_ms = ?2 \
+            "UPDATE library_identify_jobs SET not_before_at = ?2 \
              WHERE local_album_id = ?1 AND state IN ('queued', 'deferred')",
             rusqlite::params![replacement, i64::MAX],
         )
@@ -18730,7 +18730,7 @@ async fn a_held_album_matched_after_its_folder_is_let_go_is_judged_at_its_look()
     for (index, ((album, _), replacement)) in olds.iter().zip(&news).enumerate() {
         let (case, mark, runs) = cases[index];
         db.execute(
-            "UPDATE library_identify_jobs SET not_before_ms = 0 WHERE local_album_id = ?1",
+            "UPDATE library_identify_jobs SET not_before_at = 0 WHERE local_album_id = ?1",
             [replacement],
         )
         .expect("job due");
@@ -22038,7 +22038,7 @@ async fn every_identified_album_gets_its_cleanup_across_restarts() {
         .expect("empty albums");
         db.execute(
             "INSERT INTO library_identify_jobs (id, local_album_id, kind, priority, state, \
-             input_revision, idempotency_key, created_ms, updated_ms) \
+             input_revision, idempotency_key, created_at, updated_at) \
              SELECT 'job-' || id, id, 'automatic', 0, 'succeeded', 'r', 'key-' || id, ?2, \
              ?2 + CAST(substr(id, length(?1) + 2) AS INTEGER) \
              FROM local_albums WHERE id LIKE ?1 || '-%'",

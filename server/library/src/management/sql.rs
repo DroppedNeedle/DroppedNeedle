@@ -35,7 +35,7 @@ droppedneedle_kernel::sql! {
              AND (?2 IS NULL OR (q.queued_at <= ?2 AND NOT EXISTS (SELECT 1 \
                  FROM library_identify_jobs j WHERE j.local_album_id = q.local_album_id \
                  AND (j.state IN ('queued', 'running', 'deferred') \
-                     OR j.updated_ms > ?2)))) \
+                     OR j.updated_at > ?2)))) \
              ORDER BY q.not_before_at, q.local_album_id LIMIT 1";
     /// The bundles of job `?1` that count as applied: (ordinal, bundle id).
     /// A bundle counts when its album succeeded (`?2`) or its publish
@@ -340,7 +340,7 @@ droppedneedle_kernel::sql! {
          EXISTS(SELECT 1 FROM library_catalog_actions c \
            WHERE c.local_album_id = k.local_album_id \
            AND c.action_kind = 'management_hand_back_given_up' \
-           AND c.created_at * 1000 >= k.noticed_at) \
+           AND c.created_at >= k.noticed_at) \
          FROM library_album_takeovers k JOIN local_albums a ON a.id = k.local_album_id \
          WHERE k.handed_back_at IS NULL \
          ORDER BY k.noticed_at DESC, k.local_album_id LIMIT ?1";

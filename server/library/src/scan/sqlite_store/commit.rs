@@ -1831,29 +1831,11 @@ pub(super) const END_PASSES: [EndPass; 11] = [
     },
 ];
 
-/// The names of the end passes from `at` on, in order, as a run's note
-/// holds them. A build that does not know the first resumes at the first
-/// one it knows.
-pub(super) fn owed_from(at: usize) -> String {
-    END_PASSES
-        .get(at..)
-        .unwrap_or_default()
-        .iter()
-        .map(|pass| pass.name)
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
 /// Mark a run that just ended as owing every end pass. Written in the
 /// same transaction as the run's terminal state.
-pub(super) fn owe_end_passes(tx: &Connection, run_id: &str, now: f64) -> rusqlite::Result<()> {
+pub(super) fn owe_end_passes(tx: &Connection, run_id: &str) -> rusqlite::Result<()> {
     tx.prepare_cached(crate::scan::sql::OWE_END_PASSES.text())?
-        .execute(params![
-            run_id,
-            owed_from(0),
-            FailureCode::RunEndPending,
-            now
-        ])?;
+        .execute(params![run_id, END_PASSES[0].name])?;
     Ok(())
 }
 
@@ -2015,7 +1997,7 @@ fn departed_from(
     now: f64,
 ) -> rusqlite::Result<Vec<Departed>> {
     tx.prepare_cached(crate::scan::sql::DEPARTED_FROM.text())?
-        .query_map(params![run_id, album_id, now], |row| {
+        .query_map(params![run_id, album_id, crate::clock::ms(now)], |row| {
             Ok(Departed {
                 track_id: row.get(0)?,
                 album_id: row.get(1)?,
@@ -2277,7 +2259,10 @@ fn left_at(
     now: f64,
 ) -> rusqlite::Result<Option<i64>> {
     tx.prepare_cached(crate::scan::sql::LEFT_AT.text())?
-        .query_row(params![run_id, track_id, album_id, now], |row| row.get(0))
+        .query_row(
+            params![run_id, track_id, album_id, crate::clock::ms(now)],
+            |row| row.get(0),
+        )
 }
 
 /// The half of an album retagged in a first sitting, while the rest still
@@ -2415,7 +2400,12 @@ fn keep_departures_of(
     for track in pieces(tx, run_id, album_id, now)?.values().flatten() {
         if track.this_run {
             tx.prepare_cached(crate::scan::sql::KEEP_DEPARTURES_OF.text())?
-                .execute(params![run_id, track.track_id, album_id, now])?;
+                .execute(params![
+                    run_id,
+                    track.track_id,
+                    album_id,
+                    crate::clock::ms(now)
+                ])?;
         }
     }
     Ok(())
@@ -2427,7 +2417,7 @@ fn keep_departures_of(
 /// and those of an album merged into another.
 fn tidy_departures(tx: &Connection, run_id: &str, now: f64) -> rusqlite::Result<()> {
     tx.prepare_cached(crate::scan::sql::STAMP_DEPARTURE_ARRIVALS.text())?
-        .execute(params![run_id, now])?;
+        .execute(params![run_id, crate::clock::ms(now)])?;
     tx.prepare_cached(crate::scan::sql::DROP_RETURNED_DEPARTURES.text())?
         .execute([])?;
     Ok(())
@@ -2783,7 +2773,7 @@ fn write_window(
             FailureCode::CatalogCommitFailed,
             format!("The catalog could not store this file: {error}"),
             ScanPhase::Indexing.as_str(),
-            window.now,
+            crate::clock::ms(window.now),
         ])?;
     }
     changed.sort();

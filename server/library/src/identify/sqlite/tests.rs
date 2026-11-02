@@ -22,7 +22,7 @@ fn settling_two_different_chosen_matches_is_refused() {
          ('old', 'musicbrainz', 'rg', 'rel-1', 'manual', 0), \
          ('new', 'musicbrainz', 'rg', 'rel-2', 'legacy_import', 0); \
          INSERT INTO library_identify_reviews (id, local_album_id, reason_code, \
-         candidates_json, state, created_ms, updated_ms) VALUES \
+         candidates_json, state, created_at, updated_at) VALUES \
          ('waiting', 'new', 'R', '[]', 'pending', 0, 0), \
          ('closed', 'new', 'R', '[]', 'dismissed', 0, 0);",
         )
