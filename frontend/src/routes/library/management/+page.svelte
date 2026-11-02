@@ -55,8 +55,12 @@
 	type TabId = (typeof tabIds)[number];
 
 	const requestedTab = $derived(page.url.searchParams.get('tab'));
+	// A saved link that opens the runner may name no tab; the runner lives on Organize.
+	const fallbackTab = $derived<TabId>(
+		page.url.searchParams.has('runner') ? 'organize' : 'overview'
+	);
 	const activeTab = $derived<TabId>(
-		tabIds.includes(requestedTab as TabId) ? (requestedTab as TabId) : 'overview'
+		tabIds.includes(requestedTab as TabId) ? (requestedTab as TabId) : fallbackTab
 	);
 
 	function selectTab(tab: TabId): void {

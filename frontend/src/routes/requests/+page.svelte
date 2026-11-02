@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { replaceState } from '$app/navigation';
+	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { Download, Heart, History, Radar, Search, ShieldCheck, TrendingUp } from 'lucide-svelte';
 	import {
@@ -32,14 +32,15 @@
 	}
 
 	// The URL names the open tab, so a sidebar link or a reload lands on it.
-	// A click switches at once and rewrites the URL to match.
+	// A click switches at once and rewrites the URL to match, through `goto`:
+	// `replaceState` leaves `page.url` behind, and the sidebar highlights from it.
 	let activeTab = $derived(tabFromUrl(page.url.searchParams.get('tab')));
 
 	function switchTab(tab: RequestsTab) {
 		activeTab = tab;
 		const url = new URL(page.url);
 		url.searchParams.set('tab', tab);
-		replaceState(url, {});
+		void goto(url, { replaceState: true, noScroll: true, keepFocus: true });
 	}
 
 	// The header's counts show on every tab, so the page reads the list itself.

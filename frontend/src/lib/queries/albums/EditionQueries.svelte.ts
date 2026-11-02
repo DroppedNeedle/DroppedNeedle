@@ -21,6 +21,7 @@ import { createInfiniteQuery, createQuery, skipToken } from '@tanstack/svelte-qu
 import type { Getter } from 'runed';
 
 import { api } from '$lib/api/client';
+import { ApiError } from '$lib/api/errors';
 import { v3 } from '$lib/api/v3/endpoint';
 import type { components } from '$lib/api/v3/openapi';
 import { STALE_LIVE, STALE_SLOW } from '$lib/queries/staleTime';
@@ -468,9 +469,19 @@ export type TagWriteJob = components['schemas']['EditionTagsJobView'];
 
 // A tag write still planning or writing is read again this often.
 const TAG_WRITE_POLL_MS = 1_000;
+const TAG_WRITE_WATCH_SLOWDOWN = 1.5;
+const TAG_WRITE_WATCH_MAX_POLL_MS = 30_000;
+const TAG_WRITE_WATCH_LIMIT_MS = 60 * 60 * 1_000;
 
 function tagWriteMoving(job: TagWriteJob | null | undefined): boolean {
 	return !job || job.step === 'waiting' || job.step === 'planning' || job.step === 'writing';
+}
+
+// A 4xx is the server's answer about the job; 429 and anything else may pass.
+function tagWriteUnreadable(error: unknown): boolean {
+	return (
+		error instanceof ApiError && error.status >= 400 && error.status < 500 && error.status !== 429
+	);
 }
 
 export const getTagWriteQuery = (
@@ -500,21 +511,37 @@ export const getTagWriteQuery = (
 
 // A write or undo that was applied runs on after the sheet closes, so its end
 // is watched here: then everything that shows the files is stale, whether it
-// finished or failed part way.
+// finished or failed part way. A failed read is tried again, unless the server
+// says the job cannot be read. The reads slow down, and a job still moving at
+// the limit gets its refresh and is no longer read. The watch ends with the
+// session.
 function refreshWhenTagWriteEnds(target: EditionTarget, jobId: string): void {
-	const poll = async (): Promise<void> => {
+	const { userId, localId } = target;
+	const queryKey = LibraryQueryKeyFactory.catalog.editionTagWrite(userId, localId, jobId);
+	const giveUpAt = Date.now() + TAG_WRITE_WATCH_LIMIT_MS;
+	const poll = async (wait: number): Promise<void> => {
+		if (authStore.user?.id !== userId) return;
+		let ended = Date.now() >= giveUpAt;
 		try {
-			const job = await api.v3.GET(LibraryV3Api.editionTagWrite(target.localId, jobId));
-			if (tagWriteMoving(job)) {
-				setTimeout(() => void poll(), TAG_WRITE_POLL_MS);
-				return;
-			}
-		} catch {
-			// The job can no longer be read; refresh with what is known.
+			const job = await queryClient.fetchQuery({
+				queryKey,
+				retry: false,
+				staleTime: 0,
+				queryFn: ({ signal }): Promise<TagWriteJob> =>
+					api.v3.GET(LibraryV3Api.editionTagWrite(localId, jobId), { signal })
+			});
+			ended ||= !tagWriteMoving(job);
+		} catch (error) {
+			ended ||= tagWriteUnreadable(error);
 		}
-		await applyEffects(...heldEditionScope(target));
+		if (!ended) {
+			const next = Math.min(wait * TAG_WRITE_WATCH_SLOWDOWN, TAG_WRITE_WATCH_MAX_POLL_MS);
+			setTimeout(() => void poll(next), wait);
+			return;
+		}
+		if (authStore.user?.id === userId) await applyEffects(...heldEditionScope(target));
 	};
-	setTimeout(() => void poll(), TAG_WRITE_POLL_MS);
+	setTimeout(() => void poll(TAG_WRITE_POLL_MS), TAG_WRITE_POLL_MS);
 }
 
 export function previewEditionTags() {

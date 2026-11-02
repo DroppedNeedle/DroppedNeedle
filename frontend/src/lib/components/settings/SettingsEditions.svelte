@@ -107,6 +107,7 @@
 			{#snippet children(draft)}
 				<div class="grid gap-4 lg:grid-cols-3">
 					{#each lists as list (list.key)}
+						{@const refusal = section.fieldError(list.key, list.title)}
 						<Card as="section" variant="bordered" padding="md">
 							<h3 class="font-semibold">{list.title}</h3>
 							<p class="grow-0 text-xs text-base-content/55">{list.hint}</p>
@@ -169,6 +170,9 @@
 									label="Add"
 								/>
 							</form>
+							{#if refusal}
+								<p class="mt-2 text-sm text-error" role="alert">{refusal}</p>
+							{/if}
 						</Card>
 					{/each}
 				</div>
@@ -203,6 +207,11 @@
 							</label>
 						{/each}
 					</div>
+					{#if section.fieldError('avoid_types', 'Avoid unless nothing else fits')}
+						<p class="mt-2 text-sm text-error" role="alert">
+							{section.fieldError('avoid_types', 'Avoid unless nothing else fits')}
+						</p>
+					{/if}
 				</fieldset>
 
 				<Card variant="bordered" padding="md">

@@ -12,7 +12,7 @@ const { location, emptyComponent } = vi.hoisted(() => ({
 }));
 
 vi.mock('$app/state', () => ({ page: location }));
-vi.mock('$app/navigation', () => ({ replaceState: vi.fn() }));
+vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 vi.mock('$lib/stores/authStore.svelte', () => ({
 	authStore: { isAdmin: true, isTrusted: true, user: { id: 'user-1' } },
 	LAST_USER_ID_KEY: 'msr:last_user_id'

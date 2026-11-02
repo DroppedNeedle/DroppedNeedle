@@ -319,7 +319,11 @@
 						</div>
 
 						<div>
-							<Field label="Max-Age (seconds)" help="0 = disabled, 63072000 (two years) at most">
+							<Field
+								label="Max-Age (seconds)"
+								help="0 = disabled, 63072000 (two years) at most"
+								error={security.fieldError('hsts_max_age', 'Max-Age')}
+							>
 								{#snippet children(control)}
 									<div class="flex gap-2 items-center flex-wrap">
 										<Input
@@ -368,6 +372,11 @@
 								bind:checked={draft.hsts_preload}
 								disabled={draft.hsts_max_age === 0}
 							/>
+							{#if security.fieldError('hsts_preload', 'Preload')}
+								<p class="text-sm text-error" role="alert">
+									{security.fieldError('hsts_preload', 'Preload')}
+								</p>
+							{/if}
 							<p class="mt-0.5 text-sm text-base-content/60">
 								Only enable after registering your domain at
 								<a
@@ -431,6 +440,7 @@
 							empty="No address listed: nobody may show DroppedNeedle in a frame."
 							help="Each address listed here, such as a dashboard at https://home.example.com, may show DroppedNeedle in a frame unless the policy is off. A dashboard on the same site (another subdomain of the same domain, or the same host on another port) works; one on another site shows the sign-in page, because the browser does not send the sign-in cookie there. The scheme, host and port, no path. Up to {MAX_FRAMING_ADDRESSES}."
 							disabled={security.saving}
+							error={security.fieldError('frame_ancestors', 'Allowed to frame DroppedNeedle')}
 						/>
 					</div>
 				</Card>
@@ -483,13 +493,13 @@
 							placeholder="https://accounts.example.com"
 							help="The base URL of your OIDC provider. Must serve a /.well-known/openid-configuration document."
 							bind:value={draft.issuer}
-							error={security.fieldError('issuer', 'Issuer URL')}
+							error={oidc.fieldError('issuer', 'Issuer URL')}
 						/>
 
 						<TextField
 							label="Client ID"
 							bind:value={draft.client_id}
-							error={security.fieldError('client_id', 'Client ID')}
+							error={oidc.fieldError('client_id', 'Client ID')}
 						/>
 
 						<SecretField
@@ -497,7 +507,7 @@
 							mask={SECRET_MASK}
 							help="Optional - leave blank for public/PKCE clients"
 							bind:value={draft.client_secret}
-							error={security.fieldError('client_secret', 'Client Secret')}
+							error={oidc.fieldError('client_secret', 'Client Secret')}
 						/>
 
 						<TextField
@@ -506,14 +516,14 @@
 							placeholder={`https://droppedneedle.example.com${AUTH_ENDPOINTS.oidcCallback}`}
 							help={`This must point to the DroppedNeedle backend API (it ends in ${AUTH_ENDPOINTS.oidcCallback}), not the web app page. Register this exact URL as a redirect/callback URI with your provider.`}
 							bind:value={draft.redirect_uri}
-							error={security.fieldError('redirect_uri', 'Redirect URI')}
+							error={oidc.fieldError('redirect_uri', 'Redirect URI')}
 						/>
 
 						<TextField
 							label="Scopes"
 							placeholder="openid email profile"
 							bind:value={draft.scopes}
-							error={security.fieldError('scopes', 'Scopes')}
+							error={oidc.fieldError('scopes', 'Scopes')}
 						/>
 
 						<ToggleRow

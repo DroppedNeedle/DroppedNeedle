@@ -220,7 +220,10 @@
 					</div>
 				</Card>
 
-				<Field label="Check for new events daily at">
+				<Field
+					label="Check for new events daily at"
+					error={section.fieldError('poll_time', 'Check for new events daily at')}
+				>
 					{#snippet children(control)}
 						<div class="flex items-center gap-2">
 							<Input

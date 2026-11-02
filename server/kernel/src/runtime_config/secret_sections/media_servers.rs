@@ -42,7 +42,7 @@ impl Section for JellyfinConnection {
             return Err(ConfigError::Validation {
                 section: Self::KEY,
                 field: "jellyfin_url",
-                reason: "jellyfin_url must start with http:// or https://".to_owned(),
+                reason: "must start with http:// or https://".to_owned(),
             });
         }
         Ok(())
