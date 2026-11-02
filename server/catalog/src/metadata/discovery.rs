@@ -32,6 +32,7 @@ use super::{Catalog, is_mbid, mb_error, record_mb_down};
 use crate::artwork::warm::WarmTargets;
 use crate::cache_hold::CacheHold;
 use crate::discover::listening::shared;
+use crate::metadata::library::LocalArtistSong;
 
 /// Releases whose tracklists top songs look up, at most.
 const MAX_TOP_SONG_RELEASES: usize = 10;
@@ -483,6 +484,7 @@ impl Catalog {
         let mut songs = answer.rows.songs;
         self.fill_track_numbers(&mut songs).await;
         self.fill_song_groups(mbid, &mut songs).await;
+        self.prefer_owned_songs(mbid, &mut songs).await;
         Ok(TopSongsResponse {
             songs,
             source: answer.source,
@@ -568,6 +570,18 @@ impl Catalog {
         }
         missing.truncate(MAX_TOP_SONG_RELEASES);
         self.warm_song_groups(missing);
+    }
+
+    /// Songs the library holds show with the user's own copy: its album
+    /// and its place there, so the row shows that cover and plays the
+    /// file. A library that cannot be read changes nothing.
+    async fn prefer_owned_songs(&self, artist: &str, songs: &mut [TopSong]) {
+        match self.local().artist_songs(artist).await {
+            Ok(owned) => own_copies(songs, &owned),
+            Err(error) => {
+                tracing::warn!(%error, "library songs failed; showing the songs as listed");
+            }
+        }
     }
 
     /// The cache key of a song's release group: the artist and the title,
@@ -1248,6 +1262,42 @@ struct SongLookup {
     recording: Option<String>,
 }
 
+/// Point each song the library holds at its own copy. A copy matches by
+/// the song's recording, else by its title (folded). Among several, the
+/// copy on the album the song is shown with stays, then the copy of the
+/// recording, then the first in the order the library plays copies.
+fn own_copies(songs: &mut [TopSong], owned: &[LocalArtistSong]) {
+    for song in songs {
+        let wanted = title_key(&song.title);
+        let recording = song.recording_mbid.as_deref();
+        let same_recording = |copy: &LocalArtistSong| {
+            recording.is_some_and(|id| {
+                copy.recording_mbid
+                    .as_deref()
+                    .is_some_and(|own| own.eq_ignore_ascii_case(id))
+            })
+        };
+        let copies: Vec<&LocalArtistSong> = owned
+            .iter()
+            .filter(|copy| same_recording(copy) || title_key(&copy.title) == wanted)
+            .collect();
+        let shown = song.release_group_mbid.as_deref();
+        let Some(copy) = copies
+            .iter()
+            .find(|copy| {
+                shown.is_some_and(|group| copy.release_group_mbid.eq_ignore_ascii_case(group))
+            })
+            .or_else(|| copies.iter().find(|copy| same_recording(copy)))
+            .or_else(|| copies.first())
+        else {
+            continue;
+        };
+        song.release_group_mbid = Some(copy.release_group_mbid.to_ascii_lowercase());
+        song.disc_number = Some(copy.disc_number);
+        song.track_number = Some(copy.track_number);
+    }
+}
+
 /// Recordings a song title search reads.
 const SONG_SEARCH_LIMIT: u32 = 25;
 
@@ -1552,6 +1602,62 @@ mod tests {
         assert_eq!(
             song_group(&late, "Comptine d'un autre été, L'Après-midi", &hits).as_deref(),
             Some("ost")
+        );
+    }
+
+    /// A song the library holds points at the user's copy, so the row
+    /// plays it: "Sur le fil" shown with "Le Phare" but owned on the
+    /// "Amélie" soundtrack goes there; "La Dispute", owned on both, stays
+    /// with "Le Phare"; a song not owned stays as listed.
+    #[test]
+    fn a_song_the_library_holds_shows_with_its_own_copy() {
+        let song = |title: &str, recording: Option<&str>, group: &str| TopSong {
+            title: title.to_owned(),
+            artist_name: "Yann Tiersen".to_owned(),
+            recording_mbid: recording.map(str::to_owned),
+            release_group_mbid: Some(group.to_owned()),
+            original_release_mbid: None,
+            release_name: None,
+            listen_count: Some(1),
+            disc_number: None,
+            track_number: None,
+        };
+        let copy =
+            |title: &str, recording: Option<&str>, group: &str, track: u32| LocalArtistSong {
+                title: title.to_owned(),
+                recording_mbid: recording.map(str::to_owned),
+                release_group_mbid: group.to_owned(),
+                disc_number: 1,
+                track_number: track,
+            };
+        let mut songs = vec![
+            song("Sur le fil", Some("REC-AMELIE"), "phare"),
+            song("La Dispute", None, "phare"),
+            song("Le Moulin", None, "amelie"),
+        ];
+        let owned = [
+            copy("La Dispute", None, "AMELIE", 5),
+            copy("Sur le fil", Some("rec-amelie"), "AMELIE", 3),
+            copy("La dispute", None, "phare", 2),
+        ];
+        own_copies(&mut songs, &owned);
+        let placed: Vec<(&str, Option<&str>, Option<u32>)> = songs
+            .iter()
+            .map(|song| {
+                (
+                    song.title.as_str(),
+                    song.release_group_mbid.as_deref(),
+                    song.track_number,
+                )
+            })
+            .collect();
+        assert_eq!(
+            placed,
+            [
+                ("Sur le fil", Some("amelie"), Some(3)),
+                ("La Dispute", Some("phare"), Some(2)),
+                ("Le Moulin", Some("amelie"), None),
+            ]
         );
     }
 

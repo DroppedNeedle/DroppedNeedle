@@ -387,8 +387,20 @@ async fn seed_library(pool: &SqlitePool) {
 /// and is signed in with [`TOKEN`]. Hold the rig and the app while the
 /// router serves: the rig's database and the request wrapper go with them.
 async fn app_with(fixtures: &Fixtures, mb_url: String) -> (axum::Router, (AuthRig, TestApp)) {
+    app_seeded(fixtures, mb_url, &[]).await
+}
+
+/// As [`app_with`], with `extra` statements run after the shared seed.
+async fn app_seeded(
+    fixtures: &Fixtures,
+    mb_url: String,
+    extra: &[String],
+) -> (axum::Router, (AuthRig, TestApp)) {
     let (pool, dir) = crate::common::migrated_pool("reads-catalog").await;
     seed_library(&pool).await;
+    for statement in extra {
+        sqlx::query(statement).execute(&pool).await.unwrap();
+    }
     let rig = AuthRig::new("reads-catalog").await;
     rig.seed_user("ada", Role::User).await;
     rig.sign_in(USER, TOKEN).await;
@@ -639,6 +651,51 @@ async fn discography_filters_flags_and_pages() {
         fixtures.hits("/mb/ws/2/release-group"),
         1,
         "one browse serves all three"
+    );
+}
+
+/// A popular song the library holds points at the user's own copy, at
+/// its place on that album, so the row plays the file; a song not held
+/// stays as the listening service names it.
+#[tokio::test]
+async fn a_popular_song_in_the_library_points_at_its_own_copy() {
+    let fixtures = Fixtures::start().await;
+    let (app, _auth) = app_seeded(
+        &fixtures,
+        format!("{}/mb/ws/2", fixtures.base),
+        &[
+            "INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
+             path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
+             artist_name, artist_name_folded, album_title, album_title_folded, disc_number, \
+             track_number, duration_seconds, file_format, ingest_source, imported_at, \
+             membership_source) VALUES ('track-surprises', 'album-okc', 'root-1', \
+             '/music/surprises.flac', 'surprises.flac', 'hash-3', 1000, 0, 'stat-3', \
+             'No Surprises', 'no surprises', 'Radiohead', 'radiohead', 'OK Computer', \
+             'ok computer', 1, 10, 229.0, 'flac', 'scan', 0, 'manual')"
+                .to_owned(),
+            "INSERT INTO local_track_artists (local_track_id, position, local_artist_id, role) \
+             VALUES ('track-surprises', 0, 'artist-radiohead', 'primary')"
+                .to_owned(),
+        ],
+    )
+    .await;
+
+    let songs = get(&app, &format!("/api/v3/artists/{ARTIST}/top-songs")).await;
+    assert_eq!(titles(&songs["songs"]), ["Creep", "No Surprises"]);
+    let held = &songs["songs"][1];
+    assert_eq!(
+        (
+            &held["release_group_mbid"],
+            &held["disc_number"],
+            &held["track_number"]
+        ),
+        (&json!(OK_COMPUTER), &json!(1), &json!(10)),
+        "the owned song points at its place on the user's album"
+    );
+    assert_eq!(
+        songs["songs"][0]["track_number"],
+        Value::Null,
+        "a song not held stays as listed"
     );
 }
 

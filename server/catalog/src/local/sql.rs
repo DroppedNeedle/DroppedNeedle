@@ -526,6 +526,25 @@ droppedneedle_kernel::sql! {
         + (musicbrainz!("e")) + " WHERE lower(ae.provider_artist_id) = ? AND "
         + (musicbrainz!("ae")) + " AND " + (owned_album!("b"))
         + " ORDER BY b.year IS NULL, b.year DESC, b.title_folded";
+    /// The indexed tracks one artist MBID (lowercase) is credited on, on
+    /// identified owned albums: title, recording MBID, the album's release
+    /// group, disc and track. Copies in the order a lookup by release group
+    /// picks them, so the first track of a group is the one it plays.
+    /// Tracks are reached from the artist's credits by key, as in
+    /// [`ARTIST_APPEARS`].
+    pub(crate) ARTIST_SONGS = "SELECT t.title, " + (recording_mbid!("ti", "t"))
+        + ", e.release_group_mbid, t.disc_number, t.track_number \
+        FROM local_artist_external_identities ae \
+        JOIN local_track_artists credit ON credit.local_artist_id = ae.local_artist_id \
+        JOIN local_tracks t INDEXED BY sqlite_autoindex_local_tracks_1 \
+        ON t.id = credit.local_track_id \
+        JOIN local_albums b ON b.id = t.local_album_id \
+        JOIN local_album_external_identities e ON e.local_album_id = b.id AND "
+        + (musicbrainz!("e")) + " LEFT JOIN local_track_external_identities ti \
+        ON ti.local_track_id = t.id AND " + (musicbrainz!("ti"))
+        + " WHERE lower(ae.provider_artist_id) = ? AND " + (musicbrainz!("ae"))
+        + " AND " + (owned_album!("b")) + " AND t.availability = 'indexed' \
+        ORDER BY " + (copy_order!("b", "e")) + ", t.disc_number, t.track_number";
     /// The live copy of one release group (lowercase), with or without
     /// files, for the catalog pages: its id, title, tagged album artist,
     /// year, album artist MBID and whether it has files.
