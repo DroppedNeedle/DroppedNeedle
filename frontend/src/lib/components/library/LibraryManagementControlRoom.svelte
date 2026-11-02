@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { applyEffects, catalogChanged } from '$lib/queries/effects';
 	import '$lib/components/library/library-management.css';
-	import { replaceState } from '$app/navigation';
+	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { SvelteURL } from 'svelte/reactivity';
 	import {
@@ -174,10 +174,14 @@
 	}
 
 	function updateRunnerUrl(mode: RunnerMode | null): void {
+		// `goto`, because `replaceState` leaves `page.url` behind and a closed
+		// runner would reopen on the way back to this tab. The tab is named so a
+		// reload stays here after a saved link that named none.
 		const url = new SvelteURL(page.url);
+		url.searchParams.set('tab', 'organize');
 		if (mode) url.searchParams.set('runner', mode);
 		else url.searchParams.delete('runner');
-		replaceState(url, page.state);
+		void goto(url, { replaceState: true, noScroll: true, keepFocus: true, state: page.state });
 	}
 
 	function openRunner(mode: RunnerMode, opener: HTMLElement): void {

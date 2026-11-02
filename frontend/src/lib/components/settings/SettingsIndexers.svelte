@@ -36,6 +36,7 @@
 
 	import PluginHealthBadge from './PluginHealthBadge.svelte';
 	import SettingsProwlarr from './SettingsProwlarr.svelte';
+	import { refusedField } from '$lib/ui/settingsSection.svelte';
 	import SettingsSectionCollapse from './SettingsSectionCollapse.svelte';
 
 	// The common audio categories; 3000 (Audio) expands to all subcats on most indexers.
@@ -75,14 +76,20 @@
 		}
 	});
 
+	let backendRefusal = $state<string | null>(null);
+
 	async function selectBackend(next: UsenetSearchBackendName) {
 		if (next === backend) return;
+		backendRefusal = null;
 		try {
 			await saveBackend.mutateAsync(next);
 			indexersOpen = next === 'indexers';
 			prowlarrOpen = next === 'prowlarr';
-		} catch {
-			toastStore.show({ message: 'Could not switch search backend', type: 'error' });
+		} catch (error) {
+			backendRefusal = refusedField(error)?.reason ?? null;
+			if (!backendRefusal) {
+				toastStore.show({ message: 'Could not switch search backend', type: 'error' });
+			}
 		}
 	}
 	const pluginSourcesQuery = getPluginSourcesQuery();
@@ -280,6 +287,9 @@
 					</span>
 				</label>
 			</div>
+			{#if backendRefusal}
+				<p class="text-sm text-error" role="alert">{backendRefusal}</p>
+			{/if}
 		</div>
 	</Card>
 

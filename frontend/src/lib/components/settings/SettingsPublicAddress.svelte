@@ -84,6 +84,7 @@
 					empty="No address listed."
 					help="The scheme, host and port, such as https://music.example.com or http://192.168.1.5:8688. Leave out any path. Up to {MAX_ADDRESSES}."
 					disabled={section.saving}
+					error={section.fieldError('origins', 'Addresses')}
 				>
 					{#snippet actions()}
 						<Button

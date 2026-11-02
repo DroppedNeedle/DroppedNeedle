@@ -45,6 +45,9 @@
 	import Field from '$lib/ui/Field.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import Input from '$lib/ui/Input.svelte';
+	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
+	import SaveBar from '$lib/ui/SaveBar.svelte';
+	import { createSettingsSection } from '$lib/ui/settingsSection.svelte';
 	import Modal from '$lib/ui/Modal.svelte';
 	import SelectField from '$lib/ui/SelectField.svelte';
 	import TextField from '$lib/ui/TextField.svelte';
@@ -97,37 +100,59 @@
 
 	const policyQuery = getDownloadPolicyQuery();
 	const savePolicy = saveDownloadPolicy();
-	let defRequestCount = $state<number | null>(0);
-	let defRequestDays = $state<number | null>(7);
-	let defStorageGb = $state<number | null>(0);
-	let defaultsSeeded = $state(false);
 
-	$effect(() => {
-		const p = policyQuery.data;
-		if (p && !defaultsSeeded) {
-			defRequestCount = p.default_request_quota_count;
-			defRequestDays = p.default_request_quota_days;
-			defStorageGb = p.default_storage_quota_gb;
-			defaultsSeeded = true;
-		}
-	});
-
-	async function handleSaveQuotaDefaults() {
-		const p = policyQuery.data;
-		if (!p) return;
-		try {
-			// a cleared number input binds null; fall back to off/current values
-			await savePolicy.mutateAsync({
-				...p,
-				default_request_quota_count: defRequestCount ?? 0,
-				default_request_quota_days: defRequestDays ?? p.default_request_quota_days,
-				default_storage_quota_gb: defStorageGb ?? 0
-			});
-			toastStore.show({ message: 'Quota defaults saved', type: 'success' });
-		} catch {
-			toastStore.show({ message: 'Could not save quota defaults', type: 'error' });
-		}
+	interface QuotaDefaults {
+		default_request_quota_count: number | null;
+		default_request_quota_days: number | null;
+		default_storage_quota_gb: number | null;
 	}
+
+	function quotaDefaultsOf(policy: QuotaDefaults): QuotaDefaults {
+		return {
+			default_request_quota_count: policy.default_request_quota_count,
+			default_request_quota_days: policy.default_request_quota_days,
+			default_storage_quota_gb: policy.default_storage_quota_gb
+		};
+	}
+
+	// The quota defaults are three fields of the download policy.
+	const quotaDefaults = createSettingsSection<QuotaDefaults>(
+		{
+			get data() {
+				const policy = policyQuery.data;
+				return policy ? quotaDefaultsOf(policy) : undefined;
+			},
+			get isPending() {
+				return policyQuery.isPending;
+			},
+			get isError() {
+				return policyQuery.isError;
+			},
+			get error() {
+				return policyQuery.error;
+			},
+			refetch: () => policyQuery.refetch()
+		},
+		{
+			mutateAsync: async (form) => {
+				const policy = policyQuery.data;
+				if (!policy) throw new Error('The download policy has not loaded.');
+				// A cleared number input binds null: off, or the window as stored.
+				const saved = await savePolicy.mutateAsync({
+					...policy,
+					default_request_quota_count: form.default_request_quota_count ?? 0,
+					default_request_quota_days:
+						form.default_request_quota_days ?? policy.default_request_quota_days,
+					default_storage_quota_gb: form.default_storage_quota_gb ?? 0
+				});
+				return quotaDefaultsOf(saved);
+			},
+			get isPending() {
+				return savePolicy.isPending;
+			}
+		},
+		{ savedMessage: 'Quota defaults saved.' }
+	);
 
 	let showCreateForm = $state(false);
 	let newName = $state('');
@@ -574,57 +599,61 @@
 				Limits for every plain user without an override (admin and trusted are exempt). 0 =
 				unlimited. Requests use a rolling window; storage counts each user's own downloads.
 			</p>
-			<div class="flex flex-wrap items-end gap-2">
-				<Field label="Requests">
-					{#snippet children(control)}
-						<Input
-							{...control}
+			<QueryBoundary query={quotaDefaults} what="the quota defaults">
+				{#snippet children(draft)}
+					<div class="flex flex-wrap items-start gap-2">
+						<Field
 							label="Requests"
-							type="number"
-							size="sm"
-							min="0"
-							class="w-24"
-							bind:value={defRequestCount}
-						/>
-					{/snippet}
-				</Field>
-				<Field label="Window (days)">
-					{#snippet children(control)}
-						<Input
-							{...control}
+							error={quotaDefaults.fieldError('default_request_quota_count', 'Requests')}
+						>
+							{#snippet children(control)}
+								<Input
+									{...control}
+									label="Requests"
+									type="number"
+									size="sm"
+									min="0"
+									class="w-24"
+									bind:value={draft.default_request_quota_count}
+								/>
+							{/snippet}
+						</Field>
+						<Field
 							label="Window (days)"
-							type="number"
-							size="sm"
-							min="1"
-							class="w-24"
-							bind:value={defRequestDays}
-						/>
-					{/snippet}
-				</Field>
-				<Field label="Storage (GB)">
-					{#snippet children(control)}
-						<Input
-							{...control}
+							error={quotaDefaults.fieldError('default_request_quota_days', 'Window')}
+						>
+							{#snippet children(control)}
+								<Input
+									{...control}
+									label="Window (days)"
+									type="number"
+									size="sm"
+									min="1"
+									class="w-24"
+									bind:value={draft.default_request_quota_days}
+								/>
+							{/snippet}
+						</Field>
+						<Field
 							label="Storage (GB)"
-							type="number"
-							size="sm"
-							min="0"
-							class="w-28"
-							bind:value={defStorageGb}
-						/>
-					{/snippet}
-				</Field>
-				<Button
-					variant="primary"
-					size="sm"
-					class="mb-1"
-					onclick={handleSaveQuotaDefaults}
-					loading={savePolicy.isPending}
-					disabled={!defaultsSeeded}
-				>
-					Save defaults
-				</Button>
-			</div>
+							error={quotaDefaults.fieldError('default_storage_quota_gb', 'Storage')}
+						>
+							{#snippet children(control)}
+								<Input
+									{...control}
+									label="Storage (GB)"
+									type="number"
+									size="sm"
+									min="0"
+									class="w-28"
+									bind:value={draft.default_storage_quota_gb}
+								/>
+							{/snippet}
+						</Field>
+					</div>
+					<SaveBar {...quotaDefaults.bar} saveLabel="Save defaults" />
+				{/snippet}
+			</QueryBoundary>
 		</div>
 
 		<div class="pt-2 border-t border-base-300 space-y-2">

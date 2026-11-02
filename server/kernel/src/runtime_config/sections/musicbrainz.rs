@@ -229,7 +229,7 @@ impl Section for MusicBrainzSettings {
             return Err(validation(
                 key,
                 "rate_limit",
-                "rate_limit must be finite".to_owned(),
+                "must be a finite number".to_owned(),
             ));
         }
         match self.source_mode {
@@ -242,8 +242,7 @@ impl Section for MusicBrainzSettings {
                     return Err(validation(
                         key,
                         "api_url",
-                        "api_url must be an absolute HTTP(S) URL for non-official sources"
-                            .to_owned(),
+                        "must start with http:// or https:// for this source".to_owned(),
                     ));
                 }
             }
@@ -256,7 +255,7 @@ impl Section for MusicBrainzSettings {
             return Err(validation(
                 key,
                 "rate_limit",
-                format!("rate_limit must be 0 (unlimited) or between 0.1 and {MAX_MB_RATE_LIMIT}"),
+                format!("must be 0 (unlimited) or between 0.1 and {MAX_MB_RATE_LIMIT}"),
             ));
         }
         Ok(())

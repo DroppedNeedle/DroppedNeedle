@@ -10,6 +10,7 @@
 		preferredQualityWait: number;
 		autoRetryEnabled: boolean;
 		autoRetryMax: number;
+		fieldError: (field: string, label: string) => string | null;
 	}
 
 	let {
@@ -19,11 +20,27 @@
 		maxFailover = $bindable(),
 		preferredQualityWait = $bindable(),
 		autoRetryEnabled = $bindable(),
-		autoRetryMax = $bindable()
+		autoRetryMax = $bindable(),
+		fieldError
 	}: Props = $props();
+
+	const refused = $derived({
+		autoAccept: fieldError('preflight_score_auto_accept', 'Auto-accept score'),
+		manualMin: fieldError('preflight_score_manual_min', 'Manual-review score'),
+		wait: fieldError('preferred_quality_wait_minutes', 'Preferred-quality queue wait'),
+		concurrent: fieldError('max_concurrent_downloads', 'Max concurrent downloads'),
+		failover: fieldError('max_failover_attempts', 'Max failover attempts'),
+		retries: fieldError('auto_retry_max_attempts', 'Auto-retry attempts')
+	});
+
+	// A refused field stays out of sight in a closed section, so the section opens.
+	let open = $state(false);
+	$effect(() => {
+		if (Object.values(refused).some(Boolean)) open = true;
+	});
 </script>
 
-<details class="collapse collapse-arrow border border-base-300 bg-base-200/40">
+<details class="collapse collapse-arrow border border-base-300 bg-base-200/40" bind:open>
 	<summary class="collapse-title text-sm font-medium">Download behavior (advanced)</summary>
 	<div class="collapse-content flex flex-col gap-4">
 		<div class="grid gap-4 sm:grid-cols-2">
@@ -34,6 +51,7 @@
 				min={0}
 				max={1}
 				bind:value={autoAccept}
+				error={refused.autoAccept}
 			/>
 			<NumberField
 				label="Manual-review score (≥)"
@@ -42,6 +60,7 @@
 				min={0}
 				max={1}
 				bind:value={manualMin}
+				error={refused.manualMin}
 			/>
 			<NumberField
 				label="Preferred-quality queue wait (min)"
@@ -50,6 +69,7 @@
 				min={1}
 				max={1440}
 				bind:value={preferredQualityWait}
+				error={refused.wait}
 			/>
 			<NumberField
 				label="Max concurrent downloads"
@@ -57,6 +77,7 @@
 				min={1}
 				max={10}
 				bind:value={maxConcurrent}
+				error={refused.concurrent}
 			/>
 			<NumberField
 				label="Max failover attempts"
@@ -64,6 +85,7 @@
 				min={1}
 				max={10}
 				bind:value={maxFailover}
+				error={refused.failover}
 			/>
 			<NumberField
 				label="Auto-retry attempts"
@@ -71,6 +93,7 @@
 				min={0}
 				max={20}
 				bind:value={autoRetryMax}
+				error={refused.retries}
 				disabled={!autoRetryEnabled}
 			/>
 		</div>

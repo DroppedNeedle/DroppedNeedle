@@ -2,6 +2,7 @@ import { page } from 'vitest/browser';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 
+import { ApiError } from '$lib/api/errors';
 import type { DownloadPolicySettings } from '$lib/queries/downloads/DownloadClientsQueries.svelte';
 
 import type { QualityRecipeEntry } from './acquisition/qualityRecipeModel';
@@ -334,5 +335,25 @@ describe('SettingsDownloadPolicy retention', () => {
 		expect(h.mutateAsync).toHaveBeenCalledTimes(1);
 		const saved = h.mutateAsync.mock.calls[0][0] as Record<string, unknown>;
 		expect(saved.usenet_retention_days).toBe(45);
+	});
+
+	it('opens the advanced section and shows a refusal on its field', async () => {
+		const reason = 'must be between 1 and 10, got 11';
+		h.mutateAsync = vi.fn(async () => {
+			throw new ApiError(400, `Max concurrent downloads: ${reason}`, 'INVALID_INPUT', {
+				field: 'max_concurrent_downloads',
+				reason
+			});
+		});
+		await render(SettingsDownloadPolicy);
+
+		const retention = page.getByRole('spinbutton', { name: 'Usenet Retention (days)' });
+		await retention.fill('45');
+		await page.getByRole('button', { name: 'Save acquisition policy' }).click();
+
+		const field = page.getByRole('spinbutton', { name: 'Max concurrent downloads' });
+		await expect.element(field).toBeVisible();
+		await expect.element(field).toHaveAttribute('aria-invalid', 'true');
+		await expect.element(page.getByRole('alert').getByText(reason)).toBeVisible();
 	});
 });

@@ -438,6 +438,7 @@
 								bind:value={
 									() => draft.max_library_size_gb ?? 0, (next) => (draft.max_library_size_gb = next)
 								}
+								error={cap.fieldError('max_library_size_gb', 'Maximum library size')}
 							/>
 						</div>
 						<SaveBar {...cap.bar} saveLabel="Save cap" />

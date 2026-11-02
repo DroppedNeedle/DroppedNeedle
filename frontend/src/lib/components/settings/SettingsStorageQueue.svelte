@@ -3,7 +3,13 @@
 	import NumberField from '$lib/ui/NumberField.svelte';
 	import ToggleRow from '$lib/ui/ToggleRow.svelte';
 
-	let { data = $bindable() }: { data: AdvancedSettings } = $props();
+	let {
+		data = $bindable(),
+		fieldError
+	}: {
+		data: AdvancedSettings;
+		fieldError: (field: string, label: string) => string | null;
+	} = $props();
 </script>
 
 <div class="alert alert-info alert-soft mb-4">
@@ -16,6 +22,7 @@
 <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4 pt-2">
 	<NumberField
 		label="Queue Size"
+		error={fieldError('discover_queue_size', 'Queue Size')}
 		help="Albums per queue (default: 10)"
 		bind:value={data.discover_queue_size}
 		min={1}
@@ -38,6 +45,7 @@
 <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4">
 	<NumberField
 		label="Seed Artists"
+		error={fieldError('discover_queue_seed_artists', 'Seed Artists')}
 		help="Artists to base recommendations on (default: 3)"
 		bind:value={data.discover_queue_seed_artists}
 		min={1}
@@ -45,6 +53,7 @@
 	/>
 	<NumberField
 		label="Wildcard Slots"
+		error={fieldError('discover_queue_wildcard_slots', 'Wildcard Slots')}
 		help="Random variety albums (default: 2)"
 		bind:value={data.discover_queue_wildcard_slots}
 		min={0}
@@ -52,6 +61,7 @@
 	/>
 	<NumberField
 		label="Similar Artists Limit"
+		error={fieldError('discover_queue_similar_artists_limit', 'Similar Artists Limit')}
 		help="Max similar artists per seed (default: 15)"
 		bind:value={data.discover_queue_similar_artists_limit}
 		min={5}
@@ -59,6 +69,7 @@
 	/>
 	<NumberField
 		label="Albums Per Similar Artist"
+		error={fieldError('discover_queue_albums_per_similar', 'Albums Per Similar Artist')}
 		help="Top albums fetched per artist (default: 5)"
 		bind:value={data.discover_queue_albums_per_similar}
 		min={1}
@@ -66,6 +77,7 @@
 	/>
 	<NumberField
 		label="Last.fm MBID Lookups"
+		error={fieldError('discover_queue_lastfm_mbid_max_lookups', 'Last.fm MBID Lookups')}
 		help="Max MusicBrainz lookups when matching Last.fm albums (default: 10)"
 		bind:value={data.discover_queue_lastfm_mbid_max_lookups}
 		min={1}
@@ -77,6 +89,7 @@
 <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4">
 	<NumberField
 		label="Discover Picks Count"
+		error={fieldError('discover_picks_count', 'Discover Picks Count')}
 		help="How many albums appear in Discover Picks (default: 12)"
 		bind:value={data.discover_picks_count}
 		min={4}
@@ -85,6 +98,7 @@
 	/>
 	<NumberField
 		label="Genre Affinity Weight"
+		error={fieldError('discover_picks_genre_affinity_weight', 'Genre Affinity Weight')}
 		help="How strongly picks are biased towards your genres (0.0 = random, 1.0 = genre-only, default: 0.7)"
 		bind:value={data.discover_picks_genre_affinity_weight}
 		min={0}

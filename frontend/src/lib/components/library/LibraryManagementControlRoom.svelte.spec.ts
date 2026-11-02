@@ -7,7 +7,6 @@ const h = vi.hoisted(() => ({
 	reissue: vi.fn(),
 	resolveImportBundle: vi.fn(),
 	goto: vi.fn(),
-	replaceState: vi.fn(),
 	apiGet: vi.fn(),
 	apiPost: vi.fn(),
 	toast: vi.fn(),
@@ -85,7 +84,7 @@ const h = vi.hoisted(() => ({
 	}
 }));
 
-vi.mock('$app/navigation', () => ({ goto: h.goto, replaceState: h.replaceState }));
+vi.mock('$app/navigation', () => ({ goto: h.goto }));
 vi.mock('$app/state', () => ({ page: h.appPage }));
 vi.mock('$lib/api/client', () => ({
 	api: { get: h.apiGet, post: h.apiPost }
@@ -677,5 +676,18 @@ describe('LibraryManagementControlRoom', () => {
 		await expect
 			.element(page.getByRole('button', { name: 'Mark bundle-1 as handled' }))
 			.not.toBeInTheDocument();
+	});
+});
+
+describe('the runner in the URL', () => {
+	it('closes a runner from a saved link so the URL holds the tab and no runner', async () => {
+		h.goto.mockClear();
+		h.appPage.url = new URL('https://music.example.test/library/management?runner=manage');
+		await render(LibraryManagementControlRoom);
+
+		await page.getByRole('button', { name: 'Close manual management runner' }).click();
+
+		expect(h.goto).toHaveBeenCalledTimes(1);
+		expect(new URL(h.goto.mock.calls[0][0]).search).toBe('?tab=organize');
 	});
 });

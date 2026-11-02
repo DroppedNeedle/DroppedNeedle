@@ -21,6 +21,24 @@
 	let openStorageQueue = $state(true);
 	let openAudioDB = $state(false);
 	let openRetention = $state(false);
+
+	const QUEUE_FIELDS = [
+		'discover_queue_size',
+		'discover_queue_seed_artists',
+		'discover_queue_wildcard_slots',
+		'discover_queue_similar_artists_limit',
+		'discover_queue_albums_per_similar',
+		'discover_queue_lastfm_mbid_max_lookups',
+		'discover_picks_count',
+		'discover_picks_genre_affinity_weight'
+	];
+	const RETENTION_FIELDS = [
+		'request_history_retention_days',
+		'ignored_releases_retention_days',
+		'store_prune_interval_hours'
+	];
+	const queueRefused = $derived(QUEUE_FIELDS.some((field) => section.fieldError(field)));
+	const retentionRefused = $derived(RETENTION_FIELDS.some((field) => section.fieldError(field)));
 </script>
 
 <div class="space-y-6">
@@ -39,9 +57,13 @@
 					iconBgClass="bg-warning/10"
 					iconTextClass="text-warning"
 					bind:isOpen={openStorageQueue}
+					reveal={queueRefused}
 					name="advanced-settings"
 				>
-					<SettingsStorageQueue bind:data={() => draft, (value) => Object.assign(draft, value)} />
+					<SettingsStorageQueue
+						bind:data={() => draft, (value) => Object.assign(draft, value)}
+						fieldError={section.fieldError}
+					/>
 				</SettingsSectionCollapse>
 
 				<SettingsSectionCollapse
@@ -63,6 +85,7 @@
 					iconBgClass="bg-info/10"
 					iconTextClass="text-info"
 					bind:isOpen={openRetention}
+					reveal={retentionRefused}
 					name="advanced-settings"
 				>
 					<div class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4 pt-2">

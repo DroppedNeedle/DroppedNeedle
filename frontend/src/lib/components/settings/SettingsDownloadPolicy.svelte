@@ -112,6 +112,13 @@
 		);
 	});
 
+	// The quality range is worked out from the recipe, so all three show under it.
+	const qualityRefusal = $derived(
+		section.fieldError('quality_recipe', 'Quality order') ??
+			section.fieldError('quality_min', 'Quality order') ??
+			section.fieldError('quality_max', 'Quality order')
+	);
+
 	function recipeError(recipe: RecipeDraftEntry[]): string | null {
 		for (let index = 0; index < recipe.length; index += 1) {
 			const error = validateRecipeEntry(recipe[index], recipe.slice(0, index));
@@ -166,6 +173,9 @@
 					saving={section.saving}
 					ondiscard={() => (draft.recipe = cloneRecipe(baselineRecipe))}
 				/>
+				{#if qualityRefusal}
+					<p class="text-sm text-error" role="alert">{qualityRefusal}</p>
+				{/if}
 
 				<div class="divider my-1"></div>
 
@@ -186,6 +196,11 @@
 						When an album should wait for you to pick which copy to download.
 					</p>
 					<SearchReviewSection bind:searchReview={draft.search_review} />
+					{#if section.fieldError('search_review', 'Picking a copy')}
+						<p class="text-sm text-error" role="alert">
+							{section.fieldError('search_review', 'Picking a copy')}
+						</p>
+					{/if}
 				</div>
 
 				<AdvancedBehaviorSection
@@ -196,6 +211,7 @@
 					bind:preferredQualityWait={draft.preferred_quality_wait_minutes}
 					bind:autoRetryEnabled={draft.auto_retry_enabled}
 					bind:autoRetryMax={draft.auto_retry_max_attempts}
+					fieldError={section.fieldError}
 				/>
 				<div>
 					<h3 class="font-medium">Retention</h3>

@@ -9,6 +9,8 @@
 		iconBgClass?: string;
 		iconTextClass?: string;
 		isOpen?: boolean;
+		/** Opens the section when this turns true, e.g. a field inside was refused. */
+		reveal?: boolean;
 		name?: string;
 		children: Snippet;
 	};
@@ -20,13 +22,27 @@
 		iconBgClass = 'bg-primary/10',
 		iconTextClass = 'text-primary',
 		isOpen = $bindable(false),
+		reveal = false,
 		name = 'advanced-settings',
 		children
 	}: Props = $props();
+
+	let radio = $state<HTMLInputElement>();
+
+	$effect(() => {
+		if (reveal && radio) radio.checked = true;
+	});
 </script>
 
 <div class="collapse collapse-arrow bg-base-200 rounded-box">
-	<input type="radio" {name} checked={isOpen} aria-label={title} onchange={() => (isOpen = true)} />
+	<input
+		bind:this={radio}
+		type="radio"
+		{name}
+		checked={isOpen}
+		aria-label={title}
+		onchange={() => (isOpen = true)}
+	/>
 	<div class="collapse-title">
 		<div class="flex items-center gap-3">
 			<div class="{iconBgClass} p-2 rounded-lg">

@@ -425,18 +425,16 @@ impl QualityRecipeEntry {
                         "custom MP3 recipe requires min and max bitrates".to_owned(),
                     ));
                 };
-                for (name, value) in [("min_bitrate_kbps", minimum), ("max_bitrate_kbps", maximum)]
-                {
+                for (name, value) in [("minimum bitrate", minimum), ("maximum bitrate", maximum)] {
                     if !(QUALITY_KBPS_MIN..=QUALITY_KBPS_MAX).contains(&value) {
                         return Err(recipe_error(format!(
-                            "{name} must be an integer between {QUALITY_KBPS_MIN} and {QUALITY_KBPS_MAX}"
+                            "{name} must be between {QUALITY_KBPS_MIN} and {QUALITY_KBPS_MAX} kbps"
                         )));
                     }
                 }
                 if minimum > maximum {
                     return Err(recipe_error(
-                        "custom MP3 recipe requires min_bitrate_kbps <= max_bitrate_kbps"
-                            .to_owned(),
+                        "custom MP3 needs a minimum bitrate no higher than its maximum".to_owned(),
                     ));
                 }
                 return Ok(());
@@ -469,17 +467,17 @@ impl QualityRecipeEntry {
         if self.quality == RecipeQuality::Custom {
             let (Some(depth), Some(rate)) = (self.bit_depth, self.sample_rate_hz) else {
                 return Err(recipe_error(
-                    "custom FLAC recipe requires bit_depth and sample_rate_hz".to_owned(),
+                    "custom FLAC needs a bit depth and a sample rate".to_owned(),
                 ));
             };
             if !(1..=64).contains(&depth) {
                 return Err(recipe_error(
-                    "bit_depth must be an integer between 1 and 64".to_owned(),
+                    "bit depth must be between 1 and 64".to_owned(),
                 ));
             }
             if !(8000..=768000).contains(&rate) {
                 return Err(recipe_error(
-                    "sample_rate_hz must be an integer between 8000 and 768000".to_owned(),
+                    "sample rate must be between 8000 and 768000 Hz".to_owned(),
                 ));
             }
             return Ok(());
@@ -528,7 +526,7 @@ pub fn validate_quality_recipe(entries: &[QualityRecipeEntry]) -> Result<(), Con
             let key = (entry.format, entry.quality);
             if seen_standard.contains(&key) {
                 return Err(recipe_error(format!(
-                    "quality_recipe contains duplicate {}/{}",
+                    "lists {}/{} twice",
                     entry.format, entry.quality
                 )));
             }
@@ -563,7 +561,7 @@ pub fn validate_quality_recipe(entries: &[QualityRecipeEntry]) -> Result<(), Con
         {
             if flac_custom_pairs.contains(&(depth, rate)) {
                 return Err(recipe_error(
-                    "quality_recipe contains duplicate custom FLAC resolution".to_owned(),
+                    "lists the same custom FLAC resolution twice".to_owned(),
                 ));
             }
             flac_custom_pairs.push((depth, rate));
@@ -849,19 +847,14 @@ impl Section for DownloadPolicy {
             return Err(validation(
                 key,
                 "quality_min",
-                format!(
-                    "quality_min {:?} ranks above quality_max {:?}",
-                    self.quality_min, self.quality_max
-                ),
+                "the lowest quality ranks above the highest".to_owned(),
             ));
         }
         if !self.quality_recipe.is_empty() && !self.flac_mp3_only {
             return Err(validation(
                 key,
                 "quality_recipe",
-                "quality_recipe requires flac_mp3_only=true; \
-                 replace the non-convertible policy first"
-                    .to_owned(),
+                "only works with FLAC and MP3 only on; replace the old policy first".to_owned(),
             ));
         }
         validate_quality_recipe(&self.quality_recipe)?;
@@ -872,7 +865,7 @@ impl Section for DownloadPolicy {
             return Err(validation(
                 key,
                 "search_review",
-                format!("invalid search_review: {:?}", self.search_review),
+                format!("unknown choice {:?}", self.search_review),
             ));
         }
         Ok(())

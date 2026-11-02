@@ -131,7 +131,7 @@ interface RefusedField {
 }
 
 /** The field a 400 refused, from the settings routes' `details`. */
-function refusedField(error: unknown): RefusedField | null {
+export function refusedField(error: unknown): RefusedField | null {
 	if (!(error instanceof ApiError) || error.status !== 400) return null;
 	const details = error.details;
 	if (typeof details !== 'object' || details === null) return null;

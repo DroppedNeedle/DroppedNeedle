@@ -193,7 +193,7 @@ impl Section for SecuritySettings {
             return Err(ConfigError::Validation {
                 section: Self::KEY,
                 field: "hsts_preload",
-                reason: "needs hsts_include_subdomains".to_owned(),
+                reason: "needs Include Subdomains on".to_owned(),
             });
         }
         parse_frame_ancestors(&self.frame_ancestors)
