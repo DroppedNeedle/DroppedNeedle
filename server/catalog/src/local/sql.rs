@@ -528,12 +528,14 @@ droppedneedle_kernel::sql! {
         + " ORDER BY b.year IS NULL, b.year DESC, b.title_folded";
     /// The indexed tracks one artist MBID (lowercase) is credited on, on
     /// identified owned albums: title, recording MBID, the album's release
-    /// group, disc and track. Copies in the order a lookup by release group
-    /// picks them, so the first track of a group is the one it plays.
+    /// group, disc, track and whether the artist leads the album. Copies in
+    /// the order a lookup by release group picks them, so the first track of
+    /// a group is the one it plays.
     /// Tracks are reached from the artist's credits by key, as in
     /// [`ARTIST_APPEARS`].
     pub(crate) ARTIST_SONGS = "SELECT t.title, " + (recording_mbid!("ti", "t"))
-        + ", e.release_group_mbid, t.disc_number, t.track_number \
+        + ", e.release_group_mbid, t.disc_number, t.track_number, \
+        b.album_artist_id = ae.local_artist_id \
         FROM local_artist_external_identities ae \
         JOIN local_track_artists credit ON credit.local_artist_id = ae.local_artist_id \
         JOIN local_tracks t INDEXED BY sqlite_autoindex_local_tracks_1 \

@@ -102,6 +102,8 @@ pub struct LocalArtistSong {
     pub disc_number: u32,
     /// Track number.
     pub track_number: u32,
+    /// Whether the artist leads the album, rather than appearing on it.
+    pub own_album: bool,
 }
 
 /// What the library knows about which edition of an album it holds.
@@ -264,6 +266,7 @@ impl LocalCatalog {
                     release_group_mbid: row.get(2)?,
                     disc_number: u32::try_from(row.get::<_, i64>(3)?.max(1)).unwrap_or(1),
                     track_number: u32::try_from(row.get::<_, i64>(4)?.max(0)).unwrap_or(0),
+                    own_album: row.get::<_, Option<bool>>(5)?.unwrap_or(false),
                 })
             })
         })

@@ -1265,7 +1265,9 @@ struct SongLookup {
 /// Point each song the library holds at its own copy. A copy matches by
 /// the song's recording, else by its title (folded). Among several, the
 /// copy on the album the song is shown with stays, then the copy of the
-/// recording, then the first in the order the library plays copies.
+/// recording, then a copy on one of the artist's own albums (another
+/// artist's album may hold a cover of the song), then the first in the
+/// order the library plays copies.
 fn own_copies(songs: &mut [TopSong], owned: &[LocalArtistSong]) {
     for song in songs {
         let wanted = title_key(&song.title);
@@ -1288,6 +1290,7 @@ fn own_copies(songs: &mut [TopSong], owned: &[LocalArtistSong]) {
                 shown.is_some_and(|group| copy.release_group_mbid.eq_ignore_ascii_case(group))
             })
             .or_else(|| copies.iter().find(|copy| same_recording(copy)))
+            .or_else(|| copies.iter().find(|copy| copy.own_album))
             .or_else(|| copies.first())
         else {
             continue;
@@ -1608,7 +1611,9 @@ mod tests {
     /// A song the library holds points at the user's copy, so the row
     /// plays it: "Sur le fil" shown with "Le Phare" but owned on the
     /// "Amélie" soundtrack goes there; "La Dispute", owned on both, stays
-    /// with "Le Phare"; a song not owned stays as listed.
+    /// with "Le Phare"; "La Noyée" goes to the artist's own album, not to a
+    /// pianist's album that comes first and holds a cover of it; a song not
+    /// owned stays as listed.
     #[test]
     fn a_song_the_library_holds_shows_with_its_own_copy() {
         let song = |title: &str, recording: Option<&str>, group: &str| TopSong {
@@ -1629,14 +1634,18 @@ mod tests {
                 release_group_mbid: group.to_owned(),
                 disc_number: 1,
                 track_number: track,
+                own_album: group != "piano",
             };
         let mut songs = vec![
             song("Sur le fil", Some("REC-AMELIE"), "phare"),
             song("La Dispute", None, "phare"),
+            song("La Noyée", None, "phare"),
             song("Le Moulin", None, "amelie"),
         ];
         let owned = [
+            copy("La Noyée", None, "piano", 7),
             copy("La Dispute", None, "AMELIE", 5),
+            copy("La Noyee", None, "amelie", 9),
             copy("Sur le fil", Some("rec-amelie"), "AMELIE", 3),
             copy("La dispute", None, "phare", 2),
         ];
@@ -1656,6 +1665,7 @@ mod tests {
             [
                 ("Sur le fil", Some("amelie"), Some(3)),
                 ("La Dispute", Some("phare"), Some(2)),
+                ("La Noyée", Some("amelie"), Some(9)),
                 ("Le Moulin", Some("amelie"), None),
             ]
         );
