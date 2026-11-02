@@ -1,12 +1,12 @@
 //! Cover art routes: release-group, release and artist images by MBID, and
 //! an album's own art by local id.
 //!
-//! Carried over from v2's covers routes: size validation with the same
-//! allowed sizes and `original` aliases, ETag + `If-None-Match` handling
+//! Size validation against a fixed list of sizes, with `original` aliases,
+//! ETag + `If-None-Match` handling
 //! (strong, weak, and `*`), and the 202 warming answer while art resolves in
 //! the background. An item with no art answers 404, and the web UI draws its
 //! own fallback. Library views carry `art_missing` when the server already
-//! knows a route here would answer 404, so the web UI does not ask. The v2
+//! knows a route here would answer 404, so the web UI does not ask. The
 //! debug route is absent here on purpose (it lives in `covers_debug`).
 //!
 //! Caching follows Navidrome: the ETag is the content hash the art already
@@ -16,7 +16,7 @@
 //! Art keyed by a MusicBrainz id is kept for a day (`PRIVATE_DAY_CACHE`),
 //! unless it is the library's own art, which a person can replace at any
 //! time: that keeps the five-minute window below, then revalidates.
-//! Album art requested without a version keeps v2's five-minute window, then
+//! Album art requested without a version gets the five-minute window, then
 //! revalidates.
 //!
 //! Bytes come from the [`CoverArt`] port; production runs
@@ -38,11 +38,11 @@ use utoipa::ToSchema;
 use super::cache::ImageCredit;
 use crate::local::stores::StoreError;
 
-/// Sizes the release cover routes accept, v2 set kept.
+/// Sizes the release cover routes accept.
 const ALLOWED_SIZES: &[&str] = &["250", "500", "1200"];
-/// Aliases meaning "full size", v2 set kept.
+/// Aliases meaning "full size".
 const SIZE_ALIAS_ORIGINAL: &[&str] = &["", "original", "full", "max", "largest"];
-/// Default release cover size, v2 kept.
+/// Default release cover size.
 const DEFAULT_SIZE: &str = "500";
 
 /// Misses and warming answers are never stored, so a cover that turns up
@@ -54,7 +54,7 @@ const NO_STORE: &str = "no-store";
 const PRIVATE_DAY_CACHE: &str = "private, max-age=86400, stale-while-revalidate=604800";
 /// The request named an older version: revalidate every time.
 const REVALIDATE_CACHE: &str = "private, no-cache";
-/// An album's own art at its current version, per user like v2.
+/// An album's own art at its current version, per user.
 const PRIVATE_IMMUTABLE_CACHE: &str = "private, max-age=31536000, immutable";
 /// An album's own art requested without a version, and library art
 /// answered under a MusicBrainz id.
@@ -371,7 +371,7 @@ pub struct ArtistArtQuery {
 }
 
 /// Validate a release-cover `size` value. `Ok(None)` means full size;
-/// `Err` carries the user-facing message, v2 wording kept.
+/// `Err` carries the user-facing message. Quirk (v2): the wording is v2's.
 fn normalize_size(size: &str) -> Result<Option<String>, String> {
     let normalized = size.trim().to_ascii_lowercase();
     if SIZE_ALIAS_ORIGINAL.contains(&normalized.as_str()) {
@@ -385,8 +385,8 @@ fn normalize_size(size: &str) -> Result<Option<String>, String> {
     ))
 }
 
-/// `If-None-Match` matching, v2 rules kept: `*` matches anything, and both
-/// the strong tag and its `W/` weak form match.
+/// `If-None-Match` matching: `*` matches anything, and both the strong tag
+/// and its `W/` weak form match.
 fn etag_matches(if_none_match: Option<&str>, etag: &str) -> bool {
     let Some(header_value) = if_none_match else {
         return false;

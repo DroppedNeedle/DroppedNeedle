@@ -599,7 +599,7 @@ pub struct LibraryMembershipResponse {
     pub requested_ids: Vec<String>,
 }
 
-/// One artist value as the file carries it (v2 `AudioArtistCredit`).
+/// One artist value as the file carries it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct TagArtistCredit {
     /// Artist name.

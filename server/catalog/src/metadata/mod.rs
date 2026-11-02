@@ -329,17 +329,17 @@ const PLUGIN_DETAILS: Policy = Policy {
     fresh: Duration::from_secs(3600),
     miss: Duration::from_secs(3600),
 };
-/// Last.fm artist and album details: an hour, as v2 kept them.
+/// Last.fm artist and album details: an hour.
 const LASTFM_DETAILS: Policy = Policy {
     fresh: Duration::from_secs(3600),
     miss: Duration::from_secs(3600),
 };
-/// Wikipedia and Wikidata biographies: six hours, as v2 kept them.
+/// Wikipedia and Wikidata biographies: six hours.
 const BIOGRAPHY: Policy = Policy {
     fresh: Duration::from_secs(6 * 3600),
     miss: Duration::from_secs(6 * 3600),
 };
-/// Purchase options: a week, as v2 kept them.
+/// Purchase options: a week.
 const PURCHASE: Policy = Policy {
     fresh: Duration::from_secs(7 * 86400),
     miss: Duration::from_secs(7 * 86400),

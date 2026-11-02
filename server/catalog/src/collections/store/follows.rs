@@ -5,7 +5,7 @@
 //! reads them to show a follow's state. Rows key on the lowercased MBID.
 //!
 //! New releases come from `acquire_new_release_feed` joined to the user's follows;
-//! albums already in the library drop out of the to-do list (v2 rule).
+//! albums already in the library drop out of the to-do list.
 
 use droppedneedle_auth::Role;
 use rusqlite::types::{Type, Value};

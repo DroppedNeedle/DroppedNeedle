@@ -94,7 +94,7 @@ impl PlaybackStore {
 
     /// Record one play for the user, with a scrobble job for each service
     /// in `forward`. Every accepted play lands here whatever the user
-    /// linked (v2 `PlayHistoryStore` rule). False when the write failed:
+    /// linked. False when the write failed:
     /// the play and its jobs are then not kept.
     pub fn record(&self, user_id: &str, record: &PlayRecord, forward: ScrobbleTargets) -> bool {
         off_worker(|| self.write_play(user_id, record, forward))
@@ -176,8 +176,7 @@ impl PlaybackStore {
     }
 
     /// The user's presence visibility. Fallible so a failed read redacts
-    /// fail-closed instead of failing the report (v2
-    /// `NowPlayingService._load_visibility` rule).
+    /// fail-closed instead of failing the report.
     pub fn visibility(&self, user_id: &str) -> Result<String, ProviderFailure> {
         off_worker(|| {
             self.listening

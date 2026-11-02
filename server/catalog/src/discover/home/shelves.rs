@@ -1,5 +1,5 @@
-//! Pure shaping for the home page: rows into shelves (v2
-//! `HomeSectionBuilders`), and the connect-a-service cards.
+//! Pure shaping for the home page: rows into shelves, and the
+//! connect-a-service cards.
 
 use super::super::listening::LovedTrack;
 use super::library::{HomeAlbum, HomeArtist, Play};

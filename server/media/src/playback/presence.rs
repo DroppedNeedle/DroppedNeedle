@@ -19,10 +19,10 @@ use super::{
 };
 use droppedneedle_kernel::events::{NowPlayingEntry, NowPlayingSnapshot};
 
-/// Presence time-to-live in seconds (v2 `ENTRY_TTL_SECONDS`).
+/// Presence time-to-live in seconds.
 pub const PRESENCE_TTL_SECS: i64 = 45;
 
-/// One live presence entry (v2 `_Entry`, times in unix seconds).
+/// One live presence entry. Times are unix seconds.
 #[derive(Debug, Clone)]
 struct PresenceEntry {
     key: String,
@@ -42,8 +42,7 @@ struct PresenceEntry {
 }
 
 /// One mapped session from a polled upstream server (`user_id` is always
-/// `None`: upstream listeners are not DroppedNeedle accounts, v2
-/// `ExternalSession`).
+/// `None`: upstream listeners are not DroppedNeedle accounts).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExternalSession {
     /// Presence key (`{source}:{remote session id}`).
@@ -68,7 +67,7 @@ pub struct ExternalSession {
     pub duration_ms: Option<i64>,
 }
 
-/// Fields for a presence upsert (v2 `NowPlayingService.update`).
+/// Fields for a presence upsert.
 #[derive(Debug, Clone)]
 pub struct PresenceUpdate {
     /// Presence key (`{user_id}:{device}` for native reports).
@@ -99,10 +98,10 @@ pub struct PresenceUpdate {
     pub track_file_id: Option<String>,
 }
 
-/// In-memory live presence registry (v2 `NowPlayingService`).
+/// In-memory live presence registry.
 ///
 /// Presence is transient and process-local: it is intentionally lost on
-/// restart (v2 single-process invariant). Privacy is enforced here,
+/// restart. Privacy is enforced here,
 /// server-side, keyed on the owner's visibility setting, so a hidden track
 /// is never serialized to other clients. Each change broadcasts the
 /// projected snapshot as the `snapshot` event on the event hub, and bumps
@@ -154,9 +153,9 @@ impl PresenceRegistry {
 
     /// Upsert a session. `load_visibility` resolves the owner's setting on
     /// first sight; a failed load leaves the user uncached so the next
-    /// report retries and the entry redacts fail-closed meanwhile (v2
-    /// `_load_visibility` rule: never cache a fail-open default, and
-    /// presence must never fail a play report).
+    /// report retries and the entry redacts fail-closed meanwhile. A
+    /// fail-open default is never cached, and presence never fails a play
+    /// report.
     pub fn update(
         &self,
         update: PresenceUpdate,
@@ -205,7 +204,7 @@ impl PresenceRegistry {
 
     /// Replace every polled-upstream entry for `source` with the fresh poll
     /// result. Idle stays silent: no entries before and none now means no
-    /// publish (v2 `reconcile_source` no-op rule).
+    /// publish.
     pub fn reconcile_source(&self, source: &str, sessions: Vec<ExternalSession>, now: i64) {
         if let Ok(mut entries) = self.entries.lock() {
             let had_any = entries
@@ -241,7 +240,7 @@ impl PresenceRegistry {
     }
 
     /// Drop sessions that stopped heartbeating; publish only when any were
-    /// removed (v2 `sweep`).
+    /// removed.
     pub fn sweep(&self, now: i64) -> usize {
         self.entries
             .lock()
@@ -264,7 +263,7 @@ impl PresenceRegistry {
     }
 
     /// Apply a user's privacy choice (unknown values normalize to full)
-    /// and re-broadcast so it takes effect live (v2 `set_visibility`).
+    /// and re-broadcast so it takes effect live.
     pub fn set_visibility(&self, user_id: &str, visibility: &str) {
         let normalized = match visibility {
             VISIBILITY_TRACK_HIDDEN | VISIBILITY_OFFLINE => visibility.to_owned(),
@@ -278,8 +277,8 @@ impl PresenceRegistry {
         }
     }
 
-    /// Privacy-projected live sessions (v2 `snapshot`; no sweep here, the
-    /// sweeper loop owns TTLs).
+    /// Privacy-projected live sessions. No sweep here: the sweeper loop owns
+    /// TTLs.
     pub fn snapshot(&self) -> Vec<NowPlayingEntry> {
         let (entries, visibility) = match (self.entries.lock(), self.visibility.lock()) {
             (Ok(entries), Ok(visibility)) => (entries.clone(), visibility.clone()),
@@ -293,7 +292,7 @@ impl PresenceRegistry {
 
     /// Sessions a Subsonic `getNowPlaying` can serve: a catalog track id is
     /// known and the owner's visibility is full. Redacted projections carry
-    /// no track, so they are skipped, not leaked (v2 `compat_now_playing`).
+    /// no track, so they are skipped, not leaked.
     pub fn compat_now_playing(&self) -> Vec<(NowPlayingEntry, String, i64)> {
         let (entries, visibility) = match (self.entries.lock(), self.visibility.lock()) {
             (Ok(entries), Ok(visibility)) => (entries.clone(), visibility.clone()),
@@ -323,7 +322,7 @@ impl PresenceRegistry {
     }
 }
 
-/// Privacy projection (v2 `_project`): upstream sessions have no owner
+/// Privacy projection: upstream sessions have no owner
 /// setting and always show full; uncached owners redact fail-closed;
 /// offline owners vanish; hidden owners keep identity and progress with
 /// the song stripped.
@@ -371,14 +370,13 @@ fn project(entry: &PresenceEntry, visibility: &HashMap<String, String>) -> Optio
     })
 }
 
-/// Native presence key (v2 route: `{user_id}:{device}`).
+/// Native presence key: `{user_id}:{device}`.
 pub fn presence_key(user_id: &str, device: &str) -> String {
     format!("{user_id}:{device}")
 }
 
-/// Device label for presence. V2 hardcodes the `Web` label on the native
-/// route; other device slugs pass through so a phone does not show as a
-/// browser (default path unchanged).
+/// Device label for presence. The default `web` slug reads as `Web`; other
+/// slugs pass through so a phone does not show as a browser.
 pub fn device_label(device: &str) -> String {
     if device == "web" {
         "Web".to_owned()
@@ -387,7 +385,7 @@ pub fn device_label(device: &str) -> String {
     }
 }
 
-/// Record a native heartbeat (v2 `POST /now-playing`).
+/// Record a native heartbeat.
 pub fn heartbeat(deps: &PlaybackDeps, user_id: &str, request: &NowPlayingHeartbeat) {
     write_heartbeat(deps, user_id, request, None);
 }
@@ -432,21 +430,20 @@ fn write_heartbeat(
     );
 }
 
-/// Clear one native device (v2 `DELETE /now-playing`).
+/// Clear one native device's presence.
 pub fn clear_presence(deps: &PlaybackDeps, user_id: &str, device: &str) {
     deps.presence.remove(&presence_key(user_id, device));
 }
 
-/// Privacy-projected live snapshot (v2 `GET /now-playing`).
+/// Privacy-projected live snapshot.
 pub fn snapshot(deps: &PlaybackDeps) -> NowPlayingSnapshot {
     NowPlayingSnapshot {
         sessions: deps.presence.snapshot(),
     }
 }
 
-/// Session-driven presence write (v2
-/// `CompatScrobbleAdapter._write_presence`: starts arrive unpaused with no
-/// position; progress carries both; failures never fail the report).
+/// Session-driven presence write: starts arrive unpaused with no position;
+/// progress carries both; failures never fail the report.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn write_session_presence(
     deps: &PlaybackDeps,

@@ -3,8 +3,8 @@
 //! Each handler answers one route: extract, validate, call the service,
 //! render. Status mapping lives in `From<SearchError> for ApiError`.
 //! Authentication is the deny-by-default middleware alone (any signed-in
-//! user, as in v2): these routes take no principal because every role sees the
-//! same catalog and no per-user data is read or written.
+//! user): these routes take no principal because every role sees the same
+//! catalog and no per-user data is read or written.
 
 use axum::{
     Json,
@@ -97,7 +97,7 @@ pub async fn search_bucket(
 }
 
 /// Merged typeahead across buckets. Queries under two characters return
-/// an empty 200, kept from v2 so typing never errors.
+/// an empty 200, so typing never errors.
 #[utoipa::path(
     get,
     tag = "search",
@@ -125,8 +125,8 @@ pub async fn suggest(
 }
 
 /// The single enrich-batch method: one POST enriches a mixed batch of
-/// artists and albums. v2's duplicate GET form is gone; GET on this path
-/// is a 405. Provider failures degrade into typed notes, never a 5xx.
+/// artists and albums. GET on this path is a 405. Provider failures degrade
+/// into typed notes, never a 5xx.
 #[utoipa::path(
     post,
     tag = "search",

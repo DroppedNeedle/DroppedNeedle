@@ -1,8 +1,8 @@
 //! Artist and album page DTOs: the native `/api/v3/artists` and
 //! `/api/v3/albums` shapes.
 //!
-//! These keep v2's field names so the pages port over directly, minus the
-//! fields v2 always left at their defaults (per-user follow state lives on
+//! Field names match what the pages read. Fields that never carried a value
+//! are left out (per-user follow state lives on
 //! its own route). Everything is snake_case. Absent means unknown, never
 //! zero-filled to look real.
 

@@ -1,6 +1,5 @@
 //! The library and playlist reads behind radio: owned tracks by artist or
-//! album (v2 `get_files_by_artist_mbids` and
-//! `get_files_by_release_group_mbids`) and the artists on one playlist.
+//! album and the artists on one playlist.
 
 use droppedneedle_kernel::db::statement::ListLen;
 use droppedneedle_kernel::db::{Db, DbError};
@@ -58,7 +57,7 @@ impl RadioLibrary {
 
     /// Up to `limit` owned tracks, in random order, whose track artist or
     /// album artist is one of `artist_mbids`. Tracks of unidentified
-    /// albums are left out, as in v2.
+    /// albums are left out.
     pub async fn tracks_by_artists(
         &self,
         artist_mbids: &[String],
@@ -114,7 +113,7 @@ impl RadioLibrary {
     /// The playlist's distinct artist MBIDs and its track count, when the
     /// caller may read it: their own playlists and public ones. Anything
     /// else reads as missing, admins included, so a private playlist never
-    /// leaks (v2 `analyse_playlist_profile`).
+    /// leaks.
     pub async fn playlist_artists(
         &self,
         user_id: &str,

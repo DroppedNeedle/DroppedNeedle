@@ -1,6 +1,6 @@
 //! Home charts from ListenBrainz statistics and Last.fm.
 //!
-//! Ports v2's `HomeChartsService` range pages. Every row is marked when the
+//! Chart range pages. Every row is marked when the
 //! library holds it (best effort: a failed lookup leaves rows unmarked).
 //! Every read goes through the listening data, so a chart shares its cache
 //! with home and Discover: sitewide pages are kept twelve hours, a user's
@@ -9,7 +9,7 @@
 //! ListenBrainz (the default source): trending artists and popular albums
 //! come from the sitewide stats, "your top albums" from the user's own
 //! stats through their linked ListenBrainz account. One row more than asked
-//! for tells whether another page follows. As in v2, artists without an
+//! for tells whether another page follows. Artists without an
 //! MBID are dropped (they cannot link anywhere). When ListenBrainz is down
 //! and the user can read Last.fm, trending artists and "your top albums"
 //! come from Last.fm instead, marked as Last.fm rows.
@@ -17,11 +17,11 @@
 //! Last.fm (`source=lastfm`): trending artists come from Last.fm's chart,
 //! read with the user's own key, else the instance key. With Last.fm
 //! switched off or no key, these routes answer "not configured". Last.fm
-//! has no sitewide album chart; v2 showed the admin's own Last.fm account
-//! there, which this server does not keep, so popular albums from Last.fm
-//! are an empty page.
+//! has no sitewide album chart. This server does not keep an admin Last.fm
+//! account to read one from, so popular albums from Last.fm are an empty
+//! page.
 //!
-//! As in v2, "your top albums" fall back to whichever service the user
+//! "your top albums" fall back to whichever service the user
 //! has linked, and a user with neither gets an empty page. Genre pages are
 //! served by the genre pages in front of this source.
 
@@ -37,7 +37,7 @@ use crate::discover::{
     ports::{BoxFuture, ProviderFailure},
 };
 
-/// Most rows one Last.fm range page reads (v2 `min(limit + offset + 1, 200)`).
+/// Most rows one Last.fm range page reads: 200.
 const LASTFM_MAX_ROWS: i64 = 200;
 
 /// The sentence a Last.fm chart answers while Last.fm cannot be read.
@@ -158,7 +158,8 @@ fn listenbrainz_albums(rows: Vec<ListenedAlbum>) -> Vec<AlbumRef> {
         .collect()
 }
 
-/// Last.fm chart artists keep rows without an MBID, as v2 did.
+/// Last.fm chart artists keep rows without an MBID. Quirk (v2): unlike the
+/// ListenBrainz chart, these rows are not dropped.
 fn lastfm_artists(rows: Vec<ArtistRow>) -> Vec<ArtistRef> {
     rows.into_iter()
         .map(|row| ArtistRef {
@@ -191,7 +192,7 @@ fn lastfm_albums(rows: Vec<LastFmChartAlbum>) -> Vec<AlbumRef> {
 }
 
 /// Ownership marks are a nicety: a failed lookup is logged and the page
-/// renders unmarked, as in v2.
+/// renders unmarked.
 fn best_effort(
     owned: Result<std::collections::HashMap<String, String>, ProviderFailure>,
 ) -> std::collections::HashMap<String, String> {
@@ -201,7 +202,7 @@ fn best_effort(
     })
 }
 
-/// One row past the page tells whether another page follows (v2).
+/// One row past the page tells whether another page follows.
 fn window(limit: i64, offset: i64) -> (u32, u32) {
     (
         u32::try_from(limit + 1).unwrap_or(u32::MAX),
@@ -219,7 +220,7 @@ fn lastfm_window(limit: i64, offset: i64) -> (u32, usize) {
     )
 }
 
-/// Last.fm's period for a chart range (v2 `_lastfm_period_for_range`).
+/// Last.fm's period for a chart range.
 fn lastfm_period(range: StatsRange) -> &'static str {
     match range {
         StatsRange::ThisWeek => "7day",
@@ -231,7 +232,8 @@ fn lastfm_period(range: StatsRange) -> &'static str {
 
 impl LiveCharts {
     /// The Last.fm sitewide artist chart for this page. Last.fm's chart
-    /// has no ranges; every range reads the same global list, as in v2.
+    /// has no ranges; every range reads the same global list. Quirk (v2): the
+    /// requested range is not applied to this chart.
     async fn lastfm_trending(
         &self,
         user_id: &str,
@@ -358,8 +360,7 @@ impl LiveCharts {
                 .lastfm_username
                 .clone()
                 .filter(|_| policy.ready(ListenSource::Lastfm));
-            // v2 `resolve_source_value`: the asked source when the user has
-            // it linked, else the other one.
+            // The asked source when the user has it linked, else the other one.
             let use_lastfm = lastfm_user.is_some()
                 && (source == ListenSource::Lastfm || user.listenbrainz.is_none());
             let albums = match (use_lastfm, &lastfm_user, &user.listenbrainz) {

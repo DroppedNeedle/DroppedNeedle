@@ -140,8 +140,8 @@ pub trait RemoteReporters: Send + Sync {
     fn report_stop(&self, source: SourceName, report: &RemoteReport);
 }
 
-/// One recorded play: the local source of truth (v2 `play_history` row,
-/// with the played-at instant as unix seconds instead of ISO text).
+/// One recorded play: the local source of truth. The played-at instant is
+/// unix seconds, not ISO text.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlayRecord {
     /// The library track that was played, when the server resolved it

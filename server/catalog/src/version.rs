@@ -1,11 +1,10 @@
 //! Version reads: current version, update check, release history.
 //!
-//! Carried over from v2's version route and `VersionService`, read-only:
-//! the check logic is pure over the [`ReleaseSource`] port, and production
+//! The check logic is pure over the [`ReleaseSource`] port, and production
 //! runs [`GitHubReleases`], the build tag plus the GitHub releases client
 //! (cached for an hour, quiet on failure).
 //!
-//! Comparison rules, v2 kept: strip leading `v`s, compare numeric release
+//! Comparison rules: strip leading `v`s, compare numeric release
 //! cores; anything else fails closed as `comparison_failed`. A `dev`
 //! build reports an update as available when comparison fails so the full
 //! UI stays testable. `latest_release` ships only when an
@@ -218,9 +217,9 @@ pub fn routes() -> Routes<VersionState> {
         .user(routes!(get_releases))
 }
 
-/// Parse a tag into numeric release segments. Leading `v`s are stripped (v2
-/// `lstrip` kept); the rest must be pure dotted numbers or the tag is
-/// unparseable and comparison fails closed.
+/// Parse a tag into numeric release segments. Leading `v`s are stripped;
+/// the rest must be pure dotted numbers or the tag is unparseable and
+/// comparison fails closed.
 fn release_core(tag: &str) -> Option<Vec<u64>> {
     let stripped = tag.trim_start_matches('v');
     if stripped.is_empty() {
@@ -236,8 +235,8 @@ fn release_core(tag: &str) -> Option<Vec<u64>> {
     Some(segments)
 }
 
-/// Compare two tags. Returns `(update_available, comparison_failed)`, v2
-/// `_is_newer` semantics kept: unparseable tags fail closed.
+/// Compare two tags. Returns `(update_available, comparison_failed)`.
+/// Unparseable tags fail closed.
 fn is_newer(latest_tag: &str, current_tag: &str) -> (bool, bool) {
     match (release_core(latest_tag), release_core(current_tag)) {
         (Some(latest), Some(current)) => (latest > current, false),
@@ -245,8 +244,8 @@ fn is_newer(latest_tag: &str, current_tag: &str) -> (bool, bool) {
     }
 }
 
-/// Pure update-check over one current version and one latest release. V2
-/// `check_for_updates` rules kept, including the dev-build carve-out.
+/// Pure update-check over one current version and one latest release,
+/// including the dev-build carve-out.
 fn build_update_response(
     current: &VersionInfo,
     latest: Option<&GitHubRelease>,

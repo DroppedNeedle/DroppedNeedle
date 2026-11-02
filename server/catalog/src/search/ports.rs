@@ -13,8 +13,7 @@ use super::models::{
     AlbumEnrichment, ArtistEnrichment, EnrichmentBatchRequest, EnrichmentResponse,
 };
 
-/// Max ids honored per bucket per batch, kept from v2 (`MAX_ENRICHMENT`).
-/// Extras are ignored, never an error.
+/// Max ids honored per bucket per batch. Extras are ignored, never an error.
 pub const MAX_ENRICHMENT_PER_BUCKET: usize = 10;
 
 /// Boxed future for dyn-compatible port methods.

@@ -14,8 +14,8 @@
 //! or per run (sweep), so a key change applies without a restart.
 //!
 //! Dates are UTC: "today" decides which gigs are upcoming and which past
-//! rows to prune. v2 used server-local time; the container pins `TZ=UTC`,
-//! so the two agree in production.
+//! rows to prune. The container pins `TZ=UTC`, so local time and UTC agree in
+//! production.
 
 pub mod events;
 pub mod handlers;
@@ -117,7 +117,7 @@ pub(crate) struct ActiveSources {
 
 impl ActiveSources {
     /// The ready sources, or `None` when the feature is off or no source
-    /// is both enabled and keyed (v2 `is_events_source_ready`).
+    /// is both enabled and keyed.
     pub fn read(settings: &LiveSettings<EventsSettings>) -> Option<Self> {
         let settings = read_settings(settings)?;
         if !settings.enabled {

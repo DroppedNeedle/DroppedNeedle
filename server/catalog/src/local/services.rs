@@ -780,7 +780,7 @@ pub async fn decades(deps: &LibraryDeps) -> Result<DecadesResponse, LibraryFailu
     })
 }
 
-/// Reason-tagged track suggestions. Pools mirror v2: newest imports
+/// Reason-tagged track suggestions. The pools are newest imports
 /// (`recent`), oldest imports (`rediscover`), random picks (`surprise`),
 /// plus random same-decade picks (`same_era`) when a decade anchors the
 /// request. Pools over-fetch evenly, dedupe by track, then trim.
@@ -854,10 +854,10 @@ pub async fn lyrics(deps: &LibraryDeps, track_id: &str) -> Result<LyricsView, Li
     })
 }
 
-/// Most album ids one membership check accepts (v2's cap).
+/// Most album ids one membership check accepts.
 const MEMBERSHIP_MAX_IDS: usize = 500;
 
-/// Most positions one track resolution answers (v2's cap).
+/// Most positions one track resolution answers.
 const RESOLVE_MAX_ITEMS: usize = 200;
 
 /// Which asked album ids the library holds and which have an open request.
@@ -901,16 +901,15 @@ pub async fn membership(
     })
 }
 
-/// Lossless containers by extension (v2 `_LOSSLESS_EXT`).
+/// Lossless containers by extension.
 const LOSSLESS_FORMATS: [&str; 5] = ["flac", "alac", "wav", "ape", "wv"];
 
 /// MP4-family containers: lossless only with bit-depth evidence (ALAC),
 /// otherwise lossy AAC on the bitrate bands.
 const MP4_FORMATS: [&str; 3] = ["m4a", "mp4", "mov"];
 
-/// Quality tier of one file, the same reading the acquisition side uses
-/// (v2 `quality_tiers.tier_for`): lossless containers, then lossy bitrate
-/// bands whatever the codec.
+/// Quality tier of one file, the same reading the acquisition side uses:
+/// lossless containers, then lossy bitrate bands whatever the codec.
 pub fn tier_for(format: &str, bit_rate_kbps: Option<i64>, bit_depth: Option<i64>) -> &'static str {
     let format = format.trim().trim_start_matches('.').to_lowercase();
     if LOSSLESS_FORMATS.contains(&format.as_str())

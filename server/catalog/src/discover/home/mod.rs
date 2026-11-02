@@ -1,6 +1,6 @@
 //! The home page: library shelves read on every visit, the shelves the
 //! user's listening services fill built in the background and kept fresh
-//! while people use it (v2 `HomeService`).
+//! while people use it.
 //!
 //! A visit never waits on a provider. The local shelves (recently added,
 //! your albums and artists, recently played, the discover teaser) come
@@ -61,7 +61,7 @@ const TIMING: Timing = Timing {
 };
 /// Rows a library read fetches.
 const LIBRARY_ROWS: i64 = 15;
-/// Rows a provider read asks for (v2).
+/// Rows a provider read asks for.
 const PROVIDER_ROWS: u32 = 20;
 /// Bound on one provider read in a full build.
 const READ_TIMEOUT: Duration = Duration::from_secs(25);

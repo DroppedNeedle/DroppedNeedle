@@ -50,7 +50,8 @@ pub struct Pick {
     pub reasons: Vec<String>,
 }
 
-/// Per-user, per-album, per-day jitter between 0 and 0.05 (v2's md5 recipe).
+/// Per-user, per-album, per-day jitter between 0 and 0.05, from an md5
+/// digest of the three keys.
 fn daily_jitter(user_id: &str, mbid: &str, date_iso: &str) -> f64 {
     let digest = format!("{:x}", md5::compute(format!("{user_id}:{mbid}:{date_iso}")));
     let head = u64::from_str_radix(&digest[..6], 16).unwrap_or(0);

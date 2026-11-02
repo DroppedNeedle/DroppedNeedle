@@ -1,7 +1,7 @@
 //! Unified search: the library's `local_*` tables joined with MusicBrainz.
 //!
-//! MusicBrainz answers artists and albums the way v2 searched them, under
-//! a deadline and with a stale copy standing in when it is down; library
+//! MusicBrainz answers artists and albums under a deadline, with a stale copy
+//! standing in when it is down; library
 //! copies attach their local id and the in-library flag, and library rows
 //! MusicBrainz did not return still show. Every list ranks through one
 //! [`rank`]: a library row that matches exactly or as a prefix comes
@@ -33,8 +33,7 @@ use super::models::{
 };
 use super::sql;
 
-/// Score for an exact folded-title match. Also the top-result bar, kept
-/// from v2 (`TOP_RESULT_SCORE_THRESHOLD`).
+/// Score for an exact folded-title match. Also the top-result bar.
 pub const SCORE_EXACT: i32 = 100;
 /// Score for a folded-prefix match. Meets the top-result bar.
 pub const SCORE_PREFIX: i32 = 90;
@@ -103,10 +102,9 @@ impl std::fmt::Debug for SearchService {
     }
 }
 
-/// How long a full search waits for MusicBrainz (v2
-/// `FULL_SEARCH_TIMEOUT_SECONDS`). Local hits never wait on it.
+/// How long a full search waits for MusicBrainz. Local hits never wait on it.
 pub const FULL_SEARCH_DEADLINE: Duration = Duration::from_secs(6);
-/// How long typeahead waits for MusicBrainz (v2 `SUGGEST_TIMEOUT_SECONDS`).
+/// How long typeahead waits for MusicBrainz.
 pub const SUGGEST_DEADLINE: Duration = Duration::from_secs(3);
 
 impl SearchService {
@@ -312,7 +310,7 @@ impl SearchService {
     }
 
     /// Merged typeahead across buckets, best first. MusicBrainz adds
-    /// artists and albums (60% of the limit each, as in v2) under a short
+    /// artists and albums (60% of the limit each) under a short
     /// deadline. Short queries return empty; handlers enforce that first.
     pub async fn suggest(&self, query: &str, limit: u32) -> Result<SuggestResponse, DbError> {
         let folded = droppedneedle_kernel::db::fold::fold_text(query);
@@ -702,9 +700,9 @@ fn kind_order(kind: SearchKind) -> u8 {
     }
 }
 
-/// The standout hit of a ranked list, ported from v2: the best hit
-/// headlines only when it scores 90+ and its tokens overlap the query's,
-/// allowing prefix matches for partial typeahead.
+/// The standout hit of a ranked list: the best hit headlines only when it
+/// scores 90+ and its tokens overlap the query's, allowing prefix matches for
+/// partial typeahead.
 fn detect_top_result(items: &[SearchResultItem], query_folded: &str) -> Option<SearchResultItem> {
     let best = items.first()?;
     if best.score < SCORE_PREFIX {
@@ -724,7 +722,7 @@ fn detect_top_result(items: &[SearchResultItem], query_folded: &str) -> Option<S
 }
 
 /// Tokenize for top-result overlap: folded text split on whitespace with
-/// non-alphanumeric runs dropped, kept from v2's normalizer.
+/// non-alphanumeric runs dropped.
 fn search_tokens(folded: &str) -> Vec<String> {
     folded
         .split_whitespace()
@@ -733,7 +731,7 @@ fn search_tokens(folded: &str) -> Vec<String> {
         .collect()
 }
 
-/// Token overlap allowing prefix matches in either direction, kept from v2.
+/// Token overlap allowing prefix matches in either direction.
 fn tokens_match(query_tokens: &[String], title_tokens: &[String]) -> bool {
     const MIN_PREFIX: usize = 2;
     let covers = |needles: &[String], haystack: &[String]| {

@@ -11,7 +11,7 @@ use droppedneedle_plugins::runtime::{
 
 /// Accepted plays from playback, as plugin events: a `scrobble` event
 /// (which also reaches `scrobbler` plugins) and a `playback_started`
-/// event, from the one point where v2 dispatched both.
+/// event. Both are sent from this one place.
 pub struct PluginPlayEvents(pub Arc<PluginHost>);
 
 impl PlayEvents for PluginPlayEvents {

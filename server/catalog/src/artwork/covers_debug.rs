@@ -1,8 +1,7 @@
 //! Dev-only covers-debug tooling route.
 //!
-//! v2 shipped `GET /covers/debug/artist/{id}` on the prod API; v3 keeps the
-//! diagnostics but moves them off the API entirely. This module serves the
-//! same shape (MBID validity, cache state per size, warming flags, and a
+//! Diagnostics stay off the prod API. This module serves the answer shape
+//! (MBID validity, cache state per size, warming flags, and a
 //! plain recommendation) on `/__tooling__/covers/debug/artist/{id}`.
 //!
 //! Three gates keep it out of production, and any one of them suffices:
@@ -28,7 +27,7 @@ use serde::Serialize;
 
 use crate::artwork::covers::{CoverLookup, CoversState};
 
-/// Sizes probed, mirroring the v2 disk-cache slots.
+/// Sizes probed, matching the disk-cache slots.
 const DEBUG_SIZES: [u32; 2] = [250, 500];
 
 /// Cache state for one size: presence, source label, and byte length.
@@ -47,7 +46,7 @@ pub struct SizeDebug {
     pub warming: bool,
 }
 
-/// The debug answer, mirroring the v2 `debug_info` shape.
+/// The debug answer.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ArtistCoverDebug {
     /// The requested id, verbatim.
@@ -111,8 +110,7 @@ async fn debug_artist_cover(
     })
 }
 
-/// MBID shape: 36 hex-or-dash characters after stripping, the same rule the
-/// v2 validator and the export validator apply.
+/// MBID shape: 36 hex-or-dash characters after stripping.
 fn parse_mbid(raw: &str) -> Option<String> {
     let trimmed = raw.trim();
     if trimmed.len() == 36
@@ -126,7 +124,7 @@ fn parse_mbid(raw: &str) -> Option<String> {
     }
 }
 
-/// Plain next step, following the v2 recommendation ladder.
+/// The plain recommendation: the first check that fails names it.
 fn recommend(is_valid_mbid: bool, sizes: &[SizeDebug]) -> &'static str {
     if !is_valid_mbid {
         return "Invalid MBID format: no image can resolve for this id.";

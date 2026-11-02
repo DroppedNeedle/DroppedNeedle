@@ -28,7 +28,7 @@ use super::{
 const GROUP_INCLUDES: [&str; 4] = ["artist-credits", "media", "releases", "url-rels"];
 /// Includes for one release: tracklist, label, and its store links.
 const RELEASE_INCLUDES: [&str; 3] = ["labels", "recordings", "url-rels"];
-/// Releases consulted for store links (v2 `_MAX_RELEASE_LOOKUPS`).
+/// Releases consulted for store links.
 const MAX_PURCHASE_LOOKUPS: usize = 2;
 /// Ranked editions tried when the chosen one has no tracklist.
 const TRACKLIST_CANDIDATES: usize = 3;
@@ -244,7 +244,7 @@ impl Catalog {
     }
 
     /// The cached release-group detail. Sources that hand over a release
-    /// MBID where a group belongs (v2 issue #78) resolve through the
+    /// MBID where a group belongs resolve through the
     /// release before the miss is final.
     pub(super) async fn group_detail(&self, mbid: &str) -> Result<GroupCore, CatalogError> {
         self.group_detail_at(mbid, RequestPriority::UserInitiated)
@@ -340,7 +340,7 @@ impl Catalog {
     }
 
     /// The release-group MBID a route's album id names. A library album
-    /// id resolves to the group it is identified as, as in v2; anything
+    /// id resolves to the group it is identified as; anything
     /// else that is not an MBID is rejected.
     async fn album_id(&self, raw_id: &str) -> Result<String, CatalogError> {
         if let Ok(id) = checked_mbid(raw_id, "album") {

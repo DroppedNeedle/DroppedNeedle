@@ -1,8 +1,8 @@
-//! The genre page (v2 `get_genre_artists`): what the library owns in the
+//! The genre page: what the library owns in the
 //! genre, what is popular in it on MusicBrainz (paged), and its artwork.
 //!
 //! Opening a genre also queues a background warm of the popular rows'
-//! covers and artist images (v2 `GenreCoverPrewarmService`), so the page
+//! covers and artist images, so the page
 //! fills in quickly on the next visit.
 
 pub mod artwork;
@@ -27,7 +27,7 @@ use artwork::GenreArt;
 
 /// Popular rows per lane at most.
 const MAX_ROWS: i64 = 100;
-/// Owned rows per lane (v2).
+/// Owned rows per lane.
 const LIBRARY_ROWS: i64 = 50;
 
 /// Builds genre pages.

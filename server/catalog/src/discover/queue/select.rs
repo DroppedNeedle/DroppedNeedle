@@ -1,5 +1,5 @@
 //! Pure deck assembly: shuffling, round-robin selection across candidate
-//! pools, and wildcard placement (v2 `queue_strategies`).
+//! pools, and wildcard placement.
 
 use std::collections::{HashMap, HashSet};
 
@@ -57,7 +57,7 @@ impl Shuffler {
 
 /// Take `count` cards round-robin across shuffled pools, one per pool per
 /// pass, skipping release groups already taken and artists already at
-/// `max_per_artist` (v2 `round_robin_dedup_select`).
+/// `max_per_artist`.
 pub fn round_robin(
     mut pools: Vec<Vec<QueueItemLight>>,
     count: usize,
@@ -104,7 +104,7 @@ pub fn round_robin(
 }
 
 /// Insert `wildcards` into `base` at `positions`, each position counted in
-/// the growing deck; extras go to the end (v2 `interleave_at_positions`).
+/// the growing deck; extras go to the end.
 pub fn interleave(
     base: Vec<QueueItemLight>,
     wildcards: Vec<QueueItemLight>,

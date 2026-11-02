@@ -34,8 +34,8 @@ pub(crate) const MAX_COVER_BYTES: usize = 5 * 1024 * 1024;
 const COVER_TYPES: [&str; 3] = ["image/png", "image/jpeg", "image/webp"];
 /// Source type of an entry added from the local library by a compat client.
 pub const LOCAL_SOURCE: &str = "droppedneedle-local";
-/// Accepted source types and what they normalize to (v2 aliases; `howler`
-/// is the old name of the local source).
+/// Accepted source types and what they normalize to. `howler` is the old name
+/// of the local source.
 const SOURCE_TYPES: [(&str, &str); 8] = [
     ("", ""),
     ("local", "local"),
@@ -147,7 +147,7 @@ fn owns(row: &PlaylistRow, user_id: &str) -> bool {
 
 /// Validate one native track input and turn it into a store entry. Local
 /// entries whose source id names a library file link to it, so compat
-/// clients can stream them (v2 #181).
+/// clients can stream them.
 fn to_entry(input: &TrackInput) -> Result<NewEntry, CollectionsError> {
     for (label, value) in [
         ("track_name", &input.track_name),
@@ -762,7 +762,7 @@ impl CollectionsService<'_> {
 
     /// Import a remote playlist into the owner's playlists, keyed by its
     /// provenance (`<source>:<id>`). A remote playlist already imported by
-    /// this user is not copied again (v2): the answer names the existing
+    /// this user is not copied again: the answer names the existing
     /// copy. Returns the local id and whether it already existed.
     pub async fn import_playlist(
         &self,

@@ -1,15 +1,14 @@
 //! Wrapped reads: the keyed external-consumer trio.
 //!
-//! Carried over from v2's wrapped routes: user listing, per-user
-//! year-in-review, and the server-wide summary. The `X-Wrapped-API-Key`
-//! contract is preserved exactly (see [`check_key`]): exact header name,
-//! exact value match with no trimming, 401 on missing/wrong/unconfigured,
-//! and the v2 rejection message verbatim. Year-in-review data comes from the
-//! [`WrappedData`] port; production runs
+//! User listing, per-user year-in-review, and the server-wide summary. The
+//! `X-Wrapped-API-Key` contract is kept exactly (see [`check_key`]): exact
+//! header name, exact value match with no trimming, 401 on
+//! missing/wrong/unconfigured, and the rejection message verbatim.
+//! Year-in-review data comes from the [`WrappedData`] port; production runs
 //! [`ListenBrainzWrapped`](listenbrainz::ListenBrainzWrapped).
 //!
-//! Unknown users answer 200 with an empty `has_data: false` payload (v2
-//! `get_user_wrapped` rule kept, display name falls back to the user id) -
+//! Quirk (v2): unknown users answer 200 with an empty `has_data: false`
+//! payload, the display name falling back to the user id,
 //! never 404. These routes take no session: the shared secret is the only
 //! credential, so they mount in their own-credential group, outside the
 //! session gate.
@@ -35,9 +34,10 @@ use droppedneedle_kernel::runtime_config::{Live, secret_sections::WrappedSetting
 use serde::Serialize;
 use utoipa::ToSchema;
 
-/// Shared-secret header, v2 name kept byte for byte.
+/// Shared-secret header. Quirk (v2): the name is kept byte for byte, since
+/// existing clients send it.
 pub const WRAPPED_API_KEY_HEADER: &str = "x-wrapped-api-key";
-/// Rejection message, v2 wording kept verbatim.
+/// Rejection message. Quirk (v2): the wording is kept verbatim.
 pub const WRAPPED_UNAUTHORIZED_MESSAGE: &str = "Invalid or missing wrapped API key";
 
 /// One user row in the listing.
@@ -110,9 +110,9 @@ pub struct WrappedGenre {
 }
 
 /// Per-user year-in-review. `loved_tracks_count` and `total_listens_estimated`
-/// are both approximations (v2 caveat kept): ListenBrainz caps the loved
-/// endpoint at 100 rows per request, and the total sums only the returned
-/// top artists rather than every play.
+/// are both approximations: ListenBrainz caps the loved endpoint at 100 rows
+/// per request, and the total sums only the returned top artists rather than
+/// every play.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct UserWrappedResponse {
     /// User id.
@@ -285,7 +285,7 @@ impl WrappedKeySource for ConfigWrappedKey {
 }
 
 /// Handler state: the expected shared secret plus the data port. An empty
-/// secret fails every request closed (v2 `not expected` rule kept).
+/// secret fails every request closed.
 #[derive(Clone)]
 pub struct WrappedState {
     /// Expected shared secret, read per request.
@@ -314,8 +314,7 @@ pub fn routes() -> Routes<WrappedState> {
         .own_credential(OwnCredential::WrappedKey, routes!(get_wrapped_server))
 }
 
-/// Key check, v2 `verify_wrapped_api_key` semantics: the header name is
-/// matched case-insensitively (HTTP rule, same as v2 via Starlette), the
+/// Key check: the header name is matched case-insensitively (HTTP rule), the
 /// value is compared exactly with no trimming, an empty expected secret
 /// denies everything, and a missing or non-matching header denies. The
 /// comparison runs in constant time over the digests, so response timing
@@ -331,9 +330,9 @@ pub fn check_key(headers: &HeaderMap, expected: &str) -> bool {
     secret_eq(&digest(presented.as_bytes()), &digest(expected.as_bytes()))
 }
 
-/// Key-gate rejection. Status 401 with the v2 message verbatim, and
-/// no `WWW-Authenticate` header on purpose: v2 sends none, and a Bearer
-/// challenge would misdescribe a shared-secret header scheme.
+/// Key-gate rejection: status 401 with the rejection message. Quirk (v2): no
+/// `WWW-Authenticate` header, because a Bearer challenge would misdescribe a
+/// shared-secret header scheme.
 fn wrapped_rejection() -> ApiError {
     ApiError::unauthorized_without_challenge(WRAPPED_UNAUTHORIZED_MESSAGE)
 }
@@ -359,9 +358,8 @@ impl FromRequestParts<WrappedState> for WrappedKey {
     }
 }
 
-/// Empty per-user payload, v2 `get_user_wrapped` rule kept: unknown or
-/// unlinked users get `has_data: false` with empty lists, and the display
-/// name falls back to the user id.
+/// Empty per-user payload: unknown or unlinked users get `has_data: false`
+/// with empty lists, and the display name falls back to the user id.
 fn empty_user_wrapped(user_id: &str, year: i32) -> UserWrappedResponse {
     UserWrappedResponse {
         user_id: user_id.to_owned(),
@@ -458,7 +456,7 @@ mod tests {
     fn key_check_passes_only_on_exact_match() {
         let exact = headers(&[("x-wrapped-api-key", "secret")]);
         assert!(check_key(&exact, "secret"));
-        // Header names are case-insensitive per HTTP (v2 behaves the same).
+        // Header names are case-insensitive per HTTP.
         let upper = headers(&[("X-WRAPPED-API-KEY", "secret")]);
         assert!(check_key(&upper, "secret"));
     }
@@ -468,7 +466,7 @@ mod tests {
         assert!(!check_key(&HeaderMap::new(), "secret"));
         let wrong = headers(&[("x-wrapped-api-key", "other")]);
         assert!(!check_key(&wrong, "secret"));
-        // No trimming: padded values fail (v2 `!=` on the raw string).
+        // No trimming: padded values fail.
         for padded in [" secret", "secret ", " secret "] {
             let headers = headers(&[("x-wrapped-api-key", padded)]);
             assert!(!check_key(&headers, "secret"), "value {padded:?}");

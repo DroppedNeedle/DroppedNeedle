@@ -220,8 +220,8 @@ impl SourceContext {
         format!("{}:g{}", self.id, self.generation)
     }
 
-    /// The key activity rows carry, in v2's spelling so migrated rows
-    /// keep working: a compact JSON triple.
+    /// The key activity rows carry: a compact JSON triple. Quirk (v2): the
+    /// spelling is v2's so migrated rows keep working.
     pub fn key(&self) -> String {
         serde_json::to_string(&(&self.mode, &self.id, self.generation))
             .unwrap_or_else(|_| format!("[\"{}\",\"{}\",{}]", self.mode, self.id, self.generation))

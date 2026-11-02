@@ -366,8 +366,8 @@ impl EnrichmentPort for LiveEnrichment {
     }
 }
 
-/// v2's accuracy gate on an exact LRCLIB answer: the same recording
-/// signature, within two seconds, and not instrumental.
+/// Accuracy gate on an exact LRCLIB answer: the same recording signature,
+/// within two seconds, and not instrumental.
 fn lyrics_answer(
     query: &LyricsQuery,
     candidate: droppedneedle_providers::lrclib::LyricsCandidate,

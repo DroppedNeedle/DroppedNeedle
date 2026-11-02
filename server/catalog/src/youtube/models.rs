@@ -1,6 +1,6 @@
-//! Wire shapes for the YouTube link routes. Field names match v2 so the web
-//! client's album bar, track buttons and YouTube library page read them as
-//! before.
+//! Wire shapes for the YouTube link routes. Quirk (v2): the field names are
+//! v2's, so the web client's album bar, track buttons and YouTube library page
+//! read them unchanged.
 
 use serde::{Deserialize, Deserializer, Serialize};
 use utoipa::ToSchema;

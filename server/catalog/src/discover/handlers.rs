@@ -40,7 +40,7 @@ pub struct QueueQuery {
     pub count: Option<i64>,
 }
 
-/// Chart page params shared by the three redesigned routes.
+/// Chart page params shared by the three range routes.
 #[derive(Debug, Deserialize)]
 pub struct ChartQuery {
     /// Range (`this_week` default).
@@ -620,8 +620,7 @@ pub async fn genre_detail(
     .map_err(ApiError::from)
 }
 
-/// One trending-artists page. Range rides the `range` query param (one
-/// route replaces the v2 base plus `/{range_key}` pair).
+/// One trending-artists page. Range rides the `range` query param.
 #[utoipa::path(
     get,
     tag = "discover",
@@ -658,7 +657,7 @@ pub async fn trending_artists(
     .map_err(ApiError::from)
 }
 
-/// One popular-albums page (same range-param redesign).
+/// One popular-albums page, with the range param.
 #[utoipa::path(
     get,
     tag = "discover",
@@ -695,7 +694,7 @@ pub async fn popular_albums(
     .map_err(ApiError::from)
 }
 
-/// One your-top-albums page for the caller (same redesign, per-user).
+/// One your-top-albums page for the caller.
 #[utoipa::path(
     get,
     tag = "discover",

@@ -688,7 +688,7 @@ droppedneedle_kernel::sql! {
     /// The plays, as `h`, through the index over listener, track and time.
     pub(crate) fragment PLAYS = "library_play_history h INDEXED BY idx_play_history_user_track";
     /// The time of the play `h` in whole seconds. `played_at` is ISO text
-    /// whose form varies (v2 rows), so it is read as seconds, never compared
+    /// whose form varies (rows from v2), so it is read as seconds, never compared
     /// as text; one SQLite cannot read gives NULL. `unixepoch` gives what
     /// `CAST(strftime('%s', ...) AS INTEGER)` gives at a fraction of the
     /// cost.

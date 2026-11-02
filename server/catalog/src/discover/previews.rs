@@ -1,5 +1,5 @@
-//! 30-second previews from Deezer, then iTunes (v2 `/track-preview` and
-//! `/album-preview`). Both services are keyless. Preview URLs expire, so
+//! 30-second previews from Deezer, then iTunes, for tracks and albums. Both
+//! services are keyless. Preview URLs expire, so
 //! they are resolved for every request and never cached here.
 
 use crate::discover::{

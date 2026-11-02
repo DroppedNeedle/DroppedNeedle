@@ -1,4 +1,4 @@
-//! The details behind one queue card (v2 `QueueEnrichmentService`):
+//! The details behind one queue card:
 //! enrichment (tags, release date, country, artist bio, listen count, a
 //! video link) and the on-demand video preview.
 //!
@@ -225,7 +225,7 @@ async fn lastfm_fallback(
 
 /// Find a video for one release group: links on the group, then on its
 /// first release, then on that release's first recordings, then a
-/// YouTube search when an API key is set (v2 `preview_queue_item`).
+/// YouTube search when an API key is set.
 pub async fn preview(
     listening: &ListeningData,
     youtube: &LiveYouTube,

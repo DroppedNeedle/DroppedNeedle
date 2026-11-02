@@ -1,5 +1,4 @@
-//! The discover queue deck (v2 `DiscoverQueueManager` and the
-//! `services/discover` queue services).
+//! The discover queue deck.
 //!
 //! Each user has at most one background build at a time. A finished deck
 //! is a row of the page cache, its only copy, so it survives a restart;
@@ -307,7 +306,7 @@ impl Inner {
     }
 
     /// The user's state for the current MusicBrainz source. A source
-    /// switch starts the user over, as v2 did.
+    /// switch starts the user over.
     fn state<'m>(
         states: &'m mut HashMap<String, UserState>,
         user_id: &str,

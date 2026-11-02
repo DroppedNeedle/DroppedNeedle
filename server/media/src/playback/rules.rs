@@ -1,13 +1,11 @@
-//! Pure reporting rules (v2 ports, directly covered by tests) and the
-//! service error.
+//! Pure reporting rules and the service error.
 
 use super::{error::PlaybackError, ports::TrackInfo};
 
-/// Subsonic scrobble ceiling in milliseconds (v2 `240_000`, 4 minutes).
+/// Subsonic scrobble ceiling in milliseconds: 4 minutes.
 pub const SUBSONIC_THRESHOLD_CAP_MS: i64 = 240_000;
 
-/// Normalize a reporting client name (v2 `CompatScrobbleAdapter._norm_client`:
-/// strip, casefold, empty to `None`).
+/// Normalize a reporting client name: strip, casefold, empty to `None`.
 pub fn normalize_client(client: Option<&str>) -> Option<String> {
     let folded = caseless::default_case_fold_str(client.unwrap_or("").trim());
     if folded.is_empty() {
@@ -17,11 +15,10 @@ pub fn normalize_client(client: Option<&str>) -> Option<String> {
     }
 }
 
-/// Native scrobble threshold: the v2 Jellyfin stop rule, exact
-/// (v2's Jellyfin router `_should_scrobble`).
+/// Native scrobble threshold on stop.
 ///
-/// - Omitted position counts (v2 "reference s6" quirk: a client that sends
-///   no position is trusted to have finished).
+/// - Omitted position counts. Quirk (v2): a client that sends no position is
+///   trusted to have finished.
 /// - Past 90% of runtime counts.
 /// - Within the last second counts (catches rounding at the tail).
 /// - Unknown or non-positive runtime never counts on its own.
@@ -40,9 +37,8 @@ pub fn should_scrobble_native(position_ms: Option<i64>, duration_ms: Option<i64>
     position >= runtime - 1_000
 }
 
-/// Subsonic stop threshold in milliseconds (v2
-/// `PlaybackReportService.report`: half the track, capped at 4 minutes;
-/// unknown duration wants a full 4 minutes of play).
+/// Subsonic stop threshold in milliseconds: half the track, capped at 4
+/// minutes; unknown duration wants a full 4 minutes of play.
 pub fn subsonic_scrobble_threshold_ms(duration_ms: i64) -> i64 {
     if duration_ms > 0 {
         (duration_ms / 2).min(SUBSONIC_THRESHOLD_CAP_MS)

@@ -1,5 +1,5 @@
-//! Pure rules ported from v2's artist, album and purchase helpers: release
-//! type filtering, external links, edition ranking, tracklist extraction,
+//! Pure rules for artist, album and purchase data: release type filtering,
+//! external links, edition ranking, tracklist extraction,
 //! and the store table behind "where to buy".
 
 use std::collections::{BTreeMap, HashSet};
@@ -12,18 +12,17 @@ use super::models::{
 };
 
 /// Artists that never headline search or pages: Various Artists, `/v/`
-/// and `[unknown]` (v2 `FILTERED_ARTIST_MBIDS`).
+/// and `[unknown]`.
 pub const FILTERED_ARTIST_MBIDS: [&str; 3] = [
     "89ad4ac3-39f7-470e-963a-56509c546377",
     "41ece0f7-91f6-4c87-982c-3a39c5a02586",
     "125ec42a-7229-4250-afc5-e057484327fe",
 ];
 
-/// Names filtered the same way (v2 `FILTERED_ARTIST_NAMES`).
+/// Names filtered the same way.
 const FILTERED_ARTIST_NAMES: [&str; 3] = ["various artists", "[unknown]", "/v/"];
 
-/// Secondary types hidden when no secondary filter applies (v2's default
-/// exclusions).
+/// Secondary types hidden when no secondary filter applies.
 const DEFAULT_EXCLUDED_SECONDARY: [&str; 7] = [
     "compilation",
     "live",
@@ -49,7 +48,7 @@ pub fn type_set(values: &[String]) -> HashSet<String> {
         .collect()
 }
 
-/// The release-type policy (v2 `should_include_release`). A primary filter
+/// The release-type policy. A primary filter
 /// keeps only listed primary types. A secondary filter keeps release groups
 /// with a listed secondary type, and groups with none only when `studio`
 /// is listed. Without a secondary filter, the default exclusions apply
@@ -99,7 +98,7 @@ pub fn year_of(date: Option<&str>) -> Option<i32> {
 }
 
 /// First credited artist: credited name (canonical name as fallback) and
-/// MBID (v2 `extract_artist_info`).
+/// MBID.
 pub fn first_credit(credit: &[ArtistCreditName]) -> (String, String) {
     match credit.first() {
         Some(entry) => {
@@ -169,7 +168,7 @@ const LINK_TYPE_LABELS: [(&str, &str, &str); 9] = [
     ("facebook", "Facebook", "social"),
 ];
 
-/// Labels shown on artist pages (v2 `_ALLOWED_LABELS`).
+/// Labels shown on artist pages.
 const ALLOWED_LABELS: [&str; 14] = [
     "Spotify",
     "Apple Music",
@@ -188,7 +187,7 @@ const ALLOWED_LABELS: [&str; 14] = [
 ];
 
 /// Known links from an artist's URL relationships, one per label, in
-/// MusicBrainz order (v2 `extract_external_links`).
+/// MusicBrainz order.
 pub fn external_links(relations: &[Relation]) -> Vec<ExternalLink> {
     let mut links = Vec::new();
     let mut seen = HashSet::new();
@@ -227,7 +226,7 @@ pub fn external_links(relations: &[Relation]) -> Vec<ExternalLink> {
 }
 
 /// The Wikidata id and the first Wikipedia-or-Wikidata URL from an
-/// artist's URL relationships (v2 `extract_wiki_info`).
+/// artist's URL relationships.
 pub fn wiki_info(relations: &[Relation]) -> (Option<String>, Option<String>) {
     let mut wikidata_id = None;
     let mut wiki_url = None;
@@ -247,9 +246,9 @@ pub fn wiki_info(relations: &[Relation]) -> (Option<String>, Option<String>) {
     (wikidata_id, wiki_url)
 }
 
-/// A release group's releases ranked the way v2 picks a display edition:
-/// official releases (or all, when none are official), worldwide releases
-/// first, physical packaging last, then by id for stability.
+/// A release group's releases ranked to pick a display edition: official
+/// releases (or all, when none are official), worldwide releases first,
+/// physical packaging last, then by id for stability.
 pub fn ranked_releases(releases: &[MbRelease]) -> Vec<&MbRelease> {
     let official: Vec<&MbRelease> = releases
         .iter()
@@ -296,8 +295,7 @@ pub fn media_track_count(release: &MbRelease) -> u32 {
         .sum()
 }
 
-/// The tracklist of one release and its total length in milliseconds
-/// (v2 `extract_tracks`).
+/// The tracklist of one release and its total length in milliseconds.
 pub fn extract_tracks(release: &MbRelease) -> (Vec<AlbumTrack>, u64) {
     let mut tracks = Vec::new();
     let mut total = 0u64;
@@ -343,7 +341,7 @@ pub fn first_label(release: &MbRelease) -> Option<String> {
 }
 
 /// Strip HTML tags and the trailing "Read more on Last.fm" link from a
-/// Last.fm biography (v2 `clean_lastfm_bio`). Empty text reads as `None`.
+/// Last.fm biography. Empty text reads as `None`.
 pub fn clean_lastfm_bio(text: &str) -> Option<String> {
     let mut plain = String::with_capacity(text.len());
     let mut in_tag = false;
@@ -388,7 +386,7 @@ pub fn service_status(context: &DegradationContext) -> ServiceStatus {
 }
 
 // ---------------------------------------------------------------------------
-// Purchase links (v2 `get_it_service`)
+// Purchase links
 // ---------------------------------------------------------------------------
 
 /// Release relationship types that are purchase or download links.
@@ -441,7 +439,7 @@ pub fn host_of(url: &str) -> String {
     host.split(':').next().unwrap_or("").to_lowercase()
 }
 
-/// Store key for a URL (v2 `_store_for`).
+/// Store key for a URL.
 pub fn store_for(url: &str) -> &'static str {
     let host = host_of(url);
     if host.ends_with("bandcamp.com") {
@@ -524,8 +522,8 @@ pub fn quote_plus(text: &str) -> String {
     encoded
 }
 
-/// The covers route for a release group (v2 `release_group_cover_url`),
-/// or `None` when the id is not an MBID.
+/// The covers route for a release group, or `None` when the id is not an
+/// MBID.
 pub fn release_group_cover_url(release_group_mbid: &str) -> Option<String> {
     droppedneedle_providers::musicbrainz::is_valid_mbid(release_group_mbid).then(|| {
         format!(

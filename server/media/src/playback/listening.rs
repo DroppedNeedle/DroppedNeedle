@@ -260,7 +260,7 @@ impl ListeningStore {
     /// The user's Last.fm signing material, read synchronously: `None`
     /// while Last.fm is switched off, or when the user has no usable
     /// session. The user's own key pair wins; without one, the session was
-    /// granted to the instance pair the admin saved (v2 parity).
+    /// granted to the instance pair the admin saved.
     pub fn lastfm_session_blocking(
         &self,
         user_id: &str,

@@ -68,7 +68,8 @@ const MEMO_TIMING: Timing = Timing {
     retry_ms: 0,
 };
 
-/// Genre artwork schema the frontend expects (v2 default).
+/// Genre artwork schema the frontend expects. Quirk (v2): the tag keeps v2's
+/// name.
 pub const GENRE_ARTWORK_SCHEMA: &str = "v2";
 
 /// A page with no shelves.

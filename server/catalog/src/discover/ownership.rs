@@ -1,6 +1,6 @@
 //! Which chart rows the library already holds.
 //!
-//! Charts and the queue mark rows as owned (v2 `_mark_*_ownership`): an
+//! Charts and the queue mark rows as owned: an
 //! album when an owned library album is identified as its release group,
 //! an artist when an owned library artist carries its MBID. The local id
 //! comes back too, so the frontend can link straight to the library page.

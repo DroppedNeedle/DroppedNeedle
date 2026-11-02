@@ -86,7 +86,7 @@ fn found_hits(items: Vec<RemoteHit>) -> Fetched<RemoteHits> {
 }
 
 impl Catalog {
-    /// Search MusicBrainz artists (v2 `search_artists`): placeholder
+    /// Search MusicBrainz artists: placeholder
     /// artists filtered out, at most `limit` hits.
     pub async fn search_artists_remote(
         &self,
@@ -143,7 +143,7 @@ impl Catalog {
         self.remote_bucket(key, deadline, fetch).await
     }
 
-    /// Search MusicBrainz release groups (v2 `search_albums`), filtered by
+    /// Search MusicBrainz release groups, filtered by
     /// the release-type preferences, at most `limit` hits.
     pub async fn search_albums_remote(
         &self,

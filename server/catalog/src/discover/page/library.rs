@@ -2,8 +2,7 @@
 //! albums, the genre index over the scanned tags, milestone anniversaries
 //! and new releases from followed artists.
 //!
-//! The genre queries are v2's target-catalog ones over the same tables:
-//! a genre counts the distinct artists credited (track, album or album
+//! A genre counts the distinct artists credited (track, album or album
 //! artist) on indexed tracks tagged with it.
 
 use std::collections::HashMap;
@@ -87,8 +86,8 @@ impl LibraryReads {
         &self.db
     }
 
-    /// Up to `limit` identified owned albums, newest changes first (v2
-    /// `get_home_albums`, which Missing Essentials counts per artist).
+    /// Up to `limit` identified owned albums, newest changes first. Missing
+    /// Essentials counts them per artist.
     pub async fn identified_albums(&self, limit: i64) -> Result<Vec<LibraryAlbum>, String> {
         let rows = read_all(
             &self.db,

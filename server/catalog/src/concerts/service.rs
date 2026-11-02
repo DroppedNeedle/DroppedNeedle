@@ -23,7 +23,7 @@ use droppedneedle_kernel::runtime_config::secret_sections::{EventsSettings, Even
 use droppedneedle_providers::RequestPriority;
 use droppedneedle_providers::error::ProviderError;
 
-/// City search length bounds in characters, from v2.
+/// City search length bounds in characters.
 const SEARCH_CHARS: std::ops::RangeInclusive<usize> = 2..=100;
 
 /// Why a concerts call failed.

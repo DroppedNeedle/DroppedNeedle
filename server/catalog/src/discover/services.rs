@@ -37,9 +37,9 @@ pub const ALBUM_PREVIEW_MAX: i64 = 8;
 pub const CACHE_CHECK_MAX_ITEMS: usize = 100;
 /// Max artist/track string length accepted anywhere in discover.
 pub const NAME_MAX_LEN: usize = 200;
-/// Fewest radio plan tracks (v2 plans at least five).
+/// Fewest radio plan tracks.
 pub const RADIO_PLAN_MIN: i64 = 5;
-/// Max radio plan tracks (v2 caps plans at fifty).
+/// Max radio plan tracks.
 pub const RADIO_PLAN_MAX: i64 = 50;
 /// Max seed rows in one radio plan.
 pub const RADIO_ITEMS_MAX: usize = 50;
@@ -289,9 +289,9 @@ fn radio_failure(failure: RadioFailure) -> ServiceError {
     }
 }
 
-/// The queue deck: the user's last built deck when there is one (stale
-/// or not, like v2; the page asks for a fresh build through `generate`),
-/// else a deck built now and not kept.
+/// The queue deck: the user's last built deck when there is one, stale or
+/// not (the page asks for a fresh build through `generate`). Quirk (v2): a
+/// stale deck is served as it is. Otherwise a deck built now and not kept.
 pub async fn queue(
     deps: &DiscoverDeps,
     user_id: &str,
@@ -525,10 +525,9 @@ pub async fn genre_detail(
         .await?)
 }
 
-/// One trending-artists page. This is the range-pair redesign: one route
-/// with `?range=` replaces the v2 base route (four embedded ranges) plus
-/// the `/{range_key}` route. No `range` means this week; the home root
-/// still carries teasers for the overview use case.
+/// One trending-artists page. One route with `?range=` serves every range.
+/// No `range` means this week; the home root still carries teasers for the
+/// overview use case.
 pub async fn trending_artists(
     deps: &DiscoverDeps,
     user_id: &str,
@@ -547,7 +546,7 @@ pub async fn trending_artists(
         .await?)
 }
 
-/// One popular-albums page (same redesign as trending artists).
+/// One popular-albums page, with the range param.
 pub async fn popular_albums(
     deps: &DiscoverDeps,
     user_id: &str,
@@ -566,7 +565,7 @@ pub async fn popular_albums(
         .await?)
 }
 
-/// One your-top-albums page for the user (same redesign, per-user).
+/// One your-top-albums page for the user.
 pub async fn your_top_albums(
     deps: &DiscoverDeps,
     user_id: &str,

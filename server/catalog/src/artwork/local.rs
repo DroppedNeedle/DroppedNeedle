@@ -7,7 +7,7 @@
 //! hash changes. This module looks those rows up, stats the files behind
 //! them and reads the bytes back.
 //! Only `folder` and `embedded` rows are served from here; other sources
-//! (kept from v2) have no local bytes to read.
+//! (including the ones v2 wrote) have no local bytes to read.
 
 use std::fs::File;
 use std::io::Read as _;

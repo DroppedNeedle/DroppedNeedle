@@ -170,15 +170,14 @@ impl LocalCatalog {
     }
 
     /// The artist MBIDs (lowercase) the library holds: owned artists, live
-    /// and credited on an owned album (v2
-    /// `target_provider_artist_relationship`, owned half).
+    /// and credited on an owned album.
     pub async fn owned_artists(&self, mbids: &[String]) -> Result<HashSet<String>, StoreError> {
         self.collect_ids(IdSet::OwnedArtists, mbids).await
     }
 
     /// Whether the artist only appears on the library's tracks (a featured
     /// or guest credit on someone else's album) without an album of their
-    /// own (v2 `target_provider_artist_relationship`, appears half).
+    /// own.
     pub async fn artist_appears(&self, mbid: &str) -> Result<bool, StoreError> {
         let values = vec![Value::Text(mbid.to_ascii_lowercase())];
         let found: Option<i64> = self

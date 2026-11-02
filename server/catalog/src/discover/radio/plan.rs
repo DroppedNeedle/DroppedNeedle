@@ -1,4 +1,4 @@
-//! The pure parts of a radio plan (v2 `RadioPlanService`): pool
+//! The pure parts of a radio plan: pool
 //! cleanup and the interleave that turns a library pool and a provider
 //! pool into one finite, varied station.
 
@@ -47,7 +47,7 @@ pub fn clean_pool(tracks: Vec<RadioPlanTrack>, exclude: &HashSet<String>) -> Vec
 
 /// Interleave the pools (library only, or library and provider about half
 /// and half), with at most four tracks per artist and never three in a
-/// row by one artist (v2 `_mix`).
+/// row by one artist.
 pub fn mix(
     library: Vec<RadioPlanTrack>,
     external: Vec<RadioPlanTrack>,

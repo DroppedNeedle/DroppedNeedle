@@ -24,13 +24,13 @@ use super::adapter::request_id;
 use super::connections::{ConnectionResolver, Reads, ResolveError};
 use super::models::SourceName;
 
-/// Jellyfin startup delay (v2 `warm_jellyfin_mbid_index`).
+/// Jellyfin startup delay.
 pub const JELLYFIN_STARTUP_DELAY: Duration = Duration::from_secs(8);
-/// Navidrome startup delay (v2 `warm_navidrome_mbid_cache`).
+/// Navidrome startup delay.
 pub const NAVIDROME_STARTUP_DELAY: Duration = Duration::from_secs(12);
-/// Plex startup delay (v2 `warm_plex_mbid_cache`).
+/// Plex startup delay.
 pub const PLEX_STARTUP_DELAY: Duration = Duration::from_secs(15);
-/// Rebuild cadence for every source (v2 sleeps `14400`, four hours).
+/// Rebuild cadence for every source: four hours.
 pub const WARMUP_INTERVAL: Duration = Duration::from_secs(14_400);
 /// Spread of each rebuild, so the three passes drift apart.
 pub const WARMUP_JITTER: Duration = Duration::from_secs(300);

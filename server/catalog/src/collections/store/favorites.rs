@@ -2,7 +2,7 @@
 //!
 //! One row per (user, kind, item). A heart in the web UI, a Subsonic star
 //! and a Jellyfin favorite all write the same row, so a favorite shows
-//! everywhere (v2 `FavoritesService`). Library reads join the same table
+//! everywhere. Library reads join the same table
 //! for their favorite flags.
 
 use std::collections::HashMap;

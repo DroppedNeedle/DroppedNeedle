@@ -31,7 +31,8 @@ use super::rules::meets_subsonic_threshold;
 /// Whose account a web-player play is reported under. `false`: only the
 /// listener's own linked account, so nobody's plays land in another
 /// person's history; a listener with no link is not reported. `true`
-/// falls back to the admin's shared account for them, as v2 did.
+/// falls back to the admin's shared account for them. Quirk (v2): v2 sent
+/// them there.
 const SHARED_ACCOUNT_FALLBACK: bool = false;
 
 /// How long reports to a server that did not answer, or under an account

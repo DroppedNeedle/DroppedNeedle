@@ -1,12 +1,12 @@
-//! Downsize oversized local art for delivery (v2
-//! `CoverDeliveryThumbnailer`), and draw an artist's mosaic of covers.
+//! Downsize oversized local art for delivery, and draw an artist's mosaic
+//! of covers.
 //!
 //! Folder images and embedded pictures can be many megapixels; a 250-pixel
 //! grid tile should not ship them whole. A picture larger than the asked
 //! size is decoded, scaled to fit inside it (aspect kept), and encoded in
 //! its own format: JPEG at quality 85, PNG and WebP lossless. Pictures
-//! already small enough, of another format, or over 40 megapixels (v2
-//! `MAX_DELIVERY_IMAGE_PIXELS`, a decompression-bomb guard) are left as
+//! already small enough, of another format, or over 40 megapixels (a
+//! decompression-bomb guard) are left as
 //! they are. Cover Art Archive art comes here only to make a 250 from its
 //! 500 thumbnail. A mosaic decodes its covers under the same limits and is
 //! always JPEG. Callers run this on the blocking pool.
@@ -15,7 +15,7 @@ use std::io::Cursor;
 
 use image::{DynamicImage, ImageFormat, ImageReader, RgbImage, imageops::FilterType};
 
-/// Largest picture decoded for resizing (v2 `MAX_DELIVERY_IMAGE_PIXELS`).
+/// Largest picture decoded for resizing.
 const MAX_PIXELS: u64 = 40_000_000;
 /// JPEG quality for renditions.
 const JPEG_QUALITY: u8 = 85;

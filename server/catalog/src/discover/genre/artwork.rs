@@ -157,7 +157,7 @@ fn artist_key(candidate: &ArtCandidate) -> String {
         .unwrap_or_default()
 }
 
-/// Choose up to four covers for one genre (v2 `GenreArtworkService`).
+/// Choose up to four covers for one genre.
 async fn select(genre: &GenreCandidates) -> GenreArtwork {
     let mut tiers: BTreeMap<i64, Vec<&ArtCandidate>> = BTreeMap::new();
     for candidate in &genre.candidates {

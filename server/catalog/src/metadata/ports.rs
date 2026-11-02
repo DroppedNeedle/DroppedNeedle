@@ -68,7 +68,7 @@ pub struct ExtraPurchaseLink {
     pub kind: Option<super::models::PurchaseKind>,
 }
 
-/// Extra purchase links, the plugins' `purchase_links` capability in v2.
+/// Extra purchase links, the plugins' `purchase_links` capability.
 /// The plugin host plugs in here; until then the source is empty.
 pub trait PurchaseLinkSource: Send + Sync {
     /// Identifies the providers answering right now (their names, sorted).

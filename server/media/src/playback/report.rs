@@ -1,6 +1,6 @@
-//! Counted plays and external forwarding: the session-driven scrobble
-//! (v2 compat-adapter path), the native submit and now-playing forward
-//! (v2 `ScrobbleService` path), and the dedup caches both consult.
+//! Counted plays and external forwarding: the session-driven scrobble,
+//! the native submit and now-playing forward, and the dedup caches both
+//! consult.
 
 use std::{
     collections::HashMap,
@@ -17,26 +17,24 @@ use super::{
     sessions::SessionKey,
 };
 
-/// Scrobble name-dedup window in seconds (v2 `DEDUP_TTL_SECONDS`, 1h).
+/// Scrobble name-dedup window in seconds: one hour.
 pub const DEDUP_TTL_SECS: i64 = 3_600;
-/// Scrobble name-dedup table cap (v2 `DEDUP_MAX_ENTRIES`).
+/// Scrobble name-dedup table cap.
 pub const DEDUP_MAX_ENTRIES: usize = 200;
-/// Tracks shorter than this record locally but never forward
-/// (v2 `MIN_TRACK_DURATION_MS`, 30s).
+/// Tracks shorter than this record locally but never forward (30s).
 pub const MIN_TRACK_DURATION_MS: i64 = 30_000;
-/// Mixed-report dedup window in seconds (v2 `_MIXED_REPORT_DEDUP_SECONDS`).
+/// Mixed-report dedup window in seconds.
 pub const MIXED_REPORT_DEDUP_SECS: i64 = 5;
-/// Mixed-report dedup table cap (v2 `_MIXED_REPORT_DEDUP_MAX`).
+/// Mixed-report dedup table cap.
 pub const MIXED_REPORT_DEDUP_MAX: usize = 1_000;
-/// Scrobble timestamps older than this are rejected
-/// (v2 `max_age`, 14 days).
+/// Scrobble timestamps older than 14 days are rejected.
 pub const SCROBBLE_TIMESTAMP_MAX_AGE_SECS: i64 = 14 * 24 * 60 * 60;
-/// Clock skew tolerated for future scrobble timestamps (v2, 60s).
+/// Clock skew tolerated for future scrobble timestamps (60s).
 pub const SCROBBLE_FUTURE_SKEW_SECS: i64 = 60;
 
-/// Name-and-timestamp scrobble dedup (v2 `ScrobbleService` cache: user-,
-/// artist-, track-, and timestamp-scoped keys, 1h TTL, 200-entry cap with
-/// expired-then-oldest eviction).
+/// Name-and-timestamp scrobble dedup: user-, artist-, track-, and
+/// timestamp-scoped keys, 1h TTL, 200-entry cap with expired-then-oldest
+/// eviction.
 #[derive(Debug, Clone)]
 pub struct ScrobbleDedup {
     inner: Arc<Mutex<HashMap<String, i64>>>,
@@ -50,8 +48,8 @@ impl ScrobbleDedup {
         }
     }
 
-    /// Key for one scrobble (v2 `_dedup_key`: user-scoped so two users
-    /// scrobbling the same track never cross-dedup).
+    /// Key for one scrobble. User-scoped, so two users scrobbling the same
+    /// track never cross-dedup.
     pub fn key(user_id: &str, artist: &str, track: &str, timestamp: i64) -> String {
         format!(
             "{user_id}::{}::{}::{timestamp}",
@@ -72,8 +70,8 @@ impl ScrobbleDedup {
             .unwrap_or(false)
     }
 
-    /// Record a submission, holding the cap (v2 `_record_dedup`: expired
-    /// entries go first, then the oldest survivors).
+    /// Record a submission, holding the cap: expired entries go first, then
+    /// the oldest survivors.
     pub fn record(&self, key: String, now: i64) {
         if let Ok(mut entries) = self.inner.lock() {
             entries.insert(key, now);
@@ -103,10 +101,9 @@ impl Default for ScrobbleDedup {
     }
 }
 
-/// Mixed-report dedup (v2 `CompatScrobbleAdapter._recent_submissions`):
-/// a live stop right after a direct submit for the same track counts once.
-/// Only live submissions (no explicit play time) consult and feed this
-/// cache; backdated plays like Jellyfin stops bypass it (v2 exact).
+/// Mixed-report dedup: a live stop right after a direct submit for the same
+/// track counts once. Only live submissions (no explicit play time) consult
+/// and feed this cache; backdated plays like Jellyfin stops bypass it.
 #[derive(Debug, Clone)]
 pub struct MixedDedup {
     inner: Arc<Mutex<Vec<(SessionKey, i64)>>>,
@@ -120,8 +117,7 @@ impl MixedDedup {
         }
     }
 
-    /// Drop one key (a fresh start clears the track's recent submission,
-    /// v2 `now_playing` branch).
+    /// Drop one key: a fresh start clears the track's recent submission.
     pub fn clear(&self, key: &SessionKey) {
         if let Ok(mut entries) = self.inner.lock() {
             entries.retain(|(known, _)| known != key);
@@ -156,10 +152,10 @@ impl Default for MixedDedup {
     }
 }
 
-/// Count one session play through the v2 `CompatScrobbleAdapter.scrobble`
-/// flow: live submissions (no explicit play time) consult the 5s
-/// mixed-report dedup and feed it once saved; backdated ones like session
-/// stops bypass it; presence clears either way because the track is over.
+/// Count one session play: live submissions (no explicit play time) consult
+/// the 5s mixed-report dedup and feed it once saved; backdated ones like
+/// session stops bypass it; presence clears either way because the track is
+/// over.
 #[allow(clippy::too_many_arguments)]
 pub fn submit_session_scrobble(
     deps: &PlaybackDeps,
@@ -197,9 +193,9 @@ pub fn submit_session_scrobble(
     response
 }
 
-/// Submit one native scrobble (v2 `ScrobbleService.submit_scrobble`:
-/// validate, name-dedup, short-track gate, Navidrome delegation, then the
-/// play recorded with its forwards; accepted once recorded).
+/// Submit one native scrobble: validate, name-dedup, short-track gate,
+/// Navidrome delegation, then the play recorded with its forwards; accepted
+/// once recorded.
 ///
 /// A play from the library may name its track. The play is then filed
 /// under the track that id names now, with that track's recording and
@@ -279,10 +275,9 @@ fn submit_named(
     Ok(submit_counted_play(deps, user_id, &report, track_id, now))
 }
 
-/// Forward one native now-playing report (v2
-/// `ScrobbleService.report_now_playing`: Navidrome delegation first, then
+/// Forward one native now-playing report: Navidrome delegation first, then
 /// per-preference forwarding; accepted is true only when at least one
-/// service took it, and false with no linked account at all).
+/// service took it, and false with no linked account at all.
 pub fn forward_sink_now_playing(
     deps: &PlaybackDeps,
     user_id: &str,
@@ -326,8 +321,8 @@ pub fn forward_sink_now_playing(
     })
 }
 
-/// The services a user's preferences forward to (v2: one task per enabled
-/// toggle, and the sink then needs a linked account).
+/// The services a user's preferences forward to: one target per enabled
+/// toggle. The sink then needs a linked account.
 fn targets(prefs: &ScrobblePrefs) -> ScrobbleTargets {
     ScrobbleTargets {
         lastfm: prefs.scrobble_to_lastfm,
@@ -474,8 +469,8 @@ pub(super) fn forward_now_playing(
     deps.sinks.report_now_playing(user_id, &report, targets);
 }
 
-/// Timestamp bounds (v2 `ScrobbleRequest.__post_init__`: no future beyond
-/// skew, nothing older than 14 days).
+/// Timestamp bounds: no more than the future skew ahead of now, nothing
+/// older than 14 days.
 fn validate_timestamp(timestamp: i64, now: i64) -> Result<(), ServiceError> {
     if timestamp > now + SCROBBLE_FUTURE_SKEW_SECS {
         return Err(ServiceError::InvalidInput(

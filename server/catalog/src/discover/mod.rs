@@ -1,5 +1,5 @@
-//! Discover: discover + queue + radio, and home
-//! shelves with the range-pair redesign.
+//! Discover: discover + queue + radio, and home shelves, with a range param
+//! on the chart routes.
 //!
 //! The handlers call [`services`], which hold each feature's concrete
 //! service: the live providers, the database, and honest "not configured"

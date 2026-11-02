@@ -3,9 +3,8 @@
 //! ListenBrainz links never carry the token: the status shape holds the
 //! username only.
 //!
-//! Clean-slate native shapes for the playback reporting routes. Field names
-//! stay close to the v2 scrobble and now-playing schemas so the web player
-//! keeps its vocabulary; validation
+//! Native shapes for the playback reporting routes. Field names keep the
+//! scrobble and now-playing vocabulary the web player already uses; validation
 //! (timestamp bounds, non-negative durations) lives in the services, not
 //! here, because it needs the clock.
 
@@ -173,7 +172,7 @@ pub struct PlaybackStopResponse {
 // Native scrobble submit / now-playing forward
 // ---------------------------------------------------------------------------
 
-/// One native scrobble, by name (v2 `ScrobbleRequest` fields).
+/// One native scrobble, by name.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ScrobbleSubmitRequest {
     /// Track title.
@@ -204,7 +203,7 @@ pub struct ScrobbleSubmitRequest {
     pub track_id: Option<String>,
 }
 
-/// One native now-playing forward, by name (v2 `NowPlayingRequest` fields).
+/// One native now-playing forward, by name.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ScrobbleNowPlayingRequest {
     /// Track title.
@@ -241,13 +240,13 @@ pub struct ServiceResult {
     pub error: Option<String>,
 }
 
-/// Answer to a scrobble or now-playing forward (v2 `ScrobbleResponse`).
+/// Answer to a scrobble or now-playing forward.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ScrobbleResponse {
     /// Whether the play counted. Submit is true when history recorded it,
     /// even with no linked account, and false when the play could not be
-    /// saved; now-playing is true only when at least one service has it
-    /// (the v2 accepted-quirk, kept).
+    /// saved. Quirk (v2): now-playing is true only when at least one service
+    /// has it.
     pub accepted: bool,
     /// Per-service outcomes, keyed by service name.
     #[serde(default)]
@@ -258,7 +257,7 @@ pub struct ScrobbleResponse {
 // Now-playing presence
 // ---------------------------------------------------------------------------
 
-/// Native heartbeat (v2 `NowPlayingReport` fields).
+/// Native heartbeat.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct NowPlayingHeartbeat {
     /// Track title.
@@ -291,7 +290,7 @@ pub struct NowPlayingHeartbeat {
 /// Query for clearing presence: which device stopped.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NowPlayingDeleteQuery {
-    /// Device slug (`web` default, the v2 spelling).
+    /// Device slug. Defaults to `web`.
     #[serde(default)]
     pub device: Option<String>,
 }

@@ -1,11 +1,10 @@
-//! Building one deck (v2 `DiscoverQueueService.build_queue` and its
-//! strategies).
+//! Building one deck.
 //!
 //! A user with a linked listening service gets a personalised deck: seed
 //! artists from their listening, then candidate pools (similar artists,
 //! their genres, fresh releases, artists they love, deep cuts from their
 //! top artists) picked round-robin, with trending wildcards mixed in at
-//! fixed slots and used to top the deck up. Without a service the deck is
+//! fixed slots and top the deck up. Without a service the deck is
 //! trending albums. Ignored releases never appear, and albums the library
 //! already holds are dropped at the end.
 //!
@@ -133,8 +132,8 @@ pub async fn build_deck(
     };
     let mut owned = owned_of(ctx, &items).await?;
     items.retain(|item| !owned.contains(&item.musicbrainz_id.to_ascii_lowercase()));
-    // v2 stopped here, so owning a few picks shrank the deck. One more
-    // trending pass fills the gap, skipping everything seen so far.
+    // Owned picks would shrink the deck. One more trending pass fills the
+    // gap, skipping everything seen so far.
     if items.len() < count {
         let mut skip = ignored.clone();
         skip.extend(owned.iter().cloned());
@@ -528,7 +527,7 @@ pub(in crate::discover) async fn similar_artist_pools(
     .await
 }
 
-/// Albums tagged with the user's top genres (v2 `discover_by_genres`).
+/// Albums tagged with the user's top genres.
 async fn genre_albums(
     ctx: &BuildContext<'_>,
     username: &str,
@@ -558,8 +557,7 @@ async fn genre_albums(
             if excluded.contains(&group) || !seen.insert(group.clone()) {
                 continue;
             }
-            // v2 put the release-group id in the artist slot here; the
-            // credited artist is the right one.
+            // The artist slot takes the credited artist, not the release group.
             let artist_mbid = album.artist_mbid.clone().unwrap_or_default();
             items.push(card(
                 &group,
@@ -666,8 +664,7 @@ async fn loved_artist_albums(
     items
 }
 
-/// Lesser-played albums by the user's top artists this month (v2
-/// `get_artist_deep_cuts`).
+/// Lesser-played albums by the user's top artists this month.
 async fn deep_cuts(
     ctx: &BuildContext<'_>,
     user_id: &str,
@@ -805,10 +802,9 @@ pub(in crate::discover) async fn lastfm_pools(
     .await
 }
 
-/// Turn Last.fm albums into cards, matching each to its release group
-/// (v2 `lastfm_albums_to_queue_items`). Albums that do not match yet are
-/// left out; v2 passed their ids through as if they were release groups,
-/// which broke covers and ignores for those cards.
+/// Turn Last.fm albums into cards, matching each to its release group.
+/// Albums that do not match yet are left out: their release ids are not
+/// release group ids, and would break covers and ignores for those cards.
 async fn lastfm_cards(
     ctx: &BuildContext<'_>,
     pairs: Vec<(ArtistRow, Vec<LastFmAlbum>)>,

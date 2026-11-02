@@ -1,7 +1,7 @@
 //! Wire shapes for the concerts routes, plus the two enums the feed stores.
 //!
-//! Field names and meanings follow v2's `api/v1/schemas/following.py`, so
-//! the city picker and the events page read the same fields they always did.
+//! Field names and meanings match what the city picker and the events page
+//! already read.
 
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
@@ -115,11 +115,11 @@ pub struct ConcertsResponse {
     pub total: usize,
 }
 
-/// Cities kept per user, from v2.
+/// Cities kept per user.
 pub const MAX_CITIES: usize = 50;
-/// Radius clamp in km, from v2.
+/// Smallest radius in km.
 pub const MIN_RADIUS_KM: f64 = 1.0;
-/// Radius clamp in km, from v2.
+/// Largest radius in km.
 pub const MAX_RADIUS_KM: f64 = 500.0;
 
 /// One saved city. Its coordinates are in range and its radius is

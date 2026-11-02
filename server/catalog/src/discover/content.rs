@@ -3,7 +3,7 @@
 //! Discover is served by the live page ([`LiveDiscover`]): built in the
 //! background, kept in the page cache, refreshed on demand and by the
 //! warm scheduler. Home is served by [`LiveHome`] the same way. Both carry
-//! the integration status read from the settings the way v2 read it, and
+//! the integration status read from the settings, and
 //! genre tiles on both get artwork from the collection.
 
 use std::sync::Arc;
@@ -46,8 +46,8 @@ fn read<S: Listed + Default>(settings: &Live<S>) -> Arc<Plain<S>> {
     })
 }
 
-/// The sections the v2 integration flags are read from, each a live
-/// handle, and acquisition's answer on download sources.
+/// The sections the integration flags are read from, each a live handle,
+/// and acquisition's answer on download sources.
 #[derive(Clone)]
 pub struct IntegrationSettings {
     downloads: Arc<dyn DownloadReadiness>,
@@ -79,7 +79,7 @@ impl IntegrationSettings {
         self.downloads.can_acquire()
     }
 
-    /// The v2 integration flags, read from the current settings.
+    /// The integration flags, read from the current settings.
     pub fn status(&self) -> IntegrationStatus {
         let lb = read(&self.listenbrainz);
         let lastfm = read(&self.lastfm);
@@ -106,7 +106,7 @@ impl IntegrationSettings {
                 && !plex.plex_url.is_empty()
                 && !plex.plex_token.is_empty()
                 && !plex.music_library_ids.is_empty(),
-            // The native library and its scanner are always present (v2).
+            // The native library and its scanner are always present.
             library: true,
             localfiles: true,
         }

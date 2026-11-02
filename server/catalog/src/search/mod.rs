@@ -23,13 +23,13 @@ use std::sync::Arc;
 
 use droppedneedle_kernel::mount::{Routes, routes};
 
-/// Default per-bucket cap for unified search, kept from v2.
+/// Default per-bucket cap for unified search.
 pub const DEFAULT_BUCKET_LIMIT: u32 = 10;
-/// Ceiling for unified-search and drill-down limits, kept from v2.
+/// Ceiling for unified-search and drill-down limits.
 pub const MAX_BUCKET_LIMIT: u32 = 100;
-/// Default typeahead cap, kept from v2.
+/// Default typeahead cap.
 pub const DEFAULT_SUGGEST_LIMIT: u32 = 5;
-/// Ceiling for typeahead limits, kept from v2.
+/// Ceiling for typeahead limits.
 pub const MAX_SUGGEST_LIMIT: u32 = 10;
 
 /// Search dependencies, built once and injected by constructor. The pool

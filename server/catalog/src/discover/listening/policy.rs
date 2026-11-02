@@ -42,7 +42,7 @@ impl SourcePolicy {
     }
 
     /// `asked`, switched to the other service when only that one is set
-    /// up for the user (v2 `resolve_source`).
+    /// up for the user.
     pub fn asked(&self, asked: ListenSource) -> ListenSource {
         let listenbrainz = self.ready(ListenSource::Listenbrainz);
         let lastfm = self.ready(ListenSource::Lastfm);

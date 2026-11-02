@@ -23,12 +23,12 @@ use super::{
 };
 use crate::remotes::adapter::request_id;
 
-/// Session time-to-live in seconds (v2 `_SESSION_TTL_SECONDS`, 2h).
+/// Session time-to-live in seconds (2h).
 pub const SESSION_TTL_SECS: i64 = 2 * 60 * 60;
-/// Session table cap (v2 `max_sessions`, oldest-first eviction).
+/// Session table cap.
 pub const MAX_SESSIONS: usize = 1_000;
 
-/// Session key (v2 `(user_id, client.casefold(), file_id)`).
+/// Session key: the owner, the normalized client and the catalog track.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SessionKey {
     /// Owning user id.
@@ -47,8 +47,8 @@ struct Resolved {
     user_name: String,
 }
 
-/// One bounded playback session (v2 `_PlaybackSession`, plus the start
-/// instant that becomes the scrobble timestamp on the Jellyfin path).
+/// One bounded playback session, plus the start instant that becomes the
+/// scrobble timestamp on the Jellyfin path.
 #[derive(Debug, Clone)]
 struct Session {
     resolved: Resolved,
@@ -66,8 +66,8 @@ struct FinishView {
     started_at: i64,
 }
 
-/// Bounded session table (v2 `PlaybackReportService` storage: 2h TTL,
-/// 1,000-entry cap, oldest-first eviction).
+/// Bounded session table: 2h TTL, 1,000-entry cap, and the least recently
+/// updated sessions evicted first.
 #[derive(Debug, Clone)]
 pub struct SessionStore {
     inner: Arc<Mutex<HashMap<SessionKey, Session>>>,
@@ -98,8 +98,7 @@ impl SessionStore {
         sessions.get(key).map(|session| session.resolved.clone())
     }
 
-    /// Open a session, discarding any previous one: a start always resets
-    /// (v2 `state == "starting"` branch).
+    /// Open a session, discarding any previous one: a start always resets.
     fn begin(&self, key: SessionKey, resolved: Resolved, now: i64) {
         if let Ok(mut sessions) = self.inner.lock() {
             evict_stale_sessions(&mut sessions, now);
@@ -118,8 +117,7 @@ impl SessionStore {
         }
     }
 
-    /// Record a heartbeat. A stopped session that rewinds restarts fresh
-    /// (v2 `previous.stopped and position < previous.position` branch);
+    /// Record a heartbeat. A stopped session that rewinds restarts fresh;
     /// otherwise the heartbeat joins the live session.
     fn heartbeat(&self, key: SessionKey, resolved: Resolved, position_ms: Option<i64>, now: i64) {
         if let Ok(mut sessions) = self.inner.lock() {
@@ -143,8 +141,7 @@ impl SessionStore {
         }
     }
 
-    /// Mark a session stopped, creating it when the player never said
-    /// hello (v2 `previous or fresh` branch on the stop path).
+    /// Mark a session stopped, creating it when the player never said hello.
     fn finish(
         &self,
         key: SessionKey,
@@ -197,14 +194,13 @@ impl Default for SessionStore {
     }
 }
 
-/// Drop sessions idle past the TTL (v2 `_evict`).
+/// Drop sessions idle past the TTL.
 fn evict_stale_sessions(sessions: &mut HashMap<SessionKey, Session>, now: i64) {
     let cutoff = now - SESSION_TTL_SECS;
     sessions.retain(|_, session| session.updated_at >= cutoff);
 }
 
-/// Hold the cap by dropping the stalest sessions first (v2 pops
-/// insertion-oldest; update time orders the same way here).
+/// Hold the cap by dropping the least recently updated sessions first.
 fn enforce_session_cap(sessions: &mut HashMap<SessionKey, Session>) {
     while sessions.len() > MAX_SESSIONS {
         let oldest = sessions
@@ -222,9 +218,7 @@ fn enforce_session_cap(sessions: &mut HashMap<SessionKey, Session>) {
 
 /// Open a playback session. A media-server track is only reported to its
 /// server. A library or YouTube track resolves, resets the session,
-/// forwards now-playing to the sinks and writes presence (v2
-/// `PlaybackReportService` starting branch feeding
-/// `CompatScrobbleAdapter.now_playing`).
+/// forwards now-playing to the sinks and writes presence.
 pub fn start_playback(
     deps: &PlaybackDeps,
     user_id: &str,
@@ -279,8 +273,8 @@ pub fn start_playback(
 
 /// Record a heartbeat. A media-server track is only reported to its
 /// server; a library or YouTube track joins the session and refreshes
-/// presence. Heartbeats never count a play (v2 `progress` quirk: counting
-/// happens on stop).
+/// presence. Quirk (v2): a heartbeat never counts a play, counting happens
+/// on stop.
 pub fn report_progress(
     deps: &PlaybackDeps,
     user_id: &str,
@@ -326,9 +320,8 @@ pub fn report_progress(
 /// Close a session. A media-server track is only reported to its server
 /// and never counts here: the web player's scrobble submit records it. A
 /// library or YouTube track marks the session stopped, always clears
-/// presence (even below threshold, so nothing lingers to the TTL: v2
-/// `_playing_stopped` rule), and counts the play past the native threshold
-/// unless told to skip or already counted (v2 once-only `submitted` flag).
+/// presence (even below threshold, so nothing lingers to the TTL), and counts
+/// the play past the native threshold unless told to skip or already counted.
 pub fn stop_playback(
     deps: &PlaybackDeps,
     user_id: &str,
@@ -408,8 +401,7 @@ fn session_resolved(
     }
 }
 
-/// Resolve the track or 404 (v2 `LibraryViewService.get_track` miss), and
-/// the listener's display name.
+/// Resolve the track or 404, and the listener's display name.
 fn resolve(deps: &PlaybackDeps, user_id: &str, track_id: &str) -> Result<Resolved, ServiceError> {
     let track = deps
         .store

@@ -2696,7 +2696,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** One popular-albums page (same range-param redesign). */
+        /** One popular-albums page, with the range param. */
         get: operations["popular_albums"];
         put?: never;
         post?: never;
@@ -2713,10 +2713,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /**
-         * One trending-artists page. Range rides the `range` query param (one
-         *     route replaces the v2 base plus `/{range_key}` pair).
-         */
+        /** One trending-artists page. Range rides the `range` query param. */
         get: operations["trending_artists"];
         put?: never;
         post?: never;
@@ -2733,7 +2730,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** One your-top-albums page for the caller (same redesign, per-user). */
+        /** One your-top-albums page for the caller. */
         get: operations["your_top_albums"];
         put?: never;
         post?: never;
@@ -7461,8 +7458,8 @@ export interface paths {
         put?: never;
         /**
          * The single enrich-batch method: one POST enriches a mixed batch of
-         *     artists and albums. v2's duplicate GET form is gone; GET on this path
-         *     is a 405. Provider failures degrade into typed notes, never a 5xx.
+         *     artists and albums. GET on this path is a 405. Provider failures degrade
+         *     into typed notes, never a 5xx.
          */
         post: operations["enrich_batch"];
         delete?: never;
@@ -7480,7 +7477,7 @@ export interface paths {
         };
         /**
          * Merged typeahead across buckets. Queries under two characters return
-         *     an empty 200, kept from v2 so typing never errors.
+         *     an empty 200, so typing never errors.
          */
         get: operations["suggest"];
         put?: never;
@@ -16912,7 +16909,7 @@ export interface components {
             /** @description Display name of the listener. */
             user_name: string;
         };
-        /** @description Native heartbeat (v2 `NowPlayingReport` fields). */
+        /** @description Native heartbeat. */
         NowPlayingHeartbeat: {
             /** @description Album title. */
             album_name?: string | null;
@@ -20931,7 +20928,7 @@ export interface components {
          * @enum {string}
          */
         ScanTrigger: "manual" | "automatic" | "subsonic" | "startup_resume" | "policy_apply";
-        /** @description One native now-playing forward, by name (v2 `NowPlayingRequest` fields). */
+        /** @description One native now-playing forward, by name. */
         ScrobbleNowPlayingRequest: {
             /** @description Album title. */
             album_name?: string | null;
@@ -21001,13 +20998,13 @@ export interface components {
              */
             scrobble_to_listenbrainz: boolean | null;
         };
-        /** @description Answer to a scrobble or now-playing forward (v2 `ScrobbleResponse`). */
+        /** @description Answer to a scrobble or now-playing forward. */
         ScrobbleResponse: {
             /**
              * @description Whether the play counted. Submit is true when history recorded it,
              *     even with no linked account, and false when the play could not be
-             *     saved; now-playing is true only when at least one service has it
-             *     (the v2 accepted-quirk, kept).
+             *     saved. Quirk (v2): now-playing is true only when at least one service
+             *     has it.
              */
             accepted: boolean;
             /** @description Per-service outcomes, keyed by service name. */
@@ -21015,7 +21012,7 @@ export interface components {
                 [key: string]: components["schemas"]["ServiceResult"];
             };
         };
-        /** @description One native scrobble, by name (v2 `ScrobbleRequest` fields). */
+        /** @description One native scrobble, by name. */
         ScrobbleSubmitRequest: {
             /** @description Album title. */
             album_name?: string | null;
@@ -21208,9 +21205,9 @@ export interface components {
          */
         SearchKind: "artist" | "album" | "track";
         /**
-         * @description Per-bucket MusicBrainz health for one search call. The values mirror
-         *     v2's `SearchRemoteStatus` exactly so the same notice and stale-time
-         *     logic applies. Library hits show whatever the status says.
+         * @description Per-bucket MusicBrainz health for one search call. The values match what
+         *     the web UI's notice and stale-time logic expects. Library hits show
+         *     whatever the status says.
          * @enum {string}
          */
         SearchRemoteStatus: "ok" | "partial" | "timeout" | "error" | "stale";
@@ -22595,9 +22592,9 @@ export interface components {
         };
         /**
          * @description Per-user year-in-review. `loved_tracks_count` and `total_listens_estimated`
-         *     are both approximations (v2 caveat kept): ListenBrainz caps the loved
-         *     endpoint at 100 rows per request, and the total sums only the returned
-         *     top artists rather than every play.
+         *     are both approximations: ListenBrainz caps the loved endpoint at 100 rows
+         *     per request, and the total sums only the returned top artists rather than
+         *     every play.
          */
         UserWrappedResponse: {
             /** @description Display name. */
@@ -42523,7 +42520,7 @@ export interface operations {
             query: {
                 /**
                  * @description Search text. Queries shorter than two characters return an empty
-                 *     200, kept from v2 so the typeahead never errors mid-typing.
+                 *     200, so the typeahead never errors mid-typing.
                  */
                 q: string;
                 /** @description Max suggestions (1-10, default 5). */

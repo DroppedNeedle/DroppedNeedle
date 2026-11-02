@@ -348,7 +348,7 @@ pub fn service_prompts(
 }
 
 /// The genres Browse by Genre shows when ListenBrainz has none for the
-/// user (v2's default list).
+/// user.
 pub const DEFAULT_GENRES: [&str; 20] = [
     "Rock",
     "Pop",

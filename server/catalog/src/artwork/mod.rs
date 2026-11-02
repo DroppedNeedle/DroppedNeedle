@@ -1,7 +1,7 @@
 //! Cover art: local files first, then the Cover Art Archive, through a
 //! bounded disk cache.
 //!
-//! Resolution follows Navidrome and v2:
+//! Resolution order:
 //!
 //! 1. With `prefer_local_cover_art` on (the default), the album's own art
 //!    wins: the folder image or embedded picture the library scan recorded
@@ -84,7 +84,7 @@ use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
 
 /// Source label for Cover Art Archive bytes; the routes give these the
-/// short cache window, as v2 did.
+/// short cache window.
 pub const CAA_SOURCE: &str = "cover-art-archive";
 /// How long a warm job gives its page's images to start before checking
 /// whether the page is still fetching.
@@ -96,8 +96,7 @@ pub const PAGE_SETTLE: Duration = Duration::from_secs(2);
 pub const WARM_WAIT: Duration = Duration::from_millis(2_500);
 /// How long compat clients (which cannot poll) wait for an archive fetch.
 pub const COMPAT_WAIT: Duration = Duration::from_secs(20);
-/// The archive said it has no cover: ask again after four hours (v2
-/// `COVER_NEGATIVE_TTL_SECONDS`).
+/// The archive said it has no cover: ask again after four hours.
 pub const MISS_TTL_SECS: u64 = 4 * 3600;
 /// A source could not be asked (down, refusing, or resting after
 /// failures): nothing is known about the art, so the routes answer
@@ -114,7 +113,7 @@ pub const ARTIST_FLIGHT_LIMIT: Duration = Duration::from_secs(60);
 /// Local art resizes decoding at once; each can hold a large picture in
 /// memory.
 pub const RESIZE_PERMITS: usize = 3;
-/// Largest archive image accepted (v2 `MAX_DELIVERY_IMAGE_BYTES`).
+/// Largest archive image accepted.
 pub const MAX_REMOTE_BYTES: usize = 20 * 1024 * 1024;
 /// Source label for artist images.
 pub const ARTIST_SOURCE: &str = "artist-image";
@@ -486,8 +485,8 @@ impl ArtworkService {
     }
 
     /// Download and keep TheAudioDB's thumbnail for a release group, which
-    /// stands in when the album has no other cover (v2's AudioDB prewarm,
-    /// at background priority). `None` records that AudioDB has no
+    /// stands in when the album has no other cover, at background priority.
+    /// `None` records that AudioDB has no
     /// thumbnail.
     pub async fn store_audiodb_cover(&self, mbid: &str, url: Option<&str>) {
         let key = audiodb_cover_key(mbid);

@@ -123,7 +123,7 @@ impl LinkStore {
     }
 
     /// Save a full-album video, replacing any saved one. The creation time
-    /// restarts, as in v2; the track videos stay.
+    /// restarts; the track videos stay.
     pub async fn save_link(
         &self,
         album: AlbumRef,

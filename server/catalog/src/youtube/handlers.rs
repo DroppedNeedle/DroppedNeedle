@@ -1,6 +1,6 @@
 //! Thin handlers for the YouTube link routes. Every route is a plain
-//! signed-in-user route: links are shared by everyone on the server, as in
-//! v2. Status mapping lives in `From<LinkError> for ApiError`.
+//! signed-in-user route: links are shared by everyone on the server. Status
+//! mapping lives in `From<LinkError> for ApiError`.
 
 use axum::{
     Json,

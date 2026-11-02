@@ -2,9 +2,8 @@
 //! parameters, and its answers are read by its client.
 //!
 //! ListenBrainz takes a JSON body on `POST /1/submit-listens`; the fields
-//! and the `playing_now`/`single` listen types follow v2's repository and
-//! the submission format at
-//! https://listenbrainz.readthedocs.io/en/latest/users/json.html, read
+//! and the `playing_now`/`single` listen types follow the submission format
+//! at https://listenbrainz.readthedocs.io/en/latest/users/json.html, read
 //! 2026-10-21: `listened_at` is the play's start in unix seconds and is
 //! left out for `playing_now`; `additional_info` takes `duration_ms` and
 //! `recording_mbid` ("A MusicBrainz Recording ID of the recording that was

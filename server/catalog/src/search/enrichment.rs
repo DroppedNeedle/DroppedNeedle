@@ -32,11 +32,10 @@ use crate::discover::listening::shared;
 use crate::metadata::upstream::user_lastfm;
 use droppedneedle_kernel::runtime_config::sections::ListenSource;
 
-/// Per-row lookups in flight at once, kept from v2: one small batch never
-/// presses a provider harder than this.
+/// Per-row lookups in flight at once: one small batch never presses a
+/// provider harder than this.
 const IN_FLIGHT: usize = 2;
-/// Top release groups summed into one artist's ListenBrainz count, kept
-/// from v2.
+/// Top release groups summed into one artist's ListenBrainz count.
 const ARTIST_TOP_RELEASES: usize = 5;
 /// The fixed message of a degraded source.
 const DEGRADED_MESSAGE: &str = "Enrichment temporarily unavailable";

@@ -22,9 +22,9 @@ pub enum SearchKind {
     Track,
 }
 
-/// Per-bucket MusicBrainz health for one search call. The values mirror
-/// v2's `SearchRemoteStatus` exactly so the same notice and stale-time
-/// logic applies. Library hits show whatever the status says.
+/// Per-bucket MusicBrainz health for one search call. The values match what
+/// the web UI's notice and stale-time logic expects. Library hits show
+/// whatever the status says.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum SearchRemoteStatus {
@@ -230,7 +230,7 @@ pub struct BucketQuery {
 #[into_params(parameter_in = Query)]
 pub struct SuggestQuery {
     /// Search text. Queries shorter than two characters return an empty
-    /// 200, kept from v2 so the typeahead never errors mid-typing.
+    /// 200, so the typeahead never errors mid-typing.
     pub q: String,
     /// Max suggestions (1-10, default 5).
     pub limit: Option<u32>,

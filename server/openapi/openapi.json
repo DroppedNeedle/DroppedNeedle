@@ -7901,7 +7901,7 @@
         "tags": [
           "discover"
         ],
-        "summary": "One popular-albums page (same range-param redesign).",
+        "summary": "One popular-albums page, with the range param.",
         "operationId": "popular_albums",
         "parameters": [
           {
@@ -8009,7 +8009,7 @@
         "tags": [
           "discover"
         ],
-        "summary": "One trending-artists page. Range rides the `range` query param (one\nroute replaces the v2 base plus `/{range_key}` pair).",
+        "summary": "One trending-artists page. Range rides the `range` query param.",
         "operationId": "trending_artists",
         "parameters": [
           {
@@ -8117,7 +8117,7 @@
         "tags": [
           "discover"
         ],
-        "summary": "One your-top-albums page for the caller (same redesign, per-user).",
+        "summary": "One your-top-albums page for the caller.",
         "operationId": "your_top_albums",
         "parameters": [
           {
@@ -28205,7 +28205,7 @@
         "tags": [
           "search"
         ],
-        "summary": "The single enrich-batch method: one POST enriches a mixed batch of\nartists and albums. v2's duplicate GET form is gone; GET on this path\nis a 405. Provider failures degrade into typed notes, never a 5xx.",
+        "summary": "The single enrich-batch method: one POST enriches a mixed batch of\nartists and albums. GET on this path is a 405. Provider failures degrade\ninto typed notes, never a 5xx.",
         "operationId": "enrich_batch",
         "requestBody": {
           "content": {
@@ -28263,13 +28263,13 @@
         "tags": [
           "search"
         ],
-        "summary": "Merged typeahead across buckets. Queries under two characters return\nan empty 200, kept from v2 so typing never errors.",
+        "summary": "Merged typeahead across buckets. Queries under two characters return\nan empty 200, so typing never errors.",
         "operationId": "suggest",
         "parameters": [
           {
             "name": "q",
             "in": "query",
-            "description": "Search text. Queries shorter than two characters return an empty\n200, kept from v2 so the typeahead never errors mid-typing.",
+            "description": "Search text. Queries shorter than two characters return an empty\n200, so the typeahead never errors mid-typing.",
             "required": true,
             "schema": {
               "type": "string"
@@ -50940,7 +50940,7 @@
       },
       "NowPlayingHeartbeat": {
         "type": "object",
-        "description": "Native heartbeat (v2 `NowPlayingReport` fields).",
+        "description": "Native heartbeat.",
         "required": [
           "track_name",
           "artist_name"
@@ -60267,7 +60267,7 @@
       },
       "ScrobbleNowPlayingRequest": {
         "type": "object",
-        "description": "One native now-playing forward, by name (v2 `NowPlayingRequest` fields).",
+        "description": "One native now-playing forward, by name.",
         "required": [
           "track_name",
           "artist_name"
@@ -60409,14 +60409,14 @@
       },
       "ScrobbleResponse": {
         "type": "object",
-        "description": "Answer to a scrobble or now-playing forward (v2 `ScrobbleResponse`).",
+        "description": "Answer to a scrobble or now-playing forward.",
         "required": [
           "accepted"
         ],
         "properties": {
           "accepted": {
             "type": "boolean",
-            "description": "Whether the play counted. Submit is true when history recorded it,\neven with no linked account, and false when the play could not be\nsaved; now-playing is true only when at least one service has it\n(the v2 accepted-quirk, kept)."
+            "description": "Whether the play counted. Submit is true when history recorded it,\neven with no linked account, and false when the play could not be\nsaved. Quirk (v2): now-playing is true only when at least one service\nhas it."
           },
           "services": {
             "type": "object",
@@ -60432,7 +60432,7 @@
       },
       "ScrobbleSubmitRequest": {
         "type": "object",
-        "description": "One native scrobble, by name (v2 `ScrobbleRequest` fields).",
+        "description": "One native scrobble, by name.",
         "required": [
           "track_name",
           "artist_name",
@@ -60886,7 +60886,7 @@
       },
       "SearchRemoteStatus": {
         "type": "string",
-        "description": "Per-bucket MusicBrainz health for one search call. The values mirror\nv2's `SearchRemoteStatus` exactly so the same notice and stale-time\nlogic applies. Library hits show whatever the status says.",
+        "description": "Per-bucket MusicBrainz health for one search call. The values match what\nthe web UI's notice and stale-time logic expects. Library hits show\nwhatever the status says.",
         "enum": [
           "ok",
           "partial",
@@ -64249,7 +64249,7 @@
       },
       "UserWrappedResponse": {
         "type": "object",
-        "description": "Per-user year-in-review. `loved_tracks_count` and `total_listens_estimated`\nare both approximations (v2 caveat kept): ListenBrainz caps the loved\nendpoint at 100 rows per request, and the total sums only the returned\ntop artists rather than every play.",
+        "description": "Per-user year-in-review. `loved_tracks_count` and `total_listens_estimated`\nare both approximations: ListenBrainz caps the loved endpoint at 100 rows\nper request, and the total sums only the returned top artists rather than\nevery play.",
         "required": [
           "user_id",
           "display_name",

@@ -14,7 +14,7 @@ use droppedneedle_media::remotes::models::{SourceName, TrackView};
 /// Navidrome or Jellyfin playlist shows on the playlists page and in the
 /// compat clients. Each entry keeps the remote id it streams from (the
 /// Plex part key for Plex, the item id elsewhere); Plex tracks without a
-/// part key cannot play and count as failed (v2).
+/// part key cannot play and count as failed.
 #[derive(Clone)]
 pub struct PlaylistImportSink {
     collections: CollectionsState,

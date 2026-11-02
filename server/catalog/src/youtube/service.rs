@@ -27,7 +27,7 @@ pub const BATCH_TRACKS_MAX: usize = 500;
 /// Longest album id accepted.
 const ALBUM_ID_MAX: usize = 200;
 
-/// Failure reason when a search ran and found nothing, kept from v2.
+/// Failure reason when a search ran and found nothing.
 const NO_VIDEO_FOUND: &str = "No video found";
 
 /// Failure reason when YouTube itself failed for one track.
@@ -169,7 +169,7 @@ impl YouTubeLinks {
             .await?)
     }
 
-    /// Edit a saved link. Blank names keep the saved ones, as in v2.
+    /// Edit a saved link. Blank names keep the saved ones.
     pub async fn update_link(
         &self,
         album_id: &str,

@@ -8,7 +8,7 @@
 
 use serde::Serialize;
 
-/// Payload of one `concerts_new` event, as v2 sent it.
+/// Payload of one `concerts_new` event.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ConcertsNew {
     /// Artist MBID as followed.

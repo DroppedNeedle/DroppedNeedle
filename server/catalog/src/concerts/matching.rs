@@ -1,5 +1,4 @@
-//! The pure rules behind the concerts feed, ported from v2's events watcher
-//! and events service.
+//! The pure rules behind the concerts feed.
 //!
 //! Matching happens when an artist is resolved to a source's own entity,
 //! never per event:
@@ -353,7 +352,7 @@ fn match_city(event: &EventRow, city: &EventCity) -> Option<Option<f64>> {
 }
 
 /// Keep the concerts inside any saved city, each tagged with its nearest
-/// city. A name match counts as nearer than any distance, as in v2.
+/// city. A name match counts as nearer than any distance.
 pub fn filter_to_cities(concerts: Vec<StoredConcert>, cities: &[EventCity]) -> Vec<MatchedConcert> {
     concerts
         .into_iter()

@@ -1,4 +1,4 @@
-//! Radio (v2 `DiscoverRadioService` and `RadioPlanService`) and playlist
+//! Radio and playlist
 //! suggestions.
 //!
 //! Three things share one set of building blocks:
@@ -15,9 +15,8 @@
 //!   plus albums in the playlist artists' genres.
 //!
 //! Similar-artist pools come from ListenBrainz, or from Last.fm while
-//! ListenBrainz popularity is refused upstream (v2
-//! `lb_popularity_degraded`). Every provider read may fail; a failure
-//! shrinks the answer, it never fails the request.
+//! ListenBrainz popularity is refused upstream. Every provider read may fail;
+//! a failure shrinks the answer, it never fails the request.
 
 pub mod library;
 pub mod plan;
@@ -132,7 +131,8 @@ fn resolve_source(asked: Option<ListenSource>, policy: &SourcePolicy) -> ListenS
     }
 }
 
-/// Python's `str.title()`, which v2 used for genre station names.
+/// Title case by Python's `str.title()` rules. Quirk (v2): genre station
+/// names are cased this way.
 fn title_case(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut start = true;
@@ -922,8 +922,7 @@ impl LiveRadio {
         if !genres.is_empty() {
             pools.push(genres);
         }
-        // v2 meant to leave out the playlist's own artists but compared
-        // their ids with album ids, so nothing was ever left out.
+        // Leave out the playlist's own artists, matched on artist id.
         let own: HashSet<&str> = profile.artist_mbids.iter().map(String::as_str).collect();
         for pool in &mut pools {
             pool.retain(|card| !own.contains(card.artist_id.to_ascii_lowercase().as_str()));
@@ -945,8 +944,7 @@ impl LiveRadio {
         Ok(respond(section))
     }
 
-    /// Albums tagged with up to four of the playlist artists' genres (v2
-    /// `discover_by_genres`).
+    /// Albums tagged with up to four of the playlist artists' genres.
     async fn genre_albums(&self, profile: &PlaylistProfile) -> Vec<QueueItemLight> {
         let mut genres: Vec<String> = Vec::new();
         let mut seen = HashSet::new();

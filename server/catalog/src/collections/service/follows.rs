@@ -15,7 +15,7 @@ use crate::collections::state::AutoDownloadState;
 use crate::collections::store::FollowStore;
 use crate::collections::store::follows::{FollowRow, ReleaseFilter, ReleaseRow};
 
-/// Release log window in days: default and largest (v2 `/new-releases/recent`).
+/// Release log window in days: default and largest.
 const RECENT_DAYS_DEFAULT: u32 = 30;
 const RECENT_DAYS_MAX: u32 = 365;
 /// Release log size: default and largest. The page grows by 48 per "load
@@ -39,7 +39,7 @@ fn page_size(value: Option<usize>, default: usize, max: usize) -> Result<usize, 
 pub(crate) fn derive_state(row: &FollowRow) -> AutoDownloadState {
     let verdict = row.approval_state.unwrap_or(AutoDownloadState::None);
     if row.auto_download {
-        // Curators approve themselves and carry no approval row, as in v2.
+        // Curators approve themselves and carry no approval row.
         if row.user_role.is_curator() {
             AutoDownloadState::Approved
         } else {

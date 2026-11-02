@@ -36,9 +36,9 @@ use droppedneedle_kernel::runtime_config::secret_sections::{EventsSettings, Even
 use droppedneedle_providers::RequestPriority;
 use droppedneedle_providers::error::ProviderError;
 
-/// Source resolutions older than this are looked up again, from v2.
+/// Source resolutions older than this are looked up again.
 pub const RESOLUTION_TTL_SECS: f64 = 7.0 * 86_400.0;
-/// Artists swept per run, sized to Ticketmaster's daily quota, from v2.
+/// Artists swept per run, sized to Ticketmaster's daily quota.
 pub const MAX_ARTISTS_PER_SWEEP: usize = 3500;
 /// Past gigs stay this many days so late-night shows do not vanish early.
 const PRUNE_GRACE_DAYS: i64 = 2;
@@ -46,7 +46,7 @@ const PRUNE_GRACE_DAYS: i64 = 2;
 const HORIZON_DAYS: i64 = 365;
 /// Cap on one source's fetch for one artist.
 pub(crate) const FETCH_TIMEOUT: Duration = Duration::from_secs(60);
-/// Pause between artists, from v2.
+/// Pause between artists.
 const INTER_ARTIST_DELAY: Duration = Duration::from_secs(1);
 
 /// What one sweep did.

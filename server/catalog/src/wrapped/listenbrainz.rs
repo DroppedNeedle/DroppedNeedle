@@ -1,11 +1,11 @@
-//! Wrapped from ListenBrainz: each user's year in review, as v2 built it.
+//! Wrapped from ListenBrainz: each user's year in review.
 //!
-//! Ports v2's `WrappedService`. A user's stats come from their linked
+//! A user's stats come from their linked
 //! ListenBrainz account (`this_year` top artists, recordings and release
 //! groups, ten of each, genre activity, and a loved-recordings sample);
 //! the server summary adds up the users who have data and takes the
 //! sitewide top artist and album. A failed leg is logged and left empty
-//! rather than failing the whole payload, as in v2. Users without a link
+//! rather than failing the whole payload. Users without a link
 //! get the empty payload with their display name.
 
 use std::sync::Arc;
@@ -22,11 +22,11 @@ use droppedneedle_media::playback::listening::ListeningStore;
 use droppedneedle_providers::listenbrainz::ListenBrainzClient;
 use droppedneedle_providers::{ProviderError, RequestPriority};
 
-/// Rows per top list (v2 `_TOP_N`).
+/// Rows per top list.
 const TOP_N: u32 = 10;
-/// Stats range (v2 `_RANGE`).
+/// Stats range.
 const RANGE: &str = "this_year";
-/// Users read per page (v2 `_LIST_USERS_PAGE_SIZE`).
+/// Users read per page.
 const USERS_PAGE: u64 = 500;
 /// Loved-recordings sample size; ListenBrainz caps the page at 100.
 const LOVED_SAMPLE: u32 = 100;
@@ -166,7 +166,7 @@ impl ListenBrainzWrapped {
     }
 }
 
-/// One leg's rows; a failed leg is logged and reads as empty (v2).
+/// One leg's rows; a failed leg is logged and reads as empty.
 fn leg<T>(result: Result<Vec<T>, ProviderError>, label: &str, user_id: &str) -> Vec<T> {
     result.unwrap_or_else(|error| {
         tracing::warn!(user_id, %error, "wrapped {label} fetch failed");
@@ -223,8 +223,7 @@ impl WrappedData for ListenBrainzWrapped {
                 })
                 .collect();
             leaderboard.sort_by(|a, b| b.listen_count.cmp(&a.listen_count));
-            // v2 read these through the charts' one-row pages, which skip
-            // artists without an MBID.
+            // Two rows, so a first row without an MBID still leaves a top artist.
             let (artists, groups) = tokio::join!(
                 self.client.sitewide_top_artists(RANGE, 2, 0, PRIORITY),
                 self.client

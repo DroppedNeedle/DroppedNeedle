@@ -1,4 +1,4 @@
-//! One discover page build for one user (v2 `build_discover_data`).
+//! One discover page build for one user.
 //!
 //! A build makes the sections the user has switched on, from the section
 //! list ([`sections`]). It runs in two rounds. The first makes the reads
@@ -795,7 +795,7 @@ impl Builder<'_> {
     }
 
     /// Albums missing from the artists the library holds most of: up to
-    /// three of each one's most played albums (v2 Missing Essentials).
+    /// three of each one's most played albums (the Missing Essentials shelf).
     async fn missing_essentials(
         &self,
         user_id: &str,
@@ -944,8 +944,8 @@ impl Builder<'_> {
 
     /// A Last.fm album chart as a shelf. Last.fm names releases, so each id
     /// is matched to its release group first; rows that do not match in
-    /// time keep their Last.fm art but carry no id (v2 passed the release
-    /// id through as if it were a release group, which broke links).
+    /// time keep their Last.fm art but carry no id: a release id is not a
+    /// release group id, and passing it on would break links.
     async fn lastfm_album_shelf(
         &self,
         albums: &[LastFmChartAlbum],
