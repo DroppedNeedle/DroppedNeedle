@@ -2,12 +2,12 @@
 # Container entrypoint: apply UMASK, run the given command as PUID/PGID.
 #
 # Started as root (the default), it moves the baked droppedneedle user to
-# PUID/PGID and drops to it with gosu. Started with `docker run --user`, it
-# skips user setup and runs the command as that user. Any command works,
-# e.g. `droppedneedle-tool upgrade`, which then writes its files as the
-# same user the server runs as. Only the server (`droppedneedle`) has its
-# /app/config and /app/cache checked and chowned here; the tool reports a
-# folder it cannot write to itself.
+# PUID/PGID, hands the data folders over to it, and drops to it with gosu.
+# Started with `docker run --user`, it skips user setup and runs the command
+# as that user. Any command works, e.g. `droppedneedle-tool upgrade`, which
+# then writes its files as the same user the server runs as. Only the server
+# (`droppedneedle`) has its /app/config and /app/cache checked and chowned
+# here; the tool reports a folder it cannot write to itself.
 set -e
 
 REQUESTED_UMASK=${UMASK:-027}
@@ -61,19 +61,37 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 # Remap only when the baked ids differ: usermod and groupmod can stall for
-# minutes on some storage backends.
+# minutes on some storage backends. The baked home is /nonexistent, so
+# usermod edits the account files and walks no folder.
 if [ "$(id -g droppedneedle)" != "$PGID" ]; then
     groupmod -o -g "$PGID" droppedneedle 2>/dev/null \
         || echo "[init] WARNING: Could not set the droppedneedle group to GID=$PGID."
 fi
-if [ "$(id -u droppedneedle)" != "$PUID" ]; then
-    usermod -o -u "$PUID" droppedneedle 2>/dev/null \
+OLD_UID=$(id -u droppedneedle)
+if [ "$OLD_UID" != "$PUID" ]; then
+    usermod -o -d /nonexistent -u "$PUID" droppedneedle 2>/dev/null \
         || echo "[init] WARNING: Could not set the droppedneedle user to UID=$PUID."
 fi
 TARGET_UID=$(id -u droppedneedle)
 TARGET_GID=$(id -g droppedneedle)
 if [ "$TARGET_UID" != "$PUID" ] || [ "$TARGET_GID" != "$PGID" ]; then
     echo "[init] WARNING: Requested $PUID:$PGID but running as $TARGET_UID:$TARGET_GID."
+fi
+
+# After a uid change, the files the old uid owns in the four folders the server
+# writes move to the new one. A folder the new uid already owns was handed over
+# on an earlier start and is not walked, so a recreate costs nothing. -depth
+# moves the folder itself last, so a stopped hand-over runs again. find does not
+# follow links, and chown -h changes a link itself, never its target. A folder
+# that refuses the change gets a warning, not a stop; the write check for config
+# and cache below still decides whether the start can go on.
+if [ "$OLD_UID" != "$TARGET_UID" ]; then
+    for dir in /app/config /app/cache /app/plugins /app/imports; do
+        [ "$(stat -c %u "$dir" 2>/dev/null)" = "$TARGET_UID" ] && continue
+        if ! find "$dir" -depth -user "$OLD_UID" -exec chown -h "$TARGET_UID:$TARGET_GID" {} + 2>/dev/null; then
+            echo "[init] WARNING: Could not hand $dir over to uid=$TARGET_UID (the mount may not support ownership changes)."
+        fi
+    done
 fi
 
 if is_server "$1"; then

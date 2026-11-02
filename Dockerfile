@@ -80,9 +80,11 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 # Bake the user at the entrypoint's default PUID/PGID (1000) so the common
-# deployment needs no runtime usermod/groupmod remap.
+# deployment needs no runtime usermod/groupmod remap. The home is /nonexistent,
+# not /app: a remap then edits only the account files, and entrypoint.sh hands
+# the data folders over itself.
 RUN groupadd -r -g 1000 droppedneedle \
-    && useradd -r -u 1000 -g droppedneedle -d /app -s /sbin/nologin droppedneedle
+    && useradd -r -u 1000 -g droppedneedle -d /nonexistent -s /sbin/nologin droppedneedle
 
 COPY --from=builder /out/droppedneedle /usr/local/bin/droppedneedle
 COPY --from=builder /out/droppedneedle-tool /usr/local/bin/droppedneedle-tool
