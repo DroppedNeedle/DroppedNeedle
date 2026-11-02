@@ -104,7 +104,7 @@ const SEED: &str = "\
      ('user-1', 'Listener One', 0), ('user-hidden', 'Hidden', 0), \
      ('user-offline', 'Offline', 0), ('user-broken', 'Broken', 0); \
     INSERT INTO user_listening_prefs (user_id, scrobble_to_lastfm, scrobble_to_listenbrainz, \
-     navidrome_handles_external_scrobbles, updated_at) VALUES ('user-1', 1, 1, 0, ''); \
+     navidrome_handles_external_scrobbles, updated_at) VALUES ('user-1', 1, 1, 0, 0); \
     INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) \
      VALUES ('artist-1', 'Portishead', 'portishead', 'group', 0, 0); \
     INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
@@ -230,7 +230,7 @@ impl Rig {
             .execute(
                 "INSERT INTO user_listening_prefs (user_id, scrobble_to_lastfm, \
                  scrobble_to_listenbrainz, navidrome_handles_external_scrobbles, updated_at) \
-                 VALUES (?1, ?2, ?3, ?4, '') ON CONFLICT (user_id) DO UPDATE SET \
+                 VALUES (?1, ?2, ?3, ?4, 0) ON CONFLICT (user_id) DO UPDATE SET \
                  scrobble_to_lastfm = ?2, scrobble_to_listenbrainz = ?3, \
                  navidrome_handles_external_scrobbles = ?4",
                 rusqlite::params![user_id, lastfm, listenbrainz, navidrome],
@@ -243,23 +243,26 @@ impl Rig {
         self.sql()
             .execute(
                 "INSERT INTO user_listening_prefs (user_id, now_playing_visibility, updated_at) \
-                 VALUES (?1, ?2, '') ON CONFLICT (user_id) DO UPDATE SET \
+                 VALUES (?1, ?2, 0) ON CONFLICT (user_id) DO UPDATE SET \
                  now_playing_visibility = ?2",
                 [user_id, visibility],
             )
             .expect("visibility saved");
     }
 
-    /// Store a visibility that does not read as text, so the listener's
-    /// visibility read fails.
+    /// Store a visibility that does not read as text (its bytes are not
+    /// UTF-8, past the column's CHECK), so the listener's visibility read
+    /// fails.
     fn break_visibility(&self, user_id: &str) {
-        self.sql()
-            .execute(
-                "INSERT INTO user_listening_prefs (user_id, now_playing_visibility, updated_at) \
-                 VALUES (?1, X'00', '')",
-                [user_id],
-            )
-            .expect("broken visibility stored");
+        let sql = self.sql();
+        sql.execute_batch("PRAGMA ignore_check_constraints = ON")
+            .expect("checks off");
+        sql.execute(
+            "INSERT INTO user_listening_prefs (user_id, now_playing_visibility, updated_at) \
+             VALUES (?1, CAST(X'FF' AS TEXT), 0)",
+            [user_id],
+        )
+        .expect("broken visibility stored");
     }
 
     /// Link ListenBrainz for the listener with `token`, sealed the way the
@@ -972,7 +975,7 @@ async fn listener(app: &TestApp, name: &str, token: &str) -> crate::common::Logi
     .await;
     app.seed_with(
         "INSERT INTO user_listening_prefs (user_id, scrobble_to_lastfm, scrobble_to_listenbrainz, \
-         navidrome_handles_external_scrobbles, updated_at) VALUES (?1, 0, 1, 0, '') \
+         navidrome_handles_external_scrobbles, updated_at) VALUES (?1, 0, 1, 0, 0) \
          ON CONFLICT (user_id) DO UPDATE SET scrobble_to_listenbrainz = 1",
         [&login.user_id],
     )
@@ -1132,7 +1135,7 @@ async fn an_unreadable_last_fm_section_holds_the_scrobble() {
     .await;
     app.seed_with(
         "INSERT INTO user_listening_prefs (user_id, scrobble_to_lastfm, scrobble_to_listenbrainz, \
-         navidrome_handles_external_scrobbles, updated_at) VALUES (?1, 1, 0, 0, '') \
+         navidrome_handles_external_scrobbles, updated_at) VALUES (?1, 1, 0, 0, 0) \
          ON CONFLICT (user_id) DO UPDATE SET scrobble_to_lastfm = 1",
         [&user.user_id],
     )
@@ -1238,7 +1241,7 @@ async fn a_last_fm_scrobble_is_a_signed_form_with_the_session_key() {
     .await;
     app.seed_with(
         "INSERT INTO user_listening_prefs (user_id, scrobble_to_lastfm, scrobble_to_listenbrainz, \
-         navidrome_handles_external_scrobbles, updated_at) VALUES (?1, 1, 0, 0, '') \
+         navidrome_handles_external_scrobbles, updated_at) VALUES (?1, 1, 0, 0, 0) \
          ON CONFLICT (user_id) DO UPDATE SET scrobble_to_lastfm = 1",
         [&user.user_id],
     )

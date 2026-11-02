@@ -74,6 +74,7 @@ auth_password_recovery_codes
 auth_providers
 auth_tokens
 auth_users
+user_connections
 
 [plugins]
 plugin_library_writes
@@ -91,9 +92,8 @@ compat_user_settings
 
 [media]
 library_play_history
-user_connections
+media_navidrome_folder_preferences
 user_listening_prefs
-user_navidrome_folder_preferences
 
 [tool]
 import_pending_links

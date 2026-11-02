@@ -12141,3 +12141,334 @@ async fn remaining_catalog_tables_reach_the_conventions_on_upgrade() {
         assert_eq!(number(&pool, &sql).await, left, "{table}");
     }
 }
+
+/// Migration 0124: bookmarks, saved queues, listening preferences and Navidrome
+/// folder choices reach their final tables. Through the production runner, from
+/// the database before it: every row is carried with its converted times, one
+/// holding a bad value stays with the default or 0, an orphan stays an orphan, a
+/// bookmark still names no track by key, and nothing else in the schema moves.
+#[tokio::test]
+async fn compat_and_media_tables_reach_the_conventions_on_upgrade() {
+    type SchemaRow = (String, String, String, Option<String>);
+    async fn other_schema(pool: &SqlitePool) -> Vec<SchemaRow> {
+        sqlx::query_as(
+            "SELECT type, name, tbl_name, sql FROM sqlite_schema \
+             WHERE name NOT LIKE 'sqlite_%' AND tbl_name NOT IN ('compat_bookmarks', \
+             'compat_play_queues', 'compat_play_queue_items', 'user_listening_prefs', \
+             'user_navidrome_folder_preferences', 'media_navidrome_folder_preferences') \
+             ORDER BY type, name",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    }
+    async fn number(pool: &SqlitePool, sql: &str) -> i64 {
+        sqlx::query_scalar(sql).fetch_one(pool).await.unwrap()
+    }
+    async fn orphans(pool: &SqlitePool) -> Vec<(String, i64, String)> {
+        sqlx::query_as(
+            "SELECT \"table\", rowid, parent FROM pragma_foreign_key_check ORDER BY 1, 2, 3",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    }
+
+    let dir = droppedneedle_kernel::db::scratch::ScratchDir::new("compat-0124").unwrap();
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(
+            sqlx::sqlite::SqliteConnectOptions::new()
+                .filename(dir.join("library.db"))
+                .create_if_missing(true)
+                .foreign_keys(true)
+                .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal),
+        )
+        .await
+        .unwrap();
+    run_migrations(&pool, &migrator_through(123)).await.unwrap();
+    sqlx::raw_sql(
+        "INSERT INTO auth_users (id, display_name, role, created_at) \
+             VALUES ('u1', 'U', 'user', 1), ('u2', 'V', 'user', 1), ('u3', 'W', 'user', 1); \
+         INSERT INTO compat_bookmarks (rowid, user_id, file_id, position_ms, comment, \
+             created_at, changed_at) VALUES \
+             (7, 'u1', 'no-such-track', 1000, 'note', 1700000000.125, 1700000001), \
+             (8, 'u2', 't2', 2, '', '2024-01-01T00:00:00.5+00:00', 'unreadable'); \
+         INSERT INTO compat_play_queues (rowid, user_id, current_index, position_ms, updated_at, \
+             changed_by_client) VALUES \
+             (3, 'u1', 1, 500, 1700000002.5, 'Feishin'), \
+             (4, 'u2', NULL, 0, 'never', ''); \
+         INSERT INTO compat_play_queue_items (rowid, user_id, item_index, file_id) VALUES \
+             (5, 'u1', 0, 'no-such-track'), (6, 'u1', 1, 't2'); \
+         INSERT INTO user_listening_prefs (rowid, user_id, scrobble_to_lastfm, \
+             scrobble_to_listenbrainz, navidrome_handles_external_scrobbles, \
+             primary_music_source, now_playing_visibility, updated_at, \
+             auto_request_personal_mix) VALUES \
+             (9, 'u1', 1, 0, 1, 'lastfm', 'track_hidden', '2024-01-01T00:00:00.25+00:00', 1), \
+             (10, 'u2', 7, 0, 0, 'spotify', 'invisible', 'never', 0), \
+             (13, 'u3', 0, 0, 1, 'lastfm', X'00', '2024-01-01T00:00:00Z', 0); \
+         INSERT INTO user_navidrome_folder_preferences (rowid, user_id, mode, selected_ids_json, \
+             server_identity, updated_at) VALUES \
+             (11, 'u1', 'selected', '[\"a\"]', 'srv', 1700000003.75), \
+             (12, 'u2', 'all', '[]', NULL, 'nope'); \
+         PRAGMA foreign_keys = OFF; \
+         INSERT INTO compat_bookmarks (rowid, user_id, file_id, position_ms, created_at, \
+             changed_at) VALUES (20, 'ghost', 'f', 0, 1, 1); \
+         INSERT INTO compat_play_queues (rowid, user_id, updated_at) VALUES (21, 'ghost', 1); \
+         INSERT INTO compat_play_queue_items (rowid, user_id, item_index, file_id) \
+             VALUES (22, 'nobody', 0, 'f'); \
+         INSERT INTO user_listening_prefs (rowid, user_id, updated_at) VALUES (23, 'ghost', ''); \
+         INSERT INTO user_navidrome_folder_preferences (rowid, user_id, mode, updated_at) \
+             VALUES (24, 'ghost', 'all', 1); \
+         PRAGMA foreign_keys = ON;",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let schema_before = other_schema(&pool).await;
+
+    run_migrations(&pool, &migrator_through(124)).await.unwrap();
+
+    assert_eq!(other_schema(&pool).await, schema_before);
+    assert_eq!(
+        number(&pool, "SELECT foreign_keys FROM pragma_foreign_keys").await,
+        1
+    );
+    assert_eq!(
+        number(
+            &pool,
+            "SELECT COUNT(*) FROM sqlite_schema WHERE name IN ('compat_bookmarks_new', \
+             'compat_play_queues_new', 'compat_play_queue_items_new', \
+             'user_listening_prefs_new', 'user_navidrome_folder_preferences')"
+        )
+        .await,
+        0
+    );
+    for (table, parent) in [
+        ("compat_bookmarks", "auth_users"),
+        ("compat_play_queues", "auth_users"),
+        ("compat_play_queue_items", "compat_play_queues"),
+        ("user_listening_prefs", "auth_users"),
+        ("media_navidrome_folder_preferences", "auth_users"),
+    ] {
+        let sql = format!("SELECT strict FROM pragma_table_list WHERE name = '{table}'");
+        assert_eq!(number(&pool, &sql).await, 1, "{table} is STRICT");
+        let sql = format!("SELECT \"table\", on_delete FROM pragma_foreign_key_list('{table}')");
+        let keys: Vec<(String, String)> = sqlx::query_as(&sql).fetch_all(&pool).await.unwrap();
+        assert_eq!(
+            keys,
+            [(parent.to_owned(), "CASCADE".to_owned())],
+            "{table} has this one key"
+        );
+    }
+
+    // The orphans are the same rows, under the renamed table's new name.
+    assert_eq!(
+        orphans(&pool).await,
+        [
+            ("compat_bookmarks".to_owned(), 20, "auth_users".to_owned()),
+            (
+                "compat_play_queue_items".to_owned(),
+                22,
+                "compat_play_queues".to_owned()
+            ),
+            ("compat_play_queues".to_owned(), 21, "auth_users".to_owned()),
+            (
+                "media_navidrome_folder_preferences".to_owned(),
+                24,
+                "auth_users".to_owned()
+            ),
+            (
+                "user_listening_prefs".to_owned(),
+                23,
+                "auth_users".to_owned()
+            ),
+        ]
+    );
+
+    #[allow(clippy::type_complexity)]
+    let bookmarks: Vec<(i64, String, String, i64, String, i64, i64)> = sqlx::query_as(
+        "SELECT rowid, user_id, file_id, position_ms, comment, created_at, changed_at \
+         FROM compat_bookmarks ORDER BY rowid",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        bookmarks,
+        [
+            (
+                7,
+                "u1".to_owned(),
+                "no-such-track".to_owned(),
+                1000,
+                "note".to_owned(),
+                1_700_000_000_125,
+                1_700_000_001_000
+            ),
+            (
+                8,
+                "u2".to_owned(),
+                "t2".to_owned(),
+                2,
+                String::new(),
+                1_704_067_200_500,
+                0
+            ),
+            (
+                20,
+                "ghost".to_owned(),
+                "f".to_owned(),
+                0,
+                String::new(),
+                1_000,
+                1_000
+            ),
+        ]
+    );
+    let queues: Vec<(i64, String, Option<i64>, i64, i64, String)> = sqlx::query_as(
+        "SELECT rowid, user_id, current_index, position_ms, updated_at, changed_by_client \
+         FROM compat_play_queues ORDER BY rowid",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        queues,
+        [
+            (
+                3,
+                "u1".to_owned(),
+                Some(1),
+                500,
+                1_700_000_002_500,
+                "Feishin".to_owned()
+            ),
+            (4, "u2".to_owned(), None, 0, 0, String::new()),
+            (21, "ghost".to_owned(), None, 0, 1_000, String::new()),
+        ]
+    );
+    let items: Vec<(i64, String, i64, String)> = sqlx::query_as(
+        "SELECT rowid, user_id, item_index, file_id FROM compat_play_queue_items ORDER BY rowid",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        items,
+        [
+            (5, "u1".to_owned(), 0, "no-such-track".to_owned()),
+            (6, "u1".to_owned(), 1, "t2".to_owned()),
+            (22, "nobody".to_owned(), 0, "f".to_owned()),
+        ]
+    );
+    #[allow(clippy::type_complexity)]
+    let prefs: Vec<(i64, i64, i64, i64, String, String, i64, i64)> = sqlx::query_as(
+        "SELECT rowid, scrobble_to_lastfm, scrobble_to_listenbrainz, \
+         navidrome_handles_external_scrobbles, primary_music_source, now_playing_visibility, \
+         updated_at, auto_request_personal_mix FROM user_listening_prefs ORDER BY rowid",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        prefs,
+        [
+            (
+                9,
+                1,
+                0,
+                1,
+                "lastfm".to_owned(),
+                "track_hidden".to_owned(),
+                1_704_067_200_250,
+                1
+            ),
+            (
+                10,
+                1,
+                0,
+                0,
+                "listenbrainz".to_owned(),
+                "full".to_owned(),
+                0,
+                0
+            ),
+            (
+                13,
+                0,
+                0,
+                1,
+                "lastfm".to_owned(),
+                "track_hidden".to_owned(),
+                1_704_067_200_000,
+                0
+            ),
+            (
+                23,
+                0,
+                0,
+                1,
+                "listenbrainz".to_owned(),
+                "full".to_owned(),
+                0,
+                0
+            ),
+        ]
+    );
+    let folders: Vec<(i64, String, String, Option<String>, i64)> = sqlx::query_as(
+        "SELECT rowid, mode, selected_ids_json, server_identity, updated_at \
+         FROM media_navidrome_folder_preferences ORDER BY rowid",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        folders,
+        [
+            (
+                11,
+                "selected".to_owned(),
+                "[\"a\"]".to_owned(),
+                Some("srv".to_owned()),
+                1_700_000_003_750
+            ),
+            (12, "all".to_owned(), "[]".to_owned(), None, 0),
+            (24, "all".to_owned(), "[]".to_owned(), None, 1_000),
+        ]
+    );
+
+    // The checks hold from now on.
+    for refused in [
+        "UPDATE user_listening_prefs SET primary_music_source = 'spotify' WHERE user_id = 'u1'",
+        "UPDATE user_listening_prefs SET now_playing_visibility = 'hidden' WHERE user_id = 'u1'",
+        "UPDATE media_navidrome_folder_preferences SET mode = 'some' WHERE user_id = 'u1'",
+        "UPDATE compat_bookmarks SET changed_at = 1.5 WHERE user_id = 'u1'",
+    ] {
+        assert!(
+            sqlx::query(refused).execute(&pool).await.is_err(),
+            "{refused}"
+        );
+    }
+
+    // A user's rows go with the user, the queue's items with the queue, and
+    // only theirs.
+    sqlx::query("DELETE FROM auth_users WHERE id = 'u1'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    for (table, left) in [
+        ("compat_bookmarks", 2),
+        ("compat_play_queues", 2),
+        ("compat_play_queue_items", 1),
+        ("user_listening_prefs", 3),
+        ("media_navidrome_folder_preferences", 2),
+    ] {
+        let sql = format!("SELECT COUNT(*) FROM {table}");
+        assert_eq!(number(&pool, &sql).await, left, "{table}");
+    }
+    assert_eq!(
+        number(&pool, "SELECT COUNT(*) FROM db_planner_stats").await,
+        0
+    );
+}

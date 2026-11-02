@@ -17,8 +17,8 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
+use droppedneedle_auth::sqlite::UserConnections;
 use droppedneedle_auth::sqlite::parse_lastfm;
-use droppedneedle_auth::times::to_iso;
 use droppedneedle_auth::users::stores::{LastFmKeys, LastFmSwitch};
 use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::db::{Db, DbError, Lane};
@@ -175,6 +175,7 @@ pub struct ListeningStore {
     db: Db,
     crypto: Arc<Crypto>,
     clock: Arc<dyn Clock>,
+    links: UserConnections,
 }
 
 impl std::fmt::Debug for ListeningStore {
@@ -187,7 +188,13 @@ impl ListeningStore {
     /// Preferences and links on `db`, sealed under `crypto`, saves dated
     /// by `clock`.
     pub fn new(db: Db, crypto: Arc<Crypto>, clock: Arc<dyn Clock>) -> Self {
-        Self { db, crypto, clock }
+        let links = UserConnections::new(db.clone(), clock.clone());
+        Self {
+            db,
+            crypto,
+            clock,
+            links,
+        }
     }
 
     /// One user's preferences; the defaults when they saved none or the
@@ -215,7 +222,7 @@ impl ListeningStore {
     pub async fn update_prefs(&self, user_id: &str, patch: &PrefsPatch) -> Result<(), DbError> {
         let user = user_id.to_owned();
         let patch = patch.clone();
-        let now = to_iso(self.clock.now_unix());
+        let now = self.clock.now_ms();
         self.db
             .write(Lane::Foreground, "listening-prefs-save", move |tx| {
                 let mut prefs = read_prefs(tx, &user)?;
@@ -344,18 +351,8 @@ impl ListeningStore {
         username: &str,
         token: &str,
     ) -> Result<(), LinkSaveError> {
-        let user = user_id.to_owned();
         let sealed = seal_link(&self.crypto, username, token)?;
-        let now = to_iso(self.clock.now_unix());
-        self.db
-            .write(Lane::Foreground, "listening-link-save", move |tx| {
-                tx.execute(
-                    sql::SAVE_CONNECTION.text(),
-                    rusqlite::params![user, LISTENBRAINZ, sealed, now],
-                )?;
-                Ok::<_, DbError>(())
-            })
-            .await?;
+        self.links.save(user_id, LISTENBRAINZ, &sealed).await?;
         Ok(())
     }
 
@@ -382,15 +379,7 @@ impl ListeningStore {
 
     /// Remove one user's ListenBrainz link. False means there was none.
     pub async fn delete_listenbrainz(&self, user_id: &str) -> Result<bool, DbError> {
-        let user = user_id.to_owned();
-        self.db
-            .write(Lane::Foreground, "listening-link-delete", move |tx| {
-                Ok::<_, DbError>(
-                    tx.execute(sql::DELETE_CONNECTION.text(), [user.as_str(), LISTENBRAINZ])?,
-                )
-            })
-            .await
-            .map(|changed| changed > 0)
+        self.links.delete(user_id, LISTENBRAINZ).await
     }
 
     /// The stored ListenBrainz document, or `None` after logging a failed

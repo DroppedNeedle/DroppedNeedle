@@ -1099,7 +1099,7 @@ impl SubsonicStore {
                 current_index,
                 position_ms,
                 changed_by_client,
-                self.now(),
+                self.users.clock.now_ms(),
             )
             .await?)
     }
@@ -1119,7 +1119,13 @@ impl SubsonicStore {
     ) -> Result<(), CompatError> {
         Ok(self
             .queues
-            .upsert_bookmark(user_id, file_id, position_ms, comment, self.now())
+            .upsert_bookmark(
+                user_id,
+                file_id,
+                position_ms,
+                comment,
+                self.users.clock.now_ms(),
+            )
             .await?)
     }
 

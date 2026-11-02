@@ -13,21 +13,9 @@ droppedneedle_kernel::sql! {
              FROM spotify_auth_requests WHERE state = ?1";
     /// Drop state `?1`.
     pub(super) DELETE_STATE = "DELETE FROM spotify_auth_requests WHERE state = ?1";
-    /// Insert or replace user `?1`'s link to service `?2`, sealed as `?3`.
-    pub(super) UPSERT_LINK = "INSERT INTO user_connections \
-             (user_id, service, connection_data, enabled, created_at, updated_at) \
-             VALUES (?1, ?2, ?3, 1, ?4, ?4) \
-             ON CONFLICT (user_id, service) DO UPDATE SET \
-             connection_data = excluded.connection_data, enabled = 1, \
-             updated_at = excluded.updated_at";
-    /// Replace the sealed document of user `?1`'s link to service `?2`.
-    pub(super) UPDATE_LINK = "UPDATE user_connections SET connection_data = ?3, \
-             updated_at = ?4 WHERE user_id = ?1 AND service = ?2";
     /// The sealed document of user `?1`'s enabled link to service `?2`.
     pub(super) LINK_DOCUMENT = "SELECT connection_data FROM user_connections \
              WHERE user_id = ?1 AND service = ?2 AND enabled = 1";
-    /// Drop user `?1`'s link to service `?2`.
-    pub(super) DELETE_LINK = "DELETE FROM user_connections WHERE user_id = ?1 AND service = ?2";
     /// User `?1`'s playlists imported from Spotify, as `(source_ref, id)`.
     pub(super) SPOTIFY_SOURCE_REFS = "SELECT source_ref, id FROM catalog_playlists \
              WHERE user_id = ?1 AND source_ref LIKE 'spotify:%'";

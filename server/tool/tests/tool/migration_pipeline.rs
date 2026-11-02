@@ -444,7 +444,7 @@ async fn user_data_carries_resumes_and_repeats_as_noop() {
         ("user_listening_prefs", 1),
         ("personal_mix_approvals", 1),
         ("user_section_prefs", 1),
-        ("user_navidrome_folder_preferences", 1),
+        ("media_navidrome_folder_preferences", 1),
         ("catalog_new_release_seen_marks", 1),
         ("compat_play_queues", 1),
         ("compat_play_queue_items", 2),
@@ -978,6 +978,60 @@ async fn stray_whole_numbers_carry_as_null_or_whole() {
             .await
             .expect("the download carries");
     assert_eq!(landed, (None, Some(7)));
+}
+
+/// The listening preferences Alice lands with after `v2_sql` runs on the v2
+/// database: the Last.fm flag, the Navidrome flag, visibility, personal mix.
+async fn landed_listening_prefs(tag: &str, v2_sql: &str) -> (i64, i64, String, i64) {
+    let root = scratch_dir(tag);
+    build_v2_fixture(&root.join("v2")).expect("fixture builds");
+    let v2_db = root.join("v2").join("cache").join("library.db");
+    delete_orphan_rows(&v2_db).expect("repair runs");
+    let v2 = rusqlite::Connection::open(&v2_db).expect("v2 db opens");
+    v2.execute_batch(v2_sql).expect("v2 table changes");
+    drop(v2);
+    let export_path = root.join("export.json");
+    droppedneedle_tool::export::export_v2_to_file(
+        &export_request(&root.join("v2"), PASSPHRASE),
+        &export_path,
+    )
+    .expect("export writes");
+    let text = std::fs::read_to_string(&export_path).expect("export reads back");
+    let (v3_root, pool) = seeded_target(&root).await;
+    run_pipeline(&text, PASSPHRASE, &v3_root, &pool, false).await;
+    sqlx::query_as(
+        "SELECT scrobble_to_lastfm, navidrome_handles_external_scrobbles, \
+         now_playing_visibility, auto_request_personal_mix FROM user_listening_prefs",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("the preferences carry")
+}
+
+/// A v2 database last started before these three columns were added upgrades
+/// all the same: what it has carries and v3's defaults fill the rest.
+#[tokio::test]
+async fn listening_prefs_carry_from_a_v2_table_without_the_later_columns() {
+    let landed = landed_listening_prefs(
+        "prefs-older-v2",
+        "ALTER TABLE user_listening_prefs DROP COLUMN now_playing_visibility;
+         ALTER TABLE user_listening_prefs DROP COLUMN navidrome_handles_external_scrobbles;
+         ALTER TABLE user_listening_prefs DROP COLUMN auto_request_personal_mix;",
+    )
+    .await;
+    assert_eq!(landed, (1, 1, "full".to_owned(), 0));
+}
+
+/// A v2 visibility that is not text carries as hiding the song, never as
+/// showing it.
+#[tokio::test]
+async fn a_visibility_that_is_not_text_carries_as_hidden() {
+    let landed = landed_listening_prefs(
+        "prefs-blob-visibility",
+        "UPDATE user_listening_prefs SET now_playing_visibility = X'00';",
+    )
+    .await;
+    assert_eq!(landed, (1, 1, "track_hidden".to_owned(), 0));
 }
 
 /// A v2 download with a text track duration and preflight score, a held

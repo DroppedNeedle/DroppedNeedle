@@ -72,7 +72,7 @@ pub trait FolderStore: Send + Sync {
     ) -> BoxFuture<'a, Result<(), String>>;
 }
 
-/// One `user_navidrome_folder_preferences` row as stored.
+/// One `media_navidrome_folder_preferences` row as stored.
 struct FolderPreferenceRow {
     mode: String,
     selected_ids_json: String,
@@ -101,7 +101,7 @@ impl FolderPreferenceRow {
     }
 }
 
-/// Preferences in `user_navidrome_folder_preferences`.
+/// Preferences in `media_navidrome_folder_preferences`.
 #[derive(Clone)]
 pub struct SqliteFolderStore {
     db: droppedneedle_kernel::db::Db,
@@ -148,7 +148,7 @@ impl FolderStore for SqliteFolderStore {
         preference: FolderPreference,
     ) -> BoxFuture<'a, Result<(), String>> {
         let user_id = user_id.to_owned();
-        let now = self.clock.now_ms() as f64 / 1000.0;
+        let now = self.clock.now_ms();
         Box::pin(async move {
             let selected = serde_json::to_string(&preference.selected_folder_ids)
                 .map_err(|error| error.to_string())?;

@@ -2,13 +2,13 @@
 //! the read of which artists have album art to draw a picture from.
 
 droppedneedle_kernel::sql! {
-    /// A user's saved queue, without its items. Times are REAL unix seconds.
+    /// A user's saved queue, without its items.
     pub(super) QUEUE_HEAD = "SELECT current_index, position_ms, updated_at, changed_by_client \
         FROM compat_play_queues WHERE user_id = ?1";
     pub(super) row QueueHead for [QUEUE_HEAD] {
         current_index: Option<i64>,
         position_ms: i64,
-        updated_at: f64,
+        updated_at: i64,
         changed_by_client: String,
     }
     /// A user's queued file ids in order.
@@ -25,16 +25,15 @@ droppedneedle_kernel::sql! {
     /// Add one item to a user's queue.
     pub(super) ADD_QUEUE_ITEM = "INSERT INTO compat_play_queue_items (user_id, item_index, file_id) \
         VALUES (?1, ?2, ?3)";
-    /// A user's bookmarks, most recently changed first. Times are REAL unix
-    /// seconds.
+    /// A user's bookmarks, most recently changed first.
     pub(super) BOOKMARKS = "SELECT file_id, position_ms, comment, created_at, changed_at \
         FROM compat_bookmarks WHERE user_id = ?1 ORDER BY changed_at DESC, file_id";
     pub(super) row BookmarkColumns for [BOOKMARKS] {
         file_id: String,
         position_ms: i64,
         comment: String,
-        created_at: f64,
-        changed_at: f64,
+        created_at: i64,
+        changed_at: i64,
     }
     /// Create a bookmark, or move one the user already has on that file.
     pub(super) PUT_BOOKMARK = "INSERT INTO compat_bookmarks (user_id, file_id, position_ms, comment, \

@@ -11,7 +11,9 @@
 //!   federated rows of `auth_providers`;
 //! - [`app_passwords`] ([`AppPasswords`]), [`recovery`] ([`RecoveryCodes`]),
 //!   [`lastfm`] ([`LastFmLinks`]) and [`oidc`]: one each over their
-//!   like-named tables.
+//!   like-named tables;
+//! - [`connections`]: [`UserConnections`], every server write to a user's
+//!   links to outside services over `user_connections`.
 //!
 //! The account, credential, app-password, recovery and Last.fm statements
 //! are in [`sql`]; their reads run on the read pool.
@@ -34,6 +36,7 @@
 //!   variant, so there a busy database is still the generic failure.
 
 mod app_passwords;
+mod connections;
 mod federated;
 mod lastfm;
 mod oidc;
@@ -52,6 +55,7 @@ use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::db::{Db, DbError, Lane};
 
 pub use app_passwords::AppPasswords;
+pub use connections::UserConnections;
 pub use federated::FederatedUsers;
 pub use lastfm::{LastFmLinks, parse_lastfm};
 pub use oidc::OidcStates;
@@ -74,6 +78,10 @@ pub struct ForgottenAuth {
     pub app_passwords: usize,
     /// Federated sign-in token sets dropped.
     pub sign_in_tokens: usize,
+    /// User links to outside services deleted: one sealed whole (media
+    /// servers, ListenBrainz, Spotify) or plain JSON with sealed fields
+    /// (Last.fm). The user links the service again.
+    pub links: usize,
 }
 
 /// Clear what auth holds sealed under a data key that is gone, inside the
@@ -85,9 +93,11 @@ pub struct ForgottenAuth {
 pub fn forget_sealed(conn: &rusqlite::Connection) -> rusqlite::Result<ForgottenAuth> {
     let app_passwords = conn.execute(sql::FORGET_APP_PASSWORD_SECRETS.text(), [])?;
     let sign_in_tokens = conn.execute(sql::FORGET_SIGN_IN_TOKENS.text(), [])?;
+    let links = conn.execute(sql::FORGET_SEALED_LINKS.text(), [])?;
     Ok(ForgottenAuth {
         app_passwords,
         sign_in_tokens,
+        links,
     })
 }
 

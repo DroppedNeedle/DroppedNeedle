@@ -108,7 +108,7 @@ pub trait ConnectionStore: Send + Sync {
 #[derive(Clone)]
 pub struct SqliteConnectionStore {
     db: droppedneedle_kernel::db::Db,
-    clock: Arc<dyn droppedneedle_kernel::clock::Clock>,
+    writes: droppedneedle_auth::sqlite::UserConnections,
 }
 
 impl SqliteConnectionStore {
@@ -117,7 +117,8 @@ impl SqliteConnectionStore {
         db: droppedneedle_kernel::db::Db,
         clock: Arc<dyn droppedneedle_kernel::clock::Clock>,
     ) -> Self {
-        Self { db, clock }
+        let writes = droppedneedle_auth::sqlite::UserConnections::new(db.clone(), clock);
+        Self { db, writes }
     }
 }
 
@@ -151,22 +152,9 @@ impl ConnectionStore for SqliteConnectionStore {
         service: &'a str,
         data: String,
     ) -> BoxFuture<'a, Result<(), String>> {
-        let user_id = user_id.to_owned();
-        let service = service.to_owned();
-        let now = droppedneedle_auth::times::to_iso(self.clock.now_unix());
         Box::pin(async move {
-            self.db
-                .write(
-                    droppedneedle_kernel::db::Lane::Foreground,
-                    "remotes.connection.upsert",
-                    move |tx| {
-                        tx.execute(
-                            sql::SAVE_CONNECTION.text(),
-                            rusqlite::params![user_id, service, data, now],
-                        )?;
-                        Ok(())
-                    },
-                )
+            self.writes
+                .save_enabled(user_id, service, &data)
                 .await
                 .map_err(|error: DbError| error.to_string())
         })
@@ -177,22 +165,10 @@ impl ConnectionStore for SqliteConnectionStore {
         user_id: &'a str,
         service: &'a str,
     ) -> BoxFuture<'a, Result<bool, String>> {
-        let user_id = user_id.to_owned();
-        let service = service.to_owned();
         Box::pin(async move {
-            self.db
-                .write(
-                    droppedneedle_kernel::db::Lane::Foreground,
-                    "remotes.connection.delete",
-                    move |tx| {
-                        Ok(tx.execute(
-                            sql::DELETE_CONNECTION.text(),
-                            rusqlite::params![user_id, service],
-                        )?)
-                    },
-                )
+            self.writes
+                .delete(user_id, service)
                 .await
-                .map(|changed| changed > 0)
                 .map_err(|error: DbError| error.to_string())
         })
     }
@@ -239,14 +215,6 @@ impl CredentialCoder {
     pub fn open(&self, sealed: &str) -> Result<String, CryptoError> {
         self.crypto.decrypt(sealed)
     }
-}
-
-/// Delete every link whose document holds a value sealed under a data key
-/// that is gone, inside the caller's transaction: one sealed whole (media
-/// servers, ListenBrainz, Spotify) or plain JSON with sealed fields
-/// (Last.fm). The user links the service again. Answers the rows deleted.
-pub fn forget_sealed(conn: &rusqlite::Connection) -> rusqlite::Result<usize> {
-    conn.execute(sql::FORGET_SEALED.text(), [])
 }
 
 // ---------------------------------------------------------------------------

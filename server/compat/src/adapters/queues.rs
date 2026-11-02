@@ -44,7 +44,7 @@ impl CompatQueues {
                         .current_index
                         .and_then(|index| usize::try_from(index).ok()),
                     position_ms: head.position_ms,
-                    updated_at: head.updated_at,
+                    updated_at: head.updated_at as f64 / 1000.0,
                     changed_by_client: head.changed_by_client,
                 })
             })
@@ -59,7 +59,7 @@ impl CompatQueues {
         current_index: Option<usize>,
         position_ms: i64,
         changed_by_client: &str,
-        now_unix: f64,
+        now_ms: i64,
     ) -> Result<(), StoreError> {
         let (user_id, file_ids, client) = (
             user_id.to_owned(),
@@ -74,7 +74,7 @@ impl CompatQueues {
                         user_id,
                         current_index.map(|index| index as i64),
                         position_ms,
-                        now_unix,
+                        now_ms,
                         client
                     ],
                 )?;
@@ -101,8 +101,8 @@ impl CompatQueues {
                             file_id: row.file_id,
                             position_ms: row.position_ms,
                             comment: row.comment,
-                            created_at: row.created_at as i64,
-                            changed_at: row.changed_at as i64,
+                            created_at: row.created_at / 1000,
+                            changed_at: row.changed_at / 1000,
                         })
                     })?
                     .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -118,7 +118,7 @@ impl CompatQueues {
         file_id: &str,
         position_ms: i64,
         comment: &str,
-        now_unix: f64,
+        now_ms: i64,
     ) -> Result<(), StoreError> {
         let (user_id, file_id, comment) =
             (user_id.to_owned(), file_id.to_owned(), comment.to_owned());
@@ -126,7 +126,7 @@ impl CompatQueues {
             .write("compat.bookmark.upsert", move |tx| {
                 tx.execute(
                     sql::PUT_BOOKMARK.text(),
-                    params![user_id, file_id, position_ms, comment, now_unix],
+                    params![user_id, file_id, position_ms, comment, now_ms],
                 )?;
                 Ok(())
             })

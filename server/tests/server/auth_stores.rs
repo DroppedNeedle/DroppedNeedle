@@ -17,7 +17,7 @@ use droppedneedle_auth::prod::{
 };
 use droppedneedle_auth::session::store::{NewSession, SessionKind, SessionRecord};
 use droppedneedle_auth::session::tokens;
-use droppedneedle_auth::sqlite::{AuthDb, LoginWrite, Users};
+use droppedneedle_auth::sqlite::{AuthDb, LoginWrite, UserConnections, Users};
 use droppedneedle_auth::users::hibp::{HibpHttp, HibpHttpError, HibpScreen};
 use droppedneedle_auth::users::models::{
     AppPasswordRecord, LocalCredential, PasswordReset, UserRecord,
@@ -26,7 +26,7 @@ use droppedneedle_auth::users::roles::{Role, SessionKind as UserSessionKind};
 use droppedneedle_auth::users::services::{self, verify_app_password};
 use droppedneedle_auth::users::stores::{BoxFuture, RoleChange, UserDeletion};
 use droppedneedle_kernel::clock::SystemClock;
-use droppedneedle_kernel::db::Lane;
+use droppedneedle_kernel::db::{DbError, Lane};
 use droppedneedle_kernel::runtime_config::crypto::Crypto;
 use droppedneedle_kernel::runtime_config::sections::SecuritySettings;
 use rusqlite::params;
@@ -300,6 +300,45 @@ async fn login_write_needs_the_credential_it_verified() {
         .unwrap();
     assert_eq!(written, LoginWrite::Stored);
     assert_eq!(state().await, (1, rehash, Some(TEST_NOW * 1000)));
+}
+
+/// Two callers keep a turned-off link off when they save it again, and two
+/// turn it on: `save` leaves `enabled` alone, `save_enabled` sets it.
+#[tokio::test]
+async fn saving_a_link_keeps_enabled_unless_told_to_enable() {
+    let fx = fixture("link-enabled").await;
+    fx.auth
+        .users
+        .insert(user_row("user-1", "ada", Role::User))
+        .await
+        .unwrap();
+    let db = fx.runtime().db().clone();
+    let links = UserConnections::new(db.clone(), fx.clock.clone());
+    let enabled = "SELECT enabled FROM user_connections";
+    links.save("user-1", "listenbrainz", "first").await.unwrap();
+    assert_eq!(count(&fx, enabled).await, 1);
+    db.write(Lane::Foreground, "test.seed", |tx| {
+        Ok::<_, DbError>(tx.execute("UPDATE user_connections SET enabled = 0", [])?)
+    })
+    .await
+    .unwrap();
+
+    links
+        .save("user-1", "listenbrainz", "second")
+        .await
+        .unwrap();
+    assert_eq!(count(&fx, enabled).await, 0);
+    let document: String = sqlx::query_scalar("SELECT connection_data FROM user_connections")
+        .fetch_one(db.sqlx())
+        .await
+        .unwrap();
+    assert_eq!(document, "second");
+
+    links
+        .save_enabled("user-1", "listenbrainz", "third")
+        .await
+        .unwrap();
+    assert_eq!(count(&fx, enabled).await, 1);
 }
 
 #[tokio::test]

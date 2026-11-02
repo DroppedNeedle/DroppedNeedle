@@ -19,10 +19,11 @@ use rusqlite::{OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
 use super::spotify::ImportedTrack;
-use super::spotify_client::{SpotifyError, now_unix_secs};
+use super::spotify_client::SpotifyError;
 use super::spotify_oauth::{PendingAuth, STATE_TTL_SECS, SpotifyConnection};
 use super::sql;
 use crate::db::AcquireDb;
+use droppedneedle_auth::sqlite::UserConnections;
 use droppedneedle_auth::times::{parse_iso, to_iso};
 use droppedneedle_catalog::collections::db::StoreError;
 use droppedneedle_catalog::collections::store::PlaylistStore;
@@ -136,12 +137,14 @@ impl From<&SpotifyConnection> for LinkDocument {
 pub struct SqliteSpotifyLinks {
     db: AcquireDb,
     crypto: Arc<Crypto>,
+    writes: UserConnections,
 }
 
 impl SqliteSpotifyLinks {
     /// Links over the serving database, sealed with the instance key.
     pub fn new(db: AcquireDb, crypto: Arc<Crypto>) -> Self {
-        Self { db, crypto }
+        let writes = UserConnections::new(db.db().clone(), db.clock().clone());
+        Self { db, crypto, writes }
     }
 
     /// The platform clock the links are stamped with.
@@ -163,17 +166,9 @@ impl SqliteSpotifyLinks {
         user_id: &str,
         connection: &SpotifyConnection,
     ) -> Result<(), String> {
-        let (user_id, sealed) = (user_id.to_owned(), self.seal(connection)?);
-        let clock = self.db.clock().clone();
-        self.db
-            .write("spotify.link.upsert", move |tx| {
-                let now = to_iso(now_unix_secs(clock.as_ref()));
-                tx.execute(
-                    sql::UPSERT_LINK.text(),
-                    params![user_id, SERVICE, sealed, now],
-                )?;
-                Ok(())
-            })
+        let sealed = self.seal(connection)?;
+        self.writes
+            .save_enabled(user_id, SERVICE, &sealed)
             .await
             .map_err(|error| error.to_string())
     }
@@ -186,22 +181,9 @@ impl SqliteSpotifyLinks {
         user_id: &str,
         connection: &SpotifyConnection,
     ) -> Result<bool, SpotifyError> {
-        let user_id = user_id.to_owned();
         let sealed = self.seal(connection).map_err(SpotifyError::Store)?;
-        let clock = self.db.clock().clone();
-        self.db
-            .write("spotify.link.refresh", move |tx| {
-                let changed = tx.execute(
-                    sql::UPDATE_LINK.text(),
-                    params![
-                        user_id,
-                        SERVICE,
-                        sealed,
-                        to_iso(now_unix_secs(clock.as_ref()))
-                    ],
-                )?;
-                Ok(changed > 0)
-            })
+        self.writes
+            .replace_if_present(user_id, SERVICE, &sealed)
             .await
             .map_err(|error| link_failed("spotify link refresh", error))
     }
@@ -254,12 +236,8 @@ impl SqliteSpotifyLinks {
 
     /// Drop one user's link. Answers whether a link was there.
     pub async fn remove(&self, user_id: &str) -> Result<bool, String> {
-        let user_id = user_id.to_owned();
-        self.db
-            .write("spotify.link.remove", move |tx| {
-                let changed = tx.execute(sql::DELETE_LINK.text(), params![user_id, SERVICE])?;
-                Ok(changed > 0)
-            })
+        self.writes
+            .delete(user_id, SERVICE)
             .await
             .map_err(|error| error.to_string())
     }

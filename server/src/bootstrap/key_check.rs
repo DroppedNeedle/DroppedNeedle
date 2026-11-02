@@ -71,14 +71,12 @@ pub fn forget_secrets(
     db.write_durable(DurableLane::Foreground, "key.forget_secrets", |tx| {
         let settings = forget_sealed_settings(tx, now)?;
         let auth = droppedneedle_auth::sqlite::forget_sealed(tx).map_err(DbError::from)?;
-        let connections =
-            droppedneedle_media::remotes::connections::forget_sealed(tx).map_err(DbError::from)?;
         key_check::record(tx, new_key, now)?;
         Ok(Forgotten {
             settings,
             app_passwords: auth.app_passwords,
             sign_in_tokens: auth.sign_in_tokens,
-            connections,
+            connections: auth.links,
         })
     })
 }

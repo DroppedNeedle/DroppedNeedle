@@ -1,7 +1,7 @@
 //! Small per-user preferences.
 
 use super::library::live_user;
-use super::requests::{millis, now_millis};
+use super::requests::{flag, millis, now_millis, whole};
 use super::{Column, Source, TableSection, Target, col};
 
 /// Scrobble targets, now-playing visibility and the personal-mix switch.
@@ -15,13 +15,29 @@ pub const LISTENING_PREFS: TableSection = TableSection {
     target: Target::Table("user_listening_prefs"),
     columns: &[
         col("user_id"),
-        col("scrobble_to_lastfm"),
-        col("scrobble_to_listenbrainz"),
-        col("navidrome_handles_external_scrobbles"),
-        col("primary_music_source"),
-        col("now_playing_visibility"),
-        col("updated_at"),
-        col("auto_request_personal_mix"),
+        Column::new("scrobble_to_lastfm").from_sql(flag!("scrobble_to_lastfm")),
+        Column::new("scrobble_to_listenbrainz").from_sql(flag!("scrobble_to_listenbrainz")),
+        Column::new("navidrome_handles_external_scrobbles").from_sql_of(
+            "navidrome_handles_external_scrobbles",
+            flag!("navidrome_handles_external_scrobbles"),
+        ),
+        // A value outside the allowed ones becomes the default. A visibility
+        // that is not text says nothing, so the song stays hidden.
+        Column::new("primary_music_source").from_sql(
+            "CASE WHEN s.primary_music_source IN ('listenbrainz', 'lastfm') \
+             THEN s.primary_music_source ELSE 'listenbrainz' END",
+        ),
+        Column::new("now_playing_visibility").from_sql_of(
+            "now_playing_visibility",
+            "CASE WHEN typeof(s.now_playing_visibility) <> 'text' THEN 'track_hidden' \
+             WHEN s.now_playing_visibility IN ('full', 'track_hidden', 'offline') \
+             THEN s.now_playing_visibility ELSE 'full' END",
+        ),
+        Column::new("updated_at").from_sql(concat!("COALESCE(", millis!("updated_at"), ", 0)")),
+        Column::new("auto_request_personal_mix").from_sql_of(
+            "auto_request_personal_mix",
+            flag!("auto_request_personal_mix"),
+        ),
     ],
     key: &["user_id"],
     unique: &[],
@@ -98,13 +114,13 @@ pub const NAVIDROME_FOLDER_PREFS: TableSection = TableSection {
         filter: "",
         requires: &[],
     },
-    target: Target::Table("user_navidrome_folder_preferences"),
+    target: Target::Table("media_navidrome_folder_preferences"),
     columns: &[
         col("user_id"),
         col("mode"),
         col("selected_ids_json"),
         col("server_identity"),
-        col("updated_at"),
+        Column::new("updated_at").from_sql(concat!("COALESCE(", millis!("updated_at"), ", 0)")),
     ],
     key: &["user_id"],
     unique: &[],

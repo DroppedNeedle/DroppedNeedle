@@ -634,7 +634,7 @@ fn sweep(
     // Where the user has a bookmark on both rows, the later one stays.
     let mut bookmarks_moved = Vec::new();
     let mut bookmarks_deleted = Vec::new();
-    let bookmarks: Vec<(String, f64, Option<f64>)> = tx
+    let bookmarks: Vec<(String, i64, Option<i64>)> = tx
         .prepare(crate::corrections::sql::BOOKMARKS_OF_TRACK.text())?
         .query_map(params![old, new], |row| {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?))
@@ -656,8 +656,8 @@ fn sweep(
                         "file_id": row.get::<_, String>(0)?,
                         "position_ms": row.get::<_, i64>(1)?,
                         "comment": row.get::<_, String>(2)?,
-                        "created_at": row.get::<_, f64>(3)?,
-                        "changed_at": row.get::<_, f64>(4)?,
+                        "created_at": row.get::<_, i64>(3)?,
+                        "changed_at": row.get::<_, i64>(4)?,
                     }))
                 },
             )?);
