@@ -128,7 +128,7 @@ pub struct AccountLogin {
     pub password: String,
 }
 
-/// Albums one name search reads, as in v2.
+/// Albums one name search reads.
 const NAME_SEARCH_LIMIT: i64 = 50;
 /// The folded compilation credit the name step never matches on: a title
 /// like "Greatest Hits" under it names no one album.
@@ -151,7 +151,7 @@ async fn playable(
 /// Plex listening analytics over the history feed.
 pub const ANALYTICS_MAX_ENTRIES: i64 = 5_000;
 const ANALYTICS_BATCH: i64 = 500;
-/// Most genres one genre-songs read merges, as in v2.
+/// Most genres one genre-songs read merges.
 const MAX_GENRES: usize = 10;
 
 /// The remotes service. Cheap to clone.
@@ -728,7 +728,7 @@ impl RemotesService {
     }
 
     /// Plex listening analytics: top artists, albums, and tracks over the
-    /// most recent history (v2 reads up to 5,000 entries, 500 per call).
+    /// most recent history (up to 5,000 entries, 500 per call).
     pub async fn analytics(
         &self,
         user_id: &str,

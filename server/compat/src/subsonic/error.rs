@@ -1,7 +1,4 @@
 //! Subsonic error codes and the binary-vs-envelope split.
-//!
-//! v2: the Subsonic errors and router (`_BINARY`,
-//! `_AUTH_CODES`, `_binary_error`, `_dispatch`).
 
 use std::fmt;
 
@@ -20,7 +17,7 @@ pub const NOT_AUTHORIZED: u8 = 50;
 /// Requested data not found.
 pub const NOT_FOUND: u8 = 70;
 
-/// Default message per code, v2 `errors.py` verbatim.
+/// Default message per error code.
 pub fn default_message(code: u8) -> &'static str {
     match code {
         PARAM_MISSING => "Required parameter is missing.",
@@ -40,8 +37,8 @@ pub fn default_message(code: u8) -> &'static str {
 pub struct SubsonicError {
     /// One of the codes above (41/42 reserved for future auth codes).
     pub code: u8,
-    /// Wire message. v2 surfaces our own exception text and falls back
-    /// to the static default for unexpected failures.
+    /// Wire message. Quirk (v2): our own exception text is surfaced, and
+    /// unexpected failures fall back to the static default.
     pub message: String,
     /// Set for a server fault: the failure keeps a 5xx status.
     pub fault: Option<ServerFault>,
@@ -68,7 +65,7 @@ impl SubsonicError {
         }
     }
 
-    /// Bare-code error (auth paths in v2 raise bare codes).
+    /// Bare-code error. Quirk (v2): the auth paths raise bare codes.
     pub fn code_only(code: u8) -> Self {
         Self {
             code,
@@ -86,12 +83,12 @@ impl SubsonicError {
         }
     }
 
-    /// Invalid-parameter error naming the parameter, v2 style.
+    /// Invalid-parameter error naming the parameter.
     pub fn invalid(name: &str) -> Self {
         Self::new(PARAM_MISSING, format!("Invalid parameter '{name}'"))
     }
 
-    /// Missing-parameter error naming the parameter, v2 style.
+    /// Missing-parameter error naming the parameter.
     pub fn missing(name: &str) -> Self {
         Self::new(
             PARAM_MISSING,

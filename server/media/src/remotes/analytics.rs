@@ -1,6 +1,6 @@
 //! Listening analytics over a remote history feed (Plex).
 //!
-//! A port of v2's Plex analytics: count plays per artist, album, and track
+//! Plex listening analytics: count plays per artist, album, and track
 //! over the history entries read, keep the top ten of each (ties keep the
 //! order they were first seen in, newest first), and total the listening
 //! time and the plays of the last 7 and 30 days.

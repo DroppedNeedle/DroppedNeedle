@@ -1,5 +1,4 @@
 //! Strict, bounded Subsonic parameter decoding.
-//! v2: the Subsonic parameter parser (all caps verbatim).
 
 use super::error::{PARAM_MISSING, SubsonicError};
 use crate::shared::percent::{self, Plus};
@@ -40,7 +39,7 @@ impl SubsonicParameters {
     }
 
     /// Single value for a key; repeats or overlong values are code 10.
-    /// v2: `len(values) != 1` raises, so a duplicated key fails even
+    /// Quirk (v2): `len(values) != 1` raises, so a duplicated key fails even
     /// for ordinary params.
     pub fn string(
         &self,
@@ -127,7 +126,7 @@ impl SubsonicParameters {
     }
 
     /// Boolean param: `true`/`1` vs `false`/`0`, case-insensitive.
-    /// Anything else is code 10 (v2 has no lenient fallback).
+    /// Anything else is code 10. Quirk (v2): there is no lenient fallback.
     pub fn boolean(&self, name: &str, default: bool) -> Result<bool, SubsonicError> {
         let raw = match self.string(name, None)? {
             Some(raw) => raw,
@@ -156,7 +155,7 @@ impl SubsonicParameters {
     }
 }
 
-/// `^[+-]?[0-9]+$` (v2 `_INTEGER_RE`).
+/// `^[+-]?[0-9]+$`.
 fn is_integer(raw: &str) -> bool {
     let digits = raw.strip_prefix(['+', '-']).unwrap_or(raw);
     !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())
@@ -164,7 +163,7 @@ fn is_integer(raw: &str) -> bool {
 
 /// Decode one `application/x-www-form-urlencoded` blob into pairs.
 /// Malformed percent escapes and non-UTF-8 are code 10
-/// (v2 `_decode_pairs`, `parse_qsl` semantics).
+/// Decoding follows `parse_qsl` semantics.
 pub fn decode_pairs(raw: &[u8]) -> Result<Vec<(String, String)>, SubsonicError> {
     let bad = || SubsonicError::new(PARAM_MISSING, "Invalid request parameter encoding");
     let text = std::str::from_utf8(raw).map_err(|_| bad())?;
@@ -180,7 +179,7 @@ pub fn decode_pairs(raw: &[u8]) -> Result<Vec<(String, String)>, SubsonicError> 
     Ok(pairs)
 }
 
-/// Validate pair counts and lengths (v2 `parse_request_parameters` tail).
+/// Validate pair counts and lengths.
 pub fn check_limits(pairs: &[(String, String)]) -> Result<(), SubsonicError> {
     if pairs.len() > MAX_PARAMETER_COUNT {
         return Err(SubsonicError::new(

@@ -7,8 +7,8 @@
 //! hands back a [`MediaBody`]: a local file read by range on demand, a
 //! transcode read chunk by chunk, or in-memory bytes.
 //!
-//! [`content_type_for_extension`] is the one audio content-type table (v2's
-//! minus WMA, which v3 does not support). The engine resolves the final
+//! [`content_type_for_extension`] is the one audio content-type table
+//! without WMA, which is not supported. The engine resolves the final
 //! content type (upstream wins for remotes); local reads go through this
 //! table.
 
@@ -166,7 +166,7 @@ pub enum StreamFault {
     /// Unknown id.
     NotFound,
     /// Playback refused or path outside the music directory. The message is
-    /// user-facing v2 detail, never a path.
+    /// user-facing detail, never a path.
     Forbidden {
         /// What was refused, e.g. "Playback not allowed".
         message: String,

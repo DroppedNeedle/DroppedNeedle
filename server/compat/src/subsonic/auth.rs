@@ -6,7 +6,7 @@
 //! rules, so the HTTP adapter can hand the extracted [`Credentials`] to
 //! the [`SubsonicVerifier`](crate::subsonic::principal::SubsonicVerifier).
 //!
-//! v2: the Subsonic compat auth and the app password service's
+//! Subsonic compat auth and the app password service's
 //! `verify_subsonic`.
 
 use super::error::{CONFLICTING_AUTH, PARAM_MISSING, SubsonicError};
@@ -43,9 +43,8 @@ pub enum Credentials {
 }
 
 /// Classify the auth params: duplicates of the auth keys, `t`/`s`
-/// asymmetry, `p`+token, and apiKey+token/password mixes are all code 10
-/// (v2 `resolve_subsonic_user`). A non-empty apiKey next to a non-empty
-/// `u` is code 43 (v2 `verify_subsonic`). Anything else is returned for
+/// asymmetry, `p`+token, and apiKey+token/password mixes are all code 10. A
+/// non-empty apiKey next to a non-empty `u` is code 43. Anything else is returned for
 /// the verifier; missing credentials surface as code 10 there.
 pub fn classify(params: &SubsonicParameters) -> Result<Option<Credentials>, SubsonicError> {
     for key in ["u", "t", "s", "p", "apiKey", "c"] {
@@ -96,7 +95,7 @@ pub fn classify(params: &SubsonicParameters) -> Result<Option<Credentials>, Subs
     }
 }
 
-/// Length caps from v2 `app_password_service` (kept verbatim; the real
+/// Length caps the app password service enforces (the real
 /// verifier enforces them, listed here so goldens stay aligned).
 pub mod caps {
     /// Max username length.

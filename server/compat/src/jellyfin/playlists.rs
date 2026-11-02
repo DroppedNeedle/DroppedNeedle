@@ -45,7 +45,7 @@ async fn track_file_ids(
         .collect())
 }
 
-/// Create from a JSON body or `?name=`/`?ids=` (v2 `_create_playlist`).
+/// Create from a JSON body or `?name=`/`?ids=`.
 /// Unknown track ids are skipped silently.
 pub(super) async fn create_playlist(
     State(state): State<JellyfinState>,
@@ -144,7 +144,7 @@ pub(super) async fn playlist_items_inner(
         Ok(None) => return error(StatusCode::NOT_FOUND),
         Err(failed) => return ApiError::from(failed).into_response(),
     };
-    // v2 reads both `startIndex` and `StartIndex`, but params are
+    // Both `startIndex` and `StartIndex` are read, since params are
     // case-insensitive so both spellings are one key.
     let start = params::qint(q, "startIndex", 0).max(0) as usize;
     let limit = params::qint(q, "limit", 0).max(0) as usize;

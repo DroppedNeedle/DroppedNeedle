@@ -599,8 +599,8 @@ impl RemoteHandle {
     /// Tracks of any of several genres, merged in genre order without
     /// duplicates. Each genre is read from its start up to the end of the
     /// page, so the merged list has the same order on every page and the
-    /// page is a plain slice of it. v2 applied the offset to each genre
-    /// instead, which skipped tracks on every page after the first.
+    /// page is a plain slice of it. The offset applies to that merged list, not to
+    /// each genre: applying it per genre skips tracks on every page after the first.
     pub async fn genres_songs(
         &self,
         genres: &[String],

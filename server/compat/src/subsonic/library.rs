@@ -1,6 +1,5 @@
 //! Library handlers: playlists, favorites, scrobble, queues,
 //! bookmarks, info, lyrics, genres, user, scan, discovery.
-//! v2: the Subsonic router's endpoint functions.
 
 use super::browse::validate_music_folder;
 use super::error::{NOT_AUTHORIZED, NOT_FOUND, SubsonicError};
@@ -17,12 +16,12 @@ use super::{Ctx, Outcome};
 use crate::library::CompatError;
 use crate::subsonic::principal::CompatPrincipal;
 
-/// Max play-queue items (v2 `_MAX_QUEUE_ITEMS`).
+/// Max play-queue items.
 pub const MAX_QUEUE_ITEMS: usize = 500;
-/// Max media position ms (v2 `_MAX_MEDIA_POSITION_MS`).
+/// Max media position in ms.
 pub const MAX_MEDIA_POSITION_MS: i64 = 604_800_000;
 
-/// Kinds star/setRating accept (v2 `_FAV_KINDS`).
+/// Kinds star/setRating accept.
 pub const FAVORITE_KINDS: &[IdKind] = &[IdKind::Artist, IdKind::Album, IdKind::Track];
 
 /// Playlist detail with streamable entries only: legacy/outbound
@@ -891,8 +890,8 @@ pub async fn delete_bookmark(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
     Ok(Outcome::ok())
 }
 
-/// Login name, falling back to the display name (v2 `username or
-/// display_name` in queue/bookmark/user responses).
+/// Login name, falling back to the display name in queue, bookmark and
+/// user responses.
 pub fn effective_username(user: &CompatPrincipal) -> String {
     if user.username().is_empty() {
         user.display_name().to_owned()

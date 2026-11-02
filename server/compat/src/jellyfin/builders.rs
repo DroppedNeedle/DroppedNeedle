@@ -1,5 +1,4 @@
-//! View DTO → Jellyfin `BaseItemDto` shaping, ported from v2
-//! `api/compat/jellyfin/builders.py`.
+//! View DTO → Jellyfin `BaseItemDto` shaping.
 
 use std::collections::BTreeMap;
 
@@ -14,15 +13,15 @@ use super::models::{
 use super::views::{AlbumView, ArtistView, GenreView, PlaylistView, TICKS_PER_SECOND, TrackView};
 use crate::jellyfin::library::CatalogIds;
 
-/// Internal id of the single music library (v2 `LIBRARY_INTERNAL_ID`).
+/// Internal id of the single music library.
 pub const LIBRARY_INTERNAL_ID: &str = "music";
 
-/// Seconds → Jellyfin ticks (v2 `builders.ticks`).
+/// Seconds → Jellyfin ticks.
 pub fn ticks(seconds: Option<f64>) -> Option<i64> {
     seconds.map(|s| (s * TICKS_PER_SECOND as f64).round() as i64)
 }
 
-/// Genre display name → id slug (v2 `genre_slug`).
+/// Genre display name → id slug.
 pub fn genre_slug(name: &str) -> String {
     let mut out = String::with_capacity(name.len());
     let mut dash = false;
@@ -42,11 +41,11 @@ pub fn genre_slug(name: &str) -> String {
 }
 
 /// Manet requires `DateCreated` present, so items without a library date get
-/// the epoch, never null (v2 `_DEFAULT_DATE`).
+/// the epoch, never null.
 pub const DEFAULT_DATE: &str = "1970-01-01T00:00:00.0000000Z";
 
 /// Unix seconds → .NET "O" round-trip format: strict clients (Manet) reject
-/// whole-second ISO, the 7-digit fraction is required (v2 `_iso`).
+/// whole-second ISO, the 7-digit fraction is required.
 pub fn iso_o(ts: Option<f64>) -> String {
     let Some(ts) = ts else {
         return DEFAULT_DATE.to_owned();
@@ -112,7 +111,7 @@ fn civil_from_unix(secs: i64) -> (i64, u32, u32, u32, u32, u32) {
     )
 }
 
-/// Caller-scoped item state (v2 `_user_data`). `played`, the play count and
+/// Caller-scoped item state. `played`, the play count and
 /// the last play come from the library's one reading of plays and marks.
 pub fn user_data(
     item_id: &str,
@@ -257,7 +256,7 @@ fn seal(mut dto: BaseItemDto) -> BaseItemDto {
 /// The single "Music" collection-folder view, in the long form Jellyfin
 /// sends it. Strict clients (Manet) report "No music libraries found"
 /// unless it carries `UserData`, a non-empty `ImageTags.Primary`,
-/// `LocationType`, and `SortName` (v2 `_music_view`). `child_count` is the
+/// `LocationType`, and `SortName`. `child_count` is the
 /// number of album artists, the nearest thing to the top folders Jellyfin
 /// counts.
 pub fn music_view(library_id: &str, server_id: &str, child_count: usize) -> BaseItemDto {
@@ -278,7 +277,7 @@ pub fn music_view(library_id: &str, server_id: &str, child_count: usize) -> Base
     seal(dto)
 }
 
-/// View → DTO builder (v2 `JellyfinBuilder`). Image tags ride the views,
+/// View → DTO builder. Image tags ride the views,
 /// so shaping a page never reads the library again.
 pub struct Builder<'a> {
     ids: &'a CatalogIds,
@@ -291,7 +290,7 @@ impl<'a> Builder<'a> {
         Self { ids, server_id }
     }
 
-    /// Track → `Audio` DTO (v2 `JellyfinBuilder.audio`).
+    /// Track → `Audio` DTO.
     pub async fn audio(&self, t: &TrackView) -> BaseItemDto {
         let track_id = self.ids.to_jf("track", &t.file_id).await;
         let album_id = match t.album_id.as_deref() {
@@ -377,7 +376,7 @@ impl<'a> Builder<'a> {
         dto
     }
 
-    /// Album → `MusicAlbum` DTO (v2 `JellyfinBuilder.album`).
+    /// Album → `MusicAlbum` DTO.
     pub async fn album(&self, a: &AlbumView) -> BaseItemDto {
         let album_id = self.ids.to_jf("album", &a.id).await;
         let artist_jf = match a.artist_id.as_deref() {
@@ -427,7 +426,7 @@ impl<'a> Builder<'a> {
         dto
     }
 
-    /// Artist → `MusicArtist` DTO (v2 `JellyfinBuilder.artist`).
+    /// Artist → `MusicArtist` DTO.
     pub async fn artist(&self, ar: &ArtistView) -> BaseItemDto {
         let artist_id = self.ids.to_jf("artist", &ar.id).await;
         let tag = ar.image_tag.clone();
@@ -453,7 +452,7 @@ impl<'a> Builder<'a> {
         dto
     }
 
-    /// Playlist → `Playlist` DTO (v2 `JellyfinBuilder.playlist`).
+    /// Playlist → `Playlist` DTO.
     pub async fn playlist(&self, p: &PlaylistView) -> BaseItemDto {
         let pid = self.ids.to_jf("playlist", &p.id).await;
         let mut dto = base(pid.clone(), p.name.clone(), self.server_id);
@@ -552,7 +551,7 @@ impl<'a> Builder<'a> {
         seal(dto)
     }
 
-    /// Genre → `MusicGenre` DTO (v2 `JellyfinBuilder.genre`).
+    /// Genre → `MusicGenre` DTO.
     pub async fn genre(&self, g: &GenreView) -> BaseItemDto {
         let gid = self.ids.to_jf("genre", &genre_slug(&g.name)).await;
         let mut dto = base(gid.clone(), g.name.clone(), self.server_id);
@@ -637,7 +636,7 @@ pub fn media_source(
     }
 }
 
-/// Track → `MediaStream` (v2 `_audio_stream_model`).
+/// Track → `MediaStream`.
 pub fn media_stream(track: &TrackView) -> MediaStream {
     // An MP4 file holds AAC or ALAC, and the scan reads a bit depth only
     // from ALAC.

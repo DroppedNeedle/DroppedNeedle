@@ -590,7 +590,7 @@ async fn playlist_refusals_keep_their_codes_and_repeats_stay() {
     .await;
     assert!(refused.contains("\"code\":50"), "{refused}");
 
-    // The same song asked twice is added twice (v2 appends each).
+    // Quirk (v2): the same song asked twice is added twice.
     let created = subsonic(&rig, "createPlaylist", &[("name", "Twice")]).await;
     let ours: Value = serde_json::from_str(&created).expect("json answer");
     let ours = ours["subsonic-response"]["playlist"]["id"]

@@ -1,12 +1,11 @@
 //! Remote sources: one adapter for Jellyfin, Navidrome, and Plex.
 //!
-//! The v2 backend carried three parallel browse stacks (~86 endpoints);
-//! v3 collapses them to one adapter surface and one set of native
-//! `/api/v3` routes with unified shapes. [`RemoteHandle`](source::RemoteHandle)
-//! is the single browse entry point: per-source adapters translate their
-//! server's payloads into the [`models`] views.
+//! The adapters share one browse surface. [`RemoteHandle`](source::RemoteHandle)
+//! is the single browse entry point, and per-source adapters translate their
+//! server's payloads into the [`models`] views. The native `/api/v3` routes use
+//! the unified shapes.
 //!
-//! Live-version-cited quirks ported from v2 (each cited at its call site):
+//! Quirks, each cited at its call site, with the server version it was seen on:
 //! Jellyfin 10.11 `MediaBrowser` auth (issue #151), the Navidrome 0.62.0
 //! single-folder probe (repeated/unknown `musicFolderId`), the Plex
 //! http-to-https base upgrade and playlist-composite fallback, and the

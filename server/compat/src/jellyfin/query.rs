@@ -2,8 +2,8 @@
 //! in-memory paging of short lists (genres, playlists, favorites).
 
 /// `IncludeItemTypes` priority: MusicArtist > MusicAlbum > Audio > Playlist >
-/// MusicGenre, default album (v2 `_primary_type`). Type names are
-/// case-sensitive, like v2's set membership.
+/// MusicGenre, default album. Type names are
+/// case-sensitive.
 pub(super) fn primary_type(types: &[String]) -> &'static str {
     for candidate in [
         "MusicArtist",
@@ -19,7 +19,7 @@ pub(super) fn primary_type(types: &[String]) -> &'static str {
     "MusicAlbum"
 }
 
-/// Page a built list: `limit == 0` means ALL from start (v2 `_build_page`).
+/// Page a built list: `limit == 0` means ALL from start.
 pub(super) fn page<T: Clone>(items: &[T], start: usize, limit: usize) -> (Vec<T>, usize) {
     let total = items.len();
     let page = if start >= total {

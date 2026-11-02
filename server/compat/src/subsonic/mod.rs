@@ -1,8 +1,7 @@
 //! Subsonic/OpenSubsonic compat API.
 //!
-//! Pinned protocol `1.16.1`, ported quirk-for-quirk from v2's Subsonic
-//! compat package. Every behavior below cites its source; the golden tests
-//! pin the wire bytes.
+//! Pinned protocol `1.16.1`. The quirks clients depend on are listed with their
+//! sources below; the golden tests pin the wire bytes.
 //!
 //! # Endpoint x fields x auth
 //!
@@ -52,7 +51,7 @@
 //! | getTopSongs | topSongs | yes | exact artist-name match else 70 |
 //! | getSimilarSongs[2] | similarSongs[2] | yes | takes an artist id |
 //!
-//! # Quirk citations (all ported, none dropped)
+//! # Quirks, with their sources
 //!
 //! - Match-all search (Symfonium #129 / Arpeggi / gonic#229): missing,
 //!   empty, or quote-only `query` matches everything; surrounding
@@ -141,14 +140,13 @@ pub use value::{
     sniff_format,
 };
 
-/// Codes that stay enveloped on the binary dispatch path (v2 `_AUTH_CODES`).
+/// Codes that stay enveloped on the binary dispatch path.
 pub const AUTH_CODES: &[u8] = &[10, 40, 41, 42, 43, 44, 50];
 
-/// getAvatar refusal for a non-self username, v2 message verbatim.
+/// getAvatar refusal for a non-self username. Quirk (v2): the message text is kept.
 pub const AVATAR_FORBIDDEN_MESSAGE: &str = "Avatar access is limited to the authenticated user";
 
-/// Normalize an endpoint name: casefold, strip one `.view` suffix
-/// (v2 `_dispatch`).
+/// Normalize an endpoint name: casefold, strip one `.view` suffix.
 pub fn normalize_endpoint(raw: &str) -> String {
     let folded = raw.to_lowercase();
     folded.strip_suffix(".view").unwrap_or(&folded).to_owned()
@@ -161,7 +159,7 @@ pub type HandlerFuture<'c> =
 /// A method's handler.
 pub type Handler = for<'c> fn(&'c Ctx<'c>) -> HandlerFuture<'c>;
 
-/// One Subsonic method (v2 `_HANDLERS`, `_BINARY` and `_PUBLIC`).
+/// One Subsonic method.
 pub struct Endpoint {
     /// Normalized name.
     pub name: &'static str,
@@ -296,7 +294,7 @@ pub fn dispatch_uses_envelope(code: u8, normalized_endpoint: &str) -> bool {
 /// Server settings the Subsonic API reads (filled from preferences).
 #[derive(Debug, Clone)]
 pub struct Settings {
-    /// Kill switch; off -> failed envelope code 0 (v2 enablement).
+    /// Kill switch; off -> failed envelope code 0.
     pub enabled: bool,
     /// Advertised server name (`type` in the envelope).
     pub server_name: String,
@@ -333,7 +331,7 @@ impl Default for Settings {
 
 impl Settings {
     /// Transcode hint for song children: Some iff transcoding is on and
-    /// ffmpeg is present (v2 `_transcode_hint`).
+    /// ffmpeg is present.
     pub fn transcode_hint(&self) -> Option<(String, String)> {
         if self.transcoding_enabled && self.ffmpeg_available {
             let (content_type, suffix) = stream::transcode_hint(&self.transcode_default_format);

@@ -105,7 +105,7 @@ fn system_architecture() -> &'static str {
     }
 }
 
-/// QuickConnect is unsupported: the literal `false` (v2 `_handle` lambda).
+/// QuickConnect is unsupported: the literal `false`.
 pub(super) async fn quick_connect() -> Response {
     raw_json(StatusCode::OK, "false")
 }
@@ -208,8 +208,7 @@ pub(super) async fn users_me(State(state): State<JellyfinState>, authed: Authed)
     )
 }
 
-/// The `{user_id}` path id is ignored; the caller is always returned (v2
-/// `_user_dto(u)` parity).
+/// The `{user_id}` path id is ignored; the caller is always returned.
 pub(super) async fn user_by_id(
     state: State<JellyfinState>,
     Path(_user_id): Path<String>,

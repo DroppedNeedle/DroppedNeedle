@@ -1,6 +1,6 @@
 //! Bounded, identity-aware rate limiting for the compat APIs.
 //!
-//! Ports v2's compat rate limiter: a public-IP bucket
+//! The compat rate limiter: a public-IP bucket
 //! (5/s, burst 20) for unauthenticated routes only (login, public probes),
 //! per-principal browse (30/s, burst 120) and mutation (5/s, burst 20)
 //! buckets for signed-in callers, and per-IP auth-failure backoff (5
@@ -90,8 +90,7 @@ pub fn client_key(ip: Option<IpAddr>) -> String {
     ip.map_or_else(|| "unknown".to_owned(), address_key)
 }
 
-/// The three bucket families plus auth-failure state (v2
-/// `CompatRateLimitState`).
+/// The three bucket families plus auth-failure state.
 #[derive(Debug, Default)]
 pub struct CompatRateLimits {
     public_by_ip: BoundedMap<TokenBucket>,
@@ -129,7 +128,7 @@ impl CompatRateLimits {
         acquire(table, principal, spec, now)
     }
 
-    /// Active lockout remaining for an IP, if any (v2 rounds up).
+    /// Active lockout remaining for an IP, if any. Quirk (v2): rounds up.
     pub fn auth_failure_retry_after(&mut self, ip: &str, now: f64) -> Option<u64> {
         let state = self
             .auth_failures_by_ip
@@ -143,7 +142,7 @@ impl CompatRateLimits {
     }
 
     /// Record one auth failure; returns the fresh lockout length when
-    /// this failure trips it (v2 `record_auth_failure`). `presented` is the
+    /// this failure trips it. `presented` is the
     /// refused credential, as parts that together identify it; when the
     /// same address had the same one counted inside the repeat window, this
     /// failure is not counted. `None` always counts.
@@ -201,7 +200,7 @@ fn subsonic_endpoint(low: &str) -> Option<&str> {
     Some(endpoint.strip_suffix(".view").unwrap_or(endpoint))
 }
 
-/// Media paths skip the token buckets (v2 `is_media_request`): Subsonic
+/// Media paths skip the token buckets: Subsonic
 /// `stream`/`download`, Jellyfin `/audio/*`, `/items/{id}/file` and
 /// `/items/{id}/download`.
 /// Matched case-insensitively on the canonical path.
@@ -235,7 +234,7 @@ pub fn is_artwork_request(path: &str) -> bool {
     super::auth::is_image_route(&low)
 }
 
-/// Mutation classification (v2 `is_mutation_request`): DELETE/PATCH/PUT
+/// Mutation classification: DELETE/PATCH/PUT
 /// always; POST except the login and PlaybackInfo reads.
 pub fn is_mutation_request(method: &str, path: &str) -> bool {
     if matches!(

@@ -2,8 +2,8 @@
 //! no sign-in, `/subsonic/img?id=<id>&sig=<signature>&size=<px>`.
 //!
 //! Apps hand the image links of `getArtists`, `getArtistInfo2` and
-//! `getAlbumInfo2` to a picture loader that sends no credentials, as
-//! Navidrome's own links allow. Each link names one album or artist by its
+//! `getAlbumInfo2` to a picture loader that sends no credentials.
+//! Each link names one album or artist by its
 //! Subsonic id and carries a signature made with the data key under a
 //! purpose of its own, so nothing else the key signs or seals (a transcode
 //! parameter, a correction token, a stored secret) is ever a valid

@@ -14,7 +14,7 @@ use super::ranged;
 use droppedneedle_plugins::capabilities::stream::{PROXY_MAX_BYTES, open_url, proxy_chunks};
 
 /// The audio format a plugin URL carries: the URL path's extension, else
-/// the content type hint (v2's rule), else empty.
+/// the content type hint, else empty.
 pub fn url_format(url: &reqwest::Url, content_type: &str) -> String {
     let suffix = Path::new(url.path())
         .extension()

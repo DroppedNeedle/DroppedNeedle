@@ -1891,7 +1891,7 @@ export interface paths {
         };
         /**
          * One track file, unchanged, as an attachment. A single `Range` is
-         *     answered with 206, as v2's file response did, so download managers can
+         *     answered with 206, so download managers can
          *     resume.
          */
         get: operations["download_track"];
@@ -6627,8 +6627,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Random tracks, optionally filtered by genre. Limits mirror the v2
-         *     Navidrome route (default 20, max 50); Plex answers unsupported.
+         * Random tracks, optionally filtered by genre. The default is 20 and the max 50.
+         *     Plex answers unsupported.
          */
         get: operations["remotes_list_random"];
         put?: never;
@@ -12139,7 +12139,7 @@ export interface components {
         DiscoveryHubView: {
             /** @description Albums on this shelf. */
             albums: components["schemas"]["RemotesAlbumView"][];
-            /** @description Hub kind; always `"album"` (other hub kinds are dropped, as in v2). */
+            /** @description Hub kind; always `"album"`. Other hub kinds are dropped. */
             hub_type: string;
             /** @description Hub title, e.g. "Recommended for you". */
             title: string;

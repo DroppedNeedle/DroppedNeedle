@@ -2,7 +2,7 @@
 //! `compat_play_queue_items` and `compat_bookmarks`.
 //!
 //! Both protocols share these rows per user, so a queue saved from one
-//! client resumes in another, and both survive a restart (v2 parity).
+//! client resumes in another, and both survive a restart.
 
 use rusqlite::{OptionalExtension as _, params};
 

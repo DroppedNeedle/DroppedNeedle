@@ -7,10 +7,10 @@
 //! objects become child elements and arrays become repeated children.
 //! Null keys are left out of both.
 //!
-//! Rules kept from v2: XML booleans lowercase; C0 controls dropped from
+//! Quirk (v2): XML booleans lowercase; C0 controls dropped from
 //! XML; JSONP callbacks allowlisted to a bare identifier path (unsafe or
 //! overlong falls back to JSON); XML prolog and namespace. Floats are
-//! written as v2 wrote them: a whole value keeps one decimal place.
+//! written with one decimal place when the value is whole.
 
 use std::borrow::Cow;
 use std::fmt;
@@ -53,8 +53,8 @@ pub fn parse_format(value: Option<&str>) -> Result<SubsonicFormat, SubsonicError
 
 /// The format and callback a failure is answered in, read before strict
 /// decoding: a unique valid `f` value and a unique `callback` of at most
-/// 128 bytes, else XML and no callback (v2 reads a unique valid query
-/// value only).
+/// 128 bytes, else XML and no callback. Quirk (v2): only a unique valid query
+/// value is read.
 pub fn sniff_format(f: &[&str], callback: &[&str]) -> (SubsonicFormat, Option<String>) {
     let format = match f {
         [only] => parse_format(Some(only)).unwrap_or_default(),
@@ -68,8 +68,8 @@ pub fn sniff_format(f: &[&str], callback: &[&str]) -> (SubsonicFormat, Option<St
 }
 
 /// A callback is safe only as a bare identifier path of at most 128
-/// chars, else the response falls back to JSON (v2 `_CALLBACK_RE`:
-/// `^[A-Za-z_$][\w$.]{0,127}$`).
+/// chars, else the response falls back to JSON. The pattern is
+/// `^[A-Za-z_$][\w$.]{0,127}$`.
 pub fn callback_is_safe(callback: &str) -> bool {
     let mut chars = callback.chars();
     let Some(first) = chars.next() else {
@@ -139,8 +139,8 @@ fn serialize_failed(err: serde_json::Error) -> SubsonicError {
     )))
 }
 
-/// The writer's formatter: compact JSON, with floats and two control
-/// escapes as v2 wrote them.
+/// The writer's formatter: compact JSON. Quirk (v2): floats and two control
+/// escapes are written the way v2 wrote them.
 struct Wire;
 
 impl Formatter for Wire {
@@ -167,7 +167,7 @@ fn to_wire_json<T: Serialize + ?Sized>(value: &T) -> Result<String, serde_json::
     String::from_utf8(out).map_err(|err| serde::ser::Error::custom(err.to_string()))
 }
 
-/// A float as v2 wrote it: a whole value below 1e15 keeps one decimal
+/// Quirk (v2): a whole value below 1e15 keeps one decimal
 /// place, anything else is the shortest form that reads back the same.
 fn format_float(value: f64) -> String {
     if value == value.trunc() && value.abs() < 1e15 {
@@ -184,7 +184,7 @@ struct SubsonicFailure<'a> {
     message: &'a str,
 }
 
-/// The envelope (v2 `_envelope`): five attributes, then the answer under
+/// The envelope: five attributes, then the answer under
 /// its key.
 struct Envelope<'a> {
     status: &'a str,
@@ -215,7 +215,7 @@ struct Document<'a> {
     response: &'a Envelope<'a>,
 }
 
-/// Emit the envelope in the requested format (v2 `_emit`).
+/// Emit the envelope in the requested format.
 fn emit(
     envelope: &Envelope<'_>,
     format: SubsonicFormat,
@@ -237,7 +237,7 @@ fn emit(
     })
 }
 
-/// Render an `ok` envelope (v2 `render`).
+/// Render an `ok` envelope.
 pub fn render_ok(
     body: Option<(&str, &RawValue)>,
     format: SubsonicFormat,
@@ -254,7 +254,7 @@ pub fn render_ok(
     emit(&envelope, format, callback).map_err(serialize_failed)
 }
 
-/// Render a `failed` envelope over HTTP 200 (v2 `render_error`).
+/// Render a `failed` envelope over HTTP 200.
 pub fn render_error(
     code: u8,
     message: &str,
@@ -279,7 +279,7 @@ pub fn render_error(
 }
 
 /// Render a binary-path failure as `text/plain`: 70 maps to 404, 50 to
-/// 403, anything else to 404 (v2 `_binary_error`).
+/// 403, anything else to 404.
 pub fn render_binary_error(code: u8, message: &str) -> Rendered {
     let status = match code {
         NOT_FOUND => 404,
@@ -295,7 +295,7 @@ pub fn render_unknown_method() -> Rendered {
     Rendered::text(404, "text/plain", b"404 page not found\n".to_vec())
 }
 
-/// Write an envelope's JSON text as the XML document (v2 `_to_xml`).
+/// Write an envelope's JSON text as the XML document.
 fn to_xml(envelope_json: &str) -> Result<String, serde_json::Error> {
     let mut deserializer = serde_json::Deserializer::from_str(envelope_json);
     let root = Node::deserialize(&mut deserializer)?;

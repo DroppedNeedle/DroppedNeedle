@@ -8,8 +8,8 @@
 //! each, so the transcode-hint mapping cannot drift between two
 //! spellings).
 //!
-//! Ported from v2's compat package, cited per item. Where v2 disagreed with itself (the `transcoding` advert),
-//! see [`extensions`] for the one documented choice.
+//! Quirk (v2): v2 disagreed with itself about the `transcoding` advert. See
+//! [`extensions`] for the one documented choice.
 
 pub mod address;
 pub mod auth;

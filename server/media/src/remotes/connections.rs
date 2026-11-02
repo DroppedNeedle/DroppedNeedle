@@ -1,6 +1,6 @@
 //! Remote server connections: the admin's servers plus per-user links.
 //!
-//! The account rules are v2's: the server URL and enabled flag belong to
+//! The account rules: the server URL and enabled flag belong to
 //! the admin (Settings > Jellyfin, > Navidrome, > Plex) and are read from
 //! the config store on every resolution. A user may link their own account
 //! on that server; the link holds only their credential and lives in
@@ -8,9 +8,8 @@
 //! sealed whole, v2 field names kept). Resolution prefers the caller's own
 //! link (`linked`) and falls back to the admin's credential (`shared`), so
 //! a server the admin configured is usable by every user. A link that no
-//! longer opens falls back too, as in v2. A Plex link saved without a
-//! server-scoped token looks one up once and stores it (v2
-//! `resolve_plex_playlist`).
+//! longer opens falls back too. A Plex link saved without a
+//! server-scoped token looks one up once and stores it.
 //!
 //! Cache scoping keys off the user id plus a hash of the connection
 //! material, so one user's stale password never poisons another's entries.
@@ -743,7 +742,7 @@ impl ConnectionResolver {
 
     /// Look up and store missing Plex server tokens through `probe`.
     /// Without one, a Plex link lacking a server token uses its account
-    /// token (v2 `resolve_plex`).
+    /// token.
     pub fn with_plex_tokens(mut self, probe: Arc<dyn PlexServerTokens>) -> Self {
         self.plex_tokens = Some(probe);
         self
@@ -756,7 +755,7 @@ impl ConnectionResolver {
 
     /// The caller's own link first, then the admin's shared credential.
     /// A stored link that no longer opens or is incomplete falls back to
-    /// the shared account, as v2 `PerUserClientFactory` did; it reads as
+    /// the shared account; it reads as
     /// stale only when there is no shared account to fall back to. A
     /// Plex link that needs its server token looked up asks plex.tv at
     /// `priority`.
@@ -820,7 +819,7 @@ impl ConnectionResolver {
         }
     }
 
-    /// Port of the v2 machine-id probe: look up the server token for a
+    /// Looks up the server token for a
     /// Plex link that has none, and store it so the lookup runs once. A
     /// refused account or no access to the server means relink; an
     /// outage keeps the account token for this call.
@@ -1052,7 +1051,7 @@ fn cache_scope(user_id: &str, source: SourceName, base_url: &str, credential: &s
 }
 
 /// Stores the media link a Plex or Jellyfin sign-in hands back, so the
-/// account works for playback with no extra setup (v2 auto-link). The
+/// account works for playback with no extra setup. The
 /// sign-in flows decide whether a failure is fatal.
 #[derive(Clone)]
 pub struct SignInLinks {

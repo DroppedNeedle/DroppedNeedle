@@ -115,7 +115,7 @@ fn checked_url(base: &str, path: &str) -> Option<reqwest::Url> {
         .then_some(url)
 }
 
-/// How long one remote API call may take, matching the v2 repositories.
+/// How long one remote API call may take.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// The most API answers a person's reads download from one source at

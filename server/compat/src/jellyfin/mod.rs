@@ -2,11 +2,9 @@
 //! only album and artist pictures and the library tile open without
 //! sign-in; album and artist ids are made with the data key.
 //!
-//! Ported from v2's Jellyfin compat package (router, models, builders,
-//! auth, errors, serialization) and its client matrix. Every client quirk
-//! carries its citation in the code; the matrixed clients are Finamp,
-//! Jellify, and Manet only. Swiftfin, Infuse, the web client, Kodi, Roku, DLNA,
-//! QuickConnect flows, PlayOn/remote-control, video/live-TV, and
+//! Every client quirk carries its citation in the code; the matrixed clients
+//! are Finamp, Jellify, and Manet only. Swiftfin, Infuse, the web client, Kodi,
+//! Roku, DLNA, QuickConnect flows, PlayOn/remote-control, video/live-TV, and
 //! socket-based sessions are explicitly out of contract.
 //!
 //! Modules: [`models`] (wire DTOs), [`params`] (case-insensitive query +

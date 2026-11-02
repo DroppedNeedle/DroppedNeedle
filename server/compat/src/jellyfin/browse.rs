@@ -20,7 +20,7 @@ use super::views::{
 
 // ===== Library browsing =====
 
-/// The single "Music" view, both dialects (v2 `_views`).
+/// The single "Music" view, on both the plain and the user-scoped routes.
 pub(super) async fn views(
     State(state): State<JellyfinState>,
     authed: Authed,
@@ -44,7 +44,7 @@ pub(super) async fn views(
     ))
 }
 /// Decode a Jellyfin id to an artist mbid, `Ok(None)` when undecodable or
-/// not an artist (v2 `_decode_artist`).
+/// not an artist.
 pub(super) async fn decode_artist(
     state: &JellyfinState,
     jf_id: &str,
@@ -55,9 +55,9 @@ pub(super) async fn decode_artist(
     })
 }
 
-/// One item by decoded kind. Genre and library kinds have no branch in v2
-/// `_single_item` either, so they resolve to `None` (skipped in `Ids`
-/// lookups, 404 for direct fetch), as v2 does.
+/// One item by decoded kind. Quirk (v2): genre and library kinds have no
+/// branch in the single-item lookup, so they resolve to `None` (skipped in `Ids`
+/// lookups, 404 for direct fetch).
 pub(super) async fn fetch_item(
     state: &JellyfinState,
     user_id: &str,
@@ -142,7 +142,7 @@ fn nothing(start: usize) -> Response {
     result(Vec::new(), Some(0), start)
 }
 
-/// `Limit=0` means everything from `start` (v2 `_build_page`).
+/// `Limit=0` means everything from `start`.
 fn or_all(limit: usize) -> usize {
     if limit == 0 { ALL } else { limit }
 }
@@ -202,7 +202,7 @@ async fn build_artists(b: &Builder<'_>, artists: &[ArtistView]) -> Vec<BaseItemD
     built
 }
 
-/// Main browse, both dialects (v2 `_browse`, same branch order).
+/// Main browse, on both the plain and the user-scoped routes.
 pub(super) async fn browse(
     State(state): State<JellyfinState>,
     authed: Authed,
@@ -336,7 +336,7 @@ pub(super) async fn browse(
     }
 }
 
-/// Favorite listing for browse (v2 `_favorite_items`): one batch read per
+/// Favorite listing for browse: one batch read per
 /// kind, DTOs for the page only. `played` narrows favourite tracks and
 /// albums to the ones that are or are not played for the caller.
 pub(super) async fn favorites_browse(
@@ -400,7 +400,7 @@ pub(super) async fn favorites_browse(
     })
 }
 
-/// Track browse arm (v2 `_browse` `Audio` branch).
+/// Track browse arm.
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn audio_browse(
     state: &JellyfinState,
@@ -455,7 +455,7 @@ pub(super) async fn audio_browse(
     Ok(result(build_tracks(&b, &tracks).await, total, start))
 }
 
-/// Album browse arm (v2 `_browse` fallthrough branch).
+/// Album browse arm.
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn album_browse(
     state: &JellyfinState,
@@ -525,8 +525,8 @@ pub(super) async fn album_browse(
     Ok(result(build_albums(&b, &albums).await, total, start))
 }
 
-/// Jellify Recently Added: a bare JSON array of the newest albums (v2
-/// `_latest`). `ParentId`, when given, must be the music library.
+/// Jellify Recently Added: a bare JSON array of the newest albums.
+/// `ParentId`, when given, must be the music library.
 pub(super) async fn latest(
     State(state): State<JellyfinState>,
     authed: Authed,
@@ -605,7 +605,7 @@ pub(super) async fn artists_scoped(
     ))
 }
 
-/// Both genre dialects share one handler (v2 `_genres`).
+/// Both genre routes share one handler.
 pub(super) async fn genres(
     State(state): State<JellyfinState>,
     _caller: Authed,
@@ -629,9 +629,9 @@ pub(super) async fn genres(
     ))
 }
 
-/// Manet's boot call: a 404 here can leave the library empty (v2
-/// `_items_filters`). Genres and album years are the facets modelled; the
-/// key name `OfficialRatings` is v2-verbatim.
+/// Manet's boot call: a 404 here can leave the library empty.
+/// Genres and album years are the facets modelled.
+/// Quirk (v2): the key name `OfficialRatings` is kept as v2 wrote it.
 pub(super) async fn filters(
     State(state): State<JellyfinState>,
     _caller: Authed,
@@ -680,7 +680,7 @@ pub(super) async fn single_item_legacy(
 
 // ===== Discovery (owned-only) =====
 
-/// Similar + both InstantMix routes share one handler (v2 `_similar`):
+/// Similar and both InstantMix routes share one handler:
 /// resolves the artist from an artist/track/album id and serves same-artist
 /// tracks. Unknown ids and unresolvable kinds yield an empty result, not a
 /// 404. (No real similarity ranking is bound yet.)

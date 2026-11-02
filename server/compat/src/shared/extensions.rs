@@ -4,7 +4,7 @@
 //! extension the Subsonic API serves is listed: API-key auth, form posts,
 //! transcode offsets, synced lyrics (`getLyricsBySongId`), playback reports,
 //! the index-based play queue, and the transcode decision and stream
-//! endpoints. Navidrome advertises the same set.
+//! endpoints.
 
 /// Extension name plus its advertised versions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

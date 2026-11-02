@@ -1,5 +1,4 @@
 //! Library view DTOs plus View -> Subsonic converters.
-//! v2: the Subsonic models (`to_*`, `mime_for`, `iso`).
 //!
 //! These are minimal local shapes carrying exactly the fields the wire
 //! needs; the store fills them from the real library.
@@ -19,7 +18,7 @@ pub fn mime_for(file_format: &str) -> &'static str {
         .unwrap_or("application/octet-stream")
 }
 
-/// Unix seconds -> `YYYY-MM-DDTHH:MM:SSZ` (v2 `iso`).
+/// Unix seconds -> `YYYY-MM-DDTHH:MM:SSZ`.
 pub fn iso(unix_seconds: Option<i64>) -> Option<String> {
     unix_seconds.map(|ts| {
         let days = ts.div_euclid(86_400);
@@ -48,7 +47,7 @@ fn civil_from_days(z: i64) -> (i64, i64, i64) {
     (y, m, d)
 }
 
-/// A UTC timestamp cut to whole seconds, as `...Z` (v2 `played_iso`). It
+/// A UTC timestamp cut to whole seconds, as `...Z`. It
 /// reads the `YYYY-MM-DDTHH:MM:SSZ` form the store hands over and drops a
 /// fraction. It does not apply an offset: a time that is not UTC would
 /// keep its local clock. Garbage becomes `None` rather than failing the
@@ -80,7 +79,7 @@ pub fn genre_slug(name: &str) -> String {
     out.trim_end_matches('-').to_owned()
 }
 
-/// Parse `YYYY[-MM[-DD]]` into an item date (v2 `_item_date`).
+/// Parse `YYYY[-MM[-DD]]` into an item date.
 pub fn item_date(value: Option<&str>) -> Option<SItemDate> {
     let value = value?;
     let mut parts = value.split('-');
@@ -300,7 +299,7 @@ pub struct ViewGenre {
 
 /// What an artist is credited as, in a fixed order: `albumartist` with an
 /// album of its own, `artist` with a credited track, and `maincredit` with
-/// either. Navidrome's order differs from answer to answer.
+/// either. Quirk (Navidrome 0.62.0): its order differs from answer to answer.
 pub fn artist_roles(view: &ViewArtist) -> Vec<String> {
     let leads = view.album_count.is_some_and(|count| count > 0);
     let plays = view.track_count.is_some_and(|count| count > 0);
@@ -331,7 +330,7 @@ fn musicbrainz_id(
     }
 }
 
-/// Artist -> ID3 artist (v2 `to_artist_id3`), with its picture link.
+/// Artist -> ID3 artist, with its picture link.
 pub fn to_artist_id3(view: &ViewArtist, image_url: Option<String>) -> SArtistID3 {
     let aid = encode(IdKind::Artist, &view.artist_mbid);
     SArtistID3 {
@@ -354,7 +353,7 @@ pub fn to_artist_id3(view: &ViewArtist, image_url: Option<String>) -> SArtistID3
     }
 }
 
-/// Artist -> file-structure artist (v2 `to_artist_file`), with its picture
+/// Artist -> file-structure artist, with its picture
 /// link.
 pub fn to_artist_file(view: &ViewArtist, image_url: Option<String>) -> SArtist {
     let aid = encode(IdKind::Artist, &view.artist_mbid);
@@ -394,7 +393,7 @@ fn album_genres(view: &ViewAlbum) -> Vec<SItemGenre> {
         .collect()
 }
 
-/// Album -> ID3 album (v2 `to_album_id3`).
+/// Album -> ID3 album.
 pub fn to_album_id3(view: &ViewAlbum) -> SAlbumID3 {
     let alid = encode(IdKind::Album, &view.rg_mbid);
     let artists = album_artists(view);
@@ -451,7 +450,7 @@ pub fn to_album_id3(view: &ViewAlbum) -> SAlbumID3 {
     }
 }
 
-/// Track -> song child (v2 `to_child`). `transcode_hint` carries
+/// Track -> song child. `transcode_hint` carries
 /// (content type, suffix) when transcoding is on and ffmpeg is present.
 pub fn to_child(view: &ViewTrack, transcode_hint: Option<(&str, &str)>) -> SChild {
     let alid = view.rg_mbid.as_ref().map(|rg| encode(IdKind::Album, rg));
@@ -550,7 +549,7 @@ pub fn to_child(view: &ViewTrack, transcode_hint: Option<(&str, &str)>) -> SChil
     }
 }
 
-/// Album -> file-structure child (v2 `to_album_child`): an album as the
+/// Album -> file-structure child: an album as the
 /// older folder-style lists show it. The audio facts are a song's, so an
 /// album carries Navidrome's zero for each and an empty replay gain.
 pub fn to_album_child(view: &ViewAlbum) -> SChild {
@@ -597,7 +596,7 @@ pub fn to_album_child(view: &ViewAlbum) -> SChild {
     }
 }
 
-/// Genre -> wire genre (v2 `to_genre`).
+/// Genre -> wire genre.
 pub fn to_genre(view: &ViewGenre) -> SGenre {
     SGenre {
         value: view.name.clone(),

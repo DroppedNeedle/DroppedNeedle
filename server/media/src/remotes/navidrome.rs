@@ -40,13 +40,13 @@ use super::navidrome_models::{Album, Artist, Body, Envelope, Playlist, Song};
 use super::transport::{RemoteHttp, request_id};
 use super::warmup::{INDEX_MAX_PAGES, INDEX_PAGE, IndexedAlbum, indexed};
 
-/// Subsonic API version pinned by the v2 repository.
+/// Subsonic API version the adapter sends with each request.
 const SUBSONIC_VERSION: &str = "1.16.1";
 
 /// Client name sent on every Navidrome call.
 const CLIENT_NAME: &str = "droppedneedle";
 
-/// Stats album scan batch size, matching the v2 service.
+/// Stats album scan batch size.
 const STATS_BATCH: i64 = 500;
 
 /// Query pairs, owned.
@@ -150,7 +150,7 @@ impl NavidromeAdapter {
     }
 
     /// Server identity for folder-preference staleness: sha256 of the
-    /// casefolded base URL, matching the v2 repository.
+    /// casefolded base URL.
     pub fn server_identity(&self) -> String {
         use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
@@ -240,7 +240,7 @@ impl NavidromeAdapter {
         })
     }
 
-    /// One page of albums. Totals follow the v2 heuristic: the stats total
+    /// One page of albums. Quirk (v2): the total is the stats total
     /// when the page is full, `offset + len` otherwise.
     pub async fn albums(
         &self,
@@ -490,7 +490,7 @@ impl NavidromeAdapter {
         })
     }
 
-    /// Genre labels via `getGenres` (unscoped in v2).
+    /// Genre labels via `getGenres`, unscoped.
     pub async fn genres(&self) -> Result<Vec<String>, AdapterError> {
         self.require_configured()?;
         let body = self.unscoped_request("/rest/getGenres", &[]).await?;
@@ -666,8 +666,8 @@ impl NavidromeAdapter {
         Ok(songs(body.and_then(|body| body.top_songs)))
     }
 
-    /// Random songs via `getRandomSongs`, folder-scoped like the v2
-    /// route (`size` + optional `genre`). Empty when declined.
+    /// Random songs via `getRandomSongs`, folder-scoped
+    /// (`size` + optional `genre`). Empty when declined.
     pub async fn random(&self, limit: i64, genre: &str) -> Result<Vec<TrackView>, AdapterError> {
         self.require_configured()?;
         let mut pairs = vec![("size".to_owned(), limit.to_string())];
@@ -726,7 +726,7 @@ impl NavidromeAdapter {
                     artist_name: text(&entry.artist),
                     album_name: text(&entry.album),
                     // getNowPlaying reports only minutes since the play
-                    // started; v2 estimates the position from it.
+                    // started, so the position is estimated from it.
                     progress_ms: if minutes_ago > 0 {
                         (duration_ms - minutes_ago * 60_000).max(0)
                     } else {
@@ -768,8 +768,8 @@ impl NavidromeAdapter {
         .await
     }
 
-    /// The direct audio request for one song id via `/rest/stream` (v2
-    /// `build_stream_url` target). The caller sends it, by range when it
+    /// The direct audio request for one song id via `/rest/stream`
+    /// The caller sends it, by range when it
     /// seeks.
     pub fn audio_request(&self, id: &str) -> Result<reqwest::Request, AdapterError> {
         self.require_configured()?;
@@ -784,7 +784,6 @@ impl NavidromeAdapter {
     }
 
     /// Now-playing report via `/rest/scrobble` with `submission=false`
-    /// (v2 `now_playing`).
     pub async fn report_now_playing(&self, id: &str) -> Result<(), AdapterError> {
         self.require_configured()?;
         self.unscoped_request(
@@ -796,7 +795,6 @@ impl NavidromeAdapter {
     }
 
     /// Scrobble via `/rest/scrobble` with the play time in unix millis
-    /// (v2 `scrobble`).
     pub async fn scrobble(&self, id: &str, time_ms: i64) -> Result<(), AdapterError> {
         self.require_configured()?;
         let time = time_ms.to_string();
@@ -988,7 +986,7 @@ impl NavidromeAdapter {
     }
 
     /// Scope check for album detail: the album must appear in a scoped
-    /// name search, the v2 detail rule.
+    /// name search.
     async fn album_in_scope(&self, album: &Album) -> Result<bool, AdapterError> {
         let name = album.display_name();
         if !known_name(name) {
@@ -1170,8 +1168,8 @@ fn auth_params(username: &str, password: &str) -> Params {
     ]
 }
 
-/// Client-side reversal rule for album sorts, ported from the v2 route
-/// map: descending name and non-descending recency both reverse.
+/// Client-side reversal rule for album sorts: descending name and
+/// non-descending recency both reverse.
 fn needs_reverse(sort_by: &str, descending: bool, has_genre: bool) -> bool {
     if has_genre {
         return false;

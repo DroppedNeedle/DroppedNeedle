@@ -43,7 +43,7 @@ fn cache_control(q: &CiParams) -> &'static str {
 }
 
 /// 1x1 opaque PNG for the library view's advertised `ImageTags.Primary`, so
-/// the request resolves instead of 404ing (v2 `_LIBRARY_COVER_PNG`).
+/// the request resolves instead of 404ing.
 pub(super) const LIBRARY_COVER_PNG_B64: &str =
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgYGAAAAAEAAH2FzhVAAAAAElFTkSuQmCC";
 
@@ -54,8 +54,7 @@ pub(super) fn library_png() -> Vec<u8> {
         .unwrap_or_default()
 }
 
-/// Size bucket from the first present width/height-ish param (v2
-/// `_image_size`).
+/// Size bucket from the first present width/height-ish param.
 pub(super) fn image_size(q: &CiParams) -> &'static str {
     for key in [
         "fillWidth",
@@ -91,8 +90,7 @@ pub(super) async fn image(
     serve_image(&state, query.as_deref(), &item_id, &image_type).await
 }
 
-/// Indexed variant: the index is accepted and ignored (v2 takes an int and
-/// never reads it either).
+/// Indexed variant: the index is accepted and ignored.
 pub(super) async fn image_indexed(
     State(state): State<JellyfinState>,
     Path((item_id, image_type, _index)): Path<(String, String, String)>,

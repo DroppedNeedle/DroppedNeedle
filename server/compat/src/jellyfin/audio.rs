@@ -19,7 +19,7 @@ use droppedneedle_media::stream::transcode::{HLS_SEGMENT_FORMAT, TrackInfo, deci
 // ===== Streaming + PlaybackInfo =====
 
 /// Accepted `Container` values: comma-separated, pipe-variants split with
-/// the first token winning (v2 `_accepted_containers`).
+/// the first token winning.
 pub(super) fn accepted_containers(param: Option<&str>) -> std::collections::HashSet<String> {
     let mut out = std::collections::HashSet::new();
     for entry in param.unwrap_or("").split(',') {
@@ -32,7 +32,7 @@ pub(super) fn accepted_containers(param: Option<&str>) -> std::collections::Hash
 }
 
 /// Client codec → what we can produce: `mp3`/`opus` pass through, anything
-/// else coerces to `opus`, "nearest we can produce" (v2 `_map_jf_codec`).
+/// else coerces to `opus`, "nearest we can produce".
 pub(super) fn map_codec(codec: Option<&str>) -> Option<String> {
     let codec = codec.unwrap_or("");
     if codec.is_empty() {
@@ -46,7 +46,7 @@ pub(super) fn map_codec(codec: Option<&str>) -> Option<String> {
     })
 }
 
-/// Decode an audio item id to its file id (v2 `_decode_track`).
+/// Decode an audio item id to its file id.
 pub(super) async fn decode_track(state: &JellyfinState, item_id: &str) -> Result<String, Response> {
     match state.ids.from_jf(item_id).await {
         Ok(Some((kind, internal))) if kind == "track" => Ok(internal),
@@ -56,7 +56,7 @@ pub(super) async fn decode_track(state: &JellyfinState, item_id: &str) -> Result
 }
 
 /// Serve one track as `params` ask; the stream gateway decides direct or
-/// transcode (v2 `_stream_decided`). A local miss falls back to a
+/// transcode. A local miss falls back to a
 /// `streaming_source` plugin behind the stream gateway. HEAD answers the
 /// status and headers GET would, with no body and no transcode started.
 async fn play(
@@ -370,7 +370,7 @@ fn head_outcome_response(outcome: &ByteOutcome) -> Response {
 
 /// `HEAD /Audio/...`: the same status and headers GET would answer, the
 /// transcode decision included (200/206/416; HEAD honors Range), always
-/// with an empty body and no transcode started (v2 `_audio_stream_head`).
+/// with an empty body and no transcode started.
 pub(super) async fn audio_head(
     State(state): State<JellyfinState>,
     Path((item_id, tail)): Path<(String, String)>,
@@ -411,7 +411,7 @@ pub(super) async fn audio_head(
     }
 }
 
-/// `/universal` container negotiation (v2 `_universal`): a source format
+/// `/universal` container negotiation: a source format
 /// the client lists in `Container` asks for nothing, else `AudioCodec` is
 /// the requested format; `MaxStreamingBitrate` is the ceiling and
 /// `StartTimeTicks` the offset.
@@ -450,7 +450,7 @@ pub(super) async fn universal(
 }
 
 /// `/stream[.ext]`: `static=true` (case-insensitive) asks for the original
-/// (v2 `_audio_stream`); otherwise `audioCodec` is the requested format,
+/// file; otherwise `audioCodec` is the requested format,
 /// `audioBitRate` the ceiling and `startTimeTicks` the offset.
 pub(super) async fn audio_stream(
     state: &JellyfinState,
@@ -477,11 +477,10 @@ pub(super) async fn audio_stream(
     play(state, &internal, &params, header(headers, "range"), head).await
 }
 
-/// GET+POST PlaybackInfo (v2 `_playback_info`). `DirectStreamUrl` embeds
+/// GET+POST PlaybackInfo. `DirectStreamUrl` embeds
 /// `?api_key=<token>` for headerless players; the transcoding address and
 /// container appear only when the policy says transcode; Finamp's 15
-/// non-null fields are always present (MediaStream 5 + MediaSourceInfo 10,
-/// v2 issue #438).
+/// non-null fields are always present (MediaStream 5 + MediaSourceInfo 10).
 pub(super) async fn playback_info(
     State(state): State<JellyfinState>,
     Path(item_id): Path<String>,
@@ -555,7 +554,7 @@ pub(super) async fn playback_info(
         let codec = out.name();
         // Root-relative yet inside the deployment prefix: players resolve
         // against the advertised origin, so a bare path would escape the
-        // base path under non-empty BASE_PATH deployments (v2 `_playback_info`).
+        // base path under non-empty BASE_PATH deployments.
         // The ceiling rides along: the client follows this address alone, and
         // /universal reads MaxStreamingBitrate as its ceiling.
         let cap = match max_bps {

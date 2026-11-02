@@ -42,8 +42,7 @@ impl CompatPlayback {
         }
     }
 
-    /// Presence source: the normalized client, defaulting to `compat`
-    /// (v2 `_write_presence`: `source=_norm_client(client)`).
+    /// Presence source: the normalized client, defaulting to `compat`.
     fn source(client: Option<&str>) -> String {
         normalize_client(client).unwrap_or_else(|| "compat".to_owned())
     }

@@ -246,7 +246,7 @@ pub struct HubView {
 pub struct DiscoveryHubView {
     /// Hub title, e.g. "Recommended for you".
     pub title: String,
-    /// Hub kind; always `"album"` (other hub kinds are dropped, as in v2).
+    /// Hub kind; always `"album"`. Other hub kinds are dropped.
     pub hub_type: String,
     /// Albums on this shelf.
     pub albums: Vec<AlbumView>,
@@ -688,8 +688,8 @@ pub struct GenreSongsQuery {
     pub offset: Option<i64>,
 }
 
-/// Random-tracks query. Limits mirror the v2 Navidrome route
-/// (`size` 1-50, default 20) so the hub page keeps its batch size.
+/// Random-tracks query. `size` is 1-50 (default 20), so the hub page keeps
+/// its batch size.
 #[derive(Debug, Clone, Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct RandomQuery {
@@ -699,8 +699,7 @@ pub struct RandomQuery {
     pub genre: Option<String>,
 }
 
-/// Plex discovery-hubs query. The count mirrors the v2 Plex route
-/// (1-20, default 10).
+/// Plex discovery-hubs query. The count is 1-20, default 10.
 #[derive(Debug, Clone, Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct DiscoveryQuery {
@@ -774,7 +773,7 @@ pub struct FavoritesQuery {
 }
 
 impl FavoritesQuery {
-    /// Clamp to the v2 range.
+    /// Clamp to the accepted range.
     pub fn clamped(&self) -> i64 {
         self.limit.unwrap_or(50).clamp(1, 100)
     }

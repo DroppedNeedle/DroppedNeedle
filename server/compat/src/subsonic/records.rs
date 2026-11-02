@@ -1,9 +1,7 @@
 //! The records the Subsonic handlers read from and hand to the
 //! [`SubsonicStore`](crate::subsonic::store::SubsonicStore).
-//!
-//! v2: `CompatServices` behind the Subsonic router.
 
-/// Album-list sort keys (v2 `_ALBUMLIST_SORTS` + byYear directions).
+/// Album-list sort keys, including the byYear directions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AlbumSort {
     /// Recently added.

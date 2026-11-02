@@ -66,7 +66,7 @@ impl PlaylistSyncSettings for NavidromeSyncSettings {
     }
 }
 
-/// The route, admin only: the export writes files (v2's settings-wide
+/// The route, admin only: the export writes files (a settings-wide
 /// admin gate).
 pub fn routes() -> Routes<ProdPlaylistSync> {
     Routes::new().admin(routes!(sync_now_route))

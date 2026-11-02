@@ -60,8 +60,7 @@ fn params(pairs: &[(&str, &str)]) -> Params {
 }
 
 /// Plex browse client. Section ids pin the music libraries; when empty the
-/// adapter resolves every `artist`-typed section instead of answering empty
-/// (v2 answered empty; a pinned id behaves exactly like v2).
+/// adapter resolves every `artist`-typed section.
 pub struct PlexAdapter {
     http: RemoteHttp,
     base_url: RwLock<String>,
@@ -159,7 +158,7 @@ impl PlexAdapter {
     }
 
     /// The server's machine id (`/identity`); `None` when the server does
-    /// not name one or answers with an error (v2 `get_machine_identifier`).
+    /// not name one or answers with an error.
     pub async fn machine_identifier(&self) -> Result<Option<String>, AdapterError> {
         match self.request("/identity", &[]).await {
             Ok(container) => Ok(non_empty(container.machine_identifier.as_deref())),
@@ -615,9 +614,8 @@ impl PlexAdapter {
     }
 
     /// Discovery shelves via `/hubs/sections/{section}?count=`, album-type
-    /// hubs only (v2 `get_discovery_hubs` semantics: first configured
-    /// section, `Metadata` rows as albums). Empty shelves when nothing
-    /// resolves or the hubs call is declined.
+    /// hubs only: the first configured section, `Metadata` rows as albums.
+    /// Empty shelves when nothing resolves or the hubs call is declined.
     pub async fn discovery(&self, count: i64) -> Result<DiscoveryView, AdapterError> {
         self.require_configured()?;
         let empty = || DiscoveryView {
@@ -772,8 +770,8 @@ impl PlexAdapter {
         .await
     }
 
-    /// The direct audio request for one part key (v2 `proxy_get_stream`
-    /// target). A leading slash is added, and a key that is not a plain
+    /// The direct audio request for one part key.
+    /// A leading slash is added, and a key that is not a plain
     /// path under `/library/parts/` is rejected without any request. The
     /// caller sends it, by range when it seeks.
     pub fn audio_request(&self, part_key: &str) -> Result<reqwest::Request, AdapterError> {
@@ -1350,7 +1348,7 @@ fn playlist_summary(playlist: &Metadata) -> Result<PlaylistSummary, AdapterError
     })
 }
 
-/// UI sort names to Plex `field:direction`, ported from the v2 route map.
+/// UI sort names to Plex `field:direction`.
 fn plex_sort(sort_by: &str, descending: bool) -> String {
     let field = match sort_by {
         "name" | "" => "titleSort",
@@ -1581,8 +1579,8 @@ const MAX_PLEX_PATH_BYTES: usize = 512;
 /// segments of ASCII letters, digits, `.`, `-` and `_`, none of them
 /// empty, `.` or `..`. A part key is `/library/parts/{id}/{time}/file.{ext}`
 /// and a playlist cover is `/playlists/{id}/composite/{time}`, both
-/// numeric apart from the words (the shapes v2 handled and the in-repo
-/// Plex mock serves; not probed against a live server here). Neither has
+/// numeric apart from the words (the shapes the in-repo Plex mock serves;
+/// not probed against a live server here). Neither has
 /// a `%`, so none is allowed: the address parser reads `%2e%2e` as `..`
 /// and would walk the request up to another Plex path. A query, a
 /// fragment and a backslash are refused the same way.

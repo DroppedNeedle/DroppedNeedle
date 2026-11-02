@@ -1,5 +1,4 @@
 //! Media handlers: cover art, stream, download, transcode, avatar.
-//! v2: the Subsonic router's endpoint functions.
 
 use super::error::{NOT_AUTHORIZED, NOT_FOUND, SubsonicError};
 use super::ids::{IdKind, decode, decode_expect};
@@ -257,7 +256,7 @@ pub async fn cover_art(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
 /// or transcode. `format=raw` always serves the original bytes;
 /// `timeOffset` applies to transcodes only; `estimateContentLength` adds
 /// Content-Length on transcodes only. A local miss falls through to the
-/// plugin fallback in the gateway adapter, else 70 (v2 `_stream`).
+/// plugin fallback in the gateway adapter, else 70.
 pub async fn stream(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
     let fid = decode_expect(&ctx.p("id")?.unwrap_or_default(), IdKind::Track)?;
     let fid = current_id(ctx, IdKind::Track, fid).await?;
@@ -316,7 +315,7 @@ pub async fn download(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
 }
 
 /// Transcode client description, strict: unknown fields rejected at
-/// every level (v2 `forbid_unknown_fields`), body capped at 64KB.
+/// every level, body capped at 64KB.
 pub mod client_info {
     use serde::Deserialize;
 

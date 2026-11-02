@@ -799,7 +799,7 @@ impl SubsonicStore {
             .collect::<Vec<_>>();
         let plays = self.library.plays(user_id, "track", &ids).await?;
         let mut ranked = tracks;
-        // Stable: most played first, newest import breaks ties (v2).
+        // Stable: most played first, newest import breaks ties.
         ranked.sort_by_key(|track| {
             std::cmp::Reverse(plays.get(&track.id).map(|(count, _)| *count).unwrap_or(0))
         });

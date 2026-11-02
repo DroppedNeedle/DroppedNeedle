@@ -2,8 +2,8 @@
 //! live presence registry, the Jellyfin/Navidrome/Plex session pollers and
 //! the MBID warmups.
 //!
-//! The pollers read sessions through the admin's shared accounts (v2 polled
-//! with the configured server credentials), so a source counts as enabled
+//! The pollers read sessions through the admin's shared accounts, with the
+//! configured server credentials, so a source counts as enabled
 //! exactly when the admin configured it with a credential. Settings are
 //! re-read on every cycle.
 
@@ -153,7 +153,7 @@ impl RemoteSessionPollers {
 }
 
 /// One upstream session in feed shape. Sessions without a track title are
-/// skipped (v2 `map_*`).
+/// skipped.
 fn presence_session(source: SourceName, session: SessionView) -> Option<PresenceSession> {
     if session.track_title.is_empty() {
         return None;

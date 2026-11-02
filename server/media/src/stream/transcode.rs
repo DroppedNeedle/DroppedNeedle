@@ -1,8 +1,7 @@
 //! Transcode policy and execution engine.
 //!
-//! A faithful port of v2's compat transcode service, with leases from its
-//! stream concurrency module. `decide()` keeps the v2
-//! rule order and quirk citations; `build_cmd()` keeps the exact ffmpeg argv;
+//! `decide()` runs the direct-play and transcode rules in order, citing each
+//! quirk; `build_cmd()` builds the exact ffmpeg argv;
 //! the streaming body keeps the read timeout and the stderr capture.
 //!
 //! Engine only: there are no routes here. The gateway owns the HTTP
@@ -36,7 +35,7 @@
 //!   (`transcoding_enabled`, `transcode_default_format`,
 //!   `transcode_max_bitrate_kbps`).
 //! * Failures: [`TranscodeError::Capacity`] is the gateway's 429 with
-//!   `Retry-After: 1`, as v2's routers answer it.
+//!   `Retry-After: 1`.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -55,10 +54,10 @@ use super::leases::{OwnedDirectLease, TranscodeGate, TranscodeLease};
 use std::os::unix::fs::PermissionsExt as _;
 
 // ---------------------------------------------------------------------------
-// Constants (v2 values, unchanged)
+// Constants
 // ---------------------------------------------------------------------------
 
-/// Supported transcode output codecs, matching v2 `_SUPPORTED_OUT`.
+/// Supported transcode output codecs.
 pub const SUPPORTED_OUT_FORMATS: &[&str] = &["mp3", "opus"];
 
 /// Internal format name for AAC in MPEG-TS, the segment format the
@@ -88,20 +87,20 @@ pub fn out_bitrate_kbps(format: &str, client_cap_kbps: Option<i64>, server_max_k
     wanted.min(server_max_kbps).max(MIN_BITRATE_KBPS)
 }
 
-/// Lowest output bitrate v2 will emit, in kbps.
+/// Lowest output bitrate, in kbps.
 pub const MIN_BITRATE_KBPS: i64 = 64;
 
-/// "No cap" sentinel for a 0 or unset client bitrate, matching v2 `_HUGE`.
+/// "No cap" sentinel for a 0 or unset client bitrate.
 /// Finamp sends 999999999 to mean uncapped, which lands under this the same way.
 pub const NO_CAP_BITRATE_KBPS: i64 = 1_000_000_000;
 
-/// Stream read size, matching v2 `STREAM_CHUNK_SIZE` (64 KiB).
+/// Stream read size (64 KiB).
 pub const STREAM_CHUNK_SIZE: usize = 64 * 1024;
 
-/// Per-chunk ffmpeg read timeout, matching v2 `_READ_TIMEOUT_S`.
+/// Per-chunk ffmpeg read timeout.
 pub const READ_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Wait for natural ffmpeg exit after EOF, matching v2's 5s `proc.wait()`.
+/// Wait for natural ffmpeg exit after EOF.
 pub const EXIT_WAIT: Duration = Duration::from_secs(5);
 
 /// How long a transcode waits for its reader before it stops ffmpeg and
@@ -113,7 +112,7 @@ pub const EXIT_WAIT: Duration = Duration::from_secs(5);
 /// again after that.
 pub const IDLE_DEADLINE: Duration = Duration::from_secs(30 * 60);
 
-/// Bounded stderr capture for the nonzero-exit warning, v2's 2000 bytes.
+/// Bounded stderr capture for the nonzero-exit warning.
 pub const STDERR_CAPTURE_BYTES: usize = 2000;
 
 // ---------------------------------------------------------------------------
@@ -121,7 +120,7 @@ pub const STDERR_CAPTURE_BYTES: usize = 2000;
 // ---------------------------------------------------------------------------
 
 /// Transcode output codec. Only these two exist; anything else a client asks
-/// for falls back to the configured default (v2 `_SUPPORTED_OUT` behavior).
+/// for falls back to the configured default.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum OutFormat {
     /// MP3 via libmp3lame, muxed as mp3.
@@ -246,7 +245,7 @@ impl StreamPlan {
 // decide()
 // ---------------------------------------------------------------------------
 
-/// Direct-play-vs-transcode policy. Rules run in order, exactly as in v2:
+/// Direct-play-vs-transcode policy. Rules run in order:
 ///
 /// 1. Hard outs: `force_original`, transcoding disabled, or ffmpeg absent
 ///    always land direct (ffmpeg-absent is a silent fallback, never an error).
@@ -319,8 +318,7 @@ pub fn decide(
 // ffmpeg argv contract
 // ---------------------------------------------------------------------------
 
-/// Build the exact ffmpeg argv for a transcode plan, ported argument by
-/// argument from v2 `_mp3_cmd` / `_opus_cmd`:
+/// Build the exact ffmpeg argv for a transcode plan, argument by argument:
 ///
 /// ```text
 /// ffmpeg -hide_banner -loglevel error -nostdin [-ss <s.ms>] -i <path>
@@ -385,7 +383,7 @@ pub fn build_cmd(source_path: &Path, plan: &StreamPlan) -> Option<Vec<String>> {
     Some(argv)
 }
 
-/// Response content type for a transcode output codec (v2 `out_media_type`).
+/// Response content type for a transcode output codec.
 pub fn out_media_type(out_format: &OutFormat) -> &'static str {
     match out_format {
         OutFormat::Mp3 => "audio/mpeg",
@@ -412,9 +410,8 @@ pub fn estimate_size(plan: &StreamPlan) -> Option<u64> {
     Some(bytes.max(0.0) as u64)
 }
 
-/// The first `ffmpeg` executable on `PATH`, or `None` when there is none
-/// (v2 `ffmpeg_available`, the `shutil.which` half). The server looks once,
-/// at boot; whether it found one is whether it can transcode.
+/// The first `ffmpeg` executable on `PATH`, or `None` when there is none.
+/// The server looks once, at boot; whether it found one is whether it can transcode.
 pub fn ffmpeg_on_path() -> Option<PathBuf> {
     std::env::var_os("PATH").and_then(|paths| {
         std::env::split_paths(&paths)
@@ -441,8 +438,8 @@ fn is_executable_file(path: &Path) -> bool {
 // ---------------------------------------------------------------------------
 
 /// Transcode engine failures. Messages stay generic on purpose: they must
-/// never carry source paths or other request details (v2 keeps paths out of
-/// its ffmpeg log lines, and 5xx bodies stay fixed upstream).
+/// never carry source paths or other request details. Quirk (v2): the ffmpeg
+/// log lines keep paths out, and 5xx bodies stay fixed.
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum TranscodeError {
     /// The transcode gate is full for this caller. The gateway answers 429
@@ -548,8 +545,8 @@ impl FfmpegSpawner for ProcessSpawner {
 }
 
 /// Drain a child's stderr to EOF, keeping only the first bytes for the
-/// nonzero-exit warning. Port of v2 `_drain_stderr` with its 2000-byte
-/// bound. Ends when ffmpeg closes stderr, which it does when it exits.
+/// nonzero-exit warning, bounded at 2000 bytes. Ends when ffmpeg closes
+/// stderr, which it does when it exits.
 async fn drain_stderr(mut stderr: tokio::process::ChildStderr, captured: Arc<Mutex<String>>) {
     let mut buf = [0u8; 8192];
     loop {
@@ -669,7 +666,7 @@ impl<S: FfmpegSpawner> Transcoder for FfmpegTranscoder<S> {
         let Some(argv) = build_cmd(source_path, plan) else {
             return Err(TranscodeError::NotTranscoding);
         };
-        // Lease before spawning, as v2 does; a failed start drops it, so it
+        // Lease before spawning; a failed start drops it, so it
         // never wedges a slot.
         let lease = self
             .gate

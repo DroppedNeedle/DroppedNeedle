@@ -4,10 +4,7 @@
 //! The handlers translate Subsonic's parameters into [`StreamParams`];
 //! the gateway, through [`GatewayAudio`], makes the one transcode decision
 //! and says which plan it ran. Everything else here (download
-//! filenames, cover buckets) is ported from v2 and covered by goldens.
-//!
-//! v2: the local files service (ranges, HEAD, MIME) and the Subsonic
-//! router (`_serve_file`, `_stream`, `_download`, `_cover_size`).
+//! filenames, cover buckets) is covered by goldens.
 
 use axum::http::HeaderMap;
 use droppedneedle_media::stream::engine::StreamEngine;
@@ -21,11 +18,11 @@ pub use crate::body::AudioBody;
 /// Max `timeOffset` / transcode `offset` seconds.
 pub const MAX_OFFSET_SECONDS: f64 = 604_800.0;
 
-/// Transcode output MIME/suffix (v2 `out_media_type`/`out_suffix`).
+/// Transcode output MIME/suffix.
 /// The one copy: `opus` maps to the ogg pair, every other format
 /// (including `mp3` and anything unexpected) to the mp3 pair. The server
 /// default is validated to `mp3`/`opus`, so every reachable input maps
-/// as v2 did.
+/// to one of the two pairs.
 pub fn transcode_hint(format: &str) -> (&'static str, &'static str) {
     match format {
         "opus" => ("audio/ogg", "opus"),
@@ -64,7 +61,7 @@ pub fn download_filename(title: &str, file_format: &str) -> String {
 }
 
 /// Cover-art size bucket: <=300 -> 250, <=750 -> 500, else 1200
-/// (v2 `_cover_size`; absent size means 500).
+/// (absent size means 500).
 pub fn cover_bucket(size: Option<i64>) -> &'static str {
     match size {
         None => "500",
@@ -261,7 +258,7 @@ impl BackendError {
         }
     }
 
-    /// Full pool (direct 32/8, transcode 2/1 in v2).
+    /// Full pool (direct 32/8, transcode 2/1).
     pub fn full() -> Self {
         Self {
             message: "stream capacity exhausted".to_owned(),
@@ -316,8 +313,8 @@ impl From<BackendError> for ServeError {
     }
 }
 
-/// Serve one file id as `params` ask (v2 `_serve_file` and the transcode
-/// pipe, minus the lease plumbing, which lives in [`GatewayAudio`]).
+/// Serve one file id as `params` ask, through the transcode pipe,
+/// minus the lease plumbing, which lives in [`GatewayAudio`].
 ///
 /// An original takes its ranges, lengths and the 200/206/416 verdict from
 /// the stream's [`DirectSpan`], so they match the native and Jellyfin

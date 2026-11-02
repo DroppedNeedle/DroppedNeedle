@@ -1,9 +1,8 @@
-//! PascalCase Jellyfin DTOs, ported from v2 `api/compat/jellyfin/models.py`.
+//! PascalCase Jellyfin DTOs.
 //!
-//! Field declaration order matches the v2 msgspec structs, because serde
+//! Field declaration order sets the wire order, because serde
 //! emits fields in declaration order and the goldens pin the wire bytes.
-//! `None` serializes to nothing (`skip_serializing_none`), never `null`
-//! (v2 `_strip_none` parity).
+//! `None` serializes to nothing (`skip_serializing_none`), never `null`.
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -12,7 +11,7 @@ use droppedneedle_auth::compat_auth::jellyfin::PolicyFacts;
 
 // ===== System / identity =====
 
-/// `GET /System/Info/Public` shape (v2 `PublicSystemInfo`).
+/// `GET /System/Info/Public` shape.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct PublicSystemInfo {
@@ -25,7 +24,7 @@ pub struct PublicSystemInfo {
     pub startup_wizard_completed: bool,
 }
 
-/// `GET /System/Info` shape (v2 `SystemInfo`), plus the installation
+/// `GET /System/Info` shape, plus the installation
 /// fields Jellyfin 10.10.6 sends (`system.info.json` in the references).
 /// The path fields are empty: this server does not report its host.
 #[derive(Debug, Clone, Serialize)]
@@ -63,7 +62,7 @@ pub struct SystemInfo {
 // ===== User objects (Finamp/Manet login contract) =====
 
 /// Fully populated: strict clients hard-cast the bools, so an empty `{}`
-/// crashes them (Finamp "Null is not a subtype of bool", v2 issue #144).
+/// crashes them (Finamp "Null is not a subtype of bool").
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct UserConfiguration {
@@ -113,7 +112,7 @@ impl Default for UserConfiguration {
 
 /// User policy. `EnableAllFolders` must be true or strict clients (Manet)
 /// conclude "no libraries" and never call `/UserViews`; every bool must be
-/// present or Finamp's non-nullable casts crash login (v2 issues #144, #376).
+/// present or Finamp's non-nullable casts crash login.
 ///
 /// A permission is true only when the Jellyfin API here lets the user do
 /// it. Nothing can be deleted through it, it has no collections, channels,
@@ -227,8 +226,8 @@ impl UserPolicy {
     }
 }
 
-/// User object for `/Users/Me` and `/Users/{id}` (the `{id}` is ignored,
-/// v2 parity). The login echo itself is rendered by `compat_auth`'s
+/// User object for `/Users/Me` and `/Users/{id}` (the `{id}` is ignored).
+/// The login echo itself is rendered by `compat_auth`'s
 /// `login_echo_json`; this struct's field order matches it exactly so the
 /// goldens can assert the two agree byte for byte.
 #[derive(Debug, Clone, Serialize)]
@@ -254,7 +253,7 @@ pub struct UserDto {
 
 // ===== Library items =====
 
-/// Artist reference pair (v2 `NameGuidPair`).
+/// Artist reference pair.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct NameGuidPair {
@@ -262,7 +261,7 @@ pub struct NameGuidPair {
     pub id: String,
 }
 
-/// Per-user item state (v2 `UserItemDataDto`).
+/// Per-user item state.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct UserItemDataDto {
@@ -281,8 +280,7 @@ pub struct UserItemDataDto {
 }
 
 impl UserItemDataDto {
-    /// Blank state for the music view and markers (v2 `_music_view`,
-    /// `_user_item_data`).
+    /// Blank state for the music view and markers.
     pub fn blank(item_id: &str) -> Self {
         Self {
             item_id: item_id.to_owned(),
@@ -298,7 +296,7 @@ impl UserItemDataDto {
     }
 }
 
-/// The library item (v2 `BaseItemDto`). Real Jellyfin sets `LocationType`,
+/// The library item. Real Jellyfin sets `LocationType`,
 /// `BackdropImageTags`, and `ImageBlurHashes` non-null on every item and
 /// strict clients (Manet, Swift Codable) require them.
 #[derive(Debug, Clone, Serialize)]
@@ -433,7 +431,7 @@ pub struct ItemDetail {
     pub music_video_count: Option<usize>,
 }
 
-/// Paged browse result (v2 `BaseItemDtoQueryResult`).
+/// Paged browse result.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct BaseItemDtoQueryResult {
@@ -444,9 +442,9 @@ pub struct BaseItemDtoQueryResult {
 
 // ===== Playback =====
 
-/// One stream of a file (v2 `MediaStream`): the audio, and a `Lyric` entry
+/// One stream of a file: the audio, and a `Lyric` entry
 /// when the file carries lyrics. Finamp hard-casts the five trailing bools
-/// too (v2 issue #438), so they are always present. The audio-only fields
+/// too, so they are always present. The audio-only fields
 /// are left out of a `Lyric` entry, as Jellyfin leaves them out.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "PascalCase")]
@@ -519,11 +517,11 @@ pub struct LyricLine {
     pub start: Option<i64>,
 }
 
-/// Playback source (v2 `MediaSourceInfo`). `DirectStreamUrl` embeds
+/// Playback source. `DirectStreamUrl` embeds
 /// `?api_key=<token>` because headerless players (Finamp, Jellify, Manet)
 /// fetch it with no auth headers; it is sent only in the playback
 /// information answer. The ten bools after `Type` are the rest of
-/// Finamp's 15 non-null fields (v2 issue #438).
+/// Finamp's 15 non-null fields.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct MediaSourceInfo {
@@ -578,7 +576,7 @@ pub struct MediaSourceInfo {
     pub has_segments: bool,
 }
 
-/// PlaybackInfo result (v2 `PlaybackInfoResponse`).
+/// PlaybackInfo result.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct PlaybackInfoResponse {
@@ -590,8 +588,8 @@ pub struct PlaybackInfoResponse {
 
 // ===== Lenient request bodies =====
 
-/// Login body. Unknown fields are ignored by serde default, matching v2's
-/// lenient decode (Finamp sends `UserId`).
+/// Login body. Unknown fields are ignored by serde default, which keeps the
+/// decode lenient (Finamp sends `UserId`).
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 #[serde(default)]
@@ -600,7 +598,7 @@ pub struct AuthenticateRequest {
     pub pw: String,
 }
 
-/// POST PlaybackInfo body (v2 `PlaybackInfoBody`).
+/// POST PlaybackInfo body.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 #[serde(default)]
@@ -613,7 +611,7 @@ pub struct PlaybackInfoBody {
     pub user_id: Option<String>,
 }
 
-/// Playlist creation body (v2 `CreatePlaylistDto`).
+/// Playlist creation body.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 #[serde(default)]
@@ -625,7 +623,7 @@ pub struct CreatePlaylistDto {
     pub user_id: Option<String>,
 }
 
-/// Session start body (v2 `PlaybackStartInfo`).
+/// Session start body.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 #[serde(default)]
@@ -636,7 +634,7 @@ pub struct PlaybackStartInfo {
     pub play_session_id: Option<String>,
 }
 
-/// Session stop body (v2 `PlaybackStopInfo`).
+/// Session stop body.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 #[serde(default)]
@@ -652,7 +650,7 @@ pub struct PlaybackStopInfo {
     pub failed: bool,
 }
 
-/// Progress body (v2 `PlaybackProgressInfo`).
+/// Progress body.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 #[serde(default)]

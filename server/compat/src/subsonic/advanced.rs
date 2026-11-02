@@ -1,6 +1,5 @@
 //! OpenSubsonic transcoding v1: the getTranscodeDecision policy and the
-//! sealed parameters getTranscodeStream accepts (v2
-//! `AdvancedTranscodeService`).
+//! sealed parameters getTranscodeStream accepts.
 //!
 //! The decision is pure: it compares one track with the client's
 //! direct-play, transcoding and codec profiles. The parameters it hands
@@ -61,7 +60,7 @@ fn invalid(message: &str) -> SubsonicError {
     SubsonicError::new(10, message)
 }
 
-/// Reject malformed client descriptions with code 10 (v2 limits).
+/// Reject malformed client descriptions with code 10.
 pub fn validate(client: &ClientInfo) -> Result<(), SubsonicError> {
     let bad_text = |value: &str| value.is_empty() || value.len() > 256;
     if bad_text(&client.name) || bad_text(&client.platform) {
@@ -185,7 +184,7 @@ pub struct Decision {
     pub grant: Option<(bool, Option<String>, Option<i64>)>,
 }
 
-/// Match one track against the client's profiles (v2 `decide`): direct
+/// Match one track against the client's profiles: direct
 /// play, or the output format and ceiling a transcode asks the stream
 /// gateway for.
 pub fn negotiate(track: &ViewTrack, client: &ClientInfo, policy: Policy) -> Decision {

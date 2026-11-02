@@ -12,7 +12,7 @@
 //! Every route needs a session. Who may download is the admin's
 //! `security_settings.library_download_access` (everyone, trusted, or
 //! admins), read on every request so a change applies at once; refusals
-//! are 403 with v2's message.
+//! are 403 with a fixed message.
 //!
 //! Only catalog files are served (see [`super::local_files`], which
 //! playback shares): ids pick catalog rows, paths come from the row and
@@ -20,7 +20,7 @@
 //! a single `Range`, framed by the same code as streaming. Album archives are streamed (see [`archive`]): stored entries,
 //! exact `Content-Length`, file bytes read from disk as the client reads,
 //! never buffered whole in memory or written to a temp file. Files that
-//! cannot be served are left out of an album with a warning, as v2 did;
+//! cannot be served are left out of an album with a warning;
 //! an album with nothing left to serve is 404.
 
 mod archive;
@@ -54,7 +54,7 @@ use droppedneedle_library::scan::roots::RootRegistry;
 
 use archive::{Entry, Layout};
 
-/// v2's refusal text when the access setting excludes the caller's role.
+/// Refusal text when the access setting excludes the caller's role.
 const RESTRICTED_MESSAGE: &str = "Library downloads are restricted by the administrator";
 
 /// Whether the caller may download library files.
@@ -181,7 +181,7 @@ pub async fn download_access(
 }
 
 /// One track file, unchanged, as an attachment. A single `Range` is
-/// answered with 206, as v2's file response did, so download managers can
+/// answered with 206, so download managers can
 /// resume.
 #[utoipa::path(
     get,
@@ -366,8 +366,8 @@ async fn album_archive(library: &LibraryFiles, album_id: &str) -> Result<Respons
 }
 
 /// Resolve every file of the album, leaving out (with a warning) any that
-/// cannot be served, and name the entries the way v2 did:
-/// `NN Title.ext`, or `DD-NN Title.ext` when the album spans discs.
+/// cannot be served. Entries are named `NN Title.ext`, or
+/// `DD-NN Title.ext` when the album spans discs.
 /// Blocking.
 fn plan_members(
     registry: &RootRegistry,
@@ -428,7 +428,7 @@ fn entry_name(file: &CatalogFile, path: &Path, multi_disc: bool) -> String {
 
 /// Two tracks can share a number and title (a bonus disc tagged as disc 1,
 /// say); the second becomes `Name (2).ext` instead of shadowing the first
-/// when unzipped. v2 wrote both under one name.
+/// when unzipped.
 fn unique_name(name: &str, taken: &mut std::collections::HashSet<String>) -> String {
     if taken.insert(name.to_lowercase()) {
         return name.to_owned();
@@ -515,8 +515,8 @@ fn archive_stream(members: Vec<Member>, entries: Vec<Entry>, layout: Layout) -> 
 // Names and headers
 // ---------------------------------------------------------------------------
 
-/// Replace characters no common filesystem accepts (v2
-/// `sanitize_filename`); a blank result reads `Untitled`.
+/// Replace characters no common filesystem accepts;
+/// a blank result reads `Untitled`.
 fn sanitize_filename(name: &str) -> String {
     let cleaned: String = name
         .chars()

@@ -4,11 +4,10 @@ use droppedneedle_auth::compat_auth::jellyfin::PolicyFacts;
 use droppedneedle_kernel::runtime_config::sections::DownloadAccess;
 use droppedneedle_media::stream::transcode::{OutFormat, TranscodeSettings};
 
-/// The connect-apps settings subset the shim reads (v2
-/// `get_connect_apps_settings`).
+/// The connect-apps settings subset the shim reads.
 #[derive(Debug, Clone)]
 pub struct JellyfinSettings {
-    /// Kill switch, default off (v2 `jellyfin_enabled`). Disabled → HTTP 404
+    /// Kill switch, default off. Disabled → HTTP 404
     /// on every route, before handler lookup (no method enumeration).
     pub enabled: bool,
     /// User-editable advertised name, default "DroppedNeedle".

@@ -1,4 +1,4 @@
-//! Type-prefixed Subsonic ids, as v2 spells them.
+//! Type-prefixed Subsonic ids. Quirk (v2): the prefixes keep v2's spelling.
 //!
 //! Internal ids are local library ids for artists, albums and tracks, the
 //! playlist id and the genre slug. Unknown prefix decodes to error 70.

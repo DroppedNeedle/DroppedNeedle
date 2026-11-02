@@ -751,7 +751,7 @@ impl JellyfinLibrary {
     }
 
     /// Release art bytes (`size` is the 250/500/1200 bucket); `None` renders
-    /// 404 with no placeholder, unlike Subsonic (v2 `_image`).
+    /// 404 with no placeholder, unlike Subsonic.
     pub async fn cover(&self, rg_mbid: &str, size: &str) -> Result<Option<CoverBytes>, ReadFailed> {
         let found = self.library.album_cover(rg_mbid, Some(size)).await?;
         Ok(found.map(|(bytes, content_type)| CoverBytes {
@@ -900,7 +900,7 @@ impl CatalogIds {
     /// Accepts dashed or undashed input, `Ok(None)` when unknown or when
     /// nothing live holds it, `Err` when a read failed. An id handed out
     /// since the last stored one is waited for, briefly. (`from_*` takes
-    /// `self` by v2-naming parity, not by convention.)
+    /// `self`, against the usual convention.)
     #[allow(clippy::wrong_self_convention)]
     pub async fn from_jf(&self, jf_id: &str) -> Result<Option<(String, String)>, ReadFailed> {
         Ok(self

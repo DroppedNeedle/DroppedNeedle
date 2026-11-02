@@ -1,11 +1,11 @@
-//! Case-insensitive query parsing, ported from v2's Jellyfin router (`_CIParams`
-//! and friends). Real Jellyfin (ASP.NET Core) binds query strings
+//! Case-insensitive query parsing.
+//! Real Jellyfin (ASP.NET Core) binds query strings
 //! case-insensitively, so clients send mixed casing (`parentId` vs
 //! `ParentId`).
 
 use crate::shared::percent::lossy;
 
-/// Query params keyed case-insensitively, preserving repeats (v2 `_CIParams`).
+/// Query params keyed case-insensitively, preserving repeats.
 #[derive(Debug, Clone, Default)]
 pub struct CiParams {
     multi: Vec<(String, String)>,
@@ -13,7 +13,7 @@ pub struct CiParams {
 
 impl CiParams {
     /// Parse a raw query string (`a=1&A=2`), percent-decoding names and
-    /// values (`+` decodes to space, v2 Starlette parity).
+    /// values (`+` decodes to a space).
     pub fn parse(raw: Option<&str>) -> Self {
         let mut multi = Vec::new();
         for pair in raw.unwrap_or("").split('&') {
@@ -29,7 +29,7 @@ impl CiParams {
         Self { multi }
     }
 
-    /// First value for a case-insensitive key (v2 `_CIParams.get`).
+    /// First value for a case-insensitive key.
     pub fn get(&self, key: &str) -> Option<&str> {
         let want = key.to_lowercase();
         self.multi
@@ -38,7 +38,7 @@ impl CiParams {
             .map(|(_, value)| value.as_str())
     }
 
-    /// Every value for a case-insensitive key (v2 `_CIParams.getlist`).
+    /// Every value for a case-insensitive key.
     pub fn getlist(&self, key: &str) -> Vec<&str> {
         let want = key.to_lowercase();
         self.multi
@@ -49,7 +49,7 @@ impl CiParams {
     }
 }
 
-/// Split every value of a key on commas, dropping empties (v2 `_csv_param`).
+/// Split every value of a key on commas, dropping empties.
 pub fn csv_param(params: &CiParams, key: &str) -> Vec<String> {
     let mut out = Vec::new();
     for value in params.getlist(key) {
@@ -63,8 +63,7 @@ pub fn csv_param(params: &CiParams, key: &str) -> Vec<String> {
     out
 }
 
-/// `?IsFavorite=true` or `Filters` containing `IsFavorite` (v2
-/// `_wants_favorites`).
+/// `?IsFavorite=true` or `Filters` containing `IsFavorite`.
 pub fn wants_favorites(params: &CiParams) -> bool {
     if params
         .get("isFavorite")
@@ -114,7 +113,7 @@ pub fn wants_total(params: &CiParams) -> bool {
         .is_some_and(|value| value.trim().eq_ignore_ascii_case("false"))
 }
 
-/// Lenient int query: missing/empty/unparseable falls back (v2 `_qint`).
+/// Lenient int query: missing/empty/unparseable falls back to `default`.
 pub fn qint(params: &CiParams, key: &str, default: i64) -> i64 {
     match params.get(key) {
         None | Some("") => default,
@@ -123,8 +122,7 @@ pub fn qint(params: &CiParams, key: &str, default: i64) -> i64 {
 }
 
 /// Deduplicated multi-spelling id collection: lookups are case-insensitive,
-/// so spellings must be deduped or each id is collected once per spelling
-/// (v2 `_ids_param`).
+/// so spellings must be deduped or each id is collected once per spelling.
 pub fn ids_param(params: &CiParams, keys: &[&str]) -> Vec<String> {
     let mut seen = std::collections::HashSet::new();
     let mut out = Vec::new();
@@ -144,7 +142,7 @@ pub fn ids_param(params: &CiParams, keys: &[&str]) -> Vec<String> {
     out
 }
 
-// ===== SortBy allowlist (v2 `_browse_sort`) =====
+// ===== SortBy allowlist =====
 
 /// Resolved sort key: the catalog sorts plus the two play-history sorts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -185,7 +183,7 @@ impl SortKey {
     }
 
     /// `SortOrder` omitted: these keys default to descending, because the
-    /// legacy lists are newest-first (v2 `_SORT_DESC_DEFAULT`).
+    /// legacy lists are newest-first.
     fn desc_default(self) -> bool {
         matches!(
             self,
@@ -196,7 +194,7 @@ impl SortKey {
 
 /// `(SortBy key or None for legacy order, descending)`. Comma-separated
 /// `SortBy` resolves first-known-wins; unknown values are ignored so the
-/// legacy default order keeps working (v2 `_browse_sort`).
+/// legacy default order keeps working.
 pub fn browse_sort(params: &CiParams) -> (Option<SortKey>, bool) {
     let mut key = None;
     for value in csv_param(params, "SortBy") {

@@ -42,8 +42,8 @@ pub struct Principal {
 }
 
 impl Principal {
-    /// Build from `compat_auth`'s user (display-name `or`-chain parity via
-    /// `effective_name`).
+    /// Build from `compat_auth`'s user; the name comes from
+    /// `effective_name`.
     pub fn from_user(user: &JellyfinUser, token: &str) -> Self {
         Self {
             id: user.id.clone(),
@@ -79,10 +79,10 @@ impl Principal {
 
 // ===== Library views =====
 
-/// Ticks per second (v2 `JELLYFIN_TICKS_PER_SECOND`).
+/// Ticks per second.
 pub const TICKS_PER_SECOND: i64 = 10_000_000;
 
-/// Track row the builders shape into an `Audio` DTO (v2 `ViewTrack` subset).
+/// Track row the builders shape into an `Audio` DTO.
 #[derive(Debug, Clone, Default)]
 pub struct TrackView {
     pub file_id: String,
@@ -102,7 +102,7 @@ pub struct TrackView {
     pub album_artist_id: Option<String>,
     pub genre: Option<String>,
     pub file_format: Option<String>,
-    /// Source bitrate in kbps (v2 `ViewTrack.bitrate`).
+    /// Source bitrate in kbps.
     pub bitrate: Option<u32>,
     pub channels: Option<u32>,
     pub sample_rate: Option<u32>,
@@ -173,7 +173,7 @@ impl From<ReadFailed> for droppedneedle_kernel::error::ApiError {
     }
 }
 
-/// Album row (v2 `ViewAlbum` subset).
+/// Album row.
 #[derive(Debug, Clone, Default)]
 pub struct AlbumView {
     /// Local album id: the Jellyfin item id and image tag come from it.
@@ -207,7 +207,7 @@ pub struct AlbumView {
     pub image_tag: Option<String>,
 }
 
-/// Artist row (v2 `ViewArtist` subset).
+/// Artist row.
 #[derive(Debug, Clone, Default)]
 pub struct ArtistView {
     /// Local artist id: the Jellyfin item id and image tag come from it.
@@ -235,15 +235,15 @@ pub struct ArtistView {
     pub image_tag: Option<String>,
 }
 
-/// Genre row (v2 `ViewGenre` subset).
+/// Genre row.
 #[derive(Debug, Clone, Default)]
 pub struct GenreView {
     pub name: String,
     pub song_count: usize,
 }
 
-/// Playlist browse row (v2 `ViewPlaylist` subset). Counts are streamable
-/// entries only, matching the served `/Items` listing (v2 issue #181).
+/// Playlist browse row. Quirk (v2): counts are streamable entries only, to match
+/// the served `/Items` listing.
 #[derive(Debug, Clone, Default)]
 pub struct PlaylistView {
     pub id: String,
@@ -277,8 +277,8 @@ pub struct CoverBytes {
     pub content_type: String,
 }
 
-/// Artist listing scope: every artist with music vs album artists (v2
-/// `/Artists` vs `/Artists/AlbumArtists`). Empty artist rows are never
+/// Artist listing scope: every artist with music vs album artists
+/// (`/Artists` vs `/Artists/AlbumArtists`). Empty artist rows are never
 /// listed: player apps would show them as artists with nothing in them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArtistScope {
@@ -337,7 +337,7 @@ pub struct AlbumFilter {
 }
 
 /// Page order. The play-history keys (`DatePlayed`, `PlayCount`) keep
-/// every item, as Jellyfin does: what the caller never played sorts last
+/// every item: what the caller never played sorts last
 /// when descending.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ItemSort {
@@ -371,7 +371,7 @@ pub fn content_type_for_format(format: Option<&str>) -> &'static str {
 
 // ===== Playback sessions =====
 
-/// Whether a stop report counts as a play (v2 `_should_scrobble`): an
+/// Whether a stop report counts as a play: an
 /// omitted position counts; otherwise past 90% or within a second of the
 /// end. `Failed` stops never reach this check.
 pub fn should_scrobble(position_ticks: Option<i64>, runtime_ticks: Option<i64>) -> bool {

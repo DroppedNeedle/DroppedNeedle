@@ -1,15 +1,16 @@
 //! Compat HTTP edge: the Subsonic axum adapter plus the shared layers.
 //!
 //! Before routing, [`preflight`] answers preflights pre-auth and
-//! [`canonicalize_case`] fixes path case. Layers on the compat routers,
-//! outermost first: CORS (`*`, creds off), and rate limits (media and
-//! artwork exempt, a public-IP bucket for unauthenticated routes,
-//! principal buckets for signed-in callers, auth-failure backoff). Auth itself lives inside the
-//! protocol paths (the Subsonic handler, the Jellyfin sign-in layer), never
-//! in the `/api` session middleware: compat mounts outside it.
+//! [`canonicalize_case`] fixes path case. [`stamp_cors`] adds the compat
+//! CORS headers (`*`, creds off) to every answer. Inside the routers, the
+//! rate limits run: media and artwork are exempt, a public-IP bucket covers
+//! unauthenticated routes, principal buckets cover signed-in callers, and
+//! auth-failure backoff applies. Auth itself lives inside the protocol paths
+//! (the Subsonic handler, the Jellyfin sign-in layer), never in the `/api`
+//! session middleware: compat mounts outside it.
 //!
-//! Rejects match v2 exactly: Subsonic answers a failed envelope code 0
-//! ("Rate limit exceeded") over HTTP 200 plus `Retry-After`; Jellyfin
+//! Quirk (v2): rejects match v2 exactly. Subsonic answers a failed envelope
+//! code 0 ("Rate limit exceeded") over HTTP 200 plus `Retry-After`; Jellyfin
 //! answers an empty 429 plus `Retry-After`.
 
 use std::net::{IpAddr, SocketAddr};
@@ -510,7 +511,7 @@ pub fn subsonic_routes(state: SubsonicState) -> CompatRoutes {
         .with_state(state)
 }
 
-/// Unknown-method fallback: code 0, v2 message style.
+/// Unknown-method fallback: a failed envelope with code 0 and the message "Unknown method".
 async fn subsonic_method_not_allowed(
     State(state): State<SubsonicState>,
     request: Request,
@@ -734,7 +735,7 @@ async fn subsonic_dispatch(
         }
     };
     // Strict decoding of `f` and `callback`: a repeat or a bad value is
-    // code 10 (v2 reads a unique valid value only).
+    // code 10. Quirk (v2): only a unique valid value is read.
     let strict = params
         .string_max("f", Some("xml"), 16)
         .and_then(|requested| parse_format(requested.as_deref()))

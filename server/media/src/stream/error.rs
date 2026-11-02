@@ -8,7 +8,7 @@ use serde_json::json;
 use super::engine::AudioSource;
 use super::leases::RETRY_AFTER_SECONDS;
 
-/// Unknown file/item id. Message follows the v2 404 detail per source.
+/// Unknown file/item id. Quirk (v2): the 404 detail differs per source.
 pub const STREAM_NOT_FOUND: &str = "STREAM_NOT_FOUND";
 /// Playback refused, or a local path outside the music directory.
 pub const STREAM_FORBIDDEN: &str = "STREAM_FORBIDDEN";
@@ -20,7 +20,7 @@ pub const STREAM_CAPACITY_EXHAUSTED: &str = "STREAM_CAPACITY_EXHAUSTED";
 /// Every failure these routes can return.
 #[derive(Debug)]
 pub enum StreamError {
-    /// Unknown id. Message follows the v2 detail per source.
+    /// Unknown id. Quirk (v2): the detail differs per source.
     NotFound {
         /// "Track file not found" or "Audio item not found".
         message: String,

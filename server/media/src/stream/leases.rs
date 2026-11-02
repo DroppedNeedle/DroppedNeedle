@@ -1,11 +1,10 @@
-//! Stream concurrency: one keyed fair gate, ported from v2
-//! `StreamConcurrencyService`, run as two pools.
+//! Stream concurrency: one keyed fair gate, run as two pools.
 //!
 //! [`DirectGate`] bounds reads (32 global slots, 8 per principal) and
 //! [`TranscodeGate`] bounds ffmpeg jobs (one per CPU, at least two, and 2
 //! per principal so a gapless player can open the next track early). Both
-//! are the same [`Gate`]: acquirers queue fairly (first-eligible scan, like
-//! v2), at most 128 waiters, each waiting at most 5s before the gate answers
+//! are the same [`Gate`]: acquirers queue fairly (first-eligible scan),
+//! at most 128 waiters, each waiting at most 5s before the gate answers
 //! [`CapacityExhausted`], which every router turns into 429 plus
 //! `Retry-After`. The pool is a type parameter, so a lease from one pool
 //! cannot be passed where the other is meant.
@@ -23,9 +22,9 @@ use std::time::Duration;
 use tokio::sync::Notify;
 use tokio::time::timeout;
 
-/// Global direct-read slots (v2 `direct_global_limit`).
+/// Global direct-read slots.
 pub const DIRECT_GLOBAL_LIMIT: usize = 32;
-/// Direct-read slots per principal (v2 `direct_principal_limit`).
+/// Direct-read slots per principal.
 pub const DIRECT_PRINCIPAL_LIMIT: usize = 8;
 /// Fewest ffmpeg jobs the server runs at once. The real global limit is
 /// one job per CPU, never below this floor (see [`transcode_global_limit`]).
@@ -33,11 +32,11 @@ pub const TRANSCODE_GLOBAL_LIMIT: usize = 2;
 /// ffmpeg jobs one principal may hold: the playing track plus the next one,
 /// which gapless players (ExoPlayer/Media3, just_audio) open early.
 pub const TRANSCODE_PRINCIPAL_LIMIT: usize = 2;
-/// Bounded waiter queue of either pool (v2 `max_waiters`).
+/// Bounded waiter queue of either pool.
 pub const MAX_WAITERS: usize = 128;
-/// Per-acquire wait deadline of either pool (v2 `wait_timeout_seconds`).
+/// Per-acquire wait deadline of either pool.
 pub const WAIT_TIMEOUT: Duration = Duration::from_secs(5);
-/// Retry hint every router sends with its 429 (v2 sends 1).
+/// Retry hint every router sends with its 429.
 pub const RETRY_AFTER_SECONDS: u64 = 1;
 
 /// Global transcode limit for this machine: one ffmpeg job per CPU, at

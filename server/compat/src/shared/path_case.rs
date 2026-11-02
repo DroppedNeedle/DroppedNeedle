@@ -1,6 +1,6 @@
 //! Case-insensitive path routing for the compat shims.
 //!
-//! Ports v2's compat path-case middleware. Real Jellyfin
+//! Real Jellyfin
 //! (ASP.NET Core) routes case-insensitively and clients rely on it:
 //! Feishin POSTs lowercase `/jellyfin/users/authenticatebyname`. Axum
 //! matches case-sensitively, so compat paths are canonicalized to the
@@ -8,14 +8,14 @@
 //! template is lossless because every compat path param is a hex/uuid
 //! id, an int, or an already-lowercased value.
 //!
-//! Must sit outside the rate-limit middleware so its exact-path checks
-//! see the canonical form.
+//! Runs before routing, so the rate limits and the handlers see the
+//! canonical form.
 
 /// Path prefixes this canonicalization covers.
 pub const PREFIXES: [&str; 2] = ["/subsonic", "/jellyfin"];
 
 /// Whether a path falls under compat case handling (matched
-/// case-insensitively, like v2's `path.lower().startswith(...)`).
+/// case-insensitively).
 pub fn is_compat_path(path: &str) -> bool {
     let folded = path.to_lowercase();
     PREFIXES.iter().any(|prefix| folded.starts_with(prefix))
@@ -27,8 +27,8 @@ pub fn is_compat_path(path: &str) -> bool {
 /// When several templates match, the one the router would pick wins: at
 /// the first segment where they differ, a static segment beats a
 /// parameter, so `items/latest` is `Items/Latest`, never an item id.
-/// Returns the canonical path when it differs, else `None` (v2 returns
-/// `None` when already canonical, including non-matching paths).
+/// Returns the canonical path when it differs, else `None`. Paths that are
+/// already canonical and paths that match no template both give `None`.
 pub fn canonicalize(templates: &[&str], path: &str) -> Option<String> {
     if !is_compat_path(path) {
         return None;

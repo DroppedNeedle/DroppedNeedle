@@ -1,15 +1,12 @@
 //! Compat auth posture: outside the `/api` middleware.
 //!
-//! v2 mounts the compat shims in `target_application.py` outside the
-//! `/api/*` AuthMiddleware, with auth of their own: per-user app
+//! The compat shims sit outside the `/api/*` AuthMiddleware, with auth of
+//! their own: per-user app
 //! passwords only, never account passwords, never native tokens. The
 //! credential stores live in `auth::compat_auth` (reused here
 //! by the routers, never reinvented); this module holds the shared
 //! posture around them: who counts as anonymous, how principals are
-//! labeled for rate limiting, and how failures feed backoff. (The v2
-//! `_plugin_user` fallback needs no helper here: anonymous routes carry
-//! no plugin seam here, so there is nothing to verify a fallback
-//! token against.)
+//! labeled for rate limiting, and how failures feed backoff.
 
 use super::ratelimit::CompatRateLimits;
 
@@ -27,7 +24,7 @@ pub fn jellyfin_is_anonymous(method: &str, template: &str) -> bool {
     crate::jellyfin::is_public(method, template)
 }
 
-/// `GET /Items/{id}/Images/{type}[/{index}]` (v2 `_image`, anon).
+/// `GET /Items/{id}/Images/{type}[/{index}]`, served without auth.
 pub(crate) fn is_image_route(low: &str) -> bool {
     let segs: Vec<&str> = low.split('/').collect();
     if segs.len() != 6 && segs.len() != 7 {
@@ -42,11 +39,10 @@ pub(crate) fn is_image_route(low: &str) -> bool {
         && (segs.len() == 6 || !segs[6].is_empty())
 }
 
-/// Rate-limit principal label (v2 `_media_principal`): the authed user
+/// Rate-limit principal label: the authed user
 /// when one verified, else the client's key
 /// ([`client_key`](super::ratelimit::client_key)). The key must come from
-/// the address the trusted-proxy layer established, never a client header
-/// (v2 `trusted_client_ip`).
+/// the address the trusted-proxy layer established, never a client header.
 pub fn principal_label(authed_user_id: Option<&str>, client_key: &str) -> String {
     match authed_user_id {
         Some(id) if !id.is_empty() => format!("user:{id}"),

@@ -11,7 +11,7 @@ use super::models::{PlaybackProgressInfo, PlaybackStartInfo, PlaybackStopInfo, U
 use super::router::*;
 use super::views::{ItemView, ReadFailed, TICKS_PER_SECOND, WriteRefusal, should_scrobble};
 
-// ===== Favorites + played (both dialects, 200 UserItemDataDto) =====
+// ===== Favorites + played (both route forms, 200 UserItemDataDto) =====
 
 /// The caller's state of one item as the item's own read gives it, `None`
 /// when that read finds nothing (a missing track, say).
@@ -202,8 +202,7 @@ pub(super) async fn played_remove_modern(
 
 // ===== Playback reporting / scrobbling (all 204, lenient bodies) =====
 
-/// Item id → file id for session reports (`Ok(None)` for unknown/non-track,
-/// v2 `_track_from_item_id`).
+/// Item id → file id for session reports (`Ok(None)` for unknown or non-track items).
 pub(super) async fn report_file_id(
     state: &JellyfinState,
     item_id: &str,
@@ -227,7 +226,7 @@ pub(super) async fn read_body_lenient<T: serde::de::DeserializeOwned>(
     (query, parsed)
 }
 
-/// Start → presence + now-playing (v2 `_playing_start`).
+/// Start → presence + now-playing.
 pub(super) async fn playing(
     State(state): State<JellyfinState>,
     authed: Authed,
@@ -257,7 +256,7 @@ pub(super) async fn playing(
 }
 
 /// Progress → live scrubber + heartbeat under the reporting app, never a
-/// scrobble or a scrobble service's now-playing (v2 `_playing_progress`).
+/// scrobble or a scrobble service's now-playing.
 pub(super) async fn playing_progress(
     State(state): State<JellyfinState>,
     authed: Authed,
@@ -287,8 +286,8 @@ pub(super) async fn playing_progress(
     Ok(no_content())
 }
 
-/// Stop → always drop presence, then scrobble only if past the threshold (v2
-/// `_playing_stopped`). `Failed` stops skip the scrobble.
+/// Stop → always drop presence, then scrobble only if past the threshold.
+/// `Failed` stops skip the scrobble.
 pub(super) async fn playing_stopped(
     State(state): State<JellyfinState>,
     authed: Authed,
@@ -341,7 +340,7 @@ pub(super) async fn sessions_ping(_caller: Authed) -> Response {
 }
 
 /// No session registry stores reported capabilities; accept and 204 to
-/// avoid a 404 (v2 `_handle` lambda).
+/// avoid a 404.
 pub(super) async fn sessions_capabilities(_caller: Authed) -> Response {
     no_content()
 }

@@ -1,7 +1,7 @@
-//! Subsonic response objects, ported from v2's Subsonic models.
+//! Subsonic response objects.
 //!
 //! Field names are exact Subsonic/OpenSubsonic camelCase and serialize in
-//! declaration order (v2 `msgspec.to_builtins` struct order). Optional
+//! declaration order. Optional
 //! fields that hold nothing are left off the wire.
 
 #![allow(non_snake_case)]
@@ -350,7 +350,7 @@ pub struct SChild {
     /// Sample rate Hz.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub samplingRate: Option<i64>,
-    /// Channel count (v2 defaults to 2 when unknown).
+    /// Channel count. Quirk (v2): defaults to 2 when the count is unknown.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub channelCount: Option<i64>,
     /// MusicBrainz recording id.

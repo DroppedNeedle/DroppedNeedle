@@ -974,7 +974,7 @@ async fn folders_fail_closed_on_server_change_or_outage() {
 // ---------------------------------------------------------------------------
 
 /// A plain user with no links of their own, on an instance where the admin
-/// configured all three servers with shared credentials (the v2 shared
+/// configured all three servers with shared credentials (the shared
 /// mode). Every route below runs through the admin's accounts.
 async fn connected_testbed() -> (Router, Rig) {
     // Mocks leak for the life of the test process; routes need their URLs

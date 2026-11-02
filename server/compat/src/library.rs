@@ -730,9 +730,8 @@ impl CompatLibrary {
     }
 
     /// Playlist entries for library files, in order. Each entry keeps the
-    /// file's names so the web UI shows it too (v2 `add_file_id_entry`). A
-    /// file asked twice is added twice, as v2 appends each; unknown files
-    /// are skipped.
+    /// file's names so the web UI shows it too. Quirk (v2): a file asked twice is
+    /// added twice; unknown files are skipped.
     async fn file_entries(&self, file_ids: &[String]) -> Result<Vec<NewEntry>, CompatError> {
         let by_id = self
             .tracks_by_ids(file_ids)

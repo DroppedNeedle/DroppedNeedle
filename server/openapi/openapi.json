@@ -5942,7 +5942,7 @@
         "tags": [
           "stream"
         ],
-        "summary": "One track file, unchanged, as an attachment. A single `Range` is\nanswered with 206, as v2's file response did, so download managers can\nresume.",
+        "summary": "One track file, unchanged, as an attachment. A single `Range` is\nanswered with 206, so download managers can\nresume.",
         "operationId": "download_track",
         "parameters": [
           {
@@ -26131,7 +26131,7 @@
         "tags": [
           "remotes"
         ],
-        "summary": "Random tracks, optionally filtered by genre. Limits mirror the v2\nNavidrome route (default 20, max 50); Plex answers unsupported.",
+        "summary": "Random tracks, optionally filtered by genre. The default is 20 and the max 50.\nPlex answers unsupported.",
         "operationId": "remotes_list_random",
         "parameters": [
           {
@@ -40504,7 +40504,7 @@
           },
           "hub_type": {
             "type": "string",
-            "description": "Hub kind; always `\"album\"` (other hub kinds are dropped, as in v2)."
+            "description": "Hub kind; always `\"album\"`. Other hub kinds are dropped."
           },
           "title": {
             "type": "string",

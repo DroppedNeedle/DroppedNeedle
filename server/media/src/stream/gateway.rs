@@ -361,7 +361,7 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
     /// Ask `streaming_source` plugins for one recording. A file answer is
     /// served like a local file (ranges, transcodes). A URL answer is
     /// proxied with every hop re-checked: by range when its size is known,
-    /// and through a temp file when the plan transcodes (v2 behaviour).
+    /// and through a temp file when the plan transcodes.
     async fn stream_plugin(
         &self,
         request: &StreamOpen,
@@ -541,7 +541,7 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
 
 /// The catalog row and file of track `track_id`. Unknown tracks and files
 /// gone from disk are 404; a file that resolves outside the library roots
-/// is 403 with v2's message.
+/// is 403 with the message in [`OUTSIDE_MESSAGE`].
 async fn catalog_file(
     library: &LibraryFiles,
     track_id: &str,
@@ -598,7 +598,7 @@ fn estimated_len(request: &StreamOpen, plan: &StreamPlan) -> Option<u64> {
         .filter(|size| *size > 0)
 }
 
-/// v2's refusal for a library file that resolves outside every root.
+/// Refusal for a library file that resolves outside every root.
 pub const OUTSIDE_MESSAGE: &str = "Access denied: path is outside the music directory";
 
 /// Fixed sandbox refusal: the key never reaches the wire.

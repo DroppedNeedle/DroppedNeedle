@@ -535,8 +535,8 @@ pub async fn get_similar(
     )
 }
 
-/// Random tracks, optionally filtered by genre. Limits mirror the v2
-/// Navidrome route (default 20, max 50); Plex answers unsupported.
+/// Random tracks, optionally filtered by genre. The default is 20 and the max 50.
+/// Plex answers unsupported.
 #[utoipa::path(get, tag = "remotes", path = "/api/v3/remotes/{source}/random", operation_id = "remotes_list_random",
     params(("source" = SourceName, Path, description = "Remote source"), RandomQuery),
     responses((status = 200, description = "Random tracks", body = TrackPage)))]

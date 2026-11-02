@@ -4,8 +4,8 @@
 //! ran, and map its faults onto each protocol.
 //!
 //! A file id is tried as a local track first and, on a miss, as a
-//! `streaming_source` plugin recording (v2's plugin fallback; a plugin can
-//! never shadow a local track). The direct lease the open took moves into
+//! `streaming_source` plugin recording. A plugin can
+//! never shadow a local track. The direct lease the open took moves into
 //! the body, so it stays held until the last byte is sent or the client
 //! goes away. Leases count against the caller.
 

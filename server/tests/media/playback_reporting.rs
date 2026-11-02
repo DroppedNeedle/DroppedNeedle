@@ -512,7 +512,7 @@ async fn stop_counts_once_per_session() {
 
 #[tokio::test]
 async fn restart_after_rewind_opens_a_fresh_session() {
-    // A stopped session that rewinds restarts fresh (v2 rewind branch), so
+    // A stopped session that rewinds restarts fresh, so
     // replaying the track counts again.
     let rig = rig();
     start(&rig, "user-1", "track-1", "local").await;
@@ -531,7 +531,7 @@ async fn restart_after_rewind_opens_a_fresh_session() {
 
 #[tokio::test]
 async fn scrobble_threshold_rules() {
-    // Native rule: the v2 Jellyfin stop rule, exact.
+    // Native rule: the Jellyfin stop rule, exact.
     assert!(should_scrobble_native(None, Some(200_000)));
     assert!(should_scrobble_native(None, None));
     assert!(should_scrobble_native(Some(181_000), Some(200_000)));
@@ -630,7 +630,7 @@ async fn mixed_report_dedup_counts_live_once() {
     assert!(second.services.is_empty());
     assert_eq!(rig.plays(), 1);
 
-    // Backdated plays bypass the mixed cache (v2 exact); a distinct play
+    // Backdated plays bypass the mixed cache; a distinct play
     // time counts again.
     let third = submit_session_scrobble(
         &rig.deps,

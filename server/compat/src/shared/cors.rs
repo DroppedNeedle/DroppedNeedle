@@ -1,6 +1,6 @@
 //! Compat-scoped CORS: wildcard origin, credentials off.
 //!
-//! Ports v2's compat CORS policy verbatim. `*` with creds off
+//! The compat CORS policy. `*` with creds off
 //! is safe here because compat auth is an explicit token or secret, never
 //! an ambient cookie. Applies to `/subsonic` + `/jellyfin` only, and
 //! OPTIONS preflights short-circuit 204 before auth (they carry no
@@ -8,7 +8,7 @@
 
 use super::path_case;
 
-/// Header set stamped on every compat response (v2 `_CORS_HEADERS`).
+/// Header set stamped on every compat response.
 pub const HEADERS: [(&str, &str); 5] = [
     ("Access-Control-Allow-Origin", "*"),
     (
@@ -26,7 +26,7 @@ pub const HEADERS: [(&str, &str); 5] = [
     ("Access-Control-Max-Age", "600"),
 ];
 
-/// Preflight short-circuit status (v2 returns 204, pre-auth).
+/// Preflight short-circuit status. Quirk (v2): answered with 204 before auth.
 pub const PREFLIGHT_STATUS: u16 = 204;
 
 /// Whether this request is a preflight to short-circuit (OPTIONS on a

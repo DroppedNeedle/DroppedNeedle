@@ -31,7 +31,7 @@ struct ByteRange {
     end: u64,
 }
 
-/// Parse a single `Range` header against `total_len`, v2 rule for rule:
+/// Parse a single `Range` header against `total_len`:
 /// `bytes=start-end` (end clamped), `bytes=start-` (open), `bytes=-suffix`
 /// (clamped to the whole file when longer). `None` means 416: no match,
 /// both bounds empty, suffix of 0, start past the end, or an empty object.
@@ -155,8 +155,8 @@ pub fn frame(
         if let Some(len) = estimated {
             headers.insert(header::CONTENT_LENGTH, HeaderValue::from(len));
         } else if let (true, MediaBody::Bytes(bytes)) = (head_only, &body) {
-            // An in-memory body knows its length: pin it on HEAD for GET/HEAD
-            // parity (GET's buffered body gets it stamped).
+            // An in-memory body knows its length: pin it on HEAD so HEAD matches
+            // GET, whose buffered body gets it stamped.
             headers.insert(header::CONTENT_LENGTH, HeaderValue::from(bytes.len()));
         }
         // A live transcode has no known size, so GET without an estimate

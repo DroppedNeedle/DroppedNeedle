@@ -1,6 +1,6 @@
 //! Log-safe request targets for the compat surface.
 //!
-//! Ports v2's compat log redaction (the keys are pinned by tests).
+//! Compat log redaction (the keys are pinned by tests).
 //! Subsonic puts credentials in the query string (`p/t/s/apiKey`) on
 //! every request, so access logs must never record the raw target: use
 //! [`redact_request_target`]. Matching is case-insensitive over the
@@ -9,7 +9,7 @@
 
 use super::percent::lossy;
 
-/// Query keys whose values are secrets (v2 `_SECRET_QS_KEYS`, plus the
+/// Query keys whose values are secrets, plus the
 /// signature of an open picture link).
 pub const SECRET_KEYS: [&str; 10] = [
     "p",
@@ -24,7 +24,7 @@ pub const SECRET_KEYS: [&str; 10] = [
     "sig",
 ];
 
-/// Mask substituted for secret values (v2 `_MASK`).
+/// Mask substituted for secret values.
 pub const MASK: &str = "***";
 
 /// Whether a (decoded) query key names a secret.
@@ -66,7 +66,7 @@ pub fn redact_request_target(target: &str) -> String {
     out
 }
 
-/// Re-encode a decoded pair member the way v2 `urlencode` does,
+/// Re-encode a decoded pair member the way `urlencode` does,
 /// preserving already-safe input byte-for-byte.
 fn form_encode(raw: &str, decoded: &str) -> String {
     let mut out = String::with_capacity(raw.len());
