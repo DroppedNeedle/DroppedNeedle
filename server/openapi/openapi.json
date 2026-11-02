@@ -5315,6 +5315,68 @@
         ]
       }
     },
+    "/api/v3/discover/queue/ignored/{release_group_mbid}": {
+      "delete": {
+        "tags": [
+          "discover"
+        ],
+        "summary": "Take one release off the caller's ignore ledger, so later decks may\nhold it. Answers the same when the caller had not ignored it.",
+        "operationId": "unignore_queue_item",
+        "parameters": [
+          {
+            "name": "release_group_mbid",
+            "in": "path",
+            "description": "MusicBrainz release-group id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Release is not ignored"
+          },
+          "400": {
+            "description": "Not a MusicBrainz id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The change could not be saved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/discover/queue/preview/{release_group_mbid}": {
       "post": {
         "tags": [

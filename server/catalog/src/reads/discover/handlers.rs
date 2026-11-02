@@ -413,6 +413,31 @@ pub async fn ignored_releases(
         .map_err(ApiError::from)
 }
 
+/// Take one release off the caller's ignore ledger, so later decks may
+/// hold it. Answers the same when the caller had not ignored it.
+#[utoipa::path(
+    delete,
+    tag = "discover",
+    path = "/api/v3/discover/queue/ignored/{release_group_mbid}",
+    params(("release_group_mbid" = String, Path, description = "MusicBrainz release-group id")),
+    responses(
+        (status = 204, description = "Release is not ignored"),
+        (status = 400, description = "Not a MusicBrainz id"),
+        (status = 401, description = "Not authenticated"),
+        (status = 500, description = "The change could not be saved"),
+    )
+)]
+pub async fn unignore_queue_item(
+    State(deps): State<ReadsDeps>,
+    User(user): User,
+    Path(release_group_mbid): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    services::unignore_queue_item(&deps, user.user_id(), &release_group_mbid)
+        .await
+        .map(|()| StatusCode::NO_CONTENT)
+        .map_err(ApiError::from)
+}
+
 /// The given cards whose albums the library already holds.
 #[utoipa::path(
     post,
@@ -811,6 +836,7 @@ pub fn routes() -> Routes<ReadsDeps> {
         .user(routes!(preview_queue_item))
         .user(routes!(ignore_queue_item))
         .user(routes!(ignored_releases))
+        .user(routes!(unignore_queue_item))
         .user(routes!(validate_queue))
         .user(routes!(youtube_search))
         .user(routes!(youtube_track_search))

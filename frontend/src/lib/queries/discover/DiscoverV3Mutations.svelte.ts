@@ -50,6 +50,14 @@ export const getIgnoreDiscoveryV3Mutation = () =>
 		onError: () => toastStore.show({ message: "Couldn't save that preference.", type: 'error' })
 	}));
 
+export const getUnhideDiscoveryV3Mutation = () =>
+	createAppMutation(() => ({
+		mutationFn: (releaseGroupMbid: string) =>
+			api.v3.DELETE(DiscoverV3Api.unignore(releaseGroupMbid)),
+		effects: () => [recommendationsChanged(authStore.user?.id)],
+		onError: () => toastStore.show({ message: "Couldn't un-hide that album.", type: 'error' })
+	}));
+
 export const getRefreshDiscoverV3Mutation = () =>
 	createAppMutation(() => ({
 		mutationFn: () => api.v3.POST(DiscoverV3Api.refresh()),

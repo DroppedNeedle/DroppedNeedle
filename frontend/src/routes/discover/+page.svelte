@@ -10,6 +10,7 @@
 	import GenrePills from '$lib/components/GenrePills.svelte';
 	import GenreGrid from '$lib/components/GenreGrid.svelte';
 	import DiscoverQueueDeck from '$lib/components/discover/DiscoverQueueDeck.svelte';
+	import HiddenAlbumsModal from '$lib/components/discover/HiddenAlbumsModal.svelte';
 	import PlaylistDiscoveryModal from '$lib/components/PlaylistDiscoveryModal.svelte';
 	import WeeklyExploration from '$lib/components/WeeklyExploration.svelte';
 	import ServicePromptCard from '$lib/components/ServicePromptCard.svelte';
@@ -24,6 +25,7 @@
 	import { isDismissed } from '$lib/utils/dismissedPrompts';
 	import { withBasePath } from '$lib/utils/basePath';
 	import {
+		EyeOff,
 		Compass,
 		CircleAlert,
 		Sparkles,
@@ -58,6 +60,7 @@
 	useDiscoverActivity(() => ({ feature: 'discover' }));
 
 	let playlistDiscoverOpen = $state(false);
+	let hiddenAlbumsOpen = $state(false);
 
 	const discoverQuery = getDiscoverHomeV3Query();
 	const ignoreDiscoveryMutation = getIgnoreDiscoveryV3Mutation();
@@ -256,15 +259,26 @@
 				<svelte:boundary>
 					<DiscoverZoneNav {zones}>
 						{#snippet action()}
-							<Button
-								variant="ghost"
-								size="xs"
-								icon={SlidersHorizontal}
-								href={withBasePath('/settings?tab=discover')}
-								title="Choose which sections appear here"
-							>
-								<span class="hidden sm:inline">Customise</span>
-							</Button>
+							<div class="flex items-center gap-1">
+								<Button
+									variant="ghost"
+									size="xs"
+									icon={EyeOff}
+									title="Hidden albums"
+									onclick={() => (hiddenAlbumsOpen = true)}
+								>
+									<span class="hidden sm:inline">Hidden</span>
+								</Button>
+								<Button
+									variant="ghost"
+									size="xs"
+									icon={SlidersHorizontal}
+									href={withBasePath('/settings?tab=discover')}
+									title="Choose which sections appear here"
+								>
+									<span class="hidden sm:inline">Customise</span>
+								</Button>
+							</div>
 						{/snippet}
 					</DiscoverZoneNav>
 					<div class="space-y-10 sm:space-y-12" class:is-refreshing={isUpdatingInBackground}>
@@ -573,3 +587,4 @@
 </div>
 
 <PlaylistDiscoveryModal bind:open={playlistDiscoverOpen} />
+<HiddenAlbumsModal bind:open={hiddenAlbumsOpen} />

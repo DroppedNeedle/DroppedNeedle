@@ -135,7 +135,7 @@ export const EFFECTS = {
 	],
 	/** The caller's wanted albums. */
 	wantedChanged: (userId: UserId): Sweep[] => [{ key: WantedQueryKeyFactory.list(userId) }],
-	/** The caller asked for fewer recommendations like one album. */
+	/** The caller hid an album from their recommendations, or brought one back. */
 	recommendationsChanged: (userId: UserId): Sweep[] => [
 		{ key: DiscoverQueryKeyFactory.v3.ignored(userId) },
 		{ key: DiscoverQueryKeyFactory.v3.home(userId) }

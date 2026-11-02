@@ -108,6 +108,28 @@ impl QueueDb {
             .map_err(|error: DbError| format!("ignore write: {error}"))
     }
 
+    /// Remove one of the user's ignores. Later decks may hold the album
+    /// again. Nothing happens when the user has no such ignore.
+    pub async fn unignore(
+        &self,
+        user_id: &str,
+        release_group_mbid_lower: &str,
+    ) -> Result<(), String> {
+        let user_id = user_id.to_owned();
+        let release_group_mbid_lower = release_group_mbid_lower.to_owned();
+        self.db
+            .write(Lane::Foreground, "discover.queue.unignore", move |tx| {
+                tx.execute(
+                    "DELETE FROM catalog_ignored_releases \
+                     WHERE user_id = ?1 AND release_group_mbid_lower = ?2",
+                    rusqlite::params![user_id, release_group_mbid_lower],
+                )?;
+                Ok(())
+            })
+            .await
+            .map_err(|error: DbError| format!("unignore write: {error}"))
+    }
+
     /// Drop ignores older than `before` (unix ms). Returns how many went.
     pub async fn prune_ignored(&self, before: i64) -> Result<usize, String> {
         self.db

@@ -1718,6 +1718,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/discover/queue/ignored/{release_group_mbid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Take one release off the caller's ignore ledger, so later decks may
+         *     hold it. Answers the same when the caller had not ignored it.
+         */
+        delete: operations["unignore_queue_item"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/discover/queue/preview/{release_group_mbid}": {
         parameters: {
             query?: never;
@@ -27955,6 +27975,54 @@ export interface operations {
                 };
             };
             /** @description The ledger could not be read */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    unignore_queue_item: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description MusicBrainz release-group id */
+                release_group_mbid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Release is not ignored */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not a MusicBrainz id */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The change could not be saved */
             500: {
                 headers: {
                     [name: string]: unknown;

@@ -567,6 +567,10 @@ const CALLER_KEYED_OPERATIONS: &[(&str, &str)] = &[
     ("GET", "/api/v3/remotes/{source}/connection"),
     ("PUT", "/api/v3/remotes/{source}/connection"),
     ("DELETE", "/api/v3/remotes/{source}/connection"),
+    (
+        "DELETE",
+        "/api/v3/discover/queue/ignored/{release_group_mbid}",
+    ),
 ];
 
 /// Operations that take a user-owned id in the body, each driven by
@@ -1710,6 +1714,33 @@ async fn caller_keyed_state_stays_with_its_caller() {
         body.to_string().contains("ada"),
         "B's stop ended A's play: {body}"
     );
+
+    // Hidden albums: both hid the same one, and B's un-hide takes only B's.
+    let hidden_album = "6c5a1c8e-2f0b-4d8a-9b7e-3f1d2c4a5b60";
+    for who in [&ada, &bob] {
+        app.seed(&format!(
+            "INSERT INTO catalog_ignored_releases (user_id, release_group_mbid_lower, \
+             release_group_mbid, artist_mbid, release_name, artist_name, ignored_at) \
+             VALUES ('{}', '{hidden_album}', '{hidden_album}', '', 'Album', 'Artist', 1000)",
+            who.id
+        ))
+        .await;
+    }
+    let ledger = "/api/v3/discover/queue/ignored";
+    let unhide = format!("{ledger}/{hidden_album}");
+    let (status, body) = call(&app, &bob, "DELETE", &unhide, None).await;
+    ok(status, &body, "B un-hides");
+    let (_, body) = call(&app, &bob, "GET", ledger, None).await;
+    assert_eq!(body["items"], json!([]), "B's album stays hidden: {body}");
+    let (_, body) = call(&app, &ada, "GET", ledger, None).await;
+    assert_eq!(
+        body["items"][0]["release_group_mbid"], hidden_album,
+        "B's un-hide took A's: {body}"
+    );
+    let (status, body) = call(&app, &bob, "DELETE", &unhide, None).await;
+    ok(status, &body, "B un-hides again, with nothing left to take");
+    let (_, body) = call(&app, &ada, "GET", ledger, None).await;
+    assert_eq!(body["items"].as_array().map(Vec::len), Some(1), "{body}");
 
     // Remote-server links and folder choices, against the mock Navidrome.
     let navidrome = droppedneedle_testkit::remotes::serve_navidrome()

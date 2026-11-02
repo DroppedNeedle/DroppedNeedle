@@ -696,6 +696,21 @@ impl LiveQueue {
         })
     }
 
+    /// Remove one ignored release for the user. Later decks may hold it.
+    pub fn unignore_release<'a>(
+        &'a self,
+        user_id: &'a str,
+        release_group_mbid_lower: &'a str,
+    ) -> BoxFuture<'a, Result<(), ProviderFailure>> {
+        Box::pin(async move {
+            self.inner
+                .db
+                .unignore(user_id, release_group_mbid_lower)
+                .await
+                .map_err(ProviderFailure::failed)
+        })
+    }
+
     /// The user's ignore ledger, newest first.
     pub fn ignored<'a>(
         &'a self,

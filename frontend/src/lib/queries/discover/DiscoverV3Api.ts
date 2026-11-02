@@ -23,6 +23,10 @@ export const DiscoverV3Api = {
 		}),
 	queueIgnore: () => v3('/api/v3/discover/queue/ignore'),
 	ignored: () => v3('/api/v3/discover/queue/ignored'),
+	unignore: (releaseGroupMbid: string) =>
+		v3('/api/v3/discover/queue/ignored/{release_group_mbid}', {
+			path: { release_group_mbid: releaseGroupMbid }
+		}),
 	queueValidate: () => v3('/api/v3/discover/queue/validate'),
 	batches: () => v3('/api/v3/discover/batches'),
 	batch: (batchId: string) =>

@@ -386,6 +386,20 @@ pub async fn ignore_queue_item(
     Ok(())
 }
 
+/// Take one release off the user's ignore ledger. The current deck stays
+/// as it is: the album can come up in a later one.
+pub async fn unignore_queue_item(
+    deps: &ReadsDeps,
+    user_id: &str,
+    release_group_mbid: &str,
+) -> Result<(), ServiceError> {
+    let release_group = checked_release_group(release_group_mbid)?;
+    deps.queues
+        .unignore_release(user_id, &release_group)
+        .await
+        .map_err(owned_store_failure)
+}
+
 /// The user's ignore ledger, newest first.
 pub async fn ignored_releases(
     deps: &ReadsDeps,
