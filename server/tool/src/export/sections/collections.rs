@@ -2,11 +2,11 @@
 //!
 //! v2 keeps these in its native `library_*` tables; v3 keeps playlists in
 //! `catalog_playlists`/`catalog_playlist_tracks` and favorites in
-//! `library_user_favorites`.
+//! `catalog_user_favorites`.
 //! Playlist entries and favorites point at v2 library ids, written as is
 //! (v3 has no foreign key there) and recorded as pending links.
 
-use super::requests::{flag, whole, whole_or};
+use super::requests::{flag, millis, whole, whole_or};
 use super::{Column, FileSet, LinkKind, LinkMode, Parent, Source, TableSection, Target, col};
 
 /// A v2 ISO text time as integer milliseconds. v2's fractional and offset
@@ -138,12 +138,12 @@ pub const FAVORITES: TableSection = TableSection {
         filter: "",
         requires: &[],
     },
-    target: Target::Table("library_user_favorites"),
+    target: Target::Table("catalog_user_favorites"),
     columns: &[
         col("user_id"),
         col("item_kind"),
         col("item_id").link(LinkKind::ByColumn("item_kind"), LinkMode::AsWritten),
-        col("created_at"),
+        Column::new("created_at").from_sql(concat!("COALESCE(", millis!("created_at"), ", 0)")),
     ],
     key: &["user_id", "item_kind", "item_id"],
     unique: &[],
@@ -172,7 +172,7 @@ pub const FAVORITE_NAMES: TableSection = TableSection {
         filter: concat!("(", favorite_name_sql!(), ") IS NOT NULL"),
         requires: &["local_tracks", "local_albums", "local_artists"],
     },
-    target: Target::Table("library_user_favorite_names"),
+    target: Target::Table("catalog_user_favorite_names"),
     columns: &[
         col("user_id"),
         col("item_kind"),
@@ -182,7 +182,7 @@ pub const FAVORITE_NAMES: TableSection = TableSection {
     key: &["user_id", "item_kind", "item_id"],
     unique: &[],
     parents: &[Parent::required(
-        "library_user_favorites",
+        "catalog_user_favorites",
         &[
             ("user_id", "user_id"),
             ("item_kind", "item_kind"),

@@ -1,10 +1,10 @@
-//! Follow reads over `user_followed_artists`, plus the new-release feed.
+//! Follow reads over `acquire_followed_artists`, plus the new-release feed.
 //!
 //! The follows module in acquisition alone writes the follow rows and
 //! their approval verdicts in `auto_download_approvals`; this store only
 //! reads them to show a follow's state. Rows key on the lowercased MBID.
 //!
-//! New releases come from `new_release_feed` joined to the user's follows;
+//! New releases come from `acquire_new_release_feed` joined to the user's follows;
 //! albums already in the library drop out of the to-do list (v2 rule).
 
 use droppedneedle_auth::Role;
@@ -180,7 +180,7 @@ impl FollowStore {
         let mut binds = vec![Value::Text(user_id.to_owned())];
         if let Some((date, discovered)) = &filter.since {
             binds.push(Value::Text(date.clone()));
-            binds.push(Value::Real(*discovered));
+            binds.push(Value::Integer((*discovered * 1000.0).round() as i64));
         }
         let count_text = sql::release_count(filter.owned_too, filter.since.is_some());
         let count_binds = binds.clone();
@@ -231,7 +231,7 @@ impl FollowStore {
     /// Move the user's seen marker to now.
     pub async fn mark_seen(&self, user_id: &str) -> Result<(), StoreError> {
         let user_id = user_id.to_owned();
-        let now = self.db.now_real();
+        let now = self.db.now_ms();
         self.db
             .write("follows.mark_seen", move |tx| {
                 tx.execute(sql::MARK_SEEN.text(), params![user_id, now])?;

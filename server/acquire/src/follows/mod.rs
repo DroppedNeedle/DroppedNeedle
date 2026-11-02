@@ -1,7 +1,7 @@
 //! Follows: who follows which artist, the auto-download asks and their
 //! verdicts, and the follow poll's cursors.
 //!
-//! [`Follows`] alone writes `user_followed_artists`,
+//! [`Follows`] alone writes `acquire_followed_artists`,
 //! `auto_download_approvals` and `acquire_follow_cursors`, and each action
 //! is one writer-lane transaction: the auto-download toggle sets the
 //! intent and files or withdraws the ask together, a verdict moves the
@@ -475,7 +475,12 @@ pub(crate) fn now_ms(clock: &dyn Clock) -> i64 {
     ms_from_secs(epoch_secs(clock))
 }
 
-/// Float unix seconds, for the REAL follow columns, from unix milliseconds.
+/// A follow row's time in milliseconds, from the seconds a request carries.
+fn follow_ms(now: f64) -> i64 {
+    (now * 1000.0).round() as i64
+}
+
+/// Float unix seconds, from unix milliseconds.
 fn real_secs(now_ms: i64) -> f64 {
     now_ms.max(0) as f64 / 1000.0
 }
@@ -560,7 +565,7 @@ fn upsert_follow(
             artist_mbid.to_lowercase(),
             artist_name,
             UNKNOWN_ARTIST,
-            now
+            follow_ms(now)
         ],
     )?;
     Ok(())
@@ -577,7 +582,7 @@ fn set_intent(
 ) -> rusqlite::Result<()> {
     tx.execute(
         sql::SET_INTENT.text(),
-        params![i64::from(enabled), now, user_id, mbid_lower],
+        params![i64::from(enabled), follow_ms(now), user_id, mbid_lower],
     )?;
     Ok(())
 }
@@ -600,7 +605,7 @@ fn apply_verdict(
                 artist_mbid,
                 artist_mbid.to_lowercase(),
                 artist_name,
-                now
+                follow_ms(now)
             ],
         )?;
         Ok(())

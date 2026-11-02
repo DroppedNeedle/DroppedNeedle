@@ -3,7 +3,7 @@
 droppedneedle_kernel::sql! {
     /// Every distinct followed artist, keyed by lowercase MBID.
     pub(super) FOLLOWED_ARTISTS = "SELECT artist_mbid_lower, MIN(artist_mbid) AS artist_mbid, \
-             MIN(artist_name) AS artist_name FROM user_followed_artists \
+             MIN(artist_name) AS artist_name FROM acquire_followed_artists \
              GROUP BY artist_mbid_lower ORDER BY artist_mbid_lower";
     pub(super) row FollowedArtist for [FOLLOWED_ARTISTS] {
         artist_mbid_lower: String,
@@ -35,7 +35,7 @@ droppedneedle_kernel::sql! {
         last_checked_at: f64,
     }
     /// Users following an artist.
-    pub(super) FOLLOWERS = "SELECT user_id FROM user_followed_artists WHERE artist_mbid_lower = ? \
+    pub(super) FOLLOWERS = "SELECT user_id FROM acquire_followed_artists WHERE artist_mbid_lower = ? \
              ORDER BY user_id";
     /// Cached Ticketmaster resolution.
     pub(super) TM_RESOLUTION = "SELECT attraction_id, match_basis, resolved_at FROM artist_tm_attraction \
@@ -125,7 +125,7 @@ droppedneedle_kernel::sql! {
     f.starts_at, f.local_date, f.status, f.ticket_url, f.match_confidence";
     /// Feed rows for one user's follows, carrying the follow's MBID.
     fragment FOLLOWED_FEED = "SELECT " + FEED_COLUMNS + ", u.artist_mbid AS link_mbid FROM live_event_feed f \
-                 JOIN user_followed_artists u ON u.artist_mbid_lower = f.artist_mbid_lower \
+                 JOIN acquire_followed_artists u ON u.artist_mbid_lower = f.artist_mbid_lower \
                  AND u.user_id = ? WHERE f.local_date >= ?";
     /// The whole feed, with lowercase MBIDs.
     fragment WHOLE_FEED = "SELECT " + FEED_COLUMNS + ", f.artist_mbid_lower AS link_mbid FROM live_event_feed f \

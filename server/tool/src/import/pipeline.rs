@@ -1044,8 +1044,8 @@ struct FollowRow {
     user_id: String,
     artist_mbid_lower: String,
     auto_download: i64,
-    followed_at: f64,
-    updated_at: f64,
+    followed_at: i64,
+    updated_at: i64,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -1150,7 +1150,7 @@ impl DatabaseSnapshot {
         .await?;
         let follows: Vec<FollowRow> = sqlx::query_as(
             "SELECT user_id, artist_mbid_lower, auto_download, followed_at, \
-             updated_at FROM user_followed_artists",
+             updated_at FROM acquire_followed_artists",
         )
         .fetch_all(&mut *conn)
         .await?;
@@ -1270,8 +1270,8 @@ enum Planned {
     MergeFollow {
         key: (String, String),
         auto_download: bool,
-        followed_at: f64,
-        updated_at: f64,
+        followed_at: i64,
+        updated_at: i64,
     },
     InsertApproval {
         record: Value,
@@ -1767,8 +1767,14 @@ impl Plan {
             Some(existing) => {
                 let merged_auto =
                     existing.auto_download != 0 || bool_or(follow, "auto_download", false);
-                let merged_followed = existing.followed_at.min(num_or(follow, "followed_at", 0.0));
-                let merged_updated = existing.updated_at.max(num_or(follow, "updated_at", 0.0));
+                let merged_followed =
+                    existing
+                        .followed_at
+                        .min(approval_ms(num_or(follow, "followed_at", 0.0)));
+                let merged_updated =
+                    existing
+                        .updated_at
+                        .max(approval_ms(num_or(follow, "updated_at", 0.0)));
                 if existing.auto_download == i64::from(merged_auto)
                     && existing.followed_at == merged_followed
                     && existing.updated_at == merged_updated
@@ -2333,7 +2339,7 @@ async fn insert_follow(
 ) -> Result<(), ImportError> {
     let mbid = str_or(record, "artist_mbid", "");
     sqlx::query(
-        "INSERT INTO user_followed_artists (user_id, artist_mbid, \
+        "INSERT INTO acquire_followed_artists (user_id, artist_mbid, \
          artist_mbid_lower, artist_name, auto_download, followed_at, \
          updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
     )
@@ -2342,8 +2348,8 @@ async fn insert_follow(
     .bind(mbid.trim().to_lowercase())
     .bind(str_or(record, "artist_name", ""))
     .bind(i64::from(bool_or(record, "auto_download", false)))
-    .bind(num_or(record, "followed_at", 0.0))
-    .bind(num_or(record, "updated_at", 0.0))
+    .bind(approval_ms(num_or(record, "followed_at", 0.0)))
+    .bind(approval_ms(num_or(record, "updated_at", 0.0)))
     .execute(&mut **tx)
     .await?;
     Ok(())
@@ -2353,11 +2359,11 @@ async fn merge_follow(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     key: &(String, String),
     auto_download: bool,
-    followed_at: f64,
-    updated_at: f64,
+    followed_at: i64,
+    updated_at: i64,
 ) -> Result<(), ImportError> {
     sqlx::query(
-        "UPDATE user_followed_artists SET auto_download = ?, followed_at = ?, \
+        "UPDATE acquire_followed_artists SET auto_download = ?, followed_at = ?, \
          updated_at = ? WHERE user_id = ? AND artist_mbid_lower = ?",
     )
     .bind(i64::from(auto_download))

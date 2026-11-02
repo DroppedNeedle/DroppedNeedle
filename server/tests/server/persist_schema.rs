@@ -566,17 +566,17 @@ async fn unused_tables_drop_and_live_rows_survive() {
 
     // A trigger left behind would fail these writes on its missing table.
     sqlx::raw_sql(
-        "INSERT INTO user_followed_artists (user_id, artist_mbid, artist_mbid_lower, \
+        "INSERT INTO acquire_followed_artists (user_id, artist_mbid, artist_mbid_lower, \
          artist_name, followed_at, updated_at) VALUES ('u1', 'M2', 'm2', 'Other', 2, 2); \
          INSERT INTO auto_download_approvals (user_id, artist_mbid, artist_mbid_lower, \
          artist_name, requested_at) VALUES ('u1', 'M2', 'm2', 'Other', 2); \
-         DELETE FROM user_followed_artists WHERE artist_mbid_lower = 'm2';",
+         DELETE FROM acquire_followed_artists WHERE artist_mbid_lower = 'm2';",
     )
     .execute(&pool)
     .await
     .unwrap();
     let follows: Vec<String> =
-        sqlx::query_scalar("SELECT artist_mbid_lower FROM user_followed_artists")
+        sqlx::query_scalar("SELECT artist_mbid_lower FROM acquire_followed_artists")
             .fetch_all(&pool)
             .await
             .unwrap();
@@ -2488,33 +2488,33 @@ async fn user_ratings_arrive_empty_and_go_with_their_user() {
     assert!(stamped >= 59 && stamped == latest_version(), "{stamped}");
     let kept: (String, String) = sqlx::query_as(
         "SELECT u.id, f.item_id FROM auth_users u \
-         JOIN library_user_favorites f ON f.user_id = u.id",
+         JOIN catalog_user_favorites f ON f.user_id = u.id",
     )
     .fetch_one(&pool)
     .await
     .unwrap();
     assert_eq!(kept, ("u1".to_owned(), "t1".to_owned()));
-    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM library_user_ratings")
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM catalog_user_ratings")
         .fetch_one(&pool)
         .await
         .unwrap();
     assert_eq!(rows, 0);
     let strict: i64 = sqlx::query_scalar(
-        "SELECT strict FROM pragma_table_list WHERE name = 'library_user_ratings'",
+        "SELECT strict FROM pragma_table_list WHERE name = 'catalog_user_ratings'",
     )
     .fetch_one(&pool)
     .await
     .unwrap();
     assert_eq!(strict, 1);
     let key: Vec<String> = sqlx::query_scalar(
-        "SELECT name FROM pragma_table_info('library_user_ratings') WHERE pk > 0 ORDER BY pk",
+        "SELECT name FROM pragma_table_info('catalog_user_ratings') WHERE pk > 0 ORDER BY pk",
     )
     .fetch_all(&pool)
     .await
     .unwrap();
     assert_eq!(key, ["user_id", "item_kind", "item_id"]);
     let indexed: Vec<String> = sqlx::query_scalar(
-        "SELECT c.name FROM pragma_index_info('idx_user_ratings_item') c ORDER BY c.seqno",
+        "SELECT c.name FROM pragma_index_info('idx_catalog_user_ratings_item') c ORDER BY c.seqno",
     )
     .fetch_all(&pool)
     .await
@@ -2522,9 +2522,9 @@ async fn user_ratings_arrive_empty_and_go_with_their_user() {
     assert_eq!(indexed, ["item_kind", "item_id"]);
 
     for refused in [
-        "INSERT INTO library_user_ratings VALUES ('u1', 'track', 't1', 0, 1)",
-        "INSERT INTO library_user_ratings VALUES ('u1', 'track', 't1', 6, 1)",
-        "INSERT INTO library_user_ratings VALUES ('u1', 'playlist', 'p1', 3, 1)",
+        "INSERT INTO catalog_user_ratings VALUES ('u1', 'track', 't1', 0, 1)",
+        "INSERT INTO catalog_user_ratings VALUES ('u1', 'track', 't1', 6, 1)",
+        "INSERT INTO catalog_user_ratings VALUES ('u1', 'playlist', 'p1', 3, 1)",
     ] {
         assert!(
             sqlx::query(refused).execute(&pool).await.is_err(),
@@ -2535,7 +2535,7 @@ async fn user_ratings_arrive_empty_and_go_with_their_user() {
         .execute(&pool)
         .await
         .unwrap();
-    sqlx::query("INSERT INTO library_user_ratings VALUES ('u1', 'track', 't1', 4, 1)")
+    sqlx::query("INSERT INTO catalog_user_ratings VALUES ('u1', 'track', 't1', 4, 1)")
         .execute(&pool)
         .await
         .unwrap();
@@ -2543,7 +2543,7 @@ async fn user_ratings_arrive_empty_and_go_with_their_user() {
         .execute(&pool)
         .await
         .unwrap();
-    let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM library_user_ratings")
+    let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM catalog_user_ratings")
         .fetch_one(&pool)
         .await
         .unwrap();
@@ -2826,7 +2826,7 @@ async fn play_marks_arrive_empty_and_go_with_their_user_and_track() {
     }
     async fn marks(pool: &SqlitePool) -> Vec<(String, String)> {
         sqlx::query_as(
-            "SELECT user_id, local_track_id FROM library_user_play_marks \
+            "SELECT user_id, local_track_id FROM catalog_user_play_marks \
              ORDER BY user_id, local_track_id",
         )
         .fetch_all(pool)
@@ -2844,7 +2844,7 @@ async fn play_marks_arrive_empty_and_go_with_their_user_and_track() {
         .unwrap();
     assert!(stamped >= 62 && stamped == latest_version(), "{stamped}");
     assert_eq!(counts(&pool).await, (2, 2, 1));
-    let table = "library_user_play_marks";
+    let table = "catalog_user_play_marks";
     assert_eq!(
         column_names(&pool, table).await,
         [
@@ -2862,14 +2862,14 @@ async fn play_marks_arrive_empty_and_go_with_their_user_and_track() {
     assert_eq!(strict, 1);
     assert!(marks(&pool).await.is_empty());
     let key: Vec<String> = sqlx::query_scalar(
-        "SELECT name FROM pragma_table_info('library_user_play_marks') WHERE pk > 0 ORDER BY pk",
+        "SELECT name FROM pragma_table_info('catalog_user_play_marks') WHERE pk > 0 ORDER BY pk",
     )
     .fetch_all(&pool)
     .await
     .unwrap();
     assert_eq!(key, ["user_id", "local_track_id"]);
     let indexed: Vec<String> = sqlx::query_scalar(
-        "SELECT c.name FROM pragma_index_info('idx_user_play_marks_track') c ORDER BY c.seqno",
+        "SELECT c.name FROM pragma_index_info('idx_catalog_user_play_marks_track') c ORDER BY c.seqno",
     )
     .fetch_all(&pool)
     .await
@@ -2877,7 +2877,7 @@ async fn play_marks_arrive_empty_and_go_with_their_user_and_track() {
     assert_eq!(indexed, ["local_track_id"]);
     let mut keys: Vec<(String, String, String)> = sqlx::query_as(
         "SELECT \"from\", \"table\", on_delete \
-         FROM pragma_foreign_key_list('library_user_play_marks')",
+         FROM pragma_foreign_key_list('catalog_user_play_marks')",
     )
     .fetch_all(&pool)
     .await
@@ -2897,14 +2897,14 @@ async fn play_marks_arrive_empty_and_go_with_their_user_and_track() {
         .await
         .unwrap();
     assert!(
-        sqlx::query("INSERT INTO library_user_play_marks VALUES ('u1', 't1', NULL, NULL)")
+        sqlx::query("INSERT INTO catalog_user_play_marks VALUES ('u1', 't1', NULL, NULL)")
             .execute(&pool)
             .await
             .is_err(),
         "a mark with no time is refused"
     );
     sqlx::raw_sql(
-        "INSERT INTO library_user_play_marks VALUES ('u1', 't1', 5, NULL), \
+        "INSERT INTO catalog_user_play_marks VALUES ('u1', 't1', 5, NULL), \
          ('u1', 't2', NULL, 6), ('u2', 't1', 7, 3);",
     )
     .execute(&pool)
@@ -3243,11 +3243,11 @@ async fn album_play_summary_arrives_worked_out_from_the_plays() {
     .execute(&pool)
     .await
     .unwrap();
-    async fn counts(pool: &SqlitePool) -> (i64, i64, i64) {
-        sqlx::query_as(
+    async fn counts(pool: &SqlitePool, marks: &str) -> (i64, i64, i64) {
+        sqlx::query_as(&format!(
             "SELECT (SELECT COUNT(*) FROM library_play_history), \
-             (SELECT COUNT(*) FROM library_user_play_marks), (SELECT COUNT(*) FROM local_tracks)",
-        )
+             (SELECT COUNT(*) FROM {marks}), (SELECT COUNT(*) FROM local_tracks)",
+        ))
         .fetch_one(pool)
         .await
         .unwrap()
@@ -3261,7 +3261,7 @@ async fn album_play_summary_arrives_worked_out_from_the_plays() {
         .await
         .unwrap()
     }
-    assert_eq!(counts(&pool).await, (6, 1, 3));
+    assert_eq!(counts(&pool, "library_user_play_marks").await, (6, 1, 3));
 
     apply_migrations(&pool).await.unwrap();
     assert_migrated(&pool).await.unwrap();
@@ -3270,7 +3270,7 @@ async fn album_play_summary_arrives_worked_out_from_the_plays() {
         .await
         .unwrap();
     assert!(stamped >= 65 && stamped == latest_version(), "{stamped}");
-    assert_eq!(counts(&pool).await, (6, 1, 3));
+    assert_eq!(counts(&pool, "catalog_user_play_marks").await, (6, 1, 3));
     let flags: Vec<i64> =
         sqlx::query_scalar("SELECT has_indexed_track FROM local_albums ORDER BY id")
             .fetch_all(&pool)
@@ -5250,7 +5250,7 @@ async fn genre_artwork_triggers_read_the_album_tracks_index() {
     }
 
     async fn revisions(pool: &SqlitePool) -> Vec<(String, i64)> {
-        sqlx::query_as("SELECT genre_folded, value FROM library_genre_artwork_revisions ORDER BY 1")
+        sqlx::query_as("SELECT genre_folded, value FROM catalog_genre_artwork_revisions ORDER BY 1")
             .fetch_all(pool)
             .await
             .unwrap()
@@ -6529,7 +6529,7 @@ async fn migration_0005_backfills_on_upgrade() {
         "local_tracks_fts_idx",
         "local_tracks_fts_docsize",
         "local_tracks_fts_config",
-        "library_track_format_stats",
+        "catalog_track_format_stats",
         "trg_tracks_fts_insert",
         "trg_tracks_fts_delete",
         "trg_tracks_fts_update",
@@ -6595,7 +6595,7 @@ async fn migration_0005_backfills_on_upgrade() {
     .expect("oracle reads");
     assert!(!miss);
     let formats: Vec<(String, i64, i64)> =
-        sqlx::query_as("SELECT file_format, indexed_tracks, indexed_bytes FROM library_track_format_stats ORDER BY 1")
+        sqlx::query_as("SELECT file_format, indexed_tracks, indexed_bytes FROM catalog_track_format_stats ORDER BY 1")
             .fetch_all(&pool)
             .await
             .expect("stats read");
@@ -6609,7 +6609,7 @@ async fn migration_0005_backfills_on_upgrade() {
         .await
         .expect("transition writes");
     let flac: (i64, i64) = sqlx::query_as(
-        "SELECT indexed_tracks, indexed_bytes FROM library_track_format_stats WHERE file_format = 'flac'",
+        "SELECT indexed_tracks, indexed_bytes FROM catalog_track_format_stats WHERE file_format = 'flac'",
     )
     .fetch_one(&pool)
     .await
@@ -11620,4 +11620,395 @@ async fn catalog_tables_rebuild_to_conventions_on_upgrade() {
         number(&pool, "SELECT COUNT(*) FROM db_planner_stats").await,
         0
     );
+}
+
+/// Migration 0121: favourites, follows, seen marks, ratings, play marks, the
+/// new-release feed, YouTube links and two kept summaries reach their final
+/// tables. Through the production runner, from a database at 0120: every row of
+/// a user who exists is carried with its exact values, a row of a user with no
+/// account is not, each kept summary's triggers still fire, nothing else in the
+/// schema moves but those names, and a user's rows then go with the user.
+#[tokio::test]
+async fn remaining_catalog_tables_reach_the_conventions_on_upgrade() {
+    const RENAMED: [(&str, &str); 11] = [
+        ("library_user_favorites", "catalog_user_favorites"),
+        ("library_user_favorite_names", "catalog_user_favorite_names"),
+        ("library_user_ratings", "catalog_user_ratings"),
+        ("library_user_play_marks", "catalog_user_play_marks"),
+        ("user_new_release_seen", "catalog_new_release_seen_marks"),
+        ("youtube_links", "catalog_youtube_links"),
+        ("youtube_track_links", "catalog_youtube_track_links"),
+        (
+            "library_genre_artwork_revisions",
+            "catalog_genre_artwork_revisions",
+        ),
+        ("library_track_format_stats", "catalog_track_format_stats"),
+        ("user_followed_artists", "acquire_followed_artists"),
+        ("new_release_feed", "acquire_new_release_feed"),
+    ];
+    type SchemaRow = (String, String, String, Option<String>);
+    /// Every schema row but the tables' own and their indexes, under new names.
+    async fn other_schema(pool: &SqlitePool) -> Vec<SchemaRow> {
+        let rows: Vec<SchemaRow> = sqlx::query_as(
+            "SELECT type, name, tbl_name, sql FROM sqlite_schema \
+             WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap();
+        let rename = |text: &str| {
+            // A new name can hold an old one, so back to old first.
+            RENAMED.iter().fold(text.to_owned(), |text, (old, new)| {
+                text.replace(new, old).replace(old, new)
+            })
+        };
+        rows.into_iter()
+            .map(|(kind, name, table, sql)| (kind, name, rename(&table), sql.map(|s| rename(&s))))
+            .filter(|(kind, _, table, _)| {
+                kind == "trigger" || !RENAMED.iter().any(|(_, new)| new == table)
+            })
+            .collect()
+    }
+    async fn number(pool: &SqlitePool, sql: &str) -> i64 {
+        sqlx::query_scalar(sql).fetch_one(pool).await.unwrap()
+    }
+
+    let dir = droppedneedle_kernel::db::scratch::ScratchDir::new("catalog-0121").unwrap();
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(
+            sqlx::sqlite::SqliteConnectOptions::new()
+                .filename(dir.join("library.db"))
+                .create_if_missing(true)
+                .foreign_keys(true)
+                .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal),
+        )
+        .await
+        .unwrap();
+    run_migrations(&pool, &migrator_through(120)).await.unwrap();
+    sqlx::raw_sql(
+        "INSERT INTO auth_users (id, display_name, role, created_at) \
+             VALUES ('u1', 'U', 'user', 1), ('u2', 'V', 'user', 1); \
+         INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) \
+             VALUES ('a1', 'A', 'a', 'group', 1, 1); \
+         INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+             album_artist_id, grouping_source, created_at, updated_at) \
+             VALUES ('al1', 'r1', 'g1', 'T', 't', 'a1', 'automatic', 1, 1); \
+         INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
+             path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
+             album_title, album_title_folded, file_format, ingest_source, imported_at, \
+             membership_source) \
+             VALUES ('t1', 'al1', 'r1', '/m/1.flac', '1.flac', 'h1', 7, 0, 's', 'T', 't', 'T', \
+             't', 'flac', 'scan', 0, 'automatic'); \
+         INSERT INTO library_genre_artwork_revisions (genre_folded, value) VALUES ('rock', 4); \
+         INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) VALUES \
+             ('u1', 'track', 't1', 1700000000.125), \
+             ('u1', 'album', 'al1', 1700000001), \
+             ('u2', 'artist', 'a1', 1.5), \
+             ('u2', 'track', 't1', 'unreadable'), \
+             ('ghost', 'track', 't1', 5); \
+         INSERT INTO library_user_favorite_names (user_id, item_kind, item_id, display_name) \
+             VALUES ('u1', 'track', 't1', 'Song'), ('ghost', 'track', 't1', 'Gone'); \
+         INSERT INTO library_user_ratings VALUES ('u1', 'track', 't1', 4, 1700000000000), \
+             ('u2', 'album', 'al1', 2, 1700000000001); \
+         INSERT INTO library_user_play_marks VALUES ('u1', 't1', 1700000000000, NULL); \
+         INSERT INTO user_followed_artists (user_id, artist_mbid, artist_mbid_lower, \
+             artist_name, auto_download, followed_at, updated_at) VALUES \
+             ('u1', 'M1', 'm1', 'Band', 7, 1700000000.5, 1700000002), \
+             ('u2', 'M2', 'm2', 'Other', 0, 2, 3); \
+         INSERT INTO user_new_release_seen (user_id, seen_at) VALUES ('u1', 1700000004.5); \
+         PRAGMA foreign_keys = OFF; \
+         INSERT INTO user_followed_artists (user_id, artist_mbid, artist_mbid_lower, \
+             artist_name, followed_at, updated_at) VALUES ('ghost', 'M3', 'm3', 'Gone', 1, 1); \
+         INSERT INTO user_new_release_seen (user_id, seen_at) VALUES ('ghost', 1); \
+         PRAGMA foreign_keys = ON; \
+         INSERT INTO new_release_feed VALUES ('rg1', 'RG1', 'm1', 'Band', 'Title', 'Album', \
+             'Live', '2024-01-01', 1700000003.25), \
+             ('rg2', 'RG2', 'm2', 'Other', 'Next', NULL, NULL, NULL, 9); \
+         INSERT INTO youtube_links VALUES ('a', 'v', 'Al', 'Ar', 'e', 'c', \
+             '2024-01-01T00:00:00.5+00:00', 1, 2), \
+             ('b', NULL, 'x', 'y', NULL, NULL, 'never', NULL, NULL); \
+         INSERT INTO youtube_track_links VALUES ('a', 1, 1, 'Al', 'Tr', 'v', 'Ar', 'e', \
+             '2024-01-01T00:00:00Z');",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let schema_before = other_schema(&pool).await;
+    let plays_before: Vec<(String, String, i64)> = sqlx::query_as(
+        "SELECT user_id, local_album_id, plays FROM library_user_album_plays ORDER BY 1, 2",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(plays_before.len(), 1);
+
+    run_migrations(&pool, &migrator_through(121)).await.unwrap();
+
+    assert_eq!(other_schema(&pool).await, schema_before);
+    assert_eq!(
+        number(&pool, "SELECT foreign_keys FROM pragma_foreign_keys").await,
+        1
+    );
+    for (old, new) in RENAMED {
+        let sql = format!("SELECT COUNT(*) FROM sqlite_schema WHERE name = '{old}'");
+        assert_eq!(number(&pool, &sql).await, 0, "{old} is gone");
+        let sql = format!("SELECT strict FROM pragma_table_list WHERE name = '{new}'");
+        assert_eq!(number(&pool, &sql).await, 1, "{new} is STRICT");
+    }
+    for (table, parent, action) in [
+        ("catalog_user_favorites", "auth_users", "CASCADE"),
+        (
+            "catalog_user_favorite_names",
+            "catalog_user_favorites",
+            "CASCADE",
+        ),
+        ("catalog_user_ratings", "auth_users", "CASCADE"),
+        ("catalog_new_release_seen_marks", "auth_users", "CASCADE"),
+        ("acquire_followed_artists", "auth_users", "CASCADE"),
+    ] {
+        let sql =
+            format!("SELECT DISTINCT \"table\", on_delete FROM pragma_foreign_key_list('{table}')");
+        let key: (String, String) = sqlx::query_as(&sql).fetch_one(&pool).await.unwrap();
+        assert_eq!(key, (parent.to_owned(), action.to_owned()), "{table}");
+    }
+    let indexes: Vec<String> = sqlx::query_scalar(
+        "SELECT name FROM sqlite_schema WHERE type = 'index' AND sql IS NOT NULL \
+         AND tbl_name IN ('catalog_user_favorites', 'catalog_user_ratings', \
+         'catalog_user_play_marks', 'acquire_followed_artists', 'acquire_new_release_feed') \
+         ORDER BY name",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        indexes,
+        [
+            "idx_acquire_followed_artists_auto_download",
+            "idx_acquire_followed_artists_mbid",
+            "idx_acquire_followed_artists_user",
+            "idx_acquire_new_release_feed_artist",
+            "idx_acquire_new_release_feed_date",
+            "idx_catalog_user_favorites_user_kind",
+            "idx_catalog_user_play_marks_track",
+            "idx_catalog_user_ratings_item",
+        ]
+    );
+
+    let favorites: Vec<(String, String, String, i64)> = sqlx::query_as(
+        "SELECT user_id, item_kind, item_id, created_at FROM catalog_user_favorites \
+         ORDER BY user_id, item_kind",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    let favorite = |user: &str, kind: &str, id: &str, at: i64| {
+        (user.to_owned(), kind.to_owned(), id.to_owned(), at)
+    };
+    assert_eq!(
+        favorites,
+        [
+            favorite("u1", "album", "al1", 1_700_000_001_000),
+            favorite("u1", "track", "t1", 1_700_000_000_125),
+            favorite("u2", "artist", "a1", 1_500),
+            favorite("u2", "track", "t1", 0),
+        ]
+    );
+    let names: Vec<(String, String)> =
+        sqlx::query_as("SELECT user_id, display_name FROM catalog_user_favorite_names")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(names, [("u1".to_owned(), "Song".to_owned())]);
+    let ratings: Vec<(String, String, i64, i64)> = sqlx::query_as(
+        "SELECT user_id, item_id, rating, rated_at FROM catalog_user_ratings ORDER BY user_id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        ratings,
+        [
+            ("u1".to_owned(), "t1".to_owned(), 4, 1_700_000_000_000),
+            ("u2".to_owned(), "al1".to_owned(), 2, 1_700_000_000_001),
+        ]
+    );
+    let marks: (String, String, i64, Option<i64>) = sqlx::query_as(
+        "SELECT user_id, local_track_id, marked_played_at, marked_unplayed_at \
+         FROM catalog_user_play_marks",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        marks,
+        ("u1".to_owned(), "t1".to_owned(), 1_700_000_000_000, None)
+    );
+    let follows: Vec<(String, String, String, String, i64, i64, i64)> = sqlx::query_as(
+        "SELECT user_id, artist_mbid, artist_mbid_lower, artist_name, auto_download, \
+         followed_at, updated_at FROM acquire_followed_artists ORDER BY user_id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    let follow = |user: &str, mbid: &str, lower: &str, name: &str, auto, at, changed| {
+        (
+            user.to_owned(),
+            mbid.to_owned(),
+            lower.to_owned(),
+            name.to_owned(),
+            auto,
+            at,
+            changed,
+        )
+    };
+    assert_eq!(
+        follows,
+        [
+            follow(
+                "u1",
+                "M1",
+                "m1",
+                "Band",
+                1,
+                1_700_000_000_500,
+                1_700_000_002_000
+            ),
+            follow("u2", "M2", "m2", "Other", 0, 2_000, 3_000),
+        ]
+    );
+    let seen: Vec<(String, i64)> =
+        sqlx::query_as("SELECT user_id, seen_at FROM catalog_new_release_seen_marks")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(seen, [("u1".to_owned(), 1_700_000_004_500)]);
+    #[allow(clippy::type_complexity)]
+    let feed: Vec<(
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        i64,
+    )> = sqlx::query_as(
+        "SELECT release_group_mbid_lower, title, primary_type, secondary_types, \
+             first_release_date, discovered_at FROM acquire_new_release_feed ORDER BY 1",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        feed,
+        [
+            (
+                "rg1".to_owned(),
+                "Title".to_owned(),
+                Some("Album".to_owned()),
+                Some("Live".to_owned()),
+                Some("2024-01-01".to_owned()),
+                1_700_000_003_250
+            ),
+            ("rg2".to_owned(), "Next".to_owned(), None, None, None, 9_000),
+        ]
+    );
+    #[allow(clippy::type_complexity)]
+    let links: Vec<(String, Option<String>, Option<String>, i64, i64, i64)> = sqlx::query_as(
+        "SELECT album_id, video_id, cover_url, created_at, is_manual, track_count \
+         FROM catalog_youtube_links ORDER BY album_id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        links,
+        [
+            (
+                "a".to_owned(),
+                Some("v".to_owned()),
+                Some("c".to_owned()),
+                1_704_067_200_500,
+                1,
+                2
+            ),
+            ("b".to_owned(), None, None, 0, 0, 0),
+        ]
+    );
+    let track_link: (String, i64, i64, String, i64) = sqlx::query_as(
+        "SELECT album_id, disc_number, track_number, video_id, created_at \
+         FROM catalog_youtube_track_links",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        track_link,
+        ("a".to_owned(), 1, 1, "v".to_owned(), 1_704_067_200_000)
+    );
+    assert_eq!(
+        number(
+            &pool,
+            "SELECT value FROM catalog_genre_artwork_revisions WHERE genre_folded = 'rock'"
+        )
+        .await,
+        4
+    );
+
+    // The closed values and the types now hold.
+    for refused in [
+        "UPDATE acquire_followed_artists SET auto_download = 2",
+        "UPDATE catalog_youtube_links SET is_manual = 2",
+        "UPDATE catalog_user_favorites SET created_at = 'soon'",
+        "INSERT INTO catalog_user_favorites VALUES ('ghost', 'track', 't1', 1)",
+    ] {
+        assert!(
+            sqlx::query(refused).execute(&pool).await.is_err(),
+            "{refused}"
+        );
+    }
+
+    // Each kept summary still follows its source rows.
+    let stats = "SELECT indexed_tracks * 1000 + indexed_bytes FROM catalog_track_format_stats \
+         WHERE file_format = 'flac'";
+    assert_eq!(number(&pool, stats).await, 1_007);
+    sqlx::raw_sql(
+        "UPDATE local_tracks SET file_size_bytes = 9 WHERE id = 't1'; \
+         INSERT INTO local_track_genres (local_track_id, position, name, folded_name, source) \
+             VALUES ('t1', 0, 'Rock', 'rock', 'local'); \
+         INSERT INTO catalog_user_play_marks VALUES ('u2', 't1', 1700000000000, NULL);",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert_eq!(number(&pool, stats).await, 1_009);
+    assert_eq!(
+        number(
+            &pool,
+            "SELECT value FROM catalog_genre_artwork_revisions WHERE genre_folded = 'rock'"
+        )
+        .await,
+        5
+    );
+    assert_eq!(
+        number(&pool, "SELECT COUNT(*) FROM library_user_album_plays").await,
+        2
+    );
+
+    // A user's rows go with the user, and only theirs.
+    sqlx::query("DELETE FROM auth_users WHERE id = 'u1'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    for (table, left) in [
+        ("catalog_user_favorites", 2),
+        ("catalog_user_favorite_names", 0),
+        ("catalog_user_ratings", 1),
+        ("catalog_user_play_marks", 1),
+        ("acquire_followed_artists", 1),
+        ("catalog_new_release_seen_marks", 0),
+        ("acquire_new_release_feed", 2),
+    ] {
+        let sql = format!("SELECT COUNT(*) FROM {table}");
+        assert_eq!(number(&pool, &sql).await, left, "{table}");
+    }
 }

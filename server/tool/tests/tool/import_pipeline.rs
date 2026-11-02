@@ -210,8 +210,8 @@ async fn follow_merge_never_downgrades() {
     .await
     .unwrap();
     sqlx::query(
-        "INSERT INTO user_followed_artists (user_id, artist_mbid, artist_mbid_lower, artist_name, \
-         auto_download, followed_at, updated_at) VALUES ('u1', ?, ?, 'Old Name', 1, 100.0, 200.0)",
+        "INSERT INTO acquire_followed_artists (user_id, artist_mbid, artist_mbid_lower, artist_name, \
+         auto_download, followed_at, updated_at) VALUES ('u1', ?, ?, 'Old Name', 1, 100000, 200000)",
     )
     .bind(MBID)
     .bind(MBID.to_lowercase())
@@ -234,8 +234,8 @@ async fn follow_merge_never_downgrades() {
         report.entities["user"].conflict_kept_existing, 1,
         "the seeded same-id user row stands"
     );
-    let row: (i64, f64, f64, String) = sqlx::query_as(
-        "SELECT auto_download, followed_at, updated_at, artist_name FROM user_followed_artists \
+    let row: (i64, i64, i64, String) = sqlx::query_as(
+        "SELECT auto_download, followed_at, updated_at, artist_name FROM acquire_followed_artists \
          WHERE user_id = 'u1'",
     )
     .fetch_one(&pool)
@@ -243,7 +243,7 @@ async fn follow_merge_never_downgrades() {
     .unwrap();
     assert_eq!(
         row,
-        (1, 50.0, 300.0, "Old Name".to_owned()),
+        (1, 50_000, 300_000, "Old Name".to_owned()),
         "OR never downgrades, min/max win, existing name kept"
     );
 }
@@ -337,7 +337,7 @@ async fn dangling_user_refs_fail_the_whole_file() {
 
     assert_eq!(report.exit.code, ExitCode::FailedValidation);
     assert_eq!(count(&pool, "auth_users").await, 0);
-    assert_eq!(count(&pool, "user_followed_artists").await, 0);
+    assert_eq!(count(&pool, "acquire_followed_artists").await, 0);
     assert_eq!(count(&pool, "auto_download_approvals").await, 0);
     assert_eq!(count(&pool, "import_runs").await, 0);
 }

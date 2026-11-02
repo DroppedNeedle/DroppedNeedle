@@ -114,8 +114,9 @@ many. Nothing else in the v2 database is changed.
 - Playlists with their covers, favorites (with the names they had in v2)
   and play history. A playlist with no owner in v2 stays ownerless: public
   ones stay readable by everyone, and an admin may delete any of them. In
-  v3, deleting a user deletes their playlists. A v3 database upgraded in
-  place turns a playlist whose owner no longer exists into an ownerless one.
+  v3, deleting a user deletes their playlists, favorites and follows. A v3
+  database upgraded in place turns a playlist whose owner no longer exists
+  into an ownerless one, and drops favorites left by a deleted user.
 - Finished requests and finished downloads, wanted watches, and the list of
   bad download sources.
 - Per-user quota overrides. Past requests still count toward each user's

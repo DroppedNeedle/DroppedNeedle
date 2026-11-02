@@ -1402,9 +1402,9 @@ async fn follow_conflict_merges_or_min_max() {
     .await
     .expect("alice seeds");
     sqlx::query(
-        "INSERT INTO user_followed_artists (user_id, artist_mbid, artist_mbid_lower,
+        "INSERT INTO acquire_followed_artists (user_id, artist_mbid, artist_mbid_lower,
              artist_name, auto_download, followed_at, updated_at)
-         VALUES (?, ?, ?, 'Fixture Artist One', 0, 9999999999.0, 100.0)",
+         VALUES (?, ?, ?, 'Fixture Artist One', 0, 9999999999000, 100000)",
     )
     .bind(&fixture.alice_id)
     .bind(&fixture.artist_one_mbid)
@@ -1423,8 +1423,8 @@ async fn follow_conflict_merges_or_min_max() {
         1
     );
 
-    let merged: (i64, f64, f64) = sqlx::query_as(
-        "SELECT auto_download, followed_at, updated_at FROM user_followed_artists
+    let merged: (i64, i64, i64) = sqlx::query_as(
+        "SELECT auto_download, followed_at, updated_at FROM acquire_followed_artists
          WHERE user_id = ? AND artist_mbid_lower = ?",
     )
     .bind(&fixture.alice_id)
@@ -1432,7 +1432,7 @@ async fn follow_conflict_merges_or_min_max() {
     .fetch_one(&pool)
     .await
     .expect("follow reads back");
-    assert_eq!(merged, (1, 1_700_000_000.0, 1_760_000_000.0));
+    assert_eq!(merged, (1, 1_700_000_000_000, 1_760_000_000_000));
 }
 
 /// Approvals keep the most-permissive state with the earliest request.

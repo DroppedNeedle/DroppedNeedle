@@ -4,7 +4,7 @@
 //! release as the baseline and miss anything that came out between v2's
 //! last poll and the upgrade.
 
-use super::requests::whole;
+use super::requests::{millis, whole};
 use super::{Column, Source, TableSection, Target, col};
 
 /// Releases each followed artist already had.
@@ -37,7 +37,7 @@ pub const NEW_RELEASE_FEED: TableSection = TableSection {
         filter: "",
         requires: &[],
     },
-    target: Target::Table("new_release_feed"),
+    target: Target::Table("acquire_new_release_feed"),
     columns: &[
         col("release_group_mbid_lower"),
         col("release_group_mbid"),
@@ -47,7 +47,11 @@ pub const NEW_RELEASE_FEED: TableSection = TableSection {
         col("primary_type"),
         col("secondary_types"),
         col("first_release_date"),
-        col("discovered_at"),
+        Column::new("discovered_at").from_sql(concat!(
+            "COALESCE(",
+            millis!("discovered_at"),
+            ", 0)"
+        )),
     ],
     key: &["release_group_mbid_lower"],
     unique: &[],

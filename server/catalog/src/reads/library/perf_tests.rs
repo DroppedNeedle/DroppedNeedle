@@ -1532,7 +1532,7 @@ async fn seed_small_marks(fixture: &Fixture) {
          ('v2-2', 'u3', 't9', 'al5', 'x', 'x', '2026-01-06T10:00:00.500Z'), \
          ('v2-3', 'u3', 't9', 'al5', 'x', 'x', '2026-01-04T10:00:00Z'), \
          ('v2-4', 'u3', 't4', 'al2', 'x', 'x', '2026-01-03T09:00:00+01:00'); \
-         INSERT INTO library_user_play_marks (user_id, local_track_id, marked_played_at, \
+         INSERT INTO catalog_user_play_marks (user_id, local_track_id, marked_played_at, \
          marked_unplayed_at) VALUES ",
     );
     for (index, (user, track, played, unplayed)) in marks.iter().enumerate() {
@@ -1577,7 +1577,7 @@ async fn rule_values(
     let marks: Vec<(String, Option<i64>, Option<i64>)> = fetch(
         db,
         "SELECT local_track_id, marked_played_at, marked_unplayed_at \
-         FROM library_user_play_marks WHERE user_id = ?",
+         FROM catalog_user_play_marks WHERE user_id = ?",
         vec![text(user)],
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
     )
@@ -1894,7 +1894,7 @@ async fn assert_album_summary(db: &Db, step: &str) {
     let users: Vec<String> = fetch(
         db,
         "SELECT user_id FROM library_play_history \
-         UNION SELECT user_id FROM library_user_play_marks",
+         UNION SELECT user_id FROM catalog_user_play_marks",
         Vec::new(),
         |row| row.get(0),
     )
@@ -1925,7 +1925,7 @@ async fn assert_album_summary(db: &Db, step: &str) {
         db,
         "SELECT COUNT(*) FROM library_user_album_plays WHERE user_id NOT IN \
          (SELECT user_id FROM library_play_history \
-          UNION SELECT user_id FROM library_user_play_marks)",
+          UNION SELECT user_id FROM catalog_user_play_marks)",
         Vec::new(),
         |row| row.get(0),
     )
@@ -1990,7 +1990,7 @@ fn marked(user: &str, tracks: &str, played: bool, at: i64) -> String {
     };
     let values = values.replace("?2", &at.to_string());
     format!(
-        "INSERT INTO library_user_play_marks \
+        "INSERT INTO catalog_user_play_marks \
          (user_id, local_track_id, marked_played_at, marked_unplayed_at) \
          SELECT '{user}', id, {values} FROM ({tracks}) WHERE true \
          ON CONFLICT (user_id, local_track_id) DO UPDATE SET {update};"
@@ -2107,11 +2107,11 @@ async fn album_play_summary_follows_every_write() {
     let sql = format!("{TRACK_INSERT}{};", track_values("t10", "al1", "indexed"))
         + &marked("u3", &one("t10"), false, 1_800_000_006_000)
         + "UPDATE library_play_history SET local_track_id = 't10' WHERE local_track_id = 't3'; \
-           UPDATE library_user_play_marks SET local_track_id = 't10' \
+           UPDATE catalog_user_play_marks SET local_track_id = 't10' \
            WHERE user_id = 'u1' AND local_track_id = 't3'; \
-           UPDATE library_user_play_marks SET marked_played_at = NULL, \
+           UPDATE catalog_user_play_marks SET marked_played_at = NULL, \
            marked_unplayed_at = 1800000006000 WHERE user_id = 'u3' AND local_track_id = 't10'; \
-           DELETE FROM library_user_play_marks WHERE user_id = 'u3' AND local_track_id = 't3';";
+           DELETE FROM catalog_user_play_marks WHERE user_id = 'u3' AND local_track_id = 't3';";
     write_batch(&fixture, "summary continuation", sql).await;
     assert_album_summary(db, "continuation").await;
 
@@ -2604,7 +2604,7 @@ async fn assert_history_plans(db: &Db, state: &str) {
     };
     const BY_TRACK: &str = "idx_play_history_user_track (user_id=?";
     const NO_TRACK: &str = "idx_play_history_user_album_no_track (user_id=?";
-    const MARKS: &str = "sqlite_autoindex_library_user_play_marks_1 (user_id=?";
+    const MARKS: &str = "sqlite_autoindex_catalog_user_play_marks_1 (user_id=?";
     const SUMMARY: [&str; 3] = [
         "USING PRIMARY KEY (user_id=?",
         "idx_user_album_plays_last_played (user_id=?",
@@ -2729,7 +2729,7 @@ async fn assert_history_plans(db: &Db, state: &str) {
                 || line.contains("library_play_history");
             let marks = line.starts_with("SEARCH m ")
                 || line.starts_with("SCAN m")
-                || line.contains("library_user_play_marks");
+                || line.contains("catalog_user_play_marks");
             if album {
                 assert!(
                     !plays && !marks,
@@ -2971,7 +2971,7 @@ async fn history_plans_read_the_listeners_plays_first() {
         marks.push_str(&format!("('u{user}', 'U', 'user', 0)"));
     }
     marks.push_str(
-        "; INSERT INTO library_user_play_marks (user_id, local_track_id, marked_played_at, \
+        "; INSERT INTO catalog_user_play_marks (user_id, local_track_id, marked_played_at, \
          marked_unplayed_at) VALUES ",
     );
     for user in 0..50 {
@@ -3177,7 +3177,7 @@ async fn seed_100k_marks(fixture: &Fixture) {
     let mut sql = String::from(
         "INSERT INTO auth_users (id, display_name, role, created_at) \
          VALUES ('p-u1', 'P', 'user', 0); \
-         INSERT INTO library_user_play_marks (user_id, local_track_id, marked_played_at, \
+         INSERT INTO catalog_user_play_marks (user_id, local_track_id, marked_played_at, \
          marked_unplayed_at) VALUES ",
     );
     let mut marks = Vec::new();

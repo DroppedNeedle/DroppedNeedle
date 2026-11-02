@@ -284,7 +284,8 @@ async fn sqlite_fixture() -> SqliteFixture {
         "INSERT INTO local_track_genres (local_track_id, position, name, folded_name, source) VALUES \
          ('t1', 0, 'Rock', 'rock', 'local'), ('t2', 0, 'Rock', 'rock', 'local'), \
          ('t4', 0, 'Jazz', 'jazz', 'local')",
-        "INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) VALUES \
+        "INSERT INTO auth_users (id, display_name, role, created_at) VALUES ('u1', 'U', 'user', 1)",
+        "INSERT INTO catalog_user_favorites (user_id, item_kind, item_id, created_at) VALUES \
          ('u1', 'album', 'al1', 1000), ('u1', 'artist', 'a2', 1000), ('u1', 'track', 't4', 1000)",
     ]
     .join(";\n");
@@ -807,7 +808,7 @@ const ALBUM_KINDS: &str = "INSERT INTO local_artists (id, display_name, folded_n
     SELECT id, 0, 'ar-aurora', 'main' FROM local_tracks WHERE id LIKE 'tk-%'; \
     INSERT INTO local_track_external_identities (local_track_id, provider, recording_mbid, \
     decision_source, selected_at) VALUES ('tk-matched', 'musicbrainz', '9b2c4f10-0000-4000-8000-0000000000a1', 'manual', 1); \
-    INSERT INTO new_release_feed (release_group_mbid_lower, release_group_mbid, artist_mbid_lower, \
+    INSERT INTO acquire_new_release_feed (release_group_mbid_lower, release_group_mbid, artist_mbid_lower, \
     artist_name, title, first_release_date, discovered_at) \
     SELECT release_group_mbid, release_group_mbid, 'mb-aurora', 'Aurora', release_group_mbid, \
     date('now'), 1 FROM local_album_external_identities GROUP BY release_group_mbid;";
@@ -846,7 +847,7 @@ async fn one_album_set_everywhere() {
         .expect("player row");
     rig.app
         .seed_with(
-            "INSERT INTO user_followed_artists (user_id, artist_mbid, artist_mbid_lower, \
+            "INSERT INTO acquire_followed_artists (user_id, artist_mbid, artist_mbid_lower, \
              artist_name, followed_at, updated_at) VALUES (?1, 'mb-aurora', 'mb-aurora', \
              'Aurora', 1, 1)",
             [&player_id],

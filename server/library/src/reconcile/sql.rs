@@ -69,9 +69,9 @@ droppedneedle_kernel::sql! {
          AND NOT EXISTS (SELECT 1 FROM local_album_artists c WHERE c.local_artist_id = " + "artist.id" + ") \
          AND NOT EXISTS (SELECT 1 FROM local_track_artists c WHERE c.local_artist_id = " + "artist.id" + ") \
          AND NOT EXISTS (SELECT 1 FROM local_albums a WHERE a.album_artist_id = " + "artist.id" + ") \
-         AND (EXISTS (SELECT 1 FROM library_user_favorites f \
+         AND (EXISTS (SELECT 1 FROM catalog_user_favorites f \
                WHERE f.item_kind = 'artist' AND f.item_id = " + "artist.id" + ") \
-          OR EXISTS (SELECT 1 FROM library_user_ratings r \
+          OR EXISTS (SELECT 1 FROM catalog_user_ratings r \
                WHERE r.item_kind = 'artist' AND r.item_id = " + "artist.id" + ") \
           OR EXISTS (SELECT 1 FROM library_play_history h WHERE h.local_artist_id = " + "artist.id" + ")))";
     /// True when an open move took a credit of `artist.id` to a row of another folded name.
@@ -90,10 +90,10 @@ droppedneedle_kernel::sql! {
                 AND album.retired_into_album_id IS NULL AND +track.availability = 'indexed') AS track_credits, \
            (SELECT COUNT(*) FROM local_albums album \
               WHERE album.album_artist_id = artist.id AND " + ACTIVE_ALBUM + ") AS primary_albums, \
-           (SELECT COUNT(*) FROM library_user_favorites \
+           (SELECT COUNT(*) FROM catalog_user_favorites \
               WHERE item_kind = 'artist' AND item_id = artist.id) AS favorites, \
            (SELECT COUNT(*) FROM library_play_history WHERE local_artist_id = artist.id) AS history, \
-           (SELECT COUNT(*) FROM library_user_ratings \
+           (SELECT COUNT(*) FROM catalog_user_ratings \
               WHERE item_kind = 'artist' AND item_id = artist.id) AS ratings";
     /// Live records that share a folded name with another active one, or that a scan emptied with every credit moved to a row of the same name.
     pub(super) SAME_NAME_CANDIDATES = "WITH active_artists AS ( \

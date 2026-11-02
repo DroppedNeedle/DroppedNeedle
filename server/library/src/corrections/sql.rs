@@ -103,27 +103,27 @@ droppedneedle_kernel::sql! {
          AND trim(COALESCE(i.release_track_mbid, '')) <> ''";
     pub(super) ALBUM_OF = "SELECT local_album_id FROM local_tracks WHERE id = ?1";
     pub(super) PLAYS_OF_TRACK = "SELECT id FROM library_play_history WHERE local_track_id = ?1";
-    pub(super) FAVORITES_TO_MOVE = "SELECT f.user_id FROM library_user_favorites f WHERE f.item_kind = 'track' \
-         AND f.item_id = ?1 AND NOT EXISTS (SELECT 1 FROM library_user_favorites g \
+    pub(super) FAVORITES_TO_MOVE = "SELECT f.user_id FROM catalog_user_favorites f WHERE f.item_kind = 'track' \
+         AND f.item_id = ?1 AND NOT EXISTS (SELECT 1 FROM catalog_user_favorites g \
          WHERE g.user_id = f.user_id AND g.item_kind = 'track' AND g.item_id = ?2)";
-    pub(super) FAVORITES_IN_BOTH = "SELECT f.user_id, f.created_at, n.display_name FROM library_user_favorites f \
-             LEFT JOIN library_user_favorite_names n ON n.user_id = f.user_id \
+    pub(super) FAVORITES_IN_BOTH = "SELECT f.user_id, f.created_at / 1000.0, n.display_name FROM catalog_user_favorites f \
+             LEFT JOIN catalog_user_favorite_names n ON n.user_id = f.user_id \
              AND n.item_kind = f.item_kind AND n.item_id = f.item_id \
              WHERE f.item_kind = 'track' AND f.item_id = ?1 \
-             AND EXISTS (SELECT 1 FROM library_user_favorites g WHERE g.user_id = f.user_id \
+             AND EXISTS (SELECT 1 FROM catalog_user_favorites g WHERE g.user_id = f.user_id \
              AND g.item_kind = 'track' AND g.item_id = ?2)";
-    pub(super) FAVORITE_NAMES_IN_BOTH = "SELECT n.user_id, n.display_name FROM library_user_favorite_names n \
+    pub(super) FAVORITE_NAMES_IN_BOTH = "SELECT n.user_id, n.display_name FROM catalog_user_favorite_names n \
              WHERE n.item_kind = 'track' AND n.item_id = ?1 \
-             AND EXISTS (SELECT 1 FROM library_user_favorites g WHERE g.user_id = n.user_id \
+             AND EXISTS (SELECT 1 FROM catalog_user_favorites g WHERE g.user_id = n.user_id \
              AND g.item_kind = 'track' AND g.item_id = ?2) \
-             AND NOT EXISTS (SELECT 1 FROM library_user_favorite_names m \
+             AND NOT EXISTS (SELECT 1 FROM catalog_user_favorite_names m \
              WHERE m.user_id = n.user_id AND m.item_kind = 'track' AND m.item_id = ?2)";
-    pub(super) RATINGS_TO_MOVE = "SELECT r.user_id FROM library_user_ratings r WHERE r.item_kind = 'track' \
-         AND r.item_id = ?1 AND NOT EXISTS (SELECT 1 FROM library_user_ratings s \
+    pub(super) RATINGS_TO_MOVE = "SELECT r.user_id FROM catalog_user_ratings r WHERE r.item_kind = 'track' \
+         AND r.item_id = ?1 AND NOT EXISTS (SELECT 1 FROM catalog_user_ratings s \
          WHERE s.user_id = r.user_id AND s.item_kind = 'track' AND s.item_id = ?2)";
-    pub(super) RATINGS_IN_BOTH = "SELECT r.user_id, r.rating, r.rated_at FROM library_user_ratings r \
+    pub(super) RATINGS_IN_BOTH = "SELECT r.user_id, r.rating, r.rated_at FROM catalog_user_ratings r \
              WHERE r.item_kind = 'track' AND r.item_id = ?1 \
-             AND EXISTS (SELECT 1 FROM library_user_ratings s WHERE s.user_id = r.user_id \
+             AND EXISTS (SELECT 1 FROM catalog_user_ratings s WHERE s.user_id = r.user_id \
              AND s.item_kind = 'track' AND s.item_id = ?2)";
     pub(super) PLAYLIST_ROWS_OF_TRACK = "SELECT id FROM catalog_playlist_tracks WHERE library_file_id = ?1 \
          ORDER BY playlist_id, position";
@@ -139,14 +139,14 @@ droppedneedle_kernel::sql! {
     pub(super) REPOINT_BOOKMARK = "UPDATE compat_bookmarks SET file_id = ?3 WHERE user_id = ?1 AND file_id = ?2";
     pub(super) PLAY_MARKS_OF_TRACK = "SELECT m.user_id, m.marked_played_at, m.marked_unplayed_at, \
              n.local_track_id IS NOT NULL, n.marked_played_at, n.marked_unplayed_at \
-             FROM library_user_play_marks m LEFT JOIN library_user_play_marks n \
+             FROM catalog_user_play_marks m LEFT JOIN catalog_user_play_marks n \
              ON n.user_id = m.user_id AND n.local_track_id = ?2 \
              WHERE m.local_track_id = ?1";
-    pub(super) REPOINT_PLAY_MARK = "UPDATE library_user_play_marks SET local_track_id = ?3 \
+    pub(super) REPOINT_PLAY_MARK = "UPDATE catalog_user_play_marks SET local_track_id = ?3 \
                  WHERE user_id = ?1 AND local_track_id = ?2";
-    pub(super) WRITE_PLAY_MARK = "UPDATE library_user_play_marks SET marked_played_at = ?3, marked_unplayed_at = ?4 \
+    pub(super) WRITE_PLAY_MARK = "UPDATE catalog_user_play_marks SET marked_played_at = ?3, marked_unplayed_at = ?4 \
              WHERE user_id = ?1 AND local_track_id = ?2";
-    pub(super) DROP_PLAY_MARK = "DELETE FROM library_user_play_marks WHERE user_id = ?1 AND local_track_id = ?2";
+    pub(super) DROP_PLAY_MARK = "DELETE FROM catalog_user_play_marks WHERE user_id = ?1 AND local_track_id = ?2";
     pub(super) QUEUE_ITEMS_OF_TRACK = "SELECT user_id, item_index FROM compat_play_queue_items WHERE file_id = ?1 \
              ORDER BY user_id, item_index";
     pub(super) REPOINT_QUEUE_ITEMS = "UPDATE compat_play_queue_items SET file_id = ?2 WHERE file_id = ?1";
@@ -338,13 +338,13 @@ droppedneedle_kernel::sql! {
     pub(super) HOLDING_ALIASES = "WITH dead AS (SELECT x.alias FROM local_track_aliases x \
       CROSS JOIN local_tracks t ON t.id = x.alias WHERE t.availability <> 'indexed') \
     SELECT local_track_id FROM library_play_history WHERE local_track_id IN dead \
-    UNION SELECT item_id FROM library_user_favorites \
+    UNION SELECT item_id FROM catalog_user_favorites \
       WHERE item_kind = 'track' AND item_id IN dead \
-    UNION SELECT item_id FROM library_user_ratings \
+    UNION SELECT item_id FROM catalog_user_ratings \
       WHERE item_kind = 'track' AND item_id IN dead \
     UNION SELECT library_file_id FROM catalog_playlist_tracks WHERE library_file_id IN dead \
     UNION SELECT file_id FROM compat_bookmarks WHERE file_id IN dead \
-    UNION SELECT local_track_id FROM library_user_play_marks WHERE local_track_id IN dead \
+    UNION SELECT local_track_id FROM catalog_user_play_marks WHERE local_track_id IN dead \
     UNION SELECT file_id FROM compat_play_queue_items WHERE file_id IN dead \
     UNION SELECT o.local_track_id FROM library_management_overrides o \
       JOIN local_track_aliases x ON x.alias = o.local_track_id \
@@ -700,11 +700,11 @@ pub(crate) fn references_of(kind: ReferenceKind, ids: ListLen) -> String {
              WHERE album_artist_id IN ({marks}) GROUP BY 1"
         ),
         ReferenceKind::Favorites => format!(
-            "SELECT item_id AS id, COUNT(*) AS count FROM library_user_favorites \
+            "SELECT item_id AS id, COUNT(*) AS count FROM catalog_user_favorites \
              WHERE item_kind = 'artist' AND item_id IN ({marks}) GROUP BY 1"
         ),
         ReferenceKind::Ratings => format!(
-            "SELECT item_id AS id, COUNT(*) AS count FROM library_user_ratings \
+            "SELECT item_id AS id, COUNT(*) AS count FROM catalog_user_ratings \
              WHERE item_kind = 'artist' AND item_id IN ({marks}) GROUP BY 1"
         ),
         ReferenceKind::History => format!(

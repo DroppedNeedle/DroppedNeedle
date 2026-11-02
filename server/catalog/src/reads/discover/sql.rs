@@ -176,7 +176,7 @@ droppedneedle_kernel::sql! {
         "SELECT n.release_group_mbid AS release_group_mbid, n.title AS title, \
          n.artist_name AS artist_name, f.artist_mbid AS artist_mbid, \
          n.first_release_date AS first_release_date \
-         FROM new_release_feed n JOIN user_followed_artists f \
+         FROM acquire_new_release_feed n JOIN acquire_followed_artists f \
          ON f.artist_mbid_lower = n.artist_mbid_lower AND f.user_id = ?1 \
          WHERE n.release_group_mbid_lower NOT IN (",
         owned_release_groups!(),
@@ -571,7 +571,7 @@ pub(super) fn anniversary_albums(years: ListLen) -> String {
 /// `GENRE_REVISIONS`.
 pub(super) fn genre_revisions(genres: ListLen) -> String {
     format!(
-        "SELECT genre_folded, value FROM library_genre_artwork_revisions \
+        "SELECT genre_folded, value FROM catalog_genre_artwork_revisions \
          WHERE genre_folded IN ({})",
         marks(genres)
     )
@@ -601,7 +601,7 @@ pub(super) fn art_candidates(genres: ListLen) -> String {
            c.match_count AS match_count, c.cover_version AS cover_version, \
            c.content_hash AS content_hash, c.source AS source, c.path AS path, c.tracks AS tracks \
          FROM requested r \
-         LEFT JOIN library_genre_artwork_revisions rev ON rev.genre_folded = r.genre_folded \
+         LEFT JOIN catalog_genre_artwork_revisions rev ON rev.genre_folded = r.genre_folded \
          LEFT JOIN candidates c ON c.genre_folded = r.genre_folded \
          ORDER BY r.ordinal, c.match_count DESC, c.album_id",
         tracks = art_tracks_column("emb")

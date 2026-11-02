@@ -1,4 +1,4 @@
-//! Star ratings over `library_user_ratings`.
+//! Star ratings over `catalog_user_ratings`.
 //!
 //! One row per (user, kind, item), rating 1 to 5. A Subsonic app sets
 //! them; clearing a rating deletes the row. Reads give the caller's own

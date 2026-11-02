@@ -9,17 +9,17 @@ droppedneedle_kernel::sql! {
     /// Which of several artists one user follows.
     family FOLLOWED_AMONG = followed_among;
     /// Whether user `?1` follows artist `?2`.
-    pub(crate) IS_FOLLOWED = "SELECT 1 FROM user_followed_artists \
+    pub(crate) IS_FOLLOWED = "SELECT 1 FROM acquire_followed_artists \
          WHERE user_id = ?1 AND artist_mbid_lower = ?2";
     /// The followed artist `?2` of user `?1`: `(mbid, name)`.
-    pub(crate) FOLLOWED_ARTIST = "SELECT artist_mbid, artist_name FROM user_followed_artists \
+    pub(crate) FOLLOWED_ARTIST = "SELECT artist_mbid, artist_name FROM acquire_followed_artists \
          WHERE user_id = ?1 AND artist_mbid_lower = ?2";
     /// Unfollow one artist.
-    pub(crate) UNFOLLOW = "DELETE FROM user_followed_artists \
+    pub(crate) UNFOLLOW = "DELETE FROM acquire_followed_artists \
          WHERE user_id = ?1 AND artist_mbid_lower = ?2";
     /// Follow one artist; a conflict keeps the intent and start date and
     /// refreshes the name when one is given.
-    pub(crate) UPSERT_FOLLOW = "INSERT INTO user_followed_artists (user_id, artist_mbid, \
+    pub(crate) UPSERT_FOLLOW = "INSERT INTO acquire_followed_artists (user_id, artist_mbid, \
          artist_mbid_lower, artist_name, auto_download, followed_at, updated_at) \
          VALUES (?1, ?2, ?3, COALESCE(?4, ?5), 0, ?6, ?6) \
          ON CONFLICT (user_id, artist_mbid_lower) DO UPDATE SET \
@@ -38,10 +38,10 @@ droppedneedle_kernel::sql! {
                AND r.user_id <> ?1) \
          RETURNING musicbrainz_id_lower";
     /// Set the auto-download intent `?1` on one followed row.
-    pub(crate) SET_INTENT = "UPDATE user_followed_artists SET auto_download = ?1, \
+    pub(crate) SET_INTENT = "UPDATE acquire_followed_artists SET auto_download = ?1, \
          updated_at = ?2 WHERE user_id = ?3 AND artist_mbid_lower = ?4";
     /// Follow with auto-download on, or turn it on for an existing follow.
-    pub(crate) FOLLOW_ARMED = "INSERT INTO user_followed_artists (user_id, artist_mbid, \
+    pub(crate) FOLLOW_ARMED = "INSERT INTO acquire_followed_artists (user_id, artist_mbid, \
          artist_mbid_lower, artist_name, auto_download, followed_at, updated_at) \
          VALUES (?1, ?2, ?3, ?4, 1, ?5, ?5) \
          ON CONFLICT (user_id, artist_mbid_lower) DO UPDATE SET \
@@ -112,7 +112,7 @@ droppedneedle_kernel::sql! {
     pub(crate) CURSORS_DUE = "SELECT f.artist_mbid_lower, MIN(f.artist_mbid), \
          MIN(f.artist_name), MAX(c.baselined), MAX(c.cursor_date), MAX(c.next_poll_at), \
          MAX(c.pending) \
-         FROM user_followed_artists f \
+         FROM acquire_followed_artists f \
          LEFT JOIN acquire_follow_cursors c ON c.artist_mbid_lower = f.artist_mbid_lower \
          GROUP BY f.artist_mbid_lower \
          HAVING MAX(c.next_poll_at) IS NULL OR MAX(c.next_poll_at) <= ?1 \
@@ -129,7 +129,7 @@ droppedneedle_kernel::sql! {
     /// own asks show.
     pub(crate) AUTO_FOLLOWERS = "SELECT f.user_id, u.role, a.state, \
          COALESCE(u.username_display, u.username) \
-         FROM user_followed_artists f \
+         FROM acquire_followed_artists f \
          JOIN auth_users u ON u.id = f.user_id \
          LEFT JOIN auto_download_approvals a \
            ON a.user_id = f.user_id AND a.artist_mbid_lower = f.artist_mbid_lower \
@@ -143,7 +143,7 @@ droppedneedle_kernel::sql! {
     pub(crate) ADD_KNOWN_RELEASE = "INSERT OR IGNORE INTO artist_known_releases \
          (artist_mbid_lower, rg_mbid_lower) VALUES (?1, ?2)";
     /// Add one release to the followers' feed; a known one keeps its time.
-    pub(crate) ADD_FEED_RELEASE = "INSERT OR IGNORE INTO new_release_feed \
+    pub(crate) ADD_FEED_RELEASE = "INSERT OR IGNORE INTO acquire_new_release_feed \
          (release_group_mbid_lower, release_group_mbid, artist_mbid_lower, artist_name, title, \
          primary_type, secondary_types, first_release_date, discovered_at) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)";
@@ -152,7 +152,7 @@ droppedneedle_kernel::sql! {
 /// Which of `artists` artists one user (the first value) follows.
 pub(crate) fn followed_among(artists: ListLen) -> String {
     format!(
-        "SELECT artist_mbid_lower FROM user_followed_artists \
+        "SELECT artist_mbid_lower FROM acquire_followed_artists \
          WHERE user_id = ? AND artist_mbid_lower IN ({})",
         vec!["?"; artists.get()].join(", ")
     )

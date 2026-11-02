@@ -1612,7 +1612,8 @@ async fn a_double_from_overlapping_roots_retires_into_one_row() {
         .run_sql(
             "INSERT INTO auth_users (id, display_name, role, created_at) \
              VALUES ('listener', 'Listener', 'user', 0); \
-             INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+             INSERT OR IGNORE INTO auth_users (id, display_name, role, created_at) VALUES ('listener', 'Person', 'user', 1); \
+             INSERT INTO catalog_user_favorites (user_id, item_kind, item_id, created_at) \
              SELECT 'listener', 'track', id, 0 FROM local_tracks WHERE root_id = 'outer'; \
              INSERT INTO library_scan_mounts (root_id, relative_path) VALUES ('outer', 'music')",
         )
@@ -1623,7 +1624,7 @@ async fn a_double_from_overlapping_roots_retires_into_one_row() {
     assert_eq!(
         query(
             &library,
-            "SELECT COUNT(*) FROM library_user_favorites f JOIN local_tracks t \
+            "SELECT COUNT(*) FROM catalog_user_favorites f JOIN local_tracks t \
              ON t.id = f.item_id WHERE f.item_kind = 'track' AND t.root_id = 'music' \
              AND t.relative_path = 'Band/a.flac' AND t.availability = 'indexed'",
         ),
@@ -1849,7 +1850,8 @@ async fn a_case_only_rename_under_a_rule_keeps_a_favourite() {
         .run_sql(
             "INSERT INTO auth_users (id, display_name, role, created_at) \
              VALUES ('listener', 'Listener', 'user', 0); \
-             INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+             INSERT OR IGNORE INTO auth_users (id, display_name, role, created_at) VALUES ('listener', 'Person', 'user', 1); \
+             INSERT INTO catalog_user_favorites (user_id, item_kind, item_id, created_at) \
              SELECT 'listener', 'track', id, 0 FROM local_tracks \
              WHERE relative_path = 'Live/a.flac'",
         )
@@ -1896,7 +1898,7 @@ async fn a_case_only_rename_under_a_rule_keeps_a_favourite() {
     assert_eq!(
         query(
             &library,
-            "SELECT COUNT(*) FROM library_user_favorites f JOIN local_tracks t \
+            "SELECT COUNT(*) FROM catalog_user_favorites f JOIN local_tracks t \
              ON t.id = f.item_id WHERE t.relative_path = 'live/a.flac' \
              AND t.availability = 'indexed'"
         ),
@@ -2728,12 +2730,12 @@ impl RegroupRig {
             "SELECT (SELECT COUNT(*) FROM library_play_history h JOIN local_tracks t \
              ON t.id = h.local_track_id AND t.local_album_id = h.local_album_id \
              WHERE h.local_album_id = '{album}') \
-             + (SELECT COUNT(*) FROM library_user_favorites WHERE item_id = '{album}') \
+             + (SELECT COUNT(*) FROM catalog_user_favorites WHERE item_id = '{album}') \
              + (SELECT COUNT(*) FROM catalog_playlist_tracks WHERE album_id = '{album}')"
         ));
         let all = self.count(
             "SELECT (SELECT COUNT(*) FROM library_play_history) \
-             + (SELECT COUNT(*) FROM library_user_favorites) \
+             + (SELECT COUNT(*) FROM catalog_user_favorites) \
              + (SELECT COUNT(*) FROM catalog_playlist_tracks)",
         );
         (naming, all)
@@ -2761,7 +2763,8 @@ fn listener_acts(album: &str) -> String {
         "INSERT INTO library_play_history (id, user_id, local_track_id, local_album_id, \
          track_name, artist_name, played_at) SELECT 'play-1', 'listener', id, local_album_id, \
          'Song', 'Artist', '2026-01-01T00:00:00Z' {moved}; \
-         INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+         INSERT OR IGNORE INTO auth_users (id, display_name, role, created_at) VALUES ('listener', 'Person', 'user', 1); \
+         INSERT INTO catalog_user_favorites (user_id, item_kind, item_id, created_at) \
          SELECT 'listener', 'album', local_album_id, 0 {moved}; \
          INSERT INTO catalog_playlists (id, name, created_at, updated_at) VALUES ('list', 'List', 0, 0); \
          INSERT INTO catalog_playlist_tracks (id, playlist_id, position, track_name, artist_name, \
@@ -4360,7 +4363,8 @@ async fn plain_album(name: &str, count: usize) -> (RegroupRig, Vec<String>, Stri
 /// dropped when it empties, and there is nothing left to join.
 fn favorite(album: &str) -> String {
     format!(
-        "INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+        "INSERT OR IGNORE INTO auth_users (id, display_name, role, created_at) VALUES ('listener', 'Person', 'user', 1); \
+         INSERT INTO catalog_user_favorites (user_id, item_kind, item_id, created_at) \
          VALUES ('listener', 'album', '{album}', 0);"
     )
 }
@@ -4440,7 +4444,8 @@ async fn retag_across_a_cancelled_scan_is_joined_at_the_next() {
             ""
         };
         rig.run(&format!(
-            "{play} INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+            "{play} INSERT OR IGNORE INTO auth_users (id, display_name, role, created_at) VALUES ('listener', 'Person', 'user', 1); \
+             INSERT INTO catalog_user_favorites (user_id, item_kind, item_id, created_at) \
              VALUES ('listener', 'album', '{album}', 0); \
              INSERT INTO catalog_playlists (id, name, created_at, updated_at) \
              VALUES ('list', 'List', 0, 0); \
@@ -4881,7 +4886,7 @@ async fn half_then_all_to_a_third_name_is_one_album() {
         assert_eq!(match_of(&rig, &kept), matched("rel-1", "manual"), "{name}");
         assert_eq!(
             rig.count(&format!(
-                "SELECT COUNT(*) FROM library_user_favorites WHERE item_id = '{kept}'"
+                "SELECT COUNT(*) FROM catalog_user_favorites WHERE item_id = '{kept}'"
             )),
             1,
             "{name}: the favorite is with the album"
@@ -5795,7 +5800,8 @@ async fn a_reset_album_is_credited_as_a_scan_keys_it() {
              INSERT INTO local_artist_external_identities (local_artist_id, provider, \
              provider_artist_id, decision_source, selected_at) \
              VALUES ('twin', 'musicbrainz', 'cccccccc-0000-4000-8000-00000000000c', 'manual', 1); \
-             INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+             INSERT OR IGNORE INTO auth_users (id, display_name, role, created_at) VALUES ('listener', 'Person', 'user', 1); \
+             INSERT INTO catalog_user_favorites (user_id, item_kind, item_id, created_at) \
              VALUES ('listener', 'artist', 'twin', 0), ('listener', 'artist', '{name_row}', 0); \
              UPDATE local_tracks SET membership_locked = 1, membership_source = 'manual' \
              WHERE id = '{track}'; \
@@ -5820,7 +5826,7 @@ async fn a_reset_album_is_credited_as_a_scan_keys_it() {
             query(
                 &library,
                 &format!(
-                    "SELECT COUNT(*) FROM library_user_favorites \
+                    "SELECT COUNT(*) FROM catalog_user_favorites \
                      WHERE item_kind = 'artist' AND item_id = '{artist}'"
                 )
             ),
@@ -5965,7 +5971,8 @@ fn map_track(track: &str, release: Option<&str>, release_track: Option<&str>) ->
 /// A listener's star on the track.
 fn star(track: &str) -> String {
     format!(
-        "INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+        "INSERT OR IGNORE INTO auth_users (id, display_name, role, created_at) VALUES ('listener', 'Person', 'user', 1); \
+         INSERT INTO catalog_user_favorites (user_id, item_kind, item_id, created_at) \
          VALUES ('listener', 'track', '{track}', 1);"
     )
 }
@@ -5975,7 +5982,7 @@ impl RegroupRig {
     fn stars_and_aliases(&self, track: &str) -> (i64, i64) {
         (
             self.count(&format!(
-                "SELECT COUNT(*) FROM library_user_favorites WHERE item_id = '{track}'"
+                "SELECT COUNT(*) FROM catalog_user_favorites WHERE item_id = '{track}'"
             )),
             self.count("SELECT COUNT(*) FROM local_track_aliases"),
         )
@@ -8159,7 +8166,8 @@ impl ArtistRig {
     /// One favorite and one play of the artist for `user`.
     fn listen(&self, user: &str, artist: &str) {
         self.run(&format!(
-            "INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+            "INSERT OR IGNORE INTO auth_users (id, display_name, role, created_at) VALUES ('{user}', 'Person', 'user', 1); \
+             INSERT INTO catalog_user_favorites (user_id, item_kind, item_id, created_at) \
              VALUES ('{user}', 'artist', '{artist}', 1); \
              INSERT INTO library_play_history (id, user_id, local_artist_id, track_name, \
              artist_name, played_at) VALUES ('{user}-{artist}', '{user}', '{artist}', 'Song', \
@@ -8305,14 +8313,14 @@ async fn rows_proven_to_be_one_artist_merge_at_the_run_end() {
     );
     assert_eq!(
         rig.count(&format!(
-            "SELECT COUNT(*) FROM library_user_favorites WHERE item_kind = 'artist' \
+            "SELECT COUNT(*) FROM catalog_user_favorites WHERE item_kind = 'artist' \
              AND item_id = '{survivor}'"
         )),
         1
     );
     assert_eq!(
         rig.count(&format!(
-            "SELECT COUNT(*) FROM library_user_favorites WHERE item_id = '{retired}'"
+            "SELECT COUNT(*) FROM catalog_user_favorites WHERE item_id = '{retired}'"
         )),
         0
     );
@@ -8777,7 +8785,7 @@ async fn a_sort_name_change_carries_the_old_row_over() {
     assert_eq!(rig.retired_into(&old), Some(new.clone()));
     assert_eq!(
         rig.count(&format!(
-            "SELECT COUNT(*) FROM library_user_favorites WHERE item_kind = 'artist' \
+            "SELECT COUNT(*) FROM catalog_user_favorites WHERE item_kind = 'artist' \
              AND item_id = '{new}'"
         )),
         1
@@ -8837,7 +8845,7 @@ async fn a_renamed_artist_is_offered_not_merged() {
     assert_eq!(rig.retired_into(&old), None);
     assert_eq!(
         rig.count(&format!(
-            "SELECT COUNT(*) FROM library_user_favorites WHERE item_id = '{old}'"
+            "SELECT COUNT(*) FROM catalog_user_favorites WHERE item_id = '{old}'"
         )),
         1
     );
@@ -8961,7 +8969,7 @@ async fn a_case_change_with_a_featured_artist_carries_the_old_row_over() {
     assert_eq!(rig.retired_into(&old), Some(new.clone()));
     assert_eq!(
         rig.count(&format!(
-            "SELECT COUNT(*) FROM library_user_favorites WHERE item_kind = 'artist' \
+            "SELECT COUNT(*) FROM catalog_user_favorites WHERE item_kind = 'artist' \
              AND item_id = '{new}'"
         )),
         1
@@ -9040,7 +9048,7 @@ async fn a_moved_track_continues_whichever_folder_is_read_first() {
         rig.put_titled("b/01.flac", "Song", "Album A", None, band, featured);
         let stars_on = |track: &str| {
             rig.count(&format!(
-                "SELECT COUNT(*) FROM library_user_favorites WHERE item_kind = 'track' \
+                "SELECT COUNT(*) FROM catalog_user_favorites WHERE item_kind = 'track' \
                  AND item_id = '{track}'"
             ))
         };
@@ -9075,7 +9083,7 @@ async fn a_moved_track_continues_whichever_folder_is_read_first() {
         assert_eq!(rig.retired_into(&oh), Some(new.clone()), "{case}");
         assert_eq!(
             rig.count(&format!(
-                "SELECT COUNT(*) FROM library_user_favorites WHERE item_kind = 'artist' \
+                "SELECT COUNT(*) FROM catalog_user_favorites WHERE item_kind = 'artist' \
                  AND item_id = '{new}'"
             )),
             1,
@@ -9221,7 +9229,7 @@ async fn a_renamed_artist_proven_by_its_files_keeps_its_row() {
     );
     assert_eq!(
         rig.count(&format!(
-            "SELECT (SELECT COUNT(*) FROM library_user_favorites WHERE item_id = '{artist}') \
+            "SELECT (SELECT COUNT(*) FROM catalog_user_favorites WHERE item_id = '{artist}') \
              + (SELECT COUNT(*) FROM library_play_history WHERE local_artist_id = '{artist}')"
         )),
         2
@@ -10178,7 +10186,8 @@ async fn another_album_copied_over_an_old_one_comes_in_as_new_tracks() {
         "INSERT INTO local_album_external_identities (local_album_id, provider, \
          release_group_mbid, release_mbid, decision_source, selected_at) \
          VALUES ('{album}', 'musicbrainz', 'rg-r', '{REL_R}', 'manual', 0); \
-         INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+         INSERT OR IGNORE INTO auth_users (id, display_name, role, created_at) VALUES ('listener', 'Person', 'user', 1); \
+         INSERT INTO catalog_user_favorites (user_id, item_kind, item_id, created_at) \
          VALUES ('listener', 'album', '{album}', 1); \
          INSERT INTO library_play_history (id, user_id, local_track_id, local_album_id, \
          track_name, artist_name, played_at) VALUES ('play-1', 'listener', '{}', '{album}', \
@@ -10292,7 +10301,7 @@ async fn another_album_copied_over_an_old_one_comes_in_as_new_tracks() {
         );
         assert_eq!(
             rig.count(&format!(
-                "SELECT (SELECT COUNT(*) FROM library_user_favorites \
+                "SELECT (SELECT COUNT(*) FROM catalog_user_favorites \
                    WHERE item_kind = 'album' AND item_id = '{album}') \
                  + (SELECT COUNT(*) FROM local_album_external_identities \
                    WHERE local_album_id = '{album}' AND release_mbid = '{REL_R}')"

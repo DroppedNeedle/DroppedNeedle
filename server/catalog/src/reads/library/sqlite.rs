@@ -1026,7 +1026,7 @@ impl LocalCatalog {
     }
 
     /// Which of the ids the user favorited, for one kind
-    /// (`library_user_favorites.item_kind`: `album`, `artist` or `track`).
+    /// (`catalog_user_favorites.item_kind`: `album`, `artist` or `track`).
     pub async fn filter_favorites(
         &self,
         user_id: &str,

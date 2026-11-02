@@ -473,7 +473,7 @@ async fn follow_poll_baselines_then_emits() {
             "INSERT INTO auth_users (id, display_name, role, created_at) VALUES \
                ('user-1', 'Admin', 'admin', 0), \
                ('user-2', 'Pending', 'user', 0); \
-             INSERT INTO user_followed_artists (user_id, artist_mbid, artist_mbid_lower, \
+             INSERT INTO acquire_followed_artists (user_id, artist_mbid, artist_mbid_lower, \
                artist_name, auto_download, followed_at, updated_at) VALUES \
                ('user-2', 'Artist-1', 'artist-1', 'The Band', 1, 1, 1), \
                ('user-1', 'Artist-1', 'artist-1', 'The Band', 1, 1, 1);",
@@ -570,7 +570,7 @@ async fn follow_poll_baselines_then_emits() {
     assert_eq!(cursor.pending.len(), 1);
     assert_eq!(cursor.pending[0].rg_mbid, "rg-future");
     let feed: Vec<String> = sqlx::query_scalar(
-        "SELECT release_group_mbid FROM new_release_feed ORDER BY release_group_mbid",
+        "SELECT release_group_mbid FROM acquire_new_release_feed ORDER BY release_group_mbid",
     )
     .fetch_all(db.db().sqlx())
     .await
@@ -913,7 +913,7 @@ async fn seed_approved_follower(db: &AcquireDb) {
         tx.execute_batch(
             "INSERT INTO auth_users (id, display_name, role, created_at) VALUES \
                ('user-2', 'Listener', 'user', 0); \
-             INSERT INTO user_followed_artists (user_id, artist_mbid, artist_mbid_lower, \
+             INSERT INTO acquire_followed_artists (user_id, artist_mbid, artist_mbid_lower, \
                artist_name, auto_download, followed_at, updated_at) VALUES \
                ('user-2', 'Artist-1', 'artist-1', 'The Band', 1, 1, 1); \
              INSERT INTO auto_download_approvals (user_id, artist_mbid, artist_mbid_lower, \

@@ -826,7 +826,8 @@ async fn an_artist_renamed_by_a_managed_run_keeps_its_row() {
         "INSERT OR REPLACE INTO local_artist_external_identities (local_artist_id, provider, \
          provider_artist_id, decision_source, selected_at) \
          VALUES ('{artist}', 'musicbrainz', '{ARTIST}', 'legacy_import', 1); \
-         INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+         INSERT OR IGNORE INTO auth_users (id, display_name, role, created_at) VALUES ('{user}', 'Person', 'user', 1); \
+         INSERT INTO catalog_user_favorites (user_id, item_kind, item_id, created_at) \
          VALUES ('{user}', 'artist', '{artist}', 1); \
          INSERT INTO library_play_history (id, user_id, local_artist_id, track_name, \
          artist_name, played_at) VALUES ('play-1', '{user}', '{artist}', 'Song 1', 'Alpha', \
@@ -853,7 +854,7 @@ async fn an_artist_renamed_by_a_managed_run_keeps_its_row() {
     assert_eq!(text(&named), ["Alfa / Alfa, The"]);
     assert_eq!(
         text(
-            "SELECT item_id FROM library_user_favorites WHERE item_kind = 'artist' \
+            "SELECT item_id FROM catalog_user_favorites WHERE item_kind = 'artist' \
              UNION ALL SELECT local_artist_id FROM library_play_history"
         ),
         vec![artist.clone(); 2]
@@ -2301,7 +2302,8 @@ async fn moved_file_keeps_its_track() {
     rig.scan_store
         .db()
         .run_sql(&format!(
-            "INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+            "INSERT OR IGNORE INTO auth_users (id, display_name, role, created_at) VALUES ('listener', 'Person', 'user', 1); \
+             INSERT INTO catalog_user_favorites (user_id, item_kind, item_id, created_at) \
              VALUES ('listener', 'track', '{track}', 0); \
              INSERT INTO library_play_history (id, user_id, local_track_id, track_name, \
              artist_name, played_at) VALUES ('play-1', 'listener', '{track}', 'Song', \
@@ -2323,7 +2325,7 @@ async fn moved_file_keeps_its_track() {
         .scan_store
         .db()
         .query_i64(&format!(
-            "SELECT (SELECT COUNT(*) FROM library_user_favorites f JOIN local_tracks t \
+            "SELECT (SELECT COUNT(*) FROM catalog_user_favorites f JOIN local_tracks t \
              ON t.id = f.item_id WHERE t.id = '{track}' AND t.availability = 'indexed') \
              + (SELECT COUNT(*) FROM library_play_history h JOIN local_tracks t \
              ON t.id = h.local_track_id WHERE t.id = '{track}' \
@@ -5007,7 +5009,7 @@ async fn a_removed_album_is_put_back_from_its_page() {
     let tracks: Vec<String> = rels.iter().map(|rel| track_at(rel)).collect();
     let album = album_of(&tracks[0]);
     conn.execute_batch(&format!(
-        "INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+        "INSERT INTO catalog_user_favorites (user_id, item_kind, item_id, created_at) \
          VALUES ('admin', 'track', '{track}', 0), ('admin', 'album', '{album}', 0); \
          INSERT INTO library_play_history (id, user_id, local_track_id, track_name, \
          artist_name, played_at) VALUES ('play-1', 'admin', '{track}', 'Song', 'Artist', \
@@ -5047,7 +5049,7 @@ async fn a_removed_album_is_put_back_from_its_page() {
     let kept: i64 = conn
         .query_row(
             &format!(
-                "SELECT (SELECT COUNT(*) FROM library_user_favorites \
+                "SELECT (SELECT COUNT(*) FROM catalog_user_favorites \
                  WHERE (item_kind = 'track' AND item_id = '{track}') \
                  OR (item_kind = 'album' AND item_id = '{album}')) \
                  + (SELECT COUNT(*) FROM library_play_history \
@@ -8146,9 +8148,10 @@ async fn library_journey_catalog_corrections() {
     .await;
     // Someone favorited album B and played it; both follow the merge.
     app.seed(&format!(
-        "INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+        "INSERT OR IGNORE INTO auth_users (id, display_name, role, created_at) VALUES ('listener', 'Person', 'user', 1); \
+         INSERT INTO catalog_user_favorites (user_id, item_kind, item_id, created_at) \
          VALUES ('listener', 'album', '{album_b}', 1); \
-         INSERT INTO library_user_favorite_names (user_id, item_kind, item_id, display_name) \
+         INSERT INTO catalog_user_favorite_names (user_id, item_kind, item_id, display_name) \
          VALUES ('listener', 'album', '{album_b}', 'Album B'); \
          INSERT INTO library_play_history (id, user_id, local_album_id, track_name, \
          artist_name, played_at) VALUES ('play-1', 'listener', '{album_b}', 'Song', \
@@ -8193,7 +8196,7 @@ async fn library_journey_catalog_corrections() {
     assert_eq!(status, StatusCode::OK, "{body}");
     let (favorite, played): (String, String) = db
         .query_row(
-            "SELECT (SELECT item_id FROM library_user_favorite_names WHERE user_id = 'listener' \
+            "SELECT (SELECT item_id FROM catalog_user_favorite_names WHERE user_id = 'listener' \
              AND display_name = 'Album B'), \
              (SELECT local_album_id FROM library_play_history WHERE id = 'play-1')",
             [],
@@ -8268,7 +8271,8 @@ async fn library_journey_catalog_corrections() {
         "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) \
          VALUES ('artist-keep', 'Same', 'same', 'person', 1, 1), \
          ('artist-dupe', 'Same.', 'same.', 'person', 1, 1); \
-         INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+         INSERT OR IGNORE INTO auth_users (id, display_name, role, created_at) VALUES ('someone', 'Person', 'user', 1); \
+         INSERT INTO catalog_user_favorites (user_id, item_kind, item_id, created_at) \
          VALUES ('someone', 'artist', 'artist-dupe', 1);",
     )
     .await;
@@ -8303,7 +8307,7 @@ async fn library_journey_catalog_corrections() {
     let (retired, favorite): (Option<String>, String) = db
         .query_row(
             "SELECT (SELECT retired_into_artist_id FROM local_artists WHERE id = 'artist-dupe'), \
-             (SELECT item_id FROM library_user_favorites WHERE user_id = 'someone')",
+             (SELECT item_id FROM catalog_user_favorites WHERE user_id = 'someone')",
             [],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
@@ -13978,7 +13982,7 @@ async fn a_file_retagged_and_renamed_together_is_still_the_users() {
     managed
         .db()
         .execute(
-            "INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+            "INSERT INTO catalog_user_favorites (user_id, item_kind, item_id, created_at) \
              VALUES ('admin', 'track', ?1, 1)",
             [&whole_tracks[0]],
         )
@@ -14065,7 +14069,7 @@ async fn a_file_retagged_and_renamed_together_is_still_the_users() {
     managed
         .db()
         .execute(
-            "INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+            "INSERT INTO catalog_user_favorites (user_id, item_kind, item_id, created_at) \
              VALUES ('admin', 'album', ?1, 1)",
             [&whole],
         )
@@ -14103,7 +14107,7 @@ async fn a_file_retagged_and_renamed_together_is_still_the_users() {
     }
     assert_eq!(
         managed.count(&format!(
-            "SELECT COUNT(*) FROM library_user_favorites WHERE item_kind = 'album' \
+            "SELECT COUNT(*) FROM catalog_user_favorites WHERE item_kind = 'album' \
              AND item_id = '{whole}'"
         )),
         1,
@@ -17152,7 +17156,7 @@ fn indexed_at(library: &LibrarySetup, relative: &str) -> String {
 fn holdings(db: &rusqlite::Connection, track: &str) -> [i64; 6] {
     [
         "SELECT COUNT(*) FROM library_play_history WHERE local_track_id = ?1",
-        "SELECT COUNT(*) FROM library_user_favorites WHERE item_kind = 'track' AND item_id = ?1",
+        "SELECT COUNT(*) FROM catalog_user_favorites WHERE item_kind = 'track' AND item_id = ?1",
         "SELECT COUNT(*) FROM catalog_playlist_tracks WHERE library_file_id = ?1 \
          AND track_source_id = ?1",
         "SELECT COUNT(*) FROM compat_bookmarks WHERE file_id = ?1",
@@ -17242,9 +17246,10 @@ async fn a_retagged_and_renamed_album_keeps_what_people_made() {
          track_name, artist_name, played_at) VALUES \
          ('p1', 'curator', '{o4}', '{album}', 'Four', 'A', '2026-01-01T00:00:00Z'), \
          ('p2', 'curator', '{o4}', '{album}', 'Four', 'A', '2026-01-02T00:00:00Z'); \
-         INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) VALUES \
-         ('curator', 'track', '{o4}', 10), ('listener', 'track', '{o4}', 11); \
-         INSERT INTO library_user_favorite_names (user_id, item_kind, item_id, display_name) \
+         INSERT OR IGNORE INTO auth_users (id, display_name, role, created_at) VALUES ('listener', 'Person', 'user', 1), ('curator', 'Person', 'user', 1); \
+         INSERT INTO catalog_user_favorites (user_id, item_kind, item_id, created_at) VALUES \
+         ('curator', 'track', '{o4}', 10000), ('listener', 'track', '{o4}', 11000); \
+         INSERT INTO catalog_user_favorite_names (user_id, item_kind, item_id, display_name) \
          VALUES ('curator', 'track', '{o4}', 'Four'), ('listener', 'track', '{o4}', 'Four'); \
          INSERT INTO catalog_playlists (id, name, created_at, updated_at) VALUES ('list', 'List', 0, 0); \
          INSERT INTO catalog_playlist_tracks (id, playlist_id, position, track_name, artist_name, \
@@ -17261,7 +17266,7 @@ async fn a_retagged_and_renamed_album_keeps_what_people_made() {
          field_name, value_json, mode, subject_revision, created_at, updated_at) VALUES \
          ('ov-title', 'track', '{o4}', 'title', '\"Mine\"', 'replace', 1, 1000, 1000), \
          ('ov-old', 'track', '{o5}', 'comment', '\"Old\"', 'replace', 1, 1, 1); \
-         INSERT INTO library_user_play_marks (user_id, local_track_id, marked_played_at, \
+         INSERT INTO catalog_user_play_marks (user_id, local_track_id, marked_played_at, \
          marked_unplayed_at) VALUES ('curator', '{o4}', 100, NULL), ('listener', '{o4}', 10, 5);"
     ))
     .expect("people made things");
@@ -17285,14 +17290,15 @@ async fn a_retagged_and_renamed_album_keeps_what_people_made() {
     assert_eq!(choice_row(&db, &joined).0, "manual");
     assert_eq!(continuations(&db), 0, "unplaced files carry nothing");
     db.execute_batch(&format!(
-        "INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) VALUES \
+        "INSERT OR IGNORE INTO auth_users (id, display_name, role, created_at) VALUES ('listener', 'Person', 'user', 1); \
+         INSERT INTO catalog_user_favorites (user_id, item_kind, item_id, created_at) VALUES \
          ('listener', 'track', '{n4}', 99); \
          INSERT INTO compat_bookmarks (user_id, file_id, position_ms, comment, created_at, \
          changed_at) VALUES ('listener', '{n4}', 3000, 'earlier', 1, 20); \
          INSERT INTO library_management_overrides (id, subject_kind, local_track_id, \
          field_name, value_json, mode, subject_revision, created_at, updated_at) VALUES \
          ('ov-new', 'track', '{n5}', 'comment', '\"New\"', 'replace', 1, 1, 1); \
-         INSERT INTO library_user_play_marks (user_id, local_track_id, marked_played_at, \
+         INSERT INTO catalog_user_play_marks (user_id, local_track_id, marked_played_at, \
          marked_unplayed_at) VALUES ('listener', '{n4}', 60, NULL);"
     ))
     .expect("the listener starred, bookmarked and marked the new track");
@@ -17322,8 +17328,8 @@ async fn a_retagged_and_renamed_album_keeps_what_people_made() {
     );
     let stars: Vec<(String, f64, Option<String>)> = db
         .prepare(
-            "SELECT f.user_id, f.created_at, n.display_name FROM library_user_favorites f \
-             LEFT JOIN library_user_favorite_names n ON n.user_id = f.user_id \
+            "SELECT f.user_id, f.created_at, n.display_name FROM catalog_user_favorites f \
+             LEFT JOIN catalog_user_favorite_names n ON n.user_id = f.user_id \
              AND n.item_kind = f.item_kind AND n.item_id = f.item_id \
              WHERE f.item_id = ?1 ORDER BY f.user_id",
         )
@@ -17335,7 +17341,7 @@ async fn a_retagged_and_renamed_album_keeps_what_people_made() {
     assert_eq!(
         stars,
         vec![
-            ("curator".to_owned(), 10.0, Some("Four".to_owned())),
+            ("curator".to_owned(), 10000.0, Some("Four".to_owned())),
             ("listener".to_owned(), 99.0, Some("Four".to_owned()))
         ]
     );
@@ -17356,7 +17362,7 @@ async fn a_retagged_and_renamed_album_keeps_what_people_made() {
     let marks: Vec<(String, String, Option<i64>, Option<i64>)> = db
         .prepare(
             "SELECT user_id, local_track_id, marked_played_at, marked_unplayed_at \
-             FROM library_user_play_marks ORDER BY user_id",
+             FROM catalog_user_play_marks ORDER BY user_id",
         )
         .expect("prepare")
         .query_map([], |row| {
@@ -17466,7 +17472,7 @@ async fn a_retagged_and_renamed_album_keeps_what_people_made() {
         "{audit}"
     );
     assert_eq!(
-        audit["moved"]["library_user_play_marks"],
+        audit["moved"]["catalog_user_play_marks"],
         json!(2),
         "{audit}"
     );
@@ -17517,7 +17523,7 @@ async fn a_retagged_and_renamed_album_keeps_what_people_made() {
     .expect("the album is marked");
     let on_old_rows: i64 = db
         .query_row(
-            "SELECT COUNT(*) FROM library_user_play_marks WHERE local_track_id IN (?1, ?2)",
+            "SELECT COUNT(*) FROM catalog_user_play_marks WHERE local_track_id IN (?1, ?2)",
             [o4, o5],
             |row| row.get(0),
         )
@@ -17528,7 +17534,8 @@ async fn a_retagged_and_renamed_album_keeps_what_people_made() {
     assert_eq!(continuations(&db), 1, "a second scan moves nothing");
 
     db.execute_batch(&format!(
-        "INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) VALUES \
+        "INSERT OR IGNORE INTO auth_users (id, display_name, role, created_at) VALUES ('stale', 'Person', 'user', 1); \
+         INSERT INTO catalog_user_favorites (user_id, item_kind, item_id, created_at) VALUES \
          ('stale', 'track', '{o5}', 5); \
          INSERT INTO catalog_playlist_tracks (id, playlist_id, position, track_name, artist_name, \
          album_name, track_source_id, library_file_id, source_type, created_at) \
@@ -17571,7 +17578,7 @@ async fn a_rated_track_continues_with_its_ratings() {
     .await;
     let old = &tracks[2];
     db.execute_batch(&format!(
-        "INSERT INTO library_user_ratings (user_id, item_kind, item_id, rating, rated_at) \
+        "INSERT INTO catalog_user_ratings (user_id, item_kind, item_id, rating, rated_at) \
          VALUES ('listener', 'track', '{old}', 4, 1000), ('curator', 'track', '{old}', 2, 2000);"
     ))
     .expect("rated");
@@ -17586,7 +17593,7 @@ async fn a_rated_track_continues_with_its_ratings() {
     let joined = album_row(&db, &new);
     assert_eq!(album_row(&db, old), joined, "the album is joined");
     db.execute(
-        "INSERT INTO library_user_ratings (user_id, item_kind, item_id, rating, rated_at) \
+        "INSERT INTO catalog_user_ratings (user_id, item_kind, item_id, rating, rated_at) \
          VALUES ('curator', 'track', ?1, 5, 3000)",
         [&new],
     )
@@ -17600,7 +17607,7 @@ async fn a_rated_track_continues_with_its_ratings() {
 
     let ratings = |track: &str| -> Vec<(String, i64, i64)> {
         db.prepare(
-            "SELECT user_id, rating, rated_at FROM library_user_ratings \
+            "SELECT user_id, rating, rated_at FROM catalog_user_ratings \
              WHERE item_kind = 'track' AND item_id = ?1 ORDER BY user_id",
         )
         .expect("prepare")
@@ -17643,7 +17650,7 @@ async fn a_rated_track_continues_with_its_ratings() {
         json!([{"user_id": "curator", "rating": 2, "rated_at": 2000}]),
         "{audit}"
     );
-    assert_eq!(audit["moved"]["library_user_ratings"], json!(2), "{audit}");
+    assert_eq!(audit["moved"]["catalog_user_ratings"], json!(2), "{audit}");
 }
 
 fn history_kinds(history: &Value) -> Vec<String> {
@@ -17677,7 +17684,8 @@ async fn an_automatic_album_retagged_and_renamed_keeps_its_history() {
     assert_eq!(choice_row(&db, &album).0, "automatic");
     assert_eq!(placement(&db, &old[0]).0.as_deref(), Some(REL_1));
     db.execute_batch(&format!(
-        "INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+        "INSERT OR IGNORE INTO auth_users (id, display_name, role, created_at) VALUES ('listener', 'Person', 'user', 1); \
+         INSERT INTO catalog_user_favorites (user_id, item_kind, item_id, created_at) \
          VALUES ('listener', 'track', '{}', 1);",
         old[0]
     ))
@@ -17727,7 +17735,8 @@ async fn retagged_without_ids(
     db.execute_batch(&format!(
         "INSERT INTO auth_users (id, display_name, role, created_at) \
          VALUES ('curator', 'Curator', 'admin', 0); \
-         INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+         INSERT OR IGNORE INTO auth_users (id, display_name, role, created_at) VALUES ('listener', 'Person', 'user', 1); \
+         INSERT INTO catalog_user_favorites (user_id, item_kind, item_id, created_at) \
          VALUES ('listener', 'track', '{}', 1);",
         old[0]
     ))
@@ -17982,7 +17991,8 @@ async fn an_automatic_album_retagged_without_its_ids_is_joined_at_the_seal() {
         "INSERT INTO library_play_history (id, user_id, local_track_id, local_album_id, \
          track_name, artist_name, played_at) VALUES ('p1', 'listener', '{o1}', '{album}', \
          'T', 'A', '2026-01-01T00:00:00Z'); \
-         INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+         INSERT OR IGNORE INTO auth_users (id, display_name, role, created_at) VALUES ('listener', 'Person', 'user', 1); \
+         INSERT INTO catalog_user_favorites (user_id, item_kind, item_id, created_at) \
          VALUES ('listener', 'track', '{o1}', 1), ('listener', 'album', '{album}', 1); \
          INSERT INTO catalog_playlists (id, name, created_at, updated_at) \
          VALUES ('list', 'List', 0, 0); \
@@ -18030,7 +18040,7 @@ async fn an_automatic_album_retagged_without_its_ids_is_joined_at_the_seal() {
     assert_eq!(holdings(&db, &old[0])[..2], [0, 0]);
     let album_star: i64 = db
         .query_row(
-            "SELECT COUNT(*) FROM library_user_favorites WHERE item_kind = 'album' \
+            "SELECT COUNT(*) FROM catalog_user_favorites WHERE item_kind = 'album' \
              AND item_id = ?1",
             [&own_row],
             |row| row.get(0),
@@ -19107,7 +19117,8 @@ async fn a_deleted_copy_leaves_its_history_with_the_copy_that_stays() {
          ('{copy}', 'musicbrainz', 'rec-copy', '{release_track}', 'automatic', 1) \
          ON CONFLICT (local_track_id, provider) DO UPDATE SET \
          release_track_mbid = excluded.release_track_mbid; \
-         INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+         INSERT OR IGNORE INTO auth_users (id, display_name, role, created_at) VALUES ('listener', 'Person', 'user', 1); \
+         INSERT INTO catalog_user_favorites (user_id, item_kind, item_id, created_at) \
          VALUES ('listener', 'track', '{}', 1);",
         old[1]
     ))
@@ -19263,7 +19274,8 @@ fn give_history(db: &rusqlite::Connection, album: &str, track: &str) {
         "INSERT INTO library_play_history (id, user_id, local_track_id, local_album_id, \
          track_name, artist_name, played_at) VALUES \
          ('play-{track}', 'listener', '{track}', '{album}', 'Two', 'A', '2026-01-01T00:00:00Z'); \
-         INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+         INSERT OR IGNORE INTO auth_users (id, display_name, role, created_at) VALUES ('listener', 'Person', 'user', 1); \
+         INSERT INTO catalog_user_favorites (user_id, item_kind, item_id, created_at) \
          VALUES ('listener', 'track', '{track}', 1); \
          INSERT INTO catalog_playlists (id, name, created_at, updated_at) \
          VALUES ('list-{track}', 'List', 0, 0); \
@@ -19941,7 +19953,8 @@ async fn an_imported_track_takes_the_history_of_the_one_it_replaces() {
     std::fs::remove_file(&first.paths[1]).expect("file deleted");
     rescan(&library).await;
     db.execute_batch(&format!(
-        "INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+        "INSERT OR IGNORE INTO auth_users (id, display_name, role, created_at) VALUES ('listener', 'Person', 'user', 1); \
+         INSERT INTO catalog_user_favorites (user_id, item_kind, item_id, created_at) \
          VALUES ('listener', 'track', '{}', 1);",
         tracks[1]
     ))
@@ -19995,7 +20008,8 @@ async fn an_approval_continues_a_track_once_its_files_are_placed() {
     db.execute_batch(&format!(
         "INSERT INTO auth_users (id, display_name, role, created_at) \
          VALUES ('curator', 'Curator', 'admin', 0); \
-         INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+         INSERT OR IGNORE INTO auth_users (id, display_name, role, created_at) VALUES ('listener', 'Person', 'user', 1); \
+         INSERT INTO catalog_user_favorites (user_id, item_kind, item_id, created_at) \
          VALUES ('listener', 'track', '{}', 1);",
         old[1]
     ))
@@ -20221,7 +20235,8 @@ async fn retag_pairs_list_join_and_dismiss() {
                 track("a-new")
             ),
             format!(
-                "INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+                "INSERT OR IGNORE INTO auth_users (id, display_name, role, created_at) VALUES ('curator', 'Person', 'user', 1); \
+                 INSERT INTO catalog_user_favorites (user_id, item_kind, item_id, created_at) \
                  VALUES ('curator', 'album', '{a}', 1); \
                  INSERT INTO library_play_history (id, user_id, local_album_id, track_name, \
                  artist_name, played_at) VALUES ('play-a', 'curator', '{a}', 'Song', 'Artist', \
@@ -20457,7 +20472,7 @@ async fn retag_pairs_list_join_and_dismiss() {
         0
     );
     for sql in [
-        "SELECT COUNT(*) FROM library_user_favorites WHERE item_id = ?1",
+        "SELECT COUNT(*) FROM catalog_user_favorites WHERE item_id = ?1",
         "SELECT COUNT(*) FROM library_play_history WHERE local_album_id = ?1",
         "SELECT COUNT(*) FROM catalog_playlist_tracks WHERE album_id = ?1",
         "SELECT COUNT(*) FROM library_management_exclusions WHERE local_album_id = ?1",
@@ -23355,7 +23370,7 @@ async fn a_chosen_edition_retagged_with_its_ids_is_placed_and_left_to_the_person
         "INSERT INTO library_play_history (id, user_id, local_track_id, local_album_id, \
          track_name, artist_name, played_at) VALUES ('p1', 'admin', '{o1}', '{album}', \
          'One', 'A', '2026-01-01T00:00:00Z'); \
-         INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+         INSERT INTO catalog_user_favorites (user_id, item_kind, item_id, created_at) \
          VALUES ('admin', 'track', '{o1}', 1); \
          INSERT INTO catalog_playlists (id, name, created_at, updated_at) VALUES ('list', 'List', 0, 0); \
          INSERT INTO catalog_playlist_tracks (id, playlist_id, position, track_name, artist_name, \
@@ -23483,7 +23498,7 @@ async fn a_copy_takes_the_place_of_a_deleted_original_on_a_chosen_edition() {
         "INSERT INTO local_track_external_identities (local_track_id, provider, \
          recording_mbid, decision_source, selected_at) VALUES \
          ('{copy}', 'musicbrainz', 'rec-2', 'manual', 1); \
-         INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+         INSERT INTO catalog_user_favorites (user_id, item_kind, item_id, created_at) \
          VALUES ('admin', 'track', '{original}', 1);"
     ))
     .expect("left over with its recording");
@@ -23566,7 +23581,8 @@ async fn a_copy_takes_the_place_of_a_deleted_original_on_an_automatic_edition() 
         Some(album.as_str())
     );
     db.execute_batch(&format!(
-        "INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+        "INSERT OR IGNORE INTO auth_users (id, display_name, role, created_at) VALUES ('listener', 'Person', 'user', 1); \
+         INSERT INTO catalog_user_favorites (user_id, item_kind, item_id, created_at) \
          VALUES ('listener', 'track', '{}', 1);",
         old[1]
     ))
@@ -23956,7 +23972,7 @@ async fn a_run_that_adds_ids_and_translates_keeps_the_artist() {
     );
     assert_eq!(texts(&db, &link), Vec::<String>::new(), "no link yet");
     db.execute_batch(&format!(
-        "INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+        "INSERT INTO catalog_user_favorites (user_id, item_kind, item_id, created_at) \
          VALUES ('admin', 'artist', '{artist}', 1); \
          INSERT INTO library_play_history (id, user_id, local_artist_id, track_name, \
          artist_name, played_at) VALUES ('play-1', 'admin', '{artist}', 'Song', \
@@ -24016,7 +24032,7 @@ async fn a_run_that_adds_ids_and_translates_keeps_the_artist() {
     assert_eq!(
         texts(
             &db,
-            "SELECT item_id FROM library_user_favorites WHERE item_kind = 'artist' \
+            "SELECT item_id FROM catalog_user_favorites WHERE item_kind = 'artist' \
              UNION ALL SELECT local_artist_id FROM library_play_history"
         ),
         vec![artist.clone(); 2]
@@ -24181,7 +24197,8 @@ async fn an_artist_whose_files_carry_a_merged_id_is_linked_and_kept() {
         .clone();
     let user = text("SELECT id FROM auth_users WHERE role = 'admin'")[0].clone();
     app.seed(&format!(
-        "INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+        "INSERT OR IGNORE INTO auth_users (id, display_name, role, created_at) VALUES ('{user}', 'Person', 'user', 1); \
+         INSERT INTO catalog_user_favorites (user_id, item_kind, item_id, created_at) \
          VALUES ('{user}', 'artist', '{artist}', 1); \
          INSERT INTO library_play_history (id, user_id, local_artist_id, track_name, \
          artist_name, played_at) VALUES ('play-1', '{user}', '{artist}', 'First 1', \
@@ -24294,7 +24311,7 @@ async fn an_artist_whose_files_carry_a_merged_id_is_linked_and_kept() {
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["artist_mbid"], json!(CURRENT), "{body}");
-    let people_made = "SELECT item_id FROM library_user_favorites WHERE item_kind = 'artist' \
+    let people_made = "SELECT item_id FROM catalog_user_favorites WHERE item_kind = 'artist' \
                        UNION ALL SELECT local_artist_id FROM library_play_history";
     assert_eq!(text(people_made), vec![artist.clone(); 2]);
     let asked = rig.identify.artists_asked();
@@ -24666,8 +24683,13 @@ async fn files_retagged_in_place_of_an_unmanaged_album_are_left_alone() {
         .leave_unmanaged(&album, managed.edition_revision(&album), "admin")
         .expect("left unmanaged");
     let db = managed.db();
+    db.execute_batch(
+        "INSERT OR IGNORE INTO auth_users (id, display_name, role, created_at) \
+         VALUES ('listener', 'Person', 'user', 1);",
+    )
+    .expect("listener seeds");
     db.execute(
-        "INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+        "INSERT INTO catalog_user_favorites (user_id, item_kind, item_id, created_at) \
          VALUES ('listener', 'album', ?1, 1)",
         [&album],
     )
@@ -24725,7 +24747,7 @@ async fn files_retagged_in_place_of_an_unmanaged_album_are_left_alone() {
     assert_eq!(
         managed.count(&format!(
             "SELECT (SELECT COUNT(*) FROM library_management_exclusions \
-             WHERE local_album_id = '{album}') + (SELECT COUNT(*) FROM library_user_favorites \
+             WHERE local_album_id = '{album}') + (SELECT COUNT(*) FROM catalog_user_favorites \
              WHERE item_kind = 'album' AND item_id = '{album}')"
         )),
         2,
@@ -24952,7 +24974,8 @@ async fn hand_match_album(rig: &Rig, folder: &str) -> HandMatchAlbum {
 
     let listener = app.login_user("listener").await.user_id;
     app.seed(&format!(
-        "INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+        "INSERT OR IGNORE INTO auth_users (id, display_name, role, created_at) VALUES ('{listener}', 'Person', 'user', 1); \
+         INSERT INTO catalog_user_favorites (user_id, item_kind, item_id, created_at) \
              VALUES ('{listener}', 'track', '{}', 0); \
              INSERT INTO library_play_history (id, user_id, local_track_id, track_name, \
              artist_name, played_at) VALUES ('play-3', '{listener}', '{}', 'Track 3', \

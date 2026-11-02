@@ -82,7 +82,7 @@ droppedneedle_kernel::sql! {
     pub(crate) ALBUM_COUNT = "SELECT COUNT(*) FROM local_albums a WHERE " + ALBUM_FILTER;
     /// One user's (bound) favourite albums `a`, read from the favourites
     /// `fav` first: a handful of hearts never walks the whole catalog.
-    pub(crate) fragment FAVORITE_ALBUMS = "library_user_favorites fav CROSS JOIN local_albums a \
+    pub(crate) fragment FAVORITE_ALBUMS = "catalog_user_favorites fav CROSS JOIN local_albums a \
         ON a.id = fav.item_id AND fav.item_kind = 'album' AND fav.user_id = ?";
     /// One page of a user's favourite albums, as [`ALBUM_PAGE`] with the
     /// user bound first.
@@ -231,7 +231,7 @@ droppedneedle_kernel::sql! {
     family TRACK_COUNT_WORDS = track_count_words;
     /// One user's (bound) favourite tracks `t`, read from the favourites
     /// `fav` first: a handful of hearts never walks the whole catalog.
-    pub(crate) fragment FAVORITE_TRACKS = "library_user_favorites fav CROSS JOIN local_tracks t \
+    pub(crate) fragment FAVORITE_TRACKS = "catalog_user_favorites fav CROSS JOIN local_tracks t \
         ON t.id = fav.item_id AND fav.item_kind = 'track' AND fav.user_id = ?";
     /// A page of a user's favourite tracks on the substring match, the user
     /// bound first.
@@ -246,7 +246,7 @@ droppedneedle_kernel::sql! {
     family FAVORITE_TRACK_COUNT_WORDS = favorite_track_count_words;
     /// Every indexed track, from the maintained per-format totals.
     pub(crate) TRACK_TOTAL = "SELECT COALESCE(SUM(indexed_tracks), 0) \
-        FROM library_track_format_stats";
+        FROM catalog_track_format_stats";
     /// One live track by the id it has now.
     pub(crate) TRACK_BY_ID = "SELECT " + TRACK_COLUMNS + " " + TRACK_JOINS
         + " WHERE t.id = (" + CURRENT_TRACK + ") AND " + LIVE_TRACK;
@@ -369,7 +369,7 @@ droppedneedle_kernel::sql! {
     pub(crate) ARTIST_TOTALS = ARTIST_TOTAL_COLUMNS + ARTIST_JOINS + ARTIST_NAME_FILTER;
     /// One user's (bound) favourite artists `r`, read from the favourites
     /// `fav` first.
-    pub(crate) fragment FAVORITE_ARTISTS = "library_user_favorites fav CROSS JOIN local_artists r \
+    pub(crate) fragment FAVORITE_ARTISTS = "catalog_user_favorites fav CROSS JOIN local_artists r \
         ON r.id = fav.item_id AND fav.item_kind = 'artist' AND fav.user_id = ?";
     /// The artist list's totals among a user's favourites: the user, then
     /// the name filter.
@@ -393,9 +393,9 @@ droppedneedle_kernel::sql! {
         (SELECT COUNT(*) FROM local_artists r \
          WHERE r.retired_into_artist_id IS NULL AND " + CREDITED_PREDICATE + ") AS artists, \
         (SELECT COALESCE(SUM(indexed_tracks), 0) \
-         FROM library_track_format_stats) AS tracks, \
+         FROM catalog_track_format_stats) AS tracks, \
         (SELECT COALESCE(SUM(indexed_bytes), 0) \
-         FROM library_track_format_stats) AS size_bytes";
+         FROM catalog_track_format_stats) AS size_bytes";
     /// Indexed tracks, and the folders holding at least one, across every
     /// library folder. `rtrim` with the path's own non-slash characters
     /// cuts the file name off, leaving the folder.
@@ -404,7 +404,7 @@ droppedneedle_kernel::sql! {
          GROUP BY root_id, rtrim(relative_path, replace(relative_path, '/', '')))";
     /// Indexed tracks per format, the zero rows left out as GROUP BY would.
     pub(crate) STATS_FORMATS = "SELECT file_format AS format, indexed_tracks AS total \
-        FROM library_track_format_stats WHERE indexed_tracks > 0";
+        FROM catalog_track_format_stats WHERE indexed_tracks > 0";
     /// Review, local-only and last-scan totals. Local-only albums are owned
     /// albums with no identity row; the last scan is the newest completed
     /// run.
@@ -419,7 +419,7 @@ droppedneedle_kernel::sql! {
     family FAVORITES_IN = favorites_in;
     /// A user's favorite counts per kind.
     pub(crate) FAVORITE_COUNTS = "SELECT item_kind AS kind, COUNT(*) AS total \
-        FROM library_user_favorites WHERE user_id = ? GROUP BY item_kind";
+        FROM catalog_user_favorites WHERE user_id = ? GROUP BY item_kind";
 
     /// The live album a local id or alias names now: the album itself while
     /// it is live, else the album its alias points at (every merge points
@@ -684,7 +684,7 @@ droppedneedle_kernel::sql! {
     /// statistics over one listener's marks the planner would otherwise walk
     /// the table, or reach a mark from its track's index.
     pub(crate) fragment MARKS =
-        "library_user_play_marks m INDEXED BY sqlite_autoindex_library_user_play_marks_1";
+        "catalog_user_play_marks m INDEXED BY sqlite_autoindex_catalog_user_play_marks_1";
     /// The plays, as `h`, through the index over listener, track and time.
     pub(crate) fragment PLAYS = "library_play_history h INDEXED BY idx_play_history_user_track";
     /// The time of the play `h` in whole seconds. `played_at` is ISO text
@@ -1464,7 +1464,7 @@ pub(crate) fn artist_credit_counts(ids: ListLen) -> String {
 /// then the ids.
 pub(crate) fn favorites_in(ids: ListLen) -> String {
     format!(
-        "SELECT item_id FROM library_user_favorites \
+        "SELECT item_id FROM catalog_user_favorites \
          WHERE user_id = ? AND item_kind = ? AND item_id IN ({})",
         marks(ids)
     )

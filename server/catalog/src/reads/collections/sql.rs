@@ -144,8 +144,8 @@ droppedneedle_kernel::sql! {
 
     /// A user's favorites, of one kind `?2` or every kind, newest first.
     pub(super) FAVORITES = "SELECT f.item_id AS item_id, \
-         n.display_name AS display_name, f.created_at AS created_at \
-         FROM library_user_favorites f LEFT JOIN library_user_favorite_names n \
+         n.display_name AS display_name, f.created_at / 1000.0 AS created_at \
+         FROM catalog_user_favorites f LEFT JOIN catalog_user_favorite_names n \
          ON n.user_id = f.user_id AND n.item_kind = f.item_kind AND n.item_id = f.item_id \
          WHERE f.user_id = ?1 AND (?2 IS NULL OR f.item_kind = ?2) \
          ORDER BY f.created_at DESC, f.item_kind, f.item_id";
@@ -157,26 +157,26 @@ droppedneedle_kernel::sql! {
     /// When each of some items was favorited: item id, then the time.
     family STARRED_AT = starred_at;
     /// Favorite one item; an existing row keeps its date.
-    pub(super) ADD_FAVORITE = "INSERT INTO library_user_favorites \
+    pub(super) ADD_FAVORITE = "INSERT INTO catalog_user_favorites \
          (user_id, item_kind, item_id, created_at) VALUES (?1, ?2, ?3, ?4) \
          ON CONFLICT (user_id, item_kind, item_id) DO NOTHING";
     /// Save or replace the name shown for one favorite.
-    pub(super) NAME_FAVORITE = "INSERT INTO library_user_favorite_names \
+    pub(super) NAME_FAVORITE = "INSERT INTO catalog_user_favorite_names \
          (user_id, item_kind, item_id, display_name) VALUES (?1, ?2, ?3, ?4) \
          ON CONFLICT (user_id, item_kind, item_id) DO UPDATE SET \
          display_name = excluded.display_name";
     /// Delete the name saved for one favorite.
-    pub(super) UNNAME_FAVORITE = "DELETE FROM library_user_favorite_names \
+    pub(super) UNNAME_FAVORITE = "DELETE FROM catalog_user_favorite_names \
          WHERE user_id = ?1 AND item_kind = ?2 AND item_id = ?3";
     /// Unfavorite one item.
-    pub(super) REMOVE_FAVORITE = "DELETE FROM library_user_favorites \
+    pub(super) REMOVE_FAVORITE = "DELETE FROM catalog_user_favorites \
          WHERE user_id = ?1 AND item_kind = ?2 AND item_id = ?3";
 
     /// Clear a user's rating of one item.
-    pub(super) CLEAR_RATING = "DELETE FROM library_user_ratings \
+    pub(super) CLEAR_RATING = "DELETE FROM catalog_user_ratings \
          WHERE user_id = ?1 AND item_kind = ?2 AND item_id = ?3";
     /// Set a user's rating of one item.
-    pub(super) SET_RATING = "INSERT INTO library_user_ratings \
+    pub(super) SET_RATING = "INSERT INTO catalog_user_ratings \
          (user_id, item_kind, item_id, rating, rated_at) VALUES (?1, ?2, ?3, ?4, ?5) \
          ON CONFLICT (user_id, item_kind, item_id) DO UPDATE SET \
          rating = excluded.rating, rated_at = excluded.rated_at";
@@ -184,7 +184,7 @@ droppedneedle_kernel::sql! {
     family RATINGS = ratings;
     /// The ids of one kind a user rated, highest first, then the most
     /// recently rated.
-    pub(super) RATED_IDS = "SELECT item_id FROM library_user_ratings \
+    pub(super) RATED_IDS = "SELECT item_id FROM catalog_user_ratings \
          WHERE user_id = ?1 AND item_kind = ?2 ORDER BY rating DESC, rated_at DESC, item_id";
 
     /// One follow with its follower and approval verdict.
@@ -193,8 +193,8 @@ droppedneedle_kernel::sql! {
          COALESCE(u.role, 'user') AS user_role, f.artist_mbid AS artist_mbid, \
          f.artist_name AS artist_name, f.auto_download AS auto_download, \
          a.state AS approval_state, a.requested_at / 1000.0 AS requested_at, \
-         f.followed_at AS followed_at, f.updated_at AS updated_at \
-         FROM user_followed_artists f \
+         f.followed_at / 1000.0 AS followed_at, f.updated_at / 1000.0 AS updated_at \
+         FROM acquire_followed_artists f \
          LEFT JOIN auth_users u ON u.id = f.user_id \
          LEFT JOIN auto_download_approvals a \
          ON a.user_id = f.user_id AND a.artist_mbid_lower = f.artist_mbid_lower";
@@ -222,14 +222,14 @@ droppedneedle_kernel::sql! {
     /// One page of release sightings, in `ReleaseRow`'s mapper order.
     family RELEASE_PAGE = release_page;
     /// Releases not yet owned, discovered after user `?1`'s seen marker.
-    pub(super) UNSEEN_RELEASES = "SELECT COUNT(*) FROM new_release_feed n \
-         JOIN user_followed_artists f \
+    pub(super) UNSEEN_RELEASES = "SELECT COUNT(*) FROM acquire_new_release_feed n \
+         JOIN acquire_followed_artists f \
          ON f.artist_mbid_lower = n.artist_mbid_lower AND f.user_id = ?1 \
          WHERE n.release_group_mbid_lower NOT IN (" + OWNED_GROUPS + ") \
          AND n.discovered_at > COALESCE( \
-         (SELECT seen_at FROM user_new_release_seen WHERE user_id = ?1), 0)";
+         (SELECT seen_at FROM catalog_new_release_seen_marks WHERE user_id = ?1), 0)";
     /// Move a user's seen marker.
-    pub(super) MARK_SEEN = "INSERT INTO user_new_release_seen (user_id, seen_at) \
+    pub(super) MARK_SEEN = "INSERT INTO catalog_new_release_seen_marks (user_id, seen_at) \
          VALUES (?1, ?2) ON CONFLICT (user_id) DO UPDATE SET seen_at = excluded.seen_at";
 
     /// Mark the tracks of one scope `?3` played or unplayed for user `?1`
@@ -245,7 +245,7 @@ fn marks(len: ListLen) -> String {
 /// `STARRED_AT`: the user, the kind, then the ids.
 pub(super) fn starred_at(ids: ListLen) -> String {
     format!(
-        "SELECT item_id, created_at FROM library_user_favorites \
+        "SELECT item_id, created_at / 1000.0 FROM catalog_user_favorites \
          WHERE user_id = ? AND item_kind = ? AND item_id IN ({})",
         marks(ids)
     )
@@ -255,7 +255,7 @@ pub(super) fn starred_at(ids: ListLen) -> String {
 pub(super) fn ratings(ids: ListLen) -> String {
     format!(
         "SELECT item_id, MAX(CASE WHEN user_id = ? THEN rating END), AVG(rating) \
-         FROM library_user_ratings WHERE item_kind = ? AND item_id IN ({}) GROUP BY item_id",
+         FROM catalog_user_ratings WHERE item_kind = ? AND item_id IN ({}) GROUP BY item_id",
         marks(ids)
     )
 }
@@ -264,7 +264,7 @@ pub(super) fn ratings(ids: ListLen) -> String {
 /// a date and a discovery time: a release dated on or after the date or,
 /// undated, discovered at or after the time.
 fn release_from(owned_too: bool, since: bool) -> String {
-    let mut from = "FROM new_release_feed n JOIN user_followed_artists f \
+    let mut from = "FROM acquire_new_release_feed n JOIN acquire_followed_artists f \
          ON f.artist_mbid_lower = n.artist_mbid_lower AND f.user_id = ? WHERE 1 = 1"
         .to_owned();
     if !owned_too {
@@ -332,7 +332,7 @@ pub(super) fn mark_play(tracks: MarkTracks, played: bool) -> String {
         )
     };
     format!(
-        "INSERT INTO library_user_play_marks \
+        "INSERT INTO catalog_user_play_marks \
          (user_id, local_track_id, marked_played_at, marked_unplayed_at) \
          SELECT ?1, id, {values} FROM ({tracks}) WHERE true \
          ON CONFLICT (user_id, local_track_id) DO UPDATE SET {update}"

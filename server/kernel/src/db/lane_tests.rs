@@ -1350,7 +1350,7 @@ async fn seed_streamable_tracks(runtime: &DbRuntime, tracks: i64) {
         .db()
         .write(Lane::Foreground, "brief-tracks", move |tx| {
             tx.execute(
-                "INSERT INTO library_track_format_stats (file_format, indexed_tracks, indexed_bytes) \
+                "INSERT INTO catalog_track_format_stats (file_format, indexed_tracks, indexed_bytes) \
                  VALUES ('flac', ?1, 0)",
                 [tracks],
             )?;

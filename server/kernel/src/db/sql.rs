@@ -21,7 +21,7 @@ crate::sql! {
     /// Whether SQLite holds planner statistics at all.
     pub(super) STATS_PRESENT = "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'sqlite_stat1')";
     /// The streamable track count the statistics are measured against.
-    pub(super) INDEXED_TRACKS = "SELECT COALESCE(SUM(indexed_tracks), 0) FROM library_track_format_stats";
+    pub(super) INDEXED_TRACKS = "SELECT COALESCE(SUM(indexed_tracks), 0) FROM catalog_track_format_stats";
     /// Every table to analyze: no SQLite, virtual or full-text shadow tables.
     pub(super) ANALYZED_TABLES = "SELECT name FROM sqlite_schema WHERE type = 'table' \
              AND name NOT LIKE 'sqlite_%' AND sql NOT LIKE 'CREATE VIRTUAL TABLE%' \

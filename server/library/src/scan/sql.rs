@@ -441,9 +441,9 @@ droppedneedle_kernel::sql! {
                OR NOT EXISTS (SELECT 1 FROM library_scan_inventory i WHERE i.run_id = ?1 \
                  AND i.root_id = other.root_id AND i.relative_path = other.relative_path)) AS older";
     pub(super) ALBUM_STILL_HELD = "SELECT EXISTS(SELECT 1 FROM local_tracks WHERE local_album_id = ?1) \
-             OR EXISTS(SELECT 1 FROM library_user_favorites \
+             OR EXISTS(SELECT 1 FROM catalog_user_favorites \
                WHERE item_kind = 'album' AND item_id = ?1) \
-             OR EXISTS(SELECT 1 FROM library_user_ratings \
+             OR EXISTS(SELECT 1 FROM catalog_user_ratings \
                WHERE item_kind = 'album' AND item_id = ?1) \
              OR EXISTS(SELECT 1 FROM catalog_playlist_tracks WHERE album_id = ?1)";
     pub(super) ALBUMS_LEFT = "SELECT DISTINCT m.previous_album_id FROM library_scan_album_moves m \

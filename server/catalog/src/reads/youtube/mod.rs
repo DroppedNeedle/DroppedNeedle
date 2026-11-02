@@ -5,7 +5,7 @@
 //! the discover queue uses), so every search spends from the one daily
 //! budget in `youtube_quota.json`. People can also paste a video by hand,
 //! for an album the server knows or one it does not. Links live in
-//! `youtube_links` and `youtube_track_links` and are shared by everyone on
+//! `catalog_youtube_links` and `catalog_youtube_track_links` and are shared by everyone on
 //! the server.
 
 pub mod handlers;

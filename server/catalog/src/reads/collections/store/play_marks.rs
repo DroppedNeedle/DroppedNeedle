@@ -1,4 +1,4 @@
-//! Played and unplayed marks over `library_user_play_marks`.
+//! Played and unplayed marks over `catalog_user_play_marks`.
 //!
 //! One row per (user, track). A Jellyfin app sets them; marking an album or
 //! an artist marks its tracks. A mark never touches the play history: the

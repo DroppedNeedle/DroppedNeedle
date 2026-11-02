@@ -1,7 +1,7 @@
 //! Library reads: catalog, decades, suggestions, genres, lyrics.
 //!
 //! Clean-slate `/api/v3` read handlers over the
-//! 0001 baseline `local_*` tables plus `library_user_favorites` for the
+//! 0001 baseline `local_*` tables plus `catalog_user_favorites` for the
 //! caller's favorite flags. These routes read existing tables only and
 //! sit behind the caller's session; membership and track resolution are
 //! POSTs only because their id lists ride in a body.

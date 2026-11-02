@@ -418,7 +418,7 @@ async fn v2_artists_keep_one_row_with_their_plays_after_the_first_scan() {
     );
     let favorite: String = v3
         .query_row(
-            "SELECT item_id FROM library_user_favorites WHERE item_kind = 'artist'",
+            "SELECT item_id FROM catalog_user_favorites WHERE item_kind = 'artist'",
             [],
             |row| row.get(0),
         )

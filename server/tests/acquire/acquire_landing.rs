@@ -3845,7 +3845,7 @@ impl JoinRig {
              track_name, artist_name, played_at) SELECT 'play-{track}', 'u-ada', id, \
              local_album_id, title, 'Portishead', '2026-01-01T00:00:00Z' FROM local_tracks \
              WHERE id = '{track}'; \
-             INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+             INSERT INTO catalog_user_favorites (user_id, item_kind, item_id, created_at) \
              VALUES ('u-ada', 'track', '{track}', 0);"
         ));
     }
@@ -4079,7 +4079,7 @@ impl JoinRig {
     async fn history(&self, track: &str) -> (String, String, bool) {
         sqlx::query_as(
             "SELECT p.local_track_id, p.local_album_id, EXISTS(SELECT 1 FROM \
-             library_user_favorites f WHERE f.item_kind = 'track' AND f.item_id = ?2) \
+             catalog_user_favorites f WHERE f.item_kind = 'track' AND f.item_id = ?2) \
              FROM library_play_history p WHERE p.id = ?1",
         )
         .bind(format!("play-{track}"))
@@ -5155,7 +5155,7 @@ impl JoinRig {
     async fn version_history(&self, old: &str) -> (String, String, String, String) {
         sqlx::query_as(
             "SELECT (SELECT local_track_id FROM library_play_history WHERE id = 'play-' || ?1), \
-             (SELECT item_id FROM library_user_favorites WHERE item_kind = 'track' \
+             (SELECT item_id FROM catalog_user_favorites WHERE item_kind = 'track' \
                AND user_id = 'u-ada'), \
              (SELECT library_file_id FROM catalog_playlist_tracks WHERE id = 'entry'), \
              (SELECT local_track_id FROM library_management_overrides WHERE id = 'title')",

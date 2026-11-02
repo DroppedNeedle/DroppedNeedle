@@ -471,21 +471,21 @@ droppedneedle_kernel::sql! {
              AND user_id IS NOT NULL AND user_id != ?2) \
          OR EXISTS (SELECT 1 FROM request_history_requesters \
              WHERE musicbrainz_id_lower = ?1 AND user_id != ?2) \
-         OR EXISTS (SELECT 1 FROM library_user_favorites f WHERE f.user_id != ?2 AND ( \
+         OR EXISTS (SELECT 1 FROM catalog_user_favorites f WHERE f.user_id != ?2 AND ( \
              (f.item_kind = 'album' AND f.item_id IN (SELECT e.local_album_id \
                  FROM local_album_external_identities e \
                  WHERE lower(e.release_group_mbid) = ?1)) \
              OR (f.item_kind = 'track' AND f.item_id IN (SELECT t.id FROM local_tracks t \
                  JOIN local_album_external_identities e ON e.local_album_id = t.local_album_id \
                  WHERE lower(e.release_group_mbid) = ?1)))) \
-         OR EXISTS (SELECT 1 FROM library_user_ratings r WHERE r.user_id != ?2 AND ( \
+         OR EXISTS (SELECT 1 FROM catalog_user_ratings r WHERE r.user_id != ?2 AND ( \
              (r.item_kind = 'album' AND r.item_id IN (SELECT e.local_album_id \
                  FROM local_album_external_identities e \
                  WHERE lower(e.release_group_mbid) = ?1)) \
              OR (r.item_kind = 'track' AND r.item_id IN (SELECT t.id FROM local_tracks t \
                  JOIN local_album_external_identities e ON e.local_album_id = t.local_album_id \
                  WHERE lower(e.release_group_mbid) = ?1)))) \
-         OR EXISTS (SELECT 1 FROM library_user_play_marks k WHERE k.user_id != ?2 \
+         OR EXISTS (SELECT 1 FROM catalog_user_play_marks k WHERE k.user_id != ?2 \
              AND k.local_track_id IN (SELECT t.id FROM local_tracks t \
                  JOIN local_album_external_identities e ON e.local_album_id = t.local_album_id \
                  WHERE lower(e.release_group_mbid) = ?1)) \

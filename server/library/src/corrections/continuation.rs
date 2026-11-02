@@ -773,11 +773,11 @@ fn sweep(
     };
     count("library_play_history", plays.len());
     count(
-        "library_user_favorites",
+        "catalog_user_favorites",
         stars_moved.len() + stars_deleted.len(),
     );
     count(
-        "library_user_ratings",
+        "catalog_user_ratings",
         ratings_moved.len() + ratings_deleted.len(),
     );
     count("catalog_playlist_tracks", entries.len());
@@ -786,7 +786,7 @@ fn sweep(
         bookmarks_moved.len() + bookmarks_deleted.len(),
     );
     count(
-        "library_user_play_marks",
+        "catalog_user_play_marks",
         marks_moved.len() + marks_deleted.len(),
     );
     count("compat_play_queue_items", queue.len());

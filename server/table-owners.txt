@@ -9,9 +9,9 @@
 # code inside its own transaction, when one album, artist or track row
 # takes the place of another (a merge, or a scan following a retagged
 # album onto its old row):
-#   library_user_favorites        catalog   moved to the surviving row
-#   library_user_favorite_names   catalog   moved with their favorite
-#   library_user_ratings          catalog   moved to the surviving row; a
+#   catalog_user_favorites        catalog   moved to the surviving row
+#   catalog_user_favorite_names   catalog   moved with their favorite
+#   catalog_user_ratings          catalog   moved to the surviving row; a
 #                                           user who rated both keeps the
 #                                           surviving row's rating
 #   library_play_history          media     moved to the surviving row
@@ -24,15 +24,15 @@
 #
 # And when a missing track continues into the track that took its place
 # (the same release track of the same album):
-#   library_user_favorites        catalog   moved to the track it continues
-#   library_user_favorite_names   catalog   moved with their favorite
-#   library_user_ratings          catalog   moved to the track it continues
+#   catalog_user_favorites        catalog   moved to the track it continues
+#   catalog_user_favorite_names   catalog   moved with their favorite
+#   catalog_user_ratings          catalog   moved to the track it continues
 #   library_play_history          media     moved to the track it continues
 #   catalog_playlist_tracks       catalog   library_file_id and
 #                                           track_source_id of local entries
 #                                           moved to the track it continues
 #   compat_bookmarks              compat    moved to the track it continues
-#   library_user_play_marks       catalog   moved to the track it continues;
+#   catalog_user_play_marks       catalog   moved to the track it continues;
 #                                           a user's marks on both rows
 #                                           merge, the later of each time
 #   compat_play_queue_items       compat    moved to the track it continues
@@ -46,7 +46,7 @@
 # Kept by triggers (from migration 0065), not by code: no code writes
 # library_user_album_plays. The database rewrites its rows inside the
 # transaction of every write to library_play_history,
-# library_user_play_marks and local_tracks, whichever area makes it.
+# catalog_user_play_marks and local_tracks, whichever area makes it.
 # local_albums.has_indexed_track is kept the same way, from local_tracks.
 #
 # Kept by triggers (from migration 0080), not by code: no code writes
@@ -105,8 +105,10 @@ acquire_discovery_batch_items
 acquire_discovery_batches
 acquire_edition_acquires
 acquire_follow_cursors
+acquire_followed_artists
 acquire_held_entries
 acquire_held_files
+acquire_new_release_feed
 artist_known_releases
 auto_download_approvals
 download_activity_global_revision
@@ -136,29 +138,27 @@ artist_tm_attraction
 catalog_artist_genres
 catalog_cached_pages
 catalog_discover_activity
+catalog_genre_artwork_revisions
 catalog_ignored_releases
 catalog_mbid_resolutions
+catalog_new_release_seen_marks
 catalog_page_generations
 catalog_playlist_covers
 catalog_playlist_tracks
 catalog_playlists
+catalog_track_format_stats
+catalog_user_favorite_names
+catalog_user_favorites
+catalog_user_play_marks
+catalog_user_ratings
+catalog_youtube_links
+catalog_youtube_track_links
 library_artist_album_credits
 library_artist_counts
-library_genre_artwork_revisions
-library_track_format_stats
 library_user_album_plays
-library_user_favorite_names
-library_user_favorites
-library_user_play_marks
-library_user_ratings
 live_event_feed
-new_release_feed
 user_event_cities
 user_event_seen
-user_followed_artists
-user_new_release_seen
-youtube_links
-youtube_track_links
 
 [library]
 library_album_departures

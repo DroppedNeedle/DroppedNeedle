@@ -20,7 +20,7 @@ async fn entity_counts(pool: &sqlx::SqlitePool) -> Vec<i64> {
         "auth_providers",
         "auth_app_passwords",
         "auth_password_recovery_codes",
-        "user_followed_artists",
+        "acquire_followed_artists",
         "auto_download_approvals",
         "import_runs",
     ] {
@@ -353,7 +353,7 @@ async fn import_serializes_with_a_concurrent_writer() {
             "BEGIN IMMEDIATE;
              INSERT INTO auth_users (id, display_name, role, created_at)
                  VALUES ('u1', 'Live', 'user', 0);
-             INSERT INTO user_followed_artists (user_id, artist_mbid, artist_mbid_lower,
+             INSERT INTO acquire_followed_artists (user_id, artist_mbid, artist_mbid_lower,
                  artist_name, auto_download, followed_at, updated_at)
                  VALUES ('u1', '{MBID}', '{MBID}', 'Live', 1, 1, 1);"
         ))
@@ -370,7 +370,7 @@ async fn import_serializes_with_a_concurrent_writer() {
 
     assert_ne!(report.exit.code, ExitCode::FailedInternal, "{report:?}");
     assert_eq!(report.entities["user"].conflict_kept_existing, 1);
-    let auto: i64 = sqlx::query_scalar("SELECT auto_download FROM user_followed_artists")
+    let auto: i64 = sqlx::query_scalar("SELECT auto_download FROM acquire_followed_artists")
         .fetch_one(&pool)
         .await
         .unwrap();

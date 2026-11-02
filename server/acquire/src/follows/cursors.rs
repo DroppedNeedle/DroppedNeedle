@@ -56,7 +56,7 @@ pub struct PendingRelease {
     pub date: String,
 }
 
-/// One new release for the followers' feed (`new_release_feed`).
+/// One new release for the followers' feed (`acquire_new_release_feed`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FeedRelease {
     /// Release-group MBID as MusicBrainz spells it.
@@ -185,7 +185,7 @@ impl Follows {
                         params![artist, rg.to_lowercase()],
                     )?;
                 }
-                let now = crate::db::unix_secs_f64(clock.as_ref());
+                let now = super::now_ms(clock.as_ref());
                 for row in &feed {
                     tx.execute(
                         sql::ADD_FEED_RELEASE.text(),

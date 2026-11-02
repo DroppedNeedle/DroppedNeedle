@@ -232,17 +232,17 @@ droppedneedle_kernel::sql! {
              WHERE provider = ?1 AND entity_kind = ?2 AND payload_sha256 = ?3";
     pub(super) DROP_DOCUMENTS_WITH_PAYLOAD = "DELETE FROM library_management_metadata_snapshots \
          WHERE provider = ?1 AND entity_kind = ?2 AND payload_sha256 = ?3";
-    pub(super) COPY_FAVORITES_TO_ITEM = "INSERT OR IGNORE INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
-         SELECT user_id, item_kind, ?1, created_at FROM library_user_favorites \
+    pub(super) COPY_FAVORITES_TO_ITEM = "INSERT OR IGNORE INTO catalog_user_favorites (user_id, item_kind, item_id, created_at) \
+         SELECT user_id, item_kind, ?1, created_at FROM catalog_user_favorites \
          WHERE item_kind = ?2 AND item_id = ?3";
-    pub(super) COPY_FAVORITE_NAMES_TO_ITEM = "INSERT OR IGNORE INTO library_user_favorite_names (user_id, item_kind, item_id, \
+    pub(super) COPY_FAVORITE_NAMES_TO_ITEM = "INSERT OR IGNORE INTO catalog_user_favorite_names (user_id, item_kind, item_id, \
          display_name) SELECT user_id, item_kind, ?1, display_name \
-         FROM library_user_favorite_names WHERE item_kind = ?2 AND item_id = ?3";
-    pub(super) DROP_ITEM_FAVORITES = "DELETE FROM library_user_favorites WHERE item_kind = ?1 AND item_id = ?2";
-    pub(super) COPY_RATINGS_TO_ITEM = "INSERT OR IGNORE INTO library_user_ratings (user_id, item_kind, item_id, rating, \
-         rated_at) SELECT user_id, item_kind, ?1, rating, rated_at FROM library_user_ratings \
+         FROM catalog_user_favorite_names WHERE item_kind = ?2 AND item_id = ?3";
+    pub(super) DROP_ITEM_FAVORITES = "DELETE FROM catalog_user_favorites WHERE item_kind = ?1 AND item_id = ?2";
+    pub(super) COPY_RATINGS_TO_ITEM = "INSERT OR IGNORE INTO catalog_user_ratings (user_id, item_kind, item_id, rating, \
+         rated_at) SELECT user_id, item_kind, ?1, rating, rated_at FROM catalog_user_ratings \
          WHERE item_kind = ?2 AND item_id = ?3";
-    pub(super) DROP_ITEM_RATINGS = "DELETE FROM library_user_ratings WHERE item_kind = ?1 AND item_id = ?2";
+    pub(super) DROP_ITEM_RATINGS = "DELETE FROM catalog_user_ratings WHERE item_kind = ?1 AND item_id = ?2";
     pub(super) CLAIM = "UPDATE library_identify_jobs SET state = 'running', \
                          lease_expires_at = ?1, updated_at = ?2 WHERE id = ?3";
     pub(super) RECOVER = "UPDATE library_identify_jobs SET state = 'queued', \

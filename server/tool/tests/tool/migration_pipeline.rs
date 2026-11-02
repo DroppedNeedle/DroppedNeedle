@@ -429,14 +429,14 @@ async fn user_data_carries_resumes_and_repeats_as_noop() {
     for (table, expected) in [
         ("catalog_playlists", 2),
         ("catalog_playlist_covers", 1),
-        ("library_user_favorites", 2),
+        ("catalog_user_favorites", 2),
         ("library_play_history", 2),
         ("request_history", 1),
         ("request_history_requesters", 1),
         ("request_history_dismissals", 1),
         ("download_tasks", 1),
         ("download_attempts", 1),
-        ("library_user_favorite_names", 2),
+        ("catalog_user_favorite_names", 2),
         ("wanted_watches", 2),
         ("wanted_seen_candidates", 1),
         ("user_quotas", 1),
@@ -445,12 +445,12 @@ async fn user_data_carries_resumes_and_repeats_as_noop() {
         ("personal_mix_approvals", 1),
         ("user_section_prefs", 1),
         ("user_navidrome_folder_preferences", 1),
-        ("user_new_release_seen", 1),
+        ("catalog_new_release_seen_marks", 1),
         ("compat_play_queues", 1),
         ("compat_play_queue_items", 2),
         ("compat_bookmarks", 1),
         ("artist_known_releases", 1),
-        ("new_release_feed", 1),
+        ("acquire_new_release_feed", 1),
     ] {
         assert_eq!(rows(table).await, expected, "{table}");
     }
@@ -1145,9 +1145,9 @@ async fn assert_follows_intact(
     pool: &sqlx::SqlitePool,
     fixture: &droppedneedle_tool::tooling::fixture::V2Fixture,
 ) {
-    let rows: Vec<(String, String, String, i64, f64, f64)> = sqlx::query_as(
+    let rows: Vec<(String, String, String, i64, i64, i64)> = sqlx::query_as(
         "SELECT user_id, artist_mbid, artist_name, auto_download, followed_at, updated_at
-         FROM user_followed_artists ORDER BY user_id, artist_mbid",
+         FROM acquire_followed_artists ORDER BY user_id, artist_mbid",
     )
     .fetch_all(pool)
     .await

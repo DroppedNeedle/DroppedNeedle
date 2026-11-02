@@ -202,7 +202,7 @@ async fn sweep_fills_feed_and_routes_narrow_it_to_saved_cities() {
                     [user],
                 )?;
                 tx.execute(
-                    "INSERT INTO user_followed_artists (user_id, artist_mbid, artist_mbid_lower, \
+                    "INSERT INTO acquire_followed_artists (user_id, artist_mbid, artist_mbid_lower, \
                      artist_name, followed_at, updated_at) VALUES (?1, ?2, ?3, 'The Band', 1, 1)",
                     [user, MBID, &MBID.to_lowercase()],
                 )?;

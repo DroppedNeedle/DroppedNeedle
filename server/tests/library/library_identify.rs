@@ -1342,7 +1342,7 @@ impl Links {
     fn listen(&self, artist: &str) {
         self.db
             .execute_batch(&format!(
-                "INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+                "INSERT INTO catalog_user_favorites (user_id, item_kind, item_id, created_at) \
                  VALUES ('admin', 'artist', '{artist}', 1); \
                  INSERT INTO library_play_history (id, user_id, local_artist_id, track_name, \
                  artist_name, played_at) VALUES ('play-{artist}', 'admin', '{artist}', 'Song', \
@@ -1847,7 +1847,7 @@ fn a_row_its_matched_album_proves_merges_into_the_linked_row() {
     );
     assert_eq!(
         links.count(
-            "SELECT (SELECT COUNT(*) FROM library_user_favorites WHERE item_id = 'ar-s') \
+            "SELECT (SELECT COUNT(*) FROM catalog_user_favorites WHERE item_id = 'ar-s') \
              + (SELECT COUNT(*) FROM library_play_history WHERE local_artist_id = 'ar-s')"
         ),
         2

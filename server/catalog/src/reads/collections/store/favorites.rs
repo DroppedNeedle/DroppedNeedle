@@ -1,4 +1,4 @@
-//! Favorites over `library_user_favorites`.
+//! Favorites over `catalog_user_favorites`.
 //!
 //! One row per (user, kind, item). A heart in the web UI, a Subsonic star
 //! and a Jellyfin favorite all write the same row, so a favorite shows
@@ -111,7 +111,7 @@ impl FavoriteStore {
         }
         let user_id = user_id.to_owned();
         let targets = targets.to_vec();
-        let now = self.db.now_real();
+        let now = self.db.now_ms();
         self.db
             .write("favorites.apply", move |tx| {
                 if add {

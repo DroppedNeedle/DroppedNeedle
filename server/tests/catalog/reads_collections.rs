@@ -472,7 +472,7 @@ async fn playlists_favorites_and_follows_survive_a_restart() {
     assert!(!bytes.is_empty());
 
     let kept: Vec<String> =
-        sqlx::query_scalar("SELECT item_id FROM library_user_favorites WHERE user_id = 'u-ada'")
+        sqlx::query_scalar("SELECT item_id FROM catalog_user_favorites WHERE user_id = 'u-ada'")
             .fetch_all(rig.runtime.db().sqlx())
             .await
             .expect("favourites read");
@@ -580,7 +580,7 @@ async fn favorites_stay_per_user() {
         );
     }
     let bobs: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM library_user_favorites WHERE user_id = 'u-bob'")
+        sqlx::query_scalar("SELECT COUNT(*) FROM catalog_user_favorites WHERE user_id = 'u-bob'")
             .fetch_one(rig.runtime.db().sqlx())
             .await
             .expect("favourites read");
@@ -797,8 +797,8 @@ async fn store_faults_render_fixed_500_envelopes() {
     crate::common::break_schema(
         rig.runtime.db(),
         "ALTER TABLE catalog_playlists RENAME TO gone_playlists; \
-         ALTER TABLE library_user_favorites RENAME TO gone_favorites; \
-         ALTER TABLE user_followed_artists RENAME TO gone_follows;",
+         ALTER TABLE catalog_user_favorites RENAME TO gone_favorites; \
+         ALTER TABLE acquire_followed_artists RENAME TO gone_follows;",
     )
     .await;
     let scope = TestApp::start("reads-collections-faults").await;
@@ -847,6 +847,8 @@ async fn migration_0010_upgrades_in_place() {
     sqlx::query(
         "INSERT INTO playlists (id, name, created_at, updated_at, user_id) \
          VALUES ('p1', 'Kept', '2024-01-01T00:00:00+00:00', '2024-01-01T00:00:00+00:00', 'u1'); \
+         INSERT INTO auth_users (id, display_name, role, created_at) \
+         VALUES ('u1', 'U', 'user', '2024-01-01T00:00:00+00:00'); \
          INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
          VALUES ('u1', 'album', 'a1', 1.0);",
     )
@@ -867,7 +869,7 @@ async fn migration_0010_upgrades_in_place() {
     }
     apply_migrations(&pool).await.unwrap();
     let kept: (String, String) = sqlx::query_as(
-        "SELECT p.name, f.item_id FROM catalog_playlists p, library_user_favorites f WHERE p.id = 'p1'",
+        "SELECT p.name, f.item_id FROM catalog_playlists p, catalog_user_favorites f WHERE p.id = 'p1'",
     )
     .fetch_one(&pool)
     .await

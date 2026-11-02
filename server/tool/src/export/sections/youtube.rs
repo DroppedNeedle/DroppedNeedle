@@ -1,9 +1,11 @@
-//! YouTube links a user found or set for albums and tracks. v3 keeps them
-//! in the same tables v2 did, so rows travel verbatim. The album id is a
-//! MusicBrainz release group id, not a library id, so nothing waits on
-//! the library carry.
+//! YouTube links a user found or set for albums and tracks. v3 keeps their
+//! times in integer milliseconds where v2 had ISO text, and a flag and count
+//! that are never NULL; the rest travels verbatim. The album id is a
+//! MusicBrainz release group id, not a library id, so nothing waits on the
+//! library carry.
 
-use super::{Source, TableSection, Target, col};
+use super::requests::{flag, millis, whole};
+use super::{Column, Source, TableSection, Target, col};
 
 /// Album links.
 pub const ALBUM_LINKS: TableSection = TableSection {
@@ -13,7 +15,7 @@ pub const ALBUM_LINKS: TableSection = TableSection {
         filter: "",
         requires: &[],
     },
-    target: Target::Table("youtube_links"),
+    target: Target::Table("catalog_youtube_links"),
     columns: &[
         col("album_id"),
         col("video_id"),
@@ -21,9 +23,10 @@ pub const ALBUM_LINKS: TableSection = TableSection {
         col("artist_name"),
         col("embed_url"),
         col("cover_url"),
-        col("created_at"),
-        col("is_manual"),
-        col("track_count"),
+        Column::new("created_at").from_sql(concat!("COALESCE(", millis!("created_at"), ", 0)")),
+        Column::new("is_manual").from_sql(flag!("is_manual")),
+        Column::new("track_count")
+            .from_sql("CASE WHEN typeof(s.track_count) = 'integer' THEN s.track_count ELSE 0 END"),
     ],
     key: &["album_id"],
     unique: &[],
@@ -40,7 +43,7 @@ pub const TRACK_LINKS: TableSection = TableSection {
         filter: "",
         requires: &[],
     },
-    target: Target::Table("youtube_track_links"),
+    target: Target::Table("catalog_youtube_track_links"),
     columns: &[
         col("album_id"),
         col("track_number"),
@@ -50,7 +53,7 @@ pub const TRACK_LINKS: TableSection = TableSection {
         col("video_id"),
         col("artist_name"),
         col("embed_url"),
-        col("created_at"),
+        Column::new("created_at").from_sql(concat!("COALESCE(", millis!("created_at"), ", 0)")),
     ],
     key: &["album_id", "disc_number", "track_number"],
     unique: &[],

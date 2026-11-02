@@ -121,8 +121,11 @@ pub const NEW_RELEASE_SEEN: TableSection = TableSection {
         filter: "",
         requires: &[],
     },
-    target: Target::Table("user_new_release_seen"),
-    columns: &[col("user_id"), col("seen_at")],
+    target: Target::Table("catalog_new_release_seen_marks"),
+    columns: &[
+        col("user_id"),
+        Column::new("seen_at").from_sql(concat!("COALESCE(", millis!("seen_at"), ", 0)")),
+    ],
     key: &["user_id"],
     unique: &[],
     parents: &[],

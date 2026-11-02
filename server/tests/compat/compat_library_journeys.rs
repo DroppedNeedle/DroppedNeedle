@@ -3121,7 +3121,7 @@ async fn subsonic_ratings_are_per_user_and_follow_a_merge() {
         .app
         .db()
         .query_row(
-            "SELECT COUNT(*) FROM library_user_ratings WHERE item_id = ?1",
+            "SELECT COUNT(*) FROM catalog_user_ratings WHERE item_id = ?1",
             [&kept[3..]],
             |row| row.get(0),
         )
@@ -3171,8 +3171,8 @@ async fn subsonic_ratings_are_per_user_and_follow_a_merge() {
     assert_eq!(highest["albumList2"]["album"][0]["id"], json!(kept));
     rig.app
         .seed_with(
-            "INSERT INTO library_user_ratings (user_id, item_kind, item_id, rating, rated_at) \
-             SELECT user_id, 'album', 'album-gone', 5, rated_at FROM library_user_ratings \
+            "INSERT INTO catalog_user_ratings (user_id, item_kind, item_id, rating, rated_at) \
+             SELECT user_id, 'album', 'album-gone', 5, rated_at FROM catalog_user_ratings \
              WHERE item_id = ?1 AND rating = 2",
             [local(&kept)],
         )
@@ -3187,7 +3187,7 @@ async fn subsonic_ratings_are_per_user_and_follow_a_merge() {
         .app
         .db()
         .query_row(
-            "SELECT COUNT(*) FROM library_user_ratings WHERE item_id = ?1",
+            "SELECT COUNT(*) FROM catalog_user_ratings WHERE item_id = ?1",
             [local(&merged)],
             |row| row.get(0),
         )
@@ -3316,7 +3316,7 @@ async fn web_and_subsonic_apps_share_one_rating() {
         .app
         .db()
         .query_row(
-            "SELECT COUNT(*) FROM library_user_ratings WHERE item_id = 'no-such-track'",
+            "SELECT COUNT(*) FROM catalog_user_ratings WHERE item_id = 'no-such-track'",
             [],
             |row| row.get(0),
         )
@@ -3392,7 +3392,7 @@ async fn web_and_subsonic_apps_share_one_favorite() {
         .app
         .db()
         .query_row(
-            "SELECT COUNT(*) FROM library_user_favorites WHERE item_id = 'no-such-item'",
+            "SELECT COUNT(*) FROM catalog_user_favorites WHERE item_id = 'no-such-item'",
             [],
             |row| row.get(0),
         )
@@ -3773,7 +3773,7 @@ async fn jellyfin_played_marks_are_the_callers_and_leave_plays_alone() {
     // A stop after the mark counts again. A mark and a play both read the
     // clock, a play in whole seconds, so the mark moves back a minute.
     rig.app
-        .seed("UPDATE library_user_play_marks SET marked_unplayed_at = marked_unplayed_at - 60000")
+        .seed("UPDATE catalog_user_play_marks SET marked_unplayed_at = marked_unplayed_at - 60000")
         .await;
     let (status, _) = rig
         .app
