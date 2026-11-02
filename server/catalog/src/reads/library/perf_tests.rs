@@ -3339,7 +3339,7 @@ async fn perf_100k_endpoints_hold_p95() {
     .into_iter()
     .map(|name| (name, Vec::new()))
     .collect();
-    let search = crate::reads::search::service::SearchService::new(fixture.db().sqlx().clone());
+    let search = crate::reads::search::service::SearchService::new(fixture.db().clone());
     // Timed and reported, not budgeted: random track pages key every track,
     // and a song search whose words are in every track ("perf", "artist")
     // reads the whole FTS index and ranks every track, as the player's

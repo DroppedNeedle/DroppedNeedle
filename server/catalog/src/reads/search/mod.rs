@@ -17,6 +17,7 @@ pub mod handlers;
 pub mod models;
 pub mod ports;
 pub mod service;
+pub(crate) mod sql;
 
 use std::sync::Arc;
 

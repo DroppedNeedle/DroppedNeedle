@@ -164,7 +164,7 @@ impl Rig {
                 1024 * 1024,
                 std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
             ),
-            LocalArtwork::new(self.runtime.db().sqlx().clone()),
+            LocalArtwork::new(self.runtime.db().clone()),
             Some(Arc::new(self.archive.providers.coverart.clone())),
             config.live(),
         );
@@ -608,7 +608,18 @@ async fn a_failed_album_read_is_not_answered_as_no_art() {
 
     let rig = rig(None).await;
     let service = rig.service(true);
-    rig.runtime.db().sqlx().close().await;
+    rig.runtime
+        .db()
+        .write(
+            droppedneedle_kernel::db::Lane::Foreground,
+            "drop art identities",
+            |tx| {
+                tx.execute_batch("DROP TABLE local_album_external_identities")?;
+                Ok::<_, droppedneedle_kernel::db::DbError>(())
+            },
+        )
+        .await
+        .unwrap();
 
     assert!(service.album_cover("al1", Some("500")).await.is_err());
 }

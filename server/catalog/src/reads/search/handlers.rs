@@ -11,6 +11,7 @@ use axum::{
     extract::{Path, State},
 };
 use droppedneedle_auth::User;
+use droppedneedle_kernel::db::DbError;
 use droppedneedle_kernel::error::ApiError;
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 
@@ -19,9 +20,7 @@ use super::models::{BucketQuery, EnrichmentBatchRequest, SearchQuery, SuggestQue
 use super::service::{Bucket, BucketLimits};
 use super::{DEFAULT_BUCKET_LIMIT, DEFAULT_SUGGEST_LIMIT, MAX_BUCKET_LIMIT, MAX_SUGGEST_LIMIT};
 
-fn service_response<T: serde::Serialize>(
-    result: Result<T, sqlx::Error>,
-) -> Result<Json<T>, ApiError> {
+fn service_response<T: serde::Serialize>(result: Result<T, DbError>) -> Result<Json<T>, ApiError> {
     result.map(Json).map_err(ApiError::internal)
 }
 

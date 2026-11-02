@@ -23,14 +23,14 @@ pub enum AutoDownloadState {
 }
 
 impl AutoDownloadState {
-    /// Parse a stored approval state; unknown text reads as no verdict.
-    pub fn from_approval(state: &str) -> Self {
+    /// A stored approval state; `None` for text outside the table's CHECK.
+    pub fn from_approval(state: &str) -> Option<Self> {
         match state {
-            "pending" => Self::Pending,
-            "approved" => Self::Approved,
-            "rejected" => Self::Rejected,
-            "revoked" => Self::Revoked,
-            _ => Self::None,
+            "pending" => Some(Self::Pending),
+            "approved" => Some(Self::Approved),
+            "rejected" => Some(Self::Rejected),
+            "revoked" => Some(Self::Revoked),
+            _ => None,
         }
     }
 }

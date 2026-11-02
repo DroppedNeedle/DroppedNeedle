@@ -413,7 +413,11 @@ async fn app_with(fixtures: &Fixtures, mb_url: String) -> (axum::Router, (AuthRi
     );
     let catalog = Catalog::new(upstream, local_catalog(&dir));
     let search = SearchDeps::new(
-        SearchService::new(pool).with_remote(catalog.clone()),
+        SearchService::new(
+            droppedneedle_kernel::db::Db::open_for_tests(pool.connect_options().get_filename())
+                .unwrap(),
+        )
+        .with_remote(catalog.clone()),
         Arc::new(search::ports::UnconfiguredEnrichment),
     );
     let scope = TestApp::start("reads-catalog").await;
@@ -1021,7 +1025,10 @@ async fn a_failed_portrait_lookup_keeps_the_short_outage_marker() {
             1024 * 1024,
             std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
         ),
-        LocalArtwork::new(pool),
+        LocalArtwork::new(
+            droppedneedle_kernel::db::Db::open_for_tests(pool.connect_options().get_filename())
+                .unwrap(),
+        ),
         None,
         config.live(),
     )
@@ -1126,7 +1133,10 @@ async fn an_audiodb_picture_named_over_http_is_fetched_over_https() {
             1024 * 1024,
             std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
         ),
-        LocalArtwork::new(pool),
+        LocalArtwork::new(
+            droppedneedle_kernel::db::Db::open_for_tests(pool.connect_options().get_filename())
+                .unwrap(),
+        ),
         None,
         config.live(),
     )
@@ -1317,7 +1327,10 @@ async fn a_commons_portrait_answers_its_credit_as_plain_text() {
             1024 * 1024,
             std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
         ),
-        LocalArtwork::new(pool),
+        LocalArtwork::new(
+            droppedneedle_kernel::db::Db::open_for_tests(pool.connect_options().get_filename())
+                .unwrap(),
+        ),
         None,
         config.live(),
     )

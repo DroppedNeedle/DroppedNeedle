@@ -2065,14 +2065,29 @@ async fn a_busy_playlist_create_writes_nothing_and_asking_again_makes_one() {
         (count("catalog_playlists"), count("catalog_playlist_tracks"))
     };
 
-    let held = crate::common::hold_reader(starved.db().sqlx()).await;
+    // The starved runtime's one reader, held until the busy answer is in.
+    let (release, released) = std::sync::mpsc::channel::<()>();
+    let (holding, held) = tokio::sync::oneshot::channel();
+    let holder = tokio::spawn({
+        let db = starved.db().clone();
+        async move {
+            db.read("hold the reader", move |_| {
+                holding.send(()).ok();
+                released.recv_timeout(crate::common::PATIENCE).ok();
+                Ok::<_, droppedneedle_kernel::db::DbError>(())
+            })
+            .await
+        }
+    });
+    held.await.expect("reader held");
     let (status, retry_after, body) = ask().await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
     assert_eq!(retry_after.as_deref(), Some("1"));
     assert_eq!(body["subsonic-response"]["error"]["code"], 0);
     assert_eq!(rows(), (0, 0), "a busy answer wrote nothing");
 
-    drop(held);
+    drop(release);
+    holder.await.expect("holder ends").expect("holder reads");
     // The one reader is free again, though a background read may have it
     // for a moment: ask again while the answer is busy, as a client would.
     let deadline = std::time::Instant::now() + crate::common::PATIENCE;

@@ -13,12 +13,18 @@ use std::fs::File;
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
 
-use sqlx::{Row as _, SqlitePool};
+use rusqlite::{OptionalExtension as _, params};
 
 use droppedneedle_kernel::beneath::{RootLinks, open_file_beneath};
+use droppedneedle_kernel::db::statement::Statement;
+use droppedneedle_kernel::db::{Db, DbError};
 use droppedneedle_library::scan::{exact_stat_revision, mtime_ns_from_metadata};
 use droppedneedle_library::tags::read_cover_art_from;
 use droppedneedle_providers::coverart::sniff_image_content_type;
+
+use super::sql;
+
+pub(crate) use super::sql::art_tracks_column;
 
 /// Folder images and embedded pictures larger than this are not served
 /// (the scan uses the same bound).
@@ -54,21 +60,7 @@ pub struct AlbumArtContext {
 /// Lookups over the catalog tables.
 #[derive(Debug, Clone)]
 pub struct LocalArtwork {
-    pool: SqlitePool,
-}
-
-/// The tracks that can place art row `w` in its library folder, as a JSON
-/// array of `[file_path, relative_path]` pairs: `embedded`, the track
-/// holding the picture, for embedded art, else every indexed track of the
-/// album. Read with [`library_folder`].
-pub(crate) fn art_tracks_column(embedded: &str) -> String {
-    format!(
-        "CASE WHEN w.source = 'embedded' \
-         THEN json_array(json_array({embedded}.file_path, {embedded}.relative_path)) \
-         ELSE (SELECT json_group_array(json_array(art_track.file_path, art_track.relative_path)) \
-         FROM local_tracks art_track WHERE art_track.local_album_id = w.local_album_id \
-         AND art_track.availability = 'indexed') END"
-    )
+    db: Db,
 }
 
 /// The library folder `path` was scanned under: that of the first track in
@@ -95,107 +87,51 @@ pub(crate) fn library_folder(path: &Path, tracks: Option<&str>) -> Option<PathBu
     })
 }
 
-fn art_columns() -> String {
-    format!(
-        "w.local_album_id AS album_id, w.source AS source, \
-         CASE WHEN w.source = 'embedded' THEN t.file_path ELSE w.source_locator END AS path, \
-         {} AS tracks, w.content_hash AS content_hash, w.version AS version",
-        art_tracks_column("t")
-    )
-}
-
-const ART_JOINS: &str = "FROM local_album_artwork w \
-    JOIN local_albums a ON a.id = w.local_album_id AND a.retired_into_album_id IS NULL \
-    LEFT JOIN local_tracks t ON t.id = w.source_locator AND w.source = 'embedded' \
-        AND t.availability = 'indexed'";
-
 impl LocalArtwork {
-    /// Lookups over the reader pool.
-    pub fn new(pool: SqlitePool) -> Self {
-        Self { pool }
+    /// Lookups over the database.
+    pub fn new(db: Db) -> Self {
+        Self { db }
     }
 
     /// The album's identity and local art.
-    pub async fn album(&self, album_id: &str) -> Result<Option<AlbumArtContext>, sqlx::Error> {
-        let exists = sqlx::query(
-            "SELECT ae.release_group_mbid AS rg FROM local_albums a \
-             LEFT JOIN local_album_external_identities ae ON ae.local_album_id = a.id \
-             WHERE a.id = ? AND a.retired_into_album_id IS NULL",
-        )
-        .bind(album_id)
-        .fetch_optional(&self.pool)
-        .await?;
-        let Some(row) = exists else {
+    pub async fn album(&self, album_id: &str) -> Result<Option<AlbumArtContext>, DbError> {
+        let id = album_id.to_owned();
+        let group = self
+            .db
+            .read("album art identity", move |conn| {
+                let group: Option<Option<String>> = conn
+                    .query_row(sql::ALBUM_GROUP.text(), params![id], |row| row.get(0))
+                    .optional()?;
+                Ok::<_, DbError>(group)
+            })
+            .await?;
+        let Some(release_group_mbid) = group else {
             return Ok(None);
         };
-        let local = self
-            .first(
-                &format!(
-                    "SELECT {} {ART_JOINS} WHERE w.local_album_id = ?",
-                    art_columns()
-                ),
-                album_id,
-            )
-            .await?;
+        let local = self.first("album art", sql::ART_OF_ALBUM, album_id).await?;
         Ok(Some(AlbumArtContext {
-            release_group_mbid: row.try_get("rg")?,
+            release_group_mbid,
             local,
         }))
     }
 
     /// Local art of any album identified as this release group.
-    pub async fn by_release_group(&self, mbid: &str) -> Result<Option<LocalArt>, sqlx::Error> {
-        self.first(
-            &format!(
-                "SELECT {} {ART_JOINS} \
-                 JOIN local_album_external_identities ae ON ae.local_album_id = w.local_album_id \
-                 WHERE ae.release_group_mbid = ? ORDER BY w.local_album_id",
-                art_columns()
-            ),
-            mbid,
-        )
-        .await
+    pub async fn by_release_group(&self, mbid: &str) -> Result<Option<LocalArt>, DbError> {
+        self.first("release group art", sql::ART_OF_GROUP, mbid)
+            .await
     }
 
     /// Local art of any album identified as this exact release.
-    pub async fn by_release(&self, mbid: &str) -> Result<Option<LocalArt>, sqlx::Error> {
-        self.first(
-            &format!(
-                "SELECT {} {ART_JOINS} \
-                 JOIN local_album_external_identities ae ON ae.local_album_id = w.local_album_id \
-                 WHERE ae.release_mbid = ? ORDER BY w.local_album_id",
-                art_columns()
-            ),
-            mbid,
-        )
-        .await
+    pub async fn by_release(&self, mbid: &str) -> Result<Option<LocalArt>, DbError> {
+        self.first("release art", sql::ART_OF_RELEASE, mbid).await
     }
 
     /// The art of a library artist's albums, which stands in for the
     /// artist's own picture: at most `limit` albums, one per distinct
-    /// image. Albums under the artist's name come before ones that only
-    /// credit them, studio albums before compilations, then the newest
-    /// release, then the latest added.
-    pub async fn by_artist(
-        &self,
-        artist_id: &str,
-        limit: usize,
-    ) -> Result<Vec<LocalArt>, sqlx::Error> {
+    /// image, in [`sql::ART_OF_ARTIST`]'s order.
+    pub async fn by_artist(&self, artist_id: &str, limit: usize) -> Result<Vec<LocalArt>, DbError> {
         let mut arts = self
-            .servable(
-                &format!(
-                    "SELECT {} {ART_JOINS} \
-                     WHERE w.local_album_id IN (SELECT id FROM local_albums \
-                     WHERE album_artist_id = ?1 \
-                     UNION SELECT local_album_id FROM local_album_artists \
-                     WHERE local_artist_id = ?1) \
-                     AND a.has_indexed_track = 1 AND w.source IN ('folder', 'embedded') \
-                     ORDER BY a.album_artist_id = ?1 DESC, a.is_compilation, \
-                     a.year IS NULL, a.year DESC, a.created_at DESC, a.id LIMIT 40",
-                    art_columns()
-                ),
-                artist_id,
-            )
+            .servable("artist art", sql::ART_OF_ARTIST, artist_id)
             .await?;
         let mut seen = std::collections::HashSet::new();
         arts.retain(|art| {
@@ -208,30 +144,52 @@ impl LocalArtwork {
     }
 
     /// First servable row of a lookup.
-    async fn first(&self, sql: &str, value: &str) -> Result<Option<LocalArt>, sqlx::Error> {
-        Ok(self.servable(sql, value).await?.into_iter().next())
+    async fn first(
+        &self,
+        name: &'static str,
+        statement: Statement,
+        value: &str,
+    ) -> Result<Option<LocalArt>, DbError> {
+        Ok(self
+            .servable(name, statement, value)
+            .await?
+            .into_iter()
+            .next())
     }
 
     /// The servable rows of a lookup, in its order: a local source with a
     /// path.
-    async fn servable(&self, sql: &str, value: &str) -> Result<Vec<LocalArt>, sqlx::Error> {
-        let rows = sqlx::query(sql).bind(value).fetch_all(&self.pool).await?;
+    async fn servable(
+        &self,
+        name: &'static str,
+        statement: Statement,
+        value: &str,
+    ) -> Result<Vec<LocalArt>, DbError> {
+        let value = value.to_owned();
+        let rows = self
+            .db
+            .read(name, move |conn| {
+                let rows = conn
+                    .prepare(statement.text())?
+                    .query_map(params![value], sql::ArtColumns::read)?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                Ok::<_, DbError>(rows)
+            })
+            .await?;
         let mut arts = Vec::new();
         for row in rows {
-            let source: String = row.try_get("source")?;
-            let path: Option<String> = row.try_get("path")?;
-            let tracks: Option<String> = row.try_get("tracks")?;
-            let (true, Some(path)) = (source == "folder" || source == "embedded", path) else {
+            let (true, Some(path)) = (row.source == "folder" || row.source == "embedded", row.path)
+            else {
                 continue;
             };
             let path = PathBuf::from(path);
             arts.push(LocalArt {
-                album_id: row.try_get("album_id")?,
-                source,
-                root: library_folder(&path, tracks.as_deref()),
+                album_id: row.album_id,
+                source: row.source,
+                root: library_folder(&path, row.tracks.as_deref()),
                 path,
-                content_hash: row.try_get("content_hash")?,
-                version: row.try_get("version")?,
+                content_hash: row.content_hash,
+                version: row.version,
             });
         }
         Ok(arts)

@@ -34,7 +34,8 @@ impl StoreError {
         }
     }
 
-    /// Map a reader-pool error, keeping busy distinct.
+    /// Map a reader-pool error from the compat adapters, keeping busy
+    /// distinct.
     pub fn read(operation: &str, error: sqlx::Error) -> Self {
         Self::from_db(map_sqlx_busy(operation, error))
     }
@@ -77,7 +78,7 @@ impl CollectionsDb {
         self.clock.now_ms().max(0) as f64 / 1000.0
     }
 
-    /// The reader pool the sqlx stores read through.
+    /// The reader pool the compat adapters' own statements read through.
     pub fn pool(&self) -> Result<&SqlitePool, StoreError> {
         Ok(self.db.sqlx())
     }
@@ -111,9 +112,4 @@ pub fn epoch_from_real(value: f64) -> u64 {
     } else {
         0
     }
-}
-
-/// `?, ?, ...` placeholders for an IN-list. Callers skip empty lists.
-pub fn placeholders(len: usize) -> String {
-    vec!["?"; len].join(", ")
 }

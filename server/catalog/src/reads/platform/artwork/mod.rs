@@ -60,6 +60,7 @@ pub mod cache;
 pub mod local;
 pub mod remote;
 pub mod resize;
+pub(crate) mod sql;
 pub mod warm;
 
 use std::sync::Arc;
@@ -77,7 +78,6 @@ use droppedneedle_providers::{PayloadKind, ProviderError, RequestPriority, Singl
 use self::cache::{ArtworkCache, CreditSource, ImageCredit, KeyEntry, sha256_hex};
 use self::local::{LocalArt, LocalArtwork, local_art_stamp, read_local_art};
 use self::remote::{ImageFetch, RemoteCovers, RemoteImages};
-use droppedneedle_kernel::db::map_sqlx_busy;
 use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
 
@@ -1413,10 +1413,7 @@ impl CoverArt for ArtworkService {
                 Ok(Some(context)) => context,
                 Ok(None) => return Ok(None),
                 Err(error) => {
-                    return Err(StoreError::db(
-                        "album art lookup",
-                        map_sqlx_busy("album art lookup", error),
-                    ));
+                    return Err(StoreError::db("album art lookup", error));
                 }
             };
             let prefer_local = prefers_local(&self.settings);

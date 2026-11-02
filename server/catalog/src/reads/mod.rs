@@ -82,7 +82,7 @@ pub fn artwork(
             inputs.cover_cache_max_bytes,
             Arc::clone(&platform.clock),
         ),
-        LocalArtwork::new(platform.db.sqlx().clone()),
+        LocalArtwork::new(platform.db.clone()),
         Some(Arc::new(inputs.providers.coverart.clone())),
         platform.settings.live(),
     )
@@ -92,7 +92,7 @@ pub fn artwork(
 
 impl ReadsSetup {
     /// Build the production bundle over `platform`: its database serves
-    /// library reads, search reads (through its sqlx pool) and discover's
+    /// library reads, search reads and discover's
     /// writes, and its settings hand out the live handles the reads hold
     /// on their sections;
     /// `users` gives wrapped its display names and discover its Last.fm
@@ -109,7 +109,6 @@ impl ReadsSetup {
         ports: ReadsPorts,
     ) -> Self {
         let (db, settings, ids) = (&platform.db, &*platform.settings, platform.ids.clone());
-        let pool = db.sqlx();
         let ReadsPorts {
             remotes,
             collections,
@@ -164,7 +163,7 @@ impl ReadsSetup {
             collections.stores.follows.clone(),
         )));
         let search = search::SearchDeps::new(
-            search::service::SearchService::new(pool.clone()).with_remote(catalog.clone()),
+            search::service::SearchService::new(db.clone()).with_remote(catalog.clone()),
             search_enrichment,
         );
         Self {

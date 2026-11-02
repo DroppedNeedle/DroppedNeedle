@@ -9,25 +9,12 @@
 //! them inside the write so a row's time is the time it was stored.
 
 use rusqlite::{OptionalExtension as _, Transaction, params};
-use sqlx::Row as _;
 
 use crate::reads::collections::db::{CollectionsDb, StoreError};
 use droppedneedle_kernel::db::DbError;
 
 use super::models::{YouTubeLink, YouTubeTrackLink};
-
-/// Current UTC time in v2's ISO-8601 text shape.
-const NOW: &str = "strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now')";
-
-const LINK_SELECT: &str = "SELECT l.album_id AS album_id, l.video_id AS video_id, \
-    l.album_name AS album_name, l.artist_name AS artist_name, l.embed_url AS embed_url, \
-    l.cover_url AS cover_url, l.created_at AS created_at, \
-    COALESCE(l.is_manual, 0) AS is_manual, \
-    (SELECT COUNT(*) FROM youtube_track_links t WHERE t.album_id = l.album_id) AS track_count \
-    FROM youtube_links l";
-
-const TRACK_SELECT: &str = "SELECT album_id, album_name, disc_number, track_number, \
-    track_name, video_id, artist_name, embed_url, created_at FROM youtube_track_links";
+use super::sql;
 
 /// The embed URL for one video id.
 pub fn embed_url(video_id: &str) -> String {
@@ -96,44 +83,42 @@ impl LinkStore {
 
     /// One album link with its live track count.
     pub async fn link(&self, album_id: &str) -> Result<Option<YouTubeLink>, StoreError> {
-        let pool = self.db.pool()?;
-        let row = sqlx::query(&format!("{LINK_SELECT} WHERE l.album_id = ?1"))
-            .bind(album_id)
-            .fetch_optional(pool)
+        let album_id = album_id.to_owned();
+        self.db
+            .read("youtube link", move |conn| {
+                let link = conn
+                    .query_row(sql::LINK.text(), params![album_id], link_from_row)
+                    .optional()?;
+                Ok(link)
+            })
             .await
-            .map_err(|error| StoreError::read("youtube link", error))?;
-        row.map(|row| link_from_row(&row))
-            .transpose()
-            .map_err(|error| StoreError::read("youtube link", error))
     }
 
     /// Every album link, newest first.
     pub async fn links(&self) -> Result<Vec<YouTubeLink>, StoreError> {
-        let pool = self.db.pool()?;
-        let rows = sqlx::query(&format!("{LINK_SELECT} ORDER BY l.created_at DESC"))
-            .fetch_all(pool)
+        self.db
+            .read("youtube links", |conn| {
+                let links = conn
+                    .prepare(sql::LINKS.text())?
+                    .query_map([], link_from_row)?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                Ok(links)
+            })
             .await
-            .map_err(|error| StoreError::read("youtube links", error))?;
-        rows.iter()
-            .map(link_from_row)
-            .collect::<Result<_, _>>()
-            .map_err(|error| StoreError::read("youtube links", error))
     }
 
     /// An album's track links, in disc then track order.
     pub async fn track_links(&self, album_id: &str) -> Result<Vec<YouTubeTrackLink>, StoreError> {
-        let pool = self.db.pool()?;
-        let rows = sqlx::query(&format!(
-            "{TRACK_SELECT} WHERE album_id = ?1 ORDER BY disc_number, track_number"
-        ))
-        .bind(album_id)
-        .fetch_all(pool)
-        .await
-        .map_err(|error| StoreError::read("youtube track links", error))?;
-        rows.iter()
-            .map(track_from_row)
-            .collect::<Result<_, _>>()
-            .map_err(|error| StoreError::read("youtube track links", error))
+        let album_id = album_id.to_owned();
+        self.db
+            .read("youtube track links", move |conn| {
+                let tracks = conn
+                    .prepare(sql::TRACK_LINKS.text())?
+                    .query_map(params![album_id], track_from_row)?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                Ok(tracks)
+            })
+            .await
     }
 
     /// Save a full-album video, replacing any saved one. The creation time
@@ -146,21 +131,12 @@ impl LinkStore {
     ) -> Result<YouTubeLink, StoreError> {
         self.db
             .write("youtube save link", move |tx| {
-                let cover = match origin {
-                    LinkOrigin::Search => "COALESCE(excluded.cover_url, youtube_links.cover_url)",
-                    LinkOrigin::Manual => "excluded.cover_url",
+                let statement = match origin {
+                    LinkOrigin::Search => sql::SAVE_FOUND_LINK,
+                    LinkOrigin::Manual => sql::SAVE_PASTED_LINK,
                 };
                 tx.execute(
-                    &format!(
-                        "INSERT INTO youtube_links (album_id, video_id, album_name, artist_name, \
-                         embed_url, cover_url, created_at, is_manual, track_count) \
-                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, {NOW}, ?7, \
-                           (SELECT COUNT(*) FROM youtube_track_links WHERE album_id = ?1)) \
-                         ON CONFLICT(album_id) DO UPDATE SET video_id = excluded.video_id, \
-                         album_name = excluded.album_name, artist_name = excluded.artist_name, \
-                         embed_url = excluded.embed_url, cover_url = {cover}, \
-                         created_at = excluded.created_at, is_manual = excluded.is_manual"
-                    ),
+                    statement.text(),
                     params![
                         album.album_id,
                         video_id,
@@ -194,12 +170,7 @@ impl LinkStore {
                     Some(cover) => (false, cover),
                 };
                 let changed = tx.execute(
-                    "UPDATE youtube_links SET video_id = COALESCE(?2, video_id), \
-                     embed_url = COALESCE(?3, embed_url), \
-                     album_name = COALESCE(?4, album_name), \
-                     artist_name = COALESCE(?5, artist_name), \
-                     cover_url = CASE WHEN ?6 THEN cover_url ELSE ?7 END \
-                     WHERE album_id = ?1",
+                    sql::EDIT_LINK.text(),
                     params![
                         album_id,
                         edit.video_id,
@@ -222,14 +193,8 @@ impl LinkStore {
     pub async fn delete_link(&self, album_id: String) -> Result<(), StoreError> {
         self.db
             .write("youtube delete link", move |tx| {
-                tx.execute(
-                    "DELETE FROM youtube_track_links WHERE album_id = ?1",
-                    params![album_id],
-                )?;
-                tx.execute(
-                    "DELETE FROM youtube_links WHERE album_id = ?1",
-                    params![album_id],
-                )?;
+                tx.execute(sql::DELETE_TRACK_LINKS.text(), params![album_id])?;
+                tx.execute(sql::DELETE_LINK.text(), params![album_id])?;
                 Ok(())
             })
             .await
@@ -246,16 +211,7 @@ impl LinkStore {
             .write("youtube save track links", move |tx| {
                 for track in &tracks {
                     tx.execute(
-                        &format!(
-                            "INSERT INTO youtube_track_links (album_id, track_number, \
-                             disc_number, album_name, track_name, video_id, artist_name, \
-                             embed_url, created_at) \
-                             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, {NOW}) \
-                             ON CONFLICT(album_id, disc_number, track_number) DO UPDATE SET \
-                             album_name = excluded.album_name, track_name = excluded.track_name, \
-                             video_id = excluded.video_id, artist_name = excluded.artist_name, \
-                             embed_url = excluded.embed_url, created_at = excluded.created_at"
-                        ),
+                        sql::SAVE_TRACK_LINK.text(),
                         params![
                             album.album_id,
                             track.track_number,
@@ -269,15 +225,7 @@ impl LinkStore {
                     )?;
                 }
                 tx.execute(
-                    &format!(
-                        "INSERT INTO youtube_links (album_id, video_id, album_name, artist_name, \
-                         embed_url, cover_url, created_at, is_manual, track_count) \
-                         VALUES (?1, NULL, ?2, ?3, NULL, ?4, {NOW}, 0, \
-                           (SELECT COUNT(*) FROM youtube_track_links WHERE album_id = ?1)) \
-                         ON CONFLICT(album_id) DO UPDATE SET \
-                         track_count = excluded.track_count, \
-                         cover_url = COALESCE(excluded.cover_url, youtube_links.cover_url)"
-                    ),
+                    sql::ENSURE_LINK.text(),
                     params![
                         album.album_id,
                         album.album_name,
@@ -300,53 +248,39 @@ impl LinkStore {
     }
 }
 
-fn link_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<YouTubeLink, sqlx::Error> {
+fn link_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<YouTubeLink> {
+    let row = sql::LinkColumns::read(row)?;
     Ok(YouTubeLink {
-        album_id: row.try_get("album_id")?,
-        video_id: row.try_get("video_id")?,
-        album_name: row.try_get("album_name")?,
-        artist_name: row.try_get("artist_name")?,
-        embed_url: row.try_get("embed_url")?,
-        cover_url: row.try_get("cover_url")?,
-        created_at: row.try_get("created_at")?,
-        is_manual: row.try_get::<i64, _>("is_manual")? != 0,
-        track_count: row.try_get("track_count")?,
+        album_id: row.album_id,
+        video_id: row.video_id,
+        album_name: row.album_name,
+        artist_name: row.artist_name,
+        embed_url: row.embed_url,
+        cover_url: row.cover_url,
+        created_at: row.created_at,
+        is_manual: row.is_manual,
+        track_count: row.track_count,
     })
 }
 
-fn track_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<YouTubeTrackLink, sqlx::Error> {
+fn track_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<YouTubeTrackLink> {
+    let row = sql::TrackColumns::read(row)?;
     Ok(YouTubeTrackLink {
-        album_id: row.try_get("album_id")?,
-        album_name: row.try_get("album_name")?,
-        disc_number: row.try_get("disc_number")?,
-        track_number: row.try_get("track_number")?,
-        track_name: row.try_get("track_name")?,
-        video_id: row.try_get("video_id")?,
-        artist_name: row.try_get("artist_name")?,
-        embed_url: row.try_get("embed_url")?,
-        created_at: row.try_get("created_at")?,
+        album_id: row.album_id,
+        album_name: row.album_name,
+        disc_number: row.disc_number,
+        track_number: row.track_number,
+        track_name: row.track_name,
+        video_id: row.video_id,
+        artist_name: row.artist_name,
+        embed_url: row.embed_url,
+        created_at: row.created_at,
     })
 }
 
 fn read_link(tx: &Transaction, album_id: &str) -> Result<Option<YouTubeLink>, DbError> {
     let link = tx
-        .query_row(
-            &format!("{LINK_SELECT} WHERE l.album_id = ?1"),
-            params![album_id],
-            |row| {
-                Ok(YouTubeLink {
-                    album_id: row.get("album_id")?,
-                    video_id: row.get("video_id")?,
-                    album_name: row.get("album_name")?,
-                    artist_name: row.get("artist_name")?,
-                    embed_url: row.get("embed_url")?,
-                    cover_url: row.get("cover_url")?,
-                    created_at: row.get("created_at")?,
-                    is_manual: row.get::<_, i64>("is_manual")? != 0,
-                    track_count: row.get("track_count")?,
-                })
-            },
-        )
+        .query_row(sql::LINK.text(), params![album_id], link_from_row)
         .optional()?;
     Ok(link)
 }
@@ -359,23 +293,9 @@ fn read_track(
 ) -> Result<Option<YouTubeTrackLink>, DbError> {
     let track = tx
         .query_row(
-            &format!(
-                "{TRACK_SELECT} WHERE album_id = ?1 AND disc_number = ?2 AND track_number = ?3"
-            ),
+            sql::TRACK_LINK.text(),
             params![album_id, disc_number, track_number],
-            |row| {
-                Ok(YouTubeTrackLink {
-                    album_id: row.get("album_id")?,
-                    album_name: row.get("album_name")?,
-                    disc_number: row.get("disc_number")?,
-                    track_number: row.get("track_number")?,
-                    track_name: row.get("track_name")?,
-                    video_id: row.get("video_id")?,
-                    artist_name: row.get("artist_name")?,
-                    embed_url: row.get("embed_url")?,
-                    created_at: row.get("created_at")?,
-                })
-            },
+            track_from_row,
         )
         .optional()?;
     Ok(track)

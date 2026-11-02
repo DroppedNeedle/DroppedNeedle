@@ -1,4 +1,4 @@
-//! Unified search over a migrated in-memory database behind the real
+//! Unified search over a migrated database behind the real
 //! session gate: ranked buckets, accent and case folding, drill-down
 //! paging, suggest, enrichment that degrades inside a 200, the auth row
 //! and the fixed 500 on a database fault.
@@ -136,7 +136,9 @@ async fn seed_catalog(pool: &SqlitePool) {
 }
 
 fn search_deps(pool: SqlitePool, enrichment: Arc<dyn EnrichmentPort>) -> SearchDeps {
-    SearchDeps::new(SearchService::new(pool), enrichment)
+    let db = droppedneedle_kernel::db::Db::open_for_tests(pool.connect_options().get_filename())
+        .expect("search database opens");
+    SearchDeps::new(SearchService::new(db), enrichment)
 }
 
 /// What a test's router needs alive: the rig its session lives in and the
@@ -656,9 +658,14 @@ async fn auth_matrix_row_401_without_bearer() {
 
 #[tokio::test]
 async fn leak_db_failure_renders_fixed_500_with_error_id() {
+    let dir = crate::common::ScratchDir::new("reads-search-no-schema");
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
-        .connect("sqlite::memory:")
+        .connect_with(
+            sqlx::sqlite::SqliteConnectOptions::new()
+                .filename(dir.join("app.db"))
+                .create_if_missing(true),
+        )
         .await
         .unwrap();
     let (app, _held) = app(pool, Arc::new(search::ports::UnconfiguredEnrichment)).await;

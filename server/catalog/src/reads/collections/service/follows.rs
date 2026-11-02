@@ -14,7 +14,6 @@ use crate::reads::collections::models::{
 use crate::reads::collections::state::AutoDownloadState;
 use crate::reads::collections::store::FollowStore;
 use crate::reads::collections::store::follows::{FollowRow, ReleaseFilter, ReleaseRow};
-use droppedneedle_auth::Role;
 
 /// Release log window in days: default and largest (v2 `/new-releases/recent`).
 const RECENT_DAYS_DEFAULT: u32 = 30;
@@ -38,13 +37,10 @@ fn page_size(value: Option<usize>, default: usize, max: usize) -> Result<usize, 
 /// A follow's state: intent off is off; on is active once approved or when
 /// the follower's role approves itself, pending otherwise.
 pub(crate) fn derive_state(row: &FollowRow) -> AutoDownloadState {
-    let verdict = row
-        .approval_state
-        .as_deref()
-        .map_or(AutoDownloadState::None, AutoDownloadState::from_approval);
+    let verdict = row.approval_state.unwrap_or(AutoDownloadState::None);
     if row.auto_download {
         // Curators approve themselves and carry no approval row, as in v2.
-        if Role::parse(&row.user_role).is_some_and(Role::is_curator) {
+        if row.user_role.is_curator() {
             AutoDownloadState::Approved
         } else {
             verdict

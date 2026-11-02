@@ -11,6 +11,7 @@
 pub mod handlers;
 pub mod models;
 pub mod service;
+pub(crate) mod sql;
 pub mod store;
 
 pub use handlers::routes;

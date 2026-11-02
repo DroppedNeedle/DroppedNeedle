@@ -104,16 +104,7 @@ impl TextSearch {
         Some(Self { fts, short_words })
     }
 
-    /// The predicate over alias `t`; bind [`Self::binds`] in order.
-    pub(crate) fn sql(&self) -> String {
-        let mut text = sql::TRACK_TEXT_MATCH.to_owned();
-        for _ in &self.short_words {
-            text.push_str(sql::TRACK_WORD_LIKE);
-        }
-        text
-    }
-
-    /// The binds for [`Self::sql`]: the FTS expression, then each short
+    /// The binds of the text match: the FTS expression, then each short
     /// word's pattern once per column.
     pub(crate) fn binds(&self) -> Vec<String> {
         let mut binds = vec![self.fts.clone()];

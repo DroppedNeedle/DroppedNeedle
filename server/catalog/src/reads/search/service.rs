@@ -19,16 +19,19 @@
 
 use std::time::Duration;
 
-use sqlx::{Row, SqlitePool};
+use droppedneedle_kernel::db::statement::ListLen;
+use droppedneedle_kernel::db::{Db, DbError};
+use rusqlite::params;
+use rusqlite::types::Value;
 
 use crate::reads::catalog::Catalog;
 use crate::reads::catalog::search::{RemoteBucket, RemoteHit, RemoteKind, RemoteState};
-use crate::reads::library::definitions::{musicbrainz, owned_album, owned_artist, recording_mbid};
 
 use super::models::{
     SearchBucketResponse, SearchKind, SearchRemoteStatus, SearchResponse, SearchResultItem,
     SearchScope, SearchTrackDetail, SuggestResponse, SuggestResult,
 };
+use super::sql;
 
 /// Score for an exact folded-title match. Also the top-result bar, kept
 /// from v2 (`TOP_RESULT_SCORE_THRESHOLD`).
@@ -84,11 +87,11 @@ pub struct BucketLimits {
     pub tracks: u32,
 }
 
-/// Unified search over one SQLite pool plus, when wired, MusicBrainz.
-/// Clone shares the pool handle and the catalog.
+/// Unified search over one database plus, when wired, MusicBrainz.
+/// Clone shares the database handle and the catalog.
 #[derive(Clone)]
 pub struct SearchService {
-    pool: SqlitePool,
+    db: Db,
     remote: Option<Catalog>,
 }
 
@@ -107,9 +110,9 @@ pub const FULL_SEARCH_DEADLINE: Duration = Duration::from_secs(6);
 pub const SUGGEST_DEADLINE: Duration = Duration::from_secs(3);
 
 impl SearchService {
-    /// Serve searches from this pool only.
-    pub fn new(pool: SqlitePool) -> Self {
-        Self { pool, remote: None }
+    /// Serve searches from this database only.
+    pub fn new(db: Db) -> Self {
+        Self { db, remote: None }
     }
 
     /// Also search MusicBrainz through this catalog.
@@ -130,7 +133,7 @@ impl SearchService {
         limits: BucketLimits,
         buckets: &[Bucket],
         scope: SearchScope,
-    ) -> Result<SearchResponse, sqlx::Error> {
+    ) -> Result<SearchResponse, DbError> {
         let folded = droppedneedle_kernel::db::fold::fold_text(query);
         if folded.is_empty() {
             return Ok(SearchResponse {
@@ -164,7 +167,7 @@ impl SearchService {
             } else {
                 Vec::new()
             };
-            Ok::<_, sqlx::Error>((artists, albums, tracks))
+            Ok::<_, DbError>((artists, albums, tracks))
         };
         let remote_artists = self.remote_bucket(
             Bucket::Artists,
@@ -216,7 +219,7 @@ impl SearchService {
         query: &str,
         limit: u32,
         offset: u32,
-    ) -> Result<SearchBucketResponse, sqlx::Error> {
+    ) -> Result<SearchBucketResponse, DbError> {
         let folded = droppedneedle_kernel::db::fold::fold_text(query);
         let (results, status) = if folded.is_empty() {
             (Vec::new(), SearchRemoteStatus::Ok)
@@ -246,7 +249,7 @@ impl SearchService {
         folded: &str,
         limit: u32,
         offset: u32,
-    ) -> Result<(Vec<SearchResultItem>, SearchRemoteStatus), sqlx::Error> {
+    ) -> Result<(Vec<SearchResultItem>, SearchRemoteStatus), DbError> {
         let remote = self
             .remote_bucket(
                 bucket,
@@ -311,7 +314,7 @@ impl SearchService {
     /// Merged typeahead across buckets, best first. MusicBrainz adds
     /// artists and albums (60% of the limit each, as in v2) under a short
     /// deadline. Short queries return empty; handlers enforce that first.
-    pub async fn suggest(&self, query: &str, limit: u32) -> Result<SuggestResponse, sqlx::Error> {
+    pub async fn suggest(&self, query: &str, limit: u32) -> Result<SuggestResponse, DbError> {
         let folded = droppedneedle_kernel::db::fold::fold_text(query);
         if folded.trim().len() < 2 {
             return Ok(SuggestResponse {
@@ -321,7 +324,7 @@ impl SearchService {
         }
         let remote_limit = (limit * 3).div_ceil(5);
         let local = async {
-            Ok::<_, sqlx::Error>((
+            Ok::<_, DbError>((
                 self.search_artists(&folded, limit).await?,
                 self.search_albums(&folded, limit).await?,
                 self.search_tracks(&folded, limit, 0).await?,
@@ -440,7 +443,7 @@ impl SearchService {
         &self,
         folded: &str,
         limit: u32,
-    ) -> Result<Vec<SearchResultItem>, sqlx::Error> {
+    ) -> Result<Vec<SearchResultItem>, DbError> {
         self.search_artists_page(folded, limit, 0).await
     }
 
@@ -451,45 +454,41 @@ impl SearchService {
         folded: &str,
         limit: u32,
         offset: u32,
-    ) -> Result<Vec<SearchResultItem>, sqlx::Error> {
-        let rows = sqlx::query(concat!(
-            "SELECT a.id, a.display_name, a.folded_name, e.provider_artist_id AS mbid, (",
-            owned_artist!("a"),
-            ") AS owned FROM local_artists a \
-             LEFT JOIN local_artist_external_identities e ON e.local_artist_id = a.id AND ",
-            musicbrainz!("e"),
-            " WHERE a.retired_into_artist_id IS NULL \
-             AND a.folded_name LIKE ? ESCAPE '\\' \
-             ORDER BY CASE WHEN a.folded_name = ? THEN 0 \
-             WHEN a.folded_name LIKE ? ESCAPE '\\' THEN 1 ELSE 2 END, \
-             a.folded_name ASC LIMIT ? OFFSET ?"
-        ))
-        .bind(like_contains(folded))
-        .bind(folded)
-        .bind(like_prefix(folded))
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(&self.pool)
-        .await?;
+    ) -> Result<Vec<SearchResultItem>, DbError> {
+        let (contains, exact, prefix) = (
+            like_contains(folded),
+            folded.to_owned(),
+            like_prefix(folded),
+        );
+        let rows = self
+            .db
+            .read("search.artists", move |conn| {
+                let rows = conn
+                    .prepare(sql::ARTIST_HITS.text())?
+                    .query_map(
+                        params![contains, exact, prefix, limit, offset],
+                        sql::ArtistHit::read,
+                    )?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                Ok::<_, DbError>(rows)
+            })
+            .await?;
         Ok(rows
-            .iter()
-            .map(|row| {
-                let name_folded: String = row.get("folded_name");
-                SearchResultItem {
-                    kind: SearchKind::Artist,
-                    id: Some(row.get("id")),
-                    title: row.get("display_name"),
-                    artist: None,
-                    year: None,
-                    musicbrainz_id: row.get("mbid"),
-                    in_library: row.get("owned"),
-                    requested: false,
-                    score: match_score(&name_folded, folded),
-                    disambiguation: None,
-                    type_info: None,
-                    art_missing: false,
-                    track: None,
-                }
+            .into_iter()
+            .map(|row| SearchResultItem {
+                kind: SearchKind::Artist,
+                id: Some(row.id),
+                title: row.display_name,
+                artist: None,
+                year: None,
+                musicbrainz_id: row.mbid,
+                in_library: row.owned,
+                requested: false,
+                score: match_score(&row.folded_name, folded),
+                disambiguation: None,
+                type_info: None,
+                art_missing: false,
+                track: None,
             })
             .collect())
     }
@@ -499,7 +498,7 @@ impl SearchService {
         &self,
         folded: &str,
         limit: u32,
-    ) -> Result<Vec<SearchResultItem>, sqlx::Error> {
+    ) -> Result<Vec<SearchResultItem>, DbError> {
         self.search_albums_page(folded, limit, 0).await
     }
 
@@ -511,51 +510,41 @@ impl SearchService {
         folded: &str,
         limit: u32,
         offset: u32,
-    ) -> Result<Vec<SearchResultItem>, sqlx::Error> {
-        let rows = sqlx::query(concat!(
-            "SELECT b.id, b.title, b.title_folded, b.album_artist_name, b.year, \
-             e.release_group_mbid AS mbid, (w.local_album_id IS NOT NULL) AS own_art \
-             FROM local_albums b \
-             LEFT JOIN local_album_artwork w ON w.local_album_id = b.id \
-             AND w.source IN ('folder','embedded') \
-             LEFT JOIN local_album_external_identities e ON e.local_album_id = b.id AND ",
-            musicbrainz!("e"),
-            " WHERE ",
-            owned_album!("b"),
-            " AND (b.title_folded LIKE ? ESCAPE '\\' \
-             OR COALESCE(b.album_artist_name_folded, '') LIKE ? ESCAPE '\\') \
-             ORDER BY CASE WHEN b.title_folded = ? THEN 0 \
-             WHEN b.title_folded LIKE ? ESCAPE '\\' THEN 1 ELSE 2 END, \
-             b.title_folded ASC LIMIT ? OFFSET ?"
-        ))
-        .bind(like_contains(folded))
-        .bind(like_contains(folded))
-        .bind(folded)
-        .bind(like_prefix(folded))
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(&self.pool)
-        .await?;
+    ) -> Result<Vec<SearchResultItem>, DbError> {
+        let (contains, exact, prefix) = (
+            like_contains(folded),
+            folded.to_owned(),
+            like_prefix(folded),
+        );
+        let rows = self
+            .db
+            .read("search.albums", move |conn| {
+                let rows = conn
+                    .prepare(sql::ALBUM_HITS.text())?
+                    .query_map(
+                        params![contains, contains, exact, prefix, limit, offset],
+                        sql::AlbumHit::read,
+                    )?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                Ok::<_, DbError>(rows)
+            })
+            .await?;
         Ok(rows
-            .iter()
-            .map(|row| {
-                let title_folded: String = row.get("title_folded");
-                let mbid: Option<String> = row.get("mbid");
-                SearchResultItem {
-                    kind: SearchKind::Album,
-                    id: Some(row.get("id")),
-                    title: row.get("title"),
-                    artist: row.get("album_artist_name"),
-                    year: row.get("year"),
-                    art_missing: art_missing(row.get("own_art"), mbid.as_deref()),
-                    musicbrainz_id: mbid,
-                    in_library: true,
-                    requested: false,
-                    score: match_score(&title_folded, folded),
-                    disambiguation: None,
-                    type_info: None,
-                    track: None,
-                }
+            .into_iter()
+            .map(|row| SearchResultItem {
+                kind: SearchKind::Album,
+                id: Some(row.id),
+                title: row.title,
+                artist: row.album_artist_name,
+                year: row.year,
+                art_missing: art_missing(row.own_art, row.mbid.as_deref()),
+                musicbrainz_id: row.mbid,
+                in_library: true,
+                requested: false,
+                score: match_score(&row.title_folded, folded),
+                disambiguation: None,
+                type_info: None,
+                track: None,
             })
             .collect())
     }
@@ -568,46 +557,44 @@ impl SearchService {
         folded: &str,
         limit: u32,
         offset: u32,
-    ) -> Result<Vec<SearchResultItem>, sqlx::Error> {
-        let (sql, binds) = song_query(folded, limit, offset);
-        let mut query = sqlx::query(&sql);
-        for bind in binds {
-            query = match bind {
-                SongBind::Text(text) => query.bind(text),
-                SongBind::Int(number) => query.bind(number),
-            };
-        }
-        let rows = query.fetch_all(&self.pool).await?;
+    ) -> Result<Vec<SearchResultItem>, DbError> {
+        let (text, binds) = song_query(folded, limit, offset);
+        let rows = self
+            .db
+            .read("search.tracks", move |conn| {
+                let rows = conn
+                    .prepare(&text)?
+                    .query_map(rusqlite::params_from_iter(binds), sql::SongHit::read)?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                Ok::<_, DbError>(rows)
+            })
+            .await?;
         Ok(rows
-            .iter()
-            .map(|row| {
-                let title_folded: String = row.get("title_folded");
-                let release_group_mbid: Option<String> = row.get("release_group_mbid");
-                SearchResultItem {
-                    kind: SearchKind::Track,
-                    id: Some(row.get("id")),
-                    title: row.get("title"),
-                    artist: row.get("artist_name"),
-                    year: row.get("year"),
-                    musicbrainz_id: row.get("mbid"),
-                    in_library: true,
-                    requested: false,
-                    score: song_score(&title_folded, folded),
-                    disambiguation: None,
-                    type_info: None,
-                    art_missing: art_missing(row.get("own_art"), release_group_mbid.as_deref()),
-                    track: Some(SearchTrackDetail {
-                        album_id: row.get("local_album_id"),
-                        album_title: row.get("album_title"),
-                        artist_id: row.get("artist_id"),
-                        release_group_mbid,
-                        disc_number: row.get("disc_number"),
-                        track_number: row.get("track_number"),
-                        duration_seconds: row.get("duration_seconds"),
-                        format: row.get("file_format"),
-                        cover_available: row.get("cover_available"),
-                    }),
-                }
+            .into_iter()
+            .map(|row| SearchResultItem {
+                kind: SearchKind::Track,
+                id: Some(row.id),
+                title: row.title,
+                artist: row.artist_name,
+                year: row.year,
+                musicbrainz_id: row.mbid,
+                in_library: true,
+                requested: false,
+                score: song_score(&row.title_folded, folded),
+                disambiguation: None,
+                type_info: None,
+                art_missing: art_missing(row.own_art, row.release_group_mbid.as_deref()),
+                track: Some(SearchTrackDetail {
+                    album_id: row.local_album_id,
+                    album_title: row.album_title,
+                    artist_id: row.artist_id,
+                    release_group_mbid: row.release_group_mbid,
+                    disc_number: row.disc_number,
+                    track_number: row.track_number,
+                    duration_seconds: row.duration_seconds,
+                    format: row.file_format,
+                    cover_available: row.cover_available,
+                }),
             })
             .collect())
     }
@@ -620,90 +607,45 @@ fn art_missing(own_art: bool, release_group_mbid: Option<&str>) -> bool {
     !own_art && release_group_mbid.is_none_or(|mbid| mbid.trim().is_empty())
 }
 
-/// One bind of [`song_query`]'s statement, in order.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum SongBind {
-    /// A text value.
-    Text(String),
-    /// An integer value.
-    Int(i64),
-}
-
 /// The song search statement for one page and its binds, in order.
 ///
 /// A query with a word of 3+ characters goes through the FTS index: every
 /// word must appear in the title, artist or album. One with only shorter
-/// words ("U2", "xx") matches a title prefix or an exact artist name, each
-/// through its own index: the prefix walk stops after the page's last row,
-/// since every prefix match outranks every other match and the walk runs in
-/// rank order. Either way the candidates drive the read: the availability
-/// test is kept off its index (`+`), which would otherwise walk every
-/// streamable track. Songs rank exact title, title prefix, title
-/// containing the query, then songs matched only through their artist or
-/// album; ties go by title, then id, so offset pages never repeat or skip
-/// a row.
-pub(crate) fn song_query(folded: &str, limit: u32, offset: u32) -> (String, Vec<SongBind>) {
-    let search = crate::reads::library::sqlite::TextSearch::parse(folded);
-    let mut binds: Vec<SongBind> = [
+/// words ("U2", "xx") goes through [`sql::SONG_HITS_SHORT`]. Either way the
+/// candidates drive the read: the availability test is kept off its index
+/// (`+`), which would otherwise walk every streamable track. Songs rank
+/// exact title, title prefix, title containing the query, then songs matched
+/// only through their artist or album; ties go by title, then artist, then
+/// id, so offset pages never repeat or skip a row.
+pub(crate) fn song_query(folded: &str, limit: u32, offset: u32) -> (String, Vec<Value>) {
+    let mut binds: Vec<Value> = [
         folded.to_owned(),
         like_prefix(folded),
         like_contains(folded),
     ]
     .into_iter()
-    .map(SongBind::Text)
+    .map(Value::Text)
     .collect();
-    let text = match &search {
+    let text = match crate::reads::library::sqlite::TextSearch::parse(folded) {
         Some(search) => {
-            binds.extend(search.binds().into_iter().map(SongBind::Text));
-            search.sql()
+            binds.extend(search.binds().into_iter().map(Value::Text));
+            sql::song_hits_words(ListLen::new(search.short_words.len()))
         }
         None => {
             binds.extend([
-                SongBind::Text(folded.to_owned()),
-                SongBind::Text(format!("{folded}\u{10FFFF}")),
-                SongBind::Int(i64::from(limit) + i64::from(offset)),
-                SongBind::Text(folded.to_owned()),
+                Value::Text(folded.to_owned()),
+                Value::Text(format!("{folded}\u{10FFFF}")),
+                Value::Integer(i64::from(limit) + i64::from(offset)),
+                Value::Text(folded.to_owned()),
             ]);
-            "t.rowid IN (SELECT rowid FROM (SELECT rowid FROM local_tracks \
-             WHERE availability = 'indexed' AND title_folded >= ? AND title_folded < ? \
-             ORDER BY title_folded, id LIMIT ?) \
-             UNION SELECT rowid FROM local_tracks \
-             WHERE availability = 'indexed' AND COALESCE(artist_name_folded, '') = ?)"
-                .to_owned()
+            sql::SONG_HITS_SHORT.text().to_owned()
         }
     };
     binds.extend([
-        SongBind::Int(i64::from(limit)),
-        SongBind::Int(i64::from(offset)),
+        Value::Integer(i64::from(limit)),
+        Value::Integer(i64::from(offset)),
     ]);
-    let order = "tier, t.title_folded, t.id";
-    let sql = format!(
-        "SELECT t.id, t.title, t.title_folded, t.artist_name, t.year, t.local_album_id, \
-         t.album_title, t.disc_number, t.track_number, t.duration_seconds, t.file_format, \
-         {recording} AS mbid, ae.release_group_mbid AS release_group_mbid, \
-         (w.local_album_id IS NOT NULL) AS cover_available, \
-         COALESCE(w.source IN ('folder','embedded'), 0) AS own_art, \
-         (SELECT ta.local_artist_id FROM local_track_artists ta \
-          WHERE ta.local_track_id = t.id ORDER BY ta.position LIMIT 1) AS artist_id \
-         FROM (SELECT t.rowid AS hit, \
-               CASE WHEN t.title_folded = ? THEN 0 \
-               WHEN t.title_folded LIKE ? ESCAPE '\\' THEN 1 \
-               WHEN t.title_folded LIKE ? ESCAPE '\\' THEN 2 ELSE 3 END AS tier \
-               FROM local_tracks t \
-               WHERE +t.availability = 'indexed' AND {text} \
-               ORDER BY {order} LIMIT ? OFFSET ?) p \
-         JOIN local_tracks t ON t.rowid = p.hit \
-         LEFT JOIN local_track_external_identities e \
-         ON e.local_track_id = t.id AND {provider} \
-         LEFT JOIN local_album_external_identities ae \
-         ON ae.local_album_id = t.local_album_id AND {album_provider} \
-         LEFT JOIN local_album_artwork w ON w.local_album_id = t.local_album_id \
-         ORDER BY p.{order}",
-        recording = recording_mbid!("e", "t"),
-        provider = musicbrainz!("e"),
-        album_provider = musicbrainz!("ae"),
-    );
-    (sql, binds)
+    (text, binds)
 }
 
 /// LIKE pattern matching rows containing the folded query. Wildcards in

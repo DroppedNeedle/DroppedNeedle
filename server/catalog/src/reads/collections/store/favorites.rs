@@ -7,10 +7,11 @@
 
 use std::collections::HashMap;
 
-use rusqlite::params;
-use sqlx::Row as _;
+use droppedneedle_kernel::db::statement::ListLen;
+use rusqlite::{params, params_from_iter};
 
-use super::super::db::{CollectionsDb, StoreError, placeholders};
+use super::super::db::{CollectionsDb, StoreError};
+use super::super::sql;
 
 /// Kinds the table accepts (its CHECK constraint).
 pub const KINDS: [&str; 3] = ["album", "artist", "track"];
@@ -46,32 +47,25 @@ impl FavoriteStore {
         user_id: &str,
         kind: Option<&str>,
     ) -> Result<Vec<FavoriteRow>, StoreError> {
-        let pool = self.db.pool()?;
-        let rows = sqlx::query(
-            "SELECT f.item_kind AS item_kind, f.item_id AS item_id, \
-             n.display_name AS display_name, f.created_at AS created_at \
-             FROM library_user_favorites f LEFT JOIN library_user_favorite_names n \
-             ON n.user_id = f.user_id AND n.item_kind = f.item_kind AND n.item_id = f.item_id \
-             WHERE f.user_id = ? AND (? IS NULL OR f.item_kind = ?) \
-             ORDER BY f.created_at DESC, f.item_kind, f.item_id",
-        )
-        .bind(user_id)
-        .bind(kind)
-        .bind(kind)
-        .fetch_all(pool)
-        .await
-        .map_err(|error| StoreError::read("favorites.list", error))?;
-        rows.iter()
-            .map(|row| {
-                Ok(FavoriteRow {
-                    kind: row.try_get("item_kind")?,
-                    item_id: row.try_get("item_id")?,
-                    name: row.try_get("display_name")?,
-                    created_at: row.try_get("created_at")?,
-                })
+        let user_id = user_id.to_owned();
+        let kind = kind.map(str::to_owned);
+        self.db
+            .read("favorites.list", move |conn| {
+                let rows = conn
+                    .prepare(sql::FAVORITES.text())?
+                    .query_map(params![user_id, kind], |row| {
+                        let row = sql::FavoriteColumns::read(row)?;
+                        Ok(FavoriteRow {
+                            kind: row.item_kind,
+                            item_id: row.item_id,
+                            name: row.display_name,
+                            created_at: row.created_at,
+                        })
+                    })?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                Ok(rows)
             })
-            .collect::<Result<Vec<_>, sqlx::Error>>()
-            .map_err(|error| StoreError::read("favorites.list", error))
+            .await
     }
 
     /// When each of `ids` was favorited, for the ones that are.
@@ -85,31 +79,24 @@ impl FavoriteStore {
         if ids.is_empty() {
             return Ok(out);
         }
-        let pool = self.db.pool()?;
         // Chunked to stay under SQLite's bound-parameter limit.
         for chunk in ids.chunks(500) {
-            let sql = format!(
-                "SELECT item_id, created_at FROM library_user_favorites \
-                 WHERE user_id = ? AND item_kind = ? AND item_id IN ({})",
-                placeholders(chunk.len())
-            );
-            let mut query = sqlx::query(&sql).bind(user_id).bind(kind);
-            for id in chunk {
-                query = query.bind(id);
-            }
-            let rows = query
-                .fetch_all(pool)
-                .await
-                .map_err(|error| StoreError::read("favorites.starred_at", error))?;
-            for row in &rows {
-                let id: String = row
-                    .try_get("item_id")
-                    .map_err(|error| StoreError::read("favorites.starred_at", error))?;
-                let at: f64 = row
-                    .try_get("created_at")
-                    .map_err(|error| StoreError::read("favorites.starred_at", error))?;
-                out.insert(id, at);
-            }
+            let mut binds = vec![user_id.to_owned(), kind.to_owned()];
+            binds.extend_from_slice(chunk);
+            let text = sql::starred_at(ListLen::new(chunk.len()));
+            let rows = self
+                .db
+                .read("favorites.starred_at", move |conn| {
+                    let rows = conn
+                        .prepare(&text)?
+                        .query_map(params_from_iter(binds), |row| {
+                            Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?))
+                        })?
+                        .collect::<rusqlite::Result<Vec<_>>>()?;
+                    Ok(rows)
+                })
+                .await?;
+            out.extend(rows);
         }
         Ok(out)
     }
@@ -131,17 +118,8 @@ impl FavoriteStore {
         self.db
             .write("favorites.apply", move |tx| {
                 if add {
-                    let mut favorite = tx.prepare(
-                        "INSERT INTO library_user_favorites \
-                         (user_id, item_kind, item_id, created_at) VALUES (?1, ?2, ?3, ?4) \
-                         ON CONFLICT (user_id, item_kind, item_id) DO NOTHING",
-                    )?;
-                    let mut named = tx.prepare(
-                        "INSERT INTO library_user_favorite_names \
-                         (user_id, item_kind, item_id, display_name) VALUES (?1, ?2, ?3, ?4) \
-                         ON CONFLICT (user_id, item_kind, item_id) DO UPDATE SET \
-                         display_name = excluded.display_name",
-                    )?;
+                    let mut favorite = tx.prepare(sql::ADD_FAVORITE.text())?;
+                    let mut named = tx.prepare(sql::NAME_FAVORITE.text())?;
                     for (kind, id, name) in &targets {
                         favorite.execute(params![user_id, kind, id, now])?;
                         if let Some(name) = name {
@@ -151,14 +129,8 @@ impl FavoriteStore {
                 } else {
                     // Names go first: the cascade needs foreign keys on,
                     // and this keeps the rows clean either way.
-                    let mut unnamed = tx.prepare(
-                        "DELETE FROM library_user_favorite_names \
-                         WHERE user_id = ?1 AND item_kind = ?2 AND item_id = ?3",
-                    )?;
-                    let mut stmt = tx.prepare(
-                        "DELETE FROM library_user_favorites \
-                         WHERE user_id = ?1 AND item_kind = ?2 AND item_id = ?3",
-                    )?;
+                    let mut unnamed = tx.prepare(sql::UNNAME_FAVORITE.text())?;
+                    let mut stmt = tx.prepare(sql::REMOVE_FAVORITE.text())?;
                     for (kind, id, _) in &targets {
                         unnamed.execute(params![user_id, kind, id])?;
                         stmt.execute(params![user_id, kind, id])?;

@@ -2,12 +2,8 @@
 # The gate in tests/server/persist_schema.rs skips them. An area that moves
 # its statements into sql.rs deletes its line.
 auth/src/
-catalog/src/reads/collections/
 catalog/src/reads/discover/
 catalog/src/reads/library/definitions.rs
-catalog/src/reads/platform/
-catalog/src/reads/search/
-catalog/src/reads/youtube/
 compat/src/
 kernel/src/events/
 kernel/src/jobs/

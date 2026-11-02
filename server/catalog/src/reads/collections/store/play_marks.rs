@@ -7,6 +7,7 @@
 use rusqlite::params;
 
 use super::super::db::{CollectionsDb, StoreError};
+use super::super::sql::{self, MarkTracks};
 
 /// What a mark covers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -45,37 +46,16 @@ impl PlayMarkStore {
     ) -> Result<(), StoreError> {
         let user_id = user_id.to_owned();
         let (tracks, id) = match scope {
-            MarkScope::Track(id) => ("SELECT id FROM local_tracks WHERE id = ?3", id),
-            MarkScope::Album(id) => (
-                "SELECT id FROM local_tracks WHERE local_album_id = ?3 \
-                 AND id NOT IN (SELECT alias FROM local_track_aliases)",
-                id,
-            ),
-            MarkScope::AlbumArtist(id) => (
-                "SELECT t.id FROM local_tracks t JOIN local_albums a ON a.id = t.local_album_id \
-                 WHERE t.availability = 'indexed' AND a.album_artist_id = ?3",
-                id,
-            ),
+            MarkScope::Track(id) => (MarkTracks::Track, id),
+            MarkScope::Album(id) => (MarkTracks::Album, id),
+            MarkScope::AlbumArtist(id) => (MarkTracks::AlbumArtist, id),
         };
-        let (values, update) = if played {
-            ("?2, NULL", "marked_played_at = excluded.marked_played_at")
-        } else {
-            (
-                "NULL, ?2",
-                "marked_unplayed_at = excluded.marked_unplayed_at, marked_played_at = NULL",
-            )
-        };
-        let sql = format!(
-            "INSERT INTO library_user_play_marks \
-             (user_id, local_track_id, marked_played_at, marked_unplayed_at) \
-             SELECT ?1, id, {values} FROM ({tracks}) WHERE true \
-             ON CONFLICT (user_id, local_track_id) DO UPDATE SET {update}"
-        );
+        let text = sql::mark_play(tracks, played);
         let id = id.to_owned();
         let now_ms = self.db.now_ms();
         self.db
             .write("play_marks.mark", move |tx| {
-                tx.execute(&sql, params![user_id, now_ms, id])?;
+                tx.execute(&text, params![user_id, now_ms, id])?;
                 Ok(())
             })
             .await
