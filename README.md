@@ -282,6 +282,7 @@ Behind a reverse proxy, list the proxy in `TRUSTED_PROXY_IPS` and have it pass `
 | `LIBRARY_DB_PATH` | `/app/cache/library.db` | The database file; backups go in `backups/` and Undo's saved copies in `undo/` next to it. `droppedneedle-tool restore` writes a backup back under this file name |
 | `CONFIG_DIR` | `/app/config` | Holds `data_enc.key`, the key that seals stored secrets. Replaces `CONFIG_FILE_PATH`, which now stops the start: set `CONFIG_DIR` to that file's folder |
 | `DROPPEDNEEDLE_STATIC_DIR` | `/app/static` | The web UI build shipped in the image |
+| `TMPDIR` | `/tmp` | Folder for plugin stream spools, up to 2 GB at once |
 
 </details>
 

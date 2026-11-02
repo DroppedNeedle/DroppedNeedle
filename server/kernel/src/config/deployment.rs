@@ -112,6 +112,11 @@ pub const DEPLOYMENT_VARS: &[DeploymentVar] = &[
         note: "Timezone name shown next to scan schedules.",
     },
     DeploymentVar {
+        env_name: "TMPDIR",
+        default: "/tmp",
+        note: "Folder for plugin stream spools.",
+    },
+    DeploymentVar {
         env_name: "CONTACT_EMAIL",
         default: "contact@droppedneedle.com",
         note: "Contact address in the outbound User-Agent; MusicBrainz asks for one.",

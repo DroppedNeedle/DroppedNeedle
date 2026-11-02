@@ -353,7 +353,8 @@ pub async fn change_password(
             message: "No local password is set for this account".to_owned(),
         })?;
     if !check_password(deps, current_password, &local.scheme, &local.hash).await? {
-        return Err(UsersError::Unauthorized {
+        // Not a 401: the session is fine, and the web UI signs out on a 401.
+        return Err(UsersError::InvalidInput {
             message: "Current password is incorrect".to_owned(),
         });
     }

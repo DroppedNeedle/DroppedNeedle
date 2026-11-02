@@ -146,10 +146,9 @@ impl FederatedUsers {
         let lane = self.db.lane();
         let id = self.ids.new_id();
         let binding_id = self.ids.new_id();
-        let sealed = self
-            .crypto
-            .encrypt(&user.token_json)
-            .map_err(|error| store_unavailable(format!("cannot seal provider tokens: {error}")))?;
+        let sealed = self.crypto.encrypt(&user.token_json).map_err(|error| {
+            FederatedError::StoreUnavailable(format!("cannot seal provider tokens: {error}"))
+        })?;
         let created = secs_to_ms(self.db.now_unix());
         let row = user.clone();
         let row_id = id.clone();
@@ -219,10 +218,9 @@ impl FederatedUsers {
         token_json: &str,
     ) -> Result<ProviderBinding, FederatedError> {
         let lane = self.db.lane();
-        let sealed = self
-            .crypto
-            .encrypt(token_json)
-            .map_err(|error| store_unavailable(format!("cannot seal provider tokens: {error}")))?;
+        let sealed = self.crypto.encrypt(token_json).map_err(|error| {
+            FederatedError::StoreUnavailable(format!("cannot seal provider tokens: {error}"))
+        })?;
         let (id, user_id, provider, provider_uid) = (
             self.ids.new_id(),
             user_id.to_owned(),
@@ -262,10 +260,9 @@ impl FederatedUsers {
         token_json: &str,
     ) -> Result<(), FederatedError> {
         let lane = self.db.lane();
-        let sealed = self
-            .crypto
-            .encrypt(token_json)
-            .map_err(|error| store_unavailable(format!("cannot seal provider tokens: {error}")))?;
+        let sealed = self.crypto.encrypt(token_json).map_err(|error| {
+            FederatedError::StoreUnavailable(format!("cannot seal provider tokens: {error}"))
+        })?;
         let binding_id = binding_id.to_owned();
         lane.write(Lane::Foreground, "auth.federated.rotate", move |tx| {
             tx.execute(

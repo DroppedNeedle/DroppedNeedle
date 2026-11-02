@@ -173,7 +173,7 @@ impl MediaSetup {
         let (db, app_config, config) = (&platform.db, &platform.config, &*platform.settings);
         let (http_factory, ids) = (&platform.http, platform.ids.clone());
         let http = http_factory.shared().clone();
-        crate::stream::plugin_url::sweep_stale_spools();
+        crate::stream::plugin_url::sweep_stale_spools(&app_config.temp_dir);
         let library = LibraryFiles::new(db.clone(), library_roots);
         let download = DownloadState::new(Some(library.clone()), config.live());
         let resolver = remotes;
@@ -204,7 +204,11 @@ impl MediaSetup {
         )
         .with_settings(config.live())
         .with_library(library)
-        .with_plugins(plugins.clone(), http_factory.direct_no_redirect().clone());
+        .with_plugins(
+            plugins.clone(),
+            http_factory.direct_no_redirect().clone(),
+            app_config.temp_dir.clone(),
+        );
         let stream = StreamState {
             engine: Arc::new(gateway),
         };

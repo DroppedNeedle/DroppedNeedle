@@ -111,7 +111,7 @@ impl LibrarySettings {
 /// The zone daily scans run in: `TZ` as an IANA name from the system zone
 /// database or a POSIX rule, else the host's own zone (`/etc/localtime`).
 /// One that does not resolve logs a warning and falls back to UTC.
-fn schedule_zone(configured: Option<&str>) -> TimeZone {
+pub fn schedule_zone(configured: Option<&str>) -> TimeZone {
     let resolved = match configured.map(|name| name.trim().trim_start_matches(':')) {
         Some(name) => TimeZone::get(name).or_else(|_| TimeZone::posix(name)),
         None => TimeZone::try_system(),

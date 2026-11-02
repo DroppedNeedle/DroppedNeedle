@@ -146,7 +146,12 @@ pub async fn put_email(
     tag = "users",
     path = "/api/v3/me/password",
     request_body = PasswordChange,
-    responses((status = 200, description = "Updated account", body = UserResponse))
+    responses(
+        (status = 200, description = "Updated account", body = UserResponse),
+        (status = 400, description = "Current password is incorrect, or the new one is refused"),
+        (status = 401, description = "Missing or invalid session"),
+        (status = 409, description = "The account has no local password")
+    )
 )]
 pub async fn post_password(
     State(deps): State<UsersDeps>,

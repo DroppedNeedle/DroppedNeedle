@@ -15,8 +15,6 @@
 
 use std::sync::Arc;
 
-use droppedneedle_kernel::clock::Clock;
-
 use super::effects::Effects;
 use super::models::{
     DownloadPolicyView, IndexerSavedResponse, IndexerTestResponse, JellyfinUserInfo,
@@ -57,18 +55,15 @@ pub struct SettingsService {
     pub timezone: Option<String>,
     /// Connection probes behind the verify methods.
     probes: Arc<dyn VerifyProbes>,
-    /// Wall time, which picks the zone label (summer or winter time).
-    clock: Arc<dyn Clock>,
 }
 
 impl SettingsService {
-    /// Build over the shared store, effects, ids, probes and clock.
+    /// Build over the shared store, effects, ids and probes.
     pub fn new(
         store: Arc<ConfigStore>,
         effects: Effects,
         ids: Arc<dyn IdGenerator>,
         probes: Arc<dyn VerifyProbes>,
-        clock: Arc<dyn Clock>,
     ) -> Self {
         Self {
             store,
@@ -76,7 +71,6 @@ impl SettingsService {
             ids,
             timezone: None,
             probes,
-            clock,
         }
     }
 
@@ -169,7 +163,7 @@ impl SettingsService {
     pub fn get_schedule(&self) -> Result<LibraryScanScheduleResponse, SettingsError> {
         Ok(LibraryScanScheduleResponse {
             schedule: self.get()?,
-            server_timezone: server_timezone(self.timezone.as_deref(), self.clock.now_unix()),
+            server_timezone: server_timezone(self.timezone.as_deref()),
             last_scan_at: None,
         })
     }
@@ -181,7 +175,7 @@ impl SettingsService {
     ) -> Result<LibraryScanScheduleResponse, SettingsError> {
         Ok(LibraryScanScheduleResponse {
             schedule: self.save(schedule).await?,
-            server_timezone: server_timezone(self.timezone.as_deref(), self.clock.now_unix()),
+            server_timezone: server_timezone(self.timezone.as_deref()),
             last_scan_at: None,
         })
     }
@@ -722,37 +716,14 @@ fn policy_view(policy: DownloadPolicy) -> DownloadPolicyView {
     }
 }
 
-/// Server-local timezone label for the daily-scan picker. Prefers the
-/// configured IANA name (`TZ`), else the local abbreviation, else
-/// "server time".
-pub fn server_timezone(configured: Option<&str>, now_unix: i64) -> String {
+/// Server-local timezone label for the daily-scan picker: the configured
+/// `TZ`, else the system zone's name, else "UTC".
+pub fn server_timezone(configured: Option<&str>) -> String {
     if let Some(tz) = configured {
         return tz.to_owned();
     }
-    local_timezone_label(now_unix).unwrap_or_else(|| "server time".to_owned())
-}
-
-fn local_timezone_label(now_unix: i64) -> Option<String> {
-    // libc localtime names the zone the same C library call v2's tzname
-    // bottoms out in; only the abbreviation is used, never the offset.
-    let now = libc::time_t::try_from(now_unix).ok()?;
-    let mut broken = std::mem::MaybeUninit::<libc::tm>::zeroed();
-    // SAFETY: localtime_r writes only into the caller-owned `broken`
-    // struct; a null return means the input was out of range.
-    let filled = unsafe { libc::localtime_r(&now, broken.as_mut_ptr()) };
-    if filled.is_null() {
-        return None;
-    }
-    let zone = unsafe { (*filled).tm_zone };
-    if zone.is_null() {
-        return None;
-    }
-    // SAFETY: tm_zone points at static storage that localtime_r owns; it
-    // is a NUL-terminated C string for the process lifetime.
-    let name = unsafe { std::ffi::CStr::from_ptr(zone) }.to_str().ok()?;
-    if name.is_empty() {
-        None
-    } else {
-        Some(name.to_owned())
-    }
+    droppedneedle_library::settings::schedule_zone(None)
+        .iana_name()
+        .unwrap_or("UTC")
+        .to_owned()
 }

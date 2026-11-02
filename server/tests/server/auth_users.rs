@@ -9,7 +9,7 @@ use std::sync::Arc;
 use axum::{
     Router,
     body::Body,
-    http::{Request, StatusCode},
+    http::{HeaderMap, Request, StatusCode},
     middleware,
     routing::post,
 };
@@ -53,7 +53,18 @@ fn principal_for(user: &models::UserRecord, session_id: &str) -> Principal {
 /// One request, asked again while the app answers busy: a busy answer did
 /// nothing, so on a loaded host the test still sees the real verdict.
 async fn call(app: Router, method: &str, uri: &str, body: Option<Value>) -> (StatusCode, Value) {
-    let (status, _, body) = crate::common::through_busy(|| {
+    let (status, _, body) = call_with_headers(app, method, uri, body).await;
+    (status, body)
+}
+
+/// [`call`] with the answer's headers.
+async fn call_with_headers(
+    app: Router,
+    method: &str,
+    uri: &str,
+    body: Option<Value>,
+) -> (StatusCode, HeaderMap, Value) {
+    crate::common::through_busy(|| {
         let mut builder = Request::builder().method(method).uri(uri);
         let body = match &body {
             Some(json) => {
@@ -77,8 +88,7 @@ async fn call(app: Router, method: &str, uri: &str, body: Option<Value>) -> (Sta
             )
         }
     })
-    .await;
-    (status, body)
+    .await
 }
 
 #[tokio::test]
@@ -90,14 +100,17 @@ async fn password_change_needs_the_current_one_and_ends_other_sessions() {
         Some(json!({"current_password": current, "new_password": next}))
     };
 
-    let (status, _) = call(
+    // Not a 401: the web UI signs out on one, and the session is fine.
+    let (status, headers, body) = call_with_headers(
         app(),
         "POST",
         "/api/v3/me/password",
         change("wrong password here", OTHER_PASSWORD),
     )
     .await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(!headers.contains_key("www-authenticate"));
+    assert_eq!(body["error"]["code"], "INVALID_INPUT");
     let (status, _) = call(
         app(),
         "POST",

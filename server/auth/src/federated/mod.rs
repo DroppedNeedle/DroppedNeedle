@@ -60,7 +60,8 @@ use droppedneedle_providers::web_address::web_address;
 /// handler layer: `Authentication` is 401 on login routes (403 on the Plex
 /// poll, v2 parity), `NotConfigured`, `ProviderUnavailable` and `Paced` are
 /// 503,
-/// `StoreUnavailable` and `RngUnavailable` are 500 with a fixed body.
+/// `Busy` is the closed-list "server busy" 503, and `StoreUnavailable` and
+/// `RngUnavailable` are 500 with a fixed body.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum FederatedError {
     /// Bad credential, bad/expired state or exchange code, rejected
@@ -87,6 +88,9 @@ pub enum FederatedError {
     /// Local persistence failed.
     #[error("store unavailable: {0}")]
     StoreUnavailable(String),
+    /// The database was too busy to answer in time. Nothing was written.
+    #[error("store busy")]
+    Busy,
     /// A username insert raced a concurrent create; the caller re-derives.
     #[error("username taken")]
     UsernameTaken,

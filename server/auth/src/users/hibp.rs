@@ -2,15 +2,17 @@
 //!
 //! Priority, unchanged: a local hash-ordered file when configured, else the
 //! free k-anonymity range API (only the first 5 SHA-1 hex chars leave the
-//! server). Screening is fail-open: missing files and transport faults log
-//! and allow; only a corpus hit rejects. The HTTP call sits behind
-//! [`HibpHttp`] so tests never touch the network.
+//! server). Screening is fail-open, so a set-up never fails because an outside
+//! site is down: missing files and transport faults allow, logged once per
+//! change between reachable and unreachable; only a corpus hit rejects. The
+//! HTTP call sits behind [`HibpHttp`] so tests never touch the network.
 //!
 //! SHA-1 is implemented here (~60 lines, NIST-vector tested) because no
 //! SHA-1 crate is depended on for this alone. It serves only HIBP lookups, never security decisions.
 
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::stores::BoxFuture;
 use droppedneedle_kernel::runtime_config::Live;
@@ -129,12 +131,19 @@ impl HibpHttp for PwnedPasswordsHttp {
 pub struct HibpScreen {
     http: Arc<dyn HibpHttp>,
     settings: Live<SecuritySettings>,
+    /// Whether the last check could read its source, so the warning is
+    /// logged when that changes and not on every set-up.
+    reachable: Arc<AtomicBool>,
 }
 
 impl HibpScreen {
     /// Build over one HTTP seam and the live `security` section.
     pub fn new(http: Arc<dyn HibpHttp>, settings: Live<SecuritySettings>) -> Self {
-        Self { http, settings }
+        Self {
+            http,
+            settings,
+            reachable: Arc::new(AtomicBool::new(true)),
+        }
     }
 
     /// True when the password appears in the corpus. Screening is off when
@@ -152,43 +161,47 @@ impl HibpScreen {
             return false;
         };
         let digest = sha1_hex_upper(password.as_bytes());
-        if !local_path.is_empty() {
-            return screen_local_file(&local_path, &digest).await;
-        }
-        let prefix = digest[..RANGE_PREFIX_LEN].to_owned();
-        let suffix = digest[RANGE_PREFIX_LEN..].to_owned();
-        match self.http.range(&prefix).await {
-            Ok(suffixes) => suffixes.contains(&suffix),
-            Err(_) => {
-                tracing::warn!(
-                    "pwnedpasswords range check failed; proceeding without breach check"
-                );
+        let checked = if local_path.is_empty() {
+            let prefix = &digest[..RANGE_PREFIX_LEN];
+            let suffix = &digest[RANGE_PREFIX_LEN..];
+            self.http
+                .range(prefix)
+                .await
+                .map(|suffixes| suffixes.contains(suffix))
+                .map_err(|_| "pwnedpasswords range check failed".to_owned())
+        } else {
+            screen_local_file(&local_path, &digest).await
+        };
+        let was_reachable = self.reachable.swap(checked.is_ok(), Ordering::Relaxed);
+        match checked {
+            Ok(hit) => {
+                if !was_reachable {
+                    tracing::info!("breach check is reachable again");
+                }
+                hit
+            }
+            Err(cause) => {
+                if was_reachable {
+                    tracing::warn!(%cause, "proceeding without breach check until it is reachable");
+                }
                 false
             }
         }
     }
 }
 
-/// Screen against a local hash-ordered HIBP file. Missing file fails open
-/// (the operator opted out of API calls); IO faults mid-search also fail
-/// open with a warning, exactly like v2.
-async fn screen_local_file(path: &str, digest: &str) -> bool {
+/// Screen against a local hash-ordered HIBP file. The error is why it could
+/// not be read: a missing file, or an IO fault mid-search.
+async fn screen_local_file(path: &str, digest: &str) -> Result<bool, String> {
     if !std::path::Path::new(path).is_file() {
-        tracing::warn!("HIBP local path configured but file not found; skipping breach check");
-        return false;
+        return Err("HIBP local path configured but file not found".to_owned());
     }
     let owned_path = path.to_owned();
     let owned_digest = digest.to_owned();
-    let found =
-        tokio::task::spawn_blocking(move || search_sorted_file(&owned_path, &owned_digest)).await;
-    match found {
-        Ok(Ok(hit)) => hit,
-        Ok(Err(cause)) => {
-            tracing::warn!(%cause, "HIBP local file search failed; proceeding without breach check");
-            false
-        }
-        Err(_) => false,
-    }
+    tokio::task::spawn_blocking(move || search_sorted_file(&owned_path, &owned_digest))
+        .await
+        .map_err(|cause| format!("HIBP local file search stopped: {cause}"))?
+        .map_err(|cause| format!("HIBP local file search failed: {cause}"))
 }
 
 /// Binary-search a `HASH:COUNT` file ordered ascending by hash. Seeks to
@@ -282,25 +295,21 @@ mod tests {
         );
     }
 
-    /// Minimal temp-file guard without new dependencies.
-    struct TempGuard {
-        path: std::path::PathBuf,
-    }
-    impl Drop for TempGuard {
+    /// A test's own temp folder, removed when dropped.
+    struct TempFolder(std::path::PathBuf);
+    impl Drop for TempFolder {
         fn drop(&mut self) {
-            let _ = std::fs::remove_file(&self.path);
+            let _ = std::fs::remove_dir_all(&self.0);
         }
     }
-    fn tempfile_path_guard() -> TempGuard {
-        let path = std::env::temp_dir().join(format!(
-            "dn-hibp-test-{}-{}.txt",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        TempGuard { path }
+
+    /// A hash file of `lines` in a folder no other test shares.
+    fn hash_file(test: &str, lines: &str) -> (TempFolder, String) {
+        let dir = std::env::temp_dir().join(format!("dn-hibp-{test}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("hashes.txt");
+        std::fs::write(&path, lines).unwrap();
+        (TempFolder(dir), path.to_string_lossy().into_owned())
     }
 
     #[test]
@@ -312,9 +321,7 @@ mod tests {
             "7C4A8D09CA3762AF61E59520943DC26494F8941B:4218065",
             "FFFFFZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ:2",
         ];
-        let guard = tempfile_path_guard();
-        std::fs::write(&guard.path, hashes.join("\n")).unwrap();
-        let path = guard.path.to_string_lossy().into_owned();
+        let (_dir, path) = hash_file("edges", &hashes.join("\n"));
         for line in &hashes {
             let hash = line.split(':').next().unwrap();
             assert!(search_sorted_file(&path, hash).unwrap(), "missed {hash}");
@@ -326,9 +333,7 @@ mod tests {
 
     #[test]
     fn file_search_on_empty_file_misses() {
-        let guard = tempfile_path_guard();
-        std::fs::write(&guard.path, "").unwrap();
-        let path = guard.path.to_string_lossy().into_owned();
+        let (_dir, path) = hash_file("empty", "");
         assert!(!search_sorted_file(&path, "5BAA61E4C9B93F3F0682250B6CF8331B7EE68FD8").unwrap());
     }
 }

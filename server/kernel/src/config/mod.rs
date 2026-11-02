@@ -82,6 +82,8 @@ pub struct AppConfig {
     pub log_filter: String,
     /// IANA timezone name from `TZ`, shown next to scan schedules.
     pub timezone: Option<String>,
+    /// Folder for plugin stream spools (`TMPDIR`, else `/tmp`).
+    pub temp_dir: PathBuf,
     /// Outbound HTTP timeouts, pool size and User-Agent contact.
     pub http: HttpSettings,
     /// Bound on draining connections and stopping background work.
@@ -134,6 +136,7 @@ impl AppConfig {
             slskd_downloads_path: PathBuf::from(DEFAULT_SLSKD_DOWNLOADS_PATH),
             log_filter: "info".to_owned(),
             timezone: None,
+            temp_dir: PathBuf::from("/tmp"),
             http: HttpSettings::default(),
             shutdown_grace: DEFAULT_SHUTDOWN_GRACE,
             discover_warmer: true,
@@ -224,6 +227,9 @@ impl AppConfig {
         let level = log_filter_for(env("LOG_LEVEL").as_deref())?;
         config.log_filter = env("RUST_LOG").unwrap_or(level);
         config.timezone = env("TZ");
+        if let Some(dir) = path("TMPDIR") {
+            config.temp_dir = dir;
+        }
         if let Some(seconds) = env("HTTP_TIMEOUT") {
             config.http.timeout = parse_seconds("HTTP_TIMEOUT", &seconds)?;
         }

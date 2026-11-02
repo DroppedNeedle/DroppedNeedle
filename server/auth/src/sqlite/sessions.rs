@@ -470,7 +470,10 @@ impl Sessions {
             user_agent: user_agent.map(str::to_owned),
         })
         .await
-        .map_err(|error| store_unavailable(format!("cannot store session: {error}")))?;
+        .map_err(|error| match error {
+            SessionStoreError::Busy => FederatedError::Busy,
+            error => FederatedError::StoreUnavailable(format!("cannot store session: {error}")),
+        })?;
         let user_id = user_id.to_owned();
         self.db
             .lane()

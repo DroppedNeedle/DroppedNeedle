@@ -208,8 +208,8 @@ pub const DEFAULT_CLASS: RateClass = class("default", 30.0, 60);
 pub const OIDC_CLASS: RateClass = class("oidc", 2.0, 5);
 /// Local login, per client.
 pub const LOGIN_CLASS: RateClass = class("login", 2.0, 5);
-/// Local login for one username across all clients: five clients' worth of
-/// [`LOGIN_CLASS`] refill, ten of burst.
+/// Password or Jellyfin login for one username across all clients: five
+/// clients' worth of [`LOGIN_CLASS`] refill, ten of burst.
 pub const LOGIN_USERNAME_CLASS: RateClass = class("login-username", 10.0, 50);
 /// Failed authentications on protected paths, per client address. Charged
 /// by the session gate, which answers before the request limiter runs.

@@ -129,7 +129,12 @@ impl Origin {
         let after_userinfo = authority.as_str().rsplit('@').next()?;
         let port = match after_userinfo.strip_prefix(host)? {
             "" => default_port,
-            port => port.strip_prefix(':')?.parse().ok()?,
+            // Digits only: `u16` parsing alone takes a leading `+`.
+            port => port
+                .strip_prefix(':')
+                .filter(|digits| digits.bytes().all(|byte| byte.is_ascii_digit()))?
+                .parse()
+                .ok()?,
         };
         Some(Self {
             host: host.to_ascii_lowercase(),
@@ -142,5 +147,20 @@ impl Origin {
 impl fmt::Display for Origin {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}://{}:{}", self.scheme, self.host, self.port)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_port_is_digits_only() {
+        assert!(Origin::from_url("http://music.lan:+80").is_none());
+        assert!(Origin::from_host("http", "music.lan:+80").is_none());
+        assert_eq!(
+            Origin::from_url("http://music.lan:80"),
+            Origin::from_host("http", "music.lan")
+        );
     }
 }

@@ -69,9 +69,8 @@ static SPOOLED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new
 
 /// Remove spool files a previous run left behind (a crash or kill skips
 /// the drop that would have removed them). Called once at startup.
-pub fn sweep_stale_spools() {
-    let dir = std::env::temp_dir();
-    let entries = match std::fs::read_dir(&dir) {
+pub fn sweep_stale_spools(dir: &Path) {
+    let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(error) => {
             tracing::warn!(dir = %dir.display(), %error, "could not list the temp folder for old plugin stream files");
@@ -101,9 +100,13 @@ pub struct Spool {
 
 impl Spool {
     /// Copy the whole response body (capped like any plugin proxy) into a
-    /// new temp file named with `format` as its extension. Fails once all
-    /// spools together would pass [`SPOOL_BUDGET_BYTES`].
-    pub async fn fill(response: reqwest::Response, format: &str) -> std::io::Result<Self> {
+    /// new file in `dir` named with `format` as its extension. Fails once
+    /// all spools together would pass [`SPOOL_BUDGET_BYTES`].
+    pub async fn fill(
+        response: reqwest::Response,
+        format: &str,
+        dir: &Path,
+    ) -> std::io::Result<Self> {
         let extension = if !format.is_empty()
             && format.len() <= 8
             && format.chars().all(|c| c.is_ascii_alphanumeric())
@@ -113,7 +116,7 @@ impl Spool {
             "bin"
         };
         let mut spool = Self {
-            path: std::env::temp_dir().join(format!(
+            path: dir.join(format!(
                 "{SPOOL_PREFIX}{}.{extension}",
                 uuid::Uuid::new_v4().simple()
             )),

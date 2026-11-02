@@ -32,8 +32,10 @@ impl OidcStates {
     ) -> Result<(), FederatedError> {
         let lane = self.db.lane();
         let (state, code_verifier) = (state.to_owned(), code_verifier.to_owned());
-        let now = self.db.now_unix();
+        let db = self.db.clone();
         lane.write(Lane::Foreground, "auth.oidc.store", move |tx| {
+            // Read here: the write may have waited its turn on the lane.
+            let now = db.now_unix();
             // Abandoned logins leave states behind; sweep the expired ones
             // in the same transaction so the table stays small.
             tx.execute(
@@ -62,8 +64,10 @@ impl OidcStates {
     pub async fn consume_state(&self, state: &str) -> Result<Option<String>, FederatedError> {
         let lane = self.db.lane();
         let state = state.to_owned();
-        let now = self.db.now_unix();
+        let db = self.db.clone();
         lane.write(Lane::Foreground, "auth.oidc.consume", move |tx| {
+            // Read here: the write may have waited its turn on the lane.
+            let now = db.now_unix();
             let found: Option<(Option<String>, i64)> = tx
                 .query_row(
                     "SELECT code_verifier, expires_at FROM auth_oidc_states WHERE state = ?",

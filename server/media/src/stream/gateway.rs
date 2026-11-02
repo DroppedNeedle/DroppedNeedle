@@ -98,6 +98,8 @@ pub struct Gateway<R, T> {
         Arc<droppedneedle_plugins::host::PluginHost>,
         reqwest::Client,
     )>,
+    /// Where a plugin URL is spooled for a transcode.
+    spool_dir: PathBuf,
     remote: R,
     transcoder: T,
     fixed: TranscodeSettings,
@@ -122,6 +124,7 @@ impl<R, T> Gateway<R, T> {
             local_root,
             library: None,
             plugins: None,
+            spool_dir: PathBuf::new(),
             remote,
             transcoder,
             fixed: settings,
@@ -155,13 +158,16 @@ impl<R, T> Gateway<R, T> {
 
     /// Serve `streaming_source` plugins under [`AudioSource::Plugin`].
     /// `no_redirect` proxies plugin URLs; it must not follow redirects on
-    /// its own, because every hop is re-checked.
+    /// its own, because every hop is re-checked. `spool_dir` holds the
+    /// temp files plugin transcodes read.
     pub fn with_plugins(
         mut self,
         host: Arc<droppedneedle_plugins::host::PluginHost>,
         no_redirect: reqwest::Client,
+        spool_dir: PathBuf,
     ) -> Self {
         self.plugins = Some((host, no_redirect));
+        self.spool_dir = spool_dir;
         self
     }
 }
@@ -478,7 +484,7 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
             return Ok(media);
         }
         let response = plugin_url_response(client, plugin, url, None).await?;
-        let spool = plugin_url::Spool::fill(response, format)
+        let spool = plugin_url::Spool::fill(response, format, &self.spool_dir)
             .await
             .map_err(|error| StreamFault::Upstream {
                 source: AudioSource::Plugin,

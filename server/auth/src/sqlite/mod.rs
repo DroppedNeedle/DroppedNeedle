@@ -186,9 +186,13 @@ fn store_error(error: impl Into<WriteError>) -> StoreError {
     }
 }
 
-/// Log-safe federated failure, same rule as [`internal`].
-fn store_unavailable(error: impl std::fmt::Display) -> FederatedError {
-    FederatedError::StoreUnavailable(error.to_string())
+/// Federated failure from a lane or pool error: busy stays busy, the rest
+/// is log-safe text, same rule as [`internal`].
+fn store_unavailable(error: impl Into<WriteError>) -> FederatedError {
+    match error.into() {
+        WriteError::Db(DbError::Busy { .. }) => FederatedError::Busy,
+        error => FederatedError::StoreUnavailable(error.to_string()),
+    }
 }
 
 /// A local row's `(hash_scheme, password_hash)` as `(scheme, hash)`, or

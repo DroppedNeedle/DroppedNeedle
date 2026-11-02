@@ -20,7 +20,7 @@ use crate::federated::plex_http::PlexTv;
 use crate::federated::{FederatedError, MediaLinks};
 use crate::routes::native::{AuthSessionBody, PeerAddr, login_user};
 use crate::session::cookies;
-use crate::session::rate_limit::{LOGIN_CLASS, RateLimiter, rate_limited};
+use crate::session::rate_limit::{LOGIN_USERNAME_CLASS, RateLimiter, rate_limited};
 use crate::session::stated::StatedAddresses;
 use crate::session::tokens::{hash_token, secret_eq};
 use crate::sqlite::{FederatedUsers, Sessions, Users};
@@ -239,7 +239,8 @@ pub async fn oidc_callback_handler(
     request_body = OidcExchangeBody,
     responses(
         (status = 200, description = "Authenticated user; token only in Bearer mode", body = inline(AuthSessionBody)),
-        (status = 401, description = "Invalid or expired code")
+        (status = 401, description = "Invalid or expired code"),
+        (status = 503, description = "Server busy")
     )
 )]
 pub async fn oidc_exchange_handler(
@@ -356,10 +357,9 @@ pub async fn jellyfin_login_handler(
     peer: PeerAddr,
     ValidJson(body): ValidJson<JellyfinLoginBody>,
 ) -> Result<Response, ApiError> {
-    let username_key = format!("jellyfin-username:{}", body.username.trim().to_lowercase());
-    let budget = state.limits.check(LOGIN_CLASS, &username_key);
+    let budget = state.limits.check_login(&body.username);
     if !budget.allowed {
-        return Err(rate_limited(LOGIN_CLASS, budget.retry_after_secs));
+        return Err(rate_limited(LOGIN_USERNAME_CLASS, budget.retry_after_secs));
     }
     let user_agent = user_agent_of(&headers);
     match state
@@ -679,8 +679,8 @@ pub async fn plex_poll_connect_handler(
 }
 
 /// Non-caller-fault federated failures: misconfigured or unreachable IdPs
-/// are 503, store/RNG faults are 500. Bodies stay fixed; the cause goes to
-/// the log.
+/// are 503, a busy store is "server busy", store/RNG faults are 500. Bodies
+/// stay fixed; the cause goes to the log.
 fn federated_unavailable(error: &FederatedError) -> AuthRouteError {
     match error {
         FederatedError::Paced {
@@ -694,6 +694,7 @@ fn federated_unavailable(error: &FederatedError) -> AuthRouteError {
             AuthRouteError::unavailable(error)
         }
         FederatedError::Authentication(_) => AuthRouteError::unavailable(error),
+        FederatedError::Busy => AuthRouteError::busy(error),
         FederatedError::StoreUnavailable(_)
         | FederatedError::UsernameTaken
         | FederatedError::RngUnavailable => AuthRouteError::internal(error),
