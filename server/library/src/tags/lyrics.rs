@@ -21,11 +21,11 @@
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
-use std::fs::{File, OpenOptions};
+use std::fs::File;
 use std::io::{Read as _, Seek as _, SeekFrom};
-use std::os::unix::fs::OpenOptionsExt as _;
 use std::path::{Path, PathBuf};
 
+use droppedneedle_kernel::beneath::{RootLinks, open_file_beneath};
 use lofty::file::TaggedFileExt as _;
 use lofty::tag::{ItemKey, TagType};
 
@@ -226,15 +226,39 @@ pub fn read_file_lyrics(audio: &Path) -> Option<(LyricsSource, Lyrics)> {
 /// folder once.
 #[must_use]
 pub fn read_lyrics_beside(audio: &Path, sidecar: Option<&Path>) -> Option<(LyricsSource, Lyrics)> {
+    read_lyrics_checked(audio, sidecar).0
+}
+
+/// [`read_lyrics_beside`], and whether a file could not be read: then no
+/// lyrics found is not the same as none there.
+#[must_use]
+pub fn read_lyrics_checked(
+    audio: &Path,
+    sidecar: Option<&Path>,
+) -> (Option<(LyricsSource, Lyrics)>, bool) {
     let read = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        if let Some(lyrics) = sidecar.and_then(read_sidecar) {
-            return Some((LyricsSource::Sidecar, lyrics));
+        let mut unread = false;
+        if let Some(path) = sidecar {
+            match read_sidecar(path) {
+                Ok(Some(lyrics)) => return (Some((LyricsSource::Sidecar, lyrics)), false),
+                Ok(None) => {}
+                Err(error) => {
+                    tracing::debug!(path = %path.display(), %error, "lyrics file not read");
+                    unread = true;
+                }
+            }
         }
-        read_tag_lyrics(audio).map(|lyrics| (LyricsSource::Tag, lyrics))
+        match read_tag_lyrics(audio) {
+            Ok(lyrics) => (lyrics.map(|lyrics| (LyricsSource::Tag, lyrics)), unread),
+            Err(error) => {
+                tracing::debug!(path = %audio.display(), %error, "lyrics tag not read");
+                (None, true)
+            }
+        }
     }));
     read.unwrap_or_else(|_| {
         tracing::error!(path = %audio.display(), "lyrics read panicked; read as none");
-        None
+        (None, false)
     })
 }
 
@@ -245,6 +269,8 @@ pub struct Sidecars {
     /// By stem. Where two differ only in the extension's case, the first
     /// by name wins.
     by_stem: BTreeMap<OsString, PathBuf>,
+    /// The folder, or an entry of it, could not be read.
+    unread: bool,
 }
 
 impl Sidecars {
@@ -256,15 +282,20 @@ impl Sidecars {
             Ok(entries) => entries,
             Err(error) => {
                 tracing::debug!(%error, dir = %dir.display(), "lyrics: folder not listed");
-                return Self::default();
+                return Self {
+                    unread: true,
+                    ..Self::default()
+                };
             }
         };
         let mut paths = Vec::new();
+        let mut unread = false;
         for entry in entries {
             let entry = match entry {
                 Ok(entry) => entry,
                 Err(error) => {
                     tracing::debug!(%error, dir = %dir.display(), "lyrics: folder entry skipped");
+                    unread = true;
                     continue;
                 }
             };
@@ -280,6 +311,7 @@ impl Sidecars {
                 Ok(_) => {}
                 Err(error) => {
                     tracing::debug!(%error, path = %path.display(), "lyrics file skipped");
+                    unread = true;
                 }
             }
         }
@@ -290,7 +322,14 @@ impl Sidecars {
                 by_stem.entry(stem.to_owned()).or_insert(path);
             }
         }
-        Self { by_stem }
+        Self { by_stem, unread }
+    }
+
+    /// True when the listing may have missed a file: the folder, or an
+    /// entry of it, could not be read.
+    #[must_use]
+    pub fn unread(&self) -> bool {
+        self.unread
     }
 
     /// The `.lrc` file named like `audio`: the same stem, exactly.
@@ -305,80 +344,64 @@ impl Sidecars {
     }
 }
 
-/// Open for reading without following a link in the last component.
-/// `flags` adds to `O_NOFOLLOW`.
-fn open_no_follow(path: &Path, flags: libc::c_int) -> std::io::Result<File> {
-    OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_NOFOLLOW | flags)
-        .open(path)
+/// Open a regular file for reading without following a link in the last
+/// component. A FIFO or device fails rather than hanging the open.
+fn open_no_follow(path: &Path) -> std::io::Result<File> {
+    let folder = path
+        .parent()
+        .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::InvalidInput))?;
+    open_file_beneath(folder, path, RootLinks::Follow)
 }
 
-fn read_sidecar(path: &Path) -> Option<Lyrics> {
+/// The lyrics of a `.lrc` file. `Err` when it could not be read, `None`
+/// when what it holds does not count.
+fn read_sidecar(path: &Path) -> std::io::Result<Option<Lyrics>> {
     let skip = |why: &dyn std::fmt::Display| {
         tracing::debug!(path = %path.display(), reason = %why, "lyrics file skipped");
     };
-    // Non-blocking, so a FIFO swapped in after the listing cannot hang the
-    // read; the regular-file check below then turns it away.
-    let file = match open_no_follow(path, libc::O_NONBLOCK) {
-        Ok(file) => file,
-        Err(error) => {
-            skip(&error);
-            return None;
-        }
-    };
-    match file.metadata() {
-        Ok(meta) if meta.is_file() => {}
-        Ok(_) => {
-            skip(&"not a regular file");
-            return None;
-        }
-        Err(error) => {
-            skip(&error);
-            return None;
-        }
-    }
+    let file = open_no_follow(path)?;
     let mut bytes = Vec::new();
     // One byte past the cap tells an oversized file from one exactly at it.
     let cap = u64::try_from(MAX_LYRICS_BYTES)
         .unwrap_or(u64::MAX)
         .saturating_add(1);
-    if let Err(error) = file.take(cap).read_to_end(&mut bytes) {
-        skip(&error);
-        return None;
-    }
+    file.take(cap).read_to_end(&mut bytes)?;
     if bytes.len() > MAX_LYRICS_BYTES {
         skip(&LyricsRefused::TooManyBytes);
-        return None;
+        return Ok(None);
     }
     let text = match String::from_utf8(bytes) {
         Ok(text) => text,
         Err(_) => {
             skip(&"not UTF-8");
-            return None;
+            return Ok(None);
         }
     };
     let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
-    match parse_lyrics_text(text) {
+    Ok(match parse_lyrics_text(text) {
         Ok(lyrics) => lyrics,
         Err(refused) => {
             skip(&refused);
             None
         }
-    }
+    })
 }
 
-/// The first lyrics item of the file's tag that gives a line.
-fn read_tag_lyrics(audio: &Path) -> Option<Lyrics> {
-    let format = format_for_path(audio).ok()?;
+/// The first lyrics item of the file's tag that gives a line. `Err` when
+/// the file could not be read; a tag that does not parse holds no lyrics.
+fn read_tag_lyrics(audio: &Path) -> std::io::Result<Option<Lyrics>> {
+    let Ok(format) = format_for_path(audio) else {
+        return Ok(None);
+    };
     let values = match tag_lyrics_values(audio, format) {
         Ok(values) => values,
-        Err(error) => {
-            tracing::debug!(path = %audio.display(), %error, "lyrics tag not read");
-            return None;
+        Err(TagValuesError::Read(error)) => return Err(error),
+        Err(TagValuesError::Parse(error)) => {
+            tracing::debug!(path = %audio.display(), %error, "lyrics tag not parsed");
+            return Ok(None);
         }
     };
-    values
+    Ok(values
         .iter()
         .find_map(|text| match parse_lyrics_text(text) {
             Ok(lyrics) => lyrics,
@@ -386,16 +409,34 @@ fn read_tag_lyrics(audio: &Path) -> Option<Lyrics> {
                 tracing::debug!(path = %audio.display(), reason = %refused, "lyrics tag skipped");
                 None
             }
-        })
+        }))
+}
+
+/// Why a file's lyrics tags were not had.
+enum TagValuesError {
+    /// The file could not be read.
+    Read(std::io::Error),
+    /// It was read and does not parse.
+    Parse(String),
+}
+
+impl From<std::io::Error> for TagValuesError {
+    fn from(error: std::io::Error) -> Self {
+        if error.kind() == std::io::ErrorKind::UnexpectedEof {
+            Self::Parse(error.to_string())
+        } else {
+            Self::Read(error)
+        }
+    }
 }
 
 /// Every lyrics value in the file's tags: `Lyrics` items first, then
 /// `UnsyncLyrics`.
-fn tag_lyrics_values(audio: &Path, format: AudioFormat) -> Result<Vec<String>, String> {
+fn tag_lyrics_values(audio: &Path, format: AudioFormat) -> Result<Vec<String>, TagValuesError> {
     const KEYS: [ItemKey; 2] = [ItemKey::Lyrics, ItemKey::UnsyncLyrics];
-    let mut file = open_no_follow(audio, 0).map_err(|error| error.to_string())?;
+    let mut file = open_no_follow(audio)?;
     if format == AudioFormat::Aac {
-        let bytes = ape_tail(&mut file).map_err(|error| error.to_string())?;
+        let bytes = ape_tail(&mut file)?;
         let items = super::read::parse_apev2(&bytes).unwrap_or_default();
         let mut values = Vec::new();
         for key in KEYS {
@@ -410,12 +451,21 @@ fn tag_lyrics_values(audio: &Path, format: AudioFormat) -> Result<Vec<String>, S
     let options = lofty::config::ParseOptions::new()
         .read_properties(false)
         .read_cover_art(false);
+    let opened = file.try_clone()?;
     let tagged = lofty::probe::Probe::new(std::io::BufReader::new(file))
         .options(options)
-        .guess_file_type()
-        .map_err(|error| error.to_string())?
+        .guess_file_type()?
         .read()
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| {
+            if super::read::is_read_failure(&error) {
+                TagValuesError::Read(std::io::Error::other(error.to_string()))
+            } else {
+                match super::read::read_through(&opened) {
+                    Err(source) => TagValuesError::from(source),
+                    Ok(()) => TagValuesError::Parse(error.to_string()),
+                }
+            }
+        })?;
     let mut values = Vec::new();
     for key in KEYS {
         for tag in tagged.tags() {

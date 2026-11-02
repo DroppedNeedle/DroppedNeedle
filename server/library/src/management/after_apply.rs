@@ -135,8 +135,9 @@ impl Management {
                     })
             }
             // A profile run: remember what it applied. Tag edits and
-            // duplicate resolutions apply no whole profile, and an undo
-            // puts the old state back.
+            // duplicate resolutions apply no whole profile. An undo leaves
+            // the row as its commit wrote it, `managed`, never the
+            // `succeeded` that says the profile is applied.
             Some(JobMode::Apply | JobMode::AutomaticApply) if intent.tag_edit.is_none() => {
                 let (profile_id, _) = snapshot.profile_label();
                 let sandbox = self.parts.publishing.publish_sandbox().ok();

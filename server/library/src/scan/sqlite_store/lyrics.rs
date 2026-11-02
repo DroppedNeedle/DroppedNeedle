@@ -13,6 +13,9 @@
 //! so a `.lrc` fixed in place is marked and served after the next sweep.
 //! Each track folder is listed once per album.
 //!
+//! An album with a file that cannot be reached or read keeps its marks, and
+//! gets no new check row, as in the art sweep.
+//!
 //! The sweep only reads music files and never follows a link. It gives way
 //! to scans and shutdown between albums, and after a slice of reading,
 //! exactly as the art sweep does.
@@ -24,10 +27,10 @@ use rusqlite::params;
 
 use super::artwork::{
     ArtworkSweep, MIN_PER_SLICE, SWEEP_SLICE, Snapshot, TrackFile, WRITE_BATCH, album_dirs,
-    album_signature,
+    album_signature, any_file_away,
 };
 use super::{Lane, ScanStoreError, SqliteScanStore};
-use crate::tags::lyrics::{LyricsSource, Sidecars, read_lyrics_beside};
+use crate::tags::lyrics::{LyricsSource, Sidecars, read_lyrics_checked};
 
 /// What one sweep did.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -36,6 +39,8 @@ pub struct LyricsSweep {
     pub checked: usize,
     /// Tracks of those albums found to carry lyrics.
     pub marked: usize,
+    /// Albums left as they are because a file could not be reached or read.
+    pub unreachable: usize,
     /// False when the sweep stopped early; run it again to finish.
     pub complete: bool,
 }
@@ -81,7 +86,7 @@ impl SqliteScanStore {
         let mut pending = Vec::new();
         for (album_id, tracks) in &snapshot.albums {
             let slice_spent = started.is_some_and(|at| at.elapsed() >= SWEEP_SLICE)
-                && sweep.checked >= MIN_PER_SLICE;
+                && sweep.checked + sweep.unreachable >= MIN_PER_SLICE;
             if stop() || slice_spent {
                 sweep.complete = false;
                 break;
@@ -92,7 +97,12 @@ impl SqliteScanStore {
                 continue;
             }
             started.get_or_insert_with(std::time::Instant::now);
+            if any_file_away(tracks) {
+                sweep.unreachable += 1;
+                continue;
+            }
             sweep.checked += 1;
+            let mut unread = sidecars.values().any(Sidecars::unread);
             let marks = tracks
                 .iter()
                 .filter_map(|track| {
@@ -101,10 +111,15 @@ impl SqliteScanStore {
                         .parent()
                         .and_then(|dir| sidecars.get(dir))
                         .and_then(|listed| listed.for_track(&track.path));
-                    read_lyrics_beside(&track.path, sidecar)
-                        .map(|(source, _)| (track.id.clone(), source))
+                    let (found, failed) = read_lyrics_checked(&track.path, sidecar);
+                    unread |= failed;
+                    found.map(|(source, _)| (track.id.clone(), source))
                 })
                 .collect();
+            if unread {
+                sweep.unreachable += 1;
+                continue;
+            }
             pending.push(Checked {
                 album_id: album_id.clone(),
                 signature,
@@ -121,6 +136,12 @@ impl SqliteScanStore {
                 marked = sweep.marked,
                 complete = sweep.complete,
                 "lyrics sweep finished"
+            );
+        }
+        if sweep.unreachable > 0 {
+            tracing::warn!(
+                albums = sweep.unreachable,
+                "lyrics sweep left albums as they are: files could not be reached"
             );
         }
         sweep
@@ -203,6 +224,7 @@ mod tests {
             id: "t1".to_owned(),
             path: dir.join("01 Song.flac"),
             stat_revision: "r1".to_owned(),
+            size_bytes: 0,
         }];
         let folder_time = |dir: &Path| std::fs::metadata(dir).unwrap().modified().unwrap();
         let before_time = folder_time(&dir);

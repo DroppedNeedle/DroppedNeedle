@@ -245,6 +245,36 @@ fn io_source(error: &lofty::error::FileParseError) -> Option<&std::io::Error> {
     std::error::Error::source(error).and_then(|source| source.downcast_ref::<std::io::Error>())
 }
 
+/// True when a tag read failed because the file could not be read, rather
+/// than because of what it holds. A file that ends early reads as damaged.
+pub(super) fn is_read_failure(error: &FileParseError) -> bool {
+    nested_io_error(error).is_some_and(|source| source.kind() != std::io::ErrorKind::UnexpectedEof)
+}
+
+/// The I/O error anywhere under a parse error: lofty nests it under the
+/// atom, page or tag it was reading. [`io_source`] stops at the first
+/// level on purpose, so the scan's relaxed re-read still runs for a
+/// truncated tag.
+fn nested_io_error(error: &FileParseError) -> Option<&std::io::Error> {
+    let mut source = std::error::Error::source(error);
+    while let Some(error) = source {
+        if let Some(io) = error.downcast_ref::<std::io::Error>() {
+            return Some(io);
+        }
+        source = error.source();
+    }
+    None
+}
+
+/// Read a file that did not parse to its end. lofty drops some I/O errors:
+/// looking for MP4's `moov` it stops at any failed read and reports no such
+/// atom. Only a file that reads to its end is damaged.
+pub(super) fn read_through(file: &File) -> std::io::Result<()> {
+    let mut file = file.try_clone()?;
+    file.rewind()?;
+    std::io::copy(&mut file, &mut std::io::sink()).map(|_| ())
+}
+
 /// Read the tag half only. The probe half lives in [`super::probe`].
 pub fn read_tag_only(path: &Path, format: AudioFormat) -> Result<AudioTag, TagsError> {
     if format == AudioFormat::Aac {
@@ -361,12 +391,24 @@ pub fn read_cover_art_from(file: &File, path: &Path) -> Result<Option<Vec<u8>>, 
     };
     // The same two passes as `read_lenient`.
     let tagged = match read(None) {
-        Err(error) if io_source(&error).is_none() => {
+        Err(error) if io_source(&error).is_none() && !is_read_failure(&error) => {
             read(Some(ParseOptions::new().parsing_mode(ParsingMode::Relaxed)))
         }
         read => read,
     }
-    .map_err(|error| failed(error.to_string()))?;
+    .map_err(|error| match nested_io_error(&error) {
+        Some(source) if is_read_failure(&error) => TagsError::Io {
+            path: path.display().to_string(),
+            source: std::io::Error::new(source.kind(), source.to_string()),
+        },
+        _ => match read_through(file) {
+            Err(source) if source.kind() != std::io::ErrorKind::UnexpectedEof => TagsError::Io {
+                path: path.display().to_string(),
+                source,
+            },
+            _ => failed(error.to_string()),
+        },
+    })?;
     Ok(tagged
         .tags()
         .iter()
@@ -698,7 +740,76 @@ fn parse_ape_items(
 
 #[cfg(test)]
 mod tests {
-    use super::id3v23_tag_bytes;
+    use super::{FileType, Probe, id3v23_tag_bytes, is_read_failure};
+
+    /// A file whose reads fail with EIO after `limit` bytes, as on a mount
+    /// whose backend went down while stat and open still answer.
+    struct FailsAfter {
+        inner: std::io::Cursor<&'static [u8]>,
+        limit: u64,
+    }
+
+    impl std::io::Read for FailsAfter {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            let left = self.limit.saturating_sub(self.inner.position());
+            if left == 0 {
+                return Err(std::io::Error::from_raw_os_error(libc::EIO));
+            }
+            let room = buf.len().min(usize::try_from(left).unwrap_or(usize::MAX));
+            self.inner.read(&mut buf[..room])
+        }
+    }
+
+    impl std::io::Seek for FailsAfter {
+        fn seek(&mut self, to: std::io::SeekFrom) -> std::io::Result<u64> {
+            self.inner.seek(to)
+        }
+    }
+
+    /// An I/O failure partway through a file is a failed read in every
+    /// container, however deep lofty nests it, never a damaged file: the
+    /// sweeps clear rows on a damaged file and keep them on a failed read.
+    #[test]
+    fn an_io_error_inside_a_tag_is_a_read_failure() {
+        // Each failure lands inside the tag. Above it lofty and ogg_pager drop
+        // a failed read while walking atoms and page headers, which
+        // `read_through` catches when the file then does not parse.
+        let files: [(FileType, &'static [u8], &[u8], u64); 3] = [
+            (
+                FileType::Mp4,
+                include_bytes!("../../../tests/fixtures/library/management_full.m4a"),
+                b"ilst",
+                8,
+            ),
+            (
+                FileType::Opus,
+                include_bytes!("../../../tests/fixtures/library/management_full.opus"),
+                b"OpusTags",
+                8,
+            ),
+            (
+                FileType::Mpeg,
+                include_bytes!("../../../tests/fixtures/library/management_full.mp3"),
+                b"ID3",
+                64,
+            ),
+        ];
+        for (file_type, bytes, marker, past) in files {
+            let start = bytes
+                .windows(marker.len())
+                .position(|name| name == marker)
+                .expect("the fixture has its tag");
+            let reader = FailsAfter {
+                inner: std::io::Cursor::new(bytes),
+                limit: start as u64 + past,
+            };
+            let error = Probe::with_file_type(reader, file_type)
+                .read()
+                .err()
+                .unwrap_or_else(|| panic!("{file_type:?} read past the failure"));
+            assert!(is_read_failure(&error), "{file_type:?}: {error}");
+        }
+    }
 
     /// Serves an ID3v2.3 header whose tag size is one byte over 16 MiB,
     /// then zeros, counting every byte it hands out.

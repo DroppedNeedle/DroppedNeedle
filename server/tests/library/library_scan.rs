@@ -42,6 +42,9 @@ fn fixture(name: &str) -> PathBuf {
         .join(name)
 }
 
+/// A PNG's opening bytes, which is all the sweep's image check reads.
+const COVER_PNG: &[u8] = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR";
+
 fn plant(root: &Path, relative: &str, fixture_name: &str) -> PathBuf {
     let dest = root.join(relative);
     std::fs::create_dir_all(dest.parent().expect("parent")).expect("mkdir");
@@ -2350,6 +2353,87 @@ async fn lyrics_sweep_marks_what_files_carry_and_only_reads() {
     let mut kept = before;
     kept.remove("Album/01 Airbag.LRC");
     assert_eq!(snapshot(&music), kept);
+}
+
+/// A library folder that is away, gone or an empty mount point, is not "no
+/// art" and not "no lyrics": a boot sweep keeps every row, and when the
+/// folder is back the rows and art versions are as they were. A file that
+/// is there and will not read keeps its rows too.
+#[tokio::test]
+async fn sweeps_keep_art_and_lyrics_while_files_are_away() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let scratch = ScratchDir::new("scan-sweep-away");
+    let music = scratch.join("music");
+    plant(&music, "Folder/01 Song.flac", "flac_no_tags.flac");
+    std::fs::write(music.join("Folder/cover.png"), COVER_PNG).expect("cover");
+    let embedded = plant(&music, "Embedded/01 Song.flac", "management_full.flac");
+    plant(&music, "Words/01 Words.flac", "flac_lyrics_tag.flac");
+    plant(&music, "Words/02 Airbag.flac", "flac_full_01.flac");
+    plant(&music, "Words/02 Airbag.lrc", "lyrics_airbag.lrc");
+    let library = bundle(&scratch).await;
+    scan(&library).await;
+    let sweep =
+        |library: &LibrarySetup| library.scan_store.refresh_album_sweeps(&|| false).unwrap();
+    let rows = |library: &LibrarySetup| {
+        (
+            query(library, "SELECT COUNT(*) FROM local_album_artwork"),
+            query(
+                library,
+                "SELECT COALESCE(SUM(version), 0) FROM local_album_artwork",
+            ),
+            query(library, "SELECT COUNT(*) FROM local_track_lyrics"),
+        )
+    };
+    sweep(&library);
+    let before = rows(&library);
+    assert!(before.0 >= 2, "the cover and the embedded art: {before:?}");
+    assert!(before.2 >= 2, "the tag and the .lrc: {before:?}");
+
+    let away = scratch.join("away");
+    std::fs::rename(&music, &away).expect("the folder goes away");
+    assert!(sweep(&library).0.unreachable > 0, "the sweep says so");
+    assert_eq!(rows(&library), before, "an absent folder clears nothing");
+
+    std::fs::create_dir_all(&music).expect("an empty mount point");
+    sweep(&library);
+    assert_eq!(
+        rows(&library),
+        before,
+        "an empty mount point clears nothing"
+    );
+
+    std::fs::remove_dir(&music).expect("mount point goes");
+    std::fs::rename(&away, &music).expect("the folder comes back");
+    let (art, lyrics) = sweep(&library);
+    assert_eq!(
+        (art.checked, lyrics.checked),
+        (0, 0),
+        "nothing to read again"
+    );
+    assert_eq!(rows(&library), before);
+
+    // Root reads any file anyway, and the rows are kept either way.
+    let mode = std::fs::Permissions::from_mode;
+    std::fs::set_permissions(&embedded, mode(0o000)).expect("file made unreadable");
+    std::fs::File::open(music.join("Embedded"))
+        .and_then(|dir| {
+            dir.set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_000))
+        })
+        .expect("folder time sets");
+    sweep(&library);
+    std::fs::set_permissions(&embedded, mode(0o644)).expect("file readable again");
+    assert_eq!(rows(&library), before, "a read error clears nothing");
+
+    // A share can leave empty stubs behind.
+    std::fs::write(&embedded, b"").expect("file emptied");
+    std::fs::File::open(music.join("Embedded"))
+        .and_then(|dir| {
+            dir.set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(2_000))
+        })
+        .expect("folder time sets");
+    sweep(&library);
+    assert_eq!(rows(&library), before, "an empty stub clears nothing");
 }
 
 /// A scan request the store cannot record is an error. It used to answer

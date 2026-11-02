@@ -223,8 +223,8 @@ droppedneedle_kernel::sql! {
                      ON CONFLICT(local_album_id) DO UPDATE SET \
                      signature = excluded.signature, checked_at = excluded.checked_at, \
                      art_version = MAX(art_version, excluded.art_version)";
-    pub(super) ALBUM_TRACKS = "SELECT t.local_album_id, t.id, t.file_path, t.stat_revision \
-         FROM local_tracks t JOIN local_albums a ON a.id = t.local_album_id \
+    pub(super) ALBUM_TRACKS = "SELECT t.local_album_id, t.id, t.file_path, t.stat_revision, \
+         t.file_size_bytes FROM local_tracks t JOIN local_albums a ON a.id = t.local_album_id \
          WHERE t.availability = 'indexed' AND a.retired_into_album_id IS NULL \
          ORDER BY t.local_album_id, t.disc_number, t.track_number, t.id";
     pub(super) ALL_ARTWORK = "SELECT local_album_id, source, source_locator, content_hash FROM local_album_artwork";

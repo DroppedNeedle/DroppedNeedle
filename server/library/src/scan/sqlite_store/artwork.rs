@@ -19,6 +19,11 @@
 //! folder. Adding or replacing a folder image changes the folder's
 //! modification time, which brings the album back in.
 //!
+//! An album with a track file that cannot be reached (its folder is away,
+//! a share is unmounted, or a read fails) is left as it is, with no new
+//! check row: only a file that was read says an album has no art. The scan
+//! is what judges a track gone, and then the album comes back without it.
+//!
 //! Manual art is never touched. Provider rows (Cover Art Archive art kept
 //! from v2) are replaced only when local art turns up.
 //!
@@ -42,6 +47,7 @@ use sha2::{Digest as _, Sha256};
 
 use super::{Lane, RunStop, ScanStoreError, SqliteScanStore};
 use crate::clock::LibraryClock as _;
+use crate::tags::TagsError;
 use droppedneedle_kernel::beneath::{RootLinks, open_file_beneath};
 use droppedneedle_providers::coverart::sniff_image_content_type;
 
@@ -69,6 +75,8 @@ pub struct ArtworkSweep {
     pub changed: usize,
     /// Albums whose local art disappeared.
     pub cleared: usize,
+    /// Albums left as they are because a file could not be reached or read.
+    pub unreachable: usize,
     /// False when the sweep stopped early; run it again to finish.
     pub complete: bool,
 }
@@ -78,6 +86,8 @@ pub(super) struct TrackFile {
     pub(super) id: String,
     pub(super) path: PathBuf,
     pub(super) stat_revision: String,
+    /// The size the scan read.
+    pub(super) size_bytes: i64,
 }
 
 /// The art row an album has now.
@@ -95,10 +105,18 @@ struct FoundArt {
     folder_image: Option<PathBuf>,
 }
 
+/// What looking for an album's art came to.
+struct ArtSearch {
+    found: Option<FoundArt>,
+    /// A folder or file could not be read, so the answer may be incomplete.
+    unread: bool,
+}
+
 /// One album's result, waiting to be written.
 struct Checked {
     album_id: String,
-    signature: String,
+    /// `None` when a file could not be read: the album is looked at again.
+    signature: Option<String>,
     found: Option<FoundArt>,
 }
 
@@ -142,7 +160,7 @@ impl SqliteScanStore {
         let mut pending = Vec::new();
         for (album_id, tracks) in &snapshot.albums {
             let slice_spent = started.is_some_and(|at| at.elapsed() >= SWEEP_SLICE)
-                && sweep.checked >= MIN_PER_SLICE;
+                && sweep.checked + sweep.unreachable >= MIN_PER_SLICE;
             if stop() || slice_spent {
                 sweep.complete = false;
                 break;
@@ -161,11 +179,26 @@ impl SqliteScanStore {
                 continue;
             }
             started.get_or_insert_with(std::time::Instant::now);
+            if any_file_away(tracks) {
+                sweep.unreachable += 1;
+                continue;
+            }
             sweep.checked += 1;
-            let found = find_art(tracks, &dirs);
+            let ArtSearch { found, unread } = find_art(tracks, &dirs);
+            // A failed read only stands aside for art that adds to an album
+            // with none: an unreadable cover must not cost the embedded one.
+            // The album is still looked at again, as fixing a file's
+            // permissions leaves every time the signature reads alone.
+            if unread {
+                sweep.unreachable += 1;
+                if found.is_none() || current.is_some() {
+                    continue;
+                }
+            }
             // Sign with the image actually found, so the next sweep (which
             // signs with the stored folder image) sees the same value.
-            let signature = album_signature(tracks, &dirs, found_folder(&found).as_slice());
+            let signature =
+                (!unread).then(|| album_signature(tracks, &dirs, found_folder(&found).as_slice()));
             pending.push(Checked {
                 album_id: album_id.clone(),
                 signature,
@@ -183,6 +216,12 @@ impl SqliteScanStore {
                 cleared = sweep.cleared,
                 complete = sweep.complete,
                 "album art sweep finished"
+            );
+        }
+        if sweep.unreachable > 0 {
+            tracing::warn!(
+                albums = sweep.unreachable,
+                "album art sweep cleared nothing for albums with files it could not reach"
             );
         }
         sweep
@@ -239,10 +278,12 @@ impl SqliteScanStore {
                         )?;
                     }
                 }
-                tx.execute(
-                    crate::scan::sql::WRITE_ARTWORK_CHECK.text(),
-                    params![checked.album_id, checked.signature, now],
-                )?;
+                if let Some(signature) = &checked.signature {
+                    tx.execute(
+                        crate::scan::sql::WRITE_ARTWORK_CHECK.text(),
+                        params![checked.album_id, signature, now],
+                    )?;
+                }
             }
             Ok((changed, cleared))
         });
@@ -272,6 +313,7 @@ pub(super) fn album_tracks(
             id: row.get(1)?,
             path: PathBuf::from(row.get::<_, String>(2)?),
             stat_revision: row.get(3)?,
+            size_bytes: row.get(4)?,
         };
         match albums.last_mut() {
             Some((last, files)) if *last == album_id => files.push(track),
@@ -279,6 +321,19 @@ pub(super) fn album_tracks(
         }
     }
     Ok(albums)
+}
+
+/// True when any of an album's indexed track files cannot be reached. A
+/// missing file counts: a share that is down reads as an empty folder or
+/// no folder at all, and only the scan judges a track gone. So does an
+/// empty file where the scan read a size: a share can leave stubs behind.
+pub(super) fn any_file_away(tracks: &[TrackFile]) -> bool {
+    tracks
+        .iter()
+        .any(|track| match std::fs::symlink_metadata(&track.path) {
+            Ok(meta) => meta.len() == 0 && track.size_bytes > 0,
+            Err(_) => true,
+        })
 }
 
 /// Folders an album's tracks live in, in track order. Disc folders
@@ -348,51 +403,82 @@ fn found_folder(found: &Option<FoundArt>) -> Option<&Path> {
 }
 
 /// Folder image first, then the first embedded picture.
-fn find_art(tracks: &[TrackFile], dirs: &[PathBuf]) -> Option<FoundArt> {
-    if let Some((path, bytes)) = folder_image(dirs) {
-        return Some(FoundArt {
-            source: "folder",
-            locator: path.to_string_lossy().into_owned(),
-            content_hash: content_hash(&bytes),
-            folder_image: Some(path),
-        });
+fn find_art(tracks: &[TrackFile], dirs: &[PathBuf]) -> ArtSearch {
+    let mut unread = false;
+    if let Some((path, bytes)) = folder_image(dirs, &mut unread) {
+        return ArtSearch {
+            found: Some(FoundArt {
+                source: "folder",
+                locator: path.to_string_lossy().into_owned(),
+                content_hash: content_hash(&bytes),
+                folder_image: Some(path),
+            }),
+            unread,
+        };
     }
     for track in tracks {
-        match crate::tags::read_cover_art(&track.path) {
+        match read_track_art(&track.path) {
             Ok(Some(bytes))
                 if bytes.len() as u64 <= COVER_MAX_BYTES
                     && sniff_image_content_type(&bytes).is_some() =>
             {
-                return Some(FoundArt {
-                    source: "embedded",
-                    locator: track.id.clone(),
-                    content_hash: content_hash(&bytes),
-                    folder_image: None,
-                });
+                return ArtSearch {
+                    found: Some(FoundArt {
+                        source: "embedded",
+                        locator: track.id.clone(),
+                        content_hash: content_hash(&bytes),
+                        folder_image: None,
+                    }),
+                    unread,
+                };
             }
             Ok(_) => {}
             Err(error) => {
+                unread |= matches!(error, TagsError::Io { .. });
                 tracing::debug!(%error, path = %track.path.display(), "embedded art read failed");
             }
         }
     }
-    None
+    ArtSearch {
+        found: None,
+        unread,
+    }
+}
+
+/// The first picture in a track file, opened without following a link. A
+/// FIFO or device fails rather than hanging the sweep.
+fn read_track_art(path: &Path) -> Result<Option<Vec<u8>>, TagsError> {
+    let file = path
+        .parent()
+        .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::InvalidInput))
+        .and_then(|folder| open_file_beneath(folder, path, RootLinks::Follow))
+        .map_err(|source| TagsError::Io {
+            path: path.display().to_string(),
+            source,
+        })?;
+    crate::tags::read_cover_art_from(&file, path)
 }
 
 /// The first readable raster image named like a cover in the folders.
-fn folder_image(dirs: &[PathBuf]) -> Option<(PathBuf, Vec<u8>)> {
+/// `unread` is set when a folder or image could not be read.
+fn folder_image(dirs: &[PathBuf], unread: &mut bool) -> Option<(PathBuf, Vec<u8>)> {
     for dir in dirs {
         let Ok(entries) = std::fs::read_dir(dir) else {
+            *unread = true;
             continue;
         };
         let mut by_name: HashMap<String, PathBuf> = HashMap::new();
-        for entry in entries.flatten() {
+        for entry in entries {
             // Symlinks are never followed, as in the walk.
-            if entry.file_type().is_ok_and(|kind| kind.is_file()) {
-                by_name.insert(
-                    entry.file_name().to_string_lossy().to_lowercase(),
-                    entry.path(),
-                );
+            match entry.and_then(|entry| Ok((entry.file_type()?, entry))) {
+                Ok((kind, entry)) if kind.is_file() => {
+                    by_name.insert(
+                        entry.file_name().to_string_lossy().to_lowercase(),
+                        entry.path(),
+                    );
+                }
+                Ok(_) => {}
+                Err(_) => *unread = true,
             }
         }
         for stem in COVER_STEMS {
@@ -400,10 +486,15 @@ fn folder_image(dirs: &[PathBuf]) -> Option<(PathBuf, Vec<u8>)> {
                 let Some(path) = by_name.get(&format!("{stem}.{extension}")) else {
                     continue;
                 };
-                if let Some(bytes) = read_listed_image(dir, path)
-                    && sniff_image_content_type(&bytes).is_some()
-                {
-                    return Some((path.clone(), bytes));
+                match read_listed_image(dir, path) {
+                    Ok(Some(bytes)) if sniff_image_content_type(&bytes).is_some() => {
+                        return Some((path.clone(), bytes));
+                    }
+                    Ok(_) => {}
+                    Err(error) => {
+                        tracing::debug!(%error, path = %path.display(), "folder art read failed");
+                        *unread = true;
+                    }
                 }
             }
         }
@@ -413,18 +504,17 @@ fn folder_image(dirs: &[PathBuf]) -> Option<(PathBuf, Vec<u8>)> {
 
 /// The bytes of image `path`, listed in `dir` as a regular file. The open
 /// does not follow a link, so a file swapped for one after the listing is
-/// not read. `None` when it is empty, too large or does not open.
-fn read_listed_image(dir: &Path, path: &Path) -> Option<Vec<u8>> {
-    let file = open_file_beneath(dir, path, RootLinks::Follow).ok()?;
-    let size = file.metadata().ok()?.len();
+/// not read. `None` when it is empty or too large, an error when it does
+/// not open or read.
+fn read_listed_image(dir: &Path, path: &Path) -> std::io::Result<Option<Vec<u8>>> {
+    let file = open_file_beneath(dir, path, RootLinks::Follow)?;
+    let size = file.metadata()?.len();
     if size == 0 || size > COVER_MAX_BYTES {
-        return None;
+        return Ok(None);
     }
     let mut bytes = Vec::new();
-    file.take(COVER_MAX_BYTES + 1)
-        .read_to_end(&mut bytes)
-        .ok()?;
-    (bytes.len() as u64 <= COVER_MAX_BYTES).then_some(bytes)
+    file.take(COVER_MAX_BYTES + 1).read_to_end(&mut bytes)?;
+    Ok((bytes.len() as u64 <= COVER_MAX_BYTES).then_some(bytes))
 }
 
 /// Hex SHA-256 of image bytes: the art's identity and cache key.

@@ -632,6 +632,11 @@ async fn art_version(rig: &Rig) -> Option<i64> {
 #[tokio::test]
 async fn art_that_comes_back_gets_a_new_version() {
     let files = ScratchDir::new("reads-artwork-version");
+    std::fs::copy(
+        "tests/fixtures/library/flac_no_tags.flac",
+        files.join("01.flac"),
+    )
+    .unwrap();
     let rig = rig(Some(&files.join("01.flac"))).await;
     let store = SqliteScanStore::new(
         rig.runtime.db().clone(),
