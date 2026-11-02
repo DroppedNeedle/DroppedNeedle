@@ -112,15 +112,11 @@ where
         .user(routes!(logout_all))
         .user(routes!(list_app_passwords, create_app_password))
         .user(routes!(revoke_app_password))
-        .user(routes!(
-            lastfm_status,
-            lastfm_set_credentials,
-            lastfm_unlink
-        ))
+        .user(routes!(lastfm_set_credentials, lastfm_unlink))
         .user(routes!(lastfm_token))
         .user(routes!(lastfm_session))
         .admin(routes!(admin_list_users, admin_create_user))
-        .admin(routes!(admin_get_user, admin_delete_user))
+        .admin(routes!(admin_delete_user))
         .admin(routes!(admin_set_role))
         .admin(routes!(admin_revoke_sessions))
         .admin(routes!(admin_mint_recovery_code))

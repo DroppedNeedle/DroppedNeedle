@@ -368,7 +368,6 @@ pub fn routes() -> Routes<CatalogDeps> {
         .user(routes!(top_albums))
         .user(routes!(artist_lastfm))
         .user(routes!(artist_purchase_options))
-        .user(routes!(album))
         .user(routes!(album_basic))
         .user(routes!(album_tracks))
         .user(routes!(album_editions))

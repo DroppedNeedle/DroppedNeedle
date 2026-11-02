@@ -15,12 +15,12 @@ use droppedneedle_providers::RequestPriority;
 use super::CatalogDeps;
 use super::error::CatalogError;
 use super::models::{
-    AlbumArtistQuery, AlbumBasicInfo, AlbumEditionsResponse, AlbumInfo, AlbumLastFmQuery,
-    AlbumTracksInfo, ArtistExtendedInfo, ArtistInfo, ArtistLastFmQuery,
-    ArtistPurchaseOptionsResponse, ArtistPurchaseQuery, ArtistReleases, DiscoveryQuery,
-    LastFmAlbumEnrichment, LastFmArtistEnrichment, MoreByArtistResponse, PluginDetails,
-    PurchaseOptionsResponse, ReleasesQuery, SimilarAlbumsResponse, SimilarArtistsResponse,
-    TopAlbumsResponse, TopSongsResponse,
+    AlbumArtistQuery, AlbumBasicInfo, AlbumEditionsResponse, AlbumLastFmQuery, AlbumTracksInfo,
+    ArtistExtendedInfo, ArtistInfo, ArtistLastFmQuery, ArtistPurchaseOptionsResponse,
+    ArtistPurchaseQuery, ArtistReleases, DiscoveryQuery, LastFmAlbumEnrichment,
+    LastFmArtistEnrichment, MoreByArtistResponse, PluginDetails, PurchaseOptionsResponse,
+    ReleasesQuery, SimilarAlbumsResponse, SimilarArtistsResponse, TopAlbumsResponse,
+    TopSongsResponse,
 };
 
 type Answer<T> = Result<Json<T>, ApiError>;
@@ -254,28 +254,6 @@ pub async fn artist_purchase_options(
             .artist_purchase_options(&mbid, &query.name)
             .await,
     )
-}
-
-/// Header, tracklist and artwork in one call.
-#[utoipa::path(
-    get,
-    tag = "catalog",
-    path = "/api/v3/albums/{album_id}",
-    params(("album_id" = String, Path, description = "Release-group MBID, or a library album id identified as one")),
-    responses(
-        (status = 200, description = "Album page", body = AlbumInfo),
-        (status = 400, description = "Not a MusicBrainz id"),
-        (status = 401, description = "Not authenticated"),
-        (status = 404, description = "Unknown album"),
-        (status = 503, description = "MusicBrainz down and the album is not in the library"),
-    )
-)]
-pub async fn album(
-    State(deps): State<CatalogDeps>,
-    _user: User,
-    Path(id): Path<String>,
-) -> Answer<AlbumInfo> {
-    answer(deps.catalog.album(&id).await)
 }
 
 /// The album header.

@@ -44,6 +44,22 @@ export const createRejectAutoDownloadMutation = () =>
 			toastStore.show({ message: errorMessage(err, 'Reject failed'), type: 'error' })
 	}));
 
+export const createRevokeAutoDownloadMutation = () =>
+	createAppMutation(() => ({
+		mutationFn: (vars: ApprovalActionVars) =>
+			api.v3.POST(FOLLOW_ENDPOINTS.revoke(vars.userId, vars.mbid)),
+		onSuccess: (data, vars) => {
+			toastStore.show(
+				data.success
+					? { message: `Auto-download revoked for ${vars.artistName}`, type: 'info' }
+					: { message: data.message, type: 'error' }
+			);
+		},
+		effects: approvals,
+		onError: (err) =>
+			toastStore.show({ message: errorMessage(err, 'Revoke failed'), type: 'error' })
+	}));
+
 // Bulk "Lidarr Import" approval batches. Invalidating the adminApprovals
 // prefix sweeps the nested batches key too.
 interface BatchActionVars {

@@ -4,8 +4,6 @@
 //! Without a client (its quota file could not be read) search is off and
 //! says so.
 
-use std::collections::HashMap;
-
 use crate::reads::discover::{
     models::YouTubeQuotaResponse,
     ports::{BoxFuture, ProviderFailure},
@@ -141,23 +139,6 @@ impl LiveYouTube {
                 Some(client) => client.is_cached(artist, name, kind).await,
                 None => false,
             }
-        })
-    }
-
-    /// Cache membership for deduped pairs, keyed `artist|track` (lowercased).
-    pub fn cached_tracks<'a>(
-        &'a self,
-        pairs: &'a [(String, String)],
-    ) -> BoxFuture<'a, HashMap<String, bool>> {
-        Box::pin(async move {
-            let Some(client) = &self.client else {
-                return HashMap::new();
-            };
-            let borrowed: Vec<(&str, &str)> = pairs
-                .iter()
-                .map(|(artist, track)| (artist.as_str(), track.as_str()))
-                .collect();
-            client.are_cached(&borrowed).await
         })
     }
 

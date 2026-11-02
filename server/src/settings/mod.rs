@@ -13,6 +13,5 @@ pub mod quality;
 pub mod registry;
 pub mod section_prefs;
 pub mod services;
-pub mod validator;
 pub mod verify;
 pub mod wiring;

@@ -73,16 +73,16 @@ beforeEach(() => {
 
 describe('v3 GET', () => {
 	it('returns data typed from the generated contract', async () => {
-		fetchMock.mockResolvedValue(jsonResponse({ status: 'ok', ready: true, ready_via: [], gates: [] }));
+		fetchMock.mockResolvedValue(jsonResponse({ configured: true, reachable: true, version: null, message: 'ok' }));
 		const client = createV3Client(fetchMock);
 
-		const health: components['schemas']['AcquireHealth'] = await client.GET(
-			v3('/api/v3/acquire/health')
+		const status: components['schemas']['SlskdStatusResponse'] = await client.GET(
+			v3('/api/v3/acquire/slskd/status')
 		);
 
-		expect(health.ready).toBe(true);
-		expectTypeOf<V3Response<'/api/v3/acquire/health', 'get'>>().toEqualTypeOf<
-			components['schemas']['AcquireHealth']
+		expect(status.reachable).toBe(true);
+		expectTypeOf<V3Response<'/api/v3/acquire/slskd/status', 'get'>>().toEqualTypeOf<
+			components['schemas']['SlskdStatusResponse']
 		>();
 	});
 
@@ -90,10 +90,10 @@ describe('v3 GET', () => {
 		fetchMock.mockResolvedValue(jsonResponse({ id: 'job 1' }));
 		const client = createV3Client(fetchMock);
 
-		await client.GET(v3('/api/v3/acquire/spotify/jobs/{id}', { path: { id: 'job 1' } }));
+		await client.GET(v3('/api/v3/library/scan/runs/{id}', { path: { id: 'job 1' } }));
 
 		expect(fetchMock).toHaveBeenCalledWith(
-			'/api/v3/acquire/spotify/jobs/job%201',
+			'/api/v3/library/scan/runs/job%201',
 			expect.objectContaining({ method: 'GET', credentials: 'include' })
 		);
 	});
@@ -113,7 +113,7 @@ describe('v3 GET', () => {
 		const client = createV3Client(fetchMock);
 
 		// @ts-expect-error - plain strings carry no contract brand
-		await client.GET('/api/v3/acquire/health');
+		await client.GET('/api/v3/acquire/slskd/status');
 
 		expect(fetchMock).toHaveBeenCalledTimes(1);
 	});
@@ -234,7 +234,7 @@ describe('v3 errors', () => {
 		fetchMock.mockResolvedValue(errorResponse(401, { error: { code: 'UNAUTH', message: 'expired' } }));
 		const client = createV3Client(fetchMock);
 
-		const failure = await client.GET(v3('/api/v3/acquire/health')).catch((cause: unknown) => cause);
+		const failure = await client.GET(v3('/api/v3/acquire/slskd/status')).catch((cause: unknown) => cause);
 
 		expect(failure).toBeInstanceOf(SessionExpiredError);
 		expect(sessionCleanupMock.run).toHaveBeenCalledTimes(1);
@@ -251,7 +251,7 @@ describe('v3 errors', () => {
 		} as unknown as Response);
 		const client = createV3Client(fetchMock);
 
-		const failure = await client.GET(v3('/api/v3/acquire/health')).catch((cause: unknown) => cause);
+		const failure = await client.GET(v3('/api/v3/acquire/slskd/status')).catch((cause: unknown) => cause);
 
 		expect(failure).toBeInstanceOf(ApiError);
 		expect(failure).toMatchObject({ status: 200, message: 'Failed to parse response JSON' });
@@ -264,14 +264,14 @@ describe('v3 errors', () => {
 		const client = createV3Client(fetchMock);
 
 		const failure = await client
-			.GET(v3('/api/v3/acquire/health'), { signal: controller.signal })
+			.GET(v3('/api/v3/acquire/slskd/status'), { signal: controller.signal })
 			.catch((cause: unknown) => cause);
 
 		expect(failure).toBeInstanceOf(TransportError);
 		expect(failure).toMatchObject({
 			code: 'TRANSPORT_ABORTED',
 			method: 'GET',
-			path: '/api/v3/acquire/health'
+			path: '/api/v3/acquire/slskd/status'
 		});
 	});
 
@@ -286,7 +286,7 @@ describe('v3 errors', () => {
 		const client = createV3Client(fetchMock);
 
 		const failure = await client
-			.GET(v3('/api/v3/acquire/health'), { timeoutMs: 1 })
+			.GET(v3('/api/v3/acquire/slskd/status'), { timeoutMs: 1 })
 			.catch((cause: unknown) => cause);
 
 		expect(failure).toBeInstanceOf(TransportError);
@@ -298,13 +298,13 @@ describe('v3 errors', () => {
 		fetchMock.mockRejectedValue(new TypeError('fetch failed'));
 		const client = createV3Client(fetchMock);
 
-		const failure = await client.GET(v3('/api/v3/acquire/health')).catch((cause: unknown) => cause);
+		const failure = await client.GET(v3('/api/v3/acquire/slskd/status')).catch((cause: unknown) => cause);
 
 		expect(failure).toBeInstanceOf(TransportError);
 		expect(failure).toMatchObject({
 			code: 'TRANSPORT_NETWORK',
 			method: 'GET',
-			path: '/api/v3/acquire/health'
+			path: '/api/v3/acquire/slskd/status'
 		});
 	});
 });

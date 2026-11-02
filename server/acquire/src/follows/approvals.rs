@@ -162,6 +162,39 @@ impl Follows {
             .collect())
     }
 
+    /// Granted approvals, singles and batch members alike: each is revoked
+    /// on its own.
+    pub async fn approved(&self) -> Result<Vec<FollowApproval>, RequestsError> {
+        let rows: Vec<ApprovalRow> = read(&self.db, "approvals.approved", |conn| {
+            let mut statement = conn.prepare_cached(sql::APPROVED_APPROVALS.text())?;
+            let rows = statement.query_map([], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
+            })?;
+            rows.collect()
+        })
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(
+                |(user_id, user_name, artist_mbid, artist_name, requested_at, _)| FollowApproval {
+                    user_name: user_name.unwrap_or_else(|| user_id.clone()),
+                    user_id,
+                    artist_mbid,
+                    artist_name,
+                    state: ApprovalState::Approved,
+                    requested_at: secs_from_ms(requested_at),
+                },
+            )
+            .collect())
+    }
+
     /// Pending batches grouped by batch and user, oldest first.
     pub async fn pending_batches(&self) -> Result<Vec<ApprovalBatch>, RequestsError> {
         let rows = self.pending_rows(true).await?;

@@ -15,7 +15,7 @@
 //! - [`drop_import`] takes uploaded music into the library.
 //! - [`held`] keeps every file waiting for a person's decision in one
 //!   list, whichever door it came through.
-//! - [`imports`] serves Lidarr/Spotify import plus the health smoke.
+//! - [`imports`] serves Lidarr/Spotify import plus the download client status.
 //! - [`landing`] verifies a finished download, matches it to the
 //!   requested release, and publishes it into the library or holds it.
 //! - [`intake`] places matched files in the library, the same way for

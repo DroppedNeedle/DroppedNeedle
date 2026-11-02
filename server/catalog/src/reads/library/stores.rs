@@ -418,28 +418,3 @@ pub trait LyricsPort: Send + Sync {
     /// Stored lyrics for one streamable track id.
     fn get<'a>(&'a self, track_id: &'a str) -> BoxFuture<'a, Result<Option<LyricDoc>, StoreError>>;
 }
-
-/// Every held release group and every open album request, lowercase and
-/// sorted.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct AlbumMbids {
-    /// Release groups held with at least one streamable track.
-    pub owned: Vec<String>,
-    /// Album ids with an open acquisition request.
-    pub requested: Vec<String>,
-}
-
-/// What reading one catalog track's tags from disk found.
-#[derive(Debug, Clone, PartialEq)]
-pub enum TagRead {
-    /// The file's tags.
-    Found(Box<droppedneedle_library::tags::AudioTag>),
-    /// No streamable catalog track has this id.
-    Unknown,
-    /// The catalog knows the track, but its file is gone from disk.
-    Gone,
-    /// The file resolves outside every library root.
-    Outside,
-    /// The file is there but its tags cannot be read.
-    Unreadable,
-}

@@ -339,23 +339,6 @@ pub async fn list_handler(
     }))
 }
 
-/// One entry with its held files. `GET /api/v3/held/{entry_id}`.
-#[utoipa::path(
-    get,
-    tag = "held",
-    path = "/api/v3/held/{entry_id}",
-    params(("entry_id" = i64, Path, description = "Held entry id")),
-    responses((status = 200, body = HeldEntryResponse))
-)]
-pub async fn get_handler(
-    State(service): State<Arc<HeldService>>,
-    User(principal): User,
-    Path(entry_id): Path<String>,
-) -> Result<Json<HeldEntryResponse>, ApiError> {
-    let entry = service.get(&viewer(&principal), id_of(&entry_id)?).await?;
-    Ok(Json(entry.into()))
-}
-
 /// Import an entry's held files (all, or those named), skipping the check
 /// that held each. A file no better than your copy stays held until "Use
 /// this file"; a lower-quality version replaces yours only by "Use this
@@ -557,7 +540,6 @@ pub fn routes() -> Routes<Arc<HeldService>> {
     Routes::new()
         .user(routes!(list_handler))
         .user(routes!(recheck_all_handler))
-        .user(routes!(get_handler))
         .user(routes!(import_handler))
         .curator(routes!(match_handler))
         .user(routes!(recheck_handler))

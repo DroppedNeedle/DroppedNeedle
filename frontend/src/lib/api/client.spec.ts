@@ -21,7 +21,7 @@ import { api } from './client';
 import { ApiError, SessionExpiredError, TransportError } from './errors';
 import { v3 } from './v3/endpoint';
 
-const HEALTH = v3('/api/v3/acquire/health');
+const HEALTH = v3('/api/v3/acquire/slskd/status');
 const LOGIN = v3('/api/v3/auth/login');
 
 const mockGlobalFetch = vi.fn();
@@ -76,7 +76,7 @@ describe('api client', () => {
 			mockGlobalFetch.mockResolvedValue(jsonResponse({ name: 'test' }));
 			const result = await api.v3.GET(HEALTH);
 			expect(mockGlobalFetch).toHaveBeenCalledWith(
-				'/api/v3/acquire/health',
+				'/api/v3/acquire/slskd/status',
 				expect.objectContaining({ method: 'GET' })
 			);
 			expect(result).toEqual({ name: 'test' });
@@ -307,7 +307,7 @@ describe('api client', () => {
 				expect(cause).toMatchObject({
 					code: 'TRANSPORT_TIMEOUT',
 					method: 'GET',
-					path: '/api/v3/acquire/health'
+					path: '/api/v3/acquire/slskd/status'
 				});
 			}
 			expect(authMock.clear).not.toHaveBeenCalled();

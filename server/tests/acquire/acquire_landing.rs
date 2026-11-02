@@ -3176,12 +3176,12 @@ async fn a_missing_library_folder_holds_downloads_until_it_is_back() {
         worker.wait_for_landings().await;
     }
     let waiting = format!("Waiting: library folder {} isn't there.", music.display());
-    let queued = queue.get(&viewer, "queued").await.expect("queued task");
+    let queued = task_now(&queue, &viewer, "queued").await;
     assert_eq!(queued.row.task.status, TaskStatus::Queued);
     assert_eq!(queued.facts.attempts, 0, "nothing was fetched");
     assert_eq!(queued.reason, Some(Reason::LibraryFolderMissing));
     assert_eq!(queued.reason_text.as_deref(), Some(waiting.as_str()));
-    let landing = queue.get(&viewer, "landing").await.expect("landing task");
+    let landing = task_now(&queue, &viewer, "landing").await;
     assert_eq!(landing.row.task.status, TaskStatus::Downloading, "it waits");
     assert_eq!(landing.reason, Some(Reason::LibraryFolderMissing));
     assert_eq!(landing.reason_text.as_deref(), Some(waiting.as_str()));
@@ -3226,7 +3226,7 @@ async fn a_missing_library_folder_holds_downloads_until_it_is_back() {
         landed.error_message
     );
     assert!(music.join("Portishead/Dummy/0101 Mysterons.flac").is_file());
-    let started = queue.get(&viewer, "queued").await.expect("queued task");
+    let started = task_now(&queue, &viewer, "queued").await;
     assert!(started.facts.attempts > 0, "the queued download started");
 }
 
@@ -3355,10 +3355,10 @@ async fn a_switched_off_library_holds_downloads_until_it_is_on() {
         worker.wait_for_landings().await;
     }
     let waiting = "Waiting: the library is switched off.";
-    let queued = queue.get(&viewer, "queued").await.expect("queued task");
+    let queued = task_now(&queue, &viewer, "queued").await;
     assert_eq!(queued.facts.attempts, 0, "nothing was fetched");
     assert_eq!(queued.reason_text.as_deref(), Some(waiting));
-    let landing = queue.get(&viewer, "landing").await.expect("landing task");
+    let landing = task_now(&queue, &viewer, "landing").await;
     assert_eq!(landing.row.task.status, TaskStatus::Downloading, "it waits");
     assert_eq!(landing.reason_text.as_deref(), Some(waiting));
     let decisions: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM download_import_decisions")
@@ -3429,7 +3429,7 @@ async fn a_switched_off_library_holds_downloads_until_it_is_on() {
         landed.error_message
     );
     assert!(music.join("Portishead/Dummy/0101 Mysterons.flac").is_file());
-    let started = queue.get(&viewer, "queued").await.expect("queued task");
+    let started = task_now(&queue, &viewer, "queued").await;
     assert!(started.facts.attempts > 0, "the queued download started");
 }
 
@@ -7881,4 +7881,25 @@ async fn held_files_of_two_downloads_keep_their_own_plans() {
     );
     assert_eq!(albums[1].0, f.group, "filed with its own album");
     assert_ne!(albums[1].1, copy);
+}
+
+/// One task as its owner's list shows it.
+async fn task_now(
+    queue: &droppedneedle_acquire::downloads::queue::DownloadQueue,
+    viewer: &HeldViewer,
+    id: &str,
+) -> droppedneedle_acquire::downloads::queue::TaskView {
+    let filter = droppedneedle_acquire::downloads::queue_rows::ListFilter {
+        status: None,
+        release_group_mbid: None,
+        page: 1,
+        page_size: 50,
+    };
+    queue
+        .list(viewer, &filter)
+        .await
+        .expect("tasks read")
+        .into_iter()
+        .find(|task| task.row.task.id == id)
+        .expect("task")
 }

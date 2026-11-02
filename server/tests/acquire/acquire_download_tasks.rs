@@ -444,9 +444,6 @@ async fn queue_journey_scopes_explains_retries_and_clears() {
     assert_eq!(failed["reason"]["code"], "wrong_album");
     assert!(failed["reason"]["action"].as_str().unwrap().len() > 10);
     assert_eq!(failed["decision"]["outcome"], "rejected");
-    let (status, _) = send(&journal, get("/api/v3/downloads/tasks/q-bob", USER)).await;
-    assert_eq!(status, StatusCode::FORBIDDEN);
-
     let (status, _) = send(&journal, get("/api/v3/downloads/quarantine", USER)).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
     let (_, body) = send(&journal, get("/api/v3/downloads/quarantine", ADMIN)).await;

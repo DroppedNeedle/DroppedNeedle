@@ -1,5 +1,5 @@
-//! Imports and acquisition health: Lidarr read-only import, Spotify
-//! OAuth/playlist import, and the acquisition health smoke.
+//! Imports: Lidarr read-only import, Spotify OAuth/playlist import, and the
+//! download client status reads.
 //!
 //! The Lidarr surface is read-only import: monitored artists become
 //! follows keyed on the MusicBrainz MBID, and this module issues no Lidarr
@@ -13,7 +13,7 @@
 //! each imported album, `spotify_store` holds the SQLite stores behind it (links, authorize
 //! states, imported playlists),
 //! `jobs` runs each playlist import as a job on the jobs table, `health`
-//! holds the slskd/Usenet smoke plus the per-source release gates,
+//! holds the slskd and SABnzbd status reads,
 //! and `handlers` owns the native routes; the loopback mock servers the
 //! tests run against live in the testkit crate. The app mounts
 //! [`handlers::routes`]: the OAuth callback in the public group, the rest

@@ -217,19 +217,6 @@ async fn link_lifecycle_over_http() {
         .clone()
         .oneshot(
             Request::builder()
-                .uri("/api/v3/me/connections/listenbrainz")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-    assert!(!json_body(response).await.to_string().contains("lb-token-9"));
-
-    let response = router
-        .clone()
-        .oneshot(
-            Request::builder()
                 .method("DELETE")
                 .uri("/api/v3/me/connections/listenbrainz")
                 .body(Body::empty())
@@ -239,16 +226,7 @@ async fn link_lifecycle_over_http() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
 
-    let response = router
-        .oneshot(
-            Request::builder()
-                .uri("/api/v3/me/connections/listenbrainz")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    assert!(rig.deps.store.listenbrainz_link("user-1").await.is_none());
     rig.runtime.shutdown().await;
 }
 

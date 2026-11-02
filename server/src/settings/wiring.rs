@@ -301,14 +301,11 @@ pub fn routes() -> Routes<SettingsSetup> {
     super::registry::routes()
         .admin(routes!(h::get_schedule, h::put_schedule))
         .admin(routes!(h::get_library, h::put_library))
-        .admin(routes!(h::add_library_path, h::remove_library_path))
         .admin(routes!(h::get_library_policy_tree))
         .admin(routes!(h::preview_library_policy_impact))
         .admin(routes!(h::preview_library_policy_apply))
         .admin(routes!(h::get_restorable_library_roots))
         .admin(routes!(h::restore_library_roots))
-        .admin(routes!(h::get_library_path_mapping))
-        .admin(routes!(h::get_cache_ttls))
         .admin(routes!(h::verify_jellyfin))
         .admin(routes!(h::verify_navidrome))
         .admin(routes!(h::verify_plex))
@@ -330,7 +327,6 @@ pub fn routes() -> Routes<SettingsSetup> {
         .admin(routes!(h::test_sabnzbd))
         .admin(routes!(h::get_source_priority, h::put_source_priority))
         .admin(routes!(h::get_policy, h::put_policy))
-        .admin(routes!(h::get_policy_summary))
         .admin(routes!(h::list_indexers, h::create_indexer))
         .admin(routes!(h::get_search_backend, h::put_search_backend))
         .admin(routes!(h::update_indexer, h::delete_indexer))
@@ -338,22 +334,13 @@ pub fn routes() -> Routes<SettingsSetup> {
         .admin(routes!(h::test_indexer))
         .admin(routes!(h::test_prowlarr))
         .admin(routes!(
-            h::dropped_library_sync,
-            h::dropped_library_sync_put
-        ))
-        .admin(routes!(
             h::get_library_management,
             h::put_library_management
         ))
         .admin(routes!(h::get_library_management_activation_health))
         .admin(routes!(h::preview_library_management_impact))
         .admin(routes!(h::validate_library_management))
-        .admin(routes!(h::create_library_management_profile))
-        .admin(routes!(
-            h::get_library_management_profile,
-            h::update_library_management_profile,
-            h::delete_library_management_profile
-        ))
+        .admin(routes!(h::delete_library_management_profile))
         .admin(routes!(h::copy_library_management_profile))
         .admin(routes!(h::get_library_management_preset_diff))
         .admin(routes!(h::export_library_management_profile))

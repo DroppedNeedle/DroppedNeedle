@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { fade, fly } from '$lib/ui/motion';
-	import { Check, CloudDownload, Heart, Sparkles, TriangleAlert, X } from 'lucide-svelte';
+	import { Check, CloudDownload, Heart, Sparkles, TriangleAlert, Undo2, X } from 'lucide-svelte';
 	import ArtistImage from '$lib/components/ArtistImage.svelte';
 	import {
 		getAutoDownloadApprovalBatchesQuery,
@@ -10,12 +10,14 @@
 		createApproveAutoDownloadBatchMutation,
 		createApproveAutoDownloadMutation,
 		createRejectAutoDownloadBatchMutation,
-		createRejectAutoDownloadMutation
+		createRejectAutoDownloadMutation,
+		createRevokeAutoDownloadMutation
 	} from '$lib/queries/following/AdminApprovalsMutations.svelte';
 	import { getPersonalMixApprovalsQuery } from '$lib/queries/scrobble-preferences/PersonalMixApprovalsQuery.svelte';
 	import {
 		createApprovePersonalMixMutation,
-		createRejectPersonalMixMutation
+		createRejectPersonalMixMutation,
+		createRevokePersonalMixMutation
 	} from '$lib/queries/scrobble-preferences/ScrobblePreferencesMutations.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import Button from '$lib/ui/Button.svelte';
@@ -35,7 +37,9 @@
 	const autoApprovalsQuery = getAutoDownloadApprovalsQuery(() => authStore.isAdmin && active);
 	const autoApprovals = $derived(autoApprovalsQuery.data?.items ?? []);
 	const approveAuto = createApproveAutoDownloadMutation();
+	const grantedAuto = $derived(autoApprovalsQuery.data?.granted ?? []);
 	const rejectAuto = createRejectAutoDownloadMutation();
+	const revokeAuto = createRevokeAutoDownloadMutation();
 
 	// Bulk "Lidarr Import" approval batches.
 	const batchApprovalsQuery = getAutoDownloadApprovalBatchesQuery(
@@ -49,7 +53,9 @@
 	const mixApprovalsQuery = getPersonalMixApprovalsQuery(() => authStore.isAdmin && active);
 	const mixApprovals = $derived(mixApprovalsQuery.data?.items ?? []);
 	const approveMix = createApprovePersonalMixMutation();
+	const grantedMix = $derived(mixApprovalsQuery.data?.granted ?? []);
 	const rejectMix = createRejectPersonalMixMutation();
+	const revokeMix = createRevokePersonalMixMutation();
 
 	$effect(() =>
 		oncount?.(
@@ -94,7 +100,7 @@
 					</div>
 				{/each}
 			</div>
-		{:else if autoApprovals.length === 0 && batchApprovals.length === 0 && mixApprovals.length === 0}
+		{:else if autoApprovals.length === 0 && batchApprovals.length === 0 && mixApprovals.length === 0 && grantedAuto.length === 0 && grantedMix.length === 0}
 			<RequestsEmpty icon={Heart} tone="success" title="No pending approvals">
 				When a user turns on artist auto-download or Weekly Mix auto-requests, it appears here for
 				your review.
@@ -269,6 +275,74 @@
 							</div>
 						</Card>
 					</div>
+				{/each}
+				{#if grantedAuto.length > 0 || grantedMix.length > 0}
+					<h3 class="mt-4 text-sm font-semibold text-base-content/60">Approved</h3>
+				{/if}
+				{#each grantedAuto as item (item.user_id + item.artist_mbid)}
+					<Card padding="none">
+						<div class="flex items-center gap-3 sm:gap-4 p-3 sm:p-4">
+							<div
+								class="w-14 h-14 sm:w-16 sm:h-16 shrink-0 rounded-lg overflow-hidden bg-base-300"
+							>
+								<ArtistImage
+									mbid={item.artist_mbid}
+									alt={item.artist_name}
+									className="w-full h-full object-cover"
+								/>
+							</div>
+							<div class="flex-1 min-w-0">
+								<a
+									href={withBasePath(`/artist/${item.artist_mbid}`)}
+									class="block font-semibold text-sm truncate hover:text-accent hover:underline"
+									title={item.artist_name}>{item.artist_name}</a
+								>
+								<span class="block truncate text-xs text-base-content/40"
+									>{item.user_name ?? 'A user'}</span
+								>
+							</div>
+							<Button
+								variant="danger-ghost"
+								size="sm"
+								icon={Undo2}
+								class="gap-1 shrink-0"
+								disabled={revokeAuto.isPending}
+								onclick={() =>
+									revokeAuto.mutate({
+										userId: item.user_id,
+										mbid: item.artist_mbid,
+										artistName: item.artist_name
+									})}
+							>
+								Revoke
+							</Button>
+						</div>
+					</Card>
+				{/each}
+				{#each grantedMix as item (item.user_id)}
+					<Card padding="none">
+						<div class="flex items-center gap-3 sm:gap-4 p-3 sm:p-4">
+							<div
+								class="w-14 h-14 sm:w-16 sm:h-16 shrink-0 rounded-lg bg-base-300 flex items-center justify-center"
+							>
+								<Sparkles class="h-6 w-6 text-accent/60" />
+							</div>
+							<div class="flex-1 min-w-0">
+								<span class="block font-semibold text-sm truncate">Weekly Mix auto-requests</span>
+								<span class="block truncate text-xs text-base-content/40">{item.user_name}</span>
+							</div>
+							<Button
+								variant="danger-ghost"
+								size="sm"
+								icon={Undo2}
+								class="gap-1 shrink-0"
+								disabled={revokeMix.isPending}
+								onclick={() => revokeMix.mutate({ userId: item.user_id, userName: item.user_name })}
+							>
+								Revoke
+							</Button>
+						</div>
+					</Card>
 				{/each}
 			</div>
 		{/if}

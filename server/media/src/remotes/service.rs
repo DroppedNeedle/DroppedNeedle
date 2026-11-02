@@ -22,11 +22,10 @@ use super::folders::{
 };
 use super::jellyfin::{JellyfinAdapter, MixSeed};
 use super::models::{
-    AlbumPage, AlbumView, AnalyticsView, ArtistIndexEntry, ArtistPage, ArtistView,
-    ConnectionStatus, DiscoveryView, FavoritesView, FilterFacetsView, FolderResolutionView,
-    HistoryPage, HubView, ImportResult, InfoView, LyricsView, MatchQuery, MatchView,
-    MusicFolderView, PlaylistCollection, PlaylistDetail, SearchResults, SessionsView, SourceName,
-    StatsView, TrackPage, TrackView,
+    AlbumPage, AlbumView, AnalyticsView, ArtistIndexEntry, ArtistPage, ConnectionStatus,
+    DiscoveryView, FavoritesView, FilterFacetsView, FolderResolutionView, HistoryPage, HubView,
+    ImportResult, InfoView, LyricsView, MatchQuery, MatchView, MusicFolderView, PlaylistCollection,
+    PlaylistDetail, SearchResults, SourceName, StatsView, TrackPage, TrackView,
 };
 use super::warmup::MbidIndex;
 use droppedneedle_kernel::db::fold::fold_text;
@@ -343,20 +342,6 @@ impl RemotesService {
         Ok(album_page(page, offset, limit))
     }
 
-    /// One album.
-    pub async fn album(
-        &self,
-        user_id: &str,
-        source: SourceName,
-        id: String,
-    ) -> RemotesResult<AlbumView> {
-        self.call_by_id(user_id, source, Reads::User, move |handle| async move {
-            handle.album_detail(&id).await
-        })
-        .await?
-        .ok_or(RemotesFailure::NotFound)
-    }
-
     /// Tracks of one album.
     pub async fn album_tracks(
         &self,
@@ -398,20 +383,6 @@ impl RemotesService {
             handle.artist_index().await
         })
         .await
-    }
-
-    /// One artist.
-    pub async fn artist(
-        &self,
-        user_id: &str,
-        source: SourceName,
-        id: String,
-    ) -> RemotesResult<ArtistView> {
-        self.call(user_id, source, move |handle| async move {
-            handle.artist_detail(&id).await
-        })
-        .await?
-        .ok_or(RemotesFailure::NotFound)
     }
 
     /// One page of tracks.
@@ -458,19 +429,6 @@ impl RemotesService {
     ) -> RemotesResult<Vec<AlbumView>> {
         self.call(user_id, source, move |handle| async move {
             handle.recent(limit).await
-        })
-        .await
-    }
-
-    /// Recently added albums.
-    pub async fn recently_added(
-        &self,
-        user_id: &str,
-        source: SourceName,
-        limit: i64,
-    ) -> RemotesResult<Vec<AlbumView>> {
-        self.call(user_id, source, move |handle| async move {
-            handle.recently_added(limit).await
         })
         .await
     }
@@ -555,42 +513,6 @@ impl RemotesService {
             SourceName::Jellyfin,
             what,
             |handle| async move { handle.jellyfin(what)?.filter_facets().await },
-        )
-        .await
-    }
-
-    /// Most-played albums (Jellyfin play counts).
-    pub async fn most_played_albums(
-        &self,
-        user_id: &str,
-        source: SourceName,
-        limit: i64,
-    ) -> RemotesResult<Vec<AlbumView>> {
-        let what = "play counts";
-        self.call_only(
-            user_id,
-            source,
-            SourceName::Jellyfin,
-            what,
-            |handle| async move { handle.jellyfin(what)?.most_played_albums(limit).await },
-        )
-        .await
-    }
-
-    /// Most-played artists (Jellyfin play counts).
-    pub async fn most_played_artists(
-        &self,
-        user_id: &str,
-        source: SourceName,
-        limit: i64,
-    ) -> RemotesResult<Vec<ArtistView>> {
-        let what = "play counts";
-        self.call_only(
-            user_id,
-            source,
-            SourceName::Jellyfin,
-            what,
-            |handle| async move { handle.jellyfin(what)?.most_played_artists(limit).await },
         )
         .await
     }
@@ -789,16 +711,6 @@ impl RemotesService {
             )
             .await?;
         Ok(capped_page(items, limit))
-    }
-
-    /// Active audio sessions.
-    pub async fn sessions(&self, user_id: &str, source: SourceName) -> RemotesResult<SessionsView> {
-        self.call(
-            user_id,
-            source,
-            |handle| async move { handle.sessions().await },
-        )
-        .await
     }
 
     /// Listening history, newest first.

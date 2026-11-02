@@ -411,21 +411,16 @@ impl TestApp {
         let run = self
             .until("the new folder's first scan", || async {
                 let (status, body) = self
-                    .call_through_busy("GET", "/api/v3/library/scan/runs", &headers, None)
+                    .call_through_busy("GET", "/api/v3/library/scan/runs/current", &headers, None)
                     .await;
                 assert_eq!(status, StatusCode::OK, "{body}");
-                if body["current"]
-                    .as_array()
-                    .is_none_or(|runs| !runs.is_empty())
-                {
+                if !body["active"].is_null() || !body["queued"].is_null() {
                     return None;
                 }
-                body["history"]
-                    .as_array()?
-                    .iter()
-                    .filter_map(|run| run["id"].as_str())
+                self.finished_scans(&headers)
+                    .await
+                    .into_iter()
                     .find(|run| !before.iter().any(|seen| seen == run))
-                    .map(str::to_owned)
             })
             .await;
         self.scan_ended(&run).await;
@@ -487,10 +482,15 @@ impl TestApp {
 
     async fn finished_scans(&self, headers: &[(&str, &str)]) -> Vec<String> {
         let (status, body) = self
-            .call_through_busy("GET", "/api/v3/library/scan/runs", headers, None)
+            .call_through_busy(
+                "GET",
+                "/api/v3/library/scan/runs/history?limit=50",
+                headers,
+                None,
+            )
             .await;
         assert_eq!(status, StatusCode::OK, "{body}");
-        body["history"]
+        body["items"]
             .as_array()
             .expect("scan history")
             .iter()

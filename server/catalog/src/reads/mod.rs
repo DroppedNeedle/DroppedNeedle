@@ -194,14 +194,9 @@ fn library_deps(
 ) -> library::LibraryDeps {
     let online = enrichment.map(|pair| pair.lyrics.clone());
     library::LibraryDeps {
-        lyrics: Arc::new(lyrics::LyricsService::new(
-            catalog.clone(),
-            files.clone(),
-            online,
-        )),
+        lyrics: Arc::new(lyrics::LyricsService::new(catalog.clone(), files, online)),
         catalog,
         upgrade_policy: Some(settings.live()),
-        tags: library::tags::FileTagReader::new(files),
         covers: Some(covers),
     }
 }

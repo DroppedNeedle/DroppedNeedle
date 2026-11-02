@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
 use super::journal::Journal;
-use super::queue::{DownloadQueue, QueueError, TaskFile, TaskView};
+use super::queue::{DownloadQueue, QueueError, TaskView};
 use super::queue_rows::{ListFilter, Viewer};
 use super::source_tag::SourceTag;
 use super::state::TaskStatus;
@@ -304,28 +304,6 @@ pub struct DownloadActivitySummaryResponse {
     pub landed_release_group_mbids: Vec<String>,
 }
 
-/// One file of a task's current source.
-#[derive(Debug, Clone, Serialize, ToSchema)]
-pub struct DownloadFileItem {
-    pub filename: String,
-    /// Advertised size in bytes, when the source gave one.
-    pub size: Option<i64>,
-    /// Always empty: sources do not advertise durations.
-    pub duration: Option<f64>,
-}
-
-/// A task's files and counts.
-#[derive(Debug, Clone, Serialize, ToSchema)]
-pub struct DownloadFilesResponse {
-    pub task_id: String,
-    pub status: TaskStatus,
-    pub files_total: i64,
-    pub files_completed: i64,
-    pub files_failed: i64,
-    pub progress_percent: i64,
-    pub files: Vec<DownloadFileItem>,
-}
-
 /// Plain success.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct DownloadActionResponse {
@@ -523,56 +501,6 @@ pub async fn list_tasks_handler(
         items: items.into_iter().map(Into::into).collect(),
         page: filter.page,
         page_size: filter.page_size,
-    }))
-}
-
-/// One download task. `GET /api/v3/downloads/tasks/{task_id}`.
-#[utoipa::path(
-    get,
-    tag = "downloads",
-    path = "/api/v3/downloads/tasks/{task_id}",
-    params(("task_id" = String, Path, description = "Download task id")),
-    responses((status = 200, body = DownloadTaskResponse))
-)]
-pub async fn get_task_handler(
-    State(state): State<DownloadsState>,
-    User(principal): User,
-    Path(task_id): Path<String>,
-) -> Result<Json<DownloadTaskResponse>, ApiError> {
-    let view = state.queue.get(&viewer(&principal), &task_id).await?;
-    Ok(Json(view.into()))
-}
-
-/// The files of a task's current source.
-/// `GET /api/v3/downloads/tasks/{task_id}/files`.
-#[utoipa::path(
-    get,
-    tag = "downloads",
-    path = "/api/v3/downloads/tasks/{task_id}/files",
-    params(("task_id" = String, Path, description = "Download task id")),
-    responses((status = 200, body = DownloadFilesResponse))
-)]
-pub async fn task_files_handler(
-    State(state): State<DownloadsState>,
-    User(principal): User,
-    Path(task_id): Path<String>,
-) -> Result<Json<DownloadFilesResponse>, ApiError> {
-    let (row, files) = state.queue.files(&viewer(&principal), &task_id).await?;
-    Ok(Json(DownloadFilesResponse {
-        task_id: row.task.id,
-        status: row.task.status,
-        files_total: row.extras.files_total,
-        files_completed: row.extras.files_completed,
-        files_failed: row.extras.files_failed,
-        progress_percent: row.task.progress_percent,
-        files: files
-            .into_iter()
-            .map(|TaskFile { filename, size }| DownloadFileItem {
-                filename,
-                size,
-                duration: None,
-            })
-            .collect(),
     }))
 }
 
@@ -1026,8 +954,6 @@ pub fn routes() -> Routes<DownloadsRoutes> {
         .curator(routes!(upgrade_album_handler))
         .curator(routes!(upgrade_track_handler))
         .user(routes!(list_tasks_handler))
-        .user(routes!(get_task_handler))
-        .user(routes!(task_files_handler))
         .user(routes!(cancel_task_handler))
         .user(routes!(next_source_handler))
         .user(routes!(retry_task_handler))

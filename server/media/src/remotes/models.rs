@@ -780,21 +780,6 @@ impl FavoritesQuery {
     }
 }
 
-/// Most-played query.
-#[derive(Debug, Clone, Deserialize, IntoParams)]
-#[into_params(parameter_in = Query)]
-pub struct MostPlayedQuery {
-    /// Max items (1-50, default 10).
-    pub limit: Option<i64>,
-}
-
-impl MostPlayedQuery {
-    /// Clamp to the v2 range.
-    pub fn clamped(&self) -> i64 {
-        self.limit.unwrap_or(10).clamp(1, 50)
-    }
-}
-
 /// Instant-mix seed query.
 #[derive(Debug, Clone, Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]

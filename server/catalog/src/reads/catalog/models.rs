@@ -678,7 +678,7 @@ pub struct ReleasesQuery {
 pub struct DiscoveryQuery {
     /// How many to return, 1 to 50.
     pub count: Option<u32>,
-    /// Provider to ask; default is the primary music source setting.
+    /// Provider to ask; default is ListenBrainz.
     pub source: Option<ListenSource>,
 }
 

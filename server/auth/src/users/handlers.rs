@@ -21,9 +21,9 @@ use super::models::{
     AdminUserCreate, AdminUserListResponse, AppPasswordCreate, AppPasswordCreatedResponse,
     DeviceSessionMint, DeviceSessionResponse, DisplayNameUpdate, EmailUpdate,
     ImportCandidateListResponse, ImportUsersRequest, ImportUsersResponse, LastFmConfiguredResponse,
-    LastFmCredentialsSet, LastFmSessionExchange, LastFmSessionResponse, LastFmStatusResponse,
-    LastFmTokenResponse, LocalPasswordSet, PasswordChange, PasswordReset, ProfileResponse,
-    RecoveryCodeResponse, RoleUpdate, SessionListResponse, UserResponse, UsernameUpdate,
+    LastFmCredentialsSet, LastFmSessionExchange, LastFmSessionResponse, LastFmTokenResponse,
+    LocalPasswordSet, PasswordChange, PasswordReset, ProfileResponse, RecoveryCodeResponse,
+    RoleUpdate, SessionListResponse, UserResponse, UsernameUpdate,
 };
 use super::roles::{Admin, Role, User};
 use super::services;
@@ -390,23 +390,6 @@ pub async fn revoke_app_password(
         .map_err(ApiError::from)
 }
 
-/// Per-user Last.fm link status.
-#[utoipa::path(
-    get,
-    tag = "users",
-    path = "/api/v3/me/connections/lastfm",
-    responses((status = 200, description = "Link status", body = LastFmStatusResponse))
-)]
-pub async fn lastfm_status(
-    State(deps): State<UsersDeps>,
-    User(caller): User,
-) -> Result<Json<LastFmStatusResponse>, ApiError> {
-    services::lastfm_status(&deps, caller.user_id())
-        .await
-        .map(Json)
-        .map_err(ApiError::from)
-}
-
 /// Store the caller's own Last.fm API credentials.
 #[utoipa::path(
     put,
@@ -552,25 +535,6 @@ pub async fn admin_create_user(
     .await
     .map(|user| (StatusCode::CREATED, Json(user)))
     .map_err(ApiError::from)
-}
-
-/// Fetch one user.
-#[utoipa::path(
-    get,
-    tag = "users",
-    path = "/api/v3/admin/users/{id}",
-    params(("id" = String, Path, description = "User id")),
-    responses((status = 200, description = "The account", body = UserResponse))
-)]
-pub async fn admin_get_user(
-    State(deps): State<UsersDeps>,
-    admin: Admin,
-    Path(user_id): Path<String>,
-) -> Result<Json<UserResponse>, ApiError> {
-    services::admin_get_user(&deps, &admin, &user_id)
-        .await
-        .map(Json)
-        .map_err(ApiError::from)
 }
 
 /// Change one user's role.

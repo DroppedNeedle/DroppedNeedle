@@ -20,7 +20,7 @@ use utoipa::{IntoParams, ToSchema};
 
 use super::blocking;
 use super::operations::{OperationControlBody, OperationView, ReasonView, detail_view, job_view};
-use crate::operations::models::{Control, OperationJob};
+use crate::operations::models::OperationJob;
 use crate::repairs::models::{
     FindingRow, FindingState, MANAGEMENT_MAPPING_VERSION, Purpose, REPAIR_TARGET_VERSION,
 };
@@ -33,15 +33,10 @@ pub fn routes() -> Routes<LibraryServices> {
     Routes::new()
         .admin(routes!(list_repairs, create_repair))
         .admin(routes!(estimate_repair))
-        .admin(routes!(get_repair))
         .admin(routes!(repair_findings))
         .admin(routes!(apply_repair))
-        .admin(routes!(pause_repair))
-        .admin(routes!(resume_repair))
-        .admin(routes!(stop_repair))
         .admin(routes!(list_preparations, create_preparation))
         .admin(routes!(estimate_preparation))
-        .admin(routes!(get_preparation))
         .admin(routes!(preparation_findings))
         .admin(routes!(apply_preparation))
         .admin(routes!(discard_preparation))
@@ -236,15 +231,6 @@ fn root_ids(pairs: Vec<(String, String)>) -> Vec<String> {
 // Shared bodies of the repair and preparation handlers.
 // ---------------------------------------------------------------------------
 
-async fn get_job(
-    repairs: Repairs,
-    job_id: String,
-    purpose: Purpose,
-) -> Result<Json<OperationView>, ApiError> {
-    let detail = blocking(move || repairs.get(&job_id, purpose)).await?;
-    Ok(Json(repair_view(&detail)))
-}
-
 async fn list_jobs(
     repairs: Repairs,
     query: HistoryQuery,
@@ -304,25 +290,6 @@ async fn apply(
             purpose,
             body.expected_row_revision,
             body.confirmation,
-        )
-    })
-    .await?;
-    Ok(Json(job_view(&job)))
-}
-
-async fn control(
-    repairs: Repairs,
-    job_id: String,
-    control: Control,
-    body: OperationControlBody,
-) -> Result<Json<OperationView>, ApiError> {
-    let job = blocking(move || {
-        repairs.control(
-            &job_id,
-            Purpose::ExistingMatches,
-            control,
-            body.expected_row_revision,
-            body.idempotency_key.as_deref(),
         )
     })
     .await?;
@@ -419,26 +386,6 @@ pub async fn estimate_repair(
 #[utoipa::path(
     get,
     tag = "library management",
-    path = "/api/v3/library/identity-repairs/{job_id}",
-    params(("job_id" = String, Path, description = "Repair job id")),
-    responses(
-        (status = 200, description = "Repair job", body = OperationView),
-        (status = 401, description = "Not authenticated"),
-        (status = 403, description = "Admin role required"),
-        (status = 404, description = "Unknown repair job"),
-    )
-)]
-pub async fn get_repair(
-    State(repairs): State<Repairs>,
-    _caller: Admin,
-    Path(job_id): Path<String>,
-) -> Result<Json<OperationView>, ApiError> {
-    get_job(repairs, job_id, Purpose::ExistingMatches).await
-}
-
-#[utoipa::path(
-    get,
-    tag = "library management",
     path = "/api/v3/library/identity-repairs/{job_id}/findings",
     params(("job_id" = String, Path, description = "Repair job id"), FindingsQuery),
     responses(
@@ -480,75 +427,6 @@ pub async fn apply_repair(
     ValidJson(body): ValidJson<RepairApplyBody>,
 ) -> Result<Json<OperationView>, ApiError> {
     apply(repairs, job_id, body, Purpose::ExistingMatches).await
-}
-
-#[utoipa::path(
-    post,
-    tag = "library management",
-    path = "/api/v3/library/identity-repairs/{job_id}/pause",
-    params(("job_id" = String, Path, description = "Repair job id")),
-    request_body = OperationControlBody,
-    responses(
-        (status = 200, description = "Repair job", body = OperationView),
-        (status = 401, description = "Not authenticated"),
-        (status = 403, description = "Admin role required"),
-        (status = 404, description = "Unknown repair job"),
-        (status = 409, description = "Stale revision or reused idempotency key"),
-    )
-)]
-pub async fn pause_repair(
-    State(repairs): State<Repairs>,
-    _caller: Admin,
-    Path(job_id): Path<String>,
-    ValidJson(body): ValidJson<OperationControlBody>,
-) -> Result<Json<OperationView>, ApiError> {
-    control(repairs, job_id, Control::Pause, body).await
-}
-
-#[utoipa::path(
-    post,
-    tag = "library management",
-    path = "/api/v3/library/identity-repairs/{job_id}/resume",
-    params(("job_id" = String, Path, description = "Repair job id")),
-    request_body = OperationControlBody,
-    responses(
-        (status = 200, description = "Repair job", body = OperationView),
-        (status = 401, description = "Not authenticated"),
-        (status = 403, description = "Admin role required"),
-        (status = 404, description = "Unknown repair job"),
-        (status = 409, description = "Stale revision or reused idempotency key"),
-    )
-)]
-pub async fn resume_repair(
-    State(repairs): State<Repairs>,
-    _caller: Admin,
-    Path(job_id): Path<String>,
-    ValidJson(body): ValidJson<OperationControlBody>,
-) -> Result<Json<OperationView>, ApiError> {
-    control(repairs, job_id, Control::Resume, body).await
-}
-
-#[utoipa::path(
-    post,
-    tag = "library management",
-    path = "/api/v3/library/identity-repairs/{job_id}/stop",
-    params(("job_id" = String, Path, description = "Repair job id")),
-    request_body = OperationControlBody,
-    responses(
-        (status = 200, description = "Repair job", body = OperationView),
-        (status = 401, description = "Not authenticated"),
-        (status = 403, description = "Admin role required"),
-        (status = 404, description = "Unknown repair job"),
-        (status = 409, description = "Stale revision or reused idempotency key"),
-    )
-)]
-pub async fn stop_repair(
-    State(repairs): State<Repairs>,
-    _caller: Admin,
-    Path(job_id): Path<String>,
-    ValidJson(body): ValidJson<OperationControlBody>,
-) -> Result<Json<OperationView>, ApiError> {
-    control(repairs, job_id, Control::Stop, body).await
 }
 
 // ---------------------------------------------------------------------------
@@ -635,26 +513,6 @@ pub async fn estimate_preparation(
         selected_root_count,
         queued_preparation_count: estimate.queued_preparation_count,
     }))
-}
-
-#[utoipa::path(
-    get,
-    tag = "library management",
-    path = "/api/v3/library/management/identity-preparations/{job_id}",
-    params(("job_id" = String, Path, description = "Preparation job id")),
-    responses(
-        (status = 200, description = "Preparation job", body = OperationView),
-        (status = 401, description = "Not authenticated"),
-        (status = 403, description = "Admin role required"),
-        (status = 404, description = "Unknown preparation job"),
-    )
-)]
-pub async fn get_preparation(
-    State(repairs): State<Repairs>,
-    _caller: Admin,
-    Path(job_id): Path<String>,
-) -> Result<Json<OperationView>, ApiError> {
-    get_job(repairs, job_id, Purpose::ManagementReadiness).await
 }
 
 #[utoipa::path(

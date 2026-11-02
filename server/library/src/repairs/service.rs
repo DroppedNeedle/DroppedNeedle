@@ -27,11 +27,10 @@ use crate::identify::service::IdentifyService;
 use crate::identify::sqlite::{SqliteIdentifyStore, album_input_revision};
 use crate::jobs::{self, OperationState, WorkState};
 use crate::operations::models::{
-    Control, OperationDetail, OperationError, OperationJob, OperationKind,
-    ReidentificationCandidate,
+    OperationDetail, OperationError, OperationJob, OperationKind, ReidentificationCandidate,
 };
 use crate::operations::reidentify::evaluation;
-use crate::operations::service::{Operations, job_detail};
+use crate::operations::service::job_detail;
 use crate::scan::watcher::WorkWakeups;
 use crate::wiring::ScanCoordinator;
 use droppedneedle_kernel::db::{Db, DbError, Lane};
@@ -72,7 +71,6 @@ enum Checked {
 #[derive(Clone)]
 pub struct Repairs {
     db: Db,
-    ops: Operations,
     ids: Arc<dyn IdGenerator>,
     wakeups: WorkWakeups,
     clock: Arc<dyn droppedneedle_kernel::clock::Clock>,
@@ -81,35 +79,16 @@ pub struct Repairs {
 impl Repairs {
     pub fn new(
         db: Db,
-        ops: Operations,
         ids: Arc<dyn IdGenerator>,
         wakeups: WorkWakeups,
         clock: Arc<dyn droppedneedle_kernel::clock::Clock>,
     ) -> Self {
         Self {
             db,
-            ops,
             ids,
             wakeups,
             clock,
         }
-    }
-
-    /// Any operation job for the generic operation view, with its report
-    /// summary when it is a repair. One read: read apart, a commit between
-    /// them shows a ready job with no summary. Blocking.
-    pub fn operation(
-        &self,
-        job_id: &str,
-    ) -> Result<(OperationDetail, Option<Summary>), OperationError> {
-        self.db.read_blocking("repairs.operation", |conn| {
-            let detail = job_detail(conn, job_id)?;
-            if OperationKind::parse(&detail.job.kind) != Some(OperationKind::Repair) {
-                return Ok((detail, None));
-            }
-            let snap = store::snapshot(conn, job_id)?.transpose()?;
-            Ok::<_, OperationError>((detail, snap.and_then(|snap| snap.summary)))
-        })
     }
 
     /// A scan run's redacted diagnostic report: its file name and bytes.
@@ -175,20 +154,6 @@ impl Repairs {
             .read_blocking("repairs.estimate_preparation", |conn| {
                 Ok(store::estimate_preparation(conn, &roots)?)
             })
-    }
-
-    /// One repair job with its summary; not found when it is not a job of
-    /// `purpose`.
-    pub fn get(&self, job_id: &str, purpose: Purpose) -> Result<RepairDetail, OperationError> {
-        // The job and its summary come from one read: read apart, a commit
-        // between them shows a ready job with no summary.
-        self.db.read_blocking("repairs.get", |conn| {
-            let (_, snap) = store::repair_job(conn, job_id, purpose)?;
-            Ok(RepairDetail {
-                detail: job_detail(conn, job_id)?,
-                summary: snap.summary,
-            })
-        })
     }
 
     /// A page of a purpose's jobs, newest first, and the `(created_at, id)`
@@ -283,22 +248,6 @@ impl Repairs {
             .write_blocking(Lane::Foreground, "repairs.discard", |tx| {
                 store::discard(tx, job_id, expected_row_revision, self.clock.now_secs())
             })
-    }
-
-    /// Pause, resume, or stop a repair job.
-    pub fn control(
-        &self,
-        job_id: &str,
-        purpose: Purpose,
-        control: Control,
-        expected_row_revision: i64,
-        idempotency_key: Option<&str>,
-    ) -> Result<OperationJob, OperationError> {
-        self.db.read_blocking("repairs.control", |conn| {
-            store::repair_job(conn, job_id, purpose).map(|_| ())
-        })?;
-        self.ops
-            .control(job_id, control, expected_row_revision, idempotency_key)
     }
 }
 

@@ -10279,3 +10279,40 @@ async fn library_jobs_management_and_publish_tables_rebuild_on_upgrade() {
     assert_eq!(left.len(), 1, "the purge keeps an unexpired snapshot");
     runtime.shutdown().await;
 }
+
+/// Migration 0116 removes the saved primary music source and leaves every
+/// other section as it was.
+#[tokio::test]
+async fn the_primary_source_section_goes_on_upgrade() {
+    let pool = scratch_pool().await;
+    run_migrations(&pool, &migrator_through(115)).await.unwrap();
+    for (key, value) in [
+        ("primary_music_source", r#"{"source":"lastfm"}"#),
+        ("lyrics_settings", r#"{"enabled":false}"#),
+    ] {
+        sqlx::query(
+            "INSERT INTO config_sections (key, value_json, revision, updated_at) \
+             VALUES (?, ?, 4, 1700000000000)",
+        )
+        .bind(key)
+        .bind(value)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    apply_migrations(&pool).await.unwrap();
+    let rows = sqlx::query_as::<_, (String, String, i64)>(
+        "SELECT key, value_json, revision FROM config_sections",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        rows,
+        [(
+            "lyrics_settings".to_owned(),
+            r#"{"enabled":false}"#.to_owned(),
+            4
+        )]
+    );
+}

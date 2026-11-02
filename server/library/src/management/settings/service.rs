@@ -232,11 +232,6 @@ impl LibraryManagementService {
         self.load().map(Self::response)
     }
 
-    /// One profile by id.
-    pub fn get_profile(&self, profile_id: &str) -> Result<LibraryManagementProfile, SettingsError> {
-        find_profile(&self.load()?, profile_id).cloned()
-    }
-
     /// Classify a candidate without saving. `stale` reports whether the
     /// caller's revision is behind; the verdict is computed either way.
     pub fn preview_impact(
@@ -400,24 +395,6 @@ impl LibraryManagementService {
         Ok(())
     }
 
-    /// Create a profile as a copy of the default profile.
-    pub fn create_profile(
-        &self,
-        name: &str,
-        description: &str,
-        expected_settings_revision: &str,
-    ) -> Result<LibraryManagementProfileMutationResponse, SettingsError> {
-        let settings = self.load()?;
-        let source = find_profile(&settings, &settings.default_profile_id)?.clone();
-        self.copy_locked(
-            settings,
-            source,
-            name,
-            description,
-            expected_settings_revision,
-        )
-    }
-
     /// Copy one profile under a new name.
     pub fn copy_profile(
         &self,
@@ -456,27 +433,6 @@ impl LibraryManagementService {
         settings.profiles.push(copied);
         let saved = self.save_locked(settings, expected_settings_revision)?;
         mutation_response(saved, &copied_id)
-    }
-
-    /// Replace one profile. The body id must match the path id.
-    pub fn update_profile(
-        &self,
-        profile_id: &str,
-        profile: LibraryManagementProfile,
-        expected_settings_revision: &str,
-    ) -> Result<LibraryManagementProfileMutationResponse, SettingsError> {
-        if profile.id != profile_id {
-            return Err(invalid("The profile ID does not match the request path."));
-        }
-        let mut settings = self.load()?;
-        let slot = settings
-            .profiles
-            .iter_mut()
-            .find(|current| current.id == profile.id)
-            .ok_or_else(|| invalid(MISSING_PROFILE))?;
-        *slot = profile;
-        let saved = self.save_locked(settings, expected_settings_revision)?;
-        mutation_response(saved, profile_id)
     }
 
     /// Delete one custom profile that is neither the default nor assigned

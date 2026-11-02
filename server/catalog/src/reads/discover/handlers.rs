@@ -24,8 +24,7 @@ use super::{
         PlaylistSuggestionsRequest, PlaylistSuggestionsResponse, QueueEnrichment,
         QueueGenerateRequest, QueueGenerateResponse, QueueIgnoreRequest, QueueValidateRequest,
         QueueValidateResponse, RadioPlanRequest, RadioPlanResponse, RadioRequest, RefreshResponse,
-        StatsRange, TrackCacheCheckRequest, TrackCacheCheckResponse, TrackPreviewResponse,
-        YouTubeQuotaResponse, YouTubeSearchResponse,
+        StatsRange, TrackPreviewResponse, YouTubeSearchResponse,
     },
     services::{self, ReadsDeps},
 };
@@ -63,15 +62,6 @@ pub struct GenreQuery {
     pub artist_offset: Option<i64>,
     /// Album lane offset.
     pub album_offset: Option<i64>,
-}
-
-/// YouTube album search params.
-#[derive(Debug, Deserialize)]
-pub struct YouTubeAlbumQuery {
-    /// Artist name.
-    pub artist: String,
-    /// Album name.
-    pub album: String,
 }
 
 /// YouTube track search params.
@@ -462,35 +452,6 @@ pub async fn validate_queue(
         .map_err(ApiError::from)
 }
 
-/// Album video lookup with the cached flag.
-#[utoipa::path(
-    get,
-    tag = "discover",
-    path = "/api/v3/discover/queue/youtube-search",
-    params(
-        ("artist" = String, Query, description = "Artist name"),
-        ("album" = String, Query, description = "Album name"),
-    ),
-    responses(
-        (status = 200, description = "Resolved video", body = YouTubeSearchResponse),
-        (status = 400, description = "Bad query string"),
-        (status = 401, description = "Not authenticated"),
-        (status = 429, description = "YouTube search quota used up for today (RATE_LIMITED)"),
-        (status = 409, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)"),
-        (status = 503, description = "A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known)"),
-    )
-)]
-pub async fn youtube_search(
-    State(deps): State<ReadsDeps>,
-    _user: User,
-    ValidQuery(query): ValidQuery<YouTubeAlbumQuery>,
-) -> Result<Json<YouTubeSearchResponse>, ApiError> {
-    services::youtube_search(&deps, &query.artist, &query.album)
-        .await
-        .map(Json)
-        .map_err(ApiError::from)
-}
-
 /// Track video lookup with the cached flag.
 #[utoipa::path(
     get,
@@ -515,50 +476,6 @@ pub async fn youtube_track_search(
     ValidQuery(query): ValidQuery<YouTubeTrackQuery>,
 ) -> Result<Json<YouTubeSearchResponse>, ApiError> {
     services::youtube_track_search(&deps, &query.artist, &query.track)
-        .await
-        .map(Json)
-        .map_err(ApiError::from)
-}
-
-/// YouTube data-API quota state. 404 when YouTube is unconfigured.
-#[utoipa::path(
-    get,
-    tag = "discover",
-    path = "/api/v3/discover/queue/youtube-quota",
-    responses(
-        (status = 200, description = "Quota state", body = YouTubeQuotaResponse),
-        (status = 401, description = "Not authenticated"),
-        (status = 404, description = "YouTube unconfigured"),
-    )
-)]
-pub async fn youtube_quota(
-    State(deps): State<ReadsDeps>,
-    _user: User,
-) -> Result<Json<YouTubeQuotaResponse>, ApiError> {
-    services::youtube_quota(&deps)
-        .await
-        .map(Json)
-        .map_err(ApiError::from)
-}
-
-/// Bulk YouTube cache membership. Unconfigured YouTube answers empty.
-#[utoipa::path(
-    post,
-    tag = "discover",
-    path = "/api/v3/discover/queue/youtube-cache-check",
-    request_body = TrackCacheCheckRequest,
-    responses(
-        (status = 200, description = "Cache membership", body = TrackCacheCheckResponse),
-        (status = 400, description = "Bad request body"),
-        (status = 401, description = "Not authenticated"),
-    )
-)]
-pub async fn youtube_cache_check(
-    State(deps): State<ReadsDeps>,
-    _user: User,
-    ValidJson(body): ValidJson<TrackCacheCheckRequest>,
-) -> Result<Json<TrackCacheCheckResponse>, ApiError> {
-    services::youtube_cache_check(&deps, &body)
         .await
         .map(Json)
         .map_err(ApiError::from)
@@ -838,10 +755,7 @@ pub fn routes() -> Routes<ReadsDeps> {
         .user(routes!(ignored_releases))
         .user(routes!(unignore_queue_item))
         .user(routes!(validate_queue))
-        .user(routes!(youtube_search))
         .user(routes!(youtube_track_search))
-        .user(routes!(youtube_quota))
-        .user(routes!(youtube_cache_check))
         .user(routes!(track_preview))
         .user(routes!(album_preview))
         .user(routes!(get_home))

@@ -9,16 +9,13 @@ use super::CollectionsService;
 use crate::reads::collections::error::CollectionsError;
 use crate::reads::collections::models::{
     FollowStatusResponse, FollowedArtist, FollowedArtistListResponse, NewReleaseItem,
-    NewReleaseListResponse, NewReleasePageQuery, RecentReleasesQuery, UnseenCountResponse,
+    NewReleaseListResponse, RecentReleasesQuery, UnseenCountResponse,
 };
 use crate::reads::collections::state::AutoDownloadState;
 use crate::reads::collections::store::FollowStore;
 use crate::reads::collections::store::follows::{FollowRow, ReleaseFilter, ReleaseRow};
 use droppedneedle_auth::Role;
 
-/// To-do list page size: default and largest (v2 `/new-releases`).
-const PAGE_DEFAULT: usize = 50;
-const PAGE_MAX: usize = 100;
 /// Release log window in days: default and largest (v2 `/new-releases/recent`).
 const RECENT_DAYS_DEFAULT: u32 = 30;
 const RECENT_DAYS_MAX: u32 = 365;
@@ -156,23 +153,6 @@ impl CollectionsService<'_> {
             })
             .collect();
         Ok(FollowedArtistListResponse { artists })
-    }
-
-    /// New releases from followed artists the library does not hold yet
-    /// (the to-do list), one page.
-    pub async fn new_releases(
-        &self,
-        user_id: &str,
-        query: &NewReleasePageQuery,
-    ) -> Result<NewReleaseListResponse, CollectionsError> {
-        let filter = ReleaseFilter {
-            since: None,
-            owned_too: false,
-            limit: page_size(query.limit, PAGE_DEFAULT, PAGE_MAX)?,
-            offset: query.offset.unwrap_or(0),
-        };
-        let (rows, total) = self.state.stores.follows.releases(user_id, &filter).await?;
-        Ok(release_items(rows, total))
     }
 
     /// The release log: everything followed artists released in the last

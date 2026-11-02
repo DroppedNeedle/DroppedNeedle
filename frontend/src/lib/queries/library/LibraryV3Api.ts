@@ -245,8 +245,6 @@ export const LibraryV3Api = {
 		v3('/api/v3/library/reviews/{id}/approve', { path: { id: reviewId } }),
 	keepTaggedReview: (reviewId: string) =>
 		v3('/api/v3/library/reviews/{id}/keep-tagged', { path: { id: reviewId } }),
-	operation: (jobId: string) =>
-		v3('/api/v3/library/operations/{job_id}', { path: { job_id: jobId } }),
 	pauseOperation: (jobId: string) =>
 		v3('/api/v3/library/operations/{job_id}/pause', { path: { job_id: jobId } }),
 	resumeOperation: (jobId: string) =>
@@ -329,8 +327,6 @@ export const LibraryV3Api = {
 		v3('/api/v3/library/identity-repairs/estimate', {
 			query: rootIds.length ? { root_id: rootIds } : {}
 		}),
-	identityRepair: (jobId: string) =>
-		v3('/api/v3/library/identity-repairs/{job_id}', { path: { job_id: jobId } }),
 	identityRepairFindings: (jobId: string, limit: number, cursor?: string, category?: string) =>
 		v3('/api/v3/library/identity-repairs/{job_id}/findings', {
 			path: { job_id: jobId },
@@ -382,7 +378,6 @@ export const LibraryV3Api = {
 	policyTree: () => v3('/api/v3/settings/library/policy-tree'),
 	policyImpact: () => v3('/api/v3/settings/library/policy-impact'),
 	policyApplyPreview: () => v3('/api/v3/settings/library/policy-apply-preview'),
-	pathMapping: () => v3('/api/v3/settings/library/path-mapping'),
 	restorableRoots: () => v3('/api/v3/settings/library/restorable-roots'),
 	restoreRoots: () => v3('/api/v3/settings/library/restore-roots')
 };

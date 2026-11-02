@@ -47,4 +47,3 @@ export type LibraryRestorableRootsResponse = Schemas['LibraryRestorableRootsResp
 export type LibraryRestoreRootsRequest = Schemas['LibraryRestoreRootsRequest'];
 export type LibraryPolicyImpactResponse = Schemas['LibraryPolicyImpactResponse'];
 export type LibraryPolicyApplyPreviewResponse = Schemas['LibraryPolicyApplyPreviewResponse'];
-export type LibraryPathMappingReport = Schemas['LibraryPathMappingReport'];

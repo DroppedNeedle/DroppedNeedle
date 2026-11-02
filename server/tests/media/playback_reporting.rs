@@ -2338,18 +2338,17 @@ async fn older_plays_are_filed_and_count_in_player_apps() {
     );
 
     // What an administrator reads about the job.
-    let admin = app.login_admin().await;
-    let (status, report) = app
-        .call(
-            "GET",
-            &format!("/api/v3/library/operations/{job}"),
-            &[("authorization", admin.as_str())],
-            None,
+    let (purpose, raw): (String, String) = app
+        .db()
+        .query_row(
+            "SELECT purpose, result_json FROM library_repair_snapshots WHERE job_id = ?1",
+            [&job],
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
-        .await;
-    assert_eq!(status, StatusCode::OK, "{report}");
-    let summary = &report["repair_summary"];
-    assert_eq!(summary["purpose"], "play_history_filing", "{report}");
+        .expect("job summary reads");
+    let report: Value = serde_json::from_str(&raw).expect("summary parses");
+    let summary = &report;
+    assert_eq!(purpose, "play_history_filing", "{report}");
     assert_eq!(
         summary["counts_by_finding"],
         json!({"filed": 3, "left": 2}),

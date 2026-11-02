@@ -399,8 +399,8 @@ impl DownloadWorker {
         self.inputs.readable()
     }
 
-    /// Whether a download source is on: the answer requests, the health
-    /// smoke and Discover read too.
+    /// Whether a download source is on: the answer requests and Discover
+    /// read too.
     pub fn readiness(&self) -> &SourceReadiness {
         &self.readiness
     }
@@ -526,7 +526,7 @@ impl DownloadWorker {
                 sources: sources.clone(),
                 config: Box::new(config),
             },
-            SourceReadiness::unprobed(SourceList::Fixed(sources)),
+            SourceReadiness::new(SourceList::Fixed(sources)),
             events,
             health,
         )

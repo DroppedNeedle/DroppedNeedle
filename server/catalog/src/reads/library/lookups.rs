@@ -16,7 +16,7 @@ use rusqlite::types::Value;
 
 use super::sql;
 use super::store::{LocalCatalog, first, rows, texts, track_row, unsigned};
-use super::stores::{AlbumMbids, StatsExtras, StoreError, TrackRecord};
+use super::stores::{StatsExtras, StoreError, TrackRecord};
 
 /// Most ids bound into one `IN (...)` list.
 const MAX_BINDS: usize = 500;
@@ -53,14 +53,6 @@ impl LocalCatalog {
             local_only_count: unsigned(local_only),
             last_scan_at: last_scan,
         })
-    }
-
-    /// Every held release group and every open album request (the
-    /// unfiltered membership answer).
-    pub async fn all_album_mbids(&self) -> Result<AlbumMbids, StoreError> {
-        let owned = self.all_owned_release_groups().await?;
-        let requested = self.all_requested_albums().await?;
-        Ok(AlbumMbids { owned, requested })
     }
 
     /// `(album id, matched id)` pairs for one owners statement over

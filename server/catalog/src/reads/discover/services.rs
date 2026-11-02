@@ -17,8 +17,7 @@ use crate::reads::discover::{
         PlaylistSuggestionsResponse, QueueEnrichment, QueueGenerateRequest, QueueGenerateResponse,
         QueueIgnoreRequest, QueueValidateRequest, QueueValidateResponse, RadioPlanRequest,
         RadioPlanResponse, RadioRequest, RadioSeedKind, RefreshResponse, StatsRange,
-        TrackCacheCheckRequest, TrackCacheCheckResponse, TrackCacheCheckResponseItem,
-        TrackPreviewResponse, YouTubeQuotaResponse, YouTubeSearchResponse,
+        TrackPreviewResponse, YouTubeSearchResponse,
     },
     ports::{ProviderFailure, QueueTrigger, RadioFailure},
     previews::LivePreviews,
@@ -432,31 +431,6 @@ pub async fn validate_queue(
     })
 }
 
-/// Album video lookup with the cached flag.
-pub async fn youtube_search(
-    deps: &ReadsDeps,
-    artist: &str,
-    album: &str,
-) -> Result<YouTubeSearchResponse, ServiceError> {
-    check_name(artist, "artist")?;
-    check_name(album, "album")?;
-    let cached = deps.youtube.is_cached(artist, album, false).await;
-    match deps.youtube.search_video(artist, album).await? {
-        Some(video_id) => Ok(YouTubeSearchResponse {
-            video_id: Some(video_id.clone()),
-            embed_url: Some(format!("https://www.youtube.com/embed/{video_id}")),
-            error: None,
-            cached,
-        }),
-        None => Ok(YouTubeSearchResponse {
-            video_id: None,
-            embed_url: None,
-            error: Some("not_found".to_owned()),
-            cached,
-        }),
-    }
-}
-
 /// Track video lookup with the cached flag.
 pub async fn youtube_track_search(
     deps: &ReadsDeps,
@@ -480,46 +454,6 @@ pub async fn youtube_track_search(
             cached,
         }),
     }
-}
-
-/// Quota state, or missing when YouTube is unconfigured (the route 404s).
-pub async fn youtube_quota(deps: &ReadsDeps) -> Result<YouTubeQuotaResponse, ServiceError> {
-    deps.youtube.quota().await.ok_or(ServiceError::NotFound)
-}
-
-/// Bulk cache membership. Unconfigured YouTube answers empty, never an
-/// error: absence of the integration is not a failure.
-pub async fn youtube_cache_check(
-    deps: &ReadsDeps,
-    body: &TrackCacheCheckRequest,
-) -> Result<TrackCacheCheckResponse, ServiceError> {
-    if !deps.youtube.is_configured() {
-        return Ok(TrackCacheCheckResponse { items: Vec::new() });
-    }
-    let mut seen = std::collections::HashSet::new();
-    let mut deduped: Vec<(String, String)> = Vec::new();
-    for item in body.items.iter().take(CACHE_CHECK_MAX_ITEMS) {
-        let artist: String = item.artist.chars().take(NAME_MAX_LEN).collect();
-        let track: String = item.track.chars().take(NAME_MAX_LEN).collect();
-        let key = format!("{}|{}", artist.to_lowercase(), track.to_lowercase());
-        if seen.insert(key) {
-            deduped.push((artist, track));
-        }
-    }
-    let cached = deps.youtube.cached_tracks(&deduped).await;
-    Ok(TrackCacheCheckResponse {
-        items: deduped
-            .into_iter()
-            .map(|(artist, track)| {
-                let key = format!("{}|{}", artist.to_lowercase(), track.to_lowercase());
-                TrackCacheCheckResponseItem {
-                    artist,
-                    track,
-                    cached: cached.get(&key).copied().unwrap_or(false),
-                }
-            })
-            .collect(),
-    })
 }
 
 /// A 30-second track preview. Empty means no provider had one.

@@ -99,6 +99,13 @@ droppedneedle_kernel::sql! {
          WHERE a.state = 'pending' AND (a.batch_id IS NOT NULL) = ?1 \
          ORDER BY a.requested_at ASC, a.artist_name ASC";
 
+    /// Granted rows of plain users, by artist name.
+    pub(crate) APPROVED_APPROVALS = "SELECT a.user_id, u.display_name, a.artist_mbid, \
+         a.artist_name, a.requested_at, a.batch_id FROM auto_download_approvals a \
+         LEFT JOIN auth_users u ON u.id = a.user_id \
+         WHERE a.state = 'approved' AND COALESCE(u.role, 'user') NOT IN ('admin', 'trusted') \
+         ORDER BY a.artist_name ASC, a.user_id ASC";
+
     // The follow poll.
 
     /// Followed artists due at `?1`, never-polled first, at most `?2`.

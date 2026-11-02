@@ -266,27 +266,6 @@ pub async fn connect_listenbrainz_route(
     }
 }
 
-/// Read the caller's ListenBrainz link status. Unlinked reads as missing.
-#[utoipa::path(
-    get,
-    tag = "listening",
-    path = "/api/v3/me/connections/listenbrainz",
-    responses(
-        (status = 200, description = "Link status", body = LinkStatus),
-        (status = 401, description = "Not authenticated"),
-        (status = 404, description = "No link"),
-    )
-)]
-pub async fn listenbrainz_status(
-    State(deps): State<ListeningDeps>,
-    User(user): User,
-) -> Result<Json<LinkStatus>, ApiError> {
-    match deps.store.listenbrainz_link(user.user_id()).await {
-        Some(link) => Ok(Json(linked(link))),
-        None => Err(ApiError::not_found()),
-    }
-}
-
 /// Remove the caller's ListenBrainz link.
 #[utoipa::path(
     delete,
@@ -330,7 +309,6 @@ where
             update_scrobble_preferences
         ))
         .user(routes!(
-            listenbrainz_status,
             connect_listenbrainz_route,
             disconnect_listenbrainz_route
         ))

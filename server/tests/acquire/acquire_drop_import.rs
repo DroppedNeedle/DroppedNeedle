@@ -350,7 +350,7 @@ async fn dropped_album_lands_and_the_unknown_folder_waits_for_review() {
         .discard(&held_viewer, entry.id, None)
         .await
         .expect("discard");
-    let now = acquire.drops.get_job(&curator, &job.id).await.expect("job");
+    let now = job_now(&acquire.drops, &curator, &job.id).await;
     let odd = now
         .items
         .iter()
@@ -671,7 +671,7 @@ async fn a_hand_match_finds_the_edition_in_a_large_group() {
             .await
             .expect("matched by hand");
         assert_eq!(matched.imported, 3, "case {case}: {matched:?}");
-        let now = acquire.drops.get_job(&curator, &job.id).await.expect("job");
+        let now = job_now(&acquire.drops, &curator, &job.id).await;
         assert_eq!(
             now.items[0].status,
             DropItemStatus::Imported,
@@ -777,7 +777,7 @@ async fn a_deferred_upload_match_leaves_its_files_as_they_were() {
         Some(GUESS.to_owned()),
     );
     assert_eq!(held().await, as_it_was);
-    let now = acquire.drops.get_job(&curator, &job.id).await.expect("job");
+    let now = job_now(&acquire.drops, &curator, &job.id).await;
     assert_eq!(now.items[0].status, DropItemStatus::NeedsReview);
 
     std::fs::create_dir_all(&music).expect("library folder back");
@@ -1084,7 +1084,7 @@ async fn upload_and_settle(
         if frame.name() != "drop_import_updated" {
             continue;
         }
-        let now = acquire.drops.get_job(curator, &job.id).await.expect("job");
+        let now = job_now(&acquire.drops, curator, &job.id).await;
         if now.status != DropJobStatus::Processing {
             return now;
         }
@@ -1437,4 +1437,19 @@ async fn an_upload_declared_over_the_limit_is_refused_before_writing() {
     let incoming = app.state().acquire.drops.incoming_dir();
     let written = std::fs::read_dir(&incoming).map_or(0, |dir| dir.count());
     assert_eq!(written, 0, "nothing lands in {}", incoming.display());
+}
+
+/// One job as its owner's list shows it.
+async fn job_now(
+    drops: &droppedneedle_acquire::drop_import::DropImports,
+    viewer: &Viewer,
+    id: &str,
+) -> JobRecord {
+    drops
+        .list_jobs(viewer, false)
+        .await
+        .expect("jobs read")
+        .into_iter()
+        .find(|job| job.id == id)
+        .expect("job")
 }

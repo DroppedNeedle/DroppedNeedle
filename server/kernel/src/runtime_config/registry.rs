@@ -97,7 +97,6 @@ section_list! {
         WantedWatcher,
         SourcePriority,
         UsenetBackendSetting,
-        PrimaryMusicSource,
         GetIt,
         SecuritySettings,
         PublicAddress,

@@ -943,31 +943,6 @@ impl LocalCatalog {
         .await
     }
 
-    /// One page of a genre's streamable tracks, artist/album/disc/track
-    /// order, plus total. Empty when the genre is unknown.
-    pub async fn genre_tracks(
-        &self,
-        genre_folded: &str,
-        limit: u64,
-        offset: u64,
-    ) -> Result<(Vec<TrackRecord>, u64), StoreError> {
-        let folded = Value::Text(droppedneedle_kernel::db::fold_text(genre_folded.trim()));
-        let filter = vec![folded.clone(), folded];
-        let mut page = filter.clone();
-        page.extend([count(limit), count(offset)]);
-        let tracks = self
-            .read("library.genres.tracks", move |conn| {
-                rows(conn, sql::GENRE_TRACKS.text(), &page, track_row)
-            })
-            .await?;
-        let total: i64 = self
-            .read("library.genres.tracks.count", move |conn| {
-                scalar(conn, sql::GENRE_TRACK_COUNT.text(), &filter)
-            })
-            .await?;
-        Ok((tracks, unsigned(total)))
-    }
-
     /// Decade shelves of owned albums, ascending. Albums without a year
     /// sit outside.
     pub async fn decades(&self) -> Result<Vec<DecadeRecord>, StoreError> {

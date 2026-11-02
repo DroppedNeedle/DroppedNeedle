@@ -101,9 +101,6 @@ enum Owned {
     Task,
     Held,
     SearchJob,
-    SpotifyJob,
-    /// Drop-import jobs and items, owned by one of two trusted users.
-    Drop,
     /// An edition's tag write, a management job one of two trusted users
     /// asked for.
     TagWrite,
@@ -417,20 +414,6 @@ const PATH_ID_ROWS: &[(Owned, &str, &str, u16, u16)] = &[
     // Download tasks: owner or admin.
     (
         Owned::Task,
-        "GET",
-        "/api/v3/downloads/tasks/{task_id}",
-        403,
-        ADMITTED,
-    ),
-    (
-        Owned::Task,
-        "GET",
-        "/api/v3/downloads/tasks/{task_id}/files",
-        403,
-        ADMITTED,
-    ),
-    (
-        Owned::Task,
         "POST",
         "/api/v3/downloads/tasks/{task_id}/next-source",
         403,
@@ -451,7 +434,6 @@ const PATH_ID_ROWS: &[(Owned, &str, &str, u16, u16)] = &[
         ADMITTED,
     ),
     // Held entries: owner or admin.
-    (Owned::Held, "GET", "/api/v3/held/{entry_id}", 404, ADMITTED),
     (
         Owned::Held,
         "GET",
@@ -516,22 +498,6 @@ const PATH_ID_ROWS: &[(Owned, &str, &str, u16, u16)] = &[
         "/api/v3/downloads/search/{job_id}/cancel",
         403,
         403,
-    ),
-    // Spotify import jobs are keyed by their user: nobody else finds one.
-    (
-        Owned::SpotifyJob,
-        "GET",
-        "/api/v3/acquire/spotify/jobs/{id}",
-        404,
-        404,
-    ),
-    // Drop imports, between two trusted users: owner or admin.
-    (
-        Owned::Drop,
-        "GET",
-        "/api/v3/import/jobs/{job_id}",
-        404,
-        ADMITTED,
     ),
     // An edition's tag write, between two trusted users: writer or admin.
     (
@@ -602,7 +568,6 @@ const EXEMPT_READS: &[(&str, &str)] = &[
         "/api/v3/library/contributions/",
         "contributions, shared by curators",
     ),
-    ("/api/v3/library/genres/", "shared library genres"),
     (
         "/api/v3/library/reviews/",
         "library reviews, shared by curators",
@@ -817,11 +782,6 @@ const EXACT_EXEMPTIONS: &[(&str, &str, &str)] = &[
     ),
     ("PUT", "/api/v3/youtube/link/{album_id}", SHARED_LINK),
     ("DELETE", "/api/v3/youtube/link/{album_id}", SHARED_LINK),
-    (
-        "DELETE",
-        "/api/v3/youtube/track-link/{album_id}/{disc_number}/{track_number}",
-        SHARED_LINK,
-    ),
 ];
 
 /// The document's user and curator operations, as (method, path).
@@ -1289,38 +1249,12 @@ async fn seed(app: &TestApp, kind: Owned, owner: &Who, n: u32) -> Ids {
             );
             ids.insert("job_id", job_id);
         }
-        Owned::SpotifyJob => {
-            let spotify_id = format!("spotify-list-{n}");
-            let imports = &app.state().acquire.imports;
-            let playlist_id = imports
-                .spotify_playlists
-                .create(&owner.id, "Imported", &format!("spotify:{spotify_id}"))
-                .await
-                .expect("playlist seeds");
-            imports
-                .spotify_imports
-                .seed_done(&owner.id, &spotify_id, &playlist_id)
-                .await
-                .expect("import seeds");
-            ids.insert("id", spotify_id);
-        }
         Owned::TagWrite => {
             let album = format!("tag-write-album-{n}");
             let job = format!("tag-write-job-{n}");
             seed_tag_write(app, owner, &album, &job).await;
             ids.insert("album_id", album);
             ids.insert("job_id", job);
-        }
-        Owned::Drop => {
-            let job = drop_upload(app, owner).await;
-            ids.insert("job_id", job["id"].as_str().expect("job id").to_owned());
-            ids.insert(
-                "item_id",
-                job["items"][0]["id"]
-                    .to_string()
-                    .trim_matches('"')
-                    .to_owned(),
-            );
         }
     }
     ids
@@ -1379,53 +1313,6 @@ async fn seed_tag_write(app: &TestApp, owner: &Who, album: &str, job: &str) {
     .await;
 }
 
-/// Upload one audio file to the drop import as `owner` and wait for the
-/// job to settle with its item.
-async fn drop_upload(app: &TestApp, owner: &Who) -> Value {
-    let audio = std::fs::read(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/library/flac_full_01.flac"
-    ))
-    .expect("fixture reads");
-    let boundary = "ownership-boundary";
-    let mut form = format!(
-        "--{boundary}\r\nContent-Disposition: form-data; name=\"files\"; filename=\"01 One.flac\"\r\n\
-         Content-Type: audio/flac\r\n\r\n"
-    )
-    .into_bytes();
-    form.extend_from_slice(&audio);
-    form.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
-    app.state().auth.limits.reset();
-    let content_type = format!("multipart/form-data; boundary={boundary}");
-    let (status, _, bytes) = app
-        .raw_bytes(
-            "POST",
-            "/api/v3/import/uploads",
-            &[
-                ("authorization", owner.auth.as_str()),
-                ("content-type", content_type.as_str()),
-            ],
-            form,
-        )
-        .await;
-    let job: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
-    assert!(status.is_success(), "upload: {status} {job}");
-    let job_id = job["id"].as_str().expect("job id").to_owned();
-    app.until("the drop job settles with its item", || async {
-        let (_, job) = call(
-            app,
-            owner,
-            "GET",
-            &format!("/api/v3/import/jobs/{job_id}"),
-            None,
-        )
-        .await;
-        (job["status"] != json!("processing") && job["items"][0]["id"] != Value::Null)
-            .then_some(job)
-    })
-    .await
-}
-
 /// What `owner` sees of the resource: the fields another user's call
 /// could change.
 async fn look(app: &TestApp, kind: Owned, owner: &Who, ids: &Ids) -> Value {
@@ -1463,14 +1350,18 @@ async fn look(app: &TestApp, kind: Owned, owner: &Who, ids: &Ids) -> Value {
             read("/api/v3/requests/history".to_owned()).await,
         ]),
         Owned::Wanted => read("/api/v3/requests/wanted".to_owned()).await,
-        Owned::Task => read(fill("/api/v3/downloads/tasks/{task_id}", ids)).await,
+        Owned::Task => task_row(
+            ids["task_id"].as_str(),
+            read("/api/v3/downloads/tasks?page_size=100".to_owned()).await,
+        ),
         Owned::Held | Owned::HeldMatch => json!([
             read("/api/v3/held".to_owned()).await,
-            read(format!("/api/v3/downloads/tasks/{}", ids["source_task_id"])).await,
+            task_row(
+                ids["source_task_id"].as_str(),
+                read("/api/v3/downloads/tasks?page_size=100".to_owned()).await
+            ),
         ]),
         Owned::SearchJob => read(fill("/api/v3/downloads/search/{job_id}", ids)).await,
-        Owned::SpotifyJob => read(fill("/api/v3/acquire/spotify/jobs/{id}", ids)).await,
-        Owned::Drop => read(fill("/api/v3/import/jobs/{job_id}", ids)).await,
         Owned::TagWrite => {
             read(fill(
                 "/api/v3/library/albums/{album_id}/edition/tags/{job_id}",
@@ -1479,6 +1370,89 @@ async fn look(app: &TestApp, kind: Owned, owner: &Who, ids: &Ids) -> Value {
             .await
         }
     }
+}
+
+/// Upload one file as `owner` and wait for its job to settle.
+async fn drop_upload(app: &TestApp, owner: &Who) -> String {
+    let audio = std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/library/flac_full_01.flac"
+    ))
+    .expect("fixture reads");
+    let boundary = "ownership-boundary";
+    let mut form = format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"files\"; filename=\"01.flac\"\r\n\
+         Content-Type: audio/flac\r\n\r\n"
+    )
+    .into_bytes();
+    form.extend_from_slice(&audio);
+    form.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+    app.state().auth.limits.reset();
+    let content_type = format!("multipart/form-data; boundary={boundary}");
+    let (status, _, bytes) = app
+        .raw_bytes(
+            "POST",
+            "/api/v3/import/uploads",
+            &[
+                ("authorization", owner.auth.as_str()),
+                ("content-type", content_type.as_str()),
+            ],
+            form,
+        )
+        .await;
+    let job: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+    assert!(status.is_success(), "upload: {status} {job}");
+    job["id"].as_str().expect("job id").to_owned()
+}
+
+/// A person's uploads stay theirs: another trusted user does not see them,
+/// asking for everyone's does not help, and an admin who asks does see them.
+#[tokio::test]
+async fn drop_import_jobs_stay_with_their_owner() {
+    let app = TestApp::start("auth-drop-jobs").await;
+    let admin = Who {
+        id: String::new(),
+        username: "admin".to_owned(),
+        auth: app.login_admin().await,
+    };
+    let tia = trusted(&app, &admin, "tia").await;
+    let tom = trusted(&app, &admin, "tom").await;
+    // An upload needs a library folder to import into.
+    let music = app.config.root_app_dir.join("music");
+    std::fs::create_dir_all(&music).expect("music folder");
+    app.add_library_folder("music", &music).await;
+    let job = drop_upload(&app, &tia).await;
+    let lists = async |who: &Who, uri: &str| {
+        let (status, body) = call(&app, who, "GET", uri, None).await;
+        assert_eq!(status, StatusCode::OK, "{uri}: {body}");
+        body["jobs"]
+            .as_array()
+            .expect("jobs")
+            .iter()
+            .any(|row| row["id"] == json!(job))
+    };
+    assert!(lists(&tia, "/api/v3/import/jobs").await, "the owner's list");
+    assert!(
+        !lists(&tom, "/api/v3/import/jobs").await,
+        "another trusted user's list"
+    );
+    assert!(
+        !lists(&tom, "/api/v3/import/jobs?all=true").await,
+        "all=true is for admins"
+    );
+    assert!(
+        lists(&admin, "/api/v3/import/jobs?all=true").await,
+        "an admin's full list"
+    );
+}
+
+/// One task out of the owner's download list.
+fn task_row(task_id: &str, list: Value) -> Value {
+    list["items"]
+        .as_array()
+        .and_then(|items| items.iter().find(|task| task["id"] == json!(task_id)))
+        .cloned()
+        .unwrap_or(Value::Null)
 }
 
 fn answered(status: StatusCode, expected: u16) -> bool {
@@ -1521,13 +1495,11 @@ async fn another_users_resources_stay_out_of_reach() {
         Owned::Held,
         Owned::HeldMatch,
         Owned::SearchJob,
-        Owned::SpotifyJob,
-        Owned::Drop,
         Owned::TagWrite,
     ];
     let mut wrong = Vec::new();
     for (n, kind) in (0u32..).step_by(2).zip(families) {
-        let (owner, other) = if matches!(kind, Owned::Drop | Owned::TagWrite | Owned::HeldMatch) {
+        let (owner, other) = if matches!(kind, Owned::TagWrite | Owned::HeldMatch) {
             (&tia, &tom)
         } else {
             (&ada, &bob)
@@ -1618,12 +1590,6 @@ async fn caller_keyed_state_stays_with_its_caller() {
     )
     .await;
     ok(status, &body, "A favourites");
-    let (status, body) = call(&app, &bob, "GET", "/api/v3/favorites", None).await;
-    ok(status, &body, "B lists favourites");
-    assert!(
-        !body.to_string().contains(album),
-        "B sees A's favourite: {body}"
-    );
     let (status, body) = call(&app, &bob, "GET", hearted, None).await;
     ok(status, &body, "B lists favourite albums");
     assert_eq!(body["items"], json!([]), "B sees A's favourite album");

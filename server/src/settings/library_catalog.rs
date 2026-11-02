@@ -11,9 +11,7 @@ use std::collections::BTreeSet;
 use futures_util::future::BoxFuture;
 use sqlx::Row;
 
-use droppedneedle_library::policy::{
-    CatalogPath, CatalogRoot, LibraryPolicyCatalog, ScopeCounts, ScopeTotals,
-};
+use droppedneedle_library::policy::{CatalogRoot, LibraryPolicyCatalog, ScopeCounts, ScopeTotals};
 
 /// The production catalog reads.
 pub struct SqliteLibraryPolicyCatalog {
@@ -165,23 +163,6 @@ impl LibraryPolicyCatalog for SqliteLibraryPolicyCatalog {
                         }
                     },
                 )
-                .collect())
-        })
-    }
-
-    fn track_paths<'a>(&'a self) -> BoxFuture<'a, Result<Vec<CatalogPath>, String>> {
-        Box::pin(async move {
-            let rows: Vec<(String, String)> =
-                sqlx::query_as("SELECT id, file_path FROM local_tracks ORDER BY id")
-                    .fetch_all(&self.pool)
-                    .await
-                    .map_err(|cause| cause.to_string())?;
-            Ok(rows
-                .into_iter()
-                .map(|(track_id, file_path)| CatalogPath {
-                    track_id,
-                    file_path,
-                })
                 .collect())
         })
     }

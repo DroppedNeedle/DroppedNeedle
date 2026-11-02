@@ -8,19 +8,18 @@ use super::LibraryDeps;
 use super::cursor::{Cursor, fresh_seed};
 use super::models::{
     AlbumDetailView, AlbumPage, AlbumQuery, AlbumView, ArtistPage, ArtistQuery, ArtistView,
-    CursorQuery, DecadeShelf, DecadesResponse, GenreList, GenreView, LibraryAlbumStatus,
-    LibraryMbids, LibraryMembershipRequest, LibraryMembershipResponse, LibraryStatusTrack,
-    LyricLine, LyricsView, ManagementHoldView, PageQuery, RecentQuery, ResolveTracksRequest,
-    ResolveTracksResponse, ResolvedTrack, StatsView, SuggestionTrack, SuggestionsQuery,
-    SuggestionsResponse, TrackListPage, TrackPage, TrackQuery, TrackTags, TrackView,
+    CursorQuery, DecadeShelf, DecadesResponse, LibraryAlbumStatus, LibraryMembershipRequest,
+    LibraryMembershipResponse, LibraryStatusTrack, LyricLine, LyricsView, ManagementHoldView,
+    PageQuery, RecentQuery, ResolveTracksRequest, ResolveTracksResponse, ResolvedTrack, StatsView,
+    SuggestionTrack, SuggestionsQuery, SuggestionsResponse, TrackListPage, TrackPage, TrackQuery,
+    TrackView,
 };
 use super::sql;
 use super::stores::{
     After, AlbumFilter, AlbumRecord, AlbumSort, ArtistRecord, ArtistScope, ArtistSort, KeyedPage,
-    StoreError, TagRead, TrackFilter, TrackRecord, TrackSort, UpgradePolicy,
+    StoreError, TrackFilter, TrackRecord, TrackSort, UpgradePolicy,
 };
 use crate::reads::platform::artwork::{ArtworkService, KnownMissing};
-use droppedneedle_auth::Admin;
 use droppedneedle_providers::musicbrainz::is_valid_mbid;
 use rusqlite::types::Value;
 
@@ -712,26 +711,6 @@ pub async fn list_tracks(
     })
 }
 
-/// One streamable track. Unknown ids and tracks whose file is missing or
-/// excluded are 404.
-pub async fn get_track(
-    deps: &LibraryDeps,
-    user_id: &str,
-    id: &str,
-) -> Result<TrackView, LibraryFailure> {
-    let record = deps
-        .catalog
-        .get_track(id)
-        .await?
-        .ok_or(LibraryFailure::NotFound)?;
-    let favorites = favorites_for(deps, user_id, "track", std::slice::from_ref(&record.id)).await?;
-    let favorite = favorites.contains(&record.id);
-    let art_missing = track_albums_missing_art(deps, std::slice::from_ref(&record))
-        .await?
-        .contains(&record.album_id);
-    Ok(TrackView::from((record, favorite, art_missing)))
-}
-
 /// Library totals plus the caller's favorite counts, the review queue,
 /// unidentified albums and the last finished scan.
 pub async fn stats(deps: &LibraryDeps, user_id: &str) -> Result<StatsView, LibraryFailure> {
@@ -776,55 +755,6 @@ pub async fn recently_added(
             .collect(),
         total,
         next: None,
-    })
-}
-
-/// Full genre listing.
-pub async fn genres(deps: &LibraryDeps) -> Result<GenreList, LibraryFailure> {
-    let records = deps.catalog.genres().await?;
-    Ok(GenreList {
-        items: records
-            .iter()
-            .map(|record| GenreView {
-                name: record.name.clone(),
-                track_count: record.track_count,
-                album_count: record.album_count,
-            })
-            .collect(),
-    })
-}
-
-/// One page of a genre's streamable tracks. Unknown genres read as an
-/// empty page: genre names are tags, not addressable resources.
-pub async fn genre_tracks(
-    deps: &LibraryDeps,
-    user_id: &str,
-    name: &str,
-    query: &PageQuery,
-) -> Result<TrackPage, LibraryFailure> {
-    let (limit, offset) = page(query.limit, query.offset, 200, 1000)?;
-    let folded = name.trim().to_lowercase();
-    if folded.is_empty() {
-        return Err(LibraryFailure::InvalidInput(
-            "genre name must not be blank".to_owned(),
-        ));
-    }
-    let (records, total) = deps.catalog.genre_tracks(&folded, limit, offset).await?;
-    let ids: Vec<String> = records.iter().map(|record| record.id.clone()).collect();
-    let favorites = favorites_for(deps, user_id, "track", &ids).await?;
-    let missing = track_albums_missing_art(deps, &records).await?;
-    Ok(TrackPage {
-        items: records
-            .into_iter()
-            .map(|record| {
-                let favorite = favorites.contains(&record.id);
-                let art_missing = missing.contains(&record.album_id);
-                TrackView::from((record, favorite, art_missing))
-            })
-            .collect(),
-        total,
-        offset,
-        limit,
     })
 }
 
@@ -961,38 +891,6 @@ pub async fn membership(
     Ok(LibraryMembershipResponse {
         owned_ids: keep(owned),
         requested_ids: keep(requested),
-    })
-}
-
-/// The tags in one catalog track's file, as v2 read them: admins only.
-/// A file gone from disk or unreadable is a 400 with v2's message, one
-/// outside the library roots a 403.
-pub async fn track_tags(
-    deps: &LibraryDeps,
-    _admin: &Admin,
-    track_id: &str,
-) -> Result<TrackTags, LibraryFailure> {
-    match deps.tags.read(track_id).await? {
-        TagRead::Found(tag) => Ok(TrackTags::from(*tag)),
-        TagRead::Unknown => Err(LibraryFailure::NotFound),
-        TagRead::Gone => Err(LibraryFailure::InvalidInput(
-            "The audio file is no longer present on disk.".to_owned(),
-        )),
-        TagRead::Unreadable => Err(LibraryFailure::InvalidInput(
-            "Could not read the audio file.".to_owned(),
-        )),
-        TagRead::Outside => Err(LibraryFailure::Forbidden(
-            droppedneedle_media::stream::gateway::OUTSIDE_MESSAGE.to_owned(),
-        )),
-    }
-}
-
-/// Every held release group and every open album request.
-pub async fn album_mbids(deps: &LibraryDeps) -> Result<LibraryMbids, LibraryFailure> {
-    let found = deps.catalog.all_album_mbids().await?;
-    Ok(LibraryMbids {
-        mbids: found.owned,
-        requested_mbids: found.requested,
     })
 }
 

@@ -199,15 +199,6 @@ impl Journal {
         Ok(Blocklist::for_source(source, live))
     }
 
-    /// The newest client handle a task's attempts recorded.
-    pub async fn read_newest_handle(&self, task_id: &str) -> Result<Option<String>, StoreError> {
-        let task_id = task_id.to_owned();
-        self.read("downloads.newest_handle", move |store| {
-            store.newest_handle(&task_id)
-        })
-        .await
-    }
-
     /// Whether a client job still carries cleanup debt.
     pub async fn read_cleanup_debt(
         &self,

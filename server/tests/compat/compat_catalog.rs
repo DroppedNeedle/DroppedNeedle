@@ -518,10 +518,10 @@ async fn playlists_and_stars_are_shared_with_the_native_routes() {
     subsonic(&rig, "star", &[("id", "al-alb-1")]).await;
     let (status, hearts) = rig
         .app
-        .call("GET", "/api/v3/favorites?kind=album", &web, None)
+        .call("GET", "/api/v3/library/albums?favorites=true", &web, None)
         .await;
     assert_eq!(status, StatusCode::OK, "{hearts}");
-    assert_eq!(hearts["items"][0]["item_id"], "alb-1");
+    assert_eq!(hearts["items"][0]["id"], "alb-1");
     let starred = subsonic(&rig, "getStarred2", &[]).await;
     assert!(starred.contains("al-alb-1"), "{starred}");
 

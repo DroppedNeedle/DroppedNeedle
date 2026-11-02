@@ -4,11 +4,8 @@
 use std::collections::HashMap;
 
 use super::CollectionsService;
-use crate::reads::collections::db::epoch_from_real;
 use crate::reads::collections::error::CollectionsError;
-use crate::reads::collections::models::{
-    FavoriteCounts, FavoriteItem, FavoriteListResponse, FavoriteStatusResponse,
-};
+use crate::reads::collections::models::FavoriteStatusResponse;
 use crate::reads::collections::store::favorites::KINDS;
 use crate::reads::library::stores::StoreError as LibraryStoreError;
 
@@ -29,39 +26,6 @@ fn clean_kind(raw: &str) -> Result<&'static str, CollectionsError> {
 }
 
 impl CollectionsService<'_> {
-    /// The caller's favorites, optionally of one kind. Counts ignore the
-    /// filter so one call fills every tab.
-    pub async fn list_favorites(
-        &self,
-        user_id: &str,
-        kind: Option<&str>,
-    ) -> Result<FavoriteListResponse, CollectionsError> {
-        let kind = kind.map(clean_kind).transpose()?;
-        let stores = &self.state.stores;
-        let items = stores
-            .favorites
-            .list(user_id, kind)
-            .await?
-            .into_iter()
-            .map(|row| FavoriteItem {
-                kind: row.kind,
-                item_id: row.item_id,
-                name: row.name,
-                favorited_at: epoch_from_real(row.created_at),
-            })
-            .collect();
-        let counts = stores.favorites.counts(user_id).await?;
-        let count = |kind: &str| counts.get(kind).copied().unwrap_or(0);
-        Ok(FavoriteListResponse {
-            items,
-            counts: FavoriteCounts {
-                album: count("album"),
-                artist: count("artist"),
-                track: count("track"),
-            },
-        })
-    }
-
     /// Favorite or unfavorite the item `item_id` names now, as Subsonic's
     /// `star` does: the old id of a merged album or artist, or of a track
     /// that continued into another, acts on the item that holds it. An id

@@ -321,6 +321,9 @@ machine and its data folders can run it.
   library image pacing now use fixed values equal to v2's defaults. An
   import of a v2 export carrying them goes ahead, and its report lists
   each one as `dropped_setting`.
+  - The server-wide primary music source. Each person's own choice stays
+    in their profile; a discovery section with no source named asks
+    ListenBrainz first.
   - Settings > Advanced: every server and browser cache lifetime
     (including TheAudioDB's), the memory and disk cache limits, the HTTP
     timeouts and pool size, the library image batch sizes, delays and

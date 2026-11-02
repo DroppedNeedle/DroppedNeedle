@@ -41,7 +41,6 @@ export const LIBRARY_MANAGEMENT_ENDPOINTS = {
 		v3('/api/v3/settings/library-management/placement/{root_id}/check', {
 			path: { root_id: rootId }
 		}),
-	profiles: () => v3('/api/v3/settings/library-management/profiles'),
 	profile: (profileId: string) =>
 		v3('/api/v3/settings/library-management/profiles/{profile_id}', {
 			path: { profile_id: profileId }

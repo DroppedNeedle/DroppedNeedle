@@ -86,15 +86,6 @@ pub struct ScanRunView {
     pub phase_timings: HashMap<String, f64>,
 }
 
-/// Current plus recent scan runs.
-#[derive(Debug, Clone, Serialize, ToSchema)]
-pub struct ScanRunsResponse {
-    /// Live runs.
-    pub current: Vec<ScanRunView>,
-    /// Recent terminal runs.
-    pub history: Vec<ScanRunView>,
-}
-
 /// One scope inside a run.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ScanScopeView {

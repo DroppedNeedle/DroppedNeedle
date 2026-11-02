@@ -138,10 +138,6 @@ droppedneedle_kernel::sql! {
     /// Stored handles of a task's (`?1`) attempts on one source (`?2`).
     pub(super) SOURCE_HANDLES = "SELECT handle_json FROM download_attempts \
              WHERE task_id = ?1 AND source = ?2 AND handle_json != ''";
-    /// The newest handle a task's (`?1`) attempts recorded.
-    pub(super) NEWEST_HANDLE = "SELECT handle_json FROM download_attempts \
-             WHERE task_id = ?1 AND handle_json != '' \
-             ORDER BY candidate_index DESC, created_at DESC LIMIT 1";
     /// Move an attempt behind its revision; every move bumps the revision.
     pub(super) TRANSITION_ATTEMPT = "UPDATE download_attempts \
              SET state = ?1, \

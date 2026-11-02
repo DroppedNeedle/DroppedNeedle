@@ -37,7 +37,7 @@ use self::models::{
 };
 use crate::db::{AcquireDb, epoch_secs, unix_secs_f64};
 use crate::requests::error::RequestsError;
-use crate::requests::ledger::{ApprovalState, validate_mbid};
+use crate::requests::ledger::{ApprovalState, FollowApproval, validate_mbid};
 use crate::requests::models::ActionResponse;
 use crate::requests::sqlite::{lane_error, ms_from_secs, read};
 use droppedneedle_auth::{Admin, Principal, Role};
@@ -338,21 +338,24 @@ impl Follows {
 
     /// Pending single asks, oldest first, as the admin list shows them.
     pub async fn approval_list(&self) -> Result<AutoDownloadApprovalListResponse, RequestsError> {
+        let item = |row: FollowApproval| AutoDownloadApprovalItem {
+            user_id: row.user_id,
+            user_name: Some(row.user_name),
+            artist_mbid: row.artist_mbid,
+            artist_name: row.artist_name,
+            requested_at: row.requested_at,
+        };
         let items = self
             .pending()
             .await?
             .into_iter()
-            .map(|row| AutoDownloadApprovalItem {
-                user_id: row.user_id,
-                user_name: Some(row.user_name),
-                artist_mbid: row.artist_mbid,
-                artist_name: row.artist_name,
-                requested_at: row.requested_at,
-            })
+            .map(item)
             .collect::<Vec<_>>();
+        let granted = self.approved().await?.into_iter().map(item).collect();
         Ok(AutoDownloadApprovalListResponse {
             count: items.len(),
             items,
+            granted,
         })
     }
 

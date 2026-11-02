@@ -4,7 +4,7 @@
 
 use axum::{
     Json,
-    extract::{Path, State, rejection::PathRejection},
+    extract::{Path, State},
     http::StatusCode,
     response::{IntoResponse, Response},
 };
@@ -18,9 +18,8 @@ use droppedneedle_kernel::mount::{Routes, routes};
 
 use super::models::{
     YouTubeLink, YouTubeLinkGenerateRequest, YouTubeLinkResponse, YouTubeLinkUpdateRequest,
-    YouTubeManualLinkRequest, YouTubeQuotaStatus, YouTubeTrackLink,
-    YouTubeTrackLinkBatchGenerateRequest, YouTubeTrackLinkBatchResponse,
-    YouTubeTrackLinkGenerateRequest, YouTubeTrackLinkResponse,
+    YouTubeManualLinkRequest, YouTubeTrackLink, YouTubeTrackLinkBatchGenerateRequest,
+    YouTubeTrackLinkBatchResponse, YouTubeTrackLinkGenerateRequest, YouTubeTrackLinkResponse,
 };
 use super::service::{LinkError, YouTubeLinks};
 
@@ -36,8 +35,6 @@ pub fn routes() -> Routes<YouTubeLinks> {
         .user(routes!(generate_track_link))
         .user(routes!(generate_track_links))
         .user(routes!(list_track_links))
-        .user(routes!(delete_track_link))
-        .user(routes!(get_quota))
 }
 
 /// Find and save a full-album video. A saved one answers without a search.
@@ -263,51 +260,6 @@ pub async fn list_track_links(
         .await
         .map(Json)
         .map_err(ApiError::from)
-}
-
-/// Remove one track link.
-#[utoipa::path(
-    delete,
-    tag = "youtube",
-    path = "/api/v3/youtube/track-link/{album_id}/{disc_number}/{track_number}",
-    params(
-        ("album_id" = String, Path, description = "Album id"),
-        ("disc_number" = i64, Path, description = "Disc number"),
-        ("track_number" = i64, Path, description = "Track position on its disc"),
-    ),
-    responses(
-        (status = 204, description = "Removed, or nothing was saved"),
-        (status = 400, description = "Disc or track is not a number"),
-        (status = 401, description = "Not authenticated"),
-    )
-)]
-pub async fn delete_track_link(
-    State(links): State<YouTubeLinks>,
-    _user: User,
-    path: Result<Path<(String, i64, i64)>, PathRejection>,
-) -> Reply<StatusCode> {
-    let Path((album_id, disc_number, track_number)) =
-        path.map_err(|cause| ApiError::invalid_input(format!("Invalid path: {cause}")))?;
-    links
-        .delete_track_link(&album_id, disc_number, track_number)
-        .await
-        .map(|()| StatusCode::NO_CONTENT)
-        .map_err(ApiError::from)
-}
-
-/// Today's YouTube search budget. A zero budget while search is off.
-#[utoipa::path(
-    get,
-    tag = "youtube",
-    path = "/api/v3/youtube/quota",
-    operation_id = "get_youtube_quota",
-    responses(
-        (status = 200, description = "Today's budget", body = YouTubeQuotaStatus),
-        (status = 401, description = "Not authenticated"),
-    )
-)]
-pub async fn get_quota(State(links): State<YouTubeLinks>, _user: User) -> Json<YouTubeQuotaStatus> {
-    Json(links.quota().await)
 }
 
 impl From<LinkError> for ApiError {

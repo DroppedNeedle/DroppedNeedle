@@ -9,7 +9,6 @@ use std::time::Duration;
 use crate::downloads::journal::Journal;
 use crate::downloads::sources::DownloadSource;
 use crate::downloads::worker::SourceSet;
-use crate::imports::lidarr::LidarrClient;
 use crate::probes::ProbeInputs;
 use crate::slskd::{DownloadPolicy as SlskdPolicy, ReqwestSlskdHttp, SlskdClient, SlskdRepository};
 use crate::sources::{SabnzbdSource, SlskdSource};
@@ -20,8 +19,7 @@ use crate::usenet::prowlarr::{ProwlarrClient, ProwlarrIndexer};
 use crate::usenet::sabnzbd::{SabnzbdClient, SabnzbdQueue};
 use crate::wiring::{ClientLives, usenet_indexers};
 use droppedneedle_kernel::runtime_config::secret_sections::{
-    DownloadClients, LidarrImportConnection, NewznabIndexer as ConfigIndexer, ProwlarrConnection,
-    SlskdConnection,
+    DownloadClients, NewznabIndexer as ConfigIndexer, ProwlarrConnection, SlskdConnection,
 };
 use droppedneedle_kernel::runtime_config::sections::{DownloadPolicy, UsenetBackendSetting};
 use droppedneedle_plugins::host::PluginHost;
@@ -34,7 +32,6 @@ pub(crate) struct ClientSettings {
     pub(crate) sabnzbd: DownloadClients,
     pub(crate) indexers: Vec<ConfigIndexer>,
     pub(crate) prowlarr: ProwlarrConnection,
-    pub(crate) lidarr: LidarrImportConnection,
     /// `None` when the download policy does not read.
     pub(crate) policy: Option<DownloadPolicy>,
     pub(crate) backend: UsenetBackendSetting,
@@ -215,12 +212,6 @@ impl LiveClients {
             library_roots: settings.library_roots.clone(),
             sabnzbd: sab_queue,
             sabnzbd_section: settings.sabnzbd.clone(),
-            newznab,
-            newznab_entries: settings.indexers.clone(),
-            prowlarr,
-            prowlarr_section: settings.prowlarr.clone(),
-            lidarr: LidarrClient::new(http.clone()),
-            lidarr_section: settings.lidarr.clone(),
         });
         ClientSet {
             sources: Arc::new(sources),

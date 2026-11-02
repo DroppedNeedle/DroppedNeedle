@@ -26,12 +26,12 @@ use super::error::RemotesError;
 use super::jellyfin::MixSeed;
 use super::models::{
     AlbumBrowseQuery, AlbumPage, AlbumView, AnalyticsView, ArtistBrowseQuery, ArtistIndex,
-    ArtistPage, ArtistView, ConnectionSave, ConnectionStatus, DiscoveryQuery, DiscoveryView,
-    FavoritesQuery, FavoritesView, FilterFacetsView, FolderResolutionView, FolderSave,
-    GenreSongsQuery, HistoryPage, HistoryQuery, HubView, ImageQuery, ImportResult, InfoView,
-    LinkedAccount, LinkedAccounts, LyricsQuery, LyricsView, MatchQuery, MatchView, MixQuery,
-    MostPlayedQuery, PageQuery, PlaylistCollection, PlaylistDetail, RandomQuery, SearchQuery,
-    SearchResults, SessionsView, SourceName, StatsView, TrackBrowseQuery, TrackPage,
+    ArtistPage, ConnectionSave, ConnectionStatus, DiscoveryQuery, DiscoveryView, FavoritesQuery,
+    FavoritesView, FilterFacetsView, FolderResolutionView, FolderSave, GenreSongsQuery,
+    HistoryPage, HistoryQuery, HubView, ImageQuery, ImportResult, InfoView, LinkedAccount,
+    LinkedAccounts, LyricsQuery, LyricsView, MatchQuery, MatchView, MixQuery, PageQuery,
+    PlaylistCollection, PlaylistDetail, RandomQuery, SearchQuery, SearchResults, SourceName,
+    StatsView, TrackBrowseQuery, TrackPage,
 };
 use super::service::{AccountLogin, RemotesFailure, RemotesService};
 
@@ -53,22 +53,17 @@ where
         .user(routes!(get_hub))
         .user(routes!(get_stats))
         .user(routes!(list_albums))
-        .user(routes!(get_album))
         .user(routes!(list_album_tracks))
         .user(routes!(list_artists))
         .user(routes!(get_artist_index))
-        .user(routes!(get_artist))
         .user(routes!(list_tracks))
         .user(routes!(search))
         .user(routes!(get_recent))
-        .user(routes!(get_recently_added))
         .user(routes!(get_favorites))
         .user(routes!(list_genres))
         .user(routes!(list_genre_songs))
         .user(routes!(list_moods))
         .user(routes!(get_filters))
-        .user(routes!(list_most_played_albums))
-        .user(routes!(list_most_played_artists))
         .user(routes!(list_playlists))
         .user(routes!(get_playlist))
         .user(routes!(import_playlist))
@@ -80,7 +75,6 @@ where
         .user(routes!(get_random))
         .user(routes!(get_discovery))
         .user(routes!(get_mix))
-        .user(routes!(list_sessions))
         .user(routes!(list_history))
         .user(routes!(get_analytics))
         .user(routes!(get_image))
@@ -207,20 +201,6 @@ pub async fn list_albums(
     reply(deps.service.albums(user.user_id(), source, browse).await)
 }
 
-/// One album by id.
-#[utoipa::path(get, tag = "remotes", path = "/api/v3/remotes/{source}/albums/{id}", operation_id = "remotes_get_album",
-    params(("source" = SourceName, Path, description = "Remote source"),
-        ("id" = String, Path, description = "Remote album id")),
-    responses((status = 200, description = "Album detail", body = AlbumView)))]
-pub async fn get_album(
-    State(deps): State<RemotesDeps>,
-    User(user): User,
-    Path((source, id)): Path<(String, String)>,
-) -> Result<Json<AlbumView>, ApiError> {
-    let source = parse_source(&source)?;
-    reply(deps.service.album(user.user_id(), source, id).await)
-}
-
 /// Tracks of one album.
 #[utoipa::path(get, tag = "remotes", path = "/api/v3/remotes/{source}/albums/{id}/tracks",
     operation_id = "remotes_list_album_tracks",
@@ -274,20 +254,6 @@ pub async fn get_artist_index(
         .await
         .map(|index| ArtistIndex { index });
     reply(index)
-}
-
-/// One artist by id.
-#[utoipa::path(get, tag = "remotes", path = "/api/v3/remotes/{source}/artists/{id}", operation_id = "remotes_get_artist",
-    params(("source" = SourceName, Path, description = "Remote source"),
-        ("id" = String, Path, description = "Remote artist id")),
-    responses((status = 200, description = "Artist detail", body = ArtistView)))]
-pub async fn get_artist(
-    State(deps): State<RemotesDeps>,
-    User(user): User,
-    Path((source, id)): Path<(String, String)>,
-) -> Result<Json<ArtistView>, ApiError> {
-    let source = parse_source(&source)?;
-    reply(deps.service.artist(user.user_id(), source, id).await)
 }
 
 /// One page of tracks.
@@ -344,26 +310,6 @@ pub async fn get_recent(
     let source = parse_source(&source)?;
     let (limit, _) = query.clamped();
     reply(deps.service.recent(user.user_id(), source, limit).await)
-}
-
-/// Recently added albums.
-#[utoipa::path(get, tag = "remotes", path = "/api/v3/remotes/{source}/recently-added",
-    operation_id = "remotes_list_recently_added",
-    params(("source" = SourceName, Path, description = "Remote source"), PageQuery),
-    responses((status = 200, description = "Recently added", body = Vec<AlbumView>)))]
-pub async fn get_recently_added(
-    State(deps): State<RemotesDeps>,
-    User(user): User,
-    Path(source): Path<String>,
-    ValidQuery(query): ValidQuery<PageQuery>,
-) -> Result<Json<Vec<AlbumView>>, ApiError> {
-    let source = parse_source(&source)?;
-    let (limit, _) = query.clamped();
-    reply(
-        deps.service
-            .recently_added(user.user_id(), source, limit)
-            .await,
-    )
 }
 
 /// Favorite artists, albums, and tracks.
@@ -451,44 +397,6 @@ pub async fn get_filters(
 ) -> Result<Json<FilterFacetsView>, ApiError> {
     let source = parse_source(&source)?;
     reply(deps.service.filters(user.user_id(), source).await)
-}
-
-/// Most-played albums (Jellyfin).
-#[utoipa::path(get, tag = "remotes", path = "/api/v3/remotes/{source}/most-played/albums",
-    operation_id = "remotes_list_most_played_albums",
-    params(("source" = SourceName, Path, description = "Remote source"), MostPlayedQuery),
-    responses((status = 200, description = "Most-played albums", body = Vec<AlbumView>)))]
-pub async fn list_most_played_albums(
-    State(deps): State<RemotesDeps>,
-    User(user): User,
-    Path(source): Path<String>,
-    ValidQuery(query): ValidQuery<MostPlayedQuery>,
-) -> Result<Json<Vec<AlbumView>>, ApiError> {
-    let source = parse_source(&source)?;
-    reply(
-        deps.service
-            .most_played_albums(user.user_id(), source, query.clamped())
-            .await,
-    )
-}
-
-/// Most-played artists (Jellyfin).
-#[utoipa::path(get, tag = "remotes", path = "/api/v3/remotes/{source}/most-played/artists",
-    operation_id = "remotes_list_most_played_artists",
-    params(("source" = SourceName, Path, description = "Remote source"), MostPlayedQuery),
-    responses((status = 200, description = "Most-played artists", body = Vec<ArtistView>)))]
-pub async fn list_most_played_artists(
-    State(deps): State<RemotesDeps>,
-    User(user): User,
-    Path(source): Path<String>,
-    ValidQuery(query): ValidQuery<MostPlayedQuery>,
-) -> Result<Json<Vec<ArtistView>>, ApiError> {
-    let source = parse_source(&source)?;
-    reply(
-        deps.service
-            .most_played_artists(user.user_id(), source, query.clamped())
-            .await,
-    )
 }
 
 /// The caller's playlists on the server.
@@ -692,19 +600,6 @@ pub async fn get_mix(
         }
     };
     reply(deps.service.mix(user.user_id(), source, seed, limit).await)
-}
-
-/// Active audio sessions.
-#[utoipa::path(get, tag = "remotes", path = "/api/v3/remotes/{source}/sessions", operation_id = "remotes_list_sessions",
-    params(("source" = SourceName, Path, description = "Remote source")),
-    responses((status = 200, description = "Sessions", body = SessionsView)))]
-pub async fn list_sessions(
-    State(deps): State<RemotesDeps>,
-    User(user): User,
-    Path(source): Path<String>,
-) -> Result<Json<SessionsView>, ApiError> {
-    let source = parse_source(&source)?;
-    reply(deps.service.sessions(user.user_id(), source).await)
 }
 
 /// Listening history, newest first.

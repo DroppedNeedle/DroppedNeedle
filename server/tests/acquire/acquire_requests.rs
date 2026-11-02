@@ -918,6 +918,17 @@ async fn auto_download_approvals() {
         status.followed && !status.auto_download,
         "a rejected batch keeps the follow and clears its intent"
     );
+
+    // A grant stays listed for an admin until it is revoked.
+    let list = "/api/v3/requests/auto-download-approvals";
+    let (_, listed) = call(&state, Method::GET, list, Some(ADMIN), None).await;
+    assert_eq!(listed["granted"][0]["artist_mbid"], ARTIST, "{listed}");
+    assert_eq!(listed["count"], 0, "a grant is not a pending ask");
+    let revoke = format!("/api/v3/requests/auto-download-approvals/u-ada/{ARTIST}/revoke");
+    let (_, revoked) = call(&state, Method::POST, &revoke, Some(ADMIN), None).await;
+    assert_eq!(revoked["success"], true);
+    let (_, listed) = call(&state, Method::GET, list, Some(ADMIN), None).await;
+    assert_eq!(listed["granted"], json!([]), "{listed}");
 }
 
 /// ListenBrainz stand-in: one weekly-jams playlist with two tracks on two
@@ -1097,6 +1108,9 @@ async fn personal_mix_grant_build_and_refresh() {
     let demoted = builder.build_for_user("u-tris", true).await.unwrap();
     assert_eq!(demoted.requested_albums, 0, "a demotion drops the grant");
 
+    let list = "/api/v3/requests/personal-mix-approvals";
+    let (_, listed) = call(&state, Method::GET, list, Some(ADMIN), None).await;
+    assert_eq!(listed["granted"][0]["user_id"], "u-ada", "{listed}");
     let revoke = "/api/v3/requests/personal-mix-approvals/u-ada/revoke";
     assert_eq!(
         call(&state, Method::POST, revoke, Some(ADMIN), None)
@@ -1104,6 +1118,8 @@ async fn personal_mix_grant_build_and_refresh() {
             .1["success"],
         true
     );
+    let (_, listed) = call(&state, Method::GET, list, Some(ADMIN), None).await;
+    assert_eq!(listed["granted"], json!([]), "{listed}");
     assert!(
         !prefs.prefs("u-ada").await.auto_request_personal_mix,
         "revoke turns the toggle off"
@@ -1909,7 +1925,7 @@ async fn edition_acquire_is_held_while_no_source_is_ready() {
     state.edition_plans = Some(Arc::new(PlannedEdition { complete: false }));
     let staging = crate::common::ScratchDir::new("edition-held");
     state.readiness = Some(AcquireReadiness {
-        sources: droppedneedle_acquire::readiness::SourceReadiness::unprobed(
+        sources: droppedneedle_acquire::readiness::SourceReadiness::new(
             droppedneedle_acquire::downloads::worker::SourceList::Fixed(Arc::new(Vec::new())),
         ),
         staging_root: staging.to_path_buf(),

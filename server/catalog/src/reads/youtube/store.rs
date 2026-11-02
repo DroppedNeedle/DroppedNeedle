@@ -298,38 +298,6 @@ impl LinkStore {
             })
             .await
     }
-
-    /// Delete one track link. An album entry left with neither an album
-    /// video nor track videos goes too, so the library page shows no empty
-    /// card.
-    pub async fn delete_track_link(
-        &self,
-        album_id: String,
-        disc_number: i64,
-        track_number: i64,
-    ) -> Result<(), StoreError> {
-        self.db
-            .write("youtube delete track link", move |tx| {
-                tx.execute(
-                    "DELETE FROM youtube_track_links \
-                     WHERE album_id = ?1 AND disc_number = ?2 AND track_number = ?3",
-                    params![album_id, disc_number, track_number],
-                )?;
-                tx.execute(
-                    "UPDATE youtube_links SET track_count = \
-                     (SELECT COUNT(*) FROM youtube_track_links WHERE album_id = ?1) \
-                     WHERE album_id = ?1",
-                    params![album_id],
-                )?;
-                tx.execute(
-                    "DELETE FROM youtube_links WHERE album_id = ?1 AND video_id IS NULL \
-                     AND track_count = 0",
-                    params![album_id],
-                )?;
-                Ok(())
-            })
-            .await
-    }
 }
 
 fn link_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<YouTubeLink, sqlx::Error> {

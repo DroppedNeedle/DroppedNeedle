@@ -8,7 +8,6 @@ use crate::wiring::LibraryServices;
 /// Every library route, grouped by who may call it.
 pub fn library_routes() -> Routes<LibraryServices> {
     Routes::new()
-        .user(routes!(list_runs))
         .user(routes!(get_run))
         .curator(routes!(manage_undo))
         .admin(routes!(list_plugin_files))

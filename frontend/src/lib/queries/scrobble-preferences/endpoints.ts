@@ -13,5 +13,9 @@ export const SCROBBLE_PREFERENCES_ENDPOINTS = {
 		v3('/api/v3/requests/personal-mix-approvals/{user_id}/reject', {
 			path: { user_id: userId }
 		}),
+	revokePersonalMix: (userId: string) =>
+		v3('/api/v3/requests/personal-mix-approvals/{user_id}/revoke', {
+			path: { user_id: userId }
+		}),
 	refreshPersonalMixV3: () => v3('/api/v3/requests/personal-mix/refresh')
 } as const;

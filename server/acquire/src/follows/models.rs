@@ -39,8 +39,10 @@ pub struct AutoDownloadApprovalItem {
 pub struct AutoDownloadApprovalListResponse {
     /// Pending requests.
     pub items: Vec<AutoDownloadApprovalItem>,
-    /// Item count.
+    /// Item count: pending requests only.
     pub count: usize,
+    /// Approvals already granted, which an admin may revoke.
+    pub granted: Vec<AutoDownloadApprovalItem>,
 }
 
 /// One grouped approval card: a user's pending requests as a batch.

@@ -861,18 +861,6 @@ impl<'conn> DownloadStore<'conn> {
         )
     }
 
-    /// The newest client handle a task's attempts recorded, as stored JSON.
-    pub fn newest_handle(&self, task_id: &str) -> Result<Option<String>, StoreError> {
-        Ok(self
-            .conn
-            .query_row(
-                sql::NEWEST_HANDLE.text(),
-                rusqlite::params![task_id],
-                |row| row.get(0),
-            )
-            .optional()?)
-    }
-
     /// Every attempt for a task, oldest first.
     pub fn list_attempts(&self, task_id: &str) -> Result<Vec<AttemptRow>, StoreError> {
         self.rows(

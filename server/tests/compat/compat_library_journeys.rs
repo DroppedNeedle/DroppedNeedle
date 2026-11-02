@@ -2725,17 +2725,6 @@ async fn a_continued_track_opens_by_its_old_id() {
 
     let admin = rig.app.login_admin().await;
     let admin = [("authorization", admin.as_str())];
-    let (status, track) = rig
-        .app
-        .call(
-            "GET",
-            &format!("/api/v3/library/tracks/{old}"),
-            &admin,
-            None,
-        )
-        .await;
-    assert_eq!(status, StatusCode::OK, "{track}");
-    assert_eq!(track["id"], json!(copy), "{track}");
     let (status, _, body) = rig
         .app
         .raw("GET", &format!("/api/v3/stream/local/{old}"), &admin, None)

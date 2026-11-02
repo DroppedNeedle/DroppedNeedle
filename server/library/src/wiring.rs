@@ -636,7 +636,6 @@ impl LibraryServices {
         Self {
             repairs: Repairs::new(
                 setup.db.clone(),
-                operations.clone(),
                 setup.ids.clone(),
                 setup.wakeups.clone(),
                 setup.clock.clone(),

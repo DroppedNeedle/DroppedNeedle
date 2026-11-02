@@ -14,8 +14,8 @@ use super::models::{
     AdminAppPasswordView, AdminUserListResponse, AppPasswordAuth, AppPasswordCreate,
     AppPasswordCreatedResponse, AppPasswordListResponse, AppPasswordRecord, AppPasswordView,
     DeviceSessionMint, DeviceSessionResponse, LastFmConnection, LastFmSessionResponse,
-    LastFmStatusResponse, LastFmTokenResponse, LocalCredential, PasswordReset, ProfileResponse,
-    RecoveryCode, RecoveryCodeResponse, SessionListResponse, SessionView, UserRecord, UserResponse,
+    LastFmTokenResponse, LocalCredential, PasswordReset, ProfileResponse, RecoveryCode,
+    RecoveryCodeResponse, SessionListResponse, SessionView, UserRecord, UserResponse,
 };
 use super::roles::{Admin, Principal, Role};
 use super::stores::{LastFmError, LastFmKeys, RoleChange, StoreError, UserDeletion};
@@ -649,21 +649,6 @@ pub async fn admin_list_users(
     })
 }
 
-/// GET /admin/users/{id}: one user.
-pub async fn admin_get_user(
-    deps: &UsersDeps,
-    _admin: &Admin,
-    user_id: &str,
-) -> Result<UserResponse, UsersError> {
-    let user = deps
-        .users
-        .get_by_id(user_id)
-        .await
-        .map_err(store_internal)?
-        .ok_or(UsersError::NotFound)?;
-    user_response(deps, &user).await
-}
-
 /// POST /admin/users: create a local account. Conflicts stay vague on
 /// purpose (no username/email oracle for admins either).
 pub async fn admin_create_user(
@@ -1149,26 +1134,6 @@ fn lastfm_error(error: LastFmError) -> UsersError {
             message: "Last.fm rejected the request. Check the stored credentials and try again."
                 .to_owned(),
         },
-    }
-}
-
-/// GET /me/connections/lastfm: link status. Never carries secrets.
-pub async fn lastfm_status(
-    deps: &UsersDeps,
-    user_id: &str,
-) -> Result<LastFmStatusResponse, UsersError> {
-    let link = deps.lastfm.get(user_id).await.map_err(store_internal)?;
-    match link {
-        None => Ok(LastFmStatusResponse {
-            configured: false,
-            linked: false,
-            username: None,
-        }),
-        Some(link) => Ok(LastFmStatusResponse {
-            configured: link.configured,
-            linked: link.username.is_some() && link.session_key_encrypted.is_some(),
-            username: link.username,
-        }),
     }
 }
 

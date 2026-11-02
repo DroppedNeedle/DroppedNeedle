@@ -587,30 +587,6 @@ impl JellyfinAdapter {
             .collect())
     }
 
-    /// Most-played albums: `PlayCount` sort with the zero-play filter
-    /// (v2 `get_most_played_albums`).
-    pub async fn most_played_albums(&self, limit: i64) -> Result<Vec<AlbumView>, AdapterError> {
-        self.require_configured()?;
-        if self.user_id.is_empty() {
-            return Ok(Vec::new());
-        }
-        let mut query = params(&[
-            ("includeItemTypes", "MusicAlbum"),
-            ("sortBy", "PlayCount"),
-            ("sortOrder", "Descending"),
-            ("enableUserData", "true"),
-            ("recursive", "true"),
-        ]);
-        query.push(("limit".to_owned(), limit.to_string()));
-        let page = self.items("/Items", &query).await?;
-        Ok(page
-            .items
-            .iter()
-            .filter(|item| item.play_count() > 0)
-            .map(album_view)
-            .collect())
-    }
-
     /// Album filter facets via `/Items/Filters` (v2 `get_filter_facets`):
     /// years newest first, tags and studios sorted, empty studios dropped.
     pub async fn filter_facets(&self) -> Result<FilterFacetsView, AdapterError> {

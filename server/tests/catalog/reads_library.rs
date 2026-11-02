@@ -24,7 +24,6 @@ use library::stores::{
     After, AlbumFilter, AlbumSort, ArtistScope, ArtistSort, BoxFuture, LyricDoc, LyricsPort,
     StoreError, TrackFilter, TrackSort,
 };
-use library::tags::FileTagReader;
 use serde_json::Value;
 use sqlx::SqlitePool;
 use tower::ServiceExt as _;
@@ -61,7 +60,6 @@ fn deps(db: &Db, lyrics: Option<Arc<dyn LyricsPort>>) -> LibraryDeps {
             .unwrap_or_else(|| Arc::new(LyricsService::new(catalog.clone(), files.clone(), None))),
         catalog,
         upgrade_policy: None,
-        tags: FileTagReader::new(files),
         covers: None,
     }
 }
@@ -110,12 +108,9 @@ const ROUTES: &[&str] = &[
     "/api/v3/library/artists/a1/albums",
     "/api/v3/library/artists/a1/appearances",
     "/api/v3/library/tracks",
-    "/api/v3/library/tracks/t1",
     "/api/v3/library/tracks/t1/lyrics",
     "/api/v3/library/stats",
     "/api/v3/library/recently-added",
-    "/api/v3/library/genres",
-    "/api/v3/library/genres/rock/tracks",
     "/api/v3/library/albums/match/rg1",
     "/api/v3/library/decades",
     "/api/v3/library/suggestions",
@@ -662,19 +657,6 @@ async fn sqlite_genres_decades_and_suggestion_pools() {
     assert_eq!(genres[0].folded_name, "rock");
     assert_eq!((genres[0].track_count, genres[0].album_count), (2, 1));
 
-    let (_, total) = fixture
-        .catalog
-        .genre_tracks("ROCK", 50, 0)
-        .await
-        .expect("genre tracks");
-    assert_eq!(total, 2);
-    let (_, total) = fixture
-        .catalog
-        .genre_tracks("polka", 50, 0)
-        .await
-        .expect("genre tracks");
-    assert_eq!(total, 0);
-
     let decades = fixture.catalog.decades().await.expect("decades list");
     assert_eq!(decades.len(), 2);
     assert_eq!((decades[0].decade, decades[0].album_count), (1990, 2));
@@ -787,7 +769,7 @@ const ALBUM_KINDS: &str = "INSERT INTO local_artists (id, display_name, folded_n
     INSERT INTO new_release_feed (release_group_mbid_lower, release_group_mbid, artist_mbid_lower, \
     artist_name, title, first_release_date, discovered_at) \
     SELECT release_group_mbid, release_group_mbid, 'mb-aurora', 'Aurora', release_group_mbid, \
-    '2020-01-01', 1 FROM local_album_external_identities GROUP BY release_group_mbid;";
+    date('now'), 1 FROM local_album_external_identities GROUP BY release_group_mbid;";
 
 /// Ids of a JSON list of objects, under `key`, sorted.
 fn sorted_ids(items: &Value, key: &str) -> Vec<String> {
@@ -908,11 +890,6 @@ async fn one_album_set_everywhere() {
         sorted_ids(&listed["items"], "id"),
         ["tk-matched", "tk-pair", "tk-tagged"]
     );
-    let (status, track) = rig
-        .app
-        .call("GET", "/api/v3/library/tracks/tk-retired", &native, None)
-        .await;
-    assert_eq!(status, StatusCode::NOT_FOUND, "{track}");
 
     // The status of a group held only by a copy without files names that
     // copy, not in library, so its album page still reaches it.
@@ -996,7 +973,12 @@ async fn one_album_set_everywhere() {
     let not_owned = ["rg-empty", "rg-excluded", "rg-missing", "rg-retired"];
     let (status, releases) = rig
         .app
-        .call("GET", "/api/v3/following/new-releases", &native, None)
+        .call(
+            "GET",
+            "/api/v3/following/new-releases/recent?days=365&limit=50&include_owned=false",
+            &native,
+            None,
+        )
         .await;
     assert_eq!(status, StatusCode::OK, "{releases}");
     assert_eq!(

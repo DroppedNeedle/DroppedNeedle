@@ -1,6 +1,6 @@
 //! Library policy: normalize-and-validate, content revisions, and the
 //! pure logic behind the policy routes (tree, impact, apply preview,
-//! restorable roots, path mapping).
+//! restorable roots).
 //!
 //! Ports v2's `LibraryPolicyResolver` (root/rule normalization, warnings,
 //! SHA-256 content revision) plus the pure parts of v2's library policy
@@ -25,10 +25,8 @@ use futures_util::future::BoxFuture;
 use sha2::{Digest, Sha256};
 
 use crate::settings_models::{
-    LibraryPathMappingItem, LibraryPathMappingReport, LibraryPolicyApplyPreviewResponse,
-    LibraryPolicyImpactResponse, LibraryPolicyTreeNode, LibraryPolicyTreeResponse,
-    LibraryRestorableRoot, LibrarySettingsResponse, PathMappingError, PathMappingSource,
-    PolicyNodeKind,
+    LibraryPolicyApplyPreviewResponse, LibraryPolicyImpactResponse, LibraryPolicyTreeNode,
+    LibraryPolicyTreeResponse, LibraryRestorableRoot, LibrarySettingsResponse, PolicyNodeKind,
 };
 use droppedneedle_kernel::runtime_config::Masked;
 use droppedneedle_kernel::runtime_config::secret_sections::{
@@ -698,15 +696,6 @@ pub struct CatalogRoot {
     pub any_on_disk: bool,
 }
 
-/// One catalog track path, for the path-mapping dry run.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CatalogPath {
-    /// Track id.
-    pub track_id: String,
-    /// Absolute file path.
-    pub file_path: String,
-}
-
 /// Read port over the library catalog. Settings reads catalog rows only
 /// through this; the production adapter is `settings::library_catalog`.
 pub trait LibraryPolicyCatalog: Send + Sync {
@@ -724,8 +713,6 @@ pub trait LibraryPolicyCatalog: Send + Sync {
     fn has_tracks<'a>(&'a self) -> BoxFuture<'a, Result<bool, String>>;
     /// Every root id the catalog holds rows for, sorted by id.
     fn catalog_roots<'a>(&'a self) -> BoxFuture<'a, Result<Vec<CatalogRoot>, String>>;
-    /// Every track path, ordered by track id.
-    fn track_paths<'a>(&'a self) -> BoxFuture<'a, Result<Vec<CatalogPath>, String>>;
 }
 
 /// Build the policy tree: one node per root plus one per rule, counts
@@ -1054,69 +1041,6 @@ pub fn with_restored_roots(
         });
     }
     Ok(settings)
-}
-
-/// Dry run: map every catalog path to a saved root. Paths are cleaned
-/// lexically, not resolved on disk, so the run stays one pass over the
-/// rows.
-pub fn path_mapping(
-    resolved: &ResolvedLibraryPolicy,
-    sources: Vec<CatalogPath>,
-) -> LibraryPathMappingReport {
-    let roots: Vec<PathBuf> = resolved
-        .settings
-        .library_roots
-        .iter()
-        .map(|root| PathBuf::from(&root.path))
-        .collect();
-    let (mut mapped, mut ambiguous, mut out_of_root) = (0_i64, 0_i64, 0_i64);
-    let source_count = i64::try_from(sources.len()).unwrap_or(i64::MAX);
-    let items = sources
-        .into_iter()
-        .map(|source| {
-            let candidate = clean_absolute(&source.file_path);
-            let matches = candidate.as_ref().map_or(0, |path| {
-                roots.iter().filter(|root| path.starts_with(root)).count()
-            });
-            let mapping = match (&candidate, matches) {
-                (Some(path), 1) => resolve_path(&resolved.settings, path),
-                _ => None,
-            };
-            let mut item = LibraryPathMappingItem {
-                source_kind: PathMappingSource::LibraryFile,
-                source_id: source.track_id,
-                absolute_path: source.file_path,
-                root_id: None,
-                relative_path: None,
-                error: None,
-            };
-            match mapping {
-                Some((root_id, relative_path, _)) => {
-                    mapped += 1;
-                    item.root_id = Some(root_id);
-                    item.relative_path = Some(relative_path);
-                }
-                None if matches > 1 => {
-                    ambiguous += 1;
-                    item.error = Some(PathMappingError::Ambiguous);
-                }
-                None => {
-                    out_of_root += 1;
-                    item.error = Some(PathMappingError::OutOfRoot);
-                }
-            }
-            item
-        })
-        .collect();
-    LibraryPathMappingReport {
-        policy_revision: resolved.policy_revision.clone(),
-        source_count,
-        mapped_count: mapped,
-        ambiguous_count: ambiguous,
-        out_of_root_count: out_of_root,
-        blocking: ambiguous > 0 || out_of_root > 0,
-        items,
-    }
 }
 
 /// Build the GET view: normalized settings plus revision, the applied

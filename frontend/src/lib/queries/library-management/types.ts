@@ -112,13 +112,7 @@ export type LibraryManagementSettingsUpdateRequest = Schemas['LibraryManagementS
 export type LibraryManagementSettingsImpactRequest =
 	Schemas['LibraryManagementSettingsImpactRequest'];
 
-export type LibraryManagementProfileCreateRequest =
-	Schemas['LibraryManagementProfileCreateRequest'];
-
 export type LibraryManagementProfileCopyRequest = Schemas['LibraryManagementProfileCopyRequest'];
-
-export type LibraryManagementProfileUpdateRequest =
-	Schemas['LibraryManagementProfileUpdateRequest'];
 
 export type LibraryManagementProfileDeleteRequest =
 	Schemas['LibraryManagementProfileDeleteRequest'];

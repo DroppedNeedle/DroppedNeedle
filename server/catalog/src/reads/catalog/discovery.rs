@@ -1,10 +1,10 @@
 //! Discovery sections on artist and album pages: similar artists, top
 //! songs, top albums, similar albums, and more by the same artist.
 //!
-//! ListenBrainz answers by default (or whichever source the primary music
-//! source setting names); when it has nothing, Last.fm fills in with the
-//! user's Last.fm key or the instance key, the way v2 kept these sections from going blank while
-//! ListenBrainz popularity was switched off upstream.
+//! ListenBrainz answers by default; when it has nothing, Last.fm fills in
+//! with the user's Last.fm key or the instance key, the way v2 kept these
+//! sections from going blank while ListenBrainz popularity was switched off
+//! upstream.
 
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
@@ -101,7 +101,7 @@ fn section_answer(
 
 impl Catalog {
     fn preferred_source(&self, asked: Option<ListenSource>) -> ListenSource {
-        asked.unwrap_or_else(|| self.upstream().settings().primary_source())
+        asked.unwrap_or_default()
     }
 
     /// Build one artist section from the preferred source, falling back
@@ -272,8 +272,7 @@ impl Catalog {
         mbid: &str,
         (similar, songs, albums): (u32, u32, u32),
     ) -> bool {
-        let listenbrainz = self.preferred_source(None) == ListenSource::Listenbrainz
-            && self.upstream().listenbrainz().is_some();
+        let listenbrainz = self.upstream().listenbrainz().is_some();
         for (section, count) in [
             (Section::Similar, similar),
             (Section::TopSongs, songs),

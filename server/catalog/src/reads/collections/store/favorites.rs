@@ -74,28 +74,6 @@ impl FavoriteStore {
             .map_err(|error| StoreError::read("favorites.list", error))
     }
 
-    /// Per-kind counts for one user.
-    pub async fn counts(&self, user_id: &str) -> Result<HashMap<String, usize>, StoreError> {
-        let pool = self.db.pool()?;
-        let rows = sqlx::query(
-            "SELECT item_kind, COUNT(*) AS total FROM library_user_favorites \
-             WHERE user_id = ? GROUP BY item_kind",
-        )
-        .bind(user_id)
-        .fetch_all(pool)
-        .await
-        .map_err(|error| StoreError::read("favorites.counts", error))?;
-        rows.iter()
-            .map(|row| {
-                Ok((
-                    row.try_get::<String, _>("item_kind")?,
-                    row.try_get::<i64, _>("total")?.max(0) as usize,
-                ))
-            })
-            .collect::<Result<HashMap<_, _>, sqlx::Error>>()
-            .map_err(|error| StoreError::read("favorites.counts", error))
-    }
-
     /// When each of `ids` was favorited, for the ones that are.
     pub async fn starred_at(
         &self,

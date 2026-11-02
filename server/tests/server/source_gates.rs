@@ -532,7 +532,6 @@ const SPAWN_SITES: &[(&str, usize, &str)] = &[
     ("catalog/src/reads/discover/queue/mod.rs", 1, DISCOVER_BUILD),
     ("catalog/src/reads/library/file_lyrics.rs", 1, REQUEST),
     ("catalog/src/reads/library/perf_tests.rs", 1, BENCHMARKS),
-    ("catalog/src/reads/library/tags.rs", 1, REQUEST),
     ("catalog/src/reads/platform/artwork/cache.rs", 1, IMAGE_WORK),
     (
         "catalog/src/reads/platform/artwork/cache.rs",

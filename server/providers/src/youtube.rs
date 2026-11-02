@@ -509,16 +509,6 @@ impl YouTubeClient {
         self.recent(&key).is_some() || self.cache.settled(&key).await
     }
 
-    /// Cached flags for track pairs, keyed `artist|track` lowercased.
-    pub async fn are_cached(&self, pairs: &[(&str, &str)]) -> HashMap<String, bool> {
-        let mut cached = HashMap::new();
-        for (artist, track) in pairs {
-            let key = format!("{}|{}", artist.to_lowercase(), track.to_lowercase());
-            cached.insert(key, self.is_cached(artist, track, SearchKind::Track).await);
-        }
-        cached
-    }
-
     /// Album preview search: the query gains a `full album` suffix.
     pub async fn search_video(
         &self,

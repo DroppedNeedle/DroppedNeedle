@@ -546,16 +546,7 @@ async fn library_journey_scan_identify_review() {
     assert_eq!(read_title(&file_b), title_b_before);
 
     // Identification keys on the catalog album the reads API serves.
-    let (status, body) = app
-        .call(
-            "GET",
-            &format!("/api/v3/library/tracks/{track_a}"),
-            &headers,
-            None,
-        )
-        .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let album_id = body["album_id"].as_str().expect("album id").to_owned();
+    let album_id = track_album(app, &headers, &track_a).await;
     let album_key = album_id.as_str();
 
     // The scan-enqueued job runs once. On a tie it still picks a best
@@ -1803,16 +1794,23 @@ async fn library_roots_survive_a_restart() {
     // The same directory is already a root; one inside it cannot become a
     // second root.
     let add = |path: PathBuf| async move {
+        let (status, mut settings) = app
+            .call_through_busy("GET", "/api/v3/settings/library", &headers, None)
+            .await;
+        assert_eq!(status, StatusCode::OK, "{settings}");
+        let revision = settings["policy_revision"].clone();
+        settings["library_roots"]
+            .as_array_mut()
+            .expect("roots")
+            .push(json!({"id": "inside", "path": path.to_string_lossy(), "label": "inside"}));
         app.call_through_busy(
-            "POST",
-            "/api/v3/settings/library/paths",
+            "PUT",
+            "/api/v3/settings/library",
             &headers,
-            Some(json!({"path": path.to_string_lossy()})),
+            Some(json!({"settings": settings, "expected_policy_revision": revision})),
         )
         .await
     };
-    let (status, body) = add(music.clone()).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
     let (status, body) = add(music.join("album")).await;
     assert_eq!(
         status,
@@ -2086,28 +2084,42 @@ async fn a_folder_added_in_settings_is_scanned_at_once_and_alone() {
     let second = app.config.root_app_dir.join("second");
     plant(&second, "b/01.flac", "management_full.flac");
     let runs = || async {
-        let (status, body) = app
-            .call("GET", "/api/v3/library/scan/runs", &headers, None)
+        let (status, current) = app
+            .call("GET", "/api/v3/library/scan/runs/current", &headers, None)
             .await;
-        assert_eq!(status, StatusCode::OK, "{body}");
-        let ids = |list: &str| -> Vec<String> {
-            body[list]
-                .as_array()
-                .expect("runs")
-                .iter()
-                .map(|run| run["id"].as_str().expect("id").to_owned())
-                .collect()
-        };
-        [ids("current"), ids("history")].concat()
+        assert_eq!(status, StatusCode::OK, "{current}");
+        let (status, history) = app
+            .call(
+                "GET",
+                "/api/v3/library/scan/runs/history?limit=50",
+                &headers,
+                None,
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "{history}");
+        [&current["active"], &current["queued"]]
+            .into_iter()
+            .chain(history["items"].as_array().expect("runs"))
+            .filter_map(|run| run["id"].as_str().map(str::to_owned))
+            .collect::<Vec<String>>()
     };
     let before = runs().await;
 
+    let (status, mut settings) = app
+        .call("GET", "/api/v3/settings/library", &headers, None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{settings}");
+    let revision = settings["policy_revision"].clone();
+    settings["library_roots"]
+        .as_array_mut()
+        .expect("roots")
+        .push(json!({"id": "second", "path": second.to_string_lossy(), "label": "second"}));
     let (status, body) = app
         .call(
-            "POST",
-            "/api/v3/settings/library/paths",
+            "PUT",
+            "/api/v3/settings/library",
             &headers,
-            Some(json!({"path": second.to_string_lossy()})),
+            Some(json!({"settings": settings, "expected_policy_revision": revision})),
         )
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
@@ -3644,15 +3656,7 @@ async fn library_journey_undo_automatic_edition() {
             .unwrap()
             .expect("track indexed")
     };
-    let (_, body) = app
-        .call(
-            "GET",
-            &format!("/api/v3/library/tracks/{track_id}"),
-            &headers,
-            None,
-        )
-        .await;
-    let album = body["album_id"].as_str().expect("album id").to_owned();
+    let album = track_album(app, &headers, &track_id).await;
     let release = tagged_release(&rig.identify_store, &album);
     let (manual_track, auto_track) = {
         let facts = rig
@@ -3810,19 +3814,20 @@ async fn library_journey_undo_automatic_edition() {
     };
     assert_eq!(review_state(&review), "dismissed");
     let job_id = job["id"].as_str().expect("job id");
-    let (status, ended) = app
-        .call(
-            "GET",
-            &format!("/api/v3/library/operations/{job_id}"),
-            &headers,
-            None,
+    let ended: (String, Option<String>) = app
+        .db()
+        .query_row(
+            "SELECT state, terminal_code FROM library_operation_jobs WHERE id = ?1",
+            [job_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
-        .await;
-    assert_eq!(status, StatusCode::OK, "{ended}");
-    assert_eq!(ended["state"], json!("succeeded"), "{ended}");
+        .expect("job reads");
     assert_eq!(
-        ended["terminal_reason"]["code"],
-        json!("HANDED_TO_IDENTIFICATION")
+        ended,
+        (
+            "succeeded".to_owned(),
+            Some("HANDED_TO_IDENTIFICATION".to_owned())
+        )
     );
     let parked: i64 = db
         .query_row(
@@ -6456,15 +6461,7 @@ async fn library_journey_choose_edition() {
             .unwrap()
             .expect("track indexed")
     };
-    let (_, body) = app
-        .call(
-            "GET",
-            &format!("/api/v3/library/tracks/{track_id}"),
-            &headers,
-            None,
-        )
-        .await;
-    let album = body["album_id"].as_str().expect("album id").to_owned();
+    let album = track_album(app, &headers, &track_id).await;
     let fit = tagged_release(&rig.identify_store, &album);
     // Another edition of the group holding only the first song.
     let mut other = fit.clone();
@@ -8715,22 +8712,18 @@ async fn the_repairs_loop_recovers_at_start_and_wakes_on_enqueue() {
     // Waits on the job's own state, woken by each commit; the bound only
     // stops a hang.
     let settled = |job_id: String| {
-        let (repairs, mut commits) = (repairs.clone(), db.commits());
+        let (db, mut commits) = (db.clone(), db.commits());
         async move {
             let wait = async {
                 loop {
-                    let job_id = job_id.clone();
-                    let read = repairs.clone();
-                    let state = tokio::task::spawn_blocking(move || {
-                        read.get(&job_id, Purpose::ExistingMatches)
-                            .expect("detail")
-                            .detail
-                            .job
-                            .state
-                    })
+                    let state: String = sqlx::query_scalar(
+                        "SELECT state FROM library_operation_jobs WHERE id = ?1",
+                    )
+                    .bind(&job_id)
+                    .fetch_one(db.sqlx())
                     .await
-                    .expect("detail joins");
-                    if state.as_str() == "ready" {
+                    .expect("job reads");
+                    if state == "ready" {
                         return;
                     }
                     commits.changed().await.expect("database open");
@@ -9048,13 +9041,36 @@ async fn library_management_preview_apply_undo() {
 }
 
 /// Run repair turns until the job leaves `queued` and `running`.
+/// `path` is the job's own address; the job is read from its list.
 async fn settle_repair(app: &TestApp, headers: &[(&str, &str)], path: &str) -> Value {
+    let (list, id) = path.rsplit_once('/').expect("job path");
     app.until("the repair job settles", || async {
-        let (status, body) = app.call_through_busy("GET", path, headers, None).await;
+        let (status, body) = app.call_through_busy("GET", list, headers, None).await;
         assert_eq!(status, StatusCode::OK, "{body}");
-        (!matches!(body["state"].as_str(), Some("queued" | "running"))).then_some(body)
+        let job = body["items"]
+            .as_array()?
+            .iter()
+            .find(|job| job["id"] == json!(id))?
+            .clone();
+        (!matches!(job["state"].as_str(), Some("queued" | "running"))).then_some(job)
     })
     .await
+}
+
+/// The album a track belongs to, as the reads API serves it.
+async fn track_album(app: &TestApp, headers: &[(&str, &str)], track: &str) -> String {
+    let (status, body) = app
+        .call("GET", "/api/v3/library/tracks?limit=200", headers, None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    body["items"]
+        .as_array()
+        .expect("tracks")
+        .iter()
+        .find(|row| row["id"] == json!(track))
+        .and_then(|row| row["album_id"].as_str())
+        .expect("album id")
+        .to_owned()
 }
 
 #[tokio::test]
@@ -9077,9 +9093,7 @@ async fn library_journey_identity_repair_and_preparation() {
             .unwrap()
             .expect("track indexed")
     };
-    let track_path = format!("/api/v3/library/tracks/{track_id}");
-    let (_, body) = app.call("GET", &track_path, &headers, None).await;
-    let album = body["album_id"].as_str().expect("album id").to_owned();
+    let album = track_album(app, &headers, &track_id).await;
     let release = tagged_release(&rig.identify_store, &album);
     let scripted = &rig.identify;
     scripted.set_recall(RecallResult {
@@ -9249,7 +9263,9 @@ async fn library_journey_identity_repair_and_preparation() {
         job["id"].as_str().expect("id")
     );
     let as_preparation = job_path.replace("identity-repairs", "management/identity-preparations");
-    let (status, _) = app.call("GET", &as_preparation, &headers, None).await;
+    let (status, _) = app
+        .call("GET", &format!("{as_preparation}/findings"), &headers, None)
+        .await;
     assert_eq!(
         status,
         StatusCode::NOT_FOUND,

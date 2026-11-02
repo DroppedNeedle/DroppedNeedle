@@ -86,7 +86,6 @@ pub(crate) const REPLACE_UNIVERSE: &[&str] = &[
     "connect_apps",
     "library_settings",
     "library_management",
-    "primary_music_source",
     "get_it",
     "advanced_settings",
     "download_policy",

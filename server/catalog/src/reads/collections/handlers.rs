@@ -17,9 +17,8 @@ use super::{
     http::HttpResult,
     models::{
         AddTracksBody, AddTracksResponse, CheckTracksBody, CheckTracksResponse, CoverUploadBody,
-        CoverUploadResponse, CreatePlaylistBody, FavoriteListResponse, FavoriteQuery,
-        FavoriteStatusResponse, FollowStatusResponse, FollowedArtistListResponse,
-        NewReleaseListResponse, NewReleasePageQuery, PlaylistDetail, PlaylistListResponse,
+        CoverUploadResponse, CreatePlaylistBody, FavoriteStatusResponse, FollowStatusResponse,
+        FollowedArtistListResponse, NewReleaseListResponse, PlaylistDetail, PlaylistListResponse,
         PlaylistSummary, PlaylistTrack, RatingLookupBody, RatingLookupResponse,
         RatingStatusResponse, RecentReleasesQuery, RemoveTracksBody, RemoveTracksResponse,
         ReorderBody, ReorderResponse, ResolveSourcesResponse, SetFavoriteBody, SetRatingBody,
@@ -465,30 +464,6 @@ pub async fn remove_cover_handler(
     Ok(Json(ok("Cover removed")))
 }
 
-/// List the caller's favorites.
-#[utoipa::path(
-    get,
-    path = "/api/v3/favorites",
-    tag = "collections",
-    params(("kind" = Option<String>, Query, description = "Kind filter: album, artist, or track")),
-    responses(
-        (status = 200, description = "Caller favorites", body = FavoriteListResponse),
-        (status = 400, description = "Bad kind filter"),
-        (status = 401, description = "Not authenticated"),
-    )
-)]
-pub async fn list_favorites_handler(
-    State(state): State<CollectionsState>,
-    User(caller): User,
-    ValidQuery(query): ValidQuery<FavoriteQuery>,
-) -> HttpResult<Json<FavoriteListResponse>> {
-    Ok(Json(
-        CollectionsService::new(&state)
-            .list_favorites(caller.user_id(), query.kind.as_deref())
-            .await?,
-    ))
-}
-
 /// Favorite or unfavorite one item.
 ///
 /// Acts on the caller's own favourites, the ones Subsonic apps star and
@@ -624,30 +599,6 @@ pub async fn list_followed_artists_handler(
     Ok(Json(
         CollectionsService::new(&state)
             .list_followed(caller.user_id())
-            .await?,
-    ))
-}
-
-/// List new-release sightings for followed artists.
-#[utoipa::path(
-    get,
-    path = "/api/v3/following/new-releases",
-    tag = "collections",
-    params(NewReleasePageQuery),
-    responses(
-        (status = 200, description = "New releases", body = NewReleaseListResponse),
-        (status = 400, description = "Bad paging"),
-        (status = 401, description = "Not authenticated"),
-    )
-)]
-pub async fn list_new_releases_handler(
-    State(state): State<CollectionsState>,
-    User(caller): User,
-    ValidQuery(query): ValidQuery<NewReleasePageQuery>,
-) -> HttpResult<Json<NewReleaseListResponse>> {
-    Ok(Json(
-        CollectionsService::new(&state)
-            .new_releases(caller.user_id(), &query)
             .await?,
     ))
 }

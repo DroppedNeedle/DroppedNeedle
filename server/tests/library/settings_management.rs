@@ -701,7 +701,7 @@ fn scripts_validate_with_the_running_compiler() {
 /// imports it back under a new name. Imports never overwrite: the copy
 /// lands beside the original, and a stale revision is refused.
 #[tokio::test]
-async fn profile_create_export_preview_import_round_trip() {
+async fn profile_export_preview_import_round_trip() {
     use crate::common::auth::{AuthRig, test_principal, with_test_principal};
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
@@ -751,18 +751,9 @@ async fn profile_create_export_preview_import_round_trip() {
         .expect("revision")
         .to_owned();
 
-    let (status, created) = call(
-        "POST",
-        format!("{base}/profiles"),
-        Some(json!({"name": "Mine", "expected_settings_revision": revision})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{created}");
-    let profile_id = created["profile"]["id"].as_str().expect("id").to_owned();
-    let revision = created["settings_revision"]
-        .as_str()
-        .expect("revision")
-        .to_owned();
+    let profile = &seeded["profiles"][0];
+    let profile_id = profile["id"].as_str().expect("id").to_owned();
+    let profile_name = profile["name"].as_str().expect("name").to_owned();
 
     let (status, exported) = call(
         "POST",
@@ -801,7 +792,10 @@ async fn profile_create_export_preview_import_round_trip() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{preview}");
-    assert_eq!(preview["profile"]["name"], "Mine (imported)");
+    assert_eq!(
+        preview["profile"]["name"],
+        format!("{profile_name} (imported)")
+    );
     assert_eq!(preview["bundle_hash"], exported["bundle_hash"]);
 
     let (status, stale) = call(
@@ -840,7 +834,7 @@ async fn profile_create_export_preview_import_round_trip() {
         .filter_map(|profile| profile["name"].as_str())
         .collect();
     assert!(
-        names.contains(&"Mine") && names.contains(&"Mine again"),
+        names.contains(&profile_name.as_str()) && names.contains(&"Mine again"),
         "{names:?}"
     );
     assert_eq!(after["settings_revision"], imported["settings_revision"]);

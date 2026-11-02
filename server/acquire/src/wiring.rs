@@ -64,8 +64,7 @@ use droppedneedle_kernel::jobs::queue::JobQueue;
 use droppedneedle_kernel::jobs::{AlreadyRunning, Supervisor};
 use droppedneedle_kernel::platform::Platform;
 use droppedneedle_kernel::runtime_config::secret_sections::{
-    DownloadClients, Indexers as ConfigIndexers, LidarrImportConnection, ProwlarrConnection,
-    SlskdConnection, TypedLibrary,
+    DownloadClients, Indexers as ConfigIndexers, ProwlarrConnection, SlskdConnection, TypedLibrary,
 };
 use droppedneedle_kernel::runtime_config::sections::{
     DownloadPolicy, UsenetBackend, UsenetBackendSetting,
@@ -97,7 +96,6 @@ pub struct ClientLives {
     slskd: Live<SlskdConnection>,
     sabnzbd: Live<DownloadClients>,
     prowlarr: Live<ProwlarrConnection>,
-    lidarr: Live<LidarrImportConnection>,
     policy: Live<DownloadPolicy>,
     backend: Live<UsenetBackendSetting>,
     library: Live<TypedLibrary>,
@@ -114,7 +112,6 @@ impl ClientLives {
             slskd: store.live(),
             sabnzbd: store.live(),
             prowlarr: store.live(),
-            lidarr: store.live(),
             policy: store.live(),
             backend: store.live(),
             library: store.live(),
@@ -128,7 +125,6 @@ impl ClientLives {
             self.slskd.subscribe(),
             self.sabnzbd.subscribe(),
             self.prowlarr.subscribe(),
-            self.lidarr.subscribe(),
             self.policy.subscribe(),
             self.backend.subscribe(),
             self.library.subscribe(),
@@ -154,7 +150,6 @@ impl ClientLives {
             sabnzbd: (**self.sabnzbd.read().unwrap_or_default()).clone(),
             indexers,
             prowlarr: (**self.prowlarr.read().unwrap_or_default()).clone(),
-            lidarr: (**self.lidarr.read().unwrap_or_default()).clone(),
             policy: self.policy.read().map(|policy| (**policy).clone()),
             backend: **self.backend.read().unwrap_or_default(),
             library_roots: self
@@ -214,8 +209,8 @@ pub struct AcquireSetup {
     pub probes: Arc<LiveProbes>,
     /// Probe cache the refresh loop fills.
     pub probe_cache: Arc<ProbeCache>,
-    /// Whether a download source is on: requests, search, the queue, the
-    /// health smoke and Discover all read this one answer.
+    /// Whether a download source is on: requests, search, the queue and
+    /// Discover all read this one answer.
     pub readiness: SourceReadiness,
     /// What the readiness reads changes on: the source settings and, in
     /// production, the plugin host.
@@ -527,10 +522,7 @@ impl AcquireSetup {
         let search_quota = quota.clone();
         let worker_settings = Arc::new(WorkerSettings::new(&config_store, clients.clone()));
         let probe_cache = Arc::new(ProbeCache::new(clients.clone()));
-        let readiness = SourceReadiness::new(
-            SourceList::Live(worker_settings.clone()),
-            probe_cache.clone(),
-        );
+        let readiness = SourceReadiness::new(SourceList::Live(worker_settings.clone()));
         let source_notices = SourceNotices {
             settings: worker_settings.clone(),
             plugins: Some(ports.plugins.clone()),
@@ -601,7 +593,6 @@ impl AcquireSetup {
             resolver,
             spotify_imports,
             probes: Arc::new(LiveProbes::bundle(&probes)),
-            readiness: readiness.clone(),
             ids: ids.clone(),
             base_path: config.base_path.clone(),
             trusted_proxies: config.trusted_proxies.clone(),

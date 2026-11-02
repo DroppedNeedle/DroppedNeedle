@@ -294,14 +294,6 @@ impl DropImports {
         Ok(self.store.list_jobs(user, LIST_LIMIT).await?)
     }
 
-    /// One job, when the person may see it.
-    pub async fn get_job(&self, viewer: &Viewer, job_id: &str) -> Result<JobRecord, DropError> {
-        match self.store.get_job(job_id).await? {
-            Some(job) if viewer.admin || job.user_id == viewer.user_id => Ok(job),
-            _ => Err(DropError::NotFound),
-        }
-    }
-
     /// The staging folder uploads wait in: the held list's `drop` root.
     pub fn root(&self) -> &Path {
         &self.root

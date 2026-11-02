@@ -7,17 +7,16 @@ use axum::{
     Json,
     extract::{Path, State},
 };
-use droppedneedle_auth::{Admin, User};
+use droppedneedle_auth::User;
 use droppedneedle_kernel::error::ApiError;
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 
 use super::LibraryDeps;
 use super::models::{
     AlbumDetailView, AlbumPage, AlbumQuery, ArtistPage, ArtistQuery, ArtistView, CursorQuery,
-    DecadesResponse, GenreList, LibraryAlbumStatus, LibraryMbids, LibraryMembershipRequest,
-    LibraryMembershipResponse, LyricsView, PageQuery, RecentQuery, ResolveTracksRequest,
-    ResolveTracksResponse, StatsView, SuggestionsQuery, SuggestionsResponse, TrackListPage,
-    TrackPage, TrackQuery, TrackTags, TrackView,
+    DecadesResponse, LibraryAlbumStatus, LibraryMembershipRequest, LibraryMembershipResponse,
+    LyricsView, PageQuery, RecentQuery, ResolveTracksRequest, ResolveTracksResponse, StatsView,
+    SuggestionsQuery, SuggestionsResponse, TrackListPage, TrackPage, TrackQuery,
 };
 use super::services;
 
@@ -234,29 +233,6 @@ pub async fn list_tracks(
         .map_err(ApiError::from)
 }
 
-/// One streamable track.
-#[utoipa::path(
-    get,
-    tag = "library",
-    path = "/api/v3/library/tracks/{id}",
-    params(("id" = String, Path, description = "Local track id")),
-    responses(
-        (status = 200, description = "Track", body = TrackView),
-        (status = 401, description = "Not authenticated"),
-        (status = 404, description = "Unknown track id"),
-    )
-)]
-pub async fn get_track(
-    State(deps): State<LibraryDeps>,
-    User(caller): User,
-    Path(id): Path<String>,
-) -> Result<Json<TrackView>, ApiError> {
-    services::get_track(&deps, caller.user_id(), &id)
-        .await
-        .map(Json)
-        .map_err(ApiError::from)
-}
-
 /// Stored lyrics for one track.
 #[utoipa::path(
     get,
@@ -318,50 +294,6 @@ pub async fn list_recently_added(
     ValidQuery(query): ValidQuery<RecentQuery>,
 ) -> Result<Json<AlbumPage>, ApiError> {
     services::recently_added(&deps, caller.user_id(), &query)
-        .await
-        .map(Json)
-        .map_err(ApiError::from)
-}
-
-/// Full genre listing.
-#[utoipa::path(
-    get,
-    tag = "library",
-    path = "/api/v3/library/genres",
-    responses(
-        (status = 200, description = "Genres", body = GenreList),
-        (status = 401, description = "Not authenticated"),
-    )
-)]
-pub async fn list_genres(
-    State(deps): State<LibraryDeps>,
-    _caller: User,
-) -> Result<Json<GenreList>, ApiError> {
-    services::genres(&deps)
-        .await
-        .map(Json)
-        .map_err(ApiError::from)
-}
-
-/// One page of a genre's streamable tracks.
-#[utoipa::path(
-    get,
-    tag = "library",
-    path = "/api/v3/library/genres/{name}/tracks",
-    params(("name" = String, Path, description = "Genre name"), PageQuery),
-    responses(
-        (status = 200, description = "Genre tracks", body = TrackPage),
-        (status = 400, description = "Bad query string"),
-        (status = 401, description = "Not authenticated"),
-    )
-)]
-pub async fn list_genre_tracks(
-    State(deps): State<LibraryDeps>,
-    User(caller): User,
-    Path(name): Path<String>,
-    ValidQuery(query): ValidQuery<PageQuery>,
-) -> Result<Json<TrackPage>, ApiError> {
-    services::genre_tracks(&deps, caller.user_id(), &name, &query)
         .await
         .map(Json)
         .map_err(ApiError::from)
@@ -434,52 +366,6 @@ pub async fn list_suggestions(
     ValidQuery(query): ValidQuery<SuggestionsQuery>,
 ) -> Result<Json<SuggestionsResponse>, ApiError> {
     services::suggestions(&deps, &query)
-        .await
-        .map(Json)
-        .map_err(ApiError::from)
-}
-
-/// The tags in one track's file on disk (admins only).
-#[utoipa::path(
-    get,
-    tag = "library",
-    path = "/api/v3/library/tracks/{id}/tags",
-    params(("id" = String, Path, description = "Local track id")),
-    responses(
-        (status = 200, description = "The file's tags", body = TrackTags),
-        (status = 400, description = "The file is gone from disk or cannot be read"),
-        (status = 401, description = "Not authenticated"),
-        (status = 403, description = "Admin role required, or the file left the library roots"),
-        (status = 404, description = "Unknown track"),
-    )
-)]
-pub async fn track_tags(
-    State(deps): State<LibraryDeps>,
-    admin: Admin,
-    Path(id): Path<String>,
-) -> Result<Json<TrackTags>, ApiError> {
-    services::track_tags(&deps, &admin, &id)
-        .await
-        .map(Json)
-        .map_err(ApiError::from)
-}
-
-/// Every MusicBrainz release group the library holds, and every album
-/// with an open request.
-#[utoipa::path(
-    get,
-    tag = "library",
-    path = "/api/v3/library/mbids",
-    responses(
-        (status = 200, description = "Held and requested album ids", body = LibraryMbids),
-        (status = 401, description = "Not authenticated"),
-    )
-)]
-pub async fn album_mbids(
-    State(deps): State<LibraryDeps>,
-    _caller: User,
-) -> Result<Json<LibraryMbids>, ApiError> {
-    services::album_mbids(&deps)
         .await
         .map(Json)
         .map_err(ApiError::from)

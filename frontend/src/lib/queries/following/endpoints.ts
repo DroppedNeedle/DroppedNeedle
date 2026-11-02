@@ -24,6 +24,10 @@ export const FOLLOW_ENDPOINTS = {
 		v3('/api/v3/requests/auto-download-approvals/{user_id}/{artist_mbid}/reject', {
 			path: { user_id: userId, artist_mbid: mbid }
 		}),
+	revoke: (userId: string, mbid: string) =>
+		v3('/api/v3/requests/auto-download-approvals/{user_id}/{artist_mbid}/revoke', {
+			path: { user_id: userId, artist_mbid: mbid }
+		}),
 	adminApprovalBatches: () => v3('/api/v3/requests/auto-download-approval-batches'),
 	approveBatch: (batchId: string) =>
 		v3('/api/v3/requests/auto-download-approval-batches/{batch_id}/approve', {

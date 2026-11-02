@@ -82,3 +82,22 @@ export const createRejectPersonalMixMutation = () =>
 		onError: (err) =>
 			toastStore.show({ message: approvalErrorMessage(err, 'Reject failed'), type: 'error' })
 	}));
+
+export const createRevokePersonalMixMutation = () =>
+	createAppMutation(() => ({
+		mutationFn: (vars: PersonalMixApprovalVars) =>
+			api.v3.POST(SCROBBLE_PREFERENCES_ENDPOINTS.revokePersonalMix(vars.userId)),
+		onSuccess: (data, vars) => {
+			toastStore.show(
+				data.success
+					? {
+							message: `Weekly Mix auto-request revoked for ${vars.userName ?? 'user'}`,
+							type: 'info'
+						}
+					: { message: data.message, type: 'error' }
+			);
+		},
+		effects: approvals,
+		onError: (err) =>
+			toastStore.show({ message: approvalErrorMessage(err, 'Revoke failed'), type: 'error' })
+	}));

@@ -13,24 +13,22 @@ use axum::{
 };
 
 use super::models::{
-    DownloadPolicyView, FrontendCacheTTLs, IndexerReorderRequest, IndexerSavedResponse,
-    IndexerTestResponse, JellyfinVerifyResponse, LibraryManagementProfileCopyRequest,
-    LibraryManagementProfileCreateRequest, LibraryManagementProfileDeleteRequest,
-    LibraryManagementProfileExportRequest, LibraryManagementProfileImportPreviewRequest,
-    LibraryManagementProfileImportRequest, LibraryManagementProfileUpdateRequest,
-    LibraryManagementSaveRequest, LibraryManagementSettingsImpactRequest, LibraryPathQuery,
-    LibraryPathRequest, LibraryPolicyApplyRequest, LibraryPolicyImpactRequest,
-    LibraryRestorableRootsResponse, LibraryRestoreRootsRequest, LibraryScanScheduleResponse,
-    LibrarySettingsSaveRequest, MusicBrainzBindingRequest, MusicBrainzSettingsUpdate,
-    MusicBrainzSettingsView, MusicBrainzVerifyRequest, OperationResult, PlexLibrarySectionInfo,
-    PlexVerifyResponse, PolicySummaryResponse, ProwlarrTestResponse, SabnzbdTestResponse,
-    SectionPrefsResponse, SectionPrefsUpdate, SourcePriorityOrder, TestConnectionResponse,
-    UsenetSearchBackend, VerifyConnectionResponse,
+    DownloadPolicyView, IndexerReorderRequest, IndexerSavedResponse, IndexerTestResponse,
+    JellyfinVerifyResponse, LibraryManagementProfileCopyRequest,
+    LibraryManagementProfileDeleteRequest, LibraryManagementProfileExportRequest,
+    LibraryManagementProfileImportPreviewRequest, LibraryManagementProfileImportRequest,
+    LibraryManagementSaveRequest, LibraryManagementSettingsImpactRequest,
+    LibraryPolicyApplyRequest, LibraryPolicyImpactRequest, LibraryRestorableRootsResponse,
+    LibraryRestoreRootsRequest, LibraryScanScheduleResponse, LibrarySettingsSaveRequest,
+    MusicBrainzBindingRequest, MusicBrainzSettingsUpdate, MusicBrainzSettingsView,
+    MusicBrainzVerifyRequest, OperationResult, PlexLibrarySectionInfo, PlexVerifyResponse,
+    ProwlarrTestResponse, SabnzbdTestResponse, SectionPrefsResponse, SectionPrefsUpdate,
+    SourcePriorityOrder, TestConnectionResponse, UsenetSearchBackend, VerifyConnectionResponse,
 };
 use super::wiring::SettingsSetup;
 use droppedneedle_auth::{Admin, User};
 use droppedneedle_kernel::error::ApiError;
-use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
+use droppedneedle_kernel::extract::ValidJson;
 use droppedneedle_kernel::runtime_config::Masked;
 use droppedneedle_kernel::runtime_config::secret_sections::{
     EventsSettings, JellyfinConnection, LastFmSettings, ListenBrainzConnection,
@@ -38,14 +36,14 @@ use droppedneedle_kernel::runtime_config::secret_sections::{
     SabnzbdConnection, SlskdConnection, YouTubeConnection,
 };
 use droppedneedle_kernel::runtime_config::sections::{
-    DownloadPolicy, LibraryManagementProfile, LibraryScanSchedule, SecuritySettings,
+    DownloadPolicy, LibraryScanSchedule, SecuritySettings,
 };
 use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
 use droppedneedle_library::management::settings::{ActivationHealth, ChangeImpact, PresetDiff};
 use droppedneedle_library::settings_models::{
     LibraryManagementProfileExportResponse, LibraryManagementProfileImportPreviewResponse,
     LibraryManagementProfileImportResponse, LibraryManagementProfileMutationResponse,
-    LibraryManagementSettingsResponse, LibraryPathMappingReport, LibraryPolicyApplyPreviewResponse,
+    LibraryManagementSettingsResponse, LibraryPolicyApplyPreviewResponse,
     LibraryPolicyImpactResponse, LibraryPolicyTreeResponse, LibrarySettingsResponse,
 };
 
@@ -233,53 +231,6 @@ pub async fn put_library(
         .map_err(ApiError::from)
 }
 
-/// Add one library root path. The path must be a directory on this
-/// machine; re-adding is a silent no-op.
-#[utoipa::path(
-    post,
-    tag = "settings",
-    path = "/api/v3/settings/library/paths",
-    request_body = LibraryPathRequest,
-    responses((status = 200, description = "Library settings", body = LibrarySettingsResponse))
-)]
-pub async fn add_library_path(
-    State(settings): State<SettingsSetup>,
-    _caller: Admin,
-    ValidJson(body): ValidJson<LibraryPathRequest>,
-) -> JsonResult<LibrarySettingsResponse> {
-    settings
-        .service()
-        .add_library_path(&body.path)
-        .await
-        .map(Json)
-        .map_err(ApiError::from)
-}
-
-/// Remove every library root at one path. Unknown paths are a silent
-/// no-op; removing the last root while the catalog holds tracks is a 400.
-#[utoipa::path(
-    delete,
-    tag = "settings",
-    path = "/api/v3/settings/library/paths",
-    params(("path" = String, Query, description = "Directory to remove")),
-    responses(
-        (status = 200, description = "Library settings", body = LibrarySettingsResponse),
-        (status = 400, description = "Removing the last root would orphan the catalog")
-    )
-)]
-pub async fn remove_library_path(
-    State(settings): State<SettingsSetup>,
-    _caller: Admin,
-    ValidQuery(query): ValidQuery<LibraryPathQuery>,
-) -> JsonResult<LibrarySettingsResponse> {
-    settings
-        .library_policy()
-        .remove_path(&query.path)
-        .await
-        .map(Json)
-        .map_err(ApiError::from)
-}
-
 /// The saved roots and their path rules as a tree, with catalog file
 /// counts per node.
 #[utoipa::path(
@@ -397,48 +348,6 @@ pub async fn restore_library_roots(
         .library_policy()
         .restore_roots(body)
         .await
-        .map(Json)
-        .map_err(ApiError::from)
-}
-
-/// Dry run: map every catalog file path to a saved root.
-#[utoipa::path(
-    get,
-    tag = "settings",
-    path = "/api/v3/settings/library/path-mapping",
-    responses(
-        (status = 200, description = "Path mapping report", body = LibraryPathMappingReport),
-        (status = 503, description = "Catalog reads are unwired")
-    )
-)]
-pub async fn get_library_path_mapping(
-    State(settings): State<SettingsSetup>,
-    _caller: Admin,
-) -> JsonResult<LibraryPathMappingReport> {
-    settings
-        .library_policy()
-        .path_mapping()
-        .await
-        .map(Json)
-        .map_err(ApiError::from)
-}
-
-// --- cache TTLs ---------------------------------------------------------------------
-
-/// Read the advanced settings the web app reads at start.
-#[utoipa::path(
-    get,
-    tag = "settings",
-    path = "/api/v3/settings/cache-ttls",
-    responses((status = 200, description = "Web app settings", body = FrontendCacheTTLs))
-)]
-pub async fn get_cache_ttls(
-    State(settings): State<SettingsSetup>,
-    _caller: Admin,
-) -> JsonResult<FrontendCacheTTLs> {
-    settings
-        .service()
-        .get_cache_ttls()
         .map(Json)
         .map_err(ApiError::from)
 }
@@ -801,25 +710,6 @@ pub async fn put_policy(
     Ok(Json(settings.service().save_policy(body).await?))
 }
 
-/// Safe policy summary for the settings page: the contract sentence
-/// plus the source-mode label only.
-#[utoipa::path(
-    get,
-    tag = "settings",
-    path = "/api/v3/settings/download-clients/policy-summary",
-    responses((status = 200, description = "Policy summary", body = PolicySummaryResponse))
-)]
-pub async fn get_policy_summary(
-    State(settings): State<SettingsSetup>,
-    _caller: Admin,
-) -> JsonResult<PolicySummaryResponse> {
-    settings
-        .service()
-        .policy_summary()
-        .map(Json)
-        .map_err(ApiError::from)
-}
-
 // --- indexers ---------------------------------------------------------------------
 
 /// List the configured Newznab indexers (keys masked unless unset).
@@ -1178,52 +1068,6 @@ pub async fn validate_library_management(
     preview_library_management_impact(State(settings), caller, ValidJson(body)).await
 }
 
-/// Read one profile.
-#[utoipa::path(
-    get,
-    tag = "settings",
-    path = "/api/v3/settings/library-management/profiles/{profile_id}",
-    params(("profile_id" = String, Path, description = "Profile id")),
-    responses((status = 200, description = "Profile", body = LibraryManagementProfile))
-)]
-pub async fn get_library_management_profile(
-    State(settings): State<SettingsSetup>,
-    _caller: Admin,
-    Path(profile_id): Path<String>,
-) -> JsonResult<LibraryManagementProfile> {
-    settings
-        .management(move |service| service.get_profile(&profile_id))
-        .await
-        .map(Json)
-        .map_err(ApiError::from)
-}
-
-/// Create a profile as a copy of the default profile.
-#[utoipa::path(
-    post,
-    tag = "settings",
-    path = "/api/v3/settings/library-management/profiles",
-    request_body = LibraryManagementProfileCreateRequest,
-    responses((status = 200, description = "Created profile", body = LibraryManagementProfileMutationResponse))
-)]
-pub async fn create_library_management_profile(
-    State(settings): State<SettingsSetup>,
-    _caller: Admin,
-    ValidJson(body): ValidJson<LibraryManagementProfileCreateRequest>,
-) -> JsonResult<LibraryManagementProfileMutationResponse> {
-    settings
-        .management(move |service| {
-            service.create_profile(
-                &body.name,
-                &body.description,
-                &body.expected_settings_revision,
-            )
-        })
-        .await
-        .map(Json)
-        .map_err(ApiError::from)
-}
-
 /// Copy one profile under a new name.
 #[utoipa::path(
     post,
@@ -1242,30 +1086,6 @@ pub async fn copy_library_management_profile(
     settings
         .management(move |service| {
             service.copy_profile(&profile_id, &body.name, &body.expected_settings_revision)
-        })
-        .await
-        .map(Json)
-        .map_err(ApiError::from)
-}
-
-/// Replace one profile. The body id must match the path id.
-#[utoipa::path(
-    put,
-    tag = "settings",
-    path = "/api/v3/settings/library-management/profiles/{profile_id}",
-    params(("profile_id" = String, Path, description = "Profile id")),
-    request_body = LibraryManagementProfileUpdateRequest,
-    responses((status = 200, description = "Saved profile", body = LibraryManagementProfileMutationResponse))
-)]
-pub async fn update_library_management_profile(
-    State(settings): State<SettingsSetup>,
-    _caller: Admin,
-    Path(profile_id): Path<String>,
-    ValidJson(body): ValidJson<LibraryManagementProfileUpdateRequest>,
-) -> JsonResult<LibraryManagementProfileMutationResponse> {
-    settings
-        .management(move |service| {
-            service.update_profile(&profile_id, body.profile, &body.expected_settings_revision)
         })
         .await
         .map(Json)
@@ -1390,31 +1210,6 @@ pub async fn import_library_management_profile(
         .await
         .map(Json)
         .map_err(ApiError::from)
-}
-
-// --- dropped sections (410) ------------------------------------------------------
-
-/// The legacy catalog-sync section is gone (one-shot import only now).
-#[utoipa::path(
-    get,
-    tag = "settings",
-    path = "/api/v3/settings/library/sync",
-    responses((status = 410, description = "Section dropped in v3"))
-)]
-pub async fn dropped_library_sync(_caller: Admin) -> JsonResult<serde_json::Value> {
-    super::validator::ensure_kept_section("library_sync_settings")?;
-    Ok(Json(serde_json::Value::Null))
-}
-
-/// PUT twin of the dropped catalog-sync route: gone, not moved.
-#[utoipa::path(
-    put,
-    tag = "settings",
-    path = "/api/v3/settings/library/sync",
-    responses((status = 410, description = "Section dropped in v3"))
-)]
-pub async fn dropped_library_sync_put(caller: Admin) -> JsonResult<serde_json::Value> {
-    dropped_library_sync(caller).await
 }
 
 // --- section prefs (per-user) ------------------------------------------------------

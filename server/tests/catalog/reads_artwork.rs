@@ -927,7 +927,13 @@ async fn a_cover_the_archive_lacks_is_flagged_on_the_library_views() {
     })
     .await;
     assert_eq!(art_missing("/api/v3/library/albums/al1").await, true);
-    assert_eq!(art_missing("/api/v3/library/tracks/t1").await, true);
+    let (status, tracks) = app.call("GET", "/api/v3/library/tracks", &auth, None).await;
+    assert_eq!(status, StatusCode::OK, "{tracks}");
+    let track = tracks["items"]
+        .as_array()
+        .and_then(|items| items.iter().find(|track| track["id"] == "t1"))
+        .expect("track listed");
+    assert_eq!(track["art_missing"], true, "{track}");
 
     app.seed(
         "INSERT INTO local_album_artwork (local_album_id, source, source_locator, version, \

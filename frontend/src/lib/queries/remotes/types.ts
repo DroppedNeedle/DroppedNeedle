@@ -9,7 +9,6 @@ export type RemoteArtist = components['schemas']['RemotesArtistView'];
 export type RemoteTrackPage = components['schemas']['RemotesTrackPage'];
 export type RemoteTrack = components['schemas']['RemotesTrackView'];
 export type RemoteStats = components['schemas']['RemotesStatsView'];
-export type RemoteSessions = components['schemas']['SessionsView'];
 export type RemoteLyrics = components['schemas']['RemotesLyricsView'];
 export type RemoteMatch = components['schemas']['MatchView'];
 export type RemoteFolders = components['schemas']['FolderResolutionView'];

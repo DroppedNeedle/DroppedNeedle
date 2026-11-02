@@ -129,14 +129,6 @@ async fn removed_root_restores_and_previews_count_the_catalog() {
         .await
         .expect_err("unknown scope fails");
     assert!(matches!(unknown, SettingsError::InvalidInput { .. }));
-
-    let mapping = policy.path_mapping().await.expect("mapping reads");
-    assert_eq!((mapping.source_count, mapping.mapped_count), (2, 2));
-    assert!(!mapping.blocking);
-    assert_eq!(
-        mapping.items[0].relative_path.as_deref(),
-        Some("A/one.flac")
-    );
 }
 
 /// A changed import naming script is checked on save and refused with its

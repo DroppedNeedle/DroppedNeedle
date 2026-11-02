@@ -328,8 +328,7 @@ async fn advanced_round_trip_masks() {
         .expect("raw reads");
     assert_eq!(stored.audiodb_api_key.expose(), "audiodb-secret");
 
-    let ttls = service.get_cache_ttls().expect("reads ttls");
-    assert!(!ttls.discover_queue_auto_generate);
+    assert!(!stored.discover_queue_auto_generate);
 }
 
 /// Library settings round-trip with CAS: a stale token is a 409, and
@@ -360,10 +359,6 @@ async fn library_round_trip_cas_and_paths() {
         droppedneedle_kernel::runtime_config::settings_error::SettingsError::StaleRevision { .. }
     ));
 
-    let dir = ScratchDir::new("settings-library");
-    std::fs::create_dir_all(dir.join("music")).expect("fixture dir builds");
-    let root = dir.join("music").to_string_lossy().into_owned();
-
     let saved = service
         .save_library(
             request(
@@ -382,29 +377,6 @@ async fn library_round_trip_cas_and_paths() {
     );
     let stored = service.store.get_raw::<TypedLibrary>().expect("raw reads");
     assert_eq!(stored.acoustid_api_key.expose(), "acoustid-secret");
-
-    let added = service.add_library_path(&root).await.expect("adds path");
-    assert_eq!(added.settings.library_roots.len(), 1);
-    assert_eq!(added.settings.library_roots[0].path, root);
-    // Re-adding is a silent no-op; the key survives path edits.
-    let again = service.add_library_path(&root).await.expect("re-adds");
-    assert_eq!(again.settings.library_roots.len(), 1);
-    assert_eq!(again.settings.acoustid_api_key.expose(), SECRET_MASK);
-    let stored = service.store.get_raw::<TypedLibrary>().expect("raw reads");
-    assert_eq!(stored.acoustid_api_key.expose(), "acoustid-secret");
-
-    let missing = service.add_library_path("").await.expect_err("blank fails");
-    assert!(format!("{missing:?}").contains("required"));
-
-    let removed = service
-        .remove_library_path(&root, false)
-        .await
-        .expect("removes");
-    assert!(removed.settings.library_roots.is_empty());
-    service
-        .remove_library_path("/nothing/here", false)
-        .await
-        .expect("unknown remove is silent");
 }
 
 /// Two saves holding the same revision: exactly one lands, the other is
@@ -533,7 +505,6 @@ async fn settings_routes_are_admin_gated() {
         ("POST", "/api/v3/settings/indexers/test"),
         ("GET", "/api/v3/settings/musicbrainz"),
         ("POST", "/api/v3/settings/musicbrainz/brainzmash/stage"),
-        ("GET", "/api/v3/settings/library/sync"),
         ("GET", "/api/v3/settings/library-management"),
         (
             "POST",
@@ -766,21 +737,6 @@ async fn lyrics_lookup_on_by_default_off_stays_off() {
     let (status, read) = call(rig.admin_app(), "GET", "/api/v3/settings/lyrics", None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(read["enabled"], false);
-}
-
-/// The dropped catalog-sync section answers 410 on both methods.
-#[tokio::test]
-async fn dropped_routes_answer_gone() {
-    let rig = Rig::open(true).await;
-    for (method, uri) in [
-        ("GET", "/api/v3/settings/library/sync"),
-        ("PUT", "/api/v3/settings/library/sync"),
-    ] {
-        let body = (method == "PUT").then(|| json!({}));
-        let (status, gone) = call(rig.admin_app(), method, uri, body).await;
-        assert_eq!(status, StatusCode::GONE, "{method} {uri}");
-        assert_eq!(gone["error"]["code"], "SECTION_DROPPED");
-    }
 }
 
 /// The BrainzMash ceremony runs over HTTP: stage, consent, verify the

@@ -327,46 +327,6 @@ pub struct StatusResponse {
 
 // Favorites.
 
-/// One favorite row.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct FavoriteItem {
-    /// Favorited kind: album, artist, or track.
-    pub kind: String,
-    /// Favorited item id.
-    pub item_id: String,
-    /// Display name, when the caller sent one.
-    pub name: Option<String>,
-    /// When it was favorited, epoch seconds.
-    pub favorited_at: u64,
-}
-
-/// Per-kind counts.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct FavoriteCounts {
-    /// Favorited albums.
-    pub album: usize,
-    /// Favorited artists.
-    pub artist: usize,
-    /// Favorited tracks.
-    pub track: usize,
-}
-
-/// Favorite-list answer.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct FavoriteListResponse {
-    /// Favorites, optionally filtered by kind.
-    pub items: Vec<FavoriteItem>,
-    /// Counts across all kinds, ignoring the filter.
-    pub counts: FavoriteCounts,
-}
-
-/// Favorite query: optional kind filter.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FavoriteQuery {
-    /// Kind filter: album, artist, or track.
-    pub kind: Option<String>,
-}
-
 /// Set-favorite body.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct SetFavoriteBody {
@@ -490,16 +450,6 @@ pub struct NewReleaseItem {
     /// True when the library already holds the album (only the release
     /// log shows owned albums).
     pub in_library: bool,
-}
-
-/// To-do list paging: `limit` 1-100 (default 50), `offset` from 0.
-#[derive(Debug, Clone, Default, Deserialize, IntoParams)]
-#[into_params(parameter_in = Query)]
-pub struct NewReleasePageQuery {
-    /// Page size, 1-100 (default 50).
-    pub limit: Option<usize>,
-    /// Rows to skip (default 0).
-    pub offset: Option<usize>,
 }
 
 /// Release log window: `days` 1-365 (default 30), `limit` 1-500

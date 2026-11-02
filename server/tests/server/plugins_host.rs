@@ -39,7 +39,7 @@ use droppedneedle_kernel::runtime_config::ConfigStore;
 use droppedneedle_kernel::runtime_config::crypto::Crypto;
 use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
 use droppedneedle_kernel::runtime_config::sections::{
-    ListenSource, MbSourceMode, MusicBrainzSettings, UserPreferences,
+    MbSourceMode, MusicBrainzSettings, UserPreferences,
 };
 use droppedneedle_library::wiring::LibraryCore;
 use droppedneedle_plugins::handlers::{ExtRateLimiter, PluginsDeps, plugin_routes};
@@ -1734,10 +1734,6 @@ impl CatalogSettings for RecordedMusicBrainz {
 
     fn listenbrainz_enabled(&self) -> bool {
         false
-    }
-
-    fn primary_source(&self) -> ListenSource {
-        ListenSource::Listenbrainz
     }
 
     fn store_region(&self) -> Option<String> {

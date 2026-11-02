@@ -1,5 +1,5 @@
 //! The library policy routes: policy tree, impact and apply previews,
-//! restorable roots and restore, and the path-mapping dry run, plus the
+//! restorable roots and restore, plus the
 //! guard that keeps a save from orphaning the catalog.
 //!
 //! Each call reads the saved library settings, normalizes them on the
@@ -26,8 +26,8 @@ use droppedneedle_library::policy::{
     self as library_policy, CatalogRoot, LibraryPolicyCatalog, ResolvedLibraryPolicy,
 };
 use droppedneedle_library::settings_models::{
-    LibraryPathMappingReport, LibraryPolicyApplyPreviewResponse, LibraryPolicyImpactResponse,
-    LibraryPolicyTreeResponse, LibrarySettingsResponse,
+    LibraryPolicyApplyPreviewResponse, LibraryPolicyImpactResponse, LibraryPolicyTreeResponse,
+    LibrarySettingsResponse,
 };
 
 /// Library policy reads, previews, and the guarded saves.
@@ -199,18 +199,6 @@ impl LibraryPolicyService {
         Ok(offerable)
     }
 
-    /// Path-mapping dry run: does every catalog file map to exactly one
-    /// saved root.
-    pub async fn path_mapping(&self) -> Result<LibraryPathMappingReport, SettingsError> {
-        let catalog = self.catalog()?;
-        let sources = catalog
-            .track_paths()
-            .await
-            .map_err(|cause| self.catalog_error(cause))?;
-        self.with_saved(move |saved| Ok(library_policy::path_mapping(&saved, sources)))
-            .await
-    }
-
     /// Save the library settings, refusing to drop every root while the
     /// catalog holds tracks.
     pub async fn save(
@@ -225,12 +213,6 @@ impl LibraryPolicyService {
             false
         };
         self.settings.save_library(request, has_tracks).await
-    }
-
-    /// Remove every root at one path, with the same guard as a save.
-    pub async fn remove_path(&self, path: &str) -> Result<LibrarySettingsResponse, SettingsError> {
-        let has_tracks = self.catalog_has_tracks().await?;
-        self.settings.remove_library_path(path, has_tracks).await
     }
 
     /// Whether the catalog holds tracks. False when the catalog is

@@ -39,8 +39,6 @@ export const DOWNLOAD_TASKS_ENDPOINTS = {
 				page_size: pageSize
 			}
 		}),
-	task: (taskId: string) => v3('/api/v3/downloads/tasks/{task_id}', byTask(taskId)),
-	files: (taskId: string) => v3('/api/v3/downloads/tasks/{task_id}/files', byTask(taskId)),
 	cancel: (taskId: string) => v3('/api/v3/downloads/tasks/{task_id}/cancel', byTask(taskId)),
 	nextSource: (taskId: string) =>
 		v3('/api/v3/downloads/tasks/{task_id}/next-source', byTask(taskId)),

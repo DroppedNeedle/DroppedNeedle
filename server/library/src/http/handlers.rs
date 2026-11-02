@@ -20,8 +20,7 @@ use super::blocking;
 use super::error::refused;
 use super::models::{
     AggregateScope, ManageUndoBody, ManageUndoResponse, PluginFileState, PluginFileView,
-    PluginFilesQuery, RunDetailResponse, ScanFileView, ScanRunView, ScanRunsResponse,
-    ScanScopeView,
+    PluginFilesQuery, RunDetailResponse, ScanFileView, ScanRunView, ScanScopeView,
 };
 use crate::scan::models::{ScanRun, ScanScope};
 use droppedneedle_auth::{Admin, Curator, Principal, User};
@@ -81,28 +80,6 @@ fn scope_view(scope: &ScanScope) -> ScanScopeView {
 // ---------------------------------------------------------------------------
 // Scan runs.
 // ---------------------------------------------------------------------------
-
-/// List current plus recent scan runs.
-#[utoipa::path(
-    get,
-    tag = "library management",
-    path = "/api/v3/library/scan/runs",
-    responses(
-        (status = 200, description = "Scan runs", body = ScanRunsResponse),
-        (status = 401, description = "Not authenticated"),
-    )
-)]
-pub async fn list_runs(
-    State(state): State<Scans>,
-    User(caller): User,
-) -> Result<Json<ScanRunsResponse>, ApiError> {
-    let (current, history) = blocking(move || state.recent_scan_runs(20)).await?;
-    let view = |run: &ScanRun| caller_run_view(&caller, run);
-    Ok(Json(ScanRunsResponse {
-        current: current.iter().map(view).collect(),
-        history: history.iter().map(view).collect(),
-    }))
-}
 
 /// Get one scan run with its scopes and discovered files.
 #[utoipa::path(

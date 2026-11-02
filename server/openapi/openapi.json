@@ -10,34 +10,6 @@
     "version": "3.0.0"
   },
   "paths": {
-    "/api/v3/acquire/health": {
-      "get": {
-        "tags": [
-          "imports"
-        ],
-        "summary": "Acquisition health smoke: whether a download source is on, plus the\nindependent per-source release gates.",
-        "operationId": "get_health",
-        "responses": {
-          "200": {
-            "description": "Acquisition health",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AcquireHealth"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "user"
-            ]
-          }
-        ]
-      }
-    },
     "/api/v3/acquire/lidarr-import/artists": {
       "get": {
         "tags": [
@@ -332,45 +304,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "user"
-            ]
-          }
-        ]
-      }
-    },
-    "/api/v3/acquire/spotify/jobs/{id}": {
-      "get": {
-        "tags": [
-          "imports"
-        ],
-        "summary": "Latest known state of one Spotify playlist import.",
-        "operationId": "get_spotify_job",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "Spotify playlist id the import runs for",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Job state",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SpotifyJobStatus"
                 }
               }
             }
@@ -1090,43 +1023,6 @@
       }
     },
     "/api/v3/admin/users/{id}": {
-      "get": {
-        "tags": [
-          "users"
-        ],
-        "summary": "Fetch one user.",
-        "operationId": "admin_get_user",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "User id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "The account",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/UserResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "admin"
-            ]
-          }
-        ]
-      },
       "delete": {
         "tags": [
           "users"
@@ -1359,85 +1255,6 @@
           {
             "session": [
               "admin"
-            ]
-          }
-        ]
-      }
-    },
-    "/api/v3/albums/{album_id}": {
-      "get": {
-        "tags": [
-          "catalog"
-        ],
-        "summary": "Header, tracklist and artwork in one call.",
-        "operationId": "album",
-        "parameters": [
-          {
-            "name": "album_id",
-            "in": "path",
-            "description": "Release-group MBID, or a library album id identified as one",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Album page",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AlbumInfo"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Not a MusicBrainz id",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Unknown album",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "MusicBrainz down and the album is not in the library",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "user"
             ]
           }
         ]
@@ -2967,7 +2784,7 @@
           {
             "name": "source",
             "in": "query",
-            "description": "Provider to ask; default is the primary music source setting.",
+            "description": "Provider to ask; default is ListenBrainz.",
             "required": false,
             "schema": {
               "$ref": "#/components/schemas/ListenSource"
@@ -3046,7 +2863,7 @@
           {
             "name": "source",
             "in": "query",
-            "description": "Provider to ask; default is the primary music source setting.",
+            "description": "Provider to ask; default is ListenBrainz.",
             "required": false,
             "schema": {
               "$ref": "#/components/schemas/ListenSource"
@@ -3125,7 +2942,7 @@
           {
             "name": "source",
             "in": "query",
-            "description": "Provider to ask; default is the primary music source setting.",
+            "description": "Provider to ask; default is ListenBrainz.",
             "required": false,
             "schema": {
               "$ref": "#/components/schemas/ListenSource"
@@ -5552,210 +5369,6 @@
         ]
       }
     },
-    "/api/v3/discover/queue/youtube-cache-check": {
-      "post": {
-        "tags": [
-          "discover"
-        ],
-        "summary": "Bulk YouTube cache membership. Unconfigured YouTube answers empty.",
-        "operationId": "youtube_cache_check",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/TrackCacheCheckRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Cache membership",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TrackCacheCheckResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad request body",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "user"
-            ]
-          }
-        ]
-      }
-    },
-    "/api/v3/discover/queue/youtube-quota": {
-      "get": {
-        "tags": [
-          "discover"
-        ],
-        "summary": "YouTube data-API quota state. 404 when YouTube is unconfigured.",
-        "operationId": "youtube_quota",
-        "responses": {
-          "200": {
-            "description": "Quota state",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/YouTubeQuotaResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "YouTube unconfigured",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "user"
-            ]
-          }
-        ]
-      }
-    },
-    "/api/v3/discover/queue/youtube-search": {
-      "get": {
-        "tags": [
-          "discover"
-        ],
-        "summary": "Album video lookup with the cached flag.",
-        "operationId": "youtube_search",
-        "parameters": [
-          {
-            "name": "artist",
-            "in": "query",
-            "description": "Artist name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "album",
-            "in": "query",
-            "description": "Album name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Resolved video",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/YouTubeSearchResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad query string",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "YouTube search quota used up for today (RATE_LIMITED)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "user"
-            ]
-          }
-        ]
-      }
-    },
     "/api/v3/discover/queue/youtube-track-search": {
       "get": {
         "tags": [
@@ -6897,45 +6510,6 @@
         ]
       }
     },
-    "/api/v3/downloads/tasks/{task_id}": {
-      "get": {
-        "tags": [
-          "downloads"
-        ],
-        "summary": "One download task. `GET /api/v3/downloads/tasks/{task_id}`.",
-        "operationId": "get_task_handler",
-        "parameters": [
-          {
-            "name": "task_id",
-            "in": "path",
-            "description": "Download task id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DownloadTaskResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "user"
-            ]
-          }
-        ]
-      }
-    },
     "/api/v3/downloads/tasks/{task_id}/cancel": {
       "post": {
         "tags": [
@@ -6961,45 +6535,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/DownloadActionResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "user"
-            ]
-          }
-        ]
-      }
-    },
-    "/api/v3/downloads/tasks/{task_id}/files": {
-      "get": {
-        "tags": [
-          "downloads"
-        ],
-        "summary": "The files of a task's current source.\n`GET /api/v3/downloads/tasks/{task_id}/files`.",
-        "operationId": "task_files_handler",
-        "parameters": [
-          {
-            "name": "task_id",
-            "in": "path",
-            "description": "Download task id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DownloadFilesResponse"
                 }
               }
             }
@@ -7232,65 +6767,6 @@
               "text/event-stream": {
                 "schema": {
                   "$ref": "#/components/schemas/StreamEvent"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "user"
-            ]
-          }
-        ]
-      }
-    },
-    "/api/v3/favorites": {
-      "get": {
-        "tags": [
-          "collections"
-        ],
-        "summary": "List the caller's favorites.",
-        "operationId": "list_favorites_handler",
-        "parameters": [
-          {
-            "name": "kind",
-            "in": "query",
-            "description": "Kind filter: album, artist, or track",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Caller favorites",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/FavoriteListResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad kind filter",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }
@@ -7719,76 +7195,6 @@
         ]
       }
     },
-    "/api/v3/following/new-releases": {
-      "get": {
-        "tags": [
-          "collections"
-        ],
-        "summary": "List new-release sightings for followed artists.",
-        "operationId": "list_new_releases_handler",
-        "parameters": [
-          {
-            "name": "limit",
-            "in": "query",
-            "description": "Page size, 1-100 (default 50).",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 0
-            }
-          },
-          {
-            "name": "offset",
-            "in": "query",
-            "description": "Rows to skip (default 0).",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 0
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "New releases",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/NewReleaseListResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad paging",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "user"
-            ]
-          }
-        ]
-      }
-    },
     "/api/v3/following/new-releases/recent": {
       "get": {
         "tags": [
@@ -8071,46 +7477,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HeldRecheckAllResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "user"
-            ]
-          }
-        ]
-      }
-    },
-    "/api/v3/held/{entry_id}": {
-      "get": {
-        "tags": [
-          "held"
-        ],
-        "summary": "One entry with its held files. `GET /api/v3/held/{entry_id}`.",
-        "operationId": "get_handler",
-        "parameters": [
-          {
-            "name": "entry_id",
-            "in": "path",
-            "description": "Held entry id",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int64"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HeldEntryResponse"
                 }
               }
             }
@@ -8869,45 +8235,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/DropImportJobsResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "curator"
-            ]
-          }
-        ]
-      }
-    },
-    "/api/v3/import/jobs/{job_id}": {
-      "get": {
-        "tags": [
-          "imports"
-        ],
-        "summary": "One import job. `GET /api/v3/import/jobs/{job_id}`.",
-        "operationId": "get_job_handler",
-        "parameters": [
-          {
-            "name": "job_id",
-            "in": "path",
-            "description": "Import job id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DropImportJobResponse"
                 }
               }
             }
@@ -15042,123 +14369,6 @@
         ]
       }
     },
-    "/api/v3/library/genres": {
-      "get": {
-        "tags": [
-          "library"
-        ],
-        "summary": "Full genre listing.",
-        "operationId": "list_genres",
-        "responses": {
-          "200": {
-            "description": "Genres",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/GenreList"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "user"
-            ]
-          }
-        ]
-      }
-    },
-    "/api/v3/library/genres/{name}/tracks": {
-      "get": {
-        "tags": [
-          "library"
-        ],
-        "summary": "One page of a genre's streamable tracks.",
-        "operationId": "list_genre_tracks",
-        "parameters": [
-          {
-            "name": "name",
-            "in": "path",
-            "description": "Genre name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "description": "Page size, 1-1000. Default 200.",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "format": "int64"
-            }
-          },
-          {
-            "name": "offset",
-            "in": "query",
-            "description": "Page start. Default 0.",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "format": "int64"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Genre tracks",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TrackPage"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad query string",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "user"
-            ]
-          }
-        ]
-      }
-    },
     "/api/v3/library/identification/pause": {
       "post": {
         "tags": [
@@ -15511,74 +14721,6 @@
         ]
       }
     },
-    "/api/v3/library/identity-repairs/{job_id}": {
-      "get": {
-        "tags": [
-          "library management"
-        ],
-        "operationId": "get_repair",
-        "parameters": [
-          {
-            "name": "job_id",
-            "in": "path",
-            "description": "Repair job id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Repair job",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/OperationView"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Admin role required",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Unknown repair job",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "admin"
-            ]
-          }
-        ]
-      }
-    },
     "/api/v3/library/identity-repairs/{job_id}/apply": {
       "post": {
         "tags": [
@@ -15766,270 +14908,6 @@
           },
           "404": {
             "description": "Unknown repair job",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "admin"
-            ]
-          }
-        ]
-      }
-    },
-    "/api/v3/library/identity-repairs/{job_id}/pause": {
-      "post": {
-        "tags": [
-          "library management"
-        ],
-        "operationId": "pause_repair",
-        "parameters": [
-          {
-            "name": "job_id",
-            "in": "path",
-            "description": "Repair job id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/OperationControlBody"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Repair job",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/OperationView"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Admin role required",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Unknown repair job",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Stale revision or reused idempotency key",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "admin"
-            ]
-          }
-        ]
-      }
-    },
-    "/api/v3/library/identity-repairs/{job_id}/resume": {
-      "post": {
-        "tags": [
-          "library management"
-        ],
-        "operationId": "resume_repair",
-        "parameters": [
-          {
-            "name": "job_id",
-            "in": "path",
-            "description": "Repair job id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/OperationControlBody"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Repair job",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/OperationView"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Admin role required",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Unknown repair job",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Stale revision or reused idempotency key",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "admin"
-            ]
-          }
-        ]
-      }
-    },
-    "/api/v3/library/identity-repairs/{job_id}/stop": {
-      "post": {
-        "tags": [
-          "library management"
-        ],
-        "operationId": "stop_repair",
-        "parameters": [
-          {
-            "name": "job_id",
-            "in": "path",
-            "description": "Repair job id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/OperationControlBody"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Repair job",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/OperationView"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Admin role required",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Unknown repair job",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Stale revision or reused idempotency key",
             "content": {
               "application/json": {
                 "schema": {
@@ -16811,74 +15689,6 @@
           },
           "403": {
             "description": "Admin role required",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "admin"
-            ]
-          }
-        ]
-      }
-    },
-    "/api/v3/library/management/identity-preparations/{job_id}": {
-      "get": {
-        "tags": [
-          "library management"
-        ],
-        "operationId": "get_preparation",
-        "parameters": [
-          {
-            "name": "job_id",
-            "in": "path",
-            "description": "Preparation job id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Preparation job",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/OperationView"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Admin role required",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Unknown preparation job",
             "content": {
               "application/json": {
                 "schema": {
@@ -18600,44 +17410,6 @@
         ]
       }
     },
-    "/api/v3/library/mbids": {
-      "get": {
-        "tags": [
-          "library"
-        ],
-        "summary": "Every MusicBrainz release group the library holds, and every album\nwith an open request.",
-        "operationId": "album_mbids",
-        "responses": {
-          "200": {
-            "description": "Held and requested album ids",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/LibraryMbids"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "user"
-            ]
-          }
-        ]
-      }
-    },
     "/api/v3/library/membership": {
       "post": {
         "tags": [
@@ -18691,75 +17463,6 @@
           {
             "session": [
               "user"
-            ]
-          }
-        ]
-      }
-    },
-    "/api/v3/library/operations/{job_id}": {
-      "get": {
-        "tags": [
-          "library management"
-        ],
-        "summary": "Get one operation job with its results and candidates.",
-        "operationId": "get_operation",
-        "parameters": [
-          {
-            "name": "job_id",
-            "in": "path",
-            "description": "Operation job id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Operation job",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/OperationView"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Admin role required",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Unknown job",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "admin"
             ]
           }
         ]
@@ -21003,42 +19706,6 @@
       }
     },
     "/api/v3/library/scan/runs": {
-      "get": {
-        "tags": [
-          "library management"
-        ],
-        "summary": "List current plus recent scan runs.",
-        "operationId": "list_runs",
-        "responses": {
-          "200": {
-            "description": "Scan runs",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ScanRunsResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "user"
-            ]
-          }
-        ]
-      },
       "post": {
         "tags": [
           "library management"
@@ -22237,63 +20904,6 @@
       }
     },
     "/api/v3/library/tracks/{id}": {
-      "get": {
-        "tags": [
-          "library"
-        ],
-        "summary": "One streamable track.",
-        "operationId": "get_track",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "Local track id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Track",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TrackView"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Unknown track id",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "user"
-            ]
-          }
-        ]
-      },
       "delete": {
         "tags": [
           "library management"
@@ -22445,85 +21055,6 @@
           {
             "session": [
               "user"
-            ]
-          }
-        ]
-      }
-    },
-    "/api/v3/library/tracks/{id}/tags": {
-      "get": {
-        "tags": [
-          "library"
-        ],
-        "summary": "The tags in one track's file on disk (admins only).",
-        "operationId": "track_tags",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "Local track id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "The file's tags",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TrackTags"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "The file is gone from disk or cannot be read",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Admin role required, or the file left the library roots",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Unknown track",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "admin"
             ]
           }
         ]
@@ -22840,32 +21371,6 @@
       }
     },
     "/api/v3/me/connections/lastfm": {
-      "get": {
-        "tags": [
-          "users"
-        ],
-        "summary": "Per-user Last.fm link status.",
-        "operationId": "lastfm_status",
-        "responses": {
-          "200": {
-            "description": "Link status",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/LastFmStatusResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "user"
-            ]
-          }
-        ]
-      },
       "put": {
         "tags": [
           "users"
@@ -22989,52 +21494,6 @@
       }
     },
     "/api/v3/me/connections/listenbrainz": {
-      "get": {
-        "tags": [
-          "listening"
-        ],
-        "summary": "Read the caller's ListenBrainz link status. Unlinked reads as missing.",
-        "operationId": "listenbrainz_status",
-        "responses": {
-          "200": {
-            "description": "Link status",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ListeningLinkStatus"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "No link",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "user"
-            ]
-          }
-        ]
-      },
       "put": {
         "tags": [
           "listening"
@@ -26239,54 +24698,6 @@
         ]
       }
     },
-    "/api/v3/remotes/{source}/albums/{id}": {
-      "get": {
-        "tags": [
-          "remotes"
-        ],
-        "summary": "One album by id.",
-        "operationId": "remotes_get_album",
-        "parameters": [
-          {
-            "name": "source",
-            "in": "path",
-            "description": "Remote source",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/SourceName"
-            }
-          },
-          {
-            "name": "id",
-            "in": "path",
-            "description": "Remote album id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Album detail",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RemotesAlbumView"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "user"
-            ]
-          }
-        ]
-      }
-    },
     "/api/v3/remotes/{source}/albums/{id}/tracks": {
       "get": {
         "tags": [
@@ -26485,54 +24896,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ArtistIndex"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "user"
-            ]
-          }
-        ]
-      }
-    },
-    "/api/v3/remotes/{source}/artists/{id}": {
-      "get": {
-        "tags": [
-          "remotes"
-        ],
-        "summary": "One artist by id.",
-        "operationId": "remotes_get_artist",
-        "parameters": [
-          {
-            "name": "source",
-            "in": "path",
-            "description": "Remote source",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/SourceName"
-            }
-          },
-          {
-            "name": "id",
-            "in": "path",
-            "description": "Remote artist id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Artist detail",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RemotesArtistView"
                 }
               }
             }
@@ -27464,110 +25827,6 @@
         ]
       }
     },
-    "/api/v3/remotes/{source}/most-played/albums": {
-      "get": {
-        "tags": [
-          "remotes"
-        ],
-        "summary": "Most-played albums (Jellyfin).",
-        "operationId": "remotes_list_most_played_albums",
-        "parameters": [
-          {
-            "name": "source",
-            "in": "path",
-            "description": "Remote source",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/SourceName"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "description": "Max items (1-50, default 10).",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "format": "int64"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Most-played albums",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/RemotesAlbumView"
-                  }
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "user"
-            ]
-          }
-        ]
-      }
-    },
-    "/api/v3/remotes/{source}/most-played/artists": {
-      "get": {
-        "tags": [
-          "remotes"
-        ],
-        "summary": "Most-played artists (Jellyfin).",
-        "operationId": "remotes_list_most_played_artists",
-        "parameters": [
-          {
-            "name": "source",
-            "in": "path",
-            "description": "Remote source",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/SourceName"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "description": "Max items (1-50, default 10).",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "format": "int64"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Most-played artists",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/RemotesArtistView"
-                  }
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "user"
-            ]
-          }
-        ]
-      }
-    },
     "/api/v3/remotes/{source}/playlists": {
       "get": {
         "tags": [
@@ -27823,68 +26082,6 @@
         ]
       }
     },
-    "/api/v3/remotes/{source}/recently-added": {
-      "get": {
-        "tags": [
-          "remotes"
-        ],
-        "summary": "Recently added albums.",
-        "operationId": "remotes_list_recently_added",
-        "parameters": [
-          {
-            "name": "source",
-            "in": "path",
-            "description": "Remote source",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/SourceName"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "description": "Max items (1-500, default 50).",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "format": "int64"
-            }
-          },
-          {
-            "name": "offset",
-            "in": "query",
-            "description": "Records to skip (default 0).",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "format": "int64"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Recently added",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/RemotesAlbumView"
-                  }
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "user"
-            ]
-          }
-        ]
-      }
-    },
     "/api/v3/remotes/{source}/search": {
       "get": {
         "tags": [
@@ -27929,45 +26126,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/RemotesSearchResults"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "user"
-            ]
-          }
-        ]
-      }
-    },
-    "/api/v3/remotes/{source}/sessions": {
-      "get": {
-        "tags": [
-          "remotes"
-        ],
-        "summary": "Active audio sessions.",
-        "operationId": "remotes_list_sessions",
-        "parameters": [
-          {
-            "name": "source",
-            "in": "path",
-            "description": "Remote source",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/SourceName"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Sessions",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SessionsView"
                 }
               }
             }
@@ -30103,34 +28261,6 @@
         ]
       }
     },
-    "/api/v3/settings/cache-ttls": {
-      "get": {
-        "tags": [
-          "settings"
-        ],
-        "summary": "Read the advanced settings the web app reads at start.",
-        "operationId": "get_cache_ttls",
-        "responses": {
-          "200": {
-            "description": "Web app settings",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/FrontendCacheTTLs"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "admin"
-            ]
-          }
-        ]
-      }
-    },
     "/api/v3/settings/connect-apps": {
       "get": {
         "tags": [
@@ -30347,34 +28477,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/DownloadPolicyView"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "admin"
-            ]
-          }
-        ]
-      }
-    },
-    "/api/v3/settings/download-clients/policy-summary": {
-      "get": {
-        "tags": [
-          "settings"
-        ],
-        "summary": "Safe policy summary for the settings page: the contract sentence\nplus the source-mode label only.",
-        "operationId": "get_policy_summary",
-        "responses": {
-          "200": {
-            "description": "Policy summary",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PolicySummaryResponse"
                 }
               }
             }
@@ -32076,129 +30178,7 @@
         ]
       }
     },
-    "/api/v3/settings/library-management/profiles": {
-      "post": {
-        "tags": [
-          "settings"
-        ],
-        "summary": "Create a profile as a copy of the default profile.",
-        "operationId": "create_library_management_profile",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/LibraryManagementProfileCreateRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Created profile",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/LibraryManagementProfileMutationResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "admin"
-            ]
-          }
-        ]
-      }
-    },
     "/api/v3/settings/library-management/profiles/{profile_id}": {
-      "get": {
-        "tags": [
-          "settings"
-        ],
-        "summary": "Read one profile.",
-        "operationId": "get_library_management_profile",
-        "parameters": [
-          {
-            "name": "profile_id",
-            "in": "path",
-            "description": "Profile id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Profile",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/LibraryManagementProfile"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "admin"
-            ]
-          }
-        ]
-      },
-      "put": {
-        "tags": [
-          "settings"
-        ],
-        "summary": "Replace one profile. The body id must match the path id.",
-        "operationId": "update_library_management_profile",
-        "parameters": [
-          {
-            "name": "profile_id",
-            "in": "path",
-            "description": "Profile id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/LibraryManagementProfileUpdateRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Saved profile",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/LibraryManagementProfileMutationResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "admin"
-            ]
-          }
-        ]
-      },
       "delete": {
         "tags": [
           "settings"
@@ -32408,129 +30388,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/LibraryManagementChangeImpact"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "admin"
-            ]
-          }
-        ]
-      }
-    },
-    "/api/v3/settings/library/path-mapping": {
-      "get": {
-        "tags": [
-          "settings"
-        ],
-        "summary": "Dry run: map every catalog file path to a saved root.",
-        "operationId": "get_library_path_mapping",
-        "responses": {
-          "200": {
-            "description": "Path mapping report",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/LibraryPathMappingReport"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "Catalog reads are unwired",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "admin"
-            ]
-          }
-        ]
-      }
-    },
-    "/api/v3/settings/library/paths": {
-      "post": {
-        "tags": [
-          "settings"
-        ],
-        "summary": "Add one library root path. The path must be a directory on this\nmachine; re-adding is a silent no-op.",
-        "operationId": "add_library_path",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/LibraryPathRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Library settings",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/LibrarySettingsResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "admin"
-            ]
-          }
-        ]
-      },
-      "delete": {
-        "tags": [
-          "settings"
-        ],
-        "summary": "Remove every library root at one path. Unknown paths are a silent\nno-op; removing the last root while the catalog holds tracks is a 400.",
-        "operationId": "remove_library_path",
-        "parameters": [
-          {
-            "name": "path",
-            "in": "query",
-            "description": "Directory to remove",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Library settings",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/LibrarySettingsResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Removing the last root would orphan the catalog",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }
@@ -32845,60 +30702,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/LibraryScanScheduleResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "admin"
-            ]
-          }
-        ]
-      }
-    },
-    "/api/v3/settings/library/sync": {
-      "get": {
-        "tags": [
-          "settings"
-        ],
-        "summary": "The legacy catalog-sync section is gone (one-shot import only now).",
-        "operationId": "dropped_library_sync",
-        "responses": {
-          "410": {
-            "description": "Section dropped in v3",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "admin"
-            ]
-          }
-        ]
-      },
-      "put": {
-        "tags": [
-          "settings"
-        ],
-        "summary": "PUT twin of the dropped catalog-sync route: gone, not moved.",
-        "operationId": "dropped_library_sync_put",
-        "responses": {
-          "410": {
-            "description": "Section dropped in v3",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }
@@ -33864,70 +31667,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/UserPreferences"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "admin"
-            ]
-          }
-        ]
-      }
-    },
-    "/api/v3/settings/primary-source": {
-      "get": {
-        "tags": [
-          "settings"
-        ],
-        "summary": "Read the primary music source.",
-        "operationId": "get_primary_source",
-        "responses": {
-          "200": {
-            "description": "Primary music source",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PrimaryMusicSource"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "admin"
-            ]
-          }
-        ]
-      },
-      "put": {
-        "tags": [
-          "settings"
-        ],
-        "summary": "Save the primary music source.",
-        "operationId": "put_primary_source",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PrimaryMusicSource"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Saved source",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PrimaryMusicSource"
                 }
               }
             }
@@ -35481,116 +33220,6 @@
         ]
       }
     },
-    "/api/v3/youtube/quota": {
-      "get": {
-        "tags": [
-          "youtube"
-        ],
-        "summary": "Today's YouTube search budget. A zero budget while search is off.",
-        "operationId": "get_youtube_quota",
-        "responses": {
-          "200": {
-            "description": "Today's budget",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/YouTubeQuotaStatus"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "user"
-            ]
-          }
-        ]
-      }
-    },
-    "/api/v3/youtube/track-link/{album_id}/{disc_number}/{track_number}": {
-      "delete": {
-        "tags": [
-          "youtube"
-        ],
-        "summary": "Remove one track link.",
-        "operationId": "delete_track_link",
-        "parameters": [
-          {
-            "name": "album_id",
-            "in": "path",
-            "description": "Album id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "disc_number",
-            "in": "path",
-            "description": "Disc number",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int64"
-            }
-          },
-          {
-            "name": "track_number",
-            "in": "path",
-            "description": "Track position on its disc",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int64"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Removed, or nothing was saved"
-          },
-          "400": {
-            "description": "Disc or track is not a number",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "user"
-            ]
-          }
-        ]
-      }
-    },
     "/api/v3/youtube/track-links/{album_id}": {
       "get": {
         "tags": [
@@ -35694,49 +33323,6 @@
   },
   "components": {
     "schemas": {
-      "AcquireHealth": {
-        "type": "object",
-        "description": "Acquisition health smoke. `ready`\nsays whether a download source is on; the gates unpack per source.",
-        "required": [
-          "status",
-          "ready",
-          "ready_via",
-          "gates"
-        ],
-        "properties": {
-          "gates": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/SourceGate"
-            },
-            "description": "Independent per-source release gates."
-          },
-          "ready": {
-            "type": "boolean",
-            "description": "True when a download source is on: slskd, SABnzbd or a plugin\ndownload client. Requests are taken while it is false, and wait."
-          },
-          "ready_via": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "The sources that are on and answered the last probe: `soulseek`,\n`usenet` or `plugin:<name>`."
-          },
-          "status": {
-            "$ref": "#/components/schemas/AcquireHealthStatus",
-            "description": "Overall verdict."
-          }
-        }
-      },
-      "AcquireHealthStatus": {
-        "type": "string",
-        "description": "The acquisition health verdict.",
-        "enum": [
-          "ok",
-          "degraded",
-          "error"
-        ]
-      },
       "ActionResponse": {
         "type": "object",
         "description": "Mutation outcome for approve/reject/cancel/retry/clear.",
@@ -36706,93 +34292,6 @@
             }
           }
         }
-      },
-      "AlbumImages": {
-        "type": "object",
-        "description": "TheAudioDB album images. Every field is optional.",
-        "properties": {
-          "album_3d_case_url": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "3D case."
-          },
-          "album_3d_face_url": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "3D face."
-          },
-          "album_3d_flat_url": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "3D flat."
-          },
-          "album_3d_thumb_url": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "3D thumbnail."
-          },
-          "album_back_url": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Back cover."
-          },
-          "album_cdart_url": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "CD art."
-          },
-          "album_spine_url": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Spine."
-          },
-          "album_thumb_url": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Front thumbnail."
-          }
-        }
-      },
-      "AlbumInfo": {
-        "allOf": [
-          {
-            "$ref": "#/components/schemas/AlbumBasicInfo",
-            "description": "The header."
-          },
-          {
-            "$ref": "#/components/schemas/AlbumTracksInfo",
-            "description": "The tracklist."
-          },
-          {
-            "type": "object",
-            "required": [
-              "images"
-            ],
-            "properties": {
-              "images": {
-                "$ref": "#/components/schemas/AlbumImages",
-                "description": "TheAudioDB artwork, fetched and cached by this call."
-              }
-            }
-          }
-        ],
-        "description": "`GET /albums/{album_id}`: header, tracklist and artwork in one call."
       },
       "AlbumIntake": {
         "type": "object",
@@ -39103,13 +36602,21 @@
         "description": "Pending-approval list answer.",
         "required": [
           "items",
-          "count"
+          "count",
+          "granted"
         ],
         "properties": {
           "count": {
             "type": "integer",
-            "description": "Item count.",
+            "description": "Item count: pending requests only.",
             "minimum": 0
+          },
+          "granted": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AutoDownloadApprovalItem"
+            },
+            "description": "Approvals already granted, which an admin may revoke."
           },
           "items": {
             "type": "array",
@@ -42378,7 +39885,7 @@
             },
             "propertyNames": {
               "type": "string",
-              "description": "A listening-data service: the primary source setting, and the one the\ndiscover shelves, charts, radio and enrichment answers name.",
+              "description": "A listening-data service: the one the discover shelves, charts, radio and\nenrichment answers name.",
               "enum": [
                 "listenbrainz",
                 "lastfm"
@@ -42760,77 +40267,6 @@
             "type": "integer",
             "format": "int64",
             "description": "Moves whenever the viewer's queue changes structurally (not on\nbyte progress). Refetch the list when it moves."
-          }
-        }
-      },
-      "DownloadFileItem": {
-        "type": "object",
-        "description": "One file of a task's current source.",
-        "required": [
-          "filename"
-        ],
-        "properties": {
-          "duration": {
-            "type": [
-              "number",
-              "null"
-            ],
-            "format": "double",
-            "description": "Always empty: sources do not advertise durations."
-          },
-          "filename": {
-            "type": "string"
-          },
-          "size": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64",
-            "description": "Advertised size in bytes, when the source gave one."
-          }
-        }
-      },
-      "DownloadFilesResponse": {
-        "type": "object",
-        "description": "A task's files and counts.",
-        "required": [
-          "task_id",
-          "status",
-          "files_total",
-          "files_completed",
-          "files_failed",
-          "progress_percent",
-          "files"
-        ],
-        "properties": {
-          "files": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/DownloadFileItem"
-            }
-          },
-          "files_completed": {
-            "type": "integer",
-            "format": "int64"
-          },
-          "files_failed": {
-            "type": "integer",
-            "format": "int64"
-          },
-          "files_total": {
-            "type": "integer",
-            "format": "int64"
-          },
-          "progress_percent": {
-            "type": "integer",
-            "format": "int64"
-          },
-          "status": {
-            "$ref": "#/components/schemas/TaskStatus"
-          },
-          "task_id": {
-            "type": "string"
           }
         }
       },
@@ -45587,85 +43023,6 @@
           "RUN_END_PENDING"
         ]
       },
-      "FavoriteCounts": {
-        "type": "object",
-        "description": "Per-kind counts.",
-        "required": [
-          "album",
-          "artist",
-          "track"
-        ],
-        "properties": {
-          "album": {
-            "type": "integer",
-            "description": "Favorited albums.",
-            "minimum": 0
-          },
-          "artist": {
-            "type": "integer",
-            "description": "Favorited artists.",
-            "minimum": 0
-          },
-          "track": {
-            "type": "integer",
-            "description": "Favorited tracks.",
-            "minimum": 0
-          }
-        }
-      },
-      "FavoriteItem": {
-        "type": "object",
-        "description": "One favorite row.",
-        "required": [
-          "kind",
-          "item_id",
-          "favorited_at"
-        ],
-        "properties": {
-          "favorited_at": {
-            "type": "integer",
-            "format": "int64",
-            "description": "When it was favorited, epoch seconds.",
-            "minimum": 0
-          },
-          "item_id": {
-            "type": "string",
-            "description": "Favorited item id."
-          },
-          "kind": {
-            "type": "string",
-            "description": "Favorited kind: album, artist, or track."
-          },
-          "name": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Display name, when the caller sent one."
-          }
-        }
-      },
-      "FavoriteListResponse": {
-        "type": "object",
-        "description": "Favorite-list answer.",
-        "required": [
-          "items",
-          "counts"
-        ],
-        "properties": {
-          "counts": {
-            "$ref": "#/components/schemas/FavoriteCounts",
-            "description": "Counts across all kinds, ignoring the filter."
-          },
-          "items": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/FavoriteItem"
-            },
-            "description": "Favorites, optionally filtered by kind."
-          }
-        }
-      },
       "FavoriteStatusResponse": {
         "type": "object",
         "description": "Favorite-status answer.",
@@ -46107,27 +43464,6 @@
           }
         }
       },
-      "FrontendCacheTTLs": {
-        "type": "object",
-        "description": "The advanced settings the web app reads at start. The browser's cache\nlifetimes and the queue's polling interval are fixed in the web app.",
-        "properties": {
-          "discover_queue_auto_generate": {
-            "type": "boolean",
-            "description": "Discover-queue auto-generate switch.",
-            "default": true
-          }
-        }
-      },
-      "GateSource": {
-        "type": "string",
-        "description": "The source a release gate is for.",
-        "enum": [
-          "slskd",
-          "sabnzbd",
-          "newznab",
-          "lidarr_import"
-        ]
-      },
       "GenreAlias": {
         "type": "object",
         "description": "One genre alias.",
@@ -46282,22 +43618,6 @@
               "$ref": "#/components/schemas/ArtistRef"
             },
             "description": "Owned artists."
-          }
-        }
-      },
-      "GenreList": {
-        "type": "object",
-        "description": "Full genre listing. Catalogs hold dozens of genres, so no paging.",
-        "required": [
-          "items"
-        ],
-        "properties": {
-          "items": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/GenreView"
-            },
-            "description": "Genres by descending track count, name tiebreak."
           }
         }
       },
@@ -46496,33 +43816,6 @@
           "lastfm",
           "existing_local"
         ]
-      },
-      "GenreView": {
-        "type": "object",
-        "description": "One genre with streamable-only counts.",
-        "required": [
-          "name",
-          "track_count",
-          "album_count"
-        ],
-        "properties": {
-          "album_count": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Albums holding at least one such track.",
-            "minimum": 0
-          },
-          "name": {
-            "type": "string",
-            "description": "Genre display name, representative casing."
-          },
-          "track_count": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Streamable tracks carrying this tag.",
-            "minimum": 0
-          }
-        }
       },
       "GetIt": {
         "type": "object",
@@ -48243,31 +45536,6 @@
           }
         }
       },
-      "LastFmStatusResponse": {
-        "type": "object",
-        "description": "Per-user Last.fm link status. Never carries secrets.",
-        "required": [
-          "configured",
-          "linked"
-        ],
-        "properties": {
-          "configured": {
-            "type": "boolean",
-            "description": "Whether API credentials are stored."
-          },
-          "linked": {
-            "type": "boolean",
-            "description": "Whether a session is linked."
-          },
-          "username": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Linked Last.fm username, when linked."
-          }
-        }
-      },
       "LastFmTag": {
         "type": "object",
         "description": "A Last.fm tag.",
@@ -48790,28 +46058,6 @@
           }
         }
       },
-      "LibraryManagementProfileCreateRequest": {
-        "type": "object",
-        "description": "Create-profile request (clones the default profile).",
-        "required": [
-          "name",
-          "expected_settings_revision"
-        ],
-        "properties": {
-          "description": {
-            "type": "string",
-            "description": "Description for the new profile."
-          },
-          "expected_settings_revision": {
-            "type": "string",
-            "description": "Compare-and-swap token from the last GET."
-          },
-          "name": {
-            "type": "string",
-            "description": "Name for the new profile."
-          }
-        }
-      },
       "LibraryManagementProfileDeleteRequest": {
         "type": "object",
         "description": "Delete-profile request.",
@@ -49054,24 +46300,6 @@
           "settings_revision": {
             "type": "string",
             "description": "Fresh settings revision."
-          }
-        }
-      },
-      "LibraryManagementProfileUpdateRequest": {
-        "type": "object",
-        "description": "Update-profile request.",
-        "required": [
-          "profile",
-          "expected_settings_revision"
-        ],
-        "properties": {
-          "expected_settings_revision": {
-            "type": "string",
-            "description": "Compare-and-swap token from the last GET."
-          },
-          "profile": {
-            "$ref": "#/components/schemas/LibraryManagementProfile",
-            "description": "Full replacement profile (id must match the path)."
           }
         }
       },
@@ -49453,30 +46681,6 @@
         ],
         "description": "GET/PUT view of Library Management: the settings plus their content\nrevision (the write CAS token)."
       },
-      "LibraryMbids": {
-        "type": "object",
-        "description": "Every MusicBrainz release group the library holds and every album with\nan open request (v2 `/library/mbids`). Both lists are lowercase and\nsorted.",
-        "required": [
-          "mbids",
-          "requested_mbids"
-        ],
-        "properties": {
-          "mbids": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "Release groups held with at least one streamable track."
-          },
-          "requested_mbids": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "Album ids with an open acquisition request."
-          }
-        }
-      },
       "LibraryMembershipRequest": {
         "type": "object",
         "description": "Which of these MusicBrainz album ids the library holds or has an open\nrequest for. Ids compare case-insensitively.",
@@ -49511,117 +46715,6 @@
               "type": "string"
             },
             "description": "Asked ids with an open acquisition request."
-          }
-        }
-      },
-      "LibraryPathMappingItem": {
-        "type": "object",
-        "description": "One catalog path and the root it maps to under the saved settings.",
-        "required": [
-          "source_kind",
-          "source_id",
-          "absolute_path"
-        ],
-        "properties": {
-          "absolute_path": {
-            "type": "string",
-            "description": "Absolute file path the catalog holds."
-          },
-          "error": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/PathMappingError",
-                "description": "Why it did not map."
-              }
-            ]
-          },
-          "relative_path": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Path relative to that root, when it maps."
-          },
-          "root_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Root the path maps to, when it maps."
-          },
-          "source_id": {
-            "type": "string",
-            "description": "Track id."
-          },
-          "source_kind": {
-            "$ref": "#/components/schemas/PathMappingSource",
-            "description": "Source kind."
-          }
-        }
-      },
-      "LibraryPathMappingReport": {
-        "type": "object",
-        "description": "Dry run: does every catalog path map to exactly one saved root.",
-        "required": [
-          "policy_revision",
-          "source_count",
-          "mapped_count",
-          "ambiguous_count",
-          "out_of_root_count",
-          "blocking",
-          "items"
-        ],
-        "properties": {
-          "ambiguous_count": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Paths under more than one root."
-          },
-          "blocking": {
-            "type": "boolean",
-            "description": "Some path does not map."
-          },
-          "items": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/LibraryPathMappingItem"
-            },
-            "description": "Every checked path, ordered by track id."
-          },
-          "mapped_count": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Paths that map to one root."
-          },
-          "out_of_root_count": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Paths under no root."
-          },
-          "policy_revision": {
-            "type": "string",
-            "description": "Saved revision the report was built from."
-          },
-          "source_count": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Paths checked."
-          }
-        }
-      },
-      "LibraryPathRequest": {
-        "type": "object",
-        "description": "Add-one-library-path body.",
-        "required": [
-          "path"
-        ],
-        "properties": {
-          "path": {
-            "type": "string",
-            "description": "Directory to add as a library root."
           }
         }
       },
@@ -50460,7 +47553,7 @@
       },
       "ListenSource": {
         "type": "string",
-        "description": "A listening-data service: the primary source setting, and the one the\ndiscover shelves, charts, radio and enrichment answers name.",
+        "description": "A listening-data service: the one the discover shelves, charts, radio and\nenrichment answers name.",
         "enum": [
           "listenbrainz",
           "lastfm"
@@ -55675,21 +52768,6 @@
           }
         }
       },
-      "PathMappingError": {
-        "type": "string",
-        "description": "Why a path did not map to a root.",
-        "enum": [
-          "ambiguous",
-          "out_of_root"
-        ]
-      },
-      "PathMappingSource": {
-        "type": "string",
-        "description": "Where a mapped path came from.",
-        "enum": [
-          "library_file"
-        ]
-      },
       "PenaltyView": {
         "type": "object",
         "description": "One penalty's share of a candidate's distance.",
@@ -55739,14 +52817,22 @@
         "description": "Pending personal-mix approvals.",
         "required": [
           "items",
-          "count"
+          "count",
+          "granted"
         ],
         "properties": {
           "count": {
             "type": "integer",
             "format": "int32",
-            "description": "Row count.",
+            "description": "Pending row count.",
             "minimum": 0
+          },
+          "granted": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PersonalMixApprovalItem"
+            },
+            "description": "Approvals already granted, which an admin may revoke."
           },
           "items": {
             "type": "array",
@@ -57486,36 +54572,6 @@
           "rule"
         ]
       },
-      "PolicySummaryResponse": {
-        "type": "object",
-        "description": "Safe, signed-in-user projection of the acquisition policy: the quality\nsummary sentence and the recipe verdict only, no admin internals.",
-        "required": [
-          "summary",
-          "legacy_rollback_compatible",
-          "quality_recipe_status"
-        ],
-        "properties": {
-          "legacy_rollback_compatible": {
-            "type": "boolean",
-            "description": "Whether a down-level image reproduces acquisition behavior."
-          },
-          "quality_recipe_error": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Recipe verdict detail, when any."
-          },
-          "quality_recipe_status": {
-            "$ref": "#/components/schemas/QualityRecipeStatus",
-            "description": "Read-only recipe verdict."
-          },
-          "summary": {
-            "type": "string",
-            "description": "Backend-composed contract sentence."
-          }
-        }
-      },
       "PrecacheRunResponse": {
         "type": "object",
         "description": "One precache run starting. The run continues in the background under\nthe `precache-library` job name; a second start while it is live is 409.",
@@ -57637,21 +54693,6 @@
           "title": {
             "type": "string",
             "description": "Track title."
-          }
-        }
-      },
-      "PrimaryMusicSource": {
-        "type": "object",
-        "description": "Primary music source selection.",
-        "properties": {
-          "source": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/ListenSource",
-                "description": "Active source."
-              }
-            ],
-            "default": "listenbrainz"
           }
         }
       },
@@ -60019,73 +57060,6 @@
               "$ref": "#/components/schemas/RemotesTrackView"
             },
             "description": "Matching tracks."
-          }
-        }
-      },
-      "RemotesSessionView": {
-        "type": "object",
-        "description": "One active remote listening session.",
-        "required": [
-          "source",
-          "session_id",
-          "user_name",
-          "device_name",
-          "track_title",
-          "artist_name",
-          "album_name",
-          "progress_ms",
-          "duration_ms",
-          "is_paused"
-        ],
-        "properties": {
-          "album_name": {
-            "type": "string",
-            "description": "Track album."
-          },
-          "artist_name": {
-            "type": "string",
-            "description": "Track artist."
-          },
-          "device_name": {
-            "type": "string",
-            "description": "Player or device label."
-          },
-          "duration_ms": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Track length in milliseconds."
-          },
-          "image_url": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Relative images URL under `/api/v3` for the playing track's art."
-          },
-          "is_paused": {
-            "type": "boolean",
-            "description": "True when paused."
-          },
-          "progress_ms": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Playback position in milliseconds."
-          },
-          "session_id": {
-            "type": "string",
-            "description": "Remote session id."
-          },
-          "source": {
-            "$ref": "#/components/schemas/SourceName",
-            "description": "Owning source."
-          },
-          "track_title": {
-            "type": "string",
-            "description": "Track title."
-          },
-          "user_name": {
-            "type": "string",
-            "description": "Listening user."
           }
         }
       },
@@ -62756,30 +59730,6 @@
           }
         }
       },
-      "ScanRunsResponse": {
-        "type": "object",
-        "description": "Current plus recent scan runs.",
-        "required": [
-          "current",
-          "history"
-        ],
-        "properties": {
-          "current": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ScanRunView"
-            },
-            "description": "Live runs."
-          },
-          "history": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ScanRunView"
-            },
-            "description": "Recent terminal runs."
-          }
-        }
-      },
       "ScanScopeView": {
         "type": "object",
         "description": "One scope inside a run.",
@@ -64364,27 +61314,6 @@
           }
         }
       },
-      "SessionsView": {
-        "type": "object",
-        "description": "Active sessions for one source.",
-        "required": [
-          "source",
-          "sessions"
-        ],
-        "properties": {
-          "sessions": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/RemotesSessionView"
-            },
-            "description": "Active audio sessions."
-          },
-          "source": {
-            "$ref": "#/components/schemas/SourceName",
-            "description": "Owning source."
-          }
-        }
-      },
       "SetArtistLinkBody": {
         "type": "object",
         "description": "Link an artist to a MusicBrainz artist.",
@@ -64701,43 +61630,6 @@
           }
         }
       },
-      "SourceGate": {
-        "type": "object",
-        "description": "Per-source release gate verdict. Each source gates independently: one\nred gate never flips another.",
-        "required": [
-          "source",
-          "enabled",
-          "configured",
-          "reachable",
-          "open",
-          "message"
-        ],
-        "properties": {
-          "configured": {
-            "type": "boolean",
-            "description": "Credentials/URL present."
-          },
-          "enabled": {
-            "type": "boolean",
-            "description": "Admin master switch for this source."
-          },
-          "message": {
-            "type": "string",
-            "description": "User-safe summary."
-          },
-          "open": {
-            "type": "boolean",
-            "description": "True when releases may flow from this source."
-          },
-          "reachable": {
-            "type": "boolean",
-            "description": "Live probe answered."
-          },
-          "source": {
-            "$ref": "#/components/schemas/GateSource"
-          }
-        }
-      },
       "SourceName": {
         "type": "string",
         "description": "Which remote source a view or id belongs to.",
@@ -64835,47 +61727,6 @@
           "playlist_id": {
             "type": "string",
             "description": "Internal playlist id."
-          }
-        }
-      },
-      "SpotifyJobState": {
-        "type": "string",
-        "description": "Where a Spotify import job is.",
-        "enum": [
-          "running",
-          "done",
-          "error"
-        ]
-      },
-      "SpotifyJobStatus": {
-        "type": "object",
-        "description": "Terminal-or-live state of one `spotify:import` job.",
-        "required": [
-          "state",
-          "playlist_id"
-        ],
-        "properties": {
-          "message": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "User-safe failure summary, else null."
-          },
-          "playlist_id": {
-            "type": "string",
-            "description": "Internal playlist id the job populates."
-          },
-          "state": {
-            "$ref": "#/components/schemas/SpotifyJobState"
-          },
-          "track_count": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64",
-            "description": "Tracks written on success."
           }
         }
       },
@@ -65685,45 +62536,6 @@
           }
         }
       },
-      "TagArtistCredit": {
-        "type": "object",
-        "description": "One artist value as the file carries it (v2 `AudioArtistCredit`).",
-        "required": [
-          "name",
-          "join_phrase"
-        ],
-        "properties": {
-          "credited_name": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Name as credited, when it differs."
-          },
-          "join_phrase": {
-            "type": "string",
-            "description": "Text joining this credit to the next."
-          },
-          "musicbrainz_artist_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "MusicBrainz artist id."
-          },
-          "name": {
-            "type": "string",
-            "description": "Artist name."
-          },
-          "sort_name": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Sort name."
-          }
-        }
-      },
       "TaggingScript": {
         "type": "object",
         "description": "One tagging script.",
@@ -66017,72 +62829,6 @@
               "string",
               "null"
             ]
-          }
-        }
-      },
-      "TrackCacheCheckItem": {
-        "type": "object",
-        "description": "One artist/track pair to check against the YouTube cache.",
-        "required": [
-          "artist",
-          "track"
-        ],
-        "properties": {
-          "artist": {
-            "type": "string",
-            "description": "Artist name."
-          },
-          "track": {
-            "type": "string",
-            "description": "Track name."
-          }
-        }
-      },
-      "TrackCacheCheckRequest": {
-        "type": "object",
-        "description": "Body checking track cache membership in bulk.",
-        "properties": {
-          "items": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/TrackCacheCheckItem"
-            },
-            "description": "Pairs to check (capped, deduped case-insensitively)."
-          }
-        }
-      },
-      "TrackCacheCheckResponse": {
-        "type": "object",
-        "description": "Bulk cache membership.",
-        "properties": {
-          "items": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/TrackCacheCheckResponseItem"
-            },
-            "description": "Membership rows in request order (deduped)."
-          }
-        }
-      },
-      "TrackCacheCheckResponseItem": {
-        "type": "object",
-        "description": "Cache membership behind one pair.",
-        "required": [
-          "artist",
-          "track"
-        ],
-        "properties": {
-          "artist": {
-            "type": "string",
-            "description": "Artist name as sent."
-          },
-          "cached": {
-            "type": "boolean",
-            "description": "True when a cached video covers the pair."
-          },
-          "track": {
-            "type": "string",
-            "description": "Track name as sent."
           }
         }
       },
@@ -66496,209 +63242,6 @@
           "title": {
             "type": "string",
             "description": "Track title."
-          }
-        }
-      },
-      "TrackTags": {
-        "type": "object",
-        "description": "The tags in one audio file, field for field v2's `AudioTag`. The\n`musicbrainz_*` fields use Picard's tag names.",
-        "required": [
-          "title",
-          "artist",
-          "album",
-          "track_number",
-          "disc_number",
-          "compilation",
-          "genres",
-          "artists",
-          "album_artists",
-          "musicbrainz_artist_ids",
-          "musicbrainz_album_artist_ids"
-        ],
-        "properties": {
-          "acoustid_id": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "album": {
-            "type": "string"
-          },
-          "album_artist": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "album_artist_sort": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "album_artists": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/TagArtistCredit"
-            }
-          },
-          "album_sort": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "artist": {
-            "type": "string"
-          },
-          "artist_sort": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "artists": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/TagArtistCredit"
-            }
-          },
-          "compilation": {
-            "type": "boolean"
-          },
-          "disc_number": {
-            "type": "integer",
-            "format": "int32",
-            "minimum": 0
-          },
-          "disc_subtitle": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "genre": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "genres": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "musicbrainz_album_artist_id": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "musicbrainz_album_artist_ids": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "musicbrainz_artist_id": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "musicbrainz_artist_ids": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "musicbrainz_recording_id": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "musicbrainz_release_group_id": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "musicbrainz_release_id": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "musicbrainz_release_track_id": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "original_release_date": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "release_type": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Raw RELEASETYPE / MUSICBRAINZ_ALBUMTYPE value."
-          },
-          "replaygain_album_gain": {
-            "type": [
-              "number",
-              "null"
-            ],
-            "format": "double"
-          },
-          "replaygain_album_peak": {
-            "type": [
-              "number",
-              "null"
-            ],
-            "format": "double"
-          },
-          "replaygain_track_gain": {
-            "type": [
-              "number",
-              "null"
-            ],
-            "format": "double"
-          },
-          "replaygain_track_peak": {
-            "type": [
-              "number",
-              "null"
-            ],
-            "format": "double"
-          },
-          "title": {
-            "type": "string"
-          },
-          "title_sort": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "track_number": {
-            "type": "integer",
-            "format": "int32",
-            "minimum": 0
-          },
-          "year": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int32"
           }
         }
       },
@@ -68461,32 +65004,6 @@
           "youtube_url": {
             "type": "string",
             "description": "A YouTube URL or a bare 11-character video id."
-          }
-        }
-      },
-      "YouTubeQuotaResponse": {
-        "type": "object",
-        "description": "YouTube data-API quota state.",
-        "required": [
-          "used",
-          "limit",
-          "resets_at"
-        ],
-        "properties": {
-          "limit": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Quota units available per window."
-          },
-          "resets_at": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Unix seconds when the window resets."
-          },
-          "used": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Quota units spent in the current window."
           }
         }
       },

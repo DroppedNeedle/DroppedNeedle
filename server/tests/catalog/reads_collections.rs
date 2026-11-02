@@ -470,12 +470,12 @@ async fn playlists_favorites_and_follows_survive_a_restart() {
     assert_eq!(headers.get("content-type").unwrap(), "image/png");
     assert!(!bytes.is_empty());
 
-    let (_, favorites) = call(&app, Method::GET, "/api/v3/favorites", Some(ADA), None).await;
-    assert_eq!(favorites["items"][0]["name"], "First");
-    assert_eq!(
-        favorites["counts"],
-        json!({"album": 1, "artist": 0, "track": 0})
-    );
+    let kept: Vec<String> =
+        sqlx::query_scalar("SELECT item_id FROM library_user_favorites WHERE user_id = 'u-ada'")
+            .fetch_all(rig.runtime.db().sqlx())
+            .await
+            .expect("favourites read");
+    assert_eq!(kept, ["alb-1"]);
     let (_, follow) = call(
         &app,
         Method::GET,
@@ -578,22 +578,12 @@ async fn favorites_stay_per_user() {
             (StatusCode::OK, Some(true))
         );
     }
-    let (_, filtered) = call(
-        &app,
-        Method::GET,
-        "/api/v3/favorites?kind=album",
-        Some(ADA),
-        None,
-    )
-    .await;
-    assert_eq!(filtered["items"].as_array().unwrap().len(), 1);
-    assert_eq!(filtered["counts"]["track"], 1, "counts ignore the filter");
-    let (_, other) = call(&app, Method::GET, "/api/v3/favorites", Some(BOB), None).await;
-    assert_eq!(
-        other["items"],
-        json!([]),
-        "favorites never leak across users"
-    );
+    let bobs: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM library_user_favorites WHERE user_id = 'u-bob'")
+            .fetch_one(rig.runtime.db().sqlx())
+            .await
+            .expect("favourites read");
+    assert_eq!(bobs, 0, "favorites never leak across users");
     let (status, _) = call(
         &app,
         Method::PUT,
@@ -779,11 +769,7 @@ async fn store_faults_render_fixed_500_envelopes() {
     .await;
     let scope = TestApp::start("reads-collections-faults").await;
     let app = scope.request_scope(collections::routes().with_state(rig.state()).into_router());
-    for uri in [
-        "/api/v3/playlists",
-        "/api/v3/favorites",
-        "/api/v3/following/artists",
-    ] {
+    for uri in ["/api/v3/playlists", "/api/v3/following/artists"] {
         let (status, headers, bytes) =
             send(&app, Some(ADMIN), request(Method::GET, uri, None)).await;
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{uri}");

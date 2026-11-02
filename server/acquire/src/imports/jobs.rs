@@ -49,9 +49,6 @@ pub const UNAVAILABLE: &str = "SPOTIFY_UNAVAILABLE";
 pub const RATE_LIMITED: &str = "SPOTIFY_RATE_LIMITED";
 /// The playlist could not be saved.
 pub const SAVE_FAILED: &str = "SPOTIFY_SAVE_FAILED";
-/// What the status route shows for an import waiting on Spotify app
-/// settings that do not read.
-pub const SETTINGS_UNREADABLE: &str = "Spotify settings can't be read";
 
 /// The longest an import waits for the Spotify app settings to be saved
 /// before it reads them again. A save wakes it at once.
@@ -154,31 +151,6 @@ impl SpotifyImports {
                     message: failure_message(status.last_error.as_deref()).to_owned(),
                 },
             }))
-    }
-
-    /// Record a finished import for a test that needs one without running
-    /// it.
-    #[cfg(any(test, feature = "test-support"))]
-    pub async fn seed_done(
-        &self,
-        user_id: &str,
-        spotify_playlist_id: &str,
-        playlist_id: &str,
-    ) -> Result<(), JobError> {
-        let key = import_job_key(user_id, spotify_playlist_id);
-        let job = ImportJob {
-            user_id: user_id.to_owned(),
-            spotify_playlist_id: spotify_playlist_id.to_owned(),
-            playlist_id: playlist_id.to_owned(),
-        };
-        let queue = self.queue.clone();
-        self.db
-            .write(Lane::Background, "spotify-import-seed", move |tx| {
-                queue.enqueue(tx, KIND, &key, &job)?;
-                let claimed = queue.claim_in(tx, &SPEC)?.ok_or(JobError::LeaseLost)?;
-                queue.complete(tx, &claimed.lease)
-            })
-            .await
     }
 }
 

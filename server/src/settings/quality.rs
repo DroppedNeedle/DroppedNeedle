@@ -1,52 +1,13 @@
-//! Acquisition-quality snapshot and summary sentence (pure).
+//! Acquisition-quality tiers and recipe status (pure).
 //!
-//! Ports the v2 `build_snapshot`/`compose_summary` contract used by the
-//! policy summary and impact endpoints: the canonical five tiers, the
-//! default order derivation, the v2 recipe legacy projection, and the
-//! user-facing summary sentence. No I/O: the caller supplies the policy.
+//! The canonical five tiers, the default order derivation and the v2 recipe
+//! legacy projection. No I/O: the caller supplies the policy.
 
 use super::models::QualityRecipeStatus;
-use droppedneedle_kernel::runtime_config::sections::{
-    QualityRecipeEntry, RecipeFormat, RecipeQuality,
-};
-use serde::{Deserialize, Serialize};
+use droppedneedle_kernel::runtime_config::sections::{QualityRecipeEntry, RecipeFormat};
 
 /// Canonical five tiers, best first.
 pub const TIER_KEYS_BEST_FIRST: [&str; 5] = ["lossless", "mp3_320", "mp3_256", "mp3_192", "low"];
-
-/// Tier label for the summary sentence.
-fn tier_label(key: &str) -> &str {
-    match key {
-        "lossless" => "lossless",
-        "mp3_320" => "lossy 320 kbps",
-        "mp3_256" => "lossy 256-319 kbps",
-        "mp3_192" => "lossy 192-255 kbps",
-        _ => "lossy below 192 kbps",
-    }
-}
-
-/// Recipe entry label for the summary sentence.
-fn recipe_entry_label(entry: &QualityRecipeEntry) -> String {
-    if entry.format == RecipeFormat::Flac {
-        if entry.quality == RecipeQuality::Custom {
-            let khz = entry.sample_rate_hz.unwrap_or(0) as f64 / 1000.0;
-            return format!(
-                "FLAC {}-bit/{} kHz",
-                entry.bit_depth.unwrap_or(0),
-                khz.round() as i64
-            );
-        }
-        return format!("FLAC {}", entry.quality.as_str().replace('_', "/"));
-    }
-    if entry.quality == RecipeQuality::Custom {
-        return format!(
-            "MP3 {}-{} kbps",
-            entry.min_bitrate_kbps.unwrap_or(0),
-            entry.max_bitrate_kbps.unwrap_or(0)
-        );
-    }
-    format!("MP3 {} kbps", entry.quality.as_str().replace('_', "-"))
-}
 
 /// Canonical v1 tiers touched by one recipe entry (rollback projection).
 pub fn recipe_entry_legacy_tiers(entry: &QualityRecipeEntry) -> Vec<&'static str> {
@@ -112,39 +73,6 @@ pub fn clamp_cutoff(cutoff: &str, quality_min: &str, quality_max: &str) -> Strin
         .max(tier_rank_worst_zero(quality_min))
         .min(tier_rank_worst_zero(quality_max));
     TIER_KEYS_BEST_FIRST[TIER_KEYS_BEST_FIRST.len() - 1 - rank].to_owned()
-}
-
-/// Inputs the summary sentence needs (duck-typed policy projection).
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
-pub struct SummaryInputs {
-    /// Accepted tiers, best first (v1).
-    pub quality_preference_order: Vec<String>,
-    /// Canonical recipe (v2).
-    pub quality_recipe: Vec<QualityRecipeEntry>,
-    /// FLAC/MP3-only gate.
-    pub flac_mp3_only: bool,
-}
-
-/// Compose the saved product contract shown to users.
-pub fn compose_summary(inputs: &SummaryInputs) -> String {
-    let (first, rest) = if !inputs.quality_recipe.is_empty() && inputs.flac_mp3_only {
-        let mut labels = inputs.quality_recipe.iter().map(recipe_entry_label);
-        (labels.next(), labels.collect::<Vec<_>>())
-    } else {
-        let mut labels = inputs
-            .quality_preference_order
-            .iter()
-            .map(|tier| tier_label(tier).to_owned());
-        (labels.next(), labels.collect::<Vec<_>>())
-    };
-    let Some(first) = first else {
-        return "No quality preference configured.".to_owned();
-    };
-    let mut sentence = format!("Try {first}");
-    for label in rest {
-        sentence += &format!(", then {label}");
-    }
-    sentence + "."
 }
 
 /// Read-only recipe verdict.

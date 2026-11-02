@@ -207,15 +207,6 @@ impl LocalCatalog {
         .await
     }
 
-    /// Every album MBID (lowercase, sorted) with an open acquisition
-    /// request: the unfiltered form of [`Self::requested_albums`].
-    pub async fn all_requested_albums(&self) -> Result<Vec<String>, StoreError> {
-        self.read("catalog.library.requested_groups", |conn| {
-            rows(conn, sql::REQUESTED_GROUPS.text(), &[], |row| row.get(0))
-        })
-        .await
-    }
-
     /// The album MBIDs (lowercase) with an open acquisition request.
     pub async fn requested_albums(&self, mbids: &[String]) -> Result<HashSet<String>, StoreError> {
         self.collect_ids(IdSet::Requested, mbids).await

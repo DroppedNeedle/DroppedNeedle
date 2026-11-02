@@ -13,7 +13,7 @@ use std::sync::Arc;
 use axum::{
     Json,
     extract::{
-        DefaultBodyLimit, Multipart, Path, State,
+        DefaultBodyLimit, Multipart, State,
         multipart::{MultipartError, MultipartRejection},
     },
     http::{HeaderMap, StatusCode, header},
@@ -324,23 +324,6 @@ pub async fn list_jobs_handler(
     }))
 }
 
-/// One import job. `GET /api/v3/import/jobs/{job_id}`.
-#[utoipa::path(
-    get,
-    tag = "imports",
-    path = "/api/v3/import/jobs/{job_id}",
-    params(("job_id" = String, Path, description = "Import job id")),
-    responses((status = 200, body = DropImportJobResponse))
-)]
-pub async fn get_job_handler(
-    State(service): State<Arc<DropImports>>,
-    curator: Curator,
-    Path(job_id): Path<String>,
-) -> Result<Json<DropImportJobResponse>, ApiError> {
-    let viewer = viewer(&curator);
-    Ok(Json(service.get_job(&viewer, &job_id).await?.into()))
-}
-
 /// Drop-import routes, for an admin or trusted user. The upload takes a
 /// body up to `MAX_UPLOAD_BYTES`.
 pub fn routes() -> Routes<Arc<DropImports>> {
@@ -349,5 +332,4 @@ pub fn routes() -> Routes<Arc<DropImports>> {
     Routes::new()
         .curator((schemas, paths, upload))
         .curator(routes!(list_jobs_handler))
-        .curator(routes!(get_job_handler))
 }

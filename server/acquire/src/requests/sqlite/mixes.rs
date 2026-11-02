@@ -62,8 +62,17 @@ impl PersonalMixStore {
 
     /// Pending approvals of plain users, oldest first.
     pub async fn pending(&self) -> Result<Vec<MixApproval>, RequestsError> {
-        read(&self.db, "mix.pending", |conn| {
-            let mut statement = conn.prepare_cached(sql::PENDING_MIX_APPROVALS.text())?;
+        self.rows_of(sql::PENDING_MIX_APPROVALS.text()).await
+    }
+
+    /// Granted approvals of plain users, oldest first.
+    pub async fn approved(&self) -> Result<Vec<MixApproval>, RequestsError> {
+        self.rows_of(sql::APPROVED_MIX_APPROVALS.text()).await
+    }
+
+    async fn rows_of(&self, text: &'static str) -> Result<Vec<MixApproval>, RequestsError> {
+        read(&self.db, "mix.approvals", move |conn| {
+            let mut statement = conn.prepare_cached(text)?;
             let rows = statement.query_map([], |row| {
                 let user_id: String = row.get(0)?;
                 let user_name: Option<String> = row.get(1)?;

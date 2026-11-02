@@ -223,10 +223,6 @@ async fn youtube_links_journey() {
     let (_, entry) = call(&app, "GET", "/api/v3/youtube/link/rg-2", None).await;
     assert_eq!(entry["video_id"], Value::Null);
     assert_eq!(entry["track_count"], 1);
-    let (status, _) = call(&app, "DELETE", "/api/v3/youtube/track-link/rg-2/2/3", None).await;
-    assert_eq!(status, StatusCode::NO_CONTENT);
-    let (status, _) = call(&app, "GET", "/api/v3/youtube/link/rg-2", None).await;
-    assert_eq!(status, StatusCode::NO_CONTENT);
 
     // Edit: new video from a URL, cover cleared, creation time kept.
     let (status, body) = call(
@@ -274,5 +270,5 @@ async fn youtube_links_journey() {
     let (_, tracks) = call(&app, "GET", "/api/v3/youtube/track-links/rg-1", None).await;
     assert_eq!(tracks, json!([]));
     let (_, list) = call(&app, "GET", "/api/v3/youtube/links", None).await;
-    assert_eq!(list.as_array().unwrap().len(), 1);
+    assert_eq!(list.as_array().unwrap().len(), 2);
 }

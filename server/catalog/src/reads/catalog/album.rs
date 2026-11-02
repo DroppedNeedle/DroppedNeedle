@@ -563,16 +563,6 @@ impl Catalog {
         }
     }
 
-    /// `GET /albums/{album_id}`: header, tracklist and TheAudioDB artwork.
-    pub async fn album(&self, raw_id: &str) -> Result<AlbumInfo, CatalogError> {
-        let id = self.album_id(raw_id).await?;
-        let (result, context) = scoped(self.build_album(&id, RequestPriority::UserInitiated)).await;
-        result.map(|mut info| {
-            info.basic.service_status = mapping::service_status(&context);
-            info
-        })
-    }
-
     /// The album page with its providers asked at `priority`.
     pub(super) async fn build_album(
         &self,

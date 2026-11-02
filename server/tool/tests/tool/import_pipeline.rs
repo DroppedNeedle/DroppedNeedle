@@ -1325,6 +1325,7 @@ async fn removed_settings_import_and_are_reported() {
     export["settings"]["_internal"] =
         json!({"plex_client_id": "plex-1", "brainzmash_consent_admin": "u1"});
     export["settings"]["scrobble_settings"] = json!({"scrobble_to_lastfm": true});
+    export["settings"]["primary_music_source"] = json!({"source": "lastfm"});
 
     let pool = migrated_pool().await;
     let (_dir, config_path, crypto) = scratch_config("removed");
@@ -1351,6 +1352,7 @@ async fn removed_settings_import_and_are_reported() {
             "download_policy.verify_downloads",
             "indexers[0].type",
             "library_management.recycle_bin_path (/srv/stale)",
+            "primary_music_source",
             "scrobble_settings",
         ]
     );
@@ -1362,6 +1364,7 @@ async fn removed_settings_import_and_are_reported() {
     );
     assert_eq!(stored["_internal"], json!({"plex_client_id": "plex-1"}));
     assert!(stored.get("scrobble_settings").is_none());
+    assert!(stored.get("primary_music_source").is_none());
     let policy: DownloadPolicy =
         serde_json::from_value(stored["download_policy"].clone()).expect("the policy decodes");
     assert_eq!(policy.quality_recipe[0].max_bitrate_kbps, Some(320));

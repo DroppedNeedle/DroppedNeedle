@@ -307,17 +307,6 @@ pub struct PasswordReset {
     pub new_password: String,
 }
 
-/// Per-user Last.fm link status. Never carries secrets.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq, Eq)]
-pub struct LastFmStatusResponse {
-    /// Whether API credentials are stored.
-    pub configured: bool,
-    /// Whether a session is linked.
-    pub linked: bool,
-    /// Linked Last.fm username, when linked.
-    pub username: Option<String>,
-}
-
 /// Store per-user Last.fm API credentials. Either field may be the
 /// `********` mask, meaning keep the stored value.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

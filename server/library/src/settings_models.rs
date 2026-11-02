@@ -188,60 +188,6 @@ pub struct LibraryRestorableRoot {
     pub indexed_file_count: i64,
 }
 
-/// Where a mapped path came from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum PathMappingSource {
-    /// A catalog track file.
-    LibraryFile,
-}
-
-/// Why a path did not map to a root.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum PathMappingError {
-    /// The path sits under more than one root.
-    Ambiguous,
-    /// The path sits under no root.
-    OutOfRoot,
-}
-
-/// One catalog path and the root it maps to under the saved settings.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-pub struct LibraryPathMappingItem {
-    /// Source kind.
-    pub source_kind: PathMappingSource,
-    /// Track id.
-    pub source_id: String,
-    /// Absolute file path the catalog holds.
-    pub absolute_path: String,
-    /// Root the path maps to, when it maps.
-    pub root_id: Option<String>,
-    /// Path relative to that root, when it maps.
-    pub relative_path: Option<String>,
-    /// Why it did not map.
-    pub error: Option<PathMappingError>,
-}
-
-/// Dry run: does every catalog path map to exactly one saved root.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-pub struct LibraryPathMappingReport {
-    /// Saved revision the report was built from.
-    pub policy_revision: String,
-    /// Paths checked.
-    pub source_count: i64,
-    /// Paths that map to one root.
-    pub mapped_count: i64,
-    /// Paths under more than one root.
-    pub ambiguous_count: i64,
-    /// Paths under no root.
-    pub out_of_root_count: i64,
-    /// Some path does not map.
-    pub blocking: bool,
-    /// Every checked path, ordered by track id.
-    pub items: Vec<LibraryPathMappingItem>,
-}
-
 /// Profile-mutation acknowledgement: the saved profile plus the fresh
 /// revision (a second read, so concurrent saves surface as staleness on
 /// the next write instead of silently winning).

@@ -23,7 +23,7 @@ use droppedneedle_catalog::reads::catalog::{
 use droppedneedle_catalog::reads::search::{self, SearchDeps, service::SearchService};
 use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
 use droppedneedle_kernel::runtime_config::sections::{
-    ListenSource, MbSourceMode, MusicBrainzSettings, UserPreferences,
+    MbSourceMode, MusicBrainzSettings, UserPreferences,
 };
 use droppedneedle_providers::Providers;
 use serde_json::{Value, json};
@@ -289,10 +289,6 @@ impl CatalogSettings for TestSettings {
 
     fn listenbrainz_enabled(&self) -> bool {
         true
-    }
-
-    fn primary_source(&self) -> ListenSource {
-        ListenSource::Listenbrainz
     }
 
     fn store_region(&self) -> Option<String> {
@@ -711,7 +707,8 @@ async fn album_page_shows_the_owned_edition_and_where_to_buy() {
     let fixtures = Fixtures::start().await;
     let (app, _auth) = app(&fixtures).await;
 
-    let album = get(&app, &format!("/api/v3/albums/{OK_COMPUTER}")).await;
+    let album = get(&app, &format!("/api/v3/albums/{OK_COMPUTER}/basic")).await;
+    let tracks = get(&app, &format!("/api/v3/albums/{OK_COMPUTER}/tracks")).await;
     assert_eq!(album["title"], "OK Computer");
     assert_eq!(album["artist_name"], "Radiohead");
     assert_eq!(album["artist_id"], ARTIST);
@@ -721,12 +718,12 @@ async fn album_page_shows_the_owned_edition_and_where_to_buy() {
         album["cover_url"],
         format!("/api/v3/covers/release-group/{OK_COMPUTER}?size=500")
     );
-    assert_eq!(album["selected_release_mbid"], RELEASE_CD);
-    assert_eq!(album["pick_basis"], "owned");
-    assert_eq!(titles(&album["tracks"]), ["Airbag", "Paranoid Android"]);
-    assert_eq!(album["tracks"][0]["length"], 284_000);
-    assert_eq!(album["total_length"], 667_000);
-    assert_eq!(album["label"], "Parlophone");
+    assert_eq!(tracks["selected_release_mbid"], RELEASE_CD);
+    assert_eq!(tracks["pick_basis"], "owned");
+    assert_eq!(titles(&tracks["tracks"]), ["Airbag", "Paranoid Android"]);
+    assert_eq!(tracks["tracks"][0]["length"], 284_000);
+    assert_eq!(tracks["total_length"], 667_000);
+    assert_eq!(tracks["label"], "Parlophone");
     let by_local = get(&app, "/api/v3/albums/album-okc/basic").await;
     assert_eq!(
         by_local["musicbrainz_id"], OK_COMPUTER,
@@ -796,9 +793,10 @@ async fn musicbrainz_outage_falls_back_to_the_library() {
     assert_eq!(releases["source"], "library");
     assert_eq!(titles(&releases["albums"]), ["OK Computer"]);
 
-    let album = get(&app, &format!("/api/v3/albums/{OK_COMPUTER}")).await;
+    let album = get(&app, &format!("/api/v3/albums/{OK_COMPUTER}/basic")).await;
     assert_eq!(album["source"], "library");
-    assert_eq!(titles(&album["tracks"]), ["Airbag"]);
+    let tracks = get(&app, &format!("/api/v3/albums/{OK_COMPUTER}/tracks")).await;
+    assert_eq!(titles(&tracks["tracks"]), ["Airbag"]);
 
     let (status, headers, body) = call_full(
         &app,
@@ -926,7 +924,6 @@ async fn auth_matrix_rejects_anonymous_callers_and_bad_ids() {
         format!("/api/v3/artists/{ARTIST}/top-albums"),
         format!("/api/v3/artists/{ARTIST}/lastfm?artist_name=Radiohead"),
         format!("/api/v3/artists/{ARTIST}/purchase-options"),
-        format!("/api/v3/albums/{OK_COMPUTER}"),
         format!("/api/v3/albums/{OK_COMPUTER}/basic"),
         format!("/api/v3/albums/{OK_COMPUTER}/tracks"),
         format!("/api/v3/albums/{OK_COMPUTER}/editions"),
@@ -1587,10 +1584,6 @@ impl CatalogSettings for KeyedSettings {
 
     fn listenbrainz_enabled(&self) -> bool {
         self.inner.listenbrainz_enabled()
-    }
-
-    fn primary_source(&self) -> ListenSource {
-        self.inner.primary_source()
     }
 
     fn store_region(&self) -> Option<String> {

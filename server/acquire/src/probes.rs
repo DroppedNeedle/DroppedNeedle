@@ -2,10 +2,10 @@
 //! verdicts.
 //!
 //! The imports health traits are sync, but reachability needs HTTP. The
-//! split: [`LiveProbes`] implements all four traits over a [`ProbeCache`]
+//! split: [`LiveProbes`] implements both traits over a [`ProbeCache`]
 //! snapshot, and [`refresh_probes`] recomputes the snapshot with real
 //! client health checks. Wiring runs one refresh at boot, again after a
-//! client's settings are saved, and on a slow loop, so the smoke and the
+//! client's settings are saved, and on a slow loop, so the
 //! status routes always render a fresh verdict without blocking a request
 //! on five network calls. A verdict is kept with the client set it probed:
 //! until a refresh lands for the current one, a read answers from the
@@ -18,21 +18,13 @@ use std::time::Duration;
 use tokio::sync::watch;
 
 use super::clients::LiveClients;
-use super::imports::health::{
-    ClientProbe, HealthProbes, IndexerProbe, LidarrReadinessProbe, NewznabProbe, SabnzbdProbe,
-    SlskdProbe,
-};
-use super::imports::lidarr::{LidarrClient, LidarrError};
+use super::imports::health::{ClientProbe, HealthProbes, SabnzbdProbe, SlskdProbe};
 use super::imports::mount::{self, SlskdMountReport};
 use super::landing::confine::FolderFault;
 use super::slskd::{ReqwestSlskdHttp, SlskdRepository};
-use super::usenet::newznab::NewznabIndexer;
-use super::usenet::prowlarr::ProwlarrIndexer;
 use super::usenet::sabnzbd::SabnzbdQueue;
 use droppedneedle_kernel::jobs::{AlreadyRunning, FnTick, Next, Schedule, Supervisor, TickCtx};
-use droppedneedle_kernel::runtime_config::secret_sections::{
-    DownloadClients, LidarrImportConnection, NewznabIndexer as ConfigIndexer, ProwlarrConnection,
-};
+use droppedneedle_kernel::runtime_config::secret_sections::DownloadClients;
 
 /// One cached verdict per probe.
 #[derive(Debug, Clone, Default)]
@@ -47,10 +39,6 @@ pub struct CachedProbes {
     pub sabnzbd_categories: Vec<String>,
     /// SABnzbd complete dir, when the probe reached it.
     pub sabnzbd_complete_dir: Option<String>,
-    /// Per-indexer verdicts (native entries plus Prowlarr).
-    pub indexers: Vec<IndexerProbe>,
-    /// Lidarr import readiness.
-    pub lidarr: ClientProbe,
 }
 
 /// The last refresh and the client set it probed.
@@ -117,13 +105,11 @@ impl LiveProbes {
         Self { cache }
     }
 
-    /// Bundle for the imports deps. One struct serves all four traits.
+    /// Bundle for the imports deps. One struct serves both traits.
     pub fn bundle(probes: &Arc<LiveProbes>) -> HealthProbes {
         HealthProbes {
             slskd: probes.clone(),
             sabnzbd: probes.clone(),
-            newznab: probes.clone(),
-            lidarr: probes.clone(),
         }
     }
 }
@@ -152,18 +138,6 @@ impl SabnzbdProbe for LiveProbes {
     }
 }
 
-impl NewznabProbe for LiveProbes {
-    fn indexers(&self) -> Vec<IndexerProbe> {
-        self.cache.snapshot().indexers
-    }
-}
-
-impl LidarrReadinessProbe for LiveProbes {
-    fn status(&self) -> ClientProbe {
-        self.cache.snapshot().lidarr
-    }
-}
-
 /// Everything one refresh pass needs: live clients plus config snapshots.
 pub struct ProbeInputs {
     /// slskd repository, when the section configures one.
@@ -180,18 +154,6 @@ pub struct ProbeInputs {
     pub sabnzbd: Option<Arc<SabnzbdQueue>>,
     /// SABnzbd section, for the switch and mount-independent fields.
     pub sabnzbd_section: DownloadClients,
-    /// Native indexer fan-out plus its config entries.
-    pub newznab: Arc<NewznabIndexer>,
-    /// Native config entries, for names and switches.
-    pub newznab_entries: Vec<ConfigIndexer>,
-    /// Prowlarr fan-out plus its connection.
-    pub prowlarr: Arc<ProwlarrIndexer>,
-    /// Prowlarr connection, for the switch.
-    pub prowlarr_section: ProwlarrConnection,
-    /// Lidarr client plus its saved connection.
-    pub lidarr: LidarrClient,
-    /// Lidarr saved connection (raw, with the real key).
-    pub lidarr_section: LidarrImportConnection,
 }
 
 /// Recompute every verdict with live health checks and store the snapshot.
@@ -204,8 +166,6 @@ pub async fn refresh_probes(cache: &ProbeCache, inputs: &Arc<ProbeInputs>) {
         sabnzbd: refresh_sabnzbd(inputs).await,
         sabnzbd_categories: refresh_sabnzbd_categories(inputs).await,
         sabnzbd_complete_dir: refresh_sabnzbd_complete_dir(inputs).await,
-        indexers: refresh_indexers(inputs).await,
-        lidarr: refresh_lidarr(inputs).await,
     };
     cache.update(inputs, probes);
 }
@@ -214,29 +174,8 @@ pub async fn refresh_probes(cache: &ProbeCache, inputs: &Arc<ProbeInputs>) {
 /// read correctly while reachability waits for the first refresh pass.
 fn seed(inputs: &ProbeInputs) -> CachedProbes {
     let slskd_configured = inputs.slskd.is_some();
-    let (indexers, prowlarr, lidarr) = (
-        &inputs.newznab_entries,
-        &inputs.prowlarr_section,
-        &inputs.lidarr_section,
-    );
     let sab = &inputs.sabnzbd_section.sabnzbd;
     let sab_configured = !sab.url.is_empty() && !sab.api_key.expose().is_empty();
-    let mut entries: Vec<IndexerProbe> = indexers
-        .iter()
-        .map(|entry| IndexerProbe {
-            name: entry.name.clone(),
-            enabled: entry.enabled,
-            configured: !entry.url.is_empty() && !entry.api_key.expose().is_empty(),
-            reachable: false,
-        })
-        .collect();
-    entries.push(IndexerProbe {
-        name: "prowlarr".to_owned(),
-        enabled: prowlarr.enabled,
-        configured: !prowlarr.url.is_empty() && !prowlarr.api_key.expose().is_empty(),
-        reachable: false,
-    });
-    let lidarr_configured = !lidarr.url.is_empty() && !lidarr.api_key.expose().is_empty();
     CachedProbes {
         slskd: ClientProbe {
             enabled: inputs.slskd_enabled,
@@ -260,18 +199,6 @@ fn seed(inputs: &ProbeInputs) -> CachedProbes {
                 "Not configured".to_owned()
             },
         },
-        lidarr: ClientProbe {
-            enabled: lidarr_configured,
-            configured: lidarr_configured,
-            reachable: false,
-            version: None,
-            message: if lidarr_configured {
-                "Probe pending".to_owned()
-            } else {
-                "Not configured".to_owned()
-            },
-        },
-        indexers: entries,
         ..CachedProbes::default()
     }
 }
@@ -404,99 +331,6 @@ async fn refresh_sabnzbd_complete_dir(inputs: &ProbeInputs) -> Option<String> {
     match &inputs.sabnzbd {
         Some(queue) if queue.is_configured() => queue.get_complete_dir().await.ok(),
         _ => None,
-    }
-}
-
-async fn refresh_indexers(inputs: &ProbeInputs) -> Vec<IndexerProbe> {
-    let native_ok = if inputs.newznab.is_configured() {
-        // The probe loop runs in the background; nobody waits on it.
-        inputs
-            .newznab
-            .health_check(droppedneedle_providers::RequestPriority::BackgroundSync)
-            .await
-            .status
-            == "ok"
-    } else {
-        false
-    };
-    let mut out: Vec<IndexerProbe> = inputs
-        .newznab_entries
-        .iter()
-        .map(|entry| {
-            let configured = !entry.url.is_empty() && !entry.api_key.expose().is_empty();
-            IndexerProbe {
-                name: entry.name.clone(),
-                enabled: entry.enabled,
-                configured,
-                // The fan-out reports one aggregate verdict; per-indexer
-                // reachability is a later refinement, so an enabled and
-                // configured entry shares the aggregate answer.
-                reachable: native_ok && entry.enabled && configured,
-            }
-        })
-        .collect();
-    let prowlarr_configured = inputs.prowlarr.is_configured();
-    let prowlarr_ok = if prowlarr_configured {
-        inputs.prowlarr.health_check().await.status == "ok"
-    } else {
-        false
-    };
-    out.push(IndexerProbe {
-        name: "prowlarr".to_owned(),
-        enabled: inputs.prowlarr_section.enabled,
-        configured: prowlarr_configured,
-        reachable: prowlarr_ok && inputs.prowlarr_section.enabled,
-    });
-    out
-}
-
-async fn refresh_lidarr(inputs: &ProbeInputs) -> ClientProbe {
-    let section = &inputs.lidarr_section;
-    let configured = !section.url.is_empty() && !section.api_key.expose().is_empty();
-    if !configured {
-        return ClientProbe {
-            enabled: false,
-            configured: false,
-            reachable: false,
-            version: None,
-            message: "Not configured".to_owned(),
-        };
-    }
-    // The import has no master switch of its own: configured means enabled.
-    match inputs
-        .lidarr
-        .system_status(&section.url, section.api_key.expose())
-        .await
-    {
-        Ok(status) => ClientProbe {
-            enabled: true,
-            configured: true,
-            reachable: true,
-            version: if status.version.is_empty() {
-                None
-            } else {
-                Some(status.version)
-            },
-            message: "Connected".to_owned(),
-        },
-        Err(LidarrError::Auth) => ClientProbe {
-            enabled: true,
-            configured: true,
-            reachable: false,
-            version: None,
-            message: "Lidarr rejected the stored API key; check Settings".to_owned(),
-        },
-        Err(LidarrError::Unavailable(detail)) => {
-            tracing::warn!(%detail, "lidarr probe failed");
-            ClientProbe {
-                enabled: true,
-                configured: true,
-                reachable: false,
-                version: None,
-                message: "Couldn't reach Lidarr. Check the URL and that Lidarr is running."
-                    .to_owned(),
-            }
-        }
     }
 }
 

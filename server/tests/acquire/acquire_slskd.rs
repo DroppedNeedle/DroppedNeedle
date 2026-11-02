@@ -1099,7 +1099,7 @@ async fn soulseek_picks_follow_the_saved_quality_policy() {
     let worker = Arc::new(DownloadWorker::new(
         journal.clone(),
         worker_settings.clone(),
-        SourceReadiness::unprobed(SourceList::Live(worker_settings)),
+        SourceReadiness::new(SourceList::Live(worker_settings)),
         EventHub::new(),
         Default::default(),
     ));

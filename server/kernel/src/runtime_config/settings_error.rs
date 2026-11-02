@@ -21,8 +21,6 @@ use serde_json::json;
 
 /// Expected revision does not match the stored one; refresh and retry.
 pub const STALE_REVISION: &str = "STALE_REVISION";
-/// A dropped config section was addressed. Gone, not moved.
-pub const SECTION_DROPPED: &str = "SECTION_DROPPED";
 
 /// Every failure the settings services can return to a caller.
 #[derive(Debug)]
@@ -47,11 +45,6 @@ pub enum SettingsError {
     /// Expected revision missed the stored one.
     StaleRevision {
         /// What was wrong.
-        message: String,
-    },
-    /// A dropped section was addressed by key.
-    Dropped {
-        /// Which section, and where it went.
         message: String,
     },
     /// The upstream provider is rate-limiting this server.
@@ -123,7 +116,6 @@ impl std::fmt::Display for SettingsError {
             Self::InvalidInput { message }
             | Self::Conflict { message }
             | Self::StaleRevision { message }
-            | Self::Dropped { message }
             | Self::RateLimited { message } => f.write_str(message),
             Self::InvalidField { field, reason } => {
                 write!(f, "{}: {reason}", field_in_words(field))
@@ -148,9 +140,6 @@ impl From<SettingsError> for ApiError {
             SettingsError::Conflict { message } => ApiError::conflict(message),
             SettingsError::StaleRevision { message } => {
                 ApiError::new(StatusCode::CONFLICT, STALE_REVISION, message)
-            }
-            SettingsError::Dropped { message } => {
-                ApiError::new(StatusCode::GONE, SECTION_DROPPED, message)
             }
             SettingsError::RateLimited { message } => {
                 ApiError::new(StatusCode::TOO_MANY_REQUESTS, RATE_LIMITED, message)

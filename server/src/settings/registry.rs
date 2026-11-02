@@ -24,7 +24,7 @@ use droppedneedle_kernel::runtime_config::secret_sections::{
 };
 use droppedneedle_kernel::runtime_config::sections::{
     ConnectApps, EditionPreferences, FilesystemWatcher, GetIt, LyricsSettings, PlainSection,
-    PrimaryMusicSource, PublicAddress, SecuritySettings, UserPreferences, WantedWatcher,
+    PublicAddress, SecuritySettings, UserPreferences, WantedWatcher,
 };
 use droppedneedle_kernel::runtime_config::{Masked, SecretSection, Section};
 
@@ -159,12 +159,6 @@ section_routes! {
             => "Lyrics lookup switch";
         put put_lyrics_settings: "Save the online lyrics lookup switch."
             => "Saved switch";
-    }
-    plain PrimaryMusicSource at "/api/v3/settings/primary-source", read admin, write admin {
-        get get_primary_source: "Read the primary music source."
-            => "Primary music source";
-        put put_primary_source: "Save the primary music source."
-            => "Saved source";
     }
     plain PublicAddress at "/api/v3/settings/public-address", read admin, write admin {
         get get_public_address: "Read the addresses stated as this server's own."

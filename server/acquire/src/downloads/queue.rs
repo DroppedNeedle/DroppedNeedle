@@ -13,7 +13,6 @@ use std::sync::Arc;
 use super::journal::Journal;
 use super::queue_rows::{ActivitySummary, ListFilter, QueueTask, Stopped, TaskFacts, Viewer};
 use super::reasons::{DecisionReason, task_reason};
-use super::sources::SourceHandle;
 use super::state::TaskStatus;
 use super::store::{QuarantineRow, TaskRow};
 use super::watchdog::RetryPolicy;
@@ -65,13 +64,6 @@ pub struct TaskView {
     pub reason_text: Option<String>,
 }
 
-/// One file of a task's current source.
-#[derive(Debug, Clone, PartialEq)]
-pub struct TaskFile {
-    pub filename: String,
-    pub size: Option<i64>,
-}
-
 /// The queue over the download worker and its journal.
 #[derive(Clone)]
 pub struct DownloadQueue {
@@ -109,47 +101,6 @@ impl DownloadQueue {
             .await
             .map_err(unavailable)?;
         self.views(rows).await
-    }
-
-    /// One task the viewer may see.
-    pub async fn get(&self, viewer: &Viewer, task_id: &str) -> Result<TaskView, QueueError> {
-        let row = self.owned(viewer, task_id).await?;
-        let mut views = self.views(vec![row]).await?;
-        views.pop().ok_or(QueueError::NotFound)
-    }
-
-    /// The files of a task's current (newest) source, as its download
-    /// client was asked for them.
-    pub async fn files(
-        &self,
-        viewer: &Viewer,
-        task_id: &str,
-    ) -> Result<(QueueTask, Vec<TaskFile>), QueueError> {
-        let row = self.owned(viewer, task_id).await?;
-        let handle = self
-            .journal
-            .read_newest_handle(task_id)
-            .await
-            .map_err(unavailable)?
-            .and_then(|json| serde_json::from_str::<SourceHandle>(&json).ok());
-        let files = match handle {
-            Some(handle) if !handle.filenames.is_empty() => handle
-                .filenames
-                .iter()
-                .enumerate()
-                .map(|(index, name)| TaskFile {
-                    filename: name.clone(),
-                    size: handle.sizes.get(index).copied(),
-                })
-                .collect(),
-            // A usenet job is one release folder.
-            Some(handle) if !handle.job_name.is_empty() => vec![TaskFile {
-                filename: handle.job_name,
-                size: row.task.total_size_bytes,
-            }],
-            _ => Vec::new(),
-        };
-        Ok((row, files))
     }
 
     /// Stop one task: cancel it if it is live, or stop its retries if it

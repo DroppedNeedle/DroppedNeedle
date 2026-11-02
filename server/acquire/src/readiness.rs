@@ -1,5 +1,5 @@
 //! Whether music can be acquired right now: the one answer requests,
-//! manual search, the download queue, the health smoke and Discover read.
+//! manual search, the download queue and Discover read.
 //!
 //! A source counts once the saved settings turn it on: slskd or SABnzbd
 //! with a URL and a key, or an enabled plugin download client. That is
@@ -14,7 +14,6 @@ use futures_util::future::BoxFuture;
 use tokio::sync::watch;
 
 use super::downloads::source_tag::SourceTag;
-use super::probes::{CachedProbes, ProbeCache};
 use crate::downloads::worker::{DownloadWorker, SourceList, WorkerSettings};
 use droppedneedle_kernel::jobs::{AlreadyRunning, Supervisor};
 use droppedneedle_plugins::host::PluginHost;
@@ -25,9 +24,6 @@ pub struct Readiness {
     /// Sources the saved settings turn on, in no particular order. Empty
     /// while the download settings do not read.
     pub configured: Vec<SourceTag>,
-    /// The configured sources the last probe reached. A plugin source
-    /// has no probe, so it counts as reached while it is enabled.
-    pub reachable: Vec<SourceTag>,
 }
 
 impl Readiness {
@@ -42,26 +38,12 @@ impl Readiness {
 #[derive(Clone)]
 pub struct SourceReadiness {
     sources: SourceList,
-    probes: Option<Arc<ProbeCache>>,
 }
 
 impl SourceReadiness {
-    /// Readiness over the worker's sources, with reachability from
-    /// `probes`.
-    pub fn new(sources: SourceList, probes: Arc<ProbeCache>) -> Self {
-        Self {
-            sources,
-            probes: Some(probes),
-        }
-    }
-
-    /// Readiness over `sources` with no probes: nothing counts as
-    /// reached. For bundles that run no probe refresh.
-    pub fn unprobed(sources: SourceList) -> Self {
-        Self {
-            sources,
-            probes: None,
-        }
+    /// Readiness over the worker's sources.
+    pub fn new(sources: SourceList) -> Self {
+        Self { sources }
     }
 
     /// The sources as they stand now.
@@ -71,30 +53,12 @@ impl SourceReadiness {
             .current()
             .map(|sources| sources.iter().map(|source| source.tag()).collect())
             .unwrap_or_default();
-        let probes = self.probes.as_ref().map(|cache| cache.snapshot());
-        let reachable = configured
-            .iter()
-            .filter(|tag| reached(tag, probes.as_ref()))
-            .cloned()
-            .collect();
-        Readiness {
-            configured,
-            reachable,
-        }
+        Readiness { configured }
     }
 
     /// Whether a download source is on now ([`Readiness::can_acquire`]).
     pub fn can_acquire(&self) -> bool {
         self.now().can_acquire()
-    }
-}
-
-fn reached(tag: &SourceTag, probes: Option<&CachedProbes>) -> bool {
-    match (tag, probes) {
-        (SourceTag::Plugin(_), _) => true,
-        (_, None) => false,
-        (SourceTag::Soulseek, Some(probes)) => probes.slskd.reachable,
-        (SourceTag::Usenet, Some(probes)) => probes.sabnzbd.reachable,
     }
 }
 

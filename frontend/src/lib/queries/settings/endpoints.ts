@@ -4,7 +4,6 @@ import { v3 } from '$lib/api/v3/endpoint';
 // library policy and library-management sections keep their own feature modules.
 export const SETTINGS_ENDPOINTS = {
 	advanced: () => v3('/api/v3/settings/advanced'),
-	cacheTtls: () => v3('/api/v3/settings/cache-ttls'),
 	events: () => v3('/api/v3/settings/events'),
 	eventsTestTicketmaster: () => v3('/api/v3/settings/events/test-ticketmaster'),
 	eventsTestSkiddle: () => v3('/api/v3/settings/events/test-skiddle'),
@@ -22,7 +21,6 @@ export const SETTINGS_ENDPOINTS = {
 	oidc: () => v3('/api/v3/settings/oidc'),
 	oidcVerify: () => v3('/api/v3/settings/oidc/verify'),
 	preferences: () => v3('/api/v3/settings/preferences'),
-	primarySource: () => v3('/api/v3/settings/primary-source'),
 	publicAddress: () => v3('/api/v3/settings/public-address'),
 	security: () => v3('/api/v3/settings/security'),
 	securityVerifyHibp: () => v3('/api/v3/settings/security/verify-hibp'),

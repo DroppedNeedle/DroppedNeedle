@@ -178,7 +178,6 @@ export const LibraryQueryKeyFactory = {
 	policyPrefix: policy,
 	targetSettings: () => [...policy(), 'settings'] as const,
 	policyTree: () => [...policy(), 'tree'] as const,
-	pathMapping: () => [...policy(), 'path-mapping'] as const,
 	restorableRoots: () => [...policy(), 'restorable-roots'] as const,
 	repairsPrefix: () => [...operations(), 'repairs'] as const,
 	repairs: (cursor: string | undefined) =>

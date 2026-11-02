@@ -361,16 +361,6 @@ impl CollectionsPlaylistBridge {
         }
     }
 
-    /// How many rows one of the user's playlists holds.
-    pub async fn track_count(&self, user_id: &str, playlist_id: &str) -> Result<usize, String> {
-        self.playlists
-            .owned_by(user_id)
-            .tracks(playlist_id)
-            .await
-            .map(|rows| rows.len())
-            .map_err(|error| error.to_string())
-    }
-
     /// Store the picked provider image as the local cover. Answers false
     /// when a cover already exists.
     pub async fn set_imported_cover(

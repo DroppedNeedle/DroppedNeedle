@@ -261,17 +261,6 @@ droppedneedle_kernel::sql! {
     /// Which of some artists lead or are credited on a live album with
     /// indexed tracks and art of its own.
     family ARTIST_ART_IN = artist_art_in;
-    /// One genre (bound twice) on live tracks.
-    pub(crate) fragment GENRE_FILTER = LIVE_TRACK + " AND \
-        (EXISTS (SELECT 1 FROM local_track_genres g \
-         WHERE g.local_track_id = t.id AND g.folded_name = ?) \
-         OR t.genre_folded = ?)";
-    /// A page of a genre's tracks, artist, album, disc and track order.
-    pub(crate) GENRE_TRACKS = "SELECT " + TRACK_COLUMNS + " " + TRACK_JOINS + " WHERE "
-        + GENRE_FILTER + " ORDER BY t.artist_name_folded ASC, t.album_title_folded ASC, \
-        t.disc_number ASC, t.track_number ASC, t.id ASC LIMIT ? OFFSET ?";
-    /// How many tracks a genre holds.
-    pub(crate) GENRE_TRACK_COUNT = "SELECT COUNT(*) FROM local_tracks t WHERE " + GENRE_FILTER;
     /// Genres by track count, name tiebreak.
     pub(crate) GENRES = "WITH tagged(track_id, folded, name) AS ( \
         SELECT local_track_id, folded_name, name FROM local_track_genres \
@@ -514,9 +503,6 @@ droppedneedle_kernel::sql! {
     /// finished.
     pub(crate) fragment OPEN_REQUEST = "request_kind = 'album' \
         AND status IN ('pending','downloading','queued','awaiting_approval')";
-    /// Every album MBID with an open request, sorted.
-    pub(crate) REQUESTED_GROUPS = "SELECT DISTINCT musicbrainz_id_lower FROM request_history \
-        WHERE " + OPEN_REQUEST + " ORDER BY 1";
     /// The album MBIDs among a list with an open request.
     family REQUESTED_IN = requested_in;
     /// The live local artist behind one lowercase MBID.

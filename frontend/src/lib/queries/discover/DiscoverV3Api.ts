@@ -45,10 +45,6 @@ export const DiscoverV3Api = {
 		}),
 	trackPreview: (artist: string, track: string) =>
 		v3('/api/v3/discover/track-preview', { query: { artist, track } }),
-	youtubeSearch: (artist: string, album: string) =>
-		v3('/api/v3/discover/queue/youtube-search', { query: { artist, album } }),
 	youtubeTrackSearch: (artist: string, track: string) =>
-		v3('/api/v3/discover/queue/youtube-track-search', { query: { artist, track } }),
-	youtubeQuota: () => v3('/api/v3/discover/queue/youtube-quota'),
-	youtubeCacheCheck: () => v3('/api/v3/discover/queue/youtube-cache-check')
+		v3('/api/v3/discover/queue/youtube-track-search', { query: { artist, track } })
 };

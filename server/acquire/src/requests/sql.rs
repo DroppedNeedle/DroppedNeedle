@@ -383,6 +383,11 @@ droppedneedle_kernel::sql! {
          m.requested_at FROM personal_mix_approvals m LEFT JOIN auth_users u ON u.id = m.user_id \
          WHERE m.state = 'pending' AND COALESCE(u.role, 'user') NOT IN ('admin', 'trusted') \
          ORDER BY m.requested_at ASC, m.user_id";
+    /// Granted approvals of plain users, oldest first.
+    pub(crate) APPROVED_MIX_APPROVALS = "SELECT m.user_id, u.display_name, m.state, \
+         m.requested_at FROM personal_mix_approvals m LEFT JOIN auth_users u ON u.id = m.user_id \
+         WHERE m.state = 'approved' AND COALESCE(u.role, 'user') NOT IN ('admin', 'trusted') \
+         ORDER BY m.requested_at ASC, m.user_id";
     /// Move plain user `?1`'s approval from `?6` to `?2`.
     pub(crate) MIX_APPROVAL_TRANSITION = "UPDATE personal_mix_approvals SET state = ?2, \
          reviewed_by_id = ?3, reviewed_by_name = ?4, reviewed_at = ?5 \

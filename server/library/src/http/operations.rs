@@ -29,7 +29,6 @@ use crate::operations::models::{
 use crate::operations::reasons::{self, Reason};
 use crate::operations::service::{Operations, RELEASE_PAGE_MAX};
 use crate::repairs::models::Summary;
-use crate::repairs::service::Repairs;
 use crate::wiring::LibraryServices;
 use droppedneedle_auth::{Admin, Curator};
 
@@ -39,7 +38,6 @@ const MATCHER_VERSION: &str = "library-matching-v1";
 /// Operation routes.
 pub fn routes() -> Routes<LibraryServices> {
     Routes::new()
-        .admin(routes!(get_operation))
         .admin(routes!(pause_operation))
         .admin(routes!(resume_operation))
         .admin(routes!(stop_operation))
@@ -414,31 +412,6 @@ pub(super) fn detail_view(detail: &OperationDetail) -> OperationView {
 // ---------------------------------------------------------------------------
 // Handlers.
 // ---------------------------------------------------------------------------
-
-/// Get one operation job with its results and candidates.
-#[utoipa::path(
-    get,
-    tag = "library management",
-    path = "/api/v3/library/operations/{job_id}",
-    params(("job_id" = String, Path, description = "Operation job id")),
-    responses(
-        (status = 200, description = "Operation job", body = OperationView),
-        (status = 401, description = "Not authenticated"),
-        (status = 403, description = "Admin role required"),
-        (status = 404, description = "Unknown job"),
-    )
-)]
-pub async fn get_operation(
-    State(repairs): State<Repairs>,
-    _caller: Admin,
-    Path(job_id): Path<String>,
-) -> Result<Json<OperationView>, ApiError> {
-    let (detail, summary) = blocking(move || repairs.operation(&job_id)).await?;
-    Ok(Json(OperationView {
-        repair_summary: summary,
-        ..detail_view(&detail)
-    }))
-}
 
 async fn control(
     ops: Operations,

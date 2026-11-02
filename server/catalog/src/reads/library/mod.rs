@@ -30,7 +30,6 @@ pub(crate) mod sql;
 pub mod sqlite;
 pub mod store;
 pub mod stores;
-pub mod tags;
 
 use std::sync::Arc;
 
@@ -52,8 +51,6 @@ pub struct LibraryDeps {
             droppedneedle_kernel::runtime_config::sections::DownloadPolicy,
         >,
     >,
-    /// Tag reads from the files on disk (admin tag view).
-    pub tags: tags::FileTagReader,
     /// The cover service, whose cache tells the views which covers are
     /// known missing. `None` knows no cache answers: only albums with no
     /// art and no release group, and unlinked artists with no album art,
@@ -72,8 +69,6 @@ pub fn routes() -> Routes<LibraryDeps> {
         .user(routes!(get_album))
         .user(routes!(album_status))
         .user(routes!(membership))
-        .user(routes!(album_mbids))
-        .admin(routes!(track_tags))
         .user(routes!(resolve_tracks))
         .user(routes!(list_album_tracks))
         .user(routes!(list_album_copies))
@@ -82,12 +77,9 @@ pub fn routes() -> Routes<LibraryDeps> {
         .user(routes!(list_artist_albums))
         .user(routes!(list_artist_appearances))
         .user(routes!(list_tracks))
-        .user(routes!(get_track))
         .user(routes!(get_lyrics))
         .user(routes!(get_stats))
         .user(routes!(list_recently_added))
-        .user(routes!(list_genres))
-        .user(routes!(list_genre_tracks))
         .user(routes!(match_album))
         .user(routes!(list_decades))
         .user(routes!(list_suggestions))

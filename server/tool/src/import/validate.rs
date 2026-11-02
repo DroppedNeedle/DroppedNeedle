@@ -65,7 +65,8 @@ const INTERNAL_KEPT: &[&str] = &["plex_client_id", "droppedneedle_device_id"];
 
 /// v2 settings sections v3 removed. An export carrying one imports, and
 /// the report lists it as a dropped setting.
-pub(crate) const REMOVED_SECTIONS: &[&str] = &["home_settings", "scrobble_settings"];
+pub(crate) const REMOVED_SECTIONS: &[&str] =
+    &["home_settings", "primary_music_source", "scrobble_settings"];
 
 /// v2 settings fields v3 removed from sections it keeps, as dotted paths
 /// from the section key. `name[]` walks every element of a list. An export

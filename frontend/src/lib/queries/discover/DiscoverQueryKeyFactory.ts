@@ -15,11 +15,6 @@ export interface DiscoverV3RadioPlanFingerprint {
 	seedId: string | null;
 }
 
-export interface DiscoverV3CacheCheckItem {
-	artist: string;
-	track: string;
-}
-
 const root = (userId: DiscoverV3UserId) => key(userScope(userId), 'discover');
 
 export const DiscoverQueryKeyFactory = {
@@ -52,13 +47,8 @@ export const DiscoverQueryKeyFactory = {
 			[...root(userId), 'album-preview', artist, album, count] as const,
 		trackPreview: (userId: DiscoverV3UserId, artist: string, track: string) =>
 			[...root(userId), 'track-preview', artist, track] as const,
-		youtubeSearch: (userId: DiscoverV3UserId, artist: string, album: string) =>
-			[...root(userId), 'youtube-search', artist, album] as const,
 		youtubeTrackSearch: (userId: DiscoverV3UserId, artist: string, track: string) =>
 			[...root(userId), 'youtube-track-search', artist, track] as const,
-		youtubeQuota: (userId: DiscoverV3UserId) => [...root(userId), 'youtube-quota'] as const,
-		youtubeCacheCheck: (userId: DiscoverV3UserId, items: DiscoverV3CacheCheckItem[]) =>
-			[...root(userId), 'youtube-cache-check', items] as const,
 		queueValidate: (userId: DiscoverV3UserId, releaseGroupMbids: string[]) =>
 			[...root(userId), 'queue-validate', releaseGroupMbids] as const
 	}

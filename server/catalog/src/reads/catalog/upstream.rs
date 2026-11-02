@@ -14,9 +14,7 @@ use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_kernel::runtime_config::secret_sections::{
     AdvancedSettings, ListenBrainzConnection,
 };
-use droppedneedle_kernel::runtime_config::sections::{
-    ListenSource, MusicBrainzSettings, PrimaryMusicSource, UserPreferences,
-};
+use droppedneedle_kernel::runtime_config::sections::{MusicBrainzSettings, UserPreferences};
 use droppedneedle_kernel::runtime_config::{ConfigStore, Listed, Live};
 use droppedneedle_library::edition_prefs::LivePreferences;
 use droppedneedle_providers::audiodb::AudioDbClient;
@@ -38,8 +36,6 @@ pub trait CatalogSettings: Send + Sync {
     fn advanced(&self) -> AdvancedSettings;
     /// Whether ListenBrainz reads are switched on.
     fn listenbrainz_enabled(&self) -> bool;
-    /// Which provider answers discovery sections by default.
-    fn primary_source(&self) -> ListenSource;
     /// Two-letter store region for purchase lookups; `None` while it does
     /// not read.
     fn store_region(&self) -> Option<String>;
@@ -80,7 +76,6 @@ pub struct LiveCatalogSettings {
     preferences: Live<UserPreferences>,
     advanced: Live<AdvancedSettings>,
     listenbrainz: Live<ListenBrainzConnection>,
-    primary: Live<PrimaryMusicSource>,
     editions: LivePreferences,
 }
 
@@ -92,7 +87,6 @@ impl LiveCatalogSettings {
             preferences: config.live(),
             advanced: config.live(),
             listenbrainz: config.live(),
-            primary: config.live(),
             editions: LivePreferences::new(config),
         }
     }
@@ -117,10 +111,6 @@ impl CatalogSettings for LiveCatalogSettings {
 
     fn listenbrainz_enabled(&self) -> bool {
         or_default(&self.listenbrainz).enabled
-    }
-
-    fn primary_source(&self) -> ListenSource {
-        or_default(&self.primary).source
     }
 
     fn store_region(&self) -> Option<String> {

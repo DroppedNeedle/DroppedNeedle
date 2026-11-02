@@ -496,11 +496,10 @@ Run from the repo root. `make help` lists every target.
 - Never gate "can acquire" on slskd alone: acquisition health is slskd or
   Usenet or an enabled plugin download source, answered by one readiness
   value in acquire (`readiness.rs`) that requests, search, the download
-  queue, the health smoke and Discover all read. A source counts once it
-  is turned on, whether or not it answers right now. Release readiness is
-  a separate gate per source. A request made
-  while no source is ready is held and starts by itself when one is saved.
-  It is never refused or lost.
+  queue and Discover all read. A source counts once it is turned on,
+  whether or not it answers right now. A request made while no source is
+  ready is held and starts by itself when one is saved. It is never
+  refused or lost.
 - Every file kept for a person's decision (a held download, an upload
   waiting for review) is an entry in acquire's one held list
   (`acquire/src/held/`), kept 90 days and then removed by its prune. An

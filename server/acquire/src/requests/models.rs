@@ -581,8 +581,10 @@ pub struct PersonalMixApprovalItem {
 pub struct PersonalMixApprovalsResponse {
     /// Pending rows.
     pub items: Vec<PersonalMixApprovalItem>,
-    /// Row count.
+    /// Pending row count.
     pub count: u32,
+    /// Approvals already granted, which an admin may revoke.
+    pub granted: Vec<PersonalMixApprovalItem>,
 }
 
 /// Personal-mix refresh outcome. The schema renames to avoid discover's

@@ -213,19 +213,6 @@ impl YouTubeLinks {
         Ok(self.store.track_links(album_id).await?)
     }
 
-    /// Remove one track link.
-    pub async fn delete_track_link(
-        &self,
-        album_id: &str,
-        disc_number: i64,
-        track_number: i64,
-    ) -> Result<(), LinkError> {
-        Ok(self
-            .store
-            .delete_track_link(album_id.to_owned(), disc_number, track_number)
-            .await?)
-    }
-
     /// The saved video for one track, searching YouTube when there is none.
     pub async fn generate_track_link(
         &self,
