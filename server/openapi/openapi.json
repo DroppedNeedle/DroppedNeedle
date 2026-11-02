@@ -35990,6 +35990,15 @@
             "format": "double",
             "description": "Import time, unix seconds."
           },
+          "expected_track_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Tracks the album's edition has: the matched MusicBrainz release's\ntracklist while the catalog holds it, else the totals its files'\ntags give. `None` when neither tells.",
+            "minimum": 0
+          },
           "favorite": {
             "type": "boolean",
             "description": "True when the caller favorited this album."

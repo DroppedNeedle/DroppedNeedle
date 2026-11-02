@@ -144,6 +144,7 @@ impl CatalogSetup {
         let wrapped = wrapped_state(&users, settings, inputs);
         let local = library_deps(
             catalog.local().clone(),
+            catalog.clone(),
             settings,
             enrichment.as_ref(),
             library_files,
@@ -191,6 +192,7 @@ impl CatalogSetup {
 /// covers are known missing.
 fn library_deps(
     catalog: local::store::LocalCatalog,
+    releases: metadata::Catalog,
     settings: &droppedneedle_kernel::runtime_config::ConfigStore,
     enrichment: Option<&enrichment::live::ProductionEnrichment>,
     files: droppedneedle_media::stream::local_files::LibraryFiles,
@@ -202,6 +204,7 @@ fn library_deps(
         catalog,
         upgrade_policy: Some(settings.live()),
         covers: Some(covers),
+        releases: Some(releases),
     }
 }
 

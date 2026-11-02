@@ -7,6 +7,7 @@
 	import NoFilesBadge from './NoFilesBadge.svelte';
 	import type { AlbumView } from '$lib/types';
 	import { albumHref } from '$lib/utils/entityRoutes';
+	import { trackCountLabel } from '$lib/utils/trackCount';
 
 	interface Props {
 		album: AlbumView;
@@ -67,8 +68,7 @@
 		</p>
 		<p class="flex flex-wrap gap-x-1 text-[11px] leading-tight opacity-50">
 			<span class="whitespace-nowrap">
-				{album.track_count}
-				{album.track_count === 1 ? 'track' : 'tracks'}
+				{trackCountLabel(album.track_count, album.expected_track_count)}
 			</span>
 			{#if kind}
 				<span class="whitespace-nowrap"><span aria-hidden="true" class="mr-1">•</span>{kind}</span>
