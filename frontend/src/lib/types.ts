@@ -24,13 +24,6 @@ export type Artist = {
  */
 export type EditionPickBasis = 'pin' | 'owned' | 'embedded_tags' | 'file_count' | 'ranked';
 
-/**
- * Native-lane pick basis (TargetNativeLibraryService._display_pick): per-copy
- * pin, owned identity, or unanimous tags only - there is no file-count/ranked
- * fallback on that path, so unproven albums without tags get no pick.
- */
-export type NativePickBasis = 'pin' | 'owned' | 'embedded_tags';
-
 export type Album = {
 	title: string;
 	artist: string | null;
@@ -459,8 +452,7 @@ export type LyricLine = Schemas['LyricLine'];
 
 export type AlbumSort = 'recent' | 'title' | 'artist';
 
-export type AlbumIdentityState =
-	'local_only' | 'release_group_linked' | 'release_linked' | 'custom_edition';
+export type AlbumIdentityState = 'local_only' | 'release_group_linked' | 'release_linked';
 
 export type ArtistIdentityState = 'local_only' | 'musicbrainz_linked';
 
@@ -515,13 +507,10 @@ export interface LibraryAlbumSummary {
 	format: string | null;
 	year: number | null;
 	is_compilation: boolean;
-	release_type: string | null;
 	cover_available: boolean;
 	/** The server knows its cover routes answer 404: ask for no cover. */
 	art_missing?: boolean;
 	date_added: number | null;
-	sort_name: string | null;
-	original_release_date: string | null;
 	contribution_id: string | null;
 	contribution_state: ContributionState | null;
 	/** Whether the caller favorited it, where the read says. */
@@ -532,43 +521,9 @@ export interface LibraryAlbumDetail extends LibraryAlbumSummary {
 	// Set when library management leaves the album's files alone.
 	management_hold?: components['schemas']['ManagementHoldView'] | null;
 	row_revision: number;
-	input_revision: string;
 	download_allowed?: boolean;
-	identification_status:
-		| 'identified'
-		| 'needs_review'
-		| 'keep_tagged'
-		| 'local_metadata'
-		| 'manual_identity_needs_review';
+	/** The album's pending identification review. */
 	review_id: string | null;
-	review_revision: number | null;
-	management_identity_readiness:
-		| 'not_applicable'
-		| 'exact_release_required'
-		| 'track_mapping_required'
-		| 'custom_manifest_stale'
-		| 'ready';
-	mapped_track_count: number;
-	management_identity_kind: 'exact_release' | 'custom_edition' | null;
-	custom_manifest_id: string | null;
-	custom_manifest_version: number | null;
-	custom_manifest_track_count: number;
-	custom_manifest_recognized_track_count: number;
-	custom_manifest_stale: boolean;
-	active_edition_conversion: {
-		job_id: string;
-		release_mbid: string;
-		state: 'preflight' | 'acquiring' | 'ready' | 'needs_recheck';
-		kept_count: number;
-		acquire_count: number;
-		staged_count: number;
-		failed_count: number;
-		recycle_count: number;
-		row_revision: number;
-		final_preview_job_id: string | null;
-	} | null;
-	display_release_mbid: string | null;
-	pick_basis: NativePickBasis | null;
 }
 
 export type ContributionState = Schemas['ContributionState'];
@@ -604,7 +559,6 @@ export interface LibraryArtistSummary {
 	appearance_track_count: number;
 	library_relationship: LibraryArtistRelationship;
 	date_added: number | null;
-	row_revision: number;
 	/** The server knows its picture route answers 404: ask for no picture. */
 	art_missing?: boolean;
 	/** Whether the caller favorited it, where the read says. */

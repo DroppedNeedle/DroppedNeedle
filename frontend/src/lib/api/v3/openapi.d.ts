@@ -9409,6 +9409,13 @@ export interface components {
         /** @description One catalog album with what its own page shows. */
         AlbumDetailView: components["schemas"]["AlbumView"] & {
             management_hold?: null | components["schemas"]["ManagementHoldView"];
+            /** @description The album's pending identification review, if any. */
+            pending_review_id?: string | null;
+            /**
+             * Format: int64
+             * @description The album row's revision, which a change to its grouping echoes.
+             */
+            row_revision: number;
         };
         /** @description One edition (MusicBrainz release) of an album. */
         AlbumEditionItem: {
@@ -10096,8 +10103,8 @@ export interface components {
             /** @description Up to ten aliases. */
             aliases: string[];
             /**
-             * @description True when the artist only appears on the library's tracks (a guest
-             *     or featured credit) without an album of their own.
+             * @description True when the artist appears on a library album led by someone else
+             *     (a guest or featured credit), whatever they lead themselves.
              */
             appears_in_library: boolean;
             /** @description Whether the caller asked for new releases to download on their own. */
@@ -10416,6 +10423,11 @@ export interface components {
             id: string;
             /** @description `local_only` or `linked`. */
             identity_state: string;
+            /**
+             * Format: int64
+             * @description Streamable tracks credited to this artist on albums it leads.
+             */
+            led_track_count: number;
             /** @description Display name. */
             name: string;
             /**

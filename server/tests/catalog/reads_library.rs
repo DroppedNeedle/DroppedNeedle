@@ -520,8 +520,13 @@ async fn sqlite_artists_scopes_and_credits() {
         .expect("a1 found");
     // al4 has no files, so it is not counted as one of a1's albums.
     assert_eq!(
-        (a1.album_count, a1.track_count, a1.appearance_album_count),
-        (2, 3, 0)
+        (
+            a1.album_count,
+            a1.track_count,
+            a1.led_track_count,
+            a1.appearance_album_count
+        ),
+        (2, 3, 3, 0)
     );
     assert_eq!(a1.artist_mbid.as_deref(), Some("m1"));
 
@@ -535,10 +540,11 @@ async fn sqlite_artists_scopes_and_credits() {
         (
             a3.album_count,
             a3.track_count,
+            a3.led_track_count,
             a3.appearance_album_count,
             a3.appearance_track_count
         ),
-        (0, 1, 1, 1)
+        (0, 1, 0, 1, 1)
     );
 
     let (led_albums, total) = fixture
@@ -558,6 +564,42 @@ async fn sqlite_artists_scopes_and_credits() {
         .expect("appearances list");
     assert_eq!(total, 1);
     assert_eq!(appearances[0].id, "al3");
+}
+
+#[tokio::test]
+async fn an_album_page_carries_its_revision_and_pending_review() {
+    let fixture = sqlite_fixture().await;
+    let deps = deps(fixture.runtime.db(), None);
+    let uri = "/api/v3/library/albums/al2";
+
+    let (status, body) = get(app(deps.clone(), Some(ADA)), uri).await;
+    assert_eq!(status, 200);
+    assert_eq!(body["row_revision"], 1);
+    assert!(body["pending_review_id"].is_null());
+
+    fixture
+        .runtime
+        .db()
+        .write(
+            droppedneedle_kernel::db::Lane::Foreground,
+            "reviews seed",
+            |tx| {
+                tx.execute_batch(
+                    "UPDATE local_albums SET row_revision = 7 WHERE id = 'al2'; \
+                     INSERT INTO library_identify_reviews (id, local_album_id, reason_code, \
+                     candidates_json, state, created_at, updated_at) VALUES \
+                     ('done', 'al2', 'r', '[]', 'approved', 3, 3), \
+                     ('open', 'al2', 'r', '[]', 'pending', 2, 2)",
+                )
+                .map_err(droppedneedle_kernel::db::DbError::from)
+            },
+        )
+        .await
+        .expect("seed batch runs");
+
+    let (_, body) = get(app(deps, Some(ADA)), uri).await;
+    assert_eq!(body["row_revision"], 7);
+    assert_eq!(body["pending_review_id"], "open");
 }
 
 #[tokio::test]

@@ -36,12 +36,7 @@
 		getLibraryAlbumDetailQuery,
 		getLibraryAlbumTracksQuery
 	} from '$lib/queries/library/LibraryQueries.svelte';
-	import type {
-		AlbumBasicInfo,
-		LocalTrackInfo,
-		NativePickBasis,
-		NativeTrackListItem
-	} from '$lib/types';
+	import type { AlbumBasicInfo, LocalTrackInfo, NativeTrackListItem } from '$lib/types';
 	import { createLibraryContributionMutation } from '$lib/queries/libraryContributions/LibraryContributionMutations.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { artistHref } from '$lib/utils/entityRoutes';
@@ -86,28 +81,6 @@
 	);
 	const fileNotes = $derived(
 		editionPlanQuery.data?.album_id === albumId ? notesByFile(editionPlanQuery.data) : undefined
-	);
-
-	const reviewLabel = $derived(
-		album?.identification_status === 'needs_review'
-			? 'Needs review'
-			: album?.identification_status === 'keep_tagged'
-				? 'Keep as tagged'
-				: album?.identification_status === 'manual_identity_needs_review'
-					? 'Manual identity needs review'
-					: null
-	);
-	// Per-basis qualifier copy; an unknown future basis shows no qualifier
-	// (fail-closed, mirroring LocalIdentityBadge).
-	const pickBasisQualifier: Record<NativePickBasis, string> = {
-		pin: 'Year and cover shown from your pinned pressing.',
-		owned: 'Year and cover shown from your identified edition.',
-		embedded_tags: 'Year and cover shown from the best-fit pressing until the edition is verified.'
-	};
-	const qualifierText = $derived(
-		album?.album_identity_state === 'release_group_linked' && album.pick_basis
-			? (pickBasisQualifier[album.pick_basis] ?? null)
-			: null
 	);
 
 	function play(shuffle: boolean): void {
@@ -204,7 +177,8 @@
 				<div class="flex flex-wrap items-center gap-2">
 					{#if hasFiles}<LibraryFormatBadge format={album.format} />{:else}<NoFilesBadge />{/if}
 					{#if album.is_compilation}<span class="badge badge-ghost">Compilation</span>{/if}
-					{#if reviewLabel}<span class="badge badge-warning badge-outline">{reviewLabel}</span>{/if}
+					{#if album.review_id}<span class="badge badge-warning badge-outline">Needs review</span
+						>{/if}
 				</div>
 				<h1 class="mt-3 text-3xl font-black tracking-tight sm:text-5xl">{album.title}</h1>
 				<a
@@ -217,18 +191,10 @@
 					subject="album"
 					showDescription
 					className="mt-3"
-					pickBasis={album.pick_basis ?? null}
 				/>
 				<p class="mt-2 text-sm text-base-content/50">
 					{album.year ?? 'Year unknown'} · {album.track_count}
 					{album.track_count === 1 ? 'track' : 'tracks'}
-					{#if qualifierText}
-						<span
-							class="ml-1 align-middle text-xs text-base-content/45"
-							title={qualifierText}
-							aria-label={qualifierText}>· best-fit edition</span
-						>
-					{/if}
 				</p>
 				<div class="mt-2 -ml-1 flex items-center">
 					<RatingStars

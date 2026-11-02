@@ -188,6 +188,15 @@ pub struct AlbumRecord {
     pub contribution_state: Option<String>,
 }
 
+/// What only an album's own page shows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AlbumPageState {
+    /// The album row's revision, which a change to its grouping echoes.
+    pub row_revision: i64,
+    /// The newest pending identification review, if any.
+    pub pending_review_id: Option<String>,
+}
+
 /// Why library management leaves an album's files alone.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ManagementHoldRecord {
@@ -220,6 +229,8 @@ pub struct ArtistRecord {
     pub album_count: u64,
     /// Streamable tracks credited.
     pub track_count: u64,
+    /// Streamable tracks credited on albums this artist leads.
+    pub led_track_count: u64,
     /// Albums with an appearance but no lead.
     pub appearance_album_count: u64,
     /// Streamable tracks credited on albums led by someone else.

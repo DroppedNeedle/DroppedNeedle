@@ -40,9 +40,9 @@ use super::store::{
     track_row, unsigned,
 };
 use super::stores::{
-    After, AlbumFilter, AlbumRecord, AlbumSort, ArtistKeyedListing, ArtistListing, ArtistRecord,
-    ArtistScope, ArtistSort, DecadeRecord, GenreRecord, KeyedPage, ManagementHoldRecord,
-    StatsRecord, StoreError, TrackFilter, TrackRecord, TrackSort,
+    After, AlbumFilter, AlbumPageState, AlbumRecord, AlbumSort, ArtistKeyedListing, ArtistListing,
+    ArtistRecord, ArtistScope, ArtistSort, DecadeRecord, GenreRecord, KeyedPage,
+    ManagementHoldRecord, StatsRecord, StoreError, TrackFilter, TrackRecord, TrackSort,
 };
 
 /// Escape the LIKE metacharacters in a folded filter, then wrap for
@@ -350,6 +350,24 @@ impl LocalCatalog {
         .await
     }
 
+    /// The album's revision and pending review. None is absence, never
+    /// failure.
+    pub async fn album_page_state(
+        &self,
+        album_id: &str,
+    ) -> Result<Option<AlbumPageState>, StoreError> {
+        let values = vec![Value::Text(album_id.to_owned())];
+        self.read("library.albums.page_state", move |conn| {
+            first(conn, sql::ALBUM_PAGE_STATE.text(), &values, |row| {
+                Ok(AlbumPageState {
+                    row_revision: row.get("row_revision")?,
+                    pending_review_id: row.get("pending_review_id")?,
+                })
+            })
+        })
+        .await
+    }
+
     /// Why library management leaves the album's files alone. None when
     /// it does not. A person's own choice wins over the app's step back.
     pub async fn management_hold(
@@ -588,6 +606,7 @@ impl LocalCatalog {
             let credits: Credits = credit_counts.get(&artist.id).copied().unwrap_or_default();
             (
                 artist.track_count,
+                artist.led_track_count,
                 artist.appearance_album_count,
                 artist.appearance_track_count,
             ) = credits;
@@ -627,6 +646,7 @@ impl LocalCatalog {
                                 unsigned(row.get(1)?),
                                 unsigned(row.get(2)?),
                                 unsigned(row.get(3)?),
+                                unsigned(row.get(4)?),
                             ),
                         ))
                     },

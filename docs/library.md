@@ -23,6 +23,8 @@ How DroppedNeedle scans your music, works out which album and edition each folde
 
 The Albums, Artists and Tracks lists show the first page and add the next with Load more, however large the library. Tracks sort by date added, title, artist (then album and track number) or album. Shuffle on the Tracks page plays every track once in a random order.
 
+An artist's page also has an "Appears on" section when they are credited on albums someone else leads, such as a guest or featured spot. It shows those albums and tracks, whether or not the artist has albums of their own, and the Contributors view of the Artists list counts them. An album waiting for an identification review shows a "Needs review" badge, and admins get a link to the review.
+
 ## Scanning
 
 Scans live on the Scanning tab of Library Management. A running scan can be paused, resumed or stopped there; stopping keeps everything it already read. New music shows up in the library as the scan finds it, not only when the scan ends. Rescan files rereads every file in the folders you pick, even ones that look unchanged, which helps after you fix files with another tool. Each finished run in Recent runs lists the files it could not read or skipped, each with a short reason and what to do about it (for example, a damaged file says to re-download or replace it). If someone changed the library folders since you opened the page, the scan is refused: reload and try again.

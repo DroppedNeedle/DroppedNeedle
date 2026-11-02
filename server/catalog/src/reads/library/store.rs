@@ -218,9 +218,9 @@ pub(crate) fn track_row(row: &Row<'_>) -> rusqlite::Result<TrackRecord> {
     })
 }
 
-/// An artist's indexed credited tracks, appearance albums and appearance
-/// tracks.
-pub(crate) type Credits = (u64, u64, u64);
+/// An artist's indexed credited tracks, those on led albums, appearance
+/// albums and appearance tracks.
+pub(crate) type Credits = (u64, u64, u64, u64);
 
 /// The artist projection's row. Its counts come from the grouped passes
 /// and start at zero here.
@@ -232,6 +232,7 @@ pub(crate) fn artist_row(row: &Row<'_>) -> rusqlite::Result<ArtistRecord> {
         linked: row.get("linked")?,
         album_count: 0,
         track_count: 0,
+        led_track_count: 0,
         appearance_album_count: 0,
         appearance_track_count: 0,
         date_added: row.get("date_added")?,

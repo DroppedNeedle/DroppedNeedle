@@ -98,7 +98,8 @@ function localAlbum(): RouteData<'GET /api/v3/library/albums/{id}'> {
 		is_compilation: false,
 		total_duration_seconds: 736,
 		total_size_bytes: 4,
-		track_count: 4
+		track_count: 4,
+		row_revision: 1
 	};
 }
 

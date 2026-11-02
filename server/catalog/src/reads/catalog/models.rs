@@ -117,8 +117,8 @@ pub struct ArtistInfo {
     /// True when the library holds an album credited to this artist with
     /// at least one playable track.
     pub in_library: bool,
-    /// True when the artist only appears on the library's tracks (a guest
-    /// or featured credit) without an album of their own.
+    /// True when the artist appears on a library album led by someone else
+    /// (a guest or featured credit), whatever they lead themselves.
     pub appears_in_library: bool,
     /// Albums, newest first, filtered by the release-type preferences.
     pub albums: Vec<ReleaseItem>,

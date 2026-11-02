@@ -39,6 +39,7 @@
 		order: 'asc',
 		...(targetSearch ? { q: targetSearch } : {})
 	}));
+	const sourceAlbum = getLibraryAlbumDetailQuery(() => album.id);
 	const targetAlbum = getLibraryAlbumDetailQuery(() => targetAlbumId ?? '');
 	const splitPreview = previewAlbumMembership('split');
 	const mergePreview = previewAlbumMembership('merge');
@@ -92,13 +93,9 @@
 		previewResult = null;
 	}
 
-	// Revisions are sent only when the page knows them; the preview token
-	// guards the change either way.
 	function request(): MembershipPreviewInput {
-		const revisions: Record<string, number> = {};
-		if (album.row_revision > 0) revisions[album.id] = album.row_revision;
-		if (targetAlbum.data && targetAlbum.data.row_revision > 0)
-			revisions[targetAlbum.data.id] = targetAlbum.data.row_revision;
+		const revisions: Record<string, number> = { [album.id]: album.row_revision };
+		if (targetAlbum.data) revisions[targetAlbum.data.id] = targetAlbum.data.row_revision;
 		return {
 			track_ids: selectedTrackIds,
 			expected_album_revisions: revisions,
@@ -116,6 +113,13 @@
 		void preview();
 	}
 
+	// A refused change may mean the page's revisions are old: the next preview
+	// needs the current ones.
+	function reloadRevisions(): void {
+		void sourceAlbum.refetch();
+		if (targetAlbumId) void targetAlbum.refetch();
+	}
+
 	async function preview(): Promise<void> {
 		confirmed = false;
 		stalePreview = false;
@@ -126,6 +130,7 @@
 			});
 		} catch {
 			previewResult = null;
+			reloadRevisions();
 		}
 	}
 
@@ -141,6 +146,7 @@
 		} catch {
 			confirmed = false;
 			stalePreview = true;
+			reloadRevisions();
 			previewMutation.reset();
 			previewResult = null;
 		}

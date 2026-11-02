@@ -19,29 +19,12 @@ const album: LibraryAlbumDetail = {
 	format: 'flac',
 	year: 2024,
 	is_compilation: false,
-	release_type: 'album',
 	cover_available: false,
 	date_added: 1,
-	sort_name: null,
-	original_release_date: null,
 	row_revision: 5,
-	input_revision: 'input-5',
-	identification_status: 'identified',
 	review_id: null,
-	review_revision: null,
-	management_identity_readiness: 'ready',
-	mapped_track_count: 2,
-	management_identity_kind: null,
-	custom_manifest_id: null,
-	custom_manifest_version: null,
-	custom_manifest_track_count: 0,
-	custom_manifest_recognized_track_count: 0,
-	custom_manifest_stale: false,
-	active_edition_conversion: null,
 	contribution_id: null,
-	contribution_state: null,
-	display_release_mbid: null,
-	pick_basis: null
+	contribution_state: null
 };
 
 function track(id: string, number: number): NativeTrackListItem {
@@ -99,7 +82,7 @@ const h = vi.hoisted(() => ({
 
 vi.mock('$lib/queries/library/LibraryQueries.svelte', () => ({
 	getLibraryAlbumsQuery: () => ({ data: { items: [] } }),
-	getLibraryAlbumDetailQuery: () => ({ data: undefined })
+	getLibraryAlbumDetailQuery: () => ({ data: undefined, refetch: vi.fn() })
 }));
 vi.mock('$lib/queries/library/LibraryCatalogMutations.svelte', () => ({
 	previewAlbumMembership: (kind: string) => {

@@ -94,6 +94,13 @@ droppedneedle_kernel::sql! {
     /// One live album by id.
     pub(crate) ALBUM_BY_ID = "SELECT " + ALBUM_COLUMNS + " " + ALBUM_JOINS
         + " WHERE a.id = ? AND " + (live_album!("a")) + " GROUP BY a.id";
+    /// What only an album's own page shows: its revision and its newest
+    /// pending identification review.
+    pub(crate) ALBUM_PAGE_STATE = "SELECT a.row_revision AS row_revision, \
+        (SELECT r.id FROM library_identify_reviews r \
+         WHERE r.local_album_id = a.id AND r.state = 'pending' \
+         ORDER BY r.created_at DESC, r.id LIMIT 1) AS pending_review_id \
+        FROM local_albums a WHERE a.id = ?";
     /// Why library management leaves an album's files alone: a person's
     /// exclusion first, else the app's step back.
     pub(crate) MANAGEMENT_HOLD = "SELECT 'your_choice' AS kind, \
@@ -344,8 +351,8 @@ droppedneedle_kernel::sql! {
     family ARTIST_ROWS = artist_rows;
     /// Owned albums led per artist id.
     family ARTIST_ALBUM_COUNTS = artist_album_counts;
-    /// Indexed credited tracks, appearance albums and appearance tracks per
-    /// artist id.
+    /// Indexed credited tracks, those on led albums, appearance albums and
+    /// appearance tracks per artist id.
     family ARTIST_CREDIT_COUNTS = artist_credit_counts;
     /// Credited, leading and contributing artists among the rows read.
     pub(crate) fragment ARTIST_TOTAL_COLUMNS = "SELECT \
@@ -1424,12 +1431,13 @@ pub(crate) fn artist_album_counts(ids: ListLen) -> String {
     )
 }
 
-/// Indexed credited tracks, appearance albums and appearance tracks per
-/// artist id, from the kept artist and album pairs of live albums. An
+/// Indexed credited tracks, those on led albums, appearance albums and
+/// appearance tracks per artist id, from the kept artist and album pairs of live albums. An
 /// appearance is on an album led by someone else.
 pub(crate) fn artist_credit_counts(ids: ListLen) -> String {
     format!(
         "SELECT p.local_artist_id AS id, SUM(p.indexed_tracks) AS tracks, \
+         SUM((1 - p.appearance) * p.indexed_tracks) AS led_tracks, \
          SUM(p.appearance) AS appearances, \
          SUM(p.appearance * p.indexed_tracks) AS appearance_tracks \
          FROM library_artist_album_credits p \

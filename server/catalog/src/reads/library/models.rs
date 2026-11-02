@@ -124,6 +124,10 @@ pub struct AlbumDetailView {
     pub album: AlbumView,
     /// Set when library management leaves this album's files alone.
     pub management_hold: Option<ManagementHoldView>,
+    /// The album row's revision, which a change to its grouping echoes.
+    pub row_revision: i64,
+    /// The album's pending identification review, if any.
+    pub pending_review_id: Option<String>,
 }
 
 /// One page of catalog albums.
@@ -201,6 +205,8 @@ pub struct ArtistView {
     pub album_count: u64,
     /// Streamable tracks credited to this artist.
     pub track_count: u64,
+    /// Streamable tracks credited to this artist on albums it leads.
+    pub led_track_count: u64,
     /// Albums where this artist appears without leading.
     pub appearance_album_count: u64,
     /// Streamable tracks credited to this artist on albums led by someone
@@ -227,6 +233,7 @@ impl From<(ArtistRecord, bool, bool)> for ArtistView {
             identity_state: identity_state(artist.linked),
             album_count: artist.album_count,
             track_count: artist.track_count,
+            led_track_count: artist.led_track_count,
             appearance_album_count: artist.appearance_album_count,
             appearance_track_count: artist.appearance_track_count,
             date_added: artist.date_added,

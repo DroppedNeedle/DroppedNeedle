@@ -15,11 +15,7 @@ export type TrackView = components['schemas']['TrackView'];
 type AlbumPage = components['schemas']['AlbumPage'];
 type ArtistView = components['schemas']['ArtistView'];
 
-// The library pages read the native page models that the v2 catalog served.
-// v3's catalog views carry the browse fields plus the open contribution:
-// identity is `local_only` or `linked`, and the management and
-// edition-conversion fields have no v3 source yet, so they read as
-// "nothing to manage" here.
+// The library pages read the catalog views under the names the screens use.
 
 function albumIdentity(album: AlbumView): AlbumIdentityState {
 	if (album.identity_state !== 'linked') return 'local_only';
@@ -42,12 +38,9 @@ export function toAlbumSummary(album: AlbumView): LibraryAlbumSummary {
 		format: album.format ?? null,
 		year: album.year ?? null,
 		is_compilation: album.is_compilation,
-		release_type: null,
 		cover_available: album.cover_available,
 		art_missing: album.art_missing,
 		date_added: album.date_added ?? null,
-		sort_name: null,
-		original_release_date: null,
 		contribution_id: album.contribution_id ?? null,
 		contribution_state: (album.contribution_state as ContributionState | null | undefined) ?? null,
 		favorite: album.favorite
@@ -57,23 +50,9 @@ export function toAlbumSummary(album: AlbumView): LibraryAlbumSummary {
 export function toAlbumDetail(album: AlbumDetailView): LibraryAlbumDetail {
 	return {
 		...toAlbumSummary(album),
-		row_revision: 0,
-		input_revision: '',
-		identification_status: album.identity_state === 'linked' ? 'identified' : 'local_metadata',
-		review_id: null,
-		review_revision: null,
-		management_identity_readiness: 'not_applicable',
-		mapped_track_count: 0,
-		management_identity_kind: null,
-		custom_manifest_id: null,
-		custom_manifest_version: null,
-		custom_manifest_track_count: 0,
-		custom_manifest_recognized_track_count: 0,
-		custom_manifest_stale: false,
-		management_hold: album.management_hold ?? null,
-		active_edition_conversion: null,
-		display_release_mbid: album.release_mbid ?? null,
-		pick_basis: null
+		row_revision: album.row_revision,
+		review_id: album.pending_review_id ?? null,
+		management_hold: album.management_hold ?? null
 	};
 }
 
@@ -93,12 +72,11 @@ export function toArtistSummary(artist: ArtistView): LibraryArtistSummary {
 		musicbrainz_artist_id: artist.artist_mbid ?? null,
 		artist_identity_state: artist.identity_state === 'linked' ? 'musicbrainz_linked' : 'local_only',
 		album_count: artist.album_count,
-		track_count: artist.track_count,
+		track_count: artist.led_track_count,
 		appearance_release_count: artist.appearance_album_count,
 		appearance_track_count: artist.appearance_track_count,
 		library_relationship: relationship(artist),
 		date_added: artist.date_added ?? null,
-		row_revision: 0,
 		art_missing: artist.art_missing,
 		favorite: artist.favorite
 	};

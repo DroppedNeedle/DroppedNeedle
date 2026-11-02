@@ -68,29 +68,12 @@ const localAlbum: LibraryAlbumDetail = {
 	format: 'flac',
 	year: 2008,
 	is_compilation: false,
-	release_type: 'album',
 	cover_available: true,
 	date_added: 1,
-	sort_name: null,
-	original_release_date: '2008-08-04',
 	contribution_id: null,
 	contribution_state: null,
 	row_revision: 4,
-	input_revision: 'input-4',
-	identification_status: 'identified',
-	review_id: null,
-	review_revision: null,
-	management_identity_readiness: 'ready',
-	mapped_track_count: 20,
-	management_identity_kind: 'exact_release',
-	custom_manifest_id: null,
-	custom_manifest_version: null,
-	custom_manifest_track_count: 0,
-	custom_manifest_recognized_track_count: 0,
-	custom_manifest_stale: false,
-	active_edition_conversion: null,
-	display_release_mbid: null,
-	pick_basis: null
+	review_id: null
 };
 
 vi.mock('$lib/queries/library/LibraryQueries.svelte', () => ({

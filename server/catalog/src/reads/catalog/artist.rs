@@ -408,13 +408,10 @@ impl Catalog {
         })
     }
 
-    /// The artist's library relationship: (owned, appears only on tracks).
-    /// A failed read logs and reads as neither.
+    /// The artist's library relationship: (leads an album, appears on an
+    /// album led by someone else). A failed read logs and reads as neither.
     async fn artist_relationship(&self, mbid: &str) -> (bool, bool) {
         let owned = !self.artist_flags(&[mbid.to_owned()]).await.is_empty();
-        if owned {
-            return (true, false);
-        }
         let appears = self
             .local()
             .artist_appears(mbid)
@@ -423,7 +420,7 @@ impl Catalog {
                 tracing::warn!(%error, "library appearance read failed; showing none");
                 false
             });
-        (false, appears)
+        (owned, appears)
     }
 
     /// TheAudioDB images already in the cache; never dials out, so the

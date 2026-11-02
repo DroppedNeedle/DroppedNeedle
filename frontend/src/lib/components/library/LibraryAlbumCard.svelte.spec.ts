@@ -28,11 +28,8 @@ const album: LibraryAlbumSummary = {
 	format: 'flac',
 	year: 1997,
 	is_compilation: false,
-	release_type: null,
 	cover_available: true,
 	date_added: 1,
-	sort_name: null,
-	original_release_date: null,
 	contribution_id: null,
 	contribution_state: null
 };

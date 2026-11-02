@@ -34042,6 +34042,9 @@
           },
           {
             "type": "object",
+            "required": [
+              "row_revision"
+            ],
             "properties": {
               "management_hold": {
                 "oneOf": [
@@ -34053,6 +34056,18 @@
                     "description": "Set when library management leaves this album's files alone."
                   }
                 ]
+              },
+              "pending_review_id": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The album's pending identification review, if any."
+              },
+              "row_revision": {
+                "type": "integer",
+                "format": "int64",
+                "description": "The album row's revision, which a change to its grouping echoes."
               }
             }
           }
@@ -35747,7 +35762,7 @@
           },
           "appears_in_library": {
             "type": "boolean",
-            "description": "True when the artist only appears on the library's tracks (a guest\nor featured credit) without an album of their own."
+            "description": "True when the artist appears on a library album led by someone else\n(a guest or featured credit), whatever they lead themselves."
           },
           "auto_download": {
             "type": "boolean",
@@ -36419,6 +36434,7 @@
           "identity_state",
           "album_count",
           "track_count",
+          "led_track_count",
           "appearance_album_count",
           "appearance_track_count",
           "art_missing",
@@ -36473,6 +36489,12 @@
           "identity_state": {
             "type": "string",
             "description": "`local_only` or `linked`."
+          },
+          "led_track_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Streamable tracks credited to this artist on albums it leads.",
+            "minimum": 0
           },
           "name": {
             "type": "string",

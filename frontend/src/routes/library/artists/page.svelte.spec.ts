@@ -28,6 +28,7 @@ const contributors: RouteData<'GET /api/v3/library/artists'> = {
 			identity_state: 'linked',
 			album_count: 0,
 			track_count: 5,
+			led_track_count: 5,
 			appearance_album_count: 2,
 			appearance_track_count: 3,
 			art_missing: false,

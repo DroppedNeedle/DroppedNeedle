@@ -353,6 +353,29 @@ async fn seed_library(pool: &SqlitePool) {
              ('{KID_A}', '{KID_A}', 'Radiohead', 'Kid A', 1788220800000, 'pending', \
              'album')"
         ),
+        // Radiohead also guests on someone else's album.
+        "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) \
+         VALUES ('artist-host', 'Host Band', 'host band', 'group', 0, 0)"
+            .to_owned(),
+        "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+         album_artist_name, album_artist_name_folded, album_artist_id, grouping_source, \
+         created_at, updated_at) VALUES ('album-host', 'root-1', 'g-host', 'Guest Spot', \
+         'guest spot', 'Host Band', 'host band', 'artist-host', 'manual', 0, 0)"
+            .to_owned(),
+        "INSERT INTO local_album_artists (local_album_id, position, local_artist_id, role) \
+         VALUES ('album-host', 0, 'artist-host', 'primary')"
+            .to_owned(),
+        "INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
+         path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
+         artist_name, artist_name_folded, album_title, album_title_folded, disc_number, \
+         track_number, duration_seconds, file_format, ingest_source, imported_at, \
+         membership_source) VALUES ('track-host', 'album-host', 'root-1', '/music/host.flac', \
+         'host.flac', 'hash-host', 1000, 0, 'stat-host', 'Duet', 'duet', 'Host Band', \
+         'host band', 'Guest Spot', 'guest spot', 1, 1, 200.0, 'flac', 'scan', 0, 'manual')"
+            .to_owned(),
+        "INSERT INTO local_track_artists (local_track_id, position, local_artist_id, role) \
+         VALUES ('track-host', 0, 'artist-radiohead', 'guest')"
+            .to_owned(),
     ];
     for statement in statements {
         sqlx::query(&statement).execute(pool).await.unwrap();
@@ -495,7 +518,7 @@ async fn artist_header_reads_musicbrainz_once_and_flags_the_library() {
     assert_eq!(titles(&body["singles"]), ["Creep"]);
     assert_eq!(body["albums"][1]["in_library"], true);
     assert_eq!(body["release_group_count"], 6);
-    assert_eq!(body["appears_in_library"], false);
+    assert_eq!(body["appears_in_library"], true);
     assert_eq!(body["followed"], false);
     assert_eq!(body["auto_download_state"], "none");
 

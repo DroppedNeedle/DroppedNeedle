@@ -450,6 +450,11 @@ pub async fn get_album(
     let record = album_record(deps, id).await?;
     let favorites = favorites_for(deps, user_id, "album", std::slice::from_ref(&record.id)).await?;
     let hold = deps.catalog.management_hold(&record.id).await?;
+    let state = deps
+        .catalog
+        .album_page_state(&record.id)
+        .await?
+        .ok_or(LibraryFailure::NotFound)?;
     let favorite = favorites.contains(&record.id);
     let art_missing = albums_missing_art(deps, std::slice::from_ref(&record))
         .await?
@@ -462,6 +467,8 @@ pub async fn get_album(
             exclusion_revision: hold.exclusion_revision,
             handing_back: hold.handing_back,
         }),
+        row_revision: state.row_revision,
+        pending_review_id: state.pending_review_id,
     })
 }
 

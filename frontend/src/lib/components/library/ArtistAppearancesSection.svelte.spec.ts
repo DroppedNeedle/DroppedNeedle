@@ -16,6 +16,7 @@ const artist: RouteData<'GET /api/v3/library/artists/{id}'> = {
 	identity_state: 'linked',
 	album_count: 0,
 	track_count: 1,
+	led_track_count: 0,
 	appearance_album_count: 1,
 	appearance_track_count: 1,
 	art_missing: false,
@@ -38,7 +39,8 @@ const album: RouteData<'GET /api/v3/library/albums/{id}'> = {
 	cover_available: false,
 	art_missing: false,
 	favorite: false,
-	date_added: 1
+	date_added: 1,
+	row_revision: 1
 };
 
 const track: RouteData<'GET /api/v3/library/tracks'>['items'][number] = {

@@ -30,7 +30,8 @@ const album: RouteData<'GET /api/v3/library/albums/{id}'> = {
 	cover_available: false,
 	art_missing: false,
 	favorite: false,
-	date_added: 1
+	date_added: 1,
+	row_revision: 3
 };
 
 const track: RouteData<'GET /api/v3/library/albums/{id}/tracks'>['items'][number] = {
@@ -113,6 +114,47 @@ describe('local album page track menu', () => {
 		await (await page.getByLabelText('More actions').all())[0].click();
 		await expect.element(page.getByRole('menuitem', { name: 'Add to Queue' })).toBeVisible();
 		expect(page.getByRole('menuitem', { name: 'Download' }).elements()).toHaveLength(0);
+	});
+});
+
+describe('local album page with a pending review', () => {
+	const pending = { ...album, pending_review_id: 'review-1' };
+	const signIn = (role: 'admin' | 'user') =>
+		authStore.setUser(
+			toAuthUser({
+				id: 'user-1',
+				display_name: 'Someone',
+				role,
+				email: null,
+				avatar_url: null,
+				username: 'someone',
+				username_display: 'Someone'
+			})
+		);
+
+	it('shows a signed-in user the badge without the link', async () => {
+		signIn('user');
+		fakeLibrary({ downloadAllowed: true }).use({ 'GET /api/v3/library/albums/{id}': pending });
+		await renderWithQuery(LocalAlbumPage, { albumId: album.id });
+		await expect.element(page.getByText('Needs review')).toBeVisible();
+		await expect
+			.element(page.getByRole('link', { name: 'Open identification review' }))
+			.not.toBeInTheDocument();
+	});
+
+	it('gives an admin the link to the review', async () => {
+		signIn('admin');
+		fakeLibrary({ downloadAllowed: true }).use({
+			'GET /api/v3/library/albums/{id}': pending,
+			'GET /api/v3/library/albums': { items: [], total: 0, next: null },
+			'GET /api/v3/library/albums/{album_id}/removals': { items: [] },
+			'GET /api/v3/library/retag-pairs': { items: [], next_cursor: null, total: 0 }
+		});
+		await renderWithQuery(LocalAlbumPage, { albumId: album.id });
+		await expect.element(page.getByText('Needs review')).toBeVisible();
+		await expect
+			.element(page.getByRole('link', { name: 'Open identification review' }))
+			.toHaveAttribute('href', expect.stringContaining('/library/review?review=review-1'));
 	});
 });
 
