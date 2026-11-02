@@ -142,14 +142,6 @@ impl CatalogSetup {
             },
         )));
         let wrapped = wrapped_state(&users, settings, inputs);
-        // Saved links search through discover's YouTube client, so both
-        // spend from one daily budget.
-        let youtube = youtube::YouTubeLinks::new(
-            youtube::store::LinkStore::new(collections.db.clone()),
-            discover.youtube.clone(),
-            ids,
-            clock,
-        );
         let local = library_deps(
             catalog.local().clone(),
             settings,
@@ -164,6 +156,15 @@ impl CatalogSetup {
         let catalog = catalog.with_follows(Arc::new(CollectionsFollows(
             collections.stores.follows.clone(),
         )));
+        // Saved links search through discover's YouTube client, so both
+        // spend from one daily budget.
+        let youtube = youtube::YouTubeLinks::new(
+            youtube::store::LinkStore::new(collections.db.clone()),
+            discover.youtube.clone(),
+            catalog.clone(),
+            ids,
+            clock,
+        );
         let search = search::SearchDeps::new(
             search::service::SearchService::new(db.clone()).with_remote(catalog.clone()),
             search_enrichment,

@@ -184,6 +184,7 @@
 			track.track_source_id = updated.track_source_id;
 			track.source_type = updated.source_type;
 			track.format = updated.format;
+			track.recording_mbid = updated.recording_mbid;
 			if (updated.available_sources) {
 				track.available_sources = updated.available_sources;
 			}

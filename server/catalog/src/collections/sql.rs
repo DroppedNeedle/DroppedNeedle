@@ -36,7 +36,7 @@ droppedneedle_kernel::sql! {
     fragment TRACK_COLUMNS = "SELECT id, position, track_name, artist_name, album_name, \
          album_id, artist_id, track_source_id, cover_url, source_type, available_sources, \
          format, track_number, disc_number, duration_ms / 1000.0, created_at / 1000, \
-         plex_rating_key, library_file_id FROM catalog_playlist_tracks";
+         plex_rating_key, library_file_id, recording_mbid FROM catalog_playlist_tracks";
 
     /// Every playlist, then whether the caller may read it. A private
     /// playlist with no owner is left out unless `?2`, an admin asking.
@@ -120,16 +120,18 @@ droppedneedle_kernel::sql! {
     pub(super) INSERT_ENTRY = "INSERT INTO catalog_playlist_tracks (id, playlist_id, position, \
          track_name, artist_name, album_name, album_id, artist_id, track_source_id, \
          cover_url, source_type, available_sources, format, track_number, disc_number, \
-         duration_ms, created_at, plex_rating_key, library_file_id) VALUES \
-         (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)";
+         duration_ms, created_at, plex_rating_key, library_file_id, recording_mbid) VALUES \
+         (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)";
     /// Every entry of one playlist.
     pub(super) CLEAR_ENTRIES = "DELETE FROM catalog_playlist_tracks WHERE playlist_id = ?1";
     /// One entry of one playlist.
     pub(super) REMOVE_ENTRY = "DELETE FROM catalog_playlist_tracks WHERE playlist_id = ?1 AND id = ?2";
     /// Whether playlist `?1` holds entry `?2`.
     pub(super) ENTRY_EXISTS = "SELECT 1 FROM catalog_playlist_tracks WHERE playlist_id = ?1 AND id = ?2";
-    /// An entry's preferred source.
-    pub(super) SET_SOURCE_TYPE = "UPDATE catalog_playlist_tracks SET source_type = ?1 \
+    /// An entry's preferred source. A recording belongs to the source that
+    /// gave it, so another source starts with none.
+    pub(super) SET_SOURCE_TYPE = "UPDATE catalog_playlist_tracks SET source_type = ?1, \
+         recording_mbid = CASE WHEN source_type = ?1 THEN recording_mbid END \
          WHERE id = ?2 AND playlist_id = ?3";
     /// An entry's known sources, as a JSON list.
     pub(super) SET_AVAILABLE_SOURCES = "UPDATE catalog_playlist_tracks SET available_sources = ?1 \

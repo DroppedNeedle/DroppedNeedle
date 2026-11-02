@@ -50,6 +50,9 @@ pub struct YouTubeTrackLink {
     pub embed_url: String,
     /// When the link was saved (ISO-8601, UTC).
     pub created_at: String,
+    /// The MusicBrainz recording the link stands for, when known. It names
+    /// the track, not what the video holds.
+    pub recording_mbid: Option<String>,
 }
 
 /// Today's YouTube search budget.

@@ -1217,7 +1217,9 @@ fn track_view(item: &Item) -> TrackView {
         year: item
             .production_year
             .and_then(|year| i32::try_from(year).ok()),
-        recording_mbid: item.provider("MusicBrainzTrack"),
+        // `MusicBrainzTrack` is the release track id, not the recording. Not
+        // yet checked against a running Jellyfin.
+        recording_mbid: item.provider("MusicBrainzRecording"),
         part_key: None,
     }
 }

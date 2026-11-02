@@ -49,6 +49,9 @@ pub struct PlaylistTrack {
     pub plex_rating_key: Option<String>,
     /// Local library file id, when the track resolved locally.
     pub library_file_id: Option<String>,
+    /// The MusicBrainz recording `source_type` gave for this entry, when
+    /// known.
+    pub recording_mbid: Option<String>,
 }
 
 /// Playlist summary for lists and visibility answers.
@@ -210,6 +213,9 @@ pub struct TrackInput {
     pub duration: Option<f64>,
     /// Plex rating key, when the track came from Plex.
     pub plex_rating_key: Option<String>,
+    /// The MusicBrainz recording `source_type` gave for this entry. Anything
+    /// that is not an MBID is left out.
+    pub recording_mbid: Option<String>,
 }
 
 /// Add-tracks body.

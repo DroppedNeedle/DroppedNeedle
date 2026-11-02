@@ -54095,6 +54095,13 @@
             "description": "Zero-based position in the playlist.",
             "minimum": 0
           },
+          "recording_mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The MusicBrainz recording `source_type` gave for this entry, when\nknown."
+          },
           "source_type": {
             "type": "string",
             "description": "Preferred source type, empty when unresolved."
@@ -63463,6 +63470,13 @@
             ],
             "description": "Plex rating key, when the track came from Plex."
           },
+          "recording_mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The MusicBrainz recording `source_type` gave for this entry. Anything\nthat is not an MBID is left out."
+          },
           "source_type": {
             "type": "string",
             "description": "Preferred source type."
@@ -65640,6 +65654,13 @@
           "embed_url": {
             "type": "string",
             "description": "Embed URL for the video."
+          },
+          "recording_mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The MusicBrainz recording the link stands for, when known. It names\nthe track, not what the video holds."
           },
           "track_name": {
             "type": "string",

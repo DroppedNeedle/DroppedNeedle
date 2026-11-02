@@ -7,6 +7,7 @@ use super::CollectionsState;
 use super::models::PlaylistListItem;
 use super::service::CollectionsService;
 use super::store::playlists::NewEntry;
+use crate::metadata::clean_recording;
 use droppedneedle_media::remotes::adapter::{BoxFuture, ImportReceipt, ImportSink};
 use droppedneedle_media::remotes::models::{SourceName, TrackView};
 
@@ -69,6 +70,7 @@ impl ImportSink for PlaylistImportSink {
                         duration: track.duration_secs.map(|secs| secs as f64),
                         plex_rating_key: rating_key,
                         library_file_id: None,
+                        recording_mbid: track.recording_mbid.as_deref().and_then(clean_recording),
                     })
                 })
                 .collect::<Vec<_>>();

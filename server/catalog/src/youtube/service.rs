@@ -9,7 +9,10 @@ use std::sync::Arc;
 use crate::collections::db::StoreError;
 use crate::discover::ports::ProviderFailure;
 use crate::discover::youtube::LiveYouTube;
+use crate::metadata::models::AlbumTrack;
+use crate::metadata::{Catalog, clean_recording};
 use droppedneedle_kernel::clock::Clock;
+use droppedneedle_kernel::db::fold::fold_text;
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_providers::ProviderError;
 use droppedneedle_providers::youtube::quota_date;
@@ -77,22 +80,26 @@ impl From<ProviderFailure> for LinkError {
 pub struct YouTubeLinks {
     store: LinkStore,
     search: Arc<LiveYouTube>,
+    catalog: Catalog,
     ids: Arc<dyn IdGenerator>,
     clock: Arc<dyn Clock>,
 }
 
 impl YouTubeLinks {
     /// Service over `store`, searching through `search`, the server's one
-    /// YouTube client, and dating the budget by `clock`.
+    /// YouTube client, reading new links' recordings from `catalog`'s album
+    /// tracklists, and dating the budget by `clock`.
     pub fn new(
         store: LinkStore,
         search: Arc<LiveYouTube>,
+        catalog: Catalog,
         ids: Arc<dyn IdGenerator>,
         clock: Arc<dyn Clock>,
     ) -> Self {
         Self {
             store,
             search,
+            catalog,
             ids,
             clock,
         }
@@ -235,6 +242,7 @@ impl YouTubeLinks {
                     request.track_name, request.artist_name
                 ))
             })?;
+        let tracklist = self.tracklist(&album_id).await;
         let album = AlbumRef {
             album_id,
             album_name: request.album_name,
@@ -242,6 +250,12 @@ impl YouTubeLinks {
             cover_url: request.cover_url,
         };
         let track = NewTrackLink {
+            recording_mbid: recording_at(
+                &tracklist,
+                request.disc_number,
+                request.track_number,
+                &request.track_name,
+            ),
             disc_number: request.disc_number,
             track_number: request.track_number,
             track_name: request.track_name,
@@ -295,6 +309,7 @@ impl YouTubeLinks {
                 .await
             {
                 Ok(Some(video_id)) => found.push(NewTrackLink {
+                    recording_mbid: None,
                     disc_number: track.disc_number,
                     track_number: track.track_number,
                     track_name: track.track_name,
@@ -318,6 +333,17 @@ impl YouTubeLinks {
         if kept.is_empty() && found.is_empty() {
             return Ok((Vec::new(), failed));
         }
+        if !found.is_empty() {
+            let tracklist = self.tracklist(&album_id).await;
+            for track in &mut found {
+                track.recording_mbid = recording_at(
+                    &tracklist,
+                    track.disc_number,
+                    track.track_number,
+                    &track.track_name,
+                );
+            }
+        }
         let album = AlbumRef {
             album_id,
             album_name: request.album_name,
@@ -327,6 +353,22 @@ impl YouTubeLinks {
         let stored = self.store.save_track_links(album, found).await?;
         kept.extend(stored);
         Ok((kept, failed))
+    }
+
+    /// MusicBrainz's tracklist of the album, to read new links' recordings
+    /// from. A failure reads as empty and the link is saved without one. So
+    /// does the library's copy, which is the answer while MusicBrainz is down:
+    /// its album may be a guess, and reading the link applies the rule for
+    /// what the library holds.
+    async fn tracklist(&self, album_id: &str) -> Vec<AlbumTrack> {
+        match self.catalog.album_tracks(album_id).await {
+            Ok(album) if album.selected_release_mbid.is_some() => album.tracks,
+            Ok(_) => Vec::new(),
+            Err(error) => {
+                tracing::info!(album_id, %error, "no tracklist for a new youtube link");
+                Vec::new()
+            }
+        }
     }
 
     /// A made-up album id for a manual link with no album behind it.
@@ -340,6 +382,23 @@ impl YouTubeLinks {
             .collect();
         format!("manual-{short}")
     }
+}
+
+/// The recording at a disc and position, when that row has the same folded
+/// title and a well-formed id. The server reads it and a client never says
+/// it: links are shared by everyone.
+fn recording_at(tracks: &[AlbumTrack], disc: i64, position: i64, title: &str) -> Option<String> {
+    let title = fold_text(title);
+    tracks
+        .iter()
+        .find(|track| {
+            i64::from(track.disc_number) == disc
+                && i64::from(track.position) == position
+                && fold_text(&track.title) == title
+        })?
+        .recording_id
+        .as_deref()
+        .and_then(clean_recording)
 }
 
 fn failure(track: &YouTubeTrackInput, reason: &str) -> YouTubeTrackLinkFailure {
@@ -421,7 +480,32 @@ fn is_video_id(text: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::extract_video_id;
+    use super::{AlbumTrack, extract_video_id, recording_at};
+
+    #[test]
+    fn a_new_link_takes_a_recording_only_from_its_own_well_formed_row() {
+        const ID: &str = "98255a8c-017a-4bc7-8dd6-1fa36124572b";
+        let tracks = |id: &str| {
+            vec![AlbumTrack {
+                position: 3,
+                title: "Beyonc\u{e9}".to_owned(),
+                disc_number: 2,
+                length: None,
+                recording_id: Some(id.to_owned()),
+                release_track_id: None,
+                media_format: None,
+            }]
+        };
+        let upper = ID.to_uppercase();
+        assert_eq!(
+            recording_at(&tracks(&upper), 2, 3, " beyonce ").as_deref(),
+            Some(ID)
+        );
+        assert_eq!(recording_at(&tracks(ID), 1, 3, "Beyonce"), None);
+        assert_eq!(recording_at(&tracks(ID), 2, 4, "Beyonce"), None);
+        assert_eq!(recording_at(&tracks(ID), 2, 3, "Other"), None);
+        assert_eq!(recording_at(&tracks("not-an-id"), 2, 3, "Beyonce"), None);
+    }
 
     #[test]
     fn video_ids_come_out_of_every_link_shape() {

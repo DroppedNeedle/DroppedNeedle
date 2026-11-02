@@ -257,7 +257,8 @@ describe('playlistTrackToQueueItem', () => {
 		duration: 240,
 		created_at: '2026-01-01T00:00:00Z',
 		plex_rating_key: null,
-		library_file_id: null
+		library_file_id: null,
+		recording_mbid: null
 	};
 
 	it('maps local track to QueueItem with its stream address', () => {

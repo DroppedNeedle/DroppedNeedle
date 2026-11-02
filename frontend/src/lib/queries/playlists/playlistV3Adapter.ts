@@ -62,7 +62,8 @@ export function toPageTrack(track: PlaylistTrackV3): PlaylistTrack {
 		duration: track.duration ?? null,
 		created_at: epochSecToIso(track.created_at),
 		plex_rating_key: track.plex_rating_key ?? null,
-		library_file_id: track.library_file_id ?? null
+		library_file_id: track.library_file_id ?? null,
+		recording_mbid: track.recording_mbid ?? null
 	};
 }
 
@@ -130,7 +131,8 @@ export function trackDataToV3Input(data: TrackData): TrackInputV3 {
 		track_number: data.track_number ?? null,
 		disc_number: data.disc_number ?? null,
 		duration: data.duration ?? null,
-		plex_rating_key: data.plex_rating_key ?? null
+		plex_rating_key: data.plex_rating_key ?? null,
+		recording_mbid: data.recording_mbid ?? null
 	};
 }
 

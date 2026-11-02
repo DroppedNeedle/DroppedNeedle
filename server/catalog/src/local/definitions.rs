@@ -18,9 +18,11 @@
 //!   it is. An artist is owned when it is live and credited on an owned
 //!   album. Being identified (`linked`) is not ownership.
 //! - **Recording id.** A track's recording id in an answer is the accepted
-//!   identity's, else the one in the file's tags. It is shown and sent
-//!   only: never stored as identity, never used to match, file or own
-//!   anything.
+//!   identity's, else the one in the file's tags. It is shown and sent,
+//!   never stored as identity and never used to match or own anything. The
+//!   web player sends it with a play through another server or a YouTube
+//!   link, and such a play is filed by the id it carries
+//!   (`library/src/repairs/plays.rs`).
 //! - Every join to an `*_external_identities` table names the provider.
 //!
 //! Each definition is a macro that expands to a string literal over the

@@ -52,7 +52,8 @@ export function queueItemToTrackData(item: QueueItem): TrackData {
 		track_number: item.trackNumber ?? null,
 		disc_number: item.discNumber ?? null,
 		duration: item.duration ?? null,
-		plex_rating_key: item.plexRatingKey ?? null
+		plex_rating_key: item.plexRatingKey ?? null,
+		recording_mbid: item.recordingIds?.[item.sourceType] ?? null
 	};
 }
 

@@ -26,6 +26,7 @@ export type YouTubeTrackLink = {
 	embed_url: string;
 	created_at: string;
 	album_name?: string;
+	recording_mbid?: string | null;
 };
 
 export type TrackView = components['schemas']['TrackView'];

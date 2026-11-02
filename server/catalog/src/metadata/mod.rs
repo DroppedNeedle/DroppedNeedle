@@ -316,6 +316,12 @@ pub fn is_mbid(value: &str) -> bool {
     droppedneedle_providers::musicbrainz::is_valid_mbid(value)
 }
 
+/// A recording id as it is kept and sent: lowercase, and `None` for anything
+/// that is not an MBID.
+pub fn clean_recording(value: &str) -> Option<String> {
+    is_mbid(value).then(|| value.trim().to_ascii_lowercase())
+}
+
 // Cache lifetimes are fixed in code, not settings: one policy per kind of
 // answer for every install. The provider cache holds the shared ones;
 // these are the catalog's own.

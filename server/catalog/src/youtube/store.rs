@@ -12,6 +12,7 @@
 use rusqlite::{OptionalExtension as _, Transaction, params};
 
 use crate::collections::db::{CollectionsDb, StoreError};
+use crate::metadata::clean_recording;
 use droppedneedle_kernel::db::DbError;
 
 use super::models::{YouTubeLink, YouTubeTrackLink};
@@ -46,6 +47,8 @@ pub struct NewTrackLink {
     pub track_name: String,
     /// Video id.
     pub video_id: String,
+    /// The recording the track stands for, lowercase, when known.
+    pub recording_mbid: Option<String>,
 }
 
 /// Changes to a saved album link. `None` keeps the saved value.
@@ -222,6 +225,7 @@ impl LinkStore {
                             track.video_id,
                             album.artist_name,
                             embed_url(&track.video_id),
+                            track.recording_mbid,
                         ],
                     )?;
                 }
@@ -276,6 +280,7 @@ fn track_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<YouTubeTrackLink>
         artist_name: row.artist_name,
         embed_url: row.embed_url,
         created_at: row.created_at,
+        recording_mbid: row.recording_mbid.as_deref().and_then(clean_recording),
     })
 }
 

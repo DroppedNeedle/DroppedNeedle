@@ -113,6 +113,9 @@ pub struct NewEntry {
     pub plex_rating_key: Option<String>,
     /// Local track id, when the entry is a library file.
     pub library_file_id: Option<String>,
+    /// The recording `source_type` gave for this entry, lowercase, when
+    /// known.
+    pub recording_mbid: Option<String>,
 }
 
 /// Uploaded cover bytes.
@@ -235,6 +238,7 @@ fn track_from_row(row: &Row<'_>) -> rusqlite::Result<PlaylistTrack> {
         created_at: epoch(row.get(15)?),
         plex_rating_key: row.get(16)?,
         library_file_id: row.get(17)?,
+        recording_mbid: row.get(18)?,
     })
 }
 
@@ -404,6 +408,7 @@ fn insert_entries(
             now,
             entry.plex_rating_key,
             entry.library_file_id,
+            entry.recording_mbid,
         ])?;
         added.push(id);
     }

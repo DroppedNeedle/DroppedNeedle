@@ -18209,6 +18209,11 @@ export interface components {
             plex_rating_key?: string | null;
             /** @description Zero-based position in the playlist. */
             position: number;
+            /**
+             * @description The MusicBrainz recording `source_type` gave for this entry, when
+             *     known.
+             */
+            recording_mbid?: string | null;
             /** @description Preferred source type, empty when unresolved. */
             source_type: string;
             /** @description Track title. */
@@ -22242,6 +22247,11 @@ export interface components {
             format?: string | null;
             /** @description Plex rating key, when the track came from Plex. */
             plex_rating_key?: string | null;
+            /**
+             * @description The MusicBrainz recording `source_type` gave for this entry. Anything
+             *     that is not an MBID is left out.
+             */
+            recording_mbid?: string | null;
             /** @description Preferred source type. */
             source_type?: string;
             /** @description Track title. */
@@ -23220,6 +23230,11 @@ export interface components {
             disc_number: number;
             /** @description Embed URL for the video. */
             embed_url: string;
+            /**
+             * @description The MusicBrainz recording the link stands for, when known. It names
+             *     the track, not what the video holds.
+             */
+            recording_mbid?: string | null;
             /** @description Track title. */
             track_name: string;
             /**

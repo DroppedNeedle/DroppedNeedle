@@ -9287,9 +9287,10 @@ PRAGMA foreign_keys=ON;
         assert_eq!(records(&ours).await.len(), 1);
         assert_eq!(records(&ours).await, records(&by_sqlx).await);
 
+        // 0123 on alter tables that a no-transaction file renamed.
         let wrapped = set(MIGRATOR
             .iter()
-            .filter(|migration| !migration.no_tx)
+            .filter(|migration| !migration.no_tx && migration.version < 123)
             .cloned()
             .collect());
         let by_sqlx = super::scratch_pool().await;
@@ -10433,6 +10434,42 @@ async fn the_primary_source_section_goes_on_upgrade() {
             4
         )]
     );
+}
+
+/// Migration 0123 adds the recording id to links and playlist entries: rows
+/// from before it keep everything and start with none.
+#[tokio::test]
+async fn links_and_entries_keep_their_rows_with_no_recording() {
+    let pool = scratch_pool().await;
+    run_migrations(&pool, &migrator_through(122)).await.unwrap();
+    sqlx::raw_sql(
+        "INSERT INTO catalog_youtube_track_links (album_id, track_number, disc_number, \
+         album_name, track_name, video_id, artist_name, embed_url, created_at) \
+         VALUES ('rg', 1, 1, 'Album', 'Song', 'video', 'Artist', 'embed', 1); \
+         INSERT INTO catalog_playlists (id, name, created_at, updated_at) \
+         VALUES ('p', 'Mix', 1, 1); \
+         INSERT INTO catalog_playlist_tracks (id, playlist_id, position, track_name, artist_name, \
+         album_name, source_type, created_at) \
+         VALUES ('e', 'p', 0, 'Song', 'Artist', 'Album', 'jellyfin', 1);",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    apply_migrations(&pool).await.unwrap();
+    let link = sqlx::query_as::<_, (String, Option<String>)>(
+        "SELECT video_id, recording_mbid FROM catalog_youtube_track_links",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(link, ("video".to_owned(), None));
+    let entry = sqlx::query_as::<_, (String, Option<String>)>(
+        "SELECT source_type, recording_mbid FROM catalog_playlist_tracks",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(entry, ("jellyfin".to_owned(), None));
 }
 
 /// Migration 0122 leaves every request watchable: a row from before it has

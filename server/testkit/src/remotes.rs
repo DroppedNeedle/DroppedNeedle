@@ -356,6 +356,11 @@ fn jf_artists_list() -> Vec<Value> {
     ]
 }
 
+/// The recording id mock Jellyfin gives `jf-t-1`.
+pub const JELLYFIN_RECORDING: &str = "98255a8c-017a-4bc7-8dd6-1fa36124572b";
+/// The release track id mock Jellyfin gives `jf-t-1`.
+const JELLYFIN_RELEASE_TRACK: &str = "0a8e8d55-4b83-4f8a-9732-fbb5ded9f344";
+
 fn jf_track(id: &str, title: &str, album: &str, album_id: &str, artist: &str, index: i64) -> Value {
     json!({
         "Id": id, "Name": title, "Type": "Audio",
@@ -379,16 +384,26 @@ fn with_album_art(mut track: Value) -> Value {
     track
 }
 
+/// A track tagged with both MusicBrainz ids. These key names are not
+/// verified against a running Jellyfin.
+fn with_musicbrainz_ids(mut track: Value) -> Value {
+    track["ProviderIds"] = json!({
+        "MusicBrainzTrack": JELLYFIN_RELEASE_TRACK,
+        "MusicBrainzRecording": JELLYFIN_RECORDING,
+    });
+    track
+}
+
 fn jf_tracks() -> Vec<Value> {
     vec![
-        jf_track(
+        with_musicbrainz_ids(jf_track(
             "jf-t-1",
             "Meridian Dawn",
             ALBUM_ONE,
             "jf-al-1",
             ARTIST_ONE,
             1,
-        ),
+        )),
         with_album_art(jf_track(
             "jf-t-2",
             "Meridian Dusk",

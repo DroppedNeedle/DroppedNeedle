@@ -1403,6 +1403,25 @@ async fn navidrome_track_rows_show_the_disc_cover() {
 /// drawn from its members. A track row points at its album's cover, a
 /// playlist cover is the playlist's own, and an item with no image is
 /// absent (404), never a server failure.
+/// A Jellyfin track's recording is its `MusicBrainzRecording`, never its
+/// `MusicBrainzTrack`, which is the release track.
+#[tokio::test]
+async fn jellyfin_tracks_carry_the_recording_not_the_release_track() {
+    let (app, _rig) = connected_testbed().await;
+    let (status, body) = get_json(app, "/api/v3/remotes/jellyfin/albums/jf-al-1/tracks").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let dawn = body["items"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|track| track["id"] == "jf-t-1")
+        .unwrap_or_else(|| panic!("no jf-t-1 in {body}"));
+    assert_eq!(
+        dawn["recording_mbid"],
+        droppedneedle_testkit::remotes::JELLYFIN_RECORDING
+    );
+}
+
 #[tokio::test]
 async fn jellyfin_art_follows_the_servers_image_tags() {
     let (app, _rig) = connected_testbed().await;

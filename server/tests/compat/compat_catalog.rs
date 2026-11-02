@@ -738,6 +738,7 @@ async fn native_playlists_export_to_m3u_with_their_files() {
                     disc_number: None,
                     duration: Some(305.6),
                     plex_rating_key: None,
+                    recording_mbid: None,
                 }],
                 position: None,
             },

@@ -10,6 +10,10 @@ import {
 	makeNowPlayingSubmission,
 	makeScrobbleSubmission
 } from './scrobble.svelte';
+import { buildNowPlayingMetadata } from './playerSourceResolver';
+import { buildQueueItemFromYouTube, playlistTrackToQueueItem } from '$lib/player/queueHelpers';
+import type { QueueItem, YouTubeTrackLink } from '$lib/player/types';
+import type { PlaylistTrack } from '$lib/api/playlists';
 import {
 	makeTrackKey,
 	shouldAccumulate,
@@ -65,6 +69,79 @@ describe('native scrobble payloads', () => {
 			});
 		}
 	);
+});
+
+describe('a queue item reaches the scrobble', () => {
+	const RECORDING = '98255a8c-017a-4bc7-8dd6-1fa36124572b';
+
+	function submitted(item: QueueItem) {
+		const playing = buildNowPlayingMetadata(item);
+		return makeScrobbleSubmission(
+			{
+				artistName: item.artistName,
+				trackName: item.trackName,
+				albumName: item.albumName,
+				sourceType: playing.sourceType,
+				trackSourceId: playing.trackSourceId,
+				recordingMbid: playing.recordingMbid
+			},
+			180_000,
+			1234
+		);
+	}
+
+	const link: YouTubeTrackLink = {
+		album_id: 'album-1',
+		album_name: 'Album',
+		artist_name: 'Artist',
+		track_name: 'Song',
+		track_number: 1,
+		disc_number: 1,
+		video_id: 'video-1',
+		embed_url: 'https://www.youtube.com/embed/video-1',
+		created_at: '2026-01-01T00:00:00Z'
+	};
+	const meta = { albumId: 'album-1', albumName: 'Album', artistName: 'Artist', coverUrl: null };
+
+	it('a YouTube link with a recording sends it', () => {
+		const item = buildQueueItemFromYouTube({ ...link, recording_mbid: RECORDING }, meta);
+		expect(submitted(item).mbid).toBe(RECORDING);
+	});
+
+	it('a YouTube link without one sends none', () => {
+		const item = buildQueueItemFromYouTube({ ...link, recording_mbid: null }, meta);
+		expect(submitted(item)).not.toHaveProperty('mbid');
+	});
+
+	it('a playlist entry playing from the library names its track and sends no recording', () => {
+		const entry: PlaylistTrack = {
+			id: 'entry-1',
+			position: 0,
+			track_name: 'Song',
+			artist_name: 'Artist',
+			album_name: 'Album',
+			album_id: 'album-1',
+			artist_id: null,
+			track_source_id: 'jf-item-1',
+			cover_url: null,
+			source_type: 'jellyfin',
+			available_sources: ['jellyfin', 'local'],
+			format: null,
+			track_number: 1,
+			disc_number: 1,
+			duration: 180,
+			created_at: '2026-01-01T00:00:00Z',
+			plex_rating_key: null,
+			library_file_id: 'track-1',
+			recording_mbid: RECORDING
+		};
+		const local = playlistTrackToQueueItem(entry);
+		expect(local && submitted(local)).toMatchObject({ source: 'local', track_id: 'track-1' });
+		expect(local && submitted(local)).not.toHaveProperty('mbid');
+
+		const remote = playlistTrackToQueueItem({ ...entry, library_file_id: null });
+		expect(remote && submitted(remote)).toMatchObject({ source: 'jellyfin', mbid: RECORDING });
+	});
 });
 
 describe('scrobbleManager settings', () => {

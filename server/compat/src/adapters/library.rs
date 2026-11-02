@@ -759,6 +759,7 @@ impl CompatLibrary {
                 duration: track.duration_seconds,
                 plex_rating_key: None,
                 library_file_id: Some(track.id),
+                recording_mbid: None,
             })
             .collect())
     }

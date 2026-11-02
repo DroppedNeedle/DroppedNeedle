@@ -25,6 +25,7 @@ pub use crate::collections::store::playlists::SavedPlaylist;
 use crate::collections::store::playlists::{
     CoverImage, EntryNames, Listed, NewEntry, PlaylistRow, Written,
 };
+use crate::metadata::clean_recording;
 
 /// Longest accepted playlist name.
 const MAX_NAME_LEN: usize = 200;
@@ -186,6 +187,7 @@ fn to_entry(input: &TrackInput) -> Result<NewEntry, CollectionsError> {
         duration: input.duration,
         plex_rating_key: input.plex_rating_key.clone(),
         library_file_id,
+        recording_mbid: input.recording_mbid.as_deref().and_then(clean_recording),
     })
 }
 
