@@ -8,13 +8,19 @@
 //! token is sent. ListenBrainz answers 204 while it is still computing a
 //! user's stats; that reads as an empty list, like v2.
 //!
-//! Rows need their names: an artist row without `artist_name`, or a
-//! release group without its name, is skipped rather than shown as
-//! "Unknown" (v2 filled placeholders in).
+//! Rows need their names and counts: an answer without one of those fields
+//! fails decoding, and a row where one is null or blank is skipped rather
+//! than shown as "Unknown" (v2 filled placeholders in). The wire shapes are
+//! in [`models`](super::models).
 
-use serde::Deserialize;
+use serde::de::DeserializeOwned;
 
-use super::{ListenBrainzClient, ListenBrainzCredentials};
+use super::models::{
+    ArtistStatRow, ArtistStatsAnswer, FeedbackAnswer, FeedbackMetadata, FeedbackRow,
+    FreshReleaseRow, FreshReleasesAnswer, GenreActivityAnswer, RecordingStatRow,
+    RecordingStatsAnswer, ReleaseGroupStatRow, ReleaseGroupStatsAnswer, SimilarUsersAnswer,
+};
+use super::{ListenBrainzClient, ListenBrainzCredentials, non_blank};
 use crate::{ProviderError, RequestPriority};
 
 /// Ranges the stats endpoints accept (the
@@ -24,63 +30,54 @@ pub const STATS_RANGES: [&str; 4] = ["this_week", "this_month", "this_year", "al
 pub const MAX_STATS_COUNT: u32 = 100;
 
 /// One ranked artist.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ArtistStat {
-    /// Artist name: required.
+    /// Artist name.
     pub artist_name: String,
     /// Listens in the range.
-    #[serde(default)]
     pub listen_count: i64,
     /// Artist MBIDs, when ListenBrainz mapped them.
-    #[serde(default)]
     pub artist_mbids: Vec<String>,
 }
 
 /// One ranked release group.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReleaseGroupStat {
-    /// Release group title: required.
+    /// Release group title.
     pub release_group_name: String,
-    /// Credited artist: required.
+    /// Credited artist.
     pub artist_name: String,
     /// Listens in the range.
-    #[serde(default)]
     pub listen_count: i64,
     /// Release group MBID, when mapped.
-    #[serde(default)]
     pub release_group_mbid: Option<String>,
     /// Artist MBIDs, when mapped.
-    #[serde(default)]
     pub artist_mbids: Vec<String>,
 }
 
 /// One ranked recording.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecordingStat {
-    /// Track title: required.
+    /// Track title.
     pub track_name: String,
-    /// Credited artist: required.
+    /// Credited artist.
     pub artist_name: String,
     /// Listens in the range.
-    #[serde(default)]
     pub listen_count: i64,
     /// Recording MBID, when mapped.
-    #[serde(default)]
     pub recording_mbid: Option<String>,
 }
 
 /// One fresh release from a user's fresh-releases feed.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FreshRelease {
-    /// Release group MBID: required identity.
+    /// Release group MBID.
     pub release_group_mbid: String,
-    /// Release title: required.
+    /// Release title.
     pub release_name: String,
     /// Credited artist, when sent.
-    #[serde(default)]
     pub artist_credit_name: Option<String>,
     /// Artist MBIDs, when mapped.
-    #[serde(default)]
     pub artist_mbids: Vec<String>,
 }
 
@@ -123,15 +120,16 @@ impl ListenBrainzClient {
         offset: u32,
         priority: RequestPriority,
     ) -> Result<Vec<ArtistStat>, ProviderError> {
-        self.stats_rows(
-            &["1", "stats", "sitewide", "artists"],
-            range,
-            count,
-            offset,
-            "artists",
-            priority,
-        )
-        .await
+        Ok(self
+            .stats_answer::<ArtistStatsAnswer>(
+                &["1", "stats", "sitewide", "artists"],
+                range,
+                count,
+                offset,
+                priority,
+            )
+            .await?
+            .map_or_else(Vec::new, artist_stats))
     }
 
     /// Sitewide top release groups (`/1/stats/sitewide/release-groups`).
@@ -146,15 +144,16 @@ impl ListenBrainzClient {
         offset: u32,
         priority: RequestPriority,
     ) -> Result<Vec<ReleaseGroupStat>, ProviderError> {
-        self.stats_rows(
-            &["1", "stats", "sitewide", "release-groups"],
-            range,
-            count,
-            offset,
-            "release_groups",
-            priority,
-        )
-        .await
+        Ok(self
+            .stats_answer::<ReleaseGroupStatsAnswer>(
+                &["1", "stats", "sitewide", "release-groups"],
+                range,
+                count,
+                offset,
+                priority,
+            )
+            .await?
+            .map_or_else(Vec::new, release_group_stats))
     }
 
     /// A user's top artists (`/1/stats/user/{user}/artists`).
@@ -173,15 +172,16 @@ impl ListenBrainzClient {
         if username.is_empty() {
             return Ok(Vec::new());
         }
-        self.stats_rows(
-            &["1", "stats", "user", username, "artists"],
-            range,
-            count,
-            offset,
-            "artists",
-            priority,
-        )
-        .await
+        Ok(self
+            .stats_answer::<ArtistStatsAnswer>(
+                &["1", "stats", "user", username, "artists"],
+                range,
+                count,
+                offset,
+                priority,
+            )
+            .await?
+            .map_or_else(Vec::new, artist_stats))
     }
 
     /// A user's top release groups (`/1/stats/user/{user}/release-groups`).
@@ -200,15 +200,16 @@ impl ListenBrainzClient {
         if username.is_empty() {
             return Ok(Vec::new());
         }
-        self.stats_rows(
-            &["1", "stats", "user", username, "release-groups"],
-            range,
-            count,
-            offset,
-            "release_groups",
-            priority,
-        )
-        .await
+        Ok(self
+            .stats_answer::<ReleaseGroupStatsAnswer>(
+                &["1", "stats", "user", username, "release-groups"],
+                range,
+                count,
+                offset,
+                priority,
+            )
+            .await?
+            .map_or_else(Vec::new, release_group_stats))
     }
 
     /// A user's top recordings (`/1/stats/user/{user}/recordings`).
@@ -227,15 +228,16 @@ impl ListenBrainzClient {
         if username.is_empty() {
             return Ok(Vec::new());
         }
-        self.stats_rows(
-            &["1", "stats", "user", username, "recordings"],
-            range,
-            count,
-            offset,
-            "recordings",
-            priority,
-        )
-        .await
+        Ok(self
+            .stats_answer::<RecordingStatsAnswer>(
+                &["1", "stats", "user", username, "recordings"],
+                range,
+                count,
+                offset,
+                priority,
+            )
+            .await?
+            .map_or_else(Vec::new, recording_stats))
     }
 
     /// Users whose listening is most like `username`'s, most similar first
@@ -252,21 +254,20 @@ impl ListenBrainzClient {
         if username.is_empty() {
             return Ok(Vec::new());
         }
-        let Some(payload) = self
-            .public_read(&["1", "user", username, "similar-users"], &[], priority)
+        let Some(answer) = self
+            .public_read::<SimilarUsersAnswer>(
+                &["1", "user", username, "similar-users"],
+                &[],
+                priority,
+            )
             .await?
         else {
             return Ok(Vec::new());
         };
-        Ok(payload
-            .get("payload")
-            .and_then(serde_json::Value::as_array)
+        Ok(answer
+            .payload
             .into_iter()
-            .flatten()
-            .filter_map(|row| row.get("user_name")?.as_str())
-            .map(str::trim)
-            .filter(|name| !name.is_empty())
-            .map(str::to_owned)
+            .filter_map(|row| row.user_name)
             .collect())
     }
 
@@ -285,8 +286,8 @@ impl ListenBrainzClient {
         if username.is_empty() {
             return Ok(Vec::new());
         }
-        let Some(payload) = self
-            .public_read(
+        let Some(answer) = self
+            .public_read::<GenreActivityAnswer>(
                 &["1", "stats", "user", username, "genre-activity"],
                 &[],
                 priority,
@@ -296,28 +297,15 @@ impl ListenBrainzClient {
             return Ok(Vec::new());
         };
         let mut totals: Vec<GenreActivity> = Vec::new();
-        let rows = payload
-            .get("result")
-            .and_then(serde_json::Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        for row in rows {
-            let Some(genre) = row
-                .get("genre")
-                .and_then(serde_json::Value::as_str)
-                .map(str::trim)
-                .filter(|genre| !genre.is_empty())
-            else {
+        for row in answer.result {
+            let Some(genre) = row.genre else {
                 continue;
             };
-            let count = row
-                .get("listen_count")
-                .and_then(serde_json::Value::as_i64)
-                .unwrap_or(0);
+            let count = row.listen_count.unwrap_or(0);
             match totals.iter_mut().find(|entry| entry.genre == genre) {
                 Some(entry) => entry.listen_count += count,
                 None => totals.push(GenreActivity {
-                    genre: genre.to_owned(),
+                    genre,
                     listen_count: count,
                 }),
             }
@@ -343,23 +331,14 @@ impl ListenBrainzClient {
             return Ok(0);
         }
         let count_text = count.min(MAX_STATS_COUNT).to_string();
-        let Some(payload) = self
-            .public_read(
+        let answer = self
+            .public_read::<FeedbackAnswer>(
                 &["1", "feedback", "user", username, "get-feedback"],
                 &[("score", "1"), ("count", &count_text)],
                 priority,
             )
-            .await?
-        else {
-            return Ok(0);
-        };
-        let body = payload.get("payload").unwrap_or(&payload);
-        let rows = body
-            .get("feedback")
-            .or_else(|| body.get("recordings"))
-            .and_then(serde_json::Value::as_array)
-            .or_else(|| body.as_array());
-        Ok(rows.map_or(0, |rows| rows.iter().filter(|row| row.is_object()).count()))
+            .await?;
+        Ok(answer.map_or(0, |answer| answer.rows().len()))
     }
 
     /// Releases out recently by artists the user listens to
@@ -378,8 +357,8 @@ impl ListenBrainzClient {
         if username.is_empty() {
             return Ok(Vec::new());
         }
-        let Some(payload) = self
-            .public_read(
+        let Some(answer) = self
+            .public_read::<FreshReleasesAnswer>(
                 &["1", "user", username, "fresh_releases"],
                 &[("past", "true"), ("future", "false")],
                 priority,
@@ -388,15 +367,11 @@ impl ListenBrainzClient {
         else {
             return Ok(Vec::new());
         };
-        let rows = payload
-            .get("payload")
-            .and_then(|payload| payload.get("releases"))
-            .and_then(serde_json::Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        Ok(rows
+        Ok(answer
+            .payload
+            .releases
             .into_iter()
-            .filter_map(|row| serde_json::from_value(row).ok())
+            .filter_map(fresh_release)
             .collect())
     }
 
@@ -431,7 +406,7 @@ impl ListenBrainzClient {
         priority: RequestPriority,
     ) -> Result<Vec<LovedRecording>, ProviderError> {
         let rows = self.loved_feedback(username, count, priority).await?;
-        Ok(rows.iter().filter_map(loved_recording).collect())
+        Ok(rows.into_iter().filter_map(loved_recording).collect())
     }
 
     /// One page of the user's loved-recording feedback rows, with metadata.
@@ -440,42 +415,30 @@ impl ListenBrainzClient {
         username: &str,
         count: u32,
         priority: RequestPriority,
-    ) -> Result<Vec<serde_json::Value>, ProviderError> {
+    ) -> Result<Vec<FeedbackRow>, ProviderError> {
         if username.is_empty() {
             return Ok(Vec::new());
         }
         let count_text = count.min(MAX_STATS_COUNT).to_string();
-        let Some(payload) = self
-            .public_read(
+        let answer = self
+            .public_read::<FeedbackAnswer>(
                 &["1", "feedback", "user", username, "get-feedback"],
                 &[("score", "1"), ("count", &count_text), ("metadata", "true")],
                 priority,
             )
-            .await?
-        else {
-            return Ok(Vec::new());
-        };
-        let body = payload.get("payload").unwrap_or(&payload);
-        Ok(body
-            .get("feedback")
-            .or_else(|| body.get("recordings"))
-            .and_then(serde_json::Value::as_array)
-            .or_else(|| body.as_array())
-            .cloned()
-            .unwrap_or_default())
+            .await?;
+        Ok(answer.map_or_else(Vec::new, FeedbackAnswer::rows))
     }
 
-    /// One stats list: `payload.{key}` decoded row by row, skipping rows
-    /// without their required names.
-    async fn stats_rows<T: serde::de::DeserializeOwned>(
+    /// One stats list. `None` is a 204: not computed yet.
+    async fn stats_answer<T: DeserializeOwned>(
         &self,
         segments: &[&str],
         range: &str,
         count: u32,
         offset: u32,
-        key: &str,
         priority: RequestPriority,
-    ) -> Result<Vec<T>, ProviderError> {
+    ) -> Result<Option<T>, ProviderError> {
         let range = if STATS_RANGES.contains(&range) {
             range
         } else {
@@ -488,111 +451,135 @@ impl ListenBrainzClient {
             ("offset", offset_text.as_str()),
             ("range", range),
         ];
-        let Some(payload) = self.public_read(segments, &params, priority).await? else {
-            return Ok(Vec::new());
-        };
-        let rows = payload
-            .get("payload")
-            .and_then(|payload| payload.get(key))
-            .and_then(serde_json::Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        Ok(rows
-            .into_iter()
-            .filter_map(|row| serde_json::from_value(row).ok())
-            .collect())
+        self.public_read(segments, &params, priority).await
     }
 
-    /// One anonymous read. `None` is an empty answer.
-    async fn public_read(
+    /// One anonymous read. `None` is a 204.
+    async fn public_read<T: DeserializeOwned>(
         &self,
         segments: &[&str],
         params: &[(&str, &str)],
         priority: RequestPriority,
-    ) -> Result<Option<serde_json::Value>, ProviderError> {
+    ) -> Result<Option<T>, ProviderError> {
         let request = self.get(segments, params, &ListenBrainzCredentials::default())?;
         self.read(request, priority).await
     }
 }
 
+/// The artists of one stats answer.
+fn artist_stats(answer: ArtistStatsAnswer) -> Vec<ArtistStat> {
+    let rows = answer.payload.artists.into_iter();
+    rows.filter_map(artist_stat).collect()
+}
+
+/// The release groups of one stats answer.
+fn release_group_stats(answer: ReleaseGroupStatsAnswer) -> Vec<ReleaseGroupStat> {
+    let rows = answer.payload.release_groups.into_iter();
+    rows.filter_map(release_group_stat).collect()
+}
+
+/// The recordings of one stats answer.
+fn recording_stats(answer: RecordingStatsAnswer) -> Vec<RecordingStat> {
+    let rows = answer.payload.recordings.into_iter();
+    rows.filter_map(recording_stat).collect()
+}
+
+/// One ranked artist. The sitewide list names one MBID; the list form is read
+/// when it has any.
+fn artist_stat(row: ArtistStatRow) -> Option<ArtistStat> {
+    Some(ArtistStat {
+        artist_name: row.artist_name?,
+        listen_count: row.listen_count?,
+        artist_mbids: match row.artist_mbids {
+            Some(mbids) if !mbids.is_empty() => mbids,
+            _ => row.artist_mbid.into_iter().collect(),
+        },
+    })
+}
+
+/// One ranked release group.
+fn release_group_stat(row: ReleaseGroupStatRow) -> Option<ReleaseGroupStat> {
+    Some(ReleaseGroupStat {
+        release_group_name: row.release_group_name?,
+        artist_name: row.artist_name?,
+        listen_count: row.listen_count?,
+        release_group_mbid: row.release_group_mbid,
+        artist_mbids: row.artist_mbids.unwrap_or_default(),
+    })
+}
+
+/// One ranked recording.
+fn recording_stat(row: RecordingStatRow) -> Option<RecordingStat> {
+    Some(RecordingStat {
+        track_name: row.track_name?,
+        artist_name: row.artist_name?,
+        listen_count: row.listen_count?,
+        recording_mbid: row.recording_mbid,
+    })
+}
+
+/// One fresh release.
+fn fresh_release(row: FreshReleaseRow) -> Option<FreshRelease> {
+    Some(FreshRelease {
+        release_group_mbid: row.release_group_mbid?,
+        release_name: row.release_name?,
+        artist_credit_name: row.artist_credit_name,
+        artist_mbids: row.artist_mbids.unwrap_or_default(),
+    })
+}
+
 /// The metadata object of one feedback row, under any of its spellings.
-fn feedback_metadata(row: &serde_json::Value) -> Option<&serde_json::Value> {
-    ["recording_metadata", "track_metadata", "metadata"]
-        .iter()
-        .find_map(|key| row.get(*key).filter(|value| value.is_object()))
+fn feedback_metadata(row: &FeedbackRow) -> Option<&FeedbackMetadata> {
+    row.recording_metadata
+        .as_ref()
+        .or(row.track_metadata.as_ref())
+        .or(row.metadata.as_ref())
 }
 
 /// One loved recording with its names. The row's own fields stand in for
 /// missing metadata, like v2.
-fn loved_recording(row: &serde_json::Value) -> Option<LovedRecording> {
-    let empty = serde_json::Value::Null;
-    let metadata = feedback_metadata(row).unwrap_or(&empty);
-    let mapping = metadata.get("mbid_mapping").unwrap_or(&empty);
-    let text = |sources: &[(&serde_json::Value, &str)]| {
-        sources.iter().find_map(|(value, key)| {
-            value
-                .get(*key)
-                .and_then(serde_json::Value::as_str)
-                .map(str::trim)
-                .filter(|text| !text.is_empty())
-                .map(str::to_owned)
-        })
-    };
-    let track_name = text(&[
-        (metadata, "track_name"),
-        (metadata, "recording_name"),
-        (row, "track_name"),
-    ])?;
+fn loved_recording(row: FeedbackRow) -> Option<LovedRecording> {
+    let artist_mbid = loved_artist_mbid(&row);
+    let metadata = feedback_metadata(&row).cloned().unwrap_or_default();
+    let mapping = metadata.mbid_mapping.unwrap_or_default();
     Some(LovedRecording {
-        track_name,
-        artist_name: text(&[
-            (metadata, "artist_name"),
-            (metadata, "artist"),
-            (row, "artist_name"),
-        ])
-        .unwrap_or_else(|| "Unknown".to_owned()),
-        release_name: text(&[
-            (metadata, "release_name"),
-            (metadata, "album_name"),
-            (row, "release_name"),
-        ]),
-        recording_mbid: text(&[
-            (row, "recording_mbid"),
-            (mapping, "recording_mbid"),
-            (metadata, "recording_mbid"),
-        ]),
-        release_mbid: text(&[
-            (mapping, "release_mbid"),
-            (row, "release_mbid"),
-            (metadata, "release_mbid"),
-        ]),
-        artist_mbid: loved_artist_mbid(row),
+        track_name: metadata
+            .track_name
+            .or(metadata.recording_name)
+            .or(row.track_name)?,
+        artist_name: metadata
+            .artist_name
+            .or(metadata.artist)
+            .or(row.artist_name)
+            .unwrap_or_else(|| "Unknown".to_owned()),
+        release_name: metadata
+            .release_name
+            .or(metadata.album_name)
+            .or(row.release_name),
+        recording_mbid: row
+            .recording_mbid
+            .or_else(|| non_blank(mapping.recording_mbid))
+            .or(metadata.recording_mbid),
+        release_mbid: non_blank(mapping.release_mbid)
+            .or(row.release_mbid)
+            .or(metadata.release_mbid),
+        artist_mbid,
     })
 }
 
 /// The first artist MBID behind one feedback row: the MBID mapping first,
 /// then the metadata's own list, then a lone `artist_mbid`.
-fn loved_artist_mbid(row: &serde_json::Value) -> Option<String> {
+fn loved_artist_mbid(row: &FeedbackRow) -> Option<String> {
     let metadata = feedback_metadata(row)?;
-    let first = |value: Option<&serde_json::Value>| {
-        value
-            .and_then(serde_json::Value::as_array)
-            .and_then(|mbids| mbids.first())
-            .and_then(serde_json::Value::as_str)
-            .map(str::to_owned)
-    };
+    let first = |mbids: Option<&Vec<String>>| mbids.and_then(|mbids| mbids.first()).cloned();
     first(
         metadata
-            .get("mbid_mapping")
-            .and_then(|mapping| mapping.get("artist_mbids")),
+            .mbid_mapping
+            .as_ref()
+            .and_then(|mapping| mapping.artist_mbids.as_ref()),
     )
-    .or_else(|| first(metadata.get("artist_mbids")))
-    .or_else(|| {
-        metadata
-            .get("artist_mbid")
-            .and_then(serde_json::Value::as_str)
-            .map(str::to_owned)
-    })
+    .or_else(|| first(metadata.artist_mbids.as_ref()))
+    .or_else(|| metadata.artist_mbid.clone())
     .map(|mbid| mbid.trim().to_ascii_lowercase())
     .filter(|mbid| !mbid.is_empty())
 }

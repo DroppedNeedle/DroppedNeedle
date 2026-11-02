@@ -1,0 +1,68 @@
+{
+  "payload": {
+    "count": 5,
+    "from_ts": 1009843200,
+    "last_updated": 1792921533,
+    "offset": 0,
+    "range": "all_time",
+    "release_groups": [
+      {
+        "artist_mbids": [
+          "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+        ],
+        "artist_name": "Radiohead",
+        "caa_id": 43287476628,
+        "caa_release_mbid": "30702389-5c67-4438-9ea0-2351c8de0f1d",
+        "listen_count": 1462621,
+        "release_group_mbid": "b1392450-e666-3926-a536-22c65f834433",
+        "release_group_name": "OK Computer"
+      },
+      {
+        "artist_mbids": [
+          "5b11f4ce-a62d-471e-81fc-a69a8278c7da"
+        ],
+        "artist_name": "Nirvana",
+        "caa_id": 30501372565,
+        "caa_release_mbid": "c771f7fc-9e62-4349-a2e3-ceaf7122bf5b",
+        "listen_count": 1339951,
+        "release_group_mbid": "1b022e01-4da6-387b-8658-8678046e4cef",
+        "release_group_name": "Nevermind"
+      },
+      {
+        "artist_mbids": [
+          "f59c5520-5f46-4d2c-b2c4-822eabf53419"
+        ],
+        "artist_name": "Linkin Park",
+        "caa_id": 17357251129,
+        "caa_release_mbid": "e1656e7e-c23f-48e4-894e-fe1e0d5e6707",
+        "listen_count": 1154295,
+        "release_group_mbid": "09474d62-17dd-3a4f-98fb-04c65f38a479",
+        "release_group_name": "Meteora"
+      },
+      {
+        "artist_mbids": [
+          "f59c5520-5f46-4d2c-b2c4-822eabf53419"
+        ],
+        "artist_name": "Linkin Park",
+        "caa_id": 17352139218,
+        "caa_release_mbid": "69b7b91a-43fc-483f-b8cf-22cdc8f69079",
+        "listen_count": 1153846,
+        "release_group_mbid": "b5b4bb4b-8ba5-3acf-88cb-4cae2699d8da",
+        "release_group_name": "Hybrid Theory"
+      },
+      {
+        "artist_mbids": [
+          "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+        ],
+        "artist_name": "Radiohead",
+        "caa_id": 14926982777,
+        "caa_release_mbid": "1a33443c-3fff-450f-8298-efbc65659d32",
+        "listen_count": 1130892,
+        "release_group_mbid": "6e335887-60ba-38f0-95af-fae7774336bf",
+        "release_group_name": "In Rainbows"
+      }
+    ],
+    "to_ts": 1792889532,
+    "total_release_group_count": 23943771
+  }
+}

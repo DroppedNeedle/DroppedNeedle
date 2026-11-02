@@ -1,0 +1,38 @@
+{
+  "payload": {
+    "artists": [
+      {
+        "artist_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+        "artist_name": "Radiohead",
+        "listen_count": 3654336
+      },
+      {
+        "artist_mbid": "f59c5520-5f46-4d2c-b2c4-822eabf53419",
+        "artist_name": "Linkin Park",
+        "listen_count": 3115206
+      },
+      {
+        "artist_mbid": "056e4f3e-d505-4dad-8ec1-d04f521cbb56",
+        "artist_name": "Daft Punk",
+        "listen_count": 2990142
+      },
+      {
+        "artist_mbid": "b10bbbfc-cf9e-42e0-be17-e2c3e1d2600d",
+        "artist_name": "The Beatles",
+        "listen_count": 2964119
+      },
+      {
+        "artist_mbid": "381086ea-f511-4aba-bdf9-71c753dc5077",
+        "artist_name": "Kendrick Lamar",
+        "listen_count": 2882548
+      }
+    ],
+    "count": 5,
+    "from_ts": 1009843200,
+    "last_updated": 1792921533,
+    "offset": 0,
+    "range": "all_time",
+    "to_ts": 1792889532,
+    "total_artist_count": 12018095
+  }
+}

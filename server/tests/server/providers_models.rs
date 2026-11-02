@@ -92,6 +92,8 @@ enum ListenBrainzRead {
     TopReleaseGroups,
     TopRecordings,
     Similar,
+    SitewideArtists,
+    SitewideReleaseGroups,
 }
 
 /// The album the Deezer album search fixture names first, and its track list.
@@ -795,6 +797,55 @@ const ROWS: &[Row] = &[
         identity: "/ada7a83c-e3e1-40f1-93f9-3e73dbc9298a/0/total_listen_count",
     },
     Row {
+        name: "listenbrainz sitewide artists, list",
+        provider: Provider::ListenBrainz(ListenBrainzRead::SitewideArtists),
+        body: include_str!("../fixtures/listenbrainz/sitewide_artists.json"),
+        kind: PayloadKind::Decode,
+        identity: "/payload/artists",
+    },
+    Row {
+        name: "listenbrainz sitewide artists, name",
+        provider: Provider::ListenBrainz(ListenBrainzRead::SitewideArtists),
+        body: include_str!("../fixtures/listenbrainz/sitewide_artists.json"),
+        kind: PayloadKind::Decode,
+        identity: "/payload/artists/0/artist_name",
+    },
+    Row {
+        name: "listenbrainz sitewide artists, count",
+        provider: Provider::ListenBrainz(ListenBrainzRead::SitewideArtists),
+        body: include_str!("../fixtures/listenbrainz/sitewide_artists.json"),
+        kind: PayloadKind::Decode,
+        identity: "/payload/artists/0/listen_count",
+    },
+    Row {
+        name: "listenbrainz sitewide release groups, list",
+        provider: Provider::ListenBrainz(ListenBrainzRead::SitewideReleaseGroups),
+        body: include_str!("../fixtures/listenbrainz/sitewide_release_groups.json"),
+        kind: PayloadKind::Decode,
+        identity: "/payload/release_groups",
+    },
+    Row {
+        name: "listenbrainz sitewide release groups, title",
+        provider: Provider::ListenBrainz(ListenBrainzRead::SitewideReleaseGroups),
+        body: include_str!("../fixtures/listenbrainz/sitewide_release_groups.json"),
+        kind: PayloadKind::Decode,
+        identity: "/payload/release_groups/0/release_group_name",
+    },
+    Row {
+        name: "listenbrainz sitewide release groups, artist",
+        provider: Provider::ListenBrainz(ListenBrainzRead::SitewideReleaseGroups),
+        body: include_str!("../fixtures/listenbrainz/sitewide_release_groups.json"),
+        kind: PayloadKind::Decode,
+        identity: "/payload/release_groups/0/artist_name",
+    },
+    Row {
+        name: "listenbrainz sitewide release groups, count",
+        provider: Provider::ListenBrainz(ListenBrainzRead::SitewideReleaseGroups),
+        body: include_str!("../fixtures/listenbrainz/sitewide_release_groups.json"),
+        kind: PayloadKind::Decode,
+        identity: "/payload/release_groups/0/listen_count",
+    },
+    Row {
         name: "youtube /search, video id",
         provider: Provider::YouTubeSearch,
         body: include_str!("../fixtures/youtube/search_found.json"),
@@ -1396,6 +1447,20 @@ async fn listenbrainz(read: ListenBrainzRead, body: &str) -> Result<bool, Provid
                 .await?
                 .is_empty()
         }
+        ListenBrainzRead::SitewideArtists => {
+            !answer(Method::Get, "/1/stats/sitewide/artists".to_owned())
+                .listenbrainz
+                .sitewide_top_artists("all_time", 5, 0, PRIORITY)
+                .await?
+                .is_empty()
+        }
+        ListenBrainzRead::SitewideReleaseGroups => {
+            !answer(Method::Get, "/1/stats/sitewide/release-groups".to_owned())
+                .listenbrainz
+                .sitewide_top_release_groups("all_time", 5, 0, PRIORITY)
+                .await?
+                .is_empty()
+        }
     })
 }
 
@@ -1777,6 +1842,52 @@ async fn listenbrainz_recorded_values_read_as_answered() {
     let names: Vec<&str> = similar.iter().map(|a| a.artist_name.as_str()).collect();
     assert_eq!(names.len(), 2, "the seed is dropped: {names:?}");
     assert!(!names.contains(&"Radiohead"), "{names:?}");
+}
+
+/// The recorded sitewide charts keep their MBIDs: the artist list names one
+/// `artist_mbid` where the release-group list names `artist_mbids`. A 204 is a
+/// chart not computed yet, which reads as empty.
+#[tokio::test]
+async fn listenbrainz_sitewide_stats_read_as_answered() {
+    let artists = listenbrainz_answer(
+        Method::Get,
+        "/1/stats/sitewide/artists",
+        200,
+        include_str!("../fixtures/listenbrainz/sitewide_artists.json"),
+    )
+    .listenbrainz
+    .sitewide_top_artists("all_time", 5, 0, PRIORITY)
+    .await
+    .expect("the recording decodes");
+    assert_eq!(artists.len(), 5, "no recorded row is dropped");
+    assert_eq!(artists[0].artist_name, "Radiohead");
+    assert_eq!(artists[0].listen_count, 3_654_336);
+    assert_eq!(artists[0].artist_mbids, [MB_RADIOHEAD_MBID]);
+
+    let groups = listenbrainz_answer(
+        Method::Get,
+        "/1/stats/sitewide/release-groups",
+        200,
+        include_str!("../fixtures/listenbrainz/sitewide_release_groups.json"),
+    )
+    .listenbrainz
+    .sitewide_top_release_groups("all_time", 5, 0, PRIORITY)
+    .await
+    .expect("the recording decodes");
+    assert_eq!(groups.len(), 5, "no recorded row is dropped");
+    assert_eq!(groups[0].release_group_name, "OK Computer");
+    assert_eq!(
+        groups[0].release_group_mbid.as_deref(),
+        Some(MB_OK_COMPUTER_GROUP_MBID)
+    );
+    assert_eq!(groups[0].artist_mbids, [MB_RADIOHEAD_MBID]);
+
+    let computing = listenbrainz_answer(Method::Get, "/1/stats/sitewide/artists", 204, "")
+        .listenbrainz
+        .sitewide_top_artists("all_time", 5, 0, PRIORITY)
+        .await
+        .expect("a 204 is absence");
+    assert!(computing.is_empty());
 }
 
 /// The recorded answers that are not hits: an unknown release group has no

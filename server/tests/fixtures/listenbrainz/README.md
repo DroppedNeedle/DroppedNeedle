@@ -33,7 +33,16 @@ holds a key, token or personal data. Names, tags and links are catalogue data.
   `GET /1/user/droppedneedle-no-such-user-fixture/listen-count`.
 - `listens_unknown_user.json`: the body of the HTTP 404 to
   `GET /1/user/droppedneedle-no-such-user-fixture/listens?count=1`.
+- `sitewide_artists.json`: HTTP 200 to `GET /1/stats/sitewide/artists` with
+  `count=5`. Each row names one `artist_mbid`, not a list.
+- `sitewide_release_groups.json`: HTTP 200 to
+  `GET /1/stats/sitewide/release-groups` with `count=5`.
 
 Not recorded yet: the 200 answers to `/1/user/{user}/listens` and
 `/1/user/{user}/listen-count`, and the answer to a good token at
-`/1/validate-token`. They need an account.
+`/1/validate-token`, and the answers to `/1/stats/user/{user}/artists`,
+`/1/stats/user/{user}/recordings`, `/1/stats/user/{user}/release-groups`,
+`/1/stats/user/{user}/genre-activity`,
+`/1/feedback/user/{user}/get-feedback`, `/1/user/{user}/fresh_releases`,
+`/1/user/{user}/similar-users`, `/1/user/{user}/playlists/recommendations` and
+`/1/playlist/{id}`. They need an account.

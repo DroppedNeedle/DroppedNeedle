@@ -5,15 +5,12 @@
 //! recommendations, a playlist that was replaced), which reads as an empty
 //! answer, not a failure. Playlists come back as JSPF; the algorithm that
 //! made each one sits in the MusicBrainz playlist extension as
-//! `source_patch` (`weekly-jams`, `weekly-exploration`, ...).
+//! `source_patch` (`weekly-jams`, `weekly-exploration`, ...). The wire shapes
+//! are in [`models`](super::models).
 
+use super::models::{PlaylistAnswer, PlaylistHeader, PlaylistTrack, RecommendationPlaylistsAnswer};
 use super::{ListenBrainzClient, ListenBrainzCredentials};
 use crate::{ProviderError, RequestPriority};
-
-/// JSPF extension key for playlist-level MusicBrainz metadata.
-const PLAYLIST_EXTENSION: &str = "https://musicbrainz.org/doc/jspf#playlist";
-/// JSPF extension key for track-level MusicBrainz metadata.
-const TRACK_EXTENSION: &str = "https://musicbrainz.org/doc/jspf#track";
 
 /// One recommendation playlist made for a user.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -78,17 +75,16 @@ impl ListenBrainzClient {
             &[],
             creds,
         )?;
-        let Some(payload) = absent_on_404(self.read(request, priority).await)? else {
+        let answer = self
+            .read::<RecommendationPlaylistsAnswer>(request, priority)
+            .await;
+        let Some(answer) = absent_on_404(answer)? else {
             return Ok(Vec::new());
         };
-        let entries = payload
-            .get("playlists")
-            .and_then(serde_json::Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        Ok(entries
-            .iter()
-            .filter_map(|entry| parse_playlist_header(entry.get("playlist")?))
+        Ok(answer
+            .playlists
+            .into_iter()
+            .filter_map(|entry| playlist_header(entry.playlist))
             .collect())
     }
 
@@ -123,34 +119,26 @@ impl ListenBrainzClient {
             return Ok(PlaylistPage::default());
         }
         let request = self.get(&["1", "playlist", playlist_id], &[], creds)?;
-        let Some(payload) = absent_on_404(self.read(request, priority).await)? else {
+        let answer = self.read::<PlaylistAnswer>(request, priority).await;
+        let Some(answer) = absent_on_404(answer)? else {
             return Ok(PlaylistPage::default());
         };
-        let playlist = payload.get("playlist");
-        let field = |key: &str| {
-            playlist
-                .and_then(|playlist| playlist.get(key))
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("")
-                .to_owned()
-        };
-        let tracks = playlist
-            .and_then(|playlist| playlist.get("track"))
-            .and_then(serde_json::Value::as_array)
-            .cloned()
-            .unwrap_or_default();
+        let playlist = answer.playlist;
         Ok(PlaylistPage {
-            title: field("title"),
-            date: field("date"),
-            tracks: tracks.iter().filter_map(parse_track).collect(),
+            title: playlist.title.unwrap_or_default(),
+            date: playlist.date.unwrap_or_default(),
+            tracks: playlist
+                .track
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(recommendation_track)
+                .collect(),
         })
     }
 }
 
 /// A 404 here means "nothing here yet", the same as an empty answer.
-fn absent_on_404(
-    read: Result<Option<serde_json::Value>, ProviderError>,
-) -> Result<Option<serde_json::Value>, ProviderError> {
+fn absent_on_404<T>(read: Result<Option<T>, ProviderError>) -> Result<Option<T>, ProviderError> {
     match read {
         Err(ProviderError::NotFound { .. }) => Ok(None),
         other => other,
@@ -158,78 +146,53 @@ fn absent_on_404(
 }
 
 /// Id and algorithm of one playlist header. No usable id means skip.
-fn parse_playlist_header(playlist: &serde_json::Value) -> Option<RecommendationPlaylist> {
-    let identifier = playlist.get("identifier")?.as_str()?;
-    let playlist_id = identifier.rsplit('/').next()?.trim();
+fn playlist_header(playlist: PlaylistHeader) -> Option<RecommendationPlaylist> {
+    let identifier = playlist.identifier?;
+    let playlist_id = identifier.rsplit('/').next()?.trim().to_owned();
     if playlist_id.is_empty() {
         return None;
     }
     let source_patch = playlist
-        .get("extension")
-        .and_then(|ext| ext.get(PLAYLIST_EXTENSION))
-        .and_then(|ext| ext.get("additional_metadata"))
-        .and_then(|meta| meta.get("algorithm_metadata"))
-        .and_then(|algo| algo.get("source_patch"))
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or("")
-        .to_owned();
+        .extension
+        .and_then(|extension| extension.musicbrainz)
+        .and_then(|extension| extension.additional_metadata)
+        .and_then(|metadata| metadata.algorithm_metadata)
+        .and_then(|algorithm| algorithm.source_patch)
+        .unwrap_or_default();
     Some(RecommendationPlaylist {
-        playlist_id: playlist_id.to_owned(),
+        playlist_id,
         source_patch,
-        identifier: identifier.to_owned(),
+        identifier,
     })
 }
 
 /// One JSPF track.
-fn parse_track(track: &serde_json::Value) -> Option<RecommendationTrack> {
-    let text = |key: &str| {
-        track
-            .get(key)
-            .and_then(serde_json::Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_owned)
-    };
-    let title = text("title")?;
-    let creator = text("creator")?;
+fn recommendation_track(track: PlaylistTrack) -> Option<RecommendationTrack> {
     let recording_mbid = track
-        .get("identifier")
-        .and_then(serde_json::Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(serde_json::Value::as_str)
-        .find(|ident| ident.contains("recording/"))
-        .and_then(|ident| ident.rsplit('/').next())
+        .identifier
+        .iter()
+        .find(|identifier| identifier.contains("recording/"))
+        .and_then(|identifier| identifier.rsplit('/').next())
         .filter(|mbid| !mbid.is_empty())
         .map(str::to_owned);
-    let meta = track
-        .get("extension")
-        .and_then(|ext| ext.get(TRACK_EXTENSION))
-        .and_then(|ext| ext.get("additional_metadata"));
-    let artist_mbids = meta
-        .and_then(|meta| meta.get("artists"))
-        .and_then(serde_json::Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|artist| artist.get("artist_mbid")?.as_str())
-        .filter(|mbid| !mbid.is_empty())
-        .map(str::to_owned)
-        .collect();
-    let caa_release_mbid = meta
-        .and_then(|meta| meta.get("caa_release_mbid"))
-        .and_then(serde_json::Value::as_str)
-        .filter(|mbid| !mbid.is_empty())
-        .map(str::to_owned);
+    let metadata = track
+        .extension
+        .and_then(|extension| extension.musicbrainz)
+        .and_then(|extension| extension.additional_metadata);
+    let (artists, caa_release_mbid) = metadata.map_or((None, None), |metadata| {
+        (metadata.artists, metadata.caa_release_mbid)
+    });
     Some(RecommendationTrack {
-        title,
-        creator,
-        album: text("album").unwrap_or_default(),
+        title: track.title?,
+        creator: track.creator?,
+        album: track.album.unwrap_or_default(),
         recording_mbid,
-        artist_mbids,
+        artist_mbids: artists
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|artist| artist.artist_mbid)
+            .collect(),
         caa_release_mbid,
-        duration_ms: track
-            .get("duration")
-            .and_then(serde_json::Value::as_i64)
-            .filter(|ms| *ms > 0),
+        duration_ms: track.duration.filter(|ms| *ms > 0),
     })
 }

@@ -1,4 +1,4 @@
-//! ListenBrainz wire shapes for the reads the core client makes.
+//! ListenBrainz wire shapes for every read the client makes.
 //!
 //! Tolerant of unknown fields (serde skips them) and strict on identity: an
 //! answer missing the field a caller keys on fails decoding, so a changed
@@ -275,6 +275,439 @@ pub struct ListenCountPayload {
     pub count: i64,
 }
 
+/// `GET /1/stats/sitewide/artists` and `GET /1/stats/user/{user}/artists`.
+///
+/// Verified against api.listenbrainz.org/1/stats/sitewide/artists on 2026-11-02: tests/fixtures/listenbrainz/sitewide_artists.json.
+/// Not verified: /1/stats/user/{user}/artists needs an account, recorded later.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ArtistStatsAnswer {
+    /// The envelope.
+    pub payload: ArtistStatsPayload,
+}
+
+/// The artist stats envelope.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ArtistStatsPayload {
+    /// The ranked artists. Required: an answer without the list is not "no
+    /// artists". A list not computed yet is a 204.
+    pub artists: Vec<ArtistStatRow>,
+}
+
+/// One ranked artist. Name and count are on every recorded row; the row is
+/// skipped if either is null.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ArtistStatRow {
+    /// Artist name, which keys the row.
+    #[serde(deserialize_with = "loose_text")]
+    pub artist_name: Option<String>,
+    /// Listens in the range.
+    #[serde(deserialize_with = "loose_count")]
+    pub listen_count: Option<i64>,
+    /// The one MBID the sitewide list sends (recorded 2026-11-02).
+    #[serde(default, deserialize_with = "loose_text")]
+    pub artist_mbid: Option<String>,
+    /// The MBID list the user list is expected to send. Not verified: kept
+    /// until the user answer is recorded.
+    #[serde(default)]
+    pub artist_mbids: Option<Vec<String>>,
+}
+
+/// `GET /1/stats/sitewide/release-groups` and
+/// `GET /1/stats/user/{user}/release-groups`.
+///
+/// Verified against api.listenbrainz.org/1/stats/sitewide/release-groups on 2026-11-02: tests/fixtures/listenbrainz/sitewide_release_groups.json.
+/// Not verified: /1/stats/user/{user}/release-groups needs an account, recorded later.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ReleaseGroupStatsAnswer {
+    /// The envelope.
+    pub payload: ReleaseGroupStatsPayload,
+}
+
+/// The release-group stats envelope.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ReleaseGroupStatsPayload {
+    /// The ranked release groups. Required, as for the artist list.
+    pub release_groups: Vec<ReleaseGroupStatRow>,
+}
+
+/// One ranked release group. Title, artist and count are on every recorded
+/// row; the row is skipped if any is null.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ReleaseGroupStatRow {
+    /// Release group title.
+    #[serde(deserialize_with = "loose_text")]
+    pub release_group_name: Option<String>,
+    /// Credited artist.
+    #[serde(deserialize_with = "loose_text")]
+    pub artist_name: Option<String>,
+    /// Listens in the range.
+    #[serde(deserialize_with = "loose_count")]
+    pub listen_count: Option<i64>,
+    /// Release group MBID, when mapped.
+    #[serde(default, deserialize_with = "loose_text")]
+    pub release_group_mbid: Option<String>,
+    /// Artist MBIDs, when mapped.
+    #[serde(default)]
+    pub artist_mbids: Option<Vec<String>>,
+}
+
+/// `GET /1/stats/user/{user}/recordings`.
+///
+/// Not verified: needs an account, recorded later.
+#[derive(Debug, Clone, Deserialize)]
+pub struct RecordingStatsAnswer {
+    /// The envelope.
+    pub payload: RecordingStatsPayload,
+}
+
+/// The recording stats envelope.
+#[derive(Debug, Clone, Deserialize)]
+pub struct RecordingStatsPayload {
+    /// The ranked recordings. Required, as for the artist list.
+    pub recordings: Vec<RecordingStatRow>,
+}
+
+/// One ranked recording. The row is skipped if a name or the count is null.
+#[derive(Debug, Clone, Deserialize)]
+pub struct RecordingStatRow {
+    /// Track title.
+    #[serde(deserialize_with = "loose_text")]
+    pub track_name: Option<String>,
+    /// Credited artist.
+    #[serde(deserialize_with = "loose_text")]
+    pub artist_name: Option<String>,
+    /// Listens in the range.
+    #[serde(deserialize_with = "loose_count")]
+    pub listen_count: Option<i64>,
+    /// Recording MBID, when mapped.
+    #[serde(default, deserialize_with = "loose_text")]
+    pub recording_mbid: Option<String>,
+}
+
+/// `GET /1/user/{user}/similar-users`.
+///
+/// Not verified: needs an account, recorded later.
+#[derive(Debug, Clone, Deserialize)]
+pub struct SimilarUsersAnswer {
+    /// The similar users, most similar first.
+    pub payload: Vec<SimilarUserRow>,
+}
+
+/// One similar user.
+#[derive(Debug, Clone, Deserialize)]
+pub struct SimilarUserRow {
+    /// The user's name. The row is skipped if it is null or blank.
+    #[serde(deserialize_with = "loose_text")]
+    pub user_name: Option<String>,
+}
+
+/// `GET /1/stats/user/{user}/genre-activity`.
+///
+/// Not verified: needs an account, recorded later.
+#[derive(Debug, Clone, Deserialize)]
+pub struct GenreActivityAnswer {
+    /// One row per genre and hour bucket.
+    pub result: Vec<GenreActivityRow>,
+}
+
+/// One genre in one hour bucket.
+#[derive(Debug, Clone, Deserialize)]
+pub struct GenreActivityRow {
+    /// Genre label. The row is skipped if it is null or blank.
+    #[serde(deserialize_with = "loose_text")]
+    pub genre: Option<String>,
+    /// Listens in the bucket. An absent count adds nothing to the genre.
+    #[serde(default, deserialize_with = "loose_count")]
+    pub listen_count: Option<i64>,
+}
+
+/// `GET /1/user/{user}/fresh_releases`.
+///
+/// Not verified: needs an account, recorded later.
+#[derive(Debug, Clone, Deserialize)]
+pub struct FreshReleasesAnswer {
+    /// The envelope.
+    pub payload: FreshReleasesPayload,
+}
+
+/// The fresh-releases envelope.
+#[derive(Debug, Clone, Deserialize)]
+pub struct FreshReleasesPayload {
+    /// The releases. Required: an answer without the list is not "nothing new".
+    pub releases: Vec<FreshReleaseRow>,
+}
+
+/// One fresh release. The row is skipped if its id or title is null or blank.
+#[derive(Debug, Clone, Deserialize)]
+pub struct FreshReleaseRow {
+    /// Release group MBID.
+    #[serde(deserialize_with = "loose_text")]
+    pub release_group_mbid: Option<String>,
+    /// Release title.
+    #[serde(deserialize_with = "loose_text")]
+    pub release_name: Option<String>,
+    /// Credited artist.
+    #[serde(default, deserialize_with = "loose_text")]
+    pub artist_credit_name: Option<String>,
+    /// Artist MBIDs.
+    #[serde(default)]
+    pub artist_mbids: Option<Vec<String>>,
+}
+
+/// `GET /1/feedback/user/{user}/get-feedback`.
+///
+/// Not verified: needs an account, recorded later. Every spelling here and on
+/// the row types was read by the code this replaces. They stay until the
+/// recording shows which are real. A list under no spelling fails decoding.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum FeedbackAnswer {
+    /// The body inside a `payload`.
+    Wrapped {
+        /// The body.
+        payload: FeedbackBody,
+    },
+    /// The body at the top level.
+    Direct(FeedbackBody),
+}
+
+impl FeedbackAnswer {
+    /// The feedback rows, under whichever spelling they came.
+    #[must_use]
+    pub fn rows(self) -> Vec<FeedbackRow> {
+        let (Self::Wrapped { payload: body } | Self::Direct(body)) = self;
+        match body {
+            FeedbackBody::Rows(rows) | FeedbackBody::Keyed { feedback: rows } => rows,
+        }
+    }
+}
+
+/// The feedback list, bare or under a key.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum FeedbackBody {
+    /// A bare list.
+    Rows(Vec<FeedbackRow>),
+    /// A list under `feedback` or `recordings`.
+    Keyed {
+        /// The rows.
+        #[serde(alias = "recordings")]
+        feedback: Vec<FeedbackRow>,
+    },
+}
+
+/// One feedback row. Nothing here is required: the list is what the sample
+/// counts, and a row with no title anywhere is skipped where titles matter.
+#[derive(Debug, Clone, Deserialize)]
+pub struct FeedbackRow {
+    /// Metadata, first spelling.
+    #[serde(default)]
+    pub recording_metadata: Option<FeedbackMetadata>,
+    /// Metadata, second spelling.
+    #[serde(default)]
+    pub track_metadata: Option<FeedbackMetadata>,
+    /// Metadata, third spelling.
+    #[serde(default)]
+    pub metadata: Option<FeedbackMetadata>,
+    /// Track title beside the metadata.
+    #[serde(default, deserialize_with = "loose_text")]
+    pub track_name: Option<String>,
+    /// Artist name beside the metadata.
+    #[serde(default, deserialize_with = "loose_text")]
+    pub artist_name: Option<String>,
+    /// Release title beside the metadata.
+    #[serde(default, deserialize_with = "loose_text")]
+    pub release_name: Option<String>,
+    /// Recording MBID.
+    #[serde(default, deserialize_with = "loose_text")]
+    pub recording_mbid: Option<String>,
+    /// Release MBID.
+    #[serde(default, deserialize_with = "loose_text")]
+    pub release_mbid: Option<String>,
+}
+
+/// The metadata of one feedback row.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct FeedbackMetadata {
+    /// Track title.
+    #[serde(default, deserialize_with = "loose_text")]
+    pub track_name: Option<String>,
+    /// Track title, second spelling.
+    #[serde(default, deserialize_with = "loose_text")]
+    pub recording_name: Option<String>,
+    /// Artist name.
+    #[serde(default, deserialize_with = "loose_text")]
+    pub artist_name: Option<String>,
+    /// Artist name, second spelling.
+    #[serde(default, deserialize_with = "loose_text")]
+    pub artist: Option<String>,
+    /// Release title.
+    #[serde(default, deserialize_with = "loose_text")]
+    pub release_name: Option<String>,
+    /// Release title, second spelling.
+    #[serde(default, deserialize_with = "loose_text")]
+    pub album_name: Option<String>,
+    /// Recording MBID.
+    #[serde(default, deserialize_with = "loose_text")]
+    pub recording_mbid: Option<String>,
+    /// Release MBID.
+    #[serde(default, deserialize_with = "loose_text")]
+    pub release_mbid: Option<String>,
+    /// Artist MBIDs.
+    #[serde(default)]
+    pub artist_mbids: Option<Vec<String>>,
+    /// A lone artist MBID.
+    #[serde(default, deserialize_with = "loose_text")]
+    pub artist_mbid: Option<String>,
+    /// ListenBrainz's own MusicBrainz mapping.
+    #[serde(default)]
+    pub mbid_mapping: Option<MbidMapping>,
+}
+
+/// `GET /1/user/{user}/playlists/recommendations`. A 404 is "none yet".
+///
+/// Not verified: needs an account, recorded later.
+#[derive(Debug, Clone, Deserialize)]
+pub struct RecommendationPlaylistsAnswer {
+    /// The playlists. Required: an answer without the list is not "none".
+    pub playlists: Vec<PlaylistEntry>,
+}
+
+/// One entry of the recommendations list.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PlaylistEntry {
+    /// The JSPF playlist.
+    pub playlist: PlaylistHeader,
+}
+
+/// The header of a JSPF playlist.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PlaylistHeader {
+    /// The playlist's URL, whose last segment is its id: required. The entry
+    /// is skipped if it is null or blank.
+    #[serde(deserialize_with = "loose_text")]
+    pub identifier: Option<String>,
+    /// JSPF extensions.
+    #[serde(default)]
+    pub extension: Option<PlaylistExtensions>,
+}
+
+/// The JSPF extensions of a playlist.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PlaylistExtensions {
+    /// The MusicBrainz playlist extension.
+    #[serde(default, rename = "https://musicbrainz.org/doc/jspf#playlist")]
+    pub musicbrainz: Option<PlaylistExtension>,
+}
+
+/// The MusicBrainz playlist extension.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PlaylistExtension {
+    /// Its extra fields.
+    #[serde(default)]
+    pub additional_metadata: Option<PlaylistAdditionalMetadata>,
+}
+
+/// A playlist's extra fields.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PlaylistAdditionalMetadata {
+    /// What made the playlist.
+    #[serde(default)]
+    pub algorithm_metadata: Option<AlgorithmMetadata>,
+}
+
+/// What made a playlist.
+#[derive(Debug, Clone, Deserialize)]
+pub struct AlgorithmMetadata {
+    /// The algorithm, such as `weekly-jams`.
+    #[serde(default, deserialize_with = "loose_text")]
+    pub source_patch: Option<String>,
+}
+
+/// `GET /1/playlist/{id}`. A 404 is a playlist that was replaced.
+///
+/// Not verified: no public playlist id to record yet; it comes with the
+/// account's recommendations.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PlaylistAnswer {
+    /// The JSPF playlist.
+    pub playlist: PlaylistBody,
+}
+
+/// A JSPF playlist with its tracks.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PlaylistBody {
+    /// Playlist title.
+    #[serde(default, deserialize_with = "loose_text")]
+    pub title: Option<String>,
+    /// Creation date as ListenBrainz sends it.
+    #[serde(default, deserialize_with = "loose_text")]
+    pub date: Option<String>,
+    /// Tracks in playlist order.
+    #[serde(default)]
+    pub track: Option<Vec<PlaylistTrack>>,
+}
+
+/// One JSPF track. JSPF makes every field optional and no answer is recorded
+/// yet, so a track missing its title or creator is skipped, not a failed
+/// playlist.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PlaylistTrack {
+    /// Track title.
+    #[serde(default, deserialize_with = "loose_text")]
+    pub title: Option<String>,
+    /// Credited artist.
+    #[serde(default, deserialize_with = "loose_text")]
+    pub creator: Option<String>,
+    /// Album title.
+    #[serde(default, deserialize_with = "loose_text")]
+    pub album: Option<String>,
+    /// Identifier URLs; the recording's holds its MBID.
+    #[serde(default, deserialize_with = "loose_strings")]
+    pub identifier: Vec<String>,
+    /// Length in milliseconds.
+    #[serde(default, deserialize_with = "loose_count")]
+    pub duration: Option<i64>,
+    /// JSPF extensions.
+    #[serde(default)]
+    pub extension: Option<TrackExtensions>,
+}
+
+/// The JSPF extensions of a track.
+#[derive(Debug, Clone, Deserialize)]
+pub struct TrackExtensions {
+    /// The MusicBrainz track extension.
+    #[serde(default, rename = "https://musicbrainz.org/doc/jspf#track")]
+    pub musicbrainz: Option<TrackExtension>,
+}
+
+/// The MusicBrainz track extension.
+#[derive(Debug, Clone, Deserialize)]
+pub struct TrackExtension {
+    /// Its extra fields.
+    #[serde(default)]
+    pub additional_metadata: Option<TrackAdditionalMetadata>,
+}
+
+/// A track's extra fields.
+#[derive(Debug, Clone, Deserialize)]
+pub struct TrackAdditionalMetadata {
+    /// The credited artists, in order.
+    #[serde(default)]
+    pub artists: Option<Vec<TrackArtist>>,
+    /// The release the cover art comes from.
+    #[serde(default, deserialize_with = "loose_text")]
+    pub caa_release_mbid: Option<String>,
+}
+
+/// One credited artist of a track.
+#[derive(Debug, Clone, Deserialize)]
+pub struct TrackArtist {
+    /// Artist MBID.
+    #[serde(default, deserialize_with = "loose_text")]
+    pub artist_mbid: Option<String>,
+}
+
 /// A count as ListenBrainz writes it: an integer, or a float with no
 /// fraction.
 #[derive(Deserialize)]
@@ -318,5 +751,19 @@ fn loose_text<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<Strin
     Ok(match Loose::deserialize(deserializer)? {
         Loose::Text(text) if !text.trim().is_empty() => Some(text.trim().to_owned()),
         Loose::Text(_) | Loose::Other(_) => None,
+    })
+}
+
+/// A list of strings where anything else reads as empty.
+fn loose_strings<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<String>, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Loose {
+        List(Vec<String>),
+        Other(IgnoredAny),
+    }
+    Ok(match Loose::deserialize(deserializer)? {
+        Loose::List(list) => list,
+        Loose::Other(_) => Vec::new(),
     })
 }
