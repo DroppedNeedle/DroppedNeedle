@@ -107,7 +107,10 @@ export async function fetchPlaylist(
 	id: string,
 	options?: { signal?: AbortSignal }
 ): Promise<PlaylistDetailItem> {
-	const data = await api.v3.GET(v3('/api/v3/playlists/{playlist_id}', { path: { playlist_id: id } }), { signal: options?.signal });
+	const data = await api.v3.GET(
+		v3('/api/v3/playlists/{playlist_id}', { path: { playlist_id: id } }),
+		{ signal: options?.signal }
+	);
 	return toPageDetail(data);
 }
 
