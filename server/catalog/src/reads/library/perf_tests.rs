@@ -3532,7 +3532,7 @@ async fn read_endpoint(catalog: &LocalCatalog, name: &str, deep: &(After, After,
 /// Acceptance: the player pages the Jellyfin and Subsonic browse routes
 /// read (default track and album pages, a title-search miss, the newest
 /// albums) hold the same 10 ms p95 budget on the seeded 100k catalog, and
-/// the common-word search page 100 ms.
+/// the common-word search page and the 1000-row search3 page 100 ms.
 #[tokio::test]
 #[ignore = "100k acceptance timing; run explicitly with --release on reference hardware"]
 async fn perf_100k_player_pages_hold_p95() {
@@ -3598,6 +3598,7 @@ async fn perf_100k_player_pages_hold_p95() {
         ("player_albums_title", 2),
         ("player_albums_newest", 3),
         ("search3_sync_page_offset_99500", 4),
+        ("search3_sync_page_1000_offset_99000", 26),
         ("search3_songs_hit_page", 5),
         ("search3_songs_common_page", 6),
         ("player_tracks_random_50", 7),
@@ -3759,6 +3760,10 @@ async fn perf_100k_player_pages_hold_p95() {
                     .played_values("p-u1", "album", &stat_albums)
                     .await
                     .map(|values| values.len()),
+                26 => player
+                    .track_page(&TrackQuery::default(), TrackOrder::Natural, 1000, 99_000)
+                    .await
+                    .map(|page| page.len()),
                 _ => player
                     .albums(&played_albums(false), AlbumOrder::Title, 100, 9_000)
                     .await
@@ -3773,12 +3778,13 @@ async fn perf_100k_player_pages_hold_p95() {
         let p95 = percentile(&mut samples, 95.0);
         let p50 = percentile(&mut samples, 50.0);
         report.push(format!("{name}: p50 {p50:.2} ms, p95 {p95:.2} ms"));
-        // This query matches every track: the search read alone is about
-        // 25 ms, and no path that keeps its results reached 10 ms.
-        let budget = if name == "search3_songs_common_page" {
-            100.0
-        } else {
-            10.0
+        // The common-word search matches every track: its search read alone
+        // is about 25 ms, and no path that keeps its results reached 10 ms.
+        // The 1000-row search3 page, the largest count search3 takes, gets
+        // the same 100 ms.
+        let budget = match name {
+            "search3_songs_common_page" | "search3_sync_page_1000_offset_99000" => 100.0,
+            _ => 10.0,
         };
         if p95 >= budget {
             over.push(name);

@@ -443,6 +443,34 @@ async fn error_codes() {
     rig.stop().await;
 }
 
+/// Syncing clients page search3 through its counts. Artist and album counts of
+/// 1000 and a song count of 2000 answer ok at offsets 0 and 1000; one past the
+/// cap is the parameter error, never a shorter page.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn search3_counts_go_up_to_the_cap() {
+    let rig = CompatApp::start("compat-sub-search-cap").await;
+    let client = Client::player(&rig);
+    for offset in ["0", "1000"] {
+        client
+            .ok(
+                "search3",
+                &[
+                    ("query", ""),
+                    ("artistCount", "1000"),
+                    ("artistOffset", offset),
+                    ("albumCount", "1000"),
+                    ("songCount", "2000"),
+                ],
+            )
+            .await;
+    }
+    let over = client
+        .get("search3", &[("query", ""), ("artistCount", "2001")])
+        .await;
+    assert_code(&over, 10, "artistCount above the cap");
+    rig.stop().await;
+}
+
 /// LRCLIB as the lyrics lookup sees it: synced and plain lyrics for "One"
 /// by U2, nothing for anything else.
 async fn lyrics_server() -> (String, droppedneedle_testkit::usenet::ServerGuard) {

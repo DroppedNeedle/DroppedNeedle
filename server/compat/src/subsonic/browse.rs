@@ -507,6 +507,11 @@ pub async fn music_directory(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
     }
 }
 
+/// Largest artistCount, albumCount and songCount that search2 and search3
+/// accept. Syncing clients page a library through these counts; a count
+/// above this answers the parameter error, never a shorter page.
+const MAX_SEARCH_COUNT: i64 = 2000;
+
 /// Shared search query with per-type count+offset (v2 `_search`).
 pub async fn search_query(
     ctx: &Ctx<'_>,
@@ -521,7 +526,7 @@ pub async fn search_query(
     validate_music_folder(&ctx.params)?;
     let query = normalize_search_query(ctx.p("query")?.as_deref());
     let artist_count = ctx
-        .pint("artistCount", Some(20), Some(0), Some(500))?
+        .pint("artistCount", Some(20), Some(0), Some(MAX_SEARCH_COUNT))?
         .unwrap_or(0)
         .max(0) as usize;
     let artist_offset = ctx
@@ -529,7 +534,7 @@ pub async fn search_query(
         .unwrap_or(0)
         .max(0) as usize;
     let album_count = ctx
-        .pint("albumCount", Some(20), Some(0), Some(500))?
+        .pint("albumCount", Some(20), Some(0), Some(MAX_SEARCH_COUNT))?
         .unwrap_or(0)
         .max(0) as usize;
     let album_offset = ctx
@@ -537,7 +542,7 @@ pub async fn search_query(
         .unwrap_or(0)
         .max(0) as usize;
     let song_count = ctx
-        .pint("songCount", Some(20), Some(0), Some(500))?
+        .pint("songCount", Some(20), Some(0), Some(MAX_SEARCH_COUNT))?
         .unwrap_or(0)
         .max(0) as usize;
     let song_offset = ctx
