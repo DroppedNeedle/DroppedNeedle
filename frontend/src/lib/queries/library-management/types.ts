@@ -1,16 +1,19 @@
 import type { components } from '$lib/api/v3/openapi';
 
-// Settings, profile and sharing shapes are the generated v3 schemas. The
-// preview and operation shapes are views the adapters build from the v3
-// schemas (libraryManagementAdapters.ts); recovery and the tag editor have
-// no v3 route yet and stay hand-written until they do.
-export type ManagementFieldMode = components['schemas']['FieldMode'];
-export type ManagementGenreMode = components['schemas']['GenreMode'];
-export type ManagementSelectionKind = components['schemas']['ManagementSelectionKind'];
-export type ManagementEligibility = components['schemas']['Eligibility'];
+type Schemas = components['schemas'];
+
+// The contract types a stored JSON object as an empty record, so the screens
+// that read its keys take it as an open one.
+type WithJson<T, K extends keyof T> = Omit<T, K> & {
+	[P in K]: T[P] extends unknown[] ? Array<Record<string, unknown>> : Record<string, unknown>;
+};
+
+export type ManagementFieldMode = Schemas['FieldMode'];
+export type ManagementSelectionKind = Schemas['ManagementSelectionKind'];
+export type ManagementEligibility = Schemas['Eligibility'];
 export type ManagementChangeKind = 'tags' | 'artwork' | 'path' | 'sidecars' | 'no_change';
-export type LibraryManagementTagEditMode = components['schemas']['ManagementTagEditMode'];
-export type ManagementPhase = components['schemas']['ManagementPhase'];
+export type LibraryManagementTagEditMode = Schemas['ManagementTagEditMode'];
+export type ManagementPhase = Schemas['ManagementPhase'];
 export type LibraryManagementTagEditValue = string | number | boolean | string[] | null;
 export type DuplicateCollisionKind =
 	| 'same_path_same_content'
@@ -19,217 +22,77 @@ export type DuplicateCollisionKind =
 	| 'normalized_path_collision'
 	| 'sidecar_collision'
 	| 'destination_created_after_preview';
-export type DuplicateResolutionAction =
-	| 'keep_existing'
-	| 'keep_incoming_alternate'
-	| 'recycle_existing_keep_incoming'
-	| 'recycle_incoming_keep_existing';
+export type DuplicateResolutionAction = Schemas['ManagementDuplicateAction'];
 
-export type ManagedFieldSettings = components['schemas']['ManagedField'];
+export type ManagedFieldInfo = Schemas['ManagedFieldInfo'];
 
-export type ManagedFieldInfo = components['schemas']['ManagedFieldInfo'];
+export type ArtistCreditSettings = Schemas['ArtistCreditSettings'];
 
-export type ArtistCreditSettings = components['schemas']['ArtistCreditSettings'];
+export type RelationshipCreditSettings = Schemas['RelationshipCreditSettings'];
 
-export type RelationshipCreditSettings = components['schemas']['RelationshipCreditSettings'];
+export type MetadataManagementSettings = Schemas['MetadataManagementSettings'];
 
-export type MetadataManagementSettings = components['schemas']['MetadataManagementSettings'];
+export type GenreManagementSettings = Schemas['GenreManagementSettings'];
 
-export type GenreAliasSettings = components['schemas']['GenreAlias'];
+export type ArtworkManagementSettings = Schemas['ArtworkManagementSettings'];
 
-export type GenreManagementSettings = components['schemas']['GenreManagementSettings'];
+export type PathCompatibilitySettings = Schemas['PathCompatibilitySettings'];
 
-export type ArtworkManagementSettings = components['schemas']['ArtworkManagementSettings'];
+export type OrganizationManagementSettings = Schemas['OrganizationManagementSettings'];
 
-export type PathCompatibilitySettings = components['schemas']['PathCompatibilitySettings'];
+export type EnrichmentManagementSettings = Schemas['EnrichmentManagementSettings'];
 
-export type OrganizationManagementSettings =
-	components['schemas']['OrganizationManagementSettings'];
+export type LibraryManagementProfile = Schemas['LibraryManagementProfile'];
 
-export type EnrichmentManagementSettings = components['schemas']['EnrichmentManagementSettings'];
+export type ManagementScriptSettings = Schemas['NamingScript'];
 
-export type LibraryManagementProfile = components['schemas']['LibraryManagementProfile'];
+export type LibraryManagementRootOverrides = Schemas['LibraryManagementRootOverrides'];
 
-export interface ManagementScriptSettings {
-	id: string;
-	name: string;
-	source: string;
-	revision: string;
-	preset_origin: string | null;
-	preset_version: number | null;
-}
+export type LibraryManagementRootAssignment = Schemas['LibraryManagementRootAssignment'];
 
-export type LibraryManagementRootOverrides =
-	components['schemas']['LibraryManagementRootOverrides'];
+export type LibraryManagementSettings = Schemas['LibraryManagementSettings'];
 
-export type LibraryManagementRootAssignment =
-	components['schemas']['LibraryManagementRootAssignment'];
+export type LibraryManagementSettingsResponse = Schemas['LibraryManagementSettingsResponse'];
 
-export type LibraryManagementSettings = components['schemas']['LibraryManagementSettings'];
+export type LibraryManagementChangeImpact = Schemas['LibraryManagementChangeImpact'];
 
-export type LibraryManagementSettingsResponse =
-	components['schemas']['LibraryManagementSettingsResponse'];
+export type LibraryManagementPresetDiff = Schemas['LibraryManagementPresetDiff'];
 
-export type LibraryManagementChangeImpact = components['schemas']['LibraryManagementChangeImpact'];
+export type LibraryManagementSelection = Schemas['ManagementSelectionBody'];
 
-export type LibraryManagementPresetDiff = components['schemas']['LibraryManagementPresetDiff'];
+export type LibraryManagementPreviewCreatedResponse = Schemas['ManagementPreviewCreatedResponse'];
 
-export interface LibraryManagementCatalogFilter {
-	search?: string | null;
-	genre?: string | null;
-	from_year?: number | null;
-	to_year?: number | null;
-	artist_ids?: string[];
-	album_artist_only?: boolean;
-}
-
-export interface LibraryManagementSelection {
-	kind: ManagementSelectionKind;
-	ids?: string[];
-	catalog_filter?: LibraryManagementCatalogFilter | null;
-}
-
-export interface LibraryManagementPreviewCreatedResponse {
-	job_id: string;
-	preview_token: string;
-	created_at: number;
-	expires_at: number;
-	existing: boolean;
-}
-
-export interface LibraryManagementTagEditorField {
-	field_name: string;
+// The contract leaves a field's scope, cardinality and override mode as strings.
+export type LibraryManagementTagEditorField = Omit<
+	Schemas['ManagementTagEditorFieldView'],
+	'scope' | 'cardinality' | 'current_value' | 'override_mode'
+> & {
 	scope: 'album' | 'track';
 	cardinality: 'string' | 'integer' | 'boolean' | 'ordered_strings';
 	current_value: LibraryManagementTagEditValue;
-	override_id: string | null;
 	override_mode: 'replace' | 'preserve' | 'clear' | null;
-	override_row_revision: number | null;
-}
+};
 
-export interface LibraryManagementTagEditorContext {
-	local_track_id: string;
-	local_album_id: string;
-	root_id: string;
-	profile_id: string;
-	profile_name: string;
-	settings_revision: string;
-	policy_revision: string;
-	track_revision: number;
-	album_revision: number;
-	accepted_identity: boolean;
-	identity_reason: string | null;
+export type LibraryManagementTagEditorContext = Omit<
+	Schemas['ManagementTagEditorView'],
+	'fields'
+> & {
 	fields: LibraryManagementTagEditorField[];
-}
+};
 
-export interface LibraryManagementTagEditPreviewRequest {
-	local_track_id: string;
-	mode: LibraryManagementTagEditMode;
-	expected_settings_revision: string;
-	expected_policy_revision: string;
-	fields: Array<{
-		field_name: string;
-		value?: LibraryManagementTagEditValue;
-	}>;
-	idempotency_key?: string | null;
-}
+export type LibraryManagementTagEditPreviewRequest = Schemas['ManagementTagEditPreviewBody'];
 
-/** Why a file is left alone or failed: a code, a sentence, and what to do. */
-export interface LibraryManagementReason {
-	code: string;
-	message: string;
-	action: string;
-}
+export type LibraryManagementPreviewDetailResponse = WithJson<
+	Schemas['ManagementJobView'],
+	'selection'
+>;
 
-export interface LibraryManagementPreviewSummary {
-	selected_item_count: number | null;
-	item_count: number;
-	bundle_count: number;
-	eligible_count: number;
-	warning_count: number;
-	blocked_count: number;
-	stale_count: number;
-	no_change_count: number;
-	tag_change_count: number;
-	artwork_change_count: number;
-	path_change_count: number;
-	sidecar_change_count: number;
-	estimated_temporary_bytes: number;
-	expanded_track_count: number;
-	reasons: Record<string, number>;
-	roots: Record<string, number>;
-	formats: Record<string, number>;
-	deferred_sources: Record<string, number>;
-	metadata_snapshot_ids: string[];
-}
+export type LibraryManagementExternalRefresh = Schemas['ExternalRefresh'];
 
-export interface LibraryManagementPreviewDetailResponse {
-	job_id: string;
-	state: string;
-	phase: ManagementPhase;
-	mode: string;
-	origin: string;
-	profile_id: string;
-	profile_name: string;
-	profile_revision: string;
-	settings_revision: string;
-	catalog_revision: number;
-	proposed_settings_revision: string | null;
-	target_root_id: string | null;
-	/** For an undo: the operation it puts back. */
-	linked_job_id?: string | null;
-	selection: Record<string, unknown>;
-	summary: LibraryManagementPreviewSummary;
-	created_at: number;
-	updated_at: number;
-	expires_at: number | null;
-	expired: boolean;
-	stale: boolean;
-	stale_reasons: string[];
-	stale_input_count: number;
-	stale_sample_relative_paths: string[];
-	ready_for_confirmation: boolean;
-	operation_row_revision: number;
-	operation_event_revision: number;
-	terminal_code: string | null;
-	terminal_reason?: LibraryManagementReason | null;
-	worker_heartbeat_at: number | null;
-	worker_lease_expires_at: number | null;
-	worker_stalled: boolean;
-	expected_work_count: number;
-	completed_count: number;
-	succeeded_count: number;
-	failed_count: number;
-	skipped_count: number;
-	control_request: components['schemas']['ControlRequest'];
-	undo_available_count: number;
-	undo_expired_count: number;
-	undo_expires_at: number | null;
-	baseline_available_count: number;
-	external_refreshes: LibraryManagementExternalRefresh[];
-}
-
-export type LibraryManagementExternalRefresh = components['schemas']['ExternalRefresh'];
-
-export interface LibraryManagementPlanItem {
-	ordinal: number;
-	bundle_ordinal: number;
-	local_album_id: string | null;
-	local_track_id: string | null;
-	source_root_id: string | null;
-	source_relative_path: string | null;
-	destination_root_id: string | null;
-	destination_relative_path: string | null;
-	eligibility: ManagementEligibility;
-	reason_code: string | null;
-	reason?: LibraryManagementReason | null;
-	estimated_temporary_bytes: number;
-	desired_document: Record<string, unknown>;
-	artwork_choices: Array<Record<string, unknown>>;
-	diff: Record<string, unknown>;
-	capability: Record<string, unknown>;
-	collisions: Array<Record<string, unknown>>;
-}
+export type LibraryManagementPlanItem = WithJson<
+	Schemas['ManagementPlanItemView'],
+	'desired_document' | 'artwork_choices' | 'diff' | 'capability' | 'collisions'
+>;
 
 export interface LibraryManagementPlanItemPageResponse {
 	items: LibraryManagementPlanItem[];
@@ -237,223 +100,86 @@ export interface LibraryManagementPlanItemPageResponse {
 }
 
 export type LibraryManagementProfileMutationResponse =
-	components['schemas']['LibraryManagementProfileMutationResponse'];
+	Schemas['LibraryManagementProfileMutationResponse'];
 
-export interface LibraryManagementActivationProof {
-	root_id: string;
-	job_id: string;
-	preview_token: string;
-}
+export type LibraryManagementActivationProof = Schemas['ManagementActivationProofBody'];
 
 export type LibraryManagementActivationHealthResponse =
-	components['schemas']['LibraryManagementActivationHealthResponse'];
+	Schemas['LibraryManagementActivationHealthResponse'];
 
-export type LibraryManagementSettingsUpdateRequest =
-	components['schemas']['LibraryManagementSaveRequest'];
+export type LibraryManagementSettingsUpdateRequest = Schemas['LibraryManagementSaveRequest'];
 
 export type LibraryManagementSettingsImpactRequest =
-	components['schemas']['LibraryManagementSettingsImpactRequest'];
+	Schemas['LibraryManagementSettingsImpactRequest'];
 
 export type LibraryManagementProfileCreateRequest =
-	components['schemas']['LibraryManagementProfileCreateRequest'];
+	Schemas['LibraryManagementProfileCreateRequest'];
 
-export type LibraryManagementProfileCopyRequest =
-	components['schemas']['LibraryManagementProfileCopyRequest'];
+export type LibraryManagementProfileCopyRequest = Schemas['LibraryManagementProfileCopyRequest'];
 
 export type LibraryManagementProfileUpdateRequest =
-	components['schemas']['LibraryManagementProfileUpdateRequest'];
+	Schemas['LibraryManagementProfileUpdateRequest'];
 
 export type LibraryManagementProfileDeleteRequest =
-	components['schemas']['LibraryManagementProfileDeleteRequest'];
+	Schemas['LibraryManagementProfileDeleteRequest'];
 
 export type LibraryManagementProfileExportRequest =
-	components['schemas']['LibraryManagementProfileExportRequest'];
+	Schemas['LibraryManagementProfileExportRequest'];
 
 export type LibraryManagementProfileExportResponse =
-	components['schemas']['LibraryManagementProfileExportResponse'];
+	Schemas['LibraryManagementProfileExportResponse'];
 
 export type LibraryManagementProfileImportPreviewRequest =
-	components['schemas']['LibraryManagementProfileImportPreviewRequest'];
+	Schemas['LibraryManagementProfileImportPreviewRequest'];
 
 export type LibraryManagementProfileImportRequest =
-	components['schemas']['LibraryManagementProfileImportRequest'];
+	Schemas['LibraryManagementProfileImportRequest'];
 
 export type LibraryManagementProfileImportWarning =
-	components['schemas']['LibraryManagementProfileImportWarning'];
+	Schemas['LibraryManagementProfileImportWarning'];
 
 export type LibraryManagementProfileImportPreviewResponse =
-	components['schemas']['LibraryManagementProfileImportPreviewResponse'];
+	Schemas['LibraryManagementProfileImportPreviewResponse'];
 
 export type LibraryManagementProfileImportResponse =
-	components['schemas']['LibraryManagementProfileImportResponse'];
+	Schemas['LibraryManagementProfileImportResponse'];
 
-export interface LibraryManagementPreviewCreateRequest {
-	selection: LibraryManagementSelection;
-	profile_id: string;
-	expected_settings_revision: string;
-	expected_policy_revision: string;
-	idempotency_key?: string | null;
-	target_root_id?: string | null;
-	overrides?: LibraryManagementRootOverrides | null;
-}
+export type LibraryManagementPreviewCreateRequest = Schemas['ManagementPreviewCreateBody'];
+export type LibraryManagementActivationPreviewRequest = Schemas['ManagementActivationPreviewBody'];
+export type LibraryManagementActivationConfirmRequest = Schemas['ManagementActivationConfirmBody'];
+export type LibraryManagementApplyRequest = Schemas['ManagementApplyBody'];
+export type LibraryManagementPreviewReissueResponse = Schemas['ManagementPreviewReissueResponse'];
+export type LibraryManagementDiscardRequest = Schemas['ManagementDiscardBody'];
+export type LibraryManagementUndoPreviewRequest = Schemas['ManagementUndoPreviewBody'];
+export type LibraryManagementBaselineRestorePreviewRequest =
+	Schemas['ManagementRestorePreviewBody'];
+export type LibraryManagementDuplicateResolutionPreviewRequest = Schemas['ManagementDuplicateBody'];
+export type LibraryManagementBaselinePurgeRequest = Schemas['ManagementPurgeBody'];
 
-export interface LibraryManagementActivationPreviewRequest {
-	root_id: string;
-	settings: LibraryManagementSettings;
-	expected_settings_revision: string;
-	expected_policy_revision: string;
-	idempotency_key?: string | null;
-}
-
-export interface LibraryManagementActivationConfirmRequest {
-	settings: LibraryManagementSettings;
-	proofs: LibraryManagementActivationProof[];
-	expected_settings_revision: string;
-	confirmation?: boolean;
-}
-
-export interface LibraryManagementApplyRequest {
-	preview_token: string;
-	expected_operation_row_revision: number;
-	idempotency_key: string;
-	confirmation?: boolean;
-}
-
-export interface LibraryManagementPreviewReissueResponse {
-	job_id: string;
-	preview_token: string;
-	created_at: number;
-	expires_at: number;
-}
-
-export interface LibraryManagementDiscardRequest {
-	expected_operation_row_revision: number;
-}
-
-export interface LibraryManagementUndoPreviewRequest {
-	expected_operation_row_revision: number;
-	idempotency_key: string;
-}
-
-export interface LibraryManagementBaselineRestorePreviewRequest {
-	selection: LibraryManagementSelection;
-	expected_settings_revision: string;
-	expected_policy_revision: string;
-	idempotency_key: string;
-}
-
-export interface LibraryManagementDuplicateResolutionPreviewRequest {
-	source_job_id: string;
-	source_plan_item_ordinal: number;
-	expected_source_operation_row_revision: number;
-	collision_kind: DuplicateCollisionKind;
-	existing_root_id: string;
-	existing_relative_path: string;
-	action: DuplicateResolutionAction;
-	expected_settings_revision: string;
-	expected_policy_revision: string;
-	idempotency_key: string;
-	existing_local_track_id?: string | null;
-	alternate_relative_path?: string | null;
-}
-
-export interface LibraryManagementBaselinePurgeImpactResponse {
-	baseline_count: number;
-	referenced_blob_count: number;
-	referenced_blob_bytes: number;
-	blocked_journal_count: number;
-	active_restore_count: number;
-	impact_token: string;
-}
-
-export interface LibraryManagementBaselinePurgeRequest {
-	impact_token: string;
-	typed_confirmation: string;
-	idempotency_key: string;
-}
-
-export interface LibraryManagementBaselinePurgeResponse {
-	purged_baseline_count: number;
-	detached_reference_count: number;
-	cleaned_blob_count: number;
-	existing: boolean;
-}
-
-export interface LibraryManagementResultItem {
+export type LibraryManagementResultItem = Omit<
+	Schemas['ManagementResultItemView'],
+	'plan' | 'result'
+> & {
 	plan: LibraryManagementPlanItem;
-	work_state: components['schemas']['ResultState'];
-	failure_code: string | null;
-	failure_reason?: LibraryManagementReason | null;
 	result: Record<string, unknown>;
-	journal_states: string[];
-}
+};
 
 export interface LibraryManagementResultPageResponse {
 	items: LibraryManagementResultItem[];
 	next_cursor: string | null;
 }
 
-export interface LibraryManagementOperationHistoryItem {
-	operation: import('$lib/queries/library/LibraryOperationsTypes').OperationResponse;
-	mode: string;
-	origin: string;
-	phase: ManagementPhase;
-	profile_id: string;
-	profile_name: string;
-	profile_revision: string;
-	target_root_id: string | null;
-	activation_preview: boolean;
-	selection: Record<string, unknown>;
-	eligible_count: number;
-	warning_count: number;
-	blocked_count: number;
-	expires_at: number | null;
-}
+export type LibraryManagementOperationHistoryItem = WithJson<
+	Schemas['ManagementHistoryItemView'],
+	'selection'
+>;
 
 export interface LibraryManagementOperationHistoryResponse {
 	items: LibraryManagementOperationHistoryItem[];
 	next_cursor: string | null;
 }
 
-export interface LibraryManagementRecoveryDiagnosticsResponse {
-	recoverable_bundle_count: number;
-	nonterminal_journal_count: number;
-	needs_attention_count: number;
-	cleanup_pending_count: number;
-	oldest_updated_at: number | null;
-	state_counts: Record<string, number>;
-	needs_attention_bundles?: LibraryManagementNeedsAttentionBundle[];
-	// Writes recovery has been retrying for more than a day, and still is.
-	retrying_bundles?: LibraryManagementNeedsAttentionBundle[];
-	// Hidden temporary files no write accounts for. Nothing removes them.
-	leftover_file_count?: number;
-	leftover_files?: LibraryManagementLeftoverFile[];
-}
-
-export interface LibraryManagementLeftoverFile {
-	root_id: string;
-	// The library folder the file is in.
-	root_path: string;
-	// Path under the library folder.
-	rel_path: string;
-}
-
-export interface LibraryManagementNeedsAttentionBundle {
-	bundle_id: string;
-	file_count?: number;
-	// A few of the paths the write was putting files at.
-	sample_paths?: string[];
-	// The folders it took its files from, relative to their library folder.
-	source_folders?: string[];
-}
-
-export interface LibraryManagementImportBundleResolveResponse {
-	bundle_id: string;
-	state: string;
-	verified_files: number;
-	total_files: number;
-	note: string;
-}
+export type LibraryManagementRecoveryDiagnosticsResponse = Schemas['ManagementRecoveryView'];
 
 export interface LibraryManagementHistoryParams {
 	limit?: number;

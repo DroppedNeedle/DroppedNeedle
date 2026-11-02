@@ -202,7 +202,19 @@ function run(overrides: Partial<ScanRun> = {}): ScanRun {
 		coalesced_request_count: 0,
 		row_revision: 4,
 		event_revision: 5,
-		counters: {},
+		counters: {
+			changed_count: 0,
+			discovered_count: 0,
+			errored_count: 0,
+			excluded_count: 0,
+			identification_enqueued_count: 0,
+			indexed_count: 0,
+			inspected_count: 0,
+			missing_count: 0,
+			new_count: 0,
+			total_count: 0,
+			unchanged_count: 0
+		},
 		phase_timings: {},
 		...overrides
 	};

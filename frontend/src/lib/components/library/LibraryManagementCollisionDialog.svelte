@@ -185,8 +185,8 @@
 					<strong>Incoming:</strong>
 					{managementDisplayPath(
 						roots,
-						selection.item.source_root_id,
-						selection.item.source_relative_path
+						selection.item.source_root_id ?? null,
+						selection.item.source_relative_path ?? null
 					)}
 				</p>
 				<p class="mt-1">

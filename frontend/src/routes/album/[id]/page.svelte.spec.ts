@@ -547,7 +547,7 @@ describe('the page agrees with the edition', () => {
 			await expect.element(missing.getByText('3:43')).toBeVisible();
 			await expect.element(missing.getByText('Your version 3:30')).toBeVisible();
 			await expect.element(trackRow('Ambrosia').getByText('3:20')).toBeVisible();
-			await expect.element(page.getByText('3/4', { exact: true })).toBeVisible();
+			await expect.element(page.getByText('3/4', { exact: true }).first()).toBeVisible();
 			await expect.element(page.getByText('Edition complete')).not.toBeInTheDocument();
 			await expect
 				.element(page.getByText('Another version of track 5', { exact: true }))

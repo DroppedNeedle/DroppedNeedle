@@ -419,7 +419,7 @@
 							href={operationHref(
 								active.operation.id,
 								active.operation.state,
-								active.operation.terminal_code,
+								active.operation.terminal_code ?? null,
 								active.mode
 							)}>Open details</Button
 						>
@@ -441,7 +441,7 @@
 								href={operationHref(
 									item.operation.id,
 									item.operation.state,
-									item.operation.terminal_code,
+									item.operation.terminal_code ?? null,
 									item.mode
 								)}
 								class="management-history-row min-w-0 flex-1"
@@ -483,7 +483,7 @@
 								href={operationHref(
 									item.operation.id,
 									item.operation.state,
-									item.operation.terminal_code,
+									item.operation.terminal_code ?? null,
 									item.mode
 								)}
 								class="management-history-row"
@@ -552,7 +552,7 @@
 														href={operationHref(
 															member.operation.id,
 															member.operation.state,
-															member.operation.terminal_code,
+															member.operation.terminal_code ?? null,
 															member.mode
 														)}>Open details</a
 													>
@@ -586,7 +586,7 @@
 									href={operationHref(
 										single.operation.id,
 										single.operation.state,
-										single.operation.terminal_code,
+										single.operation.terminal_code ?? null,
 										single.mode
 									)}
 									class="management-history-row"

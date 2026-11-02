@@ -7,7 +7,6 @@ import {
 	toHistory,
 	toPlanItemPage,
 	toPreviewDetail,
-	toRecovery,
 	toResultPage,
 	toTagEditor
 } from './libraryManagementAdapters';
@@ -255,7 +254,7 @@ export const getLibraryManagementRecoveryQuery = (
 		enabled: enabled(),
 		queryKey: LibraryManagementQueryKeyFactory.recovery(getUserId()),
 		queryFn: async ({ signal }): Promise<LibraryManagementRecoveryDiagnosticsResponse> =>
-			toRecovery(await api.v3.GET(LIBRARY_MANAGEMENT_ENDPOINTS.recoveryDiagnostics(), { signal }))
+			await api.v3.GET(LIBRARY_MANAGEMENT_ENDPOINTS.recoveryDiagnostics(), { signal })
 	}));
 
 export const getLibraryManagementAutomaticSkippedQuery = (

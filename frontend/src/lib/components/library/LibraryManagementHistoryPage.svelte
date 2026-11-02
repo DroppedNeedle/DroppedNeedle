@@ -205,7 +205,7 @@
 						href={operationHref(
 							item.operation.id,
 							item.operation.state,
-							item.operation.terminal_code
+							item.operation.terminal_code ?? null
 						)}
 						><History class="h-4 w-4 text-library-manage" /><span class="min-w-0 flex-1"
 							><span class="flex flex-wrap items-center gap-2"
@@ -228,7 +228,7 @@
 							><small
 								>{titleManagementValue(item.origin)} · {scopeLabel(
 									isRecord(item.selection) ? item.selection : {},
-									item.target_root_id
+									item.target_root_id ?? null
 								)}</small
 							><small class="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-base-content/55"
 								><span>Started {formatDate(item.operation.created_at)}</span><span

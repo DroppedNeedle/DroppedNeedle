@@ -3,7 +3,6 @@ import type { Getter } from 'runed';
 import { api } from '$lib/api/client';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
 import { LibraryV3Api } from './LibraryV3Api';
-import { toCurrentRuns, toRunDetail, toScanRun } from './libraryScanAdapters';
 import type {
 	ScanEstimateResponse,
 	ScanRunFailuresResponse,
@@ -19,8 +18,7 @@ const FAILURES_PAGE = 50;
 const getCurrentLibraryRunsQueryOptions = () =>
 	queryOptions({
 		queryKey: LibraryQueryKeyFactory.currentRuns(),
-		queryFn: async ({ signal }) =>
-			toCurrentRuns(await api.v3.GET(LibraryV3Api.currentScanRuns(), { signal })),
+		queryFn: async ({ signal }) => await api.v3.GET(LibraryV3Api.currentScanRuns(), { signal }),
 		staleTime: STALE_LIVE
 	});
 
@@ -33,8 +31,7 @@ export const getLibraryRunQuery = (getRunId: Getter<string | null>) =>
 		return {
 			enabled: Boolean(runId),
 			queryKey: LibraryQueryKeyFactory.run(runId ?? ''),
-			queryFn: async ({ signal }) =>
-				toRunDetail(await api.v3.GET(LibraryV3Api.scanRun(runId ?? ''), { signal }))
+			queryFn: async ({ signal }) => await api.v3.GET(LibraryV3Api.scanRun(runId ?? ''), { signal })
 		};
 	});
 
@@ -44,10 +41,7 @@ export const getLibraryRunHistoryQuery = (enabled: Getter<boolean> = () => true)
 		queryKey: LibraryQueryKeyFactory.runHistory(undefined),
 		initialPageParam: undefined as string | undefined,
 		queryFn: async ({ pageParam, signal }): Promise<ScanRunHistoryResponse> => {
-			const page = await api.v3.GET(LibraryV3Api.scanRunHistory(HISTORY_PAGE, pageParam), {
-				signal
-			});
-			return { items: page.items.map(toScanRun), next_cursor: page.next_cursor ?? null };
+			return api.v3.GET(LibraryV3Api.scanRunHistory(HISTORY_PAGE, pageParam), { signal });
 		},
 		getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined
 	}));
@@ -60,17 +54,9 @@ export const getLibraryRunFailuresQuery = (getRunId: Getter<string | null>) =>
 			queryKey: LibraryQueryKeyFactory.runFailures(runId ?? ''),
 			initialPageParam: undefined as string | undefined,
 			queryFn: async ({ pageParam, signal }): Promise<ScanRunFailuresResponse> => {
-				const page = await api.v3.GET(
-					LibraryV3Api.scanRunFailures(runId ?? '', FAILURES_PAGE, pageParam),
-					{ signal }
-				);
-				return {
-					items: page.items.map((item) => ({
-						...item,
-						phase: item.phase as ScanRunFailuresResponse['items'][number]['phase']
-					})),
-					next_cursor: page.next_cursor ?? null
-				};
+				return api.v3.GET(LibraryV3Api.scanRunFailures(runId ?? '', FAILURES_PAGE, pageParam), {
+					signal
+				});
 			},
 			getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined
 		};
@@ -86,14 +72,7 @@ export const getLibraryRunEstimateQuery = (
 			enabled: enabled(),
 			queryKey: LibraryQueryKeyFactory.runEstimate(scopeIds),
 			queryFn: async ({ signal }): Promise<ScanEstimateResponse> => {
-				const estimate = await api.v3.GET(LibraryV3Api.scanRunEstimate(scopeIds), {
-					signal
-				});
-				return {
-					approximate: estimate.approximate,
-					estimated_file_count: estimate.estimated_file_count ?? null,
-					estimated_at: estimate.estimated_at ?? null
-				};
+				return api.v3.GET(LibraryV3Api.scanRunEstimate(scopeIds), { signal });
 			}
 		};
 	});

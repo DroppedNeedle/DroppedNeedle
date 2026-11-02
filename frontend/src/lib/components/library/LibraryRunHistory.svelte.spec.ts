@@ -18,11 +18,23 @@ function run(overrides: Partial<ScanRun> = {}): ScanRun {
 		terminal_at: 145,
 		resume_phase: null,
 		requested_control: 'none',
-		terminal_code: 'COMPLETED',
+		terminal_code: null,
 		coalesced_request_count: 0,
 		row_revision: 2,
 		event_revision: 3,
-		counters: { discovered_count: 40, changed_count: 7, errored_count: 1 },
+		counters: {
+			changed_count: 7,
+			discovered_count: 40,
+			errored_count: 1,
+			excluded_count: 0,
+			identification_enqueued_count: 0,
+			indexed_count: 0,
+			inspected_count: 0,
+			missing_count: 0,
+			new_count: 0,
+			total_count: 0,
+			unchanged_count: 7
+		},
 		phase_timings: { discovering: 10.5, indexing: 24.5 },
 		...overrides
 	};

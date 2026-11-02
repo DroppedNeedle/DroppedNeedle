@@ -411,11 +411,13 @@ export function managementCollisions(item: LibraryManagementPlanItem): Managemen
 				existingRootId:
 					stringOrNull(value.existing_root_id) ??
 					stringOrNull(value.destination_root_id) ??
-					item.destination_root_id,
+					item.destination_root_id ??
+					null,
 				existingRelativePath:
 					stringOrNull(value.existing_relative_path) ??
 					stringOrNull(value.destination_relative_path) ??
-					item.destination_relative_path,
+					item.destination_relative_path ??
+					null,
 				existingLocalTrackId:
 					stringOrNull(value.existing_local_track_id) ?? stringOrNull(value.catalog_track_id)
 			}
@@ -540,13 +542,13 @@ export function formatManagementBytes(value: number): string {
 }
 
 /** A server time in seconds; no time means the preview never expires. */
-export function formatManagementDate(value: number | null): string {
+export function formatManagementDate(value: number | null | undefined): string {
 	return value ? new Date(value * 1000).toLocaleString() : 'No expiry';
 }
 
 export function managementRootLabel(
 	roots: ReadonlyArray<{ id: string; label: string }>,
-	value: string | null
+	value: string | null | undefined
 ): string {
 	return roots.find((root) => root.id === value)?.label ?? (value ? 'Unavailable root' : 'No root');
 }

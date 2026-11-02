@@ -130,12 +130,12 @@
 			operation &&
 			['succeeded', 'stopped'].includes(operation.state) &&
 			operation.undo_available_count > 0 &&
-			(operation.undo_expires_at === null || operation.undo_expires_at > nowSeconds)
+			(operation.undo_expires_at == null || operation.undo_expires_at > nowSeconds)
 		)
 	);
 	const undoStatus = $derived.by(() => {
 		if (!operation) return '';
-		if (operation.undo_expires_at !== null && operation.undo_expires_at <= nowSeconds) {
+		if (operation.undo_expires_at != null && operation.undo_expires_at <= nowSeconds) {
 			const count = operation.undo_available_count + operation.undo_expired_count;
 			return `Undo snapshots have expired for ${count.toLocaleString()} ${count === 1 ? 'file' : 'files'}.`;
 		}
@@ -301,7 +301,7 @@
 			artist: managementPlanArtist(item.plan),
 			albumTitle: managementPlanAlbum(item.plan),
 			albumArtist: managementPlanAlbumArtist(item.plan),
-			albumId: item.plan.local_album_id,
+			albumId: item.plan.local_album_id ?? null,
 			albumMbid: managementDesiredField(item.plan, 'musicbrainz_release_group_id'),
 			albumArtworkVersion: managementAlbumArtworkVersion(item.plan),
 			format: managementAudioFormat(item.plan),
@@ -310,13 +310,13 @@
 				: titleManagementValue(item.work_state),
 			statusTone: resultTone(item),
 			reason: item.failure_code ? managementReasonLabel(item.failure_code) : null,
-			reasonCode: item.failure_code,
+			reasonCode: item.failure_code ?? null,
 			changes: managementPlanChanges(item.plan),
 			exceptional: Boolean(item.failure_code || item.work_state !== 'succeeded'),
 			sourceRoot: 'Source',
-			sourcePath: item.plan.source_relative_path,
+			sourcePath: item.plan.source_relative_path ?? null,
 			destinationRoot: 'Destination',
-			destinationPath: item.plan.destination_relative_path,
+			destinationPath: item.plan.destination_relative_path ?? null,
 			artworkUrl: artworkHash
 				? LIBRARY_MANAGEMENT_ENDPOINTS.previewArtwork(jobId, item.plan.ordinal, artworkHash)
 				: null
@@ -542,7 +542,7 @@
 							undoDialog.showModal();
 							undoHeading.focus();
 						}}>Preview Undo...</Button
-					>{#if operation.undo_available_count > 0 && !undoAvailable && (operation.undo_expires_at === null || operation.undo_expires_at > nowSeconds)}<p
+					>{#if operation.undo_available_count > 0 && !undoAvailable && (operation.undo_expires_at == null || operation.undo_expires_at > nowSeconds)}<p
 							class="mt-2 text-xs text-base-content/45"
 						>
 							Undo becomes available when this operation reaches a successful or stopped state.

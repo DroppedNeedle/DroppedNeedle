@@ -1,4 +1,7 @@
 import type { components } from '$lib/api/v3/openapi';
+
+type Schemas = components['schemas'];
+
 export type Artist = {
 	title: string;
 	musicbrainz_id: string;
@@ -55,10 +58,7 @@ export type Album = {
 	art_missing?: boolean;
 };
 
-export interface LibraryMembershipResponse {
-	owned_ids: string[];
-	requested_ids: string[];
-}
+export type LibraryMembershipResponse = Schemas['LibraryMembershipResponse'];
 
 export type SuggestResult = {
 	type: 'artist' | 'album';
@@ -343,46 +343,6 @@ export type CrateTrack = {
 	reason: CrateReason;
 };
 
-export type CrateResponse = { items: CrateTrack[] };
-
-export type LocalSearchResponse = {
-	albums: LocalAlbumSummary[];
-	tracks: CrateTrack[];
-};
-
-export type DecadeShelf = {
-	decade: number;
-	label: string;
-	album_count: number;
-	albums: LocalAlbumSummary[];
-};
-
-export type DecadesResponse = { items: DecadeShelf[] };
-
-export type LocalPaginatedResponse = {
-	items: LocalAlbumSummary[];
-	total: number;
-	offset: number;
-	limit: number;
-};
-
-export type FormatInfo = {
-	count: number;
-	size_bytes: number;
-	size_human: string;
-};
-
-export type LocalStorageStats = {
-	total_tracks: number;
-	total_albums: number;
-	total_artists: number;
-	total_size_bytes: number;
-	total_size_human: string;
-	disk_free_bytes: number;
-	disk_free_human: string;
-	format_breakdown: Record<string, FormatInfo>;
-};
-
 export type LastFmConnectionSettingsResponse = components['schemas']['LastFmSettings'];
 
 // mirrors backend api/v1/schemas/settings.py (GetItSettings)
@@ -495,20 +455,9 @@ export type NowPlayingSession = {
 	redacted?: boolean;
 };
 
-export type LyricLine = {
-	text: string;
-	start_seconds: number | null;
-};
-
-export type LocalLyricsResponse = {
-	text: string;
-	is_synced: boolean;
-	lines: LyricLine[];
-};
+export type LyricLine = Schemas['LyricLine'];
 
 export type AlbumSort = 'recent' | 'title' | 'artist';
-
-export type TrackSort = 'recent' | 'title' | 'artist' | 'album';
 
 export type AlbumIdentityState =
 	'local_only' | 'release_group_linked' | 'release_linked' | 'custom_edition';
@@ -622,238 +571,26 @@ export interface LibraryAlbumDetail extends LibraryAlbumSummary {
 	pick_basis: NativePickBasis | null;
 }
 
-export type ContributionState =
-	'draft' | 'ready' | 'seeded' | 'verifying' | 'linked' | 'needs_review' | 'stale' | 'cancelled';
-
-export type ContributionNextAction =
-	| 'edit_draft'
-	| 'refresh_discogs'
-	| 'run_duplicate_check'
-	| 'attach_existing'
-	| 'seed_musicbrainz'
-	| 'retry_verification'
-	| 'rebuild'
-	| 'cancel';
-
-export type ContributionFieldSource = 'local' | 'discogs' | 'entered_here';
-
-export interface ReleaseTextField {
-	value: string | null;
-	source: ContributionFieldSource;
-}
-
-export interface ReleaseTrackSnapshot {
-	local_track_id: string;
-	disc_number: number;
-	track_number: number;
-	title: string;
-	artist_name: string | null;
-	duration_seconds: number | null;
-	duration_reliable: boolean;
-}
-
-export interface ReleaseMediumSnapshot {
-	position: number;
-	title: string | null;
-	tracks: ReleaseTrackSnapshot[];
-}
-
-export interface LocalReleaseSnapshot {
-	schema_version: number;
-	local_album_id: string;
-	local_artist_id: string;
-	album_row_revision: number;
-	input_revision: string;
-	title: string;
-	album_artist_name: string;
-	artist_kind: string;
-	musicbrainz_artist_id: string | null;
-	musicbrainz_release_group_id: string | null;
-	musicbrainz_release_id: string | null;
-	release_date: string | null;
-	year: number | null;
-	is_compilation: boolean;
-	captured_at: number;
-	media: ReleaseMediumSnapshot[];
-}
-
-export interface ReleaseTrackDraft {
-	local_track_id: string;
-	disc_number: number;
-	track_number: number;
-	title: ReleaseTextField;
-	artist_name: ReleaseTextField;
-	duration_seconds: number | null;
-}
-
-export interface ReleaseMediumDraft {
-	position: number;
-	title: ReleaseTextField;
-	format: ReleaseTextField;
-	tracks: ReleaseTrackDraft[];
-}
-
-export interface ReleaseDraft {
-	schema_version: number;
-	title: ReleaseTextField;
-	artist_credit: ReleaseTextField;
-	release_date: ReleaseTextField;
-	country: ReleaseTextField;
-	label: ReleaseTextField;
-	catalogue_number: ReleaseTextField;
-	barcode: ReleaseTextField;
-	packaging: ReleaseTextField;
-	media: ReleaseMediumDraft[];
-}
-
-export interface ContributionSourceReference {
-	provider: string;
-	entity_type: string;
-	external_id: string;
-	canonical_url: string;
-	fetched_at: number | null;
-}
-
-export interface ContributionTrackAlignment {
-	local_track_id: string;
-	provider_position: string | null;
-	classification: 'exact' | 'partial' | 'conflicting' | 'unmatched';
-}
-
-export interface ContributionSourceSelection {
-	schema_version: number;
-	sources: ContributionSourceReference[];
-	alignments: ContributionTrackAlignment[];
-}
+export type ContributionState = Schemas['ContributionState'];
+export type ReleaseTextField = Sent<Schemas['ReleaseTextField']>;
+export type ReleaseDraft = Sent<Schemas['ReleaseDraft']>;
+export type ContributionDuplicateCandidate = Sent<Schemas['DuplicateCandidate']>;
 
 export type DiscogsReleaseCandidate = components['schemas']['DiscogsReleaseCandidate'];
-
-export interface DiscogsArtistCredit {
-	name: string;
-	credited_name: string | null;
-	join_phrase: string;
-	artist_id: string | null;
-	canonical_url: string | null;
-}
-
-export interface DiscogsLabel {
-	name: string;
-	catalogue_number: string | null;
-	label_id: string | null;
-	canonical_url: string | null;
-}
-
-export interface DiscogsIdentifier {
-	type: string;
-	value: string;
-	description: string | null;
-}
-
-export interface DiscogsFormat {
-	name: string;
-	quantity: number | null;
-	descriptions: string[];
-	text: string | null;
-}
-
-export interface DiscogsTrack {
-	source_position: string | null;
-	number: number | null;
-	title: string;
-	duration_seconds: number | null;
-	heading: boolean;
-	artists: DiscogsArtistCredit[];
-}
-
-export interface DiscogsMedium {
-	position: number;
-	title: string | null;
-	format: string | null;
-	tracks: DiscogsTrack[];
-}
-
-export interface DiscogsRelease {
-	release_id: string;
-	master_id: string | null;
-	canonical_release_url: string;
-	canonical_master_url: string | null;
-	title: string;
-	artist_name: string;
-	artists: DiscogsArtistCredit[];
-	released_date: string | null;
-	year: number | null;
-	country: string | null;
-	labels: DiscogsLabel[];
-	identifiers: DiscogsIdentifier[];
-	barcode: string | null;
-	formats: DiscogsFormat[];
-	media: DiscogsMedium[];
-	source_fetched_at: number;
-}
-
-export interface DiscogsSourceView {
-	release: DiscogsRelease | null;
-	expired: boolean;
-	expires_at: number | null;
-}
-
-export interface ContributionDuplicateCandidate {
-	release_mbid: string | null;
-	release_group_mbid: string | null;
-	title: string;
-	artist_name: string;
-	evidence_kind: 'exact_discogs_url' | 'release_group' | 'barcode' | 'similar';
-	exact: boolean;
-	differences: string[];
-}
-
-export interface ContributionDuplicateResult {
-	schema_version: number;
-	checked_at: number;
-	input_revision: string;
-	candidates: ContributionDuplicateCandidate[];
-	different_edition_confirmed: boolean;
-}
 
 export type MusicBrainzSeedField = components['schemas']['MusicBrainzSeedField'];
 
 export type MusicBrainzSeed = components['schemas']['MusicBrainzSeed'];
 
-export interface ContributionValidationIssue {
-	code: string;
-	field: string;
-	message: string;
-}
+// The server sends every field of a contribution, but the contract marks the
+// defaulted ones optional, so the screens read the same shape with them required.
+type Sent<T> = T extends (infer U)[]
+	? Sent<U>[]
+	: T extends object
+		? { [K in keyof T]-?: Sent<T[K]> }
+		: T;
 
-export interface LibraryContribution {
-	id: string;
-	local_album_id: string;
-	created_by_user_id: string | null;
-	updated_by_user_id: string | null;
-	state: ContributionState;
-	album_row_revision: number;
-	input_revision: string;
-	local_snapshot: LocalReleaseSnapshot;
-	draft: ReleaseDraft;
-	source_selection: ContributionSourceSelection;
-	provider_snapshot_expires_at: number | null;
-	discogs_source: DiscogsSourceView | null;
-	duplicate_result: ContributionDuplicateResult | null;
-	duplicate_checked_at: number | null;
-	result_release_mbid: string | null;
-	result_source: 'callback' | 'manual' | null;
-	result_received_at: number | null;
-	seeded_at: number | null;
-	terminal_at: number | null;
-	created_at: number;
-	updated_at: number;
-	row_revision: number;
-	input_is_current: boolean;
-	validation: ContributionValidationIssue[];
-	next_actions: ContributionNextAction[];
-	/** Why a needs-review contribution stopped: code, sentence, next step. */
-	review_reason?: { code: string; message: string; action: string } | null;
-}
+export type LibraryContribution = Sent<Schemas['ContributionRecord']>;
 
 export interface NativeAlbumsResponse {
 	items: LibraryAlbumSummary[];
@@ -902,82 +639,21 @@ export interface LibraryArtistAppearancesResponse {
 	next: string | null;
 }
 
-export interface LibraryTrack {
-	id: string;
-	recording_mbid: string | null;
-	disc_number: number;
-	track_number: number;
-	track_title: string;
-	artist_name: string | null;
-	file_path: string;
-	file_format: string | null;
-	bit_rate: number | null;
-	sample_rate: number | null;
-	bit_depth: number | null;
-	duration_seconds: number | null;
-	file_size_bytes: number;
-	current_tier: string | null;
-	below_cutoff: boolean;
-}
-
 export type LibraryFileMeta = TargetNativeTrack;
 
-export interface LibraryAlbumStatus {
-	in_library: boolean;
-	album_id: string;
-	track_count: number;
+// The contract's status, its tracks in the native track model.
+export type LibraryAlbumStatus = Omit<Schemas['LibraryAlbumStatus'], 'tracks'> & {
 	tracks: TargetNativeTrack[];
-	// Coverage vs the release's MB tracklist: expected_tracks === 0 means the
-	// tracklist was unavailable and the UI falls back to the presence-only reading.
-	expected_tracks?: number;
-	covered_tracks?: number;
-	matched_file_ids?: string[];
-	// held files that match NONE of the album's expected tracks ("doesn't match")
-	orphans?: LibraryTrack[];
-}
-
-export interface AlbumRemoveResponse {
-	success: boolean;
-	album_mbid: string;
-	removed_mbids: string[];
-	artist_removed: boolean;
-	artist_name: string | null;
-}
-
-export interface TargetCatalogRemovalResponse {
-	success: boolean;
-	id: string;
-	removed_track_ids: string[];
-}
+};
 
 export type AlbumEditionItem = components['schemas']['AlbumEditionItem'];
 export type AlbumEditionsResponse = components['schemas']['AlbumEditionsResponse'];
 
-export interface LibraryStats {
-	total_albums: number;
-	total_artists: number;
-	total_tracks: number;
-	total_size_bytes: number;
-	format_breakdown: Record<string, number>;
-	review_count: number;
-	local_only_count: number;
-	last_scan_at: number | null;
-	/** Albums the caller favorited. */
-	favorite_albums: number;
-}
+export type LibraryStats = Schemas['StatsView'];
 
-export type ScanFrequency =
-	'manual' | '30min' | '1hr' | '6hr' | '12hr' | '24hr' | '3d' | '7d' | 'daily';
+export type ScanFrequency = Schemas['ScanFrequency'];
 
-export interface LibraryScanSchedule {
-	scan_frequency: ScanFrequency;
-	/** HH:MM (server-local) used when scan_frequency is 'daily'. */
-	daily_scan_time: string;
-	/** Server timezone label for the daily-time caption; present on reads only. */
-	server_timezone?: string;
-	/** When the last scan finished, unix seconds, from the scan history; reads only. */
-	last_scan_at?: number | null;
-}
+export type LibraryScanSchedule = Schemas['LibraryScanSchedule'];
 
 export type DownloadStatus = components['schemas']['TaskStatus'];
 

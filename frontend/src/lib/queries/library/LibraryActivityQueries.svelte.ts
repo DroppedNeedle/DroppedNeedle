@@ -9,8 +9,8 @@ import { STALE_LIVE } from '$lib/queries/staleTime';
 const getLibraryActivityQueryOptions = (userId: string | undefined) =>
 	queryOptions({
 		queryKey: LibraryQueryKeyFactory.activity(userId),
-		queryFn: async ({ signal }): Promise<LibraryActivityResponse> =>
-			(await api.v3.GET(LibraryV3Api.activity(), { signal })) as LibraryActivityResponse,
+		queryFn: ({ signal }): Promise<LibraryActivityResponse> =>
+			api.v3.GET(LibraryV3Api.activity(), { signal }),
 		staleTime: STALE_LIVE
 	});
 

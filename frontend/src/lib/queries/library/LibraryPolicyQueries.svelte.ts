@@ -3,14 +3,12 @@ import type { Getter } from 'runed';
 import { api } from '$lib/api/client';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
 import { LibraryV3Api } from './LibraryV3Api';
-import { toTargetLibrarySettings } from './libraryAdapters';
 
 export const getTargetLibrarySettingsQuery = (enabled: Getter<boolean> = () => true) =>
 	createQuery(() => ({
 		enabled: enabled(),
 		queryKey: LibraryQueryKeyFactory.targetSettings(),
-		queryFn: async ({ signal }) =>
-			toTargetLibrarySettings(await api.v3.GET(LibraryV3Api.settings(), { signal }))
+		queryFn: async ({ signal }) => await api.v3.GET(LibraryV3Api.settings(), { signal })
 	}));
 
 export const getLibraryRestorableRootsQuery = (enabled: Getter<boolean> = () => true) =>

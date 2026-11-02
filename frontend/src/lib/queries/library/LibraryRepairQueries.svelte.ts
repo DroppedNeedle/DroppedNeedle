@@ -3,7 +3,6 @@ import type { Getter } from 'runed';
 import { api } from '$lib/api/client';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
 import { LibraryV3Api } from './LibraryV3Api';
-import { toOperationList } from './libraryOperationAdapters';
 import type { RepairEstimateResponse, RepairFindingListResponse } from './LibraryOperationsTypes';
 
 export const getLibraryRepairsQuery = (enabled: Getter<boolean> = () => true) =>
@@ -12,7 +11,7 @@ export const getLibraryRepairsQuery = (enabled: Getter<boolean> = () => true) =>
 		queryKey: LibraryQueryKeyFactory.repairs(undefined),
 		initialPageParam: undefined as string | undefined,
 		queryFn: async ({ pageParam, signal }) =>
-			toOperationList(await api.v3.GET(LibraryV3Api.identityRepairs(50, pageParam), { signal })),
+			await api.v3.GET(LibraryV3Api.identityRepairs(50, pageParam), { signal }),
 		getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined
 	}));
 

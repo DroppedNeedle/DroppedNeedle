@@ -308,11 +308,6 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 	const libraryTrackCount = $derived(libraryStatus?.track_count ?? 0);
 	// any held track below the quality cutoff -> the header's curator "Upgrade quality" affordance
 	const libraryBelowCutoff = $derived((libraryStatus?.tracks ?? []).some((t) => t.below_cutoff));
-	// Coverage: what the held files actually COVER of the release's tracklist.
-	// expectedTracks === 0 -> tracklist unavailable, badge/Play All fall back to the
-	// presence-only reading (never block playback on a MusicBrainz hiccup).
-	const coverageExpected = $derived(libraryStatus?.expected_tracks ?? 0);
-	const matchedFileIds = $derived(new SvelteSet(libraryStatus?.matched_file_ids ?? []));
 
 	// The local album that holds this release group, and its current edition's
 	// plan: the same reads, under the same keys, as the edition plate, so the
@@ -521,15 +516,17 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 		void tracksQuery.refetch();
 	}
 
-	// Playback sees only files that COVER an expected track: an orphan
-	// ("doesn't match this album") never enters the album queue - it plays
-	// individually from the review section. Falls back to the raw match when
-	// the tracklist was unavailable (expected_tracks === 0).
+	// Playback follows the edition plan: a file it does not keep (a duplicate,
+	// another version, an extra) plays individually from its own section. With
+	// no plan, or a plan that keeps nothing, every held file plays.
 	const localMatchForPlayback = $derived.by(() => {
-		if (!localMatch || coverageExpected === 0) return localMatch;
+		const kept = new SvelteSet(
+			editionPlan?.files.filter((file) => file.fate === 'keep').map((file) => file.local_track_id)
+		);
+		if (!localMatch || kept.size === 0) return localMatch;
 		return {
 			...localMatch,
-			tracks: localMatch.tracks.filter((t) => matchedFileIds.has(String(t.track_file_id)))
+			tracks: localMatch.tracks.filter((t) => kept.has(String(t.track_file_id)))
 		};
 	});
 	const localTracksForPlayback = $derived(localMatchForPlayback?.tracks ?? []);

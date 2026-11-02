@@ -52,8 +52,8 @@
 	);
 	const activeRun = $derived(runsQuery.data?.active ?? null);
 	const queuedRun = $derived(runsQuery.data?.queued ?? null);
-	const counters = $derived(runDetailQuery.data?.snapshot.counters ?? {});
-	const scopes = $derived(runDetailQuery.data?.snapshot.scopes ?? []);
+	const counters = $derived(runDetailQuery.data?.run.counters);
+	const scopes = $derived(runDetailQuery.data?.scopes ?? []);
 	const policyRevision = $derived(settingsQuery.data?.policy_revision ?? '');
 	const libraryEnabled = $derived(settingsQuery.data?.enabled ?? true);
 	const reviewCount = $derived(reviewsQuery.data ?? 0);
@@ -294,7 +294,7 @@
 					<div class="grid grid-cols-2 gap-2 text-sm sm:grid-cols-4 lg:grid-cols-9">
 						<div>
 							<span class="block text-xs text-base-content/50">New</span><strong
-								>{(counters.new_count ?? 0).toLocaleString()}</strong
+								>{(counters?.new_count ?? 0).toLocaleString()}</strong
 							>
 						</div>
 						<div>
@@ -304,27 +304,27 @@
 						</div>
 						<div>
 							<span class="block text-xs text-base-content/50">Changed</span><strong
-								>{(counters.changed_count ?? 0).toLocaleString()}</strong
+								>{(counters?.changed_count ?? 0).toLocaleString()}</strong
 							>
 						</div>
 						<div>
 							<span class="block text-xs text-base-content/50">Unchanged</span><strong
-								>{(counters.unchanged_count ?? 0).toLocaleString()}</strong
+								>{(counters?.unchanged_count ?? 0).toLocaleString()}</strong
 							>
 						</div>
 						<div>
 							<span class="block text-xs text-base-content/50">Excluded</span><strong
-								>{(counters.excluded_count ?? 0).toLocaleString()}</strong
+								>{(counters?.excluded_count ?? 0).toLocaleString()}</strong
 							>
 						</div>
 						<div>
 							<span class="block text-xs text-base-content/50">Missing</span><strong
-								>{(counters.missing_count ?? 0).toLocaleString()}</strong
+								>{(counters?.missing_count ?? 0).toLocaleString()}</strong
 							>
 						</div>
 						<div>
 							<span class="block text-xs text-base-content/50">Errors</span><strong
-								>{(counters.errored_count ?? 0).toLocaleString()}</strong
+								>{(counters?.errored_count ?? 0).toLocaleString()}</strong
 							>
 						</div>
 						<div>
@@ -346,13 +346,11 @@
 								</p>
 							{/if}
 							<ul class="mt-2 space-y-1 text-base-content/60">
-								{#each scopes as scope (scope.scope_id)}<li>
+								{#each scopes as scope (`${scope.root_id}/${scope.relative_path}`)}<li>
 										{roots.find((root) => root.id === scope.root_id)?.label ?? scope.root_id} · {scope.effective_policy.replace(
 											'_',
 											' '
 										)}
-										{#if scope.estimated_count !== null}
-											· about {scope.estimated_count.toLocaleString()} files{/if}
 									</li>{/each}
 							</ul>
 							{#if activeRun && Object.keys(activeRun.phase_timings).length}
@@ -371,7 +369,7 @@
 							Queued follow-up: {queuedRun.kind.replaceAll('_', ' ')} will start after the active scan.
 						</p>
 					{/if}
-					{#if activeRun?.terminal_code === 'POLICY_CHANGED' || activeRun?.state === 'superseded_policy_changed'}<div
+					{#if activeRun?.state === 'superseded_policy_changed'}<div
 							class="alert alert-warning text-sm"
 						>
 							<ShieldAlert class="h-4 w-4" /><span>Stopped because library policy changed</span

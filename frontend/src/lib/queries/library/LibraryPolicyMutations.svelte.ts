@@ -2,7 +2,6 @@ import { api } from '$lib/api/client';
 import { ApiError } from '$lib/api/errors';
 import { toastStore } from '$lib/stores/toast';
 import { LibraryV3Api } from './LibraryV3Api';
-import { toTargetLibrarySettings } from './libraryAdapters';
 import type { LibraryRestoreRootsRequest, TypedLibrarySettings } from './LibraryOperationsTypes';
 import {
 	anyLibraryActivityChanged,
@@ -37,7 +36,7 @@ export function saveTargetLibrarySettings() {
 		mutationFn: async (input: {
 			settings: TypedLibrarySettings;
 			expected_policy_revision: string;
-		}) => toTargetLibrarySettings(await api.v3.PUT(LibraryV3Api.settings(), input)),
+		}) => await api.v3.PUT(LibraryV3Api.settings(), input),
 		effects: policies,
 		onSuccess: () => {
 			toastStore.show({ message: 'Library policies saved', type: 'success' });
@@ -53,7 +52,7 @@ export function saveTargetLibrarySettings() {
 export function restoreLibraryRoots() {
 	return createAppMutation(() => ({
 		mutationFn: async (input: LibraryRestoreRootsRequest) =>
-			toTargetLibrarySettings(await api.v3.POST(LibraryV3Api.restoreRoots(), input)),
+			await api.v3.POST(LibraryV3Api.restoreRoots(), input),
 		effects: policies,
 		onSuccess: () => {
 			toastStore.show({ message: 'Library roots restored', type: 'success' });

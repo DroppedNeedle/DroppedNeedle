@@ -76,6 +76,7 @@ const contribution = (overrides: Partial<LibraryContribution> = {}): LibraryCont
 	input_is_current: true,
 	validation: [],
 	next_actions: ['edit_draft', 'run_duplicate_check', 'cancel'],
+	review_reason: null,
 	...overrides
 });
 

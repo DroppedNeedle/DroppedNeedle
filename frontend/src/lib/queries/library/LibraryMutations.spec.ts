@@ -37,13 +37,7 @@ beforeEach(() => {
 
 describe('album removal mutation', () => {
 	it('clears exact membership and declares the catalog and wanted changed', async () => {
-		const result = {
-			success: true,
-			album_mbid: 'rg-1',
-			removed_mbids: ['release-1', 'rg-1'],
-			artist_removed: false,
-			artist_name: null
-		};
+		const result = { id: 'rg-1', removed_track_ids: [] };
 		mockDelete.mockResolvedValueOnce(result);
 		const mutation = removeLibraryAlbum() as unknown as {
 			mutationFn: (input: { mbid: string; stopWanted: boolean }) => Promise<typeof result>;
@@ -72,13 +66,7 @@ describe('album removal mutation', () => {
 	});
 
 	it('does not report cache housekeeping failures as removal failures', async () => {
-		const result = {
-			success: true,
-			album_mbid: 'rg-1',
-			removed_mbids: ['rg-1'],
-			artist_removed: false,
-			artist_name: null
-		};
+		const result = { id: 'rg-1', removed_track_ids: [] };
 		mockDelete.mockResolvedValueOnce(result);
 		vi.mocked(setQueryDataWithPersister).mockRejectedValueOnce(new Error('IndexedDB unavailable'));
 		const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);

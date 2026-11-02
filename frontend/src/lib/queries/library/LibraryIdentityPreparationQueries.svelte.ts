@@ -3,7 +3,6 @@ import type { Getter } from 'runed';
 import { api } from '$lib/api/client';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
 import { LibraryV3Api } from './LibraryV3Api';
-import { toOperationList } from './libraryOperationAdapters';
 import type {
 	IdentityPreparationEstimateResponse,
 	RepairFindingListResponse
@@ -21,9 +20,7 @@ export const getLibraryIdentityPreparationsQuery = (
 			queryKey: LibraryQueryKeyFactory.identityPreparations(userId, undefined),
 			initialPageParam: undefined as string | undefined,
 			queryFn: async ({ pageParam, signal }) =>
-				toOperationList(
-					await api.v3.GET(LibraryV3Api.identityPreparations(5, pageParam), { signal })
-				),
+				await api.v3.GET(LibraryV3Api.identityPreparations(5, pageParam), { signal }),
 			getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
 			refetchInterval: (query) =>
 				query.state.data?.pages.some((page) =>

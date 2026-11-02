@@ -57,8 +57,11 @@
 	const album = $derived(managementPlanAlbum(item));
 	const deferredSource = $derived(firstDeferredSource(item));
 
-	function displayPath(root: string | null, relative: string | null): string {
-		return managementDisplayPath(roots, root, relative);
+	function displayPath(
+		root: string | null | undefined,
+		relative: string | null | undefined
+	): string {
+		return managementDisplayPath(roots, root ?? null, relative ?? null);
 	}
 
 	function formatNanosecondDate(value: string | null): string {

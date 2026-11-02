@@ -5,12 +5,7 @@ import { libraryStore } from '$lib/stores/library';
 import { setQueryDataWithPersister } from '../QueryClient';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
 import { LibraryV3Api } from './LibraryV3Api';
-import type {
-	AlbumRemoveResponse,
-	TargetCatalogRemovalResponse,
-	LibraryAlbumStatus,
-	LibraryScanSchedule
-} from '$lib/types';
+import type { LibraryAlbumStatus, LibraryScanSchedule } from '$lib/types';
 import {
 	albumLocalCopyChanged,
 	albumRemovalsChanged,
@@ -28,13 +23,9 @@ import {
 export function removeLibraryAlbum() {
 	return createAppMutation(() => ({
 		mutationFn: ({ mbid, stopWanted }: { mbid: string; stopWanted: boolean }) =>
-			api.v3.DELETE(LibraryV3Api.removeAlbum(mbid, stopWanted)) as Promise<
-				AlbumRemoveResponse | TargetCatalogRemovalResponse
-			>,
+			api.v3.DELETE(LibraryV3Api.removeAlbum(mbid, stopWanted)),
 		onSuccess: async (result, { mbid: requestedMbid }) => {
-			const responseMbids =
-				'album_mbid' in result ? [result.album_mbid, ...result.removed_mbids] : [result.id];
-			const removedMbids = [requestedMbid, ...responseMbids].filter(
+			const removedMbids = [requestedMbid, result.id].filter(
 				(mbid, index, all) => all.indexOf(mbid) === index
 			);
 			for (const mbid of removedMbids) {
@@ -49,10 +40,7 @@ export function removeLibraryAlbum() {
 									...previous,
 									in_library: false,
 									track_count: 0,
-									tracks: [],
-									covered_tracks: 0,
-									matched_file_ids: [],
-									orphans: []
+									tracks: []
 								}
 							: previous
 				);

@@ -30,7 +30,7 @@
 	let exportHeading: HTMLHeadingElement;
 	let exportOpener: HTMLElement | null = null;
 
-	function formatTime(value: number | null): string {
+	function formatTime(value: number | null | undefined): string {
 		return value ? new Date(value * 1000).toLocaleString() : '-';
 	}
 
@@ -287,16 +287,14 @@
 				{/if}
 			{/if}
 			<div class="modal-action">
-				{#if detailRun.diagnostics_available !== false}
-					<Button
-						variant="outline"
-						size="sm"
-						icon={Download}
-						class="mr-auto"
-						onclick={openDetailExport}
-						aria-label={`Export diagnostics for run ${detailRun.id}`}>Export diagnostics</Button
-					>
-				{/if}
+				<Button
+					variant="outline"
+					size="sm"
+					icon={Download}
+					class="mr-auto"
+					onclick={openDetailExport}
+					aria-label={`Export diagnostics for run ${detailRun.id}`}>Export diagnostics</Button
+				>
 				<Button variant="ghost" onclick={closeDetails}>Close</Button>
 			</div>
 		</div>

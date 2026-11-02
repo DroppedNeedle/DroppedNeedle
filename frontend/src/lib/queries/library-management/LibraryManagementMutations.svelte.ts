@@ -7,7 +7,6 @@ import { LIBRARY_MANAGEMENT_ENDPOINTS } from './endpoints';
 import { toPreviewDetail } from './libraryManagementAdapters';
 import type { OperationResponse } from '$lib/queries/library/LibraryOperationsTypes';
 import { operationControlUrl } from '$lib/queries/library/LibraryOperationMutations.svelte';
-import { toOperationResponse } from '$lib/queries/library/libraryOperationAdapters';
 import { toastStore } from '$lib/stores/toast';
 
 import type {
@@ -148,12 +147,10 @@ export const applyLibraryManagementPreviewMutation = () =>
 			jobId: string;
 			request: LibraryManagementApplyRequest;
 		}): Promise<OperationResponse> =>
-			toOperationResponse(
-				await api.v3.POST(LIBRARY_MANAGEMENT_ENDPOINTS.applyPreview(input.jobId), {
-					...input.request,
-					confirmation: input.request.confirmation ?? false
-				})
-			),
+			await api.v3.POST(LIBRARY_MANAGEMENT_ENDPOINTS.applyPreview(input.jobId), {
+				...input.request,
+				confirmation: input.request.confirmation ?? false
+			}),
 		effects: catalog,
 		onSuccess: showQueued('Organization work queued'),
 		onError: (error: Error) => {
@@ -295,11 +292,9 @@ export const controlLibraryManagementOperationMutation = (action: 'pause' | 'res
 			jobId: string;
 			expectedRevision: number;
 		}): Promise<OperationResponse> =>
-			toOperationResponse(
-				await api.v3.POST(operationControlUrl(action, input.jobId), {
-					expected_row_revision: input.expectedRevision
-				})
-			),
+			await api.v3.POST(operationControlUrl(action, input.jobId), {
+				expected_row_revision: input.expectedRevision
+			}),
 		onSuccess: () => {
 			toastStore.show({ message: `Organization ${action} requested`, type: 'success' });
 		},

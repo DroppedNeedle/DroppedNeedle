@@ -17,13 +17,7 @@ import {
 import { LibraryV3Api } from './LibraryV3Api';
 import { SearchV3Api } from '../search/SearchV3Api';
 import { toMusicBrainzAlbums } from '../search/SearchV3Adapters';
-import {
-	toAlbumDetail,
-	toAlbumSummary,
-	toArtistSummary,
-	toLibraryStats,
-	toNativeAlbums
-} from './libraryAdapters';
+import { toAlbumDetail, toAlbumSummary, toArtistSummary, toNativeAlbums } from './libraryAdapters';
 import {
 	fetchLibraryTracks,
 	toAlbumStatus,
@@ -39,12 +33,10 @@ import type {
 	LibraryArtistSummary,
 	LibraryArtistAppearancesResponse,
 	LibraryArtistScope,
-	LibraryScanSchedule,
 	LibraryMembershipResponse,
 	NativeAlbumsResponse,
 	NativeArtistsResponse,
-	NativeTrackListItem,
-	ScanFrequency
+	NativeTrackListItem
 } from '$lib/types';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { setQueryDataWithPersister } from '../QueryClient';
@@ -204,8 +196,7 @@ const getLibraryStatsQueryOptions = (forUser: LibraryV3UserId) =>
 	queryOptions({
 		meta: PERSIST,
 		queryKey: LibraryQueryKeyFactory.catalog.stats(forUser),
-		queryFn: async ({ signal }) =>
-			toLibraryStats(await api.v3.GET(LibraryV3Api.stats(), { signal }))
+		queryFn: async ({ signal }) => await api.v3.GET(LibraryV3Api.stats(), { signal })
 	});
 
 export const getLibraryStatsQuery = () => createQuery(() => getLibraryStatsQueryOptions(userId()));
@@ -386,15 +377,7 @@ export const getLibraryScanScheduleQuery = (enabled: () => boolean = () => true)
 	createQuery(() => ({
 		enabled: enabled(),
 		queryKey: LibraryQueryKeyFactory.scanSchedule(),
-		queryFn: async ({ signal }): Promise<LibraryScanSchedule> => {
-			const data = await api.v3.GET(LibraryV3Api.schedule(), { signal });
-			return {
-				scan_frequency: (data.scan_frequency ?? 'manual') as ScanFrequency,
-				daily_scan_time: data.daily_scan_time ?? '',
-				server_timezone: data.server_timezone,
-				last_scan_at: data.last_scan_at ?? null
-			};
-		}
+		queryFn: ({ signal }) => api.v3.GET(LibraryV3Api.schedule(), { signal })
 	}));
 
 // What the library holds for one album, by MusicBrainz id or local id, with

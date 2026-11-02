@@ -103,7 +103,8 @@ const contribution: LibraryContribution = {
 	row_revision: 1,
 	input_is_current: true,
 	validation: [],
-	next_actions: ['edit_draft', 'run_duplicate_check', 'cancel']
+	next_actions: ['edit_draft', 'run_duplicate_check', 'cancel'],
+	review_reason: null
 };
 
 vi.mock('$lib/queries/libraryContributions/LibraryContributionQueries.svelte', () => ({
