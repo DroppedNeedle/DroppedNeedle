@@ -11977,10 +11977,10 @@ async fn a_mixed_id3v23_file_is_saved_as_v24() {
 
 /// A scrub's preview says, per file, how many tags it keeps as they are
 /// because undo could not put them back exactly, and why: an ID3 frame
-/// over 1 MB, an MP4 item that is not text. A file no save could keep
-/// whole is left out of the run with the reason: a FLAC spelling a tag
-/// two ways, and an MP3 holding two identical pictures in a run that
-/// replaces the art.
+/// over 1 MB, an MP4 item that is not text. One the profile preserves
+/// is not counted: the scrub would not have removed it anyway. A file no
+/// save could keep whole is left out of the run with the reason: a FLAC
+/// spelling a tag two ways.
 #[tokio::test]
 async fn a_scrub_preview_names_the_tags_it_keeps() {
     use crate::library_tags::{flac_inject_pairs, id3_inject_frames};
@@ -11998,6 +11998,7 @@ async fn a_scrub_preview_names_the_tags_it_keeps() {
         "lib-kept-as-is",
         |profile| {
             profile.metadata.scrub_unmanaged_tags = true;
+            profile.metadata.preserve_fields = vec!["id3:PRIV".to_owned()];
             profile.artwork.embedded_enabled = true;
         },
         Arc::new(ScriptedEnrichment {
@@ -12021,25 +12022,22 @@ async fn a_scrub_preview_names_the_tags_it_keeps() {
     let (spelled, spelled_tracks) = managed
         .add_album_from("spelled", &["management_full.flac"], |_| {})
         .await;
-    let (doubled, doubled_tracks) = managed
-        .add_album_from("doubled", &["management_full.mp3"], |_| {})
-        .await;
     let mut geob = b"\x00application/octet-stream\x00blob.bin\x00large\x00".to_vec();
     geob.extend((0..(1 << 20) + 4096).map(|index| (index % 251) as u8));
-    id3_inject_frames(&managed.path(&kept_tracks[0]), &[("GEOB", &geob)]);
+    let mut private = b"owner\0".to_vec();
+    private.extend((0..(1 << 20) + 4096).map(|index| (index % 251) as u8));
+    id3_inject_frames(
+        &managed.path(&kept_tracks[0]),
+        &[("GEOB", &geob), ("PRIV", &private)],
+    );
     flac_inject_pairs(
         &managed.path(&spelled_tracks[0]),
         &[("Mood", "Calm"), ("MOOD", "Bright")],
     );
-    let picture = b"\0image/png\0\x03\0abc".as_slice();
-    id3_inject_frames(
-        &managed.path(&doubled_tracks[0]),
-        &[("APIC", picture), ("APIC", picture)],
-    );
     rescan(&managed.library).await;
 
     let (_, items) = managed
-        .preview(SelectionKind::Albums, &[&kept, &spelled, &doubled], "kept")
+        .preview(SelectionKind::Albums, &[&kept, &spelled], "kept")
         .await;
     let item = |track: &str| {
         items
@@ -12065,19 +12063,128 @@ async fn a_scrub_preview_names_the_tags_it_keeps() {
             item.facts.warnings
         );
     }
-    for (track, words) in [
-        (
-            &spelled_tracks[0],
-            "The file spells its MOOD tag more than one way (Mood, MOOD), so saving its tags would merge them.",
+    let item = item(&spelled_tracks[0]);
+    assert_eq!(item.eligibility, Eligibility::Blocked, "{:?}", item.facts);
+    let reason = item.reason().expect("a reason");
+    assert_eq!(reason.code, "WRITE_FAILED");
+    assert!(
+        reason.message.contains(
+            "The file spells its MOOD tag more than one way (Mood, MOOD), so saving its tags would merge them."
         ),
-        (&doubled_tracks[0], "two APIC frames"),
-    ] {
-        let item = item(track);
-        assert_eq!(item.eligibility, Eligibility::Blocked, "{:?}", item.facts);
-        let reason = item.reason().expect("a reason");
-        assert_eq!(reason.code, "WRITE_FAILED");
-        assert!(reason.message.contains(words), "{}", reason.message);
-    }
+        "{}",
+        reason.message
+    );
+}
+
+/// An artwork embed is refused only when the write would lose something:
+/// a FLAC with two file icons, an MP3 with two play counters. Two identical
+/// APICs are written, keeping the picture they hold, and undo gives the
+/// file's pictures back.
+#[tokio::test]
+async fn an_artwork_embed_is_refused_only_when_it_would_lose_a_picture() {
+    use crate::library_tags::id3_inject_frames;
+    use droppedneedle_library::management::enrich::{Cover, ScriptedEnrichment};
+    use droppedneedle_library::management::models::{Eligibility, SelectionKind};
+    use droppedneedle_library::tags::save::read_document;
+
+    let mut cover = Vec::new();
+    image::RgbImage::from_pixel(8, 8, image::Rgb([30, 30, 200]))
+        .write_to(
+            &mut std::io::Cursor::new(&mut cover),
+            image::ImageFormat::Png,
+        )
+        .expect("png");
+    let managed = ManagedLibrary::scripted(
+        "lib-picture-guards",
+        |profile| profile.artwork.embedded_enabled = true,
+        Arc::new(ScriptedEnrichment {
+            listenbrainz: None,
+            lyrics: None,
+            cover: Some(Cover {
+                bytes: cover,
+                mime: "image/png".to_owned(),
+            }),
+            ..Default::default()
+        }),
+    )
+    .await;
+    let (icons, icons_tracks) = managed
+        .add_album_from("icons", &["management_two_icons.flac"], |_| {})
+        .await;
+    let (fronts, fronts_tracks) = managed
+        .add_album_from("fronts", &["management_full.mp3"], |_| {})
+        .await;
+    let (counters, counters_tracks) = managed
+        .add_album_from("counters", &["management_full.mp3"], |_| {})
+        .await;
+    let front = b"\0image/png\0\x03\0abc".as_slice();
+    id3_inject_frames(
+        &managed.path(&fronts_tracks[0]),
+        &[("APIC", front), ("APIC", front)],
+    );
+    id3_inject_frames(
+        &managed.path(&counters_tracks[0]),
+        &[("PCNT", &[0, 0, 0, 1]), ("PCNT", &[0, 0, 0, 2])],
+    );
+    rescan(&managed.library).await;
+
+    let (_, items) = managed
+        .preview(
+            SelectionKind::Albums,
+            &[&icons, &fronts, &counters],
+            "guards",
+        )
+        .await;
+    let item = |track: &str| {
+        items
+            .iter()
+            .find(|item| item.track_id.as_deref() == Some(track))
+            .expect("item for the track")
+    };
+    assert_eq!(
+        [&icons_tracks[0], &fronts_tracks[0], &counters_tracks[0]]
+            .map(|track| item(track).eligibility == Eligibility::Blocked),
+        [true, false, true],
+        "refused: icons, fronts, counters"
+    );
+    let message = |track: &str| item(track).reason().expect("a reason").message.clone();
+    assert!(
+        message(&icons_tracks[0]).contains("two file icon pictures"),
+        "{}",
+        message(&icons_tracks[0])
+    );
+    assert!(
+        message(&counters_tracks[0]).contains("two PCNT frames"),
+        "{}",
+        message(&counters_tracks[0])
+    );
+
+    // The run renames the file, so each read asks where it is now.
+    let pictures = || {
+        read_document(&managed.path(&fronts_tracks[0]))
+            .expect("read")
+            .pictures
+    };
+    let held = pictures();
+    let run = managed
+        .apply(SelectionKind::Albums, &[&fronts], "embed")
+        .await;
+    let written = pictures();
+    assert_eq!(written[0].kind, 3);
+    assert_ne!(written[0].data, b"abc");
+
+    let management = managed.management();
+    let detail = management.detail(&run).expect("detail");
+    let undo = management
+        .undo_preview(&run, detail.job.row_revision, "undo", "admin")
+        .expect("undo preview");
+    assert!(
+        management_step(&managed.library).await,
+        "undo planning runs"
+    );
+    let undone = management_apply(&managed.library, &undo).await;
+    assert_eq!(undone.job.state.as_str(), "succeeded");
+    assert_eq!(pictures(), held);
 }
 
 /// The Picard profile applied to one album in every writable format

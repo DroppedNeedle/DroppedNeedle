@@ -7,7 +7,7 @@ use std::path::Path;
 use lofty::file::TaggedFile;
 
 use super::document::{FieldDocument, FieldRead, collect_reads, values_or_absent};
-use super::kept::{LeftAlone, TagsKept};
+use super::kept::{LeftAlone, PicturesPlan, TagsKept};
 use super::mp4_edit::{self, Mp4Edit};
 use super::{PictureSpec, Refusal, TagEdit, TagFormat, mismatch};
 use crate::tags::AudioFormat;
@@ -38,15 +38,11 @@ impl TagFormat for Mp4 {
 
     /// Items holding a value that is not text, and atoms of one code
     /// held twice, are left as they are.
-    fn kept(atoms: Vec<Mp4AtomTruth>) -> Result<TagsKept, Refusal> {
-        let left_alone = mp4_listing(&atoms, false)
-            .1
-            .into_iter()
-            .map(|(key, why)| (key["mp4:".len()..].to_owned(), why))
-            .collect();
+    fn kept(atoms: Vec<Mp4AtomTruth>, _pictures: PicturesPlan) -> Result<TagsKept, Refusal> {
+        let left_alone = mp4_listing(&atoms, false).1.into_iter().collect();
         Ok(TagsKept {
-            refusal: None,
             left_alone,
+            ..TagsKept::default()
         })
     }
 
@@ -138,12 +134,9 @@ fn mp4_listing(
                 {
                     let key = format!("mp4:----:{name}");
                     match std::str::from_utf8(data) {
-                        Ok(text) if !text.is_empty() => {
-                            out.entry(key).or_default().push(text.to_owned());
-                        }
-                        _ => {
-                            unlisted.insert(key, LeftAlone::NotText);
-                        }
+                        Ok("") => mark_left_alone(&mut unlisted, key, LeftAlone::Empty),
+                        Ok(text) => out.entry(key).or_default().push(text.to_owned()),
+                        Err(_) => mark_left_alone(&mut unlisted, key, LeftAlone::NotText),
                     }
                 }
             }
@@ -165,7 +158,16 @@ fn mp4_listing(
         // Two atoms of one code, or a value that is not text: left alone.
         match texts.filter(|texts| !texts.is_empty()) {
             None => {
-                unlisted.insert(key, LeftAlone::NotText);
+                let all_text = atom
+                    .items
+                    .iter()
+                    .all(|item| matches!(item, Mp4Item::Text(_)));
+                let why = if all_text {
+                    LeftAlone::Empty
+                } else {
+                    LeftAlone::NotText
+                };
+                mark_left_alone(&mut unlisted, key, why);
             }
             Some(_) if out.contains_key(&key) || unlisted.contains_key(&key) => {
                 unlisted.entry(key).or_insert(LeftAlone::HeldTwice);
@@ -177,6 +179,15 @@ fn mp4_listing(
     }
     out.retain(|key, _| !unlisted.contains_key(key));
     (out, unlisted)
+}
+
+/// Note why an item is left alone. A value that is not text wins over
+/// an earlier reason.
+fn mark_left_alone(unlisted: &mut BTreeMap<String, LeftAlone>, key: String, why: LeftAlone) {
+    let held = unlisted.entry(key).or_insert(why);
+    if why == LeftAlone::NotText {
+        *held = why;
+    }
 }
 
 // ---------------------------------------------------------------------------

@@ -58,8 +58,8 @@ mod vorbis;
 pub use document::{FieldDocument, read_document, read_fields};
 pub use edit::accepts;
 pub use id3_bytes::{Id3ByteReport, inspect_id3_bytes, mixed_v23_detail};
-pub use id3_upgrade::{id3_lands_as_v23, id3_upgrade_notes};
-pub use kept::{LeftAlone, TagsKept, tags_kept};
+pub use id3_upgrade::id3_lands_as_v23;
+pub use kept::{LeftAlone, PicturesPlan, TagsKept, tags_kept};
 pub use v2_captured::{CapturedAtom, CapturedTags, CapturedValue, document_from_captured};
 
 pub(crate) use id3::mixed_v23_date;
@@ -391,9 +391,14 @@ trait TagFormat {
         Ok(truth)
     }
 
-    /// Whether a save can keep this tag whole, in words, and the items
-    /// it leaves as they are.
-    fn kept(truth: Self::Truth) -> Result<TagsKept, Refusal>;
+    /// Whether a save that does `pictures` can keep this tag whole, in
+    /// words, and the items it leaves as they are.
+    fn kept(truth: Self::Truth, pictures: PicturesPlan) -> Result<TagsKept, Refusal>;
+
+    /// Why writing pictures to a file holding `held` would lose one.
+    fn pictures_refusal(_held: &[PictureSpec]) -> Option<String> {
+        None
+    }
 
     /// Field edits at their homes in this tag.
     fn resolve_fields(

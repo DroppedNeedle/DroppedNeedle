@@ -655,25 +655,31 @@ fn plan_file(
     item.diff.field_mutations = tag_plan.mutations;
     item.diff.tags_changed = !tag_plan.updates.is_empty();
     if item.diff.tags_changed {
-        // A tag write that also changes the file's ID3 version says so.
-        let notes = tags::save::id3_upgrade_notes(&path).map_err(|error| {
-            tracing::info!(%error, track = track.id, "tags unreadable at preview");
-            reasons::file_unreadable()
-        })?;
-        item.facts.warnings.extend(notes);
-        let kept = tags::save::tags_kept(&path).map_err(|error| {
+        let pictures = if tag_plan.updates.pictures().is_some() {
+            tags::save::PicturesPlan::Written
+        } else {
+            tags::save::PicturesPlan::Untouched
+        };
+        let kept = tags::save::tags_kept(&path, pictures).map_err(|error| {
             tracing::info!(%error, track = track.id, "tags unreadable at preview");
             reasons::file_unreadable()
         })?;
         if let Some(message) = kept.refusal {
             return Err(reasons::tags_not_kept(&message));
         }
-        // A scrub leaves these alone; the preview says so.
+        // A tag write that also changes the file's ID3 version says so.
+        item.facts.warnings.extend(kept.upgrade_notes);
+        // A scrub leaves these alone; the preview says so, for the ones
+        // it would otherwise have removed.
         let metadata = &ctx.pinned.profile.metadata;
         if metadata.enabled && metadata.scrub_unmanaged_tags {
-            item.facts
-                .warnings
-                .extend(left_alone_note(&kept.left_alone));
+            let preserved = profile::scrub_preserved(&ctx.pinned.profile);
+            let spared: Vec<_> = kept
+                .left_alone
+                .into_iter()
+                .filter(|(key, _)| profile::scrub_removes(&preserved, key))
+                .collect();
+            item.facts.warnings.extend(left_alone_note(&spared));
         }
     }
     item.diff.path_changed = moves;
@@ -878,6 +884,7 @@ fn left_alone_note(left_alone: &[(String, tags::save::LeftAlone)]) -> Option<Str
     }
     let groups: Vec<String> = [
         (LeftAlone::NotText, "not text"),
+        (LeftAlone::Empty, "empty"),
         (LeftAlone::HeldTwice, "held twice"),
         (LeftAlone::OverSizeLimit, "over 1 MB"),
     ]
@@ -886,7 +893,7 @@ fn left_alone_note(left_alone: &[(String, tags::save::LeftAlone)]) -> Option<Str
         let mut names: Vec<&str> = left_alone
             .iter()
             .filter(|(_, why)| *why == kind)
-            .map(|(name, _)| name.as_str())
+            .map(|(key, _)| key.split_once(':').map_or(key.as_str(), |(_, name)| name))
             .collect();
         names.sort_unstable();
         names.dedup();

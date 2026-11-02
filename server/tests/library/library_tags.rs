@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 
 use lofty::file::TaggedFileExt as _;
 use lofty::tag::TagType;
-use tags::save::{Refusal, inspect_id3_bytes, mixed_v23_detail};
+use tags::save::{PicturesPlan, Refusal, inspect_id3_bytes, mixed_v23_detail};
 use tags::{
     AudioArtistCredit, AudioFormat, AudioInfo, AudioTag, Fingerprint, SaveReport, TagEdit,
     TagField, TagsError, format_for_path,
@@ -1158,7 +1158,9 @@ fn mixed_v23_upgrade_notes() {
     let first = "Its ID3v2.3 tag also holds newer ID3v2.4 tags, so it is saved as ID3v2.4.";
     let (_scratch, path) = mixed_v23_with("mixed-notes", &[("TYER", &latin1(&["2023"]))]);
     assert_eq!(
-        tags::save::id3_upgrade_notes(&path).unwrap(),
+        tags::save::tags_kept(&path, PicturesPlan::Untouched)
+            .unwrap()
+            .upgrade_notes,
         vec![
             first.to_owned(),
             "It holds two different recording dates (TDRC 2024-03-02, TYER 2023). It now \
@@ -1172,12 +1174,15 @@ fn mixed_v23_upgrade_notes() {
         &[("TYER", &latin1(&["2024"])), ("TORY", &latin1(&["2020"]))],
     );
     assert_eq!(
-        tags::save::id3_upgrade_notes(&path).unwrap(),
+        tags::save::tags_kept(&path, PicturesPlan::Untouched)
+            .unwrap()
+            .upgrade_notes,
         vec![first.to_owned()]
     );
     assert!(
-        tags::save::id3_upgrade_notes(&fixture("management_full.mp3"))
+        tags::save::tags_kept(&fixture("management_full.mp3"), PicturesPlan::Untouched)
             .unwrap()
+            .upgrade_notes
             .is_empty()
     );
 }
@@ -1389,7 +1394,12 @@ fn save_drops_the_empty_values_of_a_fixture() {
     for field in [TagField::Title, TagField::Artist, TagField::Album] {
         assert!(!fields.contains_key(&field), "{field:?}");
     }
-    assert_eq!(tags::save::tags_kept(&path).unwrap().refusal, None);
+    assert_eq!(
+        tags::save::tags_kept(&path, PicturesPlan::Untouched)
+            .unwrap()
+            .refusal,
+        None
+    );
     tags::save_tags(&path, &[TagEdit::set_title("Fresh Title")]).unwrap();
     assert_eq!(
         vorbis_values(&path, "TITLE"),
@@ -2167,7 +2177,12 @@ fn save_drops_empty_vorbis_values() {
         .into_iter()
         .filter(|(key, value)| !value.is_empty() && key != "TITLE")
         .collect();
-    assert_eq!(tags::save::tags_kept(&path).unwrap().refusal, None);
+    assert_eq!(
+        tags::save::tags_kept(&path, PicturesPlan::Untouched)
+            .unwrap()
+            .refusal,
+        None
+    );
     tags::save_tags(&path, &[TagEdit::set_title("WRAP TITLE")]).unwrap();
     assert!(vorbis_key_values(&path, "ZZZ_EMPTY_TEST").is_empty());
     assert!(vorbis_key_values(&path, "LYRICS").is_empty());
@@ -3890,7 +3905,12 @@ fn title_save_keeps_frames_lofty_rewrites() {
         let (_dir, path) = raw_id3_mp3(&format!("kept-{major}"), major, &frames);
         let tail = after_id3v2(&path);
         let (_, before) = id3_view(&path);
-        assert_eq!(tags::save::tags_kept(&path).unwrap().refusal, None);
+        assert_eq!(
+            tags::save::tags_kept(&path, PicturesPlan::Untouched)
+                .unwrap()
+                .refusal,
+            None
+        );
 
         tags::save_tags(&path, &[TagEdit::set_title("New")]).unwrap();
         let (after_major, after) = id3_view(&path);
@@ -3922,7 +3942,10 @@ fn frames_kept_only_once_are_refused_before_saving() {
     for (id, first, second) in cases {
         let frames = vec![("TIT2", latin1(&["Probe"])), (id, first), (id, second)];
         let (_dir, path) = raw_id3_mp3(&format!("unkept-{id}"), 3, &frames);
-        let message = tags::save::tags_kept(&path).unwrap().refusal.unwrap();
+        let message = tags::save::tags_kept(&path, PicturesPlan::Untouched)
+            .unwrap()
+            .refusal
+            .unwrap();
         assert!(message.contains(&format!("two {id} frames")), "{message}");
         let before = std::fs::read(&path).unwrap();
         assert!(matches!(
@@ -3931,6 +3954,54 @@ fn frames_kept_only_once_are_refused_before_saving() {
         ));
         assert_eq!(std::fs::read(&path).unwrap(), before, "{id}");
     }
+}
+
+/// Two APICs that differ only in text encoding read as two equal pictures,
+/// and the writer's single encoding would merge them, so an undo could
+/// never put both back. A write of pictures is refused; a save that leaves
+/// them alone is not.
+#[test]
+fn pictures_differing_only_in_encoding_are_refused_when_written() {
+    let frames = vec![
+        ("TIT2", latin1(&["Probe"])),
+        ("APIC", b"\0image/png\0\x03\0abc".to_vec()),
+        ("APIC", b"\x03image/png\0\x03\0abc".to_vec()),
+    ];
+    let (_dir, path) = raw_id3_mp3("encoding-apic", 3, &frames);
+    let message = tags::save::tags_kept(&path, PicturesPlan::Written)
+        .unwrap()
+        .refusal
+        .unwrap();
+    assert!(message.contains("same picture twice"), "{message}");
+    assert_eq!(
+        tags::save::tags_kept(&path, PicturesPlan::Untouched)
+            .unwrap()
+            .refusal,
+        None
+    );
+}
+
+/// lofty's picture writer keeps one FLAC picture of type 1 or 2. A file
+/// holding two is refused when a save writes pictures, and keeps both
+/// through a save that leaves them alone.
+#[test]
+fn two_file_icons_are_refused_only_when_pictures_are_written() {
+    let (_scratch, path) = temp_copy("management_two_icons.flac", "two-icons");
+    let message = tags::save::tags_kept(&path, PicturesPlan::Written)
+        .unwrap()
+        .refusal
+        .unwrap();
+    assert!(message.contains("two file icon pictures"), "{message}");
+    assert_eq!(
+        tags::save::tags_kept(&path, PicturesPlan::Untouched)
+            .unwrap()
+            .refusal,
+        None
+    );
+    let before = tags::save::read_document(&path).unwrap().pictures;
+    assert_eq!(before.iter().filter(|picture| picture.kind == 1).count(), 2);
+    tags::save_tags(&path, &[TagEdit::set_title("New")]).unwrap();
+    assert_eq!(tags::save::read_document(&path).unwrap().pictures, before);
 }
 
 /// Zero padding between an MP3's ID3v2 tag and its first frame, outside
@@ -3959,7 +4030,12 @@ fn mp3_with_padding_after_the_tag_is_saved() {
     ));
     std::fs::write(&path, padded(1044)).unwrap();
     let pictures = tags::save::read_document(&path).unwrap().pictures;
-    assert_eq!(tags::save::tags_kept(&path).unwrap().refusal, None);
+    assert_eq!(
+        tags::save::tags_kept(&path, PicturesPlan::Untouched)
+            .unwrap()
+            .refusal,
+        None
+    );
     tags::save_tags(&path, &[TagEdit::set_title("Padded")]).unwrap();
     let after = tags::save::read_document(&path).unwrap();
     assert_eq!(after.values[&TagField::Title], vec!["Padded".to_owned()]);
@@ -3994,7 +4070,12 @@ fn chapters_move_to_v24_readable() {
         ("CHAP", chap),
     ];
     let (_dir, path) = raw_id3_mp3("chapters", 3, &frames);
-    assert_eq!(tags::save::tags_kept(&path).unwrap().refusal, None);
+    assert_eq!(
+        tags::save::tags_kept(&path, PicturesPlan::Untouched)
+            .unwrap()
+            .refusal,
+        None
+    );
 
     let report = tags::save_tags(&path, &[TagEdit::set_title("New")]).unwrap();
     assert_eq!(report.id3_version.as_deref(), Some("2.4"));

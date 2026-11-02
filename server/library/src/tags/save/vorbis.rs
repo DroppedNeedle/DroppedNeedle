@@ -12,7 +12,7 @@ use lofty::tag::{TagExt as _, TagType};
 
 use super::document::{FieldDocument, FieldRead, collect_reads};
 use super::edit::{foreign, supersede};
-use super::kept::TagsKept;
+use super::kept::{PicturesPlan, TagsKept};
 use super::{PictureSpec, Refusal, TagEdit, TagFormat, lofty_picture, mismatch, save_failed};
 use crate::tags::AudioFormat;
 use crate::tags::fields::TagField;
@@ -61,7 +61,7 @@ impl TagFormat for Vorbis {
 
     /// Every item is listed or owned by a field, so nothing is left
     /// alone; a comment the save would refuse is named instead.
-    fn kept(truth: VorbisTruth) -> Result<TagsKept, Refusal> {
+    fn kept(truth: VorbisTruth, _pictures: PicturesPlan) -> Result<TagsKept, Refusal> {
         if let Some((upper, variants)) = mixed_spelling(&truth) {
             return Ok(TagsKept::refused(format!(
                 "The file spells its {upper} tag more than one way ({}), so saving its tags would merge them.",
@@ -69,6 +69,21 @@ impl TagFormat for Vorbis {
             )));
         }
         Ok(TagsKept::default())
+    }
+
+    /// lofty's `insert_picture` keeps one picture of type 1 or 2 (the file
+    /// icons), so writing a list holding two would lose one, and undo
+    /// could not put both back. A save that leaves pictures alone keeps
+    /// them.
+    fn pictures_refusal(held: &[PictureSpec]) -> Option<String> {
+        [(1, "file icon"), (2, "other file icon")]
+            .into_iter()
+            .find(|(kind, _)| held.iter().filter(|picture| picture.kind == *kind).count() > 1)
+            .map(|(_, name)| {
+                format!(
+                    "The file holds two {name} pictures where the tag writer keeps only one, so saving its art would lose one."
+                )
+            })
     }
 
     fn resolve_fields(

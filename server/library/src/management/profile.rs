@@ -736,15 +736,9 @@ pub fn plan_tags(
     // the before-state, so undo and a baseline restore put them back.
     let mut scrubbed = Vec::new();
     if profile.metadata.enabled && profile.metadata.scrub_unmanaged_tags {
-        let preserved: Vec<String> = profile
-            .metadata
-            .preserve_fields
-            .iter()
-            .flat_map(|name| preserved_native(name))
-            .collect();
+        let preserved = scrub_preserved(profile);
         for (key, values) in &doc.custom {
-            let folded = key.to_ascii_lowercase();
-            if preserved.contains(&folded) || scrub_keeps(&folded) {
+            if !scrub_removes(&preserved, key) {
                 continue;
             }
             let target = TagTarget::Native(key.clone());
@@ -999,6 +993,24 @@ const SCRUB_KEEPS: &[&str] = &[
     "vorbis:unsyncedlyrics",
     "vorbis:work",
 ];
+
+/// The native items (folded keys) this profile's preserved names keep
+/// from a scrub.
+pub(super) fn scrub_preserved(profile: &LibraryManagementProfile) -> Vec<String> {
+    profile
+        .metadata
+        .preserve_fields
+        .iter()
+        .flat_map(|name| preserved_native(name))
+        .collect()
+}
+
+/// Whether a scrub removes this native item (`id3:GEOB`), given
+/// [`scrub_preserved`].
+pub(super) fn scrub_removes(preserved: &[String], key: &str) -> bool {
+    let folded = key.to_ascii_lowercase();
+    !preserved.contains(&folded) && !scrub_keeps(&folded)
+}
 
 /// Whether a scrub keeps this native item (a folded key): v2's managed
 /// names in every spelling, every MusicBrainz and AcoustID id, and

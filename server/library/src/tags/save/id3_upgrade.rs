@@ -10,6 +10,7 @@ use super::id3_bytes::{
     DeepId3, Id3FrameTruth, Id3TextTruth, People, decode_people, encode_id3_strings,
     parse_id3_deep, people_payload,
 };
+use super::kept::PicturesPlan;
 use crate::tags::fields::{Id3Target, TagField};
 use crate::tags::{AudioFormat, TagsError, format_for_path};
 
@@ -75,25 +76,11 @@ pub(super) fn as_saved(tag: DeepId3) -> Result<DeepId3, Refusal> {
 /// tag also holds v2.4 frames. Then the first note says it is saved as
 /// ID3v2.4, and one more names each value the tag holds twice, in a
 /// v2.3 and a v2.4 frame, differently.
-pub fn id3_upgrade_notes(path: &Path) -> Result<Vec<String>, TagsError> {
-    if format_for_path(path)? != AudioFormat::Mp3 {
+pub(super) fn upgrade_notes(tag: &DeepId3) -> Result<Vec<String>, Refusal> {
+    if !is_mixed_v23(tag) {
         return Ok(Vec::new());
     }
-    let bytes = fs::read(path).map_err(|source| TagsError::Io {
-        path: path.display().to_string(),
-        source,
-    })?;
-    let unreadable = |refusal: Refusal| TagsError::TagRead {
-        path: path.display().to_string(),
-        reason: refusal.to_string(),
-    };
-    let Some(tag) = parse_id3_deep(&bytes).map_err(unreadable)? else {
-        return Ok(Vec::new());
-    };
-    if !is_mixed_v23(&tag) {
-        return Ok(Vec::new());
-    }
-    let upgrade = upgrade_to_v24(&tag).map_err(unreadable)?;
+    let upgrade = upgrade_to_v24(tag)?;
     let mut notes = vec![UPGRADE_NOTE.to_owned()];
     notes.extend(upgrade.conflicts);
     Ok(notes)
@@ -118,10 +105,20 @@ pub(super) fn unmovable_frames(tag: &DeepId3) -> Option<String> {
 /// Why a save cannot keep this tag (as saved) whole, in plain words, or
 /// `None` when it can. The writer keeps one of two identical frames,
 /// one `PCNT` and the like, and one `UFID` per owner, so a tag holding
-/// more would lose a frame, and undo could put back only one.
-pub(super) fn frames_kept_once(tag: &DeepId3) -> Option<String> {
+/// more would lose a frame, and undo could put back only one. Pictures
+/// a save writes are exempt: identical ones read as one, so the list it
+/// writes and the one undo restores hold what they all held. Two that
+/// differ only in text encoding read as two, and `pictures_refusal`
+/// refuses those.
+pub(super) fn frames_kept_once(tag: &DeepId3, pictures: PicturesPlan) -> Option<String> {
+    let replaced = pictures == PicturesPlan::Written;
     let mut seen: std::collections::HashSet<(&str, &[u8])> = std::collections::HashSet::new();
-    for frame in tag.frames.iter().filter(|frame| frame.text.is_none()) {
+    for frame in tag
+        .frames
+        .iter()
+        .filter(|frame| frame.text.is_none())
+        .filter(|frame| !(replaced && frame.id == "APIC"))
+    {
         let key: &[u8] = if ONE_PER_TAG_IDS.contains(&frame.id.as_str()) {
             &[]
         } else if frame.id == "UFID" {
