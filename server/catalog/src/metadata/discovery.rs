@@ -2,9 +2,8 @@
 //! songs, top albums, similar albums, and more by the same artist.
 //!
 //! ListenBrainz answers by default; when it has nothing, Last.fm fills in
-//! with the user's Last.fm key or the instance key, the way v2 kept these
-//! sections from going blank while ListenBrainz popularity was switched off
-//! upstream.
+//! with the user's Last.fm key or the instance key, so the sections do not
+//! go blank while ListenBrainz popularity is switched off upstream.
 
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
@@ -35,7 +34,7 @@ use crate::discover::listening::shared;
 const MAX_TOP_SONG_RELEASES: usize = 10;
 /// How long one request spends resolving Last.fm releases.
 const LASTFM_RESOLVE_BUDGET: Duration = Duration::from_secs(4);
-/// Similar artists consulted for similar albums (v2 uses five).
+/// Similar artists consulted for similar albums.
 const SIMILAR_ALBUM_ARTISTS: usize = 5;
 /// Albums taken per similar artist.
 const ALBUMS_PER_SIMILAR_ARTIST: usize = 3;
@@ -379,8 +378,8 @@ impl Catalog {
                     .await
                 {
                     Ok(groups) if !groups.is_empty() => groups,
-                    // No popularity rows, or the popularity read failed: v2
-                    // rebuilt the list from the top recordings instead.
+                    // No popularity rows, or the popularity read failed: the
+                    // list is rebuilt from the top recordings instead.
                     other => {
                         if let Err(error) = &other {
                             hold.provider(error);
@@ -485,11 +484,10 @@ impl Catalog {
         })
     }
 
-    /// Disc and track numbers for top songs (v2 looked each song up on
-    /// MusicBrainz in the request). Numbers come from the cached tracklist
-    /// of the release the listens point at, so songs sharing a release
-    /// share one lookup and album pages share the cache. The request only
-    /// reads the cache; releases not cached yet are fetched once in the
+    /// Disc and track numbers for top songs. Numbers come from the cached
+    /// tracklist of the release the listens point at, so songs sharing a
+    /// release share one lookup and album pages share the cache. The request
+    /// only reads the cache; releases not cached yet are fetched once in the
     /// background at background priority, so the page answers at once and
     /// carries the numbers from the next load on.
     async fn fill_track_numbers(&self, songs: &mut [TopSong]) {
@@ -605,8 +603,7 @@ impl Catalog {
     /// `GET /albums/{album_id}/similar`: top albums of artists similar to
     /// this album's artist. ListenBrainz names the similar artists and their
     /// albums; when it has no albums for them, Last.fm's top albums for the
-    /// same artists fill in with the user's or the instance Last.fm key (v2
-    /// `_similar_albums_lastfm`).
+    /// same artists fill in with the user's or the instance Last.fm key.
     pub async fn similar_albums(
         &self,
         user_id: &str,
@@ -874,8 +871,8 @@ impl Catalog {
     }
 
     /// `GET /albums/{album_id}/more-by-artist`: the artist's other release
-    /// groups, in MusicBrainz order. A dead MusicBrainz reads as empty, the
-    /// way v2 kept the album page up.
+    /// groups, in MusicBrainz order. A dead MusicBrainz reads as empty, which
+    /// keeps the album page up.
     pub async fn more_by_artist(
         &self,
         raw_album: &str,
@@ -1002,11 +999,10 @@ async fn lastfm_rows(
     }
 }
 
-/// Rebuild an artist's top albums from their most played recordings (v2
-/// `_get_top_albums_from_recordings_fallback`): listens add up per release
-/// group (or per release title when the group is unknown), most played
-/// first. `None` when ListenBrainz failed; a failed release group lookup
-/// is noted in `hold`.
+/// Rebuild an artist's top albums from their most played recordings: listens
+/// add up per release group (or per release title when the group is
+/// unknown), most played first. `None` when ListenBrainz failed; a failed
+/// release group lookup is noted in `hold`.
 async fn albums_from_recordings(
     cache: &droppedneedle_providers::ProviderCacheStore,
     client: &super::upstream::CatalogListenBrainz,
@@ -1087,10 +1083,10 @@ fn title_key(title: &str) -> String {
         .join(" ")
 }
 
-/// Match Last.fm's top albums to the artist's release groups (v2
-/// `_get_top_albums_lastfm`): a Last.fm id that already is one of the
-/// artist's release groups wins, else a unique title match (deluxe
-/// suffixes dropped), else the row stays unlinked. One row per group.
+/// Match Last.fm's top albums to the artist's release groups: a Last.fm id
+/// that already is one of the artist's release groups wins, else a unique
+/// title match (deluxe suffixes dropped), else the row stays unlinked. One
+/// row per group.
 fn match_lastfm_albums(
     top: Vec<lastfm::TopItem>,
     groups: Option<&ReleaseGroupList>,

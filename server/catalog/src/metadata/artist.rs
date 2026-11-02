@@ -26,11 +26,11 @@ use crate::artwork::cache::ImageCredit;
 use crate::artwork::warm::WarmTargets;
 use crate::collections::state::AutoDownloadState;
 
-/// Most discography pages fetched per artist (v2 `_MAX_RG_PAGES`).
+/// Most discography pages fetched per artist.
 const MAX_RELEASE_GROUP_PAGES: u32 = 10;
 /// Wikipedia edition for biographies.
 const BIO_LANGUAGE: &str = "en";
-/// Tags and aliases shown on the header (v2 limits).
+/// Most tags and most aliases shown on the header.
 const MAX_TAGS: usize = 10;
 
 /// The cached projection of one MusicBrainz artist lookup. `None` is a
@@ -303,7 +303,7 @@ impl Catalog {
     }
 
     /// `GET /artists/{artist_mbid}`: the header, the discography in three
-    /// sections (as v2's full artist read), and the caller's follow state.
+    /// sections, and the caller's follow state.
     /// A dead MusicBrainz falls back to the library's own rows.
     pub async fn artist(&self, user_id: &str, raw_mbid: &str) -> Result<ArtistInfo, CatalogError> {
         let mbid = checked_mbid(raw_mbid, "artist")?;
@@ -801,8 +801,8 @@ impl Catalog {
     }
 
     /// Split a release-group list into sections, filtered by the
-    /// release-type preferences (v2 `categorize_release_groups`) and
-    /// flagged against the library and the request list.
+    /// release-type preferences and flagged against the library and the
+    /// request list.
     pub(super) async fn discography(&self, list: &ReleaseGroupList) -> Discography {
         let preferences = self.upstream().settings().preferences();
         let primary = mapping::type_set(&preferences.primary_types);
