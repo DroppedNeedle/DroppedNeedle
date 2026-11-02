@@ -77,8 +77,33 @@ describe('playback session reporter', () => {
 			['start', { ...play, position_ms: 0, duration_ms: 200_000 }],
 			['progress', { ...play, position_ms: 12_000, duration_ms: 200_000, is_paused: false }],
 			['progress', { ...play, position_ms: 12_000, duration_ms: 200_000, is_paused: true }],
-			['stop', { ...play, position_ms: 30_000, duration_ms: 200_000 }]
+			['stop', { ...play, position_ms: 30_000, start_position_ms: 0, duration_ms: 200_000 }]
 		]);
+	});
+
+	it('tells the stop where a resumed play started', async () => {
+		const api = fakeApi({
+			'POST /api/v3/playback/start': { accepted: true, session: 's' },
+			'POST /api/v3/playback/stop': { accepted: true, scrobbled: false }
+		});
+		let seconds = 180;
+		const session = createPlaybackSession({
+			intervalMs: 10_000,
+			maxFailures: 3,
+			position: () => ({ seconds, isPaused: false }),
+			duration: () => 300
+		});
+		session.begin(sessionKeyFor(item({ sourceType: 'navidrome', trackSourceId: 'nd-1' })));
+		session.playing();
+		seconds = 190;
+		await session.end(seconds);
+		expect(api.calls('POST /api/v3/playback/stop')[0].body).toEqual({
+			source: 'navidrome',
+			track_id: 'nd-1',
+			position_ms: 190_000,
+			start_position_ms: 180_000,
+			duration_ms: 300_000
+		});
 	});
 
 	it('reports nothing for a restored track that is never played', async () => {

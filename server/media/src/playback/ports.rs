@@ -120,6 +120,8 @@ pub struct RemoteReport {
     pub item_id: String,
     /// Position in milliseconds, when known.
     pub position_ms: Option<i64>,
+    /// Where the play started in milliseconds (stop only, when sent).
+    pub start_position_ms: Option<i64>,
     /// Track length in milliseconds, when known.
     pub duration_ms: Option<i64>,
     /// True while paused (progress only).

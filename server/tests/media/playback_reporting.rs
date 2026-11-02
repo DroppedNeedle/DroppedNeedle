@@ -1431,16 +1431,22 @@ async fn a_media_server_play_is_reported_to_its_server_and_counted_once() {
     play_remote(&app, &user, "navidrome", "nd-t-2", 99_000).await;
     // A play resumed at 3:00 of a five-minute track and heard for ten
     // seconds: past half the track by position, but not by what was heard.
-    for (leg, position_ms) in [("start", 180_000), ("stop", 190_000)] {
+    // The stop alone says so: nd-t-4's start never arrived.
+    for (leg, item, position_ms, start_position_ms) in [
+        ("start", "nd-t-3", 180_000, None),
+        ("stop", "nd-t-3", 190_000, Some(180_000)),
+        ("stop", "nd-t-4", 190_000, Some(180_000)),
+    ] {
         let (status, answer) = app
             .call(
                 "POST",
                 &format!("/api/v3/playback/{leg}"),
                 &[("authorization", user.authorization.as_str())],
                 Some(json!({
-                    "track_id": "nd-t-3",
+                    "track_id": item,
                     "source": "navidrome",
                     "position_ms": position_ms,
+                    "start_position_ms": start_position_ms,
                     "duration_ms": 300_000,
                 })),
             )
@@ -1530,6 +1536,11 @@ async fn a_media_server_play_is_reported_to_its_server_and_counted_once() {
         by_item("nd-t-3"),
         [Some("false".to_owned())],
         "ten seconds heard after a resume is not a play"
+    );
+    assert_eq!(
+        by_item("nd-t-4"),
+        Vec::<Option<String>>::new(),
+        "nor is it when the start never arrived"
     );
     let counted = scrobbles
         .iter()

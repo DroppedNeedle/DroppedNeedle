@@ -237,6 +237,7 @@ pub fn start_playback(
             user_id,
             &request.track_id,
             request.position_ms,
+            None,
             request.duration_ms,
             false,
         )?;
@@ -290,6 +291,7 @@ pub fn report_progress(
             user_id,
             &request.track_id,
             request.position_ms,
+            None,
             request.duration_ms,
             request.is_paused,
         )?;
@@ -337,6 +339,7 @@ pub fn stop_playback(
             user_id,
             &request.track_id,
             request.position_ms,
+            request.start_position_ms,
             request.duration_ms,
             false,
         )?;
@@ -424,6 +427,7 @@ fn remote_report(
     user_id: &str,
     item_id: &str,
     position_ms: Option<i64>,
+    start_position_ms: Option<i64>,
     duration_ms: Option<i64>,
     is_paused: bool,
 ) -> Result<RemoteReport, ServiceError> {
@@ -432,7 +436,11 @@ fn remote_report(
             "That is not a media server item id.".to_owned(),
         ));
     }
-    if position_ms.is_some_and(i64::is_negative) || duration_ms.is_some_and(i64::is_negative) {
+    if [position_ms, start_position_ms, duration_ms]
+        .into_iter()
+        .flatten()
+        .any(i64::is_negative)
+    {
         return Err(ServiceError::InvalidInput(
             "A position or length cannot be negative.".to_owned(),
         ));
@@ -441,6 +449,7 @@ fn remote_report(
         user_id: user_id.to_owned(),
         item_id: item_id.to_owned(),
         position_ms,
+        start_position_ms,
         duration_ms,
         is_paused,
     })

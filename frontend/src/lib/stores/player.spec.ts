@@ -514,7 +514,8 @@ describe('Jellyfin session lifecycle', () => {
 		expect(stopPlaybackSession).toHaveBeenCalledWith({
 			source: 'jellyfin',
 			track_id: 'jf-1',
-			position_ms: expect.any(Number)
+			position_ms: expect.any(Number),
+			start_position_ms: 0
 		});
 	});
 });
@@ -602,6 +603,7 @@ describe('beforeunload beacon', () => {
 			source: 'jellyfin',
 			track_id: 'jf-beacon',
 			position_ms: 45000,
+			start_position_ms: 0,
 			duration_ms: 180000
 		});
 	});

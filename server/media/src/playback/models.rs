@@ -145,6 +145,10 @@ pub struct PlaybackStopRequest {
     /// Final position in milliseconds, when the player knows it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub position_ms: Option<i64>,
+    /// Where this play started in milliseconds, for a resumed track; absent
+    /// means the beginning. Read for media-server plays only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_position_ms: Option<i64>,
     /// Track length in milliseconds, when the player knows it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub duration_ms: Option<i64>,

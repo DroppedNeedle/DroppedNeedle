@@ -53541,6 +53541,14 @@
             "$ref": "#/components/schemas/PlaybackSource",
             "description": "Where the track plays from."
           },
+          "start_position_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Where this play started in milliseconds, for a resumed track; absent\nmeans the beginning. Read for media-server plays only."
+          },
           "track_id": {
             "type": "string",
             "description": "The library track id for `local` and `youtube`; for a media server,\nthat server's item id (the Plex rating key)."

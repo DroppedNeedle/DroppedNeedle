@@ -55,6 +55,7 @@ export function createPlaybackSession(options: SessionOptions) {
 	let interval: ReturnType<typeof setInterval> | null = null;
 	let failures = 0;
 	let started = false;
+	let startMs = 0;
 	let lengthMs: number | undefined;
 
 	function stopInterval(): void {
@@ -87,6 +88,7 @@ export function createPlaybackSession(options: SessionOptions) {
 			source: active.source,
 			track_id: active.trackId,
 			position_ms: toMs(options.position().seconds),
+			start_position_ms: startMs,
 			duration_ms: durationMs()
 		};
 		sendJsonBeacon(v3('/api/v3/playback/stop'), stop);
@@ -104,6 +106,7 @@ export function createPlaybackSession(options: SessionOptions) {
 		if (started) listen(false);
 		active = null;
 		started = false;
+		startMs = 0;
 		lengthMs = undefined;
 	}
 
@@ -124,11 +127,12 @@ export function createPlaybackSession(options: SessionOptions) {
 			if (!key) return;
 			if (!started) {
 				started = true;
+				startMs = toMs(options.position().seconds);
 				listen(true);
 				void startPlaybackSession({
 					source: key.source,
 					track_id: key.trackId,
-					position_ms: toMs(options.position().seconds),
+					position_ms: startMs,
 					duration_ms: durationMs()
 				}).catch(() => {
 					// The session stays open: its later reports are sent regardless.
@@ -155,6 +159,7 @@ export function createPlaybackSession(options: SessionOptions) {
 		/** Closes the open session with its final position. */
 		async end(seconds: number): Promise<void> {
 			const key = started ? active : null;
+			const from = startMs;
 			const length = durationMs();
 			clear();
 			if (!key) return;
@@ -163,6 +168,7 @@ export function createPlaybackSession(options: SessionOptions) {
 					source: key.source,
 					track_id: key.trackId,
 					position_ms: toMs(seconds),
+					start_position_ms: from,
 					duration_ms: length
 				});
 			} catch {

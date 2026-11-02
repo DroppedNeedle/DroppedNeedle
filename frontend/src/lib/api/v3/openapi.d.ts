@@ -17963,6 +17963,12 @@ export interface components {
             /** @description Where the track plays from. */
             source?: components["schemas"]["PlaybackSource"];
             /**
+             * Format: int64
+             * @description Where this play started in milliseconds, for a resumed track; absent
+             *     means the beginning. Read for media-server plays only.
+             */
+            start_position_ms?: number | null;
+            /**
              * @description The library track id for `local` and `youtube`; for a media server,
              *     that server's item id (the Plex rating key).
              */

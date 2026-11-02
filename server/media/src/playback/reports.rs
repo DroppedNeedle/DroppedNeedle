@@ -39,10 +39,6 @@ const SHARED_ACCOUNT_FALLBACK: bool = false;
 /// warning per server.
 pub const FAILURE_HOLD_MS: i64 = 60_000;
 
-/// The most plays whose start position the worker keeps. Past it they are
-/// all forgotten, and a stop of one counts from the track's beginning.
-const MAX_OPEN_PLAYS: usize = 10_000;
-
 /// The session reports the worker delivers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReportOp {
@@ -143,9 +139,6 @@ struct WorkerState {
     refused_until: HashMap<(String, SourceName), i64>,
     /// When an error answer from each server was last logged as a warning.
     warned_at: HashMap<SourceName, i64>,
-    /// Where each open play started, by listener, server and item: a
-    /// resumed track counts only what was heard after it.
-    started_at: HashMap<(String, SourceName, String), i64>,
 }
 
 impl WorkerState {
@@ -156,27 +149,6 @@ impl WorkerState {
             || self
                 .refused_until
                 .contains_key(&(user_id.to_owned(), source))
-    }
-
-    /// Note where a play starts, or take back where it started once it
-    /// stops: the milliseconds heard by its stop, when the stop has a
-    /// position.
-    fn track(&mut self, source: SourceName, op: ReportOp, report: &RemoteReport) -> Option<i64> {
-        let key = (report.user_id.clone(), source, report.item_id.clone());
-        match op {
-            ReportOp::Start => {
-                if self.started_at.len() >= MAX_OPEN_PLAYS {
-                    self.started_at.clear();
-                }
-                self.started_at.insert(key, report.position_ms.unwrap_or(0));
-                None
-            }
-            ReportOp::Progress => None,
-            ReportOp::Stop => {
-                let from = self.started_at.remove(&key).unwrap_or(0);
-                report.position_ms.map(|position| position - from)
-            }
-        }
     }
 
     /// Log a failed report, and hold what it calls for: a server that did
@@ -273,7 +245,6 @@ async fn deliver(
 ) {
     let QueuedReport { source, op, report } = queued;
     let source = *source;
-    let heard_ms = state.track(source, *op, report);
     if state.on_hold(&report.user_id, source, clock.now_ms()) {
         tracing::debug!(
             source = source.as_str(),
@@ -309,7 +280,7 @@ async fn deliver(
     let outcome = match &resolver.client(http, resolved, Reads::Background) {
         RemoteHandle::Jellyfin(adapter) => deliver_jellyfin(adapter, *op, report).await,
         RemoteHandle::Navidrome(adapter) => {
-            deliver_navidrome(adapter, *op, report, heard_ms, clock.now_ms()).await
+            deliver_navidrome(adapter, *op, report, clock.now_ms()).await
         }
         RemoteHandle::Plex(adapter) => deliver_plex(adapter, *op, report).await,
     };
@@ -370,24 +341,26 @@ async fn deliver_jellyfin(
 
 /// Navidrome 0.62.0 reports through `scrobble`, as Subsonic apps send it:
 /// now playing on start, and the play itself on a stop once half the track
-/// or four minutes was heard since the start (Navidrome's own threshold),
-/// so a resumed track counts only what was played after it. Progress sends
-/// nothing: each now-playing call makes Navidrome tell Last.fm or
-/// ListenBrainz again, and the start's entry lasts to the track's end. A
-/// stop with no position never counts.
+/// or four minutes was heard since the position the stop says it started
+/// from (Navidrome's own threshold), so a resumed track counts only what was
+/// played after it. Progress sends nothing: each now-playing call makes
+/// Navidrome tell Last.fm or ListenBrainz again, and the start's entry lasts
+/// to the track's end. A stop with no position never counts.
 async fn deliver_navidrome(
     adapter: &NavidromeAdapter,
     op: ReportOp,
     report: &RemoteReport,
-    heard_ms: Option<i64>,
     now_ms: i64,
 ) -> Result<(), AdapterError> {
     match op {
         ReportOp::Start => adapter.report_now_playing(&report.item_id).await,
         ReportOp::Progress => Ok(()),
         ReportOp::Stop => {
-            let heard = heard_ms.is_some_and(|heard| {
-                meets_subsonic_threshold(heard, report.duration_ms.unwrap_or(0))
+            let heard = report.position_ms.is_some_and(|position| {
+                meets_subsonic_threshold(
+                    position - report.start_position_ms.unwrap_or(0),
+                    report.duration_ms.unwrap_or(0),
+                )
             });
             if heard {
                 adapter.scrobble(&report.item_id, now_ms).await
