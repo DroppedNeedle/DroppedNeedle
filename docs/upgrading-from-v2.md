@@ -146,7 +146,8 @@ many. Nothing else in the v2 database is changed.
   without an account can work one out, and the v2 id keeps working for anyone
   signed in. An album or artist marked to keep offline has to be marked again
   once; the music already on the device stays. A stored id that names nothing
-  in v2's library any more is dropped, and the import summary counts it.
+  in v2's library any more, or that v3 already gives another item, is left out,
+  and the import summary counts it.
 - Matches you made by hand (and v2's own matches), retired ids that still
   point at the album or artist that replaced them, "keep as tagged" and
   "exclude" decisions, edition pins and custom editions, albums you kept

@@ -161,7 +161,6 @@ pub(crate) fn apply(conn: &Connection, dry_run: bool) -> Result<SectionResult, C
     let clashes = clashes + to_count(taken);
     let demoted = to_count(demoted);
     result.counts.imported = landing;
-    result.counts.dropped_invalid = nothing;
     result.counts.conflict_kept_existing = clashes;
     if landing > 0 {
         result.note(
@@ -170,15 +169,13 @@ pub(crate) fn apply(conn: &Connection, dry_run: bool) -> Result<SectionResult, C
             format!("{landing} Jellyfin id(s) v2 handed out keep working"),
         );
     }
+    // Ids of songs long gone are normal after years of use, so they are told in
+    // the summary and do not mark the upgrade as having left records out.
     if nothing > 0 {
-        result.note(
-            String::new(),
-            "dropped_invalid",
-            format!(
-                "{nothing} Jellyfin id(s) v2 stored name nothing in v3 (a song or album no \
-                 longer there, or a malformed row); left out"
-            ),
-        );
+        result.summary.push(format!(
+            "{nothing} old Jellyfin id(s) from v2 name nothing in v3 (a song or album no longer \
+             there) and were left out. Nothing to do."
+        ));
     }
     if clashes > 0 {
         result.note(

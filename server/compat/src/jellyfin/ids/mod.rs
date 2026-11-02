@@ -14,14 +14,14 @@
 //! under another key) changes no stored album or artist id: only items
 //! added afterwards get ids under the new key. A track or playlist v2 gave
 //! another id keeps it the same way. The first pass of each process loads
-//! the stored ids that differ from the computed ones into a small map, and
+//! the stored ids that differ from the computed ones into a map, and
 //! until it has committed, [`JellyfinIds::ready`] is false and the Jellyfin
 //! routes answer busy.
 //!
 //! Aliases (`current = 0`) keep resolving for signed-in callers: the old
 //! unkeyed id of every album and artist, both ids of every album and artist
-//! a merge retired, and the other ids v2 stored. An alias row names the
-//! alias itself; the caller follows it to the item that holds it now.
+//! a merge retired, and the other ids v2 stored. The caller follows an alias
+//! row to the item that holds it now.
 
 pub mod sql;
 

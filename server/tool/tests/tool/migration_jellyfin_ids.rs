@@ -169,7 +169,15 @@ async fn v2_jellyfin_ids_keep_opening_their_items() {
 
     let counts = &report.entities[ENTITY];
     assert_eq!(counts.imported, 7, "{:?}", report.items);
-    assert_eq!(counts.dropped_invalid, 3, "{:?}", report.items);
+    assert_eq!(counts.dropped_invalid, 0, "{:?}", report.items);
+    assert!(
+        report
+            .notes
+            .iter()
+            .any(|note| note.starts_with("3 old Jellyfin id(s)")),
+        "{:?}",
+        report.notes
+    );
     assert_eq!(counts.conflict_kept_existing, 2, "{:?}", report.items);
     assert_eq!(
         &preview.entities[ENTITY], counts,
