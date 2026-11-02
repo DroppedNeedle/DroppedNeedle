@@ -62,7 +62,7 @@ pub struct Counters {
 }
 
 /// One of a run's counters.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Counter {
     Total,
     Discovered,

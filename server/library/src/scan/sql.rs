@@ -2,12 +2,65 @@
 //! records, and for its chunked clean-ups the rows each one reads before
 //! it starts and the one-row deletes its chunks run.
 
-use crate::scan::sqlite_store::sql::MOVED_COLUMNS;
-use crate::scan::sqlite_store::sql::MOVED_MATCH;
-use crate::scan::sqlite_store::sql::SAME_PLACE;
-use crate::scan::sqlite_store::sql::TRACK_GONE;
-use crate::scan::sqlite_store::sql::TRACK_PRESENT;
-use crate::scan::sqlite_store::sql::WALKED_PAST;
+// `sql!` needs a macro call in parentheses to take it as one part.
+#![allow(unused_parens, clippy::double_parens)]
+
+use droppedneedle_kernel::db::statement::{Choice, ListLen};
+
+use crate::identity::sql::PERSONS;
+use crate::scan::models::Counter;
+use crate::scan::sqlite_store::sql::{
+    MOVED_COLUMNS, MOVED_MATCH, SAME_PLACE, TRACK_GONE, TRACK_PRESENT, WALKED_PAST, awaits_admin,
+    covers, fenced_by, held, held_back, holds, refused_scope, walked_past,
+};
+
+impl Choice for Counter {
+    fn all() -> Vec<Self> {
+        Counter::ALL.to_vec()
+    }
+}
+
+/// True when the track row a saved row of the table named points at is gone.
+macro_rules! track_gone {
+    ($table:literal) => {
+        concat!(
+            "NOT EXISTS (SELECT 1 FROM local_tracks t WHERE t.id = ",
+            $table,
+            ".file_id)"
+        )
+    };
+}
+
+/// True when the artist row `$artist` names (`?1` or a column) holds an id
+/// other than `?2` on a credit, leaving out track `?3` and album `?4`.
+macro_rules! holds_other_id {
+    ($artist:literal) => {
+        concat!(
+            "(EXISTS(SELECT 1 FROM local_track_artists WHERE local_artist_id = ",
+            $artist,
+            " AND artist_mbid < ?2 AND local_track_id IS NOT ?3) \
+             OR EXISTS(SELECT 1 FROM local_track_artists WHERE local_artist_id = ",
+            $artist,
+            " AND artist_mbid > ?2 AND local_track_id IS NOT ?3) \
+             OR EXISTS(SELECT 1 FROM local_album_artists WHERE local_artist_id = ",
+            $artist,
+            " AND artist_mbid < ?2 AND local_album_id IS NOT ?4) \
+             OR EXISTS(SELECT 1 FROM local_album_artists WHERE local_artist_id = ",
+            $artist,
+            " AND artist_mbid > ?2 AND local_album_id IS NOT ?4))"
+        )
+    };
+}
+
+droppedneedle_kernel::sql_choice! {
+    /// Where a judgement takes the new album's held rows from.
+    pub(super) enum HeldRows {
+        /// The rows under a hold, at the end of run `?1`.
+        UnderHolds,
+        /// The remembered rows of album `?1` still indexed on it, at a look.
+        Remembered,
+    }
+}
 
 droppedneedle_kernel::sql! {
     /// Record one failure row of a run; a repeat of the same row is kept once.
@@ -145,7 +198,7 @@ droppedneedle_kernel::sql! {
                  UNION ALL SELECT (SELECT local_artist_id FROM local_album_artists \
                   WHERE artist_mbid = ?1 AND local_artist_id > ?2 \
                   ORDER BY local_artist_id LIMIT 1))";
-    pub(super) WITH_ID = "SELECT converged_mbid FROM local_artists WHERE id = ?1";
+    pub(super) CONVERGED_MBID_OF_ARTIST = "SELECT converged_mbid FROM local_artists WHERE id = ?1";
     pub(super) ARTIST_NAMES = "SELECT display_name, sort_name FROM local_artists WHERE id = ?1";
     pub(super) WRITE_ARTIST_NAMES = "UPDATE local_artists SET display_name = ?2, folded_name = ?3, \
                  normalized_name = ?3, sort_name = COALESCE(?4, sort_name), updated_at = ?5, \
@@ -709,14 +762,7 @@ droppedneedle_kernel::sql! {
     /// `?2`, leaving out the credits of track `?3` and album `?4` (NULL leaves
     /// out none). Each probe is a range on an (artist, id) index and stops at
     /// the first row found.
-    pub(super) fragment HOLDS_OTHER_ID = "(EXISTS(SELECT 1 FROM local_track_artists \
-     WHERE local_artist_id = ?1 AND artist_mbid < ?2 AND local_track_id IS NOT ?3) \
-     OR EXISTS(SELECT 1 FROM local_track_artists \
-     WHERE local_artist_id = ?1 AND artist_mbid > ?2 AND local_track_id IS NOT ?3) \
-     OR EXISTS(SELECT 1 FROM local_album_artists \
-     WHERE local_artist_id = ?1 AND artist_mbid < ?2 AND local_album_id IS NOT ?4) \
-     OR EXISTS(SELECT 1 FROM local_album_artists \
-     WHERE local_artist_id = ?1 AND artist_mbid > ?2 AND local_album_id IS NOT ?4))";
+    pub(super) fragment HOLDS_OTHER_ID = (holds_other_id!("?1"));
     /// Audit kind of the tracks whose paths other music took.
     pub(super) fragment OTHER_MUSIC_KIND = "other_music_at_path";
     /// Albums a person keeps their hands on: left unmanaged, kept as a custom
@@ -802,4 +848,250 @@ droppedneedle_kernel::sql! {
     pub(super) OPEN_RUN_TO_JOIN = "SELECT " + RUN_COLUMNS + " FROM library_scan_runs \
          WHERE state NOT IN ('completed','cancelled','superseded_policy_changed','failed') \
          ORDER BY CASE WHEN state = 'queued' THEN 1 ELSE 0 END, rowid";
+    /// Whether run `?1` moved a track onto album `?2` from an album a track still holds.
+    pub(super) ALBUM_HELD_BACK_IN_RUN = "SELECT EXISTS(SELECT 1 FROM local_tracks t \
+         CROSS JOIN library_scan_album_moves m ON m.run_id = ?1 AND m.root_id = t.root_id \
+           AND m.relative_path = t.relative_path AND m.local_track_id = t.id \
+         WHERE t.local_album_id = ?2 AND m.previous_album_id <> ?2 \
+         AND EXISTS (SELECT 1 FROM local_tracks left_behind \
+           WHERE left_behind.local_album_id = m.previous_album_id AND " + (holds!("left_behind", "?1")) + "))";
+    /// Whether a scan that has not ended moved a track onto album `?1` from an album a track still holds.
+    pub(super) ALBUM_AWAITS_RETAG = "SELECT EXISTS(SELECT 1 FROM library_scan_runs run \
+             CROSS JOIN local_tracks t \
+             CROSS JOIN library_scan_album_moves m ON m.run_id = run.id \
+               AND m.root_id = t.root_id AND m.relative_path = t.relative_path \
+               AND m.local_track_id = t.id \
+             WHERE run.terminal_at IS NULL AND t.local_album_id = ?1 \
+             AND m.previous_album_id <> ?1 \
+             AND EXISTS (SELECT 1 FROM local_tracks left_behind \
+               WHERE left_behind.local_album_id = m.previous_album_id AND " + (holds!("left_behind", "run.id")) + "))";
+    /// The automatic-policy albums run `?1` moved tracks to from album `?2`, when no track holds it any more.
+    pub(super) ALBUMS_RELEASED_BY = "SELECT DISTINCT t.local_album_id FROM library_scan_album_moves m \
+         JOIN local_tracks t ON t.id = m.local_track_id \
+         JOIN library_scan_inventory i ON i.run_id = m.run_id AND i.root_id = m.root_id \
+           AND i.relative_path = m.relative_path \
+         WHERE m.run_id = ?1 AND m.previous_album_id = ?2 AND t.local_album_id <> ?2 \
+         AND i.effective_policy = 'automatic' \
+         AND NOT EXISTS (SELECT 1 FROM local_tracks left_behind \
+           WHERE left_behind.local_album_id = ?2 AND " + (holds!("left_behind", "?1")) + ")";
+    /// Whether a track row still holds album `?2` in run `?1`.
+    pub(super) ALBUM_HELD_IN_RUN = "SELECT EXISTS(SELECT 1 FROM local_tracks t WHERE t.local_album_id = ?2 AND " + (holds!("t", "?1")) + ")";
+    /// Albums a departure on record or a move of run `?1` names, not retired, that no track row holds.
+    pub(super) ALBUMS_NO_ROW_HOLDS = "SELECT a.id FROM local_albums a WHERE a.retired_into_album_id IS NULL \
+             AND a.id IN (SELECT previous_album_id FROM library_album_departures \
+               UNION SELECT previous_album_id FROM library_scan_album_moves WHERE run_id = ?1) \
+             AND NOT EXISTS (SELECT 1 FROM local_tracks t WHERE t.local_album_id = a.id AND " + (holds!("t", "?1")) + ") \
+             ORDER BY a.id";
+    /// The (root, path) pairs a scan of run `?1` writes no row for: where a
+    /// track lies that a write fencing it names (`fenced_by!`: still open, or
+    /// moved after the walk of the scope covering it began), the path a
+    /// fencing write moved a file away from, where an open write is placing a
+    /// file, and where a fencing move or one that awaits an administrator
+    /// (`awaits_admin!`) took a track's file. The last keeps a move that needs
+    /// attention from listing its file as a second track: once it is marked
+    /// handled, the next scan finds the old path gone and continues the track
+    /// at the new one. One read: the open and waiting rows by the state index
+    /// (the open states listed are every state `fenced_by!` does not call
+    /// terminal), the rows moved since the run's earliest walk by their
+    /// revision.
+    pub(super) FENCED_PATHS = "WITH fencing AS ( \
+       SELECT id, state, fence_revision, track_id, source_root, source_rel, dest_root, dest_rel \
+         FROM library_publish_journal \
+         WHERE state IN ('prepared', 'staged', 'published', 'committed', 'cleanup_pending') \
+       UNION \
+       SELECT id, state, fence_revision, track_id, source_root, source_rel, dest_root, dest_rel \
+         FROM library_publish_journal WHERE fence_revision > \
+         (SELECT MIN(walk_revision) FROM library_scan_run_scopes WHERE run_id = ?1)), \
+     named AS ( \
+       SELECT state, fence_revision, track_id FROM fencing WHERE track_id IS NOT NULL \
+       UNION ALL \
+       SELECT f.state, f.fence_revision, r.replaced_track_id FROM fencing f \
+         JOIN library_publish_replacements r ON r.journal_id = f.id \
+         WHERE r.replaced_track_id IS NOT NULL) \
+     SELECT t.root_id, t.relative_path FROM named j JOIN local_tracks t ON t.id = j.track_id \
+      WHERE EXISTS (SELECT 1 FROM library_scan_run_scopes s WHERE s.run_id = ?1 \
+        AND s.root_id = t.root_id \
+        AND (s.relative_path = '.' OR t.relative_path = s.relative_path \
+          OR substr(t.relative_path, 1, length(s.relative_path) + 1) = s.relative_path || '/') \
+        AND " + (fenced_by!()) + ") \
+     UNION \
+     SELECT source_root, source_rel FROM fencing WHERE source_root IS NOT NULL \
+     UNION \
+     SELECT dest_root, dest_rel FROM fencing \
+      WHERE state IN ('prepared', 'staged', 'published', 'committed', 'cleanup_pending') \
+        OR (track_id IS NOT NULL AND source_root IS NOT NULL \
+          AND (source_root IS NOT dest_root OR source_rel IS NOT dest_rel)) \
+     UNION \
+     SELECT j.dest_root, j.dest_rel FROM library_publish_journal j \
+      WHERE j.track_id IS NOT NULL AND j.source_root IS NOT NULL \
+        AND (j.source_root IS NOT j.dest_root OR j.source_rel IS NOT j.dest_rel) AND " + (awaits_admin!());
+    /// Lift the holds run `?1` settled (`?2` is now).
+    pub(super) LIFT_SETTLED_HOLDS = "DELETE FROM library_scan_held_scopes AS h WHERE " + HOLD_LIFTS;
+    /// The held rows of live albums the holds run `?1` lifts let go, with each one's earliest hold.
+    pub(super) ROWS_LET_GO = "SELECT n.local_album_id, n.id, MIN(h.held_at) \
+             FROM library_scan_held_scopes h \
+             CROSS JOIN local_tracks n \
+             CROSS JOIN local_albums b ON b.id = n.local_album_id \
+             WHERE " + HOLD_LIFTS + " AND " + (held!("n", "h")) + " AND b.retired_into_album_id IS NULL \
+             GROUP BY n.id";
+    /// Whether a scanned file of album `?1` sits in a held folder, first indexed after the hold began.
+    pub(super) ALBUM_HOLDS_NEW_FILES = "SELECT EXISTS (SELECT 1 FROM local_tracks t \
+         CROSS JOIN library_scan_held_scopes h \
+         WHERE t.local_album_id = ?1 AND " + (held!("t", "h")) + ")";
+    /// Mounts under scope `?2` of root `?1` with no file under them in run `?3`'s inventory, with how many indexed tracks the run walked past.
+    pub(super) EMPTY_MOUNTS = "SELECT relative_path, indexed FROM (SELECT m.relative_path, \
+               (SELECT COUNT(*) FROM local_tracks t WHERE t.root_id = m.root_id \
+                AND t.availability = 'indexed' \
+                AND t.relative_path > m.relative_path || '/' \
+                AND t.relative_path < m.relative_path || '0' AND " + (walked_past!("?3")) + ") AS indexed \
+             FROM library_scan_mounts m \
+             WHERE m.root_id = ?1 AND " + (covers!("?2", "m.relative_path")) + " \
+             AND NOT EXISTS (SELECT 1 FROM library_scan_inventory i \
+               JOIN library_scan_run_scopes s ON s.run_id = i.run_id \
+               AND s.root_id = i.root_id AND s.relative_path = i.scope_relative_path \
+               WHERE i.run_id = ?3 AND i.root_id = ?1 \
+               AND i.relative_path > m.relative_path || '/' \
+               AND i.relative_path < m.relative_path || '0' \
+               AND s.discovery_generation = i.discovery_generation)) \
+             WHERE indexed > 0 ORDER BY relative_path";
+    /// The live rows proven to be the MusicBrainz artist `?2`, the survivor first. `?5` and `?6` are the sentinel ids.
+    pub(super) ROWS_PROVEN_AS_MBID = "SELECT a.id, i.decision_source IN " + PERSONS + " AS chosen \
+             FROM local_artist_external_identities i \
+             JOIN local_artists a ON a.id = i.local_artist_id \
+             WHERE lower(i.provider_artist_id) = ?2 AND i.provider = 'musicbrainz' \
+             AND a.retired_into_artist_id IS NULL AND a.kind <> 'various_artists' \
+             AND a.id NOT IN (?5, ?6) \
+             AND (i.decision_source IN " + PERSONS + " OR NOT " + (holds_other_id!("a.id")) + ") \
+             ORDER BY chosen DESC, a.created_at, a.id";
+    /// Indexed rows under one scope, outside a folder run `?3` refused as a link.
+    pub(super) INDEXED_COUNT_IN_SCOPE = "SELECT COUNT(*) FROM local_tracks t WHERE t.root_id = ?1 \
+                         AND +t.availability = 'indexed' AND " + IN_SCOPE_T + " AND NOT " + (refused_scope!("?3", "t"));
+    /// Indexed rows run `?3` walked past under one scope, and the rows the scope holds once its new files index.
+    pub(super) VANISH_COUNTS = "SELECT \
+                         (SELECT COUNT(*) FROM local_tracks t WHERE t.root_id = ?1 \
+                          AND +t.availability = 'indexed' AND " + IN_SCOPE_T + " AND " + (walked_past!("?3")) + "), \
+                         (SELECT COUNT(*) FROM local_tracks t WHERE t.root_id = ?1 \
+                          AND +t.availability = 'indexed' AND " + IN_SCOPE_T + " AND NOT " + (refused_scope!("?3", "t")) + ") \
+                         + (SELECT COUNT(*) FROM library_scan_inventory i WHERE i.run_id = ?3 \
+                          AND i.root_id = ?1 AND i.scope_relative_path = ?2 \
+                          AND i.comparison_result = 'new')";
+    /// Rows walked past under the scope whose file the run's inventory holds at the same place below a twin in `?4`.
+    pub(super) ROWS_FOUND_AT_TWINS = "SELECT COUNT(*) FROM local_tracks t WHERE t.root_id = ?1 \
+             AND +t.availability = 'indexed' AND " + IN_SCOPE_T + " AND " + (walked_past!("?3")) + " \
+             AND EXISTS (SELECT 1 FROM json_each(?4) w CROSS JOIN library_scan_inventory i \
+               ON i.run_id = ?3 AND i.root_id = ?1 \
+               AND i.relative_path = w.value || substr(t.relative_path, length(?2) + 1))";
+    /// Indexed paths run `?3` walked past under one scope, and whether a folder covering each was held back.
+    pub(super) MISSING_CATALOG_PATHS = "SELECT t.relative_path, " + (held_back!("?3", "t")) + " FROM local_tracks t \
+             WHERE t.root_id = ?1 AND t.availability = 'indexed' AND " + IN_SCOPE + " \
+             AND " + (walked_past!("?3")) + " ORDER BY t.relative_path";
+    /// Catalog tracks under any of a list of scopes, each counted once. Each scope binds its root and path.
+    family SCOPES_TRACK_COUNT = scopes_track_count;
+    /// Saved compat bookmarks whose track row is gone.
+    pub(super) DROP_ORPHAN_BOOKMARKS = "DELETE FROM compat_bookmarks WHERE " + (track_gone!("compat_bookmarks"));
+    pub(super) USERS_WITH_ORPHAN_QUEUE_ITEMS = "SELECT DISTINCT user_id FROM compat_play_queue_items WHERE " + (track_gone!("compat_play_queue_items"));
+    /// User `?1`'s queue in order, and whether each entry's track row is gone.
+    pub(super) QUEUE_ITEMS_OF_USER = "SELECT item_index, file_id, " + (track_gone!("compat_play_queue_items")) + " FROM compat_play_queue_items \
+                 WHERE user_id = ?1 ORDER BY item_index";
+    pub(super) RUNS_PAUSING_OR_STOPPING = "SELECT id FROM library_scan_runs WHERE state IN ('pausing','stopping') ORDER BY queued_at, id";
+    pub(super) RUNS_STOPPING = "SELECT id FROM library_scan_runs WHERE state = 'stopping' ORDER BY queued_at, id";
+    /// Add `?1` to one counter of run `?2`.
+    family ADD_TO_COUNTER = add_to_counter;
+    /// The `scope_covers_path` rule for a catalog path column `relative_path` and a scope bound as `?2`: "." covers everything, else the path is the scope or extends it past a slash. Byte comparisons only: paths are case-sensitive, so no `LIKE`, and every path under "scope/" sorts between "scope/" and "scope0" ('0' follows '/').
+    pub(super) fragment IN_SCOPE = "(?2 = '.' OR relative_path = ?2 \
+    OR (relative_path > ?2 || '/' AND relative_path < ?2 || '0'))";
+    /// [`IN_SCOPE`] for a `local_tracks t` alias.
+    pub(super) fragment IN_SCOPE_T = "(?2 = '.' OR t.relative_path = ?2 \
+    OR (t.relative_path > ?2 || '/' AND t.relative_path < ?2 || '0'))";
+    /// Mark one listed path (`?2` under root `?1`) missing at `?3`, only while run `?4` still walked past it.
+    pub(super) MARK_WALKED_PAST_MISSING = "UPDATE local_tracks AS t SET availability = 'missing', missing_since = ?3 \
+     WHERE t.root_id = ?1 AND t.relative_path = ?2 AND t.availability = 'indexed' AND " + (walked_past!("?4"));
+    /// Whether run `?1` lifts the hold aliased `h`: the run completed and walked a folder covering it to the end, held back or refused no folder covering it or inside it, and no file under it went missing in the run from an album that holds no indexed file and is not merged into another. `?2` is now, for a run with no start.
+    pub(super) fragment HOLD_LIFTS = "EXISTS (SELECT 1 FROM library_scan_runs r \
+       JOIN library_scan_run_scopes s ON s.run_id = r.id \
+       WHERE r.id = ?1 AND r.state = 'completed' AND s.root_id = h.root_id \
+       AND s.discovery_state = 'completed' AND " + (covers!("s.relative_path", "h.relative_path")) + ") \
+     AND NOT " + (held_back!("?1", "h")) + " AND NOT " + (refused_scope!("?1", "h")) + " AND NOT EXISTS (SELECT 1 FROM library_scan_failures g WHERE g.run_id = ?1 \
+       AND g.root_id = h.root_id \
+       AND g.failure_code IN ('MASS_MISSING_GUARD', 'SCOPE_THROUGH_LINK') \
+       AND " + (covers!("h.relative_path", "g.relative_path")) + ") \
+     AND NOT EXISTS (SELECT 1 FROM local_tracks t \
+       JOIN local_albums a ON a.id = t.local_album_id \
+       WHERE t.availability = 'missing' AND t.root_id = h.root_id \
+       AND t.missing_since >= (SELECT COALESCE(started_at, ?2) \
+         FROM library_scan_runs WHERE id = ?1) \
+       AND " + (covers!("h.relative_path", "t.relative_path")) + " AND a.retired_into_album_id IS NULL \
+       AND NOT EXISTS (SELECT 1 FROM local_tracks k \
+         WHERE k.local_album_id = a.id AND k.availability = 'indexed'))";
+     fragment WALKED_PAST_INDEXED = " OR (t.availability = 'indexed' AND " + WALKED_PAST + ")";
+    family REPLACEMENT_ROWS = replacements_sql;
+}
+
+pub(super) fn scopes_track_count(scopes: ListLen) -> String {
+    let clauses: Vec<String> = (0..scopes.get())
+        .map(|index| {
+            let root = 2 * index + 1;
+            let path = root + 1;
+            format!(
+                "(root_id = ?{root} AND (?{path} = '.' OR relative_path = ?{path} \
+                 OR (relative_path > ?{path} || '/' AND relative_path < ?{path} || '0')))"
+            )
+        })
+        .collect();
+    format!(
+        "SELECT COUNT(*) FROM local_tracks WHERE {}",
+        clauses.join(" OR ")
+    )
+}
+
+pub(super) fn add_to_counter(counter: Counter) -> String {
+    let column = counter.column();
+    format!("UPDATE library_scan_runs SET {column} = {column} + ?1 WHERE id = ?2")
+}
+
+/// Held rows and the rows of other live albums on the same release track
+/// that went since the hold began, as (new album, old album, held row).
+/// Starts from the holds or the album's tracks, so no hold means no work,
+/// and reaches the old album through its release. The old album's rows are
+/// read through its index by name: without planner statistics SQLite would
+/// build a temporary index over every track instead. Only a run end counts
+/// an old row walked past as gone: no run walks anything at a look.
+pub(super) fn replacements_sql(source: HeldRows) -> String {
+    let (from, held_row, walked_past) = match source {
+        HeldRows::UnderHolds => (
+            "library_scan_held_scopes h CROSS JOIN local_tracks n",
+            held!("n", "h"),
+            WALKED_PAST_INDEXED,
+        ),
+        HeldRows::Remembered => (
+            "local_tracks n CROSS JOIN library_scan_unjudged_tracks h \
+             ON h.local_track_id = n.id",
+            "n.local_album_id = ?1 AND n.availability = 'indexed'",
+            "",
+        ),
+    };
+    format!(
+        "SELECT DISTINCT n.local_album_id, a.id, n.id \
+         FROM {from} \
+         CROSS JOIN local_albums b ON b.id = n.local_album_id \
+         CROSS JOIN local_track_external_identities ni \
+           ON ni.local_track_id = n.id AND ni.provider = 'musicbrainz' \
+         CROSS JOIN local_album_external_identities be \
+           ON be.local_album_id = b.id AND be.provider = 'musicbrainz' \
+         CROSS JOIN local_album_external_identities ae \
+           ON lower(ae.release_mbid) = lower(be.release_mbid) AND ae.provider = 'musicbrainz' \
+         CROSS JOIN local_albums a ON a.id = ae.local_album_id \
+         CROSS JOIN local_tracks t INDEXED BY idx_local_tracks_album_availability \
+           ON t.local_album_id = a.id AND t.availability IN ('missing', 'indexed') \
+         CROSS JOIN local_track_external_identities oi \
+           ON oi.local_track_id = t.id AND oi.provider = 'musicbrainz' \
+         WHERE {held_row} AND b.retired_into_album_id IS NULL \
+         AND trim(COALESCE(be.release_mbid, '')) <> '' \
+         AND a.id <> b.id AND a.retired_into_album_id IS NULL \
+         AND trim(COALESCE(ni.release_track_mbid, '')) <> '' \
+         AND lower(trim(oi.release_track_mbid)) = lower(trim(ni.release_track_mbid)) \
+         AND NOT EXISTS (SELECT 1 FROM local_track_aliases x WHERE x.alias = t.id) \
+         AND ((t.availability = 'missing' AND t.missing_since * 1000 >= h.held_at){walked_past}) \
+         ORDER BY 1, 2, 3"
+    )
 }

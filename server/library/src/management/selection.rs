@@ -66,8 +66,6 @@ fn ids_json(ids: &[String]) -> String {
     serde_json::Value::from(ids.to_vec()).to_string()
 }
 
-use crate::management::sql::ALBUM_ORDER;
-
 /// Albums a selection covers, in a stable order.
 pub fn albums(
     conn: &Connection,
@@ -85,33 +83,10 @@ pub fn albums(
         })?;
         rows.collect()
     };
-    let indexed = "EXISTS (SELECT 1 FROM local_tracks t WHERE t.local_album_id = a.id \
-                   AND t.availability = 'indexed')";
     let scopes = match selection.kind {
-        SelectionKind::Roots => whole(
-            &format!(
-                "SELECT a.id, a.row_revision FROM local_albums a \
-                 WHERE a.root_id IN (SELECT value FROM json_each(?1)) AND {indexed} {ALBUM_ORDER}"
-            ),
-            &ids,
-        )?,
-        SelectionKind::Albums => whole(
-            &format!(
-                "SELECT a.id, a.row_revision FROM local_albums a \
-                 WHERE a.id IN (SELECT value FROM json_each(?1)) AND {indexed} {ALBUM_ORDER}"
-            ),
-            &ids,
-        )?,
-        SelectionKind::Artists => whole(
-            &format!(
-                "SELECT a.id, a.row_revision FROM local_albums a \
-                 WHERE (a.album_artist_id IN (SELECT value FROM json_each(?1)) \
-                 OR EXISTS (SELECT 1 FROM local_album_artists x WHERE x.local_album_id = a.id \
-                 AND x.local_artist_id IN (SELECT value FROM json_each(?1)))) \
-                 AND {indexed} {ALBUM_ORDER}"
-            ),
-            &ids,
-        )?,
+        SelectionKind::Roots => whole(crate::management::sql::ALBUMS_OF_ROOTS.text(), &ids)?,
+        SelectionKind::Albums => whole(crate::management::sql::ALBUMS_OF_IDS.text(), &ids)?,
+        SelectionKind::Artists => whole(crate::management::sql::ALBUMS_OF_ARTISTS.text(), &ids)?,
         SelectionKind::Tracks => track_albums(conn, &ids)?,
         SelectionKind::Filter => filtered(conn, selection.catalog_filter.as_ref())?,
     };
@@ -162,21 +137,8 @@ fn filtered(
         .filter(|text| !text.is_empty())
         .map(str::to_lowercase);
     let artists = ids_json(&filter.artist_ids);
-    let artist_clause = if filter.album_artist_only {
-        "a.album_artist_id IN (SELECT value FROM json_each(?5))"
-    } else {
-        "(a.album_artist_id IN (SELECT value FROM json_each(?5)) \
-         OR EXISTS (SELECT 1 FROM local_album_artists x WHERE x.local_album_id = a.id \
-         AND x.local_artist_id IN (SELECT value FROM json_each(?5))))"
-    };
-    let mut statement = conn.prepare(&format!(
-        "SELECT a.id, a.row_revision FROM local_albums a \
-         WHERE EXISTS (SELECT 1 FROM local_tracks t WHERE t.local_album_id = a.id \
-         AND t.availability = 'indexed') \
-         AND (?1 IS NULL OR a.title_folded LIKE ?1 OR COALESCE(a.album_artist_name_folded, '') LIKE ?1) \
-         AND (?2 IS NULL OR lower(COALESCE(a.primary_genre, '')) = ?2) \
-         AND (?3 IS NULL OR a.year >= ?3) AND (?4 IS NULL OR a.year <= ?4) \
-         AND (json_array_length(?5) = 0 OR {artist_clause}) {ALBUM_ORDER}"
+    let mut statement = conn.prepare(&crate::management::sql::filtered_albums(
+        filter.album_artist_only,
     ))?;
     let rows = statement.query_map(
         params![search, genre, filter.from_year, filter.to_year, artists],

@@ -12,7 +12,7 @@ use crate::identify::sqlite::{
     chosen_matches_differ, match_chosen, merge_moves_match, offer_album, release_chosen,
     settle_merged_match,
 };
-use crate::management::{automatic, takeover};
+use crate::management::automatic;
 use crate::operations::decisions::{CatalogAction, record_action};
 use crate::scan::sqlite_store::retag_pairs::RetagPairReason;
 use droppedneedle_kernel::db::savepoint;
@@ -185,14 +185,7 @@ pub(crate) fn merge_retagged(
 /// its expiry. An album field override is not.
 fn live_work(conn: &Connection, album_id: &str, now: f64) -> rusqlite::Result<bool> {
     conn.query_row(
-        &format!(
-            "SELECT EXISTS(SELECT 1 FROM library_contribution_drafts WHERE local_album_id = ?1 \
-             AND state IN ('draft','ready','seeded','verifying','needs_review')) \
-             OR EXISTS(SELECT 1 FROM library_management_plan_items item \
-             JOIN library_operation_jobs job ON job.id = item.job_id \
-             WHERE item.local_album_id = ?1 AND {})",
-            crate::management::store::live_job_sql("?2")
-        ),
+        crate::corrections::sql::LIVE_WORK_ON_ALBUM.text(),
         params![album_id, now],
         |row| row.get(0),
     )
@@ -201,11 +194,6 @@ fn live_work(conn: &Connection, album_id: &str, now: f64) -> rusqlite::Result<bo
 /// Whether the app has a record of the bytes of any file on the album,
 /// whatever its availability: one it wrote, or one v2 wrote.
 pub(crate) fn album_has_record(conn: &Connection, album_id: &str) -> rusqlite::Result<bool> {
-    conn.prepare_cached(&format!(
-        "SELECT EXISTS(SELECT 1 FROM local_tracks t \
-         JOIN library_track_management_state s ON s.local_track_id = t.id \
-         WHERE t.local_album_id = ?1 AND {})",
-        takeover::record_sql()
-    ))?
-    .query_row(params![album_id], |row| row.get(0))
+    conn.prepare_cached(crate::corrections::sql::ALBUM_HAS_RECORD.text())?
+        .query_row(params![album_id], |row| row.get(0))
 }

@@ -3,6 +3,26 @@
 //! kernel's lease core: times arrive there as integer milliseconds and are
 //! stored as seconds. The rest are this module's own.
 
+/// A condition on `job` (a `library_operation_jobs` row) that holds while
+/// the job still has work coming on its albums: queued, running, paused,
+/// or ready and not past its expiry. A ready preview past its expiry can
+/// never be applied, so it holds nothing back; one with no expiry stored
+/// still does. A dry run for turning automatic management on is never
+/// applied either, so it holds nothing back while ready. `$now` is the SQL
+/// parameter holding the current time in seconds.
+macro_rules! live_job {
+    ($now:literal) => {
+        concat!(
+            "(job.state IN ('queued','running','paused') OR (job.state = 'ready' \
+             AND NOT EXISTS(SELECT 1 FROM library_management_job_snapshots expiry \
+             WHERE expiry.job_id = job.id AND (expiry.preview_expires_at <= ",
+            $now,
+            " OR expiry.proposed_settings_revision IS NOT NULL))))"
+        )
+    };
+}
+pub(crate) use live_job;
+
 droppedneedle_kernel::sql! {
     /// One job row; the column order [`super::map_job`] reads.
     pub(super) fragment JOB_ROW = "SELECT id, kind, state, requested_by_user_id, \

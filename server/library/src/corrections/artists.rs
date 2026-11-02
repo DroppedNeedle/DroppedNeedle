@@ -13,48 +13,25 @@ use rusqlite::types::Value;
 use rusqlite::{OptionalExtension as _, Transaction, params, params_from_iter};
 use serde::Serialize;
 
-use super::edition::placeholders;
 use super::merge_basis::MergeBasis;
 use super::models::{ArtistMergeOutcome, ArtistMergeRequest, CorrectionError, ProviderChoice};
 use super::reasons;
+use super::sql::{self, ReferenceKind};
 use crate::identify::sqlite::retarget_references;
 use droppedneedle_auth::Admin;
+use droppedneedle_kernel::db::statement::ListLen;
 
 const VARIOUS_ARTISTS_ID: &str = "00000000-0000-4000-8000-000000000001";
 const UNKNOWN_ARTIST_ID: &str = "00000000-0000-4000-8000-000000000002";
 
 /// Reference kinds a merge moves, counted for the preview.
-const REFERENCE_COUNTS: [(&str, &str); 6] = [
-    (
-        "album_credits",
-        "SELECT local_artist_id, COUNT(*) FROM local_album_artists \
-         WHERE local_artist_id IN ({}) GROUP BY 1",
-    ),
-    (
-        "track_credits",
-        "SELECT local_artist_id, COUNT(*) FROM local_track_artists \
-         WHERE local_artist_id IN ({}) GROUP BY 1",
-    ),
-    (
-        "primary_albums",
-        "SELECT album_artist_id, COUNT(*) FROM local_albums \
-         WHERE album_artist_id IN ({}) GROUP BY 1",
-    ),
-    (
-        "favorites",
-        "SELECT item_id, COUNT(*) FROM library_user_favorites \
-         WHERE item_kind = 'artist' AND item_id IN ({}) GROUP BY 1",
-    ),
-    (
-        "ratings",
-        "SELECT item_id, COUNT(*) FROM library_user_ratings \
-         WHERE item_kind = 'artist' AND item_id IN ({}) GROUP BY 1",
-    ),
-    (
-        "history",
-        "SELECT local_artist_id, COUNT(*) FROM library_play_history \
-         WHERE local_artist_id IN ({}) GROUP BY 1",
-    ),
+const REFERENCE_KINDS: [(&str, ReferenceKind); 6] = [
+    ("album_credits", ReferenceKind::AlbumCredits),
+    ("track_credits", ReferenceKind::TrackCredits),
+    ("primary_albums", ReferenceKind::PrimaryAlbums),
+    ("favorites", ReferenceKind::Favorites),
+    ("ratings", ReferenceKind::Ratings),
+    ("history", ReferenceKind::History),
 ];
 
 /// A merge as run: what it did and the material its token covers.
@@ -166,7 +143,7 @@ pub(super) fn merge(
         }
     }
     tx.execute(
-        crate::corrections::sql::MERGE_GROUP.text(),
+        crate::corrections::sql::BUMP_ARTIST_REVISION.text(),
         params![survivor, now],
     )?;
     let material = serde_json::to_string(&Material {
@@ -192,12 +169,9 @@ pub(super) fn merge(
 
 /// (artist id, MusicBrainz artist id) for the artists that have a link.
 fn identities(tx: &Transaction<'_>, ids: &[String]) -> rusqlite::Result<Vec<(String, String)>> {
-    let marks = placeholders(ids.len());
-    tx.prepare(&format!(
-        "SELECT local_artist_id, provider_artist_id FROM local_artist_external_identities \
-         WHERE provider = 'musicbrainz' AND local_artist_id IN ({marks}) \
-         ORDER BY local_artist_id"
-    ))?
+    tx.prepare(&crate::corrections::sql::artist_links_of(ListLen::new(
+        ids.len(),
+    )))?
     .query_map(params_from_iter(ids.iter()), |row| {
         Ok((row.get(0)?, row.get(1)?))
     })?
@@ -221,16 +195,15 @@ fn reference_counts(
     tx: &Transaction<'_>,
     ids: &[String],
 ) -> rusqlite::Result<BTreeMap<String, i64>> {
-    let marks = placeholders(ids.len());
     let mut counts = BTreeMap::new();
-    for (kind, query) in REFERENCE_COUNTS {
+    for (label, kind) in REFERENCE_KINDS {
         let mut total = 0;
-        let mut stmt = tx.prepare(&query.replace("{}", &marks))?;
+        let mut stmt = tx.prepare(&sql::references_of(kind, ListLen::new(ids.len())))?;
         let rows = stmt.query_map(params_from_iter(ids.iter()), |row| row.get::<_, i64>(1))?;
         for count in rows {
             total += count?;
         }
-        counts.insert(kind.to_owned(), total);
+        counts.insert(label.to_owned(), total);
     }
     Ok(counts)
 }
@@ -276,33 +249,17 @@ pub(super) fn retire_artist(
             MOVED_WITH_ID
         ])?;
     let moves = [
-        crate::corrections::sql::REPOINT_ALBUM_CREDITS.text(),
-        "UPDATE local_track_artists SET local_artist_id = ?2, row_revision = row_revision + 1 \
-         WHERE local_artist_id = ?1",
-        "UPDATE local_albums SET album_artist_id = ?2, updated_at = ?3, \
-         row_revision = row_revision + 1 WHERE album_artist_id = ?1",
-        "DELETE FROM local_entity_source_links WHERE local_artist_id = ?1 AND EXISTS \
-         (SELECT 1 FROM local_entity_source_links kept WHERE kept.local_artist_id = ?2 \
-          AND kept.provider = local_entity_source_links.provider \
-          AND kept.external_entity_type = local_entity_source_links.external_entity_type \
-          AND kept.external_id = local_entity_source_links.external_id)",
-        "UPDATE local_entity_source_links SET local_artist_id = ?2, updated_at = ?3, \
-         row_revision = row_revision + 1 WHERE local_artist_id = ?1",
-        "DELETE FROM local_artist_external_identities WHERE local_artist_id = ?1",
-        "UPDATE local_artists SET retired_into_artist_id = ?2, converged_mbid = ?4, \
-         updated_at = ?3, row_revision = row_revision + 1 WHERE id = ?1",
-        "UPDATE local_artist_aliases SET local_artist_id = ?2 WHERE local_artist_id = ?1",
-        "INSERT OR IGNORE INTO local_artist_aliases (alias, local_artist_id, kind, created_at) \
-         VALUES (?1, ?2, 'merged_artist', ?3)",
-        "UPDATE library_artist_credit_proofs SET \
-         local_artist_id = CASE WHEN local_artist_id = ?1 THEN ?2 ELSE local_artist_id END, \
-         source_local_artist_id = CASE WHEN source_local_artist_id = ?1 THEN ?2 \
-         ELSE source_local_artist_id END, updated_at = CAST(?3 * 1000 AS INTEGER), \
-         row_revision = row_revision + 1 \
-         WHERE local_artist_id = ?1 OR source_local_artist_id = ?1",
-        "UPDATE local_artist_merge_candidates SET state = 'resolved', updated_at = ?3, \
-         row_revision = row_revision + 1 WHERE state = 'open' \
-         AND (left_artist_id = ?1 OR right_artist_id = ?1)",
+        sql::REPOINT_ALBUM_CREDITS,
+        sql::REPOINT_TRACK_CREDITS,
+        sql::REPOINT_ALBUM_ARTIST,
+        sql::DROP_SHARED_SOURCE_LINKS,
+        sql::REPOINT_SOURCE_LINKS,
+        sql::DROP_ARTIST_LINK,
+        sql::RETIRE_ARTIST_ROW,
+        sql::REPOINT_ARTIST_ALIASES,
+        sql::ALIAS_RETIRED_ARTIST,
+        sql::REPOINT_CREDIT_PROOFS,
+        sql::RESOLVE_MERGE_CANDIDATES,
     ];
     // Favorites (with their names), ratings and plays, the same way
     // identify merges move them.
@@ -310,8 +267,8 @@ pub(super) fn retire_artist(
     let mark = basis
         .converged_mark()
         .map_or(Value::Null, |mark| Value::Text(mark.to_owned()));
-    for sql in moves {
-        let mut stmt = tx.prepare(sql)?;
+    for statement in moves {
+        let mut stmt = tx.prepare(statement.text())?;
         let values = [
             Value::Text(artist.to_owned()),
             Value::Text(survivor.to_owned()),

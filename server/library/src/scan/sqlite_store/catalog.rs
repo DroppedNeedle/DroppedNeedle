@@ -1,28 +1,7 @@
 //! Track catalog: classification, catalog commits, and missing detection.
 
-use super::held_scopes::refused_scope;
 use super::*;
-use crate::scan::sqlite_store::sql::walked_past;
-
-/// The `scope_covers_path` rule in SQL for a catalog path column
-/// `relative_path` and a scope bound as `?2`: "." covers everything, else
-/// the path is the scope or extends it past a slash. Byte comparisons
-/// only: paths are case-sensitive, so no `LIKE`, and every path under
-/// "scope/" sorts between "scope/" and "scope0" ('0' follows '/').
-const IN_SCOPE: &str = "(?2 = '.' OR relative_path = ?2 \
-    OR (relative_path > ?2 || '/' AND relative_path < ?2 || '0'))";
-
-/// [`IN_SCOPE`] for a `local_tracks t` alias.
-const IN_SCOPE_T: &str = "(?2 = '.' OR t.relative_path = ?2 \
-    OR (t.relative_path > ?2 || '/' AND t.relative_path < ?2 || '0'))";
-
-/// Mark one listed path (`?2` under root `?1`) missing at `?3`, only while
-/// run `?4` still walked past it.
-const MARK_WALKED_PAST_MISSING: &str = concat!(
-    "UPDATE local_tracks AS t SET availability = 'missing', missing_since = ?3 \
-     WHERE t.root_id = ?1 AND t.relative_path = ?2 AND t.availability = 'indexed' AND ",
-    walked_past!("?4")
-);
+use droppedneedle_kernel::db::statement::ListLen;
 
 /// The track catalog: classification against it, commits into it, and
 /// missing detection.
@@ -193,7 +172,8 @@ impl SqliteScanStore {
         let marked = self.write_chunked(stop, "scan_mark_missing", relative_paths, |chunk, tx| {
             let mut marked = 0usize;
             {
-                let mut stmt = tx.prepare_cached(MARK_WALKED_PAST_MISSING)?;
+                let mut stmt =
+                    tx.prepare_cached(crate::scan::sql::MARK_WALKED_PAST_MISSING.text())?;
                 for path in chunk {
                     marked += stmt.execute(params![root_id, path, now, run_id])?;
                 }
@@ -256,7 +236,8 @@ impl SqliteScanStore {
             let mut gone = 0usize;
             {
                 let mut find = tx.prepare_cached(crate::scan::sql::TRACK_AT.text())?;
-                let mut mark = tx.prepare_cached(MARK_WALKED_PAST_MISSING)?;
+                let mut mark =
+                    tx.prepare_cached(crate::scan::sql::MARK_WALKED_PAST_MISSING.text())?;
                 for (path, home_root, home_path) in chunk {
                     let Some(home) = find
                         .query_row(params![home_root, home_path], |row| row.get::<_, String>(0))
@@ -314,11 +295,7 @@ impl SqliteScanStore {
         self.read_long(stop, "scan_indexed_count", |conn| {
             Ok(conn
                 .query_row(
-                    &format!(
-                        "SELECT COUNT(*) FROM local_tracks t WHERE t.root_id = ?1 \
-                         AND t.availability = 'indexed' AND {IN_SCOPE_T} AND NOT {REFUSED}",
-                        REFUSED = refused_scope!("?3", "t"),
-                    ),
+                    crate::scan::sql::INDEXED_COUNT_IN_SCOPE.text(),
                     params![root_id, scope_relative_path, run_id],
                     |row| row.get::<_, i64>(0),
                 )
@@ -339,18 +316,7 @@ impl SqliteScanStore {
         self.read_long(stop, "scan_vanish_counts", |conn| {
             Ok(conn
                 .query_row(
-                    &format!(
-                        "SELECT \
-                         (SELECT COUNT(*) FROM local_tracks t WHERE t.root_id = ?1 \
-                          AND t.availability = 'indexed' AND {IN_SCOPE_T} AND {WALKED}), \
-                         (SELECT COUNT(*) FROM local_tracks t WHERE t.root_id = ?1 \
-                          AND t.availability = 'indexed' AND {IN_SCOPE_T} AND NOT {REFUSED}) \
-                         + (SELECT COUNT(*) FROM library_scan_inventory i WHERE i.run_id = ?3 \
-                          AND i.root_id = ?1 AND i.scope_relative_path = ?2 \
-                          AND i.comparison_result = 'new')",
-                        WALKED = walked_past!("?3"),
-                        REFUSED = refused_scope!("?3", "t"),
-                    ),
+                    crate::scan::sql::VANISH_COUNTS.text(),
                     params![root_id, scope_relative_path, run_id],
                     |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
                 )
@@ -395,18 +361,10 @@ impl SqliteScanStore {
         let twins = serde_json::to_string(twins).map_err(|error| ScanStoreError::Internal {
             message: format!("scan twins did not encode: {error}"),
         })?;
-        let sql = format!(
-            "SELECT COUNT(*) FROM local_tracks t WHERE t.root_id = ?1 \
-             AND t.availability = 'indexed' AND {IN_SCOPE_T} AND {WALKED} \
-             AND EXISTS (SELECT 1 FROM json_each(?4) w CROSS JOIN library_scan_inventory i \
-               ON i.run_id = ?3 AND i.root_id = ?1 \
-               AND i.relative_path = w.value || substr(t.relative_path, length(?2) + 1))",
-            WALKED = walked_past!("?3"),
-        );
         self.read_long(stop, "scan_rows_found_at_twins", |conn| {
             Ok(conn
                 .query_row(
-                    &sql,
+                    crate::scan::sql::ROWS_FOUND_AT_TWINS.text(),
                     params![root_id, scope_relative_path, run_id, twins],
                     |row| row.get::<_, i64>(0),
                 )
@@ -484,15 +442,8 @@ impl SqliteScanStore {
         root_id: &str,
         scope_relative_path: &str,
     ) -> Result<Vec<(String, bool)>, ScanStoreError> {
-        let sql = format!(
-            "SELECT t.relative_path, {} FROM local_tracks t \
-             WHERE t.root_id = ?1 AND t.availability = 'indexed' AND {IN_SCOPE} \
-             AND {} ORDER BY t.relative_path",
-            crate::scan::sqlite_store::sql::held_back!("?3", "t"),
-            walked_past!("?3"),
-        );
         self.read_long(stop, "scan_missing_paths", |conn| {
-            let mut stmt = conn.prepare(&sql)?;
+            let mut stmt = conn.prepare(crate::scan::sql::MISSING_CATALOG_PATHS.text())?;
             let rows = stmt
                 .query_map(params![root_id, scope_relative_path, run_id], |row| {
                     Ok((row.get::<_, String>(0)?, row.get::<_, bool>(1)?))
@@ -646,20 +597,7 @@ impl SqliteScanStore {
         }
         // One count over the union, so nested or repeated scopes never
         // count a track twice. Each scope binds its root and path.
-        let clauses: Vec<String> = (0..scopes.len())
-            .map(|index| {
-                let root = 2 * index + 1;
-                let path = root + 1;
-                format!(
-                    "(root_id = ?{root} AND (?{path} = '.' OR relative_path = ?{path} \
-                     OR (relative_path > ?{path} || '/' AND relative_path < ?{path} || '0')))"
-                )
-            })
-            .collect();
-        let sql = format!(
-            "SELECT COUNT(*) FROM local_tracks WHERE {}",
-            clauses.join(" OR ")
-        );
+        let sql = crate::scan::sql::scopes_track_count(ListLen::new(scopes.len()));
         let values: Vec<&str> = scopes
             .iter()
             .flat_map(|scope| [scope.root_id.as_str(), scope.relative_path.as_str()])

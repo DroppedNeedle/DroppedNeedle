@@ -118,7 +118,7 @@ droppedneedle_kernel::sql! {
          WHERE state = ?2 ORDER BY nominated_at DESC LIMIT ?1";
     pub(super) KEEP = "UPDATE library_identify_artist_id_checks SET state = ?3, canonical_mbid = NULL, \
          checked_at = ?2 WHERE artist_mbid = ?1";
-    pub(super) ANSWER = "SELECT EXISTS (SELECT 1 FROM library_identify_artist_id_checks \
+    pub(super) ARTIST_ID_CHECK_IN_STATE = "SELECT EXISTS (SELECT 1 FROM library_identify_artist_id_checks \
              WHERE artist_mbid = ?1 AND state = ?2)";
     pub(super) NOT_FOLLOWED = "SELECT EXISTS (SELECT 1 FROM library_identify_artist_id_checks \
              WHERE artist_mbid = ?1) OR EXISTS (SELECT 1 FROM library_identify_artist_id_checks \
@@ -243,7 +243,7 @@ droppedneedle_kernel::sql! {
                          lease_expires_ms = ?1, updated_ms = ?2 WHERE id = ?3";
     pub(super) RECOVER = "UPDATE library_identify_jobs SET state = 'queued', \
                          lease_expires_ms = NULL, updated_ms = ?1 WHERE state = 'running'";
-    pub(super) FILE = "INSERT OR REPLACE INTO library_identify_reviews (id, local_album_id, \
+    pub(super) FILE_REVIEW = "INSERT OR REPLACE INTO library_identify_reviews (id, local_album_id, \
                          reason_code, candidates_json, state, resolved_by_user_id, \
                          selected_candidate_key, created_ms, updated_ms) \
                          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)";
@@ -257,7 +257,7 @@ droppedneedle_kernel::sql! {
     /// live and its match accepted and unchanged, the credit it proves still
     /// points at its row, and for a track, the track is indexed on the album
     /// and still mapped to the same release track.
-    pub fragment CURRENT_PROOF = "EXISTS (SELECT 1 FROM local_albums proof_album \
+    pub(crate) fragment CURRENT_PROOF = "EXISTS (SELECT 1 FROM local_albums proof_album \
      JOIN local_album_external_identities proof_identity \
        ON proof_identity.local_album_id = proof_album.id \
       AND proof_identity.provider = 'musicbrainz' \
@@ -385,7 +385,9 @@ droppedneedle_kernel::sql! {
     pub(super) GET = "SELECT " + REVIEW_COLUMNS + " FROM library_identify_reviews WHERE id = ?1";
     pub(super) PENDING_FOR_ALBUM = "SELECT " + REVIEW_COLUMNS + " FROM library_identify_reviews \
                  WHERE local_album_id = ?1 AND state = 'pending' ORDER BY created_ms, id";
-    pub(super) AUTOMATIC_LINKS_AFTER_SQL = "SELECT local_artist_id FROM local_artist_external_identities \
+    /// The rows the app linked, in id order after `?1`, at most `?2`. Every
+    /// link is MusicBrainz's (a CHECK), so the walk goes by the primary key.
+    pub(super) AUTOMATIC_LINKS_FROM = "SELECT local_artist_id FROM local_artist_external_identities \
          WHERE decision_source IN " + REVISABLE + " AND local_artist_id > ?1 \
          ORDER BY local_artist_id LIMIT ?2";
     pub(super) PERSON_HOLDS = "SELECT EXISTS (SELECT 1 FROM local_artist_external_identities \
@@ -450,4 +452,20 @@ droppedneedle_kernel::sql! {
     pub(super) ARTISTS_REVISABLY_LINKED_TO_MBID = "SELECT local_artist_id FROM local_artist_external_identities \
                  WHERE provider = 'musicbrainz' AND decision_source IN " + REVISABLE + " \
                  AND lower(provider_artist_id) = ?1 AND local_artist_id <> ?2";
+    pub(super) fragment CREDIT_ROWS = "SELECT c.position, c.local_artist_id, c.credited_name, a.display_name, \
+         a.retired_into_artist_id IS NULL AND a.kind <> 'various_artists' \
+         AND a.id NOT IN (?2, ?3), c.artist_mbid";
+    /// Album `?1`'s credits; `?2` and `?3` are the sentinel ids.
+    pub(super) ALBUM_CREDIT_ROWS = CREDIT_ROWS + " FROM local_album_artists c JOIN local_artists a ON a.id = c.local_artist_id \
+         WHERE c.local_album_id = ?1 ORDER BY c.position";
+    /// Track `?1`'s credits; `?2` and `?3` are the sentinel ids.
+    pub(super) TRACK_CREDIT_ROWS = CREDIT_ROWS + " FROM local_track_artists c JOIN local_artists a ON a.id = c.local_artist_id \
+         WHERE c.local_track_id = ?1 ORDER BY c.position";
+    pub(super) REPOINT_TRACK_CREDIT_MBID = "UPDATE local_track_artists SET artist_mbid = ?2 WHERE artist_mbid = ?1";
+    pub(super) REPOINT_ALBUM_CREDIT_MBID = "UPDATE local_album_artists SET artist_mbid = ?2 WHERE artist_mbid = ?1";
+    pub(super) RETARGET_ALBUM_PLAYS = "UPDATE library_play_history SET local_album_id = ?1 WHERE local_album_id = ?2";
+    pub(super) RETARGET_ARTIST_PLAYS = "UPDATE library_play_history SET local_artist_id = ?1 WHERE local_artist_id = ?2";
+    pub(super) RETARGET_TRACK_PLAYS = "UPDATE library_play_history SET local_track_id = ?1 WHERE local_track_id = ?2";
+    pub(super) ALBUM_ALIASES = "SELECT alias FROM local_album_aliases WHERE local_album_id = ?1 ORDER BY alias";
+    pub(super) ARTIST_ALIASES = "SELECT alias FROM local_artist_aliases WHERE local_artist_id = ?1 ORDER BY alias";
 }

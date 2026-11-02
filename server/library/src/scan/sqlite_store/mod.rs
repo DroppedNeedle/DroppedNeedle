@@ -39,8 +39,11 @@ use super::store::{
     CatalogEntry, ClassifyInput, CommitIndexedItem, IndexWindow, InventoryPage, RevisionKind,
     ScanStoreError, UnreadRows, WindowOutcome,
 };
+pub use artwork::ArtworkSweep;
 use droppedneedle_kernel::db::writer::Lane;
 use droppedneedle_kernel::db::{ChunkedError, Db, fold_text};
+pub(crate) use held_scopes::{holds_new_files, judge_remembered, remembered};
+pub use lyrics::LyricsSweep;
 
 /// Terminal runs kept past cleanup before history pruning.
 const HISTORY_KEPT: usize = 50;
@@ -384,8 +387,6 @@ fn scope_covers(existing: &ScanScope, requested_root: &str, requested: &ScanScop
 
 pub(crate) mod artists;
 mod artwork;
-pub(crate) mod sql;
-pub use artwork::ArtworkSweep;
 mod catalog;
 mod commit;
 mod folder_digests;
@@ -393,13 +394,12 @@ mod hands_off;
 mod held_scopes;
 mod inventory;
 mod lyrics;
-pub use lyrics::LyricsSweep;
 mod mounts;
 pub mod retag_pairs;
 mod runs;
+pub(crate) mod sql;
 
 pub(crate) use commit::{
-    Adopted, RetagPair, adopt_file, adoptable_track_id, automatic_album_for, awaits_retag, holds,
-    tried, waits_for_the_rest,
+    Adopted, RetagPair, adopt_file, adoptable_track_id, automatic_album_for, awaits_retag, tried,
+    waits_for_the_rest,
 };
-pub(crate) use held_scopes::{holds_new_files, judge_remembered, remembered};

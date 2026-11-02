@@ -425,10 +425,6 @@ fn album_tracks(tx: &Transaction<'_>, album_id: &str) -> rusqlite::Result<Vec<St
         .collect()
 }
 
-pub(super) fn placeholders(n: usize) -> String {
-    vec!["?"; n.max(1)].join(",")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

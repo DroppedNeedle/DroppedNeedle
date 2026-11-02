@@ -779,53 +779,5 @@ pub fn work_of_bundle(
         .optional()
 }
 
-/// A condition on `job` (a `library_operation_jobs` row) that holds while
-/// the job still has work coming on its albums: queued, running, paused,
-/// or ready and not past its expiry. A ready preview past its expiry can
-/// never be applied, so it holds nothing back; one with no expiry stored
-/// still does. A dry run for turning automatic management on is never
-/// applied either, so it holds nothing back while ready. `now` is the SQL
-/// parameter holding the current time in seconds.
-pub fn live_job_sql(now: &str) -> String {
-    format!(
-        "(job.state IN ('queued','running','paused') OR (job.state = 'ready' \
-         AND NOT EXISTS(SELECT 1 FROM library_management_job_snapshots expiry \
-         WHERE expiry.job_id = job.id AND (expiry.preview_expires_at <= {now} \
-         OR expiry.proposed_settings_revision IS NOT NULL))))"
-    )
-}
-
 #[cfg(test)]
-mod tests {
-    use droppedneedle_kernel::db::scratch::ScratchDir;
-    use droppedneedle_kernel::db::{DbConfig, open_runtime};
-    use droppedneedle_kernel::schema::template::copy_to;
-
-    /// The job table's lease statements keep the promises the kernel's
-    /// lease core relies on: a stale owner changes nothing, a lease that
-    /// ran out is requeued for its kind, and every held job is requeued at
-    /// start.
-    #[tokio::test]
-    async fn the_job_table_keeps_the_lease_promises() {
-        let dir = ScratchDir::new("library-jobs-lease").unwrap();
-        let path = dir.join("library.db");
-        copy_to(&path).unwrap();
-        let runtime = open_runtime(&DbConfig::new(&path)).await.unwrap();
-        let kind = super::OperationKind::ExplicitReidentification.as_str();
-        super::lease::check_conformance(runtime.db(), super::STATEMENTS, kind, move |tx| {
-            tx.execute(
-                "INSERT INTO library_operation_jobs (id, kind, state, created_at, updated_at) \
-                 VALUES ('job', ?1, 'queued', 0, 0)",
-                [kind],
-            )?;
-            tx.query_row(
-                "SELECT rowid FROM library_operation_jobs WHERE id = 'job'",
-                [],
-                |row| row.get(0),
-            )
-        })
-        .await
-        .unwrap();
-        runtime.shutdown().await;
-    }
-}
+mod tests;

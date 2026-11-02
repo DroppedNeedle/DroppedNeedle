@@ -16,6 +16,8 @@
 //! ones; a stored script the compiler refuses is kept and fails per item.
 
 use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
+pub use normalize::{complete_fields, migration_carry, normalize, validate_preset_provenance};
+pub(crate) use script::validate_naming_language;
 
 mod activation;
 mod bundle;
@@ -44,7 +46,6 @@ pub use bundle::{
 pub use impact::{
     ChangeImpact, active_automatic, classify, is_restrictive_profile_change, scope_payload,
 };
-pub use normalize::{complete_fields, migration_carry, normalize, validate_preset_provenance};
 pub use presets::{
     COMPLETE_LIBRARY_ORGANIZER_PROFILE_ID, LEGACY_DEFAULT_SIDECAR_PATTERNS,
     LEGACY_NAMING_PROFILE_ID, LEGACY_NAMING_SCRIPT_ID, LegacyConversion, MANAGED_FIELDS,
@@ -60,7 +61,6 @@ pub use revision::{
     naming_policy_revision, naming_script_revision, profile_revision, settings_revision,
     tagging_script_revision,
 };
-pub(crate) use script::validate_naming_language;
 
 /// A caller fault with a v2 message (400).
 fn invalid(message: &str) -> SettingsError {

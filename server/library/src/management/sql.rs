@@ -1,6 +1,26 @@
 //! Management's statements over its applied work: each album's outcome
 //! and the publish bundles a job wrote, for its results and its undo.
 
+use crate::publish::sql::HAS_BYTES_RECORD;
+
+droppedneedle_kernel::sql_choice! {
+    /// What a kept tag value sits on.
+    pub(super) enum OverrideSubject {
+        Album,
+        Track,
+    }
+}
+
+impl OverrideSubject {
+    /// The override row's key column and the subject's table.
+    fn columns(self) -> (&'static str, &'static str) {
+        match self {
+            Self::Album => ("local_album_id", "local_albums"),
+            Self::Track => ("local_track_id", "local_tracks"),
+        }
+    }
+}
+
 droppedneedle_kernel::sql! {
     /// One album's work outcome (`?1` job, `?2` ordinal): state, failure
     /// code, result and bundle.
@@ -243,7 +263,7 @@ droppedneedle_kernel::sql! {
          WHERE s.local_track_id = ?1";
     pub(super) EDIT_OVERRIDE_REVISIONS = "SELECT json_extract(result_json, '$.override_revisions') FROM library_operation_work \
              WHERE job_id = ?1 AND ordinal = ?2";
-    pub(super) SUBJECT = "SELECT t.id, t.local_album_id, t.root_id, t.relative_path, t.row_revision, \
+    pub(super) TRACK_TO_EDIT = "SELECT t.id, t.local_album_id, t.root_id, t.relative_path, t.row_revision, \
                  a.row_revision FROM local_tracks t JOIN local_albums a ON a.id = t.local_album_id \
                  WHERE t.id = ?1 AND t.availability = 'indexed'";
     pub(super) SAVED_OVERRIDES = "SELECT subject_kind, field_name, id, mode, row_revision \
@@ -363,4 +383,110 @@ droppedneedle_kernel::sql! {
          AND (?8 IS NULL OR json_extract(s.profile_snapshot_json, '$.profile.id') = ?8) \
          AND (?9 IS NULL OR j.created_at < ?9 OR (j.created_at = ?9 AND j.id < ?10)) \
          ORDER BY j.created_at DESC, j.id DESC LIMIT ?11";
+    /// Albums with an indexed file in the library folders of the JSON list `?1`.
+    pub(super) ALBUMS_OF_ROOTS = "SELECT a.id, a.row_revision FROM local_albums a \
+                 WHERE a.root_id IN (SELECT value FROM json_each(?1)) AND " + ALBUM_HAS_INDEXED_TRACK + " " + ALBUM_ORDER;
+    /// Albums with an indexed file among the ids of the JSON list `?1`.
+    pub(super) ALBUMS_OF_IDS = "SELECT a.id, a.row_revision FROM local_albums a \
+                 WHERE a.id IN (SELECT value FROM json_each(?1)) AND " + ALBUM_HAS_INDEXED_TRACK + " " + ALBUM_ORDER;
+    /// Albums with an indexed file, by or credited to the artists of the JSON list `?1`.
+    pub(super) ALBUMS_OF_ARTISTS = "SELECT a.id, a.row_revision FROM local_albums a \
+                 WHERE (a.album_artist_id IN (SELECT value FROM json_each(?1)) \
+                 OR EXISTS (SELECT 1 FROM local_album_artists x WHERE x.local_album_id = a.id \
+                 AND x.local_artist_id IN (SELECT value FROM json_each(?1)))) \
+                 AND " + ALBUM_HAS_INDEXED_TRACK + " " + ALBUM_ORDER;
+    /// Albums a catalog filter covers: search `?1`, genre `?2`, years `?3` and `?4`, artists `?5`.
+    family FILTERED_ALBUMS = filtered_albums;
+    pub(super) fragment ALBUM_HAS_INDEXED_TRACK = "EXISTS (SELECT 1 FROM local_tracks t WHERE t.local_album_id = a.id \
+                   AND t.availability = 'indexed')";
+    /// Whether the app has a record of track `?1`'s file.
+    pub(super) TRACK_FILE_HAS_RECORD = "SELECT 1 FROM library_track_management_state s \
+             WHERE s.local_track_id = ?1 AND " + HAS_BYTES_RECORD;
+    pub(super) fragment JOURNAL_OPEN = "state NOT IN ('cleaned', 'compensated', 'needs_attention')";
+    pub(super) fragment JOURNAL_NEEDS_ATTENTION = "state = 'needs_attention' AND bundle_id NOT IN \
+                 (SELECT bundle_id FROM library_publish_resolutions)";
+    pub(super) OPEN_BUNDLE_COUNT = "SELECT COUNT(DISTINCT bundle_id) FROM library_publish_journal WHERE " + JOURNAL_OPEN;
+    pub(super) ATTENTION_JOURNAL_COUNT = "SELECT COUNT(*) FROM library_publish_journal WHERE " + JOURNAL_NEEDS_ATTENTION;
+    /// The bundles that need an administrator, at most `?1`.
+    pub(super) ATTENTION_BUNDLES = "SELECT bundle_id, COUNT(*), GROUP_CONCAT(dest_rel, char(10)), \
+                 GROUP_CONCAT(source_rel, char(10)) \
+                 FROM library_publish_journal WHERE " + JOURNAL_NEEDS_ATTENTION + " \
+                 GROUP BY bundle_id ORDER BY bundle_id LIMIT ?1";
+    /// Drop one field's kept value on a subject.
+    family DROP_OVERRIDE = drop_override;
+    /// Change one field's kept value when it differs, recording who.
+    family CHANGE_OVERRIDE = change_override;
+    /// Add one field's kept value, recording who.
+    family ADD_OVERRIDE = add_override;
+    /// Put one field's kept value back as a tag edit found it.
+    family RESTORE_OVERRIDE = restore_override;
+    /// Add back a kept value a tag edit dropped.
+    family READD_OVERRIDE = readd_override;
+}
+
+pub(super) fn filtered_albums(album_artist_only: bool) -> String {
+    let artist_clause = if album_artist_only {
+        "a.album_artist_id IN (SELECT value FROM json_each(?5))"
+    } else {
+        "(a.album_artist_id IN (SELECT value FROM json_each(?5)) \
+         OR EXISTS (SELECT 1 FROM local_album_artists x WHERE x.local_album_id = a.id \
+         AND x.local_artist_id IN (SELECT value FROM json_each(?5))))"
+    };
+    format!(
+        "SELECT a.id, a.row_revision FROM local_albums a \
+         WHERE EXISTS (SELECT 1 FROM local_tracks t WHERE t.local_album_id = a.id \
+         AND t.availability = 'indexed') \
+         AND (?1 IS NULL OR a.title_folded LIKE ?1 OR COALESCE(a.album_artist_name_folded, '') LIKE ?1) \
+         AND (?2 IS NULL OR lower(COALESCE(a.primary_genre, '')) = ?2) \
+         AND (?3 IS NULL OR a.year >= ?3) AND (?4 IS NULL OR a.year <= ?4) \
+         AND (json_array_length(?5) = 0 OR {artist_clause}) {ALBUM_ORDER}"
+    )
+}
+
+pub(super) fn drop_override(subject: OverrideSubject) -> String {
+    let (column, _) = subject.columns();
+    format!(
+        "DELETE FROM library_management_overrides WHERE subject_kind = ?1 \
+                     AND {column} = ?2 AND field_name = ?3"
+    )
+}
+
+pub(super) fn change_override(subject: OverrideSubject) -> String {
+    let (column, _) = subject.columns();
+    format!(
+        "UPDATE library_management_overrides SET value_json = ?4, mode = ?5, \
+                 actor_user_id = ?6, updated_at = ?7, row_revision = row_revision + 1 \
+                 WHERE subject_kind = ?1 AND {column} = ?2 AND field_name = ?3 \
+                 AND (value_json <> ?4 OR mode <> ?5)"
+    )
+}
+
+pub(super) fn add_override(subject: OverrideSubject) -> String {
+    let (column, table) = subject.columns();
+    format!(
+        "INSERT OR IGNORE INTO library_management_overrides (id, subject_kind, {column}, \
+                 field_name, value_json, mode, actor_user_id, reason, subject_revision, \
+                 created_at, updated_at) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'tag_editor', \
+                 COALESCE((SELECT row_revision FROM {table} WHERE id = ?3), 1), ?8, ?8)"
+    )
+}
+
+pub(super) fn restore_override(subject: OverrideSubject) -> String {
+    let (column, _) = subject.columns();
+    format!(
+        "UPDATE library_management_overrides SET value_json = ?4, mode = ?5, \
+                         updated_at = ?6, row_revision = row_revision + 1 \
+                         WHERE subject_kind = ?1 AND {column} = ?2 AND field_name = ?3"
+    )
+}
+
+pub(super) fn readd_override(subject: OverrideSubject) -> String {
+    let (column, table) = subject.columns();
+    format!(
+        "INSERT OR IGNORE INTO library_management_overrides (id, subject_kind, \
+                             {column}, field_name, value_json, mode, reason, subject_revision, \
+                             created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'tag_editor', \
+                             COALESCE((SELECT row_revision FROM {table} WHERE id = ?3), 1), ?7, ?7)"
+    )
 }

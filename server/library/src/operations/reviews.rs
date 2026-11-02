@@ -66,25 +66,27 @@ pub struct FolderScope {
     pub relative_path: String,
 }
 
-/// How a listing is sorted.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum ReviewOrder {
-    /// Most recently changed first.
-    #[default]
-    Newest,
-    /// Least recently changed first.
-    Oldest,
-    /// Albums with the most files first.
-    MostTracks,
-    /// By album title, A to Z.
-    Title,
-    /// By album artist, then title.
-    Artist,
-    /// By library folder, then title.
-    Root,
-    /// By reason, newest first within each, so a reason's reviews sit
-    /// together.
-    Reason,
+droppedneedle_kernel::sql_choice! {
+    /// How a listing is sorted.
+    #[derive(Default)]
+    pub enum ReviewOrder {
+        /// Most recently changed first.
+        #[default]
+        Newest,
+        /// Least recently changed first.
+        Oldest,
+        /// Albums with the most files first.
+        MostTracks,
+        /// By album title, A to Z.
+        Title,
+        /// By album artist, then title.
+        Artist,
+        /// By library folder, then title.
+        Root,
+        /// By reason, newest first within each, so a reason's reviews sit
+        /// together.
+        Reason,
+    }
 }
 
 /// One review with the album it is about.
@@ -113,20 +115,6 @@ pub enum ReviewAction {
     Detach,
     Exclude,
     Restore,
-}
-
-/// A review row's columns; the one before the revision says whether a
-/// person's choice, made now or carried over from v2, holds the album.
-fn row_columns() -> String {
-    format!(
-        "r.id, r.local_album_id, r.reason_code, r.candidates_json, r.state, \
-         r.resolved_by_user_id, r.selected_candidate_key, COALESCE(a.title, ''), \
-         COALESCE(a.album_artist_name, ''), r.created_ms, r.updated_ms, \
-         EXISTS (SELECT 1 FROM local_album_external_identities e \
-                 WHERE e.local_album_id = r.local_album_id AND e.decision_source IN {}), \
-         r.row_revision",
-        crate::identity::sql::PERSONS
-    )
 }
 
 fn map_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Option<ReviewRow>> {
@@ -241,33 +229,6 @@ pub fn list(conn: &Connection, filter: &ReviewFilter) -> rusqlite::Result<Review
         )
         .to_string()
     });
-    let clause = "FROM library_identify_reviews r \
-         JOIN local_albums a ON a.id = r.local_album_id \
-         WHERE a.retired_into_album_id IS NULL \
-         AND (:states IS NULL OR r.state IN (SELECT value FROM json_each(:states))) \
-         AND (:album IS NULL OR r.local_album_id = :album) \
-         AND (:reason IS NULL OR r.reason_code = :reason) \
-         AND (:search IS NULL OR lower(a.title) LIKE :search \
-              OR lower(COALESCE(a.album_artist_name, '')) LIKE :search) \
-         AND (:ids IS NULL OR r.id IN (SELECT value FROM json_each(:ids))) \
-         AND (:scopes IS NULL OR EXISTS (SELECT 1 FROM local_tracks t, \
-              (SELECT json_extract(value, '$[0]') AS root, json_extract(value, '$[1]') AS path \
-               FROM json_each(:scopes)) s \
-              WHERE t.local_album_id = r.local_album_id AND t.root_id = s.root \
-              AND (s.path = '.' OR t.relative_path = s.path \
-                   OR substr(t.relative_path, 1, length(s.path) + 1) = s.path || '/'))) \
-         AND (:policy IS NULL OR EXISTS (SELECT 1 FROM local_tracks t \
-              WHERE t.local_album_id = r.local_album_id AND t.applied_policy = :policy)) \
-         AND (:job IS NULL OR EXISTS (SELECT 1 FROM library_identify_jobs j \
-              WHERE j.local_album_id = r.local_album_id AND j.state = :job)) \
-         AND (:no_active = 0 OR NOT EXISTS (SELECT 1 FROM library_identify_jobs j \
-              WHERE j.local_album_id = r.local_album_id \
-              AND j.state IN ('queued', 'running', 'deferred'))) \
-         AND (:created_from IS NULL OR r.created_ms >= :created_from) \
-         AND (:created_to IS NULL OR r.created_ms <= :created_to) \
-         AND (:updated_from IS NULL OR r.updated_ms >= :updated_from) \
-         AND (:updated_to IS NULL OR r.updated_ms <= :updated_to) \
-         AND (:with_candidates = 0 OR json_array_length(r.candidates_json) > 0)";
     let params = rusqlite::named_params! {
         ":states": states,
         ":album": filter.album_id,
@@ -284,34 +245,22 @@ pub fn list(conn: &Connection, filter: &ReviewFilter) -> rusqlite::Result<Review
         ":updated_to": filter.updated_to,
         ":with_candidates": filter.with_candidates,
     };
-    let total: i64 = conn.query_row(&format!("SELECT COUNT(*) {clause}"), params, |row| {
-        row.get(0)
-    })?;
-    let order = match filter.order {
-        ReviewOrder::Newest => "r.updated_ms DESC",
-        ReviewOrder::Oldest => "r.updated_ms ASC",
-        ReviewOrder::MostTracks => {
-            "(SELECT COUNT(*) FROM local_tracks t WHERE t.local_album_id = r.local_album_id) DESC, \
-             r.updated_ms DESC"
-        }
-        ReviewOrder::Title => "a.title COLLATE NOCASE ASC, r.updated_ms DESC",
-        ReviewOrder::Artist => {
-            "COALESCE(a.album_artist_name, '') COLLATE NOCASE ASC, a.title COLLATE NOCASE ASC"
-        }
-        ReviewOrder::Root => {
-            "(SELECT MIN(t.root_id) FROM local_tracks t WHERE t.local_album_id = r.local_album_id), \
-             a.title COLLATE NOCASE ASC"
-        }
-        ReviewOrder::Reason => "r.reason_code ASC, r.updated_ms DESC",
-    };
-    let mut statement = conn.prepare(&format!(
-        "SELECT {} {clause} ORDER BY {order}, r.id LIMIT {} OFFSET {}",
-        row_columns(),
-        filter.limit,
-        filter.offset
-    ))?;
+    let total: i64 =
+        conn.query_row(crate::operations::sql::REVIEW_COUNT.text(), params, |row| {
+            row.get(0)
+        })?;
+    let page = crate::operations::sql::review_page(filter.order);
+    let mut statement = conn.prepare(&page)?;
+    let paged: Vec<(&str, &dyn rusqlite::ToSql)> = params
+        .iter()
+        .copied()
+        .chain([
+            (":limit", &filter.limit as &dyn rusqlite::ToSql),
+            (":offset", &filter.offset as &dyn rusqlite::ToSql),
+        ])
+        .collect();
     let mut rows = statement
-        .query_map(params, map_row)?
+        .query_map(paged.as_slice(), map_row)?
         .filter_map(Result::transpose)
         .collect::<rusqlite::Result<Vec<_>>>()?;
     with_tracks(conn, &mut rows)?;
@@ -320,10 +269,7 @@ pub fn list(conn: &Connection, filter: &ReviewFilter) -> rusqlite::Result<Review
     // every bucket's count.
     let reason_counts = buckets(
         conn,
-        &format!(
-            "SELECT r.reason_code, COUNT(*) {clause} GROUP BY r.reason_code \
-             ORDER BY COUNT(*) DESC"
-        ),
+        crate::operations::sql::REVIEW_COUNT_BY_REASON.text(),
         rusqlite::named_params! {
             ":states": states,
             ":album": filter.album_id,
@@ -343,7 +289,7 @@ pub fn list(conn: &Connection, filter: &ReviewFilter) -> rusqlite::Result<Review
     )?;
     let state_counts = buckets(
         conn,
-        &format!("SELECT r.state, COUNT(*) {clause} GROUP BY r.state"),
+        crate::operations::sql::REVIEW_COUNT_BY_STATE.text(),
         rusqlite::named_params! {
             ":states": Option::<String>::None,
             ":album": filter.album_id,
@@ -613,11 +559,7 @@ pub fn plan_bulk(
 /// One review by id.
 pub fn get(conn: &Connection, review_id: &str) -> rusqlite::Result<Option<ReviewRow>> {
     conn.query_row(
-        &format!(
-            "SELECT {} FROM library_identify_reviews r \
-             LEFT JOIN local_albums a ON a.id = r.local_album_id WHERE r.id = ?1",
-            row_columns()
-        ),
+        crate::operations::sql::REVIEW_BY_ID.text(),
         [review_id],
         map_row,
     )
@@ -643,9 +585,11 @@ pub fn guard(
     settled: reasons::Reason,
 ) -> Result<String, OperationError> {
     let (album_id, state, revision): (String, String, i64) = tx
-        .query_row(crate::operations::sql::GUARD.text(), [review_id], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-        })
+        .query_row(
+            crate::operations::sql::REVIEW_GUARD_ROW.text(),
+            [review_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
         .optional()?
         .ok_or(OperationError::NotFound(reasons::REVIEW_NOT_FOUND))?;
     if revision != expected_revision {
@@ -761,22 +705,12 @@ fn restore(
         [review_id],
         |row| row.get(0),
     )?;
-    // Both parameters are always bound; the scope uses the one it needs.
-    let scope = if recorded > 0 {
-        "id IN (SELECT local_track_id FROM library_review_exclusions WHERE review_id = ?1) \
-         AND ?2 IS NOT NULL"
-    } else {
-        "local_album_id = ?2 AND ?1 IS NOT NULL"
-    };
     let changed = tx.execute(
-        &format!(
-            "UPDATE local_tracks SET manual_excluded = 0, \
-             availability = CASE WHEN availability = 'excluded' AND applied_policy <> 'excluded' \
-                            THEN 'indexed' ELSE availability END, \
-             excluded_at = CASE WHEN applied_policy = 'excluded' THEN excluded_at ELSE NULL END, \
-             row_revision = row_revision + 1 \
-             WHERE manual_excluded = 1 AND {scope}"
-        ),
+        if recorded > 0 {
+            crate::operations::sql::LIFT_RECORDED_EXCLUSIONS.text()
+        } else {
+            crate::operations::sql::LIFT_ALBUM_EXCLUSIONS.text()
+        },
         params![review_id, album_id],
     )?;
     tx.execute(

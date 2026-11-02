@@ -287,7 +287,7 @@ pub fn queue(
 /// False when the row has been filed since, or the track is gone.
 fn file(tx: &Transaction<'_>, play_rowid: i64, track_id: &str) -> rusqlite::Result<bool> {
     let changed = tx.execute(
-        crate::repairs::sql::FILE.text(),
+        crate::repairs::sql::FILE_PLAY_ON_TRACK.text(),
         params![play_rowid, track_id],
     )?;
     Ok(changed == 1)

@@ -352,15 +352,7 @@ pub(crate) fn place_imported(
 ) -> rusqlite::Result<(usize, usize)> {
     let chosen: Option<String> = tx
         .query_row(
-            &format!(
-                "SELECT release_mbid FROM local_album_external_identities \
-                 WHERE local_album_id = ?1 AND provider = ?2 \
-                 AND decision_source IN {} \
-                 AND lower(release_mbid) = lower(?3) \
-                 AND NOT EXISTS (SELECT 1 FROM library_custom_edition_active c \
-                 WHERE c.local_album_id = ?1)",
-                identity::sql::PERSONS
-            ),
+            crate::operations::sql::RELEASE_A_PERSON_CHOSE.text(),
             params![album_id, PROVIDER, release_mbid],
             |row| row.get(0),
         )

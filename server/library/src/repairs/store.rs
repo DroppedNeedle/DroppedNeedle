@@ -25,12 +25,13 @@ use crate::identify::artist_links::RELEASE_DOCUMENT_MISSING;
 use crate::identify::evidence::edition_ids_of;
 use crate::identity::DecisionSource;
 use crate::identity::reads::stored_release;
-use crate::identity::sql::REVISABLE;
 use crate::jobs::{self, NewJob, OperationState, Tally, WorkState};
 use crate::matching::decide::{IdStance, id_stance};
 use crate::operations::decisions::live_automatic_edition_undo;
 use crate::operations::models::{OperationError, OperationJob, OperationKind};
 use crate::operations::store::{album_revisions, job_after};
+use crate::repairs::sql::{RepairScope, RepairScopeKind};
+use droppedneedle_kernel::db::statement::ListLen;
 
 const PROVIDER: &str = "musicbrainz";
 
@@ -159,86 +160,52 @@ pub fn repair_job(
 // Scope.
 // ---------------------------------------------------------------------------
 
-fn root_clause(root_ids: &[String], values: &mut Vec<Value>) -> String {
-    if root_ids.is_empty() {
-        return String::new();
-    }
-    values.extend(root_ids.iter().cloned().map(Value::Text));
-    format!("AND a.root_id IN ({})", vec!["?"; root_ids.len()].join(","))
-}
-
-/// `FROM ... WHERE ...` for the albums a job of `purpose` covers, with
-/// its bound values. One predicate for counting and for the work list.
+/// The shape of the statement for the albums a job of `purpose` covers,
+/// with its bound values in order. One predicate for counting and for the
+/// work list.
 fn scope_sql(
     purpose: Purpose,
     root_ids: &[String],
     album_ids: &[String],
     scan_run_id: Option<&str>,
     source_matcher_version: Option<&str>,
-) -> (String, Vec<Value>) {
-    let mut values = Vec::new();
-    let roots = root_clause(root_ids, &mut values);
-    let indexed = "AND EXISTS (SELECT 1 FROM local_tracks t WHERE t.local_album_id = a.id \
-                   AND t.availability = 'indexed')";
-    let sql = match purpose {
-        Purpose::ExistingMatches => {
-            let identity = match source_matcher_version {
-                Some(version) => {
-                    values.push(Value::Text(version.to_owned()));
-                    "AND i.matcher_version = ?".to_owned()
-                }
-                // A person's choice, made now or carried over from v2, is
-                // never rechecked for removal.
-                None => format!("AND i.decision_source IN {REVISABLE}"),
-            };
-            format!(
-                "FROM local_albums a JOIN local_album_external_identities i \
-                 ON i.local_album_id = a.id AND i.provider = '{PROVIDER}' \
-                 WHERE a.retired_into_album_id IS NULL {indexed} {roots} {identity}"
-            )
-        }
-        Purpose::ManagementReadiness => format!(
-            "FROM local_albums a WHERE a.retired_into_album_id IS NULL {indexed} \
-             AND NOT EXISTS (SELECT 1 FROM library_management_exclusions x \
-             WHERE x.local_album_id = a.id) {roots}"
-        ),
+) -> (RepairScope, Vec<Value>) {
+    let mut values: Vec<Value> = root_ids.iter().cloned().map(Value::Text).collect();
+    let mut albums = 0;
+    let mut after_run = false;
+    let kind = match purpose {
+        Purpose::ExistingMatches => match source_matcher_version {
+            Some(version) => {
+                values.push(Value::Text(version.to_owned()));
+                RepairScopeKind::MatchesOfVersion
+            }
+            // A person's choice, made now or carried over from v2, is
+            // never rechecked for removal.
+            None => RepairScopeKind::RevisableMatches,
+        },
+        Purpose::ManagementReadiness => RepairScopeKind::ManagementReadiness,
         Purpose::CatalogIdentityHygiene => {
-            let albums = if album_ids.is_empty() {
-                String::new()
-            } else {
-                values.extend(album_ids.iter().cloned().map(Value::Text));
-                format!("AND a.id IN ({})", vec!["?"; album_ids.len()].join(","))
-            };
-            let run = match scan_run_id {
-                // Albums the run touched: new or changed files, files that
-                // moved in, and albums files moved out of (the shells the
-                // run emptied).
-                Some(run) => {
-                    values.extend((0..3).map(|_| Value::Text(run.to_owned())));
-                    "AND (EXISTS (SELECT 1 FROM library_scan_inventory inv \
-                     JOIN local_tracks t ON t.id = inv.local_track_id WHERE inv.run_id = ? \
-                     AND inv.comparison_result IN ('new','changed') \
-                     AND t.local_album_id = a.id) \
-                     OR EXISTS (SELECT 1 FROM library_scan_album_moves m \
-                     JOIN local_tracks t ON t.id = m.local_track_id \
-                     WHERE m.run_id = ? AND t.local_album_id = a.id) \
-                     OR EXISTS (SELECT 1 FROM library_scan_album_moves m \
-                     WHERE m.run_id = ? AND m.previous_album_id = a.id))"
-                }
-                None => "",
-            };
-            format!(
-                "FROM local_albums a WHERE a.retired_into_album_id IS NULL \
-                 AND {HYGIENE_CANDIDATE} {roots} {albums} {run}"
-            )
+            values.extend(album_ids.iter().cloned().map(Value::Text));
+            albums = album_ids.len();
+            if let Some(run) = scan_run_id {
+                values.extend((0..3).map(|_| Value::Text(run.to_owned())));
+                after_run = true;
+            }
+            RepairScopeKind::CatalogIdentityHygiene
         }
         // Play filing works through play rows, not a list of albums.
         Purpose::PlayHistoryFiling => {
             values.clear();
-            "FROM local_albums a WHERE 0".to_owned()
+            RepairScopeKind::Nothing
         }
     };
-    (sql, values)
+    let shape = RepairScope {
+        kind,
+        roots: ListLen::new(root_ids.len()),
+        albums: ListLen::new(albums),
+        after_run,
+    };
+    (shape, values)
 }
 
 // ---------------------------------------------------------------------------
@@ -302,7 +269,7 @@ pub fn create(
         Purpose::CatalogIdentityHygiene => "catalog_identity_hygiene",
         _ => "repair_audit",
     };
-    let (scope_sql, scope_values) = scope_sql(
+    let (scope, scope_values) = scope_sql(
         new.purpose,
         &new.root_ids,
         &new.album_ids,
@@ -316,12 +283,7 @@ pub fn create(
     ];
     values.extend(scope_values);
     let staged = tx.execute(
-        &format!(
-            "INSERT INTO library_operation_work (job_id, ordinal, local_album_id, \
-             expected_subject_revision, expected_input_revision, action, idempotency_key, \
-             updated_at) SELECT ?1, ROW_NUMBER() OVER (ORDER BY a.id) - 1, a.id, \
-             a.row_revision, '', ?2, ?1 || ':' || a.id || ':' || ?2, ?3 {scope_sql}"
-        ),
+        &crate::repairs::sql::queue_repair_work(scope),
         params_from_iter(values),
     )?;
     let scope = Scope {
@@ -369,8 +331,6 @@ pub fn create(
 /// The hygiene job queued once per database (v2's backfill key), so an
 /// upgrade's leftovers are cleaned without anyone asking.
 pub const HYGIENE_BACKFILL_KEY: &str = "catalog-identity-hygiene:v1:backfill";
-
-use crate::repairs::sql::HYGIENE_CANDIDATE;
 
 pub fn hygiene_candidates_exist(conn: &Connection) -> rusqlite::Result<bool> {
     conn.query_row(
@@ -516,7 +476,7 @@ pub fn hygiene_count_after_scan(conn: &Connection, run_id: &str) -> rusqlite::Re
         None,
     );
     conn.query_row(
-        &format!("SELECT COUNT(*) {scope}"),
+        &crate::repairs::sql::count_repair_scope(scope),
         params_from_iter(values),
         |row| row.get(0),
     )
@@ -747,7 +707,7 @@ fn active_count(conn: &Connection, purpose: Purpose) -> rusqlite::Result<i64> {
 pub fn estimate_repair(conn: &Connection, root_ids: &[String]) -> rusqlite::Result<RepairEstimate> {
     let (scope, values) = scope_sql(Purpose::ExistingMatches, root_ids, &[], None, None);
     let identity_count = conn.query_row(
-        &format!("SELECT COUNT(*) {scope}"),
+        &crate::repairs::sql::count_repair_scope(scope),
         params_from_iter(values),
         |row| row.get(0),
     )?;
@@ -764,30 +724,11 @@ pub fn estimate_preparation(
     conn: &Connection,
     root_ids: &[String],
 ) -> rusqlite::Result<PreparationEstimate> {
-    let (scope, values) = scope_sql(Purpose::ManagementReadiness, root_ids, &[], None, None);
-    let sql = format!(
-        "SELECT i.release_group_mbid, i.release_mbid, \
-         (SELECT COUNT(*) FROM local_tracks t WHERE t.local_album_id = a.id \
-          AND t.availability = 'indexed') AS tracks, \
-         (SELECT COUNT(DISTINCT ti.release_track_mbid) FROM local_tracks t \
-          JOIN local_track_external_identities ti ON ti.local_track_id = t.id \
-          AND ti.provider = '{PROVIDER}' WHERE t.local_album_id = a.id \
-          AND t.availability = 'indexed' AND ti.release_track_mbid IS NOT NULL \
-          AND ti.release_mbid = i.release_mbid AND ti.medium_position IS NOT NULL \
-          AND ti.release_track_position IS NOT NULL) AS mapped, \
-         {CUSTOM_CURRENT} AS custom_current \
-         {from} ",
-        from = scope.replacen(
-            "FROM local_albums a",
-            &format!(
-                "FROM local_albums a LEFT JOIN local_album_external_identities i \
-                 ON i.local_album_id = a.id AND i.provider = '{PROVIDER}'"
-            ),
-            1
-        )
-    );
+    let (_, values) = scope_sql(Purpose::ManagementReadiness, root_ids, &[], None, None);
     let mut estimate = PreparationEstimate::default();
-    let mut stmt = conn.prepare(&sql)?;
+    let mut stmt = conn.prepare(&crate::repairs::sql::preparation_estimate(ListLen::new(
+        root_ids.len(),
+    )))?;
     let mut rows = stmt.query(params_from_iter(values))?;
     while let Some(row) = rows.next()? {
         let group: Option<String> = row.get(0)?;
@@ -809,8 +750,6 @@ pub fn estimate_preparation(
     estimate.queued_preparation_count = active_count(conn, Purpose::ManagementReadiness)?;
     Ok(estimate)
 }
-
-use crate::repairs::sql::CUSTOM_CURRENT;
 
 /// One page of a purpose's jobs with their snapshots, newest first.
 /// `before` is the last page's `(created_at, id)`.
@@ -897,7 +836,7 @@ pub fn subject(conn: &Connection, album_id: &str) -> rusqlite::Result<Option<Sub
         .collect::<rusqlite::Result<Vec<_>>>()?;
     let custom_current: Option<bool> = conn
         .query_row(
-            crate::repairs::sql::SUBJECT.text(),
+            crate::repairs::sql::CUSTOM_EDITION_IS_CURRENT.text(),
             params![album_id],
             |row| row.get(0),
         )
@@ -1335,56 +1274,29 @@ pub fn findings_page(
     cursor: Option<(f64, String)>,
     limit: usize,
 ) -> rusqlite::Result<FindingPage> {
-    let current = if purpose == Purpose::ManagementReadiness {
-        format!(
-            "AND ((f.state = '{open}' AND a.row_revision = f.expected_album_revision \
-             AND ((f.expected_identity_revision IS NULL AND i.row_revision IS NULL) \
-             OR i.row_revision = f.expected_identity_revision)) \
-             OR (f.finding_code = '{accepted}' AND f.state = '{applied}' \
-             AND EXISTS (SELECT 1 FROM library_automatic_edition_undo u \
-             WHERE u.local_album_id = f.local_album_id AND u.consumed_at IS NULL)))",
-            open = FindingState::Open.as_str(),
-            accepted = FindingCode::ExactReleaseAutoAccepted.as_str(),
-            applied = FindingState::Applied.as_str(),
-        )
-    } else {
-        String::new()
-    };
-    let from = format!(
-        "FROM library_identity_repair_findings f JOIN local_albums a ON a.id = f.local_album_id \
-         LEFT JOIN local_album_external_identities i ON i.local_album_id = a.id \
-         AND i.provider = '{PROVIDER}' WHERE f.job_id = ? {current}"
-    );
+    let current = purpose == Purpose::ManagementReadiness;
     let mut values = vec![Value::Text(job_id.to_owned())];
-    let mut filter = String::new();
+    let by_code = codes.is_some();
+    let code_count = codes.map_or(0, <[FindingCode]>::len);
     if let Some(codes) = codes {
-        filter.push_str(&format!(
-            " AND f.finding_code IN ({})",
-            vec!["?"; codes.len()].join(",")
-        ));
         values.extend(
             codes
                 .iter()
                 .map(|code| Value::Text(code.as_str().to_owned())),
         );
     }
+    let after_cursor = cursor.is_some();
     if let Some((updated, id)) = cursor {
-        filter.push_str(" AND (f.updated_at < ? OR (f.updated_at = ? AND f.id < ?))");
         values.extend([Value::Real(updated), Value::Real(updated), Value::Text(id)]);
     }
     values.push(Value::Integer(limit as i64 + 1));
-    let sql = format!(
-        "SELECT f.id, f.local_album_id, a.title, a.album_artist_name, a.year, \
-         (EXISTS (SELECT 1 FROM local_album_artwork w WHERE w.local_album_id = a.id) \
-          OR i.release_group_mbid IS NOT NULL), \
-         (SELECT r.id FROM library_identify_reviews r WHERE r.local_album_id = f.local_album_id \
-          ORDER BY r.updated_ms DESC, r.id DESC LIMIT 1), \
-         f.finding_code, f.reason_code, f.confidence, f.apply_eligible, f.state, \
-         f.apply_result, f.suggested_release_mbid, f.suggested_release_group_mbid, \
-         f.suggested_edition_json, f.updated_at, f.row_revision \
-         {from}{filter} ORDER BY f.updated_at DESC, f.id DESC LIMIT ?"
+    let page = crate::repairs::sql::findings_page(
+        current,
+        by_code,
+        ListLen::new(code_count),
+        after_cursor,
     );
-    let mut stmt = conn.prepare(&sql)?;
+    let mut stmt = conn.prepare(&page)?;
     let mut items = stmt
         .query_map(params_from_iter(values), |row| {
             let id: String = row.get(0)?;
@@ -1425,9 +1337,7 @@ pub fn findings_page(
     for item in &mut items {
         item.automatic_undo = live_automatic_edition_undo(conn, &item.local_album_id)?;
     }
-    let mut stmt = conn.prepare(&format!(
-        "SELECT f.finding_code, COUNT(*) {from} GROUP BY f.finding_code"
-    ))?;
+    let mut stmt = conn.prepare(&crate::repairs::sql::finding_counts(current))?;
     let current_counts_by_finding = stmt
         .query_map(params![job_id], |row| {
             Ok((

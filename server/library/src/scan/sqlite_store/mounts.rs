@@ -37,27 +37,8 @@ impl SqliteScanStore {
         root_id: &str,
         scope_relative_path: &str,
     ) -> Result<Vec<(String, usize)>, ScanStoreError> {
-        let sql = format!(
-            "SELECT relative_path, indexed FROM (SELECT m.relative_path, \
-               (SELECT COUNT(*) FROM local_tracks t WHERE t.root_id = m.root_id \
-                AND t.availability = 'indexed' \
-                AND t.relative_path > m.relative_path || '/' \
-                AND t.relative_path < m.relative_path || '0' AND {}) AS indexed \
-             FROM library_scan_mounts m \
-             WHERE m.root_id = ?1 AND {} \
-             AND NOT EXISTS (SELECT 1 FROM library_scan_inventory i \
-               JOIN library_scan_run_scopes s ON s.run_id = i.run_id \
-               AND s.root_id = i.root_id AND s.relative_path = i.scope_relative_path \
-               WHERE i.run_id = ?3 AND i.root_id = ?1 \
-               AND i.relative_path > m.relative_path || '/' \
-               AND i.relative_path < m.relative_path || '0' \
-               AND s.discovery_generation = i.discovery_generation)) \
-             WHERE indexed > 0 ORDER BY relative_path",
-            crate::scan::sqlite_store::sql::walked_past!("?3"),
-            super::held_scopes::covers("?2", "m.relative_path"),
-        );
         let rows = self.read_long(stop, "scan_empty_mounts", |conn| {
-            let mut stmt = conn.prepare(&sql)?;
+            let mut stmt = conn.prepare(crate::scan::sql::EMPTY_MOUNTS.text())?;
             let rows = stmt
                 .query_map(params![root_id, scope_relative_path, run_id], |row| {
                     Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))

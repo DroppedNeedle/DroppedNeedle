@@ -1,8 +1,42 @@
 //! The SQL of the repairs module.
 
+use droppedneedle_kernel::db::statement::ListLen;
+
+use super::models::{FindingCode, FindingState};
 use crate::identity::sql::REVISABLE;
+use crate::jobs::sql::live_job;
+
+droppedneedle_kernel::sql_choice! {
+    /// Which albums a repair job covers.
+    pub(super) enum RepairScopeKind {
+        /// Matches a given matcher version made.
+        MatchesOfVersion,
+        /// Matches the app may revise.
+        RevisableMatches,
+        ManagementReadiness,
+        CatalogIdentityHygiene,
+        /// No albums: play filing works through play rows.
+        Nothing,
+    }
+}
+
+droppedneedle_kernel::sql_choice! {
+    /// The shape of a repair scope's statement. A list of no values adds no
+    /// clause.
+    pub(super) struct RepairScope {
+        pub(super) kind: RepairScopeKind,
+        pub(super) roots: ListLen,
+        pub(super) albums: ListLen,
+        pub(super) after_run: bool,
+    }
+}
 
 droppedneedle_kernel::sql! {
+    family QUEUE_REPAIR_WORK = queue_repair_work;
+    family COUNT_REPAIR_SCOPE = count_repair_scope;
+    family PREPARATION_ESTIMATE = preparation_estimate;
+    family FINDINGS_PAGE = findings_page;
+    family FINDING_COUNTS = finding_counts;
     pub(super) EXPORT_RUN = "SELECT * FROM library_scan_runs WHERE id = ?1";
     pub(super) EXPORT_RUN_SCOPES = "SELECT root_id, relative_path, effective_policy, policy_revision, estimated_count, \
          discovered_count, discovery_state, reconciliation_state, phase_timings_json, error_code \
@@ -93,7 +127,7 @@ droppedneedle_kernel::sql! {
     pub(super) QUEUE_REPAIR_MATERIALIZATION = "INSERT INTO library_repair_materialization (job_id, pinned_catalog_revision, \
          eligibility_version, purpose, sealed, created_at, updated_at) \
          VALUES (?1, ?2, ?3, ?4, 1, ?5, ?5)";
-    pub(super) FILE = "UPDATE library_play_history SET local_track_id = t.id, \
+    pub(super) FILE_PLAY_ON_TRACK = "UPDATE library_play_history SET local_track_id = t.id, \
          local_album_id = t.local_album_id, \
          local_artist_id = COALESCE((SELECT x.local_artist_id FROM local_track_artists x \
                                      WHERE x.local_track_id = t.id ORDER BY x.position LIMIT 1), \
@@ -254,7 +288,7 @@ droppedneedle_kernel::sql! {
          WHERE j.state IN " + IDENTIFY_FINISHED + " \
          AND (j.updated_ms > ?1 OR (j.updated_ms = ?1 AND j.id > ?2)) \
          ORDER BY j.updated_ms, j.id LIMIT ?3";
-    pub(super) SUBJECT = "SELECT " + CUSTOM_CURRENT + " FROM local_albums a WHERE a.id = ?1 AND EXISTS \
+    pub(super) CUSTOM_EDITION_IS_CURRENT = "SELECT " + CUSTOM_CURRENT + " FROM local_albums a WHERE a.id = ?1 AND EXISTS \
                  (SELECT 1 FROM library_custom_edition_active ac WHERE ac.local_album_id = a.id)";
     pub(super) TRACK_ID_BACKFILL_ALBUMS = "SELECT a.id FROM local_albums a \
          LEFT JOIN local_album_external_identities i \
@@ -351,4 +385,192 @@ droppedneedle_kernel::sql! {
              AND (t.applied_policy != 'automatic' \
                  OR trim(COALESCE(t.embedded_release_mbid, '')) != '')) \
          ORDER BY a.id";
+    /// Work a person or a job is doing on a list of albums (`?2` on); `?1` is now.
+    family ALBUMS_HAVE_LIVE_WORK = albums_have_live_work;
+    /// Move a list of tracks to the album bound first.
+    family MOVE_TRACKS_TO_ALBUM = move_tracks_to_album;
+}
+
+pub(super) fn albums_have_live_work(albums: ListLen) -> String {
+    let marks = (2..albums.get() + 2)
+        .map(|number| format!("?{number}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    let live = live_job!("?1");
+    format!(
+        "SELECT EXISTS(SELECT 1 FROM library_contribution_drafts WHERE local_album_id IN \
+             ({marks}) AND state IN ('draft','ready','seeded','verifying','needs_review')) \
+             OR EXISTS(SELECT 1 FROM library_management_plan_items item \
+             JOIN library_operation_jobs job ON job.id = item.job_id \
+             WHERE item.local_album_id IN ({marks}) AND {live}) \
+             OR EXISTS(SELECT 1 FROM library_management_overrides \
+             WHERE local_album_id IN ({marks}))"
+    )
+}
+
+pub(super) fn move_tracks_to_album(tracks: ListLen) -> String {
+    let marks = crate::sql::marks(tracks);
+    format!(
+        "UPDATE local_tracks SET local_album_id = ?, row_revision = row_revision + 1 \
+             WHERE id IN ({marks})"
+    )
+}
+
+/// `FROM ... WHERE ...` for the albums of a repair scope.
+fn repair_scope_from(scope: RepairScope) -> String {
+    let roots = match scope.roots.get() {
+        0 => String::new(),
+        _ => format!("AND a.root_id IN ({})", crate::sql::marks(scope.roots)),
+    };
+    let indexed = "AND EXISTS (SELECT 1 FROM local_tracks t WHERE t.local_album_id = a.id \
+                   AND t.availability = 'indexed')";
+    let matches = |identity: &str| {
+        format!(
+            "FROM local_albums a JOIN local_album_external_identities i \
+             ON i.local_album_id = a.id AND i.provider = 'musicbrainz' \
+             WHERE a.retired_into_album_id IS NULL {indexed} {roots} {identity}"
+        )
+    };
+    match scope.kind {
+        RepairScopeKind::MatchesOfVersion => matches("AND i.matcher_version = ?"),
+        RepairScopeKind::RevisableMatches => {
+            matches(&format!("AND i.decision_source IN {REVISABLE}"))
+        }
+        RepairScopeKind::ManagementReadiness => format!(
+            "FROM local_albums a WHERE a.retired_into_album_id IS NULL {indexed} \
+             AND NOT EXISTS (SELECT 1 FROM library_management_exclusions x \
+             WHERE x.local_album_id = a.id) {roots}"
+        ),
+        RepairScopeKind::CatalogIdentityHygiene => {
+            let albums = match scope.albums.get() {
+                0 => String::new(),
+                _ => format!("AND a.id IN ({})", crate::sql::marks(scope.albums)),
+            };
+            // Albums the run touched: new or changed files, files that
+            // moved in, and albums files moved out of (the shells the run
+            // emptied).
+            let run = if scope.after_run {
+                "AND (EXISTS (SELECT 1 FROM library_scan_inventory inv \
+                 JOIN local_tracks t ON t.id = inv.local_track_id WHERE inv.run_id = ? \
+                 AND inv.comparison_result IN ('new','changed') \
+                 AND t.local_album_id = a.id) \
+                 OR EXISTS (SELECT 1 FROM library_scan_album_moves m \
+                 JOIN local_tracks t ON t.id = m.local_track_id \
+                 WHERE m.run_id = ? AND t.local_album_id = a.id) \
+                 OR EXISTS (SELECT 1 FROM library_scan_album_moves m \
+                 WHERE m.run_id = ? AND m.previous_album_id = a.id))"
+            } else {
+                ""
+            };
+            format!(
+                "FROM local_albums a WHERE a.retired_into_album_id IS NULL \
+                 AND {HYGIENE_CANDIDATE} {roots} {albums} {run}"
+            )
+        }
+        RepairScopeKind::Nothing => "FROM local_albums a WHERE 0".to_owned(),
+    }
+}
+
+pub(super) fn queue_repair_work(scope: RepairScope) -> String {
+    let scope_sql = repair_scope_from(scope);
+    format!(
+        "INSERT INTO library_operation_work (job_id, ordinal, local_album_id, \
+             expected_subject_revision, expected_input_revision, action, idempotency_key, \
+             updated_at) SELECT ?1, ROW_NUMBER() OVER (ORDER BY a.id) - 1, a.id, \
+             a.row_revision, '', ?2, ?1 || ':' || a.id || ':' || ?2, ?3 {scope_sql}"
+    )
+}
+
+pub(super) fn count_repair_scope(scope: RepairScope) -> String {
+    format!("SELECT COUNT(*) {}", repair_scope_from(scope))
+}
+
+pub(super) fn preparation_estimate(roots: ListLen) -> String {
+    let scope = RepairScope {
+        kind: RepairScopeKind::ManagementReadiness,
+        roots,
+        albums: ListLen::new(0),
+        after_run: false,
+    };
+    format!(
+        "SELECT i.release_group_mbid, i.release_mbid, \
+         (SELECT COUNT(*) FROM local_tracks t WHERE t.local_album_id = a.id \
+          AND +t.availability = 'indexed') AS tracks, \
+         (SELECT COUNT(DISTINCT ti.release_track_mbid) FROM local_tracks t \
+          JOIN local_track_external_identities ti ON ti.local_track_id = t.id \
+          AND ti.provider = 'musicbrainz' WHERE t.local_album_id = a.id \
+          AND +t.availability = 'indexed' AND ti.release_track_mbid IS NOT NULL \
+          AND ti.release_mbid = i.release_mbid AND ti.medium_position IS NOT NULL \
+          AND ti.release_track_position IS NOT NULL) AS mapped, \
+         {CUSTOM_CURRENT} AS custom_current \
+         {from} ",
+        from = repair_scope_from(scope).replacen(
+            "FROM local_albums a",
+            "FROM local_albums a LEFT JOIN local_album_external_identities i \
+             ON i.local_album_id = a.id AND i.provider = 'musicbrainz'",
+            1
+        )
+    )
+}
+
+/// `FROM ... WHERE ...` of a job's findings, `?` being the job. With
+/// `current`, only findings that still describe the album as it is.
+fn findings_from(current: bool) -> String {
+    let current = if current {
+        format!(
+            "AND ((f.state = '{open}' AND a.row_revision = f.expected_album_revision \
+             AND ((f.expected_identity_revision IS NULL AND i.row_revision IS NULL) \
+             OR i.row_revision = f.expected_identity_revision)) \
+             OR (f.finding_code = '{accepted}' AND f.state = '{applied}' \
+             AND EXISTS (SELECT 1 FROM library_automatic_edition_undo u \
+             WHERE u.local_album_id = f.local_album_id AND u.consumed_at IS NULL)))",
+            open = FindingState::Open.as_str(),
+            accepted = FindingCode::ExactReleaseAutoAccepted.as_str(),
+            applied = FindingState::Applied.as_str(),
+        )
+    } else {
+        String::new()
+    };
+    format!(
+        "FROM library_identity_repair_findings f JOIN local_albums a ON a.id = f.local_album_id \
+         LEFT JOIN local_album_external_identities i ON i.local_album_id = a.id \
+         AND i.provider = 'musicbrainz' WHERE f.job_id = ? {current}"
+    )
+}
+
+pub(super) fn findings_page(
+    current: bool,
+    by_code: bool,
+    codes: ListLen,
+    after_cursor: bool,
+) -> String {
+    let from = findings_from(current);
+    let mut filter = String::new();
+    if by_code {
+        filter.push_str(&format!(
+            " AND f.finding_code IN ({})",
+            crate::sql::marks(codes)
+        ));
+    }
+    if after_cursor {
+        filter.push_str(" AND (f.updated_at < ? OR (f.updated_at = ? AND f.id < ?))");
+    }
+    format!(
+        "SELECT f.id, f.local_album_id, a.title, a.album_artist_name, a.year, \
+         (EXISTS (SELECT 1 FROM local_album_artwork w WHERE w.local_album_id = a.id) \
+          OR i.release_group_mbid IS NOT NULL), \
+         (SELECT r.id FROM library_identify_reviews r WHERE r.local_album_id = f.local_album_id \
+          ORDER BY r.updated_ms DESC, r.id DESC LIMIT 1), \
+         f.finding_code, f.reason_code, f.confidence, f.apply_eligible, f.state, \
+         f.apply_result, f.suggested_release_mbid, f.suggested_release_group_mbid, \
+         f.suggested_edition_json, f.updated_at, f.row_revision \
+         {from}{filter} ORDER BY f.updated_at DESC, f.id DESC LIMIT ?"
+    )
+}
+
+pub(super) fn finding_counts(current: bool) -> String {
+    format!(
+        "SELECT f.finding_code, COUNT(*) {} GROUP BY f.finding_code",
+        findings_from(current)
+    )
 }

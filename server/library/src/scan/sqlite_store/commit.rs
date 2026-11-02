@@ -56,7 +56,7 @@ use crate::publish::HIDDEN_PREFIX;
 use crate::scan::naming::{
     album_grouping_key, album_name_key, grouping_directory, parse_names_for_row,
 };
-use crate::scan::sqlite_store::sql::{awaits_admin, fenced_by};
+use crate::scan::sql::OTHER_MUSIC_KIND;
 use crate::scan::store::{EditionFill, IndexWindow, LengthFill, WindowOutcome};
 use crate::tags::{AudioArtistCredit, AudioTag};
 use droppedneedle_kernel::db::savepoint;
@@ -263,8 +263,6 @@ pub(super) const DURATION_TOLERANCE_SECONDS: f64 = 1.0;
 /// above; a re-rip by the gap between tracks the ripper put on one side or
 /// the other, 2 seconds on most discs.
 const OTHER_MUSIC_SECONDS: f64 = 5.0;
-
-use crate::scan::sql::OTHER_MUSIC_KIND;
 
 /// Audit kind of the tracks whose files were replaced by new copies of
 /// the same recordings.
@@ -1371,31 +1369,6 @@ fn write_item(
     })
 }
 
-/// Whether a track row still holds its album, as SQL over the track alias
-/// `track` and the run id `run`. A track row is never deleted, so an
-/// album keeps the rows of files removed years ago; they must not keep it
-/// from being followed when the files that are left are retagged.
-///
-/// A row holds its album while its file is there, and for the one scan
-/// in which the file went away: the row is still `indexed` (the run
-/// walked past its file, or has not reached it), or it was marked
-/// `missing` since this run began. A share that drops out half way must
-/// not hand an album to the few of its files that were retagged, so the
-/// follow waits one scan. The next scan knows the file is still gone: its
-/// row is then `missing` from before that run began.
-///
-/// A row that is `excluded`, or `missing` since before the run began,
-/// holds nothing. When the rows left behind are half the album or more,
-/// the follow also waits until each of them has been gone a day
-/// ([`LONG_GONE_SECONDS`]).
-pub(crate) fn holds(track: &str, run: &str) -> String {
-    format!(
-        "({track}.availability = 'indexed' OR ({track}.availability = 'missing' \
-         AND {track}.missing_since >= (SELECT started_at FROM library_scan_runs \
-         WHERE id = {run})))"
-    )
-}
-
 /// How long the rows a retag left behind must have been missing, when
 /// they are half the album or more, before the album is followed. In
 /// seconds, like `missing_since`. A share that drops out for a few scans
@@ -1407,7 +1380,7 @@ const LONG_GONE_SECONDS: f64 = 86_400.0;
 /// An album a track left in this run. It is followed when its files were
 /// retagged together:
 ///
-/// - no track row holds it any more ([`holds`]);
+/// - no track row holds it any more (`holds!`);
 /// - no track that left it in an earlier run sits on a piece of it
 ///   ([`has_counted_departure`]): an album retagged over two runs, or split
 ///   over two, is settled when the run ends ([`join_across_scans`]);
@@ -1718,66 +1691,37 @@ fn drop_if_empty(tx: &Connection, album_id: &str) -> rusqlite::Result<()> {
 }
 
 /// An album that received tracks in this run from an album a track still
-/// holds ([`holds`]) may be half of a retag the scan has not finished
+/// holds (`holds!`) may be half of a retag the scan has not finished
 /// reading. It is not offered for identification yet: a job would judge
 /// half an album, and a match written on this row keeps the old row from
 /// taking it over. Read from the run's move rows, so a resumed run holds
 /// the same albums.
 fn held_back(tx: &Connection, run_id: &str, album_id: &str) -> rusqlite::Result<bool> {
-    tx.prepare_cached(&format!(
-        "SELECT EXISTS(SELECT 1 FROM local_tracks t \
-         CROSS JOIN library_scan_album_moves m ON m.run_id = ?1 AND m.root_id = t.root_id \
-           AND m.relative_path = t.relative_path AND m.local_track_id = t.id \
-         WHERE t.local_album_id = ?2 AND m.previous_album_id <> ?2 \
-         AND EXISTS (SELECT 1 FROM local_tracks left_behind \
-           WHERE left_behind.local_album_id = m.previous_album_id AND {}))",
-        holds("left_behind", "?1")
-    ))?
-    .query_row(params![run_id, album_id], |row| row.get(0))
+    tx.prepare_cached(crate::scan::sql::ALBUM_HELD_BACK_IN_RUN.text())?
+        .query_row(params![run_id, album_id], |row| row.get(0))
 }
 
 /// Whether a scan that has not ended moved a track onto this album from
-/// another album that a track still holds ([`holds`]): the album may be
+/// another album that a track still holds (`holds!`): the album may be
 /// the new row of a retag the scan is half way through, which the old row
 /// takes over when the retag has been read to the end. Catalog cleanup
 /// asks before it retires a row into the album, which would stop that.
 /// The surviving row of a retag already followed answers no.
 pub(crate) fn awaits_retag(conn: &Connection, album_id: &str) -> rusqlite::Result<bool> {
     conn.query_row(
-        &format!(
-            "SELECT EXISTS(SELECT 1 FROM library_scan_runs run \
-             CROSS JOIN local_tracks t \
-             CROSS JOIN library_scan_album_moves m ON m.run_id = run.id \
-               AND m.root_id = t.root_id AND m.relative_path = t.relative_path \
-               AND m.local_track_id = t.id \
-             WHERE run.terminal_at IS NULL AND t.local_album_id = ?1 \
-             AND m.previous_album_id <> ?1 \
-             AND EXISTS (SELECT 1 FROM local_tracks left_behind \
-               WHERE left_behind.local_album_id = m.previous_album_id AND {}))",
-            holds("left_behind", "run.id")
-        ),
+        crate::scan::sql::ALBUM_AWAITS_RETAG.text(),
         params![album_id],
         |row| row.get(0),
     )
 }
 
 /// The automatic-policy albums this run moved tracks to from one album,
-/// when no track holds that album any more ([`holds`]): nothing more can
+/// when no track holds that album any more (`holds!`): nothing more can
 /// arrive from it, so they are due their offer.
 fn released_by(tx: &Connection, run_id: &str, album_id: &str) -> rusqlite::Result<Vec<String>> {
-    tx.prepare_cached(&format!(
-        "SELECT DISTINCT t.local_album_id FROM library_scan_album_moves m \
-         JOIN local_tracks t ON t.id = m.local_track_id \
-         JOIN library_scan_inventory i ON i.run_id = m.run_id AND i.root_id = m.root_id \
-           AND i.relative_path = m.relative_path \
-         WHERE m.run_id = ?1 AND m.previous_album_id = ?2 AND t.local_album_id <> ?2 \
-         AND i.effective_policy = 'automatic' \
-         AND NOT EXISTS (SELECT 1 FROM local_tracks left_behind \
-           WHERE left_behind.local_album_id = ?2 AND {})",
-        holds("left_behind", "?1")
-    ))?
-    .query_map(params![run_id, album_id], |row| row.get(0))?
-    .collect()
+    tx.prepare_cached(crate::scan::sql::ALBUMS_RELEASED_BY.text())?
+        .query_map(params![run_id, album_id], |row| row.get(0))?
+        .collect()
 }
 
 /// One pass of what a run settles once it has ended: its name, which is
@@ -2138,11 +2082,8 @@ fn has_counted_departure(
 
 /// Whether a track row still holds the album in the run now ending.
 fn held(tx: &Connection, run_id: &str, album_id: &str) -> rusqlite::Result<bool> {
-    tx.prepare_cached(&format!(
-        "SELECT EXISTS(SELECT 1 FROM local_tracks t WHERE t.local_album_id = ?2 AND {})",
-        holds("t", "?1")
-    ))?
-    .query_row(params![run_id, album_id], |row| row.get(0))
+    tx.prepare_cached(crate::scan::sql::ALBUM_HELD_IN_RUN.text())?
+        .query_row(params![run_id, album_id], |row| row.get(0))
 }
 
 fn retired(tx: &Connection, album_id: &str) -> rusqlite::Result<bool> {
@@ -2152,7 +2093,7 @@ fn retired(tx: &Connection, album_id: &str) -> rusqlite::Result<bool> {
 
 /// Albums retagged across scans, decided once when a run ends: every album
 /// a departure on record or a move of this run names, that is not retired
-/// and that no track row holds ([`holds`]), read in one query.
+/// and that no track row holds (`holds!`), read in one query.
 ///
 /// - A pair already on record is left as it is, unless it is still open
 ///   and waiting to be tried again (a store error, live work, work on the
@@ -2179,14 +2120,7 @@ fn join_across_scans(
     now: f64,
 ) -> rusqlite::Result<i64> {
     let albums: Vec<String> = tx
-        .prepare_cached(&format!(
-            "SELECT a.id FROM local_albums a WHERE a.retired_into_album_id IS NULL \
-             AND a.id IN (SELECT previous_album_id FROM library_album_departures \
-               UNION SELECT previous_album_id FROM library_scan_album_moves WHERE run_id = ?1) \
-             AND NOT EXISTS (SELECT 1 FROM local_tracks t WHERE t.local_album_id = a.id AND {}) \
-             ORDER BY a.id",
-            holds("t", "?1")
-        ))?
+        .prepare_cached(crate::scan::sql::ALBUMS_NO_ROW_HOLDS.text())?
         .query_map(params![run_id], |row| row.get(0))?
         .collect::<rusqlite::Result<_>>()?;
     let mut offered = 0;
@@ -2549,7 +2483,7 @@ fn mark_window(
             window.through.0,
             window.through.1
         ])?;
-    let mut summed: HashMap<&'static str, i64> = HashMap::new();
+    let mut summed: HashMap<Counter, i64> = HashMap::new();
     let window_counters = window
         .counters
         .iter()
@@ -2559,12 +2493,12 @@ fn mark_window(
             .iter()
             .map(|(counter, delta)| (counter, delta)),
     ) {
-        *summed.entry(counter.column()).or_insert(0) += delta;
+        *summed.entry(*counter).or_insert(0) += delta;
     }
-    for (column, delta) in summed {
+    for (counter, delta) in summed {
         if delta != 0 {
             tx.execute(
-                &format!("UPDATE library_scan_runs SET {column} = {column} + ?1 WHERE id = ?2"),
+                &crate::scan::sql::add_to_counter(counter),
                 params![delta, window.run_id],
             )?;
         }
@@ -2653,57 +2587,8 @@ fn record_new_copies(
     Ok(())
 }
 
-/// The (root, path) pairs a scan of run `?1` writes no row for: where a
-/// track lies that a write fencing it names (`fenced_by!`: still open, or
-/// moved after the walk of the scope covering it began), the path a
-/// fencing write moved a file away from, where an open write is placing a
-/// file, and where a fencing move or one that awaits an administrator
-/// (`awaits_admin!`) took a track's file. The last keeps a move that needs
-/// attention from listing its file as a second track: once it is marked
-/// handled, the next scan finds the old path gone and continues the track
-/// at the new one. One read: the open and waiting rows by the state index
-/// (the open states listed are every state `fenced_by!` does not call
-/// terminal), the rows moved since the run's earliest walk by their
-/// revision.
-const FENCED_PATHS: &str = concat!(
-    "WITH fencing AS ( \
-       SELECT id, state, fence_revision, track_id, source_root, source_rel, dest_root, dest_rel \
-         FROM library_publish_journal \
-         WHERE state IN ('prepared', 'staged', 'published', 'committed', 'cleanup_pending') \
-       UNION \
-       SELECT id, state, fence_revision, track_id, source_root, source_rel, dest_root, dest_rel \
-         FROM library_publish_journal WHERE fence_revision > \
-         (SELECT MIN(walk_revision) FROM library_scan_run_scopes WHERE run_id = ?1)), \
-     named AS ( \
-       SELECT state, fence_revision, track_id FROM fencing WHERE track_id IS NOT NULL \
-       UNION ALL \
-       SELECT f.state, f.fence_revision, r.replaced_track_id FROM fencing f \
-         JOIN library_publish_replacements r ON r.journal_id = f.id \
-         WHERE r.replaced_track_id IS NOT NULL) \
-     SELECT t.root_id, t.relative_path FROM named j JOIN local_tracks t ON t.id = j.track_id \
-      WHERE EXISTS (SELECT 1 FROM library_scan_run_scopes s WHERE s.run_id = ?1 \
-        AND s.root_id = t.root_id \
-        AND (s.relative_path = '.' OR t.relative_path = s.relative_path \
-          OR substr(t.relative_path, 1, length(s.relative_path) + 1) = s.relative_path || '/') \
-        AND ",
-    fenced_by!(),
-    ") \
-     UNION \
-     SELECT source_root, source_rel FROM fencing WHERE source_root IS NOT NULL \
-     UNION \
-     SELECT dest_root, dest_rel FROM fencing \
-      WHERE state IN ('prepared', 'staged', 'published', 'committed', 'cleanup_pending') \
-        OR (track_id IS NOT NULL AND source_root IS NOT NULL \
-          AND (source_root IS NOT dest_root OR source_rel IS NOT dest_rel)) \
-     UNION \
-     SELECT j.dest_root, j.dest_rel FROM library_publish_journal j \
-      WHERE j.track_id IS NOT NULL AND j.source_root IS NOT NULL \
-        AND (j.source_root IS NOT j.dest_root OR j.source_rel IS NOT j.dest_rel) AND ",
-    awaits_admin!(),
-);
-
 fn fenced_paths(tx: &Connection, run_id: &str) -> rusqlite::Result<HashSet<(String, String)>> {
-    let mut statement = tx.prepare_cached(FENCED_PATHS)?;
+    let mut statement = tx.prepare_cached(crate::scan::sql::FENCED_PATHS.text())?;
     let rows = statement.query_map(params![run_id], |row| Ok((row.get(0)?, row.get(1)?)))?;
     rows.collect()
 }

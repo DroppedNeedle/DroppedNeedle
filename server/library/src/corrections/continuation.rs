@@ -44,6 +44,7 @@ use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
 use serde_json::{Value, json};
 
 use crate::catalog_revision::bump_catalog;
+use crate::corrections::sql::HOLDING_ALIASES;
 use crate::identify::sqlite::retarget_references;
 use crate::operations::decisions::{CatalogAction, record_action};
 use droppedneedle_kernel::db::savepoint;
@@ -65,10 +66,6 @@ pub(crate) enum Scope<'a> {
     /// Every album.
     Library,
 }
-
-use crate::corrections::sql::CANDIDATE_ALBUMS;
-
-use crate::corrections::sql::HOLDING_ALIASES;
 
 /// How many aliases a pass inside another write moves, besides the pairs
 /// that write itself made on its album: each alias costs about half a
@@ -312,9 +309,16 @@ fn pass(
         add_alias(tx, old, new, moves_overrides, created_ms)
     };
     let albums: Vec<String> = if discover {
-        tx.prepare_cached(CANDIDATE_ALBUMS.text())?
-            .query_map(params![only], |row| row.get(0))?
-            .collect::<rusqlite::Result<_>>()?
+        match only {
+            Some(album) => tx
+                .prepare_cached(crate::corrections::sql::CANDIDATE_ALBUM.text())?
+                .query_map(params![album], |row| row.get(0))?
+                .collect::<rusqlite::Result<_>>()?,
+            None => tx
+                .prepare_cached(crate::corrections::sql::CANDIDATE_ALBUMS.text())?
+                .query_map([], |row| row.get(0))?
+                .collect::<rusqlite::Result<_>>()?,
+        }
     } else {
         Vec::new()
     };

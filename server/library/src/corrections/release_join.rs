@@ -59,10 +59,8 @@ use super::retag_merge::{JoinCause, MergeOutcome, merge_retagged};
 use crate::publish::HIDDEN_PREFIX;
 use crate::scan::models::scope_covers_path;
 use crate::scan::sqlite_store::retag_pairs::{RetagPairReason, RetagPairState};
-use crate::scan::sqlite_store::{RetagPair, holds, tried, waits_for_the_rest};
+use crate::scan::sqlite_store::{RetagPair, tried, waits_for_the_rest};
 use droppedneedle_kernel::db::savepoint;
-
-use crate::corrections::sql::LATEST_RUN;
 
 use crate::corrections::sql::RELEASE_JOIN_CANDIDATES as CANDIDATES;
 
@@ -218,12 +216,7 @@ fn replaced_by(
     let replaced_json = serde_json::to_string(&replaced)
         .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
     let (held, rows): (bool, i64) = tx
-        .prepare_cached(&format!(
-            "SELECT EXISTS(SELECT 1 FROM local_tracks t WHERE t.local_album_id = ?1 \
-             AND t.id NOT IN (SELECT value FROM json_each(?2)) AND {}), \
-             (SELECT COUNT(*) FROM local_tracks WHERE local_album_id = ?1)",
-            holds("t", LATEST_RUN)
-        ))?
+        .prepare_cached(crate::corrections::sql::ALBUM_STILL_HELD.text())?
         .query_row(params![old, replaced_json], |row| {
             Ok((row.get(0)?, row.get(1)?))
         })?;
@@ -279,11 +272,7 @@ pub(crate) fn judge(tx: &Transaction<'_>, pair: &Pair, now: f64) -> rusqlite::Re
     // dropped out under an older copy looks the same. It waits a scan, so
     // a share back in time keeps the two apart.
     let waits: bool = tx
-        .prepare_cached(&format!(
-            "SELECT ?1 < (SELECT MAX(started_at) FROM library_scan_runs WHERE started_at <= ?2) \
-             AND EXISTS(SELECT 1 FROM local_tracks o WHERE o.id = ?3 AND {})",
-            holds("o", LATEST_RUN)
-        ))?
+        .prepare_cached(crate::corrections::sql::WAITS_FOR_A_SCAN.text())?
         .query_row(params![arrived, gone, pair.old], |row| row.get(0))?;
     if waits {
         return Ok(Verdict::Wait);

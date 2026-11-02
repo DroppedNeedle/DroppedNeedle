@@ -113,7 +113,7 @@ pub(crate) fn answer(
 ) -> rusqlite::Result<Vec<String>> {
     let retired = mbid.trim().to_ascii_lowercase();
     let pending: bool = tx
-        .prepare_cached(crate::identify::sql::ANSWER.text())?
+        .prepare_cached(crate::identify::sql::ARTIST_ID_CHECK_IN_STATE.text())?
         .query_row(params![retired, CheckState::Pending.as_str()], |row| {
             row.get(0)
         })?;
@@ -245,11 +245,12 @@ fn follow(
         .query_map(params![retired], |row| row.get(0))?
         .collect::<rusqlite::Result<_>>()?;
     let mut credits = 0;
-    for table in ["local_track_artists", "local_album_artists"] {
+    for statement in [
+        crate::identify::sql::REPOINT_TRACK_CREDIT_MBID,
+        crate::identify::sql::REPOINT_ALBUM_CREDIT_MBID,
+    ] {
         credits += tx
-            .prepare_cached(&format!(
-                "UPDATE {table} SET artist_mbid = ?2 WHERE artist_mbid = ?1"
-            ))?
+            .prepare_cached(statement.text())?
             .execute(params![retired, current])?;
     }
     let proofs = tx

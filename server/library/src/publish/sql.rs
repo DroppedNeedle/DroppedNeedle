@@ -466,6 +466,20 @@ droppedneedle_kernel::sql! {
     /// upgrade leaves v2's job behind.
     pub(crate) fragment V2_ROW_SQL = "s.written_sha256 IS NULL AND s.managed_path_revision IS NOT NULL \
      AND s.last_operation_job_id IS NULL AND s.last_outcome IN ('succeeded', 'undone')";
+    /// On a `library_track_management_state` row (alias `s`): the app has a
+    /// record of the file's bytes.
+    pub(crate) fragment HAS_BYTES_RECORD = "(s.written_sha256 IS NOT NULL OR (" + V2_ROW_SQL + "))";
     pub(super) TRACK_WRITTEN_STATE = "SELECT s.written_sha256, CASE WHEN " + V2_ROW_SQL + " THEN s.managed_path_revision END \
              FROM library_track_management_state s WHERE s.local_track_id = ?1";
+    /// Forget the record of track `?1`'s file. `managed_path_revision` goes only where no job wrote it: such a value is v2's.
+    pub(super) FORGET_RECORD = "UPDATE library_track_management_state AS s SET written_sha256 = NULL, \
+             managed_path_revision = CASE WHEN s.last_operation_job_id IS NULL THEN NULL \
+             ELSE s.managed_path_revision END, row_revision = s.row_revision + 1 \
+             WHERE s.local_track_id = ?1 AND " + HAS_BYTES_RECORD;
+    /// Whether another row of track `?1`'s album, whose file went missing, has a record.
+    pub(super) MISSING_ROW_STANDS_IN = "SELECT 1 FROM local_tracks t \
+             JOIN local_tracks o ON o.local_album_id = t.local_album_id AND o.id <> t.id \
+             AND +o.availability = 'missing' \
+             JOIN library_track_management_state s ON s.local_track_id = o.id \
+             WHERE t.id = ?1 AND " + HAS_BYTES_RECORD + " LIMIT 1";
 }

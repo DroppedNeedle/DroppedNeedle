@@ -17,13 +17,14 @@ use crate::corrections::continuation::SAME_FILE;
 use crate::identify::models::PriorAlbumIdentity;
 use crate::identity;
 use crate::repairs::hygiene;
+use droppedneedle_kernel::db::statement::ListLen;
 
 /// How far back the history reaches.
 const MAX_AGE_SECS: f64 = 180.0 * 86_400.0;
 /// Most entries one album shows.
 const MAX_ENTRIES: usize = 10;
 /// Most track titles one entry names.
-const MAX_TITLES: usize = 5;
+pub(super) const MAX_TITLES: usize = 5;
 
 /// What one entry tells.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -141,8 +142,6 @@ struct OtherAlbum {
     source_album_id: Option<String>,
 }
 
-use crate::operations::sql::ROWS;
-
 struct Row {
     id: String,
     actor: Option<String>,
@@ -170,7 +169,7 @@ pub fn album_history(
         return Ok(None);
     }
     let rows: Vec<Row> = conn
-        .prepare_cached(ROWS.text())?
+        .prepare_cached(crate::operations::sql::ALBUM_HISTORY_ROWS.text())?
         .query_map(params![album_id, now - MAX_AGE_SECS], |row| {
             Ok(Row {
                 id: row.get(0)?,
@@ -486,11 +485,9 @@ fn sealed_edition(row: &Row) -> Option<HistoryKind> {
 
 /// The first titles of `tracks`, by disc and track number.
 fn titles(conn: &Connection, tracks: &BTreeSet<&str>) -> rusqlite::Result<Vec<String>> {
-    let marks = vec!["?"; tracks.len()].join(", ");
-    conn.prepare(&format!(
-        "SELECT title FROM local_tracks WHERE id IN ({marks}) \
-         ORDER BY disc_number, track_number, title LIMIT {MAX_TITLES}"
-    ))?
+    conn.prepare(&crate::operations::sql::titles_of_tracks(ListLen::new(
+        tracks.len(),
+    )))?
     .query_map(params_from_iter(tracks.iter()), |row| row.get(0))?
     .collect()
 }

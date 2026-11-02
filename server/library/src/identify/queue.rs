@@ -7,6 +7,7 @@ use sha2::{Digest as _, Sha256};
 
 use super::models::IdentifyKind;
 use super::sqlite::kind_str;
+pub(crate) use crate::identify::sql::INSERT_JOB;
 
 /// New or changed albums identify first.
 pub const PRIORITY_NEW_OR_CHANGED: u32 = 20;
@@ -50,8 +51,6 @@ pub fn terminally_deferred(attempts: u32) -> bool {
 pub(crate) fn idempotency_key(local_album_id: &str, input_revision: &str) -> String {
     format!("{local_album_id}:{input_revision}")
 }
-
-pub(crate) use crate::identify::sql::INSERT_JOB;
 
 /// Content revision of one album: a hash over its indexed members and
 /// their stat revisions. Any added, removed, or changed file moves it.

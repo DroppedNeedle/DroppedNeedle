@@ -1,6 +1,26 @@
 //! The SQL of the corrections module.
 
+// `sql!` needs a macro call in parentheses to take it as one part.
+#![allow(unused_parens, clippy::double_parens)]
+
+use droppedneedle_kernel::db::statement::ListLen;
+
 use crate::identify::sql::CURRENT_PROOF;
+use crate::jobs::sql::live_job;
+use crate::publish::sql::HAS_BYTES_RECORD;
+use crate::scan::sqlite_store::sql::holds;
+
+droppedneedle_kernel::sql_choice! {
+    /// A kind of reference to an artist, counted for a merge.
+    pub(crate) enum ReferenceKind {
+        AlbumCredits,
+        TrackCredits,
+        PrimaryAlbums,
+        Favorites,
+        Ratings,
+        History,
+    }
+}
 
 droppedneedle_kernel::sql! {
     pub(super) CANDIDATE_IDS = "SELECT c.mbid FROM ( \
@@ -21,7 +41,7 @@ droppedneedle_kernel::sql! {
          WHERE reason_code = ?1 AND state = 'open')";
     pub(super) FOLLOW_WAITING = "SELECT id, left_artist_id, right_artist_id FROM local_artist_merge_candidates \
              WHERE reason_code = ?1 AND state = 'open' ORDER BY id";
-    pub(super) MERGE_GROUP = "UPDATE local_artists SET updated_at = ?2, row_revision = row_revision + 1 WHERE id = ?1";
+    pub(super) BUMP_ARTIST_REVISION = "UPDATE local_artists SET updated_at = ?2, row_revision = row_revision + 1 WHERE id = ?1";
     pub(super) RECORD_MOVE = "INSERT OR IGNORE INTO local_artist_merge_candidates (id, left_artist_id, \
          right_artist_id, reason_code, created_at, updated_at) \
          SELECT ?1, ?2, ?3, ?4, ?5, ?5 WHERE NOT EXISTS (SELECT 1 FROM local_artists \
@@ -183,7 +203,7 @@ droppedneedle_kernel::sql! {
     pub(super) EMPTIED_BY_NAME = "SELECT id, right_artist_id, reason_code FROM local_artist_merge_candidates \
                  WHERE left_artist_id = ?1 AND reason_code IN (?2, ?3) AND state = 'open' \
                  ORDER BY id";
-    pub(super) PERSON = "SELECT COUNT(*) FROM local_artists WHERE id IN (?1, ?2) \
+    pub(super) LIVE_ARTISTS_OF_PAIR = "SELECT COUNT(*) FROM local_artists WHERE id IN (?1, ?2) \
                  AND retired_into_artist_id IS NULL";
     pub(super) LINK_DECISION_SOURCE = "SELECT decision_source FROM local_artist_external_identities \
              WHERE local_artist_id = ?1 AND provider = 'musicbrainz' \
@@ -271,7 +291,7 @@ droppedneedle_kernel::sql! {
     pub(super) SIDE = "SELECT title, COALESCE(album_artist_name, ''), (SELECT COUNT(*) FROM local_tracks t \
          WHERE t.local_album_id = a.id AND t.availability = 'indexed') \
          FROM local_albums a WHERE a.id = ?1";
-    pub(super) JOIN = "DELETE FROM library_retag_pairs WHERE old_album_id = ?1 AND new_album_id = ?2";
+    pub(super) DROP_RETAG_PAIR = "DELETE FROM library_retag_pairs WHERE old_album_id = ?1 AND new_album_id = ?2";
     pub(super) DISMISS = "UPDATE library_retag_pairs SET state = ?3, updated_at = ?4 \
          WHERE old_album_id = ?1 AND state = ?5 AND new_album_id IN \
          (SELECT id FROM local_albums WHERE id = ?2 OR retired_into_album_id = ?2)";
@@ -295,14 +315,16 @@ droppedneedle_kernel::sql! {
     UNION ALL SELECT ?1, 2) \
     ORDER BY rank LIMIT 1";
     /// Albums with a missing, unaliased row mapped to a release track that an
-    /// indexed row of the same album is also mapped to. Starts from the
-    /// missing rows and reads each album's indexed rows by album.
-    pub(super) CANDIDATE_ALBUMS = "SELECT DISTINCT o.local_album_id FROM local_tracks o \
+    /// indexed row of the same album is also mapped to, over every missing
+    /// row. Reads each album's indexed rows by album.
+    pub(super) CANDIDATE_ALBUMS = CANDIDATE_ALBUM_ROWS + "o.availability = 'missing'" + CANDIDATE_ALBUM_TEST;
+    /// [`CANDIDATE_ALBUMS`] for album `?1` only, by its rows.
+    pub(super) CANDIDATE_ALBUM = CANDIDATE_ALBUM_ROWS + "+o.availability = 'missing' AND o.local_album_id = ?1" + CANDIDATE_ALBUM_TEST;
+    pub(super) fragment CANDIDATE_ALBUM_ROWS = "SELECT DISTINCT o.local_album_id FROM local_tracks o \
     JOIN local_track_external_identities oi \
       ON oi.local_track_id = o.id AND oi.provider = 'musicbrainz' \
-    WHERE o.availability = 'missing' AND oi.release_track_mbid IS NOT NULL \
-    AND (?1 IS NULL OR o.local_album_id = ?1) \
-    AND NOT EXISTS (SELECT 1 FROM local_track_aliases x WHERE x.alias = o.id) \
+    WHERE oi.release_track_mbid IS NOT NULL AND ";
+    pub(super) fragment CANDIDATE_ALBUM_TEST = " AND NOT EXISTS (SELECT 1 FROM local_track_aliases x WHERE x.alias = o.id) \
     AND EXISTS (SELECT 1 FROM local_tracks n \
       JOIN local_track_external_identities ni \
         ON ni.local_track_id = n.id AND ni.provider = 'musicbrainz' \
@@ -329,6 +351,9 @@ droppedneedle_kernel::sql! {
       AND x.moves_overrides = 1 AND NOT EXISTS (SELECT 1 FROM library_management_overrides w \
         WHERE w.subject_kind = 'track' AND w.local_track_id = x.local_track_id \
         AND w.field_name = o.field_name)";
+    /// True when artist `?1` is proven to be an artist other than `?2`: a
+    /// credit's file holds another id, or a current proof names another.
+    /// Each probe is a range on an (artist, id) index.
     pub(super) fragment MERGE_BASIS_OTHER_ID = "(EXISTS(SELECT 1 FROM local_track_artists \
      WHERE local_artist_id = ?1 AND artist_mbid < ?2) \
      OR EXISTS(SELECT 1 FROM local_track_artists \
@@ -492,4 +517,143 @@ droppedneedle_kernel::sql! {
     pub(super) OPEN_PAIR_COUNT = "SELECT COUNT(*) FROM (" + OPEN_PAIRS + ")";
     pub(super) OPEN_PAIR_PAGE = "SELECT old_id, new_id, reason, recorded_at FROM (" + OPEN_PAIRS + ") \
              ORDER BY recorded_at DESC, old_id, new_id LIMIT ?7 OFFSET ?8";
+    /// (artist id, MusicBrainz artist id) for the artists of a list that have a link.
+    family ARTIST_LINKS_OF = artist_links_of;
+    /// References of one kind to each artist of a list: (artist, count).
+    family REFERENCES_OF = references_of;
+    pub(super) REPOINT_TRACK_CREDITS = "UPDATE local_track_artists SET local_artist_id = ?2, row_revision = row_revision + 1 \
+         WHERE local_artist_id = ?1";
+    pub(super) REPOINT_ALBUM_ARTIST = "UPDATE local_albums SET album_artist_id = ?2, updated_at = ?3, \
+         row_revision = row_revision + 1 WHERE album_artist_id = ?1";
+    /// The retiree's source links the survivor already has.
+    pub(super) DROP_SHARED_SOURCE_LINKS = "DELETE FROM local_entity_source_links WHERE local_artist_id = ?1 AND EXISTS \
+         (SELECT 1 FROM local_entity_source_links kept WHERE kept.local_artist_id = ?2 \
+          AND kept.provider = local_entity_source_links.provider \
+          AND kept.external_entity_type = local_entity_source_links.external_entity_type \
+          AND kept.external_id = local_entity_source_links.external_id)";
+    pub(super) REPOINT_SOURCE_LINKS = "UPDATE local_entity_source_links SET local_artist_id = ?2, updated_at = ?3, \
+         row_revision = row_revision + 1 WHERE local_artist_id = ?1";
+    pub(super) DROP_ARTIST_LINK = "DELETE FROM local_artist_external_identities WHERE local_artist_id = ?1";
+    /// The only writer of `local_artists.retired_into_artist_id`.
+    pub(super) RETIRE_ARTIST_ROW = "UPDATE local_artists SET retired_into_artist_id = ?2, converged_mbid = ?4, \
+         updated_at = ?3, row_revision = row_revision + 1 WHERE id = ?1";
+    pub(super) REPOINT_ARTIST_ALIASES = "UPDATE local_artist_aliases SET local_artist_id = ?2 WHERE local_artist_id = ?1";
+    pub(super) ALIAS_RETIRED_ARTIST = "INSERT OR IGNORE INTO local_artist_aliases (alias, local_artist_id, kind, created_at) \
+         VALUES (?1, ?2, 'merged_artist', ?3)";
+    pub(super) REPOINT_CREDIT_PROOFS = "UPDATE library_artist_credit_proofs SET \
+         local_artist_id = CASE WHEN local_artist_id = ?1 THEN ?2 ELSE local_artist_id END, \
+         source_local_artist_id = CASE WHEN source_local_artist_id = ?1 THEN ?2 \
+         ELSE source_local_artist_id END, updated_at = CAST(?3 * 1000 AS INTEGER), \
+         row_revision = row_revision + 1 \
+         WHERE local_artist_id = ?1 OR source_local_artist_id = ?1";
+    pub(super) RESOLVE_MERGE_CANDIDATES = "UPDATE local_artist_merge_candidates SET state = 'resolved', updated_at = ?3, \
+         row_revision = row_revision + 1 WHERE state = 'open' \
+         AND (left_artist_id = ?1 OR right_artist_id = ?1)";
+    /// The rows of a list of tracks, in path order.
+    family TRACK_ROWS_IN = track_rows_in;
+    /// Lock a list of tracks to album `?1` by hand.
+    family LOCK_TRACKS_TO_ALBUM = lock_tracks_to_album;
+    /// Whether a missing row of album `?1` has a record of its bytes.
+    pub(super) MISSING_ROW_HAS_RECORD = "SELECT EXISTS(SELECT 1 FROM local_tracks t \
+         JOIN library_track_management_state s ON s.local_track_id = t.id \
+         WHERE t.local_album_id = ?1 AND +t.availability = 'missing' AND " + HAS_BYTES_RECORD + ")";
+    /// Whether track `?1` has a record of its bytes.
+    pub(super) TRACK_HAS_RECORD = "SELECT EXISTS(SELECT 1 FROM library_track_management_state s \
+             WHERE s.local_track_id = ?1 AND " + HAS_BYTES_RECORD + ")";
+    /// Whether a row of album `?1` outside the replaced rows `?2` holds it, with the album's row count.
+    pub(super) ALBUM_STILL_HELD = "SELECT EXISTS(SELECT 1 FROM local_tracks t WHERE t.local_album_id = ?1 \
+             AND t.id NOT IN (SELECT value FROM json_each(?2)) AND " + (holds!("t", LATEST_RUN)) + "), \
+             (SELECT COUNT(*) FROM local_tracks WHERE local_album_id = ?1)";
+    /// Whether the new row arrived (`?1`) before the scan that marked old row `?3` gone at `?2` began, and the old row holds its album.
+    pub(super) WAITS_FOR_A_SCAN = "SELECT ?1 < (SELECT MAX(started_at) FROM library_scan_runs WHERE started_at <= ?2) \
+             AND EXISTS(SELECT 1 FROM local_tracks o WHERE o.id = ?3 AND " + (holds!("o", LATEST_RUN)) + ")";
+    /// Hand a list of tracks back to automatic grouping.
+    family RELEASE_TRACKS_TO_AUTOMATIC = release_tracks_to_automatic;
+    /// How many of a list of tracks a person locked or placed.
+    family TRACKS_HELD_BY_HAND = tracks_held_by_hand;
+    /// An open draft on album `?1`, or a plan item of a job still to come (`?2` is now).
+    pub(super) LIVE_WORK_ON_ALBUM = "SELECT EXISTS(SELECT 1 FROM library_contribution_drafts WHERE local_album_id = ?1 \
+             AND state IN ('draft','ready','seeded','verifying','needs_review')) \
+             OR EXISTS(SELECT 1 FROM library_management_plan_items item \
+             JOIN library_operation_jobs job ON job.id = item.job_id \
+             WHERE item.local_album_id = ?1 AND " + (live_job!("?2")) + ")";
+    /// Whether any file of album `?1`, whatever its availability, has a record of its bytes.
+    pub(super) ALBUM_HAS_RECORD = "SELECT EXISTS(SELECT 1 FROM local_tracks t \
+         JOIN library_track_management_state s ON s.local_track_id = t.id \
+         WHERE t.local_album_id = ?1 AND " + HAS_BYTES_RECORD + ")";
+}
+
+pub(super) fn artist_links_of(ids: ListLen) -> String {
+    let marks = marks(ids);
+    format!(
+        "SELECT local_artist_id, provider_artist_id FROM local_artist_external_identities \
+         WHERE provider = 'musicbrainz' AND local_artist_id IN ({marks}) \
+         ORDER BY local_artist_id"
+    )
+}
+
+pub(super) fn track_rows_in(ids: ListLen) -> String {
+    let marks = marks(ids);
+    format!(
+        "SELECT id, local_album_id, row_revision FROM local_tracks WHERE id IN ({marks}) \
+             ORDER BY relative_path, id"
+    )
+}
+
+pub(super) fn lock_tracks_to_album(tracks: ListLen) -> String {
+    let marks = marks(tracks);
+    format!(
+        "UPDATE local_tracks SET local_album_id = ?1, membership_source = 'manual', \
+             membership_locked = 1, row_revision = row_revision + 1 WHERE id IN ({marks})"
+    )
+}
+
+pub(super) fn release_tracks_to_automatic(tracks: ListLen) -> String {
+    format!(
+        "UPDATE local_tracks SET membership_locked = 0, membership_source = 'automatic', \
+             row_revision = row_revision + 1 WHERE id IN ({})",
+        marks(tracks)
+    )
+}
+
+pub(super) fn tracks_held_by_hand(tracks: ListLen) -> String {
+    format!(
+        "SELECT COUNT(*) FROM local_tracks WHERE id IN ({}) \
+             AND (membership_locked = 1 OR membership_source <> 'automatic')",
+        marks(tracks)
+    )
+}
+
+fn marks(len: ListLen) -> String {
+    vec!["?"; len.get().max(1)].join(",")
+}
+
+pub(crate) fn references_of(kind: ReferenceKind, ids: ListLen) -> String {
+    let marks = marks(ids);
+    match kind {
+        ReferenceKind::AlbumCredits => format!(
+            "SELECT local_artist_id, COUNT(*) FROM local_album_artists \
+             WHERE local_artist_id IN ({marks}) GROUP BY 1"
+        ),
+        ReferenceKind::TrackCredits => format!(
+            "SELECT local_artist_id, COUNT(*) FROM local_track_artists \
+             WHERE local_artist_id IN ({marks}) GROUP BY 1"
+        ),
+        ReferenceKind::PrimaryAlbums => format!(
+            "SELECT album_artist_id, COUNT(*) FROM local_albums \
+             WHERE album_artist_id IN ({marks}) GROUP BY 1"
+        ),
+        ReferenceKind::Favorites => format!(
+            "SELECT item_id, COUNT(*) FROM library_user_favorites \
+             WHERE item_kind = 'artist' AND item_id IN ({marks}) GROUP BY 1"
+        ),
+        ReferenceKind::Ratings => format!(
+            "SELECT item_id, COUNT(*) FROM library_user_ratings \
+             WHERE item_kind = 'artist' AND item_id IN ({marks}) GROUP BY 1"
+        ),
+        ReferenceKind::History => format!(
+            "SELECT local_artist_id, COUNT(*) FROM library_play_history \
+             WHERE local_artist_id IN ({marks}) GROUP BY 1"
+        ),
+    }
 }

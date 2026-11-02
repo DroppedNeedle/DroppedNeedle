@@ -45,11 +45,15 @@ use super::stores::StoreError;
 use crate::catalog_revision::bump_catalog;
 use crate::corrections::artist_convergence::{CREDITS_MOVED, MOVED_BY_NAME, MOVED_WITH_ID};
 use crate::corrections::continuation::accepted_release;
+use crate::identify::sql::ROW_IDS;
+use crate::identify::sql::STALE_ALBUMS;
+use crate::identify::sql::WAITS_FOR_DOCUMENT;
 use crate::identity::DecisionSource;
 use crate::identity::reads::release_input_hash;
 use crate::matching::model::{ArtistNames, CreditedArtist, Release, VARIOUS_ARTISTS_MBID};
 use crate::operations::decisions::{ArtistAction, record_artist_action};
 use crate::scan::sqlite_store::artists::SENTINEL_ARTIST_IDS;
+use droppedneedle_kernel::db::statement::Statement;
 use droppedneedle_kernel::db::{DbError, fold_text, savepoint};
 
 /// How many albums, and how many linked rows, one sweep looks at.
@@ -104,18 +108,6 @@ impl CreditState {
     }
 }
 
-pub use crate::identify::sql::CURRENT_PROOF;
-
-use crate::identify::sql::STALE_ALBUMS;
-
-/// The rows the app linked, in id order after `?1`, at most `?2`. Every
-/// link is MusicBrainz's (a CHECK), so the walk goes by the primary key.
-fn automatic_links_after_sql() -> &'static str {
-    crate::identify::sql::AUTOMATIC_LINKS_AFTER_SQL.text()
-}
-
-use crate::identify::sql::ROW_IDS;
-
 /// Have the next sweep work album `album` through again: which rows its
 /// credits point at, the names they are credited as or an artist id they
 /// hold changed in a way the stamp does not see.
@@ -137,8 +129,6 @@ pub(crate) const RELEASE_NOT_FOUND: &str = "RELEASE_NOT_FOUND";
 /// redirect not followed, a document that does not read). Its document is
 /// not asked for while the reason stands, as for [`RELEASE_NOT_FOUND`].
 pub(crate) const RELEASE_DOCUMENT_REFUSED: &str = "RELEASE_DOCUMENT_REFUSED";
-
-use crate::identify::sql::WAITS_FOR_DOCUMENT;
 
 /// Whether row `artist` is credited on a live album that waits for its
 /// release's document. Such an album proves nothing yet and contradicts
@@ -226,7 +216,7 @@ pub fn automatic_links_after(
     cursor: &str,
     limit: usize,
 ) -> rusqlite::Result<Vec<String>> {
-    conn.prepare_cached(automatic_links_after_sql())?
+    conn.prepare_cached(crate::identify::sql::AUTOMATIC_LINKS_FROM.text())?
         .query_map(params![cursor, limit as i64], |row| row.get(0))?
         .collect()
 }
@@ -245,35 +235,28 @@ struct LocalCredit {
 
 fn side_credits(
     conn: &Connection,
-    table: &str,
-    key: &str,
+    statement: Statement,
     subject: &str,
 ) -> rusqlite::Result<Vec<LocalCredit>> {
-    conn.prepare_cached(&format!(
-        "SELECT c.position, c.local_artist_id, c.credited_name, a.display_name, \
-         a.retired_into_artist_id IS NULL AND a.kind <> 'various_artists' \
-         AND a.id NOT IN (?2, ?3), c.artist_mbid \
-         FROM {table} c JOIN local_artists a ON a.id = c.local_artist_id \
-         WHERE c.{key} = ?1 ORDER BY c.position"
-    ))?
-    .query_map(
-        params![subject, SENTINEL_ARTIST_IDS[0], SENTINEL_ARTIST_IDS[1]],
-        |row| {
-            let credited: Option<String> = row.get(2)?;
-            let display: String = row.get(3)?;
-            let name = credited
-                .filter(|name| !name.trim().is_empty())
-                .unwrap_or(display);
-            Ok(LocalCredit {
-                position: row.get(0)?,
-                artist: row.get(1)?,
-                name,
-                provable: row.get(4)?,
-                file_id: row.get(5)?,
-            })
-        },
-    )?
-    .collect()
+    conn.prepare_cached(statement.text())?
+        .query_map(
+            params![subject, SENTINEL_ARTIST_IDS[0], SENTINEL_ARTIST_IDS[1]],
+            |row| {
+                let credited: Option<String> = row.get(2)?;
+                let display: String = row.get(3)?;
+                let name = credited
+                    .filter(|name| !name.trim().is_empty())
+                    .unwrap_or(display);
+                Ok(LocalCredit {
+                    position: row.get(0)?,
+                    artist: row.get(1)?,
+                    name,
+                    provable: row.get(4)?,
+                    file_id: row.get(5)?,
+                })
+            },
+        )?
+        .collect()
 }
 
 /// The release credit's ids (lowercased, MusicBrainz's current ones),
@@ -533,7 +516,7 @@ fn prove(
 ) -> rusqlite::Result<(Vec<Proof>, CreditState, &'static str)> {
     let names = document.artist_names.as_ref();
     let mut proofs = Vec::new();
-    let album_side = side_credits(conn, "local_album_artists", "local_album_id", album)?;
+    let album_side = side_credits(conn, crate::identify::sql::ALBUM_CREDIT_ROWS, album)?;
     let lines_up = prove_side(
         conn,
         &album_side,
@@ -569,7 +552,7 @@ fn prove(
         }) else {
             continue;
         };
-        let side = side_credits(conn, "local_track_artists", "local_track_id", track)?;
+        let side = side_credits(conn, crate::identify::sql::TRACK_CREDIT_ROWS, track)?;
         let mapped = (track.as_str(), release_track.as_str(), *revision);
         let track_lines_up = prove_side(
             conn,

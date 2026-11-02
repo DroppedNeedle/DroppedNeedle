@@ -28,14 +28,6 @@ use rusqlite::{Connection, OptionalExtension as _, params};
 
 use super::snapshots::sha256_hex;
 
-pub(crate) use crate::publish::sql::V2_ROW_SQL;
-
-/// SQL condition on a `library_track_management_state` row (alias `s`):
-/// the app has a record of the file's bytes.
-pub fn record_sql() -> String {
-    format!("(s.written_sha256 IS NOT NULL OR ({V2_ROW_SQL}))")
-}
-
 /// What the app recorded about one file.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Record {
@@ -100,13 +92,7 @@ pub fn record(conn: &Connection, track_id: &str) -> rusqlite::Result<Record> {
 /// whether it wrote.
 pub(crate) fn forget(conn: &Connection, track_id: &str) -> rusqlite::Result<bool> {
     let written = conn
-        .prepare_cached(&format!(
-            "UPDATE library_track_management_state AS s SET written_sha256 = NULL, \
-             managed_path_revision = CASE WHEN s.last_operation_job_id IS NULL THEN NULL \
-             ELSE s.managed_path_revision END, row_revision = s.row_revision + 1 \
-             WHERE s.local_track_id = ?1 AND {}",
-            record_sql()
-        ))?
+        .prepare_cached(crate::publish::sql::FORGET_RECORD.text())?
         .execute(params![track_id])?;
     Ok(written > 0)
 }
@@ -117,14 +103,7 @@ pub(crate) fn forget(conn: &Connection, track_id: &str) -> rusqlite::Result<bool
 /// row a replacement retired (its record is cleared when it is retired).
 fn stands_in(conn: &Connection, track_id: &str) -> rusqlite::Result<bool> {
     Ok(conn
-        .prepare_cached(&format!(
-            "SELECT 1 FROM local_tracks t \
-             JOIN local_tracks o ON o.local_album_id = t.local_album_id AND o.id <> t.id \
-             AND o.availability = 'missing' \
-             JOIN library_track_management_state s ON s.local_track_id = o.id \
-             WHERE t.id = ?1 AND {} LIMIT 1",
-            record_sql()
-        ))?
+        .prepare_cached(crate::publish::sql::MISSING_ROW_STANDS_IN.text())?
         .query_row(params![track_id], |_| Ok(()))
         .optional()?
         .is_some())

@@ -37,6 +37,10 @@ use serde_json::{Value, json};
 use unicode_normalization::UnicodeNormalization as _;
 
 use super::artists::{MOVED_BY_NAME, MOVED_WITH_ID};
+use crate::corrections::sql::{
+    EVERY_CREDIT_HOLDS, FILE_ID_COUNT, FILE_IDS, HELD_BACK, PROOF_ROWS, RELEASE_PROOF_COUNT,
+    RELEASE_PROOFS, STILL_CREDITED, UNLINKED_MEMBER,
+};
 use crate::identify::artist_links::placeholder;
 use crate::identity::DecisionSource;
 use crate::scan::sqlite_store::artists::{NAME_MERGE_MARK, SENTINEL_ARTIST_IDS, proven_rows};
@@ -313,7 +317,7 @@ impl<'tx> MergeBasis<'tx> {
 
     /// Whether row `from`, whose credits proven to be `mbid` moved to the
     /// row that is now `to`'s live row, merges into it: once nothing of
-    /// its own is left ([`HELD_BACK.text()`], [`STILL_CREDITED.text()`]), nothing proves
+    /// its own is left ([`HELD_BACK`], [`STILL_CREDITED`]), nothing proves
     /// that row another artist, no administrator marked the two distinct,
     /// and a current proof there still names `mbid`.
     pub(crate) fn followed(
@@ -456,7 +460,7 @@ impl<'tx> MergeBasis<'tx> {
             return Ok(None);
         }
         let live: i64 = tx
-            .prepare_cached(crate::corrections::sql::PERSON.text())?
+            .prepare_cached(crate::corrections::sql::LIVE_ARTISTS_OF_PAIR.text())?
             .query_row(params![survivor, retiree], |row| row.get(0))?;
         Ok((live == 2).then(|| {
             Self::new(
@@ -469,27 +473,6 @@ impl<'tx> MergeBasis<'tx> {
         }))
     }
 }
-
-/// SQL that is true when artist `?1` is proven to be an artist other
-/// than `?2`: a credit's file holds another id, or a current proof names
-/// another. Each probe is a range on an (artist, id) index.
-use crate::corrections::sql::PROOF_ROWS;
-
-use crate::corrections::sql::UNLINKED_MEMBER;
-
-use crate::corrections::sql::EVERY_CREDIT_HOLDS;
-
-use crate::corrections::sql::FILE_IDS;
-
-use crate::corrections::sql::FILE_ID_COUNT;
-
-use crate::corrections::sql::RELEASE_PROOFS;
-
-use crate::corrections::sql::RELEASE_PROOF_COUNT;
-
-use crate::corrections::sql::HELD_BACK;
-
-use crate::corrections::sql::STILL_CREDITED;
 
 /// One row of a group proven to be one artist.
 struct Member {
@@ -712,7 +695,7 @@ fn files_prove(tx: &Transaction<'_>, artist: &str, mbid: &str) -> rusqlite::Resu
     Ok(held && !other_id(tx, artist, mbid)?)
 }
 
-/// [`HELD_BACK.text()`] for row `from` and the row `survivor` its credits went
+/// [`HELD_BACK`] for row `from` and the row `survivor` its credits went
 /// to, as `mbid`.
 fn held_back(
     tx: &Transaction<'_>,

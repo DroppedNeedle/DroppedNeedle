@@ -34,9 +34,13 @@ use crate::identify::queue::offer_again;
 use crate::identify::sqlite::offer_album;
 use crate::identity::{self, DecisionSource, Rows};
 use crate::operations::decisions::{CatalogAction, record_action};
+use crate::repairs::sql::ALBUM_CREDITS;
+use crate::repairs::sql::INSERT_ALBUM_CREDIT;
+use crate::repairs::sql::TRACK_CREDITS;
 use crate::scan::naming::{UNKNOWN_ARTIST, UNKNOWN_ARTIST_ID};
 use crate::scan::sqlite_store::awaits_retag;
 use droppedneedle_kernel::db::fold::fold_text;
+use droppedneedle_kernel::db::statement::ListLen;
 
 const PROVIDER: &str = "musicbrainz";
 
@@ -107,26 +111,14 @@ fn identity(conn: &Connection, album_id: &str) -> rusqlite::Result<Option<Identi
 
 /// Work a person or a job is doing on these albums: leave them alone.
 fn busy(conn: &Connection, albums: &[&str], now: f64) -> rusqlite::Result<bool> {
-    let marks = (1..=albums.len())
-        .map(|number| format!("?{number}"))
-        .collect::<Vec<_>>()
-        .join(",");
-    let live = crate::management::store::live_job_sql(&format!("?{}", albums.len() + 1));
     conn.query_row(
-        &format!(
-            "SELECT EXISTS(SELECT 1 FROM library_contribution_drafts WHERE local_album_id IN \
-             ({marks}) AND state IN ('draft','ready','seeded','verifying','needs_review')) \
-             OR EXISTS(SELECT 1 FROM library_management_plan_items item \
-             JOIN library_operation_jobs job ON job.id = item.job_id \
-             WHERE item.local_album_id IN ({marks}) AND {live}) \
-             OR EXISTS(SELECT 1 FROM library_management_overrides \
-             WHERE local_album_id IN ({marks}))"
-        ),
+        &crate::repairs::sql::albums_have_live_work(ListLen::new(albums.len())),
         params_from_iter(
-            albums
-                .iter()
-                .map(|album| rusqlite::types::Value::Text((*album).to_owned()))
-                .chain([rusqlite::types::Value::Real(now)]),
+            std::iter::once(rusqlite::types::Value::Real(now)).chain(
+                albums
+                    .iter()
+                    .map(|album| rusqlite::types::Value::Text((*album).to_owned())),
+            ),
         ),
         |row| row.get(0),
     )
@@ -362,14 +354,10 @@ fn fold_split_legacy_album(
         return Ok(None);
     }
     let moved: Vec<String> = source.iter().map(|track| track.id.clone()).collect();
-    let marks = vec!["?"; moved.len()].join(",");
     // The v2 choice is kept in the audit row, so the fold can be undone.
     let folded = identity::fold_legacy(tx, &album.id, &moved)?;
     tx.execute(
-        &format!(
-            "UPDATE local_tracks SET local_album_id = ?, row_revision = row_revision + 1 \
-             WHERE id IN ({marks})"
-        ),
+        &crate::repairs::sql::move_tracks_to_album(ListLen::new(moved.len())),
         params_from_iter(std::iter::once(target).chain(&moved)),
     )?;
     retire(tx, &album.id, target, now)?;
@@ -429,8 +417,6 @@ fn write_album_credits(
     mark_stale(tx, album_id)
 }
 
-use crate::repairs::sql::INSERT_ALBUM_CREDIT;
-
 /// One artist credit as `local_track_artists` and `local_album_artists`
 /// hold it, in position order. A track credit reads as role `main`, the
 /// role an album credit made from it takes.
@@ -448,10 +434,6 @@ struct CreditRow {
 fn main_role() -> String {
     "main".to_owned()
 }
-
-use crate::repairs::sql::TRACK_CREDITS;
-
-use crate::repairs::sql::ALBUM_CREDITS;
 
 fn credit_rows(conn: &Connection, sql: &str, subject: &str) -> rusqlite::Result<Vec<CreditRow>> {
     conn.prepare_cached(sql)?

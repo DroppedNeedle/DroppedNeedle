@@ -25,7 +25,6 @@ use rusqlite::{Connection, OptionalExtension as _, params};
 use super::commit::{UNKNOWN_ARTIST, UNKNOWN_ARTIST_ID};
 use crate::identify::artist_links::placeholder;
 use crate::identify::merged_ids;
-use crate::identity::sql::PERSONS;
 use crate::scan::naming::{VARIOUS_ARTISTS_ID, artist_key, artist_mbid_key};
 use crate::tags::AudioArtistCredit;
 use droppedneedle_kernel::db::fold_text;
@@ -181,17 +180,7 @@ pub(crate) struct Proven {
 /// proven. Every test is a bounded index probe.
 pub(crate) fn proven_rows(tx: &Connection, mbid: &str) -> rusqlite::Result<Vec<Proven>> {
     let mut out: Vec<Proven> = tx
-        .prepare_cached(&format!(
-            "SELECT a.id, i.decision_source IN {PERSONS} AS chosen \
-             FROM local_artist_external_identities i \
-             JOIN local_artists a ON a.id = i.local_artist_id \
-             WHERE lower(i.provider_artist_id) = ?2 AND i.provider = 'musicbrainz' \
-             AND a.retired_into_artist_id IS NULL AND a.kind <> 'various_artists' \
-             AND a.id NOT IN (?5, ?6) \
-             AND (i.decision_source IN {PERSONS} OR NOT {}) \
-             ORDER BY chosen DESC, a.created_at, a.id",
-            holds_other_id("a.id")
-        ))?
+        .prepare_cached(crate::scan::sql::ROWS_PROVEN_AS_MBID.text())?
         .query_map(
             params![
                 mbid,
@@ -270,14 +259,6 @@ pub(super) struct Own<'a> {
     pub album_id: &'a str,
 }
 
-/// [`HOLDS_OTHER_ID`] for the artist row `artist` names (a column)
-/// instead of `?1`.
-fn holds_other_id(artist: &str) -> String {
-    HOLDS_OTHER_ID.replace("?1", artist)
-}
-
-use crate::scan::sql::HOLDS_OTHER_ID;
-
 /// Picks the rows for one file's credits.
 struct Resolver<'a> {
     tx: &'a Connection,
@@ -320,7 +301,7 @@ impl Resolver<'_> {
                 // and its merge by name only as a name row would.
                 let converged: Option<String> = self
                     .tx
-                    .prepare_cached(crate::scan::sql::WITH_ID.text())?
+                    .prepare_cached(crate::scan::sql::CONVERGED_MBID_OF_ARTIST.text())?
                     .query_row(params![base.keyed], |row| row.get(0))
                     .optional()?
                     .flatten();

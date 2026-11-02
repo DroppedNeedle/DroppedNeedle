@@ -4,6 +4,114 @@
 // `sql!` needs a macro call in parentheses to take it as one part.
 #![allow(unused_parens, clippy::double_parens)]
 
+/// Whether the folder at the SQL expression `$ancestor` covers the path at
+/// `$descendant`: `.` covers everything, otherwise the path itself or
+/// anything below it ([`scope_covers_path`](crate::scan::models::scope_covers_path)).
+macro_rules! covers {
+    ($ancestor:literal, $descendant:literal) => {
+        concat!(
+            "(",
+            $ancestor,
+            " = '.' OR ",
+            $descendant,
+            " = ",
+            $ancestor,
+            " OR substr(",
+            $descendant,
+            ", 1, length(",
+            $ancestor,
+            ") + 1) = ",
+            $ancestor,
+            " || '/')"
+        )
+    };
+}
+pub(crate) use covers;
+
+/// Whether run `$run` refused a scope covering the row aliased `$row` because
+/// it is a link or reached through one, asked for or met by a walk
+/// (`refuse_link`). A completed scope around it did not walk there, so nothing
+/// under it counts as walked or counts toward the mass-missing guard.
+macro_rules! refused_scope {
+    ($run:literal, $row:literal) => {
+        concat!(
+            "EXISTS (SELECT 1 FROM library_scan_run_scopes x WHERE x.run_id = ",
+            $run,
+            " AND x.root_id = ",
+            $row,
+            ".root_id AND x.error_code = 'SCOPE_THROUGH_LINK' AND (",
+            $row,
+            ".relative_path = x.relative_path OR substr(",
+            $row,
+            ".relative_path, 1, length(x.relative_path) + 1) = x.relative_path || '/'))"
+        )
+    };
+}
+pub(crate) use refused_scope;
+
+/// Whether the track row aliased `$track` is held by the held folder
+/// aliased `$hold`: indexed, found by a scan, in that folder of its root,
+/// and first indexed at or after the hold began. The looser bound on
+/// `imported_at` selects nothing more; it lets a search start from the
+/// recently indexed tracks.
+macro_rules! held {
+    ($track:literal, $hold:literal) => {
+        concat!(
+            $track,
+            ".availability = 'indexed' AND ",
+            $track,
+            ".ingest_source = 'scan' AND ",
+            $track,
+            ".root_id = ",
+            $hold,
+            ".root_id AND ",
+            $track,
+            ".imported_at >= (",
+            $hold,
+            ".held_at - 1) / 1000.0 AND CAST(",
+            $track,
+            ".imported_at * 1000 AS INTEGER) >= ",
+            $hold,
+            ".held_at AND (",
+            $hold,
+            ".relative_path = '.' OR ",
+            $track,
+            ".relative_path = ",
+            $hold,
+            ".relative_path OR substr(",
+            $track,
+            ".relative_path, 1, length(",
+            $hold,
+            ".relative_path) + 1) = ",
+            $hold,
+            ".relative_path || '/')"
+        )
+    };
+}
+pub(crate) use held;
+
+/// Whether the track row aliased `$track` keeps its album in the run with
+/// id `$run` (a parameter, a column or a subquery): an album keeps a row
+/// while it is indexed, or while it went `missing` after that run began.
+/// A row that is `excluded`, or `missing` since before the run began,
+/// holds nothing.
+macro_rules! holds {
+    ($track:literal, $run:tt) => {
+        droppedneedle_kernel::db::statement::__concatcp!(
+            "(",
+            $track,
+            ".availability = 'indexed' OR (",
+            $track,
+            ".availability = 'missing' AND ",
+            $track,
+            ".missing_since >= (SELECT started_at FROM library_scan_runs WHERE id = ",
+            $run,
+            ")))"
+        )
+    };
+}
+pub(crate) use holds;
+
 /// Journal row `j` keeps scope `s` from judging its track: it is still
 /// open, or it moved after the scope's walk began. The states listed are
 /// the publisher's terminal ones (`JournalState::is_terminal`).
@@ -50,7 +158,7 @@ macro_rules! walked_past {
               AND (s.relative_path = '.' OR t.relative_path = s.relative_path \
                 OR substr(t.relative_path, 1, length(s.relative_path) + 1) = s.relative_path || '/') \
               AND NOT ",
-            $crate::scan::sqlite_store::held_scopes::refused_scope!($run, "t"),
+            $crate::scan::sqlite_store::sql::refused_scope!($run, "t"),
             " AND NOT EXISTS (SELECT 1 FROM library_publish_journal j \
                 WHERE j.track_id = t.id AND (",
             $crate::scan::sqlite_store::sql::fenced_by!(),

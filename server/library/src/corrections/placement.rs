@@ -48,7 +48,6 @@ use crate::identify::sqlite::{release_chosen, stored_release};
 use crate::identity;
 use crate::management::{automatic, takeover};
 use crate::matching::Release;
-use crate::publish::record::record_sql;
 use droppedneedle_kernel::db::savepoint;
 
 use crate::corrections::sql::CANDIDATES;
@@ -327,13 +326,8 @@ fn held_tracks(tx: &Connection, album: &str) -> rusqlite::Result<BTreeSet<String
 
 /// Whether a missing row of the album has a record of its bytes.
 fn missing_rows_have_record(tx: &Connection, album: &str) -> rusqlite::Result<bool> {
-    tx.prepare_cached(&format!(
-        "SELECT EXISTS(SELECT 1 FROM local_tracks t \
-         JOIN library_track_management_state s ON s.local_track_id = t.id \
-         WHERE t.local_album_id = ?1 AND t.availability = 'missing' AND {})",
-        record_sql()
-    ))?
-    .query_row(params![album], |row| row.get(0))
+    tx.prepare_cached(crate::corrections::sql::MISSING_ROW_HAS_RECORD.text())?
+        .query_row(params![album], |row| row.get(0))
 }
 
 /// Whether one placement is a person's retag the app must not write over.
@@ -362,11 +356,7 @@ fn retagged_by_hand(
         return Ok(Retag::No);
     }
     let has_record: bool = tx
-        .prepare_cached(&format!(
-            "SELECT EXISTS(SELECT 1 FROM library_track_management_state s \
-             WHERE s.local_track_id = ?1 AND {})",
-            record_sql()
-        ))?
+        .prepare_cached(crate::corrections::sql::TRACK_HAS_RECORD.text())?
         .query_row(params![row.id], |r| r.get(0))?;
     if has_record {
         return Ok(Retag::No);

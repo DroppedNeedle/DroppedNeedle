@@ -11,7 +11,10 @@
 //! scores into a verdict with fixed thresholds, MBID vetoes, and edition
 //! preferences ([`decide`], which documents the numbers).
 
+pub use decide::{EditionPrefs, ReviewReason, Verdict, decide, should_fingerprint};
+pub use distance::{Distance, PenaltyShare};
 use droppedneedle_providers::musicbrainz::is_valid_mbid;
+pub use score::{ReleaseMatch, Support, match_release, unknown_recordings};
 
 pub mod assign;
 pub mod decide;
@@ -20,13 +23,10 @@ pub mod model;
 pub mod score;
 pub mod strings;
 
-pub use decide::{EditionPrefs, ReviewReason, Verdict, decide, should_fingerprint};
-pub use distance::{Distance, PenaltyShare};
 pub use model::{
     CreditedArtist, EditionHints, Genre, LocalAlbum, LocalTrack, Release, ReleaseMedium,
     ReleaseTrack,
 };
-pub use score::{ReleaseMatch, Support, match_release, unknown_recordings};
 
 /// The MusicBrainz id a file's tag gives the matcher: trimmed and lowercased
 /// when it has the id shape, else none. Tags are free text, so a value that

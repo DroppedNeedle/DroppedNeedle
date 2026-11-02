@@ -9,11 +9,12 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use droppedneedle_kernel::db::statement::ListLen;
 use rusqlite::types::Value;
 use rusqlite::{OptionalExtension as _, Transaction, params, params_from_iter};
 use serde::Serialize;
 
-use super::edition::{self, Settle, placeholders};
+use super::edition::{self, Settle};
 use super::models::{
     AlbumGroup, CorrectionError, EditionChange, EditionChangeKind, IdentityChoice, MembershipKind,
     MembershipOutcome, MembershipRequest,
@@ -195,12 +196,10 @@ pub(super) fn load_tracks(
     tx: &Transaction<'_>,
     ids: &[String],
 ) -> Result<Vec<TrackRow>, CorrectionError> {
-    let marks = placeholders(ids.len());
     let rows: Vec<TrackRow> = tx
-        .prepare(&format!(
-            "SELECT id, local_album_id, row_revision FROM local_tracks WHERE id IN ({marks}) \
-             ORDER BY relative_path, id"
-        ))?
+        .prepare(&crate::corrections::sql::track_rows_in(ListLen::new(
+            ids.len(),
+        )))?
         .query_map(params_from_iter(ids.iter()), |row| {
             Ok(TrackRow {
                 id: row.get(0)?,
@@ -367,14 +366,10 @@ pub(crate) fn retire(
 
 /// Lock tracks to `album_id` by hand.
 fn lock_to(tx: &Transaction<'_>, album_id: &str, tracks: &[String]) -> rusqlite::Result<()> {
-    let marks = placeholders(tracks.len());
     let mut values = vec![Value::Text(album_id.to_owned())];
     values.extend(tracks.iter().cloned().map(Value::Text));
     tx.execute(
-        &format!(
-            "UPDATE local_tracks SET local_album_id = ?1, membership_source = 'manual', \
-             membership_locked = 1, row_revision = row_revision + 1 WHERE id IN ({marks})"
-        ),
+        &crate::corrections::sql::lock_tracks_to_album(ListLen::new(tracks.len())),
         params_from_iter(values),
     )?;
     Ok(())

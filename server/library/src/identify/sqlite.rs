@@ -20,6 +20,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use droppedneedle_kernel::clock::Clock;
+use droppedneedle_kernel::db::statement::Statement;
 use droppedneedle_kernel::db::{Db, DbError, Lane};
 use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
 use sha2::{Digest as _, Sha256};
@@ -41,6 +42,7 @@ use crate::corrections::artist_convergence::{
     any_waiting, converge_ids, follow_moved, follow_waiting,
 };
 use crate::corrections::continuation::{DRAIN_BOUND, Scope, continue_tracks, drain_continuations};
+use crate::identify::sql::LAND_JOB;
 pub(crate) use crate::identity::follow::{
     chosen_matches_differ, match_chosen, merge_moves_match, release_chosen, settle_followed_match,
     settle_merged_match,
@@ -110,8 +112,6 @@ fn review_state_from(raw: &str) -> ReviewState {
         _ => ReviewState::Pending,
     }
 }
-
-use crate::identify::sql::LAND_JOB;
 
 fn map_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<IdentifyJob> {
     Ok(IdentifyJob {
@@ -1419,10 +1419,10 @@ pub(crate) fn retarget_references(
     retired_id: &str,
     surviving_id: &str,
 ) -> rusqlite::Result<()> {
-    let column = match item_kind {
-        "album" => "local_album_id",
-        "artist" => "local_artist_id",
-        _ => "local_track_id",
+    let plays = match item_kind {
+        "album" => crate::identify::sql::RETARGET_ALBUM_PLAYS,
+        "artist" => crate::identify::sql::RETARGET_ARTIST_PLAYS,
+        _ => crate::identify::sql::RETARGET_TRACK_PLAYS,
     };
     // Copy, then delete: favorite names reference the favorite's key
     // without ON UPDATE, so the key cannot change in place. Deleting the
@@ -1448,10 +1448,7 @@ pub(crate) fn retarget_references(
         crate::identify::sql::DROP_ITEM_RATINGS.text(),
         params![item_kind, retired_id],
     )?;
-    tx.execute(
-        &format!("UPDATE library_play_history SET {column} = ?1 WHERE {column} = ?2"),
-        params![surviving_id, retired_id],
-    )?;
+    tx.execute(plays.text(), params![surviving_id, retired_id])?;
     Ok(())
 }
 
@@ -1462,11 +1459,11 @@ fn hex_sha256(bytes: &[u8]) -> String {
         .collect()
 }
 
-/// Alias table and owner column for one alias kind.
-fn alias_table(kind: AliasKind) -> (&'static str, &'static str) {
+/// The aliases of one alias kind that name a surviving id.
+fn aliases_of(kind: AliasKind) -> Statement {
     match kind {
-        AliasKind::MergedAlbum => ("local_album_aliases", "local_album_id"),
-        AliasKind::MergedArtist => ("local_artist_aliases", "local_artist_id"),
+        AliasKind::MergedAlbum => crate::identify::sql::ALBUM_ALIASES,
+        AliasKind::MergedArtist => crate::identify::sql::ARTIST_ALIASES,
     }
 }
 
@@ -1478,10 +1475,7 @@ impl SqliteIdentifyStore {
         self.db.read_blocking("identify.aliases", |conn| {
             let mut out = Vec::new();
             for kind in ALIAS_KINDS {
-                let (table, owner) = alias_table(kind);
-                let mut stmt = conn.prepare(&format!(
-                    "SELECT alias FROM {table} WHERE {owner} = ?1 ORDER BY alias"
-                ))?;
+                let mut stmt = conn.prepare(aliases_of(kind).text())?;
                 let retired = stmt
                     .query_map(params![surviving_id], |row| row.get::<_, String>(0))?
                     .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -1634,7 +1628,7 @@ impl SqliteIdentifyStore {
                 changing(tx, |tx| {
                     let now = self.clock.now_ms();
                     tx.execute(
-                        crate::identify::sql::FILE.text(),
+                        crate::identify::sql::FILE_REVIEW.text(),
                         params![
                             review.id,
                             review.local_album_id,
@@ -1796,64 +1790,4 @@ pub(crate) fn map_review(row: &rusqlite::Row<'_>) -> rusqlite::Result<Option<Rev
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Two rows of one album each hold a release a person chose, and the
-    /// two differ. Settling them is refused before anything is written:
-    /// neither match and no review changes.
-    #[test]
-    fn settling_two_different_chosen_matches_is_refused() {
-        let dir = droppedneedle_kernel::db::scratch::ScratchDir::new("settle-match").unwrap();
-        let path = dir.path().join("app.db");
-        droppedneedle_kernel::schema::template::copy_to(&path).unwrap();
-        let db = Db::open_for_tests(&path).unwrap();
-        let seed = |tx: &Transaction<'_>| {
-            tx.execute_batch(
-                "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
-             album_artist_id, grouping_source, created_at, updated_at) VALUES \
-             ('old', 'r', 'old', 'T', 't', '00000000-0000-4000-8000-000000000002', \
-              'automatic', 1, 1), \
-             ('new', 'r', 'new', 'T', 't', '00000000-0000-4000-8000-000000000002', \
-              'automatic', 1, 1); \
-             INSERT INTO local_album_external_identities (local_album_id, provider, \
-             release_group_mbid, release_mbid, decision_source, selected_at) VALUES \
-             ('old', 'musicbrainz', 'rg', 'rel-1', 'manual', 0), \
-             ('new', 'musicbrainz', 'rg', 'rel-2', 'legacy_import', 0); \
-             INSERT INTO library_identify_reviews (id, local_album_id, reason_code, \
-             candidates_json, state, created_ms, updated_ms) VALUES \
-             ('waiting', 'new', 'R', '[]', 'pending', 0, 0), \
-             ('closed', 'new', 'R', '[]', 'dismissed', 0, 0);",
-            )
-        };
-        db.write_blocking(Lane::Background, "test.seed", |tx| {
-            Ok::<_, droppedneedle_kernel::db::DbError>(seed(tx)?)
-        })
-        .unwrap();
-        let state = |conn: &Connection| -> Vec<(String, String)> {
-            conn.prepare(
-                "SELECT local_album_id, release_mbid || ' ' || decision_source || ' ' \
-                 || row_revision FROM local_album_external_identities \
-                 UNION ALL SELECT local_album_id, id FROM library_identify_reviews ORDER BY 1, 2",
-            )
-            .unwrap()
-            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
-            .unwrap()
-            .collect::<rusqlite::Result<_>>()
-            .unwrap()
-        };
-        let before = db
-            .read_blocking("test.before", |conn| {
-                Ok::<_, droppedneedle_kernel::db::DbError>(state(conn))
-            })
-            .unwrap();
-        assert_eq!(before.len(), 4);
-
-        db.write_blocking(Lane::Background, "test.settle", |tx| {
-            assert!(settle_followed_match(tx, "new", "old", 1.0).is_err());
-            assert_eq!(state(tx), before);
-            Ok::<_, droppedneedle_kernel::db::DbError>(())
-        })
-        .unwrap();
-    }
-}
+mod tests;

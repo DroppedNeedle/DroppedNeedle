@@ -2,8 +2,9 @@
 //! migrated schema.
 //!
 //! An area keeps its SQL in a file named `sql.rs` beside the code that runs
-//! it. That file holds one [`sql!`](crate::sql) block and the functions that
-//! build statement families, nothing else:
+//! it. That file holds one [`sql!`](crate::sql) block, the functions that
+//! build statement families with the closed types they take, and the macros
+//! that write a shared rule for a given parameter or row alias:
 //!
 //! ```ignore
 //! droppedneedle_kernel::sql! {

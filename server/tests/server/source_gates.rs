@@ -277,6 +277,10 @@ const IDENTITY_RULES: &[Rule] = &[
                 "catalog/src/reads/library/perf_tests.rs",
                 "the read benchmarks seed their own database",
             ),
+            place(
+                "library/src/identify/sqlite/tests.rs",
+                "a unit test seeds two chosen matches that disagree, which the module refuses to write",
+            ),
         ],
     },
     Rule {

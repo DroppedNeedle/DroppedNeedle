@@ -9,6 +9,7 @@
 //! history reads through the same queries. Plain SQL on a caller's
 //! connection; the service owns the transactions.
 
+use crate::management::sql::OverrideSubject;
 use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
 
 use super::after_apply::RefreshTarget;
@@ -25,8 +26,6 @@ use crate::jobs::{
 };
 use crate::publish::snapshots::sha256_hex;
 use droppedneedle_kernel::page::TimeKey;
-
-pub use crate::jobs::live_job_sql;
 
 pub const KIND: &str = OperationKind::LibraryManagement.as_str();
 
@@ -948,17 +947,14 @@ pub fn save_tag_edit(
     }
     for field in &edit.fields {
         let album = field.subject_kind == "album";
-        let (subject_id, column, table) = if album {
-            (&edit.local_album_id, "local_album_id", "local_albums")
+        let (subject_id, subject) = if album {
+            (&edit.local_album_id, OverrideSubject::Album)
         } else {
-            (&edit.local_track_id, "local_track_id", "local_tracks")
+            (&edit.local_track_id, OverrideSubject::Track)
         };
         if edit.mode == TagEditMode::ResetCanonical {
             tx.execute(
-                &format!(
-                    "DELETE FROM library_management_overrides WHERE subject_kind = ?1 \
-                     AND {column} = ?2 AND field_name = ?3"
-                ),
+                &crate::management::sql::drop_override(subject),
                 params![field.subject_kind, subject_id, field.field_name],
             )?;
             continue;
@@ -969,12 +965,7 @@ pub fn save_tag_edit(
             many => ("replace", serde_json::Value::from(many.to_vec())),
         };
         let updated = tx.execute(
-            &format!(
-                "UPDATE library_management_overrides SET value_json = ?4, mode = ?5, \
-                 actor_user_id = ?6, updated_at = ?7, row_revision = row_revision + 1 \
-                 WHERE subject_kind = ?1 AND {column} = ?2 AND field_name = ?3 \
-                 AND (value_json <> ?4 OR mode <> ?5)"
-            ),
+            &crate::management::sql::change_override(subject),
             params![
                 field.subject_kind,
                 subject_id,
@@ -996,13 +987,7 @@ pub fn save_tag_edit(
             .as_bytes(),
         );
         tx.execute(
-            &format!(
-                "INSERT OR IGNORE INTO library_management_overrides (id, subject_kind, {column}, \
-                 field_name, value_json, mode, actor_user_id, reason, subject_revision, \
-                 created_at, updated_at) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'tag_editor', \
-                 COALESCE((SELECT row_revision FROM {table} WHERE id = ?3), 1), ?8, ?8)"
-            ),
+            &crate::management::sql::add_override(subject),
             params![
                 &id[..32],
                 field.subject_kind,
@@ -1053,28 +1038,21 @@ pub fn revert_tag_edit(
     }
     for field in &edit.fields {
         let album = field.subject_kind == "album";
-        let (subject_id, column, table) = if album {
-            (&edit.local_album_id, "local_album_id", "local_albums")
+        let (subject_id, subject) = if album {
+            (&edit.local_album_id, OverrideSubject::Album)
         } else {
-            (&edit.local_track_id, "local_track_id", "local_tracks")
+            (&edit.local_track_id, OverrideSubject::Track)
         };
         match &field.previous {
             None => {
                 tx.execute(
-                    &format!(
-                        "DELETE FROM library_management_overrides WHERE subject_kind = ?1 \
-                         AND {column} = ?2 AND field_name = ?3"
-                    ),
+                    &crate::management::sql::drop_override(subject),
                     params![field.subject_kind, subject_id, field.field_name],
                 )?;
             }
             Some((value, mode)) => {
                 let updated = tx.execute(
-                    &format!(
-                        "UPDATE library_management_overrides SET value_json = ?4, mode = ?5, \
-                         updated_at = ?6, row_revision = row_revision + 1 \
-                         WHERE subject_kind = ?1 AND {column} = ?2 AND field_name = ?3"
-                    ),
+                    &crate::management::sql::restore_override(subject),
                     params![
                         field.subject_kind,
                         subject_id,
@@ -1091,12 +1069,7 @@ pub fn revert_tag_edit(
                             .to_owned()
                     });
                     tx.execute(
-                        &format!(
-                            "INSERT OR IGNORE INTO library_management_overrides (id, subject_kind, \
-                             {column}, field_name, value_json, mode, reason, subject_revision, \
-                             created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'tag_editor', \
-                             COALESCE((SELECT row_revision FROM {table} WHERE id = ?3), 1), ?7, ?7)"
-                        ),
+                        &crate::management::sql::readd_override(subject),
                         params![
                             id,
                             field.subject_kind,

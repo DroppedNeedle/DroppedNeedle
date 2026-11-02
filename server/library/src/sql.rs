@@ -1,7 +1,10 @@
-//! The SQL of the crate root files.
+//! The SQL of the crate root files, and the one list of placeholders the
+//! crate's family builders share.
+
+use droppedneedle_kernel::db::statement::ListLen;
 
 droppedneedle_kernel::sql! {
-    pub(super) REMOVE_ALBUM_WITH = "SELECT release_group_mbid FROM local_album_external_identities \
+    pub(super) RELEASE_GROUP_OF_ALBUM = "SELECT release_group_mbid FROM local_album_external_identities \
                  WHERE local_album_id = ?1 AND release_group_mbid IS NOT NULL LIMIT 1";
     pub(super) INDEXED_TRACK = "SELECT id, local_album_id, root_id, relative_path FROM local_tracks \
                      WHERE id = ?1 AND availability = 'indexed' \
@@ -22,4 +25,9 @@ droppedneedle_kernel::sql! {
     pub(super) RECORD_ACTION = "INSERT INTO library_catalog_actions (id, actor_user_id, action_kind, local_album_id, \
          local_track_id, before_json, after_json, reason_code, created_at) VALUES \
          (?1, (SELECT id FROM auth_users WHERE id = ?2), ?3, ?4, ?5, ?6, ?7, ?8, ?9)";
+}
+
+/// `?,?,?` for an `IN` list of `len` values.
+pub(crate) fn marks(len: ListLen) -> String {
+    vec!["?"; len.get()].join(",")
 }

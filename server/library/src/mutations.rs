@@ -37,7 +37,9 @@ use super::publish::PublishError;
 use super::publish::bin::{BinsUnknown, fresh_entry, serving};
 use super::publish::paths::Root;
 use super::publish::planner::UndoRecord;
+pub use super::publish::planner::{ALBUM_REMOVED, AlbumRemoved, AlbumRemovedJob};
 use super::publish::put_back::Refusal as PutBackRefusal;
+pub use super::publish::put_back::{Listed as AlbumRemoval, RemovalKind};
 use super::publish::remove::{self, Refusal, Target};
 use super::scan::coordinator::ScanRequestError;
 use super::scan::models::{ScanKind, ScanRequest, ScanRequestResult, ScanScope, ScanTrigger};
@@ -353,9 +355,6 @@ pub struct Removed {
 /// Files moved into the recycle bin, as (where it was, where it is now).
 pub type Recycled = Vec<(PathBuf, PathBuf)>;
 
-pub use super::publish::planner::{ALBUM_REMOVED, AlbumRemoved, AlbumRemovedJob};
-pub use super::publish::put_back::{Listed as AlbumRemoval, RemovalKind};
-
 /// One track row a removal or rescan works on.
 #[derive(Debug, Clone)]
 struct TrackFile {
@@ -451,9 +450,11 @@ impl Mutations {
             "CATALOG_REMOVAL"
         };
         let release_group_mbid = self.db.read_blocking("mutations.remove_album", |conn| {
-            conn.query_row(crate::sql::REMOVE_ALBUM_WITH.text(), [&canonical], |row| {
-                row.get::<_, String>(0)
-            })
+            conn.query_row(
+                crate::sql::RELEASE_GROUP_OF_ALBUM.text(),
+                [&canonical],
+                |row| row.get::<_, String>(0),
+            )
             .optional()
             .map_err(MutationError::from)
         })?;

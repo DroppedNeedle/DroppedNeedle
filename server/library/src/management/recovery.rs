@@ -149,19 +149,16 @@ impl Management {
             .db
             .read_blocking("management.recovery_diagnostics", |conn| {
                 let count = |sql: &str| conn.query_row(sql, [], |row| row.get::<_, i64>(0));
-                let open = "state NOT IN ('cleaned', 'compensated', 'needs_attention')";
-                let attention = "state = 'needs_attention' AND bundle_id NOT IN \
-                 (SELECT bundle_id FROM library_publish_resolutions)";
                 let mut diagnostics = Diagnostics {
-                    recoverable_bundle_count: count(&format!(
-                        "SELECT COUNT(DISTINCT bundle_id) FROM library_publish_journal WHERE {open}"
-                    ))?,
-                    nonterminal_journal_count: count(&format!(
-                        "SELECT COUNT(*) FROM library_publish_journal WHERE {open}"
-                    ))?,
-                    needs_attention_count: count(&format!(
-                        "SELECT COUNT(*) FROM library_publish_journal WHERE {attention}"
-                    ))?,
+                    recoverable_bundle_count: count(
+                        crate::management::sql::OPEN_BUNDLE_COUNT.text(),
+                    )?,
+                    nonterminal_journal_count: count(
+                        crate::management::sql::OPEN_JOURNAL_COUNT.text(),
+                    )?,
+                    needs_attention_count: count(
+                        crate::management::sql::ATTENTION_JOURNAL_COUNT.text(),
+                    )?,
                     cleanup_pending_count: count(
                         crate::management::sql::CLEANUP_PENDING_COUNT.text(),
                     )?,
@@ -177,12 +174,7 @@ impl Management {
                     let (state, count): (String, i64) = row?;
                     diagnostics.state_counts.insert(state, count);
                 }
-                let mut bundles = conn.prepare(&format!(
-                    "SELECT bundle_id, COUNT(*), GROUP_CONCAT(dest_rel, char(10)), \
-                 GROUP_CONCAT(source_rel, char(10)) \
-                 FROM library_publish_journal WHERE {attention} \
-                 GROUP BY bundle_id ORDER BY bundle_id LIMIT ?1"
-                ))?;
+                let mut bundles = conn.prepare(crate::management::sql::ATTENTION_BUNDLES.text())?;
                 for row in bundles.query_map(params![ATTENTION_LIST_MAX], attention_bundle)? {
                     diagnostics.needs_attention_bundles.push(row?);
                 }

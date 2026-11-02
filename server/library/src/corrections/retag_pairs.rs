@@ -152,7 +152,7 @@ pub(super) fn join(
     if new == old {
         // Joined already by the album tools: the hidden pair goes.
         tx.execute(
-            crate::corrections::sql::JOIN.text(),
+            crate::corrections::sql::DROP_RETAG_PAIR.text(),
             params![old, stored_new],
         )?;
         return Ok(new);

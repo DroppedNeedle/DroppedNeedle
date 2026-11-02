@@ -1,5 +1,11 @@
 //! The SQL of the operations module.
 
+use droppedneedle_kernel::db::statement::ListLen;
+
+use super::history::MAX_TITLES;
+use super::reviews::ReviewOrder;
+use crate::identity::sql::PERSONS;
+
 droppedneedle_kernel::sql! {
     pub(super) PLACED_FILES = "SELECT root_id, relative_path FROM local_tracks WHERE id = ?1";
     pub(super) PLACE_IMPORTED = "SELECT EXISTS(SELECT 1 FROM local_tracks t \
@@ -57,7 +63,7 @@ droppedneedle_kernel::sql! {
          ORDER BY created_at DESC LIMIT 1";
     pub(super) WITH_TRACKS = "SELECT id, title FROM local_tracks WHERE local_album_id = ?1 \
          ORDER BY disc_number, track_number, id";
-    pub(super) GUARD = "SELECT local_album_id, state, row_revision FROM library_identify_reviews \
+    pub(super) REVIEW_GUARD_ROW = "SELECT local_album_id, state, row_revision FROM library_identify_reviews \
              WHERE id = ?1";
     pub(super) MARK = "UPDATE library_identify_reviews SET state = ?3, resolved_by_user_id = ?4, \
          updated_ms = ?5 WHERE id = ?1 AND state = ?2";
@@ -118,7 +124,7 @@ droppedneedle_kernel::sql! {
              (idempotency_key, job_id, control, requested_at) VALUES (?1, ?2, ?3, ?4)";
     pub(super) CLEAR_REIDENTIFICATION_RESULT = "UPDATE library_reidentification_snapshots SET result_json = NULL, \
                  selected_candidate_key = NULL WHERE job_id = ?1";
-    pub(super) ROWS = "SELECT a.id, a.actor_user_id, a.action_kind, a.reason_code, \
+    pub(super) ALBUM_HISTORY_ROWS = "SELECT a.id, a.actor_user_id, a.action_kind, a.reason_code, \
     a.before_json, a.after_json, a.created_at FROM library_catalog_actions a \
     WHERE (a.local_album_id = ?1 OR a.local_album_id IN \
       (SELECT r.id FROM local_albums r WHERE r.retired_into_album_id = ?1)) \
@@ -136,4 +142,98 @@ droppedneedle_kernel::sql! {
         'automatic_match_withdrawn', 'undo_automatic_edition', 'fold_undone', \
         'management_hand_back_given_up')) \
     ORDER BY a.created_at DESC, a.rowid DESC LIMIT 50";
+    /// The release of album `?1` a person chose, when it is `?3` and no custom edition is active.
+    pub(super) RELEASE_A_PERSON_CHOSE = "SELECT release_mbid FROM local_album_external_identities \
+                 WHERE local_album_id = ?1 AND provider = ?2 \
+                 AND decision_source IN " + PERSONS + " \
+                 AND lower(release_mbid) = lower(?3) \
+                 AND NOT EXISTS (SELECT 1 FROM library_custom_edition_active c \
+                 WHERE c.local_album_id = ?1)";
+    /// The first titles of a list of tracks, by disc and track number.
+    family TITLES_OF_TRACKS = titles_of_tracks;
+    /// How many reviews a listing's filter holds.
+    pub(super) REVIEW_COUNT = "SELECT COUNT(*) " + REVIEW_LISTING;
+    pub(super) REVIEW_COUNT_BY_REASON = "SELECT r.reason_code, COUNT(*) " + REVIEW_LISTING + " GROUP BY r.reason_code \
+             ORDER BY COUNT(*) DESC";
+    pub(super) REVIEW_COUNT_BY_STATE = "SELECT r.state, COUNT(*) " + REVIEW_LISTING + " GROUP BY r.state";
+    pub(super) REVIEW_BY_ID = "SELECT " + REVIEW_COLUMNS + " FROM library_identify_reviews r \
+             LEFT JOIN local_albums a ON a.id = r.local_album_id WHERE r.id = ?1";
+    /// A review row's columns; the one before the revision says whether a person's choice, made now or carried over from v2, holds the album.
+    pub(super) fragment REVIEW_COLUMNS = "r.id, r.local_album_id, r.reason_code, r.candidates_json, r.state, \
+         r.resolved_by_user_id, r.selected_candidate_key, COALESCE(a.title, ''), \
+         COALESCE(a.album_artist_name, ''), r.created_ms, r.updated_ms, \
+         EXISTS (SELECT 1 FROM local_album_external_identities e \
+                 WHERE e.local_album_id = r.local_album_id AND e.decision_source IN " + PERSONS + "), \
+         r.row_revision";
+    /// `FROM ... WHERE ...` of a review listing, every filter a named parameter that may be NULL.
+    pub(super) fragment REVIEW_LISTING = "FROM library_identify_reviews r \
+         JOIN local_albums a ON a.id = r.local_album_id \
+         WHERE a.retired_into_album_id IS NULL \
+         AND (:states IS NULL OR r.state IN (SELECT value FROM json_each(:states))) \
+         AND (:album IS NULL OR r.local_album_id = :album) \
+         AND (:reason IS NULL OR r.reason_code = :reason) \
+         AND (:search IS NULL OR lower(a.title) LIKE :search \
+              OR lower(COALESCE(a.album_artist_name, '')) LIKE :search) \
+         AND (:ids IS NULL OR r.id IN (SELECT value FROM json_each(:ids))) \
+         AND (:scopes IS NULL OR EXISTS (SELECT 1 FROM local_tracks t, \
+              (SELECT json_extract(value, '$[0]') AS root, json_extract(value, '$[1]') AS path \
+               FROM json_each(:scopes)) s \
+              WHERE t.local_album_id = r.local_album_id AND t.root_id = s.root \
+              AND (s.path = '.' OR t.relative_path = s.path \
+                   OR substr(t.relative_path, 1, length(s.path) + 1) = s.path || '/'))) \
+         AND (:policy IS NULL OR EXISTS (SELECT 1 FROM local_tracks t \
+              WHERE t.local_album_id = r.local_album_id AND t.applied_policy = :policy)) \
+         AND (:job IS NULL OR EXISTS (SELECT 1 FROM library_identify_jobs j \
+              WHERE j.local_album_id = r.local_album_id AND j.state = :job)) \
+         AND (:no_active = 0 OR NOT EXISTS (SELECT 1 FROM library_identify_jobs j \
+              WHERE j.local_album_id = r.local_album_id \
+              AND j.state IN ('queued', 'running', 'deferred'))) \
+         AND (:created_from IS NULL OR r.created_ms >= :created_from) \
+         AND (:created_to IS NULL OR r.created_ms <= :created_to) \
+         AND (:updated_from IS NULL OR r.updated_ms >= :updated_from) \
+         AND (:updated_to IS NULL OR r.updated_ms <= :updated_to) \
+         AND (:with_candidates = 0 OR json_array_length(r.candidates_json) > 0)";
+    pub(super) fragment LIFT_EXCLUSIONS = "UPDATE local_tracks SET manual_excluded = 0, \
+             availability = CASE WHEN availability = 'excluded' AND applied_policy <> 'excluded' \
+                            THEN 'indexed' ELSE availability END, \
+             excluded_at = CASE WHEN applied_policy = 'excluded' THEN excluded_at ELSE NULL END, \
+             row_revision = row_revision + 1 \
+             WHERE manual_excluded = 1 AND ";
+    /// Lift the exclusions review `?1` recorded. Both parameters are always bound; each scope uses the one it needs.
+    pub(super) LIFT_RECORDED_EXCLUSIONS = LIFT_EXCLUSIONS + "id IN (SELECT local_track_id FROM library_review_exclusions WHERE review_id = ?1) \
+         AND ?2 IS NOT NULL";
+    /// Lift every exclusion on album `?2`, for a review with none recorded.
+    pub(super) LIFT_ALBUM_EXCLUSIONS = LIFT_EXCLUSIONS + "local_album_id = ?2 AND ?1 IS NOT NULL";
+    family REVIEW_PAGE = review_page;
+}
+
+pub(super) fn titles_of_tracks(tracks: ListLen) -> String {
+    let marks = crate::sql::marks(tracks);
+    format!(
+        "SELECT title FROM local_tracks WHERE id IN ({marks}) \
+         ORDER BY disc_number, track_number, title LIMIT {MAX_TITLES}"
+    )
+}
+
+pub(super) fn review_page(order: ReviewOrder) -> String {
+    let order = match order {
+        ReviewOrder::Newest => "r.updated_ms DESC",
+        ReviewOrder::Oldest => "r.updated_ms ASC",
+        ReviewOrder::MostTracks => {
+            "(SELECT COUNT(*) FROM local_tracks t WHERE t.local_album_id = r.local_album_id) DESC, \
+             r.updated_ms DESC"
+        }
+        ReviewOrder::Title => "a.title COLLATE NOCASE ASC, r.updated_ms DESC",
+        ReviewOrder::Artist => {
+            "COALESCE(a.album_artist_name, '') COLLATE NOCASE ASC, a.title COLLATE NOCASE ASC"
+        }
+        ReviewOrder::Root => {
+            "(SELECT MIN(t.root_id) FROM local_tracks t WHERE t.local_album_id = r.local_album_id), \
+             a.title COLLATE NOCASE ASC"
+        }
+        ReviewOrder::Reason => "r.reason_code ASC, r.updated_ms DESC",
+    };
+    format!(
+        "SELECT {REVIEW_COLUMNS} {REVIEW_LISTING} ORDER BY {order}, r.id LIMIT :limit OFFSET :offset"
+    )
 }

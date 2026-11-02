@@ -197,7 +197,7 @@ impl Management {
     fn subject(&self, track_id: &str) -> Result<Subject, ManagementError> {
         self.parts.db.read_blocking("management.subject", |conn| {
             conn.query_row(
-                crate::management::sql::SUBJECT.text(),
+                crate::management::sql::TRACK_TO_EDIT.text(),
                 params![track_id],
                 |row| {
                     Ok(Subject {

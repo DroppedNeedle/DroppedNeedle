@@ -21,7 +21,6 @@ use crate::catalog_revision::bump_catalog;
 use crate::clock::LibraryClock as _;
 use crate::operations::decisions::{CatalogAction, record_action};
 use crate::publish::record::changed_since_written;
-pub use crate::publish::record::record_sql;
 use droppedneedle_kernel::db::Lane;
 
 /// Skip and block code of an album the app stepped back from.
@@ -87,11 +86,7 @@ impl Cause {
 /// Whether the app has a record of this track's file.
 pub fn has_record(conn: &Connection, track_id: &str) -> rusqlite::Result<bool> {
     Ok(conn
-        .prepare_cached(&format!(
-            "SELECT 1 FROM library_track_management_state s \
-             WHERE s.local_track_id = ?1 AND {}",
-            record_sql()
-        ))?
+        .prepare_cached(crate::management::sql::TRACK_FILE_HAS_RECORD.text())?
         .query_row(params![track_id], |_| Ok(()))
         .optional()?
         .is_some())

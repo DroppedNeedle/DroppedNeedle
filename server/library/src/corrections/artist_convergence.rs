@@ -308,7 +308,7 @@ fn merge_group(
         retire_artist(tx, basis, now)?;
     }
     tx.execute(
-        crate::corrections::sql::MERGE_GROUP.text(),
+        crate::corrections::sql::BUMP_ARTIST_REVISION.text(),
         params![survivor, now],
     )?;
     record_artist_action(

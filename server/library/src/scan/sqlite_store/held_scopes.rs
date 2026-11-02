@@ -45,93 +45,8 @@ use crate::corrections::retag_merge::album_has_record;
 use crate::identify::sqlite::{match_chosen, release_chosen};
 use crate::management::automatic;
 use crate::management::takeover::{self, Cause};
-use crate::scan::sqlite_store::sql::{WALKED_PAST, held_back};
+use crate::scan::sql::HeldRows;
 use droppedneedle_kernel::db::savepoint;
-
-/// Whether the folder at the SQL expression `ancestor` covers the path at
-/// `descendant`: `.` covers everything, otherwise the path itself or
-/// anything below it ([`scope_covers_path`](crate::scan::models::scope_covers_path)).
-pub(super) fn covers(ancestor: &str, descendant: &str) -> String {
-    format!(
-        "({ancestor} = '.' OR {descendant} = {ancestor} \
-         OR substr({descendant}, 1, length({ancestor}) + 1) = {ancestor} || '/')"
-    )
-}
-
-/// Whether run `$run` refused a scope covering the row aliased `$row` because
-/// it is a link or reached through one, asked for or met by a walk
-/// (`refuse_link`). A completed scope around it did not walk there, so nothing
-/// under it counts as walked or counts toward the mass-missing guard.
-macro_rules! refused_scope {
-    ($run:literal, $row:literal) => {
-        concat!(
-            "EXISTS (SELECT 1 FROM library_scan_run_scopes x WHERE x.run_id = ",
-            $run,
-            " AND x.root_id = ",
-            $row,
-            ".root_id AND x.error_code = 'SCOPE_THROUGH_LINK' AND (",
-            $row,
-            ".relative_path = x.relative_path OR substr(",
-            $row,
-            ".relative_path, 1, length(x.relative_path) + 1) = x.relative_path || '/'))"
-        )
-    };
-}
-pub(super) use refused_scope;
-
-/// Whether the track row aliased `track` is held by the held folder
-/// aliased `hold`: indexed, found by a scan, in that folder of its root,
-/// and first indexed at or after the hold began. The looser bound on
-/// `imported_at` selects nothing more; it lets a search start from the
-/// recently indexed tracks.
-fn held(track: &str, hold: &str) -> String {
-    format!(
-        "{track}.availability = 'indexed' AND {track}.ingest_source = 'scan' \
-         AND {track}.root_id = {hold}.root_id \
-         AND {track}.imported_at >= ({hold}.held_at - 1) / 1000.0 \
-         AND CAST({track}.imported_at * 1000 AS INTEGER) >= {hold}.held_at AND {}",
-        covers(
-            &format!("{hold}.relative_path"),
-            &format!("{track}.relative_path")
-        )
-    )
-}
-
-/// Whether run `?1` lifts the hold aliased `hold`: the run completed and
-/// walked a folder covering it to the end, held back or refused no folder
-/// covering it or inside it, and no file under it went missing in the run from an album
-/// that holds no indexed file and is not merged into another. `?2` is now,
-/// for a run with no start.
-fn lifts(hold: &str) -> String {
-    format!(
-        concat!(
-            "EXISTS (SELECT 1 FROM library_scan_runs r \
-               JOIN library_scan_run_scopes s ON s.run_id = r.id \
-               WHERE r.id = ?1 AND r.state = 'completed' AND s.root_id = {hold}.root_id \
-               AND s.discovery_state = 'completed' AND {scope_covers_held}) \
-             AND NOT ",
-            held_back!("?1", "{hold}"),
-            " AND NOT ",
-            refused_scope!("?1", "{hold}"),
-            " AND NOT EXISTS (SELECT 1 FROM library_scan_failures g WHERE g.run_id = ?1 \
-               AND g.root_id = {hold}.root_id \
-               AND g.failure_code IN ('MASS_MISSING_GUARD', 'SCOPE_THROUGH_LINK') \
-               AND {held_covers_failure}) \
-             AND NOT EXISTS (SELECT 1 FROM local_tracks t \
-               JOIN local_albums a ON a.id = t.local_album_id \
-               WHERE t.availability = 'missing' AND t.root_id = {hold}.root_id \
-               AND t.missing_since >= (SELECT COALESCE(started_at, ?2) \
-                 FROM library_scan_runs WHERE id = ?1) \
-               AND {held_covers_track} AND a.retired_into_album_id IS NULL \
-               AND NOT EXISTS (SELECT 1 FROM local_tracks k \
-                 WHERE k.local_album_id = a.id AND k.availability = 'indexed'))"
-        ),
-        hold = hold,
-        scope_covers_held = covers("s.relative_path", &format!("{hold}.relative_path")),
-        held_covers_failure = covers(&format!("{hold}.relative_path"), "g.relative_path"),
-        held_covers_track = covers(&format!("{hold}.relative_path"), "t.relative_path"),
-    )
-}
 
 /// Judge the held albums and remember the ones the lift lets go, lift the
 /// holds run `run_id` settled, record the folders it held back, then wake
@@ -142,10 +57,7 @@ pub(super) fn settle(tx: &Transaction<'_>, run_id: &str, now: f64) -> rusqlite::
     let judged = mark_replacements(tx, run_id, now)?;
     let lifted = if judged {
         tx.execute(
-            &format!(
-                "DELETE FROM library_scan_held_scopes AS h WHERE {}",
-                lifts("h")
-            ),
+            crate::scan::sql::LIFT_SETTLED_HOLDS.text(),
             params![run_id, now],
         )?
     } else {
@@ -197,69 +109,13 @@ fn mark_replacements(tx: &Transaction<'_>, run_id: &str, now: f64) -> rusqlite::
     }
 }
 
-/// Where a judgement takes the new album's held rows from.
-#[derive(Clone, Copy)]
-enum HeldRows {
-    /// The rows under a hold, at the end of run `?1`.
-    UnderHolds,
-    /// The remembered rows of album `?1` still indexed on it, at a look.
-    Remembered,
-}
-
-/// Held rows and the rows of other live albums on the same release track
-/// that went since the hold began, as (new album, old album, held row).
-/// Starts from the holds or the album's tracks, so no hold means no work,
-/// and reaches the old album through its release. The old album's rows are
-/// read through its index by name: without planner statistics SQLite would
-/// build a temporary index over every track instead. Only a run end counts
-/// an old row walked past as gone: no run walks anything at a look.
-fn replacements_sql(source: HeldRows) -> String {
-    let (from, held_row, walked_past) = match source {
-        HeldRows::UnderHolds => (
-            "library_scan_held_scopes h CROSS JOIN local_tracks n",
-            held("n", "h"),
-            format!(" OR (t.availability = 'indexed' AND {WALKED_PAST})"),
-        ),
-        HeldRows::Remembered => (
-            "local_tracks n CROSS JOIN library_scan_unjudged_tracks h \
-             ON h.local_track_id = n.id",
-            "n.local_album_id = ?1 AND n.availability = 'indexed'".to_owned(),
-            String::new(),
-        ),
-    };
-    format!(
-        "SELECT DISTINCT n.local_album_id, a.id, n.id \
-         FROM {from} \
-         CROSS JOIN local_albums b ON b.id = n.local_album_id \
-         CROSS JOIN local_track_external_identities ni \
-           ON ni.local_track_id = n.id AND ni.provider = 'musicbrainz' \
-         CROSS JOIN local_album_external_identities be \
-           ON be.local_album_id = b.id AND be.provider = 'musicbrainz' \
-         CROSS JOIN local_album_external_identities ae \
-           ON lower(ae.release_mbid) = lower(be.release_mbid) AND ae.provider = 'musicbrainz' \
-         CROSS JOIN local_albums a ON a.id = ae.local_album_id \
-         CROSS JOIN local_tracks t INDEXED BY idx_local_tracks_album_availability \
-           ON t.local_album_id = a.id AND t.availability IN ('missing', 'indexed') \
-         CROSS JOIN local_track_external_identities oi \
-           ON oi.local_track_id = t.id AND oi.provider = 'musicbrainz' \
-         WHERE {held_row} AND b.retired_into_album_id IS NULL \
-         AND trim(COALESCE(be.release_mbid, '')) <> '' \
-         AND a.id <> b.id AND a.retired_into_album_id IS NULL \
-         AND trim(COALESCE(ni.release_track_mbid, '')) <> '' \
-         AND lower(trim(oi.release_track_mbid)) = lower(trim(ni.release_track_mbid)) \
-         AND NOT EXISTS (SELECT 1 FROM local_track_aliases x WHERE x.alias = t.id) \
-         AND ((t.availability = 'missing' AND t.missing_since * 1000 >= h.held_at){walked_past}) \
-         ORDER BY 1, 2, 3"
-    )
-}
-
 /// Each new album with the old albums it may have replaced, and the held
 /// rows paired with each old album.
 type Found = BTreeMap<String, BTreeMap<String, Vec<String>>>;
 
 fn replacements(tx: &Transaction<'_>, source: HeldRows, key: &str) -> rusqlite::Result<Found> {
     let mut found = Found::new();
-    let mut statement = tx.prepare_cached(&replacements_sql(source))?;
+    let mut statement = tx.prepare_cached(&crate::scan::sql::replacements_sql(source))?;
     let rows = statement.query_map(params![key], |row| {
         Ok((
             row.get::<_, String>(0)?,
@@ -364,16 +220,7 @@ fn step_back(conn: &Connection, old: &str, new: &str) -> rusqlite::Result<Option
 fn remember(tx: &Transaction<'_>, run_id: &str, now: f64) -> rusqlite::Result<()> {
     let mut albums: BTreeMap<String, Vec<(String, i64)>> = BTreeMap::new();
     {
-        let mut statement = tx.prepare_cached(&format!(
-            "SELECT n.local_album_id, n.id, MIN(h.held_at) \
-             FROM library_scan_held_scopes h \
-             CROSS JOIN local_tracks n \
-             CROSS JOIN local_albums b ON b.id = n.local_album_id \
-             WHERE {} AND {} AND b.retired_into_album_id IS NULL \
-             GROUP BY n.id",
-            lifts("h"),
-            held("n", "h"),
-        ))?;
+        let mut statement = tx.prepare_cached(crate::scan::sql::ROWS_LET_GO.text())?;
         let rows = statement.query_map(params![run_id, now], |row| {
             Ok((
                 row.get::<_, String>(0)?,
@@ -456,11 +303,6 @@ fn edition_release(conn: &Connection, album_id: &str) -> rusqlite::Result<Option
 /// holds a folder back: one of its scanned files sits in a held folder
 /// and was first indexed after the hold began.
 pub(crate) fn holds_new_files(conn: &Connection, album_id: &str) -> rusqlite::Result<bool> {
-    conn.prepare_cached(&format!(
-        "SELECT EXISTS (SELECT 1 FROM local_tracks t \
-         CROSS JOIN library_scan_held_scopes h \
-         WHERE t.local_album_id = ?1 AND {})",
-        held("t", "h")
-    ))?
-    .query_row(params![album_id], |row| row.get(0))
+    conn.prepare_cached(crate::scan::sql::ALBUM_HOLDS_NEW_FILES.text())?
+        .query_row(params![album_id], |row| row.get(0))
 }
