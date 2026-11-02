@@ -52,9 +52,6 @@ droppedneedle_kernel::sql! {
     /// Whether a custom edition manifest names the account.
     pub(super) HELD_BY_EDITION_MANIFESTS = "SELECT 1 FROM library_custom_edition_manifests \
         WHERE sealed_by_user_id = ?1 LIMIT 1";
-    /// Whether a library management exclusion names the account.
-    pub(super) HELD_BY_MANAGEMENT_EXCLUSIONS = "SELECT 1 FROM library_management_exclusions \
-        WHERE excluded_by_user_id = ?1 LIMIT 1";
 
     /// Insert one sign-in binding, with its sealed token document or none.
     pub(super) INSERT_PROVIDER = "INSERT INTO auth_providers (id, user_id, provider, provider_uid, \

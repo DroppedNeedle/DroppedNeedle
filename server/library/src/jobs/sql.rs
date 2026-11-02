@@ -1,7 +1,6 @@
 //! The statements of `library_operation_jobs` and `library_operation_work`.
 //! The five lease statements follow the named-parameter contract of the
-//! kernel's lease core: times arrive there as integer milliseconds and are
-//! stored as seconds. The rest are this module's own.
+//! kernel's lease core. Every time is integer milliseconds.
 
 /// A condition on `job` (a `library_operation_jobs` row) that holds while
 /// the job still has work coming on its albums: queued, running, paused,
@@ -84,13 +83,13 @@ droppedneedle_kernel::sql! {
     /// Take the next due queued job of a kind. A management job waits in
     /// the queue only while it has files to plan or write.
     pub(super) CLAIM = "UPDATE library_operation_jobs SET state = 'running', \
-             started_at = COALESCE(started_at, :now / 1000.0), lease_owner = :owner, \
-             lease_expires_at = :lease_until / 1000.0, heartbeat_at = :now / 1000.0, \
-             updated_at = :now / 1000.0, next_attempt_at = NULL, \
+             started_at = COALESCE(started_at, :now), lease_owner = :owner, \
+             lease_expires_at = :lease_until, heartbeat_at = :now, \
+             updated_at = :now, next_attempt_at = NULL, \
              row_revision = row_revision + 1, event_revision = event_revision + 1 \
              WHERE id = (SELECT j.id FROM library_operation_jobs j \
                  WHERE j.kind = :scope AND j.state = 'queued' \
-                 AND (j.next_attempt_at IS NULL OR j.next_attempt_at <= :now / 1000.0) \
+                 AND (j.next_attempt_at IS NULL OR j.next_attempt_at <= :now) \
                  AND (j.kind <> 'library_management' OR EXISTS (SELECT 1 \
                      FROM library_management_job_snapshots s WHERE s.job_id = j.id \
                      AND s.phase IN ('planning', 'applying', 'undoing', 'restoring'))) \
@@ -98,24 +97,24 @@ droppedneedle_kernel::sql! {
              RETURNING rowid";
     /// Extend a lease, for its owner only.
     pub(super) HEARTBEAT = "UPDATE library_operation_jobs \
-             SET lease_expires_at = :lease_until / 1000.0, heartbeat_at = :now / 1000.0 \
+             SET lease_expires_at = :lease_until, heartbeat_at = :now \
              WHERE rowid = :id AND state = 'running' AND lease_owner = :owner";
     /// Put a running job back in the queue, for its owner only.
     pub(super) RELEASE = "UPDATE library_operation_jobs SET state = 'queued', \
              lease_owner = NULL, lease_expires_at = NULL, heartbeat_at = NULL, \
-             updated_at = :now / 1000.0, row_revision = row_revision + 1, \
+             updated_at = :now, row_revision = row_revision + 1, \
              event_revision = event_revision + 1 \
              WHERE rowid = :id AND state = 'running' AND lease_owner = :owner";
     /// Requeue the jobs of a kind whose lease ran out.
     pub(super) RECOVER_EXPIRED = "UPDATE library_operation_jobs SET state = 'queued', \
              lease_owner = NULL, lease_expires_at = NULL, heartbeat_at = NULL, \
-             updated_at = :now / 1000.0, row_revision = row_revision + 1, \
+             updated_at = :now, row_revision = row_revision + 1, \
              event_revision = event_revision + 1 \
-             WHERE kind = :scope AND state = 'running' AND lease_expires_at <= :now / 1000.0";
+             WHERE kind = :scope AND state = 'running' AND lease_expires_at <= :now";
     /// Requeue every running job of a kind: an earlier process held them.
     pub(super) RECOVER_AT_START = "UPDATE library_operation_jobs SET state = 'queued', \
              lease_owner = NULL, lease_expires_at = NULL, heartbeat_at = NULL, \
-             updated_at = :now / 1000.0, row_revision = row_revision + 1, \
+             updated_at = :now, row_revision = row_revision + 1, \
              event_revision = event_revision + 1 \
              WHERE kind = :scope AND state = 'running'";
     /// The running work of the jobs [`RECOVER_EXPIRED`] is about to

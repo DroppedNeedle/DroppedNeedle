@@ -4818,7 +4818,7 @@ fn recycled_at(fix: &Fixture, track: &str, secs: f64) {
         .execute(
             "UPDATE library_publish_replacements SET recycled_at = ?2 \
              WHERE replaced_track_id = ?1",
-            rusqlite::params![track, secs],
+            rusqlite::params![track, (secs * 1000.0) as i64],
         )
         .unwrap();
 }
@@ -6336,6 +6336,56 @@ fn a_publish_stopped_before_the_upgrade_commits_once_after_it() {
     let lyrics = publish::operations::outputs_of(&conn, "bundle-move").unwrap();
     assert_eq!(lyrics["track-b"][0].dest_rel, "organized/b.lrc");
     assert_eq!(lyrics["track-b"][0].kind, OutputKind::Lyrics);
+
+    // A real Undo of that run, on a day before its snapshots run out, puts
+    // the file back and takes its generated file away. The stored before-state
+    // holds no tags, so this pins the place, not the tags.
+    // The stored plan was sealed with a test's override revision; a bundle
+    // this undo takes pins none.
+    conn.execute(
+        "UPDATE library_publish_operations SET bundle_json = \
+         replace(bundle_json, '\"override_revision\":2', '\"override_revision\":0') \
+         WHERE bundle_id = 'bundle-move'",
+        [],
+    )
+    .unwrap();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        // The fixture's database, so the platform finds its undo folder.
+        let mut config = droppedneedle_kernel::config::AppConfig::with_root(0, &fix.dir);
+        config.library_db_path = fix.db_path.clone();
+        let platform = crate::common::TestPlatform::on(&db, &fix.dir)
+            .config(config)
+            .clock(std::sync::Arc::new(ManualClock::at(60 * 86_400_000)))
+            .build()
+            .await;
+        let (library, _) = crate::common::library::library_at(&platform);
+        library
+            .scans
+            .add_root(
+                Some("music".to_owned()),
+                fix.dir.join("music").to_string_lossy().into_owned(),
+                droppedneedle_library::scan::EffectivePolicy::Automatic,
+            )
+            .expect("root adds");
+        crate::common::library::services(&library)
+            .management
+            .undo_bundle("bundle-move", None)
+            .expect("undo publishes");
+    });
+    let back = fix.sandbox.resolve("music", "staging/b.flac").unwrap();
+    assert!(back.is_file());
+    assert!(!moved.exists());
+    assert!(
+        !fix.sandbox
+            .resolve("music", "organized/b.lrc")
+            .unwrap()
+            .exists()
+    );
+    assert_eq!(track_row(&conn, "track-b").0, "staging/b.flac");
 }
 
 /// An import stopped before its catalog commit by the publisher from

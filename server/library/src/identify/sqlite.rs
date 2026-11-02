@@ -1259,8 +1259,8 @@ fn store_release(
                 release_input_hash(),
                 payload,
                 payload_sha,
-                now,
-                now + RELEASE_FRESH_SECS as f64,
+                crate::clock::ms(now),
+                crate::clock::ms(now + RELEASE_FRESH_SECS as f64),
             ],
         )?;
         // An album matched to it may have been waiting for it.
@@ -1274,7 +1274,7 @@ fn store_release(
         params![
             PROVIDER,
             RELEASE_KIND,
-            now,
+            crate::clock::ms(now),
             review_state_str(ReviewState::Pending)
         ],
     )?;
@@ -1334,7 +1334,7 @@ fn rewrite_document(
     edit: impl FnOnce(&mut Release),
 ) -> rusqlite::Result<Option<Release>> {
     let entity = release_mbid.trim().to_ascii_lowercase();
-    let current: Option<(String, String, f64, Option<f64>)> = tx
+    let current: Option<(String, String, i64, Option<i64>)> = tx
         .query_row(
             crate::identify::sql::STORED_DOCUMENT.text(),
             params![PROVIDER, RELEASE_KIND, entity, release_input_hash()],
@@ -1360,7 +1360,7 @@ fn rewrite_document(
         }
     };
     let payload_sha = hex_sha256(payload.as_bytes());
-    let mut rows: Vec<(String, String, f64, Option<f64>)> = {
+    let mut rows: Vec<(String, String, i64, Option<i64>)> = {
         let mut statement = tx.prepare(crate::identify::sql::DOCUMENTS_WITH_PAYLOAD.text())?;
         statement
             .query_map(params![PROVIDER, RELEASE_KIND, old_sha], |row| {

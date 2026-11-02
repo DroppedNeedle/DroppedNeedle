@@ -54,7 +54,7 @@ droppedneedle_kernel::sql! {
     pub(super) TRACK_FOLLOW_REBIN = "UPDATE local_tracks SET file_path = ?3, \
              row_revision = row_revision + 1 WHERE id = ?1 AND file_path = ?2";
     /// One page of recycled copies due to expire: copies that reached the
-    /// bin before `?1` (unix seconds), are not expired yet and whose row
+    /// bin before `?1` (unix milliseconds), are not expired yet and whose row
     /// is done, after the cursor (`?2` recycled at, `?3` journal id), at
     /// most `?4`, each with its track and its copy's identity on landing.
     pub(super) EXPIRY_DUE = "SELECT r.journal_id, r.recycle_to, r.replaced_sha256, \
@@ -163,11 +163,11 @@ droppedneedle_kernel::sql! {
     /// One page of what the recycle bin holds, grouped by the removal or
     /// change that put it there, newest first, before the cursor (`?1`
     /// unix ms, then bundle id `?2`), at most `?3`: each bundle with when
-    /// it was made, when its first copy reached the bin (unix seconds),
+    /// it was made, when its first copy reached the bin (unix milliseconds),
     /// and whether its rows are removals.
     pub(super) BIN_PAGE = "SELECT bundle_id, removed_at, first_binned, removal FROM ( \
              SELECT j.bundle_id AS bundle_id, \
-             COALESCE(o.created_at, CAST(MIN(r.recycled_at) * 1000 AS INTEGER), 0) AS removed_at, \
+             COALESCE(o.created_at, MIN(r.recycled_at), 0) AS removed_at, \
              MIN(r.recycled_at) AS first_binned, MAX(j.kind = 'remove') AS removal \
              FROM library_publish_replacements r \
              JOIN library_publish_journal j ON j.id = r.journal_id \
@@ -210,7 +210,7 @@ droppedneedle_kernel::sql! {
     /// How many files the bin holds.
     pub(crate) BIN_COUNT = "SELECT COUNT(*) FROM library_publish_replacements r \
              JOIN library_publish_journal j ON j.id = r.journal_id WHERE " + IN_BIN;
-    /// The copies an empty at `?1` (unix seconds) would try: the expiry's
+    /// The copies an empty at `?1` (unix milliseconds) would try: the expiry's
     /// due rows with no retention, each with its track.
     pub(super) BIN_DUE = "SELECT r.recycle_to, r.replaced_track_id \
              FROM library_publish_replacements r \
@@ -307,10 +307,10 @@ droppedneedle_kernel::sql! {
              LEFT JOIN local_track_external_identities ti \
              ON ti.local_track_id = t.id AND ti.provider = 'musicbrainz' \
              WHERE t.id IN (SELECT value FROM json_each(?1))";
-    /// Record one operation, made at `?4` (unix milliseconds).
+    /// Record one operation, made at `?3` (unix milliseconds).
     pub(super) OPERATION_INSERT = "INSERT OR IGNORE INTO library_publish_operations \
-             (bundle_id, bundle_json, created_day, created_at, applied_by_user_id) \
-             VALUES (?1, ?2, ?3, ?4, ?5)";
+             (bundle_id, bundle_json, created_at, applied_by_user_id) \
+             VALUES (?1, ?2, ?3, ?4)";
     /// One recorded bundle's JSON (`?1`).
     pub(super) OPERATION_JSON = "SELECT bundle_json FROM library_publish_operations \
              WHERE bundle_id = ?1";
@@ -320,21 +320,21 @@ droppedneedle_kernel::sql! {
              FROM library_publish_outputs p \
              JOIN library_publish_operations o ON o.bundle_id = p.bundle_id \
              WHERE p.track_id = ?1 \
-             ORDER BY o.created_day, o.rowid, p.item_index, p.output_index";
+             ORDER BY o.created_at, o.rowid, p.item_index, p.output_index";
     /// The generated files one publish (`?1`) placed, each with its track,
     /// in plan order.
     pub(super) OUTPUTS_OF_BUNDLE = "SELECT track_id, dest_root, dest_rel, sha256, size, kind \
              FROM library_publish_outputs WHERE bundle_id = ?1 \
              ORDER BY item_index, output_index";
-    /// Bundles holding a snapshot expired by day `?1`.
+    /// Bundles holding a snapshot expired by the day starting at `?1`.
     pub(super) EXPIRED_SNAPSHOT_BUNDLES = "SELECT DISTINCT bundle_id \
-             FROM library_publish_snapshots WHERE expires_day <= ?1 ORDER BY bundle_id";
+             FROM library_publish_snapshots WHERE expires_at <= ?1 ORDER BY bundle_id";
     /// A bundle's (`?1`) operation blob references.
     pub(super) DELETE_OPERATION_REFS = "DELETE FROM library_publish_blob_refs \
              WHERE owner_kind = 'operation' AND owner_id = ?1";
-    /// A bundle's (`?1`) snapshots expired by day `?2`.
+    /// A bundle's (`?1`) snapshots expired by the day starting at `?2`.
     pub(super) DELETE_EXPIRED_SNAPSHOTS = "DELETE FROM library_publish_snapshots \
-             WHERE bundle_id = ?1 AND expires_day <= ?2";
+             WHERE bundle_id = ?1 AND expires_at <= ?2";
     /// The blob references of previews whose job has ended.
     pub(crate) DROP_PREVIEW_REFS = "DELETE FROM library_publish_blob_refs \
              WHERE owner_kind = 'preview' AND owner_id NOT IN (SELECT id \
@@ -438,16 +438,16 @@ droppedneedle_kernel::sql! {
     pub(super) SET_TRACK_INGEST = "UPDATE local_tracks SET ingest_source = ?4, download_task_id = ?2, \
          source_path = ?3 WHERE id = ?1";
     pub(super) RECORD = "INSERT INTO library_publish_snapshots
-             (id, bundle_id, track_id, blob_sha256, created_day, expires_day)
+             (id, bundle_id, track_id, blob_sha256, created_at, expires_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)";
     pub(super) ADD_REF = "INSERT OR IGNORE INTO library_publish_blob_refs (sha256, owner_kind, owner_id)
              VALUES (?1, ?2, ?3)";
-    pub(super) SNAPSHOT_ROW = "SELECT track_id, blob_sha256, expires_day
+    pub(super) SNAPSHOT_ROW = "SELECT track_id, blob_sha256, expires_at / 86400000
                  FROM library_publish_snapshots WHERE id = ?1";
-    pub(super) BUNDLE = "SELECT id, track_id, blob_sha256, expires_day
+    pub(super) BUNDLE = "SELECT id, track_id, blob_sha256, expires_at / 86400000
              FROM library_publish_snapshots WHERE bundle_id = ?1 ORDER BY id";
     pub(super) WRITE_BASELINE = "INSERT OR IGNORE INTO library_publish_baselines
-             (track_id, blob_sha256, original_root, original_rel, created_day)
+             (track_id, blob_sha256, original_root, original_rel, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5)";
     pub(super) WRITE_BASELINE_BLOB_REF = "INSERT OR IGNORE INTO library_publish_blob_refs (sha256, owner_kind, owner_id)
              VALUES (?1, 'baseline', ?2)";

@@ -27,16 +27,16 @@ droppedneedle_kernel::sql! {
     pub(super) WORK_RESULT = "SELECT state, failure_code, result_json, bundle_id \
              FROM library_operation_work WHERE job_id = ?1 AND ordinal = ?2";
     /// The next album automatic management looks at (`?1` now): (album,
-    /// tries). With `?2` set (unix seconds), only an album queued at or
+    /// tries). With `?2` set (unix milliseconds), only an album queued at or
     /// before it whose identification has no job queued, running or
     /// deferred, nor one that landed after it.
     pub(super) AUTOMATIC_DUE = "SELECT q.local_album_id, q.attempts \
-             FROM library_management_automatic_queue q WHERE q.not_before <= ?1 \
+             FROM library_management_automatic_queue q WHERE q.not_before_at <= ?1 \
              AND (?2 IS NULL OR (q.queued_at <= ?2 AND NOT EXISTS (SELECT 1 \
                  FROM library_identify_jobs j WHERE j.local_album_id = q.local_album_id \
                  AND (j.state IN ('queued', 'running', 'deferred') \
-                     OR j.updated_ms > ?2 * 1000)))) \
-             ORDER BY q.not_before, q.local_album_id LIMIT 1";
+                     OR j.updated_ms > ?2)))) \
+             ORDER BY q.not_before_at, q.local_album_id LIMIT 1";
     /// The bundles of job `?1` that count as applied: (ordinal, bundle id).
     /// A bundle counts when its album succeeded (`?2`) or its publish
     /// committed after the job stopped.
@@ -45,7 +45,7 @@ droppedneedle_kernel::sql! {
              AND (state = ?2 OR bundle_id IN (SELECT bundle_id FROM library_publish_journal \
                  WHERE state IN ('committed', 'cleanup_pending', 'cleaned'))) \
              ORDER BY ordinal";
-    /// Undo counts of job `?1` on day `?2`, its applied bundles chosen as in
+    /// Undo counts of job `?1` on the day starting at `?2`, its applied bundles chosen as in
     /// [`APPLIED_BUNDLES`] (`?3` the succeeded state): files with a
     /// before-state still kept, files whose before-state is gone, and the
     /// first day one runs out.
@@ -59,29 +59,29 @@ droppedneedle_kernel::sql! {
                AND j.state IN ('committed', 'cleaned', 'cleanup_pending')) \
              SELECT \
                (SELECT COUNT(*) FROM library_publish_snapshots s JOIN bundles b \
-                 ON b.bundle_id = s.bundle_id WHERE s.expires_day > ?2), \
+                 ON b.bundle_id = s.bundle_id WHERE s.expires_at > ?2), \
                (SELECT COUNT(*) FROM written w WHERE NOT EXISTS (SELECT 1 \
                  FROM library_publish_snapshots s WHERE s.bundle_id = w.bundle_id \
-                 AND s.track_id = w.track_id AND s.expires_day > ?2)), \
-               (SELECT MIN(s.expires_day) FROM library_publish_snapshots s JOIN bundles b \
-                 ON b.bundle_id = s.bundle_id WHERE s.expires_day > ?2)";
-    pub(super) QUEUE = "INSERT INTO library_management_automatic_queue (local_album_id, queued_at, not_before) \
+                 AND s.track_id = w.track_id AND s.expires_at > ?2)), \
+               (SELECT MIN(s.expires_at) / 86400000 FROM library_publish_snapshots s JOIN bundles b \
+                 ON b.bundle_id = s.bundle_id WHERE s.expires_at > ?2)";
+    pub(super) QUEUE = "INSERT INTO library_management_automatic_queue (local_album_id, queued_at, not_before_at) \
          SELECT ?1, ?2, ?2 WHERE EXISTS (SELECT 1 FROM local_albums WHERE id = ?1) \
          ON CONFLICT (local_album_id) DO UPDATE SET queued_at = excluded.queued_at, \
-         not_before = excluded.not_before, attempts = 0, last_reason_code = NULL";
+         not_before_at = excluded.not_before_at, attempts = 0, last_reason_code = NULL";
     pub(super) STAMP_RETAG_FOLLOWED = "UPDATE library_management_automatic_queue SET retag_followed_at = ?2 \
          WHERE local_album_id = ?1";
     pub(super) HAND_BACK_STAMPED = "SELECT 1 FROM library_album_takeovers \
              WHERE local_album_id = ?1 AND handed_back_at IS NOT NULL";
     pub(super) RETAG_FOLLOWED = "SELECT 1 FROM library_management_automatic_queue \
              WHERE local_album_id = ?1 AND retag_followed_at IS NOT NULL";
-    pub(super) WAKE = "UPDATE library_management_automatic_queue SET not_before = ?1, attempts = 0 \
-         WHERE last_reason_code IS NOT NULL AND not_before > ?1 \
+    pub(super) WAKE = "UPDATE library_management_automatic_queue SET not_before_at = ?1, attempts = 0 \
+         WHERE last_reason_code IS NOT NULL AND not_before_at > ?1 \
          AND (?2 IS NULL OR last_reason_code = ?2)";
     pub(super) ALBUM_FILES = "SELECT id, root_id, relative_path, ingest_source, stat_revision FROM local_tracks \
          WHERE local_album_id = ?1 AND availability = 'indexed' ORDER BY id";
     pub(super) WRITES_BY_ITSELF = "SELECT EXISTS(SELECT 1 FROM library_management_automatic_queue \
-                 WHERE local_album_id = ?1 AND not_before < ?2 \
+                 WHERE local_album_id = ?1 AND not_before_at < ?2 \
                  AND last_reason_code IS NOT 'PREVIEW_BLOCKED') \
                  OR EXISTS(SELECT 1 FROM library_operation_jobs j \
                  JOIN library_management_job_snapshots s ON s.job_id = j.id \
@@ -91,7 +91,7 @@ droppedneedle_kernel::sql! {
                  WHERE value = ?1))";
     pub(super) DROP_AUTOMATIC_QUEUE_ROW = "DELETE FROM library_management_automatic_queue WHERE local_album_id = ?1";
     pub(super) PUT_OFF_AUTOMATIC_ALBUM = "UPDATE library_management_automatic_queue SET attempts = attempts + ?2, \
-                     not_before = ?3, last_reason_code = ?4 WHERE local_album_id = ?1";
+                     not_before_at = ?3, last_reason_code = ?4 WHERE local_album_id = ?1";
     pub(super) AUTOMATIC_SKIPPED = "SELECT q.local_album_id, a.title, a.album_artist_name, \
                  COALESCE(q.last_reason_code, ?2), q.attempts, \
                  q.queued_at FROM library_management_automatic_queue q \
@@ -149,7 +149,7 @@ droppedneedle_kernel::sql! {
     pub(super) PUBLISH_BASELINE_COUNT = "SELECT COUNT(*) FROM library_publish_baselines";
     pub(super) OLD_BASELINE_COUNT = "SELECT COUNT(*) FROM library_management_baselines b WHERE NOT EXISTS \
          (SELECT 1 FROM library_publish_baselines p WHERE p.track_id = b.local_track_id)";
-    pub(super) NEWEST_BASELINE_DAY = "SELECT COALESCE(MAX(created_day), 0) FROM library_publish_baselines";
+    pub(super) NEWEST_BASELINE_AT = "SELECT COALESCE(MAX(created_at), 0) FROM library_publish_baselines";
     pub(super) BASELINE_BLOB_COUNT = "SELECT COUNT(DISTINCT sha256) FROM library_publish_blob_refs \
          WHERE owner_kind IN ('baseline', 'v2_baseline')";
     pub(super) OPEN_JOURNAL_COUNT = "SELECT COUNT(*) FROM library_publish_journal \
@@ -157,7 +157,7 @@ droppedneedle_kernel::sql! {
     pub(super) ACTIVE_BASELINE_RESTORE_COUNT = "SELECT COUNT(*) FROM library_management_job_snapshots s \
          JOIN library_operation_jobs j ON j.id = s.job_id \
          WHERE s.mode = 'baseline_restore' AND j.state IN ('queued', 'running', 'paused', 'ready') \
-         AND (j.state <> 'ready' OR COALESCE(s.preview_expires_at, 0) > CAST(strftime('%s', 'now') AS REAL))";
+         AND (j.state <> 'ready' OR COALESCE(s.preview_expires_at, 0) > CAST(strftime('%s', 'now') AS INTEGER) * 1000)";
     pub(super) TRACKS = "SELECT id, root_id, relative_path, title, artist_name, album_title, track_number, \
          disc_number, file_format, bit_rate, sample_rate, bit_depth FROM local_tracks \
          WHERE local_album_id = ?1 AND availability = 'indexed' \
@@ -298,9 +298,9 @@ droppedneedle_kernel::sql! {
     pub(super) IS_MARKED = "SELECT 1 FROM library_album_takeovers WHERE local_album_id = ?1";
     pub(super) MARK_TAKEN_OVER = "INSERT INTO library_album_takeovers (local_album_id, cause, noticed_at) \
          VALUES (?1, ?2, ?3) ON CONFLICT (local_album_id) DO NOTHING";
-    pub(super) QUEUE_AUTOMATIC_ALBUM = "INSERT INTO library_management_automatic_queue (local_album_id, queued_at, not_before, \
+    pub(super) QUEUE_AUTOMATIC_ALBUM = "INSERT INTO library_management_automatic_queue (local_album_id, queued_at, not_before_at, \
          last_reason_code) VALUES (?1, ?2, ?3, ?4) \
-         ON CONFLICT (local_album_id) DO UPDATE SET not_before = excluded.not_before, \
+         ON CONFLICT (local_album_id) DO UPDATE SET not_before_at = excluded.not_before_at, \
          attempts = 0, last_reason_code = excluded.last_reason_code";
     pub(super) COPY_MARK = "INSERT OR IGNORE INTO library_album_takeovers (local_album_id, cause, noticed_at, \
          handed_back_at) SELECT ?2, cause, noticed_at, handed_back_at \

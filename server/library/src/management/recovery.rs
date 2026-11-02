@@ -14,7 +14,6 @@ use rusqlite::{OptionalExtension as _, params};
 
 use super::models::ManagementError;
 use super::service::Management;
-use crate::clock::LibraryClock as _;
 use crate::publish::journal::{FileJournal, JournalKind, JournalState, JournalStore};
 use crate::publish::paths::Sandbox;
 use crate::publish::recovery::Leftover;
@@ -286,7 +285,7 @@ impl Management {
                         bundle_id,
                         actor,
                         verified,
-                        self.parts.clock.now_secs(),
+                        self.parts.clock.now_ms(),
                         as_before,
                         empty
                     ],

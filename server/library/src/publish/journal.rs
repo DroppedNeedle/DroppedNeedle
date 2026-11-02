@@ -374,7 +374,7 @@ impl<'a> JournalWriter<'a> {
         let binned = binned.map(serde_json::to_string).transpose()?;
         self.tx
             .prepare_cached(sql::JOURNAL_SET_RECYCLED.text())?
-            .execute(rusqlite::params![id, at, binned])?;
+            .execute(rusqlite::params![id, crate::clock::ms(at), binned])?;
         Ok(())
     }
 

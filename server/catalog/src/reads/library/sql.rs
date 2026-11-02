@@ -97,7 +97,7 @@ droppedneedle_kernel::sql! {
     /// Why library management leaves an album's files alone: a person's
     /// exclusion first, else the app's step back.
     pub(crate) MANAGEMENT_HOLD = "SELECT 'your_choice' AS kind, \
-        CAST(excluded_at * 1000 AS INTEGER) AS held_at, \
+        excluded_at AS held_at, \
         row_revision AS exclusion_revision, 0 AS handing_back \
         FROM library_management_exclusions WHERE local_album_id = ?1 \
         UNION ALL \

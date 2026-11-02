@@ -166,7 +166,7 @@ pub fn set_identification_paused(
     let revision: Option<i64> = if paused {
         tx.query_row(
             crate::activity::sql::PAUSE_IDENTIFICATION.text(),
-            params![now, requested_by_user_id, expected],
+            params![crate::clock::ms(now), requested_by_user_id, expected],
             |row| row.get(0),
         )
         .optional()?
@@ -333,8 +333,8 @@ pub fn operation_work(conn: &Connection) -> rusqlite::Result<Vec<OperationWork>>
             succeeded: count(row.get(7)?),
             failed: count(row.get(8)?),
             skipped: count(row.get(9)?),
-            started_at: row.get(10)?,
-            updated_at: row.get(11)?,
+            started_at: crate::clock::opt_secs_at(row, 10)?,
+            updated_at: crate::clock::secs_at(row, 11)?,
         })
     })?
     .collect()

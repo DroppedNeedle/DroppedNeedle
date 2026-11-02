@@ -437,7 +437,7 @@ impl Management {
                     actor,
                     impact.baseline_count,
                     detached,
-                    self.parts.clock.now_secs()
+                    self.parts.clock.now_ms()
                 ],
             )?;
             Ok(PurgeOutcome {
@@ -482,7 +482,7 @@ fn purge_impact(conn: &rusqlite::Connection) -> rusqlite::Result<PurgeImpact> {
     let count = |sql: &str| conn.query_row(sql, [], |row| row.get::<_, i64>(0));
     let v3 = count(crate::management::sql::PUBLISH_BASELINE_COUNT.text())?;
     let v2 = count(crate::management::sql::OLD_BASELINE_COUNT.text())?;
-    let newest = count(crate::management::sql::NEWEST_BASELINE_DAY.text())?;
+    let newest = count(crate::management::sql::NEWEST_BASELINE_AT.text())?;
     let blobs = count(crate::management::sql::BASELINE_BLOB_COUNT.text())?;
     let journals = count(crate::management::sql::OPEN_JOURNAL_COUNT.text())?;
     let restores = count(crate::management::sql::ACTIVE_BASELINE_RESTORE_COUNT.text())?;

@@ -114,7 +114,7 @@ fn busy(conn: &Connection, albums: &[&str], now: f64) -> rusqlite::Result<bool> 
     conn.query_row(
         &crate::repairs::sql::albums_have_live_work(ListLen::new(albums.len())),
         params_from_iter(
-            std::iter::once(rusqlite::types::Value::Real(now)).chain(
+            std::iter::once(rusqlite::types::Value::Integer(crate::clock::ms(now))).chain(
                 albums
                     .iter()
                     .map(|album| rusqlite::types::Value::Text((*album).to_owned())),

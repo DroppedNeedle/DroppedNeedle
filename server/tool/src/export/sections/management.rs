@@ -18,6 +18,7 @@
 //! record the already-changed file as its original.
 
 use super::library::live_user;
+use super::requests::millis;
 use super::{Column, FileSet, Parent, Source, TableSection, Target, col};
 
 /// Blobs a carried baseline names: its tag snapshot, plus every blob its
@@ -47,7 +48,7 @@ pub const BLOBS: TableSection = TableSection {
         col("byte_length"),
         col("relative_path"),
         col("media_metadata_json"),
-        col("created_at"),
+        Column::new("created_at").from_sql(concat!("COALESCE(", millis!("created_at"), ", 0)")),
         col("row_revision"),
     ],
     key: &["sha256"],
@@ -95,9 +96,9 @@ pub const BASELINES: TableSection = TableSection {
         col("stat_revision"),
         col("tag_revision"),
         col("identity_revision"),
-        col("created_at"),
+        Column::new("created_at").from_sql(concat!("COALESCE(", millis!("created_at"), ", 0)")),
         col("restore_status"),
-        col("last_verified_at"),
+        Column::new("last_verified_at").from_sql(millis!("last_verified_at")),
         col("catalog_document_json"),
         col("catalog_document_hash"),
         col("row_revision"),
@@ -261,7 +262,7 @@ pub const EXCLUSIONS: TableSection = TableSection {
         col("local_album_id"),
         col("reason"),
         col("excluded_by_user_id"),
-        col("excluded_at"),
+        Column::new("excluded_at").from_sql(concat!("COALESCE(", millis!("excluded_at"), ", 0)")),
         col("row_revision"),
     ],
     key: &["local_album_id"],
@@ -292,8 +293,8 @@ pub const OVERRIDES: TableSection = TableSection {
         Column::new("actor_user_id").from_sql(live_user!("actor_user_id")),
         col("reason"),
         col("subject_revision"),
-        col("created_at"),
-        col("updated_at"),
+        Column::new("created_at").from_sql(concat!("COALESCE(", millis!("created_at"), ", 0)")),
+        Column::new("updated_at").from_sql(concat!("COALESCE(", millis!("updated_at"), ", 0)")),
         col("row_revision"),
     ],
     key: &["id"],

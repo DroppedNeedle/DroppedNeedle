@@ -49,7 +49,7 @@ droppedneedle_kernel::sql! {
          AND j.state NOT IN ('failed', 'cancelled', 'stopped') \
          AND p.eligibility IN ('eligible', 'warning') \
          AND json_extract(p.desired_document_json, '$.plan') IS NOT NULL \
-         AND p.created_at * 1000 >= ?2 \
+         AND p.created_at >= ?2 \
          AND NOT EXISTS (SELECT 1 FROM library_management_job_snapshots u \
          JOIN library_operation_work w ON w.job_id = u.job_id \
          WHERE u.linked_operation_job_id = p.job_id AND u.mode = 'undo' \

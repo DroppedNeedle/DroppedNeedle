@@ -129,7 +129,7 @@ fn look(sandbox: Option<&Sandbox>, copy: &Path) -> Look {
     }
 }
 
-type Row = (String, i64, Option<f64>, bool);
+type Row = (String, i64, Option<i64>, bool);
 type File = (String, String, String, Option<String>);
 type Record = (String, Option<String>, Option<String>, bool);
 
@@ -213,7 +213,7 @@ pub fn page(
                 kind,
                 album: None,
                 removed_at: *removed_at,
-                first_binned_at: first_binned.map(|secs| (secs * 1000.0) as i64),
+                first_binned_at: *first_binned,
                 files: 0,
                 bytes: 0,
                 not_found: 0,
@@ -281,7 +281,7 @@ pub fn summary(
             .query_row([], |row| row.get(0))?;
         let due: Vec<(String, Option<String>)> = conn
             .prepare_cached(sql::BIN_DUE.text())?
-            .query_map([cutoff], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .query_map([as_of_ms], |row| Ok((row.get(0)?, row.get(1)?)))?
             .collect::<Result<_, _>>()?;
         Ok::<_, PublishError>((count, due))
     })?;

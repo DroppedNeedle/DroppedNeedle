@@ -13,23 +13,19 @@ use rusqlite::{Connection, OptionalExtension};
 use super::PublishError;
 use super::planner::{GeneratedOutput, OutputKind, PlanBundle};
 
-/// Record one sealed bundle, made at `now_ms` (unix milliseconds) on
-/// `today_day`, with the account that applied it when a person did.
+/// Record one sealed bundle, made at `now_ms` (unix milliseconds), with the account that applied it when a person did.
 /// Overwriting an existing row is refused: bundle ids are unique per
 /// operation.
 pub fn record_operation(
     conn: &Connection,
     bundle: &PlanBundle,
-    today_day: i64,
     now_ms: i64,
     applied_by: Option<&str>,
 ) -> Result<(), PublishError> {
     let json = serde_json::to_string(bundle).map_err(PublishError::from)?;
     let changed = conn
         .prepare_cached(super::sql::OPERATION_INSERT.text())?
-        .execute(rusqlite::params![
-            bundle.id, json, today_day, now_ms, applied_by
-        ])?;
+        .execute(rusqlite::params![bundle.id, json, now_ms, applied_by])?;
     if changed == 0 {
         return Err(PublishError::Journal(
             format!("operation {} already recorded", bundle.id).into(),

@@ -1419,8 +1419,7 @@ async fn publish_operations_keep_their_rows_and_gain_an_author() {
     .await
     .unwrap();
 
-    apply_migrations(&pool).await.unwrap();
-    assert_migrated(&pool).await.unwrap();
+    run_migrations(&pool, &migrator_through(51)).await.unwrap();
 
     sqlx::query(
         "INSERT INTO library_publish_operations \
@@ -1483,8 +1482,7 @@ async fn publish_operations_take_the_start_of_their_day() {
     .await
     .unwrap();
 
-    apply_migrations(&pool).await.unwrap();
-    assert_migrated(&pool).await.unwrap();
+    run_migrations(&pool, &migrator_through(68)).await.unwrap();
 
     let rows = sqlx::query_as::<_, (String, String, i64, i64)>(
         "SELECT bundle_id, bundle_json, created_day, created_at \
@@ -3148,8 +3146,7 @@ async fn parked_reidentifications_go_back_to_the_queue() {
     );
     let report = job(&pool, "report").await;
 
-    apply_migrations(&pool).await.unwrap();
-    assert_migrated(&pool).await.unwrap();
+    run_migrations(&pool, &migrator_through(64)).await.unwrap();
 
     let parked = job(&pool, "parked").await;
     let (fields, updated_at) = parked.rsplit_once('|').expect("job fields");
@@ -3176,7 +3173,7 @@ async fn parked_reidentifications_go_back_to_the_queue() {
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert!(stamped >= 64 && stamped == latest_version(), "{stamped}");
+    assert_eq!(stamped, 64);
 }
 
 /// Migration 0065 works out every listener's album play values and each
@@ -4735,8 +4732,7 @@ async fn recycled_rows_gain_an_expiry_column() {
     .await
     .unwrap();
 
-    apply_migrations(&pool).await.unwrap();
-    assert_migrated(&pool).await.unwrap();
+    run_migrations(&pool, &migrator_through(75)).await.unwrap();
 
     let row: (String, f64, Option<i64>) = sqlx::query_as(
         "SELECT journal_id, recycled_at, expired_at FROM library_publish_replacements",
@@ -9792,4 +9788,494 @@ async fn a_fast_scan_schedule_becomes_thirty_minutes_on_upgrade() {
     ] {
         assert_eq!(upgraded(stored).await, (stored.to_owned(), 4));
     }
+}
+
+/// Migration 0115 rebuilds the library's job, management and publish tables
+/// to the schema conventions. Through the production runner, from a database
+/// at 0114 holding a row of each kind: every row and rowid stays, times land
+/// in milliseconds, bad rows take their stated form, and every index, trigger
+/// and view outside the rebuilt tables' own definitions is unchanged.
+#[tokio::test]
+async fn library_jobs_management_and_publish_tables_rebuild_on_upgrade() {
+    use droppedneedle_kernel::db::Lane;
+    use droppedneedle_library::jobs::{self, OperationKind};
+    use droppedneedle_library::management::store::undo_counts;
+    use droppedneedle_library::publish::snapshots::{SnapshotStore, purge_expired};
+
+    const REBUILT: [&str; 21] = [
+        "library_operation_jobs",
+        "library_operation_work",
+        "library_operation_control_idempotency",
+        "library_work_control",
+        "library_management_automatic_queue",
+        "library_management_baseline_purges",
+        "library_management_blobs",
+        "library_management_baselines",
+        "library_management_exclusions",
+        "library_management_job_snapshots",
+        "library_management_metadata_snapshots",
+        "library_management_overrides",
+        "library_management_plan_items",
+        "library_publish_operations",
+        "library_publish_journal",
+        "library_publish_replacements",
+        "library_publish_resolutions",
+        "library_publish_snapshots",
+        "library_publish_baselines",
+        "library_publish_blobs",
+        "library_publish_blob_refs",
+    ];
+    let hash = "a".repeat(64);
+    let dir = droppedneedle_kernel::db::scratch::ScratchDir::new("library-0115").unwrap();
+    let path = dir.join("library.db");
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(
+            sqlx::sqlite::SqliteConnectOptions::new()
+                .filename(&path)
+                .create_if_missing(true)
+                .foreign_keys(true)
+                .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal),
+        )
+        .await
+        .unwrap();
+    run_migrations(&pool, &migrator_through(114)).await.unwrap();
+    sqlx::raw_sql(&format!(
+        "INSERT INTO auth_users (id, display_name, role, created_at) \
+             VALUES ('u1', 'U', 'admin', 1); \
+         INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) \
+             VALUES ('a1', 'A', 'a', 'group', 1, 1); \
+         INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+             album_artist_id, grouping_source, created_at, updated_at) \
+             VALUES ('al1', 'r1', 'g1', 'T', 't', 'a1', 'automatic', 1, 1), \
+             ('al2', 'r1', 'g2', 'T', 't', 'a1', 'automatic', 1, 1); \
+         INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
+             path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
+             album_title, album_title_folded, file_format, ingest_source, imported_at, \
+             membership_source) \
+             VALUES ('t1', 'al1', 'r1', '/m/1.flac', '1.flac', 'h1', 1, 0, 's', 'T', 't', 'T', \
+             't', 'flac', 'scan', 0, 'automatic'); \
+         INSERT INTO library_operation_jobs (rowid, id, kind, state, requested_by_user_id, \
+             lease_owner, lease_expires_at, heartbeat_at, created_at, started_at, updated_at) \
+             VALUES (9, 'expired', 'explicit_reidentification', 'running', 'u1', 'w', 1000.5, \
+             999.25, 900.125, 900.5, 901.0), \
+             (4, 'live', 'repair', 'running', NULL, 'w', 4000000000.0, 999.0, 'bad', NULL, 901.0), \
+             (5, 'run', 'library_management', 'succeeded', 'u1', NULL, NULL, NULL, 1000.0, NULL, \
+             1000.0), \
+             (6, 'linked', 'library_management', 'succeeded', NULL, NULL, NULL, NULL, 1.0, NULL, \
+             1.0); \
+         INSERT INTO library_operation_work (job_id, ordinal, local_album_id, \
+             expected_subject_revision, expected_input_revision, action, idempotency_key, state, \
+             updated_at, bundle_id) VALUES ('expired', 0, 'al1', 1, '', 'x', 'k', 'running', 950.5, \
+             NULL), ('run', 0, 'al1', 1, '', 'x', 'k2', 'succeeded', 950.5, 'b1'); \
+         INSERT INTO library_operation_control_idempotency VALUES ('c1', 'run', 'stop', 12.5); \
+         INSERT OR REPLACE INTO library_work_control (queue_kind, state, requested_at, \
+             requested_by_user_id) VALUES ('identification', 'paused', 13.5, 'u1'); \
+         INSERT INTO library_management_automatic_queue (local_album_id, queued_at, not_before, \
+             retag_followed_at) VALUES ('al1', 14.5, 1.0e15, 7000); \
+         INSERT INTO library_management_baseline_purges VALUES ('p1', 'i', 'gone', 1, 1, 15.5); \
+         INSERT INTO library_management_blobs (sha256, kind, byte_length, relative_path, \
+             created_at) VALUES ('{hash}', 'tag_snapshot', 1, 'a/b', 16.5); \
+         INSERT INTO library_management_baselines (id, local_track_id, original_root_id, \
+             original_relative_path, format, adapter_version, semantic_snapshot_blob_sha256, \
+             stat_revision, tag_revision, created_at, last_verified_at) VALUES ('b1', 't1', 'r1', \
+             'x.flac', 'flac', '1', '{hash}', 's', 't', 17.5, 18.5); \
+         INSERT INTO library_track_management_state (local_track_id, baseline_id, \
+             last_operation_job_id) VALUES ('t1', 'b1', 'run'); \
+         INSERT INTO library_management_exclusions (local_album_id, reason, excluded_by_user_id, \
+             excluded_at) VALUES ('al2', 'r', 'u1', 19.5); \
+         INSERT INTO library_management_job_snapshots (job_id, mode, origin, phase, selection_json, \
+             profile_revision, settings_revision, naming_revision, policy_revision, \
+             catalog_revision, profile_snapshot_json, preview_created_at, preview_expires_at, \
+             linked_operation_job_id, created_at, updated_at) VALUES ('run', 'apply', 'manual', \
+             'complete', '{{}}', 'p', 's', 'n', 'q', 0, '{{}}', 20.5, 21.5, 'linked', 22.5, 23.5); \
+         INSERT INTO library_management_plan_items (job_id, ordinal, bundle_ordinal, \
+             local_track_id, expected_catalog_revision, expected_policy_revision, \
+             expected_profile_revision, expected_root_id, expected_relative_path, \
+             expected_stat_revision, expected_tag_revision, expected_file_fingerprint, \
+             source_path_identity, desired_document_json, desired_document_hash, eligibility, \
+             created_at) VALUES ('run', 0, 0, 't1', 0, 'p', 'q', 'r1', 'x', 's', 't', 'f', 'i', \
+             '{{}}', '{hash}', 'eligible', 24.5); \
+         INSERT INTO library_management_metadata_snapshots (id, provider, entity_kind, entity_id, \
+             input_hash, canonical_payload_json, payload_sha256, fetched_at, expires_at) VALUES \
+             ('m1', 'musicbrainz', 'release', 'e', '{hash}', '{{}}', '{hash}', 25.5, 26.5); \
+         INSERT INTO library_management_overrides (id, subject_kind, local_album_id, field_name, \
+             value_json, mode, actor_user_id, subject_revision, created_at, updated_at) VALUES \
+             ('o1', 'album', 'al1', 'title', '\"x\"', 'replace', 'u1', 1, 27.5, 28.5); \
+         INSERT INTO library_publish_operations (rowid, bundle_id, bundle_json, created_day, \
+             created_at, applied_by_user_id) VALUES \
+             (8, 'b1', '{{}}', 20000, 1728000000123, 'u1'), (3, 'old', '{{}}', 19000, 0, NULL); \
+         INSERT INTO library_publish_journal (id, bundle_id, kind, dest_root, dest_rel, staged, \
+             staged_sha256, track_id, catalog_revision, state, seq, commit_as) VALUES \
+             ('j1', 'b1', 'audio', 'r1', '1.flac', 's', 'h', 't1', 7, 'committed', 3, 'managed'), \
+             ('j2', 'b1', 'audio', 'r1', '2.flac', 's', 'h', NULL, NULL, 'mystery', 0, NULL), \
+             ('j3', 'b1', 'strange', 'r1', '3.flac', 's', 'h', NULL, NULL, 'cleaned', 0, NULL); \
+         INSERT INTO library_publish_replacements (journal_id, replaced_rel, replaced_sha256, \
+             recycle_to, recycled_at, expired_at) VALUES ('j1', 'o.flac', 'h', '/bin/o', 1000.5, \
+             2000); \
+         INSERT INTO library_publish_resolutions (bundle_id, resolved_by_user_id, verified_files, \
+             resolved_at) VALUES ('b1', 'gone', 1, 29.5); \
+         INSERT INTO library_publish_snapshots VALUES ('live', 'b1', 't1', '{hash}', 20000, \
+             1000000), ('dead', 'old', 't1', '{hash}', 19000, 19001), \
+             ('far', 'old', 't1', '{hash}', 200000000000, 200000000000), \
+             ('odd', 'old', 't1', '{hash}', 19000, 'soon'); \
+         UPDATE library_operation_jobs SET next_attempt_at = 902.5, terminal_at = 903.5, \
+             phase_started_at = 904.5 WHERE id = 'expired'; \
+         INSERT INTO library_publish_baselines VALUES ('t1', '{hash}', 'r1', 'x.flac', 20000); \
+         INSERT INTO library_publish_blobs VALUES ('{hash}', x'0102'); \
+         INSERT INTO library_publish_blob_refs VALUES ('{hash}', 'operation', 'b1');"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    type SchemaRow = (String, String, String, Option<String>);
+    async fn schema(pool: &SqlitePool) -> Vec<SchemaRow> {
+        sqlx::query_as("SELECT type, name, tbl_name, sql FROM sqlite_schema ORDER BY type, name")
+            .fetch_all(pool)
+            .await
+            .unwrap()
+    }
+    async fn rows(pool: &SqlitePool, tables: &[&'static str]) -> BTreeMap<&'static str, Vec<i64>> {
+        let mut out = BTreeMap::new();
+        for table in tables {
+            let ids = sqlx::query_scalar(&format!("SELECT rowid FROM {table} ORDER BY rowid"))
+                .fetch_all(pool)
+                .await
+                .unwrap();
+            out.insert(*table, ids);
+        }
+        out
+    }
+    async fn orphans(pool: &SqlitePool) -> Vec<(String, String)> {
+        sqlx::query_as("SELECT \"table\", parent FROM pragma_foreign_key_check ORDER BY 1, 2")
+            .fetch_all(pool)
+            .await
+            .unwrap()
+    }
+    async fn number(pool: &SqlitePool, sql: &str) -> Option<i64> {
+        sqlx::query_scalar(sql).fetch_one(pool).await.unwrap()
+    }
+    let schema_before = schema(&pool).await;
+    let rows_before = rows(&pool, &REBUILT).await;
+    let orphans_before = orphans(&pool).await;
+
+    // Rows keyed by a BLOB and the rows that point at them: none of them is
+    // kept, and none of them refuses the upgrade.
+    sqlx::raw_sql(
+        "INSERT INTO library_publish_journal (id, bundle_id, kind, dest_root, dest_rel, staged, \
+             staged_sha256, state) VALUES (x'6a39', 'b1', 'audio', 'r1', '9.flac', 's', 'h', \
+             'cleaned'); \
+         INSERT INTO library_publish_replacements (journal_id, replaced_rel, replaced_sha256, \
+             recycle_to) VALUES (x'6a39', 'o.flac', 'h', '/bin/9'); \
+         INSERT INTO library_operation_jobs (id, kind, state, created_at, updated_at) \
+             VALUES (x'6a', 'repair', 'succeeded', 1.0, 1.0); \
+         INSERT INTO library_operation_work (job_id, ordinal, local_album_id, \
+             expected_subject_revision, expected_input_revision, action, idempotency_key, \
+             updated_at) VALUES (x'6a', 0, 'al1', 1, '', 'x', 'k9', 1.0); \
+         INSERT INTO library_repair_snapshots (job_id, scope_json, target_matcher_version, \
+             created_at) VALUES (x'6a', '{}', 'v', 1.0);",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Through 0115 only: later migrations change other things.
+    run_migrations(&pool, &migrator_through(115)).await.unwrap();
+
+    assert_eq!(rows(&pool, &REBUILT).await, rows_before, "rows and rowids");
+    assert_eq!(number(&pool, "PRAGMA foreign_keys").await, Some(1));
+    assert_eq!(orphans(&pool).await, orphans_before, "no new orphan");
+
+    let schema_after = schema(&pool).await;
+    let own = |row: &SchemaRow| row.0 == "table" && REBUILT.contains(&row.1.as_str());
+    let gone: Vec<&str> = schema_before
+        .iter()
+        .filter(|row| !own(row) && !schema_after.contains(row))
+        .map(|row| row.1.as_str())
+        .collect();
+    assert_eq!(gone, ["idx_library_management_automatic_queue_due"]);
+    let added: Vec<&str> = schema_after
+        .iter()
+        .filter(|row| !own(row) && !schema_before.contains(row))
+        .map(|row| row.1.as_str())
+        .collect();
+    assert_eq!(
+        added,
+        [
+            "idx_library_management_automatic_queue_due",
+            "idx_library_management_baseline_purges_actor_user_id",
+            "idx_library_publish_resolutions_resolved_by_user_id",
+        ]
+    );
+    for table in REBUILT {
+        let sql: String = sqlx::query_scalar("SELECT sql FROM sqlite_schema WHERE name = ?1")
+            .bind(table)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(sql.trim_end().ends_with("STRICT"), "{table}: {sql}");
+    }
+
+    for (sql, want) in [
+        (
+            "SELECT lease_expires_at FROM library_operation_jobs WHERE id = 'expired'",
+            1_000_500,
+        ),
+        (
+            "SELECT heartbeat_at FROM library_operation_jobs WHERE id = 'expired'",
+            999_250,
+        ),
+        (
+            "SELECT created_at FROM library_operation_jobs WHERE id = 'expired'",
+            900_125,
+        ),
+        (
+            "SELECT created_at FROM library_operation_jobs WHERE id = 'live'",
+            0,
+        ),
+        (
+            "SELECT lease_expires_at FROM library_operation_jobs WHERE id = 'live'",
+            4_000_000_000_000,
+        ),
+        (
+            "SELECT started_at FROM library_operation_jobs WHERE id = 'expired'",
+            900_500,
+        ),
+        (
+            "SELECT updated_at FROM library_operation_jobs WHERE id = 'expired'",
+            901_000,
+        ),
+        (
+            "SELECT next_attempt_at FROM library_operation_jobs WHERE id = 'expired'",
+            902_500,
+        ),
+        (
+            "SELECT terminal_at FROM library_operation_jobs WHERE id = 'expired'",
+            903_500,
+        ),
+        (
+            "SELECT phase_started_at FROM library_operation_jobs WHERE id = 'expired'",
+            904_500,
+        ),
+        (
+            "SELECT expires_at FROM library_publish_snapshots WHERE id = 'far'",
+            8_640_000_000_000_000_000,
+        ),
+        (
+            "SELECT created_at FROM library_publish_snapshots WHERE id = 'far'",
+            8_640_000_000_000_000_000,
+        ),
+        (
+            "SELECT expires_at FROM library_publish_snapshots WHERE id = 'odd'",
+            8_640_000_000_000_000_000,
+        ),
+        ("SELECT COUNT(*) FROM library_repair_snapshots", 0),
+        (
+            "SELECT updated_at FROM library_operation_work WHERE job_id = 'run'",
+            950_500,
+        ),
+        (
+            "SELECT requested_at FROM library_operation_control_idempotency",
+            12_500,
+        ),
+        ("SELECT requested_at FROM library_work_control", 13_500),
+        (
+            "SELECT queued_at FROM library_management_automatic_queue",
+            14_500,
+        ),
+        (
+            "SELECT not_before_at FROM library_management_automatic_queue",
+            1_000_000_000_000_000_000,
+        ),
+        (
+            "SELECT retag_followed_at FROM library_management_automatic_queue",
+            7000,
+        ),
+        (
+            "SELECT created_at FROM library_management_baseline_purges",
+            15_500,
+        ),
+        ("SELECT created_at FROM library_management_blobs", 16_500),
+        (
+            "SELECT last_verified_at FROM library_management_baselines",
+            18_500,
+        ),
+        (
+            "SELECT excluded_at FROM library_management_exclusions",
+            19_500,
+        ),
+        (
+            "SELECT preview_expires_at FROM library_management_job_snapshots",
+            21_500,
+        ),
+        (
+            "SELECT created_at FROM library_management_plan_items",
+            24_500,
+        ),
+        (
+            "SELECT expires_at FROM library_management_metadata_snapshots",
+            26_500,
+        ),
+        (
+            "SELECT updated_at FROM library_management_overrides",
+            28_500,
+        ),
+        (
+            "SELECT recycled_at FROM library_publish_replacements",
+            1_000_500,
+        ),
+        ("SELECT expired_at FROM library_publish_replacements", 2000),
+        (
+            "SELECT resolved_at FROM library_publish_resolutions",
+            29_500,
+        ),
+        (
+            "SELECT created_at FROM library_publish_operations WHERE bundle_id = 'b1'",
+            1_728_000_000_123,
+        ),
+        (
+            "SELECT created_at FROM library_publish_operations WHERE bundle_id = 'old'",
+            19_000 * 86_400_000,
+        ),
+        (
+            "SELECT created_at FROM library_publish_baselines",
+            20_000 * 86_400_000,
+        ),
+        (
+            "SELECT expires_at FROM library_publish_snapshots WHERE id = 'live'",
+            1_000_000 * 86_400_000,
+        ),
+    ] {
+        assert_eq!(number(&pool, sql).await, Some(want), "{sql}");
+    }
+    let nobody: Vec<Option<String>> = sqlx::query_scalar(
+        "SELECT resolved_by_user_id FROM library_publish_resolutions \
+         UNION ALL SELECT actor_user_id FROM library_management_baseline_purges",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(nobody, [None, None], "an id of no account becomes NULL");
+
+    // A row of no known state or kind waits for an admin and moves no file.
+    let journal: Vec<(String, String, String, i64)> =
+        sqlx::query_as("SELECT id, kind, state, seq FROM library_publish_journal ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        journal,
+        [
+            (
+                "j1".to_owned(),
+                "audio".to_owned(),
+                "committed".to_owned(),
+                3
+            ),
+            (
+                "j2".to_owned(),
+                "audio".to_owned(),
+                "needs_attention".to_owned(),
+                0
+            ),
+            (
+                "j3".to_owned(),
+                "sidecar".to_owned(),
+                "needs_attention".to_owned(),
+                0
+            ),
+        ]
+    );
+
+    // The copy fired no trigger, and the triggers it put back fire. The
+    // stamp j1 took on insert before the upgrade is still there.
+    let stamp = "SELECT fence_revision FROM library_publish_journal WHERE id = 'j1'";
+    let revision = "SELECT revision FROM library_scan_fences";
+    let stamped = number(&pool, stamp).await;
+    let fence = number(&pool, revision).await;
+    assert_eq!(stamped, fence, "the rebuild moves no fence");
+    sqlx::raw_sql("UPDATE library_publish_journal SET state = 'cleaned' WHERE id = 'j1'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(number(&pool, revision).await, fence.map(|at| at + 1));
+    assert!(
+        sqlx::raw_sql("UPDATE library_management_metadata_snapshots SET provider = 'x'")
+            .execute(&pool)
+            .await
+            .is_err(),
+        "snapshots stay immutable"
+    );
+    for refused in [
+        "UPDATE library_publish_journal SET state = 'mystery' WHERE id = 'j1'",
+        "UPDATE library_publish_journal SET kind = 'mystery' WHERE id = 'j1'",
+        "UPDATE library_operation_jobs SET created_at = 1.5 WHERE id = 'run'",
+    ] {
+        assert!(
+            sqlx::raw_sql(refused).execute(&pool).await.is_err(),
+            "{refused}"
+        );
+    }
+
+    // The new delete actions: a user goes and the album stays excluded; a
+    // linked job goes and the link is null.
+    sqlx::raw_sql(
+        "DELETE FROM auth_users WHERE id = 'u1'; \
+         DELETE FROM library_operation_jobs WHERE id = 'linked'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let by: Option<String> =
+        sqlx::query_scalar("SELECT excluded_by_user_id FROM library_management_exclusions")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(by, None);
+    assert_eq!(
+        number(
+            &pool,
+            "SELECT COUNT(*) FROM library_management_job_snapshots \
+             WHERE linked_operation_job_id IS NULL"
+        )
+        .await,
+        Some(1)
+    );
+    apply_migrations(&pool).await.unwrap();
+    pool.close().await;
+
+    // Through the production code: leases, and what Undo reads.
+    let runtime = open_runtime(&DbConfig::new(&path)).await.unwrap();
+    let db = runtime.db();
+    let (recovered, still_live) = db
+        .write_blocking(Lane::Foreground, "test", |tx| {
+            let recovered =
+                jobs::recover_expired(tx, OperationKind::ExplicitReidentification, 1001.0)?;
+            let still_live = jobs::recover_expired(tx, OperationKind::Repair, 1001.0)?;
+            Ok::<_, droppedneedle_kernel::db::DbError>((recovered, still_live))
+        })
+        .unwrap();
+    assert_eq!(recovered, 1, "a lease that ran out before the upgrade");
+    assert_eq!(still_live, 0, "a live lease is left alone");
+    let (kept, undo) = db
+        .read_blocking("test", |conn| {
+            Ok::<_, droppedneedle_library::publish::PublishError>((
+                SnapshotStore::new(conn).bundle("b1")?,
+                undo_counts(conn, "run", 20_001)?,
+            ))
+        })
+        .unwrap();
+    assert_eq!(kept[0].3, 1_000_000, "the expiry reads back as its day");
+    assert_eq!(undo.first_expiry_day, Some(1_000_000));
+    assert_eq!(
+        purge_expired(db, 20_001).unwrap(),
+        1,
+        "only the expired one goes"
+    );
+    let left = db
+        .read_blocking("test", |conn| SnapshotStore::new(conn).bundle("b1"))
+        .unwrap();
+    assert_eq!(left.len(), 1, "the purge keeps an unexpired snapshot");
+    runtime.shutdown().await;
 }

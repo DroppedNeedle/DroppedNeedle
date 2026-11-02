@@ -34,7 +34,7 @@ struct Candidate {
     original_relative_path: String,
     format: String,
     semantic_snapshot_blob_sha256: String,
-    created_at: f64,
+    created_at: i64,
     ancillary_snapshot_json: Option<String>,
 }
 
@@ -75,7 +75,7 @@ pub(crate) async fn apply(
     }
     let candidates: Vec<Candidate> = sqlx::query_as(&format!(
         "SELECT local_track_id, original_root_id, original_relative_path, format, \
-         semantic_snapshot_blob_sha256, CAST(created_at AS REAL) AS created_at, \
+         semantic_snapshot_blob_sha256, CAST(created_at AS INTEGER) AS created_at, \
          ancillary_snapshot_json FROM {SCHEMA}.\"{baselines}\" ORDER BY id"
     ))
     .persistent(false)
@@ -188,14 +188,14 @@ pub(crate) async fn apply(
         .await?;
         sqlx::query(
             "INSERT INTO main.library_publish_baselines \
-             (track_id, blob_sha256, original_root, original_rel, created_day) \
+             (track_id, blob_sha256, original_root, original_rel, created_at) \
              VALUES (?1, ?2, ?3, ?4, ?5)",
         )
         .bind(&track)
         .bind(&blob_sha)
         .bind(&candidate.original_root_id)
         .bind(&candidate.original_relative_path)
-        .bind((candidate.created_at / 86_400.0).floor() as i64)
+        .bind(candidate.created_at)
         .execute(&mut *conn)
         .await?;
         let mut owned = vec![(blob_sha, "baseline")];

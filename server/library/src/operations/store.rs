@@ -384,7 +384,7 @@ pub fn request_control(
     if let Some(key) = idempotency_key {
         tx.execute(
             crate::operations::sql::RECORD_CONTROL_REQUEST.text(),
-            params![key, job_id, control.as_str(), now],
+            params![key, job_id, control.as_str(), crate::clock::ms(now)],
         )?;
     }
     let change = match plan(&current, control) {

@@ -279,7 +279,7 @@ pub fn create(
     let mut values = vec![
         Value::Text(new.job_id.clone()),
         Value::Text(action.to_owned()),
-        Value::Real(now),
+        Value::Integer(crate::clock::ms(now)),
     ];
     values.extend(scope_values);
     let staged = tx.execute(
@@ -762,7 +762,13 @@ pub fn history(
     let (created, id) = before.unzip();
     let mut stmt = conn.prepare(crate::repairs::sql::HISTORY.text())?;
     stmt.query_map(
-        params![purpose, created, id, limit as i64, OperationKind::Repair],
+        params![
+            purpose,
+            created.map(crate::clock::ms),
+            id,
+            limit as i64,
+            OperationKind::Repair
+        ],
         |row| {
             let job_id: String = row.get(0)?;
             let phase: String = row.get(2)?;
@@ -1157,7 +1163,7 @@ pub fn begin_apply(
     tx.execute(crate::repairs::sql::CLEAR_JOB_WORK.text(), params![job_id])?;
     let staged = tx.execute(
         crate::repairs::sql::ADD_APPLY_WORK.text(),
-        params![job_id, now, FindingState::Open],
+        params![job_id, crate::clock::ms(now), FindingState::Open],
     )?;
     jobs::queue_work(tx, job_id, staged as i64, now)?;
     tx.execute(

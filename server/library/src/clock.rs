@@ -4,6 +4,7 @@
 use std::time::UNIX_EPOCH;
 
 use droppedneedle_kernel::clock::Clock;
+use droppedneedle_kernel::db::time::Millis;
 
 /// Unix seconds and days on any kernel clock.
 pub(crate) trait LibraryClock {
@@ -37,4 +38,23 @@ impl<C: Clock + ?Sized> LibraryClock for C {
 /// millisecond column with the same time as its other rows.
 pub(crate) fn ms(secs: f64) -> i64 {
     (secs * 1000.0).round() as i64
+}
+
+/// One day in milliseconds. A column that keeps a whole day holds that day's
+/// first millisecond.
+pub(crate) const DAY_MS: i64 = 86_400_000;
+
+/// Unix milliseconds as unix seconds, the unit the services work in.
+pub(crate) fn secs(ms: i64) -> f64 {
+    ms as f64 / 1000.0
+}
+
+/// A stored `_at` column, as unix seconds.
+pub(crate) fn secs_at(row: &rusqlite::Row<'_>, index: usize) -> rusqlite::Result<f64> {
+    Ok(secs(row.get::<_, Millis>(index)?.0))
+}
+
+/// A stored nullable `_at` column, as unix seconds.
+pub(crate) fn opt_secs_at(row: &rusqlite::Row<'_>, index: usize) -> rusqlite::Result<Option<f64>> {
+    Ok(row.get::<_, Option<Millis>>(index)?.map(|at| secs(at.0)))
 }

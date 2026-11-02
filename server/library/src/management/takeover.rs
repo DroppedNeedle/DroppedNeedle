@@ -338,7 +338,12 @@ pub(crate) fn mark(
     }
     tx.execute(
         crate::management::sql::QUEUE_AUTOMATIC_ALBUM.text(),
-        params![album_id, now, super::automatic::PARKED, TAKEN_OVER],
+        params![
+            album_id,
+            crate::clock::ms(now),
+            super::automatic::PARKED,
+            TAKEN_OVER
+        ],
     )?;
     record_action(
         tx,

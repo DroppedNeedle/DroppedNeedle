@@ -263,7 +263,13 @@ pub fn queue(
     };
     let queued = tx.execute(
         crate::repairs::sql::QUEUE_REPAIR_JOB.text(),
-        params![job_id, catalog_revision, unfiled, key, now],
+        params![
+            job_id,
+            catalog_revision,
+            unfiled,
+            key,
+            crate::clock::ms(now)
+        ],
     )?;
     if queued == 0 {
         return Ok(false);
@@ -389,7 +395,7 @@ pub fn step(tx: &Transaction<'_>, job_id: &str, limit: usize, now: f64) -> rusql
     )?;
     tx.execute(
         crate::repairs::sql::ADD_JOB_COUNTS.text(),
-        params![job_id, looked_at, filed, left, now],
+        params![job_id, looked_at, filed, left, crate::clock::ms(now)],
     )?;
     Ok(rows.len() < limit)
 }

@@ -186,7 +186,7 @@ pub(crate) fn merge_retagged(
 fn live_work(conn: &Connection, album_id: &str, now: f64) -> rusqlite::Result<bool> {
     conn.query_row(
         crate::corrections::sql::LIVE_WORK_ON_ALBUM.text(),
-        params![album_id, now],
+        params![album_id, crate::clock::ms(now)],
         |row| row.get(0),
     )
 }

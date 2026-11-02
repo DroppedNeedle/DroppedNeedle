@@ -45,7 +45,7 @@ const MAX_ATTEMPTS: i64 = 8;
 /// First wait before looking again; it doubles each time, up to six hours.
 const FIRST_RETRY_SECONDS: f64 = 60.0;
 /// `not_before` of an album skipped until something changes.
-pub(super) const PARKED: f64 = 1.0e15;
+pub(super) const PARKED: i64 = 1_000_000_000_000_000_000;
 /// Skip code of an album with files a scan found in a folder it holds
 /// back.
 pub const SCAN_HELD_BACK: &str = "SCAN_HELD_BACK";
@@ -206,7 +206,10 @@ pub fn skip_reason(code: &str) -> ItemReason {
 /// identification settled, or its edition changed). A queued album is
 /// looked at again from the start.
 pub fn queue(conn: &Connection, album_id: &str, now: f64) -> rusqlite::Result<()> {
-    conn.execute(crate::management::sql::QUEUE.text(), params![album_id, now])?;
+    conn.execute(
+        crate::management::sql::QUEUE.text(),
+        params![album_id, crate::clock::ms(now)],
+    )?;
     Ok(())
 }
 
@@ -224,7 +227,7 @@ pub(crate) fn stamp_retag_followed(
     queue(conn, album_id, now)?;
     conn.execute(
         crate::management::sql::STAMP_RETAG_FOLLOWED.text(),
-        params![album_id, (now * 1000.0) as i64],
+        params![album_id, crate::clock::ms(now)],
     )?;
     Ok(())
 }
@@ -257,7 +260,10 @@ fn retag_followed(conn: &Connection, album_id: &str) -> rusqlite::Result<bool> {
 /// Look again at the skipped albums whose reason may have gone (`None`
 /// wakes every one).
 pub fn wake(conn: &Connection, code: Option<&str>, now: f64) -> rusqlite::Result<usize> {
-    conn.execute(crate::management::sql::WAKE.text(), params![now, code])
+    conn.execute(
+        crate::management::sql::WAKE.text(),
+        params![crate::clock::ms(now), code],
+    )
 }
 
 /// A file's place and stat signature: changes when the file is moved,
@@ -524,7 +530,7 @@ impl Management {
                     Ok::<_, ManagementError>(
                         conn.query_row(
                             super::sql::AUTOMATIC_DUE.text(),
-                            params![now, settled_before],
+                            params![crate::clock::ms(now), settled_before.map(crate::clock::ms)],
                             |row| Ok((row.get(0)?, row.get(1)?)),
                         )
                         .optional()?,
@@ -544,7 +550,7 @@ impl Management {
             }
         };
         // (next look, attempts added, reason shown); `None` drops the row.
-        let next: Option<(f64, i64, &str)> = match verdict {
+        let next: Option<(i64, i64, &str)> = match verdict {
             Verdict::Started(job_id) => {
                 tracing::info!(album_id, job_id, "automatic management started");
                 None
@@ -572,9 +578,11 @@ impl Management {
             }
             Verdict::Wait(code) => {
                 let delay = (FIRST_RETRY_SECONDS * 2f64.powi(attempts as i32)).min(6.0 * 3600.0);
-                Some((now + delay, 1, code))
+                Some((crate::clock::ms(now + delay), 1, code))
             }
-            Verdict::RetryAt(code, at) => Some((at.max(now + FIRST_RETRY_SECONDS), 0, code)),
+            Verdict::RetryAt(code, at) => {
+                Some((crate::clock::ms(at.max(now + FIRST_RETRY_SECONDS)), 0, code))
+            }
         };
         self.parts
             .db
@@ -609,7 +617,7 @@ impl Management {
                             artist_name: row.get(2)?,
                             reason: skip_reason(&row.get::<_, String>(3)?),
                             attempts: row.get(4)?,
-                            updated_at: row.get(5)?,
+                            updated_at: crate::clock::secs_at(row, 5)?,
                         })
                     })?;
                 Ok(rows.collect::<rusqlite::Result<_>>()?)

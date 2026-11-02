@@ -363,6 +363,10 @@ fn only_the_identity_module_writes_identity_rows() {
 const IDENTITY_USES: &[(&str, &str)] = &[
     ("catalog_revision", "moves the catalog revision"),
     (
+        "clock",
+        "turns the seconds it is given into the milliseconds its rows keep",
+    ),
+    (
         "corrections::continuation",
         "carries a file's history onto the files a match placed; reads identity rows, writes none",
     ),

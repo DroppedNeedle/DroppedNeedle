@@ -420,23 +420,26 @@ fn is_held(held: &HashSet<String>, row: &DueRow) -> bool {
 /// reached the bin, so a row kept for good never holds up the rows behind
 /// it.
 fn due_rows(db: &Db, cutoff: f64, page: usize) -> Result<Vec<DueRow>, PublishError> {
-    type Due = (String, String, String, f64, Option<String>, Option<String>);
+    type Due = (String, String, String, i64, Option<String>, Option<String>);
     let mut rows = Vec::new();
-    let mut cursor = (f64::MIN, String::new());
+    let mut cursor = (i64::MIN, String::new());
     loop {
         let found: Vec<Due> = db.read_long("publish.expiry_due", &CancelFlag::never(), |conn| {
             let mut statement = conn.prepare_cached(sql::EXPIRY_DUE.text())?;
             let found = statement
-                .query_map(params![cutoff, cursor.0, cursor.1, page as i64], |row| {
-                    Ok((
-                        row.get(0)?,
-                        row.get(1)?,
-                        row.get(2)?,
-                        row.get(3)?,
-                        row.get(4)?,
-                        row.get(5)?,
-                    ))
-                })?
+                .query_map(
+                    params![crate::clock::ms(cutoff), cursor.0, cursor.1, page as i64],
+                    |row| {
+                        Ok((
+                            row.get(0)?,
+                            row.get(1)?,
+                            row.get(2)?,
+                            row.get(3)?,
+                            row.get(4)?,
+                            row.get(5)?,
+                        ))
+                    },
+                )?
                 .collect::<Result<Vec<_>, _>>()?;
             Ok::<_, PublishError>(found)
         })?;

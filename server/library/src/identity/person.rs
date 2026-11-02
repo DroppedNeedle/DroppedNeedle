@@ -440,7 +440,7 @@ pub fn leave_unmanaged(
         .execute(params![album_id, now, PROVIDER])?;
     forget_album_hand_matches(tx, album_id)?;
     tx.prepare_cached(sql::EXCLUDE_ALBUM.text())?
-        .execute(params![album_id, actor, now])?;
+        .execute(params![album_id, actor, crate::clock::ms(now)])?;
     for statement in [sql::DROP_CUSTOM, sql::DROP_REMAP] {
         drop_satellite(tx, album_id, statement)?;
     }

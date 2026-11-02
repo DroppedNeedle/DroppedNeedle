@@ -244,6 +244,11 @@ Run from the repo root. `make help` lists every target.
   order: the runner skips any migration below the database's version, so a
   later number landing first loses the earlier one on every database that
   boots in between.
+- A migration that rebuilds a table other tables reference starts with
+  `-- no-transaction`, turns foreign keys off around one transaction, keeps
+  `rowid`, indexes and triggers, refuses to commit when `foreign_key_check`
+  finds more rows than before, and turns foreign keys back on. It never
+  renames the old table first.
 - Back up with the SQLite backup API, never a copy of the live file, which can
   miss what is still in the WAL.
 - New tables follow the schema conventions: a point in time is integer

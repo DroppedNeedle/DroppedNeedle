@@ -748,7 +748,7 @@ fn sweep(
     let overrides: Vec<(String, f64, i64)> = if moves_overrides {
         tx.prepare(crate::corrections::sql::OVERRIDES_TO_MOVE.text())?
             .query_map(params![old, new], |row| {
-                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                Ok((row.get(0)?, crate::clock::secs_at(row, 1)?, row.get(2)?))
             })?
             .collect::<rusqlite::Result<_>>()?
     } else {
@@ -757,7 +757,7 @@ fn sweep(
     for (id, _, _) in &overrides {
         tx.execute(
             crate::corrections::sql::REPOINT_OVERRIDE.text(),
-            params![id, new, now],
+            params![id, new, crate::clock::ms(now)],
         )?;
     }
 

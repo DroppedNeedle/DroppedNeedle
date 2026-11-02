@@ -102,15 +102,15 @@ fn map_snapshot(conn: &Connection, row: &rusqlite::Row<'_>) -> rusqlite::Result<
         policy_revision: row.get(7)?,
         catalog_revision: row.get(8)?,
         profile_snapshot_json: row.get(9)?,
-        preview_created_at: row.get(10)?,
-        preview_expires_at: row.get(11)?,
+        preview_created_at: crate::clock::opt_secs_at(row, 10)?,
+        preview_expires_at: crate::clock::opt_secs_at(row, 11)?,
         target_root_id: row.get(12)?,
         linked_job_id: row.get(13)?,
         intent_json: row.get(14)?,
         summary_json: row.get(15)?,
         idempotency_key: row.get(16)?,
-        lease_expires_at: row.get(17)?,
-        heartbeat_at: row.get(18)?,
+        lease_expires_at: crate::clock::opt_secs_at(row, 17)?,
+        heartbeat_at: crate::clock::opt_secs_at(row, 18)?,
         proposed_settings_revision: row.get(20)?,
     }))
 }
@@ -179,8 +179,8 @@ pub fn insert_job(
             job.revisions.policy,
             job.catalog_revision,
             job.profile_snapshot_json,
-            job.now,
-            job.expires_at,
+            crate::clock::ms(job.now),
+            crate::clock::ms(job.expires_at),
             job.target_root_id,
             job.linked_job_id,
             serde_json::to_string(&JobIntent {
@@ -215,7 +215,7 @@ fn set_phase(
 ) -> rusqlite::Result<()> {
     tx.execute(
         crate::management::sql::SET_PHASE.text(),
-        params![job_id, phase, now],
+        params![job_id, phase, crate::clock::ms(now)],
     )?;
     Ok(())
 }
@@ -267,7 +267,7 @@ pub fn insert_items(
             item.eligibility.as_str(),
             item.reason().map(|reason| reason.code.clone()),
             i64::try_from(item.estimated_bytes).unwrap_or(i64::MAX),
-            now,
+            crate::clock::ms(now),
         ])?;
     }
     Ok(())
@@ -289,7 +289,7 @@ pub fn finish_planning(
         params![
             job_id,
             serde_json::to_string(summary)?,
-            now,
+            crate::clock::ms(now),
             ManagementPhase::Ready
         ],
     )?;
@@ -422,7 +422,7 @@ pub fn begin_apply(
     }
     tx.execute(
         crate::management::sql::BEGIN_APPLY.text(),
-        params![job_id, mode, phase, idempotency_key, now],
+        params![job_id, mode, phase, idempotency_key, crate::clock::ms(now)],
     )?;
     jobs::queue_work(tx, job_id, bundles.len() as i64, now)
 }
@@ -693,7 +693,7 @@ pub fn live_undos(
     let rows = statement.query_map(
         params![
             job_id,
-            now,
+            crate::clock::ms(now),
             OperationState::Failed,
             OperationState::Cancelled,
             OperationState::Stopped,
@@ -741,7 +741,7 @@ pub struct UndoCounts {
 pub fn undo_counts(conn: &Connection, job_id: &str, today: i64) -> rusqlite::Result<UndoCounts> {
     conn.query_row(
         sql::UNDO_COUNTS.text(),
-        params![job_id, today, WorkState::Succeeded],
+        params![job_id, today * crate::clock::DAY_MS, WorkState::Succeeded],
         |row| {
             Ok(UndoCounts {
                 available: row.get(0)?,
@@ -777,10 +777,10 @@ pub fn history(
         filter.root_id,
         filter.state,
         filter.mode,
-        filter.created_from,
-        filter.created_to,
+        filter.created_from.map(crate::clock::ms),
+        filter.created_to.map(crate::clock::ms),
         filter.profile_id,
-        cursor_at,
+        cursor_at.map(crate::clock::ms),
         cursor_id,
         filter.limit + 1,
     ])?;
@@ -941,6 +941,7 @@ pub fn save_tag_edit(
     actor: Option<&str>,
     now: f64,
 ) -> rusqlite::Result<()> {
+    let now = crate::clock::ms(now);
     use super::models::TagEditMode;
     if edit.mode == TagEditMode::WriteOnce {
         return Ok(());
@@ -1032,6 +1033,7 @@ pub fn revert_tag_edit(
     job_id: &str,
     now: f64,
 ) -> rusqlite::Result<()> {
+    let now = crate::clock::ms(now);
     use super::models::TagEditMode;
     if edit.mode == TagEditMode::WriteOnce {
         return Ok(());

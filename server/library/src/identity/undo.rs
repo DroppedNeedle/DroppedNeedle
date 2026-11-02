@@ -44,19 +44,19 @@ pub(crate) struct MatchStateRow {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExclusionRow {
     reason: String,
-    excluded_by_user_id: String,
+    excluded_by_user_id: Option<String>,
     excluded_at: f64,
     row_revision: i64,
 }
 
-/// The same row. The time is compared to the microsecond: read back from
-/// the undo's JSON it can differ from the stored value in the last bit.
+/// The same row. The time is compared to the millisecond, what the row keeps:
+/// an undo's JSON may hold it at the finer resolution it had when written.
 impl PartialEq for ExclusionRow {
     fn eq(&self, other: &Self) -> bool {
         self.reason == other.reason
             && self.excluded_by_user_id == other.excluded_by_user_id
             && self.row_revision == other.row_revision
-            && (self.excluded_at - other.excluded_at).abs() < 1e-6
+            && crate::clock::ms(self.excluded_at) == crate::clock::ms(other.excluded_at)
     }
 }
 
@@ -128,7 +128,7 @@ pub(crate) fn exclusion_row(
             Ok(ExclusionRow {
                 reason: row.get(0)?,
                 excluded_by_user_id: row.get(1)?,
-                excluded_at: row.get(2)?,
+                excluded_at: crate::clock::secs_at(row, 2)?,
                 row_revision: row.get(3)?,
             })
         })
@@ -148,7 +148,7 @@ pub(crate) fn restore_exclusion(
             album_id,
             row.reason,
             row.excluded_by_user_id,
-            row.excluded_at,
+            crate::clock::ms(row.excluded_at),
             actor
         ])?;
     Ok(())
@@ -763,4 +763,23 @@ pub fn undo_automatic(
     }
     crate::catalog_revision::bump_catalog(tx)?;
     Ok(outcome)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ExclusionRow;
+
+    /// An undo kept before times were whole milliseconds still matches the
+    /// row the upgrade rounded, so undoing it lifts the "leave unmanaged".
+    #[test]
+    fn a_kept_exclusion_matches_the_row_rounded_to_the_millisecond() {
+        let row = |excluded_at| ExclusionRow {
+            reason: "administrator_choice".to_owned(),
+            excluded_by_user_id: Some("u1".to_owned()),
+            excluded_at,
+            row_revision: 1,
+        };
+        assert_eq!(row(1_760_000_000.123_456), row(1_760_000_000.123));
+        assert_ne!(row(1_760_000_000.123), row(1_760_000_000.124));
+    }
 }

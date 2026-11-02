@@ -268,8 +268,8 @@ impl<'a> SnapshotStore<'a> {
                 bundle_id,
                 track_id,
                 blob_sha256,
-                created_day,
-                expires_day
+                created_day * crate::clock::DAY_MS,
+                expires_day * crate::clock::DAY_MS
             ],
         )?;
         self.add_ref(blob_sha256, "operation", bundle_id)?;
@@ -348,7 +348,10 @@ pub fn purge_expired(db: &Db, today_day: i64) -> Result<usize, PublishError> {
         &CancelFlag::never(),
         |conn| {
             let mut stmt = conn.prepare_cached(sql::EXPIRED_SNAPSHOT_BUNDLES.text())?;
-            let rows = stmt.query_map(rusqlite::params![today_day], |row| row.get(0))?;
+            let rows = stmt
+                .query_map(rusqlite::params![today_day * crate::clock::DAY_MS], |row| {
+                    row.get(0)
+                })?;
             Ok::<_, PublishError>(rows.collect::<Result<_, _>>()?)
         },
     )?;
@@ -361,7 +364,10 @@ pub fn purge_expired(db: &Db, today_day: i64) -> Result<usize, PublishError> {
                     .execute(rusqlite::params![bundle_id])?;
                 deleted += tx
                     .prepare_cached(sql::DELETE_EXPIRED_SNAPSHOTS.text())?
-                    .execute(rusqlite::params![bundle_id, today_day])?;
+                    .execute(rusqlite::params![
+                        bundle_id,
+                        today_day * crate::clock::DAY_MS
+                    ])?;
             }
             Ok::<_, PublishError>(deleted)
         })?;
@@ -424,7 +430,7 @@ impl<'a> BaselineStore<'a> {
                 blob_sha256,
                 original_root,
                 original_rel,
-                created_day
+                created_day * crate::clock::DAY_MS
             ],
         )?;
         if changed == 0 {

@@ -778,11 +778,18 @@ impl Mutations {
             .ok_or(MutationError::NotFound(ALBUM_NOT_FOUND))?;
         self.db
             .write_blocking(Lane::Foreground, "mutations.reenable_management", |tx| {
-                let removed: Option<(String, String, f64, i64)> = tx
+                let removed: Option<(String, Option<String>, f64, i64)> = tx
                     .query_row(
                         crate::sql::LIFT_EXCLUSION.text(),
                         params![canonical, expected_revision],
-                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                        |row| {
+                            Ok((
+                                row.get(0)?,
+                                row.get(1)?,
+                                crate::clock::secs_at(row, 2)?,
+                                row.get(3)?,
+                            ))
+                        },
                     )
                     .optional()?;
                 let Some((reason, by, at, revision)) = removed else {

@@ -1067,10 +1067,10 @@ impl<P: SpaceProbe> Publisher<P> {
         // pass, before the first byte stages. Rows for operations that
         // then fail linger harmlessly: undo of one compares the published
         // bytes, which never landed, so it stays put.
-        let (today, now) = (self.today_day, self.now_ms);
+        let now = self.now_ms;
         self.db
             .write_blocking(Lane::Background, "publish.record_operation", |tx| {
-                super::operations::record_operation(tx, bundle, today, now, applied_by)?;
+                super::operations::record_operation(tx, bundle, now, applied_by)?;
                 match on_record {
                     Some(on_record) => on_record(tx, &bundle.id, now),
                     None => Ok(()),

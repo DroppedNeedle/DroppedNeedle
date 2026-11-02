@@ -243,7 +243,7 @@ pub(crate) fn stored_release(
                 RELEASE_KIND,
                 mbid.trim().to_ascii_lowercase(),
                 release_input_hash(),
-                oldest,
+                crate::clock::ms(oldest),
             ],
             |row| row.get(0),
         )

@@ -13,7 +13,8 @@
 //! go back to pending with it.
 //!
 //! Every function here is plain SQL on the caller's transaction; the
-//! services own the transactions. Times are unix seconds. A caller that
+//! services own the transactions. Callers pass unix seconds, and the rows keep
+//! integer milliseconds. A caller that
 //! queues a job wakes its kind's loop with [`wake`] once the write is in.
 
 pub(crate) mod sql;
@@ -91,8 +92,8 @@ fn map_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<OperationJob> {
         reidentification_attempt_count: row.get(11)?,
         row_revision: row.get(12)?,
         event_revision: row.get(13)?,
-        created_at: row.get(14)?,
-        updated_at: row.get(15)?,
+        created_at: crate::clock::secs_at(row, 14)?,
+        updated_at: crate::clock::secs_at(row, 15)?,
     })
 }
 
@@ -147,7 +148,7 @@ pub fn insert(tx: &Transaction<'_>, new: &NewJob<'_>) -> rusqlite::Result<()> {
             ":catalog_revision": new.catalog_revision,
             ":work_count": new.expected_work_count,
             ":key": new.idempotency_key,
-            ":now": new.now,
+            ":now": crate::clock::ms(new.now),
         })
         .map(drop)
 }
@@ -169,7 +170,7 @@ pub fn insert_done(
             ":kind": kind,
             ":code": code,
             ":key": key,
-            ":now": now,
+            ":now": crate::clock::ms(now),
         })
         .map(drop)
 }
@@ -199,7 +200,7 @@ pub fn insert_work(tx: &Transaction<'_>, new: &NewWork<'_>) -> rusqlite::Result<
             ":input_revision": new.expected_input_revision,
             ":action": new.action,
             ":key": new.idempotency_key,
-            ":now": new.now,
+            ":now": crate::clock::ms(new.now),
         })
         .map(drop)
 }
@@ -222,7 +223,7 @@ pub fn insert_work_with_input(
             ":action": new.action,
             ":key": new.idempotency_key,
             ":input": input,
-            ":now": new.now,
+            ":now": crate::clock::ms(new.now),
         })
         .map(drop)
 }
@@ -247,7 +248,7 @@ pub fn recent(
     limit: u32,
 ) -> rusqlite::Result<Vec<OperationJob>> {
     conn.prepare_cached(sql::RECENT_JOBS.text())?
-        .query_map(params![kind, since, limit], map_job)?
+        .query_map(params![kind, crate::clock::ms(since), limit], map_job)?
         .collect()
 }
 
@@ -259,7 +260,7 @@ pub fn queue_work(
     now: f64,
 ) -> rusqlite::Result<()> {
     tx.prepare_cached(sql::QUEUE_WORK.text())?
-        .execute(named_params! { ":id": job_id, ":work_count": work_count, ":now": now })
+        .execute(named_params! { ":id": job_id, ":work_count": work_count, ":now": crate::clock::ms(now) })
         .map(drop)
 }
 
@@ -296,7 +297,7 @@ pub fn recover_expired(
     // job requeued here never leaves its work running.
     let now_ms = crate::clock::ms(now);
     tx.prepare_cached(sql::WORK_RECOVER_EXPIRED.text())?
-        .execute(named_params! { ":kind": kind, ":now": now_ms as f64 / 1000.0 })?;
+        .execute(named_params! { ":kind": kind, ":now": now_ms })?;
     lease::recover_expired(tx, &STATEMENTS, kind.as_str(), now_ms).map_err(db_error)
 }
 
@@ -309,7 +310,7 @@ pub fn recover_at_start(
     now: f64,
 ) -> Result<u64, DbError> {
     tx.prepare_cached(sql::WORK_RECOVER_AT_START.text())?
-        .execute(named_params! { ":kind": kind, ":now": now })?;
+        .execute(named_params! { ":kind": kind, ":now": crate::clock::ms(now) })?;
     lease::recover_at_start(tx, &STATEMENTS, kind.as_str(), crate::clock::ms(now)).map_err(db_error)
 }
 
@@ -398,7 +399,7 @@ pub fn release_until(
         return Ok(false);
     }
     tx.prepare_cached(sql::RETRY_AT.text())?
-        .execute(named_params! { ":id": job_id, ":at": retry_at })?;
+        .execute(named_params! { ":id": job_id, ":at": crate::clock::ms(retry_at) })?;
     Ok(true)
 }
 
@@ -436,7 +437,7 @@ pub fn checkpoint(
         None => return job(tx, job_id),
     };
     tx.prepare_cached(sql::HALT.text())?
-        .execute(named_params! { ":id": job_id, ":state": state, ":code": code, ":now": now })?;
+        .execute(named_params! { ":id": job_id, ":state": state, ":code": code, ":now": crate::clock::ms(now) })?;
     work_back_to_pending(tx, job_id, None, now)?;
     job(tx, job_id)
 }
@@ -448,7 +449,7 @@ fn work_back_to_pending(
     now: f64,
 ) -> rusqlite::Result<()> {
     tx.prepare_cached(sql::WORK_BACK_TO_PENDING.text())?
-        .execute(named_params! { ":job": job_id, ":code": reason, ":now": now })
+        .execute(named_params! { ":job": job_id, ":code": reason, ":now": crate::clock::ms(now) })
         .map(drop)
 }
 
@@ -492,7 +493,7 @@ pub fn finish(
             ":state": state,
             ":code": code,
             ":tally": tally.code(),
-            ":now": now,
+            ":now": crate::clock::ms(now),
         })?;
     Ok(changed == 1)
 }
@@ -507,7 +508,7 @@ pub fn park_ready(
 ) -> rusqlite::Result<bool> {
     let changed = tx
         .prepare_cached(sql::PARK_READY.text())?
-        .execute(named_params! { ":id": job_id, ":owner": owner, ":now": now })?;
+        .execute(named_params! { ":id": job_id, ":owner": owner, ":now": crate::clock::ms(now) })?;
     Ok(changed == 1)
 }
 
@@ -523,7 +524,7 @@ pub fn report_ready(
 ) -> rusqlite::Result<bool> {
     let changed = tx
         .prepare_cached(sql::REPORT_READY.text())?
-        .execute(named_params! { ":id": job_id, ":owner": owner, ":code": code, ":now": now })?;
+        .execute(named_params! { ":id": job_id, ":owner": owner, ":code": code, ":now": crate::clock::ms(now) })?;
     Ok(changed == 1)
 }
 
@@ -537,7 +538,7 @@ pub fn cancel_ready(
 ) -> rusqlite::Result<bool> {
     let changed = tx
         .prepare_cached(sql::CANCEL_READY.text())?
-        .execute(named_params! { ":id": job_id, ":code": code, ":now": now })?;
+        .execute(named_params! { ":id": job_id, ":code": code, ":now": crate::clock::ms(now) })?;
     Ok(changed == 1)
 }
 
@@ -549,7 +550,7 @@ pub fn complete_ready(
     now: f64,
 ) -> rusqlite::Result<()> {
     tx.prepare_cached(sql::COMPLETE_READY.text())?
-        .execute(named_params! { ":id": job_id, ":code": code, ":now": now })
+        .execute(named_params! { ":id": job_id, ":code": code, ":now": crate::clock::ms(now) })
         .map(drop)
 }
 
@@ -568,7 +569,7 @@ pub fn discard_preview(
             ":id": job_id,
             ":code": "DISCARDED",
             ":revision": expected_revision,
-            ":now": now,
+            ":now": crate::clock::ms(now),
         })?;
     Ok(changed == 1)
 }
@@ -605,26 +606,26 @@ pub fn control(
                         ":id": job_id,
                         ":request": request,
                         ":revision": expected_revision,
-                        ":now": now,
+                        ":now": crate::clock::ms(now),
                     })?;
             return Ok(changed == 1);
         }
         ControlChange::StopNow => sql::CONTROL_STOP_NOW,
         ControlChange::Restart => {
             tx.prepare_cached(sql::WORK_RESET_ALL.text())?
-                .execute(named_params! { ":job": job_id, ":now": now })?;
+                .execute(named_params! { ":job": job_id, ":now": crate::clock::ms(now) })?;
             sql::CONTROL_RESTART
         }
         ControlChange::RetryFailed => {
             tx.prepare_cached(sql::WORK_RESET_FAILED.text())?
-                .execute(named_params! { ":job": job_id, ":now": now })?;
+                .execute(named_params! { ":job": job_id, ":now": crate::clock::ms(now) })?;
             sql::CONTROL_RETRY_FAILED
         }
         ControlChange::Continue => sql::CONTROL_CONTINUE,
     };
     let changed = tx
         .prepare_cached(statement.text())?
-        .execute(named_params! { ":id": job_id, ":revision": expected_revision, ":now": now })?;
+        .execute(named_params! { ":id": job_id, ":revision": expected_revision, ":now": crate::clock::ms(now) })?;
     Ok(changed == 1)
 }
 
@@ -639,8 +640,9 @@ pub fn claim_work(tx: &Transaction<'_>, job_id: &str, now: f64) -> rusqlite::Res
         .query_row(named_params! { ":job": job_id }, |row| row.get(0))
         .optional()?;
     if let Some(ordinal) = ordinal {
-        tx.prepare_cached(sql::START_WORK.text())?
-            .execute(named_params! { ":job": job_id, ":ordinal": ordinal, ":now": now })?;
+        tx.prepare_cached(sql::START_WORK.text())?.execute(
+            named_params! { ":job": job_id, ":ordinal": ordinal, ":now": crate::clock::ms(now) },
+        )?;
     }
     Ok(ordinal)
 }
@@ -712,10 +714,10 @@ pub fn finish_work(
             ":state": state,
             ":code": failure_code,
             ":result": result_json,
-            ":now": now,
+            ":now": crate::clock::ms(now),
         })?;
     tx.prepare_cached(sql::COUNT_WORK.text())?
-        .execute(named_params! { ":job": job_id, ":state": state, ":now": now })
+        .execute(named_params! { ":job": job_id, ":state": state, ":now": crate::clock::ms(now) })
         .map(drop)
 }
 
@@ -735,7 +737,7 @@ pub fn finish_running_work(
             ":state": state,
             ":code": failure_code,
             ":result": result_json,
-            ":now": now,
+            ":now": crate::clock::ms(now),
         })
         .map(drop)
 }

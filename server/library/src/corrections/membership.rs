@@ -350,7 +350,7 @@ pub(crate) fn retire(
     )?;
     tx.execute(
         crate::corrections::sql::REPOINT_ALBUM_OVERRIDES.text(),
-        params![album_id, successor, now],
+        params![album_id, successor, crate::clock::ms(now)],
     )?;
     tx.execute(
         crate::corrections::sql::REJECT_PENDING_REVIEWS.text(),

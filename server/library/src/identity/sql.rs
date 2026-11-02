@@ -380,13 +380,13 @@ droppedneedle_kernel::sql! {
     pub(super) DELETE_EXCLUSION =
         "DELETE FROM library_management_exclusions WHERE local_album_id = ?1";
     /// Put back the album's (`?1`) "leave unmanaged" (reason `?2`, by `?3`
-    /// or else the one undoing, `?5`, at `?4`).
+    /// or else the one undoing, `?5`, at `?4`), with no name when neither is
+    /// an account. `WHERE true` is what lets SQLite parse the upsert.
     pub(super) RESTORE_EXCLUSION = "INSERT INTO library_management_exclusions (local_album_id, \
              reason, excluded_by_user_id, excluded_at, row_revision) \
              SELECT ?1, ?2, chooser, ?4, 1 FROM (SELECT COALESCE( \
              (SELECT id FROM auth_users WHERE id = ?3), \
-             (SELECT id FROM auth_users WHERE id = ?5)) AS chooser) \
-             WHERE chooser IS NOT NULL \
+             (SELECT id FROM auth_users WHERE id = ?5)) AS chooser) WHERE true \
              ON CONFLICT (local_album_id) DO UPDATE SET reason = excluded.reason, \
              excluded_by_user_id = excluded.excluded_by_user_id, \
              excluded_at = excluded.excluded_at, row_revision = row_revision + 1";

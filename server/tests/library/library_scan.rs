@@ -626,8 +626,9 @@ async fn a_held_back_folder_is_held_until_a_scan_finds_it_again() {
         .db()
         .run_sql(&format!(
             "INSERT INTO library_management_automatic_queue (local_album_id, queued_at, \
-             not_before, attempts, last_reason_code) VALUES \
-             ('{parked}', 1, 1e15, 3, 'SCAN_HELD_BACK'), ('{taken}', 1, 1e15, 0, 'TAKEN_OVER');"
+             not_before_at, attempts, last_reason_code) VALUES \
+             ('{parked}', 1, 1000000000000000000, 3, 'SCAN_HELD_BACK'), \
+             ('{taken}', 1, 1000000000000000000, 0, 'TAKEN_OVER');"
         ))
         .expect("parked");
     let due = |library: &LibrarySetup, album: &str| {
@@ -635,7 +636,7 @@ async fn a_held_back_folder_is_held_until_a_scan_finds_it_again() {
             library,
             &format!(
                 "SELECT COUNT(*) FROM library_management_automatic_queue \
-                 WHERE local_album_id = '{album}' AND not_before < 1e15 AND attempts = 0"
+                 WHERE local_album_id = '{album}' AND not_before_at < 1000000000000000000 AND attempts = 0"
             ),
         )
     };
@@ -653,7 +654,7 @@ async fn a_held_back_folder_is_held_until_a_scan_finds_it_again() {
         .scan_store
         .db()
         .run_sql(&format!(
-            "UPDATE library_management_automatic_queue SET not_before = 1e15 \
+            "UPDATE library_management_automatic_queue SET not_before_at = 1000000000000000000 \
              WHERE local_album_id = '{parked}'"
         ))
         .expect("parked again");
@@ -3311,7 +3312,7 @@ fn automatic_leftovers(album: &str, tag: &str) -> String {
          expected_post_album_revision, expected_post_identity_revision, reason_code, created_at) \
          SELECT 'undo-{tag}', {album}, 1, 4, 'AUTOMATIC_EXACT_EDITION', 0 \
          WHERE {album} IS NOT NULL; \
-         INSERT INTO library_management_automatic_queue (local_album_id, queued_at, not_before) \
+         INSERT INTO library_management_automatic_queue (local_album_id, queued_at, not_before_at) \
          SELECT {album}, 0, 0 WHERE {album} IS NOT NULL; \
          INSERT INTO library_identify_reviews (id, local_album_id, reason_code, \
          candidates_json, state, created_ms, updated_ms) \
@@ -10734,7 +10735,7 @@ async fn a_new_copy_at_a_path_needs_the_same_recording_and_new_audio() {
             assert_eq!(
                 rig.count(&format!(
                     "SELECT COUNT(*) FROM library_management_automatic_queue \
-                     WHERE local_album_id = '{album}' AND not_before < 1e15"
+                     WHERE local_album_id = '{album}' AND not_before_at < 1000000000000000000"
                 )),
                 1,
                 "row {row}: the album is queued"

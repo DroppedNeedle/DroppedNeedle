@@ -2272,12 +2272,23 @@ fn refuse_activation(snapshot: &Snapshot) -> Result<(), ManagementError> {
 /// A preview's expiry as its token carries it: whole seconds, rounded
 /// down, so the token never outlasts the preview.
 fn token_expiry(expires_at: f64) -> i64 {
-    expires_at.floor() as i64
+    // Rounded as the row keeps it, so issuing and checking sign one value.
+    crate::clock::ms(expires_at).div_euclid(1000)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A preview's token signs the expiry its row reads back, even when
+    /// rounding to the millisecond crosses a second.
+    #[test]
+    fn a_token_signs_the_expiry_the_row_reads_back() {
+        for at in [1_760_086_400.999_7, 1_760_086_400.123_456, 1_760_086_400.0] {
+            let stored = crate::clock::secs(crate::clock::ms(at));
+            assert_eq!(token_expiry(at), token_expiry(stored), "{at}");
+        }
+    }
 
     /// A read an album needs during apply that finds the database busy
     /// sends the job back to the queue; only another failure leaves the

@@ -4868,7 +4868,7 @@ async fn a_removed_album_is_put_back_from_its_page() {
         1
     );
     conn.execute(
-        "UPDATE library_publish_replacements SET recycled_at = recycled_at - 40 * 86400 \
+        "UPDATE library_publish_replacements SET recycled_at = recycled_at - 40 * 86400000 \
          WHERE replaced_track_id = ?1",
         [&gone_track],
     )
@@ -5068,7 +5068,7 @@ async fn expiry_waits_on_a_retention_that_does_not_read() {
         .expect("track removed");
     let (copy, row) = copy_of(&conn, &track);
     conn.execute(
-        "UPDATE library_publish_replacements SET recycled_at = recycled_at - 40 * 86400",
+        "UPDATE library_publish_replacements SET recycled_at = recycled_at - 40 * 86400000",
         [],
     )
     .expect("the copy is 40 days old");
@@ -5148,7 +5148,7 @@ async fn emptying_the_bin_deletes_unchanged_copies_and_keeps_the_rest() {
     )
     .expect("a put-back holds C");
     conn.execute(
-        "UPDATE library_publish_replacements SET recycled_at = recycled_at - 10",
+        "UPDATE library_publish_replacements SET recycled_at = recycled_at - 10000",
         [],
     )
     .expect("the copies reached the bin a little earlier");
@@ -5220,7 +5220,7 @@ async fn expiry_and_an_empty_at_once_mark_every_copy() {
     };
     let age = |track: &str| {
         conn.execute(
-            "UPDATE library_publish_replacements SET recycled_at = recycled_at - 40 * 86400 \
+            "UPDATE library_publish_replacements SET recycled_at = recycled_at - 40 * 86400000 \
              WHERE replaced_track_id = ?1",
             [track],
         )
@@ -5231,7 +5231,7 @@ async fn expiry_and_an_empty_at_once_mark_every_copy() {
         .into_iter()
         .collect();
     conn.execute(
-        "UPDATE library_publish_replacements SET recycled_at = recycled_at - 40 * 86400",
+        "UPDATE library_publish_replacements SET recycled_at = recycled_at - 40 * 86400000",
         [],
     )
     .expect("copies age past the retention");
@@ -6148,7 +6148,7 @@ async fn an_undone_put_back_leaves_edited_copies_to_expire() {
     assert_eq!(walk_files(&music.join(".recycle")).len(), 2);
 
     conn.execute(
-        "UPDATE library_publish_replacements SET recycled_at = recycled_at - 10",
+        "UPDATE library_publish_replacements SET recycled_at = recycled_at - 10000",
         [],
     )
     .expect("the copies reached the bin a little earlier");
@@ -7163,14 +7163,14 @@ async fn edition_status_says_when_the_app_writes_the_files() {
     // Parked, or waiting on a preview a person must look at: nothing is
     // about to be written.
     app.seed_with(
-        "UPDATE library_management_automatic_queue SET not_before = 1e15, \
+        "UPDATE library_management_automatic_queue SET not_before_at = 1000000000000000000, \
          last_reason_code = 'MANAGEMENT_FAILED' WHERE local_album_id = ?1",
         [&album],
     )
     .await;
     assert_eq!(writes(&status().await), (json!(true), json!(false)));
     app.seed_with(
-        "UPDATE library_management_automatic_queue SET not_before = 1e12, \
+        "UPDATE library_management_automatic_queue SET not_before_at = 1e12, \
          last_reason_code = 'PREVIEW_BLOCKED' WHERE local_album_id = ?1",
         [&album],
     )
@@ -13009,7 +13009,7 @@ async fn left_unmanaged_albums_read_back_and_hand_back() {
     // A person's own choice is what the page shows when both are there.
     app.seed_with(
         "INSERT INTO library_management_exclusions (local_album_id, reason, \
-         excluded_by_user_id, excluded_at) SELECT ?1, 'manual', id, 5 FROM auth_users LIMIT 1",
+         excluded_by_user_id, excluded_at) SELECT ?1, 'manual', id, 5000 FROM auth_users LIMIT 1",
         [&album],
     )
     .await;
@@ -16084,7 +16084,7 @@ async fn a_merge_places_files_on_the_edition_the_album_has() {
              INSERT INTO library_album_takeovers (local_album_id, cause, noticed_at) \
              VALUES ('{album_a}', 'files_changed', 1234); \
              INSERT INTO library_management_automatic_queue (local_album_id, queued_at, \
-             not_before, retag_followed_at) VALUES ('{album_a}', 1, 1, 5678);"
+             not_before_at, retag_followed_at) VALUES ('{album_a}', 1, 1, 5678);"
         ))
         .await;
         let chosen = choice_row(&db, &album_a);
@@ -17028,7 +17028,7 @@ async fn a_retagged_and_renamed_album_keeps_what_people_made() {
          ('curator', 0, '{o3}'), ('curator', 1, '{o4}'), ('curator', 2, '{o5}'); \
          INSERT INTO library_management_overrides (id, subject_kind, local_track_id, \
          field_name, value_json, mode, subject_revision, created_at, updated_at) VALUES \
-         ('ov-title', 'track', '{o4}', 'title', '\"Mine\"', 'replace', 1, 1, 1), \
+         ('ov-title', 'track', '{o4}', 'title', '\"Mine\"', 'replace', 1, 1000, 1000), \
          ('ov-old', 'track', '{o5}', 'comment', '\"Old\"', 'replace', 1, 1, 1); \
          INSERT INTO library_user_play_marks (user_id, local_track_id, marked_played_at, \
          marked_unplayed_at) VALUES ('curator', '{o4}', 100, NULL), ('listener', '{o4}', 10, 5);"
@@ -20857,23 +20857,26 @@ async fn automatic_credits_wait_for_musicbrainz_and_respect_a_hand_edit() {
     managed
         .db()
         .execute(
-            "UPDATE library_management_automatic_queue SET attempts = 7, not_before = 0 \
+            "UPDATE library_management_automatic_queue SET attempts = 7, not_before_at = 0 \
              WHERE local_album_id = ?1",
             [&album],
         )
         .expect("many tries");
     managed.worker_looks().await;
-    let (attempts, not_before): (i64, f64) = managed
+    let (attempts, not_before): (i64, i64) = managed
         .db()
         .query_row(
-            "SELECT attempts, not_before FROM library_management_automatic_queue \
+            "SELECT attempts, not_before_at FROM library_management_automatic_queue \
              WHERE local_album_id = ?1",
             [&album],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .expect("the album still waits");
     assert_eq!(attempts, 8);
-    assert!(not_before < 1.0e12, "not parked: {not_before}");
+    assert!(
+        not_before < 1_000_000_000_000_000,
+        "not parked: {not_before}"
+    );
 
     *scripted.relations.lock().expect("script") =
         Some(managed.scripted_credits(&tracks, |_| concerto_credits()));
@@ -22630,11 +22633,11 @@ async fn automatic_acoustid_waits_while_acoustid_is_down() {
         before,
         "nothing written while it is down"
     );
-    let reason = |managed: &ManagedLibrary| -> (String, i64, f64) {
+    let reason = |managed: &ManagedLibrary| -> (String, i64, i64) {
         managed
             .db()
             .query_row(
-                "SELECT last_reason_code, attempts, not_before \
+                "SELECT last_reason_code, attempts, not_before_at \
                  FROM library_management_automatic_queue WHERE local_album_id = ?1",
                 [&album],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
@@ -22645,7 +22648,7 @@ async fn automatic_acoustid_waits_while_acoustid_is_down() {
     managed
         .db()
         .execute(
-            "UPDATE library_management_automatic_queue SET attempts = 7, not_before = 0 \
+            "UPDATE library_management_automatic_queue SET attempts = 7, not_before_at = 0 \
              WHERE local_album_id = ?1",
             [&album],
         )
@@ -22653,7 +22656,10 @@ async fn automatic_acoustid_waits_while_acoustid_is_down() {
     managed.worker_looks().await;
     let (code, attempts, not_before) = reason(&managed);
     assert_eq!((code.as_str(), attempts), ("ACOUSTID_UNAVAILABLE", 8));
-    assert!(not_before < 1.0e12, "not parked: {not_before}");
+    assert!(
+        not_before < 1_000_000_000_000_000,
+        "not parked: {not_before}"
+    );
 
     let recording = managed.recording(&tracks[0]);
     *scripted.acoustid.lock().expect("script") =
@@ -25679,7 +25685,7 @@ async fn a_re_ripped_track_is_managed_again_and_undo_gives_it_back() {
     assert_eq!(
         managed.count(&format!(
             "SELECT COUNT(*) FROM library_management_automatic_queue \
-             WHERE local_album_id = '{album}' AND not_before < 1e15"
+             WHERE local_album_id = '{album}' AND not_before_at < 1000000000000000000"
         )),
         1,
         "the album is queued"
