@@ -35,6 +35,11 @@
 //! play guard holds and no administrator marked them distinct. Any other
 //! row a scan emptied stays, and the duplicate artists list offers it.
 //!
+//! The upgrade from v2 folds a carried row named exactly "Unknown Artist"
+//! into the built-in one ([`fold_v2_placeholder`]) when nothing on it names
+//! a real id and every credit it holds is under that name. The scan never
+//! calls it.
+//!
 //! The app's links among a run end's candidates are settled first, so a
 //! link whose support is gone does not lead a group. MusicBrainz's
 //! special-purpose artist ids are never candidates.
@@ -43,15 +48,18 @@
 
 use std::collections::BTreeSet;
 
-use rusqlite::{Connection, Transaction, params};
+use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
 
-use super::artists::retire_artist;
-pub(crate) use super::artists::{CREDITS_MOVED, MERGED_BY_NAME, MOVED_BY_NAME, MOVED_WITH_ID};
-use super::merge_basis::{Follow, MergeBasis};
+pub(crate) use super::artists::{
+    CREDITS_MOVED, MERGED_BY_NAME, MOVED_BY_NAME, MOVED_WITH_ID, V2_PLACEHOLDER_FOLDED,
+};
+use super::artists::{retarget_retired, retire_artist};
+use super::merge_basis::{Follow, MergeBasis, V2PlaceholderKept};
 use crate::catalog_actions::ArtistAction;
 use crate::catalog_actions::record_artist_action;
 use crate::catalog_revision::bump_catalog;
 use crate::identify::artist_links::{MovedProof, placeholder, settle_holders};
+use crate::scan::naming::{UNKNOWN_ARTIST, UNKNOWN_ARTIST_ID};
 use crate::scan::sqlite_store::artists::SENTINEL_ARTIST_IDS;
 use droppedneedle_kernel::db::savepoint;
 
@@ -406,5 +414,120 @@ pub(crate) fn follow_renamed(tx: &Transaction<'_>, now: f64) -> rusqlite::Result
     if merged > 0 {
         bump_catalog(tx)?;
     }
+    Ok(())
+}
+
+/// What the upgrade did with one carried v2 "Unknown Artist" row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum V2Fold {
+    /// The row merged into the built-in one.
+    Folded,
+    /// The row had folded already.
+    AlreadyFolded {
+        /// Rows that landed on it since and moved on.
+        moved: u64,
+        /// Links, source links and credits that stay on it.
+        left: u64,
+    },
+    /// The row stays apart.
+    Kept(V2PlaceholderKept),
+}
+
+/// Fold v2's placeholder row `retiree` into the built-in Unknown Artist
+/// ([`MergeBasis::v2_placeholder`]), or move on what a later import landed
+/// on a row that already folded ([`retarget_retired`]), with no second audit
+/// row. Repeating it writes nothing. A failure is rolled back and answered
+/// as a row kept.
+pub fn fold_v2_placeholder(
+    tx: &Transaction<'_>,
+    retiree: &str,
+    now: f64,
+) -> rusqlite::Result<V2Fold> {
+    let retired_into: Option<String> = tx
+        .prepare_cached(crate::corrections::sql::ARTIST_RETIRED_INTO.text())?
+        .query_row(params![retiree], |row| row.get(0))
+        .optional()?
+        .flatten();
+    let (outcome, failed) = if retired_into.as_deref() == Some(UNKNOWN_ARTIST_ID) {
+        let late = savepoint(tx, "artist_v2_placeholder", || late_rows(tx, retiree, now))?;
+        (late, V2PlaceholderKept::LateRowsFailed)
+    } else {
+        let basis = match MergeBasis::v2_placeholder(tx, retiree)? {
+            Ok(basis) => basis,
+            Err(kept) => return Ok(V2Fold::Kept(kept)),
+        };
+        let merged = savepoint(tx, "artist_v2_placeholder", || {
+            merge_v2_placeholder(tx, basis, now).map(|()| V2Fold::Folded)
+        })?;
+        (merged, V2PlaceholderKept::MergeFailed)
+    };
+    Ok(outcome.unwrap_or_else(|error: rusqlite::Error| {
+        tracing::warn!(
+            %error,
+            retired_artist_id = retiree,
+            "v2 Unknown Artist row could not be merged; it stays as it is"
+        );
+        V2Fold::Kept(failed)
+    }))
+}
+
+fn late_rows(tx: &Transaction<'_>, retiree: &str, now: f64) -> rusqlite::Result<V2Fold> {
+    let moved = retarget_retired(tx, retiree, UNKNOWN_ARTIST_ID, UNKNOWN_ARTIST, now)?;
+    if moved > 0 {
+        touch_built_in(tx, now)?;
+    }
+    let left = tx
+        .prepare_cached(crate::corrections::sql::LEFT_ON_RETIRED.text())?
+        .query_row(params![retiree], |row| row.get(0))?;
+    Ok(V2Fold::AlreadyFolded { moved, left })
+}
+
+/// Retire the row and write the merge's one audit row. Rows v2 merged into
+/// it, and their aliases, now answer through an alias on the built-in row,
+/// which is all that opens them once it is retired too.
+fn merge_v2_placeholder(
+    tx: &Transaction<'_>,
+    basis: MergeBasis<'_>,
+    now: f64,
+) -> rusqlite::Result<()> {
+    let retiree = basis.retiree().to_owned();
+    let audit = basis.audit();
+    retire_artist(tx, basis, now)?;
+    tx.execute(
+        crate::corrections::sql::REPOINT_ALIASES_OF_ROWS_MERGED_INTO.text(),
+        params![retiree, UNKNOWN_ARTIST_ID],
+    )?;
+    tx.execute(
+        crate::corrections::sql::ALIAS_ROWS_MERGED_INTO.text(),
+        params![retiree, UNKNOWN_ARTIST_ID, now],
+    )?;
+    touch_built_in(tx, now)?;
+    record_artist_action(
+        tx,
+        ArtistAction {
+            actor: "system",
+            kind: "merge_artist",
+            artist_id: UNKNOWN_ARTIST_ID,
+            before: serde_json::json!({ "artist_ids": [retiree] }),
+            after: serde_json::json!({
+                "kind": "v2_placeholder_fold",
+                "surviving_artist_id": UNKNOWN_ARTIST_ID,
+                "retired_artist_ids": [retiree],
+                "filesystem_writes": 0,
+                "basis": audit,
+            }),
+            reason: V2_PLACEHOLDER_FOLDED,
+        },
+        now,
+    )?;
+    Ok(())
+}
+
+fn touch_built_in(tx: &Transaction<'_>, now: f64) -> rusqlite::Result<()> {
+    tx.execute(
+        crate::corrections::sql::BUMP_ARTIST_REVISION.text(),
+        params![UNKNOWN_ARTIST_ID, crate::clock::ms(now)],
+    )?;
+    bump_catalog(tx)?;
     Ok(())
 }

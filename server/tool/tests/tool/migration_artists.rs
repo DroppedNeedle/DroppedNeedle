@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto, Secret};
+use droppedneedle_library::reconcile::models::MergeBasisLabel;
 use droppedneedle_library::scan::naming::{UNKNOWN_ARTIST_ID, artist_key};
 use droppedneedle_library::tags::TagField;
 use droppedneedle_library::tags::save::{TagEdit, save_tags};
@@ -24,6 +25,7 @@ const PASSPHRASE: &str = "operator-passphrase";
 const CLAIRO_ID: &str = "v2-clairo";
 const COTTRILL_ID: &str = "v2-claire-cottrill";
 const UNKNOWN_ID: &str = "v2-unknown-artist";
+const REAL_MBID: &str = "c2a8b4e9-0000-4000-8000-000000000002";
 
 /// v2's artist tables the base fixture leaves out, in the columns the
 /// export reads.
@@ -49,6 +51,17 @@ const V2_ARTIST_TABLES: &str = "
         canonical_url TEXT NOT NULL, decision_source TEXT NOT NULL, selected_by_user_id TEXT,
         verified_at REAL NOT NULL, created_at REAL NOT NULL, updated_at REAL NOT NULL);
 ";
+
+/// A v2 row linking `artist` to a page on another service.
+fn source_link_sql(id: &str, artist: &str) -> String {
+    format!(
+        "INSERT INTO local_entity_source_links (id, local_artist_id, provider,
+             external_entity_type, external_id, canonical_url, decision_source, verified_at,
+             created_at, updated_at)
+         VALUES ('{id}', '{artist}', 'wikidata', 'artist', '{id}', 'https://w/{id}', 'manual',
+             1700000000.0, 1700000000.0, 1700000000.0);"
+    )
+}
 
 /// A file in the v2 music root with these tags over the fixture's. The
 /// fixture's artist id is not aligned to a listed artist, so no credit
@@ -172,14 +185,22 @@ pub(crate) fn export(root: &Path, v2_root: &Path) -> PathBuf {
 /// Import the export into a fresh v3 data folder. Returns the report and
 /// the v3 database.
 pub(crate) async fn import(root: &Path, export_path: &Path) -> (ImportReport, PathBuf) {
-    import_with(root, export_path, false).await
+    let (report, db_path) = import_with(root, export_path, false, None).await;
+    assert!(
+        matches!(report.exit.code, ExitCode::Ok | ExitCode::OkWithDrops),
+        "{:?}",
+        report.exit
+    );
+    (report, db_path)
 }
 
-/// As [`import`], counting only when `dry_run`.
+/// [`import`] as a dry run or crashing after some carried sections, with
+/// the exit left to the caller.
 pub(crate) async fn import_with(
     root: &Path,
     export_path: &Path,
     dry_run: bool,
+    fault_after_sections: Option<usize>,
 ) -> (ImportReport, PathBuf) {
     let v3 = root.join("v3");
     let config_dir = v3.join("config");
@@ -207,15 +228,10 @@ pub(crate) async fn import_with(
             dry_run,
             fault_before_commit: false,
             fault_after_commit: false,
-            fault_after_sections: None,
+            fault_after_sections,
         })
         .await;
     pool.close().await;
-    assert!(
-        matches!(report.exit.code, ExitCode::Ok | ExitCode::OkWithDrops),
-        "{:?}",
-        report.exit
-    );
     (report, db_path)
 }
 
@@ -453,28 +469,43 @@ async fn v2_artists_keep_one_row_with_their_plays_after_the_first_scan() {
     }
 }
 
-/// A v2 row named "Unknown Artist" would key to v3's own Unknown Artist
-/// row. It keeps its v2 id, the export says so, and its merge candidate
-/// against that row still imports.
+/// How many of the report's summary notes hold `text`.
+fn notes_with(report: &ImportReport, text: &str) -> usize {
+    report
+        .notes
+        .iter()
+        .filter(|note| note.contains(text))
+        .count()
+}
+
+/// One value from the v3 database.
+fn cell<T: rusqlite::types::FromSql>(db: &Connection, query: &str) -> T {
+    db.query_row(query, [], |row| row.get(0)).expect(query)
+}
+
+/// v2's own Unknown Artist merges into v3's: credits, plays, favorites and
+/// ratings move, someone who rated both keeps the built-in row's rating,
+/// its id and the id of a row v2 merged into it open the built-in row, and
+/// the merge history says why. A crash before the step folds on the rerun,
+/// once, and a third run writes nothing.
 #[tokio::test]
-async fn a_v2_unknown_artist_row_keeps_its_id() {
+async fn a_v2_unknown_artist_row_folds_into_the_built_in_one() {
     let scratch = ScratchDir::new("migration-unknown-artist");
     let root = scratch.to_path_buf();
-    let (v2_root, _, db) = v2_instance(&root);
+    let (v2_root, alice, db) = v2_instance(&root);
     v2_artist(&db, UNKNOWN_ID, "Unknown Artist", None, None);
-    v2_album(
-        &db,
-        "v2-larks",
-        "Larks' Tongues",
-        (UNKNOWN_ID, "Unknown Artist"),
-    );
-    v2_track(
-        &db,
-        "v2-larks-1",
-        "v2-larks",
-        "King Crimson/Larks/01.flac",
-        (UNKNOWN_ID, "Unknown Artist"),
-    );
+    v2_artist(&db, "v2-merged-in", "Mystery", None, Some(UNKNOWN_ID));
+    for n in 1..=3 {
+        let album = format!("v2-larks-{n}");
+        v2_album(&db, &album, "Larks", (UNKNOWN_ID, "Unknown Artist"));
+        v2_track(
+            &db,
+            &format!("v2-larks-track-{n}"),
+            &album,
+            &format!("Unknown/{n}/01.flac"),
+            (UNKNOWN_ID, "Unknown Artist"),
+        );
+    }
     db.execute(
         "INSERT INTO local_artist_merge_candidates (id, left_artist_id, right_artist_id,
              reason_code, state, created_at, updated_at)
@@ -483,32 +514,324 @@ async fn a_v2_unknown_artist_row_keeps_its_id() {
         params![UNKNOWN_ARTIST_ID, UNKNOWN_ID],
     )
     .expect("candidate");
+    db.execute(
+        "INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at)
+         VALUES (?1, 'artist', ?2, 1700000002.0)",
+        params![alice, UNKNOWN_ID],
+    )
+    .expect("favorite");
+    db.execute(
+        "INSERT INTO library_play_history (id, user_id, local_track_id, local_album_id,
+             local_artist_id, track_name, artist_name, album_name, played_at)
+         VALUES ('listen-unknown', ?1, 'v2-larks-track-1', 'v2-larks-1', ?2, 'Song',
+             'Unknown Artist', 'Larks', '1700000000')",
+        params![alice, UNKNOWN_ID],
+    )
+    .expect("play");
+    let bob: String = db
+        .query_row(
+            "SELECT id FROM auth_users WHERE id <> ?1 LIMIT 1",
+            params![alice],
+            |row| row.get(0),
+        )
+        .expect("second user");
     drop(db);
-
     let export_path = export(&root, &v2_root);
-    let (report, db_path) = import(&root, &export_path).await;
-    assert_eq!(
-        report.notes,
-        [
-            "Artists kept under their v2 id because v3 keeps their name for its own artist \
-          row: Unknown Artist"
-        ]
-    );
-    assert_eq!(report.entities["artist_merge_candidate"].imported, 1);
+
+    let (preview, db_path) = import_with(&root, &export_path, true, None).await;
+    assert_eq!(notes_with(&preview, "would become v3's"), 1);
     let v3 = Connection::open(&db_path).expect("v3 db");
-    let names: Vec<(String, String)> = v3
-        .prepare("SELECT id, display_name FROM local_artists WHERE display_name = 'Unknown Artist' ORDER BY id")
+    let carried: i64 = cell(
+        &v3,
+        "SELECT COUNT(*) FROM local_artists WHERE id = 'v2-unknown-artist'",
+    );
+    assert_eq!(carried, 0, "a dry run writes nothing");
+    drop(v3);
+
+    // Connections, every section, editions, baselines and links: the crash
+    // comes right before the fold.
+    let before_fold = droppedneedle_tool::export::sections::ALL.len() + 4;
+    let (crashed, _) = import_with(&root, &export_path, false, Some(before_fold)).await;
+    assert_eq!(crashed.exit.code, ExitCode::FailedInternal);
+    let v3 = Connection::open(&db_path).expect("v3 db");
+    assert_eq!(opens(&v3, UNKNOWN_ID).as_deref(), Some(UNKNOWN_ID));
+    v3.execute_batch("PRAGMA foreign_keys = ON").expect("keys");
+    for (user, item, rating) in [
+        (alice.as_str(), UNKNOWN_ID, 2),
+        (alice.as_str(), UNKNOWN_ARTIST_ID, 5),
+        (bob.as_str(), UNKNOWN_ID, 3),
+    ] {
+        v3.execute(
+            "INSERT INTO catalog_user_ratings (user_id, item_kind, item_id, rating, rated_at)
+             VALUES (?1, 'artist', ?2, ?3, 1700000000000)",
+            params![user, item, rating],
+        )
+        .expect("rating");
+    }
+    drop(v3);
+
+    let (report, _) = import(&root, &export_path).await;
+    assert_eq!(notes_with(&report, "is now v3's"), 1);
+    assert_eq!(notes_with(&report, "kept under their v2 id"), 0);
+    let v3 = Connection::open(&db_path).expect("v3 db");
+    let named: Vec<String> = v3
+        .prepare(
+            "SELECT id FROM local_artists WHERE display_name = 'Unknown Artist' \
+             AND retired_into_artist_id IS NULL",
+        )
         .expect("prepare")
-        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .query_map([], |row| row.get(0))
         .expect("query")
         .collect::<Result<_, _>>()
         .expect("rows");
+    assert_eq!(named, [UNKNOWN_ARTIST_ID]);
+    for table in [
+        "local_album_artists WHERE local_artist_id",
+        "local_track_artists WHERE local_artist_id",
+        "local_albums WHERE album_artist_id",
+    ] {
+        let credits: i64 = v3
+            .query_row(
+                &format!("SELECT COUNT(*) FROM {table} = ?1"),
+                params![UNKNOWN_ARTIST_ID],
+                |row| row.get(0),
+            )
+            .expect(table);
+        assert_eq!(credits, 3, "{table}");
+    }
+    let play: String = cell(
+        &v3,
+        "SELECT local_artist_id FROM library_play_history WHERE id = 'listen-unknown'",
+    );
+    assert_eq!(play, UNKNOWN_ARTIST_ID);
+    let favorite: String = cell(
+        &v3,
+        "SELECT item_id FROM catalog_user_favorites WHERE item_kind = 'artist'",
+    );
+    assert_eq!(favorite, UNKNOWN_ARTIST_ID);
+    let favorite_name: String = cell(
+        &v3,
+        "SELECT item_id FROM catalog_user_favorite_names WHERE item_kind = 'artist'",
+    );
+    assert_eq!(favorite_name, UNKNOWN_ARTIST_ID);
+    let ratings: Vec<(String, i64)> = v3
+        .prepare(
+            "SELECT user_id, rating FROM catalog_user_ratings \
+             WHERE item_kind = 'artist' AND item_id = ?1",
+        )
+        .expect("prepare")
+        .query_map(params![UNKNOWN_ARTIST_ID], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })
+        .expect("query")
+        .collect::<Result<_, _>>()
+        .expect("rows");
+    assert_eq!(ratings.len(), 2, "{ratings:?}");
+    assert!(ratings.contains(&(alice.clone(), 5)), "{ratings:?}");
+    assert!(ratings.contains(&(bob, 3)), "{ratings:?}");
+    assert_eq!(opens(&v3, UNKNOWN_ID).as_deref(), Some(UNKNOWN_ARTIST_ID));
     assert_eq!(
-        names,
-        [
-            (UNKNOWN_ARTIST_ID.to_owned(), "Unknown Artist".to_owned()),
-            (UNKNOWN_ID.to_owned(), "Unknown Artist".to_owned()),
-        ]
+        opens(&v3, "v2-merged-in").as_deref(),
+        Some(UNKNOWN_ARTIST_ID)
+    );
+    let candidate: String = cell(
+        &v3,
+        "SELECT state FROM local_artist_merge_candidates WHERE id = 'candidate-unknown'",
+    );
+    assert_eq!(candidate, "resolved");
+    let basis: String = cell(
+        &v3,
+        "SELECT json_extract(after_json, '$.basis.kind') FROM library_catalog_actions \
+         WHERE reason_code = 'AUTOMATIC_V2_PLACEHOLDER_FOLDED'",
+    );
+    assert_eq!(basis, "v2_placeholder");
+
+    let handle = droppedneedle_kernel::db::Db::open_for_tests(&db_path).expect("database opens");
+    let page = droppedneedle_library::reconcile::service::Reconcile::new(
+        handle,
+        Arc::new(droppedneedle_kernel::clock::SystemClock),
+    )
+    .list(50, None, None, None)
+    .expect("groups");
+    let group = page
+        .items
+        .iter()
+        .find(|group| group.id.starts_with("resolved:"))
+        .expect("the fold is in the merge history");
+    assert_eq!(group.merge_basis, Some(MergeBasisLabel::V2Placeholder));
+    assert_eq!(group.reason.code, "AUTOMATIC_V2_PLACEHOLDER_FOLDED");
+    assert!(group.reason.message.contains("Unknown Artist"));
+
+    let state = |db: &Connection| -> (i64, i64, i64) {
+        (
+            cell(
+                db,
+                "SELECT COUNT(*) FROM library_catalog_actions \
+                 WHERE reason_code = 'AUTOMATIC_V2_PLACEHOLDER_FOLDED'",
+            ),
+            cell(db, "SELECT value FROM library_catalog_revision"),
+            cell(
+                db,
+                "SELECT row_revision FROM local_artists \
+                 WHERE id = '00000000-0000-4000-8000-000000000002'",
+            ),
+        )
+    };
+    let before = state(&v3);
+    assert_eq!(before.0, 1);
+    drop(v3);
+    let (again, _) = import(&root, &export_path).await;
+    assert!(again.notes.is_empty(), "{:?}", again.notes);
+    let v3 = Connection::open(&db_path).expect("v3 db");
+    assert_eq!(state(&v3), before);
+
+    // What lands on the folded row later moves on, with no second audit row.
+    v3.execute(
+        "UPDATE library_play_history SET local_artist_id = ?1 WHERE id = 'listen-unknown'",
+        params![UNKNOWN_ID],
+    )
+    .expect("a late play");
+    drop(v3);
+    let (late, _) = import(&root, &export_path).await;
+    assert_eq!(notes_with(&late, "moved to v3's"), 1);
+    let v3 = Connection::open(&db_path).expect("v3 db");
+    let play: String = cell(
+        &v3,
+        "SELECT local_artist_id FROM library_play_history WHERE id = 'listen-unknown'",
+    );
+    assert_eq!(play, UNKNOWN_ARTIST_ID);
+    assert_eq!(state(&v3).0, 1);
+    drop(v3);
+
+    // A newer export of this instance lands a real link and a source link on
+    // the folded row. They may be another artist's, so they stay there.
+    let db = Connection::open(v2_root.join("cache").join("library.db")).expect("v2 db");
+    db.execute_batch(&format!(
+        "INSERT INTO local_artist_external_identities (local_artist_id, provider,
+             provider_artist_id, decision_source, selected_at)
+         VALUES ('{UNKNOWN_ID}', 'musicbrainz', '{REAL_MBID}', 'manual', 1700000000.0);
+         {}",
+        source_link_sql("link-late", UNKNOWN_ID),
+    ))
+    .expect("late links");
+    drop(db);
+    let export_path = export(&root, &v2_root);
+    let (newer, _) = import(&root, &export_path).await;
+    assert_eq!(
+        notes_with(&newer, "stay on that row"),
+        1,
+        "{:?}",
+        newer.notes
+    );
+    let v3 = Connection::open(&db_path).expect("v3 db");
+    let link: String = cell(
+        &v3,
+        "SELECT local_artist_id FROM local_artist_external_identities \
+         WHERE provider = 'musicbrainz'",
+    );
+    assert_eq!(link, UNKNOWN_ID);
+    let source: String = cell(
+        &v3,
+        "SELECT local_artist_id FROM local_entity_source_links WHERE id = 'link-late'",
+    );
+    assert_eq!(source, UNKNOWN_ID);
+    assert_eq!(state(&v3).0, 1);
+}
+
+/// A row of that name holding a real id, a source link or a credit under
+/// another name, or marked distinct, stays apart, and the summary says why.
+/// A special-purpose link is not a real id, so that row folds. The bundle
+/// holds no credit's id, so a dry run cannot see that one refusal.
+#[tokio::test]
+async fn an_unknown_artist_row_that_may_be_someone_else_stays() {
+    let scratch = ScratchDir::new("migration-unknown-artist-kept");
+    let root = scratch.to_path_buf();
+    let (v2_root, alice, db) = v2_instance(&root);
+    let name = "Unknown Artist";
+    for id in ["linked", "special", "sourced", "distinct", "named"] {
+        v2_artist(&db, &format!("v2-unknown-{id}"), name, None, None);
+    }
+    db.execute_batch(&format!(
+        "INSERT INTO local_artist_external_identities (local_artist_id, provider,
+             provider_artist_id, decision_source, selected_at)
+         VALUES ('v2-unknown-linked', 'musicbrainz', '{REAL_MBID}', 'manual', 1700000000.0),
+                ('v2-unknown-special', 'musicbrainz', '125ec42a-7229-4250-afc5-e057484327fe',
+                 'manual', 1700000000.0);
+         {}
+         INSERT INTO library_artist_reconciliation_dismissals (left_artist_id, right_artist_id,
+             left_artist_revision, right_artist_revision, dismissed_by_user_id, reason_code,
+             created_at, updated_at)
+         VALUES ('{UNKNOWN_ARTIST_ID}', 'v2-unknown-distinct', 1, 1, '{alice}',
+             'DIFFERENT_ARTISTS', 1700000000.0, 1700000000.0);",
+        source_link_sql("link-sourced", "v2-unknown-sourced"),
+    ))
+    .expect("what each row holds");
+    v2_album(&db, "v2-named", "Named", ("v2-unknown-named", name));
+    v2_track(
+        &db,
+        "v2-named-1",
+        "v2-named",
+        "Unknown/Named/01.flac",
+        ("v2-unknown-named", name),
+    );
+    v2_artist(&db, "v2-unknown-mixed", name, None, None);
+    v2_album(&db, "v2-mixed", "Larks", ("v2-unknown-mixed", name));
+    v2_track(
+        &db,
+        "v2-mixed-1",
+        "v2-mixed",
+        "Unknown/Mixed/01.flac",
+        ("v2-unknown-mixed", "King Crimson"),
+    );
+    drop(db);
+    let export_path = export(&root, &v2_root);
+
+    let (preview, db_path) = import_with(&root, &export_path, true, None).await;
+    assert_eq!(
+        notes_with(&preview, "stays apart"),
+        4,
+        "{:?}",
+        preview.notes
+    );
+    assert_eq!(notes_with(&preview, "would become v3's"), 2);
+
+    let before_fold = droppedneedle_tool::export::sections::ALL.len() + 4;
+    let (crashed, _) = import_with(&root, &export_path, false, Some(before_fold)).await;
+    assert_eq!(crashed.exit.code, ExitCode::FailedInternal);
+    let v3 = Connection::open(&db_path).expect("v3 db");
+    v3.execute(
+        "UPDATE local_track_artists SET artist_mbid = ?1 WHERE local_track_id = 'v2-named-1'",
+        params![REAL_MBID],
+    )
+    .expect("a credit names a real id");
+    drop(v3);
+
+    let (report, _) = import(&root, &export_path).await;
+    for reason in [
+        "linked to a real artist",
+        "link to a page on another service",
+        "names a real MusicBrainz artist",
+        "under another name",
+        "marked the two as different artists",
+    ] {
+        assert_eq!(
+            notes_with(&report, reason),
+            1,
+            "{reason}: {:?}",
+            report.notes
+        );
+    }
+    assert_eq!(notes_with(&report, "is now v3's"), 1);
+    let v3 = Connection::open(&db_path).expect("v3 db");
+    let live: i64 = cell(
+        &v3,
+        "SELECT COUNT(*) FROM local_artists WHERE display_name = 'Unknown Artist' \
+         AND retired_into_artist_id IS NULL",
+    );
+    assert_eq!(live, 6, "the built-in row and the five kept");
+    assert_eq!(
+        opens(&v3, "v2-unknown-special").as_deref(),
+        Some(UNKNOWN_ARTIST_ID)
     );
 }
 

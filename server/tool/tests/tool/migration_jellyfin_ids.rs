@@ -123,7 +123,7 @@ async fn v2_jellyfin_ids_keep_opening_their_items() {
     drop(db);
     let export_path = export(&root, &v2_root);
 
-    let (preview, _) = import_with(&root, &export_path, true).await;
+    let (preview, _) = import_with(&root, &export_path, true, None).await;
     let (report, db_path) = import(&root, &export_path).await;
 
     let ids = process(&db_path).await;

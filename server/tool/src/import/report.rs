@@ -10,6 +10,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 
+use crate::export::artist_keys::KEPT_RESERVED_NOTE;
 use crate::export::envelope::LeftBehind;
 use droppedneedle_auth::times::to_iso;
 
@@ -222,6 +223,36 @@ impl ReportBuilder {
         self.left_behind = left_behind;
     }
 
+    /// Add a line to the notes the upgrade summary prints.
+    pub(crate) fn add_note(&mut self, line: String) {
+        self.notes.push(line);
+    }
+
+    /// Take `count` rows named `name` off the export's note about rows kept
+    /// under their v2 id, and the note itself when none is left. An older
+    /// export carries the same note.
+    pub(crate) fn unlist_kept_reserved(&mut self, name: &str, count: usize) {
+        let prefix = format!("{KEPT_RESERVED_NOTE}: ");
+        self.notes.retain_mut(|note| {
+            let Some(listed) = note.strip_prefix(&prefix) else {
+                return true;
+            };
+            let mut left = count;
+            let names: Vec<&str> = listed
+                .split(", ")
+                .filter(|listed| {
+                    let unlisted = *listed == name && left > 0;
+                    left -= usize::from(unlisted);
+                    !unlisted
+                })
+                .collect();
+            let keep = !names.is_empty();
+            let rewritten = format!("{prefix}{}", names.join(", "));
+            *note = rewritten;
+            keep
+        });
+    }
+
     /// Copy the export's notes into the report.
     pub fn set_notes(&mut self, notes: Vec<String>) {
         self.notes = notes;
@@ -399,6 +430,13 @@ impl ReportBuilder {
             self.finish(ExitCode::Ok, String::new())
         }
     }
+}
+
+/// The current time in seconds, for the library's merge audit.
+pub(crate) fn now_secs() -> f64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0.0, |span| span.as_secs_f64())
 }
 
 /// Current UTC time as ISO-8601. Falls back to the epoch on clock

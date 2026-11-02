@@ -47,6 +47,11 @@ pub const RESOLVED_BY_NAME: Reason = reason(
     "A tag edit changed only how this artist's name is written or sorted, so the records were merged.",
     "Nothing to do.",
 );
+pub const RESOLVED_V2_PLACEHOLDER: Reason = reason(
+    crate::corrections::artist_convergence::V2_PLACEHOLDER_FOLDED,
+    "The upgrade merged v2's Unknown Artist into this one.",
+    "Nothing to do.",
+);
 pub const RESOLVED_AUTOMATICALLY: Reason = reason(
     "AUTOMATIC_PROVIDER_PROVEN_ARTIST_CONVERGENCE",
     "These records were merged automatically because MusicBrainz proved they are one artist.",
@@ -81,6 +86,7 @@ pub fn for_code(code: &str) -> Reason {
         "CREDITS_MOVED_WITHOUT_PROOF" => CREDITS_MOVED,
         "SHARED_PROVIDER_IDENTITY" => SHARED_PROVIDER_IDENTITY,
         code if code == RESOLVED_BY_NAME.code => RESOLVED_BY_NAME,
+        code if code == RESOLVED_V2_PLACEHOLDER.code => RESOLVED_V2_PLACEHOLDER,
         _ => RESOLVED_AUTOMATICALLY,
     }
 }

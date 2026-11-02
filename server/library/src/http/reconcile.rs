@@ -110,6 +110,8 @@ pub enum ArtistMergeBasis {
     /// A tag edit moved every song to a record of the same name, with only
     /// its sort name, capitals or spacing changed.
     SameName,
+    /// The upgrade folded v2's Unknown Artist into the built-in one.
+    V2Placeholder,
 }
 
 impl From<MergeBasisLabel> for ArtistMergeBasis {
@@ -117,6 +119,7 @@ impl From<MergeBasisLabel> for ArtistMergeBasis {
         match label {
             MergeBasisLabel::MusicbrainzProof => Self::MusicbrainzProof,
             MergeBasisLabel::SameName => Self::SameName,
+            MergeBasisLabel::V2Placeholder => Self::V2Placeholder,
         }
     }
 }

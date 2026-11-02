@@ -133,6 +133,10 @@ many. Nothing else in the v2 database is changed.
   An artist that can't take that id (Various Artists, one with no songs,
   or one whose name another artist already holds) keeps its v2 id, and
   the summary names any kept apart by name.
+  v2's own Unknown Artist becomes v3's: its songs, plays and favorites move
+  there, and its v2 id still opens it. The summary says so. One with a real
+  artist's id, a link to another service, or songs under another name stays
+  apart, and the summary says why.
   Playlists, favorites, history, queues and bookmarks find their songs and
   artists again. Subsonic apps like Symfonium or Feishin keep everything:
   song and album ids do not change, and an artist they know by its v2 id

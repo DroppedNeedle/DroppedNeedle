@@ -3,7 +3,9 @@
 use droppedneedle_kernel::db::statement::ListLen;
 use droppedneedle_kernel::db::time::Millis;
 
-use crate::corrections::artist_convergence::{MERGED_BY_NAME, MOVED_BY_NAME, MOVED_WITH_ID};
+use crate::corrections::artist_convergence::{
+    MERGED_BY_NAME, MOVED_BY_NAME, MOVED_WITH_ID, V2_PLACEHOLDER_FOLDED,
+};
 use crate::identify::sql::CURRENT_PROOF;
 
 droppedneedle_kernel::sql! {
@@ -58,9 +60,10 @@ droppedneedle_kernel::sql! {
                WHERE p.subject_kind = 'track' AND p.subject_id = credit.local_track_id \
                AND p.credit_position = credit.position AND p.source_local_artist_id = ?1 \
                AND (" + CURRENT_PROOF + ")))";
-    /// Catalog action reasons that record an automatic artist merge: v2's two, and the merge of a row a retag emptied by name.
+    /// Catalog action reasons that record an automatic artist merge: v2's two, the merge of a row a retag emptied by name, and the upgrade's fold of v2's Unknown Artist.
     pub(super) fragment MERGE_REASONS = "('AUTOMATIC_PROVIDER_PROVEN_ARTIST_CONVERGENCE', \
-         'AUTOMATIC_PROVIDER_ANCHORED_ARTIST_CONVERGENCE', '" + MERGED_BY_NAME + "')";
+         'AUTOMATIC_PROVIDER_ANCHORED_ARTIST_CONVERGENCE', '" + MERGED_BY_NAME + "', \
+         '" + V2_PLACEHOLDER_FOLDED + "')";
     /// The open moves of `artist.id`'s credits a scan recorded.
     pub(super) fragment OPEN_MOVES = "SELECT 1 FROM local_artist_merge_candidates moved WHERE moved.left_artist_id = " + "artist.id" + " \
          AND moved.reason_code IN ('" + MOVED_BY_NAME + "', '" + MOVED_WITH_ID + "') AND moved.state = 'open'";

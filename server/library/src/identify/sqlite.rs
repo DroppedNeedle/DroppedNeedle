@@ -1349,12 +1349,13 @@ fn rewrite_document(
 /// Point what people made of a merged album, artist or track (favorites,
 /// ratings, play history) at the record it merged into.
 /// A person who already favorited or rated the survivor keeps one row.
+/// Answers how many favorites, ratings and plays left the merged record.
 pub(crate) fn retarget_references(
     tx: &Connection,
     item_kind: &str,
     retired_id: &str,
     surviving_id: &str,
-) -> rusqlite::Result<()> {
+) -> rusqlite::Result<u64> {
     let plays = match item_kind {
         "album" => crate::identify::sql::RETARGET_ALBUM_PLAYS,
         "artist" => crate::identify::sql::RETARGET_ARTIST_PLAYS,
@@ -1371,7 +1372,7 @@ pub(crate) fn retarget_references(
         crate::identify::sql::COPY_FAVORITE_NAMES_TO_ITEM.text(),
         params![surviving_id, item_kind, retired_id],
     )?;
-    tx.execute(
+    let favorites = tx.execute(
         crate::identify::sql::DROP_ITEM_FAVORITES.text(),
         params![item_kind, retired_id],
     )?;
@@ -1380,12 +1381,12 @@ pub(crate) fn retarget_references(
         crate::identify::sql::COPY_RATINGS_TO_ITEM.text(),
         params![surviving_id, item_kind, retired_id],
     )?;
-    tx.execute(
+    let ratings = tx.execute(
         crate::identify::sql::DROP_ITEM_RATINGS.text(),
         params![item_kind, retired_id],
     )?;
-    tx.execute(plays.text(), params![surviving_id, retired_id])?;
-    Ok(())
+    let plays = tx.execute(plays.text(), params![surviving_id, retired_id])?;
+    Ok((favorites + ratings + plays) as u64)
 }
 
 fn hex_sha256(bytes: &[u8]) -> String {

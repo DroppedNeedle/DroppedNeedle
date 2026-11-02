@@ -10252,7 +10252,7 @@ export interface components {
          * @description What an automatic artist merge rested on.
          * @enum {string}
          */
-        ArtistMergeBasis: "musicbrainz_proof" | "same_name";
+        ArtistMergeBasis: "musicbrainz_proof" | "same_name" | "v2_placeholder";
         /** @description An artist merge to preview. */
         ArtistMergePreviewBody: {
             /**

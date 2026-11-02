@@ -25,7 +25,7 @@ use droppedneedle_library::publish::v2_baseline::translate;
 /// Report entity and section marker name.
 pub(crate) const ENTITY: &str = "original_baseline";
 
-fn bundle_has(conn: &Connection, table: &str) -> rusqlite::Result<bool> {
+pub(super) fn bundle_has(conn: &Connection, table: &str) -> rusqlite::Result<bool> {
     conn.query_row(sql::BUNDLE_HAS_TABLE.text(), params![table], |row| {
         row.get(0)
     })

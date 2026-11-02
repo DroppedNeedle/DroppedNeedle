@@ -136,7 +136,8 @@
 
 	const basisLabels: Record<NonNullable<ArtistDuplicateGroupSummary['merge_basis']>, string> = {
 		musicbrainz_proof: 'MusicBrainz proof',
-		same_name: 'Same name'
+		same_name: 'Same name',
+		v2_placeholder: 'v2 upgrade'
 	};
 
 	function stateClass(state: ArtistReconciliationGroupState): string {

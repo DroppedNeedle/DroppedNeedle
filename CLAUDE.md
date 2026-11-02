@@ -512,6 +512,12 @@ Run from the repo root. `make help` lists every target.
   merge is in the audit. Any other record emptied without provider proof is
   never merged by itself; when a scan recorded the move and it holds a
   favourite, rating or play, it is listed in Duplicate artists.
+- A third exception: at the upgrade, a carried v2 row named exactly "Unknown
+  Artist" merges into the built-in one when it has no MusicBrainz link other
+  than a special-purpose id and no source link, nothing names a real id at any
+  of its credits or proofs, every credit it holds is under that name, and an
+  admin has not marked them distinct. Any other such row stays, and the
+  upgrade report names it.
 - Retired IDs stay as aliases.
 - Every artist merge goes through `retire_artist` with a `MergeBasis`
   built in `corrections/merge_basis.rs` from rows read in the same

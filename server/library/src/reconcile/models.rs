@@ -108,6 +108,8 @@ pub enum MergeBasisLabel {
     /// A retag moved every credit to a record of the same name, with only
     /// its sort name, capitals or spacing changed.
     SameName,
+    /// The upgrade folded v2's Unknown Artist into the built-in one.
+    V2Placeholder,
 }
 
 impl MergeBasisLabel {
@@ -118,6 +120,9 @@ impl MergeBasisLabel {
             "AUTOMATIC_PROVIDER_PROVEN_ARTIST_CONVERGENCE"
             | "AUTOMATIC_PROVIDER_ANCHORED_ARTIST_CONVERGENCE" => Some(Self::MusicbrainzProof),
             crate::corrections::artist_convergence::MERGED_BY_NAME => Some(Self::SameName),
+            crate::corrections::artist_convergence::V2_PLACEHOLDER_FOLDED => {
+                Some(Self::V2Placeholder)
+            }
             _ => None,
         }
     }

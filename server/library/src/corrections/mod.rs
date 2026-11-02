@@ -7,7 +7,8 @@
 //! - reset grouping: tracks grouped by hand go back to automatic grouping;
 //! - artist merge: duplicate artists fold into one survivor;
 //! - artist convergence: at the end of a scan run, artist rows MusicBrainz
-//!   proves to be one artist fold into one, with no one asking.
+//!   proves to be one artist fold into one, with no one asking;
+//! - the upgrade from v2 folds v2's own Unknown Artist into the built-in one.
 //!
 //! Each is previewed first and applied with the preview's token
 //! ([`crate::preview`]). They change catalog rows only, for the albums
@@ -45,4 +46,6 @@ mod retag_pairs;
 pub mod service;
 pub(crate) mod sql;
 
+pub use artist_convergence::{V2Fold, fold_v2_placeholder};
+pub use merge_basis::{V2PlaceholderFacts, V2PlaceholderKept};
 pub use service::Corrections;

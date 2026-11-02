@@ -602,6 +602,55 @@ droppedneedle_kernel::sql! {
              updated_at = CAST(round(?3 * 1000) AS INTEGER), \
          row_revision = row_revision + 1 WHERE state = 'open' \
          AND (left_artist_id = ?1 OR right_artist_id = ?1)";
+    /// The row artist `?1` was merged into, when it was.
+    pub(super) ARTIST_RETIRED_INTO = "SELECT retired_into_artist_id FROM local_artists WHERE id = ?1";
+    /// Point the aliases of the rows merged into `?1` before it at `?2`: an
+    /// alias opens only a live row.
+    pub(super) REPOINT_ALIASES_OF_ROWS_MERGED_INTO = "UPDATE local_artist_aliases SET local_artist_id = ?2 \
+         WHERE local_artist_id IN (SELECT id FROM local_artists WHERE retired_into_artist_id = ?1)";
+    /// Make the rows merged into `?1` before it open `?2`: an artist id
+    /// follows `retired_into_artist_id` one hop at most.
+    pub(super) ALIAS_ROWS_MERGED_INTO = "INSERT OR IGNORE INTO local_artist_aliases (alias, local_artist_id, kind, created_at) \
+         SELECT lower(id), ?2, 'merged_artist', CAST(round(?3 * 1000) AS INTEGER) \
+         FROM local_artists WHERE retired_into_artist_id = ?1";
+    /// Credits of retired artist `?1` under exactly the name `?3`, or no
+    /// name of their own, with no id: these move to `?2`.
+    pub(super) RETARGET_ALBUM_CREDITS = "UPDATE local_album_artists SET local_artist_id = ?2, row_revision = row_revision + 1 \
+         WHERE local_artist_id = ?1 AND trim(COALESCE(credited_name, '')) IN ('', ?3) \
+         AND trim(COALESCE(artist_mbid, '')) = ''";
+    pub(super) RETARGET_TRACK_CREDITS = "UPDATE local_track_artists SET local_artist_id = ?2, row_revision = row_revision + 1 \
+         WHERE local_artist_id = ?1 AND trim(COALESCE(credited_name, '')) IN ('', ?3) \
+         AND trim(COALESCE(artist_mbid, '')) = ''";
+    pub(super) RETARGET_ALBUM_ARTIST = "UPDATE local_albums SET album_artist_id = ?2, \
+         updated_at = CAST(round(?3 * 1000) AS INTEGER), row_revision = row_revision + 1 \
+         WHERE album_artist_id = ?1 AND trim(album_artist_name) = ?4";
+    /// What stays on retired artist `?1`: links, source links and credits.
+    pub(super) LEFT_ON_RETIRED = "SELECT \
+         (SELECT COUNT(*) FROM local_artist_external_identities WHERE local_artist_id = ?1) \
+         + (SELECT COUNT(*) FROM local_entity_source_links WHERE local_artist_id = ?1) \
+         + (SELECT COUNT(*) FROM local_album_artists WHERE local_artist_id = ?1) \
+         + (SELECT COUNT(*) FROM local_track_artists WHERE local_artist_id = ?1) \
+         + (SELECT COUNT(*) FROM local_albums WHERE album_artist_id = ?1)";
+    /// The ids the links of artist `?1` name.
+    pub(super) LINKED_IDS = "SELECT provider_artist_id FROM local_artist_external_identities \
+         WHERE local_artist_id = ?1";
+    /// Whether artist `?1` has a link to a page on another service.
+    pub(super) HAS_SOURCE_LINK = "SELECT EXISTS (SELECT 1 FROM local_entity_source_links WHERE local_artist_id = ?1)";
+    /// The MusicBrainz ids artist `?1`'s credits and proofs name.
+    pub(super) NAMED_IDS = "SELECT artist_mbid FROM local_track_artists \
+         WHERE local_artist_id = ?1 AND trim(COALESCE(artist_mbid, '')) <> '' \
+         UNION SELECT artist_mbid FROM local_album_artists \
+         WHERE local_artist_id = ?1 AND trim(COALESCE(artist_mbid, '')) <> '' \
+         UNION SELECT artist_mbid FROM library_artist_credit_proofs \
+         WHERE local_artist_id = ?1 OR source_local_artist_id = ?1";
+    /// Whether a credit or album of artist `?1` stands under a name other
+    /// than `?2`. A credit with no name of its own takes the row's.
+    pub(super) CREDITED_UNDER_ANOTHER_NAME = "SELECT EXISTS (SELECT 1 FROM local_track_artists \
+         WHERE local_artist_id = ?1 AND trim(COALESCE(credited_name, '')) NOT IN ('', ?2)) \
+         OR EXISTS (SELECT 1 FROM local_album_artists \
+         WHERE local_artist_id = ?1 AND trim(COALESCE(credited_name, '')) NOT IN ('', ?2)) \
+         OR EXISTS (SELECT 1 FROM local_albums \
+         WHERE album_artist_id = ?1 AND trim(album_artist_name) IS NOT ?2)";
     /// The rows of a list of tracks, in path order.
     family TRACK_ROWS_IN = track_rows_in;
     /// Lock a list of tracks to album `?1` by hand.

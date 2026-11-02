@@ -36171,7 +36171,8 @@
         "description": "What an automatic artist merge rested on.",
         "enum": [
           "musicbrainz_proof",
-          "same_name"
+          "same_name",
+          "v2_placeholder"
         ]
       },
       "ArtistMergePreviewBody": {

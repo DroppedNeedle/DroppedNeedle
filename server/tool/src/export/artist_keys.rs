@@ -49,6 +49,11 @@ use droppedneedle_library::scan::naming::{
     UNKNOWN_ARTIST_ID, VARIOUS_ARTISTS_ID, artist_key, artist_mbid_key,
 };
 
+/// How the export's note about rows kept under their v2 id starts, followed
+/// by a colon and their names. The import rewrites it when one of them folds.
+pub(crate) const KEPT_RESERVED_NOTE: &str =
+    "Artists kept under their v2 id because v3 keeps their name for its own artist row";
+
 /// What re-keying the carried artists did.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct ArtistRekey {
@@ -87,8 +92,7 @@ impl ArtistRekey {
         }
         if !self.kept_reserved.is_empty() {
             notes.push(format!(
-                "Artists kept under their v2 id because v3 keeps their name for its own \
-                 artist row: {}",
+                "{KEPT_RESERVED_NOTE}: {}",
                 self.kept_reserved.join(", ")
             ));
         }

@@ -232,6 +232,10 @@ pub(crate) const MOVED_WITH_ID: &str = "CREDITS_MOVED_WITH_ID";
 /// spacing (`artist_convergence`).
 pub(crate) const MERGED_BY_NAME: &str = "AUTOMATIC_SAME_NAME_CREDITS_MOVED";
 
+/// The audit reason of a v2 "Unknown Artist" row the upgrade merged into
+/// the built-in one (`artist_convergence`).
+pub(crate) const V2_PLACEHOLDER_FOLDED: &str = "AUTOMATIC_V2_PLACEHOLDER_FOLDED";
+
 /// Point every reference of the basis's retiree at its survivor and
 /// retire it, recording in `converged_mbid` what proved the merge. The
 /// only writer of `local_artists.retired_into_artist_id`.
@@ -245,15 +249,7 @@ pub(super) fn retire_artist(
     // A row waiting to follow its credits to `artist`, or whose credits a
     // scan moved to it, follows them on to the survivor; every other open
     // candidate naming `artist` is resolved below.
-    tx.prepare_cached(crate::corrections::sql::REPOINT_MERGE_CANDIDATES.text())?
-        .execute(params![
-            artist,
-            survivor,
-            crate::clock::ms(now),
-            CREDITS_MOVED,
-            MOVED_BY_NAME,
-            MOVED_WITH_ID
-        ])?;
+    repoint_merge_candidates(tx, artist, survivor, now)?;
     let moves = [
         sql::REPOINT_ALBUM_CREDITS,
         sql::REPOINT_TRACK_CREDITS,
@@ -285,4 +281,53 @@ pub(super) fn retire_artist(
         stmt.execute(params_from_iter(values.into_iter().take(wanted)))?;
     }
     Ok(())
+}
+
+fn repoint_merge_candidates(
+    tx: &Transaction<'_>,
+    artist: &str,
+    survivor: &str,
+    now: f64,
+) -> rusqlite::Result<usize> {
+    tx.prepare_cached(crate::corrections::sql::REPOINT_MERGE_CANDIDATES.text())?
+        .execute(params![
+            artist,
+            survivor,
+            crate::clock::ms(now),
+            CREDITS_MOVED,
+            MOVED_BY_NAME,
+            MOVED_WITH_ID
+        ])
+}
+
+/// Move on what landed on `artist` after it was retired into `survivor`:
+/// favorites, ratings, plays, aliases, candidates and credits under exactly
+/// `name` with no id. Links, source links and any other credit stay on the
+/// retired row, since they may be another artist's. Answers how many rows
+/// moved.
+pub(super) fn retarget_retired(
+    tx: &Transaction<'_>,
+    artist: &str,
+    survivor: &str,
+    name: &str,
+    now: f64,
+) -> rusqlite::Result<u64> {
+    let mut moved = repoint_merge_candidates(tx, artist, survivor, now)? as u64;
+    moved += retarget_references(tx, "artist", artist, survivor)?;
+    moved += tx.execute(
+        sql::REPOINT_ARTIST_ALIASES.text(),
+        params![artist, survivor],
+    )? as u64;
+    moved += tx.execute(
+        sql::RESOLVE_MERGE_CANDIDATES.text(),
+        params![artist, survivor, now],
+    )? as u64;
+    for credits in [sql::RETARGET_ALBUM_CREDITS, sql::RETARGET_TRACK_CREDITS] {
+        moved += tx.execute(credits.text(), params![artist, survivor, name])? as u64;
+    }
+    moved += tx.execute(
+        sql::RETARGET_ALBUM_ARTIST.text(),
+        params![artist, survivor, now, name],
+    )? as u64;
+    Ok(moved)
 }

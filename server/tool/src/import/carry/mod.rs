@@ -31,6 +31,7 @@ pub(crate) mod held;
 pub(crate) mod jellyfin_ids;
 pub(crate) mod links;
 pub(crate) mod sql;
+pub(crate) mod unknown_artist;
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -42,6 +43,7 @@ use crate::export::envelope::ExportDoc;
 use crate::export::sections::{ALL, Column, TableSection, Target};
 use crate::import::report::{EntityCounts, ReportBuilder, utc_now_iso};
 use droppedneedle_kernel::runtime_config::Crypto;
+use droppedneedle_library::scan::naming::UNKNOWN_ARTIST;
 
 /// How the carry can fail. Messages stay free of row contents and secrets.
 #[derive(Debug, Error)]
@@ -77,6 +79,11 @@ pub(crate) struct SectionResult {
     /// Rows the export held for this section; a section that held any is
     /// marked carried.
     pub rows: u64,
+    /// Lines for the notes the upgrade summary prints.
+    pub summary: Vec<String>,
+    /// v2 Unknown Artist rows that folded, so the export's note about rows
+    /// kept under their v2 id no longer lists them.
+    pub unknown_artists_folded: usize,
 }
 
 impl SectionResult {
@@ -115,8 +122,11 @@ enum Work {
     Baselines,
     /// Store the Jellyfin ids v2 handed out (after the catalog).
     JellyfinIds,
-    /// Settle pending library links (last, on every import).
+    /// Settle pending library links (on every import).
     Links,
+    /// Fold v2's Unknown Artist into the built-in one (after the links, so
+    /// the plays they settle move with it; on every import with a bundle).
+    UnknownArtist,
 }
 
 impl Work {
@@ -128,6 +138,7 @@ impl Work {
             Self::Baselines => baselines::ENTITY,
             Self::JellyfinIds => jellyfin_ids::ENTITY,
             Self::Links => links::ENTITY,
+            Self::UnknownArtist => unknown_artist::ENTITY,
         }
     }
 }
@@ -185,6 +196,9 @@ fn run_sections(
         work.push(Work::JellyfinIds);
     }
     work.push(Work::Links);
+    if run.bundle.is_some() {
+        work.push(Work::UnknownArtist);
+    }
     let mut written = 0;
     for (done, unit) in work.into_iter().enumerate() {
         written += carry_section(conn, run, &marker, unit, report)?;
@@ -234,7 +248,11 @@ fn carry_section(
         return Ok(0);
     }
     let transaction = conn.transaction()?;
-    match apply_with_marker(&transaction, run, marker, unit) {
+    let outcome = match unit {
+        Work::UnknownArtist => unknown_artist::fold(&transaction),
+        _ => apply_with_marker(&transaction, run, marker, unit),
+    };
+    match outcome {
         Ok(result) => {
             transaction.commit()?;
             let written = result.written;
@@ -289,6 +307,8 @@ fn apply(conn: &Connection, run: &CarryRun<'_>, unit: Work) -> Result<SectionRes
         Work::Baselines => return baselines::apply(conn, run.dry_run),
         Work::JellyfinIds => return jellyfin_ids::apply(conn, run.dry_run),
         Work::Links => return links::apply(conn, run.dry_run),
+        // A real run folds through `carry_section`, on its transaction.
+        Work::UnknownArtist => return unknown_artist::would_fold(conn),
         Work::Section(section) => section,
     };
     // A section this bundle does not hold (an older exporter) is empty.
@@ -403,5 +423,9 @@ fn record(report: &mut ReportBuilder, name: &str, result: SectionResult) {
     report.add_carried_writes(result.written);
     for (key, outcome, detail) in result.notes {
         report.note(name, key, outcome, detail);
+    }
+    report.unlist_kept_reserved(UNKNOWN_ARTIST, result.unknown_artists_folded);
+    for line in result.summary {
+        report.add_note(line);
     }
 }

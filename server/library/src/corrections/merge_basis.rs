@@ -12,6 +12,8 @@
 //!   proof there still names the artist;
 //! - [`MergeBasis::emptied_by_name`]: a row a retag emptied follows its
 //!   credits by name, the one merge names alone decide;
+//! - [`MergeBasis::v2_placeholder`]: the upgrade folds a v2 row named
+//!   exactly "Unknown Artist" into the built-in one;
 //! - [`MergeBasis::person`]: an administrator chose the merge.
 //!
 //! MusicBrainz's special-purpose artist ids (`[unknown]` and the like)
@@ -43,6 +45,7 @@ use crate::corrections::sql::{
 };
 use crate::identify::artist_links::placeholder;
 use crate::identity::DecisionSource;
+use crate::scan::naming::{UNKNOWN_ARTIST, UNKNOWN_ARTIST_ID};
 use crate::scan::sqlite_store::artists::{NAME_MERGE_MARK, SENTINEL_ARTIST_IDS, proven_rows};
 use droppedneedle_auth::Admin;
 
@@ -76,6 +79,8 @@ enum Kind {
     /// A retag moved every credit of the retiree by name to the survivor;
     /// the recorded moves' ids.
     EmptiedByName { moves: Vec<String> },
+    /// The upgrade folded v2's placeholder row of this name.
+    V2Placeholder { name: String },
     /// An administrator chose the merge.
     PersonChose { user_id: String },
 }
@@ -105,6 +110,84 @@ enum Subject {
     Album(String),
 }
 
+/// Why a v2 "Unknown Artist" row stays apart from the built-in one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum V2PlaceholderKept {
+    /// It is not a live ordinary row of that name, or the built-in row is
+    /// not live.
+    NotPlaceholder,
+    Linked,
+    SourceLink,
+    NamesRealId,
+    MixedCredit,
+    MarkedDistinct,
+    /// The store failed on the merge.
+    MergeFailed,
+    /// The store failed moving on what landed after the merge.
+    LateRowsFailed,
+}
+
+impl V2PlaceholderKept {
+    /// The reason as the upgrade report words it.
+    #[must_use]
+    pub fn sentence(self) -> &'static str {
+        match self {
+            Self::NotPlaceholder => "it is not a live artist of exactly that name",
+            Self::Linked => "it is linked to a real artist",
+            Self::SourceLink => "it has a link to a page on another service",
+            Self::NamesRealId => "a credit or proof on it names a real MusicBrainz artist",
+            Self::MixedCredit => "some of its credits are under another name",
+            Self::MarkedDistinct => "an admin marked the two as different artists",
+            Self::MergeFailed => {
+                "the merge failed. Its songs, plays and favorites stay on it and nothing is \
+                 lost. To try again, run droppedneedle-tool upgrade --undo --yes and then the \
+                 upgrade again, before you start using v3"
+            }
+            Self::LateRowsFailed => {
+                "the merge happened, but rows that landed on it later could not move and stay \
+                 on it. Nothing is lost"
+            }
+        }
+    }
+}
+
+/// What the fold of a v2 "Unknown Artist" row looks at, read from the
+/// database for a real fold and from the export bundle for a dry run.
+#[derive(Debug, Default)]
+pub struct V2PlaceholderFacts {
+    /// The ids its links name.
+    pub linked_ids: Vec<String>,
+    /// It has a link to a page on another service.
+    pub source_link: bool,
+    /// The MusicBrainz ids its credits and proofs name.
+    pub named_ids: Vec<String>,
+    /// A credit or album stands under another name.
+    pub other_credit: bool,
+    /// An administrator marked it and the built-in row as distinct.
+    pub marked_distinct: bool,
+}
+
+impl V2PlaceholderFacts {
+    /// Ok when the row folds. A special-purpose MusicBrainz id is not a
+    /// real one, so it never keeps a row apart.
+    pub fn judge(&self) -> Result<(), V2PlaceholderKept> {
+        let real = |id: &String| !placeholder(&id.trim().to_lowercase());
+        if self.linked_ids.iter().any(real) {
+            Err(V2PlaceholderKept::Linked)
+        } else if self.source_link {
+            Err(V2PlaceholderKept::SourceLink)
+        } else if self.named_ids.iter().any(real) {
+            Err(V2PlaceholderKept::NamesRealId)
+        } else if self.other_credit {
+            Err(V2PlaceholderKept::MixedCredit)
+        } else if self.marked_distinct {
+            Err(V2PlaceholderKept::MarkedDistinct)
+        } else {
+            Ok(())
+        }
+    }
+}
+
 /// Where a row that could follow its credits stands.
 pub(crate) enum Follow<'tx> {
     /// It merges on this basis.
@@ -129,7 +212,7 @@ impl MergeBasis<'_> {
     pub(super) fn converged_mark(&self) -> Option<&str> {
         match &self.kind {
             Kind::Proven { mbid, .. } => Some(mbid),
-            Kind::EmptiedByName { .. } => Some(NAME_MERGE_MARK),
+            Kind::EmptiedByName { .. } | Kind::V2Placeholder { .. } => Some(NAME_MERGE_MARK),
             Kind::PersonChose { .. } => None,
         }
     }
@@ -195,6 +278,7 @@ impl MergeBasis<'_> {
                     .collect();
                 json!({ "kind": "same_name", "moves": moves })
             }
+            Kind::V2Placeholder { name } => json!({ "kind": "v2_placeholder", "name": name }),
             Kind::PersonChose { user_id } => json!({ "kind": "person", "user_id": user_id }),
         }
     }
@@ -209,6 +293,7 @@ impl MergeBasis<'_> {
         match (&self.kind, &other.kind) {
             (Kind::Proven { mbid: a, .. }, Kind::Proven { mbid: b, .. }) => a == b,
             (Kind::EmptiedByName { .. }, Kind::EmptiedByName { .. }) => true,
+            (Kind::V2Placeholder { .. }, Kind::V2Placeholder { .. }) => true,
             (Kind::PersonChose { user_id: a }, Kind::PersonChose { user_id: b }) => a == b,
             _ => false,
         }
@@ -448,6 +533,28 @@ impl<'tx> MergeBasis<'tx> {
         )))
     }
 
+    /// The fold of v2's placeholder row `retiree` into the built-in Unknown
+    /// Artist: both live, `retiree` an ordinary row whose trimmed name is
+    /// exactly that one (a scan keys the name exactly, so a folded match
+    /// would move back at the first scan), and [`V2PlaceholderFacts::judge`]
+    /// holds.
+    pub(crate) fn v2_placeholder(
+        tx: &'tx Transaction<'_>,
+        retiree: &str,
+    ) -> rusqlite::Result<Result<Self, V2PlaceholderKept>> {
+        let live: i64 = tx
+            .prepare_cached(crate::corrections::sql::LIVE_ARTISTS_OF_PAIR.text())?
+            .query_row(params![UNKNOWN_ARTIST_ID, retiree], |row| row.get(0))?;
+        let name = ordinary_name(tx, retiree)?;
+        let Some(name) = name.filter(|name| live == 2 && name.trim() == UNKNOWN_ARTIST) else {
+            return Ok(Err(V2PlaceholderKept::NotPlaceholder));
+        };
+        let facts = v2_placeholder_facts(tx, retiree)?;
+        Ok(facts
+            .judge()
+            .map(|()| Self::new(UNKNOWN_ARTIST_ID, retiree, Kind::V2Placeholder { name })))
+    }
+
     /// An administrator's merge of live row `retiree` into live row
     /// `survivor`; none when either is not live or they are one row.
     pub(crate) fn person(
@@ -472,6 +579,28 @@ impl<'tx> MergeBasis<'tx> {
             )
         }))
     }
+}
+
+fn v2_placeholder_facts(
+    tx: &Transaction<'_>,
+    retiree: &str,
+) -> rusqlite::Result<V2PlaceholderFacts> {
+    let ids = |statement: droppedneedle_kernel::db::statement::Statement| {
+        tx.prepare_cached(statement.text())?
+            .query_map(params![retiree], |row| row.get(0))?
+            .collect::<rusqlite::Result<Vec<String>>>()
+    };
+    Ok(V2PlaceholderFacts {
+        linked_ids: ids(crate::corrections::sql::LINKED_IDS)?,
+        source_link: tx
+            .prepare_cached(crate::corrections::sql::HAS_SOURCE_LINK.text())?
+            .query_row(params![retiree], |row| row.get(0))?,
+        named_ids: ids(crate::corrections::sql::NAMED_IDS)?,
+        other_credit: tx
+            .prepare_cached(crate::corrections::sql::CREDITED_UNDER_ANOTHER_NAME.text())?
+            .query_row(params![retiree, UNKNOWN_ARTIST], |row| row.get(0))?,
+        marked_distinct: marked_distinct(tx, &[retiree, UNKNOWN_ARTIST_ID])?,
+    })
 }
 
 /// One row of a group proven to be one artist.

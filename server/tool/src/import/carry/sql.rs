@@ -37,6 +37,27 @@ droppedneedle_kernel::sql! {
     /// The columns of v3 table ?1 that have no default.
     pub(super) REQUIRED_COLUMNS = "SELECT name FROM pragma_table_info(?1, 'main') \
              WHERE \"notnull\" = 1 AND dflt_value IS NULL";
+    /// The bundle's live ordinary rows named `?1`, other than the row `?2`.
+    pub(super) UNKNOWN_ARTIST_CANDIDATES = "SELECT id FROM bundle.\"library_artist\" \
+             WHERE trim(display_name) = ?1 AND id <> ?2 AND retired_into_artist_id IS NULL \
+             AND kind <> 'various_artists' ORDER BY id";
+    /// The row a v3 artist was merged into; no row when it is not there.
+    pub(super) ARTIST_RETIRED_INTO = "SELECT retired_into_artist_id FROM main.local_artists WHERE id = ?1";
+    /// The ids the bundled links of artist `?1` name.
+    pub(super) UNKNOWN_ARTIST_LINKS = "SELECT provider_artist_id FROM bundle.\"artist_identity\" \
+             WHERE local_artist_id = ?1";
+    pub(super) UNKNOWN_ARTIST_SOURCE_LINK = "SELECT EXISTS (SELECT 1 FROM bundle.\"library_source_link\" \
+             WHERE local_artist_id = ?1)";
+    pub(super) UNKNOWN_ARTIST_ALBUM_CREDIT = "SELECT EXISTS (SELECT 1 FROM bundle.\"library_album_artist\" \
+             WHERE local_artist_id = ?1 AND trim(COALESCE(credited_name, '')) NOT IN ('', ?2))";
+    pub(super) UNKNOWN_ARTIST_TRACK_CREDIT = "SELECT EXISTS (SELECT 1 FROM bundle.\"library_track_artist\" \
+             WHERE local_artist_id = ?1 AND trim(COALESCE(credited_name, '')) NOT IN ('', ?2))";
+    pub(super) UNKNOWN_ARTIST_ALBUM_NAME = "SELECT EXISTS (SELECT 1 FROM bundle.\"library_album\" \
+             WHERE album_artist_id = ?1 AND trim(album_artist_name) IS NOT ?2)";
+    /// Whether the bundle marks artists `?1` and `?2` as different people.
+    pub(super) UNKNOWN_ARTIST_DISMISSED = "SELECT EXISTS (SELECT 1 FROM bundle.\"artist_dismissal\" \
+             WHERE (left_artist_id = ?1 AND right_artist_id = ?2) \
+                OR (left_artist_id = ?2 AND right_artist_id = ?1))";
     /// Whether the bundle has table ?1.
     pub(super) BUNDLE_HAS_TABLE = "SELECT EXISTS(SELECT 1 FROM bundle.sqlite_master \
              WHERE type = 'table' AND name = ?1)";
