@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use rusqlite::{Connection, OpenFlags, params};
 use sha2::{Digest as _, Sha256};
 
-use crate::export::envelope::LeftBehind;
+use crate::export::envelope::{LeftBehind, LeftBehindKind};
 use crate::export::error::ExportError;
 use crate::export::sections::library::ARTIST_ALIASES;
 use crate::export::sections::{ALL, Column, FileSet, LIVE_USER, Source, TableSection, V2Value};
@@ -305,6 +305,7 @@ fn copy_table(
             table: table.to_owned(),
             rows: skipped,
             reason: section.left_behind.to_owned(),
+            kind: LeftBehindKind::Table,
         });
     }
     Ok(copied)
@@ -402,6 +403,7 @@ fn attach_held_files(
                      V2_ROOT/cache/held from your backup and export again, or request the \
                      download again in v3"
                 .to_owned(),
+            kind: LeftBehindKind::Files,
         });
     }
     Ok(kept)
@@ -467,6 +469,7 @@ fn copy_management_blobs(
                      Restore V2_ROOT/cache/library-management from your backup and export \
                      again"
                 .to_owned(),
+            kind: LeftBehindKind::Files,
         });
     }
     Ok(copied)
@@ -551,6 +554,7 @@ fn copy_playlist_covers(
                      V2_ROOT/cache/covers/playlists from your backup and export again, or \
                      pick a new cover in v3"
                 .to_owned(),
+            kind: LeftBehindKind::Files,
         });
     }
     Ok(copied)

@@ -322,6 +322,48 @@ async fn settings_land_with_schedule_carry_and_no_plaintext() {
     }
 }
 
+/// A top-level Jellyfin address and contact address reach the person: the
+/// first in v3's settings, the second as a line in the import report, which
+/// lists the config keys left behind.
+#[tokio::test]
+async fn top_level_config_keys_reach_the_import() {
+    let root = scratch_dir("config-keys");
+    let _ = repaired_export(&root);
+    let config_path = root.join("v2").join("config").join("config.json");
+    let mut config: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&config_path).expect("config reads"))
+            .expect("config parses");
+    config["jellyfin_url"] = "http://jellyfin.lan:8096".into();
+    config["contact_email"] = "ops@example.org".into();
+    std::fs::write(&config_path, config.to_string()).expect("config writes");
+    let export_path = root.join("edited.json");
+    droppedneedle_tool::export::export_v2_to_file(
+        &export_request(&root.join("v2"), PASSPHRASE),
+        &export_path,
+    )
+    .expect("export writes");
+    let text = std::fs::read_to_string(&export_path).expect("export reads back");
+
+    let (v3_root, pool) = seeded_target(&root).await;
+    let report = run_pipeline(&text, PASSPHRASE, &v3_root, &pool, false).await;
+    assert_eq!(
+        v3_settings(&v3_root)["jellyfin_settings"]["jellyfin_url"],
+        "http://jellyfin.lan:8096"
+    );
+    assert!(
+        report
+            .notes
+            .iter()
+            .any(|note| note.starts_with("Set CONTACT_EMAIL=ops@example.org in your environment")),
+        "{:?}",
+        report.notes
+    );
+    assert!(report.left_behind.iter().any(|item| {
+        item.table == "contact_email"
+            && item.kind == droppedneedle_tool::export::LeftBehindKind::Setting
+    }));
+}
+
 #[tokio::test]
 async fn reimport_writes_nothing() {
     let root = scratch_dir("reimport");

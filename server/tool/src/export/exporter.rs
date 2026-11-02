@@ -7,8 +7,9 @@
 //! operator passphrase, and assembles the envelope. The JSON carries
 //! accounts, settings, follows and sealed per-user connections; the rest of
 //! the carried user data goes in the bundle beside it
-//! ([`crate::export::bundle`]). Everything else stays behind and is listed,
-//! with row counts, in the document's `left_behind`.
+//! ([`crate::export::bundle`]). Everything else stays behind and is listed
+//! in the document's `left_behind`: tables and files with counts, settings
+//! by name.
 //!
 //! Two v2 plaintext-at-rest bugs close here: the AudioDB key and
 //! secret-flagged plugin settings were stored unencrypted in v2, so they
@@ -37,7 +38,30 @@ use crate::export::sql::{
 use crate::export::v2dir::V2Dirs;
 use crate::export::{EXPORT_FORMAT, FORMAT_VERSION};
 use droppedneedle_kernel::db::backup::{WalState, wal_path, wal_state};
+use droppedneedle_kernel::http_client::DEFAULT_CONTACT_EMAIL;
 use droppedneedle_kernel::runtime_config::Secret;
+
+/// The address v2 writes to every new `config.json`, so finding it says
+/// nobody chose one. v3 defaults to the same address.
+const V2_DEFAULT_JELLYFIN_URL: &str = "http://jellyfin:8096";
+
+/// v2's default contact address before the project was renamed. An install
+/// from then still holds it, and nobody chose it.
+const V2_OLD_DEFAULT_CONTACT: &str = "contact@musicseerr.com";
+
+/// A web address with no sign-in in it. A password in an address must not
+/// land in the export, and anything but http or https is not a server v3 can
+/// reach.
+fn is_plain_web_address(address: &str) -> bool {
+    let Some(rest) = address
+        .strip_prefix("http://")
+        .or_else(|| address.strip_prefix("https://"))
+    else {
+        return false;
+    };
+    let host = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    !host.is_empty() && !host.contains('@')
+}
 
 /// `download_policy` read-only projection metadata. v2 itself strips these
 /// before save; they must not cross into the export.
@@ -129,7 +153,8 @@ fn build_doc(
     let event_cities = read_event_cities(&db)?;
     let event_seen = read_event_seen(&db)?;
     let plugin_flags = crate::export::v2dir::plugin_setting_flags(&request.v2.plugins_dir);
-    let settings = build_settings(&config, &key, &sealer, &plugin_flags)?;
+    let mut settings = build_settings(&config, &key, &sealer, &plugin_flags)?;
+    let jellyfin_carried = carry_jellyfin_address(&config, &mut settings);
     let exported_at = request
         .exported_at
         .clone()
@@ -144,13 +169,24 @@ fn build_doc(
         bundle_name,
         unix_seconds(now),
     );
-    let (attachment, left_behind, notes) = match built {
+    let (attachment, mut left_behind, mut notes) = match built {
         Ok(built) => built,
         Err(error) => {
             let _ = std::fs::remove_file(bundle_path);
             return Err(error);
         }
     };
+    left_behind.extend(crate::export::inventory::left_behind_settings(
+        &config, &settings,
+    ));
+    if jellyfin_carried {
+        notes.push(
+            "Jellyfin address: v2 kept it only in an older setting, so it moved to \
+             Settings > Jellyfin. Check it there."
+                .to_owned(),
+        );
+    }
+    notes.extend(contact_email_note(&config));
 
     let mut doc = ExportDoc {
         format: EXPORT_FORMAT.to_owned(),
@@ -176,6 +212,53 @@ fn build_doc(
     })?;
     doc.content_hmac = sealer.digest(&value)?;
     Ok(doc)
+}
+
+/// Move v2's top-level Jellyfin address into the section when the section
+/// has none, and say whether it did. v2 reads the section first and falls
+/// back to this key, so an install can hold its address only here.
+fn carry_jellyfin_address(config: &Map<String, Value>, settings: &mut Map<String, Value>) -> bool {
+    let Some(address) = config
+        .get("jellyfin_url")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|address| *address != V2_DEFAULT_JELLYFIN_URL && is_plain_web_address(address))
+    else {
+        return false;
+    };
+    let section = settings
+        .entry("jellyfin_settings")
+        .or_insert_with(|| json!({}));
+    let Some(section) = section.as_object_mut() else {
+        return false;
+    };
+    let has_one = section
+        .get("jellyfin_url")
+        .and_then(Value::as_str)
+        .is_some_and(|held| !held.trim().is_empty());
+    if has_one {
+        return false;
+    }
+    section.insert("jellyfin_url".to_owned(), json!(address));
+    true
+}
+
+/// What to do about a contact address of the person's own: v3 reads it only
+/// from the environment. The check is the one v3 makes at start, where a
+/// value it refuses would stop the server.
+fn contact_email_note(config: &Map<String, Value>) -> Option<String> {
+    let address = config.get("contact_email")?.as_str()?.trim();
+    if address.is_empty() || address == DEFAULT_CONTACT_EMAIL || address == V2_OLD_DEFAULT_CONTACT {
+        return None;
+    }
+    Some(if address.chars().all(|ch| ch.is_ascii_graphic()) {
+        format!("Set CONTACT_EMAIL={address} in your environment: v3 reads it from there.")
+    } else {
+        format!(
+            "Set CONTACT_EMAIL in your environment: v3 reads it from there. v2's address \
+             {address:?} has spaces or other characters v3 refuses, so use a plain one."
+        )
+    })
 }
 
 /// Build the bundle, hash it, and list everything the export leaves

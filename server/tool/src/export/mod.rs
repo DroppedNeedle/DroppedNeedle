@@ -21,9 +21,9 @@ pub mod v2dir;
 
 pub use envelope::{
     ApprovalRecord, Attachment, ConnectionRecord, EXPORT_FORMAT, EnvelopeWarning, ExportDoc,
-    FORMAT_VERSION, FollowRecord, HashScheme, LeftBehind, MIN_FORMAT_VERSION, ParsedExport,
-    ProviderRecord, REQUIRED_KEYS, RESERVED_SECTIONS, RecoveryCode, SealedValue, SecretEnvelope,
-    UserRecord, derive_hash_scheme, parse_export,
+    FORMAT_VERSION, FollowRecord, HashScheme, LeftBehind, LeftBehindKind, MIN_FORMAT_VERSION,
+    ParsedExport, ProviderRecord, REQUIRED_KEYS, RESERVED_SECTIONS, RecoveryCode, SealedValue,
+    SecretEnvelope, UserRecord, derive_hash_scheme, parse_export,
 };
 pub use error::ExportError;
 pub use exporter::{ExportRequest, bundle_path_for, export_v2, export_v2_to_file, utc_now_rfc3339};

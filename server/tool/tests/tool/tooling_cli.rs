@@ -161,6 +161,12 @@ fn validate_accepts_rejects_and_cross_checks() {
         "stderr: {}",
         String::from_utf8_lossy(&status.stderr)
     );
+    // Settings left behind print by name, among the counted tables.
+    let stdout = String::from_utf8_lossy(&status.stdout);
+    assert!(
+        stdout.contains("\n  library_sync_settings (older"),
+        "stdout: {stdout}"
+    );
 
     // A bumped version fails closed.
     let bad_version = root.join("bad-version.json");
@@ -649,6 +655,12 @@ fn upgrade_turns_a_v2_directory_into_v3_in_place() {
     let root = scratch.join("data");
     let fixture =
         droppedneedle_tool::tooling::fixture::build_v2_fixture(&root).expect("fixture builds");
+    let config_path = root.join("config").join("config.json");
+    let mut config: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&config_path).expect("config reads"))
+            .expect("config parses");
+    config["contact_email"] = "ops@example.org".into();
+    std::fs::write(&config_path, config.to_string()).expect("config writes");
 
     let run = tool_in(&root, &["upgrade"]);
     assert!(run.status.success(), "stderr: {}", stderr_of(&run));
@@ -676,6 +688,16 @@ fn upgrade_turns_a_v2_directory_into_v3_in_place() {
     let stdout = String::from_utf8_lossy(&run.stdout);
     assert!(
         stdout.contains("Removed 2 follows and approvals"),
+        "stdout: {stdout}"
+    );
+    // The contact address cannot move to settings, so the summary says what
+    // to do, and names the key among what stayed behind.
+    assert!(
+        stdout.contains("Set CONTACT_EMAIL=ops@example.org in your environment"),
+        "stdout: {stdout}"
+    );
+    assert!(
+        stdout.contains("\n  contact_email (v3 reads"),
         "stdout: {stdout}"
     );
     let orphans: i64 = rusqlite::Connection::open(cache_backup.join("library.db"))

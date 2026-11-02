@@ -212,6 +212,9 @@ report lists it too (`left_behind`). In short:
 - MusicBrainz contributions that were already linked, cancelled or out of
   date. A linked album keeps its match.
 - Caches, which v3 fills again on its own.
+- Keys of v2's `config.json` that v3 no longer uses or reads from the
+  environment instead, such as `port` and `contact_email`. Each is listed by
+  name with what to do, and its value stays out of the list.
 - Plugins. Their settings come across, switched off, and the report lists
   each one as needing porting. Port it, install it again from Settings >
   Plugins, then switch it on.
@@ -456,6 +459,13 @@ If your reverse proxy has a special rule for v2's live update stream at
 stream per download (`/api/v1/downloads/<id>/stream`); v3 sends download
 progress over that same single stream, so a rule for those can go.
 
+If you set your own contact address in v2, set it again in your compose
+file. v3 reads it only from the environment. The upgrade's "Worth a look" list
+says what to set, as `Set CONTACT_EMAIL=you@example.com in your environment`.
+Without it v3 sends its default address to MusicBrainz. With the import by
+hand, the same line is in `validate`'s `note:` lines and in the report's
+`notes`.
+
 Then check:
 
 - You can log in with your v2 password.
@@ -463,6 +473,9 @@ Then check:
   the first moments after each start, while the server records its
   Jellyfin ids, Jellyfin apps are told the server is busy and try again.
 - Settings > Download Client and Settings > Indexers / Prowlarr look right.
+- If you use Jellyfin, Settings > Jellyfin shows your address. An address v2
+  kept only in its older top-level setting moves there, and "Worth a look"
+  says so.
 - Your library folders are listed under Settings > Library. They come across
   with your settings, so check them rather than adding them again: a folder
   added a second time gets a new id, and your carried library is filed under
@@ -584,9 +597,9 @@ A clean file ends with `valid: N warning(s)`. Two warnings are normal:
 `DANGLING_REVIEWER` (an approval whose reviewer no longer exists; the
 reviewer field is cleared on import).
 
-Above that it prints what stays behind in v2, one line per table with a
-row count and the reason. Read it: this is the moment to decide whether
-anything there matters to you before you move.
+Above that it prints what stays behind in v2: one line per table with a row
+count and the reason, then one per setting by name. Read it: this is the
+moment to decide whether anything there matters to you before you move.
 
 If it reports `DANGLING_USER_REF`, v2 has follows or approvals that point at
 deleted users. Remove them from `V2_ROOT` (not the backup) and export again:

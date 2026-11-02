@@ -412,15 +412,49 @@ pub struct Attachment {
     pub sections: std::collections::BTreeMap<String, u64>,
 }
 
+/// What a [`LeftBehind`] entry names.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LeftBehindKind {
+    /// Rows of a v2 table. A file with no `kind` means this.
+    #[default]
+    Table,
+    /// Files of a v2 file set.
+    Files,
+    /// A key of v2's `config.json`.
+    Setting,
+}
+
+impl LeftBehindKind {
+    fn is_table(&self) -> bool {
+        *self == Self::Table
+    }
+}
+
 /// v2 data that did not travel, with a count and the reason.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LeftBehind {
-    /// v2 table (or file set) name.
+    /// v2 table, file set or setting name.
     pub table: String,
-    /// Rows (or files) left behind.
+    /// Rows or files left behind; a setting counts as one.
     pub rows: u64,
     /// Why, in plain words.
     pub reason: String,
+    /// What `table` names.
+    #[serde(default, skip_serializing_if = "LeftBehindKind::is_table")]
+    pub kind: LeftBehindKind,
+}
+
+impl LeftBehind {
+    /// The entry as the summaries print it. A setting has no count to show.
+    #[must_use]
+    pub fn line(&self) -> String {
+        if self.kind == LeftBehindKind::Setting {
+            format!("{} ({})", self.table, self.reason)
+        } else {
+            format!("{}: {} ({})", self.table, self.rows, self.reason)
+        }
+    }
 }
 
 /// The full parsed export document. Settings stay schemaless JSON: v2

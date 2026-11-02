@@ -1,5 +1,7 @@
 //! What stays behind in v2: every table the export does not read that
-//! still holds rows, with its row count and a plain reason.
+//! still holds rows, with its row count and a plain reason, and every key
+//! of v2's `config.json` the export does not carry, by name only (a value
+//! left here may be a secret).
 //!
 //! The list rides in the export file, `validate` prints it and the import
 //! report repeats it, so nothing is lost silently: the operator sees what
@@ -8,11 +10,14 @@
 use std::collections::HashSet;
 
 use rusqlite::Connection;
+use serde_json::{Map, Value};
 
-use crate::export::envelope::LeftBehind;
+use crate::export::envelope::{LeftBehind, LeftBehindKind};
 use crate::export::error::ExportError;
 use crate::export::sql::{COUNT_ROWS_FROM, TABLE_NAMES};
+use droppedneedle_kernel::config::deployment::{DEPLOYMENT_VARS, DROPPED_ENV_VARS};
 use droppedneedle_kernel::db::statement::quoted_identifier;
+use droppedneedle_kernel::runtime_config::DROPPED_SECTION_KEYS;
 
 /// Older copies v2 kept from before its own library upgrade. v2 itself
 /// reads the `library_*` tables the export carries instead.
@@ -185,8 +190,86 @@ pub fn left_behind_tables(
                 reason: reason_for(&table).to_owned(),
                 table,
                 rows: u64::try_from(rows).unwrap_or(0),
+                kind: LeftBehindKind::Table,
             });
         }
     }
     Ok(out)
+}
+
+/// v2 sections v3 has no place for, beyond the names the kernel lists.
+const REMOVED_V2_SECTIONS: &[&str] = &["free_music", "home_settings"];
+
+const NOT_USED: &str = "a v2 setting v3 no longer uses. Nothing to do";
+
+/// Why one top-level v2 config key stays behind, and what to do about it.
+fn setting_reason(key: &str) -> String {
+    let named = |name: &str| name.eq_ignore_ascii_case(key);
+    if key == "jellyfin_url" {
+        "older copy of the Jellyfin address. Nothing to do: v3 keeps the one under \
+         Settings > Jellyfin"
+            .to_owned()
+    } else if key == "contact_email" {
+        "v3 reads its contact address from CONTACT_EMAIL in the environment. If v2 had \
+         your own address, a note says what to set"
+            .to_owned()
+    } else if key == "library_sync_settings" {
+        "older library sync settings. Nothing to do: the schedule moves to the scan \
+         schedule (pass --v2-config when you import by hand)"
+            .to_owned()
+    } else if let Some(var) = DEPLOYMENT_VARS.iter().find(|var| named(var.env_name)) {
+        format!(
+            "v3 reads this from {} in the environment. Set it there if you changed it in v2",
+            var.env_name
+        )
+    } else if DROPPED_SECTION_KEYS.iter().any(|name| named(name))
+        || DROPPED_ENV_VARS.iter().any(|var| named(var.env_name))
+        || REMOVED_V2_SECTIONS.contains(&key)
+    {
+        NOT_USED.to_owned()
+    } else {
+        "a setting this upgrade does not know, so it is not carried. Keep your v2 backup \
+         if it holds something you need"
+            .to_owned()
+    }
+}
+
+/// Every key of v2's config that `settings` (the sections the export holds)
+/// does not carry: top-level keys, then fields a carried section left out.
+/// The instance id travels on its own, and a Jellyfin address the section
+/// holds has moved with it.
+#[must_use]
+pub fn left_behind_settings(
+    config: &Map<String, Value>,
+    settings: &Map<String, Value>,
+) -> Vec<LeftBehind> {
+    let setting = |table: String, reason: String| LeftBehind {
+        table,
+        rows: 1,
+        reason,
+        kind: LeftBehindKind::Setting,
+    };
+    let section_address = settings
+        .get("jellyfin_settings")
+        .and_then(|section| section.get("jellyfin_url"))
+        .and_then(Value::as_str)
+        .map(str::trim);
+    let mut out = Vec::new();
+    for (key, value) in config {
+        if key == "instance_id"
+            || (key == "jellyfin_url" && value.as_str().map(str::trim) == section_address)
+        {
+            continue;
+        }
+        let Some(carried) = settings.get(key) else {
+            out.push(setting(key.clone(), setting_reason(key)));
+            continue;
+        };
+        if let (Value::Object(fields), Value::Object(kept)) = (value, carried) {
+            for field in fields.keys().filter(|field| !kept.contains_key(*field)) {
+                out.push(setting(format!("{key}.{field}"), NOT_USED.to_owned()));
+            }
+        }
+    }
+    out
 }

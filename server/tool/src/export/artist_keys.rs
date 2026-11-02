@@ -21,8 +21,8 @@
 //! row keeps (the two sentinels, Various Artists rows, rows kept under
 //! their v2 id):
 //!
-//! - when two rows want one key, the row with more votes takes it; the
-//!   other takes the row v3 makes for its MusicBrainz id when it has one,
+//! - when two rows want one key, the row with more votes for it takes it,
+//!   present tracks first; the other takes the row v3 makes for its MusicBrainz id when it has one,
 //!   else keeps its v2 id;
 //! - a row whose key is taken by a kept id keeps its v2 id.
 //!
@@ -61,6 +61,9 @@ pub struct ArtistRekey {
     /// Rows kept under their v2 id because another row keeps their key
     /// (a sentinel such as Unknown Artist), by name.
     pub kept_reserved: Vec<String>,
+    /// The bundle column whose absence stopped the re-keying, on a bundle
+    /// that holds artists.
+    pub skipped_for: Option<String>,
 }
 
 impl ArtistRekey {
@@ -68,6 +71,14 @@ impl ArtistRekey {
     #[must_use]
     pub fn notes(&self) -> Vec<String> {
         let mut notes = Vec::new();
+        if let Some(column) = &self.skipped_for {
+            notes.push(format!(
+                "Artists kept their v2 ids because the v2 database has no {column} column. \
+                 v3's first scan makes new rows for their credits, and plays and favorites \
+                 stay on the old rows. Update v2 to its last release and export again to \
+                 avoid that."
+            ));
+        }
         if !self.kept_apart.is_empty() {
             notes.push(format!(
                 "Artists kept apart from another artist with the same name and sort name: {}",
@@ -139,6 +150,12 @@ impl Tally {
         if present {
             *self.present.entry(key.to_owned()).or_default() += 1;
         }
+    }
+
+    /// One key's votes from present credits, then from all.
+    fn votes_for(&self, key: &str) -> (usize, usize) {
+        let count = |votes: &BTreeMap<String, usize>| votes.get(key).copied().unwrap_or(0);
+        (count(&self.present), count(&self.all))
     }
 
     /// Keys by votes, most first; ties go to the smaller key.
@@ -370,6 +387,37 @@ fn identities(conn: &Connection) -> Result<HashMap<String, String>, ExportError>
     rows.collect::<Result<_, _>>().map_err(bundle_error)
 }
 
+/// The row at the end of `artist`'s chain of merges (itself when live).
+fn end_of_merges<'a>(artist: &'a Artist, by_id: &HashMap<&str, &'a Artist>) -> &'a Artist {
+    let mut survivor = artist;
+    for _ in 0..16 {
+        match survivor
+            .retired_into
+            .as_deref()
+            .and_then(|id| by_id.get(id))
+        {
+            Some(next) => survivor = next,
+            None => break,
+        }
+    }
+    survivor
+}
+
+/// The id, after re-keying, that a re-keyed row's old id should open: the
+/// row its merges end on, since a retired row opens nothing itself.
+fn alias_target(
+    old: &str,
+    new: &str,
+    by_id: &HashMap<&str, &Artist>,
+    new_id: &BTreeMap<String, String>,
+) -> String {
+    let Some(artist) = by_id.get(old) else {
+        return new.to_owned();
+    };
+    let end = &end_of_merges(artist, by_id).id;
+    new_id.get(end).unwrap_or(end).clone()
+}
+
 /// The new id of every carried row that changes, and the rows kept apart.
 fn plan(
     artists: &[Artist],
@@ -402,20 +450,23 @@ fn plan(
     }
 
     // Live rows: each takes the key it has most votes for; when two want
-    // one key, the one with more votes takes it.
-    let mut wants: BTreeMap<String, Vec<(usize, &str)>> = BTreeMap::new();
+    // one key, the one with more votes for it takes it, present tracks
+    // first, so a row's missing tracks never outvote another's present ones.
+    #[allow(clippy::type_complexity)]
+    let mut wants: BTreeMap<String, Vec<((usize, usize), &str)>> = BTreeMap::new();
     for artist in artists {
         if artist.retired_into.is_some() || reserved.contains(artist.id.as_str()) {
             continue;
         }
-        if let Some((key, count)) = tallies
-            .get(artist.id.as_str())
-            .and_then(|tally| tally.ranked().into_iter().next())
-        {
+        let Some(tally) = tallies.get(artist.id.as_str()) else {
+            continue;
+        };
+        if let Some((key, _)) = tally.ranked().into_iter().next() {
+            let votes = tally.votes_for(&key);
             wants
                 .entry(key)
                 .or_default()
-                .push((count, artist.id.as_str()));
+                .push((votes, artist.id.as_str()));
         }
     }
     let mut new_id: BTreeMap<String, String> = BTreeMap::new();
@@ -468,17 +519,7 @@ fn plan(
         if artist.retired_into.is_none() || reserved.contains(artist.id.as_str()) {
             continue;
         }
-        let mut survivor = artist;
-        for _ in 0..16 {
-            match survivor
-                .retired_into
-                .as_deref()
-                .and_then(|id| by_id.get(id))
-            {
-                Some(next) => survivor = next,
-                None => break,
-            }
-        }
+        let survivor = end_of_merges(artist, &by_id);
         let folded = fold_text(artist.name.trim());
         let mut tally = Tally::default();
         for vote in votes
@@ -542,10 +583,24 @@ fn artist_columns() -> Vec<ArtistColumn> {
     out
 }
 
+/// True when the bundle has an artist table with a row in it.
+fn holds_artists(conn: &Connection) -> Result<bool, ExportError> {
+    if !has(conn, ARTISTS.name, "id")? {
+        return Ok(false);
+    }
+    conn.query_row(
+        &format!("SELECT EXISTS(SELECT 1 FROM main.\"{}\")", ARTISTS.name),
+        [],
+        |row| row.get(0),
+    )
+    .map_err(bundle_error)
+}
+
 /// Give every carried artist the id v3's scan lands its credits on, keep
 /// each old id as a `legacy_artist` alias, and rewrite every reference in
 /// the bundle. Refuses when a pair of artists would end up naming one row
-/// on both sides. A bundle without a catalog is left as it is.
+/// on both sides. A bundle without a catalog is left as it is; one with
+/// artists but without a column this needs is too, and the notes say so.
 pub fn rekey_artists(conn: &Connection, now: f64) -> Result<ArtistRekey, ExportError> {
     let required: [(&str, &[&str]); 5] = [
         (
@@ -579,7 +634,10 @@ pub fn rekey_artists(conn: &Connection, now: f64) -> Result<ArtistRekey, ExportE
     for (table, columns) in required {
         for column in columns {
             if !has(conn, table, column)? {
-                return Ok(ArtistRekey::default());
+                return Ok(ArtistRekey {
+                    skipped_for: holds_artists(conn)?.then(|| format!("{table}.{column}")),
+                    ..ArtistRekey::default()
+                });
             }
         }
     }
@@ -591,15 +649,23 @@ pub fn rekey_artists(conn: &Connection, now: f64) -> Result<ArtistRekey, ExportE
     }
 
     conn.execute_batch(
-        "CREATE TEMP TABLE artist_rekey (old TEXT PRIMARY KEY, new TEXT NOT NULL UNIQUE)",
+        "CREATE TEMP TABLE artist_rekey (old TEXT PRIMARY KEY, new TEXT NOT NULL UNIQUE, \
+         alias_target TEXT NOT NULL)",
     )
     .map_err(bundle_error)?;
     {
         let mut insert = conn
-            .prepare("INSERT INTO temp.artist_rekey (old, new) VALUES (?1, ?2)")
+            .prepare("INSERT INTO temp.artist_rekey (old, new, alias_target) VALUES (?1, ?2, ?3)")
             .map_err(bundle_error)?;
+        let by_id: HashMap<&str, &Artist> = artists
+            .iter()
+            .map(|artist| (artist.id.as_str(), artist))
+            .collect();
         for (old, new) in &new_id {
-            insert.execute(params![old, new]).map_err(bundle_error)?;
+            let target = alias_target(old, new, &by_id, &new_id);
+            insert
+                .execute(params![old, new, target])
+                .map_err(bundle_error)?;
         }
     }
     for (table, column, kind) in artist_columns() {
@@ -675,7 +741,7 @@ pub fn rekey_artists(conn: &Connection, now: f64) -> Result<ArtistRekey, ExportE
         .execute(
             &format!(
                 "INSERT INTO main.\"{aliases}\" (alias, local_artist_id, kind, created_at) \
-                 SELECT lower(r.old), r.new, 'legacy_artist', ?1 FROM temp.artist_rekey r \
+                 SELECT lower(r.old), r.alias_target, 'legacy_artist', ?1 FROM temp.artist_rekey r \
                  WHERE NOT EXISTS (SELECT 1 FROM main.\"{aliases}\" x \
                  WHERE x.alias IN (r.old, lower(r.old)))"
             ),
@@ -741,5 +807,63 @@ mod tests {
         );
         assert_eq!(new_id.get("v2-c"), None);
         assert_eq!(outcome.kept_apart, ["Nirvana", "Nirvana"]);
+    }
+
+    /// A row's present tracks outvote any number of another's missing ones.
+    #[test]
+    fn present_votes_decide_a_shared_key() {
+        let key = artist_key("Nirvana", None);
+        let artists = [
+            artist("v2-a", "Nirvana", None),
+            artist("v2-b", "Nirvana", None),
+        ];
+        let missing = |id: &str| Vote {
+            present: false,
+            ..vote(id, "Nirvana", &key)
+        };
+        let votes = [
+            vote("v2-b", "Nirvana", &key),
+            missing("v2-a"),
+            missing("v2-a"),
+            missing("v2-a"),
+        ];
+        let (new_id, outcome) = plan(&artists, &votes, &HashMap::new());
+        assert_eq!(new_id.get("v2-b"), Some(&key));
+        assert_eq!(new_id.get("v2-a"), None);
+        assert_eq!(outcome.kept_apart, ["Nirvana"]);
+    }
+
+    /// An old id opens the row its merges end on, under that row's new id.
+    #[test]
+    fn a_retired_row_aliases_the_end_of_its_chain() {
+        let artists = [
+            artist("v2-a", "Old Name", Some("v2-b")),
+            artist("v2-b", "Middle Name", Some("v2-c")),
+            artist("v2-c", "Last Name", None),
+        ];
+        let by_id: HashMap<&str, &Artist> = artists
+            .iter()
+            .map(|artist| (artist.id.as_str(), artist))
+            .collect();
+        let new_id: BTreeMap<String, String> = [("v2-a", "key-a"), ("v2-c", "key-c")]
+            .map(|(old, new)| (old.to_owned(), new.to_owned()))
+            .into();
+        assert_eq!(alias_target("v2-a", "key-a", &by_id, &new_id), "key-c");
+        assert_eq!(alias_target("v2-c", "key-c", &by_id, &new_id), "key-c");
+    }
+
+    /// A catalog missing a column leaves a note; no catalog at all does not.
+    #[test]
+    fn a_skipped_rekey_leaves_a_note_only_over_artists() {
+        let conn = Connection::open_in_memory().unwrap();
+        assert_eq!(rekey_artists(&conn, 0.0).unwrap(), ArtistRekey::default());
+        conn.execute_batch(&format!(
+            "CREATE TABLE \"{0}\" (id TEXT); INSERT INTO \"{0}\" VALUES ('v2-a')",
+            ARTISTS.name
+        ))
+        .unwrap();
+        let notes = rekey_artists(&conn, 0.0).unwrap().notes();
+        assert_eq!(notes.len(), 1);
+        assert!(notes[0].contains("display_name column"), "{notes:?}");
     }
 }

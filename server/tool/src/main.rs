@@ -37,7 +37,7 @@ use droppedneedle_kernel::db::datalock::DataLock;
 use droppedneedle_kernel::runtime_config::Secret;
 use droppedneedle_kernel::runtime_config::sections::ContentSecurityPolicyMode;
 use droppedneedle_tool::export::v2dir::V2Dirs;
-use droppedneedle_tool::export::{ExportRequest, export_v2_to_file};
+use droppedneedle_tool::export::{ExportRequest, LeftBehind, export_v2_to_file};
 use droppedneedle_tool::r#import::ExitCode;
 use droppedneedle_tool::tooling::host_settings;
 use droppedneedle_tool::tooling::recovery_code;
@@ -45,6 +45,7 @@ use droppedneedle_tool::tooling::reset_key;
 use droppedneedle_tool::tooling::upgrade::{
     self, OfflineImport, Step, Summary, UpgradeError, UpgradeRequest, Upgraded,
 };
+use serde::Deserialize as _;
 
 /// Usage text, printed for `help` and on bad invocations.
 const USAGE: &str = "\
@@ -427,7 +428,7 @@ fn print_notes(root: &serde_json::Value) {
     }
 }
 
-/// Print what the export leaves behind in v2, one line per table.
+/// Print what the export leaves behind in v2, one line per entry.
 fn print_left_behind(root: &serde_json::Value) {
     let Some(items) = root
         .get("left_behind")
@@ -440,19 +441,9 @@ fn print_left_behind(root: &serde_json::Value) {
     }
     println!("left behind in v2 (not carried to v3):");
     for item in items {
-        let table = item
-            .get("table")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_default();
-        let rows = item
-            .get("rows")
-            .and_then(serde_json::Value::as_u64)
-            .unwrap_or_default();
-        let reason = item
-            .get("reason")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_default();
-        println!("  {table}: {rows} ({reason})");
+        if let Ok(item) = LeftBehind::deserialize(item) {
+            println!("  {}", item.line());
+        }
     }
 }
 
@@ -684,7 +675,7 @@ fn print_summary(dirs: &DataDirs, summary: &Summary) {
     if !report.left_behind.is_empty() {
         println!("\nLeft behind in v2 (not carried to v3):");
         for item in &report.left_behind {
-            println!("  {}: {} ({})", item.table, item.rows, item.reason);
+            println!("  {}", item.line());
         }
     }
     if !report.notes.is_empty() {

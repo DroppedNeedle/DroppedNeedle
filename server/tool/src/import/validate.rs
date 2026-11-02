@@ -17,6 +17,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use serde::Deserialize as _;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
 
@@ -28,8 +29,9 @@ use crate::allowlist::{
 use crate::export::envelope::HashScheme;
 use crate::export::envelope::{
     AppPasswordRecord, ApprovalRecord, BUNDLE_ROLE, ConnectionRecord, EXPORT_FORMAT,
-    EventCityRecord, EventSeenRecord, ExportDoc, FORMAT_VERSION, FollowRecord, MIN_FORMAT_VERSION,
-    OPTIONAL_KEYS, ProviderRecord, REQUIRED_KEYS_V2, RESERVED_SECTIONS, UserRecord, required_keys,
+    EventCityRecord, EventSeenRecord, ExportDoc, FORMAT_VERSION, FollowRecord, LeftBehind,
+    MIN_FORMAT_VERSION, OPTIONAL_KEYS, ProviderRecord, REQUIRED_KEYS_V2, RESERVED_SECTIONS,
+    UserRecord, required_keys,
 };
 use crate::export::seal::{KDF_ALGO, M_COST_KIB, P_COST, SCHEME, T_COST};
 use droppedneedle_auth::times::parse_iso;
@@ -448,17 +450,15 @@ pub fn check_attachments(root: &Value, folder: &std::path::Path) -> Vec<Validati
 fn validate_left_behind(left_behind: Option<&Value>, report: &mut ValidationReport) {
     let Some(list) = left_behind else { return };
     let well_formed = list.as_array().is_some_and(|items| {
-        items.iter().all(|item| {
-            item.get("table").and_then(Value::as_str).is_some()
-                && item.get("rows").and_then(Value::as_u64).is_some()
-                && item.get("reason").and_then(Value::as_str).is_some()
-        })
+        items
+            .iter()
+            .all(|item| LeftBehind::deserialize(item).is_ok())
     });
     if !well_formed {
         report.errors.push(ValidationIssue::new(
             "BAD_LEFT_BEHIND",
             "left_behind".to_owned(),
-            "left_behind must list {table, rows, reason} objects".to_owned(),
+            "left_behind must list {table, rows, reason, kind} objects".to_owned(),
         ));
     }
 }

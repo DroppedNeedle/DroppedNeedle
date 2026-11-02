@@ -7,8 +7,8 @@ use std::path::Path;
 
 use droppedneedle_kernel::runtime_config::Secret;
 use droppedneedle_tool::export::{
-    ExportError, ExportRequest, HashScheme, Opener, SealError, export_v2, export_v2_to_file,
-    fernet::FernetKey, parse_export, unseal,
+    ExportError, ExportRequest, HashScheme, LeftBehind, LeftBehindKind, Opener, ParsedExport,
+    SealError, export_v2, export_v2_to_file, fernet::FernetKey, parse_export, unseal,
 };
 use rusqlite::{Connection, params};
 use serde_json::{Value, json};
@@ -82,7 +82,9 @@ fn unparseable_key_refuses() {
 fn fixture_config(key: &FernetKey) -> Value {
     json!({
         "instance_id": INSTANCE_ID,
-        "jellyfin_url": "http://jellyfin:8096",
+        "jellyfin_url": "http://jellyfin.lan:8096",
+        "contact_email": "ops@example.org",
+        "port": 8688,
         "user_preferences": {"primary_types": ["Album"], "secondary_types": []},
         "download_client": {"enabled": true, "api_key": "legacy-plaintext-slskd"},
         "download_clients": {"sabnzbd": {"enabled": true, "api_key": key.encrypt("sab-key").unwrap()}},
@@ -528,6 +530,179 @@ fn export_drops_vestigial_sections() {
         !text.contains("must-not-survive"),
         "legacy plaintext never crosses"
     );
+}
+
+/// The fixture export with its v2 config changed first.
+fn exported_with(change: impl FnOnce(&mut Value)) -> ParsedExport {
+    let (dir, _key) = fixture_v2_root();
+    let path = dir.join("config/config.json");
+    let mut config: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    change(&mut config);
+    std::fs::write(&path, config.to_string()).unwrap();
+    let doc = export_v2(&request(&dir), &dir.join("export.bundle.sqlite")).unwrap();
+    parse_export(&doc.to_json_string().unwrap()).unwrap()
+}
+
+fn settings_left_behind(parsed: &ParsedExport) -> Vec<&str> {
+    parsed
+        .doc
+        .left_behind
+        .iter()
+        .filter(|item| item.kind == LeftBehindKind::Setting)
+        .map(|item| item.table.as_str())
+        .collect()
+}
+
+/// A top-level-only Jellyfin address lands in the section, and every config
+/// key that does not travel is listed by name, its value kept out.
+#[test]
+fn export_carries_the_address_and_lists_settings_left_behind() {
+    let (text, parsed) = exported();
+    assert_eq!(
+        parsed.doc.settings["jellyfin_settings"]["jellyfin_url"],
+        "http://jellyfin.lan:8096"
+    );
+    let left = settings_left_behind(&parsed);
+    for key in [
+        "contact_email",
+        "port",
+        "_legacy_lidarr",
+        "home_settings",
+        "library_sync_settings",
+        "advanced_settings.artist_discovery_warm_interval",
+        "download_policy.quality_recipe_status",
+        "musicbrainz_settings.source_quarantined",
+        "_internal.audiodb_sweep_cursor",
+    ] {
+        assert!(left.contains(&key), "{key} is not listed: {left:?}");
+    }
+    for carried in [
+        "jellyfin_url",
+        "instance_id",
+        "indexers",
+        "user_preferences",
+    ] {
+        assert!(!left.contains(&carried), "{carried} is carried");
+    }
+    assert!(!text.contains("must-not-survive"));
+    assert!(
+        parsed
+            .doc
+            .notes
+            .iter()
+            .any(|note| note.starts_with("Set CONTACT_EMAIL=ops@example.org in your environment")),
+        "{:?}",
+        parsed.doc.notes
+    );
+    assert!(
+        parsed
+            .doc
+            .notes
+            .iter()
+            .any(|note| note.contains("Jellyfin"))
+    );
+}
+
+/// The section's own address wins and the other copy is listed. v2's own
+/// v2's default before the rename counts as nobody's choice, and an address
+/// with a password in it or no web scheme never lands in the export.
+#[test]
+fn a_retired_contact_and_an_odd_jellyfin_address_stay_behind() {
+    let parsed = exported_with(|config| {
+        config["contact_email"] = json!("contact@musicseerr.com");
+        config["jellyfin_url"] = json!("http://user:secret@jellyfin.lan:8096");
+    });
+    assert!(
+        !parsed
+            .doc
+            .notes
+            .iter()
+            .any(|note| note.contains("CONTACT_EMAIL"))
+    );
+    assert!(
+        !serde_json::to_string(&parsed.doc.settings)
+            .unwrap()
+            .contains("secret@")
+    );
+    assert!(settings_left_behind(&parsed).contains(&"jellyfin_url"));
+    let parsed = exported_with(|config| config["jellyfin_url"] = json!("ftp://jellyfin.lan"));
+    assert!(parsed.doc.settings.get("jellyfin_settings").is_none());
+}
+
+/// defaults say nobody chose anything, so they make no section and no note.
+#[test]
+fn only_an_address_someone_chose_moves() {
+    let parsed = exported_with(|config| {
+        config["jellyfin_settings"] = json!({"jellyfin_url": "http://section:8096"});
+    });
+    assert_eq!(
+        parsed.doc.settings["jellyfin_settings"]["jellyfin_url"],
+        "http://section:8096"
+    );
+    assert!(settings_left_behind(&parsed).contains(&"jellyfin_url"));
+    assert!(
+        !parsed
+            .doc
+            .notes
+            .iter()
+            .any(|note| note.contains("Jellyfin"))
+    );
+
+    let parsed = exported_with(|config| {
+        config["jellyfin_settings"] = json!({"jellyfin_url": "", "enabled": true});
+    });
+    assert_eq!(
+        parsed.doc.settings["jellyfin_settings"]["jellyfin_url"],
+        "http://jellyfin.lan:8096"
+    );
+    assert_eq!(parsed.doc.settings["jellyfin_settings"]["enabled"], true);
+
+    let parsed = exported_with(|config| {
+        config["jellyfin_url"] = json!("http://jellyfin:8096");
+        config["contact_email"] = json!("contact@droppedneedle.com");
+    });
+    assert!(parsed.doc.settings.get("jellyfin_settings").is_none());
+    assert!(parsed.doc.notes.is_empty(), "{:?}", parsed.doc.notes);
+    assert!(settings_left_behind(&parsed).contains(&"contact_email"));
+}
+
+/// v3 refuses to start on a CONTACT_EMAIL with a space, so the note never
+/// tells anyone to set one.
+#[test]
+fn a_contact_address_v3_would_refuse_is_not_offered() {
+    let parsed = exported_with(|config| config["contact_email"] = json!("ops at example"));
+    assert!(
+        parsed.doc.notes.iter().any(|note| {
+            note.starts_with("Set CONTACT_EMAIL in your environment") && note.contains("ops at")
+        }),
+        "{:?}",
+        parsed.doc.notes
+    );
+}
+
+/// An install with neither case writes what it wrote before: nothing is
+/// added to its settings, notes or list, and a table entry has no `kind`.
+#[test]
+fn an_install_with_neither_case_gains_nothing() {
+    let section = json!({"jellyfin_url": "http://jellyfin.lan:8096"});
+    let parsed = exported_with(|config| {
+        *config = json!({
+            "instance_id": INSTANCE_ID,
+            "jellyfin_url": "http://jellyfin.lan:8096",
+            "jellyfin_settings": section,
+        });
+    });
+    assert_eq!(parsed.doc.settings["jellyfin_settings"], section);
+    assert_eq!(parsed.doc.settings.len(), 1);
+    assert!(parsed.doc.notes.is_empty(), "{:?}", parsed.doc.notes);
+    assert!(parsed.doc.left_behind.is_empty());
+    let table = LeftBehind {
+        table: "t".to_owned(),
+        rows: 1,
+        reason: "r".to_owned(),
+        kind: LeftBehindKind::Table,
+    };
+    assert!(serde_json::to_value(table).unwrap().get("kind").is_none());
 }
 
 #[test]
