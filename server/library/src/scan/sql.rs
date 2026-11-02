@@ -373,6 +373,7 @@ droppedneedle_kernel::sql! {
          title_provenance = excluded.title_provenance, \
          album_title_provenance = excluded.album_title_provenance, \
          album_artist_provenance = excluded.album_artist_provenance, \
+         row_revision = local_tracks.row_revision + 1, \
          availability = CASE WHEN local_tracks.manual_excluded = 1 THEN 'excluded' \
            ELSE 'indexed' END, missing_at = NULL, \
          excluded_at = CASE WHEN local_tracks.manual_excluded = 1 \

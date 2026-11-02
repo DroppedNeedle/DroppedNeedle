@@ -38,6 +38,7 @@ const track: RouteData<'GET /api/v3/library/albums/{id}/tracks'>['items'][number
 	id: 'local-track-1',
 	title: 'Unmatched Song',
 	album_id: album.id,
+	row_revision: 1,
 	album_title: album.title,
 	artist_id: album.artist_id,
 	artist_name: album.artist_name,

@@ -18,7 +18,7 @@ use utoipa::{IntoParams, ToSchema};
 
 use super::blocking;
 use super::error::refused;
-use crate::mutations::{MutationError, Mutations, RemovalKind};
+use crate::mutations::{MutationError, Mutations, RemovalKind, SeenAlbum};
 use crate::scan::models::{Disposition, ScanState};
 use crate::wiring::LibraryServices;
 use droppedneedle_auth::{Admin, Curator};
@@ -137,6 +137,12 @@ pub async fn put_back_removal(
 #[derive(Debug, Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct RemoveAlbumQuery {
+    /// The album's `row_revision` as the person saw it. Another revision
+    /// answers STALE_REVISION and nothing moves.
+    pub expected_revision: i64,
+    /// The album's `track_count` as the person saw it. Another count answers
+    /// STALE_REVISION and nothing moves.
+    pub expected_track_count: i64,
     /// Move the album's files into the recycle bin too. Off by default:
     /// the album only leaves the catalog.
     #[serde(default)]
@@ -151,6 +157,9 @@ pub struct RemoveAlbumQuery {
 #[derive(Debug, Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct RemoveTrackQuery {
+    /// The track's `row_revision` as the person saw it. Another revision
+    /// answers STALE_REVISION and nothing moves.
+    pub expected_revision: i64,
     /// Move the track's file into the recycle bin too. On by default, as
     /// in v2 (where it deleted the file outright).
     #[serde(default = "default_true")]
@@ -231,15 +240,16 @@ impl From<MutationError> for ApiError {
     tag = "library management",
     path = "/api/v3/library/albums/{id}",
     params(
-        ("id" = String, Path, description = "Local album id or release-group MBID"),
+        ("id" = String, Path, description = "The album's local id, as its detail shows it"),
         RemoveAlbumQuery,
     ),
     responses(
         (status = 200, description = "Album removed", body = RemovalResponse),
+        (status = 400, description = "Bad query string"),
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Admin role required"),
         (status = 404, description = "Album not found"),
-        (status = 409, description = "Library busy or off, or a file is outside the library folders"),
+        (status = 409, description = "The album or its tracks changed since the values sent, the library is busy or off, or a file is outside the library folders"),
         (status = 422, description = "A file could not be recycled; nothing changed"),
     )
 )]
@@ -251,7 +261,16 @@ pub async fn remove_album(
 ) -> Result<Json<RemovalResponse>, ApiError> {
     let actor = caller.user_id().to_owned();
     let removed = blocking(move || {
-        mutations.remove_album_now(&album_id, query.delete_files, query.stop_wanted, &actor)
+        mutations.remove_album_now(
+            &album_id,
+            SeenAlbum {
+                revision: query.expected_revision,
+                track_count: query.expected_track_count,
+            },
+            query.delete_files,
+            query.stop_wanted,
+            &actor,
+        )
     })
     .await?;
     Ok(Json(RemovalResponse {
@@ -272,10 +291,11 @@ pub async fn remove_album(
     ),
     responses(
         (status = 200, description = "Track removed", body = RemovalResponse),
+        (status = 400, description = "Bad query string"),
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Curator role required"),
         (status = 404, description = "Track not found"),
-        (status = 409, description = "Library busy or off, or the file is outside the library folders"),
+        (status = 409, description = "The track changed since the revision sent, the library is busy or off, or the file is outside the library folders"),
         (status = 422, description = "The file could not be recycled; nothing changed"),
     )
 )]
@@ -286,8 +306,15 @@ pub async fn remove_track(
     ValidQuery(query): ValidQuery<RemoveTrackQuery>,
 ) -> Result<Json<RemovalResponse>, ApiError> {
     let actor = caller.user_id().to_owned();
-    let removed =
-        blocking(move || mutations.remove_track_now(&track_id, query.delete_file, &actor)).await?;
+    let removed = blocking(move || {
+        mutations.remove_track_now(
+            &track_id,
+            query.expected_revision,
+            query.delete_file,
+            &actor,
+        )
+    })
+    .await?;
     Ok(Json(RemovalResponse {
         id: removed.id,
         removed_track_ids: removed.track_ids,

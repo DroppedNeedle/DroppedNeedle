@@ -169,7 +169,8 @@ droppedneedle_kernel::sql! {
          t.bit_rate AS bit_rate, t.sample_rate AS sample_rate, \
          t.bit_depth AS bit_depth, t.channels AS channels, \
          t.file_size_bytes AS file_size_bytes, t.imported_at / 1000.0 AS date_added, \
-         COALESCE(w.source IN ('folder','embedded'), 0) AS cover_available"
+         COALESCE(w.source IN ('folder','embedded'), 0) AS cover_available, \
+         t.row_revision AS row_revision"
     ));
     /// The track projection's joins. A statement adds the availability
     /// filter. Every join after the first credit is a primary-key lookup per

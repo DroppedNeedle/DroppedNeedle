@@ -2,6 +2,7 @@
 	import { Pause, Play, Trash2, TriangleAlert, X } from 'lucide-svelte';
 
 	import { streamUrlFor } from '$lib/player/streamUrl';
+	import { isStaleRevision } from '$lib/api/errors';
 	import { createRemoveLibraryTrackMutation } from '$lib/queries/library/LibraryMutations.svelte';
 	import { formatCountdown } from '$lib/queries/downloads/downloadStatus';
 	import { toastStore } from '$lib/stores/toast';
@@ -25,6 +26,7 @@
 	let confirmingId = $state<string | null>(null);
 
 	function handleRemove(file: UnmatchedFile): void {
+		if (file.rowRevision === null) return;
 		if (confirmingId !== file.id) {
 			confirmingId = file.id;
 			return;
@@ -32,12 +34,16 @@
 		confirmingId = null;
 		if (activeId === file.id) stopPreview();
 		remove.mutate(
-			{ fileId: file.id, albumMbid, albumId },
+			{ fileId: file.id, expectedRevision: file.rowRevision, albumMbid, albumId },
 			{
 				onSuccess: () => {
 					toastStore.show({ message: 'File removed', type: 'success' });
 				},
-				onError: () => toastStore.show({ message: "Couldn't remove this file", type: 'error' })
+				onError: (error) =>
+					toastStore.show({
+						message: isStaleRevision(error) ? error.message : "Couldn't remove this file",
+						type: 'error'
+					})
 			}
 		);
 	}
@@ -124,7 +130,7 @@
 						<span class="badge badge-sm badge-warning badge-outline whitespace-nowrap">
 							{file.label}
 						</span>
-						{#if canRemove}
+						{#if canRemove && file.rowRevision !== null}
 							{#if confirmingId === file.id}
 								<div class="flex items-center gap-1">
 									<Button

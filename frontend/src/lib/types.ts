@@ -288,6 +288,8 @@ export type ArtistIndexEntry = {
 
 export type LocalTrackInfo = {
 	track_file_id: string;
+	/** What removing this file sends back. Absent where the view offers no removal. */
+	row_revision?: components['schemas']['TrackView']['row_revision'];
 	title: string;
 	track_number: number;
 	disc_number?: number | null;
@@ -457,6 +459,8 @@ export type AlbumIdentityState = 'local_only' | 'release_group_linked' | 'releas
 export type ArtistIdentityState = 'local_only' | 'musicbrainz_linked';
 
 export interface TargetNativeTrack {
+	/** What removing this file sends back. Only the album status view carries it. */
+	row_revision?: number;
 	id: string;
 	title: string;
 	album_id: string;
@@ -520,7 +524,7 @@ export interface LibraryAlbumSummary {
 export interface LibraryAlbumDetail extends LibraryAlbumSummary {
 	// Set when library management leaves the album's files alone.
 	management_hold?: components['schemas']['ManagementHoldView'] | null;
-	row_revision: number;
+	row_revision: components['schemas']['AlbumDetailView']['row_revision'];
 	download_allowed?: boolean;
 	/** The album's pending identification review. */
 	review_id: string | null;

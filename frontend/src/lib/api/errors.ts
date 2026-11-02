@@ -12,6 +12,11 @@ export class ApiError extends Error {
 	}
 }
 
+/** The server refused a change made against a revision that has since moved. */
+export function isStaleRevision(error: unknown): error is ApiError {
+	return error instanceof ApiError && error.code === 'STALE_REVISION';
+}
+
 /**
  * Thrown when a request fails with 401 while a session was active. The client
  * has already cleared the store and triggered a hard redirect to /login;

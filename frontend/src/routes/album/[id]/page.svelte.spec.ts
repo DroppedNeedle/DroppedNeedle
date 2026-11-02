@@ -1,5 +1,6 @@
 import { page } from 'vitest/browser';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { toastStore } from '$lib/stores/toast';
 import { apiError, fakeApi, type FakeApi, type RouteData } from '$lib/test/api';
 import { renderWithQuery } from '$lib/test/render';
 
@@ -63,6 +64,7 @@ function localTrack(i: number, albumIdOfFile: string): LocalTrack {
 	const [disc, position, title, length] = songs[i];
 	return {
 		id: `file-${i}`,
+		row_revision: 4,
 		title,
 		album_id: albumIdOfFile,
 		album_title: 'Daylight Hours',
@@ -290,6 +292,7 @@ describe('album detail page track removal', () => {
 
 		await expect.element(page.getByRole('dialog')).not.toBeInTheDocument();
 		expect(api.calls(removeRoute).map((call) => call.params.id)).toEqual(['file-0']);
+		expect(api.calls(removeRoute)[0].query.get('expected_revision')).toBe('4');
 		await vi.waitFor(() => expect(api.calls(matchRoute).length).toBe(before + 1));
 		expect(api.calls(matchRoute).every((call) => call.params.mbid === albumId)).toBe(true);
 	});
@@ -315,6 +318,25 @@ describe('album detail page track removal', () => {
 		await expect.element(page.getByRole('alert')).toHaveTextContent("Couldn't remove this file");
 		await expect.element(page.getByRole('dialog')).toBeVisible();
 		expect(api.calls(matchRoute)).toHaveLength(before);
+	});
+
+	it('a refused stale removal says so, closes and rereads the album', async () => {
+		await renderPage();
+		await openRemoveFileDialog();
+		const before = api.calls(matchRoute).length;
+		const shown = vi.spyOn(toastStore, 'show');
+		api.use({
+			[removeRoute]: apiError(409, 'STALE_REVISION', 'This track changed after you opened it.')
+		});
+
+		await page.getByRole('dialog').getByRole('button', { name: 'Remove', exact: true }).click();
+
+		await expect.element(page.getByRole('dialog')).not.toBeInTheDocument();
+		expect(shown).toHaveBeenCalledWith({
+			message: 'This track changed after you opened it.',
+			type: 'error'
+		});
+		await vi.waitFor(() => expect(api.calls(matchRoute).length).toBe(before + 1));
 	});
 
 	it('drops the dialog on navigation and never refetches the old album', async () => {

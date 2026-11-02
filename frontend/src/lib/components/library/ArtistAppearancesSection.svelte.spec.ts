@@ -47,6 +47,7 @@ const track: RouteData<'GET /api/v3/library/tracks'>['items'][number] = {
 	id: 'track-1',
 	title: 'Featured Verse',
 	album_id: album.id,
+	row_revision: 1,
 	album_title: album.title,
 	artist_id: 'artist-lead',
 	artist_name: 'Lead Band',

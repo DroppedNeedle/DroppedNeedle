@@ -16,6 +16,7 @@ function track(id: string, title: string, artist: string): TrackPage['items'][nu
 		id,
 		title,
 		album_id: `album-${id}`,
+		row_revision: 1,
 		album_title: `Album ${id}`,
 		artist_id: null,
 		artist_name: artist,

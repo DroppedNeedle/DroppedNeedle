@@ -215,6 +215,7 @@ pub(crate) fn track_row(row: &Row<'_>) -> rusqlite::Result<TrackRecord> {
         file_size_bytes: row.get("file_size_bytes")?,
         date_added: row.get("date_added")?,
         cover_available: row.get("cover_available")?,
+        row_revision: row.get("row_revision")?,
     })
 }
 

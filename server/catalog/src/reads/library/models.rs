@@ -124,7 +124,8 @@ pub struct AlbumDetailView {
     pub album: AlbumView,
     /// Set when library management leaves this album's files alone.
     pub management_hold: Option<ManagementHoldView>,
-    /// The album row's revision, which a change to its grouping echoes.
+    /// The album row's revision, which a change to its grouping and its
+    /// removal echo.
     pub row_revision: i64,
     /// The album's pending identification review, if any.
     pub pending_review_id: Option<String>,
@@ -342,6 +343,8 @@ pub struct TrackView {
     pub art_missing: bool,
     /// True when the caller favorited this track.
     pub favorite: bool,
+    /// The track row's revision, which its removal echoes.
+    pub row_revision: i64,
 }
 
 /// A library track with whether the caller favorited it and whether its
@@ -376,6 +379,7 @@ impl From<(TrackRecord, bool, bool)> for TrackView {
             cover_available: track.cover_available,
             art_missing,
             favorite,
+            row_revision: track.row_revision,
         }
     }
 }

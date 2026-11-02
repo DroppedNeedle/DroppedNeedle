@@ -2859,6 +2859,206 @@ async fn approve_first_candidate(library: &LibrarySetup, identify: &FakeProvider
     choose_first_edition(library, album).await;
 }
 
+/// The track's row revision now, which a removal sends back.
+fn seen_track(library: &LibrarySetup, track: &str) -> i64 {
+    library
+        .scan_store
+        .db()
+        .query_i64(&format!(
+            "SELECT row_revision FROM local_tracks WHERE id = '{track}'"
+        ))
+        .expect("track revision reads")
+}
+
+/// What a person saw, then a scan changed it: a file rewritten moves its
+/// track's revision, and a file added changes its album's track count, so a
+/// removal sent from the old view moves nothing. A scan that finds nothing new
+/// moves nothing either, or every removal after a scan would be refused.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_removal_after_a_scan_changed_what_was_seen_moves_nothing() {
+    use droppedneedle_library::tags::TagField;
+    use droppedneedle_library::tags::save::{TagEdit, save_tags};
+
+    let rig = Rig::start("lib-remove-scanned").await;
+    let app = &rig.app;
+    let auth = app.login_admin().await;
+    let headers = [("authorization", auth.as_str())];
+    let music = app.config.root_app_dir.join("music");
+    let first = plant(&music, "One/LP/01.flac", "flac_full_01.flac");
+    let second = plant(&music, "One/LP/02.flac", "flac_full_02.flac");
+    app.add_library_folder("music", &music).await;
+    let track = rig
+        .scan_store
+        .track_at("music", "One/LP/02.flac")
+        .unwrap()
+        .expect("track indexed");
+    let track_uri = format!("/api/v3/library/tracks/{track}");
+    let album: String = app
+        .db()
+        .query_row(
+            "SELECT local_album_id FROM local_tracks WHERE id = ?1",
+            [&track],
+            |row| row.get(0),
+        )
+        .expect("album id");
+    let album_uri = format!("/api/v3/library/albums/{album}");
+    let shown_track = || async {
+        let (status, body) = app
+            .call("GET", &format!("{album_uri}/status"), &headers, None)
+            .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        body["tracks"]
+            .as_array()
+            .expect("tracks")
+            .iter()
+            .find(|held| held["id"] == json!(track))
+            .and_then(|held| held["row_revision"].as_i64())
+            .expect("row revision")
+    };
+    let album_query = || async {
+        let (status, body) = app.call("GET", &album_uri, &headers, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        format!(
+            "expected_revision={}&expected_track_count={}&delete_files=true",
+            body["row_revision"], body["track_count"]
+        )
+    };
+
+    let seen = shown_track().await;
+    app.scan_library().await;
+    assert_eq!(shown_track().await, seen, "nothing changed on disk");
+
+    save_tags(
+        &second,
+        &[TagEdit::verbatim(
+            TagField::Title,
+            vec!["Retitled".to_owned()],
+        )],
+    )
+    .expect("file rewritten");
+    app.scan_library().await;
+    let (status, body) = app
+        .call(
+            "DELETE",
+            &format!("{track_uri}?expected_revision={seen}"),
+            &headers,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"]["code"], json!("STALE_REVISION"));
+    assert!(second.exists(), "the rewritten file stays");
+
+    let seen = album_query().await;
+    let third = plant(&music, "One/LP/03.flac", "flac_full_02.flac");
+    save_tags(
+        &third,
+        &[
+            TagEdit::verbatim(TagField::Title, vec!["Track 3".to_owned()]),
+            TagEdit::verbatim(TagField::TrackNumber, vec!["3".to_owned()]),
+        ],
+    )
+    .expect("third track tagged");
+    app.scan_library().await;
+    let (status, body) = app
+        .call("DELETE", &format!("{album_uri}?{seen}"), &headers, None)
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"]["code"], json!("STALE_REVISION"));
+    assert!(
+        first.exists() && second.exists() && third.exists(),
+        "no file moved"
+    );
+
+    let current = album_query().await;
+    let (status, body) = app
+        .call("DELETE", &format!("{album_uri}?{current}"), &headers, None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(
+        !first.exists() && !second.exists() && !third.exists(),
+        "what the page now shows is removed"
+    );
+    rig.stop().await;
+}
+
+/// An album removal names the row a person saw: a moved revision, or an old
+/// id that now leads to another album, is refused and nothing moves.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_album_removal_names_the_row_it_saw() {
+    let rig = Rig::start("lib-remove-stale").await;
+    let app = &rig.app;
+    let auth = app.login_admin().await;
+    let headers = [("authorization", auth.as_str())];
+    let music = app.config.root_app_dir.join("music");
+    let one = plant(&music, "One/LP/01.flac", "flac_full_01.flac");
+    let two = plant(&music, "Two/LP/01.flac", "flac_full_01.flac");
+    app.add_library_folder("music", &music).await;
+    let album_at = |path: &str| -> String {
+        let track = rig
+            .scan_store
+            .track_at("music", path)
+            .unwrap()
+            .expect("track indexed");
+        app.db()
+            .query_row(
+                "SELECT local_album_id FROM local_tracks WHERE id = ?1",
+                [&track],
+                |row| row.get(0),
+            )
+            .expect("album id")
+    };
+    let (album, other) = (album_at("One/LP/01.flac"), album_at("Two/LP/01.flac"));
+    assert_ne!(album, other);
+    let seen = |id: String| {
+        let headers = &headers;
+        async move {
+            let uri = format!("/api/v3/library/albums/{id}");
+            let (status, body) = app.call("GET", &uri, headers, None).await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            format!(
+                "expected_revision={}&expected_track_count={}&delete_files=true",
+                body["row_revision"], body["track_count"]
+            )
+        }
+    };
+    let refused = |id: String, query: String| {
+        let headers = &headers;
+        let files = [&one, &two];
+        async move {
+            let uri = format!("/api/v3/library/albums/{id}?{query}");
+            let (status, body) = app.call("DELETE", &uri, headers, None).await;
+            assert_eq!(status, StatusCode::CONFLICT, "{uri}: {body}");
+            assert_eq!(body["error"]["code"], json!("STALE_REVISION"), "{uri}");
+            assert!(
+                files.iter().all(|file| file.exists()),
+                "{uri}: a file moved"
+            );
+        }
+    };
+
+    let shown = seen(album.clone()).await;
+    rig.scan_store
+        .db()
+        .run_sql(&format!(
+            "UPDATE local_albums SET row_revision = row_revision + 1 WHERE id = '{album}'"
+        ))
+        .expect("row bumped");
+    refused(album.clone(), shown).await;
+
+    // The revision its old id sends is not the revision of the album the id
+    // now leads to, even when the numbers agree.
+    rig.scan_store
+        .db()
+        .run_sql(&format!(
+            "UPDATE local_albums SET retired_into_album_id = '{other}' WHERE id = '{album}'"
+        ))
+        .expect("album merged");
+    let current = seen(other.clone()).await;
+    refused(album.clone(), current).await;
+    rig.stop().await;
+}
+
 /// The album's identity revision as its edition status shows it, which an
 /// edition action sends back.
 fn shown_revision(library: &LibrarySetup, album: &str) -> i64 {
@@ -4051,7 +4251,7 @@ async fn removal_recycles_files_and_rescan_targets_the_album() {
     drain_scans(&library).await;
 
     let removed = Mutations::new(&library)
-        .remove_track_now(&track, true, "admin")
+        .remove_track_now(&track, seen_track(&library, &track), true, "admin")
         .expect("track removed");
     assert_eq!(removed.track_ids, vec![track.clone()]);
     assert!(!first.exists(), "the file left the album folder");
@@ -4128,9 +4328,14 @@ async fn removals_use_the_bin_library_management_names() {
         .expect("bin saved");
 
     std::fs::set_permissions(&vault, std::fs::Permissions::from_mode(0o000)).expect("locked");
-    let refused = std::fs::read_dir(&vault)
-        .is_err()
-        .then(|| Mutations::new(&library).remove_track_now(&track, true, "admin"));
+    let refused = std::fs::read_dir(&vault).is_err().then(|| {
+        Mutations::new(&library).remove_track_now(
+            &track,
+            seen_track(&library, &track),
+            true,
+            "admin",
+        )
+    });
     std::fs::set_permissions(&vault, std::fs::Permissions::from_mode(0o755)).expect("unlocked");
     if let Some(refused) = refused {
         let Err(MutationError::Conflict(reason)) = refused else {
@@ -4143,7 +4348,7 @@ async fn removals_use_the_bin_library_management_names() {
     }
 
     Mutations::new(&library)
-        .remove_track_now(&track, true, "admin")
+        .remove_track_now(&track, seen_track(&library, &track), true, "admin")
         .expect("track removed");
     assert!(!file.exists());
     assert_eq!(std::fs::read_dir(&bin).expect("bin").count(), 1);
@@ -4180,7 +4385,12 @@ async fn an_unreadable_section_can_be_repaired_from_the_page() {
         )
         .expect("row broken");
 
-    let refused = Mutations::new(&library).remove_track_now(&track, true, "admin");
+    let refused = Mutations::new(&library).remove_track_now(
+        &track,
+        seen_track(&library, &track),
+        true,
+        "admin",
+    );
     let Err(MutationError::Conflict(reason)) = refused else {
         panic!("expected a refusal");
     };
@@ -4205,7 +4415,7 @@ async fn an_unreadable_section_can_be_repaired_from_the_page() {
     assert_eq!(reread.settings.recycle_retention_days, 365);
 
     Mutations::new(&library)
-        .remove_track_now(&track, true, "admin")
+        .remove_track_now(&track, seen_track(&library, &track), true, "admin")
         .expect("track removed");
     assert!(!file.exists());
     assert_eq!(
@@ -5069,7 +5279,7 @@ async fn expiry_waits_on_a_retention_that_does_not_read() {
         .unwrap()
         .expect("track indexed");
     Mutations::new(&library)
-        .remove_track_now(&track, true, "admin")
+        .remove_track_now(&track, seen_track(&library, &track), true, "admin")
         .expect("track removed");
     let (copy, row) = copy_of(&conn, &track);
     conn.execute(
@@ -6376,7 +6586,7 @@ async fn a_library_folder_reached_through_a_symlink_takes_writes() {
 
     let bytes = std::fs::read(&file).expect("file read");
     Mutations::new(&library)
-        .remove_track_now(&track, true, "admin")
+        .remove_track_now(&track, seen_track(&library, &track), true, "admin")
         .expect("removal");
     assert!(!file.exists(), "the file left the folder");
     let binned: Vec<PathBuf> = std::fs::read_dir(real.join("music/.recycle"))
@@ -6426,7 +6636,12 @@ async fn a_library_folder_reached_through_a_symlink_takes_writes() {
         .track_at("music", "Band/LP2/02.flac")
         .unwrap()
         .expect("track indexed");
-    let refused = Mutations::new(&library).remove_track_now(&through_link, true, "admin");
+    let refused = Mutations::new(&library).remove_track_now(
+        &through_link,
+        seen_track(&library, &through_link),
+        true,
+        "admin",
+    );
     assert!(
         matches!(
             &refused,
@@ -19234,7 +19449,12 @@ async fn a_removal_open_across_a_walk_is_not_judged_gone() {
     library
         .publishing
         .arm_publish_crash(Some(CrashPoint::BeforeCatalogCommit));
-    let answer = Mutations::new(&library).remove_track_now(&copy, true, "admin");
+    let answer = Mutations::new(&library).remove_track_now(
+        &copy,
+        seen_track(&library, &copy),
+        true,
+        "admin",
+    );
     library.publishing.arm_publish_crash(None);
     assert!(answer.is_err(), "the removal stopped before its commit");
     assert!(!home.exists(), "its file is set aside");

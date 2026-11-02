@@ -294,6 +294,8 @@ pub struct TrackRecord {
     pub date_added: Option<f64>,
     /// True when the owning album has a folder image or an embedded picture.
     pub cover_available: bool,
+    /// The track row's revision.
+    pub row_revision: i64,
 }
 
 /// Library totals. Track and size totals count streamable tracks only.

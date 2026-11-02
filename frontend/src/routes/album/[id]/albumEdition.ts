@@ -22,6 +22,8 @@ export interface EditionTrackRow {
 /** A file under the album that sits on none of its edition's tracks. */
 export interface UnmatchedFile {
 	id: string;
+	/** The revision on the album's status, which removal sends. Null: no status row, no removal. */
+	rowRevision: number | null;
 	title: string;
 	artistName: string | null;
 	format: string | null;
@@ -107,6 +109,7 @@ export function unmatchedFiles(
 			const meta = filesById.get(file.local_track_id);
 			return {
 				id: file.local_track_id,
+				rowRevision: meta?.row_revision ?? null,
 				title: file.title,
 				artistName: meta?.artist_name ?? null,
 				format: meta?.format ?? null,

@@ -9431,7 +9431,8 @@ export interface components {
             pending_review_id?: string | null;
             /**
              * Format: int64
-             * @description The album row's revision, which a change to its grouping echoes.
+             * @description The album row's revision, which a change to its grouping and its
+             *     removal echo.
              */
             row_revision: number;
         };
@@ -22390,6 +22391,11 @@ export interface components {
             release_group_mbid?: string | null;
             /**
              * Format: int64
+             * @description The track row's revision, which its removal echoes.
+             */
+            row_revision: number;
+            /**
+             * Format: int64
              * @description Sample rate, when probed.
              */
             sample_rate?: number | null;
@@ -31113,7 +31119,17 @@ export interface operations {
     };
     remove_album: {
         parameters: {
-            query?: {
+            query: {
+                /**
+                 * @description The album's `row_revision` as the person saw it. Another revision
+                 *     answers STALE_REVISION and nothing moves.
+                 */
+                expected_revision: number;
+                /**
+                 * @description The album's `track_count` as the person saw it. Another count answers
+                 *     STALE_REVISION and nothing moves.
+                 */
+                expected_track_count: number;
                 /**
                  * @description Move the album's files into the recycle bin too. Off by default:
                  *     the album only leaves the catalog.
@@ -31127,7 +31143,7 @@ export interface operations {
             };
             header?: never;
             path: {
-                /** @description Local album id or release-group MBID */
+                /** @description The album's local id, as its detail shows it */
                 id: string;
             };
             cookie?: never;
@@ -31141,6 +31157,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RemovalResponse"];
+                };
+            };
+            /** @description Bad query string */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
             /** @description Not authenticated */
@@ -31170,7 +31195,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Library busy or off, or a file is outside the library folders */
+            /** @description The album or its tracks changed since the values sent, the library is busy or off, or a file is outside the library folders */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -37783,7 +37808,12 @@ export interface operations {
     };
     remove_track: {
         parameters: {
-            query?: {
+            query: {
+                /**
+                 * @description The track's `row_revision` as the person saw it. Another revision
+                 *     answers STALE_REVISION and nothing moves.
+                 */
+                expected_revision: number;
                 /**
                  * @description Move the track's file into the recycle bin too. On by default, as
                  *     in v2 (where it deleted the file outright).
@@ -37806,6 +37836,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RemovalResponse"];
+                };
+            };
+            /** @description Bad query string */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
             /** @description Not authenticated */
@@ -37835,7 +37874,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Library busy or off, or the file is outside the library folders */
+            /** @description The track changed since the revision sent, the library is busy or off, or the file is outside the library folders */
             409: {
                 headers: {
                     [name: string]: unknown;

@@ -24,6 +24,7 @@ const localMatchUrl = (mbid: string) =>
 function toLocalTrack(track: components['schemas']['TrackView']): LocalTrackInfo {
 	return {
 		track_file_id: track.id,
+		row_revision: track.row_revision,
 		title: track.title,
 		track_number: track.track_number,
 		disc_number: track.disc_number,

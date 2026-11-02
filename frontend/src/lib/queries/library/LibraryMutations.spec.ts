@@ -38,27 +38,43 @@ beforeEach(() => {
 	mockDelete.mockResolvedValue({});
 });
 
+type RemoveInput = {
+	mbid: string;
+	albumId: string;
+	expectedRevision: number;
+	expectedTrackCount: number;
+	stopWanted: boolean;
+};
+
 describe('album removal mutation', () => {
 	it('clears exact membership and declares the catalog and wanted changed', async () => {
 		const result = { id: 'rg-1', removed_track_ids: [] };
 		mockDelete.mockResolvedValueOnce(result);
 		const mutation = createRemoveLibraryAlbumMutation() as unknown as {
-			mutationFn: (input: { mbid: string; stopWanted: boolean }) => Promise<typeof result>;
-			onSuccess: (
-				data: typeof result,
-				input: { mbid: string; stopWanted: boolean }
-			) => Promise<void>;
+			mutationFn: (input: RemoveInput) => Promise<typeof result>;
+			onSuccess: (data: typeof result, input: RemoveInput) => Promise<void>;
 			effects: () => Effect[];
 		};
 
-		const input = { mbid: 'release-1', stopWanted: true };
+		const input = {
+			mbid: 'release-1',
+			albumId: 'local-1',
+			expectedRevision: 4,
+			expectedTrackCount: 2,
+			stopWanted: true
+		};
 		const data = await mutation.mutationFn(input);
 		await mutation.onSuccess(data, input);
 
 		expect(mockDelete).toHaveBeenCalledWith(
 			v3('/api/v3/library/albums/{id}', {
-				path: { id: 'release-1' },
-				query: { delete_files: true, stop_wanted: true }
+				path: { id: 'local-1' },
+				query: {
+					expected_revision: 4,
+					expected_track_count: 2,
+					delete_files: true,
+					stop_wanted: true
+				}
 			})
 		);
 		expect(mockRemoveMbid).toHaveBeenCalledWith('release-1');
@@ -79,14 +95,17 @@ describe('album removal mutation', () => {
 		vi.mocked(setQueryDataWithPersister).mockRejectedValueOnce(new Error('IndexedDB unavailable'));
 		const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 		const mutation = createRemoveLibraryAlbumMutation() as unknown as {
-			mutationFn: (input: { mbid: string; stopWanted: boolean }) => Promise<typeof result>;
-			onSuccess: (
-				data: typeof result,
-				input: { mbid: string; stopWanted: boolean }
-			) => Promise<void>;
+			mutationFn: (input: RemoveInput) => Promise<typeof result>;
+			onSuccess: (data: typeof result, input: RemoveInput) => Promise<void>;
 		};
 
-		const input = { mbid: 'rg-1', stopWanted: false };
+		const input = {
+			mbid: 'rg-1',
+			albumId: 'local-1',
+			expectedRevision: 4,
+			expectedTrackCount: 2,
+			stopWanted: false
+		};
 		const data = await mutation.mutationFn(input);
 
 		await expect(mutation.onSuccess(data, input)).resolves.toBeUndefined();

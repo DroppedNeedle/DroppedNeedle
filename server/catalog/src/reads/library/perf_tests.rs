@@ -679,14 +679,14 @@ const TRACK_RECORDS: [&str; 7] = [
      artist_mbid: Some(\"m1\"), album_artist_mbid: Some(\"m1\"), disc_number: 1, track_number: 2, \
      year: Some(1994), genre: None, duration_seconds: Some(200.0), format: \"flac\", \
      bit_rate: None, sample_rate: None, bit_depth: None, channels: None, \
-     file_size_bytes: 4000000, date_added: Some(1100.0), cover_available: true }",
+     file_size_bytes: 4000000, date_added: Some(1100.0), cover_available: true, row_revision: 1 }",
     "TrackRecord { id: \"t1\", title: \"Opener\", album_id: \"al1\", album_title: \"First Light\", \
      artist_name: \"Aurora\", artist_id: Some(\"a1\"), album_artist_name: \"Aurora\", \
      album_artist_id: Some(\"a1\"), recording_mbid: None, release_group_mbid: Some(\"rg1\"), \
      artist_mbid: Some(\"m1\"), album_artist_mbid: Some(\"m1\"), disc_number: 1, track_number: 1, \
      year: Some(1994), genre: Some(\"Rock\"), duration_seconds: Some(200.0), format: \"flac\", \
      bit_rate: None, sample_rate: None, bit_depth: None, channels: None, \
-     file_size_bytes: 4000000, date_added: Some(1000.0), cover_available: true }",
+     file_size_bytes: 4000000, date_added: Some(1000.0), cover_available: true, row_revision: 1 }",
     "TrackRecord { id: \"t9\", title: \"Ox \\\"Q\\\" %\", album_id: \"al5\", \
      album_title: \"100% \\\"Live\\\" _Unplugged_ 'Encore'\", artist_name: \"\", \
      artist_id: Some(\"a2\"), album_artist_name: \"Boreal\", album_artist_id: Some(\"a2\"), \
@@ -694,21 +694,21 @@ const TRACK_RECORDS: [&str; 7] = [
      album_artist_mbid: None, disc_number: 1, track_number: 2, year: Some(1987), genre: None, \
      duration_seconds: Some(195.0), format: \"opus\", bit_rate: None, sample_rate: None, \
      bit_depth: None, channels: None, file_size_bytes: 2000000, date_added: Some(1900.0), \
-     cover_available: false }",
+     cover_available: false, row_revision: 1 }",
     "TrackRecord { id: \"t6\", title: \"Peak\", album_id: \"al3\", album_title: \"Lone Peak\", \
      artist_name: \"Boreal\", artist_id: Some(\"a2\"), album_artist_name: \"Boreal\", \
      album_artist_id: Some(\"a2\"), recording_mbid: None, release_group_mbid: None, \
      artist_mbid: None, album_artist_mbid: None, disc_number: 1, track_number: 1, \
      year: Some(1994), genre: None, duration_seconds: Some(220.0), format: \"flac\", \
      bit_rate: None, sample_rate: None, bit_depth: None, channels: None, \
-     file_size_bytes: 5000000, date_added: Some(1500.0), cover_available: false }",
+     file_size_bytes: 5000000, date_added: Some(1500.0), cover_available: false, row_revision: 1 }",
     "TrackRecord { id: \"t4\", title: \"Single\", album_id: \"al2\", album_title: \"Second Dawn\", \
      artist_name: \"Aurora\", artist_id: Some(\"a1\"), album_artist_name: \"Aurora\", \
      album_artist_id: Some(\"a1\"), recording_mbid: None, release_group_mbid: None, \
      artist_mbid: Some(\"m1\"), album_artist_mbid: Some(\"m1\"), disc_number: 1, track_number: 1, \
      year: Some(2001), genre: None, duration_seconds: Some(180.0), format: \"mp3\", \
      bit_rate: None, sample_rate: None, bit_depth: None, channels: None, \
-     file_size_bytes: 3000000, date_added: Some(2000.0), cover_available: false }",
+     file_size_bytes: 3000000, date_added: Some(2000.0), cover_available: false, row_revision: 1 }",
     "TrackRecord { id: \"t8\", title: \"Up\", album_id: \"al5\", \
      album_title: \"100% \\\"Live\\\" _Unplugged_ 'Encore'\", artist_name: \"Boreal\", \
      artist_id: Some(\"a2\"), album_artist_name: \"Boreal\", album_artist_id: Some(\"a2\"), \
@@ -716,7 +716,7 @@ const TRACK_RECORDS: [&str; 7] = [
      album_artist_mbid: None, disc_number: 1, track_number: 1, year: Some(1987), genre: None, \
      duration_seconds: Some(190.0), format: \"opus\", bit_rate: None, sample_rate: None, \
      bit_depth: None, channels: None, file_size_bytes: 2000000, date_added: Some(1800.0), \
-     cover_available: false }",
+     cover_available: false, row_revision: 1 }",
     "TrackRecord { id: \"t7\", title: \"Æther \\\"Mix\\\" 100%_Sure\", album_id: \"al3\", \
      album_title: \"Lone Peak\", artist_name: \"Aurora\", artist_id: Some(\"a1\"), \
      album_artist_name: \"Boreal\", album_artist_id: Some(\"a2\"), recording_mbid: None, \
@@ -724,7 +724,7 @@ const TRACK_RECORDS: [&str; 7] = [
      disc_number: 1, track_number: 2, year: Some(1994), genre: Some(\"Jazz\"), \
      duration_seconds: Some(210.0), format: \"ogg\", bit_rate: None, sample_rate: None, \
      bit_depth: None, channels: None, file_size_bytes: 1000000, date_added: Some(1600.0), \
-     cover_available: false }",
+     cover_available: false, row_revision: 1 }",
 ];
 
 fn track_ids(tracks: &[TrackRecord]) -> Vec<&str> {

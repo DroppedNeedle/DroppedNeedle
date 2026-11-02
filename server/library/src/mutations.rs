@@ -197,6 +197,21 @@ pub const STALE_EXCLUSION: Reason = reason(
     "The album's management exclusion changed before it could be removed.",
     "Reload the album page and try again.",
 );
+pub const STALE_ALBUM_REMOVAL: Reason = reason(
+    "STALE_REVISION",
+    "This album changed after you opened it, so nothing was removed.",
+    "Check the album, then remove it again.",
+);
+pub const STALE_ALBUM_TRACKS: Reason = reason(
+    "STALE_REVISION",
+    "This album's tracks changed after you opened it, so nothing was removed.",
+    "Check the album, then remove it again.",
+);
+pub const STALE_TRACK_REMOVAL: Reason = reason(
+    "STALE_REVISION",
+    "This track changed after you opened it, so nothing was removed.",
+    "Check the album page, then remove it again.",
+);
 pub const SCAN_REFUSED: Reason = reason(
     "SCAN_REFUSED",
     "The library folders changed while the rescan was being set up.",
@@ -396,8 +411,9 @@ impl Mutations {
     /// id or a release-group MBID. An identified album's download and
     /// wanted clean-up is queued in the removal's own commit; `stop_wanted`
     /// stops its wanted watch, otherwise a fulfilled watch looks again.
-    /// Background work: it waits for a write in flight instead of
-    /// answering busy.
+    /// For a batch removal, which names the albums the batch caused rather
+    /// than a revision anyone saw, so nothing checks one. It waits for a
+    /// write in flight instead of answering busy.
     pub fn remove_album(
         &self,
         album_id: &str,
@@ -407,6 +423,7 @@ impl Mutations {
     ) -> Result<Removed, MutationError> {
         self.remove_album_with(
             album_id,
+            None,
             delete_files,
             stop_wanted,
             actor,
@@ -414,17 +431,20 @@ impl Mutations {
         )
     }
 
-    /// [`Self::remove_album`] for a person waiting on the answer: a write
-    /// in flight answers busy at once.
+    /// [`Self::remove_album`] for a person waiting on the answer, who names
+    /// the live album row they saw and its revision: anything else is
+    /// refused and nothing moves. A write in flight answers busy at once.
     pub fn remove_album_now(
         &self,
         album_id: &str,
+        seen: SeenAlbum,
         delete_files: bool,
         stop_wanted: bool,
         actor: &str,
     ) -> Result<Removed, MutationError> {
         self.remove_album_with(
             album_id,
+            Some(seen),
             delete_files,
             stop_wanted,
             actor,
@@ -435,6 +455,7 @@ impl Mutations {
     fn remove_album_with(
         &self,
         album_id: &str,
+        expected: Option<SeenAlbum>,
         delete_files: bool,
         stop_wanted: bool,
         actor: &str,
@@ -443,7 +464,17 @@ impl Mutations {
         let canonical = self
             .canonical_album(album_id)?
             .ok_or(MutationError::NotFound(ALBUM_NOT_FOUND))?;
+        // A revision belongs to one row, so an id that led to another album
+        // (a merge, a release group's copy) cannot be checked by it.
+        if expected.is_some() && canonical != album_id {
+            return Err(MutationError::Conflict(STALE_ALBUM_REMOVAL));
+        }
         let tracks = self.album_tracks(&canonical)?;
+        let seen = expected.map(|album| Seen::Album {
+            id: &canonical,
+            album,
+        });
+        self.check_seen(seen)?;
         let reason_code = if delete_files {
             "ALBUM_FILES_RECYCLED"
         } else {
@@ -464,6 +495,7 @@ impl Mutations {
             entry,
             expect_sha256: None,
             undo_album: Some(&canonical),
+            seen,
             album_removed: release_group_mbid
                 .clone()
                 .map(|release_group_mbid| AlbumRemoved {
@@ -482,25 +514,39 @@ impl Mutations {
     }
 
     /// Remove one track, moving its file into the recycle bin when
-    /// `delete_file` is set. A person waits on the answer: a write in
-    /// flight answers busy at once.
+    /// `delete_file` is set. A person waits on the answer, having seen the
+    /// track at `expected_revision`: another revision is refused and
+    /// nothing moves, and a write in flight answers busy at once.
     pub fn remove_track_now(
         &self,
         track_id: &str,
+        expected_revision: i64,
         delete_file: bool,
         actor: &str,
     ) -> Result<Removed, MutationError> {
-        self.remove_track_with(track_id, delete_file, actor, RemovalEntry::Now)
+        self.remove_track_with(
+            track_id,
+            expected_revision,
+            delete_file,
+            actor,
+            RemovalEntry::Now,
+        )
     }
 
     fn remove_track_with(
         &self,
         track_id: &str,
+        expected_revision: i64,
         delete_file: bool,
         actor: &str,
         entry: RemovalEntry,
     ) -> Result<Removed, MutationError> {
         let track = self.indexed_track(track_id, None)?;
+        let seen = Some(Seen::Track {
+            id: track_id,
+            revision: expected_revision,
+        });
+        self.check_seen(seen)?;
         let reason_code = if delete_file {
             "FILE_RECYCLED"
         } else {
@@ -514,6 +560,7 @@ impl Mutations {
             expect_sha256: None,
             undo_album: Some(&album_id),
             album_removed: None,
+            seen,
         };
         let done = self.remove_tracks(&[track], delete_file, &removal)?;
         Ok(Removed {
@@ -548,6 +595,7 @@ impl Mutations {
             expect_sha256: Some(sha256),
             undo_album: Some(&album_id),
             album_removed: None,
+            seen: None,
         };
         let done = self.remove_tracks(&[track], true, &removal)?;
         Ok(Removed {
@@ -641,6 +689,7 @@ impl Mutations {
             expect_sha256: None,
             undo_album: Some(album_id),
             album_removed: None,
+            seen: None,
         };
         let done = self.remove_tracks(&tracks, true, &removal)?;
         Ok(Removed {
@@ -873,6 +922,9 @@ impl Mutations {
             let changed =
                 self.db
                     .write_blocking(Lane::Foreground, "mutations.remove_tracks", |tx| {
+                        if let Some(seen) = removal.seen {
+                            seen.check(tx)?;
+                        }
                         let now = self.clock.now_secs();
                         let changed =
                             mark_missing(tx, tracks, removal.reason_code, removal.actor, now)?;
@@ -915,6 +967,8 @@ impl Mutations {
                 expect_sha256: removal.expect_sha256.map(str::to_owned),
             });
         }
+        // Reading the files above takes time on a large album.
+        self.check_seen(removal.seen)?;
         let done = self
             .publishing
             .publish_removal(
@@ -971,6 +1025,16 @@ impl Mutations {
             .optional()
             .map_err(MutationError::from)
         })
+    }
+
+    /// Refuse a removal whose row moved on from what the person saw. Read
+    /// after the removal's tracks, so a write between the two is refused.
+    fn check_seen(&self, seen: Option<Seen<'_>>) -> Result<(), MutationError> {
+        let Some(seen) = seen else {
+            return Ok(());
+        };
+        self.db
+            .read_blocking("mutations.check_seen", |conn| seen.check(conn))
     }
 
     fn album_tracks(&self, album_id: &str) -> Result<Vec<TrackFile>, MutationError> {
@@ -1058,6 +1122,49 @@ struct Removal<'a> {
     undo_album: Option<&'a str>,
     /// The removed album's clean-up, queued in the removal's commit.
     album_removed: Option<AlbumRemoved>,
+    /// The row a person saw when they asked for the removal.
+    seen: Option<Seen<'a>>,
+}
+
+/// An album as a person saw it when they asked to remove it. Tracks can join
+/// an album without moving its revision, so the count is checked too.
+#[derive(Debug, Clone, Copy)]
+pub struct SeenAlbum {
+    pub revision: i64,
+    pub track_count: i64,
+}
+
+/// A catalog row as a person saw it.
+#[derive(Debug, Clone, Copy)]
+enum Seen<'a> {
+    Album { id: &'a str, album: SeenAlbum },
+    Track { id: &'a str, revision: i64 },
+}
+
+impl Seen<'_> {
+    fn check(self, conn: &rusqlite::Connection) -> Result<(), MutationError> {
+        let read = |statement: &str, id: &str| -> Result<Option<i64>, MutationError> {
+            Ok(conn
+                .query_row(statement, [id], |row| row.get(0))
+                .optional()?)
+        };
+        match self {
+            Seen::Album { id, album } => {
+                if read(crate::sql::ALBUM_ROW_REVISION.text(), id)? != Some(album.revision) {
+                    return Err(MutationError::Conflict(STALE_ALBUM_REMOVAL));
+                }
+                if read(crate::sql::ALBUM_INDEXED_TRACKS.text(), id)? != Some(album.track_count) {
+                    return Err(MutationError::Conflict(STALE_ALBUM_TRACKS));
+                }
+            }
+            Seen::Track { id, revision } => {
+                if read(crate::sql::TRACK_ROW_REVISION.text(), id)? != Some(revision) {
+                    return Err(MutationError::Conflict(STALE_TRACK_REMOVAL));
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 /// A removal's refusal as the page reads it.

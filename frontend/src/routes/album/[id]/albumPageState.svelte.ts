@@ -45,6 +45,7 @@ import { isActiveDownloadStatus } from '$lib/queries/downloads/downloadStatus';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { createRemoveLibraryTrackMutation } from '$lib/queries/library/LibraryMutations.svelte';
 import { toastStore } from '$lib/stores/toast';
+import { isStaleRevision } from '$lib/api/errors';
 import { getActiveRequestsQuery } from '$lib/queries/requests/RequestQueries.svelte';
 import { createSwitchRequestedEditionMutation } from '$lib/queries/albums/EditionQueries.svelte';
 import type { EditionRequestPick } from '$lib/components/library/edition/editionSheetState.svelte';
@@ -587,6 +588,7 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 	const removeTrack = createRemoveLibraryTrackMutation();
 	let removeFileTarget = $state<{
 		fileId: string;
+		revision: number;
 		albumMbid: string;
 		albumCacheId: string;
 		title: string;
@@ -605,9 +607,10 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 	function openRemoveFileDialog(fileId: string, title: string): void {
 		const albumMbid = album?.musicbrainz_id ?? '';
 		const albumCacheId = albumIdGetter();
-		if (!albumMbid || !fileId || !albumCacheId) return;
+		const revision = localMatch?.tracks.find((t) => t.track_file_id === fileId)?.row_revision;
+		if (!albumMbid || !fileId || !albumCacheId || revision === undefined) return;
 		removeFileError = null;
-		removeFileTarget = { fileId, albumMbid, albumCacheId, title };
+		removeFileTarget = { fileId, revision, albumMbid, albumCacheId, title };
 	}
 
 	function closeRemoveFileDialog(): void {
@@ -620,14 +623,25 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 		const target = removeFileTarget;
 		if (!target || removeTrack.isPending) return;
 		removeTrack.mutate(
-			{ fileId: target.fileId, albumMbid: target.albumMbid },
+			{
+				fileId: target.fileId,
+				expectedRevision: target.revision,
+				albumMbid: target.albumMbid
+			},
 			{
 				onSuccess: () => {
 					removeFileTarget = null;
 					removeFileError = null;
 					toastStore.show({ message: 'File removed', type: 'success' });
 				},
-				onError: () => {
+				onError: (error) => {
+					if (isStaleRevision(error)) {
+						// The list refreshes; removing again reads the new revision.
+						removeFileTarget = null;
+						removeFileError = null;
+						toastStore.show({ message: error.message, type: 'error' });
+						return;
+					}
 					removeFileError = "Couldn't remove this file";
 					toastStore.show({ message: "Couldn't remove this file", type: 'error' });
 				}

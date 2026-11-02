@@ -1,6 +1,7 @@
 import { v3 } from '$lib/api/v3/endpoint';
 import { useQueryClient } from '@tanstack/svelte-query';
 import { api } from '$lib/api/client';
+import { isStaleRevision } from '$lib/api/errors';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { libraryStore } from '$lib/stores/library';
 import { setQueryDataWithPersister } from '../QueryClient';
@@ -12,6 +13,7 @@ import {
 	albumStatusChanged,
 	anyWantedChanged,
 	applyEffects,
+	applyEffectsIn,
 	catalogChanged,
 	createAppMutation,
 	editionPlansChanged,
@@ -22,11 +24,29 @@ import {
 
 export function createRemoveLibraryAlbumMutation() {
 	return createAppMutation(() => ({
-		mutationFn: ({ mbid, stopWanted }: { mbid: string; stopWanted: boolean }) =>
+		// `mbid` is the address the caller knows the album by; the rest comes
+		// from the album's detail.
+		mutationFn: ({
+			albumId,
+			expectedRevision,
+			expectedTrackCount,
+			stopWanted
+		}: {
+			mbid: string;
+			albumId: string;
+			expectedRevision: number;
+			expectedTrackCount: number;
+			stopWanted: boolean;
+		}) =>
 			api.v3.DELETE(
 				v3('/api/v3/library/albums/{id}', {
-					path: { id: mbid },
-					query: { delete_files: true, stop_wanted: stopWanted }
+					path: { id: albumId },
+					query: {
+						expected_revision: expectedRevision,
+						expected_track_count: expectedTrackCount,
+						delete_files: true,
+						stop_wanted: stopWanted
+					}
 				})
 			),
 		onSuccess: async (result, { mbid: requestedMbid }) => {
@@ -93,22 +113,43 @@ export function createSaveLibraryScanScheduleMutation() {
 // AND the local-library lists, in the cache of the page that removed it.
 export function createRemoveLibraryTrackMutation() {
 	const client = useQueryClient();
+	const changed = (albumMbid: string, albumId?: string) => {
+		const userId = authStore.user?.id;
+		return [
+			albumStatusChanged(userId, albumMbid),
+			albumLocalCopyChanged(userId, albumMbid),
+			libraryCountsChanged(userId),
+			albumRemovalsChanged(userId),
+			localChanged(),
+			...(albumId ? [editionPlansChanged(userId, albumId)] : [])
+		];
+	};
 	return createAppMutation(
 		() => ({
 			// `albumId`, the library album's own id, also refreshes its edition plans.
-			mutationFn: ({ fileId }: { fileId: string; albumMbid: string; albumId?: string }) =>
-				api.v3.DELETE(v3('/api/v3/library/tracks/{id}', { path: { id: fileId } })),
-			effects: (_data, { albumMbid, albumId }) => {
-				const userId = authStore.user?.id;
-				return [
-					albumStatusChanged(userId, albumMbid),
-					albumLocalCopyChanged(userId, albumMbid),
-					libraryCountsChanged(userId),
-					albumRemovalsChanged(userId),
-					localChanged(),
-					...(albumId ? [editionPlansChanged(userId, albumId)] : [])
-				];
-			}
+			mutationFn: ({
+				fileId,
+				expectedRevision
+			}: {
+				fileId: string;
+				expectedRevision: number;
+				albumMbid: string;
+				albumId?: string;
+			}) =>
+				api.v3.DELETE(
+					v3('/api/v3/library/tracks/{id}', {
+						path: { id: fileId },
+						query: { expected_revision: expectedRevision }
+					})
+				),
+			// A refusal for a moved revision means the page is old: read it again.
+			onError: (error, { albumMbid, albumId }) => {
+				if (!isStaleRevision(error)) return;
+				void applyEffectsIn(client, changed(albumMbid, albumId)).catch((failure: unknown) =>
+					console.error('Refreshing after a refused removal failed', failure)
+				);
+			},
+			effects: (_data, { albumMbid, albumId }) => changed(albumMbid, albumId)
 		}),
 		client
 	);

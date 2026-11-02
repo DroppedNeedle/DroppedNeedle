@@ -11400,10 +11400,30 @@
           {
             "name": "id",
             "in": "path",
-            "description": "Local album id or release-group MBID",
+            "description": "The album's local id, as its detail shows it",
             "required": true,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "expected_revision",
+            "in": "query",
+            "description": "The album's `row_revision` as the person saw it. Another revision\nanswers STALE_REVISION and nothing moves.",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "expected_track_count",
+            "in": "query",
+            "description": "The album's `track_count` as the person saw it. Another count answers\nSTALE_REVISION and nothing moves.",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
             }
           },
           {
@@ -11432,6 +11452,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/RemovalResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad query string",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }
@@ -11467,7 +11497,7 @@
             }
           },
           "409": {
-            "description": "Library busy or off, or a file is outside the library folders",
+            "description": "The album or its tracks changed since the values sent, the library is busy or off, or a file is outside the library folders",
             "content": {
               "application/json": {
                 "schema": {
@@ -20931,6 +20961,16 @@
             }
           },
           {
+            "name": "expected_revision",
+            "in": "query",
+            "description": "The track's `row_revision` as the person saw it. Another revision\nanswers STALE_REVISION and nothing moves.",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
             "name": "delete_file",
             "in": "query",
             "description": "Move the track's file into the recycle bin too. On by default, as\nin v2 (where it deleted the file outright).",
@@ -20947,6 +20987,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/RemovalResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad query string",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }
@@ -20982,7 +21032,7 @@
             }
           },
           "409": {
-            "description": "Library busy or off, or the file is outside the library folders",
+            "description": "The track changed since the revision sent, the library is busy or off, or the file is outside the library folders",
             "content": {
               "application/json": {
                 "schema": {
@@ -34131,7 +34181,7 @@
               "row_revision": {
                 "type": "integer",
                 "format": "int64",
-                "description": "The album row's revision, which a change to its grouping echoes."
+                "description": "The album row's revision, which a change to its grouping and its\nremoval echo."
               }
             }
           }
@@ -63623,7 +63673,8 @@
           "file_size_bytes",
           "cover_available",
           "art_missing",
-          "favorite"
+          "favorite",
+          "row_revision"
         ],
         "properties": {
           "album_artist_id": {
@@ -63760,6 +63811,11 @@
               "null"
             ],
             "description": "Linked release group of the owning album, when identified."
+          },
+          "row_revision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The track row's revision, which its removal echoes."
           },
           "sample_rate": {
             "type": [

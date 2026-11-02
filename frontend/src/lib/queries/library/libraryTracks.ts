@@ -85,6 +85,7 @@ export function toAlbumStatus(
 		track_count: status.track_count,
 		tracks: status.tracks.map((track) => ({
 			...toNativeTrack(track),
+			row_revision: track.row_revision,
 			current_tier: track.current_tier,
 			below_cutoff: track.below_cutoff
 		}))

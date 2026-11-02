@@ -22,6 +22,7 @@ async function renderSection(files: UnmatchedFile[], canRemove = true) {
 function orphan(overrides: Partial<UnmatchedFile> = {}): UnmatchedFile {
 	return {
 		id: 'f-wrong',
+		rowRevision: 6,
 		title: 'Arrival in Ashford',
 		artistName: 'Dan Romer',
 		format: 'flac',
@@ -40,9 +41,17 @@ describe('UnmatchedFilesSection', () => {
 	it('removal is a two-step confirm before the mutation fires', async () => {
 		await renderSection([orphan()]);
 		await page.getByRole('button', { name: /^Remove$/ }).click();
+		await expect.element(page.getByRole('button', { name: /Remove file/ })).toBeVisible();
 		expect(h.removeMut).not.toHaveBeenCalled(); // armed, not fired
 		await page.getByRole('button', { name: /Remove file/ }).click();
 		expect(h.removeMut).toHaveBeenCalledTimes(1);
+		expect(h.removeMut.mock.calls[0][0]).toMatchObject({ fileId: 'f-wrong', expectedRevision: 6 });
+	});
+
+	it('offers no removal for a file the status does not list', async () => {
+		await renderSection([orphan({ rowRevision: null })]);
+		await expect.element(page.getByText(/Arrival in Ashford/)).toBeVisible();
+		expect(page.getByRole('button', { name: /^Remove$/ }).elements().length).toBe(0);
 	});
 
 	it('backing out of the confirm keeps the file', async () => {

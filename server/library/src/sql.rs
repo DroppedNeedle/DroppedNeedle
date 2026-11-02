@@ -9,6 +9,10 @@ droppedneedle_kernel::sql! {
     pub(super) INDEXED_TRACK = "SELECT id, local_album_id, root_id, relative_path FROM local_tracks \
                      WHERE id = ?1 AND availability = 'indexed' \
                      AND (?2 IS NULL OR local_album_id = ?2)";
+    pub(super) ALBUM_ROW_REVISION = "SELECT row_revision FROM local_albums WHERE id = ?1";
+    pub(super) ALBUM_INDEXED_TRACKS = "SELECT COUNT(*) FROM local_tracks \
+                     WHERE local_album_id = ?1 AND availability = 'indexed'";
+    pub(super) TRACK_ROW_REVISION = "SELECT row_revision FROM local_tracks WHERE id = ?1";
     pub(super) LIFT_EXCLUSION = "DELETE FROM library_management_exclusions \
                      WHERE local_album_id = ?1 AND row_revision = ?2 \
                      RETURNING reason, excluded_by_user_id, excluded_at, row_revision";
