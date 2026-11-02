@@ -43,8 +43,9 @@ pub const ERROR_RATE_LIMITED: i64 = 29;
 /// (tests/fixtures/lastfm/invalid_key.json).
 pub const ERROR_INVALID_KEY: i64 = 10;
 /// Invalid method signature: the shared secret does not match the key.
-/// Taken from the listing at https://www.last.fm/api/errorcodes, not
-/// provoked live; the envelope is assumed to match error 10's.
+/// Taken from the listing at https://www.last.fm/api/errorcodes (read
+/// 2026-11-02), not provoked live; the envelope is assumed to match error
+/// 10's.
 pub const ERROR_INVALID_SIGNATURE: i64 = 13;
 /// Suspended API key. From the same listing, not provoked live.
 pub const ERROR_SUSPENDED_KEY: i64 = 26;
