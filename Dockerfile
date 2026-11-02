@@ -65,19 +65,61 @@ RUN cargo build --release --locked --manifest-path server/Cargo.toml --bins -p d
     && cp server/target/release/droppedneedle server/target/release/droppedneedle-tool /out/ \
     && rm -rf server/target
 
+# A slim audio-only ffmpeg for transcoding, LGPL only: never --enable-gpl or
+# --enable-nonfree. libmp3lame and libopus come from Debian, linked dynamically.
+# The lists cover what the scan accepts and plugins may spool: a format the
+# server should transcode is added here with a transcode in
+# server/scripts/e2e-container.sh.
+FROM debian:bookworm-slim AS ffmpeg
+
+ARG FFMPEG_VERSION=9.0.2
+ARG FFMPEG_SHA256=8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends build-essential ca-certificates curl libmp3lame-dev libopus-dev nasm pkg-config xz-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+# The image carries what the LGPL asks of whoever ships the program: the licence
+# files, the exact source and, in BUILD, the version and configure line.
+RUN curl -fsSL --retry 3 -o "ffmpeg-${FFMPEG_VERSION}.tar.xz" "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz" \
+    && echo "${FFMPEG_SHA256}  ffmpeg-${FFMPEG_VERSION}.tar.xz" | sha256sum -c - \
+    && tar xf "ffmpeg-${FFMPEG_VERSION}.tar.xz" \
+    && cd "ffmpeg-${FFMPEG_VERSION}" \
+    && ./configure \
+        --disable-debug \
+        --disable-everything --disable-autodetect --disable-network \
+        --disable-doc --disable-ffplay --disable-ffprobe --disable-avdevice --disable-swscale \
+        --enable-libmp3lame --enable-libopus \
+        --enable-protocol=file,pipe \
+        --enable-demuxer=aac,flac,matroska,mov,mp3,ogg,wav \
+        --enable-parser=aac,flac,mpegaudio,opus,vorbis \
+        --enable-decoder=aac,adpcm_ima_wav,adpcm_ms,alac,flac,mp3,mp3float,opus,pcm_alaw,pcm_f32le,pcm_f64le,pcm_mulaw,pcm_s16le,pcm_s24le,pcm_s32le,pcm_u8,vorbis \
+        --enable-encoder=aac,libmp3lame,libopus \
+        --enable-muxer=mp3,mpegts,ogg \
+        --enable-filter=aformat,anull,aresample,atrim \
+    && make -j"$(nproc)" ffmpeg \
+    && mkdir -p /out/doc \
+    && cp ffmpeg /out/ffmpeg \
+    && cp COPYING.* CREDITS LICENSE.md /out/doc/ \
+    && ./ffmpeg -version > /out/doc/BUILD \
+    && cp "../ffmpeg-${FFMPEG_VERSION}.tar.xz" /out/doc/
+
 FROM debian:bookworm-slim
 
 ENV PORT=8688
 
 WORKDIR /app
 
-# ffmpeg for transcoding, gosu for the PUID/PGID drop in entrypoint.sh,
-# tini as PID 1, curl for the health check, tzdata so TZ resolves.
+# The two encoder libraries the slim ffmpeg links, gosu for the PUID/PGID drop
+# in entrypoint.sh, tini as PID 1, curl for the health check, tzdata so TZ
+# resolves.
 # python3 runs Python plugins; build with --build-arg PLUGIN_PYTHON=0 for
 # an image without it (plugins that ship their own program still run).
 ARG PLUGIN_PYTHON=1
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl ffmpeg gosu tini tzdata \
+    && apt-get install -y --no-install-recommends ca-certificates curl gosu libmp3lame0 libopus0 tini tzdata \
     && if [ "$PLUGIN_PYTHON" = "1" ]; then apt-get install -y --no-install-recommends python3; fi \
     && rm -rf /var/lib/apt/lists/*
 
@@ -90,6 +132,8 @@ RUN groupadd -r -g 1000 droppedneedle \
 
 COPY --from=builder /out/droppedneedle /usr/local/bin/droppedneedle
 COPY --from=builder /out/droppedneedle-tool /usr/local/bin/droppedneedle-tool
+COPY --from=ffmpeg /out/ffmpeg /usr/local/bin/ffmpeg
+COPY --from=ffmpeg /out/doc /usr/share/doc/ffmpeg
 # The pristine web UI; the server stamps a copy into /app/cache/static at
 # startup (DROPPEDNEEDLE_STATIC_DIR defaults to /app/static).
 COPY --from=frontend /app/frontend/build /app/static

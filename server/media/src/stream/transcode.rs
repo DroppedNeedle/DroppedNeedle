@@ -20,6 +20,9 @@
 //! ends, exactly once. A second task drains stderr into the bounded
 //! capture for the nonzero-exit warning.
 //!
+//! The image's ffmpeg is a slim audio-only build whose configuration lives in
+//! the `Dockerfile`.
+//!
 //! # Seams
 //!
 //! * Leases: [`TranscodeGate`] (see [`super::leases`]).

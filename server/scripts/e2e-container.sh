@@ -1,18 +1,22 @@
 #!/bin/sh
 # Container end-to-end test.
 #
-# 1. Smoke: fresh boot, healthy, clean SIGTERM shutdown. Prints cold and
+# 1. ffmpeg: the image's build is LGPL only with its notices beside it, and
+#    every format the scan accepts transcodes to every output, with and without
+#    a seek, using the argument shape of build_cmd in transcode.rs.
+# 2. Smoke: fresh boot, healthy, clean SIGTERM shutdown. Prints cold and
 #    warm boot time, idle RSS and shutdown time.
-# 2. Journeys: on an internal network with no route out, starts the mock
+# 3. Journeys: on an internal network with no route out, starts the mock
 #    slskd and MusicBrainz (e2e-mocks.Dockerfile), then runs each browser
 #    journey in frontend/tests/journeys against a fresh server of its own,
 #    after checking that nothing outside resolves or routes from it.
 #
 # Everything runs against containers this script starts under its own names,
 # never against an address passed in. They are removed on exit, pass or fail,
-# and use no volumes. The one folder mounted, as the library at /music, is a
-# throwaway copy of two audio fixtures, removed on exit. The journeys need the
-# frontend dependencies and Playwright's Chromium
+# and use no volumes. The folders mounted are the audio fixtures, read-only,
+# for the ffmpeg check and, as the library at /music, a throwaway copy of two of
+# them, removed on exit. The journeys need the frontend dependencies and
+# Playwright's Chromium
 # (make frontend-install frontend-browser-install).
 #
 # DN_E2E_IMAGE and DN_E2E_MOCKS_IMAGE name images already built; each one set
@@ -26,13 +30,16 @@ NAME="dn-e2e-smoke"
 APP="dn-e2e-app"
 MOCKS="dn-e2e-mocks"
 NET="dn-e2e-sealed"
+FFMPEG="dn-e2e-ffmpeg"
 FIXTURES="$ROOT/server/tests/fixtures/library"
 WORK=""
+OUT=""
 
 cleanup() {
-  docker rm -f "$NAME" "$APP" "$MOCKS" >/dev/null 2>&1 || true
+  docker rm -f "$NAME" "$APP" "$MOCKS" "$FFMPEG" >/dev/null 2>&1 || true
   docker network rm "$NET" >/dev/null 2>&1 || true
   if [ -n "$WORK" ]; then rm -rf "$WORK" || true; fi
+  if [ -n "$OUT" ]; then rm -rf "$OUT" || true; fi
 }
 trap cleanup EXIT
 trap 'exit 130' INT TERM
@@ -68,6 +75,119 @@ curl_inside() {
   docker exec "$APP" curl -s -o /dev/null -m 3 "$1" && echo 0 || echo $?
 }
 
+# Print some bytes of a file from an offset, as lowercase hex.
+hex_at() {
+  od -An -tx1 -j "$2" -N "$3" "$1" | tr -d ' \n'
+}
+
+# Fail unless a file is what its muxer writes and holds audio, not only headers:
+# an MP3 frame sync (after the ID3 tag, when there is one); an Ogg page opening an
+# Opus stream and a page after the two header pages; MPEG-TS packets that all
+# start with the sync byte, one of them on ffmpeg's first audio PID (0x100).
+check_output() {
+  case "$1" in
+    mp3)
+      AT=0
+      if [ "$(hex_at "$2" 0 3)" = "494433" ]; then
+        # shellcheck disable=SC2046
+        set -- "$1" "$2" "$3" $(od -An -tu1 -j 6 -N 4 "$2")
+        AT=$((10 + ($4 << 21) + ($5 << 14) + ($6 << 7) + $7))
+      fi
+      case "$(hex_at "$2" "$AT" 2)" in
+        ff[ef]?) ;;
+        *) fail "$3: no MPEG frame sync at byte $AT" ;;
+      esac
+      ;;
+    ogg)
+      [ "$(hex_at "$2" 0 4)" = "4f676753" ] || fail "$3: no OggS"
+      [ "$(hex_at "$2" 28 8)" = "4f70757348656164" ] || fail "$3: no OpusHead"
+      PAGES=$(LC_ALL=C grep -ao OggS "$2" | wc -l)
+      [ "$PAGES" -ge 3 ] || fail "$3: only $PAGES Ogg pages"
+      ;;
+    mpegts)
+      SIZE=$(wc -c <"$2")
+      [ "$SIZE" -gt 0 ] && [ $((SIZE % 188)) -eq 0 ] || fail "$3: $SIZE bytes is not whole MPEG-TS packets"
+      AT=0
+      AUDIO=""
+      while [ "$AT" -lt "$SIZE" ]; do
+        [ "$(hex_at "$2" "$AT" 1)" = "47" ] || fail "$3: no MPEG-TS sync byte at $AT"
+        case "$(hex_at "$2" $((AT + 1)) 2)" in
+          ?100) AUDIO=1 ;;
+        esac
+        AT=$((AT + 188))
+      done
+      [ -n "$AUDIO" ] || fail "$3: no MPEG-TS audio packet"
+      ;;
+  esac
+}
+
+# One transcode with the argument shape of build_cmd: input, encoder, bitrate,
+# muxer, then optionally -ss and its value. Anything ffmpeg logs at this level
+# fails it too, since a stream it could not decode can still exit 0.
+transcode() {
+  INPUT=$1 ENCODER=$2 RATE=$3 MUXER=$4
+  shift 4
+  LABEL="$INPUT to $MUXER${1:+ with $*}"
+  docker exec "$FFMPEG" ffmpeg -hide_banner -loglevel error -nostdin "$@" -i "/fixtures/$INPUT" \
+    -vn -map 0:a:0 -c:a "$ENCODER" -b:a "$RATE" -f "$MUXER" pipe:1 >"$OUT/out" 2>"$OUT/err" \
+    || fail "$LABEL: ffmpeg failed: $(cat "$OUT/err")"
+  [ ! -s "$OUT/err" ] || fail "$LABEL: ffmpeg logged: $(cat "$OUT/err")"
+  check_output "$MUXER" "$OUT/out" "$LABEL"
+}
+
+check_ffmpeg() {
+  docker run -d --name "$FFMPEG" --network none --user 1000:1000 --entrypoint sleep \
+    -v "$FIXTURES:/fixtures:ro" "$IMAGE" 600 >/dev/null || fail "ffmpeg container did not start"
+  OUT=$(mktemp -d)
+
+  FOUND=$(docker exec "$FFMPEG" sh -c 'command -v ffmpeg') || fail "no ffmpeg on PATH"
+  [ "$FOUND" = "/usr/local/bin/ffmpeg" ] || fail "ffmpeg on PATH is $FOUND"
+
+  # The licence: the configure line and what the program itself says.
+  CONFIGURATION=$(docker exec "$FFMPEG" ffmpeg -version | grep '^configuration:') \
+    || fail "ffmpeg -version has no configuration line"
+  echo "$CONFIGURATION"
+  case "$CONFIGURATION" in
+    *--enable-gpl* | *--enable-nonfree*) fail "ffmpeg is not LGPL only" ;;
+  esac
+  docker exec "$FFMPEG" ffmpeg -hide_banner -L | grep -q 'GNU Lesser General Public' \
+    || fail "ffmpeg -L does not name the LGPL"
+
+  # The notices that ship with it.
+  for FILE in COPYING.LGPLv2.1 CREDITS LICENSE.md; do
+    docker exec "$FFMPEG" test -s "/usr/share/doc/ffmpeg/$FILE" || fail "no $FILE beside ffmpeg"
+  done
+  docker exec "$FFMPEG" grep -qF -- "$CONFIGURATION" /usr/share/doc/ffmpeg/BUILD \
+    || fail "BUILD does not hold the configure line ffmpeg reports"
+  VERSION=$(docker exec "$FFMPEG" ffmpeg -version | sed -n 's/^ffmpeg version \([^ ]*\).*/\1/p')
+  docker exec "$FFMPEG" test -s "/usr/share/doc/ffmpeg/ffmpeg-$VERSION.tar.xz" \
+    || fail "no source tarball for ffmpeg $VERSION"
+
+  COUNT=0
+  for INPUT in \
+    management_full.flac \
+    management_two_icons.flac \
+    management_full.mp3 \
+    management_full.ogg \
+    management_full.opus \
+    management_full.m4a \
+    alac_short.m4a \
+    management_full.aac \
+    management_full.wav; do
+    for SEEK in "" "-ss 0.200"; do
+      # shellcheck disable=SC2086
+      transcode "$INPUT" libmp3lame 192k mp3 $SEEK
+      # shellcheck disable=SC2086
+      transcode "$INPUT" libopus 128k ogg $SEEK
+      # shellcheck disable=SC2086
+      transcode "$INPUT" aac 256k mpegts $SEEK
+      COUNT=$((COUNT + 3))
+    done
+  done
+  echo "ffmpeg: $COUNT transcodes passed"
+  docker rm -f "$FFMPEG" >/dev/null 2>&1 || true
+}
+
 echo "--- build ---"
 if [ -z "${DN_E2E_IMAGE:-}" ]; then
   docker build -f "$ROOT/Dockerfile" -t "$IMAGE" "$ROOT" || fail "docker build failed"
@@ -77,6 +197,11 @@ if [ -z "${DN_E2E_MOCKS_IMAGE:-}" ]; then
 fi
 
 cleanup
+
+echo "image size: $(docker image inspect --format '{{.Size}}' "$IMAGE") bytes"
+
+echo "--- ffmpeg ---"
+check_ffmpeg
 
 echo "--- cold boot ---"
 read -r PORT COLD_BOOT <<EOF
