@@ -3,7 +3,6 @@
 	import { replaceState } from '$app/navigation';
 	import { useIntegrationStatus } from '$lib/queries/home.svelte';
 	import SettingsTabContent from '$lib/components/settings/SettingsTabContent.svelte';
-	import { isSettingsTabVisible } from '$lib/components/settings/settingsTabs';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { getUpdateCheckQuery } from '$lib/queries/version.svelte';
 	import {
@@ -67,6 +66,9 @@
 		{ id: 'system', label: 'System', hint: 'Maintenance & account' }
 	];
 
+	// Members see only Home and Discover: the pages their Customise buttons open.
+	const memberTabIds = new Set(['home', 'discover']);
+
 	const tabs = [
 		{ id: 'library', label: 'Library', tier: 'setup', icon: Music },
 		{ id: 'editions', label: 'Editions', tier: 'setup', icon: Disc3 },
@@ -103,10 +105,10 @@
 		{ id: 'diagnostics', label: 'Diagnostics', tier: 'system', icon: Activity },
 		{ id: 'advanced', label: 'Advanced', tier: 'system', icon: Settings },
 		{ id: 'about', label: 'About', tier: 'system', icon: Info }
-	].filter((tab) => isSettingsTabVisible(tab.id, authStore.isAdmin));
+	].filter((tab) => authStore.isAdmin || memberTabIds.has(tab.id));
 	const requestedTab = page.url.searchParams.get('tab');
 	let activeTab = $state(
-		requestedTab && tabs.some((tab) => tab.id === requestedTab) ? requestedTab : 'library'
+		requestedTab && tabs.some((tab) => tab.id === requestedTab) ? requestedTab : tabs[0].id
 	);
 
 	const normalizedFilter = $derived(filter.trim().toLowerCase());

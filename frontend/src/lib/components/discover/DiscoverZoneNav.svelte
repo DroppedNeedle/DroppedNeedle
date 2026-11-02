@@ -29,7 +29,7 @@
 		aria-label="Jump to a discover section"
 	>
 		<div class="flex items-center gap-2">
-			<div class="flex flex-1 gap-1.5 overflow-x-auto">
+			<div class="zone-chips flex flex-1 gap-1.5 overflow-x-auto pe-8">
 				{#each zones as zone (zone.id)}
 					<Button
 						variant="ghost"
@@ -48,3 +48,11 @@
 		</div>
 	</nav>
 {/if}
+
+<style>
+	/* The chips fade out before the action buttons. The end padding keeps the
+	   last chip clear of the fade once the row is scrolled to its end. */
+	.zone-chips {
+		mask-image: linear-gradient(to right, black calc(100% - 2rem), transparent);
+	}
+</style>

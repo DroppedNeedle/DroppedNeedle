@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from 'vitest';
-import { load as settingsLoad } from './settings/+layout';
 import { load as reviewLoad } from './library/review/+page';
 import { load as unmatchedLoad } from './library/unmatched/+page';
 import { load as legacyLibrarySettingsLoad } from './settings/library/+page';
@@ -23,24 +22,7 @@ function delayedParent(user: typeof admin | typeof regular) {
 }
 
 describe('role-gated loads', () => {
-	it('waits for parent hydration before admitting an administrator to Settings', async () => {
-		const hydration = delayedParent(admin);
-		const result = Promise.resolve(
-			settingsLoad({ parent: hydration.parent } as unknown as Parameters<typeof settingsLoad>[0])
-		);
-		let settled = false;
-		void result.finally(() => {
-			settled = true;
-		});
-		await Promise.resolve();
-		expect(settled).toBe(false);
-
-		hydration.release();
-		await expect(result).resolves.toBeUndefined();
-	});
-
 	it.each([
-		['Settings', settingsLoad, '/'],
 		['Unmatched Library', unmatchedLoad, '/library'],
 		['Library Management', libraryManagementLoad, '/library'],
 		['legacy library settings', legacyLibrarySettingsLoad, '/']
