@@ -123,7 +123,7 @@ pub struct AutomaticSeal {
 pub struct PriorAlbumIdentity {
     pub release_group_mbid: Option<String>,
     pub release_mbid: Option<String>,
-    pub decision_source: Option<String>,
+    pub decision_source: Option<DecisionSource>,
     pub matcher_version: Option<String>,
     pub attempt_id: Option<String>,
     pub selected_by_user_id: Option<String>,
@@ -142,7 +142,7 @@ pub struct PriorTrackIdentity {
     pub release_track_mbid: Option<String>,
     pub medium_position: Option<i64>,
     pub release_track_position: Option<i64>,
-    pub decision_source: Option<String>,
+    pub decision_source: Option<DecisionSource>,
     pub attempt_id: Option<String>,
     pub selected_at: Option<f64>,
 }
@@ -192,6 +192,12 @@ pub enum IdentifyKind {
     Historical,
 }
 
+crate::scan::models::spelled!(IdentifyKind {
+    Automatic => "automatic",
+    Manual => "manual",
+    Historical => "historical",
+});
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 #[schema(as = IdentifyJobState)]
@@ -203,6 +209,15 @@ pub enum JobState {
     Failed,
     Attention,
 }
+
+crate::scan::models::spelled!(JobState {
+    Queued => "queued",
+    Running => "running",
+    Deferred => "deferred",
+    Succeeded => "succeeded",
+    Failed => "failed",
+    Attention => "attention",
+});
 
 /// One ambiguous case waiting on a curator.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -227,6 +242,14 @@ pub enum ReviewState {
     /// The album's files were taken out of the library.
     Excluded,
 }
+
+crate::scan::models::spelled!(ReviewState {
+    Pending => "pending",
+    Approved => "approved",
+    Rejected => "rejected",
+    Dismissed => "dismissed",
+    Excluded => "excluded",
+});
 
 /// Identity summary: the whole case for one album on one card.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -327,14 +350,10 @@ pub enum MatchFlagState {
     Unmatched,
 }
 
-impl MatchFlagState {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Unconfirmed => "unconfirmed",
-            Self::Unmatched => "unmatched",
-        }
-    }
-}
+crate::scan::models::spelled!(MatchFlagState {
+    Unconfirmed => "unconfirmed",
+    Unmatched => "unmatched",
+});
 
 /// An album's match flag: why identification is unsure, and the closest
 /// candidates for a person to compare.

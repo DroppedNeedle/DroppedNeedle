@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 
 use super::reads::{album_identity_row, identity_revision, indexed_track_ids, track_identity_rows};
 use super::sql;
-use super::{IdentityError, PROVIDER, Refusal, Rows, delete_album_row};
+use super::{DecisionSource, IdentityError, PROVIDER, Refusal, Rows, delete_album_row};
 use crate::identify::models::{PriorAlbumIdentity, PriorTrackIdentity};
 use crate::operations::decisions::{CatalogAction, record_action};
 
@@ -126,13 +126,12 @@ pub(crate) fn exclusion_row(
     album_id: &str,
 ) -> rusqlite::Result<Option<ExclusionRow>> {
     conn.prepare_cached(sql::EXCLUSION_ROW.text())?
-        .query_row(params![album_id], |row| {
-            Ok(ExclusionRow {
-                reason: row.get(0)?,
-                excluded_by_user_id: row.get(1)?,
-                excluded_at: crate::clock::secs_at(row, 2)?,
-                row_revision: row.get(3)?,
-            })
+        .query_row(params![album_id], sql::StoredExclusion::read)
+        .map(|row| ExclusionRow {
+            reason: row.reason,
+            excluded_by_user_id: row.excluded_by_user_id,
+            excluded_at: crate::clock::secs(row.excluded_at.0),
+            row_revision: row.row_revision,
         })
         .optional()
 }
@@ -164,13 +163,12 @@ fn hold(conn: &Connection, album_id: &str) -> rusqlite::Result<Hold> {
         .optional()?;
     let remap = conn
         .prepare_cached(sql::REMAP_ROW.text())?
-        .query_row(params![album_id], |row| {
-            Ok(RemapRow {
-                release_mbid: row.get(0)?,
-                chosen_by_user_id: row.get(1)?,
-                origin: row.get(2)?,
-                queued_at: crate::clock::secs_at(row, 3)?,
-            })
+        .query_row(params![album_id], sql::StoredRemap::read)
+        .map(|row| RemapRow {
+            release_mbid: row.release_mbid,
+            chosen_by_user_id: row.chosen_by_user_id,
+            origin: row.origin,
+            queued_at: crate::clock::secs(row.queued_at.0),
         })
         .optional()?;
     Ok(Hold {
@@ -183,13 +181,14 @@ fn hold(conn: &Connection, album_id: &str) -> rusqlite::Result<Hold> {
 fn hand_matches(conn: &Connection, album_id: &str) -> rusqlite::Result<Vec<HandMatchRow>> {
     conn.prepare_cached(sql::ALBUM_HAND_MATCHES.text())?
         .query_map(params![album_id], |row| {
+            let row = sql::StoredHandMatch::read(row)?;
             Ok(HandMatchRow {
-                local_track_id: row.get(0)?,
-                release_mbid: row.get(1)?,
-                release_track_mbid: row.get(2)?,
-                prior_identity_json: row.get(3)?,
-                matched_by_user_id: row.get(4)?,
-                matched_at: row.get(5)?,
+                local_track_id: row.local_track_id,
+                release_mbid: row.release_mbid,
+                release_track_mbid: row.release_track_mbid,
+                prior_identity_json: row.prior_identity_json,
+                matched_by_user_id: row.matched_by_user_id,
+                matched_at: row.matched_at,
             })
         })?
         .collect()
@@ -226,14 +225,13 @@ fn restore_hand_matches(
 
 fn match_state_row(conn: &Connection, album_id: &str) -> rusqlite::Result<Option<MatchStateRow>> {
     conn.prepare_cached(sql::MATCH_STATE_ROW.text())?
-        .query_row(params![album_id], |row| {
-            Ok(MatchStateRow {
-                state: row.get(0)?,
-                reason_code: row.get(1)?,
-                release_mbid: row.get(2)?,
-                candidates_json: row.get(3)?,
-                updated_at: crate::clock::secs_at(row, 4)?,
-            })
+        .query_row(params![album_id], sql::StoredMatchState::read)
+        .map(|row| MatchStateRow {
+            state: row.state,
+            reason_code: row.reason_code,
+            release_mbid: row.release_mbid,
+            candidates_json: row.candidates_json,
+            updated_at: crate::clock::secs(row.updated_at.0),
         })
         .optional()
 }
@@ -442,19 +440,24 @@ pub(crate) fn restore_match_state(
     album_id: &str,
     post_identity_revision: i64,
 ) -> rusqlite::Result<()> {
-    let kept: Option<(String, Option<String>)> = tx
+    let kept = tx
         .prepare_cached(sql::CHOICE_UNDO_AT.text())?
-        .query_row(params![album_id, post_identity_revision], |row| {
-            Ok((row.get(0)?, row.get(1)?))
-        })
+        .query_row(
+            params![album_id, post_identity_revision],
+            sql::ChoiceUndoAt::read,
+        )
         .optional()?;
-    let Some((undo_id, state_json)) = kept else {
+    let Some(kept) = kept else {
         return Ok(());
     };
-    let prior: Option<MatchStateRow> = state_json.as_deref().map(from_json).transpose()?;
+    let prior: Option<MatchStateRow> = kept
+        .prior_match_state_json
+        .as_deref()
+        .map(from_json)
+        .transpose()?;
     put_match_state(tx, album_id, prior.as_ref())?;
     tx.prepare_cached(sql::CONSUME_CHOICE_UNDO.text())?
-        .execute(params![undo_id])?;
+        .execute(params![kept.id])?;
     Ok(())
 }
 
@@ -475,7 +478,7 @@ pub(crate) fn restore_track_row(
             row.release_track_mbid,
             row.medium_position,
             row.release_track_position,
-            row.decision_source.as_deref().unwrap_or("automatic"),
+            row.decision_source.unwrap_or(DecisionSource::Automatic),
             row.attempt_id,
             crate::clock::ms(row.selected_at.unwrap_or(now)),
         ])?;
@@ -495,7 +498,7 @@ pub(crate) fn restore_album_row(
             album_id,
             prior.release_group_mbid,
             prior.release_mbid,
-            prior.decision_source.as_deref().unwrap_or("automatic"),
+            prior.decision_source.unwrap_or(DecisionSource::Automatic),
             prior.matcher_version,
             prior.attempt_id,
             prior.selected_by_user_id,
@@ -503,16 +506,6 @@ pub(crate) fn restore_album_row(
             PROVIDER,
         ])?;
     Ok(())
-}
-
-/// One kept choice undo, as stored.
-struct UndoRow {
-    id: String,
-    identity: Option<String>,
-    tracks: String,
-    state: Option<String>,
-    expected: i64,
-    hold: Option<String>,
 }
 
 /// Take back the album's last edition change: the identity, track rows and
@@ -527,18 +520,9 @@ pub fn undo(
     actor: &str,
     now: f64,
 ) -> Result<(), IdentityError> {
-    let kept: Option<UndoRow> = tx
+    let kept = tx
         .prepare_cached(sql::CHOICE_UNDO.text())?
-        .query_row(params![album_id], |row| {
-            Ok(UndoRow {
-                id: row.get(0)?,
-                identity: row.get(1)?,
-                tracks: row.get(2)?,
-                state: row.get(3)?,
-                expected: row.get(4)?,
-                hold: row.get(5)?,
-            })
-        })
+        .query_row(params![album_id], sql::ChoiceUndoRow::read)
         .optional()?;
     let Some(kept) = kept else {
         return Err(Refusal::NoEditionChoice.into());
@@ -548,14 +532,22 @@ pub fn undo(
         .as_ref()
         .and_then(|row| row.row_revision)
         .unwrap_or(0)
-        != kept.expected
+        != kept.expected_identity_revision
     {
         return Err(Refusal::EditionChoiceStale.into());
     }
-    let prior: Option<PriorAlbumIdentity> = kept.identity.as_deref().map(from_json).transpose()?;
-    let prior_tracks: Vec<PriorTrackIdentity> = from_json(&kept.tracks)?;
-    let prior_state: Option<MatchStateRow> = kept.state.as_deref().map(from_json).transpose()?;
-    let held: Option<HoldChange> = kept.hold.as_deref().map(from_json).transpose()?;
+    let prior: Option<PriorAlbumIdentity> = kept
+        .prior_identity_json
+        .as_deref()
+        .map(from_json)
+        .transpose()?;
+    let prior_tracks: Vec<PriorTrackIdentity> = from_json(&kept.prior_tracks_json)?;
+    let prior_state: Option<MatchStateRow> = kept
+        .prior_match_state_json
+        .as_deref()
+        .map(from_json)
+        .transpose()?;
+    let held: Option<HoldChange> = kept.prior_hold_json.as_deref().map(from_json).transpose()?;
 
     match prior.filter(|prior| prior.release_group_mbid.is_some()) {
         Some(prior) => restore_album_row(tx, album_id, &prior, now)?,
@@ -642,24 +634,18 @@ pub fn undo_automatic(
     asked: &AutomaticUndo<'_>,
 ) -> Result<AutomaticUndone, IdentityError> {
     let now = asked.now;
-    type Kept = (String, Option<String>, String, i64, i64);
-    let undo: Option<Kept> = tx
+    let undo = tx
         .prepare_cached(sql::AUTOMATIC_UNDO.text())?
-        .query_row(params![album_id], |row| {
-            Ok((
-                row.get(0)?,
-                row.get(1)?,
-                row.get(2)?,
-                row.get(3)?,
-                row.get(4)?,
-            ))
-        })
+        .query_row(params![album_id], sql::AutomaticUndoRow::read)
         .optional()?;
-    let Some((undo_id, prior_json, prior_tracks_json, post_album_revision, post_identity_revision)) =
-        undo
-    else {
+    let Some(undo) = undo else {
         return Err(Refusal::NoAutomaticEdition.into());
     };
+    let (undo_id, post_album_revision, post_identity_revision) = (
+        undo.id,
+        undo.expected_post_album_revision,
+        undo.expected_post_identity_revision,
+    );
     let album_revision: Option<i64> = tx
         .prepare_cached(sql::ALBUM_REVISION.text())?
         .query_row(params![album_id], |row| row.get(0))
@@ -669,15 +655,19 @@ pub fn undo_automatic(
     let fresh = album_revision == Some(asked.expected_album_revision)
         && asked.expected_album_revision == post_album_revision
         && current.as_ref().is_some_and(|identity| {
-            identity.decision_source.as_deref() == Some("automatic")
+            identity.decision_source == Some(DecisionSource::Automatic)
                 && identity.row_revision == Some(asked.expected_identity_revision)
                 && asked.expected_identity_revision == post_identity_revision
         });
     if !fresh {
         return Err(Refusal::AutomaticUndoStale.into());
     }
-    let prior: Option<PriorAlbumIdentity> = prior_json.as_deref().map(from_json).transpose()?;
-    let prior_tracks: Vec<PriorTrackIdentity> = from_json(&prior_tracks_json)?;
+    let prior: Option<PriorAlbumIdentity> = undo
+        .prior_identity_json
+        .as_deref()
+        .map(from_json)
+        .transpose()?;
+    let prior_tracks: Vec<PriorTrackIdentity> = from_json(&undo.prior_track_identities_json)?;
     let current_tracks = track_identity_rows(tx, album_id)?;
 
     let prior =
@@ -717,7 +707,7 @@ pub fn undo_automatic(
             .find(|row| row.local_track_id == track_id);
         // Only what the automatic seal wrote is put back; a curator's (or
         // the tags') row stays as it is.
-        if now_row.is_some_and(|row| row.decision_source.as_deref() != Some("automatic")) {
+        if now_row.is_some_and(|row| row.decision_source != Some(DecisionSource::Automatic)) {
             continue;
         }
         let before = prior_tracks

@@ -510,8 +510,6 @@ pub fn remove(
     };
     let persons = identity
         .decision_source
-        .as_deref()
-        .and_then(DecisionSource::parse)
         .is_some_and(DecisionSource::is_persons_choice);
     let (reason, actor, job_id, kind, carried) = match removal {
         Removal::Repair { .. } if persons => return Ok(None),
@@ -639,8 +637,7 @@ pub fn hand_match(tx: &Transaction<'_>, matched: &Matched<'_>) -> rusqlite::Resu
     let persons = before
         .identity
         .as_ref()
-        .and_then(|row| row.decision_source.as_deref())
-        .and_then(DecisionSource::parse)
+        .and_then(|row| row.decision_source)
         .is_some_and(DecisionSource::is_persons_choice);
     if !persons {
         make_persons(tx, album_id, &before, matched.actor, now)?;

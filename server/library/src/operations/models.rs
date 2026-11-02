@@ -5,7 +5,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::reasons::Reason;
-use crate::identify::models::{CandidateEvidence, EvidenceClass};
+use crate::identify::models::{CandidateEvidence, EvidenceClass, IdentificationOutcome};
 pub use crate::identity::AutomaticUndone;
 pub use crate::jobs::{ControlRequest, OperationJob, OperationKind, OperationState, WorkState};
 
@@ -84,9 +84,9 @@ pub struct ReidentificationCandidate {
 }
 
 /// What a re-identification evaluation found, kept on the job snapshot.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Evaluation {
-    pub outcome: String,
+    pub outcome: IdentificationOutcome,
     pub reason_code: String,
     pub candidates: Vec<ReidentificationCandidate>,
     #[serde(default)]

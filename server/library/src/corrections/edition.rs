@@ -42,7 +42,7 @@ pub(super) struct Identity {
     pub album_id: String,
     pub release_group_mbid: String,
     pub release_mbid: Option<String>,
-    pub decision_source: String,
+    pub decision_source: DecisionSource,
     pub row_revision: i64,
     /// A custom edition is active: it lists this album's own tracks.
     pub custom: bool,
@@ -58,7 +58,7 @@ impl Identity {
     }
 
     fn pinned(&self) -> bool {
-        DecisionSource::parse(&self.decision_source).is_some_and(DecisionSource::is_persons_choice)
+        self.decision_source.is_persons_choice()
     }
 
     fn dropped(&self) -> DroppedEdition {
@@ -66,7 +66,7 @@ impl Identity {
             album_id: self.album_id.clone(),
             release_group_mbid: self.release_group_mbid.clone(),
             release_mbid: self.release_mbid.clone(),
-            decision_source: self.decision_source.clone(),
+            decision_source: self.decision_source,
         }
     }
 }
@@ -100,7 +100,7 @@ pub(super) fn identity_token(identity: Option<&Identity>) -> String {
             format!(
                 "{}:{}:{}:{}:{}",
                 found.row_revision,
-                found.decision_source,
+                found.decision_source.as_str(),
                 found.release_group_mbid,
                 found.release_mbid.as_deref().unwrap_or_default(),
                 u8::from(found.custom)
@@ -434,7 +434,7 @@ mod tests {
             album_id: album.to_owned(),
             release_group_mbid: "rg".to_owned(),
             release_mbid: Some(release.to_owned()),
-            decision_source: source.to_owned(),
+            decision_source: DecisionSource::parse(source).expect("a decision source"),
             row_revision: 1,
             custom: false,
         }

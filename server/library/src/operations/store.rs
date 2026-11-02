@@ -181,9 +181,8 @@ pub(super) fn retry_gate(
     // Identification keeps an edition someone chose or imported, so a
     // retry would change nothing.
     if album_identity_row(conn, album_id)?.is_some_and(|row| {
-        row.decision_source.as_deref().is_some_and(|raw| {
-            DecisionSource::parse(raw).is_some_and(DecisionSource::is_persons_choice)
-        })
+        row.decision_source
+            .is_some_and(DecisionSource::is_persons_choice)
     }) {
         return Err(OperationError::Conflict(reasons::EDITION_IS_CHOSEN));
     }

@@ -27,7 +27,7 @@ use super::reasons;
 use super::store::PROVIDER;
 use crate::identify::models::PriorTrackIdentity;
 use crate::identity::reads::{album_identity_row, identity_revision, indexed_track_ids, track_row};
-use crate::identity::{self, Matched};
+use crate::identity::{self, DecisionSource, Matched};
 use crate::matching::model::Release;
 
 /// Whether the album is in the library and not merged into another.
@@ -278,7 +278,7 @@ pub(super) fn unmatch_file(
     }
     let current = track_row(tx, track_id)?;
     let stands = current.as_ref().is_some_and(|row| {
-        row.decision_source.as_deref() == Some("manual")
+        row.decision_source == Some(DecisionSource::Manual)
             && row
                 .release_mbid
                 .as_deref()

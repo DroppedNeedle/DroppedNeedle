@@ -75,7 +75,7 @@ pub(crate) fn fold_legacy(
     let mut track_identities = Vec::new();
     for track_id in moved_track_ids {
         if let Some(row) = track_row(tx, track_id)?
-            && row.decision_source.as_deref() == Some(DecisionSource::LegacyImport.as_str())
+            && row.decision_source == Some(DecisionSource::LegacyImport)
         {
             track_identities.push(row);
         }

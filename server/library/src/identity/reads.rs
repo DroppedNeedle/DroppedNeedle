@@ -34,17 +34,16 @@ pub fn album_identity_row(
     local_album_id: &str,
 ) -> rusqlite::Result<Option<PriorAlbumIdentity>> {
     conn.prepare_cached(sql::ALBUM_ROW.text())?
-        .query_row(params![local_album_id, PROVIDER], |row| {
-            Ok(PriorAlbumIdentity {
-                release_group_mbid: row.get(0)?,
-                release_mbid: row.get(1)?,
-                decision_source: row.get(2)?,
-                matcher_version: row.get(3)?,
-                attempt_id: row.get(4)?,
-                selected_by_user_id: row.get(5)?,
-                selected_at: crate::clock::opt_secs_at(row, 6)?,
-                row_revision: row.get(7)?,
-            })
+        .query_row(params![local_album_id, PROVIDER], sql::PriorAlbumRow::read)
+        .map(|row| PriorAlbumIdentity {
+            release_group_mbid: row.release_group_mbid,
+            release_mbid: row.release_mbid,
+            decision_source: row.decision_source,
+            matcher_version: row.matcher_version,
+            attempt_id: row.attempt_id,
+            selected_by_user_id: row.selected_by_user_id,
+            selected_at: row.selected_at.map(|at| crate::clock::secs(at.0)),
+            row_revision: row.row_revision,
         })
         .optional()
 }
@@ -70,16 +69,17 @@ pub(crate) fn track_row(
 }
 
 fn prior_track(row: &rusqlite::Row<'_>) -> rusqlite::Result<PriorTrackIdentity> {
+    let row = sql::PriorTrackRow::read(row)?;
     Ok(PriorTrackIdentity {
-        local_track_id: row.get(0)?,
-        recording_mbid: row.get(1)?,
-        release_mbid: row.get(2)?,
-        release_track_mbid: row.get(3)?,
-        medium_position: row.get(4)?,
-        release_track_position: row.get(5)?,
-        decision_source: row.get(6)?,
-        attempt_id: row.get(7)?,
-        selected_at: crate::clock::opt_secs_at(row, 8)?,
+        local_track_id: row.local_track_id,
+        recording_mbid: row.recording_mbid,
+        release_mbid: row.release_mbid,
+        release_track_mbid: row.release_track_mbid,
+        medium_position: row.medium_position,
+        release_track_position: row.release_track_position,
+        decision_source: row.decision_source,
+        attempt_id: row.attempt_id,
+        selected_at: row.selected_at.map(|at| crate::clock::secs(at.0)),
     })
 }
 
@@ -89,15 +89,17 @@ pub(crate) fn read_album_identity(
     local_album_id: &str,
 ) -> rusqlite::Result<Option<AlbumIdentity>> {
     conn.prepare_cached(sql::ALBUM_IDENTITY.text())?
-        .query_row(params![local_album_id, PROVIDER], |row| {
-            Ok(AlbumIdentity {
-                local_album_id: local_album_id.to_owned(),
-                provider: PROVIDER.to_owned(),
-                release_group_mbid: Some(row.get(0)?),
-                release_mbid: row.get(1)?,
-                decision_source: row.get(2)?,
-                row_revision: row.get::<_, i64>(3)? as u64,
-            })
+        .query_row(
+            params![local_album_id, PROVIDER],
+            sql::AlbumIdentityRow::read,
+        )
+        .map(|row| AlbumIdentity {
+            local_album_id: local_album_id.to_owned(),
+            provider: PROVIDER.to_owned(),
+            release_group_mbid: Some(row.release_group_mbid),
+            release_mbid: row.release_mbid,
+            decision_source: row.decision_source,
+            row_revision: row.row_revision as u64,
         })
         .optional()
 }
@@ -108,15 +110,17 @@ pub(crate) fn read_track_identity(
     local_track_id: &str,
 ) -> rusqlite::Result<Option<TrackIdentity>> {
     conn.prepare_cached(sql::TRACK_IDENTITY.text())?
-        .query_row(params![local_track_id, PROVIDER], |row| {
-            Ok(TrackIdentity {
-                local_track_id: local_track_id.to_owned(),
-                provider: PROVIDER.to_owned(),
-                recording_mbid: Some(row.get(0)?),
-                release_track_mbid: row.get(1)?,
-                decision_source: row.get(2)?,
-                row_revision: row.get::<_, i64>(3)? as u64,
-            })
+        .query_row(
+            params![local_track_id, PROVIDER],
+            sql::TrackIdentityRow::read,
+        )
+        .map(|row| TrackIdentity {
+            local_track_id: local_track_id.to_owned(),
+            provider: PROVIDER.to_owned(),
+            recording_mbid: Some(row.recording_mbid),
+            release_track_mbid: row.release_track_mbid,
+            decision_source: row.decision_source,
+            row_revision: row.row_revision as u64,
         })
         .optional()
 }
@@ -135,34 +139,35 @@ pub fn identity_revision(conn: &Connection, album_id: &str) -> rusqlite::Result<
 /// repair keeps it as the identity it checked.
 pub fn identity_hash(conn: &Connection, album_id: &str) -> rusqlite::Result<String> {
     let mut hasher = Sha256::new();
-    let album: Option<(String, Option<String>, String, i64)> = conn
+    let album = conn
         .prepare_cached(sql::ALBUM_HASH_ROW.text())?
-        .query_row(params![album_id, PROVIDER], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
-        })
+        .query_row(params![album_id, PROVIDER], sql::AlbumHashRow::read)
         .optional()?;
-    if let Some((group, release, source, revision)) = album {
+    if let Some(album) = album {
         hasher.update(
             format!(
-                "album\0{group}\0{}\0{source}\0{revision}\n",
-                release.unwrap_or_default()
+                "album\0{}\0{}\0{}\0{}\n",
+                album.release_group_mbid,
+                album.release_mbid.unwrap_or_default(),
+                album.decision_source.as_str(),
+                album.row_revision,
             )
             .as_bytes(),
         );
     }
     let mut stmt = conn.prepare_cached(sql::TRACK_HASH_ROWS.text())?;
-    let mut rows = stmt.query(params![album_id, PROVIDER])?;
-    while let Some(row) = rows.next()? {
+    for row in stmt.query_map(params![album_id, PROVIDER], sql::TrackHashRow::read)? {
+        let row = row?;
         let line = format!(
             "track\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\n",
-            row.get::<_, String>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, Option<String>>(2)?.unwrap_or_default(),
-            row.get::<_, Option<String>>(3)?.unwrap_or_default(),
-            row.get::<_, Option<i64>>(4)?.unwrap_or_default(),
-            row.get::<_, Option<i64>>(5)?.unwrap_or_default(),
-            row.get::<_, String>(6)?,
-            row.get::<_, i64>(7)?,
+            row.id,
+            row.recording_mbid,
+            row.release_mbid.unwrap_or_default(),
+            row.release_track_mbid.unwrap_or_default(),
+            row.medium_position.unwrap_or_default(),
+            row.release_track_position.unwrap_or_default(),
+            row.decision_source.as_str(),
+            row.row_revision,
         );
         hasher.update(line.as_bytes());
     }
@@ -204,7 +209,8 @@ pub(crate) fn hand_matches_standing(
 ) -> rusqlite::Result<Vec<(String, String)>> {
     conn.prepare_cached(sql::HAND_MATCHES_STANDING.text())?
         .query_map(params![album_id, PROVIDER], |row| {
-            Ok((row.get(0)?, row.get(1)?))
+            let found = sql::HandMatchStanding::read(row)?;
+            Ok((found.local_track_id, found.release_track_mbid))
         })?
         .collect()
 }
@@ -216,8 +222,12 @@ pub fn live_automatic_edition_undo(
     album_id: &str,
 ) -> rusqlite::Result<Option<(i64, i64)>> {
     conn.prepare_cached(sql::LIVE_AUTOMATIC_UNDO.text())?
-        .query_row(params![album_id, PROVIDER], |row| {
-            Ok((row.get(0)?, row.get(1)?))
+        .query_row(params![album_id, PROVIDER], sql::LiveAutomaticUndo::read)
+        .map(|undo| {
+            (
+                undo.expected_post_album_revision,
+                undo.expected_post_identity_revision,
+            )
         })
         .optional()
 }
@@ -285,14 +295,13 @@ pub fn copy_for_group(
     conn.prepare_cached(sql::COPY_SHOWN.text())?
         .query_row(
             params![release_group_mbid.to_ascii_lowercase(), PROVIDER],
-            |row| {
-                Ok(CopyEdition {
-                    album_id: row.get(0)?,
-                    release_mbid: row.get(1)?,
-                    source: row.get(2)?,
-                    file_count: row.get(3)?,
-                })
-            },
+            sql::CopyRow::read,
         )
+        .map(|copy| CopyEdition {
+            album_id: copy.local_album_id,
+            release_mbid: copy.release_mbid,
+            source: copy.decision_source,
+            file_count: copy.file_count,
+        })
         .optional()
 }

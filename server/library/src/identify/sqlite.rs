@@ -28,9 +28,8 @@ use sha2::{Digest as _, Sha256};
 use super::artist_links::{self, ArtistLink, ArtistLinkError};
 use super::merged_ids;
 use super::models::{
-    AlbumIdentity, Alias, AliasKind, AutomaticSeal, CandidateEvidence, IdentifyJob, IdentifyKind,
-    JobState, LocalAlbumFacts, LocalTrackFacts, MatchFlag, MatchFlagState, ReviewItem, ReviewState,
-    TrackIdentity,
+    AlbumIdentity, Alias, AliasKind, AutomaticSeal, CandidateEvidence, IdentifyJob, JobState,
+    LocalAlbumFacts, LocalTrackFacts, MatchFlag, ReviewItem, ReviewState, TrackIdentity,
 };
 pub(crate) use super::queue::bump_identification_stream;
 use super::queue::{INSERT_JOB, idempotency_key};
@@ -42,7 +41,10 @@ use crate::corrections::artist_convergence::{
     any_waiting, converge_ids, follow_moved, follow_waiting,
 };
 use crate::corrections::continuation::{DRAIN_BOUND, Scope, continue_tracks, drain_continuations};
-use crate::identify::sql::LAND_JOB;
+use crate::identify::sql::{
+    AlbumFactTrack, AlbumFactsRow, DocumentCopy, JobRow, LAND_JOB, MatchFlagRow, ReviewRow,
+    StoredDocument, StoredFingerprint,
+};
 pub(crate) use crate::identity::follow::{
     chosen_matches_differ, match_chosen, merge_moves_match, release_chosen, settle_followed_match,
     settle_merged_match,
@@ -55,77 +57,20 @@ use crate::matching::Release;
 
 const PROVIDER: &str = "musicbrainz";
 
-pub(crate) fn kind_str(kind: IdentifyKind) -> &'static str {
-    match kind {
-        IdentifyKind::Automatic => "automatic",
-        IdentifyKind::Manual => "manual",
-        IdentifyKind::Historical => "historical",
-    }
-}
-
-fn kind_from(raw: &str) -> IdentifyKind {
-    match raw {
-        "manual" => IdentifyKind::Manual,
-        "historical" => IdentifyKind::Historical,
-        _ => IdentifyKind::Automatic,
-    }
-}
-
-fn state_str(state: JobState) -> &'static str {
-    match state {
-        JobState::Queued => "queued",
-        JobState::Running => "running",
-        JobState::Deferred => "deferred",
-        JobState::Succeeded => "succeeded",
-        JobState::Failed => "failed",
-        JobState::Attention => "attention",
-    }
-}
-
-fn state_from(raw: &str) -> JobState {
-    match raw {
-        "running" => JobState::Running,
-        "deferred" => JobState::Deferred,
-        "succeeded" => JobState::Succeeded,
-        "failed" => JobState::Failed,
-        "attention" => JobState::Attention,
-        _ => JobState::Queued,
-    }
-}
-
-fn review_state_str(state: ReviewState) -> &'static str {
-    match state {
-        ReviewState::Pending => "pending",
-        ReviewState::Approved => "approved",
-        ReviewState::Rejected => "rejected",
-        ReviewState::Dismissed => "dismissed",
-        ReviewState::Excluded => "excluded",
-    }
-}
-
-fn review_state_from(raw: &str) -> ReviewState {
-    match raw {
-        "approved" => ReviewState::Approved,
-        "rejected" => ReviewState::Rejected,
-        "dismissed" => ReviewState::Dismissed,
-        "excluded" => ReviewState::Excluded,
-        _ => ReviewState::Pending,
-    }
-}
-
 fn map_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<IdentifyJob> {
+    let row = JobRow::read(row)?;
     Ok(IdentifyJob {
-        id: row.get(0)?,
-        local_album_id: row.get(1)?,
-        kind: kind_from(&row.get::<_, String>(2)?),
-        priority: row.get::<_, i64>(3)? as u32,
-        state: state_from(&row.get::<_, String>(4)?),
-        attempts: row.get::<_, i64>(5)? as u32,
-        not_before_ms: row.get::<_, i64>(6)?.max(0) as u64,
-        input_revision: row.get(7)?,
-        requested_by_user_id: row.get(8)?,
-        failure_code: row.get(9)?,
-        lease_expires_ms: row.get::<_, Option<i64>>(10)?.map(|at| at.max(0) as u64),
+        id: row.id,
+        local_album_id: row.local_album_id,
+        kind: row.kind,
+        priority: row.priority as u32,
+        state: row.state,
+        attempts: row.attempts as u32,
+        not_before_ms: row.not_before_at.0.max(0) as u64,
+        input_revision: row.input_revision,
+        requested_by_user_id: row.requested_by_user_id,
+        failure_code: row.failure_code,
+        lease_expires_ms: row.lease_expires_at.map(|at| at.0.max(0) as u64),
     })
 }
 
@@ -436,23 +381,20 @@ impl SqliteIdentifyStore {
                     crate::identify::sql::MATCH_FLAG.text(),
                     params![local_album_id],
                     |row| {
-                        let state: String = row.get(0)?;
-                        let candidates: String = row.get(3)?;
+                        let row = MatchFlagRow::read(row)?;
                         Ok(MatchFlag {
-                            state: if state == "unmatched" {
-                                MatchFlagState::Unmatched
-                            } else {
-                                MatchFlagState::Unconfirmed
-                            },
-                            reason_code: row.get(1)?,
-                            release_mbid: row.get(2)?,
-                            candidates: serde_json::from_str(&candidates).map_err(|error| {
-                                rusqlite::Error::FromSqlConversionFailure(
-                                    3,
-                                    rusqlite::types::Type::Text,
-                                    Box::new(error),
-                                )
-                            })?,
+                            state: row.state,
+                            reason_code: row.reason_code,
+                            release_mbid: row.release_mbid,
+                            candidates: serde_json::from_str(&row.candidates_json).map_err(
+                                |error| {
+                                    rusqlite::Error::FromSqlConversionFailure(
+                                        3,
+                                        rusqlite::types::Type::Text,
+                                        Box::new(error),
+                                    )
+                                },
+                            )?,
                         })
                     },
                 )
@@ -493,7 +435,7 @@ impl From<rusqlite::Error> for Landing {
 fn land_tx(tx: &Transaction<'_>, clock: &dyn Clock, job: &IdentifyJob) -> Result<(), Landing> {
     let key = idempotency_key(&job.local_album_id, &job.input_revision);
     let landed = tx.prepare_cached(LAND_JOB.text())?.execute(params![
-        state_str(job.state),
+        job.state,
         job.attempts as i64,
         job.not_before_ms as i64,
         job.input_revision,
@@ -526,17 +468,10 @@ impl SqliteIdentifyStore {
                 .query_row(
                     crate::identify::sql::ALBUM_FACTS.text(),
                     params![local_album_id],
-                    |row| {
-                        Ok((
-                            row.get::<_, String>(0)?,
-                            row.get::<_, String>(1)?,
-                            row.get::<_, i64>(2)? != 0,
-                            row.get::<_, Option<i64>>(3)?,
-                        ))
-                    },
+                    AlbumFactsRow::read,
                 )
                 .optional()?;
-            let Some((title, album_artist_name, is_compilation, year)) = album else {
+            let Some(album) = album else {
                 return Ok(None);
             };
             // In the same read as the facts, so a seal can tell whether the
@@ -546,36 +481,31 @@ impl SqliteIdentifyStore {
             let mut tracks = Vec::new();
             let mut locked = Vec::new();
             let rows = stmt.query_map(params![local_album_id], |row| {
+                let row = AlbumFactTrack::read(row)?;
                 Ok((
                     LocalTrackFacts {
-                        local_track_id: row.get(0)?,
-                        title: row.get(1)?,
-                        artist_name: row.get(2)?,
-                        track_number: row.get::<_, i64>(3)?.max(0) as u32,
-                        disc_number: row.get::<_, i64>(4)?.max(0) as u32,
-                        duration_secs: row
-                            .get::<_, Option<f64>>(5)?
-                            .map(|seconds| seconds.max(0.0) as u64),
-                        recording_mbid: row.get(6)?,
-                        release_track_mbid: row.get(7)?,
-                        release_mbid: row.get(8)?,
-                        release_group_mbid: row.get(9)?,
-                        root_id: row.get(11)?,
-                        relative_path: row.get(12)?,
-                        stat_revision: row.get(13)?,
-                        duration_exact: row
-                            .get::<_, Option<f64>>(5)?
-                            .filter(|seconds| *seconds > 0.0),
-                        duration_measured: row.get::<_, Option<i64>>(19)? == Some(1),
-                        media: row.get(14)?,
-                        barcode: row.get(15)?,
-                        catalog_number: row.get(16)?,
-                        release_country: row.get(17)?,
-                        total_discs: row
-                            .get::<_, Option<i64>>(18)?
-                            .and_then(|total| u32::try_from(total).ok()),
+                        local_track_id: row.id,
+                        title: row.title,
+                        artist_name: row.artist_name,
+                        track_number: row.track_number.max(0) as u32,
+                        disc_number: row.disc_number.max(0) as u32,
+                        duration_secs: row.duration_seconds.map(|seconds| seconds.max(0.0) as u64),
+                        recording_mbid: row.embedded_recording_mbid,
+                        release_track_mbid: row.embedded_release_track_mbid,
+                        release_mbid: row.embedded_release_mbid,
+                        release_group_mbid: row.embedded_release_group_mbid,
+                        root_id: row.root_id,
+                        relative_path: row.relative_path,
+                        stat_revision: row.stat_revision,
+                        duration_exact: row.duration_seconds.filter(|seconds| *seconds > 0.0),
+                        duration_measured: row.duration_measured == Some(1),
+                        media: row.media,
+                        barcode: row.barcode,
+                        catalog_number: row.catalog_number,
+                        release_country: row.release_country,
+                        total_discs: row.total_discs.and_then(|total| u32::try_from(total).ok()),
                     },
-                    row.get::<_, i64>(10)? != 0,
+                    row.membership_locked,
                 ))
             })?;
             for row in rows {
@@ -587,12 +517,12 @@ impl SqliteIdentifyStore {
             }
             Ok(Some(LocalAlbumFacts {
                 local_album_id: local_album_id.to_owned(),
-                title,
-                album_artist_name,
-                year: year.and_then(|year| i32::try_from(year).ok()),
+                title: album.title,
+                album_artist_name: album.album_artist_name,
+                year: album.year.and_then(|year| i32::try_from(year).ok()),
                 tracks,
                 locked_track_ids: locked,
-                is_compilation,
+                is_compilation: album.is_compilation,
                 input_revision,
             }))
         })
@@ -621,13 +551,14 @@ impl SqliteIdentifyStore {
                 .query_row(
                     crate::identify::sql::FINGERPRINT.text(),
                     params![local_track_id, stat_revision, FINGERPRINTER_VERSION],
-                    |row| {
-                        Ok((
-                            row.get::<_, String>(0)?,
-                            row.get::<_, Option<f64>>(1)?.unwrap_or(0.0).max(0.0) as u32,
-                        ))
-                    },
+                    StoredFingerprint::read,
                 )
+                .map(|found| {
+                    (
+                        found.fingerprint,
+                        found.duration_seconds.unwrap_or(0.0).max(0.0) as u32,
+                    )
+                })
                 .optional()?)
         })
     }
@@ -1275,7 +1206,7 @@ fn store_release(
             PROVIDER,
             RELEASE_KIND,
             crate::clock::ms(now),
-            review_state_str(ReviewState::Pending)
+            ReviewState::Pending
         ],
     )?;
     Ok(())
@@ -1334,17 +1265,18 @@ fn rewrite_document(
     edit: impl FnOnce(&mut Release),
 ) -> rusqlite::Result<Option<Release>> {
     let entity = release_mbid.trim().to_ascii_lowercase();
-    let current: Option<(String, String, i64, Option<i64>)> = tx
+    let current = tx
         .query_row(
             crate::identify::sql::STORED_DOCUMENT.text(),
             params![PROVIDER, RELEASE_KIND, entity, release_input_hash()],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            StoredDocument::read,
         )
         .optional()?;
-    let Some((payload, old_sha, fetched_at, expires_at)) = current else {
+    let Some(current) = current else {
         return Ok(None);
     };
-    let mut release: Release = match serde_json::from_str(&payload) {
+    let old_sha = current.payload_sha256;
+    let mut release: Release = match serde_json::from_str(&current.canonical_payload_json) {
         Ok(release) => release,
         Err(error) => {
             tracing::warn!(%error, release_mbid, "stored release document did not decode");
@@ -1360,12 +1292,10 @@ fn rewrite_document(
         }
     };
     let payload_sha = hex_sha256(payload.as_bytes());
-    let mut rows: Vec<(String, String, i64, Option<i64>)> = {
+    let mut rows: Vec<DocumentCopy> = {
         let mut statement = tx.prepare(crate::identify::sql::DOCUMENTS_WITH_PAYLOAD.text())?;
         statement
-            .query_map(params![PROVIDER, RELEASE_KIND, old_sha], |row| {
-                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
-            })?
+            .query_map(params![PROVIDER, RELEASE_KIND, old_sha], DocumentCopy::read)?
             .collect::<rusqlite::Result<_>>()?
     };
     let answers: Vec<String> = std::iter::once(&release.id)
@@ -1374,8 +1304,13 @@ fn rewrite_document(
         .filter(|id| !id.is_empty())
         .collect();
     for id in answers {
-        if !rows.iter().any(|(known, ..)| *known == id) {
-            rows.push((id, release_input_hash(), fetched_at, expires_at));
+        if !rows.iter().any(|known| known.entity_id == id) {
+            rows.push(DocumentCopy {
+                entity_id: id,
+                input_hash: release_input_hash(),
+                fetched_at: current.fetched_at,
+                expires_at: current.expires_at,
+            });
         }
     }
     // Rows are immutable, so each is replaced, along with any other
@@ -1384,7 +1319,8 @@ fn rewrite_document(
         crate::identify::sql::DROP_DOCUMENTS_WITH_PAYLOAD.text(),
         params![PROVIDER, RELEASE_KIND, old_sha],
     )?;
-    for (entity, input_hash, fetched_at, expires_at) in rows {
+    for row in rows {
+        let entity = row.entity_id;
         tx.execute(
             crate::identify::sql::DROP_RELEASE_DOCUMENT.text(),
             params![PROVIDER, RELEASE_KIND, entity],
@@ -1396,11 +1332,11 @@ fn rewrite_document(
                 PROVIDER,
                 RELEASE_KIND,
                 entity,
-                input_hash,
+                row.input_hash,
                 payload,
                 payload_sha,
-                fetched_at,
-                expires_at,
+                row.fetched_at,
+                row.expires_at,
             ],
         )?;
         // An album matched to it may have been waiting for it, or its
@@ -1505,9 +1441,9 @@ impl SqliteIdentifyStore {
                         params![
                             job.id,
                             job.local_album_id,
-                            kind_str(job.kind),
+                            job.kind,
                             job.priority as i64,
-                            state_str(job.state),
+                            job.state,
                             job.attempts as i64,
                             job.not_before_ms as i64,
                             job.input_revision,
@@ -1634,7 +1570,7 @@ impl SqliteIdentifyStore {
                             review.local_album_id,
                             review.reason_code,
                             candidates,
-                            review_state_str(review.state),
+                            review.state,
                             review.resolved_by_user_id,
                             review.selected_candidate_key,
                             now,
@@ -1687,7 +1623,7 @@ impl SqliteIdentifyStore {
                     let changed = tx.execute(
                         crate::identify::sql::SET_STATE.text(),
                         params![
-                            review_state_str(state),
+                            state,
                             by_user_id,
                             selected_key,
                             self.clock.now_ms(),
@@ -1769,23 +1705,22 @@ fn approve_tx(
 /// One review row. Candidates that no longer decode drop the review with
 /// a log line instead of failing the whole listing.
 pub(crate) fn map_review(row: &rusqlite::Row<'_>) -> rusqlite::Result<Option<ReviewItem>> {
-    let id: String = row.get(0)?;
-    let json: String = row.get(3)?;
-    let candidates: Vec<CandidateEvidence> = match serde_json::from_str(&json) {
+    let row = ReviewRow::read(row)?;
+    let candidates: Vec<CandidateEvidence> = match serde_json::from_str(&row.candidates_json) {
         Ok(candidates) => candidates,
         Err(error) => {
-            tracing::error!(%error, review = id, "stored review candidates did not decode");
+            tracing::error!(%error, review = row.id, "stored review candidates did not decode");
             return Ok(None);
         }
     };
     Ok(Some(ReviewItem {
-        id,
-        local_album_id: row.get(1)?,
-        reason_code: row.get(2)?,
+        id: row.id,
+        local_album_id: row.local_album_id,
+        reason_code: row.reason_code,
         candidates,
-        state: review_state_from(&row.get::<_, String>(4)?),
-        resolved_by_user_id: row.get(5)?,
-        selected_candidate_key: row.get(6)?,
+        state: row.state,
+        resolved_by_user_id: row.resolved_by_user_id,
+        selected_candidate_key: row.selected_candidate_key,
     }))
 }
 

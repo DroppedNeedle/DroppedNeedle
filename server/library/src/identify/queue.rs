@@ -6,7 +6,6 @@ use rusqlite::{Connection, OptionalExtension as _, params};
 use sha2::{Digest as _, Sha256};
 
 use super::models::IdentifyKind;
-use super::sqlite::kind_str;
 pub(crate) use crate::identify::sql::INSERT_JOB;
 
 /// New or changed albums identify first.
@@ -135,7 +134,7 @@ pub(crate) fn offer_again(
         params![
             uuid::Uuid::new_v4().to_string(),
             local_album_id,
-            kind_str(IdentifyKind::Historical),
+            IdentifyKind::Historical,
             PRIORITY_HISTORICAL_BACKLOG as i64,
             "queued",
             0_i64,

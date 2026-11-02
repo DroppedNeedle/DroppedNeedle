@@ -1,5 +1,9 @@
 //! The SQL of the identify module.
 
+use droppedneedle_kernel::db::time::Millis;
+
+use super::models::{IdentifyKind, JobState, MatchFlagState, ReviewState};
+use crate::identity::DecisionSource;
 use crate::identity::sql::PERSONS;
 use crate::identity::sql::REVISABLE;
 
@@ -73,16 +77,16 @@ droppedneedle_kernel::sql! {
              UNION SELECT c.local_artist_id FROM local_track_artists c \
              JOIN local_tracks t ON t.id = c.local_track_id WHERE t.local_album_id = ?1";
     pub(super) ARTIST_CREATED_AND_ELIGIBLE = "SELECT created_at, retired_into_artist_id IS NULL \
-                 AND kind <> 'various_artists' AND id NOT IN (?2, ?3) \
+                 AND kind <> 'various_artists' AND id NOT IN (?2, ?3) AS provable \
                  FROM local_artists WHERE id = ?1";
-    pub(super) ARTIST_LINK_AND_SOURCE = "SELECT lower(provider_artist_id), decision_source \
+    pub(super) ARTIST_LINK_AND_SOURCE = "SELECT lower(provider_artist_id) AS provider_artist_id, decision_source \
                  FROM local_artist_external_identities \
                  WHERE local_artist_id = ?1 AND provider = 'musicbrainz'";
     pub(super) ARTISTS_LINKED_TO_MBID = "SELECT local_artist_id FROM local_artist_external_identities \
                  WHERE provider = 'musicbrainz' AND lower(provider_artist_id) = ?1";
     pub(super) TOUCH_ARTIST = "UPDATE local_artists SET updated_at = ?2, row_revision = row_revision + 1 WHERE id = ?1";
     pub(super) ARTIST_REVISION = "SELECT row_revision FROM local_artists WHERE id = ?1";
-    pub(super) ARTIST_LINK_WITH_SELECTOR = "SELECT lower(i.provider_artist_id), i.decision_source, u.id, i.selected_at \
+    pub(super) ARTIST_LINK_WITH_SELECTOR = "SELECT lower(i.provider_artist_id) AS provider_artist_id, i.decision_source, u.id, i.selected_at \
              FROM local_artist_external_identities i \
              LEFT JOIN auth_users u ON u.id = i.selected_by_user_id \
              WHERE i.local_artist_id = ?1 AND i.provider = 'musicbrainz'";
@@ -177,9 +181,9 @@ droppedneedle_kernel::sql! {
                      = lower(?2))";
     pub(super) MATCH_FLAG = "SELECT state, reason_code, release_mbid, candidates_json \
                      FROM library_album_match_state WHERE local_album_id = ?1";
-    pub(super) ALBUM_FACTS = "SELECT title, COALESCE(album_artist_name, ''), is_compilation, year \
+    pub(super) ALBUM_FACTS = "SELECT title, COALESCE(album_artist_name, '') AS album_artist_name, is_compilation, year \
                      FROM local_albums WHERE id = ?1";
-    pub(super) ALBUM_FACT_TRACKS = "SELECT t.id, t.title, COALESCE(t.artist_name, ''), t.track_number, \
+    pub(super) ALBUM_FACT_TRACKS = "SELECT t.id, t.title, COALESCE(t.artist_name, '') AS artist_name, t.track_number, \
                  t.disc_number, t.duration_seconds, t.embedded_recording_mbid, \
                  t.embedded_release_track_mbid, t.embedded_release_mbid, \
                  t.embedded_release_group_mbid, t.membership_locked, t.root_id, \
@@ -459,7 +463,7 @@ droppedneedle_kernel::sql! {
                  AND lower(provider_artist_id) = ?1 AND local_artist_id <> ?2";
     pub(super) fragment CREDIT_ROWS = "SELECT c.position, c.local_artist_id, c.credited_name, a.display_name, \
          a.retired_into_artist_id IS NULL AND a.kind <> 'various_artists' \
-         AND a.id NOT IN (?2, ?3), c.artist_mbid";
+         AND a.id NOT IN (?2, ?3) AS provable, c.artist_mbid";
     /// Album `?1`'s credits; `?2` and `?3` are the sentinel ids.
     pub(super) ALBUM_CREDIT_ROWS = CREDIT_ROWS + " FROM local_album_artists c JOIN local_artists a ON a.id = c.local_artist_id \
          WHERE c.local_album_id = ?1 ORDER BY c.position";
@@ -473,4 +477,121 @@ droppedneedle_kernel::sql! {
     pub(super) RETARGET_TRACK_PLAYS = "UPDATE library_play_history SET local_track_id = ?1 WHERE local_track_id = ?2";
     pub(super) ALBUM_ALIASES = "SELECT alias FROM local_album_aliases WHERE local_album_id = ?1 ORDER BY alias";
     pub(super) ARTIST_ALIASES = "SELECT alias FROM local_artist_aliases WHERE local_artist_id = ?1 ORDER BY alias";
+
+    pub(super) row CreditRow for [ALBUM_CREDIT_ROWS, TRACK_CREDIT_ROWS] {
+        position: i64,
+        local_artist_id: String,
+        credited_name: Option<String>,
+        display_name: String,
+        provable: bool,
+        artist_mbid: Option<String>,
+    }
+    pub(super) row MappedTrack for [PROVE] {
+        id: String,
+        release_track_mbid: String,
+        row_revision: i64,
+    }
+    pub(super) row StoredProof for [STORED_PROOFS] {
+        subject_kind: String,
+        subject_id: String,
+        credit_position: i64,
+        evidence_hash: String,
+        source_local_artist_id: Option<String>,
+        local_artist_id: String,
+        artist_mbid: String,
+    }
+    pub(super) row AlbumReleaseRevision for [ALBUM_RELEASE_AND_REVISION] {
+        release_mbid: Option<String>,
+        row_revision: i64,
+    }
+    pub(super) row ArtistEligibility for [ARTIST_CREATED_AND_ELIGIBLE] {
+        created_at: f64,
+        provable: bool,
+    }
+    pub(super) row ArtistLinkSource for [ARTIST_LINK_AND_SOURCE] {
+        provider_artist_id: String,
+        decision_source: DecisionSource,
+    }
+    pub(super) row ArtistLinkRow for [ARTIST_LINK_WITH_SELECTOR] {
+        provider_artist_id: String,
+        decision_source: DecisionSource,
+        id: Option<String>,
+        selected_at: Millis,
+    }
+    pub(super) row NamedArtist for [SHARING, FOLLOWS_OUT, FOLLOWS_IN] {
+        id: String,
+        display_name: String,
+    }
+    pub(super) row JobRow for [ENQUEUE, NEXT_CLAIMABLE_JOB, JOB, JOBS_FOR_ALBUM] {
+        id: String,
+        local_album_id: String,
+        kind: IdentifyKind,
+        priority: i64,
+        state: JobState,
+        attempts: i64,
+        not_before_at: Millis,
+        input_revision: String,
+        requested_by_user_id: Option<String>,
+        failure_code: Option<String>,
+        lease_expires_at: Option<Millis>,
+    }
+    pub(super) row ReviewRow for [GET, PENDING_FOR_ALBUM] {
+        id: String,
+        local_album_id: String,
+        reason_code: String,
+        candidates_json: String,
+        state: ReviewState,
+        resolved_by_user_id: Option<String>,
+        selected_candidate_key: Option<String>,
+    }
+    pub(super) row MatchFlagRow for [MATCH_FLAG] {
+        state: MatchFlagState,
+        reason_code: String,
+        release_mbid: Option<String>,
+        candidates_json: String,
+    }
+    pub(super) row AlbumFactsRow for [ALBUM_FACTS] {
+        title: String,
+        album_artist_name: String,
+        is_compilation: bool,
+        year: Option<i64>,
+    }
+    pub(super) row AlbumFactTrack for [ALBUM_FACT_TRACKS] {
+        id: String,
+        title: String,
+        artist_name: String,
+        track_number: i64,
+        disc_number: i64,
+        duration_seconds: Option<f64>,
+        embedded_recording_mbid: Option<String>,
+        embedded_release_track_mbid: Option<String>,
+        embedded_release_mbid: Option<String>,
+        embedded_release_group_mbid: Option<String>,
+        membership_locked: bool,
+        root_id: String,
+        relative_path: String,
+        stat_revision: String,
+        media: Option<String>,
+        barcode: Option<String>,
+        catalog_number: Option<String>,
+        release_country: Option<String>,
+        total_discs: Option<i64>,
+        duration_measured: Option<i64>,
+    }
+    pub(super) row StoredFingerprint for [FINGERPRINT] {
+        fingerprint: String,
+        duration_seconds: Option<f64>,
+    }
+    pub(super) row StoredDocument for [STORED_DOCUMENT] {
+        canonical_payload_json: String,
+        payload_sha256: String,
+        fetched_at: Millis,
+        expires_at: Option<Millis>,
+    }
+    pub(super) row DocumentCopy for [DOCUMENTS_WITH_PAYLOAD] {
+        entity_id: String,
+        input_hash: String,
+        fetched_at: Millis,
+        expires_at: Option<Millis>,
+    }
 }

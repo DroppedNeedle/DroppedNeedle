@@ -48,6 +48,10 @@ use crate::corrections::continuation::accepted_release;
 use crate::identify::sql::ROW_IDS;
 use crate::identify::sql::STALE_ALBUMS;
 use crate::identify::sql::WAITS_FOR_DOCUMENT;
+use crate::identify::sql::{
+    AlbumReleaseRevision, ArtistEligibility, ArtistLinkRow, ArtistLinkSource, CreditRow,
+    MappedTrack, NamedArtist, StoredProof,
+};
 use crate::identity::DecisionSource;
 use crate::identity::reads::release_input_hash;
 use crate::matching::model::{ArtistNames, CreditedArtist, Release, VARIOUS_ARTISTS_MBID};
@@ -94,19 +98,13 @@ impl CreditState {
         Self::AmbiguousCreditStructure,
         Self::Projected,
     ];
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::WaitingForIdentity => "waiting_for_identity",
-            Self::AmbiguousCreditStructure => "ambiguous_credit_structure",
-            Self::Projected => "projected",
-        }
-    }
-
-    pub fn parse(raw: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|state| state.as_str() == raw)
-    }
 }
+
+crate::scan::models::spelled!(CreditState {
+    WaitingForIdentity => "waiting_for_identity",
+    AmbiguousCreditStructure => "ambiguous_credit_structure",
+    Projected => "projected",
+});
 
 /// Have the next sweep work album `album` through again: which rows its
 /// credits point at, the names they are credited as or an artist id they
@@ -242,17 +240,17 @@ fn side_credits(
         .query_map(
             params![subject, SENTINEL_ARTIST_IDS[0], SENTINEL_ARTIST_IDS[1]],
             |row| {
-                let credited: Option<String> = row.get(2)?;
-                let display: String = row.get(3)?;
-                let name = credited
+                let credit = CreditRow::read(row)?;
+                let name = credit
+                    .credited_name
                     .filter(|name| !name.trim().is_empty())
-                    .unwrap_or(display);
+                    .unwrap_or(credit.display_name);
                 Ok(LocalCredit {
-                    position: row.get(0)?,
-                    artist: row.get(1)?,
+                    position: credit.position,
+                    artist: credit.local_artist_id,
                     name,
-                    provable: row.get(4)?,
-                    file_id: row.get(5)?,
+                    provable: credit.provable,
+                    file_id: credit.artist_mbid,
                 })
             },
         )?
@@ -540,7 +538,8 @@ fn prove(
     let tracks: Vec<(String, String, i64)> = conn
         .prepare_cached(crate::identify::sql::PROVE.text())?
         .query_map(params![album, release], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            let track = MappedTrack::read(row)?;
+            Ok((track.id, track.release_track_mbid, track.row_revision))
         })?
         .collect::<rusqlite::Result<_>>()?;
     for (track, release_track, revision) in &tracks {
@@ -618,18 +617,9 @@ fn store_proofs(
     now_ms: i64,
 ) -> rusqlite::Result<(BTreeSet<String>, Vec<MovedProof>)> {
     type Key = (String, String, i64);
-    #[allow(clippy::type_complexity)]
-    let existing: Vec<(Key, String, Option<String>, String, String)> = tx
+    let existing: Vec<StoredProof> = tx
         .prepare_cached(crate::identify::sql::STORED_PROOFS.text())?
-        .query_map(params![album], |row| {
-            Ok((
-                (row.get(0)?, row.get(1)?, row.get(2)?),
-                row.get(3)?,
-                row.get(4)?,
-                row.get(5)?,
-                row.get(6)?,
-            ))
-        })?
+        .query_map(params![album], StoredProof::read)?
         .collect::<rusqlite::Result<_>>()?;
     let wanted: BTreeMap<Key, (&Proof, String)> = proofs
         .iter()
@@ -646,24 +636,31 @@ fn store_proofs(
         .collect();
     let mut lost = BTreeSet::new();
     let mut moved = Vec::new();
-    for (key, hash, source, artist, mbid) in &existing {
-        let kept = wanted.get(key).is_some_and(|(_, wanted)| wanted == hash);
+    for stored in existing {
+        let key: Key = (
+            stored.subject_kind,
+            stored.subject_id,
+            stored.credit_position,
+        );
+        let kept = wanted
+            .get(&key)
+            .is_some_and(|(_, wanted)| *wanted == stored.evidence_hash);
         if kept {
             continue;
         }
-        if let (Some(from), Some((proof, _))) = (source, wanted.get(key))
+        if let (Some(from), Some((proof, _))) = (&stored.source_local_artist_id, wanted.get(&key))
             && *from != proof.artist
-            && *mbid == proof.mbid
+            && stored.artist_mbid == proof.mbid
         {
             moved.push(MovedProof {
                 from: from.clone(),
                 to: proof.artist.clone(),
-                mbid: mbid.clone(),
+                mbid: stored.artist_mbid,
             });
         }
-        lost.extend(source.iter().cloned());
-        lost.insert(artist.clone());
-        if !wanted.contains_key(key) {
+        lost.extend(stored.source_local_artist_id);
+        lost.insert(stored.local_artist_id);
+        if !wanted.contains_key(&key) {
             tx.prepare_cached(crate::identify::sql::DROP_PROOF.text())?
                 .execute(params![key.0, key.1, key.2])?;
         }
@@ -728,16 +725,16 @@ pub fn link_album(tx: &Transaction<'_>, album: &str, now_ms: i64) -> rusqlite::R
     let Some(live) = live else {
         return Ok(Linked::default());
     };
-    let identity: Option<(Option<String>, i64)> = if live {
+    let identity = if live {
         tx.prepare_cached(crate::identify::sql::ALBUM_RELEASE_AND_REVISION.text())?
-            .query_row(params![album], |row| Ok((row.get(0)?, row.get(1)?)))
+            .query_row(params![album], AlbumReleaseRevision::read)
             .optional()?
     } else {
         None
     };
     let (proofs, state) = match identity {
         None => (Vec::new(), None),
-        Some((identity_release, revision)) => match accepted_release(tx, album)? {
+        Some(identity) => match accepted_release(tx, album)? {
             None => (
                 Vec::new(),
                 Some((CreditState::WaitingForIdentity, "MATCH_NOT_ACCEPTED")),
@@ -765,8 +762,8 @@ pub fn link_album(tx: &Transaction<'_>, album: &str, now_ms: i64) -> rusqlite::R
                         album,
                         &document,
                         &release,
-                        identity_release.as_deref().unwrap_or(&release),
-                        revision,
+                        identity.release_mbid.as_deref().unwrap_or(&release),
+                        identity.row_revision,
                     )?;
                     (proofs, Some((state, reason)))
                 }
@@ -870,19 +867,24 @@ fn plan_rows(conn: &Connection, rows: &[String]) -> rusqlite::Result<Planned> {
     let mut candidates: Vec<Candidate> = Vec::new();
     let mut conflicts: BTreeSet<String> = BTreeSet::new();
     for artist in rows {
-        let row: Option<(f64, bool)> = conn
+        let row = conn
             .prepare_cached(crate::identify::sql::ARTIST_CREATED_AND_ELIGIBLE.text())?
             .query_row(
                 params![artist, SENTINEL_ARTIST_IDS[0], SENTINEL_ARTIST_IDS[1]],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                ArtistEligibility::read,
             )
             .optional()?;
-        let Some((created, provable)) = row else {
+        let Some(ArtistEligibility {
+            created_at: created,
+            provable,
+        }) = row
+        else {
             continue;
         };
         let link: Option<(String, DecisionSource)> = conn
             .prepare_cached(crate::identify::sql::ARTIST_LINK_AND_SOURCE.text())?
-            .query_row(params![artist], |row| Ok((row.get(0)?, row.get(1)?)))
+            .query_row(params![artist], ArtistLinkSource::read)
+            .map(|link| (link.provider_artist_id, link.decision_source))
             .optional()?;
         let ids = if provable {
             row_ids(conn, artist)?
@@ -1241,13 +1243,12 @@ pub fn artist_link(conn: &Connection, artist: &str) -> rusqlite::Result<Option<A
     };
     let link = conn
         .prepare_cached(crate::identify::sql::ARTIST_LINK_WITH_SELECTOR.text())?
-        .query_row(params![artist], |row| {
-            Ok(StoredLink {
-                mbid: row.get(0)?,
-                source: LinkSource::from(row.get::<_, DecisionSource>(1)?),
-                selected_by: row.get(2)?,
-                selected_at_ms: row.get(3)?,
-            })
+        .query_row(params![artist], ArtistLinkRow::read)
+        .map(|link| StoredLink {
+            mbid: link.provider_artist_id,
+            source: LinkSource::from(link.decision_source),
+            selected_by: link.id,
+            selected_at_ms: link.selected_at.0,
         })
         .optional()?;
     Ok(Some(ArtistLink {
@@ -1279,6 +1280,11 @@ fn person_target(
     Ok((current, provable))
 }
 
+fn named_artist(row: &rusqlite::Row<'_>) -> rusqlite::Result<(String, String)> {
+    let found = NamedArtist::read(row)?;
+    Ok((found.id, found.display_name))
+}
+
 /// The live records other than `artist` that a link of `artist` to
 /// `mbid` would group it with, as (id, name), at most ten: any record
 /// holding `mbid` by a link, and any record its credits' files or a
@@ -1288,7 +1294,7 @@ fn sharing(conn: &Connection, artist: &str, mbid: &str) -> rusqlite::Result<Vec<
     conn.prepare_cached(crate::identify::sql::SHARING.text())?
         .query_map(
             params![mbid, artist, SENTINEL_ARTIST_IDS[0], SENTINEL_ARTIST_IDS[1]],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            named_artist,
         )?
         .collect()
 }
@@ -1300,7 +1306,7 @@ fn follows_out(conn: &Connection, artist: &str) -> rusqlite::Result<Vec<(String,
     conn.prepare_cached(crate::identify::sql::FOLLOWS_OUT.text())?
         .query_map(
             params![artist, MOVED_BY_NAME, MOVED_WITH_ID, CREDITS_MOVED],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            named_artist,
         )?
         .collect()
 }
@@ -1315,9 +1321,7 @@ fn follows_in(
     mbid: Option<&str>,
 ) -> rusqlite::Result<Vec<(String, String)>> {
     conn.prepare_cached(crate::identify::sql::FOLLOWS_IN.text())?
-        .query_map(params![artist, CREDITS_MOVED, mbid], |row| {
-            Ok((row.get(0)?, row.get(1)?))
-        })?
+        .query_map(params![artist, CREDITS_MOVED, mbid], named_artist)?
         .collect()
 }
 

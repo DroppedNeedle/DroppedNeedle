@@ -3,7 +3,9 @@
 //! show them.
 
 use super::models::{CandidateTrack, Evaluation, ReidentificationCandidate};
-use crate::identify::models::{EvidenceClass, LocalAlbumFacts, RecallResult};
+use crate::identify::models::{
+    EvidenceClass, IdentificationOutcome, LocalAlbumFacts, RecallResult,
+};
 use crate::identify::service::Ranking;
 use crate::matching::model::VARIOUS_ARTISTS_MBID;
 use crate::matching::score::NAME_GATE;
@@ -49,9 +51,12 @@ pub fn evaluation(
             .then_with(|| a.candidate_key.cmp(&b.candidate_key))
     });
     let (outcome, reason_code) = if exact_request && !candidates.is_empty() {
-        ("contradictory".to_owned(), MANUAL_EXACT.to_owned())
+        (
+            IdentificationOutcome::Contradictory,
+            MANUAL_EXACT.to_owned(),
+        )
     } else {
-        (snake(&ranking.outcome), ranking.reason_code.clone())
+        (ranking.outcome, ranking.reason_code.clone())
     };
     Evaluation {
         outcome,
@@ -129,11 +134,4 @@ pub fn name_class(local: &str, release: &str) -> EvidenceClass {
     } else {
         EvidenceClass::Contradictory
     }
-}
-
-fn snake<T: serde::Serialize>(value: &T) -> String {
-    serde_json::to_value(value)
-        .ok()
-        .and_then(|json| json.as_str().map(str::to_owned))
-        .unwrap_or_else(|| "unknown".to_owned())
 }

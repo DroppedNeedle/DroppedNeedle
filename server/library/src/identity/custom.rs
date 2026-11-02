@@ -95,29 +95,22 @@ pub fn custom_edition(
     }) {
         return Err(Refusal::CustomEditionGroupConflict.into());
     }
-    let (title, album_artist, artist_mbid, album_meta, album_revision): (
-        String,
-        String,
-        Option<String>,
-        ManifestAlbum,
-        i64,
-    ) = tx
+    let facts = tx
         .prepare_cached(sql::CUSTOM_ALBUM_FACTS.text())?
-        .query_row(params![album_id, PROVIDER], |row| {
-            Ok((
-                row.get(0)?,
-                row.get(1)?,
-                row.get(2)?,
-                ManifestAlbum {
-                    album_artist_sort_name: row.get(3)?,
-                    year: row.get(4)?,
-                    original_release_date: row.get(5)?,
-                    primary_genre: row.get(6)?,
-                    is_compilation: row.get::<_, i64>(7)? != 0,
-                },
-                row.get(8)?,
-            ))
-        })?;
+        .query_row(params![album_id, PROVIDER], sql::CustomAlbumFacts::read)?;
+    let (title, album_artist, artist_mbid, album_revision) = (
+        facts.title,
+        facts.album_artist_name,
+        facts.provider_artist_id,
+        facts.row_revision,
+    );
+    let album_meta = ManifestAlbum {
+        album_artist_sort_name: facts.album_artist_sort_name,
+        year: facts.year,
+        original_release_date: facts.original_release_date,
+        primary_genre: facts.primary_genre,
+        is_compilation: facts.is_compilation,
+    };
     if title.trim().is_empty() || album_artist.trim().is_empty() {
         return Err(Refusal::CustomEditionNamesMissing.into());
     }
@@ -305,11 +298,12 @@ fn write_manifest(
         (a.disc_number, a.track_number, &a.id).cmp(&(b.disc_number, b.track_number, &b.id))
     });
     for (ordinal, track) in ordered.into_iter().enumerate() {
-        let identity: Option<(String, i64)> = tx
+        let identity = tx
             .prepare_cached(sql::TRACK_RECORDING_REVISION.text())?
-            .query_row(params![track.id, PROVIDER], |row| {
-                Ok((row.get(0)?, row.get(1)?))
-            })
+            .query_row(
+                params![track.id, PROVIDER],
+                sql::TrackRecordingRevision::read,
+            )
             .optional()?;
         let meta = super::undo::to_json(&track.meta)?;
         tx.prepare_cached(sql::INSERT_MANIFEST_TRACK.text())?
@@ -318,7 +312,7 @@ fn write_manifest(
                 ordinal as i64,
                 track.id,
                 track.row_revision,
-                identity.as_ref().map(|(_, revision)| *revision),
+                identity.as_ref().map(|found| found.row_revision),
                 track.stat_revision,
                 track.tag_revision,
                 track.title,
@@ -327,7 +321,7 @@ fn write_manifest(
                 frozen.album_artist,
                 track.disc_number,
                 track.track_number,
-                identity.map(|(recording, _)| recording),
+                identity.map(|found| found.recording_mbid),
                 track.artist_mbid,
                 frozen.artist_mbid,
                 meta,
@@ -343,29 +337,30 @@ fn write_manifest(
 fn manifest_tracks(conn: &Connection, album_id: &str) -> rusqlite::Result<Vec<ManifestTrack>> {
     conn.prepare_cached(sql::MANIFEST_TRACKS.text())?
         .query_map(params![album_id], |row| {
+            let row = sql::ManifestTrackRow::read(row)?;
             Ok(ManifestTrack {
-                id: row.get(0)?,
-                row_revision: row.get(1)?,
-                stat_revision: row.get(2)?,
-                tag_revision: row.get(3)?,
-                title: row.get(4)?,
-                artist_name: row.get(5)?,
-                album_title: row.get(6)?,
-                disc_number: row.get(7)?,
-                track_number: row.get(8)?,
-                artist_mbid: row.get(9)?,
-                file_format: row.get(10)?,
-                duration_seconds: row.get(11)?,
+                id: row.id,
+                row_revision: row.row_revision,
+                stat_revision: row.stat_revision,
+                tag_revision: row.tag_revision,
+                title: row.title,
+                artist_name: row.artist_name,
+                album_title: row.album_title,
+                disc_number: row.disc_number,
+                track_number: row.track_number,
+                artist_mbid: row.embedded_artist_mbid,
+                file_format: row.file_format,
+                duration_seconds: row.duration_seconds,
                 meta: ManifestTrackMeta {
-                    album_artist_name: row.get(12)?,
-                    year: row.get(13)?,
-                    genre: row.get(14)?,
-                    title_sort: row.get(15)?,
-                    artist_sort: row.get(16)?,
-                    album_sort: row.get(17)?,
-                    album_artist_sort: row.get(18)?,
-                    disc_subtitle: row.get(19)?,
-                    is_compilation: row.get::<_, i64>(20)? != 0,
+                    album_artist_name: row.album_artist_name,
+                    year: row.year,
+                    genre: row.genre,
+                    title_sort: row.title_sort,
+                    artist_sort: row.artist_sort,
+                    album_sort: row.album_sort,
+                    album_artist_sort: row.album_artist_sort,
+                    disc_subtitle: row.disc_subtitle,
+                    is_compilation: row.is_compilation,
                 },
             })
         })?

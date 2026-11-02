@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::identity::DecisionSource;
 use crate::operations::reasons::Reason;
 
 /// Which album membership change.
@@ -139,7 +140,7 @@ pub struct DroppedEdition {
     pub album_id: String,
     pub release_group_mbid: String,
     pub release_mbid: Option<String>,
-    pub decision_source: String,
+    pub decision_source: DecisionSource,
 }
 
 /// What a membership change does.
