@@ -4,9 +4,8 @@
 //! the writer lane for every write. The stores in `store/` hold a clone;
 //! nothing in collections opens its own connection.
 //!
-//! Timestamps: playlist rows keep v2's ISO-8601 text columns. SQLite does
-//! the conversion in the statements (`strftime`), so the stores trade in
-//! epoch seconds and never parse dates themselves.
+//! Timestamps: playlist rows hold integer milliseconds. The statements turn
+//! them into the epoch seconds the stores trade in.
 
 use std::sync::Arc;
 

@@ -12,6 +12,7 @@ describe('playlistV3Adapter', () => {
 			id: 'pl-x',
 			track_count: 7,
 			owner_name: 'Cara',
+			can_delete: false,
 			is_redacted: true
 		});
 
@@ -19,6 +20,7 @@ describe('playlistV3Adapter', () => {
 			id: 'pl-x',
 			track_count: 7,
 			owner_name: 'Cara',
+			can_delete: false,
 			is_redacted: true
 		});
 	});

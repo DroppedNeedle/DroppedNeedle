@@ -830,7 +830,9 @@ async fn a_failed_read_is_a_server_error_not_an_empty_answer() {
     let playlists: i64 = rig
         .app
         .db()
-        .query_row("SELECT COUNT(*) FROM playlists", [], |row| row.get(0))
+        .query_row("SELECT COUNT(*) FROM catalog_playlists", [], |row| {
+            row.get(0)
+        })
         .expect("playlists count");
     assert_eq!(playlists, 0);
     rig.stop().await;

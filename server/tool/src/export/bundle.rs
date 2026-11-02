@@ -530,7 +530,12 @@ fn copy_playlist_covers(
         conn.execute(
             "INSERT INTO main.\"playlist_cover\" (playlist_id, content_type, image, updated_at) \
              VALUES (?1, ?2, ?3, ?4)",
-            params![playlist_id, content_type, bytes, modified_secs(&path)],
+            params![
+                playlist_id,
+                content_type,
+                bytes,
+                (modified_secs(&path) * 1000.0).round() as i64
+            ],
         )
         .map_err(bundle_error)?;
         copied += 1;

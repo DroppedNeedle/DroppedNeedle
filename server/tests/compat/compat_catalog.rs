@@ -837,8 +837,8 @@ async fn jellyfin_ids_resolve_after_a_restart_without_reading_the_catalog() {
     let rig = Rig::open().await;
     write_catalog(
         &rig,
-        "INSERT INTO playlists (id, name, created_at, updated_at, user_id) \
-         VALUES ('pl-1', 'Mix', '2024-01-01', '2024-01-01', 'u1');",
+        "INSERT INTO catalog_playlists (id, name, created_at, updated_at, user_id) \
+         VALUES ('pl-1', 'Mix', 1704067200000, 1704067200000, 'u1');",
     )
     .await;
     let (before, _) = booted(&rig, 7).await;

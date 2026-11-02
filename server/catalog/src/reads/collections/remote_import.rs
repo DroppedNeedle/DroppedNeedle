@@ -95,7 +95,7 @@ impl ImportSink for PlaylistImportSink {
         Box::pin(async move {
             let prefix = format!("{}:", source.as_str());
             let list = CollectionsService::new(&self.collections)
-                .list_playlists(owner_id)
+                .list_playlists(owner_id, false)
                 .await
                 .map_err(|error| format!("playlist list failed: {error:?}"))?;
             Ok(list

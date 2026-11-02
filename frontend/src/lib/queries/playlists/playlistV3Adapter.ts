@@ -65,6 +65,7 @@ function toPageSummary(summary: PlaylistSummaryV3): PlaylistSummary {
 		updated_at: epochSecToIso(summary.updated_at),
 		is_public: summary.is_public,
 		is_owner: summary.is_owner,
+		can_delete: summary.can_delete,
 		owner_name: summary.owner_name ?? null,
 		is_redacted: false
 	};
@@ -85,6 +86,7 @@ export function toPageListItem(item: PlaylistListItemV3): PlaylistListItem {
 			id: item.id,
 			track_count: item.track_count,
 			owner_name: item.owner_name ?? null,
+			can_delete: item.can_delete,
 			is_redacted: true
 		};
 		return redacted;

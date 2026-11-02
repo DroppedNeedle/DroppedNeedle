@@ -53158,9 +53158,14 @@
           "updated_at",
           "is_public",
           "is_owner",
+          "can_delete",
           "is_redacted"
         ],
         "properties": {
+          "can_delete": {
+            "type": "boolean",
+            "description": "True when the caller may delete it: its owner, or an admin when it\nhas no owner."
+          },
           "cover_urls": {
             "type": "array",
             "items": {
@@ -53385,9 +53390,14 @@
           "updated_at",
           "is_public",
           "is_owner",
+          "can_delete",
           "is_redacted"
         ],
         "properties": {
+          "can_delete": {
+            "type": "boolean",
+            "description": "True when the caller may delete it: its owner, or an admin when it\nhas no owner."
+          },
           "cover_urls": {
             "type": "array",
             "items": {
@@ -56237,13 +56247,18 @@
       },
       "RedactedPlaylist": {
         "type": "object",
-        "description": "Another user's private playlist: existence, count, and owner only. Never\nthe name, tracks, or covers.",
+        "description": "A private playlist the caller may not read: existence, count, and owner\nonly. Never the name, tracks, or covers. An admin also gets the ones with\nno owner, which they may delete.",
         "required": [
           "id",
           "track_count",
+          "can_delete",
           "is_redacted"
         ],
         "properties": {
+          "can_delete": {
+            "type": "boolean",
+            "description": "True for an admin when it has no owner."
+          },
           "id": {
             "type": "string",
             "description": "Playlist id."
@@ -56257,7 +56272,7 @@
               "string",
               "null"
             ],
-            "description": "Owner display name."
+            "description": "Owner display name. None when it has no owner."
           },
           "track_count": {
             "type": "integer",

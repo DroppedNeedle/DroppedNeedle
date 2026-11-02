@@ -56,6 +56,7 @@ function makePlaylist(overrides: Record<string, unknown> = {}): PlaylistListItem
 		updated_at: 1767312000,
 		is_public: false,
 		is_owner: true,
+		can_delete: false,
 		owner_name: null,
 		is_redacted: false,
 		...overrides
@@ -63,7 +64,14 @@ function makePlaylist(overrides: Record<string, unknown> = {}): PlaylistListItem
 }
 
 function makeRedacted(overrides: Record<string, unknown> = {}): PlaylistListItemV3 {
-	return { id: 'pl-x', track_count: 7, owner_name: 'Cara', is_redacted: true, ...overrides };
+	return {
+		id: 'pl-x',
+		track_count: 7,
+		owner_name: 'Cara',
+		can_delete: false,
+		is_redacted: true,
+		...overrides
+	};
 }
 
 describe('Playlists list page', () => {
@@ -96,12 +104,41 @@ describe('Playlists list page', () => {
 		await expect.element(page.getByText(/Shared by Ann Smith/)).toBeVisible();
 	});
 
-	it('renders an admin redacted private card', async () => {
+	it('renders a redacted private card with no delete', async () => {
 		listQuery.data = [makeRedacted({ id: 'priv', track_count: 4, owner_name: 'Cara' })];
 		await render(PlaylistsPage);
 
+		await expect.element(page.getByRole('heading', { name: 'Private', exact: true })).toBeVisible();
 		await expect.element(page.getByText('Private playlist')).toBeVisible();
 		await expect.element(page.getByText(/owned by Cara/)).toBeVisible();
+		expect(page.getByRole('button', { name: /Delete/ }).elements()).toHaveLength(0);
+	});
+
+	it('marks a private playlist with no owner and offers delete where the server says so', async () => {
+		listQuery.data = [makeRedacted({ id: 'stray', owner_name: null, can_delete: true })];
+		await render(PlaylistsPage);
+
+		await expect.element(page.getByText(/No owner/)).toBeVisible();
+		await expect
+			.element(page.getByRole('button', { name: 'Delete private playlist with no owner' }))
+			.toBeVisible();
+	});
+
+	it('shows delete on a public playlist with no owner where the server says so', async () => {
+		listQuery.data = [
+			makePlaylist({
+				id: 'stray',
+				name: 'Old Mix',
+				is_owner: false,
+				is_public: true,
+				owner_name: null,
+				can_delete: true
+			})
+		];
+		await render(PlaylistsPage);
+
+		await expect.element(page.getByText('No owner')).toBeVisible();
+		await expect.element(page.getByRole('button', { name: 'Delete Old Mix' })).toBeVisible();
 	});
 
 	it('hides the delete button on a shared (non-owned) card', async () => {

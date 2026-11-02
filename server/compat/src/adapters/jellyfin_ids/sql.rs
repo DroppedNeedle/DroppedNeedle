@@ -21,13 +21,13 @@ droppedneedle_kernel::sql! {
         WHERE j.kind = 'track' AND j.internal_id = t.id AND j.current = 1)";
     /// Files playlist entries name that have no track row and no current
     /// id stored: a playlist answer hands out a track id for them too.
-    pub(super) NEW_PLAYLIST_FILES = "SELECT DISTINCT p.library_file_id FROM playlist_tracks p \
+    pub(super) NEW_PLAYLIST_FILES = "SELECT DISTINCT p.library_file_id FROM catalog_playlist_tracks p \
         WHERE p.library_file_id IS NOT NULL \
         AND NOT EXISTS (SELECT 1 FROM local_tracks t WHERE t.id = p.library_file_id) \
         AND NOT EXISTS (SELECT 1 FROM compat_jellyfin_ids j \
         WHERE j.kind = 'track' AND j.internal_id = p.library_file_id AND j.current = 1)";
     /// Playlists with no current id stored.
-    pub(super) NEW_PLAYLISTS = "SELECT p.id FROM playlists p \
+    pub(super) NEW_PLAYLISTS = "SELECT p.id FROM catalog_playlists p \
         WHERE NOT EXISTS (SELECT 1 FROM compat_jellyfin_ids j \
         WHERE j.kind = 'playlist' AND j.internal_id = p.id AND j.current = 1)";
     /// Every genre name an answer can carry: the genre rows, the tags and

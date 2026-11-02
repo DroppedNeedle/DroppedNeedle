@@ -76,6 +76,9 @@ pub struct PlaylistSummary {
     pub is_public: bool,
     /// True when the caller owns the playlist.
     pub is_owner: bool,
+    /// True when the caller may delete it: its owner, or an admin when it
+    /// has no owner.
+    pub can_delete: bool,
     /// Owner display name.
     pub owner_name: Option<String>,
     /// Always false on a full summary; true on redacted rows.
@@ -109,22 +112,28 @@ pub struct PlaylistDetail {
     pub is_public: bool,
     /// True when the caller owns the playlist.
     pub is_owner: bool,
+    /// True when the caller may delete it: its owner, or an admin when it
+    /// has no owner.
+    pub can_delete: bool,
     /// Owner display name.
     pub owner_name: Option<String>,
     /// Always false on a full detail; true on redacted rows.
     pub is_redacted: bool,
 }
 
-/// Another user's private playlist: existence, count, and owner only. Never
-/// the name, tracks, or covers.
+/// A private playlist the caller may not read: existence, count, and owner
+/// only. Never the name, tracks, or covers. An admin also gets the ones with
+/// no owner, which they may delete.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct RedactedPlaylist {
     /// Playlist id.
     pub id: String,
     /// Track count.
     pub track_count: usize,
-    /// Owner display name.
+    /// Owner display name. None when it has no owner.
     pub owner_name: Option<String>,
+    /// True for an admin when it has no owner.
+    pub can_delete: bool,
     /// Always true.
     pub is_redacted: bool,
 }

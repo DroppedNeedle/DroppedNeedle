@@ -775,7 +775,7 @@ fn sweep(
         "library_user_ratings",
         ratings_moved.len() + ratings_deleted.len(),
     );
-    count("playlist_tracks", entries.len());
+    count("catalog_playlist_tracks", entries.len());
     count(
         "compat_bookmarks",
         bookmarks_moved.len() + bookmarks_deleted.len(),

@@ -147,6 +147,7 @@ function makePlaylist(overrides: Record<string, unknown> = {}): PlaylistDetailV3
 		updated_at: 1767312000,
 		is_public: false,
 		is_owner: true,
+		can_delete: true,
 		owner_name: null,
 		is_redacted: false,
 		tracks: [

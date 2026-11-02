@@ -1293,7 +1293,7 @@ async fn spotify_failed_reimport_keeps_the_old_tracks() {
     AcquireDb::new(auth.platform.db.clone(), auth.platform.clock.clone())
         .write("test.fail_second_track", |tx| {
             tx.execute(
-                "CREATE TRIGGER fail_second_track BEFORE INSERT ON playlist_tracks \
+                "CREATE TRIGGER fail_second_track BEFORE INSERT ON catalog_playlist_tracks \
                  WHEN NEW.track_name = 'Glass Tides' \
                  BEGIN SELECT RAISE(ABORT, 'injected'); END",
                 [],
@@ -1678,7 +1678,7 @@ async fn spotify_sqlite_stores_persist_and_expire() {
             .expect("replaces");
     }
     let rows: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM playlist_tracks WHERE playlist_id = ?1")
+        sqlx::query_scalar("SELECT COUNT(*) FROM catalog_playlist_tracks WHERE playlist_id = ?1")
             .bind(&id)
             .fetch_one(db.db().sqlx())
             .await

@@ -188,11 +188,11 @@
 					class="flex items-center gap-1.5 text-sm font-semibold uppercase tracking-wider text-base-content/40"
 				>
 					<Lock class="h-3.5 w-3.5" />
-					Private &middot; admin view
+					Private
 				</h2>
 				<div class={gridClass}>
 					{#each redactedPlaylists as playlist (playlist.id)}
-						<RedactedPlaylistCard {playlist} />
+						<RedactedPlaylistCard {playlist} ondelete={handleCardDelete} />
 					{/each}
 				</div>
 			</section>

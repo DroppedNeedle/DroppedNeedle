@@ -756,13 +756,46 @@ async fn remote_playlist_import_lands_in_the_users_playlists() {
     assert_eq!(detail["tracks"][0]["plex_rating_key"], "1");
 }
 
+/// Entry lengths are stored in milliseconds and the native API answers them
+/// in seconds, fractions kept, each entry and the total.
+#[tokio::test]
+async fn playlist_lengths_answer_in_fractional_seconds() {
+    let rig = Rig::open().await;
+    let app = rig.app();
+    let (_, created) = call(
+        &app,
+        Method::POST,
+        "/api/v3/playlists",
+        Some(ADA),
+        Some(json!({"name": "Lengths"})),
+    )
+    .await;
+    let one = format!("/api/v3/playlists/{}", created["id"].as_str().unwrap());
+    let mut timed = track("Timed");
+    timed["duration"] = json!(215.25);
+    let (status, _) = call(
+        &app,
+        Method::POST,
+        &format!("{one}/tracks"),
+        Some(ADA),
+        Some(json!({"tracks": [timed, track("Untimed")]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (_, detail) = call(&app, Method::GET, &one, Some(ADA), None).await;
+    assert_eq!(detail["tracks"][0]["duration"], 215.25);
+    assert_eq!(detail["tracks"][1]["duration"], Value::Null);
+    assert_eq!(detail["total_duration"], 215.25);
+}
+
 #[tokio::test]
 async fn store_faults_render_fixed_500_envelopes() {
     let rig = Rig::open().await;
     // Every read below fails inside SQLite on a table that is not there.
     crate::common::break_schema(
         rig.runtime.db(),
-        "ALTER TABLE playlists RENAME TO gone_playlists; \
+        "ALTER TABLE catalog_playlists RENAME TO gone_playlists; \
          ALTER TABLE library_user_favorites RENAME TO gone_favorites; \
          ALTER TABLE user_followed_artists RENAME TO gone_follows;",
     )
@@ -820,24 +853,26 @@ async fn migration_0010_upgrades_in_place() {
     .await
     .unwrap();
 
-    apply_migrations(&pool).await.unwrap();
-    let kept: (String, String) = sqlx::query_as(
-        "SELECT p.name, f.item_id FROM playlists p, library_user_favorites f WHERE p.id = 'p1'",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    assert_eq!(kept, ("Kept".to_owned(), "a1".to_owned()));
     let migration = MIGRATOR
         .migrations
         .iter()
         .find(|migration| migration.version == 10)
         .unwrap();
-    sqlx::raw_sql(&migration.sql)
-        .execute(&pool)
-        .await
-        .expect("0010 applies twice");
-    let covers: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM playlist_covers")
+    for _ in 0..2 {
+        sqlx::raw_sql(&migration.sql)
+            .execute(&pool)
+            .await
+            .expect("0010 applies twice");
+    }
+    apply_migrations(&pool).await.unwrap();
+    let kept: (String, String) = sqlx::query_as(
+        "SELECT p.name, f.item_id FROM catalog_playlists p, library_user_favorites f WHERE p.id = 'p1'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(kept, ("Kept".to_owned(), "a1".to_owned()));
+    let covers: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM catalog_playlist_covers")
         .fetch_one(&pool)
         .await
         .unwrap();

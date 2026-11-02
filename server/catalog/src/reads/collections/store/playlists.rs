@@ -1,4 +1,5 @@
-//! Playlist rows over `playlists`, `playlist_tracks` and `playlist_covers`.
+//! Playlist rows over `catalog_playlists`, `catalog_playlist_tracks` and
+//! `catalog_playlist_covers`.
 //!
 //! One playlist model serves the native routes, both compat protocols and
 //! remote playlist imports. Entries that point at a library file carry its
@@ -9,7 +10,8 @@
 //! statement or transaction, so a write to another user's playlist changes
 //! nothing and answers [`Written::Missing`]. [`PlaylistStore::visible_to`]
 //! reads what one user may see: their own playlists and public ones, with
-//! the line drawn in SQL.
+//! the line drawn in SQL. [`PlaylistStore::strays`] lets an admin delete a
+//! playlist with no owner, and nothing else.
 //!
 //! Positions are dense and zero based. `UNIQUE(playlist_id, position)`
 //! is checked row by row during an UPDATE, so every reorder writes the new
@@ -20,6 +22,7 @@ use rusqlite::{Connection, OptionalExtension, Row, Transaction, params};
 use super::super::db::{CollectionsDb, StoreError};
 use super::super::models::PlaylistTrack;
 use super::super::sql;
+use droppedneedle_auth::users::roles::Admin;
 use droppedneedle_kernel::db::DbError;
 
 /// How many track covers a summary carries.
@@ -32,7 +35,7 @@ pub struct PlaylistRow {
     pub id: String,
     /// Display name.
     pub name: String,
-    /// Owning user id. v2 rows from before ownership may have none.
+    /// Owning user id. A playlist from v2 with no owner has none.
     pub owner_id: Option<String>,
     /// Owner display name, when the owner still exists.
     pub owner_name: Option<String>,
@@ -64,10 +67,12 @@ pub struct PlaylistRow {
 pub enum Listed {
     /// A playlist the caller may read.
     Readable(PlaylistRow),
-    /// Another user's private playlist.
+    /// Another user's private playlist, or a private one with no owner.
     Hidden {
         /// Playlist id.
         id: String,
+        /// Owning user id, when it has an owner.
+        owner_id: Option<String>,
         /// Every entry.
         track_count: usize,
         /// Owner display name, when the owner still exists.
@@ -174,6 +179,12 @@ pub struct OwnedPlaylists<'a> {
 pub struct VisiblePlaylists<'a> {
     store: &'a PlaylistStore,
     user_id: &'a str,
+}
+
+/// Playlists with no owner, as an admin may act on them.
+#[derive(Clone, Copy, Debug)]
+pub struct StrayPlaylists<'a> {
+    store: &'a PlaylistStore,
 }
 
 fn epoch(value: i64) -> u64 {
@@ -311,14 +322,14 @@ fn owns(tx: &Transaction, playlist_id: &str, user_id: &str) -> rusqlite::Result<
         .is_some())
 }
 
-/// Bump `updated_at` of the user's playlist; false when it is gone or not
-/// theirs.
-fn touch(tx: &Transaction, playlist_id: &str, user_id: &str, now: u64) -> rusqlite::Result<bool> {
-    let changed = tx.execute(sql::TOUCH.text(), params![now as i64, playlist_id, user_id])?;
+/// Bump `updated_at` of the user's playlist to `now`, milliseconds; false
+/// when it is gone or not theirs.
+fn touch(tx: &Transaction, playlist_id: &str, user_id: &str, now: i64) -> rusqlite::Result<bool> {
+    let changed = tx.execute(sql::TOUCH.text(), params![now, playlist_id, user_id])?;
     Ok(changed > 0)
 }
 
-/// Insert one empty playlist row made at `now`, epoch seconds.
+/// Insert one empty playlist row made at `now`, milliseconds.
 fn insert_playlist(
     tx: &Transaction,
     id: &str,
@@ -361,7 +372,7 @@ fn insert_entries(
     playlist_id: &str,
     position: Option<usize>,
     entries: &[NewEntry],
-    now: u64,
+    now: i64,
 ) -> rusqlite::Result<Vec<String>> {
     let mut order = entry_order(tx, playlist_id)?;
     let at = position.unwrap_or(order.len()).min(order.len());
@@ -387,8 +398,10 @@ fn insert_entries(
             entry.format,
             entry.track_number,
             entry.disc_number,
-            entry.duration,
-            now as i64,
+            entry
+                .duration
+                .map(|seconds| (seconds * 1000.0).round() as i64),
+            now,
             entry.plex_rating_key,
             entry.library_file_id,
         ])?;
@@ -421,24 +434,50 @@ impl PlaylistStore {
             user_id,
         }
     }
+
+    /// Playlists with no owner, which only an admin may delete.
+    pub fn strays(&self, _admin: &Admin) -> StrayPlaylists<'_> {
+        StrayPlaylists { store: self }
+    }
+}
+
+impl StrayPlaylists<'_> {
+    /// Delete a playlist with no owner, with its entries and cover. A
+    /// playlist that has an owner is `Missing` and stays.
+    pub async fn delete(&self, playlist_id: &str) -> Result<Written<()>, StoreError> {
+        let playlist_id = playlist_id.to_owned();
+        self.store
+            .db
+            .write("playlists.delete_stray", move |tx| {
+                let changed = tx.execute(sql::DELETE_STRAY.text(), params![playlist_id])?;
+                Ok(if changed == 0 {
+                    Written::Missing
+                } else {
+                    Written::Done(())
+                })
+            })
+            .await
+    }
 }
 
 impl VisiblePlaylists<'_> {
     /// Every playlist in name order: the readable ones with aggregates and
-    /// cover tiles, other users' private ones as existence only.
-    pub async fn list(&self) -> Result<Vec<Listed>, StoreError> {
+    /// cover tiles, other users' private ones as existence only. A private
+    /// playlist with no owner is listed only when `with_private_strays`.
+    pub async fn list(&self, with_private_strays: bool) -> Result<Vec<Listed>, StoreError> {
         let user_id = self.user_id.to_owned();
         self.store
             .db
             .read("playlists.list", move |conn| {
                 let mut stmt = conn.prepare(sql::LIST_ALL.text())?;
                 let mut listed = stmt
-                    .query_map(params![user_id], |row| {
+                    .query_map(params![user_id, with_private_strays], |row| {
                         if row.get::<_, i64>(13)? != 0 {
                             Ok(Listed::Readable(playlist_from_row(row)?))
                         } else {
                             Ok(Listed::Hidden {
                                 id: row.get(0)?,
+                                owner_id: row.get(2)?,
                                 track_count: count(row.get(9)?),
                                 owner_name: row.get(3)?,
                             })
@@ -644,7 +683,7 @@ impl OwnedPlaylists<'_> {
             name.to_owned(),
             source_ref.map(str::to_owned),
         );
-        let now = self.store.db.now_epoch() as i64;
+        let now = self.store.db.now_ms();
         self.store
             .db
             .write("playlists.create", move |tx| {
@@ -676,13 +715,13 @@ impl OwnedPlaylists<'_> {
     ) -> Result<(String, u64), StoreError> {
         let id = uuid::Uuid::new_v4().to_string();
         let (owner_id, name) = (self.user_id.to_owned(), name.to_owned());
-        let now = self.store.db.now_epoch();
+        let now = self.store.db.now_ms();
         self.store
             .db
             .write("playlists.create_with", move |tx| {
-                insert_playlist(tx, &id, &name, now as i64, None, &owner_id)?;
+                insert_playlist(tx, &id, &name, now, None, &owner_id)?;
                 insert_entries(tx, &id, None, &entries, now)?;
-                Ok((id, now))
+                Ok((id, epoch(now / 1000)))
             })
             .await
     }
@@ -694,7 +733,7 @@ impl OwnedPlaylists<'_> {
             playlist_id.to_owned(),
             name.to_owned(),
         );
-        let now = self.store.db.now_epoch();
+        let now = self.store.db.now_ms();
         self.store
             .db
             .write("playlists.rename", move |tx| {
@@ -716,7 +755,7 @@ impl OwnedPlaylists<'_> {
         public: bool,
     ) -> Result<Written<()>, StoreError> {
         let (user_id, playlist_id) = (self.user_id.to_owned(), playlist_id.to_owned());
-        let now = self.store.db.now_epoch();
+        let now = self.store.db.now_ms();
         self.store
             .db
             .write("playlists.set_public", move |tx| {
@@ -759,7 +798,7 @@ impl OwnedPlaylists<'_> {
         entries: Vec<NewEntry>,
     ) -> Result<Written<Vec<String>>, StoreError> {
         let (user_id, playlist_id) = (self.user_id.to_owned(), playlist_id.to_owned());
-        let now = self.store.db.now_epoch();
+        let now = self.store.db.now_ms();
         self.store
             .db
             .write("playlists.insert", move |tx| {
@@ -801,7 +840,7 @@ impl OwnedPlaylists<'_> {
             playlist_id.to_owned(),
             name.map(str::to_owned),
         );
-        let now = self.store.db.now_epoch();
+        let now = self.store.db.now_ms();
         self.store
             .db
             .write("playlists.replace_entries", move |tx| {
@@ -826,7 +865,7 @@ impl OwnedPlaylists<'_> {
                     name,
                     is_public,
                     created_at,
-                    updated_at: now,
+                    updated_at: epoch(now / 1000),
                 }))
             })
             .await
@@ -840,7 +879,7 @@ impl OwnedPlaylists<'_> {
     ) -> Result<Written<usize>, StoreError> {
         let (user_id, playlist_id) = (self.user_id.to_owned(), playlist_id.to_owned());
         let entry_ids = entry_ids.to_vec();
-        let now = self.store.db.now_epoch();
+        let now = self.store.db.now_ms();
         self.store
             .db
             .write("playlists.remove", move |tx| {
@@ -874,7 +913,7 @@ impl OwnedPlaylists<'_> {
             playlist_id.to_owned(),
             entry_id.to_owned(),
         );
-        let now = self.store.db.now_epoch();
+        let now = self.store.db.now_ms();
         self.store
             .db
             .write("playlists.move", move |tx| {
@@ -908,7 +947,7 @@ impl OwnedPlaylists<'_> {
             playlist_id.to_owned(),
             entry_id.to_owned(),
         );
-        let now = self.store.db.now_epoch();
+        let now = self.store.db.now_ms();
         self.store
             .db
             .write("playlists.update_sources", move |tx| {
@@ -950,7 +989,7 @@ impl OwnedPlaylists<'_> {
         cover: CoverImage,
     ) -> Result<Written<()>, StoreError> {
         let (user_id, playlist_id) = (self.user_id.to_owned(), playlist_id.to_owned());
-        let now = self.store.db.now_epoch();
+        let now = self.store.db.now_ms();
         self.store
             .db
             .write("playlists.set_cover", move |tx| {
@@ -959,7 +998,7 @@ impl OwnedPlaylists<'_> {
                 }
                 tx.execute(
                     sql::UPSERT_COVER.text(),
-                    params![playlist_id, cover.content_type, cover.bytes, now as f64],
+                    params![playlist_id, cover.content_type, cover.bytes, now],
                 )?;
                 Ok(Written::Done(()))
             })
@@ -969,7 +1008,7 @@ impl OwnedPlaylists<'_> {
     /// Delete the uploaded cover. `Missing` when there was none.
     pub async fn remove_cover(&self, playlist_id: &str) -> Result<Written<()>, StoreError> {
         let (user_id, playlist_id) = (self.user_id.to_owned(), playlist_id.to_owned());
-        let now = self.store.db.now_epoch();
+        let now = self.store.db.now_ms();
         self.store
             .db
             .write("playlists.remove_cover", move |tx| {

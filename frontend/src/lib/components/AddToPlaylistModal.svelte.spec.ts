@@ -35,6 +35,7 @@ function playlist(id: string, name: string) {
 		updated_at: 1767225600,
 		is_public: false,
 		is_owner: true,
+		can_delete: true,
 		owner_name: null,
 		is_redacted: false
 	};

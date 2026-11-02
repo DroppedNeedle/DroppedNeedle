@@ -1,24 +1,41 @@
 //! Playlists, their tracks and covers, and favorites with their names.
 //!
 //! v2 keeps these in its native `library_*` tables; v3 keeps playlists in
-//! `playlists`/`playlist_tracks` and favorites in `library_user_favorites`.
+//! `catalog_playlists`/`catalog_playlist_tracks` and favorites in
+//! `library_user_favorites`.
 //! Playlist entries and favorites point at v2 library ids, written as is
 //! (v3 has no foreign key there) and recorded as pending links.
 
+use super::requests::{flag, whole, whole_or};
 use super::{Column, FileSet, LinkKind, LinkMode, Parent, Source, TableSection, Target, col};
+
+/// A v2 ISO text time as integer milliseconds. v2's fractional and offset
+/// forms are exact to the millisecond; one no form can read becomes 0.
+macro_rules! iso_millis {
+    ($column:literal) => {
+        concat!(
+            "COALESCE(CAST(round(unixepoch(s.",
+            $column,
+            ", 'subsec') * 1000) AS INTEGER), 0)"
+        )
+    };
+}
 
 /// Playlists whose owner still exists (or that predate ownership).
 const LIVE_PLAYLIST: &str = "s.playlist_id IN (SELECT p.id FROM v2.library_playlists p \
      WHERE p.user_id IS NULL OR p.user_id IN (SELECT id FROM v2.auth_users))";
 
 /// Entries and covers hang off a playlist that landed in v3.
-const ON_PLAYLIST: &[Parent] = &[Parent::required("playlists", &[("playlist_id", "id")])];
+const ON_PLAYLIST: &[Parent] = &[Parent::required(
+    "catalog_playlists",
+    &[("playlist_id", "id")],
+)];
 
 /// Source types whose `track_source_id` is a v2 library id.
 const LOCAL_ENTRY: &str = "b.\"source_type\" IN ('local', 'droppedneedle-local', 'howler')";
 
 /// Playlists. The v2 cover path stays behind: v3 keeps the cover bytes in
-/// `playlist_covers` instead. A user holds one playlist per imported
+/// `catalog_playlist_covers` instead. A user holds one playlist per imported
 /// source; a second v2 playlist with the same source counts as a conflict.
 pub const PLAYLISTS: TableSection = TableSection {
     name: "playlist",
@@ -27,15 +44,15 @@ pub const PLAYLISTS: TableSection = TableSection {
         filter: "",
         requires: &[],
     },
-    target: Target::Table("playlists"),
+    target: Target::Table("catalog_playlists"),
     columns: &[
         col("id"),
         col("name"),
-        col("created_at"),
-        col("updated_at"),
+        Column::new("created_at").from_sql(iso_millis!("created_at")),
+        Column::new("updated_at").from_sql(iso_millis!("updated_at")),
         col("source_ref"),
         col("user_id"),
-        col("is_public"),
+        Column::new("is_public").from_sql(flag!("is_public")),
     ],
     key: &["id"],
     unique: &[&["user_id", "source_ref"]],
@@ -55,11 +72,11 @@ pub const PLAYLIST_TRACKS: TableSection = TableSection {
         filter: LIVE_PLAYLIST,
         requires: &[],
     },
-    target: Target::Table("playlist_tracks"),
+    target: Target::Table("catalog_playlist_tracks"),
     columns: &[
         col("id"),
         col("playlist_id"),
-        col("position"),
+        Column::new("position").from_sql(whole_or!("position", 0)),
         col("track_name"),
         col("artist_name"),
         col("album_name"),
@@ -70,10 +87,14 @@ pub const PLAYLIST_TRACKS: TableSection = TableSection {
         col("source_type"),
         col("available_sources"),
         col("format"),
-        col("track_number"),
-        col("disc_number"),
-        col("duration"),
-        col("created_at"),
+        Column::new("track_number").from_sql_of("track_number", whole!("track_number")),
+        Column::new("disc_number").from_sql_of("disc_number", whole!("disc_number")),
+        Column::new("duration_ms").from_sql_of(
+            "duration",
+            "CASE WHEN typeof(s.duration) IN ('integer', 'real') \
+             THEN CAST(round(s.duration * 1000) AS INTEGER) END",
+        ),
+        Column::new("created_at").from_sql(iso_millis!("created_at")),
         col("plex_rating_key"),
         Column::new("library_file_id")
             .from_v2("local_track_id")
@@ -95,7 +116,7 @@ pub const PLAYLIST_TRACKS: TableSection = TableSection {
 pub const PLAYLIST_COVERS: TableSection = TableSection {
     name: "playlist_cover",
     source: Source::Files(FileSet::PlaylistCovers),
-    target: Target::Table("playlist_covers"),
+    target: Target::Table("catalog_playlist_covers"),
     columns: &[
         col("playlist_id"),
         col("content_type"),

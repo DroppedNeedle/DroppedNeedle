@@ -112,7 +112,10 @@ many. Nothing else in the v2 database is changed.
   each artist had already released (so v3 does not miss a release that
   came out around the upgrade).
 - Playlists with their covers, favorites (with the names they had in v2)
-  and play history.
+  and play history. A playlist with no owner in v2 stays ownerless: public
+  ones stay readable by everyone, and an admin may delete any of them. In
+  v3, deleting a user deletes their playlists. A v3 database upgraded in
+  place turns a playlist whose owner no longer exists into an ownerless one.
 - Finished requests and finished downloads, wanted watches, and the list of
   bad download sources.
 - Per-user quota overrides. Past requests still count toward each user's
@@ -199,6 +202,7 @@ report lists it too (`left_behind`). In short:
 - Album art you picked by hand in v2. v3 reads album art from your files
   again.
 - Held downloads you already imported or threw away.
+- Playlists of users deleted in v2.
 - Requests still waiting for approval or downloading, and unfinished
   downloads. Ask again in v3.
 - Download attempts still cleaning up their download folder.

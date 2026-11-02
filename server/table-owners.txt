@@ -15,9 +15,12 @@
 #                                           user who rated both keeps the
 #                                           surviving row's rating
 #   library_play_history          media     moved to the surviving row
-#   playlist_tracks               catalog   album_id set to the surviving
+#   catalog_playlist_tracks       catalog   album_id set to the surviving
 #                                           album (a followed retag, or a
 #                                           retag joined across two scans)
+#
+# Auth's user delete removes catalog_playlists rows by cascade, and their
+# entries and covers with them; it names none of those tables.
 #
 # And when a missing track continues into the track that took its place
 # (the same release track of the same album):
@@ -25,7 +28,7 @@
 #   library_user_favorite_names   catalog   moved with their favorite
 #   library_user_ratings          catalog   moved to the track it continues
 #   library_play_history          media     moved to the track it continues
-#   playlist_tracks               catalog   library_file_id and
+#   catalog_playlist_tracks       catalog   library_file_id and
 #                                           track_source_id of local entries
 #                                           moved to the track it continues
 #   compat_bookmarks              compat    moved to the track it continues
@@ -135,6 +138,9 @@ catalog_discover_activity
 catalog_ignored_releases
 catalog_mbid_resolutions
 catalog_page_generations
+catalog_playlist_covers
+catalog_playlist_tracks
+catalog_playlists
 library_artist_album_credits
 library_artist_counts
 library_genre_artwork_revisions
@@ -146,9 +152,6 @@ library_user_play_marks
 library_user_ratings
 live_event_feed
 new_release_feed
-playlist_covers
-playlist_tracks
-playlists
 user_event_cities
 user_event_seen
 user_followed_artists

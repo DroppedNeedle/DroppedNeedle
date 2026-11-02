@@ -1,30 +1,67 @@
 <script lang="ts">
 	import type { RedactedPlaylist } from '$lib/api/playlists';
-	import { Lock } from 'lucide-svelte';
+	import { deletePlaylistV3 } from '$lib/queries/playlists/PlaylistV3Mutations.svelte';
+	import { toastStore } from '$lib/stores/toast';
+	import { Lock, Trash2 } from 'lucide-svelte';
 	import Card from '$lib/ui/Card.svelte';
+	import ConfirmDialog from '$lib/ui/ConfirmDialog.svelte';
+	import IconButton from '$lib/ui/IconButton.svelte';
 
-	let { playlist }: { playlist: RedactedPlaylist } = $props();
+	interface Props {
+		playlist: RedactedPlaylist;
+		ondelete?: (playlistId: string) => void;
+	}
+
+	let { playlist, ondelete }: Props = $props();
+
+	const deleteMutation = deletePlaylistV3();
+	let confirmOpen = $state(false);
 
 	let trackText = $derived(`${playlist.track_count} track${playlist.track_count === 1 ? '' : 's'}`);
+	let ownerText = $derived(playlist.owner_name ? `owned by ${playlist.owner_name}` : 'No owner');
+
+	async function confirmDelete() {
+		await deleteMutation.mutateAsync(playlist.id);
+		toastStore.show({ message: 'Playlist deleted.', type: 'success' });
+		ondelete?.(playlist.id);
+	}
 </script>
 
-<!-- Admin-only redacted projection of another user's PRIVATE playlist: no name,
-	 no cover, no link-through; only count + owner. -->
+<!-- A private playlist the caller may not read: no name, no cover, no link-through;
+	 only count + owner. An admin may delete one that has no owner. -->
 <Card
 	as="article"
 	padding="none"
-	class="w-full shrink-0 opacity-70 select-none cursor-default"
-	aria-label="Private playlist owned by {playlist.owner_name ?? 'another user'}"
+	class="w-full shrink-0 select-none cursor-default"
+	aria-label="Private playlist, {playlist.owner_name ? ownerText : 'no owner'}"
 >
 	<figure
-		class="aspect-square overflow-hidden relative flex items-center justify-center rounded-t-box bg-base-300/40"
+		class="aspect-square overflow-hidden relative flex items-center justify-center rounded-t-box bg-base-300/40 opacity-70"
 	>
 		<Lock class="h-10 w-10 text-base-content/30" />
 	</figure>
-	<div class="p-3">
+	<div class="p-3 opacity-70">
 		<h3 class="text-sm font-semibold italic text-base-content/60 line-clamp-1">Private playlist</h3>
 		<p class="text-xs text-base-content/50 mt-0.5 line-clamp-2">
-			{trackText}{playlist.owner_name ? ` · owned by ${playlist.owner_name}` : ''}
+			{trackText} · {ownerText}
 		</p>
 	</div>
+	{#if playlist.can_delete}
+		<div class="flex justify-end px-3 pb-2.5">
+			<IconButton
+				size="sm"
+				icon={Trash2}
+				label="Delete private playlist with no owner"
+				onclick={() => (confirmOpen = true)}
+			/>
+		</div>
+		<ConfirmDialog
+			bind:open={confirmOpen}
+			title="Delete this playlist?"
+			message="It has no owner. This cannot be undone."
+			confirmLabel="Delete"
+			tone="danger"
+			onconfirm={confirmDelete}
+		/>
+	{/if}
 </Card>

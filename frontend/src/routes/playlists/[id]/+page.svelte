@@ -59,7 +59,7 @@
 	});
 
 	let isOwner = $derived(playlist?.is_owner ?? false);
-	let canDelete = $derived((playlist?.is_owner ?? false) || authStore.isAdmin);
+	let canDelete = $derived(playlist?.can_delete ?? false);
 
 	let missingAlbumCount = $derived.by(() => {
 		if (!playlist) return 0;

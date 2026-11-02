@@ -1891,3 +1891,124 @@ async fn body_ids_never_reach_another_users_resources() {
     assert!(answered(status, ADMITTED), "owner: {status} {body}");
     app.stop().await;
 }
+
+/// An ownerless playlist from v2, with one entry and a cover.
+async fn seed_stray(app: &TestApp, id: &str, public: bool) {
+    app.seed(format!(
+        "INSERT INTO catalog_playlists (id, name, created_at, updated_at, is_public) \
+             VALUES ('{id}', 'Stray {id}', 0, 0, {public}); \
+             INSERT INTO catalog_playlist_tracks (id, playlist_id, position, track_name, \
+             artist_name, album_name, source_type, created_at) \
+             VALUES ('{id}-entry', '{id}', 0, 'T', 'A', 'B', 'local', 0); \
+             INSERT INTO catalog_playlist_covers (playlist_id, content_type, image, updated_at) \
+             VALUES ('{id}', 'image/png', x'00', 0);",
+        public = i64::from(public),
+    ))
+    .await;
+}
+
+/// Rows left of a playlist: itself, its entries, its cover.
+fn rows_of(app: &TestApp, id: &str) -> [i64; 3] {
+    let db = app.db();
+    let count = |sql: &str| -> i64 {
+        db.query_row(sql, [id], |row| row.get(0))
+            .expect("rows count")
+    };
+    [
+        count("SELECT COUNT(*) FROM catalog_playlists WHERE id = ?1"),
+        count("SELECT COUNT(*) FROM catalog_playlist_tracks WHERE playlist_id = ?1"),
+        count("SELECT COUNT(*) FROM catalog_playlist_covers WHERE playlist_id = ?1"),
+    ]
+}
+
+/// Who may delete an ownerless playlist: only an admin. Everyone else gets
+/// what `require_owner` answers: 403 for a public one, 404 for a private one.
+/// An admin may read a private one no better than before, or change either.
+#[tokio::test]
+async fn only_an_admin_deletes_an_ownerless_playlist() {
+    let app = TestApp::start("auth-playlist-strays").await;
+    let admin = Who {
+        id: String::new(),
+        username: "admin".to_owned(),
+        auth: app.login_admin().await,
+    };
+    let ada = user(&app, "ada").await;
+    let tia = trusted(&app, &admin, "tia").await;
+    seed_stray(&app, "public", true).await;
+    seed_stray(&app, "private", false).await;
+
+    for who in [&ada, &tia] {
+        for (id, want) in [("public", 403), ("private", 404)] {
+            let uri = format!("/api/v3/playlists/{id}");
+            let (status, body) = call(&app, who, "DELETE", &uri, None).await;
+            assert_eq!(
+                status.as_u16(),
+                want,
+                "{} deleting {id}: {body}",
+                who.username
+            );
+            assert_eq!(rows_of(&app, id), [1, 1, 1], "{id} stays");
+        }
+        let (status, list) = call(&app, who, "GET", "/api/v3/playlists", None).await;
+        assert_eq!(status, StatusCode::OK, "{list}");
+        let rows = list["playlists"].as_array().expect("playlists");
+        assert_eq!(rows.len(), 1, "a private stray is not listed: {list}");
+        assert_eq!(rows[0]["id"], "public");
+        assert_eq!(rows[0]["can_delete"], false);
+    }
+
+    let (_, list) = call(&app, &admin, "GET", "/api/v3/playlists", None).await;
+    let rows = list["playlists"].as_array().expect("playlists");
+    let row = |id: &str| {
+        rows.iter()
+            .find(|row| row["id"] == id)
+            .unwrap_or_else(|| panic!("{id} listed: {list}"))
+    };
+    assert_eq!(row("public")["can_delete"], true);
+    assert_eq!(row("public")["name"], "Stray public");
+    assert_eq!(row("private")["can_delete"], true);
+    assert_eq!(row("private")["is_redacted"], true);
+    assert!(row("private").get("name").is_none(), "{list}");
+
+    let (status, detail) = call(&app, &admin, "GET", "/api/v3/playlists/public", None).await;
+    assert_eq!(status, StatusCode::OK, "{detail}");
+    assert_eq!(detail["can_delete"], true);
+    let (status, _) = call(&app, &admin, "GET", "/api/v3/playlists/private", None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let rename = || Some(json!({"name": "Mine now"}));
+    let (status, _) = call(&app, &admin, "PUT", "/api/v3/playlists/public", rename()).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, _) = call(&app, &admin, "PUT", "/api/v3/playlists/private", rename()).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    for id in ["public", "private"] {
+        let uri = format!("/api/v3/playlists/{id}");
+        let (status, body) = call(&app, &admin, "DELETE", &uri, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(rows_of(&app, id), [0, 0, 0], "{id} went with its rows");
+    }
+}
+
+/// Deleting a user through the real admin route takes their playlists,
+/// entries and covers, and leaves another user's alone.
+#[tokio::test]
+async fn deleting_a_user_deletes_their_playlists() {
+    let app = TestApp::start("auth-playlist-cascade").await;
+    let admin = Who {
+        id: String::new(),
+        username: "admin".to_owned(),
+        auth: app.login_admin().await,
+    };
+    let ada = user(&app, "ada").await;
+    let bob = user(&app, "bob").await;
+    let adas = seed(&app, Owned::Playlist, &ada, 0).await["playlist_id"].clone();
+    let bobs = seed(&app, Owned::Playlist, &bob, 1).await["playlist_id"].clone();
+    assert_eq!(rows_of(&app, &adas), [1, 2, 1]);
+
+    let uri = format!("/api/v3/admin/users/{}", ada.id);
+    let (status, body) = call(&app, &admin, "DELETE", &uri, None).await;
+    assert!(status.is_success(), "{status}: {body}");
+
+    assert_eq!(rows_of(&app, &adas), [0, 0, 0]);
+    assert_eq!(rows_of(&app, &bobs), [1, 2, 1]);
+}

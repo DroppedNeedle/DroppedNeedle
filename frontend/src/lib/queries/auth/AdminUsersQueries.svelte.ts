@@ -5,7 +5,7 @@ import { api } from '$lib/api/client';
 import type { V3Body } from '$lib/api/v3/client';
 import type { components } from '$lib/api/v3/openapi';
 import { authStore } from '$lib/stores/authStore.svelte';
-import { createAppMutation, usersChanged } from '../effects';
+import { createAppMutation, playlistsChanged, usersChanged } from '../effects';
 import { AuthQueryKeyFactory } from './AuthQueryKeyFactory';
 import { AUTH_ENDPOINTS } from './endpoints';
 
@@ -44,7 +44,8 @@ export const createAdminUserMutation = () =>
 export const createDeleteUserMutation = () =>
 	createAppMutation(() => ({
 		mutationFn: (userId: string) => api.v3.DELETE(AUTH_ENDPOINTS.adminUser(userId)),
-		effects: refreshUsers
+		// Their playlists go with them, shared ones in the admin's list included.
+		effects: () => [...refreshUsers(), playlistsChanged(authStore.user?.id)]
 	}));
 
 /** Signs one account out of every browser and device. App passwords keep working. */

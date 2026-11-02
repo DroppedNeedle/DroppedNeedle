@@ -38,6 +38,7 @@ export interface PlaylistSummary {
 	// Ownership and visibility.
 	is_public: boolean;
 	is_owner: boolean;
+	can_delete: boolean;
 	owner_name: string | null;
 	is_redacted: false;
 }
@@ -46,11 +47,12 @@ export interface PlaylistDetail extends PlaylistSummary {
 	tracks: PlaylistTrack[];
 }
 
-/** Admin's view of another user's PRIVATE playlist: count + owner only. */
+/** A private playlist the caller may not read: count + owner only. */
 export interface RedactedPlaylist {
 	id: string;
 	track_count: number;
 	owner_name: string | null;
+	can_delete: boolean;
 	is_redacted: true;
 }
 

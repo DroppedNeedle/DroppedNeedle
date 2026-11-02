@@ -8,7 +8,7 @@
 //!   imported with and is sealed
 //!   whole with the instance key, like the other sealed connections.
 //! - [`CollectionsPlaylistBridge`]: imported playlists are ordinary rows in
-//!   `playlists` / `playlist_tracks`, written through the collections
+//!   `catalog_playlists` / `catalog_playlist_tracks`, written through the collections
 //!   playlist store, so they show up wherever playlists do.
 //!
 //! Errors carry a log-only cause.

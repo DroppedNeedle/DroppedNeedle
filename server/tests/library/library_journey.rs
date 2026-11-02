@@ -16938,7 +16938,7 @@ fn holdings(db: &rusqlite::Connection, track: &str) -> [i64; 6] {
     [
         "SELECT COUNT(*) FROM library_play_history WHERE local_track_id = ?1",
         "SELECT COUNT(*) FROM library_user_favorites WHERE item_kind = 'track' AND item_id = ?1",
-        "SELECT COUNT(*) FROM playlist_tracks WHERE library_file_id = ?1 \
+        "SELECT COUNT(*) FROM catalog_playlist_tracks WHERE library_file_id = ?1 \
          AND track_source_id = ?1",
         "SELECT COUNT(*) FROM compat_bookmarks WHERE file_id = ?1",
         "SELECT COUNT(*) FROM compat_play_queue_items WHERE file_id = ?1",
@@ -17031,10 +17031,10 @@ async fn a_retagged_and_renamed_album_keeps_what_people_made() {
          ('curator', 'track', '{o4}', 10), ('listener', 'track', '{o4}', 11); \
          INSERT INTO library_user_favorite_names (user_id, item_kind, item_id, display_name) \
          VALUES ('curator', 'track', '{o4}', 'Four'), ('listener', 'track', '{o4}', 'Four'); \
-         INSERT INTO playlists (id, name, created_at, updated_at) VALUES ('list', 'List', '', ''); \
-         INSERT INTO playlist_tracks (id, playlist_id, position, track_name, artist_name, \
+         INSERT INTO catalog_playlists (id, name, created_at, updated_at) VALUES ('list', 'List', 0, 0); \
+         INSERT INTO catalog_playlist_tracks (id, playlist_id, position, track_name, artist_name, \
          album_name, album_id, track_source_id, library_file_id, source_type, created_at) \
-         VALUES ('entry', 'list', 0, 'Five', 'A', 'B', '{album}', '{o5}', '{o5}', 'local', ''); \
+         VALUES ('entry', 'list', 0, 'Five', 'A', 'B', '{album}', '{o5}', '{o5}', 'local', 0); \
          INSERT INTO compat_bookmarks (user_id, file_id, position_ms, comment, created_at, \
          changed_at) VALUES ('curator', '{o4}', 1000, 'mine', 1, 1), \
          ('listener', '{o4}', 2000, 'later', 1, 30); \
@@ -17315,9 +17315,9 @@ async fn a_retagged_and_renamed_album_keeps_what_people_made() {
     db.execute_batch(&format!(
         "INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) VALUES \
          ('stale', 'track', '{o5}', 5); \
-         INSERT INTO playlist_tracks (id, playlist_id, position, track_name, artist_name, \
+         INSERT INTO catalog_playlist_tracks (id, playlist_id, position, track_name, artist_name, \
          album_name, track_source_id, library_file_id, source_type, created_at) \
-         VALUES ('late', 'list', 1, 'Five', 'A', 'B', '{o5}', '{o5}', 'local', '');"
+         VALUES ('late', 'list', 1, 'Five', 'A', 'B', '{o5}', '{o5}', 'local', 0);"
     ))
     .expect("a stale client wrote against an old id");
     rescan(&library).await;
@@ -17769,11 +17769,11 @@ async fn an_automatic_album_retagged_without_its_ids_is_joined_at_the_seal() {
          'T', 'A', '2026-01-01T00:00:00Z'); \
          INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
          VALUES ('listener', 'track', '{o1}', 1), ('listener', 'album', '{album}', 1); \
-         INSERT INTO playlists (id, name, created_at, updated_at) \
-         VALUES ('list', 'List', '', ''); \
-         INSERT INTO playlist_tracks (id, playlist_id, position, track_name, artist_name, \
+         INSERT INTO catalog_playlists (id, name, created_at, updated_at) \
+         VALUES ('list', 'List', 0, 0); \
+         INSERT INTO catalog_playlist_tracks (id, playlist_id, position, track_name, artist_name, \
          album_name, album_id, track_source_id, library_file_id, source_type, created_at) \
-         VALUES ('entry', 'list', 0, 'T', 'A', 'B', '{album}', '{o2}', '{o2}', 'local', '');",
+         VALUES ('entry', 'list', 0, 'T', 'A', 'B', '{album}', '{o2}', '{o2}', 'local', 0);",
         o1 = old[0],
         o2 = old[1]
     ))
@@ -19050,12 +19050,12 @@ fn give_history(db: &rusqlite::Connection, album: &str, track: &str) {
          ('play-{track}', 'listener', '{track}', '{album}', 'Two', 'A', '2026-01-01T00:00:00Z'); \
          INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
          VALUES ('listener', 'track', '{track}', 1); \
-         INSERT INTO playlists (id, name, created_at, updated_at) \
-         VALUES ('list-{track}', 'List', '', ''); \
-         INSERT INTO playlist_tracks (id, playlist_id, position, track_name, artist_name, \
+         INSERT INTO catalog_playlists (id, name, created_at, updated_at) \
+         VALUES ('list-{track}', 'List', 0, 0); \
+         INSERT INTO catalog_playlist_tracks (id, playlist_id, position, track_name, artist_name, \
          album_name, album_id, track_source_id, library_file_id, source_type, created_at) \
          VALUES ('entry-{track}', 'list-{track}', 0, 'Two', 'A', 'B', '{album}', '{track}', \
-         '{track}', 'local', '');"
+         '{track}', 'local', 0);"
     ))
     .expect("history given");
 }
@@ -20006,11 +20006,11 @@ async fn retag_pairs_list_join_and_dismiss() {
                  INSERT INTO library_play_history (id, user_id, local_album_id, track_name, \
                  artist_name, played_at) VALUES ('play-a', 'curator', '{a}', 'Song', 'Artist', \
                  '2026-01-01T00:00:00Z'); \
-                 INSERT INTO playlists (id, name, created_at, updated_at) \
-                 VALUES ('list', 'List', '', ''); \
-                 INSERT INTO playlist_tracks (id, playlist_id, position, track_name, \
+                 INSERT INTO catalog_playlists (id, name, created_at, updated_at) \
+                 VALUES ('list', 'List', 0, 0); \
+                 INSERT INTO catalog_playlist_tracks (id, playlist_id, position, track_name, \
                  artist_name, album_name, album_id, source_type, created_at) \
-                 VALUES ('entry', 'list', 0, 'Song', 'Artist', 'Old', '{a}', 'local', ''); \
+                 VALUES ('entry', 'list', 0, 'Song', 'Artist', 'Old', '{a}', 'local', 0); \
                  INSERT INTO library_management_exclusions (local_album_id, reason, \
                  excluded_by_user_id, excluded_at) VALUES ('{a}', 'by hand', 'curator', 5); \
                  INSERT INTO library_album_takeovers (local_album_id, cause, noticed_at) \
@@ -20239,7 +20239,7 @@ async fn retag_pairs_list_join_and_dismiss() {
     for sql in [
         "SELECT COUNT(*) FROM library_user_favorites WHERE item_id = ?1",
         "SELECT COUNT(*) FROM library_play_history WHERE local_album_id = ?1",
-        "SELECT COUNT(*) FROM playlist_tracks WHERE album_id = ?1",
+        "SELECT COUNT(*) FROM catalog_playlist_tracks WHERE album_id = ?1",
         "SELECT COUNT(*) FROM library_management_exclusions WHERE local_album_id = ?1",
         "SELECT COUNT(*) FROM library_album_takeovers WHERE local_album_id = ?1",
     ] {
@@ -23137,11 +23137,11 @@ async fn a_chosen_edition_retagged_with_its_ids_is_placed_and_left_to_the_person
          'One', 'A', '2026-01-01T00:00:00Z'); \
          INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
          VALUES ('admin', 'track', '{o1}', 1); \
-         INSERT INTO playlists (id, name, created_at, updated_at) VALUES ('list', 'List', '', ''); \
-         INSERT INTO playlist_tracks (id, playlist_id, position, track_name, artist_name, \
+         INSERT INTO catalog_playlists (id, name, created_at, updated_at) VALUES ('list', 'List', 0, 0); \
+         INSERT INTO catalog_playlist_tracks (id, playlist_id, position, track_name, artist_name, \
          album_name, album_id, track_source_id, library_file_id, source_type, created_at) \
          VALUES ('entry', 'list', 0, 'Two', 'A', 'Chosen', '{album}', '{o2}', '{o2}', \
-         'local', '');",
+         'local', 0);",
         o1 = old[0],
         o2 = old[1],
     ))

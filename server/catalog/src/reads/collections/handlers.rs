@@ -52,7 +52,7 @@ pub async fn list_playlists_handler(
 ) -> HttpResult<Json<PlaylistListResponse>> {
     Ok(Json(
         CollectionsService::new(&state)
-            .list_playlists(caller.user_id())
+            .list_playlists(caller.user_id(), caller.is_admin())
             .await?,
     ))
 }
@@ -99,7 +99,7 @@ pub async fn get_playlist_handler(
 ) -> HttpResult<Json<PlaylistDetail>> {
     Ok(Json(
         CollectionsService::new(&state)
-            .get_playlist(caller.user_id(), &playlist_id)
+            .get_playlist(caller.user_id(), caller.is_admin(), &playlist_id)
             .await?,
     ))
 }
@@ -151,7 +151,7 @@ pub async fn delete_playlist_handler(
     Path(playlist_id): Path<String>,
 ) -> HttpResult<Json<StatusResponse>> {
     CollectionsService::new(&state)
-        .delete_playlist(caller.user_id(), &playlist_id)
+        .delete_as_caller(&caller, &playlist_id)
         .await?;
     Ok(Json(ok("Playlist deleted")))
 }

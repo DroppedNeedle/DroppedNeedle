@@ -1,6 +1,6 @@
 //! The statements of the Spotify import: authorize states
 //! (`spotify_auth_requests`), links (`user_connections`) and the source
-//! refs of imported playlists (`playlists`).
+//! refs of imported playlists (`catalog_playlists`).
 
 droppedneedle_kernel::sql! {
     /// Drop the states that expired by `?1`.
@@ -29,6 +29,6 @@ droppedneedle_kernel::sql! {
     /// Drop user `?1`'s link to service `?2`.
     pub(super) DELETE_LINK = "DELETE FROM user_connections WHERE user_id = ?1 AND service = ?2";
     /// User `?1`'s playlists imported from Spotify, as `(source_ref, id)`.
-    pub(super) SPOTIFY_SOURCE_REFS = "SELECT source_ref, id FROM playlists \
+    pub(super) SPOTIFY_SOURCE_REFS = "SELECT source_ref, id FROM catalog_playlists \
              WHERE user_id = ?1 AND source_ref LIKE 'spotify:%'";
 }

@@ -2729,12 +2729,12 @@ impl RegroupRig {
              ON t.id = h.local_track_id AND t.local_album_id = h.local_album_id \
              WHERE h.local_album_id = '{album}') \
              + (SELECT COUNT(*) FROM library_user_favorites WHERE item_id = '{album}') \
-             + (SELECT COUNT(*) FROM playlist_tracks WHERE album_id = '{album}')"
+             + (SELECT COUNT(*) FROM catalog_playlist_tracks WHERE album_id = '{album}')"
         ));
         let all = self.count(
             "SELECT (SELECT COUNT(*) FROM library_play_history) \
              + (SELECT COUNT(*) FROM library_user_favorites) \
-             + (SELECT COUNT(*) FROM playlist_tracks)",
+             + (SELECT COUNT(*) FROM catalog_playlist_tracks)",
         );
         (naming, all)
     }
@@ -2763,10 +2763,10 @@ fn listener_acts(album: &str) -> String {
          'Song', 'Artist', '2026-01-01T00:00:00Z' {moved}; \
          INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
          SELECT 'listener', 'album', local_album_id, 0 {moved}; \
-         INSERT INTO playlists (id, name, created_at, updated_at) VALUES ('list', 'List', '', ''); \
-         INSERT INTO playlist_tracks (id, playlist_id, position, track_name, artist_name, \
+         INSERT INTO catalog_playlists (id, name, created_at, updated_at) VALUES ('list', 'List', 0, 0); \
+         INSERT INTO catalog_playlist_tracks (id, playlist_id, position, track_name, artist_name, \
          album_name, album_id, track_source_id, source_type, created_at) \
-         SELECT 'entry', 'list', 0, 'Song', 'Artist', 'After', local_album_id, id, 'local', '' \
+         SELECT 'entry', 'list', 0, 'Song', 'Artist', 'After', local_album_id, id, 'local', 0 \
          {moved};"
     )
 }
@@ -4442,11 +4442,11 @@ async fn retag_across_a_cancelled_scan_is_joined_at_the_next() {
         rig.run(&format!(
             "{play} INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
              VALUES ('listener', 'album', '{album}', 0); \
-             INSERT INTO playlists (id, name, created_at, updated_at) \
-             VALUES ('list', 'List', '', ''); \
-             INSERT INTO playlist_tracks (id, playlist_id, position, track_name, artist_name, \
+             INSERT INTO catalog_playlists (id, name, created_at, updated_at) \
+             VALUES ('list', 'List', 0, 0); \
+             INSERT INTO catalog_playlist_tracks (id, playlist_id, position, track_name, artist_name, \
              album_name, album_id, source_type, created_at) \
-             VALUES ('entry', 'list', 0, 'Song', 'Artist', 'Before', '{album}', 'local', '');"
+             VALUES ('entry', 'list', 0, 'Song', 'Artist', 'Before', '{album}', 'local', 0);"
         ));
         let after = rig.after.clone();
         rig.tag(&files, &after);
@@ -10183,10 +10183,10 @@ async fn another_album_copied_over_an_old_one_comes_in_as_new_tracks() {
          INSERT INTO library_play_history (id, user_id, local_track_id, local_album_id, \
          track_name, artist_name, played_at) VALUES ('play-1', 'listener', '{}', '{album}', \
          'Old Two', 'Artist', '2026-01-01T00:00:00Z'); \
-         INSERT INTO playlists (id, name, created_at, updated_at) VALUES ('list', 'List', '', ''); \
-         INSERT INTO playlist_tracks (id, playlist_id, position, track_name, artist_name, \
+         INSERT INTO catalog_playlists (id, name, created_at, updated_at) VALUES ('list', 'List', 0, 0); \
+         INSERT INTO catalog_playlist_tracks (id, playlist_id, position, track_name, artist_name, \
          album_name, album_id, track_source_id, source_type, created_at) VALUES ('entry', \
-         'list', 0, 'Old One', 'Artist', 'Before', '{album}', '{}', 'local', ''); \
+         'list', 0, 'Old One', 'Artist', 'Before', '{album}', '{}', 'local', 0); \
          INSERT INTO library_track_management_state (local_track_id, written_sha256) \
          VALUES ('{}', 'sha');",
         tracks[1], tracks[0], tracks[2]
@@ -10243,7 +10243,7 @@ async fn another_album_copied_over_an_old_one_comes_in_as_new_tracks() {
         rig.count(&format!(
             "SELECT (SELECT COUNT(*) FROM library_play_history \
                WHERE local_track_id = '{}' AND local_album_id = '{album}') \
-             + (SELECT COUNT(*) FROM playlist_tracks WHERE track_source_id = '{}') \
+             + (SELECT COUNT(*) FROM catalog_playlist_tracks WHERE track_source_id = '{}') \
              + (SELECT COUNT(*) FROM library_track_management_state \
                WHERE local_track_id = '{}' AND written_sha256 = 'sha')",
             tracks[1], tracks[0], tracks[2]

@@ -10,7 +10,6 @@
 	import { getSourceColor, getSourceLabel } from '$lib/utils/sources';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { Play, Shuffle, Trash2, Tv, Lock, Globe } from 'lucide-svelte';
-	import { authStore } from '$lib/stores/authStore.svelte';
 	import NavidromeIcon from '$lib/components/NavidromeIcon.svelte';
 	import PlexIcon from '$lib/components/PlexIcon.svelte';
 	import PlaylistMosaic from './PlaylistMosaic.svelte';
@@ -26,8 +25,6 @@
 
 	const deleteMutation = deletePlaylistV3();
 
-	// Mutations (delete) are owner-only; admins may delete any playlist for cleanup.
-	let canDelete = $derived(playlist.is_owner || authStore.isAdmin);
 	let ownerInitials = $derived(
 		(playlist.owner_name ?? '')
 			.trim()
@@ -210,7 +207,7 @@
 						</div>
 					</div>
 					<span class="text-[10px] text-base-content/60 line-clamp-1">
-						Shared by {playlist.owner_name ?? 'someone'}
+						{playlist.owner_name ? `Shared by ${playlist.owner_name}` : 'No owner'}
 					</span>
 				</div>
 			{/if}
@@ -238,7 +235,7 @@
 			onclick={handleShuffle}
 		/>
 
-		{#if canDelete}
+		{#if playlist.can_delete}
 			<div class="ml-auto">
 				<IconButton
 					variant={deleteConfirming ? 'danger' : 'ghost'}

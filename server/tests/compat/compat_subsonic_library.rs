@@ -2062,7 +2062,7 @@ async fn a_busy_playlist_create_writes_nothing_and_asking_again_makes_one() {
             })
             .expect("rows count")
         };
-        (count("playlists"), count("playlist_tracks"))
+        (count("catalog_playlists"), count("catalog_playlist_tracks"))
     };
 
     let held = crate::common::hold_reader(starved.db().sqlx()).await;

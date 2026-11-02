@@ -17892,6 +17892,11 @@ export interface components {
         };
         /** @description Full playlist detail: summary fields plus tracks. */
         PlaylistDetail: {
+            /**
+             * @description True when the caller may delete it: its owner, or an admin when it
+             *     has no owner.
+             */
+            can_delete: boolean;
             /** @description Up to four track covers for the header. */
             cover_urls: string[];
             /**
@@ -17980,6 +17985,11 @@ export interface components {
         };
         /** @description Playlist summary for lists and visibility answers. */
         PlaylistSummary: {
+            /**
+             * @description True when the caller may delete it: its owner, or an admin when it
+             *     has no owner.
+             */
+            can_delete: boolean;
             /** @description Up to four track covers for the list tile. */
             cover_urls: string[];
             /**
@@ -19277,15 +19287,18 @@ export interface components {
             staying: number;
         };
         /**
-         * @description Another user's private playlist: existence, count, and owner only. Never
-         *     the name, tracks, or covers.
+         * @description A private playlist the caller may not read: existence, count, and owner
+         *     only. Never the name, tracks, or covers. An admin also gets the ones with
+         *     no owner, which they may delete.
          */
         RedactedPlaylist: {
+            /** @description True for an admin when it has no owner. */
+            can_delete: boolean;
             /** @description Playlist id. */
             id: string;
             /** @description Always true. */
             is_redacted: boolean;
-            /** @description Owner display name. */
+            /** @description Owner display name. None when it has no owner. */
             owner_name?: string | null;
             /** @description Track count. */
             track_count: number;

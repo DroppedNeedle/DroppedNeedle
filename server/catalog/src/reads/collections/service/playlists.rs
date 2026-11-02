@@ -4,9 +4,12 @@
 //! their playlists and everyone sees full rows for public ones. Other users'
 //! private playlists redact to existence plus count plus owner. Mutations are
 //! owner-only: private plus non-owner is 404 (the row stays hidden), public
-//! plus non-owner is 403. Admins hold no extra playlist rights.
+//! plus non-owner is 403. Admins hold one extra right: deleting a playlist
+//! with no owner. A private one is listed to admins only, as a stub.
 
 use std::collections::HashMap;
+
+use droppedneedle_auth::users::roles::{Admin, Principal};
 
 use super::CollectionsService;
 use crate::reads::collections::error::CollectionsError;
@@ -87,7 +90,12 @@ fn cover_url(playlist_id: &str) -> String {
     format!("/api/v3/playlists/{playlist_id}/cover")
 }
 
-fn summary(row: &PlaylistRow, user_id: &str) -> PlaylistSummary {
+/// Who may delete a playlist: its owner, and an admin when it has no owner.
+fn can_delete(owner_id: Option<&str>, user_id: &str, admin: bool) -> bool {
+    owner_id.map_or(admin, |owner| owner == user_id)
+}
+
+fn summary(row: &PlaylistRow, user_id: &str, admin: bool) -> PlaylistSummary {
     PlaylistSummary {
         id: row.id.clone(),
         name: row.name.clone(),
@@ -100,13 +108,19 @@ fn summary(row: &PlaylistRow, user_id: &str) -> PlaylistSummary {
         updated_at: row.updated_at,
         is_public: row.is_public,
         is_owner: owns(row, user_id),
+        can_delete: can_delete(row.owner_id.as_deref(), user_id, admin),
         owner_name: row.owner_name.clone(),
         is_redacted: false,
     }
 }
 
-fn detail(row: &PlaylistRow, user_id: &str, tracks: Vec<PlaylistTrack>) -> PlaylistDetail {
-    let summary = summary(row, user_id);
+fn detail(
+    row: &PlaylistRow,
+    user_id: &str,
+    admin: bool,
+    tracks: Vec<PlaylistTrack>,
+) -> PlaylistDetail {
+    let summary = summary(row, user_id, admin);
     PlaylistDetail {
         id: summary.id,
         name: summary.name,
@@ -120,6 +134,7 @@ fn detail(row: &PlaylistRow, user_id: &str, tracks: Vec<PlaylistTrack>) -> Playl
         updated_at: summary.updated_at,
         is_public: summary.is_public,
         is_owner: summary.is_owner,
+        can_delete: summary.can_delete,
         owner_name: summary.owner_name,
         is_redacted: false,
     }
@@ -229,24 +244,28 @@ impl CollectionsService<'_> {
             .collect())
     }
 
-    /// The native list: full summaries plus redacted stubs.
+    /// The native list: full summaries plus redacted stubs. `admin` adds the
+    /// private playlists with no owner, which only an admin can act on.
     pub async fn list_playlists(
         &self,
         user_id: &str,
+        admin: bool,
     ) -> Result<PlaylistListResponse, CollectionsError> {
         let playlists = self
             .playlists()
             .visible_to(user_id)
-            .list()
+            .list(admin)
             .await?
             .into_iter()
             .map(|listed| match listed {
-                Listed::Readable(row) => PlaylistListItem::Full(summary(&row, user_id)),
+                Listed::Readable(row) => PlaylistListItem::Full(summary(&row, user_id, admin)),
                 Listed::Hidden {
                     id,
+                    owner_id,
                     track_count,
                     owner_name,
                 } => PlaylistListItem::Redacted(RedactedPlaylist {
+                    can_delete: can_delete(owner_id.as_deref(), user_id, admin),
                     id,
                     track_count,
                     owner_name,
@@ -313,10 +332,12 @@ impl CollectionsService<'_> {
         Ok(Some(playlists.owned_by(user_id).tracks(playlist_id).await?))
     }
 
-    /// One playlist detail.
+    /// One playlist detail. `admin` says the caller may delete it when it
+    /// has no owner; it lets them read nothing more.
     pub async fn get_playlist(
         &self,
         user_id: &str,
+        admin: bool,
         playlist_id: &str,
     ) -> Result<PlaylistDetail, CollectionsError> {
         let row = self.readable_playlist(user_id, playlist_id).await?;
@@ -325,7 +346,7 @@ impl CollectionsService<'_> {
             .visible_to(user_id)
             .tracks(playlist_id)
             .await?;
-        Ok(detail(&row, user_id, tracks))
+        Ok(detail(&row, user_id, admin, tracks))
     }
 
     /// Create a playlist owned by the caller; returns its id. A second
@@ -396,7 +417,7 @@ impl CollectionsService<'_> {
         let id = self
             .create_named(user_id, &body.name, body.source_ref.as_deref())
             .await?;
-        self.get_playlist(user_id, &id).await
+        self.get_playlist(user_id, false, &id).await
     }
 
     /// Rename a playlist. A missing name leaves it unchanged.
@@ -410,7 +431,7 @@ impl CollectionsService<'_> {
             Some(name) => self.rename(user_id, playlist_id, name).await?,
             None => self.require_owner(user_id, playlist_id).await?,
         }
-        self.get_playlist(user_id, playlist_id).await
+        self.get_playlist(user_id, false, playlist_id).await
     }
 
     /// Rename a playlist, reading nothing back.
@@ -429,7 +450,34 @@ impl CollectionsService<'_> {
         self.found(user_id, playlist_id, written).await
     }
 
-    /// Delete a playlist.
+    /// Delete a playlist as the signed-in caller: their own, or as an admin
+    /// one with no owner. Every other playlist answers as
+    /// [`Self::require_owner`] does. Each write checks who holds the row in
+    /// its own statement.
+    pub async fn delete_as_caller(
+        &self,
+        caller: &Principal,
+        playlist_id: &str,
+    ) -> Result<(), CollectionsError> {
+        let user_id = caller.user_id();
+        let written = self
+            .playlists()
+            .owned_by(user_id)
+            .delete(playlist_id)
+            .await?;
+        if matches!(written, Written::Missing)
+            && let Ok(admin) = Admin::try_from(caller.clone())
+            && matches!(
+                self.playlists().strays(&admin).delete(playlist_id).await?,
+                Written::Done(())
+            )
+        {
+            return Ok(());
+        }
+        self.found(user_id, playlist_id, written).await
+    }
+
+    /// Delete one of the caller's own playlists.
     pub async fn delete_playlist(
         &self,
         user_id: &str,
@@ -452,7 +500,7 @@ impl CollectionsService<'_> {
     ) -> Result<PlaylistSummary, CollectionsError> {
         self.set_public(user_id, playlist_id, public).await?;
         let row = self.readable_playlist(user_id, playlist_id).await?;
-        Ok(summary(&row, user_id))
+        Ok(summary(&row, user_id, false))
     }
 
     /// Flip visibility, reading nothing back.

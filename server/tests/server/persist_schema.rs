@@ -181,7 +181,10 @@ async fn dual_owner_tables_carry_the_merged_shape() {
     let pool = migrated_pool().await;
 
     for (table, columns) in [
-        (("playlists"), vec!["source_ref", "user_id", "is_public"]),
+        (
+            ("catalog_playlists"),
+            vec!["source_ref", "user_id", "is_public"],
+        ),
         (("auth_users"), vec!["username", "username_display"]),
         (("auth_tokens"), vec!["last_seen_at", "session_kind"]),
         (("local_albums"), vec!["management_schedule_pending"]),
@@ -262,7 +265,7 @@ async fn dual_owner_tables_carry_the_merged_shape() {
 
     // Per-user playlist uniqueness survived the merge.
     let index_sql: String = sqlx::query_scalar(
-        "SELECT sql FROM sqlite_master WHERE name = 'idx_playlists_user_source_ref'",
+        "SELECT sql FROM sqlite_master WHERE name = 'idx_catalog_playlists_user_source_ref'",
     )
     .fetch_one(&pool)
     .await
@@ -11009,4 +11012,246 @@ async fn library_tables_rebuild_to_conventions_on_upgrade() {
         assert_eq!(read(sql), want, "{sql}");
     }
     runtime.shutdown().await;
+}
+
+/// Migration 0118 rebuilds the playlist tables to the schema conventions and
+/// ties a playlist to its owner. Through the production runner, from a
+/// database at 0117: no playlist is lost, an owner with no account becomes
+/// ownerless, every time and length is exact, bad values take their stated
+/// form, nothing else in the schema moves, and deleting the owner then takes
+/// their playlists with them.
+#[tokio::test]
+async fn playlists_rebuild_to_the_conventions_on_upgrade() {
+    const OLD: [&str; 3] = ["playlists", "playlist_tracks", "playlist_covers"];
+    const NEW: [&str; 3] = [
+        "catalog_playlists",
+        "catalog_playlist_tracks",
+        "catalog_playlist_covers",
+    ];
+    type SchemaRow = (String, String, String, Option<String>);
+    async fn other_schema(pool: &SqlitePool) -> Vec<SchemaRow> {
+        sqlx::query_as(
+            "SELECT type, name, tbl_name, sql FROM sqlite_schema \
+             WHERE tbl_name NOT IN ('playlists', 'playlist_tracks', 'playlist_covers', \
+             'catalog_playlists', 'catalog_playlist_tracks', 'catalog_playlist_covers') \
+             AND name NOT LIKE 'sqlite_%' ORDER BY type, name",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    }
+    async fn count(pool: &SqlitePool, sql: &str) -> i64 {
+        sqlx::query_scalar(sql).fetch_one(pool).await.unwrap()
+    }
+
+    let dir = droppedneedle_kernel::db::scratch::ScratchDir::new("catalog-0118").unwrap();
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(
+            sqlx::sqlite::SqliteConnectOptions::new()
+                .filename(dir.join("library.db"))
+                .create_if_missing(true)
+                .foreign_keys(true)
+                .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal),
+        )
+        .await
+        .unwrap();
+    run_migrations(&pool, &migrator_through(117)).await.unwrap();
+    sqlx::raw_sql(
+        "INSERT INTO auth_users (id, display_name, role, created_at) \
+             VALUES ('u1', 'U', 'user', 1), ('u2', 'V', 'user', 1); \
+         INSERT INTO playlists (id, name, cover_image_path, created_at, updated_at, source_ref, \
+             user_id, is_public) VALUES \
+             ('live', 'Live', NULL, '2024-01-01T00:00:00Z', \
+                 '2024-01-01T12:30:45.678901+02:00', 'spotify:1', 'u1', 0), \
+             ('other', 'Other', NULL, '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z', NULL, \
+                 'u2', 1), \
+             ('gone', 'Gone', NULL, 'not a date', '', 'spotify:1', 'ghost', 1), \
+             ('gone2', 'Gone again', NULL, 'not a date', '', 'spotify:1', 'ghost2', 0), \
+             ('stray', 'Stray', '/old/cover.png', '2023-06-15T08:00:00.250Z', \
+                 '2023-06-15T08:00:00Z', NULL, NULL, 2), \
+             ('edge', 'Edge', NULL, '', '', NULL, NULL, 0), \
+             (x'00', 'Blob id', NULL, '', '', NULL, NULL, 0); \
+         INSERT INTO playlist_tracks (id, playlist_id, position, track_name, artist_name, \
+             album_name, source_type, duration, created_at, track_number, disc_number) VALUES \
+             ('whole', 'live', 0, 'T', 'A', 'B', 'local', 215, '2024-01-01T00:00:00Z', 1, 2), \
+             ('fraction', 'live', 1, 'T', 'A', 'B', 'local', 215.25, \
+                 '2024-01-01T00:00:00.5+00:00', 1.5, 'x'), \
+             ('none', 'live', 2, 'T', 'A', 'B', 'local', NULL, 'never', NULL, NULL), \
+             ('words', 'live', 3, 'T', 'A', 'B', 'local', 'long', '', NULL, NULL), \
+             ('mispositioned', 'live', 1.5, 'T', 'A', 'B', 'local', NULL, '', NULL, NULL), \
+             ('kept', 'other', 0, 'T', 'A', 'B', 'local', 60, '', NULL, NULL), \
+             ('strays-entry', 'gone', 0, 'T', 'A', 'B', 'local', 1, '', NULL, NULL), \
+             ('edge-last', 'edge', 9223372036854775807, 'T', 'A', 'B', 'local', NULL, '', \
+                 NULL, NULL), \
+             ('edge-first', 'edge', 5, 'T', 'A', 'B', 'local', NULL, '', NULL, NULL), \
+             ('edge-bad', 'edge', 'x', 'T', 'A', 'B', 'local', NULL, '', NULL, NULL); \
+         INSERT INTO playlist_covers (playlist_id, content_type, image, updated_at) VALUES \
+             ('live', 'image/png', x'00ff10', 1700000000.125), \
+             ('stray', 'image/jpeg', x'ffd8', 'unreadable');",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let schema_before = other_schema(&pool).await;
+
+    run_migrations(&pool, &migrator_through(118)).await.unwrap();
+
+    assert_eq!(other_schema(&pool).await, schema_before);
+    assert_eq!(
+        count(&pool, "SELECT foreign_keys FROM pragma_foreign_keys").await,
+        1
+    );
+    for table in OLD {
+        let sql = format!("SELECT COUNT(*) FROM sqlite_schema WHERE name = '{table}'");
+        assert_eq!(count(&pool, &sql).await, 0, "{table} is gone");
+    }
+    for table in NEW {
+        let sql = format!("SELECT strict FROM pragma_table_list WHERE name = '{table}'");
+        assert_eq!(count(&pool, &sql).await, 1, "{table} is STRICT");
+    }
+    for (table, parent) in [
+        ("catalog_playlists", "auth_users"),
+        ("catalog_playlist_tracks", "catalog_playlists"),
+        ("catalog_playlist_covers", "catalog_playlists"),
+    ] {
+        let key: (String, String) = sqlx::query_as(&format!(
+            "SELECT \"table\", on_delete FROM pragma_foreign_key_list('{table}')"
+        ))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(key, (parent.to_owned(), "CASCADE".to_owned()), "{table}");
+    }
+    let indexes: Vec<String> = sqlx::query_scalar(
+        "SELECT name FROM sqlite_schema WHERE type = 'index' AND sql IS NOT NULL \
+         AND tbl_name LIKE 'catalog_playlist%' ORDER BY name",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        indexes,
+        [
+            "idx_catalog_playlist_tracks_library_file",
+            "idx_catalog_playlists_user",
+            "idx_catalog_playlists_user_source_ref",
+        ]
+    );
+
+    type Playlist = (String, Option<String>, i64, i64, i64);
+    let playlists: Vec<Playlist> = sqlx::query_as(
+        "SELECT id, user_id, created_at, updated_at, is_public FROM catalog_playlists ORDER BY id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    let playlist = |id: &str, owner: Option<&str>, created, updated, public| -> Playlist {
+        (
+            id.to_owned(),
+            owner.map(str::to_owned),
+            created,
+            updated,
+            public,
+        )
+    };
+    assert_eq!(
+        playlists,
+        [
+            playlist("edge", None, 0, 0, 0),
+            playlist("gone", None, 0, 0, 1),
+            playlist("gone2", None, 0, 0, 0),
+            playlist("live", Some("u1"), 1_704_067_200_000, 1_704_105_045_679, 0),
+            playlist("other", Some("u2"), 1_704_067_200_000, 1_704_067_200_000, 1),
+            playlist("stray", None, 1_686_816_000_250, 1_686_816_000_000, 1),
+        ]
+    );
+
+    type Entry = (String, i64, Option<i64>, i64, Option<i64>, Option<i64>);
+    let entries: Vec<Entry> = sqlx::query_as(
+        "SELECT id, position, duration_ms, created_at, track_number, disc_number \
+         FROM catalog_playlist_tracks WHERE playlist_id = 'live' ORDER BY position",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    let entry = |id: &str, position, ms, at, track, disc| -> Entry {
+        (id.to_owned(), position, ms, at, track, disc)
+    };
+    assert_eq!(
+        entries,
+        [
+            entry(
+                "whole",
+                0,
+                Some(215_000),
+                1_704_067_200_000,
+                Some(1),
+                Some(2)
+            ),
+            entry("fraction", 1, Some(215_250), 1_704_067_200_500, None, None),
+            entry("none", 2, None, 0, None, None),
+            entry("words", 3, None, 0, None, None),
+            entry("mispositioned", 4, None, 0, None, None),
+        ]
+    );
+
+    let edge: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT id, position FROM catalog_playlist_tracks WHERE playlist_id = 'edge' \
+         ORDER BY position",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    let edge: Vec<(&str, i64)> = edge.iter().map(|(id, at)| (id.as_str(), *at)).collect();
+    assert_eq!(
+        edge,
+        [("edge-first", 0), ("edge-last", 1), ("edge-bad", 2)],
+        "a position at the integer limit cannot refuse the upgrade"
+    );
+
+    let covers: Vec<(String, String, Vec<u8>, i64)> = sqlx::query_as(
+        "SELECT playlist_id, content_type, image, updated_at FROM catalog_playlist_covers \
+         ORDER BY playlist_id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        covers,
+        [
+            (
+                "live".to_owned(),
+                "image/png".to_owned(),
+                vec![0x00, 0xff, 0x10],
+                1_700_000_000_125
+            ),
+            (
+                "stray".to_owned(),
+                "image/jpeg".to_owned(),
+                vec![0xff, 0xd8],
+                0
+            ),
+        ]
+    );
+
+    sqlx::query("DELETE FROM auth_users WHERE id = 'u1'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    for sql in [
+        "SELECT COUNT(*) FROM catalog_playlists WHERE id = 'live'",
+        "SELECT COUNT(*) FROM catalog_playlist_tracks WHERE playlist_id = 'live'",
+        "SELECT COUNT(*) FROM catalog_playlist_covers WHERE playlist_id = 'live'",
+    ] {
+        assert_eq!(count(&pool, sql).await, 0, "{sql}");
+    }
+    assert_eq!(
+        count(&pool, "SELECT COUNT(*) FROM catalog_playlists").await,
+        5
+    );
+    assert_eq!(
+        count(&pool, "SELECT COUNT(*) FROM catalog_playlist_tracks").await,
+        5
+    );
 }

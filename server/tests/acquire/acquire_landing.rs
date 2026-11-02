@@ -5076,11 +5076,11 @@ impl VersionCase {
         rig.place(&rig.track_at(&kept_rel), &e.new, kept, "manual");
         rig.listen(&old);
         rig.sql(&format!(
-            "INSERT INTO playlists (id, name, created_at, updated_at) \
-             VALUES ('list', 'L', '', ''); \
-             INSERT INTO playlist_tracks (id, playlist_id, position, track_name, artist_name, \
+            "INSERT INTO catalog_playlists (id, name, created_at, updated_at) \
+             VALUES ('list', 'L', 0, 0); \
+             INSERT INTO catalog_playlist_tracks (id, playlist_id, position, track_name, artist_name, \
              album_name, source_type, created_at, library_file_id) \
-             VALUES ('entry', 'list', 0, 'T', 'A', 'B', 'local', '', '{old}'); \
+             VALUES ('entry', 'list', 0, 'T', 'A', 'B', 'local', 0, '{old}'); \
              INSERT INTO library_management_overrides (id, subject_kind, local_track_id, \
              field_name, value_json, mode, subject_revision, created_at, updated_at) \
              VALUES ('title', 'track', '{old}', 'title', '\"Radio Edit\"', 'replace', 1, 0, 0);"
@@ -5157,7 +5157,7 @@ impl JoinRig {
             "SELECT (SELECT local_track_id FROM library_play_history WHERE id = 'play-' || ?1), \
              (SELECT item_id FROM library_user_favorites WHERE item_kind = 'track' \
                AND user_id = 'u-ada'), \
-             (SELECT library_file_id FROM playlist_tracks WHERE id = 'entry'), \
+             (SELECT library_file_id FROM catalog_playlist_tracks WHERE id = 'entry'), \
              (SELECT local_track_id FROM library_management_overrides WHERE id = 'title')",
         )
         .bind(old)

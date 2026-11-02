@@ -133,9 +133,9 @@ async fn read_playlists(
 ) -> Result<Vec<ExportPlaylist>, sqlx::Error> {
     // Default-deny: only an explicit "all" publishes private playlists.
     let sql = if scope == "all" {
-        "SELECT id, name FROM playlists ORDER BY updated_at DESC, id"
+        "SELECT id, name FROM catalog_playlists ORDER BY updated_at DESC, id"
     } else {
-        "SELECT id, name FROM playlists WHERE is_public = 1 ORDER BY updated_at DESC, id"
+        "SELECT id, name FROM catalog_playlists WHERE is_public = 1 ORDER BY updated_at DESC, id"
     };
     let rows: Vec<(String, String)> = sqlx::query_as(sql).fetch_all(pool).await?;
     Ok(rows
@@ -150,11 +150,11 @@ async fn read_entries(
 ) -> Result<Vec<ExportEntry>, sqlx::Error> {
     // Entries with no local file (remote or YouTube tracks) come back with
     // no path so they can be counted, not silently dropped. Collections
-    // keeps the local track id in `library_file_id`, and stores durations
-    // as float seconds, so the column is read as REAL and truncated (v2).
-    let rows: Vec<(String, String, Option<f64>, Option<String>)> = sqlx::query_as(
-        "SELECT pt.track_name, pt.artist_name, CAST(pt.duration AS REAL), t.file_path \
-         FROM playlist_tracks pt LEFT JOIN local_tracks t ON t.id = pt.library_file_id \
+    // keeps the local track id in `library_file_id`. The M3U length is whole
+    // seconds, truncated (v2).
+    let rows: Vec<(String, String, Option<i64>, Option<String>)> = sqlx::query_as(
+        "SELECT pt.track_name, pt.artist_name, pt.duration_ms, t.file_path \
+         FROM catalog_playlist_tracks pt LEFT JOIN local_tracks t ON t.id = pt.library_file_id \
          WHERE pt.playlist_id = ?1 ORDER BY pt.position",
     )
     .bind(playlist_id)
@@ -163,10 +163,10 @@ async fn read_entries(
     Ok(rows
         .into_iter()
         .map(
-            |(track_name, artist_name, duration, file_path)| ExportEntry {
+            |(track_name, artist_name, duration_ms, file_path)| ExportEntry {
                 track_name,
                 artist_name,
-                duration: duration.map(|secs| secs as i64),
+                duration: duration_ms.map(|ms| ms / 1000),
                 file_path,
             },
         )

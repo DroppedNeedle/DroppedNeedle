@@ -421,7 +421,7 @@ droppedneedle_kernel::sql! {
              (SELECT t.local_album_id FROM local_tracks t \
               WHERE t.id = library_play_history.local_track_id), ?1) \
              WHERE local_album_id = ?2";
-    pub(super) MOVE_ALBUM_PLAYLIST_TRACKS = "UPDATE playlist_tracks SET album_id = ?1 WHERE album_id = ?2";
+    pub(super) MOVE_ALBUM_PLAYLIST_TRACKS = "UPDATE catalog_playlist_tracks SET album_id = ?1 WHERE album_id = ?2";
     pub(super) DROP_ALBUM = "DELETE FROM local_albums WHERE id = ?1";
     pub(super) STAMP_IF_RETAGGED_BY_HAND = "SELECT EXISTS(SELECT 1 FROM library_custom_edition_active WHERE local_album_id = ?1)";
     pub(super) HOLDS_ONLY_ITS_RETAG = "WITH run AS (SELECT (started_at - 0.5) / 1000.0 AS started_at FROM library_scan_runs WHERE id = ?1), \
@@ -440,7 +440,7 @@ droppedneedle_kernel::sql! {
                WHERE item_kind = 'album' AND item_id = ?1) \
              OR EXISTS(SELECT 1 FROM library_user_ratings \
                WHERE item_kind = 'album' AND item_id = ?1) \
-             OR EXISTS(SELECT 1 FROM playlist_tracks WHERE album_id = ?1)";
+             OR EXISTS(SELECT 1 FROM catalog_playlist_tracks WHERE album_id = ?1)";
     pub(super) ALBUMS_LEFT = "SELECT DISTINCT m.previous_album_id FROM library_scan_album_moves m \
          JOIN local_albums a ON a.id = m.previous_album_id \
          WHERE m.run_id = ?1 AND a.retired_into_album_id IS NULL ORDER BY 1";

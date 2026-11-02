@@ -164,7 +164,7 @@ impl RadioLibrary {
         playlist_id: &str,
     ) -> Result<Option<(Vec<String>, i64)>, String> {
         let visible: Option<String> = sqlx::query_scalar(
-            "SELECT id FROM playlists WHERE id = ?1 AND (user_id = ?2 OR is_public = 1)",
+            "SELECT id FROM catalog_playlists WHERE id = ?1 AND (user_id = ?2 OR is_public = 1)",
         )
         .bind(playlist_id)
         .bind(user_id)
@@ -175,7 +175,7 @@ impl RadioLibrary {
             return Ok(None);
         }
         let rows: Vec<Option<String>> = sqlx::query_scalar(
-            "SELECT artist_id FROM playlist_tracks WHERE playlist_id = ?1 ORDER BY position",
+            "SELECT artist_id FROM catalog_playlist_tracks WHERE playlist_id = ?1 ORDER BY position",
         )
         .bind(playlist_id)
         .fetch_all(&self.pool)

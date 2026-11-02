@@ -566,8 +566,8 @@ async fn backup_restore_round_trip_with_refusals() {
         .db()
         .write(Lane::Foreground, "brief-seed", |tx| {
             tx.execute(
-                "INSERT INTO playlists (id, name, created_at, updated_at)
-                 VALUES ('p1', 'Road Songs', 'now', 'now')",
+                "INSERT INTO catalog_playlists (id, name, created_at, updated_at)
+                 VALUES ('p1', 'Road Songs', 0, 0)",
                 [],
             )?;
             Ok::<_, DbError>(())
@@ -607,9 +607,11 @@ async fn backup_restore_round_trip_with_refusals() {
     )
     .unwrap();
     let name: String = connection
-        .query_row("SELECT name FROM playlists WHERE id = 'p1'", [], |row| {
-            row.get(0)
-        })
+        .query_row(
+            "SELECT name FROM catalog_playlists WHERE id = 'p1'",
+            [],
+            |row| row.get(0),
+        )
         .unwrap();
     assert_eq!(name, "Road Songs");
     let integrity: String = connection

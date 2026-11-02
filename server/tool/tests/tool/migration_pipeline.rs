@@ -392,8 +392,8 @@ async fn user_data_carries_resumes_and_repeats_as_noop() {
         droppedneedle_tool::r#import::ExitCode::FailedInternal
     );
     assert_eq!(rows("user_connections").await, 4);
-    assert_eq!(rows("playlists").await, 2);
-    assert_eq!(rows("playlist_tracks").await, 2);
+    assert_eq!(rows("catalog_playlists").await, 2);
+    assert_eq!(rows("catalog_playlist_tracks").await, 2);
     assert_eq!(rows("library_play_history").await, 0);
     let playlists = &crashed.entities["playlist"];
     assert_eq!(
@@ -427,8 +427,8 @@ async fn user_data_carries_resumes_and_repeats_as_noop() {
         .collect();
     assert_eq!(skipped, ["connection", "playlist", "playlist_track"]);
     for (table, expected) in [
-        ("playlists", 2),
-        ("playlist_covers", 1),
+        ("catalog_playlists", 2),
+        ("catalog_playlist_covers", 1),
         ("library_user_favorites", 2),
         ("library_play_history", 2),
         ("request_history", 1),
@@ -519,8 +519,17 @@ async fn user_data_carries_resumes_and_repeats_as_noop() {
         history.as_deref(),
         Some(droppedneedle_tool::tooling::fixture::V2_TRACK_ID)
     );
+    let made: i64 = sqlx::query_scalar("SELECT created_at FROM catalog_playlists WHERE id = ?")
+        .bind(PLAYLIST_ID)
+        .fetch_one(&pool)
+        .await
+        .expect("playlist time reads");
+    assert_eq!(
+        made, 1_748_736_000_000,
+        "v2's ISO time lands in milliseconds"
+    );
     let cover: Vec<u8> =
-        sqlx::query_scalar("SELECT image FROM playlist_covers WHERE playlist_id = ?")
+        sqlx::query_scalar("SELECT image FROM catalog_playlist_covers WHERE playlist_id = ?")
             .bind(PLAYLIST_ID)
             .fetch_one(&pool)
             .await
@@ -615,7 +624,7 @@ async fn user_data_carries_resumes_and_repeats_as_noop() {
 
     // A repeat import writes nothing anywhere, and a playlist deleted in v3
     // since does not come back: each section is carried once.
-    sqlx::query("DELETE FROM playlists WHERE id = 'playlist-bob'")
+    sqlx::query("DELETE FROM catalog_playlists WHERE id = 'playlist-bob'")
         .execute(&pool)
         .await
         .expect("playlist deletes");
