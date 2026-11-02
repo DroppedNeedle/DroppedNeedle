@@ -469,6 +469,35 @@ fn kernel_musicbrainz_rates_match_the_table() {
     );
 }
 
+/// `CLAUDE.md` lists every rate row with the day it was last read, and only
+/// rows that exist.
+#[test]
+fn the_contract_lists_every_rate_with_its_date() {
+    use droppedneedle_providers::rates::RATES;
+
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../CLAUDE.md");
+    let contract = std::fs::read_to_string(path).expect("CLAUDE.md is at the repo root");
+    let listed: Vec<&str> = contract
+        .lines()
+        .map(str::trim_start)
+        .filter(|line| line.starts_with("| `"))
+        .filter(|line| line.ends_with(" |") && line.matches('|').count() == 5)
+        .collect();
+    for rate in RATES {
+        let row = format!("| `{}` |", rate.source);
+        let date = format!("| {} |", rate.verified_on);
+        assert!(
+            listed
+                .iter()
+                .any(|line| line.starts_with(&row) && line.ends_with(&date)),
+            "CLAUDE.md has no row for {} read on {}",
+            rate.source,
+            rate.verified_on
+        );
+    }
+    assert_eq!(listed.len(), RATES.len(), "CLAUDE.md lists other rate rows");
+}
+
 /// Each shape a review found dodging the gate, written in a file no entry
 /// lists, fails it.
 #[test]

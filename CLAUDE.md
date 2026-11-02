@@ -314,6 +314,46 @@ Run from the repo root. `make help` lists every target.
   `server/tests/server/providers_gate.rs` refuses a rate written anywhere
   else, an HTTP client in a provider file and a priority nobody chose.
   Change a limit only after re-verifying it against the provider's docs.
+- Pace per install is not enough. MetaBrainz counts the total across every
+  install, so ListenBrainz and MusicBrainz reads are cached for as long as the
+  data allows, background work never refetches what a kept row can answer, and
+  a user's chosen source is honoured. A change that adds calls to them says how
+  many a day, for one active install.
+- The User-Agent is `DroppedNeedleApp/v<version> (<contact>; <site>)`, the form
+  MetaBrainz's gateway matches. Never change it, or send another name to get
+  past a refusal, without asking the provider first.
+- The limits, from `rates.rs`, with the day each was last read at its source
+  ("theirs" is a published limit we must keep, "ours" a pace we chose where none
+  is published). `providers_gate.rs` holds this table to `rates.rs`:
+
+  | Source | Keep to | Basis | Last read |
+  |---|---|---|---|
+  | `musicbrainz` | 1 a second, no burst | theirs: about 1 a second per address, 503 past it | 2026-10-18 |
+  | `brainzmash` | 10 a second, one in flight | ours: no published number, cools down on 429 | 2026-10-18 |
+  | `musicbrainz-mirror` | set by the admin; a public host uses the `musicbrainz` row | ours | 2026-10-18 |
+  | `listenbrainz` | 1 a second, no burst | theirs: at most 1 a second, 429 past it | 2026-10-18 |
+  | `lastfm` | 5 a second, burst 10 | ours: no published number | 2026-10-18 |
+  | `audiodb` | 30 a minute, held at 0.48 a second | theirs: the shared key is banned if over-used, never raise it | 2026-10-18 |
+  | `audiodb-premium` | 100 a minute, held at 1.6 a second | theirs | 2026-10-18 |
+  | `audiodb-media` | 5 a second, burst 2 | ours: no published number | 2026-10-18 |
+  | `acoustid` | 3 a second, no burst | theirs | 2026-10-18 |
+  | `coverartarchive` | 10 a second, no burst | ours: no published number, 503 past it | 2026-10-18 |
+  | `wikimedia-api` | 4 a second, one in flight | theirs: below 5 a second, one in flight | 2026-10-18 |
+  | `wikimedia-media` | 5 a second, two in flight | theirs: two in flight; the pace is ours | 2026-10-18 |
+  | `discogs` | 25 a minute, one every 2.4 seconds | copies of their spec: the official page refused the fetch | 2026-10-18 |
+  | `itunes` | 20 a minute, held at 0.3 a second, burst 2 | theirs: approximate | 2026-10-18 |
+  | `deezer` | 5 a second, burst 5 | ours: half the 50 per 5 seconds a third party cites | 2026-10-18 |
+  | `lrclib` | 1 a second, no burst | ours: a volunteer service | 2026-10-18 |
+  | `youtube` | 1 a second, burst 2 | theirs: 100 searches a day; the pace is ours | 2026-10-18 |
+  | `github` | 50 an hour, burst 10 | theirs: 60 an hour unauthenticated | 2026-10-18 |
+  | `spotify` | 2 a second, burst 5 | ours: no published number, 429 past it | 2026-10-30 |
+  | `plextv` | 1 a second, burst 5 | ours: no published limit | 2026-10-30 |
+  | `newznab` | 1 a second, burst 5, per indexer | ours: each indexer also reports its own daily caps, which the client holds to | 2026-10-30 |
+  | `hibp` | 5 a second, four in flight | ours: no limit on Pwned Passwords | 2026-10-30 |
+  | `oidc` | 10 a second, burst 20 | ours: no published number | 2026-10-30 |
+  | `ticketmaster` | 2 a second, no burst | theirs: 5 a second and 5000 a day | 2026-10-18 |
+  | `skiddle` | 1 a second, no burst | ours: no published number | 2026-10-18 |
+  | `open-meteo` | 2 a second, no burst | theirs: under 600 a minute | 2026-10-18 |
 - Addresses of outside services that are fixed in code live in
   `bootstrap::Outbound`. `Outbound::live()` is the only production source:
   never read one from the environment or from settings.
