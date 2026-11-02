@@ -1144,7 +1144,7 @@ impl LocalCatalog {
             }
             Paging::Catalog(sequence, seed) => {
                 let seed: Vec<Value> = seed
-                    .map(|seed| sql::shuffle_values(seed).to_vec())
+                    .map(|seed| sql::track_shuffle_values(seed).to_vec())
                     .unwrap_or_default();
                 self.ids(
                     "player.tracks",

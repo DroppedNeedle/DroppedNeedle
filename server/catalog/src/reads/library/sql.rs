@@ -616,13 +616,14 @@ droppedneedle_kernel::sql! {
         WHERE (t.title_folded LIKE w.value ESCAPE '\\' \
         OR t.artist_name_folded LIKE w.value ESCAPE '\\' \
         OR t.album_title_folded LIKE w.value ESCAPE '\\') IS NOT 1)";
-    /// A seeded shuffle key over the track `t`, as the library list's
-    /// shuffle works it out, with the seed's three numbers from
-    /// [`shuffle_values`] bound as the statement's first three values, so
-    /// the key reads no other row.
-    pub(crate) fragment PLAYER_SHUFFLE_KEY = "((((t.search_key * ?1 + ?2) % 2147483647) \
-        * ((t.search_key * ?1 + ?2) % 2147483647)) % 2147483647 * ?3 \
-        + ((t.search_key * ?1 + ?2) % 2147483647)) % 2147483647";
+    /// A seeded shuffle key over the track `t`, with the seed's three
+    /// numbers from [`track_shuffle_values`] bound as the statement's first
+    /// three values, so the key reads no other row. It is worked out for
+    /// every track on each page, so it reads the search key twice where the
+    /// library list's shuffle reads it six times: a quadratic in the key,
+    /// as that one is, at three quarters of the cost per page.
+    pub(crate) fragment PLAYER_SHUFFLE_KEY =
+        "((t.search_key * ?1 + ?2) % 2147483647 * (t.search_key + ?3)) % 2147483647";
     /// Every streamable track in insertion (`search_key`) order, one page
     /// at an offset: the full-library sync. The keys come from the index
     /// over availability and the time a track went missing, which holds
@@ -630,12 +631,12 @@ droppedneedle_kernel::sql! {
     /// none, and the few that have one are merged in. Only the page's rows
     /// are read for their ids. Binds: limit, offset.
     pub(crate) fragment PLAYER_NATURAL_PAGE = "SELECT pt.id FROM (\
-        SELECT t.search_key AS k, t.rowid AS r FROM local_tracks t \
+        SELECT t.search_key AS k FROM local_tracks t \
         WHERE t.availability = 'indexed' AND t.missing_at IS NULL \
-        UNION ALL SELECT t.search_key, t.rowid FROM local_tracks t \
+        UNION ALL SELECT t.search_key FROM local_tracks t \
         WHERE t.availability = 'indexed' AND t.missing_at IS NOT NULL \
         ORDER BY 1 LIMIT ? OFFSET ?) p CROSS JOIN local_tracks pt \
-        WHERE pt.rowid = p.r ORDER BY p.k";
+        WHERE pt.search_key = p.k ORDER BY p.k";
     /// One page of player track ids in a catalog order, over the whole
     /// library.
     family PLAYER_TRACK_PAGE = player_track_page;
@@ -836,6 +837,18 @@ pub(crate) fn shuffle_values(seed: u32) -> [Value; 3] {
     let seed = i64::from(seed);
     [
         Value::Integer(seed % (prime - 1) + 1),
+        Value::Integer((seed * 7919) % prime),
+        Value::Integer((seed * 104_729) % (prime - 1) + 1),
+    ]
+}
+
+/// The binds of [`PLAYER_SHUFFLE_KEY`] for one seed. The multiplier is spread
+/// over the whole range: with a small one, neighbouring tracks stay together.
+pub(crate) fn track_shuffle_values(seed: u32) -> [Value; 3] {
+    let prime: i64 = 2_147_483_647;
+    let seed = i64::from(seed);
+    [
+        Value::Integer((seed % (prime - 1) + 1) * 1_103_515_245 % prime),
         Value::Integer((seed * 7919) % prime),
         Value::Integer((seed * 104_729) % (prime - 1) + 1),
     ]
@@ -1668,9 +1681,9 @@ fn track_page(shape: TrackShape, key: TrackKey, sequence: TrackSequence) -> Stri
     // search keys alone, which a narrow index holds, and only the page's
     // rows are read for their ids.
     format!(
-        "SELECT pt.id FROM (SELECT t.search_key AS k, t.rowid AS r, {order} AS o \
+        "SELECT pt.id FROM (SELECT t.search_key AS k, {order} AS o \
          FROM {rows} WHERE {filter} ORDER BY o, k LIMIT ? OFFSET ?) p \
-         CROSS JOIN local_tracks pt WHERE pt.rowid = p.r ORDER BY p.o, p.k"
+         CROSS JOIN local_tracks pt WHERE pt.search_key = p.k ORDER BY p.o, p.k"
     )
 }
 
