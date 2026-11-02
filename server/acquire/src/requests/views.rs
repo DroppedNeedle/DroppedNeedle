@@ -21,7 +21,7 @@ use super::http::{decided_reply, mix_reply};
 use super::models::{
     ActionResponse, ActiveCountResponse, ActiveRequestsResponse, HistoryQuery, HistoryResponse,
     KindQuery, PersonalMixApprovalsResponse, RefreshResponse, RequestKind, WantedActionResponse,
-    WantedResponse,
+    WantedRemovalResponse, WantedResponse,
 };
 use super::service::RequestsService;
 use super::state::RequestsState;
@@ -244,6 +244,46 @@ pub async fn wanted_seen_handler(
     Ok(Json(
         RequestsService::new(&state)
             .wanted_seen(&principal, &musicbrainz_id)
+            .await?,
+    ))
+}
+
+/// Remove one wanted watch, stopping it first if it is active.
+/// `DELETE /api/v3/requests/wanted/{musicbrainz_id}`.
+#[utoipa::path(
+    delete,
+    tag = "requests",
+    path = "/api/v3/requests/wanted/{musicbrainz_id}",
+    params(("musicbrainz_id" = String, Path, description = "Release-group MBID")),
+    responses((status = 200, body = WantedRemovalResponse))
+)]
+pub async fn wanted_remove_handler(
+    State(state): State<RequestsState>,
+    User(principal): User,
+    Path(musicbrainz_id): Path<String>,
+) -> Result<impl IntoResponse, ApiError> {
+    Ok(Json(
+        RequestsService::new(&state)
+            .wanted_remove(&principal, &musicbrainz_id)
+            .await?,
+    ))
+}
+
+/// Remove every stopped or fulfilled watch the caller can see.
+/// `POST /api/v3/requests/wanted/clear-finished`. An admin's covers everyone's.
+#[utoipa::path(
+    post,
+    tag = "requests",
+    path = "/api/v3/requests/wanted/clear-finished",
+    responses((status = 200, body = WantedRemovalResponse))
+)]
+pub async fn wanted_clear_finished_handler(
+    State(state): State<RequestsState>,
+    User(principal): User,
+) -> Result<impl IntoResponse, ApiError> {
+    Ok(Json(
+        RequestsService::new(&state)
+            .wanted_clear_finished(&principal)
             .await?,
     ))
 }

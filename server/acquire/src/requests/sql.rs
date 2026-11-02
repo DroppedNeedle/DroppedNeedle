@@ -279,6 +279,12 @@ droppedneedle_kernel::sql! {
     pub(crate) ROWS_IN_STATUS_OF_KIND = RECORD_SELECT
         + " WHERE rh.status = ?1 AND rh.request_kind = ?2 \
          ORDER BY rh.requested_at ASC, rh.musicbrainz_id_lower";
+    /// Album rows in status `?1` a person has not removed the watch of since
+    /// their last write, oldest first.
+    pub(crate) ROWS_TO_WATCH = RECORD_SELECT
+        + " WHERE rh.status = ?1 AND rh.request_kind = 'album' \
+           AND rh.watch_removed_generation IS NOT rh.generation \
+         ORDER BY rh.requested_at ASC, rh.musicbrainz_id_lower";
     /// Terminal rows settled before `?1` that no live watch points at.
     pub(crate) PRUNE_TERMINAL = "DELETE FROM request_history \
          WHERE status IN ('imported', 'incomplete', 'failed', 'cancelled', 'rejected') \
@@ -312,6 +318,23 @@ droppedneedle_kernel::sql! {
     pub(crate) PRUNE_WATCHES = "DELETE FROM wanted_watches \
          WHERE state IN ('stopped', 'fulfilled') \
          AND COALESCE(last_checked_at, created_at) < ?1";
+    /// Remember on album row `?1` that its watch was removed.
+    pub(crate) NOTE_WATCH_REMOVED = "UPDATE request_history \
+         SET watch_removed_generation = generation \
+         WHERE musicbrainz_id_lower = ?1 AND request_kind = 'album'";
+    /// Delete watch `?1`; its seen candidates cascade.
+    pub(crate) DELETE_WATCH = "DELETE FROM wanted_watches WHERE release_group_mbid_lower = ?1";
+    /// Remember the removal on the album rows of the stopped and fulfilled
+    /// watches of user `?2`, or everyone's when `?1`.
+    pub(crate) NOTE_FINISHED_WATCHES_REMOVED = "UPDATE request_history \
+         SET watch_removed_generation = generation \
+         WHERE request_kind = 'album' AND musicbrainz_id_lower IN ( \
+           SELECT release_group_mbid_lower FROM wanted_watches \
+           WHERE state IN ('stopped', 'fulfilled') AND (?1 OR user_id = ?2))";
+    /// Delete the stopped and fulfilled watches of user `?2`, or everyone's
+    /// when `?1`; their seen candidates cascade.
+    pub(crate) DELETE_FINISHED_WATCHES = "DELETE FROM wanted_watches \
+         WHERE state IN ('stopped', 'fulfilled') AND (?1 OR user_id = ?2)";
     /// Enrol a new watch; an existing one is left alone.
     pub(crate) ENROL_WATCH = "INSERT INTO wanted_watches (release_group_mbid_lower, \
          release_group_mbid, user_id, artist_name, album_title, artist_mbid, year, cover_url, \

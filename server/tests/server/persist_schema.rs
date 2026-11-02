@@ -10369,6 +10369,30 @@ async fn the_primary_source_section_goes_on_upgrade() {
     );
 }
 
+/// Migration 0122 leaves every request watchable: a row from before it has
+/// had no watch removed, so its generation never matches.
+#[tokio::test]
+async fn request_rows_start_with_no_watch_removed() {
+    let pool = scratch_pool().await;
+    run_migrations(&pool, &migrator_through(121)).await.unwrap();
+    sqlx::query(
+        "INSERT INTO request_history (musicbrainz_id_lower, musicbrainz_id, artist_name, \
+         album_title, requested_at, status, request_kind) \
+         VALUES ('r', 'R', 'a', 'b', 1, 'failed', 'album')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    apply_migrations(&pool).await.unwrap();
+    let removed = sqlx::query_scalar::<_, Option<i64>>(
+        "SELECT watch_removed_generation FROM request_history",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(removed, None);
+}
+
 /// Migration 0120 adds the per-user switch: nobody has a row, so everyone
 /// starts off, only 0 and 1 are stored, and a row goes with its user.
 #[tokio::test]

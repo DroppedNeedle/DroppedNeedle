@@ -7302,6 +7302,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/requests/wanted/clear-finished": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Remove every stopped or fulfilled watch the caller can see.
+         *     `POST /api/v3/requests/wanted/clear-finished`. An admin's covers everyone's.
+         */
+        post: operations["wanted_clear_finished_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/requests/wanted/{musicbrainz_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove one wanted watch, stopping it first if it is active.
+         *     `DELETE /api/v3/requests/wanted/{musicbrainz_id}`.
+         */
+        delete: operations["wanted_remove_handler"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/requests/wanted/{musicbrainz_id}/resume": {
         parameters: {
             query?: never;
@@ -22717,6 +22757,14 @@ export interface components {
              * @description Tracks started (`wanted_auto_dispatched` for a partial album).
              */
             tracks?: number | null;
+        };
+        /** @description How many wanted watches a removal took off the list. */
+        WantedRemovalResponse: {
+            /**
+             * Format: int64
+             * @description Watches removed.
+             */
+            removed: number;
         };
         /** @description Wanted list: watches plus the still-retrying set. */
         WantedResponse: {
@@ -42179,6 +42227,47 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WantedResponse"];
+                };
+            };
+        };
+    };
+    wanted_clear_finished_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WantedRemovalResponse"];
+                };
+            };
+        };
+    };
+    wanted_remove_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Release-group MBID */
+                musicbrainz_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WantedRemovalResponse"];
                 };
             };
         };

@@ -85,3 +85,28 @@ export const createMarkWantedSeenMutation = () =>
 		onError: () => void applyEffects(...wanted()),
 		effects: wanted
 	}));
+
+// The confirm dialog shows a failure, so these raise no error toast.
+export const createRemoveWatchMutation = () =>
+	createAppMutation(() => ({
+		mutationFn: ({ mbid }: WantedActionVars) =>
+			api.v3.DELETE(
+				v3('/api/v3/requests/wanted/{musicbrainz_id}', { path: { musicbrainz_id: mbid } })
+			),
+		onSuccess: (_data, { albumTitle }) => {
+			toastStore.show({ message: `Removed ${albumTitle}.`, type: 'info' });
+		},
+		effects: wanted
+	}));
+
+export const createClearFinishedWatchesMutation = () =>
+	createAppMutation(() => ({
+		mutationFn: () => api.v3.POST(v3('/api/v3/requests/wanted/clear-finished')),
+		onSuccess: ({ removed }) => {
+			toastStore.show({
+				message: `Removed ${removed} ${removed === 1 ? 'album' : 'albums'}.`,
+				type: 'info'
+			});
+		},
+		effects: wanted
+	}));

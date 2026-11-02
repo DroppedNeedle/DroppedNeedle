@@ -13,6 +13,7 @@ What happens between pressing Request and the album landing in your library, and
 - [Upgrades](#upgrades)
 - [The Downloads page](#the-downloads-page)
 - [Choosing a copy](#choosing-a-copy)
+- [The Wanted list](#the-wanted-list)
 - [Blocked sources](#blocked-sources)
 - [Drop imports](#drop-imports)
 
@@ -92,6 +93,10 @@ On the Downloads page you can cancel a download, retry it, or move a Soulseek do
 To choose the copy yourself, press "Pick a source" on a failed, cancelled or partial album download. DroppedNeedle asks every download source you have turned on for that album and lists what each one has, grouped by source with the best fit first. Soulseek folders are compared with the tracklist of the edition you asked for, so each one says plainly what it looks like ("Holds all 12 tracks of this edition", "Holds 9 of the 12 tracks", "2 track lengths do not match"). Each copy also shows what it is ranked on: a Soulseek folder its format with the bitrate or bit depth its files report, a Usenet release its indexer, age and grabs, a plugin release the source's own score. Copies outside your download settings (your quality range, the size limit, ignored or required terms, or a plugin score below your minimum) are listed after the rest, each with the reason. Pick one and DroppedNeedle downloads exactly that folder or release, then checks the files like any other download; if it fails, the normal search takes over. Picking a copy outside your settings asks first. Once you confirm, that download is kept even if its quality is outside your range; every other check still runs, and if it fails, the next source is held to your settings as usual. A copy kept below your quality range may later be replaced by the background upgrade scan. "None of these - keep watching" closes the search and puts the album on your wanted list, and the copies you turned down are remembered so they aren't offered as new finds. A search takes up to a couple of minutes, and the results update by themselves when it finishes. If no source is turned on or none of them answers, the search says so and what to check. The wanted watcher re-searches a watched album the same way: it asks only the sources you have turned on, plugin sources included, with the same filters.
 
 Before downloading an album on its own, DroppedNeedle looks at what every source has, the same way "Pick a source" does. If a copy looks like the whole edition in a quality you accept, it downloads that one. If none does, the album waits in the download queue as "Awaiting review" with the copies it found, and you choose one, or press "None of these - keep watching". Nothing is downloaded until you do. You can change this under Settings > Download Client, "Picking a copy": wait only when no copy looks right (the default), always wait for your pick, or never wait and take the best copy found. Single tracks are not held this way; they are fetched from their album's folder as described above.
+
+## The Wanted list
+
+The Wanted tab on the Requests page lists the albums DroppedNeedle keeps looking for. The bin on a row removes that watch and the copies it has seen, stopping it first if it is still active. "Clear finished" removes every stopped or found watch you can see; an admin's covers everyone's, and active watches stay. The request stays in your history either way. A removed watch comes back when you request the album again and that fails, when a retry of its download fails, or when you press "None of these - keep watching" on a search for it. Without a removal, stopped and found watches leave the list by themselves after the request history retention.
 
 ## Blocked sources
 

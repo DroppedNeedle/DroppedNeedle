@@ -1,16 +1,19 @@
 <script lang="ts">
 	import { fade, fly } from '$lib/ui/motion';
-	import { Radar, TriangleAlert } from 'lucide-svelte';
+	import { Radar, Trash2, TriangleAlert } from 'lucide-svelte';
 	import WantedRetryingCard from '$lib/components/WantedRetryingCard.svelte';
 	import WantedWatchCard from '$lib/components/WantedWatchCard.svelte';
 	import { getWantedWatchesQuery } from '$lib/queries/wanted.svelte';
 	import {
+		createClearFinishedWatchesMutation,
 		createMarkWantedSeenMutation,
+		createRemoveWatchMutation,
 		createResumeWatchMutation,
 		createStopWatchMutation
 	} from '$lib/queries/wanted.svelte';
 	import type { WantedWatchItem } from '$lib/queries/wanted.svelte';
 	import Button from '$lib/ui/Button.svelte';
+	import ConfirmDialog from '$lib/ui/ConfirmDialog.svelte';
 	import RequestsEmpty from './RequestsEmpty.svelte';
 
 	interface Props {
@@ -32,7 +35,29 @@
 	const stopWatch = createStopWatchMutation();
 	const resumeWatch = createResumeWatchMutation();
 	const markWantedSeen = createMarkWantedSeenMutation();
-	const wantedBusy = $derived(stopWatch.isPending || resumeWatch.isPending);
+	const removeWatch = createRemoveWatchMutation();
+	const clearFinished = createClearFinishedWatchesMutation();
+	const wantedBusy = $derived(
+		stopWatch.isPending || resumeWatch.isPending || removeWatch.isPending
+	);
+
+	const finishedCount = $derived(wantedItems.filter((i) => i.state !== 'watching').length);
+	let removing = $state<WantedWatchItem | null>(null);
+	let removeOpen = $state(false);
+	let clearOpen = $state(false);
+
+	function askRemove(item: WantedWatchItem) {
+		removing = item;
+		removeOpen = true;
+	}
+
+	async function confirmRemove() {
+		if (!removing) return;
+		await removeWatch.mutateAsync({
+			mbid: removing.musicbrainz_id,
+			albumTitle: removing.album_title
+		});
+	}
 
 	// A listener only receives their own rows, and the server checks the owner
 	// on every action, so each row gets its stop and resume buttons.
@@ -83,10 +108,23 @@
 				here.
 			</RequestsEmpty>
 		{:else}
-			<p class="text-xs text-base-content/40 mb-3">
-				Albums that couldn't be found are re-checked on a schedule. A copy that passes verification
-				downloads by itself; near misses show up as candidates for you to review.
-			</p>
+			<div class="flex items-start justify-between gap-3 mb-3">
+				<p class="text-xs text-base-content/40">
+					Albums that couldn't be found are re-checked on a schedule. A copy that passes
+					verification downloads by itself; near misses show up as candidates for you to review.
+				</p>
+				{#if finishedCount > 0}
+					<Button
+						variant="ghost"
+						size="sm"
+						icon={Trash2}
+						class="shrink-0"
+						onclick={() => (clearOpen = true)}
+					>
+						Clear finished
+					</Button>
+				{/if}
+			</div>
 			<div class="flex flex-col gap-2.5">
 				{#each wantedRetrying as item, i (`retrying-${item.musicbrainz_id}`)}
 					<div in:fly={{ y: 12, duration: 200, delay: i * 30 }}>
@@ -102,6 +140,7 @@
 							onstop={handleWantedStop}
 							onresume={handleWantedResume}
 							onseen={handleWantedSeen}
+							onremove={askRemove}
 						/>
 					</div>
 				{/each}
@@ -109,3 +148,23 @@
 		{/if}
 	</div>
 {/if}
+
+<ConfirmDialog
+	bind:open={removeOpen}
+	title="Remove from the list?"
+	message={`${removing?.album_title ?? 'This album'} stops being watched. It comes back only if a new request for it fails.`}
+	confirmLabel="Remove"
+	tone="danger"
+	pending={removeWatch.isPending}
+	onconfirm={confirmRemove}
+/>
+
+<ConfirmDialog
+	bind:open={clearOpen}
+	title="Clear finished?"
+	message={`Removes ${finishedCount} stopped or found ${finishedCount === 1 ? 'album' : 'albums'} from the list.`}
+	confirmLabel="Clear"
+	tone="danger"
+	pending={clearFinished.isPending}
+	onconfirm={() => clearFinished.mutateAsync()}
+/>

@@ -1,11 +1,21 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import AlbumImage from './AlbumImage.svelte';
-	import { CircleCheck, CircleStop, Play, Radar, RefreshCw, Sparkles, X } from 'lucide-svelte';
+	import {
+		CircleCheck,
+		CircleStop,
+		Play,
+		Radar,
+		RefreshCw,
+		Sparkles,
+		Trash2,
+		X
+	} from 'lucide-svelte';
 	import type { WantedWatchItem } from '$lib/queries/wanted.svelte';
 	import { nowSeconds, startSharedClock } from '$lib/stores/clock.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
+	import IconButton from '$lib/ui/IconButton.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 
 	interface Props {
@@ -15,9 +25,10 @@
 		onstop?: (item: WantedWatchItem) => void;
 		onresume?: (item: WantedWatchItem) => void;
 		onseen?: (item: WantedWatchItem) => void;
+		onremove?: (item: WantedWatchItem) => void;
 	}
 
-	let { item, busy = false, ownerName, onstop, onresume, onseen }: Props = $props();
+	let { item, busy = false, ownerName, onstop, onresume, onseen, onremove }: Props = $props();
 
 	onMount(() => startSharedClock());
 
@@ -37,7 +48,7 @@
 </script>
 
 <Card padding="none">
-	<div class="flex items-center gap-3 sm:gap-4 p-3 sm:p-4">
+	<div class="flex flex-wrap sm:flex-nowrap items-center gap-3 sm:gap-4 p-3 sm:p-4">
 		<div class="w-14 h-14 sm:w-16 sm:h-16 shrink-0 rounded-lg overflow-hidden bg-base-300">
 			<AlbumImage
 				mbid={item.musicbrainz_id}
@@ -115,7 +126,7 @@
 			{/if}
 		</div>
 
-		<div class="flex gap-2 shrink-0">
+		<div class="flex w-full sm:w-auto justify-end gap-2 shrink-0">
 			{#if item.state === 'watching'}
 				{#if onresume}
 					<Button
@@ -156,6 +167,16 @@
 				>
 					Resume
 				</Button>
+			{/if}
+			{#if onremove}
+				<IconButton
+					variant="danger-ghost"
+					size="sm"
+					icon={Trash2}
+					label="Remove from the list"
+					disabled={busy}
+					onclick={() => onremove?.(item)}
+				/>
 			{/if}
 		</div>
 	</div>

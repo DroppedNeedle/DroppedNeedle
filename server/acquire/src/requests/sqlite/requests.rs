@@ -1208,7 +1208,19 @@ impl RequestStore {
         .await
     }
 
-    /// Rows of one kind in one status, oldest first (wanted enrolment).
+    /// Album rows in one status the wanted sweep may watch: a watch a person
+    /// removed is not enrolled again until the row is next written.
+    pub async fn to_watch(
+        &self,
+        status: RequestStatus,
+    ) -> Result<Vec<RequestRecord>, RequestsError> {
+        read(&self.db, "requests.to_watch", move |conn| {
+            read_records(conn, sql::ROWS_TO_WATCH.text(), params![status])
+        })
+        .await
+    }
+
+    /// Rows of one kind in one status, oldest first.
     pub async fn with_status(
         &self,
         kind: RequestKind,

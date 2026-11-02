@@ -27785,6 +27785,73 @@
         ]
       }
     },
+    "/api/v3/requests/wanted/clear-finished": {
+      "post": {
+        "tags": [
+          "requests"
+        ],
+        "summary": "Remove every stopped or fulfilled watch the caller can see.\n`POST /api/v3/requests/wanted/clear-finished`. An admin's covers everyone's.",
+        "operationId": "wanted_clear_finished_handler",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WantedRemovalResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
+    "/api/v3/requests/wanted/{musicbrainz_id}": {
+      "delete": {
+        "tags": [
+          "requests"
+        ],
+        "summary": "Remove one wanted watch, stopping it first if it is active.\n`DELETE /api/v3/requests/wanted/{musicbrainz_id}`.",
+        "operationId": "wanted_remove_handler",
+        "parameters": [
+          {
+            "name": "musicbrainz_id",
+            "in": "path",
+            "description": "Release-group MBID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WantedRemovalResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/requests/wanted/{musicbrainz_id}/resume": {
       "post": {
         "tags": [
@@ -64537,6 +64604,21 @@
             ],
             "format": "int32",
             "description": "Tracks started (`wanted_auto_dispatched` for a partial album).",
+            "minimum": 0
+          }
+        }
+      },
+      "WantedRemovalResponse": {
+        "type": "object",
+        "description": "How many wanted watches a removal took off the list.",
+        "required": [
+          "removed"
+        ],
+        "properties": {
+          "removed": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Watches removed.",
             "minimum": 0
           }
         }

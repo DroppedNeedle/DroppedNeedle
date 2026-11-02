@@ -10,7 +10,7 @@ use crate::requests::ledger::{RequestRecord, RequestStatus, validate_mbid};
 use crate::requests::models::{
     ActiveCountResponse, ActiveRequestsResponse, HistoryQuery, HistoryResponse,
     REIMPORTABLE_FILTER, RequestItem, RequestKind, RequestTaskState, WaitingReason,
-    WantedActionResponse, WantedItem, WantedResponse, WantedRetryingItem,
+    WantedActionResponse, WantedItem, WantedRemovalResponse, WantedResponse, WantedRetryingItem,
 };
 use crate::requests::sqlite::WatchChange;
 use droppedneedle_auth::{Admin, Principal};
@@ -321,6 +321,35 @@ impl RequestsService {
             .mark_seen(&mbid, principal.user_id(), principal.is_admin())
             .await?;
         watch_action(change)
+    }
+
+    /// Remove one wanted watch in any state, and what it has seen.
+    pub async fn wanted_remove(
+        &self,
+        principal: &Principal,
+        mbid: &str,
+    ) -> Result<WantedRemovalResponse, RequestsError> {
+        let mbid = validate_mbid(mbid)?;
+        if !self
+            .wanted
+            .remove(&mbid, principal.user_id(), principal.is_admin())
+            .await?
+        {
+            return Err(RequestsError::NotFound);
+        }
+        Ok(WantedRemovalResponse { removed: 1 })
+    }
+
+    /// Remove every stopped or fulfilled watch the caller can see.
+    pub async fn wanted_clear_finished(
+        &self,
+        principal: &Principal,
+    ) -> Result<WantedRemovalResponse, RequestsError> {
+        let removed = self
+            .wanted
+            .clear_finished(principal.user_id(), principal.is_admin())
+            .await?;
+        Ok(WantedRemovalResponse { removed })
     }
 
     /// Rows plus their linked tasks' progress, in order. Each owner's

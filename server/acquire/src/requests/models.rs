@@ -565,6 +565,13 @@ pub struct WantedActionResponse {
     pub state: super::ledger::WatchState,
 }
 
+/// How many wanted watches a removal took off the list.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct WantedRemovalResponse {
+    /// Watches removed.
+    pub removed: u64,
+}
+
 /// One pending personal-mix auto-request approval.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct PersonalMixApprovalItem {

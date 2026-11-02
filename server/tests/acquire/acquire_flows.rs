@@ -362,6 +362,51 @@ async fn wanted_waits_while_no_source_is_turned_on() {
     assert!(tasks(&db).await.is_empty(), "nothing is downloaded");
 }
 
+// A removed watch does not come back from the request's failed row. It comes
+// back only once that request is written again and fails again.
+#[tokio::test]
+async fn a_removed_watch_stays_gone_until_the_request_fails_again() {
+    let db = AcquireDb::scratch().unwrap();
+    let rig = wanted(&db).await;
+    seed_request(&rig.deps.ledger, "rg-blue", "failed", None).await;
+    assert_eq!(wanted_tick(NOW, &rig.deps).await.enrolled, 1);
+    assert!(
+        rig.deps
+            .watches
+            .remove("rg-blue", "user-1", false)
+            .await
+            .unwrap()
+    );
+    assert_eq!(wanted_tick(NOW, &rig.deps).await.enrolled, 0);
+    let row = rig
+        .deps
+        .ledger
+        .get(RequestKind::Album, "rg-blue")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        row.status,
+        RequestStatus::Failed,
+        "the request is untouched"
+    );
+
+    assert!(
+        rig.deps
+            .ledger
+            .update_status(
+                RequestKind::Album,
+                "rg-blue",
+                RequestStatus::Failed,
+                None,
+                None
+            )
+            .await
+            .unwrap()
+    );
+    assert_eq!(wanted_tick(NOW, &rig.deps).await.enrolled, 1);
+}
+
 // A watch the library now holds is fulfilled and its request imported.
 #[tokio::test]
 async fn wanted_satisfied_from_the_library() {

@@ -411,6 +411,13 @@ const PATH_ID_ROWS: &[(Owned, &str, &str, u16, u16)] = &[
         404,
         ADMITTED,
     ),
+    (
+        Owned::Wanted,
+        "DELETE",
+        "/api/v3/requests/wanted/{musicbrainz_id}",
+        404,
+        ADMITTED,
+    ),
     // Download tasks: owner or admin.
     (
         Owned::Task,
@@ -1851,6 +1858,23 @@ async fn caller_keyed_state_stays_with_its_caller() {
     assert!(
         body["server_url"].is_null(),
         "B sees the server address on the shared account: {body}"
+    );
+
+    // Clearing finished watches: B's reaches only B's, an admin's everyone's.
+    let ids = seed(&app, Owned::Wanted, &ada, 900).await;
+    let stop = fill("/api/v3/requests/wanted/{musicbrainz_id}/stop", &ids);
+    let (status, body) = call(&app, &ada, "POST", &stop, None).await;
+    ok(status, &body, "A stops its watch");
+    let clear = "/api/v3/requests/wanted/clear-finished";
+    let (status, body) = call(&app, &bob, "POST", clear, None).await;
+    ok(status, &body, "B clears its finished watches");
+    assert_eq!(body["removed"], json!(0), "B reached A's watch: {body}");
+    let (status, body) = call(&app, &admin, "POST", clear, None).await;
+    ok(status, &body, "admin clears every finished watch");
+    assert_eq!(
+        body["removed"],
+        json!(1),
+        "admin's clear missed A's: {body}"
     );
     app.stop().await;
 }

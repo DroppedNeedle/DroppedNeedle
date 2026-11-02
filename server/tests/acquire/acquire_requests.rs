@@ -857,6 +857,80 @@ async fn wanted_view_and_actions() {
 }
 
 // Auto-download approvals: single approve, then a batch reject.
+// Removing a watch takes its seen candidates with it, and an active one goes
+// in one step. Clearing takes only the finished watches the caller can see.
+#[tokio::test]
+async fn wanted_watches_can_be_removed_and_cleared() {
+    const MBID_D: &str = "44444444-4444-4444-8444-444444444444";
+    const MBID_E: &str = "55555555-5555-4555-8555-555555555555";
+    let (state, _db, _dispatch) = setup().await;
+    state.wanted.enrol(watch(MBID_A, "u-ada")).await.unwrap();
+    state
+        .wanted
+        .add_seen(MBID_A, vec![("slskd".into(), "peer".into())], 1_700_000_000)
+        .await
+        .unwrap();
+    let remove = format!("/api/v3/requests/wanted/{MBID_A}");
+    assert_eq!(
+        call(&state, Method::DELETE, &remove, Some(BOB), None)
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
+    let (status, removed) = call(&state, Method::DELETE, &remove, Some(ADA), None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(removed["removed"], 1);
+    assert!(state.wanted.get(MBID_A).await.unwrap().is_none());
+    assert!(state.wanted.seen(MBID_A).await.unwrap().is_empty());
+    assert_eq!(
+        call(&state, Method::DELETE, &remove, Some(ADA), None)
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
+
+    for (key, user) in [
+        (MBID_B, "u-ada"),
+        (MBID_C, "u-ada"),
+        (MBID_D, "u-ada"),
+        (MBID_E, "u-bob"),
+    ] {
+        state.wanted.enrol(watch(key, user)).await.unwrap();
+    }
+    for (key, who) in [(MBID_B, ADA), (MBID_E, BOB)] {
+        let stop = format!("/api/v3/requests/wanted/{key}/stop");
+        call(&state, Method::POST, &stop, Some(who), None).await;
+    }
+    state
+        .store
+        .settle_in_library(MBID_C, "in_library", 1_700_000_100)
+        .await
+        .unwrap();
+    let clear = "/api/v3/requests/wanted/clear-finished";
+    let (_, cleared) = call(&state, Method::POST, clear, Some(ADA), None).await;
+    assert_eq!(cleared["removed"], 2, "stopped and fulfilled, own only");
+    let (_, left) = call(
+        &state,
+        Method::GET,
+        "/api/v3/requests/wanted",
+        Some(ADMIN),
+        None,
+    )
+    .await;
+    assert_eq!(keys(&left), vec![MBID_D.to_owned(), MBID_E.to_owned()]);
+    let (_, cleared) = call(&state, Method::POST, clear, Some(ADMIN), None).await;
+    assert_eq!(cleared["removed"], 1, "an admin's covers everyone's");
+    let (_, left) = call(
+        &state,
+        Method::GET,
+        "/api/v3/requests/wanted",
+        Some(ADMIN),
+        None,
+    )
+    .await;
+    assert_eq!(keys(&left), vec![MBID_D.to_owned()], "active stays");
+}
+
 #[tokio::test]
 async fn auto_download_approvals() {
     let (state, _db, _dispatch) = setup().await;

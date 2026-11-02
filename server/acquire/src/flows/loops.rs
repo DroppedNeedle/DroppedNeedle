@@ -449,7 +449,7 @@ fn notify_wanted(
 
 /// Enrol availability-dead album requests as watches: `failed` rows, plus
 /// `incomplete` rows when the partial toggle is on. Never auto-revives a
-/// stopped watch, skips rows with no requester, and skips rows whose
+/// stopped or removed watch, skips rows with no requester, and skips rows whose
 /// linked task is still active.
 async fn enrol_watches(now: i64, settings: &WantedSettings, deps: &WantedDeps) -> usize {
     let mut statuses = vec![(RequestStatus::Failed, WatchKind::Missing)];
@@ -458,7 +458,7 @@ async fn enrol_watches(now: i64, settings: &WantedSettings, deps: &WantedDeps) -
     }
     let mut enrolled = 0;
     for (status, kind) in statuses {
-        let rows = match deps.ledger.with_status(RequestKind::Album, status).await {
+        let rows = match deps.ledger.to_watch(status).await {
             Ok(rows) => rows,
             Err(error) => {
                 tracing::warn!(%status, ?error, "wanted enrolment could not read requests");

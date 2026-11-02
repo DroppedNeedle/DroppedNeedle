@@ -205,7 +205,7 @@ impl WantedStore {
         let key = key.to_lowercase();
         self.db
             .write_background("wanted.record_check", move |tx| {
-                tx.execute(
+                let recorded = tx.execute(
                     sql::RECORD_CHECK.text(),
                     params![
                         key,
@@ -217,6 +217,10 @@ impl WantedStore {
                         check.new_candidates
                     ],
                 )?;
+                // Removed while the check ran: nothing to remember it on.
+                if recorded == 0 {
+                    return Ok(());
+                }
                 for (source, identity) in &check.seen {
                     tx.execute(
                         sql::ADD_SEEN.text(),
@@ -337,6 +341,57 @@ impl WantedStore {
             Ok(())
         })
         .await
+    }
+
+    /// Remove one watch in any state and its seen candidates. The sweep will
+    /// not enrol the album again until its request is next written. Owners
+    /// and admins only; answers whether a watch went.
+    pub async fn remove(
+        &self,
+        key: &str,
+        user_id: &str,
+        is_admin: bool,
+    ) -> Result<bool, RequestsError> {
+        let key = key.to_lowercase();
+        let user_id = user_id.to_owned();
+        self.db
+            .write("wanted.remove", move |tx| {
+                let Some(watch) = load_watch_tx(tx, &key)? else {
+                    return Ok(false);
+                };
+                if !is_admin && watch.user_id != user_id {
+                    return Ok(false);
+                }
+                tx.execute(sql::NOTE_WATCH_REMOVED.text(), params![key])?;
+                tx.execute(sql::DELETE_WATCH.text(), params![key])?;
+                Ok(true)
+            })
+            .await
+            .map_err(|error| lane_error("wanted.remove", error))
+    }
+
+    /// Remove every stopped and fulfilled watch one caller can see: their
+    /// own, or everyone's for an admin. Answers how many went.
+    pub async fn clear_finished(
+        &self,
+        user_id: &str,
+        is_admin: bool,
+    ) -> Result<u64, RequestsError> {
+        let user_id = user_id.to_owned();
+        self.db
+            .write("wanted.clear_finished", move |tx| {
+                tx.execute(
+                    sql::NOTE_FINISHED_WATCHES_REMOVED.text(),
+                    params![is_admin, user_id],
+                )?;
+                let removed = tx.execute(
+                    sql::DELETE_FINISHED_WATCHES.text(),
+                    params![is_admin, user_id],
+                )?;
+                Ok(u64::try_from(removed).unwrap_or(0))
+            })
+            .await
+            .map_err(|error| lane_error("wanted.clear_finished", error))
     }
 
     /// Ownership-checked mutation; a fulfilled watch refuses everything

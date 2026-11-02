@@ -67,6 +67,8 @@ pub fn routes() -> Routes<RequestsState> {
         .user(routes!(wanted_stop_handler))
         .user(routes!(wanted_resume_handler))
         .user(routes!(wanted_seen_handler))
+        .user(routes!(wanted_remove_handler))
+        .user(routes!(wanted_clear_finished_handler))
         .admin(routes!(approvals_handler))
         .admin(routes!(approvals_count_handler))
         .admin(routes!(approve_handler))
