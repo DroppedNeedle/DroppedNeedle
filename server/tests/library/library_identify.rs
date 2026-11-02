@@ -1032,6 +1032,47 @@ const LINK_GROUP: &str = "bbbbbbbb-0000-4000-8000-000000000002";
 /// as, and the MusicBrainz id its file gave.
 type Seeded<'a> = (&'a str, &'a str, Option<&'a str>);
 
+/// Filing a review again keeps which files its exclude took out: a restore
+/// with no record of them would lift every exclusion on the album.
+#[test]
+fn filing_a_review_again_keeps_its_recorded_exclusions() {
+    let rig = rig_with_recall(RecallResult::default());
+    rig.seed_album(&album_facts("album-a", &[("rec-1", None)]));
+    let review = |reason: &str| droppedneedle_library::identify::models::ReviewItem {
+        id: "review-a".to_owned(),
+        local_album_id: "album-a".to_owned(),
+        reason_code: reason.to_owned(),
+        candidates: Vec::new(),
+        state: droppedneedle_library::identify::models::ReviewState::Pending,
+        resolved_by_user_id: None,
+        selected_candidate_key: None,
+    };
+    rig.store.file(review("FIRST")).expect("review files");
+    rig.db
+        .execute(
+            "INSERT INTO library_review_exclusions (review_id, local_track_id) \
+             SELECT 'review-a', id FROM local_tracks WHERE local_album_id = 'album-a'",
+            [],
+        )
+        .expect("exclusion records");
+    rig.store
+        .file(review("SECOND"))
+        .expect("review files again");
+
+    let (kept, reason, revision): (i64, String, i64) = rig
+        .db
+        .query_row(
+            "SELECT (SELECT COUNT(*) FROM library_review_exclusions WHERE review_id = r.id), \
+             r.reason_code, r.row_revision FROM library_identify_reviews r WHERE r.id = 'review-a'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("review reads");
+    assert_eq!(kept, 1, "the recorded exclusion survives");
+    assert_eq!(reason, "SECOND");
+    assert_eq!(revision, 2, "a stale revision no longer settles it");
+}
+
 /// A catalog whose albums' matches link their artists: rows the test
 /// seeds, a release document on file, and the identify store that works
 /// the links out.

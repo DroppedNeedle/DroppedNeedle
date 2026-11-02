@@ -243,10 +243,15 @@ droppedneedle_kernel::sql! {
                          lease_expires_at = ?1, updated_at = ?2 WHERE id = ?3";
     pub(super) RECOVER = "UPDATE library_identify_jobs SET state = 'queued', \
                          lease_expires_at = NULL, updated_at = ?1 WHERE state = 'running'";
-    pub(super) FILE_REVIEW = "INSERT OR REPLACE INTO library_identify_reviews (id, local_album_id, \
+    pub(super) FILE_REVIEW = "INSERT INTO library_identify_reviews (id, local_album_id, \
                          reason_code, candidates_json, state, resolved_by_user_id, \
                          selected_candidate_key, created_at, updated_at) \
-                         VALUES (?1, ?2, ?3, ?4, ?5, (SELECT id FROM auth_users WHERE id = ?6), ?7, ?8, ?8)";
+                         VALUES (?1, ?2, ?3, ?4, ?5, (SELECT id FROM auth_users WHERE id = ?6), ?7, ?8, ?8) \
+                         ON CONFLICT (id) DO UPDATE SET local_album_id = excluded.local_album_id, \
+                         reason_code = excluded.reason_code, candidates_json = excluded.candidates_json, \
+                         state = excluded.state, resolved_by_user_id = excluded.resolved_by_user_id, \
+                         selected_candidate_key = excluded.selected_candidate_key, \
+                         updated_at = excluded.updated_at";
     pub(super) SET_STATE = "UPDATE library_identify_reviews SET state = ?1, \
                          resolved_by_user_id = (SELECT id FROM auth_users WHERE id = ?2), selected_candidate_key = ?3, updated_at = ?4 \
                          WHERE id = ?5";

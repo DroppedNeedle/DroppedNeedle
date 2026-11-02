@@ -145,6 +145,49 @@ pub enum TagEditMode {
     ResetCanonical,
 }
 
+/// Where a tag applies.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+#[schema(as = ManagementTagScope)]
+pub enum TagScope {
+    /// Every file of the album.
+    Album,
+    /// One file.
+    Track,
+}
+
+crate::scan::models::spelled!(TagScope {
+    Album => "album",
+    Track => "track",
+});
+
+/// The shape of a tag's value in the editor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+#[schema(as = ManagementTagCardinality)]
+pub enum TagCardinality {
+    String,
+    Integer,
+    Boolean,
+    OrderedStrings,
+}
+
+/// What a saved override does to its tag.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+#[schema(as = ManagementOverrideMode)]
+pub enum OverrideMode {
+    Replace,
+    Preserve,
+    Clear,
+}
+
+crate::scan::models::spelled!(OverrideMode {
+    Replace => "replace",
+    Preserve => "preserve",
+    Clear => "clear",
+});
+
 /// One edited field, with the override it replaces.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TagEditField {
@@ -186,12 +229,25 @@ pub enum DuplicateAction {
     RecycleIncomingKeepExisting,
 }
 
+/// What kind of collision a duplicate resolution settles.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+#[schema(as = ManagementCollisionKind)]
+pub enum CollisionKind {
+    SamePathSameContent,
+    SamePathDifferentContent,
+    SameReleasePositionDifferentContent,
+    NormalizedPathCollision,
+    SidecarCollision,
+    DestinationCreatedAfterPreview,
+}
+
 /// A duplicate resolution: the blocked file and what to do with it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DuplicateIntent {
     pub source_job_id: String,
     pub source_plan_item_ordinal: i64,
-    pub collision_kind: String,
+    pub collision_kind: CollisionKind,
     pub existing_root_id: String,
     pub existing_relative_path: String,
     pub existing_local_track_id: Option<String>,

@@ -33600,8 +33600,7 @@
             "format": "double"
           },
           "state": {
-            "type": "string",
-            "description": "A scan run state, or `running`, `pausing`, `paused`, `idle` or\n`failed` for identification."
+            "$ref": "#/components/schemas/ActivityState"
           },
           "total": {
             "type": [
@@ -33628,6 +33627,25 @@
         "enum": [
           "scan",
           "identification"
+        ]
+      },
+      "ActivityState": {
+        "type": "string",
+        "description": "What a card's work is doing: a scan run's state, or identification's.",
+        "enum": [
+          "queued",
+          "discovering",
+          "indexing",
+          "reconciling",
+          "running",
+          "pausing",
+          "paused",
+          "stopping",
+          "idle",
+          "completed",
+          "cancelled",
+          "superseded_policy_changed",
+          "failed"
         ]
       },
       "AddTracksBody": {
@@ -38637,13 +38655,30 @@
         "required": [
           "id",
           "local_album_id",
+          "created_by_user_id",
+          "updated_by_user_id",
           "state",
           "album_row_revision",
           "input_revision",
           "local_snapshot",
           "draft",
           "source_selection",
-          "row_revision"
+          "provider_snapshot_expires_at",
+          "discogs_source",
+          "duplicate_result",
+          "duplicate_checked_at",
+          "result_release_mbid",
+          "result_source",
+          "result_received_at",
+          "seeded_at",
+          "terminal_at",
+          "created_at",
+          "updated_at",
+          "row_revision",
+          "input_is_current",
+          "validation",
+          "next_actions",
+          "review_reason"
         ],
         "properties": {
           "album_row_revision": {
@@ -38806,6 +38841,11 @@
       },
       "ContributionSourceSelection": {
         "type": "object",
+        "required": [
+          "schema_version",
+          "sources",
+          "alignments"
+        ],
         "properties": {
           "alignments": {
             "type": "array",
@@ -39271,6 +39311,13 @@
       },
       "DiscogsArtistCredit": {
         "type": "object",
+        "required": [
+          "name",
+          "credited_name",
+          "join_phrase",
+          "artist_id",
+          "canonical_url"
+        ],
         "properties": {
           "artist_id": {
             "type": [
@@ -39300,6 +39347,12 @@
       },
       "DiscogsFormat": {
         "type": "object",
+        "required": [
+          "name",
+          "quantity",
+          "descriptions",
+          "text"
+        ],
         "properties": {
           "descriptions": {
             "type": "array",
@@ -39327,6 +39380,11 @@
       },
       "DiscogsIdentifier": {
         "type": "object",
+        "required": [
+          "type",
+          "value",
+          "description"
+        ],
         "properties": {
           "description": {
             "type": [
@@ -39344,6 +39402,12 @@
       },
       "DiscogsLabel": {
         "type": "object",
+        "required": [
+          "name",
+          "catalogue_number",
+          "label_id",
+          "canonical_url"
+        ],
         "properties": {
           "canonical_url": {
             "type": [
@@ -39371,7 +39435,10 @@
       "DiscogsMedium": {
         "type": "object",
         "required": [
-          "position"
+          "position",
+          "title",
+          "format",
+          "tracks"
         ],
         "properties": {
           "format": {
@@ -39400,6 +39467,24 @@
       },
       "DiscogsRelease": {
         "type": "object",
+        "required": [
+          "release_id",
+          "master_id",
+          "canonical_release_url",
+          "canonical_master_url",
+          "title",
+          "artist_name",
+          "artists",
+          "released_date",
+          "year",
+          "country",
+          "labels",
+          "identifiers",
+          "barcode",
+          "formats",
+          "media",
+          "source_fetched_at"
+        ],
         "properties": {
           "artist_name": {
             "type": "string"
@@ -39604,6 +39689,11 @@
       },
       "DiscogsSourceView": {
         "type": "object",
+        "required": [
+          "release",
+          "expired",
+          "expires_at"
+        ],
         "properties": {
           "expired": {
             "type": "boolean"
@@ -39629,6 +39719,14 @@
       },
       "DiscogsTrack": {
         "type": "object",
+        "required": [
+          "source_position",
+          "number",
+          "title",
+          "duration_seconds",
+          "heading",
+          "artists"
+        ],
         "properties": {
           "artists": {
             "type": "array",
@@ -41251,7 +41349,13 @@
       "DuplicateCandidate": {
         "type": "object",
         "required": [
-          "evidence_kind"
+          "release_mbid",
+          "release_group_mbid",
+          "title",
+          "artist_name",
+          "evidence_kind",
+          "exact",
+          "differences"
         ],
         "properties": {
           "artist_name": {
@@ -41306,6 +41410,13 @@
       },
       "DuplicateCheckResult": {
         "type": "object",
+        "required": [
+          "schema_version",
+          "checked_at",
+          "input_revision",
+          "candidates",
+          "different_edition_confirmed"
+        ],
         "properties": {
           "candidates": {
             "type": "array",
@@ -47644,6 +47755,24 @@
       },
       "LocalReleaseSnapshot": {
         "type": "object",
+        "required": [
+          "schema_version",
+          "local_album_id",
+          "local_artist_id",
+          "album_row_revision",
+          "input_revision",
+          "title",
+          "album_artist_name",
+          "artist_kind",
+          "musicbrainz_artist_id",
+          "musicbrainz_release_group_id",
+          "musicbrainz_release_id",
+          "release_date",
+          "year",
+          "is_compilation",
+          "captured_at",
+          "media"
+        ],
         "properties": {
           "album_artist_name": {
             "type": "string"
@@ -48118,6 +48247,18 @@
           }
         }
       },
+      "ManagementCollisionKind": {
+        "type": "string",
+        "description": "What kind of collision a duplicate resolution settles.",
+        "enum": [
+          "same_path_same_content",
+          "same_path_different_content",
+          "same_release_position_different_content",
+          "normalized_path_collision",
+          "sidecar_collision",
+          "destination_created_after_preview"
+        ]
+      },
       "ManagementDiscardBody": {
         "type": "object",
         "description": "Discard a preview.",
@@ -48168,7 +48309,7 @@
             "description": "For `keep_incoming_alternate`: where the incoming file goes."
           },
           "collision_kind": {
-            "type": "string"
+            "$ref": "#/components/schemas/ManagementCollisionKind"
           },
           "existing_local_track_id": {
             "type": [
@@ -48561,6 +48702,15 @@
             "description": "The library folder it is in."
           }
         }
+      },
+      "ManagementOverrideMode": {
+        "type": "string",
+        "description": "What a saved override does to its tag.",
+        "enum": [
+          "replace",
+          "preserve",
+          "clear"
+        ]
       },
       "ManagementPhase": {
         "type": "string",
@@ -49363,6 +49513,16 @@
           }
         }
       },
+      "ManagementTagCardinality": {
+        "type": "string",
+        "description": "The shape of a tag's value in the editor.",
+        "enum": [
+          "string",
+          "integer",
+          "boolean",
+          "ordered_strings"
+        ]
+      },
       "ManagementTagEditFieldBody": {
         "type": "object",
         "description": "One edited tag.",
@@ -49431,12 +49591,12 @@
           "field_name",
           "scope",
           "cardinality",
-          "current_value"
+          "current_value",
+          "override_mode"
         ],
         "properties": {
           "cardinality": {
-            "type": "string",
-            "description": "`string`, `integer`, `boolean`, or `ordered_strings`."
+            "$ref": "#/components/schemas/ManagementTagCardinality"
           },
           "current_value": {
             "description": "The file's value now: text, a number, true/false, a list, or null."
@@ -49451,11 +49611,14 @@
             ]
           },
           "override_mode": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "`replace`, `preserve`, or `clear`."
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ManagementOverrideMode"
+              }
+            ]
           },
           "override_row_revision": {
             "type": [
@@ -49465,8 +49628,7 @@
             "format": "int64"
           },
           "scope": {
-            "type": "string",
-            "description": "`album` (applies to every file of the album) or `track`."
+            "$ref": "#/components/schemas/ManagementTagScope"
           }
         }
       },
@@ -49535,6 +49697,14 @@
             "format": "int64"
           }
         }
+      },
+      "ManagementTagScope": {
+        "type": "string",
+        "description": "Where a tag applies.",
+        "enum": [
+          "album",
+          "track"
+        ]
       },
       "ManagementTakeoverCause": {
         "type": "string",
@@ -56507,6 +56677,18 @@
       },
       "ReleaseDraft": {
         "type": "object",
+        "required": [
+          "schema_version",
+          "title",
+          "artist_credit",
+          "release_date",
+          "country",
+          "label",
+          "catalogue_number",
+          "barcode",
+          "packaging",
+          "media"
+        ],
         "properties": {
           "artist_credit": {
             "$ref": "#/components/schemas/ReleaseTextField"
@@ -56636,7 +56818,10 @@
       "ReleaseMediumDraft": {
         "type": "object",
         "required": [
-          "position"
+          "position",
+          "title",
+          "format",
+          "tracks"
         ],
         "properties": {
           "format": {
@@ -56660,7 +56845,9 @@
       "ReleaseMediumSnapshot": {
         "type": "object",
         "required": [
-          "position"
+          "position",
+          "title",
+          "tracks"
         ],
         "properties": {
           "position": {
@@ -56683,6 +56870,10 @@
       },
       "ReleaseTextField": {
         "type": "object",
+        "required": [
+          "value",
+          "source"
+        ],
         "properties": {
           "source": {
             "$ref": "#/components/schemas/ContributionFieldSource"
@@ -56702,7 +56893,8 @@
           "disc_number",
           "track_number",
           "title",
-          "artist_name"
+          "artist_name",
+          "duration_seconds"
         ],
         "properties": {
           "artist_name": {
@@ -56736,7 +56928,11 @@
         "required": [
           "local_track_id",
           "disc_number",
-          "track_number"
+          "track_number",
+          "title",
+          "artist_name",
+          "duration_seconds",
+          "duration_reliable"
         ],
         "properties": {
           "artist_name": {
@@ -61723,7 +61919,8 @@
           "provider",
           "entity_type",
           "external_id",
-          "canonical_url"
+          "canonical_url",
+          "fetched_at"
         ],
         "properties": {
           "canonical_url": {
@@ -62879,7 +63076,9 @@
       "TrackAlignment": {
         "type": "object",
         "required": [
-          "local_track_id"
+          "local_track_id",
+          "provider_position",
+          "classification"
         ],
         "properties": {
           "classification": {

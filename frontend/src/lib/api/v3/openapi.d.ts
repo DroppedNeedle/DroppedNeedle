@@ -9173,11 +9173,7 @@ export interface components {
             provider_unavailable: boolean;
             /** Format: double */
             started_at: number | null;
-            /**
-             * @description A scan run state, or `running`, `pausing`, `paused`, `idle` or
-             *     `failed` for identification.
-             */
-            state: string;
+            state: components["schemas"]["ActivityState"];
             /** Format: int64 */
             total: number | null;
             /** Format: double */
@@ -9190,6 +9186,11 @@ export interface components {
          * @enum {string}
          */
         ActivityKind: "scan" | "identification";
+        /**
+         * @description What a card's work is doing: a scan run's state, or identification's.
+         * @enum {string}
+         */
+        ActivityState: "queued" | "discovering" | "indexing" | "reconciling" | "running" | "pausing" | "paused" | "stopping" | "idle" | "completed" | "cancelled" | "superseded_policy_changed" | "failed";
         /** @description Add-tracks body. */
         AddTracksBody: {
             /** @description Insert position. Missing appends; past-the-end clamps. */
@@ -11473,38 +11474,38 @@ export interface components {
             /** Format: int64 */
             album_row_revision: number;
             /** Format: double */
-            created_at?: number;
-            created_by_user_id?: string | null;
-            discogs_source?: null | components["schemas"]["DiscogsSourceView"];
+            created_at: number;
+            created_by_user_id: string | null;
+            discogs_source: null | components["schemas"]["DiscogsSourceView"];
             draft: components["schemas"]["ReleaseDraft"];
             /** Format: double */
-            duplicate_checked_at?: number | null;
-            duplicate_result?: null | components["schemas"]["DuplicateCheckResult"];
+            duplicate_checked_at: number | null;
+            duplicate_result: null | components["schemas"]["DuplicateCheckResult"];
             id: string;
-            input_is_current?: boolean;
+            input_is_current: boolean;
             input_revision: string;
             local_album_id: string;
             local_snapshot: components["schemas"]["LocalReleaseSnapshot"];
-            next_actions?: components["schemas"]["ContributionNextAction"][];
+            next_actions: components["schemas"]["ContributionNextAction"][];
             /** Format: double */
-            provider_snapshot_expires_at?: number | null;
+            provider_snapshot_expires_at: number | null;
             /** Format: double */
-            result_received_at?: number | null;
-            result_release_mbid?: string | null;
-            result_source?: string | null;
-            review_reason?: null | components["schemas"]["ContributionReason"];
+            result_received_at: number | null;
+            result_release_mbid: string | null;
+            result_source: string | null;
+            review_reason: null | components["schemas"]["ContributionReason"];
             /** Format: int64 */
             row_revision: number;
             /** Format: double */
-            seeded_at?: number | null;
+            seeded_at: number | null;
             source_selection: components["schemas"]["ContributionSourceSelection"];
             state: components["schemas"]["ContributionState"];
             /** Format: double */
-            terminal_at?: number | null;
+            terminal_at: number | null;
             /** Format: double */
-            updated_at?: number;
-            updated_by_user_id?: string | null;
-            validation?: components["schemas"]["ContributionValidationIssue"][];
+            updated_at: number;
+            updated_by_user_id: string | null;
+            validation: components["schemas"]["ContributionValidationIssue"][];
         };
         /** @description A revision guard alone (rebuild, cancel, remove Discogs, seed, verify). */
         ContributionRevisionBody: {
@@ -11515,10 +11516,10 @@ export interface components {
             expected_row_revision: number;
         };
         ContributionSourceSelection: {
-            alignments?: components["schemas"]["TrackAlignment"][];
+            alignments: components["schemas"]["TrackAlignment"][];
             /** Format: int32 */
-            schema_version?: number;
-            sources?: components["schemas"]["SourceReference"][];
+            schema_version: number;
+            sources: components["schemas"]["SourceReference"][];
         };
         /**
          * @description Contribution lifecycle states, v2 `ContributionState` verbatim.
@@ -11729,56 +11730,56 @@ export interface components {
             token: string;
         };
         DiscogsArtistCredit: {
-            artist_id?: string | null;
-            canonical_url?: string | null;
-            credited_name?: string | null;
-            join_phrase?: string;
-            name?: string;
+            artist_id: string | null;
+            canonical_url: string | null;
+            credited_name: string | null;
+            join_phrase: string;
+            name: string;
         };
         DiscogsFormat: {
-            descriptions?: string[];
-            name?: string;
+            descriptions: string[];
+            name: string;
             /** Format: int64 */
-            quantity?: number | null;
-            text?: string | null;
+            quantity: number | null;
+            text: string | null;
         };
         DiscogsIdentifier: {
-            description?: string | null;
-            type?: string;
-            value?: string;
+            description: string | null;
+            type: string;
+            value: string;
         };
         DiscogsLabel: {
-            canonical_url?: string | null;
-            catalogue_number?: string | null;
-            label_id?: string | null;
-            name?: string;
+            canonical_url: string | null;
+            catalogue_number: string | null;
+            label_id: string | null;
+            name: string;
         };
         DiscogsMedium: {
-            format?: string | null;
+            format: string | null;
             /** Format: int64 */
             position: number;
-            title?: string | null;
-            tracks?: components["schemas"]["DiscogsTrack"][];
+            title: string | null;
+            tracks: components["schemas"]["DiscogsTrack"][];
         };
         DiscogsRelease: {
-            artist_name?: string;
-            artists?: components["schemas"]["DiscogsArtistCredit"][];
-            barcode?: string | null;
-            canonical_master_url?: string | null;
-            canonical_release_url?: string;
-            country?: string | null;
-            formats?: components["schemas"]["DiscogsFormat"][];
-            identifiers?: components["schemas"]["DiscogsIdentifier"][];
-            labels?: components["schemas"]["DiscogsLabel"][];
-            master_id?: string | null;
-            media?: components["schemas"]["DiscogsMedium"][];
-            release_id?: string;
-            released_date?: string | null;
+            artist_name: string;
+            artists: components["schemas"]["DiscogsArtistCredit"][];
+            barcode: string | null;
+            canonical_master_url: string | null;
+            canonical_release_url: string;
+            country: string | null;
+            formats: components["schemas"]["DiscogsFormat"][];
+            identifiers: components["schemas"]["DiscogsIdentifier"][];
+            labels: components["schemas"]["DiscogsLabel"][];
+            master_id: string | null;
+            media: components["schemas"]["DiscogsMedium"][];
+            release_id: string;
+            released_date: string | null;
             /** Format: double */
-            source_fetched_at?: number;
-            title?: string;
+            source_fetched_at: number;
+            title: string;
             /** Format: int32 */
-            year?: number | null;
+            year: number | null;
         };
         DiscogsReleaseCandidate: {
             artist_name?: string;
@@ -11818,20 +11819,20 @@ export interface components {
             release_id_or_url: string;
         };
         DiscogsSourceView: {
-            expired?: boolean;
+            expired: boolean;
             /** Format: double */
-            expires_at?: number | null;
-            release?: null | components["schemas"]["DiscogsRelease"];
+            expires_at: number | null;
+            release: null | components["schemas"]["DiscogsRelease"];
         };
         DiscogsTrack: {
-            artists?: components["schemas"]["DiscogsArtistCredit"][];
+            artists: components["schemas"]["DiscogsArtistCredit"][];
             /** Format: double */
-            duration_seconds?: number | null;
-            heading?: boolean;
+            duration_seconds: number | null;
+            heading: boolean;
             /** Format: int64 */
-            number?: number | null;
-            source_position?: string | null;
-            title?: string;
+            number: number | null;
+            source_position: string | null;
+            title: string;
         };
         /** @description Body recording one discover interaction for personalization. */
         DiscoverActivityRequest: {
@@ -12589,13 +12590,13 @@ export interface components {
             files: string[];
         };
         DuplicateCandidate: {
-            artist_name?: string;
-            differences?: string[];
+            artist_name: string;
+            differences: string[];
             evidence_kind: components["schemas"]["DuplicateEvidenceKind"];
-            exact?: boolean;
-            release_group_mbid?: string | null;
-            release_mbid?: string | null;
-            title?: string;
+            exact: boolean;
+            release_group_mbid: string | null;
+            release_mbid: string | null;
+            title: string;
         };
         /** @description Run the MusicBrainz duplicate check. */
         DuplicateCheckBody: {
@@ -12608,13 +12609,13 @@ export interface components {
             expected_row_revision: number;
         };
         DuplicateCheckResult: {
-            candidates?: components["schemas"]["DuplicateCandidate"][];
+            candidates: components["schemas"]["DuplicateCandidate"][];
             /** Format: double */
-            checked_at?: number;
-            different_edition_confirmed?: boolean;
-            input_revision?: string;
+            checked_at: number;
+            different_edition_confirmed: boolean;
+            input_revision: string;
             /** Format: int32 */
-            schema_version?: number;
+            schema_version: number;
         };
         /**
          * @description Duplicate evidence kinds, ordered weakest-last (v2 sort key
@@ -15594,26 +15595,26 @@ export interface components {
             new_password: string;
         };
         LocalReleaseSnapshot: {
-            album_artist_name?: string;
+            album_artist_name: string;
             /** Format: int64 */
-            album_row_revision?: number;
-            artist_kind?: string;
+            album_row_revision: number;
+            artist_kind: string;
             /** Format: double */
-            captured_at?: number;
-            input_revision?: string;
-            is_compilation?: boolean;
-            local_album_id?: string;
-            local_artist_id?: string;
-            media?: components["schemas"]["ReleaseMediumSnapshot"][];
-            musicbrainz_artist_id?: string | null;
-            musicbrainz_release_group_id?: string | null;
-            musicbrainz_release_id?: string | null;
-            release_date?: string | null;
+            captured_at: number;
+            input_revision: string;
+            is_compilation: boolean;
+            local_album_id: string;
+            local_artist_id: string;
+            media: components["schemas"]["ReleaseMediumSnapshot"][];
+            musicbrainz_artist_id: string | null;
+            musicbrainz_release_group_id: string | null;
+            musicbrainz_release_id: string | null;
+            release_date: string | null;
             /** Format: int32 */
-            schema_version?: number;
-            title?: string;
+            schema_version: number;
+            title: string;
             /** Format: int32 */
-            year?: number | null;
+            year: number | null;
         };
         /** @description Local login body. */
         LoginBody: {
@@ -15787,6 +15788,11 @@ export interface components {
             /** Format: int64 */
             to_year?: number | null;
         };
+        /**
+         * @description What kind of collision a duplicate resolution settles.
+         * @enum {string}
+         */
+        ManagementCollisionKind: "same_path_same_content" | "same_path_different_content" | "same_release_position_different_content" | "normalized_path_collision" | "sidecar_collision" | "destination_created_after_preview";
         /** @description Discard a preview. */
         ManagementDiscardBody: {
             /** Format: int64 */
@@ -15802,7 +15808,7 @@ export interface components {
             action: components["schemas"]["ManagementDuplicateAction"];
             /** @description For `keep_incoming_alternate`: where the incoming file goes. */
             alternate_relative_path?: string | null;
-            collision_kind: string;
+            collision_kind: components["schemas"]["ManagementCollisionKind"];
             existing_local_track_id?: string | null;
             existing_relative_path: string;
             existing_root_id: string;
@@ -15947,6 +15953,11 @@ export interface components {
             /** @description The library folder it is in. */
             root_path: string;
         };
+        /**
+         * @description What a saved override does to its tag.
+         * @enum {string}
+         */
+        ManagementOverrideMode: "replace" | "preserve" | "clear";
         /**
          * @description Where a management job is: planning its files, a preview waiting to be
          *     applied, writing (applying, undoing or restoring originals), or done.
@@ -16234,6 +16245,11 @@ export interface components {
             /** Format: int64 */
             warning_count: number;
         };
+        /**
+         * @description The shape of a tag's value in the editor.
+         * @enum {string}
+         */
+        ManagementTagCardinality: "string" | "integer" | "boolean" | "ordered_strings";
         /** @description One edited tag. */
         ManagementTagEditFieldBody: {
             field_name: string;
@@ -16259,18 +16275,15 @@ export interface components {
         };
         /** @description One tag in the editor. */
         ManagementTagEditorFieldView: {
-            /** @description `string`, `integer`, `boolean`, or `ordered_strings`. */
-            cardinality: string;
+            cardinality: components["schemas"]["ManagementTagCardinality"];
             /** @description The file's value now: text, a number, true/false, a list, or null. */
             current_value: unknown;
             field_name: string;
             override_id?: string | null;
-            /** @description `replace`, `preserve`, or `clear`. */
-            override_mode?: string | null;
+            override_mode: null | components["schemas"]["ManagementOverrideMode"];
             /** Format: int64 */
             override_row_revision?: number | null;
-            /** @description `album` (applies to every file of the album) or `track`. */
-            scope: string;
+            scope: components["schemas"]["ManagementTagScope"];
         };
         /** @description One file's tags, saved overrides and match. */
         ManagementTagEditorView: {
@@ -16292,6 +16305,11 @@ export interface components {
             /** Format: int64 */
             track_revision: number;
         };
+        /**
+         * @description Where a tag applies.
+         * @enum {string}
+         */
+        ManagementTagScope: "album" | "track";
         /**
          * @description Why the app stepped back from an album.
          * @enum {string}
@@ -19387,17 +19405,17 @@ export interface components {
          */
         RelationshipType: "composer" | "lyricist" | "conductor" | "performer" | "arranger" | "remixer" | "producer" | "other";
         ReleaseDraft: {
-            artist_credit?: components["schemas"]["ReleaseTextField"];
-            barcode?: components["schemas"]["ReleaseTextField"];
-            catalogue_number?: components["schemas"]["ReleaseTextField"];
-            country?: components["schemas"]["ReleaseTextField"];
-            label?: components["schemas"]["ReleaseTextField"];
-            media?: components["schemas"]["ReleaseMediumDraft"][];
-            packaging?: components["schemas"]["ReleaseTextField"];
-            release_date?: components["schemas"]["ReleaseTextField"];
+            artist_credit: components["schemas"]["ReleaseTextField"];
+            barcode: components["schemas"]["ReleaseTextField"];
+            catalogue_number: components["schemas"]["ReleaseTextField"];
+            country: components["schemas"]["ReleaseTextField"];
+            label: components["schemas"]["ReleaseTextField"];
+            media: components["schemas"]["ReleaseMediumDraft"][];
+            packaging: components["schemas"]["ReleaseTextField"];
+            release_date: components["schemas"]["ReleaseTextField"];
             /** Format: int32 */
-            schema_version?: number;
-            title?: components["schemas"]["ReleaseTextField"];
+            schema_version: number;
+            title: components["schemas"]["ReleaseTextField"];
         };
         /**
          * @description One page of the edition finder, with MusicBrainz's count of matches as
@@ -19438,42 +19456,42 @@ export interface components {
             year?: number | null;
         };
         ReleaseMediumDraft: {
-            format?: components["schemas"]["ReleaseTextField"];
+            format: components["schemas"]["ReleaseTextField"];
             /** Format: int64 */
             position: number;
-            title?: components["schemas"]["ReleaseTextField"];
-            tracks?: components["schemas"]["ReleaseTrackDraft"][];
+            title: components["schemas"]["ReleaseTextField"];
+            tracks: components["schemas"]["ReleaseTrackDraft"][];
         };
         ReleaseMediumSnapshot: {
             /** Format: int64 */
             position: number;
-            title?: string | null;
-            tracks?: components["schemas"]["ReleaseTrackSnapshot"][];
+            title: string | null;
+            tracks: components["schemas"]["ReleaseTrackSnapshot"][];
         };
         ReleaseTextField: {
-            source?: components["schemas"]["ContributionFieldSource"];
-            value?: string | null;
+            source: components["schemas"]["ContributionFieldSource"];
+            value: string | null;
         };
         ReleaseTrackDraft: {
             artist_name: components["schemas"]["ReleaseTextField"];
             /** Format: int64 */
             disc_number: number;
             /** Format: double */
-            duration_seconds?: number | null;
+            duration_seconds: number | null;
             local_track_id: string;
             title: components["schemas"]["ReleaseTextField"];
             /** Format: int64 */
             track_number: number;
         };
         ReleaseTrackSnapshot: {
-            artist_name?: string | null;
+            artist_name: string | null;
             /** Format: int64 */
             disc_number: number;
-            duration_reliable?: boolean;
+            duration_reliable: boolean;
             /** Format: double */
-            duration_seconds?: number | null;
+            duration_seconds: number | null;
             local_track_id: string;
-            title?: string;
+            title: string;
             /** Format: int64 */
             track_number: number;
         };
@@ -21633,7 +21651,7 @@ export interface components {
             entity_type: string;
             external_id: string;
             /** Format: double */
-            fetched_at?: number | null;
+            fetched_at: number | null;
             provider: string;
         };
         /**
@@ -22091,9 +22109,9 @@ export interface components {
             source: components["schemas"]["ListenSource"];
         };
         TrackAlignment: {
-            classification?: components["schemas"]["AlignmentClassification"];
+            classification: components["schemas"]["AlignmentClassification"];
             local_track_id: string;
-            provider_position?: string | null;
+            provider_position: string | null;
         };
         /** @description How one file fits a candidate release. */
         TrackEvidenceView: {

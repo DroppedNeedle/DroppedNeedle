@@ -9,7 +9,6 @@ import {
 import { goto } from '$app/navigation';
 import { withBasePath } from '$lib/utils/basePath';
 import { api } from '$lib/api/client';
-import { asLibraryContribution } from './asLibraryContribution';
 import type { components } from '$lib/api/v3/openapi';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { toastStore } from '$lib/stores/toast';
@@ -23,7 +22,7 @@ import { LibraryContributionQueryKeyFactory } from './LibraryContributionQueryKe
 const saveContribution = (record: components['schemas']['ContributionRecord']): Promise<void> =>
 	setQueryDataWithPersister(
 		LibraryContributionQueryKeyFactory.detail(authStore.user?.id, record.id),
-		asLibraryContribution(record)
+		record
 	);
 
 const contributions = () => [contributionsChanged(authStore.user?.id)];

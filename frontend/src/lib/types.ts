@@ -572,9 +572,9 @@ export interface LibraryAlbumDetail extends LibraryAlbumSummary {
 }
 
 export type ContributionState = Schemas['ContributionState'];
-export type ReleaseTextField = Sent<Schemas['ReleaseTextField']>;
-export type ReleaseDraft = Sent<Schemas['ReleaseDraft']>;
-export type ContributionDuplicateCandidate = Sent<Schemas['DuplicateCandidate']>;
+export type ReleaseTextField = Schemas['ReleaseTextField'];
+export type ReleaseDraft = Schemas['ReleaseDraft'];
+export type ContributionDuplicateCandidate = Schemas['DuplicateCandidate'];
 
 export type DiscogsReleaseCandidate = components['schemas']['DiscogsReleaseCandidate'];
 
@@ -582,15 +582,7 @@ export type MusicBrainzSeedField = components['schemas']['MusicBrainzSeedField']
 
 export type MusicBrainzSeed = components['schemas']['MusicBrainzSeed'];
 
-// The server sends every field of a contribution, but the contract marks the
-// defaulted ones optional, so the screens read the same shape with them required.
-type Sent<T> = T extends (infer U)[]
-	? Sent<U>[]
-	: T extends object
-		? { [K in keyof T]-?: Sent<T[K]> }
-		: T;
-
-export type LibraryContribution = Sent<Schemas['ContributionRecord']>;
+export type LibraryContribution = Schemas['ContributionRecord'];
 
 export interface NativeAlbumsResponse {
 	items: LibraryAlbumSummary[];

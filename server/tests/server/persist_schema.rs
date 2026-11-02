@@ -4006,6 +4006,25 @@ fn prepare_one(connection: &rusqlite::Connection, name: &str, text: &str) -> Opt
     }
 }
 
+/// A `row` reads by position, so the columns a statement answers must be the
+/// struct's fields, by name and in order.
+fn row_mismatch(
+    connection: &rusqlite::Connection,
+    shape: &droppedneedle_kernel::db::statement::RowShape,
+    statement: &droppedneedle_kernel::db::statement::Statement,
+) -> Option<String> {
+    let prepared = connection.prepare(statement.text()).ok()?;
+    let answers = prepared.column_names();
+    (answers != shape.columns()).then(|| {
+        format!(
+            "{} reads {}: the statement answers {answers:?}, the struct has {:?}",
+            shape.name(),
+            statement.name(),
+            shape.columns()
+        )
+    })
+}
+
 /// Decision 5: every declared statement, and every statement a family can
 /// make, prepares against the migrated schema, or a `schema = V2` block's
 /// against the v2 fixture database, so a renamed column or a dropped table
@@ -4058,10 +4077,15 @@ fn every_registered_statement_prepares() {
     for (module, (path, written)) in &on_disk {
         match registered.get(module.as_str()) {
             None => wrong.push(format!("{path}: missing from its crate's list of sql.rs files")),
-            Some((_, declared)) if declared.len() != *written => wrong.push(format!(
-                "{path}: {written} declarations written, {} registered; declare SQL only inside its sql! block",
-                declared.len()
-            )),
+            Some((_, declared))
+                if declared.iter().filter(|one| !matches!(one, Declared::Row(_))).count()
+                    != *written =>
+            {
+                wrong.push(format!(
+                    "{path}: {written} declarations written, {} registered; declare SQL only inside its sql! block",
+                    declared.len()
+                ))
+            }
             Some(_) => {}
         }
     }
@@ -4115,6 +4139,11 @@ fn every_registered_statement_prepares() {
                             wrong.extend(prepare_one(connection, &name, text));
                         }
                     }
+                }
+            }
+            Declared::Row(shape) => {
+                for statement in shape.statements() {
+                    wrong.extend(row_mismatch(connection, shape, statement));
                 }
             }
             Declared::Fragment(_) => {}
@@ -4212,7 +4241,7 @@ fn registered_statements_reach_tracks_by_key() {
                 let (name, texts) = match declared {
                     Declared::Statement(one) => (one.name(), vec![one.text().to_owned()]),
                     Declared::Family(family) => (family.name(), family.texts().unwrap_or_default()),
-                    Declared::Fragment(_) => continue,
+                    Declared::Fragment(_) | Declared::Row(_) => continue,
                 };
                 if TRACK_WALKS.contains(&name) {
                     continue;

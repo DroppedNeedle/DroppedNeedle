@@ -14,6 +14,11 @@
 //!     pub(crate) RUN_BY_ID = "SELECT " + RUN_COLUMNS + RUN_FROM + " WHERE r.id = ?1";
 //!     /// The run list, one statement per sort and direction.
 //!     family RUN_PAGES = run_page;
+//!     /// What a statement answers: one field per column, in order.
+//!     pub(super) row RunRow for [RUN_BY_ID] {
+//!         id: String,
+//!         updated_at: Millis,
+//!     }
 //! }
 //! ```
 //!
@@ -38,7 +43,15 @@
 //! block against a file built from the cache schema). Preparing proves
 //! the tables and columns a statement names exist and that the text is one
 //! valid statement; it does not prove the call site binds the right number
-//! of values, that a column list matches its row mapper, or the query plan.
+//! of values or the query plan.
+//!
+//! A `row` is a struct and its `read`, for a statement that answers more
+//! than one column. `read` takes the columns by position, so a list of a
+//! hundred thousand rows looks up no names, and the schema test holds each
+//! statement in its `for` list to the struct: the columns it answers must
+//! be the fields, by name and in order. A column with no name of its own
+//! (`COUNT(*)`) takes an `AS`. A statement with a single column needs no
+//! row.
 
 /// One named statement. Pass [`Statement::text`] to rusqlite or sqlx.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -215,6 +228,46 @@ pub enum Declared {
     Fragment(&'static str),
     /// A family, prepared over every combination.
     Family(Family),
+    /// A row struct and the statements it reads.
+    Row(RowShape),
+}
+
+/// A `row` declaration as the schema test sees it.
+#[derive(Debug, Clone, Copy)]
+pub struct RowShape {
+    name: &'static str,
+    columns: &'static [&'static str],
+    statements: &'static [Statement],
+}
+
+impl RowShape {
+    #[doc(hidden)]
+    pub const fn new(
+        name: &'static str,
+        columns: &'static [&'static str],
+        statements: &'static [Statement],
+    ) -> Self {
+        Self {
+            name,
+            columns,
+            statements,
+        }
+    }
+
+    /// The module path and struct name.
+    pub const fn name(&self) -> &'static str {
+        self.name
+    }
+
+    /// The struct's fields, in order.
+    pub const fn columns(&self) -> &'static [&'static str] {
+        self.columns
+    }
+
+    /// The statements read into it.
+    pub const fn statements(&self) -> &'static [Statement] {
+        self.statements
+    }
 }
 
 /// The declarations of one `sql.rs`, in order.
@@ -237,6 +290,8 @@ pub fn quoted_identifier(name: &str) -> String {
 
 #[doc(hidden)]
 pub use const_format::concatcp as __concatcp;
+#[doc(hidden)]
+pub use rusqlite as __rusqlite;
 
 /// Declare the statements, fragments and families of one `sql.rs`. See
 /// [`db::statement`](crate::db::statement).
@@ -268,6 +323,38 @@ macro_rules! __sql_items {
         $($rest:tt)*
     ) => {
         $crate::__sql_items! { $schema [$($done)* (family $name $builder)] $($rest)* }
+    };
+    (
+        $schema:ident [$($done:tt)*]
+        $(#[$meta:meta])* $vis:vis row $name:ident for [$($statement:ident),+ $(,)?] {
+            $($field:ident : $ty:ty),+ $(,)?
+        }
+        $($rest:tt)*
+    ) => {
+        $(#[$meta])*
+        $vis struct $name {
+            $($vis $field: $ty),+
+        }
+
+        impl $name {
+            /// One row, its columns in the order of the fields.
+            #[allow(unused_assignments)]
+            $vis fn read(
+                row: &$crate::db::statement::__rusqlite::Row<'_>,
+            ) -> $crate::db::statement::__rusqlite::Result<Self> {
+                let mut at = 0;
+                Ok(Self {
+                    $($field: {
+                        let value = row.get(at)?;
+                        at += 1;
+                        value
+                    }),+
+                })
+            }
+        }
+        $crate::__sql_items! {
+            $schema [$($done)* (row $name [$($statement),+] [$($field),+])] $($rest)*
+        }
     };
     (
         $schema:ident [$($done:tt)*]
@@ -305,6 +392,13 @@ macro_rules! __sql_declared {
     };
     ((family $name:ident $builder:ident)) => {
         $crate::db::statement::Declared::Family($crate::sql_family!($name, $builder))
+    };
+    ((row $name:ident [$($statement:ident),+] [$($field:ident),+])) => {
+        $crate::db::statement::Declared::Row($crate::db::statement::RowShape::new(
+            concat!(module_path!(), "::", stringify!($name)),
+            &[$(stringify!($field)),+],
+            &[$($statement),+],
+        ))
     };
 }
 

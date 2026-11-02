@@ -1,5 +1,8 @@
 //! The contribution store's newer statements.
 
+use droppedneedle_kernel::db::time::Millis;
+
+use super::models::ContributionState;
 use crate::identity::sql::PERSONS;
 
 droppedneedle_kernel::sql! {
@@ -103,4 +106,74 @@ droppedneedle_kernel::sql! {
     pub(super) LOAD_ROW = "SELECT " + ROW_COLUMNS + " FROM library_contribution_drafts WHERE id = ?1";
     pub(super) CHOSEN_ARTIST_IDENTITY = "SELECT provider_artist_id FROM local_artist_external_identities \
          WHERE local_artist_id = ?1 AND provider = ?2 AND decision_source IN " + PERSONS;
+    pub(super) row AlbumInputRow for [ALBUM_INPUT] {
+        row_revision: i64,
+        album_artist_id: String,
+    }
+    pub(super) row AlbumInputTrack for [ALBUM_INPUT_TRACKS] {
+        id: String,
+        tag_revision: Option<String>,
+        stat_revision: String,
+        applied_policy_revision: String,
+        applied_policy: String,
+    }
+    pub(super) row AlbumIdentityRow for [ALBUM_IDENTITY] {
+        release_mbid: Option<String>,
+        release_group_mbid: String,
+    }
+    /// A draft's columns; its JSON decodes after the statement finishes.
+    pub(super) row DraftRow for [LOAD_ROW] {
+        id: String,
+        local_album_id: String,
+        created_by_user_id: Option<String>,
+        updated_by_user_id: Option<String>,
+        state: ContributionState,
+        album_row_revision: i64,
+        input_revision: String,
+        local_snapshot_json: String,
+        resolved_draft_json: String,
+        source_selection_json: String,
+        provider_snapshot_expires_at: Option<Millis>,
+        duplicate_result_json: Option<String>,
+        duplicate_checked_at: Option<Millis>,
+        duplicate_input_revision: Option<String>,
+        result_release_mbid: Option<String>,
+        result_source: Option<String>,
+        result_received_at: Option<Millis>,
+        seed_snapshot_json: Option<String>,
+        seed_hash: Option<String>,
+        seeded_at: Option<Millis>,
+        terminal_at: Option<Millis>,
+        created_at: Millis,
+        updated_at: Millis,
+        row_revision: i64,
+        last_verification_failure: Option<String>,
+    }
+    pub(super) row AlbumContextRow for [ALBUM_CONTEXT] {
+        id: String,
+        row_revision: i64,
+        title: String,
+        album_artist_name: Option<String>,
+        album_artist_id: String,
+        original_release_date: Option<String>,
+        year: Option<i32>,
+        is_compilation: bool,
+    }
+    pub(super) row AlbumContextTrack for [ALBUM_CONTEXT_TRACKS] {
+        id: String,
+        disc_number: i64,
+        track_number: i64,
+        title: String,
+        artist_name: Option<String>,
+        duration_seconds: Option<f64>,
+        availability: String,
+        disc_subtitle: Option<String>,
+        relative_path: String,
+        recording_mbid: Option<String>,
+        embedded_recording_mbid: Option<String>,
+        tag_revision: Option<String>,
+        stat_revision: String,
+        applied_policy_revision: String,
+        applied_policy: String,
+    }
 }

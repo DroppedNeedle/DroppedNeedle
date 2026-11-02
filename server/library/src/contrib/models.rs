@@ -70,6 +70,17 @@ pub enum ContributionState {
     Cancelled,
 }
 
+crate::scan::models::spelled!(ContributionState {
+    Draft => "draft",
+    Ready => "ready",
+    Seeded => "seeded",
+    Verifying => "verifying",
+    Linked => "linked",
+    NeedsReview => "needs_review",
+    Stale => "stale",
+    Cancelled => "cancelled",
+});
+
 /// Follow-up actions the UI may offer, v2 `ContributionNextAction` verbatim.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -125,8 +136,10 @@ pub enum AlignmentClassification {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct ReleaseTextField {
     #[serde(default)]
+    #[schema(required = true)]
     pub value: Option<String>,
     #[serde(default)]
+    #[schema(required = true)]
     pub source: ContributionFieldSource,
 }
 
@@ -158,12 +171,16 @@ pub struct ReleaseTrackSnapshot {
     pub disc_number: i64,
     pub track_number: i64,
     #[serde(default)]
+    #[schema(required = true)]
     pub title: String,
     #[serde(default)]
+    #[schema(required = true)]
     pub artist_name: Option<String>,
     #[serde(default)]
+    #[schema(required = true)]
     pub duration_seconds: Option<f64>,
     #[serde(default)]
+    #[schema(required = true)]
     pub duration_reliable: bool,
 }
 
@@ -171,44 +188,62 @@ pub struct ReleaseTrackSnapshot {
 pub struct ReleaseMediumSnapshot {
     pub position: i64,
     #[serde(default)]
+    #[schema(required = true)]
     pub title: Option<String>,
     #[serde(default)]
+    #[schema(required = true)]
     pub tracks: Vec<ReleaseTrackSnapshot>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct LocalReleaseSnapshot {
     #[serde(default = "schema_one")]
+    #[schema(required = true)]
     pub schema_version: i32,
     #[serde(default)]
+    #[schema(required = true)]
     pub local_album_id: String,
     #[serde(default)]
+    #[schema(required = true)]
     pub local_artist_id: String,
     #[serde(default = "revision_one")]
+    #[schema(required = true)]
     pub album_row_revision: i64,
     #[serde(default)]
+    #[schema(required = true)]
     pub input_revision: String,
     #[serde(default)]
+    #[schema(required = true)]
     pub title: String,
     #[serde(default)]
+    #[schema(required = true)]
     pub album_artist_name: String,
     #[serde(default = "unknown_kind")]
+    #[schema(required = true)]
     pub artist_kind: String,
     #[serde(default)]
+    #[schema(required = true)]
     pub musicbrainz_artist_id: Option<String>,
     #[serde(default)]
+    #[schema(required = true)]
     pub musicbrainz_release_group_id: Option<String>,
     #[serde(default)]
+    #[schema(required = true)]
     pub musicbrainz_release_id: Option<String>,
     #[serde(default)]
+    #[schema(required = true)]
     pub release_date: Option<String>,
     #[serde(default)]
+    #[schema(required = true)]
     pub year: Option<i32>,
     #[serde(default)]
+    #[schema(required = true)]
     pub is_compilation: bool,
     #[serde(default)]
+    #[schema(required = true)]
     pub captured_at: f64,
     #[serde(default)]
+    #[schema(required = true)]
     pub media: Vec<ReleaseMediumSnapshot>,
 }
 
@@ -230,6 +265,7 @@ pub struct ReleaseTrackDraft {
     pub title: ReleaseTextField,
     pub artist_name: ReleaseTextField,
     #[serde(default)]
+    #[schema(required = true)]
     pub duration_seconds: Option<f64>,
 }
 
@@ -237,34 +273,47 @@ pub struct ReleaseTrackDraft {
 pub struct ReleaseMediumDraft {
     pub position: i64,
     #[serde(default)]
+    #[schema(required = true)]
     pub title: ReleaseTextField,
     #[serde(default)]
+    #[schema(required = true)]
     pub format: ReleaseTextField,
     #[serde(default)]
+    #[schema(required = true)]
     pub tracks: Vec<ReleaseTrackDraft>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct ReleaseDraft {
     #[serde(default = "schema_one")]
+    #[schema(required = true)]
     pub schema_version: i32,
     #[serde(default)]
+    #[schema(required = true)]
     pub title: ReleaseTextField,
     #[serde(default)]
+    #[schema(required = true)]
     pub artist_credit: ReleaseTextField,
     #[serde(default)]
+    #[schema(required = true)]
     pub release_date: ReleaseTextField,
     #[serde(default)]
+    #[schema(required = true)]
     pub country: ReleaseTextField,
     #[serde(default)]
+    #[schema(required = true)]
     pub label: ReleaseTextField,
     #[serde(default)]
+    #[schema(required = true)]
     pub catalogue_number: ReleaseTextField,
     #[serde(default)]
+    #[schema(required = true)]
     pub barcode: ReleaseTextField,
     #[serde(default)]
+    #[schema(required = true)]
     pub packaging: ReleaseTextField,
     #[serde(default)]
+    #[schema(required = true)]
     pub media: Vec<ReleaseMediumDraft>,
 }
 
@@ -292,6 +341,7 @@ pub struct SourceReference {
     pub external_id: String,
     pub canonical_url: String,
     #[serde(default)]
+    #[schema(required = true)]
     pub fetched_at: Option<f64>,
 }
 
@@ -299,18 +349,23 @@ pub struct SourceReference {
 pub struct TrackAlignment {
     pub local_track_id: String,
     #[serde(default)]
+    #[schema(required = true)]
     pub provider_position: Option<String>,
     #[serde(default)]
+    #[schema(required = true)]
     pub classification: AlignmentClassification,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct ContributionSourceSelection {
     #[serde(default = "schema_one")]
+    #[schema(required = true)]
     pub schema_version: i32,
     #[serde(default)]
+    #[schema(required = true)]
     pub sources: Vec<SourceReference>,
     #[serde(default)]
+    #[schema(required = true)]
     pub alignments: Vec<TrackAlignment>,
 }
 
@@ -358,121 +413,166 @@ pub struct DiscogsReleaseCandidate {
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, ToSchema)]
 pub struct DiscogsArtistCredit {
     #[serde(default)]
+    #[schema(required = true)]
     pub name: String,
     #[serde(default)]
+    #[schema(required = true)]
     pub credited_name: Option<String>,
     #[serde(default)]
+    #[schema(required = true)]
     pub join_phrase: String,
     #[serde(default)]
+    #[schema(required = true)]
     pub artist_id: Option<String>,
     #[serde(default)]
+    #[schema(required = true)]
     pub canonical_url: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, ToSchema)]
 pub struct DiscogsLabel {
     #[serde(default)]
+    #[schema(required = true)]
     pub name: String,
     #[serde(default)]
+    #[schema(required = true)]
     pub catalogue_number: Option<String>,
     #[serde(default)]
+    #[schema(required = true)]
     pub label_id: Option<String>,
     #[serde(default)]
+    #[schema(required = true)]
     pub canonical_url: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, ToSchema)]
 pub struct DiscogsIdentifier {
     #[serde(default, rename = "type")]
+    #[schema(required = true)]
     pub kind: String,
     #[serde(default)]
+    #[schema(required = true)]
     pub value: String,
     #[serde(default)]
+    #[schema(required = true)]
     pub description: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, ToSchema)]
 pub struct DiscogsFormat {
     #[serde(default)]
+    #[schema(required = true)]
     pub name: String,
     #[serde(default)]
+    #[schema(required = true)]
     pub quantity: Option<i64>,
     #[serde(default)]
+    #[schema(required = true)]
     pub descriptions: Vec<String>,
     #[serde(default)]
+    #[schema(required = true)]
     pub text: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, ToSchema)]
 pub struct DiscogsTrack {
     #[serde(default)]
+    #[schema(required = true)]
     pub source_position: Option<String>,
     #[serde(default)]
+    #[schema(required = true)]
     pub number: Option<i64>,
     #[serde(default)]
+    #[schema(required = true)]
     pub title: String,
     #[serde(default)]
+    #[schema(required = true)]
     pub duration_seconds: Option<f64>,
     #[serde(default)]
+    #[schema(required = true)]
     pub heading: bool,
     #[serde(default)]
+    #[schema(required = true)]
     pub artists: Vec<DiscogsArtistCredit>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, ToSchema)]
 pub struct DiscogsMedium {
+    #[schema(required = true)]
     pub position: i64,
     #[serde(default)]
+    #[schema(required = true)]
     pub title: Option<String>,
     #[serde(default)]
+    #[schema(required = true)]
     pub format: Option<String>,
     #[serde(default)]
+    #[schema(required = true)]
     pub tracks: Vec<DiscogsTrack>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, ToSchema)]
 pub struct DiscogsRelease {
     #[serde(default)]
+    #[schema(required = true)]
     pub release_id: String,
     #[serde(default)]
+    #[schema(required = true)]
     pub master_id: Option<String>,
     #[serde(default)]
+    #[schema(required = true)]
     pub canonical_release_url: String,
     #[serde(default)]
+    #[schema(required = true)]
     pub canonical_master_url: Option<String>,
     #[serde(default)]
+    #[schema(required = true)]
     pub title: String,
     #[serde(default)]
+    #[schema(required = true)]
     pub artist_name: String,
     #[serde(default)]
+    #[schema(required = true)]
     pub artists: Vec<DiscogsArtistCredit>,
     #[serde(default)]
+    #[schema(required = true)]
     pub released_date: Option<String>,
     #[serde(default)]
+    #[schema(required = true)]
     pub year: Option<i32>,
     #[serde(default)]
+    #[schema(required = true)]
     pub country: Option<String>,
     #[serde(default)]
+    #[schema(required = true)]
     pub labels: Vec<DiscogsLabel>,
     #[serde(default)]
+    #[schema(required = true)]
     pub identifiers: Vec<DiscogsIdentifier>,
     #[serde(default)]
+    #[schema(required = true)]
     pub barcode: Option<String>,
     #[serde(default)]
+    #[schema(required = true)]
     pub formats: Vec<DiscogsFormat>,
     #[serde(default)]
+    #[schema(required = true)]
     pub media: Vec<DiscogsMedium>,
     #[serde(default)]
+    #[schema(required = true)]
     pub source_fetched_at: f64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct DiscogsSourceView {
     #[serde(default)]
+    #[schema(required = true)]
     pub release: Option<DiscogsRelease>,
     #[serde(default)]
+    #[schema(required = true)]
     pub expired: bool,
     #[serde(default)]
+    #[schema(required = true)]
     pub expires_at: Option<f64>,
 }
 
@@ -483,31 +583,42 @@ pub struct DiscogsSourceView {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct DuplicateCandidate {
     #[serde(default)]
+    #[schema(required = true)]
     pub release_mbid: Option<String>,
     #[serde(default)]
+    #[schema(required = true)]
     pub release_group_mbid: Option<String>,
     #[serde(default)]
+    #[schema(required = true)]
     pub title: String,
     #[serde(default)]
+    #[schema(required = true)]
     pub artist_name: String,
     pub evidence_kind: DuplicateEvidenceKind,
     #[serde(default)]
+    #[schema(required = true)]
     pub exact: bool,
     #[serde(default)]
+    #[schema(required = true)]
     pub differences: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct DuplicateCheckResult {
     #[serde(default = "schema_one")]
+    #[schema(required = true)]
     pub schema_version: i32,
     #[serde(default)]
+    #[schema(required = true)]
     pub checked_at: f64,
     #[serde(default)]
+    #[schema(required = true)]
     pub input_revision: String,
     #[serde(default)]
+    #[schema(required = true)]
     pub candidates: Vec<DuplicateCandidate>,
     #[serde(default)]
+    #[schema(required = true)]
     pub different_edition_confirmed: bool,
 }
 
@@ -596,9 +707,9 @@ pub struct ContributionValidationIssue {
 pub struct ContributionRecord {
     pub id: String,
     pub local_album_id: String,
-    #[serde(default)]
+    #[schema(required = true)]
     pub created_by_user_id: Option<String>,
-    #[serde(default)]
+    #[schema(required = true)]
     pub updated_by_user_id: Option<String>,
     pub state: ContributionState,
     pub album_row_revision: i64,
@@ -606,38 +717,33 @@ pub struct ContributionRecord {
     pub local_snapshot: LocalReleaseSnapshot,
     pub draft: ReleaseDraft,
     pub source_selection: ContributionSourceSelection,
-    #[serde(default)]
+    #[schema(required = true)]
     pub provider_snapshot_expires_at: Option<f64>,
-    #[serde(default)]
+    #[schema(required = true)]
     pub discogs_source: Option<DiscogsSourceView>,
-    #[serde(default)]
+    #[schema(required = true)]
     pub duplicate_result: Option<DuplicateCheckResult>,
-    #[serde(default)]
+    #[schema(required = true)]
     pub duplicate_checked_at: Option<f64>,
-    #[serde(default)]
+    #[schema(required = true)]
     pub result_release_mbid: Option<String>,
-    #[serde(default)]
+    #[schema(required = true)]
     pub result_source: Option<String>,
-    #[serde(default)]
+    #[schema(required = true)]
     pub result_received_at: Option<f64>,
-    #[serde(default)]
+    #[schema(required = true)]
     pub seeded_at: Option<f64>,
-    #[serde(default)]
+    #[schema(required = true)]
     pub terminal_at: Option<f64>,
-    #[serde(default)]
     pub created_at: f64,
-    #[serde(default)]
     pub updated_at: f64,
     pub row_revision: i64,
-    #[serde(default)]
     pub input_is_current: bool,
-    #[serde(default)]
     pub validation: Vec<ContributionValidationIssue>,
-    #[serde(default)]
     pub next_actions: Vec<ContributionNextAction>,
     /// Why the contribution needs review, when it does: a stable code, a
     /// plain sentence, and what to do next.
-    #[serde(default)]
+    #[schema(required = true)]
     pub review_reason: Option<ContributionReason>,
 }
 

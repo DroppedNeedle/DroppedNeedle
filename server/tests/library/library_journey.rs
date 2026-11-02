@@ -10201,7 +10201,7 @@ async fn library_management_tools_journey() {
         intent: droppedneedle_library::management::models::DuplicateIntent {
             source_job_id: clash.job_id.clone(),
             source_plan_item_ordinal: blocked.ordinal,
-            collision_kind: "same_path_different_content".to_owned(),
+            collision_kind: droppedneedle_library::management::models::CollisionKind::SamePathDifferentContent,
             existing_root_id: "music".to_owned(),
             existing_relative_path: managed_rel.clone(),
             existing_local_track_id: None,

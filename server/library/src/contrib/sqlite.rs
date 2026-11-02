@@ -20,16 +20,20 @@
 use droppedneedle_kernel::db::{Db, Lane};
 use droppedneedle_kernel::jobs::queue::{JobError, JobQueue};
 use futures_util::future::BoxFuture;
-use rusqlite::{Connection, OptionalExtension as _, Row, Transaction, params};
+use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
 
 use super::error::ContribError;
 use super::models::*;
 use super::rules::album_input_revisions;
 use super::seams::*;
+use super::sql::{
+    AlbumContextRow, AlbumContextTrack, AlbumIdentityRow, AlbumInputRow, AlbumInputTrack, DraftRow,
+};
 use super::transition::{
     ContributionUpdate, Effect, Finish, Invalidation, Update, transition, verification_outcome,
 };
 use super::worker::{Completion, VERIFY};
+use crate::clock::at_secs;
 use crate::identify::artist_links::{LINK_SET_BY_PERSON, audit_link, placeholder, would_group};
 use crate::identify::merged_ids;
 use crate::identity;
@@ -86,37 +90,6 @@ impl SqliteContributions {
 // Encoding
 // ---------------------------------------------------------------------------
 
-fn state_str(state: ContributionState) -> &'static str {
-    match state {
-        ContributionState::Draft => "draft",
-        ContributionState::Ready => "ready",
-        ContributionState::Seeded => "seeded",
-        ContributionState::Verifying => "verifying",
-        ContributionState::Linked => "linked",
-        ContributionState::NeedsReview => "needs_review",
-        ContributionState::Stale => "stale",
-        ContributionState::Cancelled => "cancelled",
-    }
-}
-
-fn state_from(raw: &str) -> Result<ContributionState, ContribError> {
-    Ok(match raw {
-        "draft" => ContributionState::Draft,
-        "ready" => ContributionState::Ready,
-        "seeded" => ContributionState::Seeded,
-        "verifying" => ContributionState::Verifying,
-        "linked" => ContributionState::Linked,
-        "needs_review" => ContributionState::NeedsReview,
-        "stale" => ContributionState::Stale,
-        "cancelled" => ContributionState::Cancelled,
-        other => {
-            return Err(ContribError::Data(format!(
-                "Unknown contribution state '{other}'."
-            )));
-        }
-    })
-}
-
 fn to_json<T: serde::Serialize>(value: &T) -> Result<String, ContribError> {
     serde_json::to_string(value)
         .map_err(|error| ContribError::Data(format!("Contribution document not encoded: {error}")))
@@ -141,26 +114,29 @@ struct AlbumInput {
 /// The active album with at least one indexed track, or `None` (v2
 /// `_active_album_input`).
 fn album_input(conn: &Connection, album_id: &str) -> rusqlite::Result<Option<AlbumInput>> {
-    let album: Option<(i64, String)> = conn
+    let album = conn
         .prepare_cached(crate::contrib::sql::ALBUM_INPUT.text())?
-        .query_row(params![album_id], |row| Ok((row.get(0)?, row.get(1)?)))
+        .query_row(params![album_id], AlbumInputRow::read)
         .optional()?;
-    let Some((row_revision, artist_id)) = album else {
+    let Some(album) = album else {
         return Ok(None);
     };
     let tracks: Vec<(String, TrackInput)> = conn
         .prepare_cached(crate::contrib::sql::ALBUM_INPUT_TRACKS.text())?
-        .query_map(params![album_id], |row| {
-            Ok((
-                row.get(0)?,
-                TrackInput {
-                    tag_revision: row.get(1)?,
-                    stat_revision: row.get(2)?,
-                    applied_policy_revision: row.get(3)?,
-                    applied_policy: row.get(4)?,
-                },
-            ))
-        })?
+        .query_map(params![album_id], AlbumInputTrack::read)?
+        .map(|track| {
+            track.map(|track| {
+                (
+                    track.id,
+                    TrackInput {
+                        tag_revision: track.tag_revision,
+                        stat_revision: track.stat_revision,
+                        applied_policy_revision: track.applied_policy_revision,
+                        applied_policy: track.applied_policy,
+                    },
+                )
+            })
+        })
         .collect::<rusqlite::Result<_>>()?;
     if tracks.is_empty() {
         return Ok(None);
@@ -168,69 +144,10 @@ fn album_input(conn: &Connection, album_id: &str) -> rusqlite::Result<Option<Alb
     let (tag, file, policy) =
         album_input_revisions(tracks.iter().map(|(id, input)| (id.as_str(), input)));
     Ok(Some(AlbumInput {
-        row_revision,
-        artist_id,
+        row_revision: album.row_revision,
+        artist_id: album.album_artist_id,
         input_revision: format!("{tag}:{file}:{policy}"),
     }))
-}
-
-/// Raw column values; JSON decodes after the statement finishes.
-struct RawRow {
-    id: String,
-    local_album_id: String,
-    created_by: Option<String>,
-    updated_by: Option<String>,
-    state: String,
-    album_row_revision: i64,
-    input_revision: String,
-    snapshot: String,
-    draft: String,
-    selection: String,
-    provider_expires: Option<f64>,
-    duplicate: Option<String>,
-    duplicate_checked_at: Option<f64>,
-    duplicate_input_revision: Option<String>,
-    result_release_mbid: Option<String>,
-    result_source: Option<String>,
-    result_received_at: Option<f64>,
-    seed_snapshot: Option<String>,
-    seed_hash: Option<String>,
-    seeded_at: Option<f64>,
-    terminal_at: Option<f64>,
-    created_at: f64,
-    updated_at: f64,
-    row_revision: i64,
-    last_verification_failure: Option<String>,
-}
-
-fn raw_row(row: &Row<'_>) -> rusqlite::Result<RawRow> {
-    Ok(RawRow {
-        id: row.get(0)?,
-        local_album_id: row.get(1)?,
-        created_by: row.get(2)?,
-        updated_by: row.get(3)?,
-        state: row.get(4)?,
-        album_row_revision: row.get(5)?,
-        input_revision: row.get(6)?,
-        snapshot: row.get(7)?,
-        draft: row.get(8)?,
-        selection: row.get(9)?,
-        provider_expires: crate::clock::opt_secs_at(row, 10)?,
-        duplicate: row.get(11)?,
-        duplicate_checked_at: crate::clock::opt_secs_at(row, 12)?,
-        duplicate_input_revision: row.get(13)?,
-        result_release_mbid: row.get(14)?,
-        result_source: row.get(15)?,
-        result_received_at: crate::clock::opt_secs_at(row, 16)?,
-        seed_snapshot: row.get(17)?,
-        seed_hash: row.get(18)?,
-        seeded_at: crate::clock::opt_secs_at(row, 19)?,
-        terminal_at: crate::clock::opt_secs_at(row, 20)?,
-        created_at: crate::clock::secs_at(row, 21)?,
-        updated_at: crate::clock::secs_at(row, 22)?,
-        row_revision: row.get(23)?,
-        last_verification_failure: row.get(24)?,
-    })
 }
 
 /// One contribution row with its freshness join (v2 `_contribution_row`).
@@ -240,7 +157,7 @@ fn load_row(
 ) -> Result<Option<ContributionRow>, ContribError> {
     let raw = conn
         .prepare_cached(crate::contrib::sql::LOAD_ROW.text())?
-        .query_row(params![contribution_id], raw_row)
+        .query_row(params![contribution_id], DraftRow::read)
         .optional()?;
     let Some(raw) = raw else {
         return Ok(None);
@@ -254,7 +171,7 @@ fn load_row(
         },
         artist_id: live.as_ref().map(|live| live.artist_id.clone()),
     };
-    let selection: ContributionSourceSelection = from_json(&raw.selection)?;
+    let selection: ContributionSourceSelection = from_json(&raw.source_selection_json)?;
     let discogs = selection
         .sources
         .iter()
@@ -263,31 +180,35 @@ fn load_row(
     Ok(Some(ContributionRow {
         id: raw.id,
         local_album_id: raw.local_album_id,
-        created_by_user_id: raw.created_by,
-        updated_by_user_id: raw.updated_by,
-        state: state_from(&raw.state)?,
+        created_by_user_id: raw.created_by_user_id,
+        updated_by_user_id: raw.updated_by_user_id,
+        state: raw.state,
         album_row_revision: raw.album_row_revision,
         input_revision: raw.input_revision,
-        local_snapshot: from_json(&raw.snapshot)?,
-        draft: from_json(&raw.draft)?,
-        provider_snapshot_expires_at: raw.provider_expires,
+        local_snapshot: from_json(&raw.local_snapshot_json)?,
+        draft: from_json(&raw.resolved_draft_json)?,
+        provider_snapshot_expires_at: raw.provider_snapshot_expires_at.map(at_secs),
         discogs_release_id: discogs.as_ref().map(|s| s.external_id.clone()),
         discogs_canonical_url: discogs.map(|s| s.canonical_url),
         source_selection: selection,
-        duplicate_result: raw.duplicate.as_deref().map(from_json).transpose()?,
-        duplicate_checked_at: raw.duplicate_checked_at,
+        duplicate_result: raw
+            .duplicate_result_json
+            .as_deref()
+            .map(from_json)
+            .transpose()?,
+        duplicate_checked_at: raw.duplicate_checked_at.map(at_secs),
         duplicate_input_revision: raw.duplicate_input_revision,
         result_release_mbid: raw.result_release_mbid,
         result_source: raw.result_source,
-        result_received_at: raw.result_received_at,
-        seeded_at: raw.seeded_at,
+        result_received_at: raw.result_received_at.map(at_secs),
+        seeded_at: raw.seeded_at.map(at_secs),
         seed_token_hash: None,
         seed_token_expires_at: None,
-        seed_snapshot_json: raw.seed_snapshot,
+        seed_snapshot_json: raw.seed_snapshot_json,
         seed_hash: raw.seed_hash,
-        terminal_at: raw.terminal_at,
-        created_at: raw.created_at,
-        updated_at: raw.updated_at,
+        terminal_at: raw.terminal_at.map(at_secs),
+        created_at: at_secs(raw.created_at),
+        updated_at: at_secs(raw.updated_at),
         row_revision: raw.row_revision,
         last_verification_failure: raw.last_verification_failure,
         album_active: live.is_some(),
@@ -319,7 +240,7 @@ fn save_row(conn: &Connection, row: &ContributionRow, expected: i64) -> Result<(
         .execute(params![
             row.id,
             expected,
-            state_str(row.state),
+            row.state,
             row.updated_by_user_id,
             row.album_row_revision,
             row.input_revision,
@@ -408,9 +329,8 @@ fn album_identity(
     album_id: &str,
 ) -> rusqlite::Result<Option<(Option<String>, String)>> {
     conn.prepare_cached(crate::contrib::sql::ALBUM_IDENTITY.text())?
-        .query_row(params![album_id, PROVIDER], |row| {
-            Ok((row.get(0)?, row.get(1)?))
-        })
+        .query_row(params![album_id, PROVIDER], AlbumIdentityRow::read)
+        .map(|found| (found.release_mbid, found.release_group_mbid))
         .optional()
 }
 
@@ -1061,18 +981,17 @@ fn album_context(
 ) -> Result<Option<AlbumIdentificationContext>, ContribError> {
     let album = conn
         .prepare_cached(crate::contrib::sql::ALBUM_CONTEXT.text())?
-        .query_row(params![album_id], |row| {
-            Ok(IdentityAlbumRow {
-                id: row.get(0)?,
-                row_revision: row.get(1)?,
-                active: true,
-                title: row.get(2)?,
-                album_artist_name: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
-                album_artist_id: row.get(4)?,
-                original_release_date: row.get(5)?,
-                year: row.get(6)?,
-                is_compilation: row.get::<_, i64>(7)? != 0,
-            })
+        .query_row(params![album_id], AlbumContextRow::read)
+        .map(|album| IdentityAlbumRow {
+            id: album.id,
+            row_revision: album.row_revision,
+            active: true,
+            title: album.title,
+            album_artist_name: album.album_artist_name.unwrap_or_default(),
+            album_artist_id: album.album_artist_id,
+            original_release_date: album.original_release_date,
+            year: album.year,
+            is_compilation: album.is_compilation,
         })
         .optional()?;
     let Some(album) = album else {
@@ -1095,27 +1014,28 @@ fn album_context(
     };
     let tracks = conn
         .prepare_cached(crate::contrib::sql::ALBUM_CONTEXT_TRACKS.text())?
-        .query_map(params![album_id], |row| {
-            Ok(IdentityTrack {
-                id: row.get(0)?,
-                disc_number: row.get(1)?,
-                track_number: row.get(2)?,
-                title: row.get(3)?,
-                artist_name: row.get(4)?,
-                duration_seconds: row.get(5)?,
-                availability: row.get(6)?,
-                disc_subtitle: row.get(7)?,
-                relative_path: row.get(8)?,
-                recording_mbid: row.get(9)?,
-                embedded_recording_mbid: row.get(10)?,
+        .query_map(params![album_id], AlbumContextTrack::read)?
+        .map(|track| {
+            track.map(|track| IdentityTrack {
+                id: track.id,
+                disc_number: track.disc_number,
+                track_number: track.track_number,
+                title: track.title,
+                artist_name: track.artist_name,
+                duration_seconds: track.duration_seconds,
+                availability: track.availability,
+                disc_subtitle: track.disc_subtitle,
+                relative_path: track.relative_path,
+                recording_mbid: track.recording_mbid,
+                embedded_recording_mbid: track.embedded_recording_mbid,
                 input: TrackInput {
-                    tag_revision: row.get(11)?,
-                    stat_revision: row.get(12)?,
-                    applied_policy_revision: row.get(13)?,
-                    applied_policy: row.get(14)?,
+                    tag_revision: track.tag_revision,
+                    stat_revision: track.stat_revision,
+                    applied_policy_revision: track.applied_policy_revision,
+                    applied_policy: track.applied_policy,
                 },
             })
-        })?
+        })
         .collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(Some(AlbumIdentificationContext {
         album: Some(album),

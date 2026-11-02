@@ -11,6 +11,11 @@ use std::collections::BTreeMap;
 use droppedneedle_kernel::db::DbError;
 use rusqlite::{Connection, OptionalExtension as _, params};
 
+use super::sql::{
+    ControlRow, FailedJob, FailureCount, JobTotals, OperationRow, StateCount, WaitingJob,
+};
+use crate::clock::at_secs;
+
 /// Deferred jobs the activity card lists by name (v2 limit).
 const DEFERRED_JOB_LIMIT: i64 = 20;
 
@@ -117,10 +122,6 @@ impl IdentificationSnapshot {
     }
 }
 
-fn seconds(ms: i64) -> f64 {
-    ms as f64 / 1000.0
-}
-
 fn count(conn: &Connection, sql: &str) -> rusqlite::Result<u64> {
     conn.query_row(sql, [], |row| row.get::<_, i64>(0))
         .map(|value| value.max(0) as u64)
@@ -132,13 +133,13 @@ pub fn identification_control(conn: &Connection) -> rusqlite::Result<Identificat
         .query_row(
             crate::activity::sql::IDENTIFICATION_CONTROL.text(),
             [],
-            |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+            ControlRow::read,
         )
         .optional()?;
     Ok(match row {
-        Some((state, revision)) => IdentificationControl {
-            paused: state == "paused",
-            row_revision: revision.max(0) as u64,
+        Some(row) => IdentificationControl {
+            paused: row.state == "paused",
+            row_revision: row.row_revision.max(0) as u64,
         },
         None => IdentificationControl {
             paused: false,
@@ -206,13 +207,10 @@ pub fn identification_snapshot(
         // ended because its album changed (files moved mid-attempt, the
         // album gone): nothing failed, and a newer job takes the album.
         let mut stmt = conn.prepare(crate::activity::sql::JOB_COUNTS_BY_LIVE_STATE.text())?;
-        let rows = stmt.query_map(params![now_ms], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
-        })?;
-        for row in rows {
-            let (state, total) = row?;
-            let total = total.max(0) as u64;
-            match state.as_str() {
+        for row in stmt.query_map(params![now_ms], StateCount::read)? {
+            let row = row?;
+            let total = row.total.max(0) as u64;
+            match row.live_state.as_str() {
                 "queued" => snapshot.queued = total,
                 "running" => snapshot.running = total,
                 "deferred" => snapshot.backing_off = total,
@@ -223,22 +221,15 @@ pub fn identification_snapshot(
             }
         }
     }
-    let (started, updated, deferred, claimable) = conn.query_row(
+    let totals = conn.query_row(
         crate::activity::sql::JOB_TOTALS.text(),
         params![now_ms],
-        |row| {
-            Ok((
-                row.get::<_, Option<i64>>(0)?,
-                row.get::<_, Option<i64>>(1)?,
-                row.get::<_, Option<i64>>(2)?,
-                row.get::<_, Option<i64>>(3)?,
-            ))
-        },
+        JobTotals::read,
     )?;
-    snapshot.started_at = started.map(seconds);
-    snapshot.updated_at = updated.map(seconds);
-    snapshot.deferred_count = deferred.unwrap_or(0).max(0) as u64;
-    snapshot.claimable = claimable.unwrap_or(0).max(0) as u64;
+    snapshot.started_at = totals.started_at.map(at_secs);
+    snapshot.updated_at = totals.updated_at.map(at_secs);
+    snapshot.deferred_count = totals.deferred.unwrap_or(0).max(0) as u64;
+    snapshot.claimable = totals.claimable.unwrap_or(0).max(0) as u64;
     snapshot.active_priority = conn
         .query_row(
             crate::activity::sql::NEXT_JOB_PRIORITY.text(),
@@ -253,41 +244,38 @@ pub fn identification_snapshot(
     // attention, and a job that ended because its album changed is no
     // failure at all.
     snapshot.failure = conn
-        .query_row(crate::activity::sql::FAILED_JOBS.text(), [], |row| {
-            Ok((row.get::<_, String>(0)?, seconds(row.get::<_, i64>(1)?)))
-        })
+        .query_row(
+            crate::activity::sql::FAILED_JOBS.text(),
+            [],
+            FailedJob::read,
+        )
+        .map(|job| (job.id, at_secs(job.updated_at)))
         .optional()?;
     snapshot.foreground_operations =
         count(conn, crate::activity::sql::ACTIVE_OPERATION_COUNT.text())?;
     {
         let mut stmt = conn.prepare(crate::activity::sql::WAITING_FAILURE_COUNTS.text())?;
-        let rows = stmt.query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
-        })?;
-        for row in rows {
-            let (code, total) = row?;
+        for row in stmt.query_map([], FailureCount::read)? {
+            let row = row?;
             snapshot
                 .deferred_reason_counts
-                .insert(code, total.max(0) as u64);
+                .insert(row.failure_code, row.total.max(0) as u64);
         }
     }
     {
         let mut stmt = conn.prepare(crate::activity::sql::WAITING_JOBS_WITH_FAILURE.text())?;
-        let rows = stmt.query_map(params![DEFERRED_JOB_LIMIT], |row| {
-            let not_before: i64 = row.get(6)?;
-            Ok(DeferredJob {
-                job_id: row.get(0)?,
-                local_album_id: row.get(1)?,
-                album_title: row.get(2)?,
-                artist_name: row.get(3)?,
-                last_failure_code: row.get(4)?,
-                attempt_count: row.get::<_, i64>(5)?.max(0) as u64,
-                not_before: (not_before > 0).then(|| seconds(not_before)),
-                updated_at: seconds(row.get(7)?),
-            })
-        })?;
-        for row in rows {
-            snapshot.deferred_jobs.push(row?);
+        for row in stmt.query_map(params![DEFERRED_JOB_LIMIT], WaitingJob::read)? {
+            let job = row?;
+            snapshot.deferred_jobs.push(DeferredJob {
+                job_id: job.id,
+                local_album_id: job.local_album_id,
+                album_title: job.title,
+                artist_name: job.display_name,
+                last_failure_code: job.failure_code,
+                attempt_count: job.attempts.max(0) as u64,
+                not_before: (job.not_before_at.0 > 0).then(|| at_secs(job.not_before_at)),
+                updated_at: at_secs(job.updated_at),
+            });
         }
     }
     Ok(snapshot)
@@ -321,23 +309,24 @@ pub struct OperationWork {
 pub fn operation_work(conn: &Connection) -> rusqlite::Result<Vec<OperationWork>> {
     let mut stmt = conn.prepare(crate::activity::sql::OPERATION_WORK.text())?;
     let count = |value: i64| value.max(0) as u64;
-    stmt.query_map([], |row| {
-        Ok(OperationWork {
-            id: row.get(0)?,
-            kind: row.get(1)?,
-            purpose: row.get(2)?,
-            phase: row.get(3)?,
-            state: row.get(4)?,
-            expected: count(row.get(5)?),
-            completed: count(row.get(6)?),
-            succeeded: count(row.get(7)?),
-            failed: count(row.get(8)?),
-            skipped: count(row.get(9)?),
-            started_at: crate::clock::opt_secs_at(row, 10)?,
-            updated_at: crate::clock::secs_at(row, 11)?,
+    stmt.query_map([], OperationRow::read)?
+        .map(|row| {
+            row.map(|job| OperationWork {
+                id: job.id,
+                kind: job.kind,
+                purpose: job.purpose,
+                phase: job.phase,
+                state: job.state,
+                expected: count(job.expected_work_count),
+                completed: count(job.completed_count),
+                succeeded: count(job.succeeded_count),
+                failed: count(job.failed_count),
+                skipped: count(job.skipped_count),
+                started_at: job.started_at.map(at_secs),
+                updated_at: at_secs(job.updated_at),
+            })
         })
-    })?
-    .collect()
+        .collect()
 }
 
 pub fn library_revisions(conn: &Connection) -> rusqlite::Result<BTreeMap<String, u64>> {

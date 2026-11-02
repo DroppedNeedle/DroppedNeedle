@@ -49,6 +49,11 @@ pub(crate) fn secs(ms: i64) -> f64 {
     ms as f64 / 1000.0
 }
 
+/// A time a row read, as unix seconds.
+pub(crate) fn at_secs(at: Millis) -> f64 {
+    secs(at.0)
+}
+
 /// A stored `_at` column, as unix seconds.
 pub(crate) fn secs_at(row: &rusqlite::Row<'_>, index: usize) -> rusqlite::Result<f64> {
     Ok(secs(row.get::<_, Millis>(index)?.0))

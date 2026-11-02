@@ -6,7 +6,6 @@ import type {
 	LibraryManagementPreviewDetailResponse,
 	LibraryManagementResultPageResponse,
 	LibraryManagementTagEditorContext,
-	LibraryManagementTagEditorField,
 	LibraryManagementTagEditValue
 } from './types';
 
@@ -65,25 +64,10 @@ export function toTagEditor(view: TagEditorView): LibraryManagementTagEditorCont
 		...view,
 		fields: view.fields.map((field) => ({
 			...field,
-			scope: field.scope === 'album' ? 'album' : 'track',
-			cardinality: CARDINALITIES.find((value) => value === field.cardinality) ?? 'string',
-			current_value: toTagValue(field.current_value),
-			override_mode: OVERRIDE_MODES.find((value) => value === field.override_mode) ?? null
+			current_value: toTagValue(field.current_value)
 		}))
 	};
 }
-
-const CARDINALITIES: LibraryManagementTagEditorField['cardinality'][] = [
-	'string',
-	'integer',
-	'boolean',
-	'ordered_strings'
-];
-const OVERRIDE_MODES: NonNullable<LibraryManagementTagEditorField['override_mode']>[] = [
-	'replace',
-	'preserve',
-	'clear'
-];
 
 function toTagValue(value: unknown): LibraryManagementTagEditValue {
 	if (

@@ -11,8 +11,9 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-/// Give a fieldless enum its stored spelling: `as_str` and a `parse` that
-/// answers `None` for any other text.
+/// Give a fieldless enum its stored spelling: `as_str`, a `parse` that
+/// answers `None` for any other text, and the codec that binds and reads it,
+/// where any other text is a decode error.
 macro_rules! spelled {
     ($name:ident { $($variant:ident => $text:literal),+ $(,)? }) => {
         impl $name {
@@ -31,8 +32,28 @@ macro_rules! spelled {
                 }
             }
         }
+
+        impl rusqlite::types::ToSql for $name {
+            fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
+                Ok(rusqlite::types::ToSqlOutput::from(self.as_str()))
+            }
+        }
+
+        impl rusqlite::types::FromSql for $name {
+            fn column_result(
+                value: rusqlite::types::ValueRef<'_>,
+            ) -> rusqlite::types::FromSqlResult<Self> {
+                let text = value.as_str()?;
+                Self::parse(text).ok_or_else(|| {
+                    rusqlite::types::FromSqlError::Other(
+                        format!("{} has no value {text:?}", stringify!($name)).into(),
+                    )
+                })
+            }
+        }
     };
 }
+pub(crate) use spelled;
 
 /// A run's counters, one per column of the runs table.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
@@ -739,12 +760,6 @@ spelled!(FailureCode {
     ScopeThroughLink => "SCOPE_THROUGH_LINK",
     ScopeRenamed => "SCOPE_RENAMED",
 });
-
-impl rusqlite::types::ToSql for FailureCode {
-    fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
-        Ok(self.as_str().into())
-    }
-}
 
 impl std::fmt::Display for FailureCode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

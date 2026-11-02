@@ -239,6 +239,8 @@ Run from the repo root. `make help` lists every target.
   `server/sql-outside-registry.txt`, and a gate then keeps raw SQL out.
   A `sql!` block whose statements read a v2 database starts with
   `schema = V2;` and is prepared against the v2 fixture.
+- A statement that answers more than one column is read through a `row` in its
+  `sql!` block, whose fields the schema test holds to the statement's columns.
 - Migrations are numbered and forward-only. Never edit or renumber a shipped
   one. Each new one ships an upgrade test. They land on `v3` in number
   order: the runner skips any migration below the database's version, so a

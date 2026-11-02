@@ -2,7 +2,6 @@ import { v3 } from '$lib/api/v3/endpoint';
 import { createQuery } from '@tanstack/svelte-query';
 import type { Getter } from 'runed';
 import { api } from '$lib/api/client';
-import { asLibraryContribution } from './asLibraryContribution';
 import { authStore } from '$lib/stores/authStore.svelte';
 import type { LibraryContribution } from '$lib/types';
 import { LibraryContributionQueryKeyFactory } from './LibraryContributionQueryKeyFactory';
@@ -14,13 +13,12 @@ export const getLibraryContributionQuery = (getContributionId: Getter<string>) =
 			enabled: Boolean(authStore.user?.id && contributionId),
 			queryKey: LibraryContributionQueryKeyFactory.detail(authStore.user?.id, contributionId),
 			queryFn: async ({ signal }) => {
-				const contribution = await api.v3.GET(
+				return api.v3.GET(
 					v3('/api/v3/library/contributions/{id}', { path: { id: contributionId } }),
 					{
 						signal
 					}
 				);
-				return asLibraryContribution(contribution);
 			},
 			refetchInterval: (query: { state: { data?: LibraryContribution } }) =>
 				['seeded', 'verifying'].includes(query.state.data?.state ?? '') ? 2_000 : false

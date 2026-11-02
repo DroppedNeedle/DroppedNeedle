@@ -10,8 +10,8 @@ use std::path::Path;
 use rusqlite::{OptionalExtension as _, params};
 
 use super::models::{
-    JobIntent, JobMode, ManagementError, Origin, PreviewHandle, Selection, SelectionKind,
-    TagEditField, TagEditIntent, TagEditMode,
+    JobIntent, JobMode, ManagementError, Origin, OverrideMode, PreviewHandle, Selection,
+    SelectionKind, TagCardinality, TagEditField, TagEditIntent, TagEditMode, TagScope,
 };
 use super::profile;
 use super::reasons;
@@ -68,22 +68,22 @@ const LIST_FIELDS: &[TagField] = &[
     TagField::Director,
 ];
 
-/// `album` or `track`.
-pub fn scope(field: TagField) -> &'static str {
+/// Where the field applies.
+pub fn scope(field: TagField) -> TagScope {
     if ALBUM_FIELDS.contains(&field) {
-        "album"
+        TagScope::Album
     } else {
-        "track"
+        TagScope::Track
     }
 }
 
-/// `string`, `integer`, `boolean`, or `ordered_strings` (v2's names).
-pub fn cardinality(field: TagField) -> &'static str {
+/// The shape of the field's value.
+pub fn cardinality(field: TagField) -> TagCardinality {
     match field.kind() {
-        FieldKind::Count => "integer",
-        FieldKind::Flag => "boolean",
-        _ if LIST_FIELDS.contains(&field) => "ordered_strings",
-        _ => "string",
+        FieldKind::Count => TagCardinality::Integer,
+        FieldKind::Flag => TagCardinality::Boolean,
+        _ if LIST_FIELDS.contains(&field) => TagCardinality::OrderedStrings,
+        _ => TagCardinality::String,
     }
 }
 
@@ -144,11 +144,11 @@ fn values_of(field: TagField, value: &serde_json::Value) -> Result<Vec<String>, 
 #[derive(Debug, Clone)]
 pub struct EditorField {
     pub field_name: String,
-    pub scope: &'static str,
-    pub cardinality: &'static str,
+    pub scope: TagScope,
+    pub cardinality: TagCardinality,
     pub current_value: serde_json::Value,
     pub override_id: Option<String>,
-    pub override_mode: Option<String>,
+    pub override_mode: Option<OverrideMode>,
     pub override_row_revision: Option<i64>,
 }
 
@@ -191,7 +191,7 @@ struct Subject {
 }
 
 /// A saved override: (subject kind, field) -> (id, mode, row revision).
-type SavedOverrides = BTreeMap<(String, String), (String, String, i64)>;
+type SavedOverrides = BTreeMap<(String, String), (String, OverrideMode, i64)>;
 
 impl Management {
     fn subject(&self, track_id: &str) -> Result<Subject, ManagementError> {
@@ -228,7 +228,7 @@ impl Management {
                             (row.get::<_, String>(0)?, row.get::<_, String>(1)?),
                             (
                                 row.get::<_, String>(2)?,
-                                row.get::<_, String>(3)?,
+                                row.get::<_, OverrideMode>(3)?,
                                 row.get::<_, i64>(4)?,
                             ),
                         ))
@@ -288,7 +288,7 @@ impl Management {
             .into_iter()
             .map(|field| {
                 let scope = scope(field);
-                let saved = saved.get(&(scope.to_owned(), field.name().to_owned()));
+                let saved = saved.get(&(scope.as_str().to_owned(), field.name().to_owned()));
                 EditorField {
                     field_name: field.name().to_owned(),
                     scope,
@@ -298,7 +298,7 @@ impl Management {
                         doc.managed.field(field).map_or(&[], Vec::as_slice),
                     ),
                     override_id: saved.map(|(id, _, _)| id.clone()),
-                    override_mode: saved.map(|(_, mode, _)| mode.clone()),
+                    override_mode: saved.map(|(_, mode, _)| *mode),
                     override_row_revision: saved.map(|(_, _, revision)| *revision),
                 }
             })
@@ -350,7 +350,7 @@ impl Management {
             }
             names.push(name.clone());
             let scope = scope(field);
-            let existing = saved.get(&(scope.to_owned(), name.clone()));
+            let existing = saved.get(&(scope.as_str().to_owned(), name.clone()));
             let values = if request.mode == TagEditMode::ResetCanonical {
                 if existing.is_none() {
                     return Err(ManagementError::Invalid(format!(
@@ -363,7 +363,7 @@ impl Management {
             };
             fields.push(TagEditField {
                 field_name: name.clone(),
-                subject_kind: scope.to_owned(),
+                subject_kind: scope.as_str().to_owned(),
                 values,
                 override_id: existing.map(|(id, _, _)| id.clone()),
                 expected_override_row_revision: existing.map(|(_, _, revision)| *revision),
@@ -379,7 +379,7 @@ impl Management {
                                         |row| row.get::<_, String>(0),
                                     )
                                     .optional()?
-                                    .map(|value| (value, mode.clone())),
+                                    .map(|value| (value, mode.as_str().to_owned())),
                                 )
                             })?
                     }

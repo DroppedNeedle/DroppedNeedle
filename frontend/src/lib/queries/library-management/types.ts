@@ -15,13 +15,7 @@ export type ManagementChangeKind = 'tags' | 'artwork' | 'path' | 'sidecars' | 'n
 export type LibraryManagementTagEditMode = Schemas['ManagementTagEditMode'];
 export type ManagementPhase = Schemas['ManagementPhase'];
 export type LibraryManagementTagEditValue = string | number | boolean | string[] | null;
-export type DuplicateCollisionKind =
-	| 'same_path_same_content'
-	| 'same_path_different_content'
-	| 'same_release_position_different_content'
-	| 'normalized_path_collision'
-	| 'sidecar_collision'
-	| 'destination_created_after_preview';
+export type DuplicateCollisionKind = Schemas['ManagementCollisionKind'];
 export type DuplicateResolutionAction = Schemas['ManagementDuplicateAction'];
 
 export type ManagedFieldInfo = Schemas['ManagedFieldInfo'];
@@ -62,15 +56,11 @@ export type LibraryManagementSelection = Schemas['ManagementSelectionBody'];
 
 export type LibraryManagementPreviewCreatedResponse = Schemas['ManagementPreviewCreatedResponse'];
 
-// The contract leaves a field's scope, cardinality and override mode as strings.
 export type LibraryManagementTagEditorField = Omit<
 	Schemas['ManagementTagEditorFieldView'],
-	'scope' | 'cardinality' | 'current_value' | 'override_mode'
+	'current_value'
 > & {
-	scope: 'album' | 'track';
-	cardinality: 'string' | 'integer' | 'boolean' | 'ordered_strings';
 	current_value: LibraryManagementTagEditValue;
-	override_mode: 'replace' | 'preserve' | 'clear' | null;
 };
 
 export type LibraryManagementTagEditorContext = Omit<

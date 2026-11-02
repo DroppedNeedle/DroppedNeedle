@@ -20,7 +20,10 @@ use super::blocking;
 use super::management::{ManagementJobView, ManagementPreviewCreatedResponse};
 use crate::management::activation::{ActivationConfirm, ActivationProof, ActivationRequest};
 use crate::management::duplicates::DuplicateRequest;
-use crate::management::models::{DuplicateAction, DuplicateIntent, Selection, TagEditMode};
+use crate::management::models::{
+    CollisionKind, DuplicateAction, DuplicateIntent, OverrideMode, Selection, TagCardinality,
+    TagEditMode, TagScope,
+};
 use crate::management::recovery::{AttentionBundle, Diagnostics, Resolved};
 use crate::management::restore::{PurgeImpact, PurgeOutcome, PurgeRequest, RestoreRequest};
 use crate::management::service::Management;
@@ -64,15 +67,13 @@ fn key(raw: Option<String>) -> Option<String> {
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ManagementTagEditorFieldView {
     pub field_name: String,
-    /// `album` (applies to every file of the album) or `track`.
-    pub scope: String,
-    /// `string`, `integer`, `boolean`, or `ordered_strings`.
-    pub cardinality: String,
+    pub scope: TagScope,
+    pub cardinality: TagCardinality,
     /// The file's value now: text, a number, true/false, a list, or null.
     pub current_value: serde_json::Value,
     pub override_id: Option<String>,
-    /// `replace`, `preserve`, or `clear`.
-    pub override_mode: Option<String>,
+    #[schema(required = true)]
+    pub override_mode: Option<OverrideMode>,
     pub override_row_revision: Option<i64>,
 }
 
@@ -115,8 +116,8 @@ impl From<EditorContext> for ManagementTagEditorView {
                 .into_iter()
                 .map(|field| ManagementTagEditorFieldView {
                     field_name: field.field_name,
-                    scope: field.scope.to_owned(),
-                    cardinality: field.cardinality.to_owned(),
+                    scope: field.scope,
+                    cardinality: field.cardinality,
                     current_value: field.current_value,
                     override_id: field.override_id,
                     override_mode: field.override_mode,
@@ -363,7 +364,7 @@ pub struct ManagementDuplicateBody {
     pub source_job_id: String,
     pub source_plan_item_ordinal: i64,
     pub expected_source_operation_row_revision: i64,
-    pub collision_kind: String,
+    pub collision_kind: CollisionKind,
     pub existing_root_id: String,
     pub existing_relative_path: String,
     pub action: DuplicateAction,
