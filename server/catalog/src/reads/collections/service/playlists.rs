@@ -2,10 +2,11 @@
 //!
 //! Ownership rules: anyone authenticated lists; owners see full rows for
 //! their playlists and everyone sees full rows for public ones. Other users'
-//! private playlists redact to existence plus count plus owner. Mutations are
-//! owner-only: private plus non-owner is 404 (the row stays hidden), public
-//! plus non-owner is 403. Admins hold one extra right: deleting a playlist
-//! with no owner. A private one is listed to admins only, as a stub.
+//! private playlists redact to existence plus count plus owner, and opening
+//! one answers that same stub. Mutations are owner-only: private plus
+//! non-owner is 404 (the row stays hidden), public plus non-owner is 403.
+//! Admins hold one extra right: deleting a playlist with no owner. A private
+//! one is listed to admins only, as a stub; to anyone else it does not exist.
 
 use std::collections::HashMap;
 
@@ -347,6 +348,22 @@ impl CollectionsService<'_> {
             .tracks(playlist_id)
             .await?;
         Ok(detail(&row, user_id, admin, tracks))
+    }
+
+    /// The stub the caller's list shows for a playlist they may not read.
+    /// None when the list does not show it as one: readable, unknown, or
+    /// private with no owner and the caller is not an admin.
+    pub async fn private_stub(
+        &self,
+        user_id: &str,
+        admin: bool,
+        playlist_id: &str,
+    ) -> Result<Option<RedactedPlaylist>, CollectionsError> {
+        let listed = self.list_playlists(user_id, admin).await?;
+        Ok(listed.playlists.into_iter().find_map(|item| match item {
+            PlaylistListItem::Redacted(stub) if stub.id == playlist_id => Some(stub),
+            _ => None,
+        }))
     }
 
     /// Create a playlist owned by the caller; returns its id. A second

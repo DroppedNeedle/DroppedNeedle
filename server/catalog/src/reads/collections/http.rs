@@ -4,9 +4,25 @@
 //! failure meets a status code. Lock contention answers the closed-list
 //! `SERVER_BUSY`; any other fault is the fixed internal error.
 
+use axum::http::StatusCode;
 use droppedneedle_kernel::error::{ApiError, Unavailable};
+use serde_json::json;
 
 use super::error::CollectionsError;
+use super::models::RedactedPlaylist;
+
+/// Opening a playlist the caller may not read but their list shows.
+const PLAYLIST_PRIVATE: &str = "PLAYLIST_PRIVATE";
+
+/// The 403 for such a playlist: `details` is the stub, and nothing more.
+pub(super) fn playlist_private(stub: &RedactedPlaylist) -> ApiError {
+    ApiError::new(
+        StatusCode::FORBIDDEN,
+        PLAYLIST_PRIVATE,
+        "This playlist is private",
+    )
+    .with_details(json!(stub))
+}
 
 impl From<CollectionsError> for ApiError {
     fn from(error: CollectionsError) -> Self {

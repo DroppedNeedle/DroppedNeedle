@@ -231,7 +231,7 @@ async fn playlist_auth_matrix() {
     let one = format!("/api/v3/playlists/{id}");
 
     let (status, _) = call(&app, Method::GET, &one, Some(BOB), None).await;
-    assert_eq!(status, StatusCode::NOT_FOUND, "private hides from others");
+    assert_eq!(status, StatusCode::FORBIDDEN, "private answers its stub");
     let (status, _) = call(
         &app,
         Method::PUT,
@@ -468,6 +468,7 @@ async fn playlists_favorites_and_follows_survive_a_restart() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(headers.get("content-type").unwrap(), "image/png");
+    assert_eq!(headers.get("cache-control").unwrap(), "private");
     assert!(!bytes.is_empty());
 
     let kept: Vec<String> =

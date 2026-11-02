@@ -18,12 +18,16 @@
 		refreshPlaylist,
 		setPlaylistVisibilityV3
 	} from '$lib/queries/playlists/PlaylistV3Mutations.svelte';
-	import { toPageDetail } from '$lib/queries/playlists/playlistV3Adapter';
+	import {
+		privatePlaylistLine,
+		privatePlaylistStub,
+		toPageDetail
+	} from '$lib/queries/playlists/playlistV3Adapter';
 	import { queryClient } from '$lib/queries/QueryClient';
 	import { extractDominantColor, DEFAULT_GRADIENT } from '$lib/utils/colors';
 	import { getApiUrl } from '$lib/api/api-utils';
 	import { withBasePath } from '$lib/utils/basePath';
-	import { Music, Download } from 'lucide-svelte';
+	import { Music, Download, Lock } from 'lucide-svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import BackButton from '$lib/components/BackButton.svelte';
@@ -52,6 +56,7 @@
 	let header = $state<ReturnType<typeof PlaylistHeader> | null>(null);
 
 	let loading = $derived(detailQuery.isLoading);
+	let locked = $derived(privatePlaylistStub(detailQuery.error));
 	let loadError = $derived.by(() => {
 		if (!detailQuery.isError) return null;
 		const msg = detailQuery.error instanceof Error ? detailQuery.error.message : '';
@@ -269,7 +274,7 @@
 </script>
 
 <svelte:head>
-	<title>{playlist?.name ?? 'Playlist'} - DroppedNeedle</title>
+	<title>{locked ? 'Private playlist' : (playlist?.name ?? 'Playlist')} - DroppedNeedle</title>
 </svelte:head>
 
 <div class="w-full px-2 sm:px-4 lg:px-8 py-4 sm:py-8 max-w-7xl mx-auto">
@@ -293,6 +298,15 @@
 					<div class="skeleton h-14 w-full"></div>
 				{/each}
 			</div>
+		</div>
+	{:else if locked}
+		<div class="flex flex-col items-center justify-center py-20 gap-4 text-center">
+			<Lock class="h-16 w-16 text-base-content/20" />
+			<div class="space-y-1">
+				<h2 class="text-lg font-semibold text-base-content/80">Private playlist</h2>
+				<p class="text-sm text-base-content/60">{privatePlaylistLine(locked)}</p>
+			</div>
+			<BackButton fallback={withBasePath('/playlists')} />
 		</div>
 	{:else if loadError}
 		<div class="flex flex-col items-center justify-center py-20 gap-4 text-center">

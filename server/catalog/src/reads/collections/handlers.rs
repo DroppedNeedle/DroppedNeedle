@@ -11,10 +11,12 @@ use axum::{
 };
 
 use droppedneedle_auth::User;
+use droppedneedle_kernel::error::ApiError;
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 
 use super::{
-    http::HttpResult,
+    error::CollectionsError,
+    http::{HttpResult, playlist_private},
     models::{
         AddTracksBody, AddTracksResponse, CheckTracksBody, CheckTracksResponse, CoverUploadBody,
         CoverUploadResponse, CreatePlaylistBody, FavoriteStatusResponse, FollowStatusResponse,
@@ -89,6 +91,7 @@ pub async fn create_playlist_handler(
     responses(
         (status = 200, description = "Playlist detail", body = PlaylistDetail),
         (status = 401, description = "Not authenticated"),
+        (status = 403, description = "PLAYLIST_PRIVATE: another user's private playlist, with a RedactedPlaylist in error.details"),
         (status = 404, description = "Unknown playlist id"),
     )
 )]
@@ -97,11 +100,20 @@ pub async fn get_playlist_handler(
     User(caller): User,
     Path(playlist_id): Path<String>,
 ) -> HttpResult<Json<PlaylistDetail>> {
-    Ok(Json(
-        CollectionsService::new(&state)
-            .get_playlist(caller.user_id(), caller.is_admin(), &playlist_id)
-            .await?,
-    ))
+    let service = CollectionsService::new(&state);
+    let admin = caller.is_admin();
+    match service
+        .get_playlist(caller.user_id(), admin, &playlist_id)
+        .await
+    {
+        Err(CollectionsError::NotFound) => {
+            let stub = service
+                .private_stub(caller.user_id(), admin, &playlist_id)
+                .await?;
+            Err(stub.map_or_else(ApiError::not_found, |stub| playlist_private(&stub)))
+        }
+        detail => Ok(Json(detail?)),
+    }
 }
 
 /// Rename a playlist.
@@ -434,7 +446,10 @@ pub async fn get_cover_handler(
         .await?;
     Ok((
         StatusCode::OK,
-        [(header::CONTENT_TYPE, cover.content_type)],
+        [
+            (header::CONTENT_TYPE, cover.content_type),
+            (header::CACHE_CONTROL, "private".to_owned()),
+        ],
         cover.bytes,
     )
         .into_response())

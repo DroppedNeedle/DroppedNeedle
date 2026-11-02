@@ -22561,6 +22561,16 @@
               }
             }
           },
+          "403": {
+            "description": "PLAYLIST_PRIVATE: another user's private playlist, with a RedactedPlaylist in error.details",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Unknown playlist id",
             "content": {

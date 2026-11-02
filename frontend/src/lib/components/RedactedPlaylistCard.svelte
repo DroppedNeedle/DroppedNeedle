@@ -1,7 +1,9 @@
 <script lang="ts">
 	import type { RedactedPlaylist } from '$lib/api/playlists';
 	import { deletePlaylistV3 } from '$lib/queries/playlists/PlaylistV3Mutations.svelte';
+	import { privatePlaylistLine } from '$lib/queries/playlists/playlistV3Adapter';
 	import { toastStore } from '$lib/stores/toast';
+	import { withBasePath } from '$lib/utils/basePath';
 	import { Lock, Trash2 } from 'lucide-svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import ConfirmDialog from '$lib/ui/ConfirmDialog.svelte';
@@ -17,8 +19,7 @@
 	const deleteMutation = deletePlaylistV3();
 	let confirmOpen = $state(false);
 
-	let trackText = $derived(`${playlist.track_count} track${playlist.track_count === 1 ? '' : 's'}`);
-	let ownerText = $derived(playlist.owner_name ? `owned by ${playlist.owner_name}` : 'No owner');
+	let line = $derived(privatePlaylistLine(playlist));
 
 	async function confirmDelete() {
 		await deleteMutation.mutateAsync(playlist.id);
@@ -27,25 +28,26 @@
 	}
 </script>
 
-<!-- A private playlist the caller may not read: no name, no cover, no link-through;
-	 only count + owner. An admin may delete one that has no owner. -->
-<Card
-	as="article"
-	padding="none"
-	class="w-full shrink-0 select-none cursor-default"
-	aria-label="Private playlist, {playlist.owner_name ? ownerText : 'no owner'}"
->
-	<figure
-		class="aspect-square overflow-hidden relative flex items-center justify-center rounded-t-box bg-base-300/40 opacity-70"
+<!-- A private playlist the caller may not read: no name, no cover, only count
+	 and owner. It links to the locked page. An admin may delete one that has no owner. -->
+<Card as="article" padding="none" class="w-full shrink-0 select-none">
+	<a
+		href={withBasePath(`/playlists/${playlist.id}`)}
+		class="block rounded-box focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-base-100"
+		aria-label="Private playlist, {line}"
 	>
-		<Lock class="h-10 w-10 text-base-content/30" />
-	</figure>
-	<div class="p-3 opacity-70">
-		<h3 class="text-sm font-semibold italic text-base-content/60 line-clamp-1">Private playlist</h3>
-		<p class="text-xs text-base-content/50 mt-0.5 line-clamp-2">
-			{trackText} · {ownerText}
-		</p>
-	</div>
+		<figure
+			class="aspect-square overflow-hidden relative flex items-center justify-center rounded-t-box bg-base-300/40 opacity-70"
+		>
+			<Lock class="h-10 w-10 text-base-content/30" />
+		</figure>
+		<div class="p-3 opacity-70">
+			<h3 class="text-sm font-semibold italic text-base-content/60 line-clamp-1">
+				Private playlist
+			</h3>
+			<p class="text-xs text-base-content/50 mt-0.5 line-clamp-2">{line}</p>
+		</div>
+	</a>
 	{#if playlist.can_delete}
 		<div class="flex justify-end px-3 pb-2.5">
 			<IconButton

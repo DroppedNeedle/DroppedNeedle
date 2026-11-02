@@ -120,14 +120,14 @@ const ADMITTED: u16 = 0;
 /// resource, destructive operations come last, since the owner pass runs
 /// them in order on one resource.
 const PATH_ID_ROWS: &[(Owned, &str, &str, u16, u16)] = &[
-    // Playlists: a private one is invisible to everyone else, admins
-    // included: admins never see another user's private playlist.
+    // Playlists: opening a private one answers its stub to everyone else,
+    // admins included, and every other route treats it as not there.
     (
         Owned::Playlist,
         "GET",
         "/api/v3/playlists/{playlist_id}",
-        404,
-        404,
+        403,
+        403,
     ),
     (
         Owned::Playlist,
@@ -888,6 +888,9 @@ fn fill(template: &str, ids: &Ids) -> String {
 }
 
 const PNG: &str = "iVBORw0KGgo=";
+/// Bytes that differ from the seeded cover, so a cover write that got through
+/// shows in the owner's read.
+const OTHER_PNG: &str = "AQIDBA==";
 
 fn track() -> Value {
     json!({"track_name": "One", "artist_name": "Someone", "album_name": "Something"})
@@ -900,11 +903,11 @@ fn body(method: &str, template: &str, ids: &Ids) -> Option<Value> {
     match (method, template) {
         ("PUT", "/api/v3/playlists/{playlist_id}") => Some(json!({"name": "Renamed"})),
         ("POST", "/api/v3/playlists/{playlist_id}/cover") => {
-            Some(json!({"content_type": "image/png", "image_base64": PNG}))
+            Some(json!({"content_type": "image/png", "image_base64": OTHER_PNG}))
         }
         ("POST", "/api/v3/playlists/{playlist_id}/tracks") => Some(json!({"tracks": [track()]})),
         ("PATCH", "/api/v3/playlists/{playlist_id}/tracks/reorder") => {
-            Some(json!({"track_id": id("track_id"), "new_position": 0}))
+            Some(json!({"track_id": id("track_id"), "new_position": 1}))
         }
         ("PATCH", "/api/v3/playlists/{playlist_id}/tracks/{track_id}") => {
             Some(json!({"source_type": "local"}))
@@ -1324,10 +1327,19 @@ async fn look(app: &TestApp, kind: Owned, owner: &Who, ids: &Ids) -> Value {
     match kind {
         Owned::Playlist | Owned::PublicPlaylist => {
             let playlist = read(fill("/api/v3/playlists/{playlist_id}", ids)).await;
+            let (status, _, cover) = app
+                .raw_bytes(
+                    "GET",
+                    &fill("/api/v3/playlists/{playlist_id}/cover", ids),
+                    &[("authorization", owner.auth.as_str())],
+                    Vec::new(),
+                )
+                .await;
+            assert_eq!(status, StatusCode::OK, "the owner reads the cover");
             json!([
                 playlist["name"],
                 playlist["is_public"],
-                playlist["custom_cover_url"],
+                cover,
                 playlist["tracks"]
             ])
         }
@@ -1657,8 +1669,10 @@ async fn caller_keyed_state_stays_with_its_caller() {
         !body.to_string().contains(artist),
         "B lists A's follow: {body}"
     );
-    call(&app, &bob, "PUT", &auto, Some(json!({"enabled": false}))).await;
-    call(&app, &bob, "PUT", &follow, Some(json!({"followed": false}))).await;
+    let (status, body) = call(&app, &bob, "PUT", &auto, Some(json!({"enabled": false}))).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "B follows nothing: {body}");
+    let (status, body) = call(&app, &bob, "PUT", &follow, Some(json!({"followed": false}))).await;
+    ok(status, &body, "B unfollows");
     let (_, body) = call(&app, &ada, "GET", &status_uri, None).await;
     assert_eq!(body, adas, "B's writes changed A's follow");
 
@@ -1676,8 +1690,9 @@ async fn caller_keyed_state_stays_with_its_caller() {
     let (status, body) = call(&app, &bob, "DELETE", "/api/v3/now-playing?device=web", None).await;
     ok(status, &body, "B stops");
     let (_, body) = call(&app, &ada, "GET", "/api/v3/now-playing", None).await;
+    let playing = body["sessions"].as_array().expect("sessions");
     assert!(
-        body.to_string().contains("ada"),
+        playing.iter().any(|row| row["user_name"] == json!("ada")),
         "B's stop ended A's play: {body}"
     );
 
@@ -1892,6 +1907,46 @@ async fn body_ids_never_reach_another_users_resources() {
     app.stop().await;
 }
 
+/// Opening another user's private playlist answers exactly the stub the
+/// caller's list shows, admins included, and an unknown id stays 404.
+#[tokio::test]
+async fn a_private_playlist_opens_to_its_stub_and_nothing_more() {
+    let app = TestApp::start("auth-playlist-locked").await;
+    let admin = Who {
+        id: String::new(),
+        username: "admin".to_owned(),
+        auth: app.login_admin().await,
+    };
+    let ada = user(&app, "ada").await;
+    let bob = user(&app, "bob").await;
+    let ids = seed(&app, Owned::Playlist, &ada, 0).await;
+    let uri = fill("/api/v3/playlists/{playlist_id}", &ids);
+
+    for who in [&bob, &admin] {
+        let (status, body) = call(&app, who, "GET", &uri, None).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+        assert_eq!(body["error"]["code"], "PLAYLIST_PRIVATE");
+        let (_, list) = call(&app, who, "GET", "/api/v3/playlists", None).await;
+        let listed = list["playlists"]
+            .as_array()
+            .expect("playlists")
+            .iter()
+            .find(|row| row["id"] == ids["playlist_id"].as_str())
+            .expect("the list shows the stub");
+        assert_eq!(&body["error"]["details"], listed);
+        assert_eq!(body["error"]["details"]["track_count"], 2);
+        let text = body.to_string();
+        assert!(
+            !text.contains("Mine") && !text.contains("Someone"),
+            "{text}"
+        );
+
+        let (status, _) = call(&app, who, "GET", "/api/v3/playlists/no-such-id", None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+    app.stop().await;
+}
+
 /// An ownerless playlist from v2, with one entry and a cover.
 async fn seed_stray(app: &TestApp, id: &str, public: bool) {
     app.seed(format!(
@@ -1949,6 +2004,12 @@ async fn only_an_admin_deletes_an_ownerless_playlist() {
             );
             assert_eq!(rows_of(&app, id), [1, 1, 1], "{id} stays");
         }
+        let (status, body) = call(&app, who, "GET", "/api/v3/playlists/private", None).await;
+        assert_eq!(
+            status,
+            StatusCode::NOT_FOUND,
+            "not listed, not opened: {body}"
+        );
         let (status, list) = call(&app, who, "GET", "/api/v3/playlists", None).await;
         assert_eq!(status, StatusCode::OK, "{list}");
         let rows = list["playlists"].as_array().expect("playlists");
@@ -1973,8 +2034,9 @@ async fn only_an_admin_deletes_an_ownerless_playlist() {
     let (status, detail) = call(&app, &admin, "GET", "/api/v3/playlists/public", None).await;
     assert_eq!(status, StatusCode::OK, "{detail}");
     assert_eq!(detail["can_delete"], true);
-    let (status, _) = call(&app, &admin, "GET", "/api/v3/playlists/private", None).await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, locked) = call(&app, &admin, "GET", "/api/v3/playlists/private", None).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{locked}");
+    assert_eq!(&locked["error"]["details"], row("private"));
     let rename = || Some(json!({"name": "Mine now"}));
     let (status, _) = call(&app, &admin, "PUT", "/api/v3/playlists/public", rename()).await;
     assert_eq!(status, StatusCode::FORBIDDEN);

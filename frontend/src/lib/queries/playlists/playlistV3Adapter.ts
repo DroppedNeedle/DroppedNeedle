@@ -1,3 +1,4 @@
+import { ApiError } from '$lib/api/errors';
 import type { components } from '$lib/api/v3/openapi';
 import type {
 	PlaylistDetail,
@@ -25,6 +26,20 @@ function isRedactedListItemV3(
 	item: PlaylistListItemV3
 ): item is components['schemas']['RedactedPlaylist'] {
 	return item.is_redacted === true;
+}
+
+/** The stub a 403 carries when the playlist is someone else's and private. */
+export function privatePlaylistStub(
+	error: unknown
+): components['schemas']['RedactedPlaylist'] | null {
+	if (!(error instanceof ApiError) || error.code !== 'PLAYLIST_PRIVATE') return null;
+	return error.details as components['schemas']['RedactedPlaylist'];
+}
+
+/** "4 tracks · owned by Cara", the one line a private playlist shows. */
+export function privatePlaylistLine(stub: { track_count: number; owner_name?: string | null }) {
+	const tracks = `${stub.track_count} track${stub.track_count === 1 ? '' : 's'}`;
+	return `${tracks} · ${stub.owner_name ? `owned by ${stub.owner_name}` : 'No owner'}`;
 }
 
 /** V3 track row to the page track shape. */

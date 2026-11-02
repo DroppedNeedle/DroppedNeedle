@@ -38921,6 +38921,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description PLAYLIST_PRIVATE: another user's private playlist, with a RedactedPlaylist in error.details */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Unknown playlist id */
             404: {
                 headers: {
