@@ -82,7 +82,7 @@ impl<E> Clone for StreamState<E> {
 /// estimated length. Player deep links rely on these keys.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct StreamQuery {
-    /// Requested output codec (`mp3`, `opus`, `raw`, or unset).
+    /// Requested output codec (`mp3`, `opus`, `flac`, `raw`, or unset).
     #[serde(default)]
     pub format: Option<String>,
     /// Client bitrate cap in kbps (0 or unset means uncapped).
@@ -132,7 +132,7 @@ where
     params(
         ("source" = String, Path, description = "Audio source: local, jellyfin, navidrome, plex, or plugin"),
         ("*key" = String, Path, description = "Local file id, remote item id, Plex part key, or recording MBID for plugin. A wildcard: Plex part keys keep their slashes"),
-        ("format" = Option<String>, Query, description = "Requested output codec: mp3, opus, or raw"),
+        ("format" = Option<String>, Query, description = "Requested output codec: mp3, opus, flac, or raw"),
         ("max_bitrate" = Option<i64>, Query, description = "Client bitrate cap in kbps (0 or unset means uncapped)"),
         ("start_seconds" = Option<f64>, Query, description = "Seek offset in seconds for a transcode"),
         ("estimate_content_length" = Option<bool>, Query, description = "Ask a transcode landing for its estimated Content-Length"),
@@ -169,7 +169,7 @@ pub async fn stream_get_route(
     params(
         ("source" = String, Path, description = "Audio source: local, jellyfin, navidrome, plex, or plugin"),
         ("*key" = String, Path, description = "Local file id, remote item id, Plex part key, or recording MBID for plugin. A wildcard: Plex part keys keep their slashes"),
-        ("format" = Option<String>, Query, description = "Requested output codec: mp3, opus, or raw"),
+        ("format" = Option<String>, Query, description = "Requested output codec: mp3, opus, flac, or raw"),
         ("max_bitrate" = Option<i64>, Query, description = "Client bitrate cap in kbps (0 or unset means uncapped)"),
         ("start_seconds" = Option<f64>, Query, description = "Seek offset in seconds for a transcode"),
         ("estimate_content_length" = Option<bool>, Query, description = "Ask a transcode landing for its estimated Content-Length"),

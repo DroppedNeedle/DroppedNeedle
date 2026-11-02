@@ -417,7 +417,7 @@ Either way the user's own media account is linked for playback, so plays count f
 
 ## Guides
 
-- [Your library](docs/library.md): scans, identification, unconfirmed matches, album organization, removing and downloading albums, lyrics, ratings, adding a missing album to MusicBrainz.
+- [Your library](docs/library.md): scans, supported formats, identification, unconfirmed matches, album organization, removing and downloading albums, lyrics, ratings, adding a missing album to MusicBrainz.
 - [Library Management](docs/library-management.md): profiles, tags, artwork, lyrics, previews and Apply, Undo, editions, hand edits and retags.
 - [Requests and downloads](docs/downloads.md): editions and single tracks, following artists, held files, upgrades, choosing a copy, drop imports.
 - [Discovery, apps and accounts](docs/discovery.md): Home, Discover, radio, Weekly Mix, covers, Last.fm, ListenBrainz, Spotify and music apps.

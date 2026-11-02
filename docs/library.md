@@ -6,6 +6,7 @@ How DroppedNeedle scans your music, works out which album and edition each folde
 
 - [Browsing](#browsing)
 - [Scanning](#scanning)
+- [Supported formats](#supported-formats)
 - [How an album is identified](#how-an-album-is-identified)
 - [Unconfirmed matches](#unconfirmed-matches)
 - [Album organization](#album-organization)
@@ -44,6 +45,12 @@ After a scan, the library notes which tracks carry lyrics (a lyrics tag, or a `.
 Recent runs can also export a diagnostic report for a scan: a small JSON file with the run's counters, timings, scopes and failed files, to attach to a bug report. Paths are replaced by fingerprints, and it holds no user names, passwords or error text.
 
 MusicBrainz lookups pace at 1 request per second on the official MusicBrainz server. Built-in BrainzMash runs its own local pacing instead. Either way, later scans are incremental, so the first one is the slow one.
+
+## Supported formats
+
+The library takes FLAC, MP3, Ogg Vorbis, Opus, AAC, ALAC or AAC in M4A, and WAV. Scans and imports skip other formats, WMA, APE and WavPack included.
+
+When your browser can't play a library file, the web player asks the server for a transcode by itself: FLAC for a lossless source such as ALAC, so nothing is lost (the max bitrate under Settings > Connect Apps doesn't apply to it), and Opus or MP3 for a lossy one. Seeking works as usual. With transcoding off, or when a transcode fails, the track is skipped with one message.
 
 ## How an album is identified
 

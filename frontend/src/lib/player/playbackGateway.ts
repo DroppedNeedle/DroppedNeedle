@@ -22,6 +22,7 @@ export interface StreamHints {
 	format?: string;
 	max_bitrate?: number;
 	estimate_content_length?: boolean;
+	start_seconds?: number;
 }
 
 // One gateway URL for every source: local file ids, Jellyfin/Navidrome item
@@ -38,6 +39,7 @@ export function gatewayStreamUrl(
 	if (hints.estimate_content_length !== undefined) {
 		search.set('estimate_content_length', String(hints.estimate_content_length));
 	}
+	if (hints.start_seconds) search.set('start_seconds', String(hints.start_seconds));
 	return streamPath(source, String(key), search);
 }
 

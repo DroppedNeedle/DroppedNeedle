@@ -6,7 +6,9 @@
 
 use droppedneedle_kernel::db::statement::ListLen;
 
-use crate::local::definitions::{musicbrainz, owned_album, owned_artist, recording_mbid};
+use crate::local::definitions::{
+    musicbrainz, owned_album, owned_artist, recording_mbid, track_codec,
+};
 use crate::local::sql::{TRACK_TEXT_MATCH, TRACK_WORD_LIKE};
 
 droppedneedle_kernel::sql! {
@@ -71,7 +73,9 @@ droppedneedle_kernel::sql! {
          t.artist_name AS artist_name, t.year AS year, t.local_album_id AS local_album_id, \
          t.album_title AS album_title, t.disc_number AS disc_number, \
          t.track_number AS track_number, t.duration_seconds AS duration_seconds, \
-         t.file_format AS file_format, ",
+         ",
+        track_codec!("t"),
+        " AS file_format, ",
         recording_mbid!("e", "t"),
         " AS mbid, ae.release_group_mbid AS release_group_mbid, \
          (w.local_album_id IS NOT NULL) AS cover_available, \

@@ -23,6 +23,7 @@ use futures_util::StreamExt as _;
 use transcode::{
     FfmpegChild, FfmpegSpawner, FfmpegTranscoder, IDLE_DEADLINE, OutFormat, ProcessSpawner,
     StreamPlan, TrackInfo, TranscodeError, TranscodeSettings, Transcoder as _, build_cmd, decide,
+    estimate_size, out_media_type,
 };
 
 use crate::common::ScratchDir;
@@ -418,6 +419,32 @@ fn mp3_argv_is_exact() {
     .collect();
     assert_eq!(argv, expected);
     assert!(!argv.iter().any(|arg| arg == "-ss"), "no seek, no -ss");
+}
+
+/// The web player asks for FLAC when a browser refuses a lossless source. It
+/// seeks like the others, carries no bitrate, and has no size to estimate.
+#[test]
+fn flac_request_transcodes_to_flac_and_seeks() {
+    let plan = decide(
+        &track(Some(900), "m4a"),
+        Some("flac"),
+        None,
+        false,
+        12.5,
+        &settings(),
+        true,
+    );
+    assert_eq!(plan.out_format(), Some(OutFormat::Flac));
+    assert_eq!(estimate_size(&plan), None);
+    let argv = build_cmd(Path::new("/m/x.m4a"), &plan).expect("transcode builds argv");
+    let seek = argv.iter().position(|arg| arg == "-ss").expect("seek flag");
+    assert_eq!(argv[seek + 1], "12.500");
+    assert!(!argv.iter().any(|arg| arg == "-b:a"), "{argv:?}");
+    assert_eq!(
+        &argv[argv.len() - 5..],
+        &["-c:a", "flac", "-f", "flac", "pipe:1"]
+    );
+    assert_eq!(out_media_type(&OutFormat::Flac), "audio/flac");
 }
 
 #[test]

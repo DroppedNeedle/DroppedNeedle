@@ -447,6 +447,41 @@ async fn sqlite_format_filter_artist_sort_and_release_group_lookup() {
     );
 }
 
+/// A web player picks its transcode by this name: an MP4 file with a bit
+/// depth is ALAC, and one without stays what it is.
+#[tokio::test]
+async fn an_alac_track_is_named_apart_from_aac() {
+    let fixture = sqlite_fixture().await;
+    fixture
+        .runtime
+        .db()
+        .write(
+            droppedneedle_kernel::db::Lane::Foreground,
+            "mp4 tracks",
+            |tx| {
+                tx.execute_batch(
+                    "UPDATE local_tracks SET file_format = 'm4a', bit_depth = 16 WHERE id = 't1'; \
+                     UPDATE local_tracks SET file_format = 'm4a' WHERE id = 't2'",
+                )
+                .map_err(droppedneedle_kernel::db::DbError::from)
+            },
+        )
+        .await
+        .expect("seed batch runs");
+    let (tracks, _) = fixture
+        .catalog
+        .album_tracks("al1", 50, 0)
+        .await
+        .expect("tracks list");
+    assert_eq!(
+        tracks
+            .iter()
+            .map(|track| track.format.as_str())
+            .collect::<Vec<_>>(),
+        ["alac", "m4a"]
+    );
+}
+
 #[tokio::test]
 async fn sqlite_album_tracks_and_copies() {
     let fixture = sqlite_fixture().await;

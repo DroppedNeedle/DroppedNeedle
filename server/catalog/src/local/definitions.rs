@@ -105,6 +105,22 @@ macro_rules! recording_mbid {
     };
 }
 
+/// A track's format as a person or a browser needs it: an MP4 file is AAC or
+/// ALAC, and the scan reads a bit depth only from ALAC.
+macro_rules! track_codec {
+    ($track:literal) => {
+        concat!(
+            "CASE WHEN ",
+            $track,
+            ".file_format = 'm4a' AND ",
+            $track,
+            ".bit_depth IS NOT NULL THEN 'alac' ELSE ",
+            $track,
+            ".file_format END"
+        )
+    };
+}
+
 /// Every owned release group, lowercased: a subquery for `IN (...)`.
 macro_rules! owned_release_groups {
     () => {
@@ -136,5 +152,5 @@ macro_rules! owned_artist {
 
 pub(crate) use {
     copy_order, live_album, live_track, musicbrainz, owned_album, owned_artist,
-    owned_release_groups, recording_mbid,
+    owned_release_groups, recording_mbid, track_codec,
 };

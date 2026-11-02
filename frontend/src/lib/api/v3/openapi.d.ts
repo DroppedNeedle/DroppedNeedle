@@ -45331,7 +45331,7 @@ export interface operations {
     stream_get: {
         parameters: {
             query?: {
-                /** @description Requested output codec: mp3, opus, or raw */
+                /** @description Requested output codec: mp3, opus, flac, or raw */
                 format?: string;
                 /** @description Client bitrate cap in kbps (0 or unset means uncapped) */
                 max_bitrate?: number;
@@ -45433,7 +45433,7 @@ export interface operations {
     stream_head: {
         parameters: {
             query?: {
-                /** @description Requested output codec: mp3, opus, or raw */
+                /** @description Requested output codec: mp3, opus, flac, or raw */
                 format?: string;
                 /** @description Client bitrate cap in kbps (0 or unset means uncapped) */
                 max_bitrate?: number;

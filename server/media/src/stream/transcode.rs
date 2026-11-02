@@ -58,7 +58,7 @@ use std::os::unix::fs::PermissionsExt as _;
 // ---------------------------------------------------------------------------
 
 /// Supported transcode output codecs.
-pub const SUPPORTED_OUT_FORMATS: &[&str] = &["mp3", "opus"];
+pub const SUPPORTED_OUT_FORMATS: &[&str] = &["mp3", "opus", "flac"];
 
 /// Internal format name for AAC in MPEG-TS, the segment format the
 /// Jellyfin HLS playlist serves. [`decide`] produces it only when it is
@@ -119,8 +119,8 @@ pub const STDERR_CAPTURE_BYTES: usize = 2000;
 // Policy types
 // ---------------------------------------------------------------------------
 
-/// Transcode output codec. Only these two exist; anything else a client asks
-/// for falls back to the configured default.
+/// Transcode output codec; anything else a client asks for falls back to the
+/// configured default.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum OutFormat {
     /// MP3 via libmp3lame, muxed as mp3.
@@ -130,6 +130,11 @@ pub enum OutFormat {
     Opus,
     /// AAC muxed as MPEG-TS: the Jellyfin HLS segment format.
     AacTs,
+    /// FLAC, for a lossless source a browser cannot play. Only the native
+    /// stream route asks for it: the Subsonic and Jellyfin routes admit `mp3`
+    /// and `opus` alone. It has no bitrate, so neither the client cap nor the
+    /// server ceiling touches it, and piped output has no length in its header.
+    Flac,
 }
 
 impl OutFormat {
@@ -139,6 +144,7 @@ impl OutFormat {
             OutFormat::Mp3 => "mp3",
             OutFormat::Opus => "opus",
             OutFormat::AacTs => HLS_SEGMENT_FORMAT,
+            OutFormat::Flac => "flac",
         }
     }
 
@@ -148,6 +154,7 @@ impl OutFormat {
             OutFormat::Mp3 => "mp3",
             OutFormat::Opus => "ogg",
             OutFormat::AacTs => "ts",
+            OutFormat::Flac => "flac",
         }
     }
 }
@@ -299,6 +306,7 @@ pub fn decide(
         "mp3" => OutFormat::Mp3,
         "opus" => OutFormat::Opus,
         HLS_SEGMENT_FORMAT => OutFormat::AacTs,
+        "flac" => OutFormat::Flac,
         _ => settings.default_format,
     };
     let bitrate = out_bitrate_kbps(
@@ -325,6 +333,8 @@ pub fn decide(
 ///   -vn -map 0:a:0 -c:a <libmp3lame|libopus> -b:a <n>k
 ///   -f <mp3|ogg> pipe:1
 /// ```
+///
+/// FLAC output takes `-c:a flac -f flac` and no bitrate.
 ///
 /// `-ss` comes before `-i` (fast input seek) and only when the offset is
 /// positive; output always goes to piped stdout. Returns `None` for a direct
@@ -378,6 +388,11 @@ pub fn build_cmd(source_path: &Path, plan: &StreamPlan) -> Option<Vec<String>> {
             argv.push("-f".to_owned());
             argv.push("mpegts".to_owned());
         }
+        OutFormat::Flac => {
+            argv.push("flac".to_owned());
+            argv.push("-f".to_owned());
+            argv.push("flac".to_owned());
+        }
     }
     argv.push("pipe:1".to_owned());
     Some(argv)
@@ -389,14 +404,17 @@ pub fn out_media_type(out_format: &OutFormat) -> &'static str {
         OutFormat::Mp3 => "audio/mpeg",
         OutFormat::Opus => "audio/ogg",
         OutFormat::AacTs => "video/mp2t",
+        OutFormat::Flac => "audio/flac",
     }
 }
 
 /// Back-of-envelope transcode size in bytes, for the optional Content-Length
 /// (`estimateContentLength`): bitrate over the remaining duration after the
-/// seek offset. `None` for a direct plan.
+/// seek offset. `None` for a direct plan and for FLAC, which has no bitrate
+/// to work it out from.
 pub fn estimate_size(plan: &StreamPlan) -> Option<u64> {
     let StreamPlan::Transcode {
+        out_format,
         out_bitrate_kbps,
         start_seconds,
         source_duration_seconds,
@@ -405,6 +423,9 @@ pub fn estimate_size(plan: &StreamPlan) -> Option<u64> {
     else {
         return None;
     };
+    if *out_format == OutFormat::Flac {
+        return None;
+    }
     let seconds = (source_duration_seconds - start_seconds).max(0.0);
     let bytes = *out_bitrate_kbps as f64 * 1000.0 / 8.0 * seconds;
     Some(bytes.max(0.0) as u64)

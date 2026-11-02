@@ -11,7 +11,7 @@ use droppedneedle_kernel::db::time::Millis;
 
 use crate::artwork::local::art_tracks_column;
 use crate::local::definitions::{
-    live_album, musicbrainz, owned_album, owned_artist, owned_release_groups,
+    live_album, musicbrainz, owned_album, owned_artist, owned_release_groups, track_codec,
 };
 
 droppedneedle_kernel::sql! {
@@ -324,7 +324,9 @@ droppedneedle_kernel::sql! {
     /// album columns prefer the identified ids over the embedded tags.
     fragment RADIO_TRACK_SELECT = "SELECT t.id AS id, t.title AS title, \
          COALESCE(NULLIF(t.artist_name, ''), t.album_artist_name, '') AS artist_name, \
-         t.album_title AS album_title, t.file_format AS file_format, \
+         t.album_title AS album_title, "
+         + (track_codec!("t"))
+         + " AS file_format, \
          t.duration_seconds AS duration_seconds, t.disc_number AS disc_number, \
          t.track_number AS track_number, \
          COALESCE(te.recording_mbid, t.embedded_recording_mbid) AS recording_mbid, \

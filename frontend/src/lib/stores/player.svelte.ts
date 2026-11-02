@@ -9,6 +9,8 @@ import { createPlaybackSource } from '$lib/player/createSource';
 import { api } from '$lib/api/client';
 import { createPlaybackSession, sessionKeyFor } from '$lib/player/playbackSession';
 import { prefetchPathFor, streamUrlFor } from '$lib/player/streamUrl';
+import { transcodeTarget } from '$lib/player/transcodeTarget';
+import { UNPLAYABLE_ERROR } from '$lib/player/NativeAudioSource';
 import { toastStore } from '$lib/stores/toast';
 import { radioSession } from '$lib/stores/radioSession.svelte';
 import {
@@ -61,13 +63,20 @@ const MAX_HISTORY_LENGTH = 3;
 const SESSION_PERSIST_INTERVAL_MS = 5000;
 const SESSION_REPORT_INTERVAL_MS = 10_000;
 const MAX_SESSION_REPORT_FAILURES = 3;
+const REARM_AFTER_PLAYED_S = 30;
+// Progress arrives a few times a second; a bigger jump is a seek, not listening.
+const MAX_PROGRESS_STEP_S = 5;
 
 /**
- * How the current item is recovering. A failed item is retried once, then moved to another
- * source once, then counted failed and skipped after a pause; three failures in a row stop
- * playback. Playing clears it, so recovery never chains.
+ * How the current item is recovering. A failed item is reloaded once (as a transcode when the
+ * browser could not read it, and not at all when it already was one), then moved to another
+ * source once, without a word. Then it is counted failed and skipped after a pause, with one
+ * message; three failures in a row stop playback. A track that fails soon after starting spends
+ * the same steps, and only real playback clears the count. Thirty seconds heard since the last
+ * load earns the steps back, so a dropped connection on a long track retries each time. A decode
+ * error after that point is the file's, and is not retried: it would fail there again, for ever.
  */
-type RecoveryPhase = 'idle' | 'loading' | 'playing' | 'retrying' | 'fallingBack' | 'failed';
+type RecoveryPhase = 'idle' | 'loading' | 'retrying' | 'fallingBack' | 'failed';
 type LoadKind = 'fresh' | 'retry' | 'fallback';
 
 interface Recovery {
@@ -76,6 +85,13 @@ interface Recovery {
 	generation: number;
 	/** The tracks that failed in a row; its length is the error count. */
 	failed: string[];
+	/** The current load asked the server for a transcode. */
+	transcoded: boolean;
+	/** The browser could not read this track's original, so its reloads stay transcodes. */
+	directFailed: boolean;
+	/** Seconds heard since the last load, counted from the player's own progress. */
+	heard: number;
+	lastPosition: number;
 	skipTimer: ReturnType<typeof setTimeout> | null;
 }
 
@@ -98,7 +114,16 @@ function createPlayerStore() {
 	let currentIndex = $state(0);
 	let shuffleEnabled = $state(false);
 	let shuffleOrder = $state<number[]>([]);
-	const recovery: Recovery = { phase: 'idle', generation: 0, failed: [], skipTimer: null };
+	const recovery: Recovery = {
+		phase: 'idle',
+		generation: 0,
+		failed: [],
+		transcoded: false,
+		directFailed: false,
+		heard: 0,
+		lastPosition: 0,
+		skipTimer: null
+	};
 	let lastPersistTime = 0;
 
 	function cancelSkip(): void {
@@ -110,6 +135,8 @@ function createPlayerStore() {
 	function beginLoad(phase: RecoveryPhase): number {
 		cancelSkip();
 		recovery.phase = phase;
+		recovery.heard = 0;
+		recovery.lastPosition = 0;
 		return ++recovery.generation;
 	}
 
@@ -195,12 +222,29 @@ function createPlayerStore() {
 		loadUrl: string | undefined;
 	} {
 		isSeekable = true;
-		const url = streamUrlFor(item);
+		// Only library files transcode: the gateway passes a media server's bytes through.
+		const format =
+			item.sourceType === 'local' ? transcodeTarget(item.format, recovery.directFailed) : null;
+		recovery.transcoded = format !== null;
+		const url = streamUrlFor(item, format ? { format } : undefined);
 		if (item.sourceType === 'youtube') {
 			return { source: createPlaybackSource('youtube'), loadUrl: url };
 		}
 		return {
-			source: createPlaybackSource(item.sourceType, { url: url!, seekable: true }),
+			source: createPlaybackSource(item.sourceType, {
+				url: url!,
+				seekable: true,
+				transcode: format
+					? {
+							duration: item.duration ?? 0,
+							urlAt: (seconds) =>
+								streamUrlFor(
+									{ sourceType: 'local', trackSourceId: item.trackSourceId },
+									{ format, start_seconds: seconds }
+								)
+						}
+					: undefined
+			}),
 			loadUrl: url
 		};
 	}
@@ -209,6 +253,7 @@ function createPlayerStore() {
 		const item = queue[index];
 		if (!item) return;
 		const gen = beginLoad(LOAD_PHASE[kind]);
+		if (kind !== 'retry') recovery.directFailed = false;
 		const prevProgress = progress,
 			prevItem = currentSource ? (queue[currentIndex] ?? null) : null;
 		currentIndex = index;
@@ -224,7 +269,7 @@ function createPlayerStore() {
 		currentSource?.destroy();
 		let source: PlaybackSource, resolvedUrl: string | undefined;
 		try {
-			const r = await resolveSourceForItem(item);
+			const r = resolveSourceForItem(item);
 			source = r.source;
 			resolvedUrl = r.loadUrl;
 		} catch (e) {
@@ -270,30 +315,27 @@ function createPlayerStore() {
 	}
 
 	function handleTrackError(gen: number, error?: { code: string; message: string }): void {
-		if (!isCurrent(gen)) return;
+		// A failed load reports twice, through the source and through its promise.
+		if (!isCurrent(gen) || recovery.phase === 'failed') return;
 		const index = currentIndex;
 		const item = queue[index];
 		const trackName = nowPlaying?.trackName ?? item?.trackName ?? 'Unknown track';
-		const failedSource = item?.sourceType ?? nowPlaying?.sourceType ?? 'unknown';
-		const detail = error?.message || error?.code || '';
-		const detailSuffix = detail ? ` (${detail})` : '';
-		const { phase } = recovery;
-		// A first failure may be transient: reload the same item once.
-		if (item && (phase === 'loading' || phase === 'playing')) {
-			toastStore.notify(
-				`"${trackName}" failed on ${failedSource}${detailSuffix}, retrying...`,
-				'warning'
-			);
+		const { phase, transcoded } = recovery;
+		const unplayable = error?.code === UNPLAYABLE_ERROR;
+		const fileBroke = unplayable && recovery.heard >= REARM_AFTER_PLAYED_S;
+		// A first failure may be transient: reload once. A transcode that failed is
+		// not one to repeat, and an original the browser could not read becomes one.
+		if (item && phase === 'loading' && !transcoded && !fileBroke) {
+			recovery.directFailed ||= unplayable;
 			void loadQueueItem(index, 'retry');
 			return;
 		}
 		// The same track may play from another source (Plex fails, the local copy works).
-		if (item && phase === 'retrying') {
+		if (item && (phase === 'retrying' || phase === 'loading')) {
 			const next = nextFallbackSource(item);
 			const switched = next ? changeItemSource(queue, index, next) : null;
 			if (switched && !switched.error) {
 				queue = switched.newQueue;
-				toastStore.notify(`"${trackName}" failed on ${failedSource}, trying ${next}...`, 'warning');
 				void loadQueueItem(index, 'fallback');
 				return;
 			}
@@ -304,22 +346,30 @@ function createPlayerStore() {
 		playbackState = 'error';
 		if (recovery.failed.length >= MAX_CONSECUTIVE_ERRORS) {
 			const named = recovery.failed.map((n) => `"${n}"`).join(', ');
-			toastStore.notify(`Several tracks failed: ${named} - playback stopped.`, 'error');
+			toastStore.notify(`Stopped: can't play ${named}`, 'error');
 			applyResetState();
 			return;
 		}
 		const nextIdx = getNextIndex();
 		if (nextIdx !== null) {
-			toastStore.notify(
-				`"${trackName}" failed on ${failedSource}${detailSuffix}, skipping...`,
-				'warning'
-			);
+			toastStore.notify(`Skipped "${trackName}": can't play it`, 'warning');
 			recovery.skipTimer = setTimeout(() => {
 				recovery.skipTimer = null;
 				if (isCurrent(gen)) void loadQueueItem(nextIdx);
 			}, ERROR_SKIP_DELAY_MS);
 		} else {
-			toastStore.notify(`"${trackName}" failed on ${failedSource}${detailSuffix}`, 'error');
+			toastStore.notify(`Can't play "${trackName}"`, 'error');
+		}
+	}
+
+	function noteHeard(position: number): void {
+		const step = position - recovery.lastPosition;
+		recovery.lastPosition = position;
+		if (step <= 0 || step > MAX_PROGRESS_STEP_S) return;
+		recovery.heard += step;
+		if (recovery.heard >= REARM_AFTER_PLAYED_S && recovery.phase !== 'failed') {
+			recovery.phase = 'loading';
+			recovery.transcoded = false;
 		}
 	}
 
@@ -337,7 +387,6 @@ function createPlayerStore() {
 			if (!isCurrent(gen)) return;
 			playbackState = state;
 			if (state === 'playing') {
-				recovery.phase = 'playing';
 				recovery.failed = [];
 				session.playing();
 				prefetchNext();
@@ -369,6 +418,7 @@ function createPlayerStore() {
 			if (!isCurrent(gen)) return;
 			progress = t;
 			duration = d;
+			noteHeard(t);
 			// preview tier: DJ-style fade over the last 2s so 30s clips blend
 			// instead of stopping dead
 			const item = queue[currentIndex];

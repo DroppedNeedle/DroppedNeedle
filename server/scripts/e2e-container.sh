@@ -104,6 +104,10 @@ check_output() {
       PAGES=$(LC_ALL=C grep -ao OggS "$2" | wc -l)
       [ "$PAGES" -ge 3 ] || fail "$3: only $PAGES Ogg pages"
       ;;
+    flac)
+      [ "$(hex_at "$2" 0 4)" = "664c6143" ] || fail "$3: no fLaC"
+      od -An -tx1 -v "$2" | tr -d ' \n' | grep -Eq 'fff[89]' || fail "$3: no FLAC frame sync"
+      ;;
     mpegts)
       SIZE=$(wc -c <"$2")
       [ "$SIZE" -gt 0 ] && [ $((SIZE % 188)) -eq 0 ] || fail "$3: $SIZE bytes is not whole MPEG-TS packets"
@@ -123,13 +127,14 @@ check_output() {
 
 # One transcode with the argument shape of build_cmd: input, encoder, bitrate,
 # muxer, then optionally -ss and its value. Anything ffmpeg logs at this level
-# fails it too, since a stream it could not decode can still exit 0.
+# fails it too, since a stream it could not decode can still exit 0. An empty
+# bitrate sends none, as build_cmd does for FLAC.
 transcode() {
   INPUT=$1 ENCODER=$2 RATE=$3 MUXER=$4
   shift 4
   LABEL="$INPUT to $MUXER${1:+ with $*}"
   docker exec "$FFMPEG" ffmpeg -hide_banner -loglevel error -nostdin "$@" -i "/fixtures/$INPUT" \
-    -vn -map 0:a:0 -c:a "$ENCODER" -b:a "$RATE" -f "$MUXER" pipe:1 >"$OUT/out" 2>"$OUT/err" \
+    -vn -map 0:a:0 -c:a "$ENCODER" ${RATE:+-b:a "$RATE"} -f "$MUXER" pipe:1 >"$OUT/out" 2>"$OUT/err" \
     || fail "$LABEL: ffmpeg failed: $(cat "$OUT/err")"
   [ ! -s "$OUT/err" ] || fail "$LABEL: ffmpeg logged: $(cat "$OUT/err")"
   check_output "$MUXER" "$OUT/out" "$LABEL"
@@ -181,7 +186,9 @@ check_ffmpeg() {
       transcode "$INPUT" libopus 128k ogg $SEEK
       # shellcheck disable=SC2086
       transcode "$INPUT" aac 256k mpegts $SEEK
-      COUNT=$((COUNT + 3))
+      # shellcheck disable=SC2086
+      transcode "$INPUT" flac "" flac $SEEK
+      COUNT=$((COUNT + 4))
     done
   done
   echo "ffmpeg: $COUNT transcodes passed"

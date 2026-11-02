@@ -3,8 +3,24 @@ import { getAudioElement, resumeAudioEngine } from './audioElement';
 
 const LOAD_TIMEOUT_MS = 15_000;
 const STALL_TIMEOUT_MS = 15_000;
+const MEDIA_ERR_DECODE = 3;
+const MEDIA_ERR_SRC_NOT_SUPPORTED = 4;
+
+/** The browser could not read what it was given. The server's refusals read the same to it. */
+export const UNPLAYABLE_ERROR = 'UNPLAYABLE';
 
 type NativeSourceType = 'jellyfin' | 'local' | 'navidrome' | 'plex';
+
+/**
+ * A transcode is a live pipe: no ranges, and no length until it ends (the
+ * browser reports Infinity meanwhile). So the track's known length stands in,
+ * and a seek asks the server for a new pipe starting at that point.
+ */
+export interface LiveTranscode {
+	/** The track's length in seconds, 0 when it is not known. */
+	duration: number;
+	urlAt(seconds: number): string;
+}
 
 export class NativeAudioSource implements PlaybackSource {
 	readonly type: NativeSourceType;
@@ -12,6 +28,9 @@ export class NativeAudioSource implements PlaybackSource {
 	private readonly audio: HTMLAudioElement;
 	private readonly url: string;
 	private readonly seekable: boolean;
+	private readonly transcode?: LiveTranscode;
+	/** Where in the track the current pipe started. */
+	private pipeStart = 0;
 
 	private stateCallbacks: ((state: PlaybackState) => void)[] = [];
 	private readyCallbacks: (() => void)[] = [];
@@ -24,10 +43,14 @@ export class NativeAudioSource implements PlaybackSource {
 	private destroyed = false;
 	private currentState: PlaybackState = 'idle';
 
-	constructor(type: NativeSourceType, opts: { url: string; seekable: boolean }) {
+	constructor(
+		type: NativeSourceType,
+		opts: { url: string; seekable: boolean; transcode?: LiveTranscode }
+	) {
 		this.type = type;
 		this.url = opts.url;
 		this.seekable = opts.seekable;
+		this.transcode = opts.transcode;
 		this.audio = getAudioElement();
 	}
 
@@ -58,11 +81,6 @@ export class NativeAudioSource implements PlaybackSource {
 					this.readyCallbacks.forEach((cb) => cb());
 					resolve();
 				});
-			};
-
-			const onPlay = () => {
-				this.clearStallTimeout();
-				this.emitStateChange('playing');
 			};
 
 			const onPlaying = () => {
@@ -98,7 +116,12 @@ export class NativeAudioSource implements PlaybackSource {
 				const code = this.audio.error?.code ?? 0;
 				const message = this.getMediaErrorMessage(code);
 				this.emitStateChange('error');
-				this.emitError('LOAD_ERROR', message);
+				this.emitError(
+					code === MEDIA_ERR_DECODE || code === MEDIA_ERR_SRC_NOT_SUPPORTED
+						? UNPLAYABLE_ERROR
+						: 'LOAD_ERROR',
+					message
+				);
 				finalize(() => reject(new Error(message)));
 			};
 
@@ -131,7 +154,6 @@ export class NativeAudioSource implements PlaybackSource {
 				this.registerListener(event, handleReady);
 			}
 			this.registerListener('durationchange', emitProgress);
-			this.registerListener('play', onPlay);
 			this.registerListener('playing', onPlaying);
 			this.registerListener('pause', onPause);
 			this.registerListener('ended', onEnded);
@@ -163,6 +185,11 @@ export class NativeAudioSource implements PlaybackSource {
 		}
 		const clamped = Math.max(0, seconds);
 		const dur = this.getDuration();
+		if (this.transcode) {
+			// A pipe started at the very end would answer nothing and read as a failure.
+			this.restartPipe(this.transcode, dur > 1 ? Math.min(clamped, dur - 1) : clamped);
+			return;
+		}
 		this.audio.currentTime = dur > 0 ? Math.min(clamped, dur) : clamped;
 	}
 
@@ -176,10 +203,11 @@ export class NativeAudioSource implements PlaybackSource {
 
 	getCurrentTime(): number {
 		const current = this.audio.currentTime;
-		return Number.isFinite(current) ? current : 0;
+		return this.pipeStart + (Number.isFinite(current) ? current : 0);
 	}
 
 	getDuration(): number {
+		if (this.transcode?.duration) return this.transcode.duration;
 		const total = this.audio.duration;
 		return Number.isFinite(total) ? total : 0;
 	}
@@ -214,6 +242,14 @@ export class NativeAudioSource implements PlaybackSource {
 
 	isSeekable(): boolean {
 		return this.seekable;
+	}
+
+	private restartPipe(transcode: LiveTranscode, seconds: number): void {
+		const wasPlaying = !this.audio.paused;
+		this.pipeStart = seconds;
+		this.audio.src = transcode.urlAt(seconds);
+		this.audio.load();
+		if (wasPlaying) this.play();
 	}
 
 	private registerListener(event: string, handler: EventListener): void {
@@ -258,6 +294,8 @@ export class NativeAudioSource implements PlaybackSource {
 			await this.audio.play();
 		} catch (err: unknown) {
 			const name = err instanceof DOMException || err instanceof Error ? err.name : '';
+			// A new load interrupted this play: a seek or a track change, not a failure.
+			if (name === 'AbortError') return;
 			if (name === 'NotAllowedError') {
 				this.emitError('AUTOPLAY_BLOCKED', 'Playback failed. Browser may be blocking autoplay.');
 			} else {

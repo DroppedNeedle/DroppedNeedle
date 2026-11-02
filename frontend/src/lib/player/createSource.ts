@@ -1,11 +1,13 @@
 import type { PlaybackSource, SourceType } from './types';
 import { YouTubePlaybackSource } from './YouTubePlaybackSource';
-import { NativeAudioSource } from './NativeAudioSource';
+import { NativeAudioSource, type LiveTranscode } from './NativeAudioSource';
 import { YOUTUBE_PLAYER_ELEMENT_ID } from '$lib/constants';
 
 export type NativeSourceOptions = {
 	url: string;
 	seekable: boolean;
+	/** Set when the url is a live transcode, which cannot seek or report a length itself. */
+	transcode?: LiveTranscode;
 };
 
 export function createPlaybackSource(type: SourceType, opts?: NativeSourceOptions): PlaybackSource {

@@ -18,7 +18,6 @@ import {
 	buildQueueItemFromYouTube,
 	compareDiscTrack,
 	getDiscTrackKey,
-	normalizeCodec,
 	playlistTrackToQueueItem
 } from './queueHelpers';
 
@@ -134,32 +133,6 @@ describe('buildRemoteQueueItems', () => {
 		expect.assertions(1);
 		const items = buildRemoteQueueItems([jellyfinTrack], baseMeta);
 		expect(streamUrlFor(items[0])).toBe('/api/v3/stream/jellyfin/jf-123');
-	});
-});
-
-describe('normalizeCodec', () => {
-	it('lowercases known codecs and folds alac to flac', () => {
-		expect.assertions(2);
-		expect(normalizeCodec('FLAC')).toBe('flac');
-		expect(normalizeCodec('ALAC')).toBe('flac');
-	});
-
-	it('keeps wma labeled as wma instead of relabeling it aac', () => {
-		expect.assertions(2);
-		expect(normalizeCodec('wma')).toBe('wma');
-		expect(normalizeCodec('WMA')).toBe('wma');
-	});
-
-	it('passes unknown codecs through instead of calling them aac', () => {
-		expect.assertions(1);
-		expect(normalizeCodec('unknown_codec')).toBe('unknown_codec');
-	});
-
-	it('defaults a missing codec to aac', () => {
-		expect.assertions(3);
-		expect(normalizeCodec(null)).toBe('aac');
-		expect(normalizeCodec(undefined)).toBe('aac');
-		expect(normalizeCodec('')).toBe('aac');
 	});
 });
 

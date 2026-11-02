@@ -14,7 +14,7 @@ use rusqlite::types::Value;
 
 use super::definitions::{
     copy_order, live_album, live_track, musicbrainz, owned_album, owned_artist,
-    owned_release_groups, recording_mbid,
+    owned_release_groups, recording_mbid, track_codec,
 };
 use super::player::{
     AlbumKey, AlbumSequence, AlbumShape, HistoryKey, ItemKind, KeyedBy, PlayedFilter, TextMatch,
@@ -165,7 +165,9 @@ droppedneedle_kernel::sql! {
          t.disc_number AS disc_number, t.track_number AS track_number, t.year AS year, \
          COALESCE((SELECT g.name FROM local_track_genres g \
          WHERE g.local_track_id = t.id ORDER BY g.position LIMIT 1), t.genre) AS genre, \
-         t.duration_seconds AS duration_seconds, t.file_format AS format, \
+         t.duration_seconds AS duration_seconds, ",
+        track_codec!("t"),
+        " AS format, \
          t.bit_rate AS bit_rate, t.sample_rate AS sample_rate, \
          t.bit_depth AS bit_depth, t.channels AS channels, \
          t.file_size_bytes AS file_size_bytes, t.imported_at / 1000.0 AS date_added, \

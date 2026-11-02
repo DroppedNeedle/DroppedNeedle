@@ -9,20 +9,8 @@ import type { RemoteTrack } from '$lib/queries/remotes/types';
 import type { PlaylistTrack } from '$lib/api/playlists';
 import { getCoverUrl } from '$lib/utils/errorHandling';
 
-const CODEC_ALIASES: Record<string, string> = { alac: 'flac' };
-
-export function normalizeCodec(codec: string | undefined | null): string {
-	const raw = codec?.toLowerCase() ?? '';
-	if (!raw) return 'aac';
-	if (CODEC_ALIASES[raw]) return CODEC_ALIASES[raw];
-	// Unknown codecs (wma included) pass through honestly: relabeling one
-	// as aac would lie about what is about to play, and every surface
-	// downstream renders the raw value as-is.
-	return raw;
-}
-
-// Remote views carry no codec, so a remote item takes the missing-codec default.
-export const REMOTE_FORMAT = normalizeCodec(null);
+// Remote views carry no codec, so a remote item is labelled with the common one.
+export const REMOTE_FORMAT = 'aac';
 
 /** The key a remote track streams by: Plex streams a media part, the others the item. */
 export function remoteStreamKey(track: RemoteTrack): string | null {

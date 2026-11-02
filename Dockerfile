@@ -96,8 +96,8 @@ RUN curl -fsSL --retry 3 -o "ffmpeg-${FFMPEG_VERSION}.tar.xz" "https://ffmpeg.or
         --enable-demuxer=aac,flac,matroska,mov,mp3,ogg,wav \
         --enable-parser=aac,flac,mpegaudio,opus,vorbis \
         --enable-decoder=aac,adpcm_ima_wav,adpcm_ms,alac,flac,mp3,mp3float,opus,pcm_alaw,pcm_f32le,pcm_f64le,pcm_mulaw,pcm_s16le,pcm_s24le,pcm_s32le,pcm_u8,vorbis \
-        --enable-encoder=aac,libmp3lame,libopus \
-        --enable-muxer=mp3,mpegts,ogg \
+        --enable-encoder=aac,flac,libmp3lame,libopus \
+        --enable-muxer=flac,mp3,mpegts,ogg \
         --enable-filter=aformat,anull,aresample,atrim \
     && make -j"$(nproc)" ffmpeg \
     && mkdir -p /out/doc \

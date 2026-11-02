@@ -116,7 +116,7 @@ describe('NativeAudioSource', () => {
 		hoisted.dispatch('error');
 
 		await expect(loadPromise).rejects.toThrow('MEDIA_ERR_SRC_NOT_SUPPORTED');
-		expect(onError).toHaveBeenCalledWith(expect.objectContaining({ code: 'LOAD_ERROR' }));
+		expect(onError).toHaveBeenCalledWith(expect.objectContaining({ code: 'UNPLAYABLE' }));
 	});
 
 	it('transitions from buffering back to playing after seek via playing event', async () => {
@@ -128,7 +128,11 @@ describe('NativeAudioSource', () => {
 		hoisted.dispatch('canplay');
 		await loadPromise;
 
+		// Asked to play is not playing: a file that cannot decode gets this far.
 		hoisted.dispatch('play');
+		expect(states).not.toContain('playing');
+
+		hoisted.dispatch('playing');
 		expect(states).toContain('playing');
 
 		hoisted.dispatch('waiting');

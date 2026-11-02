@@ -74,7 +74,7 @@ impl AudioSource {
 /// their own parameter names into it. The engine's `decide()` reads it.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct StreamParams {
-    /// Requested output codec (`mp3`, `opus`, `raw`, or unset). `raw`
+    /// Requested output codec (`mp3`, `opus`, `flac`, `raw`, or unset). `raw`
     /// always serves the original bytes.
     pub format: Option<String>,
     /// Client bitrate cap in kbps. 0 or unset means uncapped.

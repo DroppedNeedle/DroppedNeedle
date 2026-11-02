@@ -32385,7 +32385,7 @@
           {
             "name": "format",
             "in": "query",
-            "description": "Requested output codec: mp3, opus, or raw",
+            "description": "Requested output codec: mp3, opus, flac, or raw",
             "required": false,
             "schema": {
               "type": "string"
@@ -32535,7 +32535,7 @@
           {
             "name": "format",
             "in": "query",
-            "description": "Requested output codec: mp3, opus, or raw",
+            "description": "Requested output codec: mp3, opus, flac, or raw",
             "required": false,
             "schema": {
               "type": "string"
