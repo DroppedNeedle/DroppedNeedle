@@ -643,6 +643,9 @@ pub struct ReleaseSearchHit {
 pub struct RecordingSearchHit {
     /// Recording MBID: required identity.
     pub id: String,
+    /// Recording title.
+    #[serde(default)]
+    pub title: Option<String>,
     /// Plain score key.
     #[serde(default)]
     pub score: Option<i64>,
@@ -659,6 +662,13 @@ pub struct RecordingSearchHit {
 pub struct RecordingSearchRelease {
     /// Release MBID: required identity.
     pub id: String,
+    /// Release status (`Official`, `Bootleg`, ...).
+    #[serde(default)]
+    pub status: Option<String>,
+    /// Release date. The release-group facet here carries no first
+    /// release date, so this is the only date a hit has.
+    #[serde(default)]
+    pub date: Option<String>,
     /// Release-group facet.
     #[serde(rename = "release-group", default)]
     pub release_group: Option<ReleaseGroupRef>,
