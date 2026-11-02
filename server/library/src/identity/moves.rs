@@ -128,7 +128,7 @@ fn write_track(
             spot.disc,
             spot.position,
             source,
-            now,
+            crate::clock::ms(now),
         ])?;
     forget_hand_match(tx, spot.local_track_id)
 }
@@ -181,7 +181,7 @@ pub(crate) fn link(
             link.matcher_version,
             link.attempt_id,
             link.selected_by,
-            now,
+            crate::clock::ms(now),
         ])?;
     }
     let mut statement = tx.prepare_cached(sql::LINK_TRACK.text())?;
@@ -195,7 +195,7 @@ pub(crate) fn link(
             track.disc,
             track.position,
             link.attempt_id,
-            now,
+            crate::clock::ms(now),
             link.album_id,
         ])?;
         if written > 0 {

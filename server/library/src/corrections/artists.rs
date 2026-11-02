@@ -137,14 +137,14 @@ pub(super) fn merge(
             if let Some(row) = carried_row.flatten() {
                 tx.execute(
                     crate::corrections::sql::WRITE_MERGED_ARTIST_LINK.text(),
-                    params![survivor, row.0, row.1, now],
+                    params![survivor, row.0, row.1, crate::clock::ms(now)],
                 )?;
             }
         }
     }
     tx.execute(
         crate::corrections::sql::BUMP_ARTIST_REVISION.text(),
-        params![survivor, now],
+        params![survivor, crate::clock::ms(now)],
     )?;
     let material = serde_json::to_string(&Material {
         kind: "artist_merge",

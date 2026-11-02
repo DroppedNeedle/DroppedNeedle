@@ -679,7 +679,7 @@ fn exclude(
 ) -> Result<(), OperationError> {
     let changed: Vec<String> = tx
         .prepare(crate::operations::sql::EXCLUDE_TRACK.text())?
-        .query_map(params![album_id, now], |row| row.get(0))?
+        .query_map(params![album_id, crate::clock::ms(now)], |row| row.get(0))?
         .collect::<rusqlite::Result<_>>()?;
     for track_id in &changed {
         tx.execute(

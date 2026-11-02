@@ -482,7 +482,7 @@ fn give_up_path(tx: &Connection, track_id: &str, item: &CommitIndexedItem) -> ru
     tx.prepare_cached(crate::scan::sql::GIVE_UP_PATH.text())?
         .execute(params![
             track_id,
-            item.tags_read_at,
+            crate::clock::ms(item.tags_read_at),
             hidden,
             file_path,
             sha256_hex(&hidden)
@@ -716,7 +716,7 @@ fn write_album(
             tag.original_release_date,
             tag.genre,
             tag.compilation,
-            now,
+            crate::clock::ms(now),
         ])?;
     let rows_before = credit_rows(tx, CreditSide::Album, album_id)?;
     let mut album_artist_rows = tx.prepare_cached(crate::scan::sql::WRITE_ALBUM_CREDIT.text())?;
@@ -1188,7 +1188,7 @@ fn write_item(
             item.mtime_ns,
             exact_stat_revision(item.size_bytes, item.mtime_ns),
             tag_revision,
-            now,
+            crate::clock::ms(now),
             title,
             title_folded,
             track_artist,
@@ -1370,8 +1370,7 @@ fn write_item(
 }
 
 /// How long the rows a retag left behind must have been missing, when
-/// they are half the album or more, before the album is followed. In
-/// seconds, like `missing_since`. A share that drops out for a few scans
+/// they are half the album or more, before the album is followed. A share that drops out for a few scans
 /// must not hand the album's row and chosen edition to the few files that
 /// were retagged meanwhile. A missing row with no time counts as long
 /// gone.
@@ -1602,7 +1601,7 @@ pub(crate) fn waits_for_the_rest(
         .query_row(
             params![
                 album_id,
-                now - LONG_GONE_SECONDS,
+                crate::clock::ms(now - LONG_GONE_SECONDS),
                 moved_ids,
                 format!("{HIDDEN_PREFIX}gone/")
             ],
@@ -3073,7 +3072,10 @@ pub(crate) fn automatic_album_for(
         )
         .optional()?;
     if let Some(revived) = retired {
-        tx.execute(crate::scan::sql::REVIVE_ALBUM.text(), params![revived, now])?;
+        tx.execute(
+            crate::scan::sql::REVIVE_ALBUM.text(),
+            params![revived, crate::clock::ms(now)],
+        )?;
         tx.execute(
             crate::scan::sql::DROP_MERGED_ALBUM_ALIAS.text(),
             params![revived],
@@ -3106,7 +3108,7 @@ pub(crate) fn automatic_album_for(
             stored.year,
             stored.genre,
             stored.is_compilation,
-            now,
+            crate::clock::ms(now),
         ],
     )?;
     tx.execute(

@@ -363,7 +363,7 @@ fn fold_split_legacy_album(
     retire(tx, &album.id, target, now)?;
     tx.execute(
         crate::repairs::sql::BUMP_ALBUM_REVISION.text(),
-        params![target, now],
+        params![target, crate::clock::ms(now)],
     )?;
     offer_album(tx, target, crate::clock::ms(now))?;
     let after = serde_json::json!({
@@ -554,7 +554,7 @@ fn artist_from_tracks(
             name,
             primary.artist_id,
             source.album_artist_sort,
-            now
+            crate::clock::ms(now)
         ],
     )?;
     write_album_credits(tx, &album.id, &credits)?;
@@ -733,7 +733,7 @@ pub fn undo_artist_from_tracks(
             folded,
             before.album_artist_id,
             before.album_artist_sort_name,
-            now
+            crate::clock::ms(now)
         ],
     )?;
     write_album_credits(tx, &album_id, &before.credits)?;

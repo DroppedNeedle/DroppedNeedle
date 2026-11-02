@@ -109,7 +109,7 @@ droppedneedle_kernel::sql! {
     /// Mark an indexed track (`?1`) missing since `?2`; answers its new
     /// row revision.
     pub(crate) TRACK_MARK_MISSING = "UPDATE local_tracks SET availability = 'missing', \
-             missing_since = ?2, row_revision = row_revision + 1 \
+             missing_at = ?2, row_revision = row_revision + 1 \
              WHERE id = ?1 AND availability = 'indexed' RETURNING row_revision";
     /// One catalog action. The actor (`?2`) stays NULL when it is no
     /// account.
@@ -407,8 +407,8 @@ droppedneedle_kernel::sql! {
                  last_outcome = excluded.last_outcome, \
                  last_managed_at = excluded.last_managed_at, \
                  row_revision = library_track_management_state.row_revision + 1";
-    pub(super) MARK_MISSING = "UPDATE local_tracks SET availability = 'missing', missing_since = ?2 WHERE id = ?1";
-    pub(super) RETIRE_REPLACED_TRACK = "UPDATE local_tracks SET availability = 'missing', missing_since = ?5, \
+    pub(super) MARK_MISSING = "UPDATE local_tracks SET availability = 'missing', missing_at = ?2 WHERE id = ?1";
+    pub(super) RETIRE_REPLACED_TRACK = "UPDATE local_tracks SET availability = 'missing', missing_at = ?5, \
          relative_path = ?4, file_path = ?6, path_hash = ?7, \
          row_revision = row_revision + 1 \
          WHERE id = ?1 AND root_id = ?2 AND relative_path = ?3";

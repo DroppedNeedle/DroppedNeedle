@@ -146,7 +146,7 @@ pub(crate) fn place_scanned(tx: &Transaction<'_>, now: f64) -> rusqlite::Result<
                     release: row.get(4)?,
                     disc: row.get(5)?,
                     track: row.get(6)?,
-                    imported_at: row.get(7)?,
+                    imported_at: crate::clock::opt_secs_at(row, 7)?,
                     album_title: row.get(8)?,
                     album_artist: row.get(9)?,
                 },
@@ -187,7 +187,9 @@ fn place_album(
 ) -> rusqlite::Result<bool> {
     let (release, chosen_at): (String, f64) = tx
         .prepare_cached(crate::corrections::sql::PLACE_ALBUM.text())?
-        .query_row(params![album], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        .query_row(params![album], |row| {
+            Ok((row.get(0)?, crate::clock::secs_at(row, 1)?))
+        })?;
     let edition = edition(tx, album, &release)?;
     let held = held_tracks(tx, album)?;
 
@@ -366,7 +368,7 @@ fn retagged_by_hand(
         .query_map(params![album, track.key], |r| {
             Ok((
                 r.get(0)?,
-                r.get(1)?,
+                crate::clock::opt_secs_at(r, 1)?,
                 r.get(2)?,
                 r.get(3)?,
                 r.get(4)?,
@@ -375,8 +377,8 @@ fn retagged_by_hand(
         })?
         .collect::<rusqlite::Result<_>>()?;
     let mut waits = false;
-    for (old, missing_since, title, artist, disc, number) in olds {
-        let retitled_copy = missing_since.is_some_and(|gone| arrived < gone)
+    for (old, missing_at, title, artist, disc, number) in olds {
+        let retitled_copy = missing_at.is_some_and(|gone| arrived < gone)
             && (title != row.album_title
                 || artist != row.album_artist
                 || disc != row.disc

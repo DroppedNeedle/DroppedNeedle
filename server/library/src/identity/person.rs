@@ -147,14 +147,14 @@ pub(super) fn write_choice_tracks(
                 placement.release_track_mbid,
                 placement.disc,
                 placement.position,
-                now,
+                crate::clock::ms(now),
                 album_id,
             ])?;
         forget_hand_match(tx, &placement.local_track_id)?;
     }
     for track_id in &fit.extra {
         tx.prepare_cached(sql::UNPLACE_CHOSEN_TRACK.text())?
-            .execute(params![track_id, now, PROVIDER, album_id])?;
+            .execute(params![track_id, crate::clock::ms(now), PROVIDER, album_id])?;
         forget_hand_match(tx, track_id)?;
     }
     Ok(())
@@ -192,7 +192,7 @@ pub(super) fn seal_persons_album(
             release_group,
             release,
             actor,
-            now
+            crate::clock::ms(now)
         ])?;
     Ok(())
 }
@@ -343,9 +343,9 @@ fn make_persons(
     now: f64,
 ) -> rusqlite::Result<()> {
     tx.prepare_cached(sql::CONFIRM_ALBUM.text())?
-        .execute(params![album_id, actor, now, PROVIDER])?;
+        .execute(params![album_id, actor, crate::clock::ms(now), PROVIDER])?;
     tx.prepare_cached(sql::CONFIRM_TRACKS.text())?
-        .execute(params![album_id, now, PROVIDER])?;
+        .execute(params![album_id, crate::clock::ms(now), PROVIDER])?;
     drop_satellite(tx, album_id, sql::CLEAR_FLAG)?;
     // A chosen or confirmed edition is what automatic management waits
     // for: the album's files follow that exact edition.
@@ -387,9 +387,9 @@ pub fn hand_back(
         return Ok(false);
     };
     tx.prepare_cached(sql::HAND_BACK_ALBUM.text())?
-        .execute(params![album_id, now, PROVIDER])?;
+        .execute(params![album_id, crate::clock::ms(now), PROVIDER])?;
     tx.prepare_cached(sql::HAND_BACK_TRACKS.text())?
-        .execute(params![album_id, now, PROVIDER])?;
+        .execute(params![album_id, crate::clock::ms(now), PROVIDER])?;
     forget_album_hand_matches(tx, album_id)?;
     for statement in [sql::DROP_REMAP, sql::DROP_CUSTOM] {
         drop_satellite(tx, album_id, statement)?;
@@ -434,10 +434,10 @@ pub fn leave_unmanaged(
     let matched = before.identity.is_some();
     if matched {
         tx.prepare_cached(sql::LEAVE_ALBUM_UNMANAGED.text())?
-            .execute(params![album_id, actor, now, PROVIDER])?;
+            .execute(params![album_id, actor, crate::clock::ms(now), PROVIDER])?;
     }
     tx.prepare_cached(sql::UNPLACE_ALBUM_TRACKS.text())?
-        .execute(params![album_id, now, PROVIDER])?;
+        .execute(params![album_id, crate::clock::ms(now), PROVIDER])?;
     forget_album_hand_matches(tx, album_id)?;
     tx.prepare_cached(sql::EXCLUDE_ALBUM.text())?
         .execute(params![album_id, actor, crate::clock::ms(now)])?;
@@ -664,7 +664,7 @@ pub fn hand_match(tx: &Transaction<'_>, matched: &Matched<'_>) -> rusqlite::Resu
             matched.release_track_mbid,
             matched.disc,
             matched.position,
-            now,
+            crate::clock::ms(now),
             album_id,
         ])?;
     // The file now fits the edition the person chose.
@@ -759,7 +759,7 @@ pub(crate) fn upsert_track_identity(
             row.medium_position,
             row.release_track_position,
             row.decision_source,
-            now,
+            crate::clock::ms(now),
         ])?;
     forget_hand_match(tx, row.local_track_id)
 }

@@ -182,13 +182,17 @@ pub fn give_up_remap(
         .prepare_cached(sql::GIVE_UP_ALBUM.text())?
         .execute(params![
             pending.local_album_id,
-            now,
+            crate::clock::ms(now),
             PROVIDER,
             pending.release_mbid
         ])?;
     if handed_back == 1 {
         tx.prepare_cached(sql::GIVE_UP_TRACKS.text())?
-            .execute(params![pending.local_album_id, now, PROVIDER])?;
+            .execute(params![
+                pending.local_album_id,
+                crate::clock::ms(now),
+                PROVIDER
+            ])?;
         crate::identify::queue::offer_album(tx, &pending.local_album_id, (now * 1000.0) as i64)?;
     }
     drop_satellite(tx, &pending.local_album_id, sql::DROP_REMAP)
@@ -410,7 +414,7 @@ pub fn place_files(
     }
     for track_id in &extra {
         tx.prepare_cached(sql::UNPLACE_CHOSEN_TRACK.text())?
-            .execute(params![track_id, now, PROVIDER, album_id])?;
+            .execute(params![track_id, crate::clock::ms(now), PROVIDER, album_id])?;
         forget_hand_match(tx, track_id)?;
     }
     tx.prepare_cached(sql::CLEAR_CHOSEN_FLAG.text())?

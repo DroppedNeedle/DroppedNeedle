@@ -266,7 +266,7 @@ impl SqliteScanStore {
                                     found.source,
                                     found.locator,
                                     found.content_hash,
-                                    now
+                                    crate::clock::ms(now)
                                 ],
                             )?;
                         }
@@ -281,7 +281,7 @@ impl SqliteScanStore {
                 if let Some(signature) = &checked.signature {
                     tx.execute(
                         crate::scan::sql::WRITE_ARTWORK_CHECK.text(),
-                        params![checked.album_id, signature, now],
+                        params![checked.album_id, signature, crate::clock::ms(now)],
                     )?;
                 }
             }

@@ -129,7 +129,13 @@ pub(super) fn credits(
 fn insert_artist(tx: &Connection, id: &str, credit: &Credit, now: f64) -> rusqlite::Result<()> {
     let folded = fold_text(&credit.name);
     tx.prepare_cached(crate::scan::sql::INSERT_ARTIST.text())?
-        .execute(params![id, credit.name, credit.sort_name, folded, now])?;
+        .execute(params![
+            id,
+            credit.name,
+            credit.sort_name,
+            folded,
+            crate::clock::ms(now)
+        ])?;
     Ok(())
 }
 
@@ -376,7 +382,13 @@ impl Resolver<'_> {
         let folded = fold_text(name);
         self.tx
             .prepare_cached(crate::scan::sql::WRITE_ARTIST_NAMES.text())?
-            .execute(params![artist, name, folded, new_sort, self.now])?;
+            .execute(params![
+                artist,
+                name,
+                folded,
+                new_sort,
+                crate::clock::ms(self.now)
+            ])?;
         Ok(())
     }
 

@@ -74,7 +74,7 @@ pub fn seal_automatic(
         PROVIDER,
         seal.release_group_mbid,
         seal.release_mbid,
-        now
+        crate::clock::ms(now)
     ])?;
     let album_changed = written == 1;
     if !album_changed && !album_source(tx, album)?.is_some_and(DecisionSource::is_revisable) {
@@ -112,7 +112,7 @@ pub fn seal_automatic(
             recording,
             release,
             release_track,
-            now,
+            crate::clock::ms(now),
             album,
         ])?;
     }
@@ -121,7 +121,12 @@ pub fn seal_automatic(
         // still names another one is a file it did not write. Only a seal
         // that keeps its undo moves them, so that undo puts them back.
         tx.prepare_cached(sql::SEAL_UNPLACE_ELSEWHERE.text())?
-            .execute(params![album, seal.release_mbid, now, PROVIDER])?;
+            .execute(params![
+                album,
+                seal.release_mbid,
+                crate::clock::ms(now),
+                PROVIDER
+            ])?;
         keep_automatic_undo(
             tx,
             album,
@@ -212,7 +217,7 @@ fn clear_release_rows(
     tx.prepare_cached(sql::DELETE_AUTOMATIC_ON_RELEASE.text())?
         .execute(params![album_id, release, PROVIDER])?;
     tx.prepare_cached(sql::UNPLACE_EMBEDDED_ON_RELEASE.text())?
-        .execute(params![album_id, release, now, PROVIDER])?;
+        .execute(params![album_id, release, crate::clock::ms(now), PROVIDER])?;
     Ok(())
 }
 
@@ -352,7 +357,7 @@ pub fn accept_automatic(
             PROVIDER,
             accepted.release_group_mbid,
             accepted.release_mbid,
-            now
+            crate::clock::ms(now)
         ])?;
     for placement in &placed {
         tx.prepare_cached(sql::PLACE_TRACK.text())?
@@ -364,7 +369,7 @@ pub fn accept_automatic(
                 placement.release_track_mbid,
                 placement.disc,
                 placement.position,
-                now,
+                crate::clock::ms(now),
                 album_id,
             ])?;
     }
@@ -375,13 +380,13 @@ pub fn accept_automatic(
             placement.recording_mbid,
             None::<&str>,
             None::<&str>,
-            now,
+            crate::clock::ms(now),
             album_id,
         ])?;
     }
     for track_id in accepted.extra {
         tx.prepare_cached(sql::UNPLACE_TRACK.text())?
-            .execute(params![track_id, now, PROVIDER, album_id])?;
+            .execute(params![track_id, crate::clock::ms(now), PROVIDER, album_id])?;
     }
     tx.prepare_cached(sql::DROP_REMAP.text())?
         .execute(params![album_id])?;

@@ -229,7 +229,7 @@ pub(crate) fn save_album(
             group,
             identity.release_mbid,
             identity.decision_source.as_str(),
-            now,
+            crate::clock::ms(now),
             identity.row_revision.max(1) as i64,
         ])?;
     if written == 0 {
@@ -263,7 +263,7 @@ pub(crate) fn save_track(
             recording,
             identity.release_track_mbid,
             identity.decision_source.as_str(),
-            now,
+            crate::clock::ms(now),
             identity.row_revision.max(1) as i64,
         ])?;
     if written == 0 {

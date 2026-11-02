@@ -11255,3 +11255,292 @@ async fn playlists_rebuild_to_the_conventions_on_upgrade() {
         5
     );
 }
+
+/// Migration 0119: the catalog's tables become STRICT with times in integer
+/// milliseconds and `search_key` as the primary key, every row, child and
+/// search hit carried, and nothing else in the schema changed.
+#[tokio::test]
+async fn catalog_tables_rebuild_to_conventions_on_upgrade() {
+    const REBUILT: [&str; 15] = [
+        "local_artists",
+        "local_albums",
+        "local_tracks",
+        "local_album_artists",
+        "local_track_artists",
+        "local_artist_external_identities",
+        "local_album_external_identities",
+        "local_track_external_identities",
+        "local_artist_aliases",
+        "local_album_aliases",
+        "local_track_genres",
+        "local_entity_source_links",
+        "local_album_artwork",
+        "local_album_artwork_checks",
+        "local_track_edition_tags",
+    ];
+    type SchemaRow = (String, String, String, Option<String>);
+    // Every row but the rebuilt tables' own CREATE TABLE, and the three the
+    // migration means to change.
+    async fn other_schema(pool: &SqlitePool) -> Vec<SchemaRow> {
+        let rows: Vec<SchemaRow> = sqlx::query_as(
+            "SELECT type, name, tbl_name, sql FROM sqlite_schema \
+             WHERE name NOT LIKE 'sqlite_%' AND name NOT IN ('trg_tracks_fts_insert', \
+             'idx_local_tracks_search_key', 'idx_local_tracks_availability') \
+             ORDER BY type, name",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap();
+        rows.into_iter()
+            .filter(|row| !(row.0 == "table" && REBUILT.contains(&row.1.as_str())))
+            .collect()
+    }
+    async fn number(pool: &SqlitePool, sql: &str) -> i64 {
+        sqlx::query_scalar(sql).fetch_one(pool).await.unwrap()
+    }
+
+    let dir = droppedneedle_kernel::db::scratch::ScratchDir::new("catalog-0119").unwrap();
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(
+            sqlx::sqlite::SqliteConnectOptions::new()
+                .filename(dir.join("library.db"))
+                .create_if_missing(true)
+                .foreign_keys(true)
+                .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal),
+        )
+        .await
+        .unwrap();
+    run_migrations(&pool, &migrator_through(118)).await.unwrap();
+    sqlx::raw_sql(
+        "INSERT INTO auth_users (id, display_name, role, created_at) VALUES ('u1', 'U', 'admin', 1); \
+         INSERT INTO local_artists (rowid, id, display_name, folded_name, kind, created_at, updated_at) VALUES \
+             (5, 'a1', 'A', 'a', 'group', 1700000000.1236, 1700000000.5), \
+             (6, 'a2', 'B', 'b', 'group', 1e300, 'soon'); \
+         INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) \
+             VALUES (x'00', 'Blob', 'blob', 'group', 1, 1); \
+         INSERT INTO local_albums (rowid, id, root_id, grouping_key, title, title_folded, \
+             album_artist_id, year, grouping_source, management_schedule_pending, created_at, updated_at) VALUES \
+             (9, 'al1', 'r1', 'g1', 'Blue', 'blue', 'a1', 1959.5, 'automatic', 5, 1700000000.25, 1700000001.0); \
+         INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
+             path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
+             album_title, album_title_folded, file_format, availability, ingest_source, \
+             imported_at, tags_read_at, missing_since, excluded_at, membership_source, duration_seconds) VALUES \
+             ('t1', 'al1', 'r1', '/m/1.flac', '1.flac', 'h1', 1, 0, 's', 'Giant Steps', 'giant steps', \
+              'Blue', 'blue', 'flac', 'indexed', 'scan', 1700000000.0004, 1700000000.0005, NULL, NULL, 'automatic', 183.25), \
+             ('t2', 'al1', 'r1', '/m/2.flac', '2.flac', 'h2', 1, 0, 's', 'Naima', 'naima', \
+              'Blue', 'blue', 'flac', 'missing', 'scan', 2, NULL, 1700000002.9996, NULL, 'automatic', NULL), \
+             ('t3', 'al1', 'r1', '/m/3.flac', '3.flac', 'h3', 1, 0, 's', 'Syeeda', 'syeeda', \
+              'Blue', 'blue', 'flac', 'excluded', 'scan', 3, NULL, NULL, 1700000003.5, 'automatic', NULL); \
+         DELETE FROM local_tracks WHERE id = 't2'; \
+         INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
+             path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
+             album_title, album_title_folded, file_format, availability, ingest_source, \
+             imported_at, missing_since, membership_source) VALUES \
+             ('t2', 'al1', 'r1', '/m/2.flac', '2.flac', 'h2', 1, 0, 's', 'Naima', 'naima', \
+              'Blue', 'blue', 'flac', 'missing', 'scan', 2, 1700000002.9996, 'automatic'); \
+         INSERT INTO local_album_artists (local_album_id, position, local_artist_id, role) VALUES ('al1', 0, 'a1', 'main'); \
+         INSERT INTO local_track_artists (local_track_id, position, local_artist_id, role) VALUES ('t1', 0, 'a1', 'main'); \
+         INSERT INTO local_artist_external_identities (local_artist_id, provider, provider_artist_id, \
+             decision_source, selected_by_user_id, selected_at) VALUES ('a1', 'musicbrainz', 'mb-a', 'manual', 'u1', 10.5); \
+         INSERT INTO local_album_external_identities (local_album_id, release_group_mbid, \
+             decision_source, selected_at) VALUES ('al1', 'rg', 'automatic', 11.5); \
+         INSERT INTO local_track_external_identities (local_track_id, recording_mbid, medium_position, \
+             decision_source, selected_at) VALUES ('t1', 'rec', 1, 'automatic', 12.5); \
+         INSERT INTO local_artist_aliases VALUES ('old-a', 'a1', 'merged_artist', 13.5); \
+         INSERT INTO local_album_aliases VALUES ('old-al', 'al1', 'merged_album', 14.5); \
+         INSERT INTO local_track_genres (local_track_id, position, name, folded_name, source, weight) \
+             VALUES ('t1', 0, 'Jazz', 'jazz', 'local', 2.5); \
+         INSERT INTO local_entity_source_links (id, local_album_id, provider, external_entity_type, \
+             external_id, canonical_url, decision_source, verified_at, created_at, updated_at) \
+             VALUES ('l1', 'al1', 'p', 'album', 'x', 'http://x', 'manual', 15.5, 16.5, 17.5); \
+         INSERT INTO local_album_artwork (local_album_id, source, version, updated_at) VALUES ('al1', 'folder', 3, 18.5); \
+         INSERT INTO local_album_artwork_checks VALUES ('al1', 'sig', 19.5, 3); \
+         INSERT INTO local_track_edition_tags (local_track_id, media, total_discs) VALUES ('t1', 'CD', 1);",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let keys_before: Vec<(String, i64)> =
+        sqlx::query_as("SELECT id, search_key FROM local_tracks ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(keys_before.len(), 3);
+    let schema_before = other_schema(&pool).await;
+    let genres_before = number(&pool, "SELECT COUNT(*) FROM local_track_genres").await;
+    let artists_before = number(&pool, "SELECT COUNT(*) FROM local_artists").await;
+
+    run_migrations(&pool, &migrator_through(119)).await.unwrap();
+
+    assert_eq!(other_schema(&pool).await, schema_before);
+    assert_eq!(
+        number(&pool, "SELECT foreign_keys FROM pragma_foreign_keys").await,
+        1
+    );
+    assert_eq!(
+        number(&pool, "SELECT COUNT(*) FROM pragma_foreign_key_check").await,
+        0
+    );
+    assert_eq!(
+        number(&pool, "SELECT user_version FROM pragma_user_version").await,
+        119
+    );
+    for table in REBUILT {
+        let sql = format!("SELECT strict FROM pragma_table_list WHERE name = '{table}'");
+        assert_eq!(number(&pool, &sql).await, 1, "{table} is STRICT");
+    }
+
+    // Rounded to the millisecond, held at the limit, or read as passed.
+    for (sql, want) in [
+        (
+            "SELECT created_at FROM local_artists WHERE id = 'a1'",
+            1_700_000_000_124,
+        ),
+        (
+            "SELECT updated_at FROM local_artists WHERE id = 'a1'",
+            1_700_000_000_500,
+        ),
+        (
+            "SELECT created_at FROM local_artists WHERE id = 'a2'",
+            i64::MAX,
+        ),
+        ("SELECT updated_at FROM local_artists WHERE id = 'a2'", 0),
+        ("SELECT created_at FROM local_albums", 1_700_000_000_250),
+        ("SELECT year FROM local_albums", 1959),
+        ("SELECT management_schedule_pending FROM local_albums", 1),
+        (
+            "SELECT imported_at FROM local_tracks WHERE id = 't1'",
+            1_700_000_000_000,
+        ),
+        (
+            "SELECT tags_read_at FROM local_tracks WHERE id = 't1'",
+            1_700_000_000_001,
+        ),
+        (
+            "SELECT missing_at FROM local_tracks WHERE id = 't2'",
+            1_700_000_003_000,
+        ),
+        (
+            "SELECT excluded_at FROM local_tracks WHERE id = 't3'",
+            1_700_000_003_500,
+        ),
+        (
+            "SELECT selected_at FROM local_artist_external_identities",
+            10_500,
+        ),
+        (
+            "SELECT selected_at FROM local_album_external_identities",
+            11_500,
+        ),
+        (
+            "SELECT selected_at FROM local_track_external_identities",
+            12_500,
+        ),
+        ("SELECT created_at FROM local_artist_aliases", 13_500),
+        ("SELECT created_at FROM local_album_aliases", 14_500),
+        ("SELECT weight FROM local_track_genres", 2),
+        ("SELECT verified_at FROM local_entity_source_links", 15_500),
+        ("SELECT created_at FROM local_entity_source_links", 16_500),
+        ("SELECT updated_at FROM local_entity_source_links", 17_500),
+        ("SELECT updated_at FROM local_album_artwork", 18_500),
+        ("SELECT checked_at FROM local_album_artwork_checks", 19_500),
+        ("SELECT rowid FROM local_artists WHERE id = 'a1'", 5),
+        ("SELECT rowid FROM local_albums WHERE id = 'al1'", 9),
+    ] {
+        assert_eq!(number(&pool, sql).await, want, "{sql}");
+    }
+    let length: f64 =
+        sqlx::query_scalar("SELECT duration_seconds FROM local_tracks WHERE id = 't1'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(length, 183.25);
+    assert_eq!(
+        number(&pool, "SELECT COUNT(*) FROM local_artists").await,
+        artists_before - 1,
+        "the BLOB key stays behind"
+    );
+    assert_eq!(
+        number(&pool, "SELECT COUNT(*) FROM local_track_genres").await,
+        genres_before
+    );
+
+    // The key is the row's own: unchanged, and what the search index holds.
+    let keys_after: Vec<(String, i64)> =
+        sqlx::query_as("SELECT id, rowid FROM local_tracks ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(keys_after, keys_before);
+    assert_eq!(
+        number(
+            &pool,
+            "SELECT pk FROM pragma_table_info('local_tracks') WHERE name = 'search_key'"
+        )
+        .await,
+        1
+    );
+    assert_eq!(
+        number(&pool, "SELECT COUNT(*) FROM pragma_index_list('local_tracks') WHERE origin = 'u' AND \"unique\" = 1").await,
+        2,
+        "id and the path stay unique"
+    );
+    let hit = "SELECT t.id FROM local_tracks_fts f JOIN local_tracks t ON t.search_key = f.rowid \
+               WHERE local_tracks_fts MATCH ";
+    let found = |query: String| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_scalar::<_, String>(&query)
+                .fetch_all(&pool)
+                .await
+                .unwrap()
+        }
+    };
+    assert_eq!(found(format!("{hit} 'naima'")).await, ["t2"]);
+
+    // The triggers came back: each write keeps the search index and the read
+    // models in step on a row from before the upgrade.
+    sqlx::raw_sql(
+        "UPDATE local_tracks SET title_folded = 'lush life' WHERE id = 't2'; \
+         UPDATE local_tracks SET availability = 'missing' WHERE id = 't1'; \
+         INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
+             path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
+             album_title, album_title_folded, file_format, ingest_source, imported_at, membership_source) VALUES \
+             ('t4', 'al1', 'r1', '/m/4.flac', '4.flac', 'h4', 7, 0, 's', 'Mister', 'mister', \
+              'Blue', 'blue', 'flac', 'scan', 1, 'automatic'); \
+         DELETE FROM local_tracks WHERE id = 't3';",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert!(found(format!("{hit} 'naima'")).await.is_empty());
+    assert_eq!(found(format!("{hit} 'lush'")).await, ["t2"]);
+    assert_eq!(found(format!("{hit} 'mister'")).await, ["t4"]);
+    assert!(found(format!("{hit} 'syeeda'")).await.is_empty());
+    sqlx::raw_sql("INSERT INTO local_tracks_fts(local_tracks_fts) VALUES ('integrity-check')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        number(&pool, "SELECT search_key FROM local_tracks WHERE id = 't4'").await,
+        keys_before.iter().map(|key| key.1).max().unwrap_or(0) + 1
+    );
+    assert_eq!(
+        number(&pool, "SELECT has_indexed_track FROM local_albums").await,
+        1
+    );
+    assert_eq!(
+        number(
+            &pool,
+            "SELECT indexed_bytes FROM library_track_format_stats WHERE file_format = 'flac'"
+        )
+        .await,
+        7
+    );
+    // The planner's statistics are taken again at the next check.
+    assert_eq!(
+        number(&pool, "SELECT COUNT(*) FROM db_planner_stats").await,
+        0
+    );
+}

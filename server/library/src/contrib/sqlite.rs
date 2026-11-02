@@ -505,9 +505,10 @@ fn commit_link(
     if album_unlinked {
         album_revision = conn
             .prepare_cached(crate::contrib::sql::BUMP_ALBUM_IF_REVISION.text())?
-            .query_row(params![link.album_id, link.album_revision, now], |row| {
-                row.get(0)
-            })
+            .query_row(
+                params![link.album_id, link.album_revision, crate::clock::ms(now)],
+                |row| row.get(0),
+            )
             .optional()?
             .ok_or_else(|| {
                 ContribError::stale("The album changed before the release could be linked.")
@@ -559,7 +560,7 @@ fn commit_link(
         {
             let before = artist_identity(conn, link.artist_id)?;
             conn.prepare_cached(crate::contrib::sql::BUMP_ARTIST_REVISION.text())?
-                .execute(params![link.artist_id, now])?;
+                .execute(params![link.artist_id, crate::clock::ms(now)])?;
             conn.prepare_cached(crate::contrib::sql::WRITE_ARTIST_LINK.text())?
                 .execute(params![
                     link.artist_id,
@@ -567,7 +568,7 @@ fn commit_link(
                     mbid,
                     link.attempt.id,
                     actor,
-                    now
+                    crate::clock::ms(now)
                 ])?;
             audit_link(
                 conn,

@@ -313,7 +313,7 @@ pub(crate) fn retire(
 ) -> rusqlite::Result<()> {
     tx.execute(
         crate::corrections::sql::RETIRE_ALBUM.text(),
-        params![album_id, successor, now],
+        params![album_id, successor, crate::clock::ms(now)],
     )?;
     tx.execute(
         crate::corrections::sql::REPOINT_RETIRED_ALBUMS.text(),
@@ -329,7 +329,7 @@ pub(crate) fn retire(
     )?;
     tx.execute(
         crate::corrections::sql::ADD_MERGED_ALBUM_ALIAS.text(),
-        params![album_id, successor, now],
+        params![album_id, successor, crate::clock::ms(now)],
     )?;
     retarget_references(tx, "album", album_id, successor)?;
     // What a curator set on the old album carries over, unless the
@@ -504,7 +504,10 @@ pub(super) fn regroup(
         }
     }
     for album in live_sources.iter().chain(std::iter::once(&dest.id)) {
-        tx.execute(crate::corrections::sql::REGROUP.text(), params![album, now])?;
+        tx.execute(
+            crate::corrections::sql::REGROUP.text(),
+            params![album, crate::clock::ms(now)],
+        )?;
     }
     let settled = edition::settle(
         tx,
@@ -580,7 +583,7 @@ fn create_split_album(
             droppedneedle_kernel::db::fold_text(&title),
             artist,
             droppedneedle_kernel::db::fold_text(&artist),
-            now,
+            crate::clock::ms(now),
             source.id,
         ],
     )?;

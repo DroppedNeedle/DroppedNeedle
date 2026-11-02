@@ -87,7 +87,7 @@ pub(super) fn reset(
         )?;
         tx.execute(
             crate::corrections::sql::RESET_ALBUM_GROUPING.text(),
-            params![album.id, locked, now],
+            params![album.id, locked, crate::clock::ms(now)],
         )?;
     }
 

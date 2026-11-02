@@ -477,7 +477,7 @@ pub(crate) fn restore_track_row(
             row.release_track_position,
             row.decision_source.as_deref().unwrap_or("automatic"),
             row.attempt_id,
-            row.selected_at.unwrap_or(now),
+            crate::clock::ms(row.selected_at.unwrap_or(now)),
         ])?;
     Ok(())
 }
@@ -499,7 +499,7 @@ pub(crate) fn restore_album_row(
             prior.matcher_version,
             prior.attempt_id,
             prior.selected_by_user_id,
-            prior.selected_at.unwrap_or(now),
+            crate::clock::ms(prior.selected_at.unwrap_or(now)),
             PROVIDER,
         ])?;
     Ok(())
@@ -701,7 +701,7 @@ pub fn undo_automatic(
                     prior.matcher_version,
                     prior.attempt_id,
                     prior.selected_by_user_id,
-                    prior.selected_at.unwrap_or(now),
+                    crate::clock::ms(prior.selected_at.unwrap_or(now)),
                     PROVIDER,
                 ])?;
         }

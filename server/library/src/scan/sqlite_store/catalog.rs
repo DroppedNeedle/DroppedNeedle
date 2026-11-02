@@ -175,7 +175,8 @@ impl SqliteScanStore {
                 let mut stmt =
                     tx.prepare_cached(crate::scan::sql::MARK_WALKED_PAST_MISSING.text())?;
                 for path in chunk {
-                    marked += stmt.execute(params![root_id, path, now, run_id])?;
+                    marked +=
+                        stmt.execute(params![root_id, path, crate::clock::ms(now), run_id])?;
                 }
             }
             tx.execute(
@@ -244,7 +245,12 @@ impl SqliteScanStore {
                         .optional()?
                     else {
                         if absent.contains(path.as_str()) {
-                            gone += mark.execute(params![root_id, path, now, run_id])?;
+                            gone += mark.execute(params![
+                                root_id,
+                                path,
+                                crate::clock::ms(now),
+                                run_id
+                            ])?;
                         }
                         continue;
                     };
@@ -254,7 +260,7 @@ impl SqliteScanStore {
                     else {
                         continue;
                     };
-                    if mark.execute(params![root_id, path, now, run_id])? > 0 {
+                    if mark.execute(params![root_id, path, crate::clock::ms(now), run_id])? > 0 {
                         pairs.push((old, home));
                     }
                 }
@@ -640,7 +646,7 @@ fn load_catalog_map(
                 } else {
                     RevisionKind::LegacyFloat
                 },
-                tags_read_at: row.get("tags_read_at")?,
+                tags_read_at: super::opt_secs_named(row, "tags_read_at")?,
             },
         ))
     })?;

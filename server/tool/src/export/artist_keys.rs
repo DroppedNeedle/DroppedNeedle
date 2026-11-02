@@ -679,7 +679,7 @@ pub fn rekey_artists(conn: &Connection, now: f64) -> Result<ArtistRekey, ExportE
                  WHERE NOT EXISTS (SELECT 1 FROM main.\"{aliases}\" x \
                  WHERE x.alias IN (r.old, lower(r.old)))"
             ),
-            params![now],
+            params![(now * 1000.0).round() as i64],
         )
         .map_err(bundle_error)?;
     outcome.aliases_added = u64::try_from(added).unwrap_or(u64::MAX);

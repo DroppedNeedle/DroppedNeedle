@@ -4063,7 +4063,7 @@ impl JoinRig {
     async fn album_identity(
         &self,
         album: &str,
-    ) -> (Option<String>, String, Option<String>, f64, i64) {
+    ) -> (Option<String>, String, Option<String>, i64, i64) {
         sqlx::query_as(
             "SELECT release_mbid, decision_source, selected_by_user_id, selected_at, \
              row_revision FROM local_album_external_identities WHERE local_album_id = ?1",
@@ -4295,8 +4295,8 @@ async fn a_fetched_track_joins_the_copy_it_was_fetched_for() {
     // tags under a new id, and the old row keeps everything, off the path.
     ask(4, "t-join-4").await;
     rig.set_edition(album(4), &mb(4, 1, 1), &ed(4).other.id, "manual");
-    let (missing_since, old_identity): (f64, Option<String>) = sqlx::query_as(
-        "SELECT t.missing_since, i.release_track_mbid FROM local_tracks t \
+    let (missing_at, old_identity): (i64, Option<String>) = sqlx::query_as(
+        "SELECT t.missing_at, i.release_track_mbid FROM local_tracks t \
          LEFT JOIN local_track_external_identities i ON i.local_track_id = t.id WHERE t.id = ?1",
     )
     .bind(x_of(4))
@@ -4308,8 +4308,8 @@ async fn a_fetched_track_joins_the_copy_it_was_fetched_for() {
     let (filed, filed_on, _, _, _) = rig.row_at(&copy_rel(4, SOUR_TIMES)).await;
     assert_ne!(filed, x_of(4), "a new id");
     assert_ne!(filed_on, album(4), "filed by its tags");
-    let kept: (String, String, f64, Option<String>, String) = sqlx::query_as(
-        "SELECT t.local_album_id, t.availability, t.missing_since, i.release_track_mbid, \
+    let kept: (String, String, i64, Option<String>, String) = sqlx::query_as(
+        "SELECT t.local_album_id, t.availability, t.missing_at, i.release_track_mbid, \
          t.relative_path FROM local_tracks t LEFT JOIN local_track_external_identities i \
          ON i.local_track_id = t.id WHERE t.id = ?1",
     )
@@ -4319,7 +4319,7 @@ async fn a_fetched_track_joins_the_copy_it_was_fetched_for() {
     .expect("old row");
     assert_eq!(
         (kept.0.as_str(), kept.1.as_str(), kept.2, kept.3),
-        (album(4), "missing", missing_since, old_identity)
+        (album(4), "missing", missing_at, old_identity)
     );
     assert_ne!(kept.4, copy_rel(4, SOUR_TIMES), "off the path");
     assert_eq!(
@@ -5270,7 +5270,7 @@ async fn a_copy_gone_at_commit_is_planned_again() {
     .await;
     rig.sql(&format!(
         "CREATE TRIGGER copy_gone AFTER INSERT ON library_publish_journal BEGIN \
-         UPDATE local_tracks SET availability = 'missing', missing_since = 1 \
+         UPDATE local_tracks SET availability = 'missing', missing_at = 1 \
          WHERE local_album_id = '{album}'; END"
     ));
     rig.land(vec![rig.landed("t-gone", &e.new, 1, FIXTURES[1])])

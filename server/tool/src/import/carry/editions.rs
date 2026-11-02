@@ -140,7 +140,7 @@ pub(crate) async fn apply(
              selected_at) \
              SELECT p.local_album_id, 'musicbrainz', p.release_group_mbid, p.release_mbid, \
              'manual', (SELECT u.id FROM main.auth_users u \
-             WHERE u.id = p.set_by_user_id), CAST(strftime('%s', 'now') AS REAL) \
+             WHERE u.id = p.set_by_user_id), CAST(strftime('%s', 'now') AS INTEGER) * 1000 \
              FROM {pins_table} p WHERE p.local_album_id {carried} \
              AND NOT EXISTS (SELECT 1 FROM main.local_album_external_identities e \
              WHERE e.local_album_id = p.local_album_id AND e.provider = 'musicbrainz')"
@@ -174,7 +174,7 @@ pub(crate) async fn apply(
              selected_at) \
              SELECT a.local_album_id, 'musicbrainz', m.release_group_mbid, NULL, \
              'legacy_import', (SELECT u.id FROM main.auth_users u \
-             WHERE u.id = m.sealed_by_user_id), m.sealed_at / 1000.0 \
+             WHERE u.id = m.sealed_by_user_id), m.sealed_at \
              FROM main.library_custom_edition_active a \
              JOIN main.library_custom_edition_manifests m ON m.id = a.manifest_id \
              WHERE a.local_album_id {carried} \

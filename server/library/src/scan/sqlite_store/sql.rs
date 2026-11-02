@@ -51,9 +51,7 @@ pub(crate) use refused_scope;
 
 /// Whether the track row aliased `$track` is held by the held folder
 /// aliased `$hold`: indexed, found by a scan, in that folder of its root,
-/// and first indexed at or after the hold began. The looser bound on
-/// `imported_at` selects nothing more; it lets a search start from the
-/// recently indexed tracks.
+/// and first indexed at or after the hold began.
 macro_rules! held {
     ($track:literal, $hold:literal) => {
         concat!(
@@ -66,11 +64,7 @@ macro_rules! held {
             $hold,
             ".root_id AND ",
             $track,
-            ".imported_at >= (",
-            $hold,
-            ".held_at - 1) / 1000.0 AND CAST(",
-            $track,
-            ".imported_at * 1000 AS INTEGER) >= ",
+            ".imported_at >= ",
             $hold,
             ".held_at AND (",
             $hold,
@@ -104,7 +98,7 @@ macro_rules! holds {
             $track,
             ".availability = 'missing' AND ",
             $track,
-            ".missing_since >= (SELECT (started_at - 0.5) / 1000.0 FROM library_scan_runs WHERE id = ",
+            ".missing_at >= (SELECT started_at FROM library_scan_runs WHERE id = ",
             $run,
             ")))"
         )

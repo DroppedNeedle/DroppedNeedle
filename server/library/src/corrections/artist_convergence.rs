@@ -309,7 +309,7 @@ fn merge_group(
     }
     tx.execute(
         crate::corrections::sql::BUMP_ARTIST_REVISION.text(),
-        params![survivor, now],
+        params![survivor, crate::clock::ms(now)],
     )?;
     record_artist_action(
         tx,

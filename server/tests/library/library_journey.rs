@@ -13259,7 +13259,7 @@ async fn the_apps_own_regroup_of_a_mostly_missing_album_is_followed_unmarked() {
     managed
         .db()
         .execute(
-            "UPDATE local_tracks SET missing_since = missing_since - 86401 \
+            "UPDATE local_tracks SET missing_at = missing_at - 86401000 \
              WHERE availability = 'missing'",
             [],
         )
@@ -13832,17 +13832,17 @@ async fn a_file_retagged_and_renamed_together_is_still_the_users() {
         "files that went away mark nothing"
     );
 
-    let missing_since = |track: &str| -> (String, Option<f64>) {
+    let missing_at = |track: &str| -> (String, Option<f64>) {
         managed
             .db()
             .query_row(
-                "SELECT availability, missing_since FROM local_tracks WHERE id = ?1",
+                "SELECT availability, missing_at FROM local_tracks WHERE id = ?1",
                 [track],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .expect("old row")
     };
-    let gone: Vec<(String, Option<f64>)> = whole_tracks.iter().map(|t| missing_since(t)).collect();
+    let gone: Vec<(String, Option<f64>)> = whole_tracks.iter().map(|t| missing_at(t)).collect();
     assert!(
         gone.iter()
             .all(|(state, since)| state == "missing" && since.is_some())
@@ -13880,7 +13880,7 @@ async fn a_file_retagged_and_renamed_together_is_still_the_users() {
         assert_eq!(managed.album_of(&new), whole);
         assert_eq!(album_tag(path), edition_tag);
         assert_eq!(
-            &missing_since(old),
+            &missing_at(old),
             before,
             "still missing, since the same day"
         );
@@ -14023,11 +14023,11 @@ async fn an_import_that_cannot_read_the_albums_match_leaves_it_alone() {
     std::fs::remove_file(&first.paths[1]).expect("file deleted");
     rescan(&library).await;
 
-    // A person's match holding a value the reader cannot decode (the
-    // table is not STRICT), and an unsure flag on the album.
+    // A person's match holding a value the reader cannot decode (text that
+    // is not UTF-8), and an unsure flag on the album.
     db.execute_batch(&format!(
         "UPDATE local_album_external_identities SET decision_source = 'manual', \
-         release_group_mbid = X'00' WHERE local_album_id = '{album}'; \
+         release_group_mbid = CAST(X'FF' AS TEXT) WHERE local_album_id = '{album}'; \
          INSERT OR REPLACE INTO library_album_match_state (local_album_id, state, \
          reason_code, release_mbid, candidates_json, updated_at) \
          VALUES ('{album}', 'unconfirmed', 'EDITION_UNCERTAIN', '{REL_1}', '[]', 1);"
@@ -14035,7 +14035,7 @@ async fn an_import_that_cannot_read_the_albums_match_leaves_it_alone() {
     .expect("match made unreadable");
     let identity = |db: &rusqlite::Connection| -> Vec<String> {
         db.prepare(
-            "SELECT 'album ' || quote(release_group_mbid) || ' ' || quote(release_mbid) || ' ' \
+            "SELECT 'album ' || hex(release_group_mbid) || ' ' || quote(release_mbid) || ' ' \
              || decision_source || ' ' || row_revision || ' ' || selected_at \
              FROM local_album_external_identities WHERE local_album_id = ?1 \
              UNION ALL SELECT 'track ' || local_track_id || ' ' || recording_mbid || ' ' \
@@ -16086,7 +16086,7 @@ async fn a_merge_places_files_on_the_edition_the_album_has() {
              INSERT INTO local_album_external_identities (local_album_id, provider, \
              release_group_mbid, release_mbid, decision_source, selected_by_user_id, \
              selected_at, row_revision) VALUES ('{album_a}', 'musicbrainz', 'rg-1', '{REL_1}', \
-             '{source}', 'curator', 1234.5, 7); \
+             '{source}', 'curator', 1234500, 7); \
              INSERT INTO local_track_external_identities (local_track_id, provider, \
              recording_mbid, release_mbid, release_track_mbid, medium_position, \
              release_track_position, decision_source, selected_at) VALUES \
@@ -16219,7 +16219,7 @@ async fn a_file_that_joins_while_musicbrainz_is_asked_is_placed_next() {
          INSERT INTO local_album_external_identities (local_album_id, provider, \
          release_group_mbid, release_mbid, decision_source, selected_by_user_id, \
          selected_at, row_revision) VALUES ('{album}', 'musicbrainz', 'rg-1', '{REL_1}', \
-         'manual', 'curator', 1234.5, 7); \
+         'manual', 'curator', 1234500, 7); \
          INSERT INTO local_track_external_identities (local_track_id, provider, \
          recording_mbid, release_mbid, release_track_mbid, medium_position, \
          release_track_position, decision_source, selected_at) VALUES \
@@ -16296,7 +16296,7 @@ async fn chosen_album_at_rest(tag: &str) -> (Scratch, LibrarySetup, String, Vec<
              INSERT INTO local_album_external_identities (local_album_id, provider, \
              release_group_mbid, release_mbid, decision_source, selected_by_user_id, \
              selected_at, row_revision) VALUES ('{album}', 'musicbrainz', 'rg-1', '{REL_1}', \
-             'manual', 'curator', 1234.5, 7);"
+             'manual', 'curator', 1234500, 7);"
         ))
         .expect("edition chosen");
     (scratch, library, album, tracks)
@@ -16965,7 +16965,7 @@ type OldRow = (String, String, String, Option<f64>, i64);
 
 fn old_row(db: &rusqlite::Connection, track: &str) -> OldRow {
     db.query_row(
-        "SELECT id, relative_path, availability, missing_since, \
+        "SELECT id, relative_path, availability, missing_at, \
          (SELECT COUNT(*) FROM library_track_management_state s WHERE s.local_track_id = t.id) \
          + (SELECT COUNT(*) FROM local_track_external_identities i WHERE i.local_track_id = t.id) \
          FROM local_tracks t WHERE id = ?1",
@@ -17008,7 +17008,7 @@ async fn a_retagged_and_renamed_album_keeps_what_people_made() {
          INSERT INTO local_album_external_identities (local_album_id, provider, \
          release_group_mbid, release_mbid, decision_source, selected_by_user_id, \
          selected_at, row_revision) VALUES ('{album}', 'musicbrainz', 'rg-1', '{REL_1}', \
-         'manual', 'curator', 1234.5, 7);"
+         'manual', 'curator', 1234500, 7);"
     ))
     .expect("edition chosen");
     queue_remap_row(&library, &album, "place_only");
@@ -17344,7 +17344,7 @@ async fn a_rated_track_continues_with_its_ratings() {
          INSERT INTO local_album_external_identities (local_album_id, provider, \
          release_group_mbid, release_mbid, decision_source, selected_by_user_id, \
          selected_at, row_revision) VALUES ('{album}', 'musicbrainz', 'rg-1', '{REL_1}', \
-         'manual', 'curator', 1234.5, 7);"
+         'manual', 'curator', 1234500, 7);"
     ))
     .expect("edition chosen");
     queue_remap_row(&library, &album, "place_only");
@@ -17727,7 +17727,7 @@ impl ManagedLibrary {
 /// The row's path and when it went missing.
 fn where_gone(db: &rusqlite::Connection, track: &str) -> (String, String, Option<f64>) {
     db.query_row(
-        "SELECT relative_path, availability, missing_since FROM local_tracks WHERE id = ?1",
+        "SELECT relative_path, availability, missing_at FROM local_tracks WHERE id = ?1",
         [track],
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
     )
@@ -18139,7 +18139,7 @@ async fn a_held_folder_holds_only_files_scanned_into_it_since() {
         db.execute(
             "UPDATE local_tracks SET imported_at = ?2, ingest_source = ?3 \
              WHERE local_album_id = ?1",
-            rusqlite::params![album, imported_at, source],
+            rusqlite::params![album, (imported_at * 1000.0) as i64, source],
         )
         .expect("rows set");
         managed
@@ -18429,7 +18429,7 @@ async fn a_held_album_is_left_alone_where_the_retag_join_would_leave_it() {
     let gone_at = |album: &str, edge: &str| -> i64 {
         db.query_row(
             &format!(
-                "SELECT CAST({edge}(missing_since) * 1000 AS INTEGER) FROM local_tracks \
+                "SELECT {edge}(missing_at) FROM local_tracks \
                  WHERE local_album_id = ?1"
             ),
             [album],
@@ -18442,7 +18442,7 @@ async fn a_held_album_is_left_alone_where_the_retag_join_would_leave_it() {
             let held_at = gone_at(album, "MAX") + 1;
             let scanned: i64 = db
                 .query_row(
-                    "SELECT CAST(MIN(imported_at) * 1000 AS INTEGER) FROM local_tracks \
+                    "SELECT MIN(imported_at) FROM local_tracks \
                      WHERE local_album_id = ?1",
                     [replacement],
                     |row| row.get(0),
@@ -18676,7 +18676,7 @@ async fn a_held_album_matched_after_its_folder_is_let_go_is_judged_at_its_look()
     for (index, (album, _)) in olds.iter().enumerate() {
         let held_at: i64 = db
             .query_row(
-                "SELECT CAST(MIN(missing_since) * 1000 AS INTEGER) - 1 FROM local_tracks \
+                "SELECT MIN(missing_at) - 1 FROM local_tracks \
                  WHERE local_album_id = ?1",
                 [album],
                 |row| row.get(0),
@@ -19943,7 +19943,7 @@ async fn retag_pairs_list_join_and_dismiss() {
             "INSERT INTO local_album_external_identities (local_album_id, provider, \
              release_group_mbid, release_mbid, decision_source, selected_by_user_id, \
              selected_at, row_revision) VALUES ('{}', 'musicbrainz', '{group}', {release}, \
-             'manual', 'curator', 1234.5, 3);",
+             'manual', 'curator', 1234500, 3);",
             id(folder)
         )
     };
@@ -20218,7 +20218,7 @@ async fn retag_pairs_list_join_and_dismiss() {
             chosen.2.as_deref(),
             chosen.3
         ),
-        ("manual", Some("rel-a-old"), Some("curator"), 1234.5)
+        ("manual", Some("rel-a-old"), Some("curator"), 1234500.0)
     );
     let reviews = pending_reviews(&db, &a_new);
     assert_eq!(reviews.len(), 1, "{reviews:?}");
@@ -23058,7 +23058,7 @@ impl ManagedLibrary {
              INSERT OR REPLACE INTO local_album_external_identities (local_album_id, provider, \
              release_group_mbid, release_mbid, decision_source, selected_by_user_id, \
              selected_at, row_revision) VALUES ('{album}', 'musicbrainz', 'rg-chosen', \
-             '{CHOSEN_REL}', 'manual', 'curator', 1234.5, 7);"
+             '{CHOSEN_REL}', 'manual', 'curator', 1234500, 7);"
         );
         for (index, track) in tracks.iter().enumerate() {
             let n = index + 1;
@@ -25948,4 +25948,151 @@ fn approve(library: &LibrarySetup, review_id: &str, candidate_key: &str) {
     operations
         .approve_review(review_id, revision, candidate_key, "curator")
         .expect("approved");
+}
+
+/// Rows written in seconds before the catalog moved to milliseconds take a
+/// real scan and a real artist merge after the upgrade, and the API still
+/// answers in seconds.
+#[tokio::test]
+async fn catalog_rows_from_before_the_upgrade_take_a_scan_and_a_merge() {
+    const IMPORTED_MS: i64 = 1_700_000_000_123;
+    let music = std::sync::Arc::new(std::sync::Mutex::new(PathBuf::new()));
+    let planted = music.clone();
+    let app = crate::common::TestApp::start_prepared("catalog-upgrade", move |config| {
+        let root = config.root_app_dir.join("music");
+        plant(&root, "album-a/01.flac", "management_full.flac");
+        plant(&root, "album-a/02.flac", "management_full.flac");
+        plant(&root, "album-a/03.flac", "management_full.flac");
+        *planted.lock().unwrap() = root;
+        let path = config.library_db_path.clone();
+        std::fs::remove_file(&path).unwrap();
+        std::thread::spawn(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(async move {
+                    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+                        .max_connections(1)
+                        .connect_with(
+                            sqlx::sqlite::SqliteConnectOptions::new()
+                                .filename(&path)
+                                .create_if_missing(true)
+                                .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal),
+                        )
+                        .await
+                        .unwrap();
+                    let before = sqlx::migrate::Migrator {
+                        migrations: std::borrow::Cow::Owned(
+                            droppedneedle_kernel::schema::MIGRATOR
+                                .migrations
+                                .iter()
+                                .filter(|migration| migration.version <= 118)
+                                .cloned()
+                                .collect(),
+                        ),
+                        ignore_missing: false,
+                        locking: true,
+                        no_tx: false,
+                    };
+                    droppedneedle_kernel::schema::run_migrations(&pool, &before)
+                        .await
+                        .unwrap();
+                    let track = |id: &str, n: i64, availability: &str| {
+                        format!(
+                            "('{id}', 'old', 'music', '/gone/{n}', 'album-a/0{n}.flac', 'h{n}', 1, 0, \
+                             '0:0', 'T{n}', 't{n}', 'Old', 'old', 'flac', '{availability}', 'scan', \
+                             1700000000.1234, 'automatic')"
+                        )
+                    };
+                    sqlx::raw_sql(&format!(
+                        "INSERT INTO local_artists (id, display_name, folded_name, kind, \
+                         created_at, updated_at) VALUES \
+                         ('artist-keep', 'Same', 'same', 'person', 1700000000.5, 1700000000.5), \
+                         ('artist-dupe', 'Same.', 'same.', 'person', 1700000000.5, 1700000000.5); \
+                         INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+                         album_artist_id, grouping_source, created_at, updated_at) VALUES \
+                         ('old', 'music', 'g', 'Old', 'old', 'artist-dupe', 'automatic', \
+                         1700000000.5, 1700000000.5); \
+                         INSERT INTO local_tracks (id, local_album_id, root_id, file_path, \
+                         relative_path, path_hash, file_size_bytes, file_mtime_ns, stat_revision, \
+                         title, title_folded, album_title, album_title_folded, file_format, \
+                         availability, ingest_source, imported_at, membership_source) VALUES {}, {}, {}, {};",
+                        track("kept1", 1, "indexed"),
+                        track("kept2", 2, "indexed"),
+                        track("kept3", 3, "indexed"),
+                        track("walked", 4, "indexed"),
+                    ))
+                    .execute(&pool)
+                    .await
+                    .unwrap();
+                    pool.close().await;
+                });
+        })
+        .join()
+        .unwrap();
+    })
+    .await;
+    let root = music.lock().unwrap().clone();
+    let auth = app.login_admin().await;
+    let headers = [("authorization", auth.as_str())];
+    let db = app.db();
+    let ms = |sql: &str| -> i64 { db.query_row(sql, [], |row| row.get(0)).unwrap() };
+    assert_eq!(
+        ms("SELECT imported_at FROM local_tracks WHERE id = 'kept1'"),
+        IMPORTED_MS
+    );
+
+    // A scan rereads what is there and judges the rest gone, in milliseconds.
+    let before = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64;
+    app.add_library_folder("music", &root).await;
+    assert_eq!(
+        ms("SELECT imported_at FROM local_tracks WHERE id = 'kept1'"),
+        IMPORTED_MS,
+        "a reread keeps when the track arrived"
+    );
+    assert!(ms("SELECT tags_read_at FROM local_tracks WHERE id = 'kept1'") >= before);
+    assert!(ms("SELECT missing_at FROM local_tracks WHERE id = 'walked'") >= before);
+
+    // A merge moves the album over and stamps every row in milliseconds.
+    let selection = json!({
+        "source_artist_ids": ["artist-keep", "artist-dupe"],
+        "surviving_artist_id": "artist-keep",
+        "expected_revisions": {"artist-keep": 1, "artist-dupe": 1},
+    });
+    let (status, preview) = app
+        .call(
+            "POST",
+            "/api/v3/library/artists/merge-preview",
+            &headers,
+            Some(selection.clone()),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{preview}");
+    let mut apply = selection;
+    apply["preview_token"] = preview["preview_token"].clone();
+    apply["idempotency_key"] = json!("artist-merge-upgrade");
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/v3/library/artists/merge",
+            &headers,
+            Some(apply),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(ms("SELECT updated_at FROM local_artists WHERE id = 'artist-dupe'") >= before);
+    assert!(
+        ms("SELECT created_at FROM local_artist_aliases WHERE alias = 'artist-dupe'") >= before
+    );
+
+    // The wire keeps seconds.
+    let (status, artist) = app
+        .call("GET", "/api/v3/library/artists/artist-keep", &headers, None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{artist}");
+    assert_eq!(artist["date_added"], json!(1_700_000_000.5));
 }

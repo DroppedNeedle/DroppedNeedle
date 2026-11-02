@@ -254,7 +254,7 @@ droppedneedle_kernel::sql! {
            ON i.local_track_id = t.id AND i.provider = 'musicbrainz' \
          WHERE t.local_album_id = ?1 AND +t.availability = 'indexed' \
          AND trim(COALESCE(i.release_track_mbid, '')) <> ''";
-    pub(super) RETAGGED_BY_HAND = "SELECT t.id, t.missing_since, t.album_title_folded, \
+    pub(super) RETAGGED_BY_HAND = "SELECT t.id, t.missing_at, t.album_title_folded, \
              COALESCE(t.album_artist_name_folded, ''), t.disc_number, t.track_number \
              FROM local_tracks t JOIN local_track_external_identities i \
                ON i.local_track_id = t.id AND i.provider = 'musicbrainz' \
@@ -262,7 +262,7 @@ droppedneedle_kernel::sql! {
              AND lower(trim(i.release_track_mbid)) = ?2 ORDER BY t.id";
     pub(super) REPLACED_BY = "SELECT EXISTS(SELECT 1 FROM library_retag_pairs \
              WHERE old_album_id = ?1 AND state = ?2)";
-    pub(super) GONE_TRACK_FACTS = "SELECT missing_since, root_id, relative_path FROM local_tracks WHERE id = ?1";
+    pub(super) GONE_TRACK_FACTS = "SELECT missing_at, root_id, relative_path FROM local_tracks WHERE id = ?1";
     pub(super) NEW_TRACK_FACTS = "SELECT imported_at, root_id, relative_path FROM local_tracks WHERE id = ?1";
     pub(super) SCAN_OVERLAP_AND_CHANGE = "SELECT EXISTS(SELECT 1 FROM library_scan_runs \
                WHERE started_at <= ?2 AND ?2 <= COALESCE(terminal_at, ?3)), \
@@ -480,7 +480,7 @@ droppedneedle_kernel::sql! {
       AND be.local_album_id <> a.id \
     JOIN local_albums b ON b.id = be.local_album_id AND b.retired_into_album_id IS NULL \
     WHERE o.availability = 'missing' \
-    AND o.missing_since >= (SELECT (MIN(started_at) - 0.5) / 1000.0 FROM library_scan_runs) \
+    AND o.missing_at >= (SELECT MIN(started_at) FROM library_scan_runs) \
     AND (?1 IS NULL OR a.id = ?1) AND (?2 IS NULL OR b.id = ?2) \
     AND trim(COALESCE(ae.release_mbid, '')) <> '' \
     AND EXISTS (SELECT 1 FROM local_track_external_identities oi \
@@ -523,7 +523,8 @@ droppedneedle_kernel::sql! {
     family REFERENCES_OF = references_of;
     pub(super) REPOINT_TRACK_CREDITS = "UPDATE local_track_artists SET local_artist_id = ?2, row_revision = row_revision + 1 \
          WHERE local_artist_id = ?1";
-    pub(super) REPOINT_ALBUM_ARTIST = "UPDATE local_albums SET album_artist_id = ?2, updated_at = ?3, \
+    pub(super) REPOINT_ALBUM_ARTIST = "UPDATE local_albums SET album_artist_id = ?2, \
+         updated_at = CAST(round(?3 * 1000) AS INTEGER), \
          row_revision = row_revision + 1 WHERE album_artist_id = ?1";
     /// The retiree's source links the survivor already has.
     pub(super) DROP_SHARED_SOURCE_LINKS = "DELETE FROM local_entity_source_links WHERE local_artist_id = ?1 AND EXISTS \
@@ -531,15 +532,16 @@ droppedneedle_kernel::sql! {
           AND kept.provider = local_entity_source_links.provider \
           AND kept.external_entity_type = local_entity_source_links.external_entity_type \
           AND kept.external_id = local_entity_source_links.external_id)";
-    pub(super) REPOINT_SOURCE_LINKS = "UPDATE local_entity_source_links SET local_artist_id = ?2, updated_at = ?3, \
+    pub(super) REPOINT_SOURCE_LINKS = "UPDATE local_entity_source_links SET local_artist_id = ?2, \
+         updated_at = CAST(round(?3 * 1000) AS INTEGER), \
          row_revision = row_revision + 1 WHERE local_artist_id = ?1";
     pub(super) DROP_ARTIST_LINK = "DELETE FROM local_artist_external_identities WHERE local_artist_id = ?1";
     /// The only writer of `local_artists.retired_into_artist_id`.
     pub(super) RETIRE_ARTIST_ROW = "UPDATE local_artists SET retired_into_artist_id = ?2, converged_mbid = ?4, \
-         updated_at = ?3, row_revision = row_revision + 1 WHERE id = ?1";
+         updated_at = CAST(round(?3 * 1000) AS INTEGER), row_revision = row_revision + 1 WHERE id = ?1";
     pub(super) REPOINT_ARTIST_ALIASES = "UPDATE local_artist_aliases SET local_artist_id = ?2 WHERE local_artist_id = ?1";
     pub(super) ALIAS_RETIRED_ARTIST = "INSERT OR IGNORE INTO local_artist_aliases (alias, local_artist_id, kind, created_at) \
-         VALUES (?1, ?2, 'merged_artist', ?3)";
+         VALUES (?1, ?2, 'merged_artist', CAST(round(?3 * 1000) AS INTEGER))";
     pub(super) REPOINT_CREDIT_PROOFS = "UPDATE library_artist_credit_proofs SET \
          local_artist_id = CASE WHEN local_artist_id = ?1 THEN ?2 ELSE local_artist_id END, \
          source_local_artist_id = CASE WHEN source_local_artist_id = ?1 THEN ?2 \

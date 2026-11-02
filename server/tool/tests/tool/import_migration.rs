@@ -258,7 +258,7 @@ async fn pinned_album_left_unmanaged_in_v2_stays_so_once_its_files_are_placed() 
             "manual".to_owned(),
             Some(PINNED.to_owned()),
             Some(alice.clone()),
-            1700000500.0
+            1700000500000.0
         )
     );
     let queued: String = db

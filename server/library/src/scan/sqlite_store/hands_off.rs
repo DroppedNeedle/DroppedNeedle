@@ -82,13 +82,12 @@ pub(super) fn hold_replacements(
 }
 
 fn pass(tx: &Transaction<'_>, run_id: &str, now: f64) -> rusqlite::Result<()> {
-    let started: Option<f64> = tx
+    let started: Option<i64> = tx
         .query_row(crate::scan::sql::PASS.text(), params![run_id], |row| {
             row.get::<_, Option<i64>>(0)
         })
         .optional()?
-        .flatten()
-        .map(crate::clock::earliest_secs);
+        .flatten();
     let Some(started) = started else {
         return Ok(());
     };
@@ -113,7 +112,7 @@ fn pass(tx: &Transaction<'_>, run_id: &str, now: f64) -> rusqlite::Result<()> {
 
 /// The rows of hands-off albums that went away in this run: missing since
 /// it began, or still indexed and walked past.
-fn lost_rows(tx: &Transaction<'_>, run_id: &str, started: f64) -> rusqlite::Result<Vec<Lost>> {
+fn lost_rows(tx: &Transaction<'_>, run_id: &str, started: i64) -> rusqlite::Result<Vec<Lost>> {
     // CROSS JOIN keeps the order: the few hands-off albums first, never a
     // walk over every live album.
     let sql = crate::scan::sql::LOST_ROWS.text();
@@ -136,7 +135,7 @@ fn lost_rows(tx: &Transaction<'_>, run_id: &str, started: f64) -> rusqlite::Resu
 fn new_albums_at(
     tx: &Transaction<'_>,
     run_id: &str,
-    started: f64,
+    started: i64,
     root_id: &str,
     place: &str,
 ) -> rusqlite::Result<BTreeSet<String>> {
@@ -180,14 +179,14 @@ fn settle(
     tx: &Transaction<'_>,
     lost: &[Lost],
     album_id: &str,
-    started: f64,
+    started: i64,
     now: f64,
 ) -> rusqlite::Result<()> {
     let Some((created, live, foreign, excluded, held)) = tx
         .prepare_cached(crate::scan::sql::HANDS_OFF_ALBUM_STATE.text())?
         .query_row(params![album_id, Cause::ReplacedHandsOff.as_str()], |row| {
             Ok((
-                row.get::<_, f64>(0)?,
+                row.get::<_, i64>(0)?,
                 row.get::<_, bool>(1)?,
                 row.get::<_, bool>(2)?,
                 row.get::<_, bool>(3)?,

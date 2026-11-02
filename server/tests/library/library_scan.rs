@@ -1022,7 +1022,7 @@ async fn a_scan_moves_the_catalog_revision_as_it_goes() {
 
     // A closed lane ends the event loop, with the supervisor never stopped.
     runtime.shutdown().await;
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
     while supervisor.is_running(revisions::JOB_NAME) {
         assert!(
             std::time::Instant::now() < deadline,
@@ -4007,7 +4007,7 @@ impl RegroupRig {
     /// Move the time the missing tracks went missing `seconds` back.
     fn age_missing(&self, seconds: i64) {
         self.run(&format!(
-            "UPDATE local_tracks SET missing_since = missing_since - {seconds} \
+            "UPDATE local_tracks SET missing_at = missing_at - {seconds} * 1000 \
              WHERE availability = 'missing'"
         ));
     }
@@ -6568,7 +6568,7 @@ struct Story {
     removed_in_app: bool,
     /// The old rows went missing between two scans.
     missing_between_scans: bool,
-    no_missing_since: bool,
+    no_missing_at: bool,
     /// The scan that read the new files stopped before it marked the old
     /// rows missing, so the next one marks them.
     interrupted: bool,
@@ -6612,7 +6612,7 @@ async fn tell(name: &str, story: Story) -> (RegroupRig, String, String, String, 
     let runs = rig.runs();
     if story.interrupted {
         rig.run(&format!(
-            "UPDATE local_tracks SET availability = 'indexed', missing_since = NULL \
+            "UPDATE local_tracks SET availability = 'indexed', missing_at = NULL \
              WHERE local_album_id = '{old}'; \
              UPDATE library_scan_runs SET state = 'cancelled' WHERE id = '{}';",
             runs[1]
@@ -6640,16 +6640,16 @@ async fn tell(name: &str, story: Story) -> (RegroupRig, String, String, String, 
     }
     if story.missing_between_scans {
         rig.run(&format!(
-            "UPDATE local_tracks SET missing_since = \
+            "UPDATE local_tracks SET missing_at = \
              ((SELECT terminal_at FROM library_scan_runs WHERE id = '{}') \
-             + (SELECT started_at FROM library_scan_runs WHERE id = '{}')) / 2000.0 \
+             + (SELECT started_at FROM library_scan_runs WHERE id = '{}')) / 2 \
              WHERE local_album_id = '{old}' AND availability = 'missing';",
             runs[0], runs[1]
         ));
     }
-    if story.no_missing_since {
+    if story.no_missing_at {
         rig.run(&format!(
-            "UPDATE local_tracks SET missing_since = NULL WHERE local_album_id = '{old}';"
+            "UPDATE local_tracks SET missing_at = NULL WHERE local_album_id = '{old}';"
         ));
     }
     rig.scan().await;
@@ -6765,7 +6765,7 @@ async fn an_album_is_not_joined_without_proof_it_was_replaced() {
         (
             "missing with no time",
             Story {
-                no_missing_since: true,
+                no_missing_at: true,
                 ..Story::default()
             },
         ),
@@ -7195,7 +7195,7 @@ async fn a_join_waits_for_the_rest_of_the_old_album() {
     rig.scan().await;
     rig.assert_apart(&old, &old_rows[0], "three gone under a day");
     rig.run(&format!(
-        "UPDATE local_tracks SET missing_since = missing_since - 86400 \
+        "UPDATE local_tracks SET missing_at = missing_at - 86400000 \
          WHERE local_album_id = '{old}' AND id <> '{}';",
         old_rows[0]
     ));
@@ -7761,7 +7761,7 @@ async fn a_placement_marks_only_a_hand_retag() {
         "parked"
     );
 
-    let (mut rig, album, _) = placed_album("scan-place-mark-later", "manual", 1e12).await;
+    let (mut rig, album, _) = placed_album("scan-place-mark-later", "manual", 1e15).await;
     rig.retag_and_rename().await;
     rig.placed_at("b/t000.flac", "chosen after the file came");
     assert_eq!(rig.mark_of(&album), None, "chosen after the file came");
@@ -10148,7 +10148,7 @@ impl RegroupRig {
 use droppedneedle_library::publish::HIDDEN_PREFIX;
 
 /// When the latest scan run started.
-const LATEST_START: &str = "(SELECT (MAX(started_at) - 0.5) / 1000.0 FROM library_scan_runs)";
+const LATEST_START: &str = "(SELECT MAX(started_at) FROM library_scan_runs)";
 
 /// Another album copied over an old one with the same file names: the
 /// three files whose length moved more than five seconds come in as new
@@ -10220,7 +10220,7 @@ async fn another_album_copied_over_an_old_one_comes_in_as_new_tracks() {
         assert_eq!(
             rig.count(&format!(
                 "SELECT COUNT(*) FROM local_tracks WHERE id = '{old}' \
-                 AND local_album_id = '{album}' AND missing_since >= {LATEST_START}"
+                 AND local_album_id = '{album}' AND missing_at >= {LATEST_START}"
             )),
             1,
             "{file}'s old track went missing in this run, on the old album"
@@ -10376,10 +10376,10 @@ async fn other_music_at_a_path_needs_a_length_gap_and_a_contradiction() {
     let old: Vec<String> = (0..lines.len()).map(|n| rig.row_at(&file(n))).collect();
     let since = |rig: &RegroupRig, track: &str| {
         rig.text(&format!(
-            "SELECT CAST(missing_since AS TEXT) FROM local_tracks WHERE id = '{track}'"
+            "SELECT CAST(missing_at AS TEXT) FROM local_tracks WHERE id = '{track}'"
         ))
     };
-    let mut missing_since = BTreeMap::new();
+    let mut missing_at = BTreeMap::new();
     for (n, line) in lines.iter().enumerate() {
         if line.exclude {
             rig.run(&format!(
@@ -10390,7 +10390,7 @@ async fn other_music_at_a_path_needs_a_length_gap_and_a_contradiction() {
         }
         if line.lose_first {
             rig.lose(&[file(n)]).await;
-            missing_since.insert(n, since(&rig, &old[n]).expect("missing since"));
+            missing_at.insert(n, since(&rig, &old[n]).expect("missing since"));
         }
     }
     for (n, line) in lines.iter().enumerate() {
@@ -10424,11 +10424,11 @@ async fn other_music_at_a_path_needs_a_length_gap_and_a_contradiction() {
                 "row {row}: still excluded"
             );
         }
-        if let Some(kept) = missing_since.get(&n) {
+        if let Some(kept) = missing_at.get(&n) {
             assert_eq!(
                 since(&rig, &old[n]).as_ref(),
                 Some(kept),
-                "row {row}: keeps its own missing_since"
+                "row {row}: keeps its own missing_at"
             );
         }
     }

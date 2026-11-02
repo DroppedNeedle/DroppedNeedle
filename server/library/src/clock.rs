@@ -49,14 +49,6 @@ pub(crate) fn secs(ms: i64) -> f64 {
     ms as f64 / 1000.0
 }
 
-/// About the earliest unix seconds that round to `ms`, to compare a time kept
-/// to the millisecond with one still kept in seconds. A time at or after the
-/// kept one reads as at or after it, but for a float step at the very edge of
-/// the half millisecond.
-pub(crate) fn earliest_secs(ms: i64) -> f64 {
-    (ms as f64 - 0.5) / 1000.0
-}
-
 /// A stored `_at` column, as unix seconds.
 pub(crate) fn secs_at(row: &rusqlite::Row<'_>, index: usize) -> rusqlite::Result<f64> {
     Ok(secs(row.get::<_, Millis>(index)?.0))

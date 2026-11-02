@@ -281,7 +281,7 @@ pub(super) fn mark_missing(
 ) -> Result<(), PublishError> {
     conn.execute(
         crate::publish::sql::MARK_MISSING.text(),
-        rusqlite::params![track_id, clock.now_secs()],
+        rusqlite::params![track_id, clock.now_ms()],
     )?;
     crate::catalog_revision::bump_catalog(conn)?;
     Ok(())
@@ -316,7 +316,7 @@ fn retire_replaced(
             track.root_id,
             track.rel_path,
             retired,
-            now,
+            crate::clock::ms(now),
             recycle_to,
             sha256_hex(retired.as_bytes())
         ],
@@ -342,7 +342,7 @@ fn changed_under(track_id: &str, bundle_id: &str) -> PublishError {
 /// placed there and placement refuses a taken name, so another row still
 /// on that path describes a file that is gone. A missing or excluded row
 /// gives the path up for a hidden name of its own and keeps everything
-/// else: its id, availability, `missing_since`, album and record. A row
+/// else: its id, availability, `missing_at`, album and record. A row
 /// the catalog still lists as indexed fails the commit until a scan has
 /// seen its file go.
 fn give_up_destination(conn: &Connection, track: &TrackCommit) -> Result<(), PublishError> {

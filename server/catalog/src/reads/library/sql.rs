@@ -39,7 +39,7 @@ droppedneedle_kernel::sql! {
         a.year AS year, a.is_compilation AS is_compilation, \
         COALESCE(w.source IN ('folder','embedded'), 0) AS cover_available, \
         CASE WHEN w.source IN ('folder','embedded') THEN w.version END AS art_version, \
-        a.created_at AS date_added, \
+        a.created_at / 1000.0 AS date_added, \
         (SELECT c.id FROM library_contribution_drafts c WHERE c.local_album_id = a.id \
          AND c.state NOT IN ('linked','cancelled','stale')) AS contribution_id, \
         (SELECT c.state FROM library_contribution_drafts c WHERE c.local_album_id = a.id \
@@ -161,7 +161,7 @@ droppedneedle_kernel::sql! {
          t.duration_seconds AS duration_seconds, t.file_format AS format, \
          t.bit_rate AS bit_rate, t.sample_rate AS sample_rate, \
          t.bit_depth AS bit_depth, t.channels AS channels, \
-         t.file_size_bytes AS file_size_bytes, t.imported_at AS date_added, \
+         t.file_size_bytes AS file_size_bytes, t.imported_at / 1000.0 AS date_added, \
          COALESCE(w.source IN ('folder','embedded'), 0) AS cover_available"
     ));
     /// The track projection's joins. A statement adds the availability
@@ -292,7 +292,7 @@ droppedneedle_kernel::sql! {
     /// subquery per row.
     pub(crate) fragment ARTIST_COLUMNS = "r.id AS id, r.display_name AS name, \
         e.provider_artist_id AS artist_mbid, (e.local_artist_id IS NOT NULL) AS linked, \
-        r.created_at AS date_added";
+        r.created_at / 1000.0 AS date_added";
     /// The artist projection's joins.
     pub(crate) fragment ARTIST_JOINS = "FROM local_artists r " + ARTIST_IDENTITY;
     /// The artist `r`'s MusicBrainz link, `e`.
@@ -558,7 +558,7 @@ droppedneedle_kernel::sql! {
          LOWER(t.file_format) AS format, t.bit_rate AS bit_rate, t.sample_rate AS sample_rate, \
          t.bit_depth AS bit_depth, t.channels AS channels, t.file_size_bytes AS file_size_bytes, \
          t.relative_path AS relative_path, \
-         t.imported_at AS date_added, t.title_sort AS sort_name, t.disc_subtitle AS disc_subtitle, ",
+         t.imported_at / 1000.0 AS date_added, t.title_sort AS sort_name, t.disc_subtitle AS disc_subtitle, ",
         recording_mbid!("te", "t"),
         " AS recording_mbid, \
          tae.provider_artist_id AS artist_mbid, aae.provider_artist_id AS album_artist_mbid, \
@@ -624,9 +624,9 @@ droppedneedle_kernel::sql! {
     /// are read for their ids. Binds: limit, offset.
     pub(crate) fragment PLAYER_NATURAL_PAGE = "SELECT pt.id FROM (\
         SELECT t.search_key AS k, t.rowid AS r FROM local_tracks t \
-        WHERE t.availability = 'indexed' AND t.missing_since IS NULL \
+        WHERE t.availability = 'indexed' AND t.missing_at IS NULL \
         UNION ALL SELECT t.search_key, t.rowid FROM local_tracks t \
-        WHERE t.availability = 'indexed' AND t.missing_since IS NOT NULL \
+        WHERE t.availability = 'indexed' AND t.missing_at IS NOT NULL \
         ORDER BY 1 LIMIT ? OFFSET ?) p CROSS JOIN local_tracks pt \
         WHERE pt.rowid = p.r ORDER BY p.k";
     /// One page of player track ids in a catalog order, over the whole

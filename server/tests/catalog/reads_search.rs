@@ -721,7 +721,7 @@ async fn rebuild_tracks(pool: &SqlitePool) {
     .await
     .unwrap();
     let create = table.replacen(
-        "CREATE TABLE local_tracks",
+        "CREATE TABLE \"local_tracks\"",
         "CREATE TABLE local_tracks_rebuilt",
         1,
     );

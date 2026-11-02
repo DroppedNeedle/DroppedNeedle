@@ -89,7 +89,7 @@ pub fn edition_status(
                     row.get(1)?,
                     row.get(2)?,
                     row.get(3)?,
-                    row.get(4)?,
+                    crate::clock::secs_at(row, 4)?,
                     row.get(5)?,
                 ))
             },

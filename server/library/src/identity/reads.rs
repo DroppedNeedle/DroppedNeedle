@@ -42,7 +42,7 @@ pub fn album_identity_row(
                 matcher_version: row.get(3)?,
                 attempt_id: row.get(4)?,
                 selected_by_user_id: row.get(5)?,
-                selected_at: row.get(6)?,
+                selected_at: crate::clock::opt_secs_at(row, 6)?,
                 row_revision: row.get(7)?,
             })
         })
@@ -79,7 +79,7 @@ fn prior_track(row: &rusqlite::Row<'_>) -> rusqlite::Result<PriorTrackIdentity> 
         release_track_position: row.get(5)?,
         decision_source: row.get(6)?,
         attempt_id: row.get(7)?,
-        selected_at: row.get(8)?,
+        selected_at: crate::clock::opt_secs_at(row, 8)?,
     })
 }
 

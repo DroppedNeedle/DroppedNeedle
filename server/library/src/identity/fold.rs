@@ -151,7 +151,11 @@ pub fn undo_fold(
     };
     let source = folded.source_album_id.as_str();
     tx.prepare_cached(sql::UNRETIRE_ALBUM.text())?
-        .execute(params![source, folded.grouping_locked, now])?;
+        .execute(params![
+            source,
+            folded.grouping_locked,
+            crate::clock::ms(now)
+        ])?;
     for track_id in &folded.moved_track_ids {
         tx.prepare_cached(sql::MOVE_TRACK_TO.text())?
             .execute(params![source, track_id])?;
@@ -177,7 +181,7 @@ pub fn undo_fold(
     tx.prepare_cached(sql::DROP_MERGED_ALIAS.text())?
         .execute(params![source, target])?;
     tx.prepare_cached(sql::TOUCH_ALBUM.text())?
-        .execute(params![target, now])?;
+        .execute(params![target, crate::clock::ms(now)])?;
     let now_ms = (now * 1000.0) as i64;
     offer_album(tx, source, now_ms)?;
     offer_album(tx, &target, now_ms)?;

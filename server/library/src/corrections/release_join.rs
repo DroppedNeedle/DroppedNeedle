@@ -231,17 +231,17 @@ fn replaced_by(
 /// only the two rows' times and paths and the run history, never their
 /// identities. Times are seconds.
 pub(crate) fn judge(tx: &Transaction<'_>, pair: &Pair, now: f64) -> rusqlite::Result<Verdict> {
-    let (missing_since, old_root, old_path): (Option<f64>, String, String) = tx
+    let (missing_at, old_root, old_path): (Option<f64>, String, String) = tx
         .prepare_cached(crate::corrections::sql::GONE_TRACK_FACTS.text())?
         .query_row(params![pair.old], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            Ok((crate::clock::opt_secs_at(row, 0)?, row.get(1)?, row.get(2)?))
         })?;
     let (imported_at, new_root, new_path): (Option<f64>, String, String) = tx
         .prepare_cached(crate::corrections::sql::NEW_TRACK_FACTS.text())?
         .query_row(params![pair.new], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            Ok((crate::clock::opt_secs_at(row, 0)?, row.get(1)?, row.get(2)?))
         })?;
-    let Some(gone) = missing_since else {
+    let Some(gone) = missing_at else {
         return Ok(Verdict::Stayed);
     };
     let (by_scan, removed): (bool, bool) = tx

@@ -270,7 +270,7 @@ droppedneedle_kernel::sql! {
              ORDER BY created_at, id";
     pub(super) ALBUM_EXISTS = "SELECT EXISTS(SELECT 1 FROM local_albums WHERE id = ?1)";
     pub(super) GIVE_UP_PATH = "UPDATE local_tracks SET availability = 'missing', \
-         missing_since = CASE WHEN availability = 'missing' THEN missing_since ELSE ?2 END, \
+         missing_at = CASE WHEN availability = 'missing' THEN missing_at ELSE ?2 END, \
          relative_path = ?3, file_path = ?4, path_hash = ?5, row_revision = row_revision + 1 \
          WHERE id = ?1";
     pub(super) ALBUM_CREDIT_ROWS = "SELECT position, local_artist_id, credited_name, artist_mbid \
@@ -374,7 +374,7 @@ droppedneedle_kernel::sql! {
          album_title_provenance = excluded.album_title_provenance, \
          album_artist_provenance = excluded.album_artist_provenance, \
          availability = CASE WHEN local_tracks.manual_excluded = 1 THEN 'excluded' \
-           ELSE 'indexed' END, missing_since = NULL, \
+           ELSE 'indexed' END, missing_at = NULL, \
          excluded_at = CASE WHEN local_tracks.manual_excluded = 1 \
            THEN COALESCE(local_tracks.excluded_at, excluded.tags_read_at) END";
     pub(super) TRACK_AND_ALBUM_AT_PATH = "SELECT id, local_album_id FROM local_tracks WHERE root_id = ?1 AND relative_path = ?2";
@@ -424,7 +424,7 @@ droppedneedle_kernel::sql! {
     pub(super) MOVE_ALBUM_PLAYLIST_TRACKS = "UPDATE catalog_playlist_tracks SET album_id = ?1 WHERE album_id = ?2";
     pub(super) DROP_ALBUM = "DELETE FROM local_albums WHERE id = ?1";
     pub(super) STAMP_IF_RETAGGED_BY_HAND = "SELECT EXISTS(SELECT 1 FROM library_custom_edition_active WHERE local_album_id = ?1)";
-    pub(super) HOLDS_ONLY_ITS_RETAG = "WITH run AS (SELECT (started_at - 0.5) / 1000.0 AS started_at FROM library_scan_runs WHERE id = ?1), \
+    pub(super) HOLDS_ONLY_ITS_RETAG = "WITH run AS (SELECT started_at FROM library_scan_runs WHERE id = ?1), \
              other AS (SELECT t.imported_at, t.root_id, t.relative_path FROM local_tracks t \
                WHERE t.local_album_id = ?2 AND NOT EXISTS ( \
                  SELECT 1 FROM library_scan_album_moves m WHERE m.run_id = ?1 \
@@ -445,7 +445,7 @@ droppedneedle_kernel::sql! {
          JOIN local_albums a ON a.id = m.previous_album_id \
          WHERE m.run_id = ?1 AND a.retired_into_album_id IS NULL ORDER BY 1";
     pub(super) RECENTLY_MISSING_TRACKS = "SELECT t.id FROM local_tracks t WHERE t.availability = 'missing' \
-             AND t.missing_since >= (SELECT (MIN(started_at) - 0.5) / 1000.0 FROM library_scan_runs) \
+             AND t.missing_at >= (SELECT MIN(started_at) FROM library_scan_runs) \
              AND NOT EXISTS (SELECT 1 FROM local_track_aliases x WHERE x.alias = t.id) \
              AND substr(t.relative_path, 1, length(?1)) <> ?1 \
              ORDER BY t.id";
@@ -478,7 +478,7 @@ droppedneedle_kernel::sql! {
                    WHERE previous_album_id = ?2 \
                    UNION SELECT local_track_id FROM library_scan_album_moves \
                    WHERE run_id = ?1 AND previous_album_id = ?2) \
-                 AND (o.imported_at IS NULL OR o.imported_at * 1000 < ?4))";
+                 AND (o.imported_at IS NULL OR o.imported_at < ?4))";
     pub(super) HAS_COUNTED_DEPARTURE = "SELECT EXISTS(SELECT 1 FROM library_album_departures WHERE previous_album_id = ?1)";
     pub(super) RETIRED = "SELECT EXISTS(SELECT 1 FROM local_albums WHERE id = ?1 \
          AND retired_into_album_id IS NOT NULL)";
@@ -794,7 +794,7 @@ droppedneedle_kernel::sql! {
              WHERE a.local_album_id = ?1 AND a.action_kind = '" + OTHER_MUSIC_KIND + "' \
              AND json_extract(p.value, '$.old_track_id') = t.id)) \
          OR (t.availability != 'excluded' AND NOT (t.availability = 'missing' \
-           AND (t.missing_since IS NULL OR t.missing_since <= ?2)))))";
+           AND (t.missing_at IS NULL OR t.missing_at <= ?2)))))";
     pub(super) LOAD_RUN = "SELECT " + RUN_COLUMNS + " FROM library_scan_runs WHERE id = ?1";
     pub(super) NEW_EVERYWHERE = NEW;
     pub(super) NEW_BELOW = NEW + " AND t.relative_path >= ?4 AND t.relative_path < ?5";
@@ -824,7 +824,7 @@ droppedneedle_kernel::sql! {
          CROSS JOIN local_albums a ON a.id = h.local_album_id \
          CROSS JOIN local_tracks t ON t.local_album_id = a.id \
          WHERE a.retired_into_album_id IS NULL AND ((t.availability = 'missing' \
-         AND t.missing_since >= ?2) OR (t.availability = 'indexed' AND " + WALKED_PAST + "))";
+         AND t.missing_at >= ?2) OR (t.availability = 'indexed' AND " + WALKED_PAST + "))";
     pub(super) LIST_HISTORY = "SELECT " + RUN_COLUMNS + " FROM library_scan_runs WHERE terminal_at IS NOT NULL \
                  AND (?2 IS NULL OR terminal_at < ?2 OR (terminal_at = ?2 AND id < ?3)) \
                  ORDER BY terminal_at DESC, id DESC LIMIT ?1";
@@ -998,7 +998,7 @@ droppedneedle_kernel::sql! {
     pub(super) fragment IN_SCOPE_T = "(?2 = '.' OR t.relative_path = ?2 \
     OR (t.relative_path > ?2 || '/' AND t.relative_path < ?2 || '0'))";
     /// Mark one listed path (`?2` under root `?1`) missing at `?3`, only while run `?4` still walked past it.
-    pub(super) MARK_WALKED_PAST_MISSING = "UPDATE local_tracks AS t SET availability = 'missing', missing_since = ?3 \
+    pub(super) MARK_WALKED_PAST_MISSING = "UPDATE local_tracks AS t SET availability = 'missing', missing_at = ?3 \
      WHERE t.root_id = ?1 AND t.relative_path = ?2 AND t.availability = 'indexed' AND " + (walked_past!("?4"));
     /// Whether run `?1` lifts the hold aliased `h`: the run completed and walked a folder covering it to the end, held back or refused no folder covering it or inside it, and no file under it went missing in the run from an album that holds no indexed file and is not merged into another. `?2` is now, for a run with no start.
     pub(super) fragment HOLD_LIFTS = "EXISTS (SELECT 1 FROM library_scan_runs r \
@@ -1012,7 +1012,7 @@ droppedneedle_kernel::sql! {
      AND NOT EXISTS (SELECT 1 FROM local_tracks t \
        JOIN local_albums a ON a.id = t.local_album_id \
        WHERE t.availability = 'missing' AND t.root_id = h.root_id \
-       AND t.missing_since >= (SELECT (COALESCE(started_at, ?2) - 0.5) / 1000.0 \
+       AND t.missing_at >= (SELECT COALESCE(started_at, ?2) \
          FROM library_scan_runs WHERE id = ?1) \
        AND " + (covers!("h.relative_path", "t.relative_path")) + " AND a.retired_into_album_id IS NULL \
        AND NOT EXISTS (SELECT 1 FROM local_tracks k \
@@ -1085,7 +1085,7 @@ pub(super) fn replacements_sql(source: HeldRows) -> String {
          AND trim(COALESCE(ni.release_track_mbid, '')) <> '' \
          AND lower(trim(oi.release_track_mbid)) = lower(trim(ni.release_track_mbid)) \
          AND NOT EXISTS (SELECT 1 FROM local_track_aliases x WHERE x.alias = t.id) \
-         AND ((t.availability = 'missing' AND t.missing_since * 1000 >= h.held_at){walked_past}) \
+         AND ((t.availability = 'missing' AND t.missing_at >= h.held_at){walked_past}) \
          ORDER BY 1, 2, 3"
     )
 }

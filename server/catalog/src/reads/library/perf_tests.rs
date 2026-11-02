@@ -80,42 +80,42 @@ fn seed_small_sql() -> String {
     let t9 = sql(fold_text("Ox \"Q\" %"));
     format!(
         "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) VALUES \
-         ('a1', 'Aurora', 'aurora', 'person', 1000, 1000), \
-         ('a2', 'Boreal', 'boreal', 'group', 1500, 1500), \
-         ('a3', 'Gæst \"Quoted\" 100%', '{a3}', 'person', 1600, 1600), \
-         ('ax', 'Retired', 'retired', 'person', 900, 900);\n\
+         ('a1', 'Aurora', 'aurora', 'person', 1000000, 1000000), \
+         ('a2', 'Boreal', 'boreal', 'group', 1500000, 1500000), \
+         ('a3', 'Gæst \"Quoted\" 100%', '{a3}', 'person', 1600000, 1600000), \
+         ('ax', 'Retired', 'retired', 'person', 900000, 900000);\n\
          UPDATE local_artists SET retired_into_artist_id = 'a1' WHERE id = 'ax';\n\
          INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
          album_artist_name, album_artist_name_folded, album_artist_id, year, \
          grouping_source, created_at, updated_at) VALUES \
-         ('al1', 'r1', 'g1', 'First Light', 'first light', 'Aurora', 'aurora', 'a1', 1994, 'automatic', 1000, 1000), \
-         ('al2', 'r1', 'g2', 'Second Dawn', 'second dawn', 'Aurora', 'aurora', 'a1', 2001, 'automatic', 2000, 2000), \
-         ('al3', 'r1', 'g3', 'Lone Peak', 'lone peak', 'Boreal', 'boreal', 'a2', 1994, 'automatic', 1500, 1500), \
-         ('al4', 'r1', 'g4', 'Empty Halls', 'empty halls', 'Aurora', 'aurora', 'a1', 1994, 'automatic', 1200, 1200), \
-         ('al5', 'r1', 'g5', '100% \"Live\" _Unplugged_ ''Encore''', '{al5}', 'Boreal', 'boreal', 'a2', 1987, 'automatic', 1800, 1800);\n\
+         ('al1', 'r1', 'g1', 'First Light', 'first light', 'Aurora', 'aurora', 'a1', 1994, 'automatic', 1000000, 1000000), \
+         ('al2', 'r1', 'g2', 'Second Dawn', 'second dawn', 'Aurora', 'aurora', 'a1', 2001, 'automatic', 2000000, 2000000), \
+         ('al3', 'r1', 'g3', 'Lone Peak', 'lone peak', 'Boreal', 'boreal', 'a2', 1994, 'automatic', 1500000, 1500000), \
+         ('al4', 'r1', 'g4', 'Empty Halls', 'empty halls', 'Aurora', 'aurora', 'a1', 1994, 'automatic', 1200000, 1200000), \
+         ('al5', 'r1', 'g5', '100% \"Live\" _Unplugged_ ''Encore''', '{al5}', 'Boreal', 'boreal', 'a2', 1987, 'automatic', 1800000, 1800000);\n\
          INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, path_hash, \
          file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, artist_name, artist_name_folded, \
          album_title, album_title_folded, album_artist_name, album_artist_name_folded, \
          disc_number, track_number, year, duration_seconds, file_format, availability, \
          ingest_source, imported_at, membership_source) VALUES \
          ('t1', 'al1', 'r1', '/m/t1.flac', 't1.flac', 'h1', 4000000, 1, 's1', 'Opener', 'opener', \
-          'Aurora', 'aurora', 'First Light', 'first light', 'Aurora', 'aurora', 1, 1, 1994, 200.0, 'flac', 'indexed', 'scan', 1000.0, 'automatic'), \
+          'Aurora', 'aurora', 'First Light', 'first light', 'Aurora', 'aurora', 1, 1, 1994, 200.0, 'flac', 'indexed', 'scan', 1000000, 'automatic'), \
          ('t2', 'al1', 'r1', '/m/t2.flac', 't2.flac', 'h2', 4000000, 1, 's2', 'Closer', 'closer', \
-          'Aurora', 'aurora', 'First Light', 'first light', 'Aurora', 'aurora', 1, 2, 1994, 200.0, 'flac', 'indexed', 'scan', 1100.0, 'automatic'), \
+          'Aurora', 'aurora', 'First Light', 'first light', 'Aurora', 'aurora', 1, 2, 1994, 200.0, 'flac', 'indexed', 'scan', 1100000, 'automatic'), \
          ('t3', 'al1', 'r1', '/m/t3.flac', 't3.flac', 'h3', 4000000, 1, 's3', 'Gone', 'gone', \
-          'Aurora', 'aurora', 'First Light', 'first light', 'Aurora', 'aurora', 1, 3, 1994, 200.0, 'flac', 'missing', 'scan', 1150.0, 'automatic'), \
+          'Aurora', 'aurora', 'First Light', 'first light', 'Aurora', 'aurora', 1, 3, 1994, 200.0, 'flac', 'missing', 'scan', 1150000, 'automatic'), \
          ('t4', 'al2', 'r1', '/m/t4.mp3', 't4.mp3', 'h4', 3000000, 1, 's4', 'Single', 'single', \
-          'Aurora', 'aurora', 'Second Dawn', 'second dawn', 'Aurora', 'aurora', 1, 1, 2001, 180.0, 'mp3', 'indexed', 'scan', 2000.0, 'automatic'), \
+          'Aurora', 'aurora', 'Second Dawn', 'second dawn', 'Aurora', 'aurora', 1, 1, 2001, 180.0, 'mp3', 'indexed', 'scan', 2000000, 'automatic'), \
          ('t5', 'al2', 'r1', '/m/t5.mp3', 't5.mp3', 'h5', 3000000, 1, 's5', 'Skipped', 'skipped', \
-          'Aurora', 'aurora', 'Second Dawn', 'second dawn', 'Aurora', 'aurora', 1, 2, 2001, 180.0, 'mp3', 'excluded', 'scan', 2050.0, 'automatic'), \
+          'Aurora', 'aurora', 'Second Dawn', 'second dawn', 'Aurora', 'aurora', 1, 2, 2001, 180.0, 'mp3', 'excluded', 'scan', 2050000, 'automatic'), \
          ('t6', 'al3', 'r1', '/m/t6.flac', 't6.flac', 'h6', 5000000, 1, 's6', 'Peak', 'peak', \
-          'Boreal', 'boreal', 'Lone Peak', 'lone peak', 'Boreal', 'boreal', 1, 1, 1994, 220.0, 'flac', 'indexed', 'scan', 1500.0, 'automatic'), \
+          'Boreal', 'boreal', 'Lone Peak', 'lone peak', 'Boreal', 'boreal', 1, 1, 1994, 220.0, 'flac', 'indexed', 'scan', 1500000, 'automatic'), \
          ('t7', 'al3', 'r1', '/m/t7.ogg', 't7.ogg', 'h7', 1000000, 1, 's7', 'Æther \"Mix\" 100%_Sure', '{t7}', \
-          'Aurora', 'aurora', 'Lone Peak', 'lone peak', 'Boreal', 'boreal', 1, 2, 1994, 210.0, 'ogg', 'indexed', 'scan', 1600.0, 'automatic'), \
+          'Aurora', 'aurora', 'Lone Peak', 'lone peak', 'Boreal', 'boreal', 1, 2, 1994, 210.0, 'ogg', 'indexed', 'scan', 1600000, 'automatic'), \
          ('t8', 'al5', 'r1', '/m/t8.opus', 't8.opus', 'h8', 2000000, 1, 's8', 'Up', 'up', \
-          'Boreal', 'boreal', '100% \"Live\" _Unplugged_ ''Encore''', '{al5}', 'Boreal', 'boreal', 1, 1, 1987, 190.0, 'opus', 'indexed', 'scan', 1800.0, 'automatic'), \
+          'Boreal', 'boreal', '100% \"Live\" _Unplugged_ ''Encore''', '{al5}', 'Boreal', 'boreal', 1, 1, 1987, 190.0, 'opus', 'indexed', 'scan', 1800000, 'automatic'), \
          ('t9', 'al5', 'r1', '/m/t9.opus', 't9.opus', 'h9', 2000000, 1, 's9', 'Ox \"Q\" %', '{t9}', \
-          NULL, NULL, '100% \"Live\" _Unplugged_ ''Encore''', '{al5}', 'Boreal', 'boreal', 1, 2, 1987, 195.0, 'opus', 'indexed', 'scan', 1900.0, 'automatic');\n\
+          NULL, NULL, '100% \"Live\" _Unplugged_ ''Encore''', '{al5}', 'Boreal', 'boreal', 1, 2, 1987, 195.0, 'opus', 'indexed', 'scan', 1900000, 'automatic');\n\
          INSERT INTO local_track_artists (local_track_id, position, local_artist_id, role) VALUES \
          ('t1', 0, 'a1', 'main'), ('t2', 0, 'a1', 'main'), ('t3', 0, 'a1', 'main'), \
          ('t4', 0, 'a1', 'main'), ('t5', 0, 'a1', 'main'), \
@@ -833,7 +833,7 @@ async fn player_short_words_need_a_column_that_holds_them() {
         format!(
             "{TRACK_INSERT}('nt1', 'al1', 'r1', '/m/nt1.flac', 'nt1.flac', 'h-nt1', 1000, 1, \
              's-nt1', 'Love Song', 'love song', NULL, NULL, 'Greatest', 'greatest', 'Aurora', \
-             'aurora', 1, 9, 2001, 100.0, 'flac', 'indexed', 'scan', 3000.0, 'automatic');"
+             'aurora', 1, 9, 2001, 100.0, 'flac', 'indexed', 'scan', 3000000, 'automatic');"
         ),
     )
     .await;
@@ -1025,7 +1025,7 @@ async fn stats_maintained_totals_track_mutations() {
          album_title_folded, disc_number, track_number, duration_seconds, file_format, \
          availability, ingest_source, imported_at, membership_source) VALUES \
          ('m1', 'al1', 'r1', '/m/m1', 'm1', 'hm1', 7000000, 1, 'sm1', 'Fresh', 'fresh', \
-         'First Light', 'first light', 1, 9, 200.0, 'wav', 'indexed', 'scan', 3000.0, 'automatic');"
+         'First Light', 'first light', 1, 9, 200.0, 'wav', 'indexed', 'scan', 3000000, 'automatic');"
             .to_owned(),
     )
     .await;
@@ -1038,9 +1038,9 @@ async fn stats_maintained_totals_track_mutations() {
          album_title_folded, disc_number, track_number, duration_seconds, file_format, \
          availability, ingest_source, imported_at, membership_source) VALUES \
          ('m2', 'al1', 'r1', '/m/m2', 'm2', 'hm2', 100, 1, 'sm2', 'Lost', 'lost', \
-         'First Light', 'first light', 1, 10, 200.0, 'wav', 'missing', 'scan', 3001.0, 'automatic'), \
+         'First Light', 'first light', 1, 10, 200.0, 'wav', 'missing', 'scan', 3001000, 'automatic'), \
          ('m3', 'al1', 'r1', '/m/m3', 'm3', 'hm3', 100, 1, 'sm3', 'Skipped', 'skipped', \
-         'First Light', 'first light', 1, 11, 200.0, 'wav', 'excluded', 'scan', 3002.0, 'automatic');"
+         'First Light', 'first light', 1, 11, 200.0, 'wav', 'excluded', 'scan', 3002000, 'automatic');"
             .to_owned(),
     )
     .await;
@@ -1951,7 +1951,7 @@ fn track_values(id: &str, album: &str, availability: &str) -> String {
     format!(
         "('{id}', '{album}', 'r1', '/m/{id}.flac', '{id}.flac', 'h-{id}', 1000, 1, 's-{id}', \
          '{id}', '{id}', 'Aurora', 'aurora', 'x', 'x', 'Aurora', 'aurora', 1, 1, 2001, 100.0, \
-         'flac', '{availability}', 'scan', 3000.0, 'automatic')"
+         'flac', '{availability}', 'scan', 3000000, 'automatic')"
     )
 }
 
@@ -2146,7 +2146,7 @@ async fn album_play_summary_follows_every_write() {
                album_artist_name, album_artist_name_folded, album_artist_id, year, \
                grouping_source, created_at, updated_at) VALUES \
                ('al6', 'r1', 'g6', 'Sixth', 'sixth', 'Aurora', 'aurora', 'a1', 2001, \
-               'automatic', 3000, 3000);"
+               'automatic', 3000000, 3000000);"
         .to_owned()
         + &format!(
             "{TRACK_INSERT}{}, {};",
@@ -2160,7 +2160,7 @@ async fn album_play_summary_follows_every_write() {
     write_batch(
         &fixture,
         "summary missing",
-        "UPDATE local_tracks SET availability = 'missing', missing_since = 4000 \
+        "UPDATE local_tracks SET availability = 'missing', missing_at = 4000 \
          WHERE root_id = 'r1' AND relative_path = 't12.flac' AND availability = 'indexed'"
             .to_owned(),
     )
@@ -2170,7 +2170,7 @@ async fn album_play_summary_follows_every_write() {
     write_batch(
         &fixture,
         "summary back",
-        "UPDATE local_tracks SET availability = 'indexed', missing_since = NULL \
+        "UPDATE local_tracks SET availability = 'indexed', missing_at = NULL \
          WHERE id = 't12'"
             .to_owned(),
     )
@@ -2212,7 +2212,7 @@ async fn album_play_summary_follows_every_write() {
 
     // A replaced file's track retires (missing, its path hidden), and the
     // new file's track takes its path on the same album.
-    let sql = "UPDATE local_tracks SET availability = 'missing', missing_since = 4200, \
+    let sql = "UPDATE local_tracks SET availability = 'missing', missing_at = 4200, \
                relative_path = '.dn/replaced/t11/t11.flac', file_path = '/m/.dn/t11.flac', \
                path_hash = 'h-hidden', row_revision = row_revision + 1 \
                WHERE id = 't11' AND root_id = 'r1' AND relative_path = 't11.flac';"
@@ -2230,7 +2230,7 @@ async fn album_play_summary_follows_every_write() {
                album_artist_name, album_artist_name_folded, album_artist_id, year, \
                grouping_source, created_at, updated_at) VALUES \
                ('al7', 'r1', 'g7', 'Seventh', 'seventh', 'Aurora', 'aurora', 'a1', 2001, \
-               'automatic', 3000, 3000);"
+               'automatic', 3000000, 3000000);"
         .to_owned()
         + &format!("{TRACK_INSERT}{};", track_values("t14", "al7", "indexed"))
         + &marked("u1", &one("t14"), true, 1_800_000_007_000);
@@ -2393,8 +2393,8 @@ async fn artist_counts_follow_every_write() {
         "new album",
         format!(
             "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, \
-             updated_at) VALUES ('a4', 'Delta', 'delta', 'person', 3000, 3000), \
-             ('a5', 'Echo', 'echo', 'person', 3000, 3000); \
+             updated_at) VALUES ('a4', 'Delta', 'delta', 'person', 3000000, 3000000), \
+             ('a5', 'Echo', 'echo', 'person', 3000000, 3000000); \
              {ALBUM_INSERT}{}; \
              INSERT INTO local_album_artists (local_album_id, position, local_artist_id, role) \
              VALUES ('al6', 0, 'a4', 'main'), ('al6', 1, 'a5', 'main'); \
@@ -2422,7 +2422,7 @@ async fn artist_counts_follow_every_write() {
     // being owned, and its album-credited artist leaves the list.
     step(
         "last tracks missing",
-        "UPDATE local_tracks SET availability = 'missing', missing_since = 4000 \
+        "UPDATE local_tracks SET availability = 'missing', missing_at = 4000 \
          WHERE id IN ('t10', 't11') AND availability = 'indexed';"
             .to_owned(),
     )
@@ -2440,7 +2440,7 @@ async fn artist_counts_follow_every_write() {
     );
     step(
         "tracks back",
-        "UPDATE local_tracks SET availability = 'indexed', missing_since = NULL \
+        "UPDATE local_tracks SET availability = 'indexed', missing_at = NULL \
          WHERE id IN ('t10', 't11');"
             .to_owned(),
     )
@@ -2492,7 +2492,7 @@ async fn artist_counts_follow_every_write() {
         "credited only on a retired album",
         format!(
             "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, \
-             updated_at) VALUES ('a6', 'Foxtrot', 'foxtrot', 'person', 3000, 3000); \
+             updated_at) VALUES ('a6', 'Foxtrot', 'foxtrot', 'person', 3000000, 3000000); \
              {ALBUM_INSERT}{}; \
              {TRACK_INSERT}{}; \
              INSERT INTO local_track_artists (local_track_id, position, local_artist_id, role) \
@@ -3015,7 +3015,7 @@ async fn seed_100k(fixture: &Fixture) {
             artists.push_str(", ");
         }
         artists.push_str(&format!(
-            "('p-a{artist:04}', 'Perf Artist {artist:04}', 'perf artist {artist:04}', 'person', 1000, 1000)"
+            "('p-a{artist:04}', 'Perf Artist {artist:04}', 'perf artist {artist:04}', 'person', 1000000, 1000000)"
         ));
     }
     artists.push(';');
@@ -3033,7 +3033,7 @@ async fn seed_100k(fixture: &Fixture) {
             }
             albums.push_str(&format!(
                 "('p-al{id:05}', 'r1', 'pg{id:05}', 'Perf Album {id:05}', 'perf album {id:05}', \
-                 'Perf Artist {:04}', 'perf artist {:04}', 'p-a{:04}', 1994, 'automatic', 1000, 1000)",
+                 'Perf Artist {:04}', 'perf artist {:04}', 'p-a{:04}', 1994, 'automatic', 1000000, 1000000)",
                 id / 20,
                 id / 20,
                 id / 20
@@ -3077,7 +3077,7 @@ async fn seed_100k(fixture: &Fixture) {
                  4000, 1, 'ps{id:06}', 'Perf Track {id:06}', 'perf track {id:06}', \
                  'Perf Artist {:04}', 'perf artist {:04}', 'Perf Album {:05}', 'perf album {:05}', \
                  'Perf Artist {:04}', 'perf artist {:04}', 1, {}, 1994, 200.0, '{format}', 'indexed', \
-                 'scan', 1000.0, 'automatic')",
+                 'scan', 1000000, 'automatic')",
                 id / 10,
                 (id / 10) / 20,
                 (id / 10) / 20,
@@ -3216,7 +3216,7 @@ async fn seed_100k_guests(fixture: &Fixture) {
             artists.push_str(", ");
         }
         artists.push_str(&format!(
-            "('p-g{guest:04}', 'Perf Guest {guest:04}', 'perf guest {guest:04}', 'person', 1000, 1000)"
+            "('p-g{guest:04}', 'Perf Guest {guest:04}', 'perf guest {guest:04}', 'person', 1000000, 1000000)"
         ));
         for album in 0..(guest % 10 + 1) {
             if guest > 0 || album > 0 {

@@ -983,7 +983,7 @@ fn person_holds(conn: &Connection, mbid: &str, artist: &str) -> rusqlite::Result
 /// Move the artist's `updated_at` (seconds) and revision once.
 pub(crate) fn touch_artist(tx: &Transaction<'_>, artist: &str, now: f64) -> rusqlite::Result<()> {
     tx.prepare_cached(crate::identify::sql::TOUCH_ARTIST.text())?
-        .execute(params![artist, now])?;
+        .execute(params![artist, crate::clock::ms(now)])?;
     Ok(())
 }
 
@@ -1052,7 +1052,7 @@ pub fn settle(tx: &Transaction<'_>, rows: &[String], now_ms: i64) -> rusqlite::R
         if let LinkChange::Link { artist, mbid } = change {
             let written = tx
                 .prepare_cached(crate::identify::sql::WRITE_SETTLED_LINK.text())?
-                .execute(params![artist, mbid, now])?;
+                .execute(params![artist, mbid, crate::clock::ms(now)])?;
             if written > 0 {
                 touch_artist(tx, artist, now)?;
                 let old = before.get(artist.as_str()).cloned().flatten();
@@ -1246,7 +1246,7 @@ pub fn artist_link(conn: &Connection, artist: &str) -> rusqlite::Result<Option<A
                 mbid: row.get(0)?,
                 source: LinkSource::from(row.get::<_, DecisionSource>(1)?),
                 selected_by: row.get(2)?,
-                selected_at_ms: (row.get::<_, f64>(3)? * 1000.0) as i64,
+                selected_at_ms: row.get(3)?,
             })
         })
         .optional()?;
@@ -1371,7 +1371,7 @@ pub fn set_by_person(
     }
     let now = now_ms as f64 / 1000.0;
     tx.prepare_cached(crate::identify::sql::SET_BY_PERSON.text())?
-        .execute(params![artist, mbid, user_id, now])?;
+        .execute(params![artist, mbid, user_id, crate::clock::ms(now)])?;
     touch_artist(tx, artist, now)?;
     audit_link(
         tx,

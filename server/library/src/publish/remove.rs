@@ -516,7 +516,9 @@ pub(crate) fn mark_removed(
 ) -> rusqlite::Result<bool> {
     let revision: Option<i64> = conn
         .prepare_cached(sql::TRACK_MARK_MISSING.text())?
-        .query_row(rusqlite::params![track_id, now], |row| row.get(0))
+        .query_row(rusqlite::params![track_id, crate::clock::ms(now)], |row| {
+            row.get(0)
+        })
         .optional()?;
     let Some(revision) = revision else {
         return Ok(false);

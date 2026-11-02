@@ -122,24 +122,24 @@ fn seed_catalog(db_path: &std::path::Path) {
 }
 
 /// Another track of the album in the catalog at `rel`, with no file.
-fn seed_track(fix: &Fixture, id: &str, rel: &str, availability: &str, missing_since: Option<f64>) {
+fn seed_track(fix: &Fixture, id: &str, rel: &str, availability: &str, missing_at: Option<f64>) {
     open_db(fix)
         .execute(
             "INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
              path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
              album_title, album_title_folded, file_format, ingest_source, imported_at, \
-             membership_source, availability, missing_since) VALUES (?1, 'album', 'music', ?2, \
+             membership_source, availability, missing_at) VALUES (?1, 'album', 'music', ?2, \
              ?2, ?1, 0, 0, '0:0', ?1, ?1, 'Album', 'album', 'flac', 'scan', 0, 'automatic', \
              ?3, ?4)",
-            rusqlite::params![id, rel, availability, missing_since],
+            rusqlite::params![id, rel, availability, missing_at],
         )
         .unwrap();
 }
 
-/// A track row's path, availability and `missing_since`.
+/// A track row's path, availability and `missing_at`.
 fn track_row(conn: &Connection, id: &str) -> (String, String, Option<f64>) {
     conn.query_row(
-        "SELECT relative_path, availability, missing_since FROM local_tracks WHERE id = ?1",
+        "SELECT relative_path, availability, missing_at FROM local_tracks WHERE id = ?1",
         [id],
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
     )
@@ -580,7 +580,7 @@ fn crash_at_every_phase_resumes_without_half_state() {
             .unwrap();
         // A track whose file went before the write still holds track-a's
         // destination in the catalog.
-        seed_track(&fix, "gone", "organized/a.flac", "missing", Some(1234.5));
+        seed_track(&fix, "gone", "organized/a.flac", "missing", Some(1234500.0));
         let (sealed, live) = seal(&bundle);
         let mut publisher = open_publisher(&fix);
         publisher.set_crash_point(Some(point));
@@ -647,7 +647,7 @@ fn crash_at_every_phase_resumes_without_half_state() {
         assert!(file_path.ends_with(&held), "{point:?}: {file_path}");
         assert_eq!(
             track_row(&conn, "gone"),
-            (held, "missing".to_string(), Some(1234.5)),
+            (held, "missing".to_string(), Some(1234500.0)),
             "{point:?}: the missing row"
         );
         let marks: i64 = conn
