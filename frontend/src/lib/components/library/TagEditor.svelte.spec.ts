@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 
 import type { LibraryManagementTagEditorContext } from '$lib/queries/library-management/types';
-import type { LibraryFileMeta } from '$lib/types';
+import type { TrackView } from '$lib/types';
 
 const { mockCreate, mockGoto, mockQuery, mockRemember } = vi.hoisted(() => ({
 	mockCreate: vi.fn(),
@@ -32,7 +32,7 @@ vi.mock('$lib/utils/uuid', () => ({ createUuid: () => 'edit-key-1' }));
 
 import TagEditor from './TagEditor.svelte';
 
-const track: LibraryFileMeta = {
+const track: TrackView = {
 	id: 'track-1',
 	title: 'Airbag',
 	album_id: 'album-1',
@@ -41,10 +41,10 @@ const track: LibraryFileMeta = {
 	artist_name: 'Radiohead',
 	album_artist_id: 'artist-1',
 	album_artist_name: 'Radiohead',
-	musicbrainz_recording_id: 'rec-1',
-	musicbrainz_release_group_id: 'rg-1',
-	musicbrainz_artist_id: null,
-	musicbrainz_album_artist_id: null,
+	recording_mbid: 'rec-1',
+	release_group_mbid: 'rg-1',
+	artist_mbid: null,
+	album_artist_mbid: null,
 	disc_number: 1,
 	track_number: 1,
 	year: 1997,
@@ -58,8 +58,9 @@ const track: LibraryFileMeta = {
 	file_size_bytes: 1048576,
 	date_added: 1,
 	cover_available: false,
-	current_tier: 'lossless',
-	below_cutoff: false
+	art_missing: false,
+	favorite: false,
+	row_revision: 1
 };
 
 const context = (acceptedIdentity = true): LibraryManagementTagEditorContext => ({

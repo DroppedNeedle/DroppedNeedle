@@ -4,7 +4,7 @@ import { render } from 'vitest-browser-svelte';
 
 import { ApiError } from '$lib/api/errors';
 import type { components } from '$lib/api/v3/openapi';
-import type { LibraryAlbumSummary } from '$lib/types';
+import type { AlbumView } from '$lib/types';
 
 type EditionStatus = components['schemas']['EditionStatusView'];
 type EditionPlan = components['schemas']['EditionPlanView'];
@@ -174,7 +174,7 @@ const copy = {
 	artist_name: 'The Lanterns',
 	track_count: 4,
 	format: 'flac'
-} as LibraryAlbumSummary;
+} as AlbumView;
 
 const minutes = (m: number, s: number) => (m * 60 + s) * 1000;
 

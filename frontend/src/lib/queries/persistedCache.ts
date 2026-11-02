@@ -42,7 +42,7 @@ export interface StoredQuery extends PersistedQuery {
  * removed by the clean-up after sign-in. Bump the suffix whenever the key
  * shape changes or a clean cache is needed.
  */
-export const PERSISTED_CACHE_BUSTER = 'droppedneedle-v3-5';
+export const PERSISTED_CACHE_BUSTER = 'droppedneedle-v3-6';
 
 /** Maximum age for persisted queries (7 days). */
 const PERSISTED_CACHE_MAX_AGE = 1000 * 60 * 60 * 24 * 7;

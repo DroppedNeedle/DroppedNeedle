@@ -5,15 +5,15 @@
 	import LibraryFormatBadge from './LibraryFormatBadge.svelte';
 	import LocalIdentityBadge from './LocalIdentityBadge.svelte';
 	import NoFilesBadge from './NoFilesBadge.svelte';
-	import type { LibraryAlbumSummary } from '$lib/types';
+	import type { AlbumView } from '$lib/types';
 	import { albumHref } from '$lib/utils/entityRoutes';
 
 	interface Props {
-		album: LibraryAlbumSummary;
+		album: AlbumView;
 	}
 
 	let { album }: Props = $props();
-	let href = $derived(albumHref(album.musicbrainz_release_group_id ?? album.id));
+	let href = $derived(albumHref(album.release_group_mbid ?? album.id));
 </script>
 
 <Card
@@ -26,7 +26,7 @@
 	<figure class="aspect-square overflow-hidden relative">
 		<AlbumImage
 			albumId={album.id}
-			mbid={album.musicbrainz_release_group_id ?? ''}
+			mbid={album.release_group_mbid ?? ''}
 			available={album.cover_available}
 			artMissing={album.art_missing}
 			alt={album.title}
@@ -42,9 +42,10 @@
 				<LibraryFormatBadge format={album.format} />
 			{/if}
 		</div>
-		{#if album.album_identity_state === 'local_only'}
+		{#if album.identity_state === 'local_only'}
 			<LocalIdentityBadge
-				state={album.album_identity_state}
+				state={album.identity_state}
+				releaseMbid={album.release_mbid}
 				subject="album"
 				compact
 				className="absolute left-2 top-2 z-10"

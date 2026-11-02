@@ -9,7 +9,7 @@
 	import Button from '$lib/ui/Button.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import Input from '$lib/ui/Input.svelte';
-	import type { AlbumSort, LibraryAlbumSummary } from '$lib/types';
+	import type { AlbumSort, AlbumView } from '$lib/types';
 
 	const PAGE_SIZE = 50;
 	const SEARCH_DEBOUNCE_MS = 300;
@@ -53,7 +53,7 @@
 	// keep its first appearance.
 	const albums = $derived.by(() => {
 		const seen: Record<string, true> = Object.create(null);
-		const out: LibraryAlbumSummary[] = [];
+		const out: AlbumView[] = [];
 		for (const response of albumsQuery.data?.pages ?? []) {
 			for (const album of response.items) {
 				if (seen[album.id]) continue;

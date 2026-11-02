@@ -8,7 +8,7 @@
 	import ArtistMusicBrainzLink from '$lib/components/library/ArtistMusicBrainzLink.svelte';
 	import LocalIdentityBadge from '$lib/components/library/LocalIdentityBadge.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
-	import type { ContributionState, LibraryAlbumSummary } from '$lib/types';
+	import type { AlbumView } from '$lib/types';
 	import {
 		getLibraryArtistAlbumsQuery,
 		getLibraryArtistDetailQuery
@@ -32,14 +32,14 @@
 	const artist = $derived(artistQuery.data);
 	const albums = $derived(albumsQuery.data?.items ?? []);
 	const contributionAlbums = $derived(
-		albums.filter((album) => album.album_identity_state === 'local_only')
+		albums.filter((album) => album.identity_state === 'local_only')
 	);
 	const contributionMutation = createLibraryContributionMutation();
 	const ratingsQuery = getRatingsQuery(() => (artist ? { artistIds: [artist.id] } : null));
 	const rate = createSetRatingMutation();
 	const heart = createSetFavoriteMutation();
 
-	function openContribution(album: LibraryAlbumSummary): void {
+	function openContribution(album: AlbumView): void {
 		if (album.contribution_id) {
 			void goto(withBasePath(`/library/contributions/${album.contribution_id}`));
 			return;
@@ -47,7 +47,7 @@
 		contributionMutation.mutate(album.id);
 	}
 
-	function contributionLabel(state: ContributionState | null): string {
+	function contributionLabel(state: AlbumView['contribution_state']): string {
 		if (state === 'draft' || state === 'ready') return 'Draft in progress';
 		if (state === 'seeded') return 'Waiting for MusicBrainz';
 		if (state === 'verifying') return 'Verifying MusicBrainz';
@@ -79,7 +79,7 @@
 	{:else}
 		<header class="flex flex-col gap-5 sm:flex-row sm:items-end">
 			<ArtistImage
-				mbid={artist.musicbrainz_artist_id ?? ''}
+				mbid={artist.artist_mbid ?? ''}
 				localId={artist.id}
 				artMissing={artist.art_missing}
 				alt={artist.name}
@@ -104,7 +104,7 @@
 					/>
 				</div>
 				<LocalIdentityBadge
-					state={artist.artist_identity_state}
+					state={artist.identity_state}
 					subject="artist"
 					showDescription
 					className="mt-3"
@@ -114,8 +114,8 @@
 					{#if artist.album_count > 0}
 						<span>
 							{artist.album_count}
-							{artist.album_count === 1 ? 'album' : 'albums'} · {artist.track_count}
-							{artist.track_count === 1 ? 'track' : 'tracks'}
+							{artist.album_count === 1 ? 'album' : 'albums'} · {artist.led_track_count}
+							{artist.led_track_count === 1 ? 'track' : 'tracks'}
 						</span>
 					{/if}
 					{#if artist.appearance_track_count > 0}
@@ -126,19 +126,19 @@
 						</span>
 					{/if}
 				</div>
-				{#if artist.musicbrainz_artist_id}
+				{#if artist.artist_mbid}
 					<Button
 						variant="ghost"
 						size="sm"
 						icon={ExternalLink}
 						iconPosition="end"
 						class="mt-3"
-						href={`https://musicbrainz.org/artist/${artist.musicbrainz_artist_id}`}
+						href={`https://musicbrainz.org/artist/${artist.artist_mbid}`}
 						target="_blank"
 						rel="noreferrer">Open in MusicBrainz</Button
 					>
 				{/if}
-				{#if authStore.isTrusted && artist.artist_identity_state === 'local_only' && contributionAlbums.length}
+				{#if authStore.isTrusted && artist.identity_state === 'local_only' && contributionAlbums.length}
 					<Button
 						variant="outline"
 						size="sm"

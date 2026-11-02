@@ -1,18 +1,18 @@
 import { page } from 'vitest/browser';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
-import type { LibraryAlbumDetail, NativeTrackListItem } from '$lib/types';
+import type { AlbumDetailView, TrackView } from '$lib/types';
 import type { MembershipPreviewResponse } from '$lib/queries/library/LibraryOperationsTypes';
 
-const album: LibraryAlbumDetail = {
+const album: AlbumDetailView = {
 	id: 'album-1',
 	title: 'Grouped Album',
 	artist_name: 'Local Artist',
 	artist_id: 'artist-1',
-	musicbrainz_release_group_id: 'rg-1',
-	musicbrainz_release_id: null,
-	musicbrainz_artist_id: null,
-	album_identity_state: 'release_group_linked',
+	release_group_mbid: 'rg-1',
+	release_mbid: null,
+	artist_mbid: null,
+	identity_state: 'linked',
 	track_count: 2,
 	total_duration_seconds: 300,
 	total_size_bytes: 1000,
@@ -20,14 +20,16 @@ const album: LibraryAlbumDetail = {
 	year: 2024,
 	is_compilation: false,
 	cover_available: false,
+	art_missing: false,
+	favorite: false,
 	date_added: 1,
 	row_revision: 5,
-	review_id: null,
+	pending_review_id: null,
 	contribution_id: null,
 	contribution_state: null
 };
 
-function track(id: string, number: number): NativeTrackListItem {
+function track(id: string, number: number): TrackView {
 	return {
 		id,
 		title: `Track ${number}`,
@@ -37,10 +39,10 @@ function track(id: string, number: number): NativeTrackListItem {
 		artist_name: album.artist_name,
 		album_artist_id: album.artist_id,
 		album_artist_name: album.artist_name,
-		musicbrainz_recording_id: null,
-		musicbrainz_release_group_id: album.musicbrainz_release_group_id,
-		musicbrainz_artist_id: null,
-		musicbrainz_album_artist_id: null,
+		recording_mbid: null,
+		release_group_mbid: album.release_group_mbid,
+		artist_mbid: null,
+		album_artist_mbid: null,
 		disc_number: 1,
 		track_number: number,
 		year: 2024,
@@ -54,8 +56,9 @@ function track(id: string, number: number): NativeTrackListItem {
 		file_size_bytes: 500,
 		date_added: 1,
 		cover_available: false,
-		current_tier: null,
-		below_cutoff: false
+		art_missing: false,
+		favorite: false,
+		row_revision: 1
 	};
 }
 

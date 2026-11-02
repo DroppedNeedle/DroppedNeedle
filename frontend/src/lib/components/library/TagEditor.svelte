@@ -12,7 +12,7 @@
 		LibraryManagementTagEditorField
 	} from '$lib/queries/library-management/types';
 	import { authStore } from '$lib/stores/authStore.svelte';
-	import type { LibraryFileMeta } from '$lib/types';
+	import type { TrackView } from '$lib/types';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { createUuid } from '$lib/utils/uuid';
 	import Button from '$lib/ui/Button.svelte';
@@ -20,7 +20,7 @@
 	import Input from '$lib/ui/Input.svelte';
 
 	interface Props {
-		track: LibraryFileMeta;
+		track: TrackView;
 		open: boolean;
 	}
 

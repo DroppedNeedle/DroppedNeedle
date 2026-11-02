@@ -4,7 +4,7 @@ vi.mock('$lib/utils/errorHandling', () => ({
 	getCoverUrl: (url: string | null, albumId: string) => url ?? `/cover/${albumId}`
 }));
 
-import type { LocalTrackInfo, NativeTrackListItem } from '$lib/player/types';
+import type { LocalTrackInfo, TrackView } from '$lib/player/types';
 import type { PlaylistTrack } from '$lib/api/playlists';
 import type { RemoteSource, RemoteTrack } from '$lib/queries/remotes/types';
 import type { TrackMeta, TrackSourceData } from './queueHelpers';
@@ -182,7 +182,7 @@ describe('buildQueueItemsFromLocal', () => {
 });
 
 describe('buildDiscoveryQueueFromLocal', () => {
-	const nativeTrack: NativeTrackListItem = {
+	const nativeTrack: TrackView = {
 		id: 'file-7',
 		title: 'Flat Song',
 		album_id: 'local-album-9',
@@ -191,10 +191,10 @@ describe('buildDiscoveryQueueFromLocal', () => {
 		artist_name: 'Flat Artist',
 		album_artist_id: 'local-artist-9',
 		album_artist_name: 'Flat Artist',
-		musicbrainz_recording_id: null,
-		musicbrainz_release_group_id: 'rg-9',
-		musicbrainz_artist_id: null,
-		musicbrainz_album_artist_id: null,
+		recording_mbid: null,
+		release_group_mbid: 'rg-9',
+		artist_mbid: null,
+		album_artist_mbid: null,
 		format: 'FLAC',
 		track_number: 3,
 		disc_number: 2,
@@ -208,8 +208,9 @@ describe('buildDiscoveryQueueFromLocal', () => {
 		file_size_bytes: 1,
 		date_added: 1,
 		cover_available: true,
-		current_tier: null,
-		below_cutoff: false
+		art_missing: false,
+		favorite: false,
+		row_revision: 1
 	};
 
 	it('carries per-row album/artist/cover context and a local stream url', () => {

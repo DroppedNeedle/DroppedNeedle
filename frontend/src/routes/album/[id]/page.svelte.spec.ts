@@ -113,6 +113,7 @@ let status: (id: string) => Status;
 let plan: Plan | null;
 let history: History;
 let editionFetch: Fetch;
+let downloadAllowed: boolean;
 let api: FakeApi;
 
 function routes(): FakeApi {
@@ -169,6 +170,7 @@ function routes(): FakeApi {
 						}))
 					: []
 		}),
+		'GET /api/v3/download/access': () => ({ allowed: downloadAllowed }),
 		'GET /api/v3/library/albums/{id}/status': ({ params }) => status(params.id),
 		'GET /api/v3/library/albums/{id}': ({ params }) =>
 			params.id === localAlbumId ? localAlbum() : apiError(404, 'NOT_FOUND', 'Unknown album'),
@@ -243,6 +245,7 @@ beforeEach(async () => {
 	plan = null;
 	history = { items: [] };
 	editionFetch = null;
+	downloadAllowed = true;
 	await setQueryDataWithPersister(HomeQueryKeyFactory.integrationStatus('user-1'), {
 		download_client: false,
 		jellyfin: false,
@@ -270,6 +273,20 @@ describe('album detail page remote match', () => {
 			'Daylight Hours',
 			'Lumen'
 		]);
+	});
+});
+
+describe('album download', () => {
+	it('offers a restricted user no Download', async () => {
+		downloadAllowed = false;
+		status = (id) => ({ album_id: id, in_library: true, track_count: 4, tracks: [] });
+		signIn('user');
+		await renderPage();
+
+		await expect.element(page.getByText('In Library').first()).toBeVisible();
+		await expect
+			.element(page.getByRole('button', { name: /Download album/ }))
+			.not.toBeInTheDocument();
 	});
 });
 

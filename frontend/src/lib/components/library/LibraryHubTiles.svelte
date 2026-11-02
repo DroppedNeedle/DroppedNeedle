@@ -31,7 +31,7 @@
 		(recentlyAddedQuery.data?.items ?? []).slice(0, 9).map((a) => ({
 			key: a.id,
 			albumId: a.id,
-			mbid: a.musicbrainz_release_group_id ?? '',
+			mbid: a.release_group_mbid ?? '',
 			remoteUrl: null,
 			type: 'album',
 			available: a.cover_available
@@ -40,10 +40,10 @@
 	const artistArt = $derived<Art[]>(
 		(artistThumbsQuery.data?.items ?? []).slice(0, 9).map((a) => ({
 			key: a.id,
-			mbid: a.musicbrainz_artist_id ?? '',
+			mbid: a.artist_mbid ?? '',
 			remoteUrl: null,
 			type: 'artist',
-			available: a.musicbrainz_artist_id !== null
+			available: Boolean(a.artist_mbid)
 		}))
 	);
 	// rotate the reused album pool so the tracks fan never mirrors the albums fan in a small library

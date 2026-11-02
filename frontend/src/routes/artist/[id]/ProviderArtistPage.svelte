@@ -16,7 +16,7 @@
 	import ArtistAppearancesSection from '$lib/components/library/ArtistAppearancesSection.svelte';
 	import ArtistMusicBrainzLink from '$lib/components/library/ArtistMusicBrainzLink.svelte';
 	import LocalArtistPage from './LocalArtistPage.svelte';
-	import type { LibraryArtistSummary } from '$lib/types';
+	import type { ArtistView } from '$lib/types';
 	import PageSectionToc from '$lib/components/PageSectionToc.svelte';
 	import { createRequestAlbumMutation } from '$lib/queries/downloads/DownloadMutations.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
@@ -51,7 +51,7 @@
 
 	interface Props {
 		data: { artistId: string; primarySource: MusicSource };
-		localArtist?: LibraryArtistSummary;
+		localArtist?: ArtistView;
 	}
 
 	let { data, localArtist }: Props = $props();

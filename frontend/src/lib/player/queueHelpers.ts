@@ -1,6 +1,6 @@
 import type {
 	LocalTrackInfo,
-	NativeTrackListItem,
+	TrackView,
 	QueueItem,
 	SourceType,
 	YouTubeTrackLink
@@ -261,7 +261,7 @@ export function playlistTrackToQueueItem(track: PlaylistTrack): QueueItem | null
 	};
 }
 
-export function buildDiscoveryQueueFromLocal(tracks: NativeTrackListItem[]): QueueItem[] {
+export function buildDiscoveryQueueFromLocal(tracks: TrackView[]): QueueItem[] {
 	return tracks.map((t) => ({
 		trackSourceId: t.id,
 		trackName: t.title,
@@ -273,7 +273,7 @@ export function buildDiscoveryQueueFromLocal(tracks: NativeTrackListItem[]): Que
 		coverUrl: getCoverUrl(null, t.album_id),
 		coverRemoteUrl: null,
 		sourceType: 'local' as const,
-		artistId: t.artist_id,
+		artistId: t.artist_id ?? undefined,
 		format: (t.format ?? '').toLowerCase(),
 		availableSources: ['local'] as SourceType[],
 		duration: t.duration_seconds ?? undefined

@@ -6,15 +6,15 @@
 	import { playerStore } from '$lib/stores/player.svelte';
 	import { buildDiscoveryQueueFromLocal } from '$lib/player/queueHelpers';
 	import { formatBytes, formatDurationSec } from '$lib/utils/formatting';
-	import type { NativeTrackListItem } from '$lib/types';
+	import type { TrackView } from '$lib/types';
 	import { artistHref } from '$lib/utils/entityRoutes';
 	import ContextMenu, { type MenuItem } from '$lib/components/ContextMenu.svelte';
 
 	interface Props {
-		tracks: NativeTrackListItem[];
+		tracks: TrackView[];
 		/** A sentence about a file, by track id, shown on its row. */
 		notes?: Map<string, string>;
-		getTrackMenuItems?: (track: NativeTrackListItem) => MenuItem[];
+		getTrackMenuItems?: (track: TrackView) => MenuItem[];
 		/** The caller's rating of each track they rated, by track id. */
 		trackRatings?: Record<string, number>;
 		/** Rate a track, or clear it with 0. Rows show stars only with this. */
@@ -33,7 +33,7 @@
 	}: Props = $props();
 </script>
 
-{#snippet rateAndHeart(track: NativeTrackListItem)}
+{#snippet rateAndHeart(track: TrackView)}
 	{#if onRateTrack}
 		<RatingStars
 			value={trackRatings[track.id] ?? 0}
@@ -66,7 +66,7 @@
 			<div class="min-w-0 flex-1">
 				<p class="truncate font-medium">{track.title}</p>
 				<a
-					href={artistHref(track.musicbrainz_artist_id ?? track.artist_id)}
+					href={artistHref(track.artist_mbid ?? track.artist_id ?? '')}
 					class="truncate text-xs text-base-content/55 hover:underline"
 					>{track.artist_name || 'Unknown artist'}</a
 				>

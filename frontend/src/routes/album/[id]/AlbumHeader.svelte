@@ -5,7 +5,7 @@
 		AlbumTracksInfo,
 		DownloadTask,
 		HeldFile,
-		LibraryAlbumSummary
+		AlbumView
 	} from '$lib/types';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import HeroBackdrop from '$lib/components/HeroBackdrop.svelte';
@@ -58,7 +58,7 @@
 		/** The current edition's tracks a file sits on, out of all of them, once its plan is read. */
 		editionCounts?: { kept: number; total: number } | null;
 		releaseGroupMbid?: string;
-		localCopies?: LibraryAlbumSummary[];
+		localCopies?: AlbumView[];
 		/** The edition a request gets, for a curator on an album the library does not hold. */
 		editionPick?: EditionRequestPick | null;
 		downloadAllowed?: boolean;

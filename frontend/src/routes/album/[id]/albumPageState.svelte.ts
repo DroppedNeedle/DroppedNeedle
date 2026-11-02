@@ -9,7 +9,7 @@ import type {
 	LocalAlbumMatch,
 	LocalTrackInfo,
 	LibraryAlbumStatus,
-	LibraryFileMeta,
+	LibraryStatusTrack,
 	DownloadTask,
 	HeldFileInEntry
 } from '$lib/types';
@@ -43,6 +43,7 @@ import { getAlbumDownloadsQuery } from '$lib/queries/downloads/DownloadQueries.s
 import { getHeldEntriesQuery } from '$lib/queries/downloads/HeldQueries.svelte';
 import { isActiveDownloadStatus } from '$lib/queries/downloads/downloadStatus';
 import { authStore } from '$lib/stores/authStore.svelte';
+import { getDownloadAccessQuery } from '$lib/queries/local/DownloadAccessQuery.svelte';
 import { createRemoveLibraryTrackMutation } from '$lib/queries/library/LibraryMutations.svelte';
 import { toastStore } from '$lib/stores/toast';
 import { isStaleRevision } from '$lib/api/errors';
@@ -155,6 +156,9 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 		enabled: integrations.plex && !!album
 	}));
 	const localMatch = $derived<LocalAlbumMatch | null>(localMatchQuery.data ?? null);
+	// The download buttons follow the admin's "Library downloads" setting.
+	const downloadAccessQuery = getDownloadAccessQuery(userId);
+	const downloadAllowed = $derived(downloadAccessQuery.data?.allowed !== false);
 	const jellyfinMatch = $derived(jellyfinMatchQuery.data ?? null);
 	const navidromeMatch = $derived(navidromeMatchQuery.data ?? null);
 	const plexMatch = $derived(plexMatchQuery.data ?? null);
@@ -239,15 +243,15 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 		!!(album && !inLibrary && (album.requested || libraryStore.isRequested(album.musicbrainz_id)))
 	);
 	const libraryTracksByRecording = $derived.by(() => {
-		const m = new SvelteMap<string, LibraryFileMeta>();
+		const m = new SvelteMap<string, LibraryStatusTrack>();
 		for (const t of libraryStatus?.tracks ?? []) {
-			if (t.musicbrainz_recording_id) m.set(t.musicbrainz_recording_id, t);
+			if (t.recording_mbid) m.set(t.recording_mbid, t);
 		}
 		return m;
 	});
 	// positional fallback (disc:track): downloaded files often lack a recording MBID, and the same song has different recording MBIDs across releases, so MBID-only matching misses in-library tracks
 	const libraryTracksByPosition = $derived.by(() => {
-		const m = new SvelteMap<string, LibraryFileMeta>();
+		const m = new SvelteMap<string, LibraryStatusTrack>();
 		for (const t of libraryStatus?.tracks ?? []) {
 			m.set(getDiscTrackKey({ disc_number: t.disc_number, track_number: t.track_number }), t);
 		}
@@ -578,7 +582,7 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 			resolvedNavidrome,
 			resolvedPlex,
 			playlistModalRef,
-			localMatch?.download_allowed !== false,
+			downloadAllowed,
 			authStore.isTrusted
 				? (fileId: string) => openRemoveFileDialog(fileId, track.title)
 				: undefined
@@ -650,10 +654,7 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 	}
 
 	const localDownloadCallback = $derived<{ callback: (() => void) | undefined }>({
-		callback: buildLocalAlbumDownloadCallback(
-			localMatch?.musicbrainz_id,
-			localMatch?.download_allowed !== false
-		)
+		callback: buildLocalAlbumDownloadCallback(localMatch?.musicbrainz_id, downloadAllowed)
 	});
 
 	const jellyfinCallbacks: SourceCallbacks = buildSourceCallbacks(
@@ -843,6 +844,9 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 		},
 		get libraryTrackCount() {
 			return libraryTrackCount;
+		},
+		get downloadAllowed() {
+			return downloadAllowed;
 		},
 		get libraryBelowCutoff() {
 			return libraryBelowCutoff;

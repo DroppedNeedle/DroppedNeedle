@@ -7,7 +7,7 @@
 <script lang="ts">
 	import { CirclePause } from 'lucide-svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
-	import type { LibraryAlbumDetail } from '$lib/types';
+	import type { AlbumDetailView } from '$lib/types';
 	import { createReenableAlbumManagementMutation } from '$lib/queries/library/LibraryCatalogMutations.svelte';
 	import { getAlbumEditionsQuery } from '$lib/queries/albums/EditionQueries.svelte';
 	import { getAlbumHistoryQuery } from '$lib/queries/library/LibraryAlbumHistoryQueries.svelte';
@@ -19,7 +19,7 @@
 	import Card from '$lib/ui/Card.svelte';
 
 	interface Props {
-		album: LibraryAlbumDetail;
+		album: AlbumDetailView;
 	}
 
 	let { album }: Props = $props();
@@ -31,8 +31,8 @@
 	const steppedBack = $derived(hold !== null && hold.kind !== 'your_choice');
 	const editionsQuery = getAlbumEditionsQuery(
 		() => authStore.user?.id,
-		() => album.musicbrainz_release_group_id ?? '',
-		() => steppedBack && Boolean(album.musicbrainz_release_group_id)
+		() => album.release_group_mbid ?? '',
+		() => steppedBack && Boolean(album.release_group_mbid)
 	);
 	const historyQuery = getAlbumHistoryQuery(
 		() => authStore.user?.id,
@@ -48,8 +48,8 @@
 			)
 	);
 	const editionTitle = $derived(
-		editionsQuery.data?.items.find((item) => item.release_mbid === album.musicbrainz_release_id)
-			?.title ?? null
+		editionsQuery.data?.items.find((item) => item.release_mbid === album.release_mbid)?.title ??
+			null
 	);
 	const holdCopy = $derived.by((): { heading: string; body: string } | null => {
 		if (!hold) return null;
@@ -85,7 +85,7 @@
 		}
 	});
 	const handBackNote = $derived(
-		album.musicbrainz_release_id
+		album.release_mbid
 			? `DroppedNeedle will retag and rename these files from ${editionTitle ?? 'its edition'}. Changes made outside DroppedNeedle are overwritten. The run can be undone from the operations page.`
 			: 'DroppedNeedle will manage this album again once it has an edition.'
 	);

@@ -12,7 +12,7 @@
 	import { ChevronRight, Hand } from 'lucide-svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import Button from '$lib/ui/Button.svelte';
-	import type { LibraryAlbumSummary } from '$lib/types';
+	import type { AlbumView } from '$lib/types';
 	import {
 		getAlbumEditionStatusQuery,
 		getAlbumEditionsQuery,
@@ -26,7 +26,7 @@
 
 	interface Props {
 		/** The album's library copies; the plate shows the first. */
-		copies: LibraryAlbumSummary[];
+		copies: AlbumView[];
 		/** The release group the page shows, empty on a local album's page. */
 		groupMbid?: string;
 		/** The edition a request gets, on the page of an album with no copies. */
@@ -91,7 +91,7 @@
 	let sheetOpen = $state(false);
 	let sheetMounted = $state(false);
 
-	let sheetCopies = $state<LibraryAlbumSummary[]>([]);
+	let sheetCopies = $state<AlbumView[]>([]);
 
 	// The sheet keeps the copies it opened with: a choice can move the copy
 	// off this page while the sheet still shows what happened.

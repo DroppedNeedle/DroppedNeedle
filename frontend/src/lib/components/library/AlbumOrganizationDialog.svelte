@@ -3,7 +3,7 @@
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import Input from '$lib/ui/Input.svelte';
-	import type { LibraryAlbumDetail, NativeTrackListItem } from '$lib/types';
+	import type { AlbumDetailView, TrackView } from '$lib/types';
 	import type { MembershipPreviewResponse } from '$lib/queries/library/LibraryOperationsTypes';
 	import {
 		getLibraryAlbumDetailQuery,
@@ -17,8 +17,8 @@
 
 	type Action = 'split' | 'merge' | 'move' | 'reset';
 	interface Props {
-		album: LibraryAlbumDetail;
-		tracks: NativeTrackListItem[];
+		album: AlbumDetailView;
+		tracks: TrackView[];
 	}
 	let { album, tracks }: Props = $props();
 	let dialog: HTMLDialogElement;

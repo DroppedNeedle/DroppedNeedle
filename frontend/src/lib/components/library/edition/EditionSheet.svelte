@@ -20,7 +20,7 @@
 	import SelectField from '$lib/ui/SelectField.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { useIntegrationStatus } from '$lib/queries/home.svelte';
-	import type { LibraryAlbumSummary } from '$lib/types';
+	import type { AlbumView } from '$lib/types';
 	import { getLibraryAlbumDetailQuery } from '$lib/queries/library/LibraryQueries.svelte';
 	import { getReleaseEditionSearchQuery } from '$lib/queries/library/LibraryEditionQueries.svelte';
 	import {
@@ -73,7 +73,7 @@
 	interface Props {
 		open: boolean;
 		/** The album's library copies; the first is the one the page shows. */
-		copies: LibraryAlbumSummary[];
+		copies: AlbumView[];
 		/** The release group the page shows, empty on a local album's page. */
 		groupMbid: string;
 		/** `movedTo` is the release group a choice moved the album to, if it did. */

@@ -1,16 +1,16 @@
 import { page } from 'vitest/browser';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
-import type { LibraryAlbumDetail } from '$lib/types';
+import type { AlbumDetailView } from '$lib/types';
 
 const album = {
 	id: 'album-1',
 	title: 'Local Signals',
 	artist_name: 'Signal Artist',
-	musicbrainz_release_group_id: null,
-	musicbrainz_release_id: null,
+	release_group_mbid: null,
+	release_mbid: null,
 	management_hold: null
-} as unknown as LibraryAlbumDetail;
+} as unknown as AlbumDetailView;
 
 const h = vi.hoisted(() => ({
 	handBack: vi.fn(),
@@ -58,8 +58,8 @@ beforeEach(() => {
 describe('an album left unmanaged', () => {
 	const heldAt = Date.UTC(2026, 9, 1, 12);
 	const renderHeld = (
-		hold: NonNullable<LibraryAlbumDetail['management_hold']>,
-		overrides: Partial<LibraryAlbumDetail> = {}
+		hold: NonNullable<AlbumDetailView['management_hold']>,
+		overrides: Partial<AlbumDetailView> = {}
 	) =>
 		render(ManagementHoldSection, {
 			props: { album: { ...album, ...overrides, management_hold: hold } }
@@ -90,7 +90,7 @@ describe('an album left unmanaged', () => {
 	it('hands a stepped-back album back, saying beside the button what that overwrites', async () => {
 		await renderHeld(
 			{ kind: 'files_changed', held_at: heldAt, handing_back: false },
-			{ musicbrainz_release_group_id: 'rg-1', musicbrainz_release_id: 'release-1' }
+			{ release_group_mbid: 'rg-1', release_mbid: 'release-1' }
 		);
 
 		const section = page.getByRole('region', { name: 'Left unmanaged' });

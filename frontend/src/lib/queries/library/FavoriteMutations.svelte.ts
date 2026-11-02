@@ -17,11 +17,11 @@ interface FavoriteVars {
 
 type Row = Record<string, unknown>;
 
-// A field only each kind's page model has, so an album never takes a
+// A field only each kind's view has, so an album never takes a
 // track's heart when two ids match.
 const KIND_FIELD: Record<FavoriteKind, string> = {
-	album: 'album_identity_state',
-	artist: 'artist_identity_state',
+	album: 'is_compilation',
+	artist: 'led_track_count',
 	track: 'track_number'
 };
 

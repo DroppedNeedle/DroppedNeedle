@@ -95,13 +95,13 @@
 				<Card as="article" variant="bordered" padding="sm">
 					<div class="grid gap-4 sm:grid-cols-[7rem_minmax(0,1fr)]">
 						<a
-							href={albumHref(appearance.album.musicbrainz_release_group_id ?? appearance.album.id)}
+							href={albumHref(appearance.album.release_group_mbid ?? appearance.album.id)}
 							class="appearance-cover group/cover relative mx-auto block aspect-square w-28 overflow-hidden rounded-lg shadow-md sm:mx-0 sm:w-full"
 							aria-label={`Open ${appearance.album.title}`}
 						>
 							<AlbumImage
 								albumId={appearance.album.id}
-								mbid={appearance.album.musicbrainz_release_group_id ?? ''}
+								mbid={appearance.album.release_group_mbid ?? ''}
 								available={appearance.album.cover_available}
 								alt={`Cover for ${appearance.album.title}`}
 								size="full"
@@ -117,9 +117,7 @@
 									Appears on
 								</p>
 								<a
-									href={albumHref(
-										appearance.album.musicbrainz_release_group_id ?? appearance.album.id
-									)}
+									href={albumHref(appearance.album.release_group_mbid ?? appearance.album.id)}
 									class="mt-0.5 block truncate text-lg font-bold hover:underline"
 									>{appearance.album.title}</a
 								>

@@ -16,7 +16,7 @@
 	let { data }: Props = $props();
 	const localQuery = getLibraryArtistDetailQuery(() => data.artistId);
 	const localArtist = $derived(localQuery.data);
-	const providerArtistId = $derived(localArtist?.musicbrainz_artist_id ?? null);
+	const providerArtistId = $derived(localArtist?.artist_mbid ?? null);
 	const shouldRedirect = $derived(providerArtistId !== null && providerArtistId !== data.artistId);
 
 	$effect(() => {

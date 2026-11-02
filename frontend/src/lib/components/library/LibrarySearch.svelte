@@ -6,7 +6,7 @@
 	import ArtistImage from '$lib/components/ArtistImage.svelte';
 	import { buildDiscoveryQueueFromLocal } from '$lib/player/queueHelpers';
 	import { playerStore } from '$lib/stores/player.svelte';
-	import type { NativeTrackListItem } from '$lib/types';
+	import type { TrackView } from '$lib/types';
 	import { albumHref, artistHref } from '$lib/utils/entityRoutes';
 	import { withBasePath } from '$lib/utils/basePath';
 	import IconButton from '$lib/ui/IconButton.svelte';
@@ -74,7 +74,7 @@
 		else inputEl?.blur();
 	}
 
-	function playTrack(t: NativeTrackListItem) {
+	function playTrack(t: TrackView) {
 		playerStore.playQueue(buildDiscoveryQueueFromLocal([t]), 0, false);
 		focused = false;
 	}
@@ -206,12 +206,12 @@
 						</div>
 						{#each results.artists as artist (artist.id)}
 							<a
-								href={artistHref(artist.musicbrainz_artist_id ?? artist.id)}
+								href={artistHref(artist.artist_mbid ?? artist.id)}
 								class="flex items-center gap-3 rounded-xl px-2 py-2 transition-colors hover:bg-base-content/5"
 							>
 								<div class="h-10 w-10 shrink-0 overflow-hidden rounded-full">
 									<ArtistImage
-										mbid={artist.musicbrainz_artist_id ?? ''}
+										mbid={artist.artist_mbid ?? ''}
 										localId={artist.id}
 										alt={artist.name}
 										size="xs"
@@ -222,8 +222,8 @@
 									<div class="truncate text-sm font-semibold">{artist.name}</div>
 									<div class="truncate text-xs text-base-content/50">
 										{artist.album_count}
-										{artist.album_count === 1 ? 'album' : 'albums'} · {artist.track_count}
-										{artist.track_count === 1 ? 'track' : 'tracks'}
+										{artist.album_count === 1 ? 'album' : 'albums'} · {artist.led_track_count}
+										{artist.led_track_count === 1 ? 'track' : 'tracks'}
 									</div>
 								</div>
 								<ArrowUpRight class="h-4 w-4 shrink-0 text-base-content/30" />
@@ -239,13 +239,13 @@
 						</div>
 						{#each results.albums as album (album.id)}
 							<a
-								href={albumHref(album.musicbrainz_release_group_id ?? album.id)}
+								href={albumHref(album.release_group_mbid ?? album.id)}
 								class="flex items-center gap-3 rounded-xl px-2 py-2 transition-colors hover:bg-base-content/5"
 							>
 								<div class="h-10 w-10 shrink-0 overflow-hidden rounded-md">
 									<AlbumImage
 										albumId={album.id}
-										mbid={album.musicbrainz_release_group_id ?? ''}
+										mbid={album.release_group_mbid ?? ''}
 										available={album.cover_available}
 										alt={album.title}
 										size="xs"
@@ -282,7 +282,7 @@
 								<div class="relative h-10 w-10 shrink-0 overflow-hidden rounded-md">
 									<AlbumImage
 										albumId={track.album_id}
-										mbid={track.musicbrainz_release_group_id ?? ''}
+										mbid={track.release_group_mbid ?? ''}
 										available={track.cover_available}
 										alt={track.album_title}
 										size="xs"

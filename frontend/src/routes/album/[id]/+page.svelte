@@ -28,7 +28,7 @@
 		statusSettled && !heldByAnotherAlbum ? data.albumId : ''
 	);
 	const localAlbum = $derived(localQuery.data);
-	const providerAlbumId = $derived(localAlbum?.musicbrainz_release_group_id ?? null);
+	const providerAlbumId = $derived(localAlbum?.release_group_mbid ?? null);
 	const matchedElsewhere = $derived(providerAlbumId !== null && providerAlbumId !== data.albumId);
 	// An edition chosen in the sheet can match a local album to a release
 	// group; the page follows it there once the sheet is closed.

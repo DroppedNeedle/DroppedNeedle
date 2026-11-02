@@ -36,7 +36,7 @@
 		getLibraryAlbumDetailQuery,
 		getLibraryAlbumTracksQuery
 	} from '$lib/queries/library/LibraryQueries.svelte';
-	import type { AlbumBasicInfo, LocalTrackInfo, NativeTrackListItem } from '$lib/types';
+	import type { AlbumBasicInfo, LocalTrackInfo, TrackView } from '$lib/types';
 	import { createLibraryContributionMutation } from '$lib/queries/libraryContributions/LibraryContributionMutations.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { artistHref } from '$lib/utils/entityRoutes';
@@ -54,9 +54,7 @@
 	const hasFiles = $derived((album?.track_count ?? 0) > 0);
 	// The download buttons follow the admin's "Library downloads" setting.
 	const downloadAccessQuery = getDownloadAccessQuery(() => authStore.user?.id);
-	const downloadAllowed = $derived(
-		album?.download_allowed !== false && downloadAccessQuery.data?.allowed !== false
-	);
+	const downloadAllowed = $derived(downloadAccessQuery.data?.allowed !== false);
 	const contributionMutation = createLibraryContributionMutation();
 
 	// One ratings read for the album and its tracks, once the tracks are in.
@@ -94,12 +92,12 @@
 	// Same 4-item menu as provider rows, via the shared builder: the native
 	// track adapts to the provider shapes (the backend download param is the
 	// file id, which is track.id on this path).
-	function getLocalTrackMenuItems(track: NativeTrackListItem): MenuItem[] {
+	function getLocalTrackMenuItems(track: TrackView): MenuItem[] {
 		const albumForMenu: AlbumBasicInfo = {
 			title: track.album_title,
-			musicbrainz_id: track.musicbrainz_release_group_id ?? track.album_id,
+			musicbrainz_id: track.release_group_mbid ?? track.album_id,
 			artist_name: track.artist_name,
-			artist_id: track.artist_id,
+			artist_id: track.artist_id ?? '',
 			in_library: true
 		};
 		const resolvedLocal: LocalTrackInfo = {
@@ -164,7 +162,7 @@
 		<header class="grid gap-6 md:grid-cols-[16rem_1fr] md:items-end">
 			<AlbumImage
 				albumId={album.id}
-				mbid={album.musicbrainz_release_group_id ?? ''}
+				mbid={album.release_group_mbid ?? ''}
 				available={album.cover_available}
 				artMissing={album.art_missing}
 				alt={`Cover for ${album.title}`}
@@ -177,17 +175,19 @@
 				<div class="flex flex-wrap items-center gap-2">
 					{#if hasFiles}<LibraryFormatBadge format={album.format} />{:else}<NoFilesBadge />{/if}
 					{#if album.is_compilation}<span class="badge badge-ghost">Compilation</span>{/if}
-					{#if album.review_id}<span class="badge badge-warning badge-outline">Needs review</span
+					{#if album.pending_review_id}<span class="badge badge-warning badge-outline"
+							>Needs review</span
 						>{/if}
 				</div>
 				<h1 class="mt-3 text-3xl font-black tracking-tight sm:text-5xl">{album.title}</h1>
 				<a
-					href={artistHref(album.musicbrainz_artist_id ?? album.artist_id)}
+					href={artistHref(album.artist_mbid ?? album.artist_id)}
 					class="mt-2 inline-block text-lg text-base-content/65 hover:underline"
 					>{album.artist_name || 'Unknown album artist'}</a
 				>
 				<LocalIdentityBadge
-					state={album.album_identity_state}
+					state={album.identity_state}
+					releaseMbid={album.release_mbid}
 					subject="album"
 					showDescription
 					className="mt-3"
@@ -235,7 +235,7 @@
 							{downloadAllowed}
 						/>
 					{/if}
-					{#if authStore.isTrusted && album.album_identity_state === 'local_only'}
+					{#if authStore.isTrusted && album.identity_state === 'local_only'}
 						<Button
 							variant="ghost"
 							icon={FileUp}
@@ -247,10 +247,10 @@
 					{/if}
 					{#if authStore.isAdmin}<AlbumOrganizationDialog {album} {tracks} />{/if}
 				</div>
-				{#if album.review_id && authStore.isAdmin}
+				{#if album.pending_review_id && authStore.isAdmin}
 					<a
 						class="link link-warning mt-3 inline-block text-sm"
-						href={withBasePath(`/library/review?review=${album.review_id}`)}
+						href={withBasePath(`/library/review?review=${album.pending_review_id}`)}
 						>Open identification review</a
 					>
 				{/if}
@@ -265,7 +265,7 @@
 			<RecycledRemovals
 				class="mt-6"
 				albumId={album.id}
-				releaseGroupMbid={album.musicbrainz_release_group_id}
+				releaseGroupMbid={album.release_group_mbid}
 			/>
 		{/if}
 

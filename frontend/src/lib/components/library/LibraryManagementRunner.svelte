@@ -208,12 +208,12 @@
 			return searchQuery.data.artists.map((artist) => ({
 				id: artist.id,
 				title: artist.name,
-				subtitle: `${quantity(artist.album_count, 'release')} · ${quantity(artist.track_count, 'track')}`,
+				subtitle: `${quantity(artist.album_count, 'release')} · ${quantity(artist.led_track_count, 'track')}`,
 				image: {
 					kind: 'artist',
 					id: artist.id,
-					mbid: artist.musicbrainz_artist_id ?? '',
-					available: artist.musicbrainz_artist_id !== null
+					mbid: artist.artist_mbid ?? '',
+					available: Boolean(artist.artist_mbid)
 				}
 			}));
 		}
@@ -225,7 +225,7 @@
 				image: {
 					kind: 'album',
 					id: album.id,
-					mbid: album.musicbrainz_release_group_id ?? '',
+					mbid: album.release_group_mbid ?? '',
 					available: album.cover_available
 				}
 			}));
@@ -238,7 +238,7 @@
 				image: {
 					kind: 'album',
 					id: track.album_id,
-					mbid: track.musicbrainz_release_group_id ?? '',
+					mbid: track.release_group_mbid ?? '',
 					available: track.cover_available
 				}
 			}));

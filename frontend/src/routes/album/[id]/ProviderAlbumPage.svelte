@@ -166,7 +166,7 @@
 				releaseGroupMbid={album.musicbrainz_id}
 				{localCopies}
 				editionPick={state.editionPick}
-				downloadAllowed={state.localMatch?.download_allowed !== false}
+				downloadAllowed={state.downloadAllowed}
 				rating={ratingOf(ratingsQuery.data, 'album', localAlbumId)}
 				onrate={localAlbumId
 					? (rating) => rate.mutate({ kind: 'album', itemId: localAlbumId, rating })

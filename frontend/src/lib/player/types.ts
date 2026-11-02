@@ -1,3 +1,5 @@
+import type { components } from '$lib/api/v3/openapi';
+
 // Transitional v1 catalog shapes, copied verbatim from the deleted $lib/types
 // (v3 HEAD). Producers (album/library routes) still emit these; the catalog
 // slices re-home them when those surfaces migrate to v3 views. Player files
@@ -26,37 +28,7 @@ export type YouTubeTrackLink = {
 	album_name?: string;
 };
 
-export interface TargetNativeTrack {
-	id: string;
-	title: string;
-	album_id: string;
-	album_title: string;
-	artist_id: string;
-	artist_name: string;
-	album_artist_id: string;
-	album_artist_name: string;
-	musicbrainz_recording_id: string | null;
-	musicbrainz_release_group_id: string | null;
-	musicbrainz_artist_id: string | null;
-	musicbrainz_album_artist_id: string | null;
-	disc_number: number;
-	track_number: number;
-	year: number | null;
-	genre: string | null;
-	duration_seconds: number;
-	format: string;
-	bit_rate: number | null;
-	sample_rate: number | null;
-	bit_depth: number | null;
-	channels: number | null;
-	file_size_bytes: number;
-	date_added: number | null;
-	cover_available: boolean;
-	current_tier: string | null;
-	below_cutoff: boolean;
-}
-
-export type NativeTrackListItem = TargetNativeTrack;
+export type TrackView = components['schemas']['TrackView'];
 
 export type LocalAlbumMatch = {
 	found: boolean;
@@ -64,7 +36,6 @@ export type LocalAlbumMatch = {
 	tracks: LocalTrackInfo[];
 	total_size_bytes: number;
 	primary_format?: string | null;
-	download_allowed?: boolean;
 };
 
 export type PlaybackState =

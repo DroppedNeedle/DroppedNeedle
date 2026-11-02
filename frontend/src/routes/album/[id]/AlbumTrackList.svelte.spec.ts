@@ -68,7 +68,7 @@ import type {
 	AlbumBasicInfo,
 	AlbumTracksInfo,
 	HeldFileInEntry,
-	LibraryFileMeta,
+	LibraryStatusTrack,
 	LocalAlbumMatch,
 	LocalTrackInfo
 } from '$lib/types';
@@ -86,7 +86,7 @@ const TRACKS: AlbumTracksInfo['tracks'] = [
 	{ position: 3, disc_number: 1, title: 'Genuinely Missing', length: 100000, recording_id: 'rec-3' }
 ];
 
-function libTrack(over: Partial<LibraryFileMeta>): LibraryFileMeta {
+function libTrack(over: Partial<LibraryStatusTrack>): LibraryStatusTrack {
 	return {
 		id: 'f',
 		title: '',
@@ -96,10 +96,10 @@ function libTrack(over: Partial<LibraryFileMeta>): LibraryFileMeta {
 		artist_name: 'Artist',
 		album_artist_id: 'artist-1',
 		album_artist_name: 'Artist',
-		musicbrainz_recording_id: null,
-		musicbrainz_release_group_id: null,
-		musicbrainz_artist_id: null,
-		musicbrainz_album_artist_id: null,
+		recording_mbid: null,
+		release_group_mbid: null,
+		artist_mbid: null,
+		album_artist_mbid: null,
 		disc_number: 1,
 		track_number: 0,
 		year: null,
@@ -113,27 +113,30 @@ function libTrack(over: Partial<LibraryFileMeta>): LibraryFileMeta {
 		file_size_bytes: 1,
 		date_added: 1,
 		cover_available: false,
-		current_tier: null,
+		art_missing: false,
+		favorite: false,
+		row_revision: 1,
+		current_tier: 'lossless',
 		below_cutoff: false,
 		...over
 	};
 }
 
 // rec-1 present by recording MBID; track 1:2 present by position only (NULL MBID)
-const byRecording = new Map<string, LibraryFileMeta>([
-	['rec-1', libTrack({ id: 'a', musicbrainz_recording_id: 'rec-1', track_number: 1 })]
+const byRecording = new Map<string, LibraryStatusTrack>([
+	['rec-1', libTrack({ id: 'a', recording_mbid: 'rec-1', track_number: 1 })]
 ]);
-const byPosition = new Map<string, LibraryFileMeta>([
-	['1:1', libTrack({ id: 'a', musicbrainz_recording_id: 'rec-1', track_number: 1 })],
-	['1:2', libTrack({ id: 'b', musicbrainz_recording_id: null, track_number: 2 })]
+const byPosition = new Map<string, LibraryStatusTrack>([
+	['1:1', libTrack({ id: 'a', recording_mbid: 'rec-1', track_number: 1 })],
+	['1:2', libTrack({ id: 'b', recording_mbid: null, track_number: 2 })]
 ]);
 
 async function renderList(
 	over: {
 		heldByRecording?: Map<string, HeldFileInEntry>;
 		heldByPosition?: Map<string, HeldFileInEntry>;
-		byRecording?: Map<string, LibraryFileMeta>;
-		byPosition?: Map<string, LibraryFileMeta>;
+		byRecording?: Map<string, LibraryStatusTrack>;
+		byPosition?: Map<string, LibraryStatusTrack>;
 		releaseMbid?: string | null;
 		tracks?: AlbumTracksInfo['tracks'];
 		localTracks?: LocalTrackInfo[];
@@ -222,12 +225,12 @@ beforeAll(async () => {
 });
 
 describe('AlbumTrackList upgrade affordance (admin/trusted, below cutoff)', () => {
-	const belowCutoffOwned = new Map<string, LibraryFileMeta>([
+	const belowCutoffOwned = new Map<string, LibraryStatusTrack>([
 		[
 			'rec-1',
 			libTrack({
 				id: 'a',
-				musicbrainz_recording_id: 'rec-1',
+				recording_mbid: 'rec-1',
 				track_number: 1,
 				current_tier: 'mp3_192',
 				below_cutoff: true

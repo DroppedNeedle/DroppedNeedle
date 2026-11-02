@@ -5,10 +5,10 @@
 	import TagEditor from './TagEditor.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { formatBytes, formatDurationSec } from '$lib/utils/formatting';
-	import type { LibraryFileMeta } from '$lib/types';
+	import type { TrackView } from '$lib/types';
 
 	interface Props {
-		meta: LibraryFileMeta;
+		meta: TrackView;
 	}
 
 	let { meta }: Props = $props();
@@ -56,10 +56,10 @@
 				{meta.sample_rate} Hz
 			</div>
 		{/if}
-		{#if meta.musicbrainz_recording_id}
+		{#if meta.recording_mbid}
 			<div class="truncate sm:col-span-2">
 				<dt class="inline text-base-content/50">Recording MBID:</dt>
-				<span class="font-mono">{meta.musicbrainz_recording_id}</span>
+				<span class="font-mono">{meta.recording_mbid}</span>
 			</div>
 		{/if}
 		<div class="break-all sm:col-span-2">

@@ -1,5 +1,5 @@
 import type { QueueItem } from '$lib/player/types';
-import type { NativeTrackListItem } from '$lib/types';
+import type { TrackView } from '$lib/types';
 import type { LibraryV3TracksParams } from './LibraryQueryKeyFactory';
 import {
 	fetchLibraryTracks,
@@ -11,7 +11,7 @@ import {
 const BATCH_SIZE = 500;
 
 export interface LibraryTrackQueueHooks {
-	buildQueue(tracks: NativeTrackListItem[]): QueueItem[];
+	buildQueue(tracks: TrackView[]): QueueItem[];
 	playQueue(items: QueueItem[], startIndex: number, shuffle: boolean): void;
 	appendQueue(items: QueueItem[]): void;
 	reshuffle(): void;
@@ -60,7 +60,7 @@ export function createLibraryTrackQueue(hooks: LibraryTrackQueueHooks) {
 					if (shuffle) hooks.reshuffle();
 				}
 				loaded += page.items.length;
-				next = page.next;
+				next = page.next ?? null;
 			}
 		} catch {
 			if (!ac.signal.aborted) {
@@ -103,11 +103,11 @@ export function createLibraryTrackQueue(hooks: LibraryTrackQueueHooks) {
 		hooks.playQueue(queue, 0, shuffle);
 		loaded = page.items.length;
 		total = page.total;
-		if (page.next === null) {
-			release(ac);
-		} else {
+		if (page.next) {
 			loading = true;
 			void walk(ac, params, page.next, shuffle);
+		} else {
+			release(ac);
 		}
 		return 'playing';
 	}

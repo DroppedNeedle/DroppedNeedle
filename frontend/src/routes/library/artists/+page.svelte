@@ -10,7 +10,7 @@
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import Input from '$lib/ui/Input.svelte';
 	import { getLibraryArtistsInfiniteQuery } from '$lib/queries/library/LibraryQueries.svelte';
-	import type { ArtistSort, LibraryArtistScope, LibraryArtistSummary } from '$lib/types';
+	import type { ArtistSort, LibraryArtistScope, ArtistView } from '$lib/types';
 	import { artistHref } from '$lib/utils/entityRoutes';
 	import { ChevronLeft, Disc3, Heart, Mic, Search, UsersRound, X } from 'lucide-svelte';
 
@@ -53,7 +53,7 @@
 
 	const artists = $derived.by(() => {
 		const seen: Record<string, true> = Object.create(null);
-		const out: LibraryArtistSummary[] = [];
+		const out: ArtistView[] = [];
 		for (const response of artistsQuery.data?.pages ?? []) {
 			for (const item of response.items) {
 				if (seen[item.id]) continue;
@@ -260,13 +260,13 @@
 				<Card
 					variant="raised"
 					padding="none"
-					href={artistHref(artist.musicbrainz_artist_id ?? artist.id)}
+					href={artistHref(artist.artist_mbid ?? artist.id)}
 					class="group overflow-hidden"
 					aria-label={`Open ${artist.name}`}
 				>
 					<figure class="relative aspect-square overflow-hidden p-3">
 						<ArtistImage
-							mbid={artist.musicbrainz_artist_id ?? ''}
+							mbid={artist.artist_mbid ?? ''}
 							localId={artist.id}
 							artMissing={artist.art_missing}
 							alt={artist.name}
@@ -274,9 +274,9 @@
 							requestSize={250}
 							className="h-full w-full transition-transform duration-300 motion-safe:group-hover:scale-105"
 						/>
-						{#if artist.artist_identity_state === 'local_only'}
+						{#if artist.identity_state === 'local_only'}
 							<LocalIdentityBadge
-								state={artist.artist_identity_state}
+								state={artist.identity_state}
 								subject="artist"
 								compact
 								className="absolute left-3 top-3 z-10"
@@ -289,11 +289,11 @@
 							{#if browse.scope === 'album'}
 								{artist.album_count}
 								{artist.album_count === 1 ? 'release' : 'releases'} ·
-								{artist.track_count}
-								{artist.track_count === 1 ? 'track' : 'tracks'}
+								{artist.led_track_count}
+								{artist.led_track_count === 1 ? 'track' : 'tracks'}
 							{:else}
-								{artist.appearance_release_count}
-								{artist.appearance_release_count === 1 ? 'release' : 'releases'} ·
+								{artist.appearance_album_count}
+								{artist.appearance_album_count === 1 ? 'release' : 'releases'} ·
 								{artist.appearance_track_count}
 								{artist.appearance_track_count === 1 ? 'appearance' : 'appearances'}
 							{/if}

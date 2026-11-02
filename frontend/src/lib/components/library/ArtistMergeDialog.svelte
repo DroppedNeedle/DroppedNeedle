@@ -3,10 +3,10 @@
 	import Button from '$lib/ui/Button.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 
-	import type { LibraryArtistSummary } from '$lib/types';
+	import type { ArtistView } from '$lib/types';
 
 	interface Props {
-		artist: LibraryArtistSummary;
+		artist: ArtistView;
 	}
 
 	let { artist }: Props = $props();

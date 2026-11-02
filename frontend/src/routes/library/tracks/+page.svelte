@@ -29,7 +29,7 @@
 		Search,
 		X
 	} from 'lucide-svelte';
-	import type { NativeTrackListItem } from '$lib/types';
+	import type { TrackView } from '$lib/types';
 
 	const PAGE_SIZE = 48;
 	const SEARCH_DEBOUNCE_MS = 300;
@@ -49,7 +49,7 @@
 	// keep its first appearance.
 	const tracks = $derived.by(() => {
 		const seen: Record<string, true> = Object.create(null);
-		const out: NativeTrackListItem[] = [];
+		const out: TrackView[] = [];
 		for (const response of pages) {
 			for (const track of response.items) {
 				if (seen[track.id]) continue;
@@ -115,28 +115,28 @@
 		void queue.shuffleAll(searchTerm, favorites);
 	}
 
-	function addTrackToQueue(track: NativeTrackListItem) {
+	function addTrackToQueue(track: TrackView) {
 		const items = buildDiscoveryQueueFromLocal([track]);
 		if (items.length === 0) return;
 		playerStore.addMultipleToQueue(items);
 		toastStore.show({ message: `"${track.title}" was added to the queue`, type: 'info' });
 	}
 
-	function playTrackNext(track: NativeTrackListItem) {
+	function playTrackNext(track: TrackView) {
 		const items = buildDiscoveryQueueFromLocal([track]);
 		if (items.length === 0) return;
 		playerStore.playMultipleNext(items);
 		toastStore.show({ message: `"${track.title}" will play next`, type: 'info' });
 	}
 
-	function getTrackMenuItems(track: NativeTrackListItem): MenuItem[] {
+	function getTrackMenuItems(track: TrackView): MenuItem[] {
 		return [
 			{ label: 'Add to Queue', icon: ListPlus, onclick: () => addTrackToQueue(track) },
 			{ label: 'Play Next', icon: ListStart, onclick: () => playTrackNext(track) }
 		];
 	}
 
-	function isTrackPlaying(track: NativeTrackListItem): boolean {
+	function isTrackPlaying(track: TrackView): boolean {
 		return (
 			playerStore.isPlaying &&
 			playerStore.currentQueueItem?.trackSourceId === track.id &&
@@ -288,7 +288,7 @@
 					<div class="relative h-12 w-12 shrink-0">
 						<AlbumImage
 							albumId={track.album_id}
-							mbid={track.musicbrainz_release_group_id ?? ''}
+							mbid={track.release_group_mbid ?? ''}
 							available={track.cover_available}
 							artMissing={track.art_missing}
 							alt={track.album_title}

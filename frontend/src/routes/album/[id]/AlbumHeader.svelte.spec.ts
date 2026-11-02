@@ -6,8 +6,8 @@ import type {
 	AlbumBasicInfo,
 	AlbumEditionsResponse,
 	AlbumTracksInfo,
-	LibraryAlbumDetail,
-	LibraryAlbumSummary
+	AlbumDetailView,
+	AlbumView
 } from '$lib/types';
 
 const h = vi.hoisted(() => ({
@@ -65,15 +65,15 @@ vi.mock('$lib/queries/library/LibraryMutations.svelte', () => ({
 	})
 }));
 
-const localAlbum: LibraryAlbumDetail = {
+const localAlbum: AlbumDetailView = {
 	id: 'local-album-1',
 	title: 'Glass Harbor',
 	artist_name: 'Northern Static',
 	artist_id: 'local-artist-1',
-	musicbrainz_release_group_id: '4b6276da-e7c7-36df-8771-34b92f774d3b',
-	musicbrainz_release_id: '0687c8a5-40a2-4a0c-bdc9-c1d80d94bef5',
-	musicbrainz_artist_id: 'eba4c290-2ce6-42c9-affd-5b1ffab84a8f',
-	album_identity_state: 'release_linked',
+	release_group_mbid: '4b6276da-e7c7-36df-8771-34b92f774d3b',
+	release_mbid: '0687c8a5-40a2-4a0c-bdc9-c1d80d94bef5',
+	artist_mbid: 'eba4c290-2ce6-42c9-affd-5b1ffab84a8f',
+	identity_state: 'linked',
 	track_count: 20,
 	total_duration_seconds: 3900,
 	total_size_bytes: 1,
@@ -81,11 +81,13 @@ const localAlbum: LibraryAlbumDetail = {
 	year: 2008,
 	is_compilation: false,
 	cover_available: true,
+	art_missing: false,
+	favorite: false,
 	date_added: 1,
 	contribution_id: null,
 	contribution_state: null,
 	row_revision: 4,
-	review_id: null
+	pending_review_id: null
 };
 
 vi.mock('$lib/queries/library/LibraryQueries.svelte', () => ({
@@ -221,7 +223,7 @@ async function renderHeader({
 	onrefresh?: () => void;
 	libraryTrackCount?: number;
 	libraryBelowCutoff?: boolean;
-	localCopies?: LibraryAlbumSummary[];
+	localCopies?: AlbumView[];
 	trackData?: AlbumTracksInfo;
 	loadingTracks?: boolean;
 	downloadAllowed?: boolean;

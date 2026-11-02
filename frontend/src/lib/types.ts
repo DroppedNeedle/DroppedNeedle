@@ -174,7 +174,6 @@ export type LocalAlbumMatch = {
 	tracks: LocalTrackInfo[];
 	total_size_bytes: number;
 	primary_format?: string | null;
-	download_allowed?: boolean;
 };
 
 export type CrateReason = 'recent' | 'rediscover' | 'surprise' | 'same_era';
@@ -309,79 +308,12 @@ export type LyricLine = Schemas['LyricLine'];
 
 export type AlbumSort = 'recent' | 'title' | 'artist';
 
-export type AlbumIdentityState = 'local_only' | 'release_group_linked' | 'release_linked';
-
-export type ArtistIdentityState = 'local_only' | 'musicbrainz_linked';
-
-export interface NativeTrackListItem {
-	/** What removing this file sends back. Only the album status view carries it. */
-	row_revision?: number;
-	id: string;
-	title: string;
-	album_id: string;
-	album_title: string;
-	artist_id: string;
-	artist_name: string;
-	album_artist_id: string;
-	album_artist_name: string;
-	musicbrainz_recording_id: string | null;
-	musicbrainz_release_group_id: string | null;
-	musicbrainz_artist_id: string | null;
-	musicbrainz_album_artist_id: string | null;
-	disc_number: number;
-	track_number: number;
-	year: number | null;
-	genre: string | null;
-	duration_seconds: number;
-	format: string;
-	bit_rate: number | null;
-	sample_rate: number | null;
-	bit_depth: number | null;
-	channels: number | null;
-	file_size_bytes: number;
-	date_added: number | null;
-	cover_available: boolean;
-	/** The server knows the album's cover routes answer 404: ask for no cover. */
-	art_missing?: boolean;
-	current_tier: string | null;
-	below_cutoff: boolean;
-	/** Whether the caller favorited it, where the read says. */
-	favorite?: boolean;
-}
-
-export interface LibraryAlbumSummary {
-	id: string;
-	title: string;
-	artist_name: string;
-	artist_id: string;
-	musicbrainz_release_group_id: string | null;
-	musicbrainz_release_id: string | null;
-	musicbrainz_artist_id: string | null;
-	album_identity_state: AlbumIdentityState;
-	track_count: number;
-	total_duration_seconds: number | null;
-	total_size_bytes: number;
-	format: string | null;
-	year: number | null;
-	is_compilation: boolean;
-	cover_available: boolean;
-	/** The server knows its cover routes answer 404: ask for no cover. */
-	art_missing?: boolean;
-	date_added: number | null;
-	contribution_id: string | null;
-	contribution_state: ContributionState | null;
-	/** Whether the caller favorited it, where the read says. */
-	favorite?: boolean;
-}
-
-export interface LibraryAlbumDetail extends LibraryAlbumSummary {
-	// Set when library management leaves the album's files alone.
-	management_hold?: components['schemas']['ManagementHoldView'] | null;
-	row_revision: components['schemas']['AlbumDetailView']['row_revision'];
-	download_allowed?: boolean;
-	/** The album's pending identification review. */
-	review_id: string | null;
-}
+export type AlbumView = Schemas['AlbumView'];
+export type AlbumDetailView = Schemas['AlbumDetailView'];
+export type ArtistView = Schemas['ArtistView'];
+export type TrackView = Schemas['TrackView'];
+/** A held track with its quality tier against the upgrade cutoff. */
+export type LibraryStatusTrack = Schemas['LibraryStatusTrack'];
 
 export type ContributionState = Schemas['ContributionState'];
 export type ReleaseTextField = Schemas['ReleaseTextField'];
@@ -392,53 +324,10 @@ export type MusicBrainzSeed = components['schemas']['MusicBrainzSeed'];
 
 export type LibraryContribution = Schemas['ContributionRecord'];
 
-export interface NativeAlbumsResponse {
-	items: LibraryAlbumSummary[];
-	total: number;
-}
-
 export type ArtistSort = 'name' | 'album_count' | 'appearance_count' | 'date_added';
 export type LibraryArtistScope = 'album' | 'contributors';
-export type LibraryArtistRelationship = 'album_artist' | 'contributor' | 'both';
 
-export interface LibraryArtistSummary {
-	id: string;
-	name: string;
-	musicbrainz_artist_id: string | null;
-	artist_identity_state: ArtistIdentityState;
-	album_count: number;
-	track_count: number;
-	appearance_release_count: number;
-	appearance_track_count: number;
-	library_relationship: LibraryArtistRelationship;
-	date_added: number | null;
-	/** The server knows its picture route answers 404: ask for no picture. */
-	art_missing?: boolean;
-	/** Whether the caller favorited it, where the read says. */
-	favorite?: boolean;
-}
-
-export interface NativeArtistsResponse {
-	items: LibraryArtistSummary[];
-	total: number;
-	album_artist_total: number;
-	contributor_total: number;
-}
-
-export interface LibraryArtistAppearancesResponse {
-	items: { album: LibraryAlbumSummary; tracks: NativeTrackListItem[] }[];
-	total: number;
-	total_tracks: number;
-	/** The cursor of the page after this one; null on the last page. */
-	next: string | null;
-}
-
-export type LibraryFileMeta = NativeTrackListItem;
-
-// The contract's status, its tracks in the native track model.
-export type LibraryAlbumStatus = Omit<Schemas['LibraryAlbumStatus'], 'tracks'> & {
-	tracks: NativeTrackListItem[];
-};
+export type LibraryAlbumStatus = Schemas['LibraryAlbumStatus'];
 
 export type AlbumEditionsResponse = components['schemas']['AlbumEditionsResponse'];
 

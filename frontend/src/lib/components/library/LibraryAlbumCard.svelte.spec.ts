@@ -2,7 +2,7 @@ import { page } from 'vitest/browser';
 import { describe, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import LibraryAlbumCard from './LibraryAlbumCard.svelte';
-import type { LibraryAlbumSummary } from '$lib/types';
+import type { AlbumView } from '$lib/types';
 
 // Keep the image on its first source: the test has no server to answer it.
 vi.mock('$lib/utils/lazyImage', () => ({
@@ -13,15 +13,15 @@ vi.mock('$lib/utils/lazyImage', () => ({
 // Local ids are UUID-shaped, so nothing may mistake one for a MusicBrainz id.
 const LOCAL_ALBUM_ID = '2abe7c2d-339c-5b5c-8071-7e07a93a6ba6';
 
-const album: LibraryAlbumSummary = {
+const album: AlbumView = {
 	id: LOCAL_ALBUM_ID,
 	title: 'OK Computer',
 	artist_name: 'Radiohead',
 	artist_id: 'artist-1',
-	musicbrainz_release_group_id: null,
-	musicbrainz_release_id: null,
-	musicbrainz_artist_id: null,
-	album_identity_state: 'local_only',
+	release_group_mbid: null,
+	release_mbid: null,
+	artist_mbid: null,
+	identity_state: 'local_only',
 	track_count: 12,
 	total_duration_seconds: 3200,
 	total_size_bytes: 1048576,
@@ -29,6 +29,8 @@ const album: LibraryAlbumSummary = {
 	year: 1997,
 	is_compilation: false,
 	cover_available: true,
+	art_missing: false,
+	favorite: false,
 	date_added: 1,
 	contribution_id: null,
 	contribution_state: null
@@ -49,8 +51,8 @@ describe('LibraryAlbumCard.svelte', () => {
 				album: {
 					...album,
 					cover_available: false,
-					musicbrainz_release_group_id: releaseGroup,
-					album_identity_state: 'release_group_linked'
+					release_group_mbid: releaseGroup,
+					identity_state: 'linked'
 				}
 			}
 		});
@@ -66,8 +68,8 @@ describe('LibraryAlbumCard.svelte', () => {
 					...album,
 					cover_available: false,
 					art_missing: true,
-					musicbrainz_release_group_id: 'b1392450-e666-3926-a536-22c65f834433',
-					album_identity_state: 'release_group_linked'
+					release_group_mbid: 'b1392450-e666-3926-a536-22c65f834433',
+					identity_state: 'linked'
 				}
 			}
 		});

@@ -2,9 +2,9 @@ import { page } from 'vitest/browser';
 import { describe, expect, it } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import LibraryTrackRow from './LibraryTrackRow.svelte';
-import type { LibraryFileMeta } from '$lib/types';
+import type { TrackView } from '$lib/types';
 
-const meta: LibraryFileMeta = {
+const meta: TrackView = {
 	id: 'file-1',
 	title: 'Airbag',
 	album_id: 'album-1',
@@ -13,10 +13,10 @@ const meta: LibraryFileMeta = {
 	artist_name: 'Radiohead',
 	album_artist_id: 'artist-1',
 	album_artist_name: 'Radiohead',
-	musicbrainz_recording_id: 'rec-airbag-0001',
-	musicbrainz_release_group_id: null,
-	musicbrainz_artist_id: null,
-	musicbrainz_album_artist_id: null,
+	recording_mbid: 'rec-airbag-0001',
+	release_group_mbid: null,
+	artist_mbid: null,
+	album_artist_mbid: null,
 	disc_number: 1,
 	track_number: 1,
 	year: 1997,
@@ -30,8 +30,9 @@ const meta: LibraryFileMeta = {
 	file_size_bytes: 1048576,
 	date_added: 1,
 	cover_available: false,
-	current_tier: 'lossless',
-	below_cutoff: false
+	art_missing: false,
+	favorite: false,
+	row_revision: 1
 };
 
 async function renderComponent() {
