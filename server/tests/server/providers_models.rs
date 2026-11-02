@@ -11,6 +11,7 @@ use droppedneedle_providers::coverart::{DownloadSize, EntityKind};
 use droppedneedle_providers::executor::{Method, Scripted, ScriptedWire};
 use droppedneedle_providers::geocoding::DEFAULT_CITY_COUNT;
 use droppedneedle_providers::lastfm::{ArtistInfo, LastFmCredentials};
+use droppedneedle_providers::listenbrainz::ListenBrainzCredentials;
 use droppedneedle_providers::musicbrainz::{self, Criticality, MbSource};
 use droppedneedle_providers::youtube::{YouTubeClient, YouTubeSettings, YoutubeError};
 use droppedneedle_providers::{
@@ -63,6 +64,7 @@ enum Provider {
     TicketmasterEvents,
     AcoustIdLookup,
     LastFm(LastFmRead),
+    ListenBrainz(ListenBrainzRead),
     YouTubeSearch,
     YouTubeVideos,
 }
@@ -79,6 +81,17 @@ enum LastFmRead {
     AlbumTopTags,
     ChartTopArtists,
     TagTopArtists,
+}
+
+/// The ListenBrainz read a row's answer goes through.
+#[derive(Clone, Copy)]
+enum ListenBrainzRead {
+    RecordingGroups,
+    Genres,
+    Popularity,
+    TopReleaseGroups,
+    TopRecordings,
+    Similar,
 }
 
 /// The album the Deezer album search fixture names first, and its track list.
@@ -116,6 +129,8 @@ const MB_MERGED_ARTIST_MBID: &str = "ffbcb0c1-37ad-4df8-a78d-e31bd590d7ea";
 const MB_RECORDING_MBID: &str = "33ea7e59-3691-4414-92d3-6bce48d5d9cc";
 const MB_OK_COMPUTER_GROUP_MBID: &str = "b1392450-e666-3926-a536-22c65f834433";
 const MB_RADIOHEAD_MBID: &str = "a74b1b7f-71a5-4011-9441-d0b5e4122711";
+/// The recording the recorded ListenBrainz metadata answer is about.
+const LB_KARMA_POLICE_MBID: &str = "9e2ad5bc-c6f9-40d2-a36f-3122ee2072a3";
 const MB_RELEASE_INCLUDES: &[&str] = &[
     "artist-credits",
     "genres",
@@ -717,6 +732,69 @@ const ROWS: &[Row] = &[
         identity: "/results/0/recordings/0/id",
     },
     Row {
+        name: "listenbrainz /1/metadata/recording/, release group",
+        provider: Provider::ListenBrainz(ListenBrainzRead::RecordingGroups),
+        body: include_str!("../fixtures/listenbrainz/recording_metadata_post.json"),
+        kind: PayloadKind::Decode,
+        identity: "/9e2ad5bc-c6f9-40d2-a36f-3122ee2072a3/release/release_group_mbid",
+    },
+    Row {
+        name: "listenbrainz /1/metadata/release_group/, tag",
+        provider: Provider::ListenBrainz(ListenBrainzRead::Genres),
+        body: include_str!("../fixtures/listenbrainz/release_group_metadata.json"),
+        kind: PayloadKind::Decode,
+        identity: "/b1392450-e666-3926-a536-22c65f834433/tag/release_group/0/tag",
+    },
+    Row {
+        name: "listenbrainz /1/metadata/release_group/, tag count",
+        provider: Provider::ListenBrainz(ListenBrainzRead::Genres),
+        body: include_str!("../fixtures/listenbrainz/release_group_metadata.json"),
+        kind: PayloadKind::Decode,
+        identity: "/b1392450-e666-3926-a536-22c65f834433/tag/release_group/0/count",
+    },
+    Row {
+        name: "listenbrainz /1/popularity/release-group",
+        provider: Provider::ListenBrainz(ListenBrainzRead::Popularity),
+        body: include_str!("../fixtures/listenbrainz/popularity_release_group_post.json"),
+        kind: PayloadKind::Decode,
+        identity: "/0/release_group_mbid",
+    },
+    Row {
+        name: "listenbrainz top release groups, id",
+        provider: Provider::ListenBrainz(ListenBrainzRead::TopReleaseGroups),
+        body: include_str!("../fixtures/listenbrainz/top_release_groups_radiohead.json"),
+        kind: PayloadKind::Decode,
+        identity: "/0/release_group_mbid",
+    },
+    Row {
+        name: "listenbrainz top release groups, count",
+        provider: Provider::ListenBrainz(ListenBrainzRead::TopReleaseGroups),
+        body: include_str!("../fixtures/listenbrainz/top_release_groups_radiohead.json"),
+        kind: PayloadKind::Decode,
+        identity: "/0/total_listen_count",
+    },
+    Row {
+        name: "listenbrainz top recordings, title",
+        provider: Provider::ListenBrainz(ListenBrainzRead::TopRecordings),
+        body: include_str!("../fixtures/listenbrainz/top_recordings_radiohead.json"),
+        kind: PayloadKind::Decode,
+        identity: "/0/recording_name",
+    },
+    Row {
+        name: "listenbrainz top recordings, count",
+        provider: Provider::ListenBrainz(ListenBrainzRead::TopRecordings),
+        body: include_str!("../fixtures/listenbrainz/top_recordings_radiohead.json"),
+        kind: PayloadKind::Decode,
+        identity: "/0/total_listen_count",
+    },
+    Row {
+        name: "listenbrainz /1/lb-radio/artist, count",
+        provider: Provider::ListenBrainz(ListenBrainzRead::Similar),
+        body: include_str!("../fixtures/listenbrainz/lb_radio_artist.json"),
+        kind: PayloadKind::Decode,
+        identity: "/ada7a83c-e3e1-40f1-93f9-3e73dbc9298a/0/total_listen_count",
+    },
+    Row {
         name: "youtube /search, video id",
         provider: Provider::YouTubeSearch,
         body: include_str!("../fixtures/youtube/search_found.json"),
@@ -1201,6 +1279,7 @@ async fn read(provider: Provider, body: &str) -> Result<bool, ProviderError> {
             Ok(found.is_some())
         }
         Provider::LastFm(read) => lastfm(read, body).await,
+        Provider::ListenBrainz(read) => listenbrainz(read, body).await,
         Provider::YouTubeSearch => {
             let scratch = ScratchDir::new("youtube-search-row");
             let wire = Arc::new(ScriptedWire::new());
@@ -1244,6 +1323,80 @@ async fn read(provider: Provider, body: &str) -> Result<bool, ProviderError> {
             Ok(true)
         }
     }
+}
+
+/// The providers answering `path` under the ListenBrainz root with `status`
+/// and `body`.
+fn listenbrainz_answer(method: Method, path: &str, status: u16, body: &str) -> Providers {
+    let wire = Arc::new(ScriptedWire::new());
+    wire.on(
+        method,
+        &format!("http://fake/listenbrainz{path}"),
+        Scripted::Answer {
+            status,
+            headers: Vec::new(),
+            body: body.as_bytes().to_vec(),
+        },
+    );
+    Providers::unpaced_at(
+        wire,
+        ProviderEndpoints {
+            listenbrainz: "http://fake/listenbrainz".to_owned(),
+            ..ProviderEndpoints::closed()
+        },
+    )
+}
+
+/// Serves `body` from where `read` asks and reads it through the client.
+async fn listenbrainz(read: ListenBrainzRead, body: &str) -> Result<bool, ProviderError> {
+    let creds = ListenBrainzCredentials::default();
+    let answer = |method, path: String| listenbrainz_answer(method, &path, 200, body);
+    Ok(match read {
+        ListenBrainzRead::RecordingGroups => {
+            !answer(Method::Post, "/1/metadata/recording/".to_owned())
+                .listenbrainz
+                .recording_release_groups(&[LB_KARMA_POLICE_MBID.to_owned()], &creds, PRIORITY)
+                .await?
+                .is_empty()
+        }
+        ListenBrainzRead::Genres => !answer(Method::Get, "/1/metadata/release_group/".to_owned())
+            .listenbrainz
+            .release_group_genres(&[MB_OK_COMPUTER_GROUP_MBID.to_owned()], &creds, PRIORITY)
+            .await?[MB_OK_COMPUTER_GROUP_MBID]
+            .release_group_tags
+            .is_empty(),
+        ListenBrainzRead::Popularity => {
+            !answer(Method::Post, "/1/popularity/release-group".to_owned())
+                .listenbrainz
+                .release_group_popularity(&[MB_OK_COMPUTER_GROUP_MBID.to_owned()], &creds, PRIORITY)
+                .await?
+                .is_empty()
+        }
+        ListenBrainzRead::TopReleaseGroups => {
+            let path = format!("/1/popularity/top-release-groups-for-artist/{MB_RADIOHEAD_MBID}");
+            !answer(Method::Get, path)
+                .listenbrainz
+                .artist_top_release_groups(MB_RADIOHEAD_MBID, 5, &creds, PRIORITY)
+                .await?
+                .is_empty()
+        }
+        ListenBrainzRead::TopRecordings => {
+            let path = format!("/1/popularity/top-recordings-for-artist/{MB_RADIOHEAD_MBID}");
+            !answer(Method::Get, path)
+                .listenbrainz
+                .artist_top_recordings(MB_RADIOHEAD_MBID, 5, &creds, PRIORITY)
+                .await?
+                .is_empty()
+        }
+        ListenBrainzRead::Similar => {
+            let path = format!("/1/lb-radio/artist/{MB_RADIOHEAD_MBID}");
+            !answer(Method::Get, path)
+                .listenbrainz
+                .similar_artists(MB_RADIOHEAD_MBID, 3, &creds, PRIORITY)
+                .await?
+                .is_empty()
+        }
+    })
 }
 
 /// Serves `body` from Last.fm's API root and reads it through `read`.
@@ -1568,6 +1721,120 @@ async fn a_lastfm_count_that_was_not_sent_reads_as_absent() {
         .expect("the artist is kept");
     assert_eq!(artist.playcount, None);
     assert_eq!(artist.listeners, Some(8_489_583));
+}
+
+/// What the recorded answers mean once read: the values behind Discover and
+/// the artist page, a row with no release, and the seed artist LB Radio
+/// names among its own similar artists.
+#[tokio::test]
+async fn listenbrainz_recorded_values_read_as_answered() {
+    let creds = ListenBrainzCredentials::default();
+    let top = listenbrainz_answer(
+        Method::Get,
+        &format!("/1/popularity/top-recordings-for-artist/{MB_RADIOHEAD_MBID}"),
+        200,
+        include_str!("../fixtures/listenbrainz/top_recordings_radiohead.json"),
+    )
+    .listenbrainz
+    .artist_top_recordings(MB_RADIOHEAD_MBID, usize::MAX, &creds, PRIORITY)
+    .await
+    .expect("the recording decodes");
+    assert_eq!(top.len(), 2170, "no recorded row is dropped");
+    assert_eq!(top[0].title, "Karma Police");
+    assert_eq!(top[0].listen_count, 3_890_683);
+    assert_eq!(top[0].release_name.as_deref(), Some("OK Computer"));
+    let no_release = top
+        .iter()
+        .find(|row| row.title == "You (acoustic)")
+        .expect("the recorded row without a release");
+    assert_eq!(no_release.release_mbid, None);
+
+    let groups = listenbrainz_answer(
+        Method::Get,
+        &format!("/1/popularity/top-release-groups-for-artist/{MB_RADIOHEAD_MBID}"),
+        200,
+        include_str!("../fixtures/listenbrainz/top_release_groups_radiohead.json"),
+    )
+    .listenbrainz
+    .artist_top_release_groups(MB_RADIOHEAD_MBID, usize::MAX, &creds, PRIORITY)
+    .await
+    .expect("the recording decodes");
+    assert_eq!(groups.len(), 347, "no recorded row is dropped");
+    assert_eq!(groups[0].name, "In Rainbows");
+    assert_eq!(groups[0].artist_name, "Radiohead");
+    assert_eq!(groups[0].listen_count, 27_057_653);
+
+    let similar = listenbrainz_answer(
+        Method::Get,
+        &format!("/1/lb-radio/artist/{MB_RADIOHEAD_MBID}"),
+        200,
+        include_str!("../fixtures/listenbrainz/lb_radio_artist.json"),
+    )
+    .listenbrainz
+    .similar_artists(MB_RADIOHEAD_MBID, 3, &creds, PRIORITY)
+    .await
+    .expect("the recording decodes");
+    let names: Vec<&str> = similar.iter().map(|a| a.artist_name.as_str()).collect();
+    assert_eq!(names.len(), 2, "the seed is dropped: {names:?}");
+    assert!(!names.contains(&"Radiohead"), "{names:?}");
+}
+
+/// The recorded answers that are not hits: an unknown release group has no
+/// tags, a made-up token and an unknown user get their own verdicts.
+#[tokio::test]
+async fn listenbrainz_recorded_refusals_read_as_refusals() {
+    let creds = ListenBrainzCredentials::default();
+    let unknown = "00000000-0000-4000-8000-000000000000".to_owned();
+    let genres = listenbrainz_answer(
+        Method::Get,
+        "/1/metadata/release_group/",
+        200,
+        include_str!("../fixtures/listenbrainz/release_group_metadata_unknown.json"),
+    )
+    .listenbrainz
+    .release_group_genres(std::slice::from_ref(&unknown), &creds, PRIORITY)
+    .await
+    .expect("an unknown id is not a failure");
+    assert!(genres[&unknown].release_group_tags.is_empty());
+
+    let token = listenbrainz_answer(
+        Method::Get,
+        "/1/validate-token",
+        200,
+        include_str!("../fixtures/listenbrainz/validate_token_invalid.json"),
+    )
+    .listenbrainz
+    .verify("someone", "made-up-token", PRIORITY)
+    .await;
+    assert!(!token.valid, "{token:?}");
+    assert_eq!(token.message, "Token invalid or expired");
+
+    let user = "droppedneedle-no-such-user-fixture";
+    let count = listenbrainz_answer(
+        Method::Get,
+        &format!("/1/user/{user}/listen-count"),
+        404,
+        include_str!("../fixtures/listenbrainz/listen_count_unknown_user.json"),
+    )
+    .listenbrainz
+    .verify(user, "", PRIORITY)
+    .await;
+    assert!(!count.valid, "{count:?}");
+    assert_eq!(count.message, format!("User '{user}' not found"));
+
+    let listens = listenbrainz_answer(
+        Method::Get,
+        &format!("/1/user/{user}/listens"),
+        404,
+        include_str!("../fixtures/listenbrainz/listens_unknown_user.json"),
+    )
+    .listenbrainz
+    .user_listens(user, 1, &creds, PRIORITY)
+    .await;
+    assert!(
+        matches!(listens, Err(ProviderError::NotFound { .. })),
+        "{listens:?}"
+    );
 }
 
 /// A decode failure says where and how the answer broke, never what it

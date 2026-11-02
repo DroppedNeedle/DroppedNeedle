@@ -1,0 +1,163 @@
+{
+  "9e2ad5bc-c6f9-40d2-a36f-3122ee2072a3": {
+    "recording": {
+      "first_release_date": "1997-05-21",
+      "isrcs": [
+        "GBAYE9701368",
+        "GBBKS1700112",
+        "GBAYE9701424"
+      ],
+      "length": 262426,
+      "name": "Karma Police",
+      "rels": [
+        {
+          "artist_mbid": "8ed2e0b3-aa4c-4e13-bec3-dc7393ed4d6b",
+          "artist_name": "Thom Yorke",
+          "instrument": "piano",
+          "type": "instrument"
+        },
+        {
+          "artist_mbid": "309d9809-cf74-493a-b56b-1378258f20fd",
+          "artist_name": "Ed O\u2019Brien",
+          "instrument": "effects",
+          "type": "instrument"
+        },
+        {
+          "artist_mbid": "e9fcfbbf-1743-4f73-8744-ada8da7394ea",
+          "artist_name": "Jonny Greenwood",
+          "instrument": "glockenspiel",
+          "type": "instrument"
+        },
+        {
+          "artist_mbid": "4ab74d13-d1eb-4895-b874-6da5d8b1aac3",
+          "artist_name": "Philip Selway",
+          "instrument": "drums (drum set)",
+          "type": "instrument"
+        },
+        {
+          "artist_mbid": "32111fcd-2338-472a-892b-4b329549e3ba",
+          "artist_name": "Nick Ingman",
+          "type": "conductor"
+        },
+        {
+          "artist_mbid": "f23074f4-2c06-477a-bf1d-12fa66e087ee",
+          "artist_name": "Colin Greenwood",
+          "instrument": "bass guitar",
+          "type": "instrument"
+        },
+        {
+          "artist_mbid": "f23074f4-2c06-477a-bf1d-12fa66e087ee",
+          "artist_name": "Colin Greenwood",
+          "instrument": "bass synthesizer",
+          "type": "instrument"
+        },
+        {
+          "artist_mbid": "8ed2e0b3-aa4c-4e13-bec3-dc7393ed4d6b",
+          "artist_name": "Thom Yorke",
+          "instrument": "guitar",
+          "type": "instrument"
+        },
+        {
+          "artist_mbid": "309d9809-cf74-493a-b56b-1378258f20fd",
+          "artist_name": "Ed O\u2019Brien",
+          "instrument": "guitar",
+          "type": "instrument"
+        },
+        {
+          "artist_mbid": "309d9809-cf74-493a-b56b-1378258f20fd",
+          "artist_name": "Ed O\u2019Brien",
+          "instrument": "background vocals",
+          "type": "vocal"
+        },
+        {
+          "artist_mbid": "309d9809-cf74-493a-b56b-1378258f20fd",
+          "artist_name": "Ed O\u2019Brien",
+          "instrument": "percussion",
+          "type": "instrument"
+        },
+        {
+          "artist_mbid": "8ed2e0b3-aa4c-4e13-bec3-dc7393ed4d6b",
+          "artist_name": "Thom Yorke",
+          "type": "vocal"
+        },
+        {
+          "artist_mbid": "e9fcfbbf-1743-4f73-8744-ada8da7394ea",
+          "artist_name": "Jonny Greenwood",
+          "instrument": "piano",
+          "type": "instrument"
+        },
+        {
+          "artist_mbid": "4ab74d13-d1eb-4895-b874-6da5d8b1aac3",
+          "artist_name": "Philip Selway",
+          "instrument": "percussion",
+          "type": "instrument"
+        },
+        {
+          "artist_mbid": "f23074f4-2c06-477a-bf1d-12fa66e087ee",
+          "artist_name": "Colin Greenwood",
+          "instrument": "percussion",
+          "type": "instrument"
+        },
+        {
+          "artist_mbid": "e9fcfbbf-1743-4f73-8744-ada8da7394ea",
+          "artist_name": "Jonny Greenwood",
+          "instrument": "organ",
+          "type": "instrument"
+        },
+        {
+          "artist_mbid": "e9fcfbbf-1743-4f73-8744-ada8da7394ea",
+          "artist_name": "Jonny Greenwood",
+          "instrument": "mellotron",
+          "type": "instrument"
+        },
+        {
+          "artist_mbid": "e9fcfbbf-1743-4f73-8744-ada8da7394ea",
+          "artist_name": "Jonny Greenwood",
+          "instrument": "keyboard",
+          "type": "instrument"
+        },
+        {
+          "artist_mbid": "e9fcfbbf-1743-4f73-8744-ada8da7394ea",
+          "artist_name": "Jonny Greenwood",
+          "instrument": "guitar",
+          "type": "instrument"
+        }
+      ],
+      "url_rels": [
+        {
+          "type": "purchase for download",
+          "url": "https://music.apple.com/gb/song/1097861836"
+        },
+        {
+          "type": "free streaming",
+          "url": "https://www.deezer.com/track/138539981"
+        },
+        {
+          "type": "streaming",
+          "url": "https://tidal.com/track/58990516"
+        },
+        {
+          "type": "free streaming",
+          "url": "https://www.youtube.com/watch?v=1uYWYWPc9HU"
+        },
+        {
+          "type": "free streaming",
+          "url": "https://open.spotify.com/track/63OQupATfueTdZMWTxW03A"
+        },
+        {
+          "type": "streaming",
+          "url": "https://music.apple.com/gb/song/1097861836"
+        }
+      ]
+    },
+    "release": {
+      "album_artist_name": "Radiohead",
+      "caa_id": 43287476628,
+      "caa_release_mbid": "30702389-5c67-4438-9ea0-2351c8de0f1d",
+      "mbid": "1834eae1-741b-3c03-9ca5-0df3decb43ea",
+      "name": "OK Computer",
+      "release_group_mbid": "b1392450-e666-3926-a536-22c65f834433",
+      "year": 1997
+    }
+  }
+}

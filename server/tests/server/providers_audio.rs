@@ -859,8 +859,8 @@ async fn listenbrainz_user_listens_found_with_mbid_mapping() {
 
 #[tokio::test]
 async fn listenbrainz_popularity_malformed_never_reads_as_zeros() {
-    // A malformed answer is a failure, so nothing is kept from it; only a
-    // clean empty list is an answer.
+    // A malformed answer is a payload error, never an empty map that a
+    // caller could store as "no listens".
     let popularity = lb_url("/1/popularity/release-group");
     let wire = Arc::new(droppedneedle_providers::executor::ScriptedWire::new());
     wire.on(
@@ -882,19 +882,50 @@ async fn listenbrainz_popularity_malformed_never_reads_as_zeros() {
         },
     );
     let providers = listenbrainz_providers(&wire);
+    let (ids, creds) = (["a".to_owned()], lb_anonymous());
+    let ask = || {
+        providers
+            .listenbrainz
+            .release_group_popularity(&ids, &creds, LB_PRIORITY)
+    };
 
-    let malformed = providers
-        .listenbrainz
-        .release_group_popularity(&["a".to_owned()], &lb_anonymous(), LB_PRIORITY)
-        .await;
+    let malformed = ask().await.expect_err("a malformed answer is no counts");
     assert!(
-        matches!(malformed, Err(ProviderError::Payload { .. })),
+        matches!(malformed, ProviderError::Payload { .. }),
         "{malformed:?}"
     );
-    let counts = providers
-        .listenbrainz
-        .release_group_popularity(&["a".to_owned()], &lb_anonymous(), LB_PRIORITY)
-        .await
-        .expect("empty list is legitimate");
+    let counts = ask().await.expect("an empty list is legitimate");
     assert!(counts.is_empty());
+}
+
+/// A credential check whose answer lacks its verdict field gives no
+/// verdict: never "User found with 0 listens" or "Token invalid".
+#[tokio::test]
+async fn listenbrainz_verify_without_its_verdict_field_gives_none() {
+    let wire = Arc::new(ScriptedWire::new());
+    wire.answer(
+        &lb_url("/1/user/listener/listen-count"),
+        200,
+        &[],
+        r#"{"payload": {}}"#,
+    );
+    wire.answer(&lb_url("/1/validate-token"), 200, &[], r#"{"code": 200}"#);
+    let providers = listenbrainz_providers(&wire);
+
+    let user = providers
+        .listenbrainz
+        .verify("listener", "", LB_PRIORITY)
+        .await;
+    let token = providers
+        .listenbrainz
+        .verify("listener", "made-up-token", LB_PRIORITY)
+        .await;
+
+    for outcome in [user, token] {
+        assert!(!outcome.valid, "{outcome:?}");
+        assert_eq!(
+            outcome.message, "ListenBrainz is temporarily unavailable. Try again shortly.",
+            "{outcome:?}"
+        );
+    }
 }

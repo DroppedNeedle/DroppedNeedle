@@ -1,0 +1,98 @@
+{
+  "a74b1b7f-71a5-4011-9441-d0b5e4122711": [
+    {
+      "recording_mbid": "dfae0883-216d-42b2-9b2a-a09e68899b11",
+      "similar_artist_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+      "similar_artist_name": "Radiohead",
+      "total_listen_count": 20
+    },
+    {
+      "recording_mbid": "c54d8180-5b5e-4177-bfdf-4d3be8ab0881",
+      "similar_artist_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+      "similar_artist_name": "Radiohead",
+      "total_listen_count": 3
+    },
+    {
+      "recording_mbid": "4b7f1af4-b068-4762-94dc-bbcbd74bf96f",
+      "similar_artist_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+      "similar_artist_name": "Radiohead",
+      "total_listen_count": 14
+    },
+    {
+      "recording_mbid": "e8ae7a8a-65eb-4134-a6ee-f6e953b6c4fc",
+      "similar_artist_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+      "similar_artist_name": "Radiohead",
+      "total_listen_count": 2
+    },
+    {
+      "recording_mbid": "dca97ca6-cdae-4fd9-a5e8-366e3eb53741",
+      "similar_artist_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+      "similar_artist_name": "Radiohead",
+      "total_listen_count": 357453
+    }
+  ],
+  "ada7a83c-e3e1-40f1-93f9-3e73dbc9298a": [
+    {
+      "recording_mbid": "8f84da07-09a0-477b-b216-cc982dabcde1",
+      "similar_artist_mbid": "ada7a83c-e3e1-40f1-93f9-3e73dbc9298a",
+      "similar_artist_name": "Arctic Monkeys",
+      "total_listen_count": 1256921
+    },
+    {
+      "recording_mbid": "251c24cc-eb0f-4a17-a5dd-88e0008536d6",
+      "similar_artist_mbid": "ada7a83c-e3e1-40f1-93f9-3e73dbc9298a",
+      "similar_artist_name": "Arctic Monkeys",
+      "total_listen_count": 2099158
+    },
+    {
+      "recording_mbid": "c2705dfc-83bf-4838-bdcb-07734e71c7d7",
+      "similar_artist_mbid": "ada7a83c-e3e1-40f1-93f9-3e73dbc9298a",
+      "similar_artist_name": "Arctic Monkeys",
+      "total_listen_count": 2340784
+    },
+    {
+      "recording_mbid": "a341e826-7a90-4306-ada8-0a14e5e67f01",
+      "similar_artist_mbid": "ada7a83c-e3e1-40f1-93f9-3e73dbc9298a",
+      "similar_artist_name": "Arctic Monkeys",
+      "total_listen_count": 262945
+    },
+    {
+      "recording_mbid": "b2fc2193-e2aa-4116-8a2e-1de5c00552fd",
+      "similar_artist_mbid": "ada7a83c-e3e1-40f1-93f9-3e73dbc9298a",
+      "similar_artist_name": "Arctic Monkeys",
+      "total_listen_count": 17
+    }
+  ],
+  "f181961b-20f7-459e-89de-920ef03c7ed0": [
+    {
+      "recording_mbid": "f1adc27f-953b-44e2-a688-8efc633585d5",
+      "similar_artist_mbid": "f181961b-20f7-459e-89de-920ef03c7ed0",
+      "similar_artist_name": "The Strokes",
+      "total_listen_count": 25
+    },
+    {
+      "recording_mbid": "4bbe375b-dd2a-4fa4-8801-6561a0f4fa32",
+      "similar_artist_mbid": "f181961b-20f7-459e-89de-920ef03c7ed0",
+      "similar_artist_name": "The Strokes",
+      "total_listen_count": 564991
+    },
+    {
+      "recording_mbid": "66f2f2e3-7d17-428d-907f-dfc2e94be26f",
+      "similar_artist_mbid": "f181961b-20f7-459e-89de-920ef03c7ed0",
+      "similar_artist_name": "The Strokes",
+      "total_listen_count": 923291
+    },
+    {
+      "recording_mbid": "9a471382-e7b8-46fd-b0c9-abf272131ce6",
+      "similar_artist_mbid": "f181961b-20f7-459e-89de-920ef03c7ed0",
+      "similar_artist_name": "The Strokes",
+      "total_listen_count": 997
+    },
+    {
+      "recording_mbid": "91844217-d7c2-4fde-b544-530d4b4298e6",
+      "similar_artist_mbid": "f181961b-20f7-459e-89de-920ef03c7ed0",
+      "similar_artist_name": "The Strokes",
+      "total_listen_count": 39
+    }
+  ]
+}

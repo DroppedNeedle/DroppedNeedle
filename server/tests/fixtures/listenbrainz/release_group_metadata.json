@@ -1,0 +1,520 @@
+{
+  "b1392450-e666-3926-a536-22c65f834433": {
+    "artist": {
+      "artist_credit_id": 66,
+      "artists": [
+        {
+          "area": "United Kingdom",
+          "artist_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+          "begin_year": 1991,
+          "join_phrase": "",
+          "name": "Radiohead",
+          "rels": {
+            "free streaming": "https://www.deezer.com/artist/399",
+            "lyrics": "https://genius.com/artists/Radiohead",
+            "official homepage": "http://www.radiohead.com/",
+            "purchase for download": "https://www.qobuz.com/us-en/interpreter/radiohead/43840",
+            "social network": "https://www.tiktok.com/@radiohead",
+            "streaming": "https://www.qobuz.com/us-en/interpreter/radiohead/43840",
+            "wikidata": "https://www.wikidata.org/wiki/Q44190"
+          },
+          "type": "Group"
+        }
+      ],
+      "name": "Radiohead"
+    },
+    "release": {
+      "caa_id": 43287476628,
+      "caa_release_mbid": "30702389-5c67-4438-9ea0-2351c8de0f1d",
+      "date": "1997-05-21",
+      "name": "OK Computer",
+      "rels": [
+        {
+          "artist_mbid": "aba55cf7-28ae-4030-976b-f98ca24a7074",
+          "artist_name": "Rachel Owen",
+          "type": "dedicated to"
+        }
+      ],
+      "type": "Album"
+    },
+    "release_group": {
+      "caa_id": 43287476628,
+      "caa_release_mbid": "30702389-5c67-4438-9ea0-2351c8de0f1d",
+      "date": "1997-05-21",
+      "name": "OK Computer",
+      "rels": [
+        {
+          "artist_mbid": "aba55cf7-28ae-4030-976b-f98ca24a7074",
+          "artist_name": "Rachel Owen",
+          "type": "dedicated to"
+        }
+      ],
+      "type": "Album"
+    },
+    "tag": {
+      "artist": [
+        {
+          "artist_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+          "count": 2,
+          "tag": "alternative rock music"
+        },
+        {
+          "artist_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+          "count": 1,
+          "tag": "vyrzukhisuc-artiest"
+        },
+        {
+          "artist_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+          "count": 2,
+          "tag": "progressive rock music"
+        },
+        {
+          "artist_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+          "count": 2,
+          "genre_mbid": "a493b79c-4072-4371-a14c-446b1027982a",
+          "tag": "post-britpop"
+        },
+        {
+          "artist_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+          "count": 3,
+          "genre_mbid": "930ef127-3653-4677-9b95-ecc90c7c1a14",
+          "tag": "art pop"
+        },
+        {
+          "artist_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+          "count": 1,
+          "genre_mbid": "2cdcecfe-3e7c-4055-ab34-78eceabe4d9b",
+          "tag": "ambient pop"
+        },
+        {
+          "artist_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+          "count": 1,
+          "genre_mbid": "c4a69842-f891-4569-9506-1882aa5db433",
+          "tag": "electronic rock"
+        },
+        {
+          "artist_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+          "count": 1,
+          "tag": "britrock"
+        },
+        {
+          "artist_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+          "count": 1,
+          "genre_mbid": "eee90717-3eee-41bd-b463-003c180544bd",
+          "tag": "crossover prog"
+        },
+        {
+          "artist_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+          "count": 1,
+          "tag": "oxford"
+        },
+        {
+          "artist_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+          "count": 1,
+          "genre_mbid": "9e7ae1de-d5f2-46a5-b105-11c7367dc70d",
+          "tag": "indietronica"
+        },
+        {
+          "artist_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+          "count": 1,
+          "genre_mbid": "f0843e91-c025-4dd7-8aef-6fe3d35470d9",
+          "tag": "chamber pop"
+        },
+        {
+          "artist_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+          "count": 1,
+          "tag": "english"
+        },
+        {
+          "artist_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+          "count": 14,
+          "genre_mbid": "65c97e89-b42b-45c2-a70e-0eca1b8f0ff7",
+          "tag": "experimental rock"
+        },
+        {
+          "artist_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+          "count": 1,
+          "genre_mbid": "bbb1310c-24cb-4fc9-97c4-f93e4549f1e2",
+          "tag": "post-grunge"
+        },
+        {
+          "artist_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+          "count": 30,
+          "genre_mbid": "b7ef058e-6d83-4ca4-8123-9724bff4648b",
+          "tag": "art rock"
+        },
+        {
+          "artist_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+          "count": 2,
+          "genre_mbid": "f1c9b874-7ef2-4e79-9419-c0bcb5f33a30",
+          "tag": "britpop"
+        },
+        {
+          "artist_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+          "count": 2,
+          "tag": "alternative"
+        },
+        {
+          "artist_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+          "count": 2,
+          "genre_mbid": "53a3cea3-17af-4421-a07a-5824b540aeb5",
+          "tag": "electronica"
+        },
+        {
+          "artist_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+          "count": 5,
+          "genre_mbid": "ccd19ebf-052c-4afe-8ad9-fbb0a73f94a7",
+          "tag": "indie rock"
+        },
+        {
+          "artist_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+          "count": 1,
+          "tag": "uk"
+        },
+        {
+          "artist_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+          "count": 1,
+          "genre_mbid": "8eb583f1-4fd7-460c-8246-dcdccc0e3ef9",
+          "tag": "idm"
+        },
+        {
+          "artist_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+          "count": 14,
+          "tag": "british"
+        },
+        {
+          "artist_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+          "count": 3,
+          "genre_mbid": "68c81274-5770-4e7b-a4bf-ab0d7d425d99",
+          "tag": "experimental"
+        },
+        {
+          "artist_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+          "count": 43,
+          "genre_mbid": "ceeaa283-5d7b-4202-8d1d-e25d116b2a18",
+          "tag": "alternative rock"
+        },
+        {
+          "artist_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+          "count": 14,
+          "genre_mbid": "89255676-1f14-4dd8-bbad-fca839d6aff4",
+          "tag": "electronic"
+        },
+        {
+          "artist_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+          "count": 19,
+          "genre_mbid": "0e3fc579-2d24-4f20-9dae-736e1ec78798",
+          "tag": "rock"
+        }
+      ],
+      "release_group": [
+        {
+          "count": 1,
+          "tag": "political"
+        },
+        {
+          "count": 13,
+          "genre_mbid": "0e3fc579-2d24-4f20-9dae-736e1ec78798",
+          "tag": "rock"
+        },
+        {
+          "count": 2,
+          "genre_mbid": "89255676-1f14-4dd8-bbad-fca839d6aff4",
+          "tag": "electronic"
+        },
+        {
+          "count": 27,
+          "genre_mbid": "ceeaa283-5d7b-4202-8d1d-e25d116b2a18",
+          "tag": "alternative rock"
+        },
+        {
+          "count": 1,
+          "tag": "owned"
+        },
+        {
+          "count": 1,
+          "tag": "i own this"
+        },
+        {
+          "count": 3,
+          "genre_mbid": "68c81274-5770-4e7b-a4bf-ab0d7d425d99",
+          "tag": "experimental"
+        },
+        {
+          "count": 1,
+          "tag": "british"
+        },
+        {
+          "count": 1,
+          "tag": "uk"
+        },
+        {
+          "count": 1,
+          "tag": "britannique"
+        },
+        {
+          "count": 2,
+          "genre_mbid": "ccd19ebf-052c-4afe-8ad9-fbb0a73f94a7",
+          "tag": "indie rock"
+        },
+        {
+          "count": 1,
+          "tag": "cd"
+        },
+        {
+          "count": 1,
+          "genre_mbid": "8d275a8d-154a-4bcb-8b5a-f56306ad4bcb",
+          "tag": "progressive"
+        },
+        {
+          "count": 1,
+          "tag": "acoustic"
+        },
+        {
+          "count": 1,
+          "tag": "alternative"
+        },
+        {
+          "count": 1,
+          "tag": "melodic"
+        },
+        {
+          "count": 1,
+          "genre_mbid": "f1c9b874-7ef2-4e79-9419-c0bcb5f33a30",
+          "tag": "britpop"
+        },
+        {
+          "count": 15,
+          "genre_mbid": "b7ef058e-6d83-4ca4-8123-9724bff4648b",
+          "tag": "art rock"
+        },
+        {
+          "count": 2,
+          "genre_mbid": "32bea60c-e201-4241-8ed4-228636d34a97",
+          "tag": "leftfield"
+        },
+        {
+          "count": 2,
+          "genre_mbid": "65c97e89-b42b-45c2-a70e-0eca1b8f0ff7",
+          "tag": "experimental rock"
+        },
+        {
+          "count": 2,
+          "genre_mbid": "797e2e85-5ffd-495c-a757-8b4079052f0e",
+          "tag": "pop rock"
+        },
+        {
+          "count": 1,
+          "genre_mbid": "cd99451c-f6d5-47c7-8d49-6c08b51e61aa",
+          "tag": "neo-psychedelia"
+        },
+        {
+          "count": 1,
+          "tag": "urban"
+        },
+        {
+          "count": 2,
+          "tag": "english"
+        },
+        {
+          "count": 3,
+          "tag": "melancholic"
+        },
+        {
+          "count": 1,
+          "tag": "alt rock"
+        },
+        {
+          "count": 1,
+          "tag": "1997"
+        },
+        {
+          "count": 3,
+          "tag": "futuristic"
+        },
+        {
+          "count": 1,
+          "tag": "technology"
+        },
+        {
+          "count": 1,
+          "tag": "rock and indie"
+        },
+        {
+          "count": 2,
+          "tag": "alternative and punk"
+        },
+        {
+          "count": 1,
+          "tag": "poprock"
+        },
+        {
+          "count": 4,
+          "tag": "atmospheric"
+        },
+        {
+          "count": 1,
+          "tag": "dense"
+        },
+        {
+          "count": 1,
+          "tag": "falsetto"
+        },
+        {
+          "count": 1,
+          "tag": "sad"
+        },
+        {
+          "count": 3,
+          "tag": "existential"
+        },
+        {
+          "count": 1,
+          "tag": "britrock"
+        },
+        {
+          "count": 1,
+          "tag": "brit rock"
+        },
+        {
+          "count": 1,
+          "tag": "depressive"
+        },
+        {
+          "count": 1,
+          "tag": "male vocalist"
+        },
+        {
+          "count": 1,
+          "tag": "poetic"
+        },
+        {
+          "count": 3,
+          "tag": "lonely"
+        },
+        {
+          "count": 2,
+          "tag": "nihilistic"
+        },
+        {
+          "count": 1,
+          "tag": "passionate"
+        },
+        {
+          "count": 1,
+          "tag": "introspective"
+        },
+        {
+          "count": 3,
+          "tag": "cold"
+        },
+        {
+          "count": 1,
+          "tag": "pop/rock"
+        },
+        {
+          "count": 1,
+          "tag": "alternative/indie rock"
+        },
+        {
+          "count": 1,
+          "tag": "alternative pop/rock"
+        },
+        {
+          "count": 1,
+          "tag": "alternative & punk"
+        },
+        {
+          "count": 1,
+          "tag": "paranoia"
+        },
+        {
+          "count": 1,
+          "tag": "travel"
+        },
+        {
+          "count": 1,
+          "tag": "alternative/indie"
+        },
+        {
+          "count": 1,
+          "tag": "dystopian"
+        },
+        {
+          "count": 1,
+          "tag": "serious"
+        },
+        {
+          "count": 1,
+          "tag": "rock/alternative rock"
+        },
+        {
+          "count": 2,
+          "tag": "alienation"
+        },
+        {
+          "count": 2,
+          "tag": "anxious"
+        },
+        {
+          "count": 1,
+          "tag": "cynical"
+        },
+        {
+          "count": 1,
+          "tag": "sarcastic"
+        },
+        {
+          "count": 1,
+          "tag": "mental health"
+        },
+        {
+          "count": 1,
+          "tag": "longing"
+        },
+        {
+          "count": 4,
+          "genre_mbid": "a493b79c-4072-4371-a14c-446b1027982a",
+          "tag": "post-britpop"
+        },
+        {
+          "count": 2,
+          "tag": "offizielle charts"
+        },
+        {
+          "count": 1,
+          "tag": "pessimistic"
+        },
+        {
+          "count": 1,
+          "tag": "insecure"
+        },
+        {
+          "count": 3,
+          "genre_mbid": "11c85378-c3d2-4f21-a189-56fac6e3de24",
+          "tag": "space rock revival"
+        },
+        {
+          "count": 1,
+          "tag": "discogs/the most popular album released every year from 1950 to 2020"
+        },
+        {
+          "count": 2,
+          "tag": "5+ wochen"
+        },
+        {
+          "count": 1,
+          "tag": "anti-authoritarian"
+        },
+        {
+          "count": 1,
+          "tag": "vyrzukhisuc-album"
+        },
+        {
+          "count": 1,
+          "tag": "anticonsumerism"
+        }
+      ]
+    }
+  }
+}
