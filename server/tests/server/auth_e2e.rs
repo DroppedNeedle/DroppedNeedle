@@ -76,6 +76,7 @@ impl E2e {
     pub(crate) async fn open_with(tag: &str, tune: impl FnOnce(DbConfig) -> DbConfig) -> Self {
         let scratch = crate::common::ScratchDir::new(&format!("auth-e2e-{tag}"));
         let dir = scratch.to_path_buf();
+        crate::common::migrated_db(&dir.join("app.db"));
         let runtime = open_runtime(&tune(DbConfig::new(&dir.join("app.db"))))
             .await
             .expect("scratch runtime opens");
@@ -347,7 +348,7 @@ pub(crate) async fn call(
 }
 
 /// One request, answered as it came: a busy answer is not asked again.
-async fn call_once(
+pub(crate) async fn call_once(
     app: Router,
     method: &str,
     uri: &str,

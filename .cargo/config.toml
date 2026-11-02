@@ -1,0 +1,8 @@
+[env]
+# SQLite's memory counters take one process-wide mutex on every allocation,
+# so parallel test threads queue on it: four threads migrating took 4.4 s
+# each with the counters on and 1.0 s with them off. Nothing here reads them,
+# and SQLite's docs recommend this setting. It sits at the repo root so every
+# command run inside the repo shares one SQLite build. The Dockerfile sets the
+# same flag, so tests run the SQLite that ships.
+LIBSQLITE3_FLAGS = "-DSQLITE_DEFAULT_MEMSTATUS=0"

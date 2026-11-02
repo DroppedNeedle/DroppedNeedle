@@ -34,7 +34,7 @@ use ring::rand::SystemRandom;
 use ring::signature::{RSA_PKCS1_SHA256, RsaKeyPair, RsaPublicKeyComponents};
 use serde_json::{Value, json};
 
-use crate::auth_e2e::{E2e, call};
+use crate::auth_e2e::{E2e, call, call_once};
 use crate::common::auth::AuthRig;
 
 // ---------------------------------------------------------------------------
@@ -578,8 +578,10 @@ async fn a_declined_plex_start_says_how_long_to_wait() {
         })
         .expect("plex settings save");
 
+    // Once only: `call` would obey the answer's wait and ask again until the
+    // tests' patience ran out.
     let (status, body, headers) =
-        call(e2e.router(), "POST", "/api/v3/auth/plex/start", &[], None).await;
+        call_once(e2e.router(), "POST", "/api/v3/auth/plex/start", &[], None).await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
     assert_eq!(body["error"]["code"], "PROVIDER_UNAVAILABLE");
     assert_eq!(body["error"]["details"]["provider"], "plextv");

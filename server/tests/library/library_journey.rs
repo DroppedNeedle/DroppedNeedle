@@ -2210,10 +2210,7 @@ async fn bare_library_at(
         identify: Arc::new(FakeProviders::default()),
         enrichment,
     };
-    let connection = droppedneedle_kernel::db::open_connection(&scratch.join("app.db"))
-        .expect("scratch db opens");
-    droppedneedle_kernel::schema::apply_migrations_blocking(&connection).expect("migrations apply");
-    drop(connection);
+    crate::common::migrated_db(&scratch.join("app.db"));
     let library = open_library_on(&scratch, clock).await;
     let music = scratch.join("music");
     (scratch, library, music)

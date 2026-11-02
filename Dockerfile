@@ -39,6 +39,8 @@ RUN cargo install cargo-chef --version 0.1.78 --locked
 
 WORKDIR /app
 COPY rust-toolchain.toml ./
+# The same SQLite the tests run: see .cargo/config.toml.
+ENV LIBSQLITE3_FLAGS=-DSQLITE_DEFAULT_MEMSTATUS=0
 
 # The recipe is the manifests and the lock file with every source stripped,
 # so the layer that compiles third-party crates is keyed on nothing else.

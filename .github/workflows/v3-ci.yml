@@ -14,6 +14,7 @@ on:
       - 'Dockerfile'
       - '.dockerignore'
       - 'entrypoint.sh'
+      - '.cargo/**'
       - 'rust-toolchain.toml'
       - '.github/node-version'
       - '.github/workflows/v3-ci.yml'
@@ -26,6 +27,7 @@ on:
       - 'Dockerfile'
       - '.dockerignore'
       - 'entrypoint.sh'
+      - '.cargo/**'
       - 'rust-toolchain.toml'
       - '.github/node-version'
       - '.github/workflows/v3-ci.yml'
@@ -69,6 +71,7 @@ jobs:
               - 'server/**'
               - 'sdk/**'
               - 'examples/plugins/**'
+              - '.cargo/**'
               - 'rust-toolchain.toml'
               - '.github/workflows/v3-ci.yml'
             contract:
@@ -95,7 +98,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 25
     defaults:
       run:
         working-directory: ./server

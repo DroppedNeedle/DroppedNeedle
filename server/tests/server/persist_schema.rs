@@ -312,48 +312,65 @@ async fn foreign_keys_bite_under_enforcement() {
     assert_eq!(left, 0, "bookmarks cascade with their user");
 }
 
+/// SQLite is built without its memory counters (`.cargo/config.toml`). Lost
+/// silently, every parallel test queues on their one mutex.
+#[test]
+fn sqlite_is_built_without_memory_counters() {
+    let connection = rusqlite::Connection::open_in_memory().unwrap();
+    let mut options = connection.prepare("PRAGMA compile_options").unwrap();
+    let options: Vec<String> = options
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert!(
+        options.iter().any(|option| option == "DEFAULT_MEMSTATUS=0"),
+        "{options:?}"
+    );
+}
+
 /// Every earlier schema upgrades to the latest one in place and keeps its
 /// rows: migrate through version N, write an account, apply the rest.
 #[tokio::test]
 async fn every_earlier_version_upgrades_and_keeps_data() {
-    for version in 1..latest_version() {
-        let pool = scratch_pool().await;
-        let through = sqlx::migrate::Migrator {
-            migrations: std::borrow::Cow::Owned(
-                MIGRATOR
-                    .migrations
-                    .iter()
-                    .filter(|migration| migration.version <= version)
-                    .cloned()
-                    .collect(),
-            ),
-            ignore_missing: false,
-            locking: true,
-            no_tx: false,
-        };
-        run_migrations(&pool, &through).await.unwrap();
+    // One walk stopping at every version, not a fresh database per version:
+    // a row left at each stop meets every later migration, and the walk costs
+    // one migrate where one database per version cost about sixty.
+    let pool = scratch_pool().await;
+    let versions: Vec<i64> = MIGRATOR
+        .migrations
+        .iter()
+        .map(|migration| migration.version)
+        .filter(|version| *version < latest_version())
+        .collect();
+    for version in &versions {
+        run_migrations(&pool, &migrator_through(*version))
+            .await
+            .unwrap();
         // From 0101 on, times are integer milliseconds.
-        let created_at = if version >= 101 {
+        let created_at = if *version >= 101 {
             "1704067200000"
         } else {
             "'2024-01-01T00:00:00+00:00'"
         };
         sqlx::query(&format!(
             "INSERT INTO auth_users (id, display_name, role, created_at) \
-             VALUES ('u1', 'Kept', 'user', {created_at})"
+             VALUES ('u{version}', 'Kept {version}', 'user', {created_at})"
         ))
         .execute(&pool)
         .await
         .unwrap();
+    }
 
-        apply_migrations(&pool).await.unwrap();
-        assert_migrated(&pool).await.unwrap();
-        let name: String =
-            sqlx::query_scalar("SELECT display_name FROM auth_users WHERE id = 'u1'")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        assert_eq!(name, "Kept", "upgrade from {version}");
+    apply_migrations(&pool).await.unwrap();
+    assert_migrated(&pool).await.unwrap();
+    for version in &versions {
+        let name: String = sqlx::query_scalar("SELECT display_name FROM auth_users WHERE id = ?")
+            .bind(format!("u{version}"))
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(name, format!("Kept {version}"), "upgrade from {version}");
     }
 }
 

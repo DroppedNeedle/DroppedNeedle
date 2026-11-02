@@ -318,27 +318,6 @@ async fn user_version(conn: &mut SqliteConnection) -> Result<i64, sqlx::Error> {
         .await
 }
 
-/// Apply the pending embedded migrations over one rusqlite connection, for
-/// scratch test databases that never meet the async pool. Production
-/// boots through [`apply_migrations`].
-///
-/// Like the sqlx migrator, a migration already applied is skipped: every
-/// migration stamps `user_version`, so anything at or below the stamp is
-/// done. Running this twice on one database is a no-op, which matters
-/// because SQLite cannot make `ALTER TABLE ... ADD COLUMN` or a table
-/// rebuild safe to replay in SQL alone. `execute_batch` wraps nothing, so a
-/// `-- no-transaction` file runs as written here too.
-#[cfg(any(test, feature = "test-support"))]
-pub fn apply_migrations_blocking(connection: &rusqlite::Connection) -> rusqlite::Result<()> {
-    let applied: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-    for migration in MIGRATOR.migrations.iter() {
-        if migration.version > applied {
-            connection.execute_batch(&migration.sql)?;
-        }
-    }
-    Ok(())
-}
-
 /// Refuse to serve when `user_version` differs from the binary.
 pub async fn assert_migrated(pool: &SqlitePool) -> Result<(), SchemaError> {
     let found: i64 = sqlx::query_scalar("PRAGMA user_version")

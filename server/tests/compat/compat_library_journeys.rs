@@ -587,6 +587,7 @@ async fn a_composite_artist_sends_no_musicbrainz_id() {
 
     let answer = subsonic_ok(&rig, &format!("getArtist?id=ar-{artist}")).await;
     assert_eq!(answer["artist"]["musicBrainzId"], json!(""), "{answer}");
+    rig.jellyfin_ids_caught_up().await;
     let token = rig.jellyfin_auth();
     let (status, item) = rig
         .app
@@ -606,6 +607,7 @@ async fn a_composite_artist_sends_no_musicbrainz_id() {
 /// `ProviderIds` of the album a Jellyfin app reaches from its `track`.
 async fn album_ids_sent(rig: &CompatApp, album: &str, track: &str) -> (Value, Value) {
     let subsonic = subsonic_ok(rig, &format!("getAlbum?id=al-{album}")).await;
+    rig.jellyfin_ids_caught_up().await;
     let token = rig.jellyfin_auth();
     let auth = [("X-Emby-Authorization", token.as_str())];
     let (status, item) = rig
@@ -2526,6 +2528,7 @@ async fn jellyfin_album_id(rig: &CompatApp, name: &str) -> String {
 /// The Jellyfin id a signed-in app is handed for the album artist of the
 /// track `track`.
 async fn jellyfin_artist_id(rig: &CompatApp, track: &str) -> String {
+    rig.jellyfin_ids_caught_up().await;
     let token = rig.jellyfin_auth();
     let (status, item) = rig
         .app

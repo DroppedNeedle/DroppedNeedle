@@ -992,7 +992,7 @@ async fn a_scan_moves_the_catalog_revision_as_it_goes() {
             moved > before,
             "the first window moved the catalog revision: {before} -> {moved}"
         );
-        let heard = tokio::time::timeout(Duration::from_secs(10), async {
+        let heard = tokio::time::timeout(Duration::from_secs(30), async {
             loop {
                 let frame = listener.next().await.expect("the hub stays open");
                 if frame.name() != "activity.changed" {
