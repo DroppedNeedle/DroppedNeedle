@@ -3,8 +3,7 @@
 //! [`SqliteScanStore::refresh_album_artwork`] walks the indexed albums and
 //! records the cover each one has in `local_album_artwork`: an image in the
 //! album folder first (`cover.jpg`, `folder.png`, ...), else the first
-//! picture embedded in one of its tracks. That is the same order v2 used
-//! for local art, and the one Navidrome uses.
+//! picture embedded in one of its tracks. Navidrome uses the same order.
 //!
 //! Only the reference is stored (the folder image path, or the id of the
 //! track holding the picture) plus a hash of the image bytes. The hash is
@@ -51,13 +50,11 @@ use crate::tags::TagsError;
 use droppedneedle_kernel::beneath::{RootLinks, open_file_beneath};
 use droppedneedle_providers::coverart::sniff_image_content_type;
 
-/// Folder image names, most deliberate first, matched case-insensitively
-/// (v2 `_LOCAL_COVER_STEMS`).
+/// Folder image names, most deliberate first, matched case-insensitively.
 const COVER_STEMS: [&str; 5] = ["cover", "folder", "front", "album", "artwork"];
-/// Folder image extensions (v2 `_LOCAL_COVER_EXTENSIONS`).
+/// Folder image extensions.
 const COVER_EXTENSIONS: [&str; 4] = ["jpg", "jpeg", "png", "webp"];
-/// Folder images and embedded pictures larger than this are ignored (v2
-/// `_LOCAL_COVER_MAX_BYTES`).
+/// Folder images and embedded pictures larger than this are ignored.
 const COVER_MAX_BYTES: u64 = 25 * 1024 * 1024;
 /// Longest stretch one sweep runs before handing back to the scan loop.
 pub const SWEEP_SLICE: std::time::Duration = std::time::Duration::from_secs(30);
@@ -339,7 +336,7 @@ pub(super) fn any_file_away(tracks: &[TrackFile]) -> bool {
 
 /// Folders an album's tracks live in, in track order. Disc folders
 /// (`Album/CD1/...`) keep their art one level up, so when every track
-/// folder shares one parent, that parent is probed last (v2 rule).
+/// folder shares one parent, that parent is probed last.
 pub(super) fn album_dirs(tracks: &[TrackFile]) -> Vec<PathBuf> {
     let mut dirs: Vec<PathBuf> = Vec::new();
     for track in tracks {

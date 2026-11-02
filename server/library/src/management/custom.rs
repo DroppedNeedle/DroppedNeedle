@@ -1,6 +1,6 @@
 //! Custom editions: an album sealed by hand as "these files, under this
 //! release group", with no MusicBrainz release behind it. Management
-//! plans such an album from its sealed manifest, as v2 did: the album and
+//! plans such an album from its sealed manifest: the album and
 //! track facts frozen when it was sealed stand in for a release, and no
 //! release or release-track MBID is ever written.
 

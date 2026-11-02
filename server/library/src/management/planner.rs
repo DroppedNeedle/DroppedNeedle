@@ -909,8 +909,8 @@ fn left_alone_note(left_alone: &[(String, tags::save::LeftAlone)]) -> Option<Str
     ))
 }
 
-/// Plan the file's embedded pictures (v2's embedded artwork and its
-/// picture scrub) as one list:
+/// Plan the file's embedded pictures (embedded artwork and the picture
+/// scrub) as one list:
 /// - the front cover: with embedding on, the album's cover, unless the
 ///   file's front already holds these bytes or, under "never replace with
 ///   smaller", a larger image (then the file's own front stays);
@@ -1057,7 +1057,7 @@ fn plan_pictures(
     Ok(())
 }
 
-/// The album's cover file next to its tracks (v2's external artwork):
+/// The album's cover file next to its tracks (external artwork):
 /// written only where no cover file the profile recognises already sits,
 /// in the folder the album ends up in or the one it comes from.
 fn cover_file(
@@ -1176,7 +1176,7 @@ fn drop_shadowed_outputs(items: &mut [PlannedItem]) {
     }
 }
 
-/// Most files one album's ReplayGain analysis covers (as v2).
+/// Most files one album's ReplayGain analysis covers.
 const MAX_REPLAYGAIN_TRACKS: usize = 500;
 
 /// Measure the album's ReplayGain when the profile writes it and some file
@@ -1656,7 +1656,7 @@ pub(crate) fn acoustid_values(
 }
 
 /// Most sidecar files one album may carry, and most directory entries
-/// looked at to find them (as in v2).
+/// looked at to find them.
 const MAX_SIDECARS: usize = 1_000;
 const MAX_SIDECAR_ENTRIES: usize = 10_000;
 
@@ -1738,7 +1738,7 @@ fn sidecar_candidates(dir: &Path, deep: bool, patterns: &[Vec<char>]) -> Option<
 }
 
 /// Sidecars (cover art, cue sheets, logs) travel with the album when its
-/// folder moves, as v2 did: the files in the first moving file's folder
+/// folder moves: the files in the first moving file's folder
 /// that match the profile's patterns go to its new folder. A sidecar
 /// that would land on an existing file blocks the album instead.
 fn plan_sidecars(ctx: &PlanContext<'_>, items: &mut [PlannedItem]) {

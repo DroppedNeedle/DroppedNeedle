@@ -3,7 +3,7 @@
 //! management touch an album again after it was excluded.
 //!
 //! Removing never deletes audio. Without `delete_files` the tracks only
-//! leave the catalog (marked missing, rows and references kept, as v2).
+//! leave the catalog (marked missing, rows and references kept).
 //! With it, the removal goes through the publisher as one bundle
 //! (`publish::remove`): each file is set aside under the journal, the
 //! catalog marks the tracks missing in one commit, and only then does each
@@ -1294,7 +1294,7 @@ fn put_back_refusal(refused: PutBackRefusal) -> MutationError {
 }
 
 /// Mark indexed tracks missing, one catalog action each; rows and
-/// references stay (v2 `mark_target_tracks_missing`).
+/// references stay.
 fn mark_missing(
     tx: &Transaction<'_>,
     tracks: &[TrackFile],

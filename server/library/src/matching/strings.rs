@@ -196,8 +196,8 @@ fn strip_part(value: &str) -> String {
     value.to_owned()
 }
 
-/// Words that name an edition rather than an album (v2's
-/// `EDITION_SUFFIXES`); album titles drop them before the title gate.
+/// Words that name an edition rather than an album. Album titles drop them
+/// before the title gate.
 const EDITION_WORDS: [&str; 23] = [
     "deluxe",
     "remastered",
@@ -394,8 +394,7 @@ pub fn artist_dist(left: &str, right: &str) -> f64 {
 
 /// True when one credit's artists contain the other's ("Iron Coast;
 /// Vela" and "Iron Coast"), never for disjoint credits (a tribute band
-/// and the band it covers). A repeated artist counts each time. v2's
-/// `_artist_subset_match`.
+/// and the band it covers). A repeated artist counts each time.
 pub fn artist_subset(left: &str, right: &str) -> bool {
     let left = artist_tokens(left);
     let right = artist_tokens(right);

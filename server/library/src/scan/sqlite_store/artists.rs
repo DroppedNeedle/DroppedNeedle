@@ -1,6 +1,6 @@
 //! Which artist row a file's credits land on.
 //!
-//! An artist row is keyed by the tag's name and sort name, as in v2. A
+//! Quirk (v2): an artist row is keyed by the tag's name and sort name. A
 //! credit whose file lists its artists with their MusicBrainz ids one for
 //! one (`ARTISTS` with `MUSICBRAINZ_ARTISTID`, `ALBUMARTISTS` with
 //! `MUSICBRAINZ_ALBUMARTISTID`) carries its id, and that id picks the row

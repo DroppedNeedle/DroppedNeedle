@@ -61,7 +61,7 @@ pub fn root_assignment(
         })
 }
 
-/// A tag-only profile for the tag editor (as in v2): the folder's own
+/// A tag-only profile for the tag editor: the folder's own
 /// profile with only the edited fields managed: no scripts, genres,
 /// lyrics, ReplayGain, scrubbing, renames, moves or artwork.
 pub fn tag_edit_profile(
@@ -730,7 +730,7 @@ pub fn plan_tags(
         });
         updates.insert(TagTarget::Field(field), new);
     }
-    // Scrubbing (v2's rule): every native item outside the managed
+    // Scrubbing: every native item outside the managed
     // fields goes, except the ones the profile preserves and v2's other
     // managed spellings, which always stay. The values are recorded in
     // the before-state, so undo and a baseline restore put them back.
@@ -809,11 +809,10 @@ fn names_unavailable() -> ItemReason {
 }
 
 /// Native spellings (folded keys) a scrub never removes: every spelling
-/// in v2's per-format maps (`_ID3_TXXX`, the ID3 frame list, the Vorbis
-/// and MP4 key maps), plus spellings of v2's other managed names
-/// (comment, encoder, copyright, publisher, grouping). Spellings a
-/// writable field owns never reach the scrub; they are listed so the
-/// list can be checked against v2's whole.
+/// in the per-format maps (ID3 TXXX, the ID3 frame list, the Vorbis and MP4
+/// key maps), plus spellings of other managed names (comment, encoder,
+/// copyright, publisher, grouping). Spellings a writable field owns never
+/// reach the scrub; they are listed so this set stays complete.
 const SCRUB_KEEPS: &[&str] = &[
     "id3:comm",
     "id3:grp1",

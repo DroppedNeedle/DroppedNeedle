@@ -1,8 +1,7 @@
 //! The verdict on one album, from what the matcher made of its files
 //! against MusicBrainz. Pure: the service gathers the facts, this decides.
 //!
-//! Ported from v2's `IdentityRepairService._classify` (identity repair)
-//! and `_classify_management_readiness` (identity preparation), on top of
+//! Identity repair and identity preparation verdicts, on top of
 //! v3's matching engine: a candidate's per-file evidence is the matcher's,
 //! and "the matcher would accept it" is the candidate's `automatic_safe`.
 
@@ -190,9 +189,9 @@ pub fn readiness_exact(
         })
 }
 
-/// Top score an edition needs to be accepted without a person (v2's).
+/// Top score an edition needs to be accepted without a person.
 pub const MIN_AUTO_ACCEPT_SCORE: f64 = 0.95;
-/// Lead over the next edition an automatic acceptance needs (v2's).
+/// Lead over the next edition an automatic acceptance needs.
 pub const AUTO_ACCEPT_MARGIN: f64 = 0.05;
 
 /// Per-candidate reasons that count as fully supported: the matcher's
@@ -201,10 +200,10 @@ pub const AUTO_ACCEPT_MARGIN: f64 = 0.05;
 /// `SUPPORTED_EMBEDDED_IDS`.
 const QUALIFYING_REASONS: [&str; 2] = ["SUPPORTED", "CLOSE_MATCH"];
 
-/// v2's automatic acceptance gate over the suggestible editions, best
+/// The automatic acceptance gate over the suggestible editions, best
 /// first: the best scores at least 0.95 and is alone, or beats the next
 /// by 0.05 without tying any other on score, status, date and country.
-/// As in v2, every suggestible edition must also carry a fully supported
+/// Every suggestible edition must also carry a fully supported
 /// reason, and the best must be one the matcher would accept on its own.
 /// Returns `AUTO_ACCEPT` or the reason the suggestion waits for a person.
 pub fn auto_gate(ranked: &[(&ReidentificationCandidate, EditionSummary)]) -> &'static str {

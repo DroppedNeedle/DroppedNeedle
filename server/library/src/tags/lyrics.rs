@@ -31,9 +31,9 @@ use lofty::tag::{ItemKey, TagType};
 
 use super::{AudioFormat, format_for_path};
 
-/// Largest lyrics payload read, in bytes (v2 `_MAX_LYRICS_BYTES`).
+/// Largest lyrics payload read, in bytes.
 pub const MAX_LYRICS_BYTES: usize = 2 * 1024 * 1024;
-/// Largest lyrics payload read, in characters (v2 `_MAX_LYRICS_CHARACTERS`).
+/// Largest lyrics payload read, in characters.
 pub const MAX_LYRICS_CHARACTERS: usize = 1_000_000;
 
 /// Lyrics parsed into lines.

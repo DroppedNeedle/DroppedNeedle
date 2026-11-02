@@ -1,7 +1,6 @@
 //! Stat-derived change detection for hashless scans.
 //!
-//! Port of v2's file revision, including its accepted tradeoff: a
-//! revision is `size:mtime_ns` only. A content
+//! Quirk (v2): a revision is `size:mtime_ns` only. A content
 //! swap that preserves size and lands in the same mtime tick classifies as
 //! unchanged. Folding `ctime` into the revision would narrow this but
 //! mass-promote legacy entries to changed, so it needs the owner's
@@ -24,7 +23,7 @@ pub fn mtime_ns_from_metadata(meta: &Metadata) -> i64 {
         .unwrap_or(0)
 }
 
-/// One unit in the last place for a float (v2 `math.ulp`).
+/// One unit in the last place for a float.
 fn ulp(value: f64) -> f64 {
     if !value.is_normal() {
         // Matches math.ulp(0.0): the smallest subnormal.
@@ -33,8 +32,8 @@ fn ulp(value: f64) -> f64 {
     2f64.powi(value.abs().log2().floor() as i32 - 52)
 }
 
-/// Symmetric epsilon band for legacy float mtime compares (v2
-/// `_legacy_mtime_eps_seconds`): `max(1us, 4*ulp)`, so the band
+/// Symmetric epsilon band for legacy float mtime compares:
+/// `max(1us, 4*ulp)`, so the band
 /// tracks epoch growth instead of silently drifting. Covers float error
 /// only; real rewrites still classify as changed.
 pub fn legacy_mtime_eps_seconds(file_mtime: f64) -> f64 {

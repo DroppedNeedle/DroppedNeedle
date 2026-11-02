@@ -1,6 +1,6 @@
 //! Stable scan supervisor: recovery, dirty scopes, schedule, worker.
 //!
-//! Port of v2's library scan supervisor. One loop owns every trigger:
+//! Library scan supervisor. One loop owns every trigger:
 //! Hook A (one-shot startup reconciliation),
 //! Hook B (dirty scope marks from settings saves), the rolling schedule
 //! tick, and the single scan worker. Iterations never fail the loop: a
@@ -31,8 +31,8 @@ pub struct SupervisorInputs {
     pub now_unix: Arc<dyn Fn() -> f64 + Send + Sync>,
 }
 
-/// Resolve Hook B dirty scope ids against current settings (v2
-/// `_scopes_for_dirty_ids`). Ids that no longer resolve are dropped:
+/// Resolve Hook B dirty scope ids against current settings. Ids that no
+/// longer resolve are dropped:
 /// dirty marks are hints only, and removals converge through
 /// policy reconciliation instead.
 pub fn scopes_for_dirty_ids(registry: &RootRegistry, scope_ids: &[String]) -> Vec<ScanScope> {
@@ -92,8 +92,8 @@ where
     }
 }
 
-/// Startup recovery plus the Hook A one-shot reconciliation scan (v2
-/// supervisor preamble, every boot). Guards mirror the loop gates:
+/// Startup recovery plus the Hook A one-shot reconciliation scan, run on
+/// every boot. Guards mirror the loop gates:
 /// enabled, not manual, nothing resumable or current, non-empty scopes.
 /// Every request disposition is acceptable; failures log and the loop
 /// below still runs.

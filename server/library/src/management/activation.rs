@@ -62,7 +62,7 @@ fn settings_error(error: SettingsError) -> ManagementError {
 
 impl Management {
     /// The library policy revision activation pins compare against (the
-    /// settings' own revision of the roots and rules, as in v2).
+    /// settings' own revision of the roots and rules).
     pub(super) fn activation_policy_revision(&self) -> Result<String, ManagementError> {
         self.parts
             .core

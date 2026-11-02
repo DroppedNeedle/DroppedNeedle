@@ -1,8 +1,8 @@
 //! SQLite-backed scan store: durable runs, scopes, inventory, failures,
 //! and the track catalog over the 0001 baseline tables.
 //!
-//! [`SqliteScanStore`] keeps the v2 disposition,
-//! transition, and verdict semantics: the cover rule, union
+//! [`SqliteScanStore`] keeps the disposition, transition, and
+//! verdict semantics: the cover rule, union
 //! normalization, idempotent control answers, the legacy-mtime band with
 //! promotion, and the deferred re-offer. `runs` holds the run lifecycle,
 //! `inventory` the discovery inventory, `catalog` the track catalog.
@@ -365,7 +365,7 @@ fn read_scan_stream(conn: &Connection) -> rusqlite::Result<u64> {
 }
 
 /// True when a stored scope covers a requested one: same root, same policy
-/// revision, stored path is the requested path or an ancestor (memory port).
+/// revision, stored path is the requested path or an ancestor.
 fn scope_covers(existing: &ScanScope, requested_root: &str, requested: &ScanScope) -> bool {
     existing.root_id == requested_root
         && existing.policy_revision == requested.policy_revision

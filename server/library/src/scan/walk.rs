@@ -1,6 +1,6 @@
 //! One-walk, bounded-queue discovery.
 //!
-//! Port of v2's library inventory scanner. A
+//! Library inventory scanner. A
 //! blocking producer walks each scope and streams file stats through a
 //! bounded channel; the async consumer dedups, classifies, and persists
 //! inventory in batches. Skip-and-report runs through everything: one bad
@@ -33,21 +33,20 @@ use super::stop::RunStop;
 use super::store::{ClassifyInput, ScanStoreError};
 use crate::clock::LibraryClock as _;
 
-/// Bounded discovery queue (v2 `INVENTORY_QUEUE_SIZE`).
+/// Bounded discovery queue.
 pub const INVENTORY_QUEUE_SIZE: usize = 256;
-/// Inventory rows persisted per batch (v2 `INVENTORY_BATCH_SIZE`).
+/// Inventory rows persisted per batch.
 pub const INVENTORY_BATCH_SIZE: usize = 256;
 /// Reap horizon for wedged detached walkers as a multiple of the walk
-/// deadline (v2 `DETACHED_WALKER_REAP_MULTIPLIER`).
+/// deadline.
 pub const DETACHED_WALKER_REAP_MULTIPLIER: f64 = 3.0;
-/// Default walk deadline (v2 `walk_deadline_seconds`).
+/// Default walk deadline.
 pub const DEFAULT_WALK_DEADLINE_SECS: f64 = 30.0;
-/// Default cap on in-flight detached walkers (v2 `max_detached_walkers`).
+/// Default cap on in-flight detached walkers.
 pub const DEFAULT_MAX_DETACHED_WALKERS: usize = 4;
 
-/// Audio suffixes, lowercase with dot (v2 `AUDIO_EXTENSIONS` in
-/// `local_files_service.py`). Matching is case-insensitive ASCII, which
-/// equals v2's `casefold` for these suffixes.
+/// Audio suffixes, lowercase with dot. Matching is case-insensitive ASCII,
+/// which equals `casefold` for these suffixes.
 pub const AUDIO_EXTENSIONS: &[&str] = &[".flac", ".mp3", ".ogg", ".m4a", ".aac", ".wav", ".opus"];
 
 pub fn is_audio_file(path: &Path) -> bool {
@@ -62,8 +61,8 @@ pub fn is_audio_file(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-/// POSIX text for a path that is always bindable as stored TEXT (v2
-/// `_text_safe_posix`): names that are not valid UTF-8 are
+/// POSIX text for a path that is always bindable as stored TEXT: names that
+/// are not valid UTF-8 are
 /// losslessly percent-encoded from their raw bytes instead.
 pub fn text_safe_posix(path: &Path) -> String {
     #[cfg(unix)]
@@ -107,7 +106,7 @@ fn percent_encode_bytes(bytes: &[u8]) -> String {
     out
 }
 
-/// Relativize for failure and heartbeat paths (v2 `_relativize`).
+/// Relativize for failure and heartbeat paths.
 pub fn relativize(path: &Path, root: &Path) -> String {
     match path.strip_prefix(root) {
         Ok(relative) => text_safe_posix(relative),
@@ -115,8 +114,8 @@ pub fn relativize(path: &Path, root: &Path) -> String {
     }
 }
 
-/// NFC-normalized inventory key for one in-root path (v2 `_inventory_key`,
-/// step 4.13). macOS writes NFD bytes, so an NFC<->NFD rename of an
+/// NFC-normalized inventory key for one in-root path. macOS writes NFD bytes,
+/// so an NFC<->NFD rename of an
 /// unchanged file must classify as a move (same key) instead of a
 /// delete+new pair. Only the key is normalized; display strings keep their
 /// on-disk form, and case-only variants are unaffected.
@@ -130,8 +129,7 @@ pub fn inventory_key(path: &Path, root: &Path) -> String {
     }
 }
 
-/// Class-name-plus-errno detail, never the message or filesystem paths
-/// (v2 `_walk_failure_detail`).
+/// Class-name-plus-errno detail, never the message or filesystem paths.
 fn walk_failure_detail(error: &std::io::Error) -> String {
     match error.raw_os_error() {
         Some(errno) => format!("IoError (errno={}) while walking.", errno_name(errno)),
@@ -178,8 +176,8 @@ fn walk_error_code(error: &std::io::Error) -> FailureCode {
     }
 }
 
-/// Thread-safe liveness signal written by the walk producer (v2
-/// `_WalkHeartbeat`): `WALK_TIMEOUT` fires only when no progress
+/// Thread-safe liveness signal written by the walk producer: `WALK_TIMEOUT`
+/// fires only when no progress
 /// signal arrived for the whole deadline.
 #[derive(Debug)]
 struct WalkHeartbeat {
@@ -281,7 +279,7 @@ fn send_with_stop(
     }
 }
 
-/// One-walk bounded-queue inventory scanner (v2 `LibraryInventoryScanner`).
+/// One-walk bounded-queue inventory scanner.
 pub struct InventoryScanner {
     store: Arc<SqliteScanStore>,
     pool: BlockingPool,
@@ -485,7 +483,7 @@ impl InventoryScanner {
         }
     }
 
-    /// Discover every scope of a run (v2 `discover`).
+    /// Discover every scope of a run.
     pub async fn discover<C: Checkpoint>(
         &self,
         run: &ScanRun,
@@ -744,7 +742,7 @@ impl InventoryScanner {
         Ok(current)
     }
 
-    /// Walk one scope and persist its inventory (v2 `_walk_scope`).
+    /// Walk one scope and persist its inventory.
     #[allow(clippy::too_many_arguments)]
     async fn walk_scope<C: Checkpoint>(
         &self,
@@ -1076,7 +1074,7 @@ impl InventoryScanner {
         }
     }
 
-    /// Classify and persist one inventory page (v2 `_persist_batch`).
+    /// Classify and persist one inventory page.
     /// Returns the revision plus whether the batch landed: a skipped
     /// batch degrades the scope (its files are invisible to reconcile),
     /// so the outcome must reach the caller, not just the log.
@@ -1398,7 +1396,7 @@ pub fn folder_digests(
     Ok(digests)
 }
 
-/// Blocking walk producing inventory messages (v2 `producer`). Runs on the
+/// Blocking walk producing inventory messages. Runs on the
 /// pool: stat-only, symlink-cautious, skip-and-report. `device` reads the
 /// filesystem of each folder the walk descends into, once, to report mounts.
 /// `yielded` holds the real folders of other roots that index the files

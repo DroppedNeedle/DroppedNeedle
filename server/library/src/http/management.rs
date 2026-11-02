@@ -2,7 +2,7 @@
 //! through its files, apply or discard it, get a new token for it, read
 //! the history and results of applied jobs, and preview an undo.
 //!
-//! Every route is admin-only, as in v2. Store and file work runs on a
+//! Every route is admin-only. Store and file work runs on a
 //! blocking thread.
 
 use axum::{

@@ -482,7 +482,7 @@ pub fn current_picard_preset_scripts(settings: &LibraryManagement) -> (NamingScr
     (scripts.remove(0), scripts.remove(0))
 }
 
-/// Fresh-tenant initial settings (v2 `build_initial_library_management_settings`):
+/// Fresh-tenant initial settings:
 /// the Picard-style (default) and complete organizer presets with their
 /// two naming scripts, plus a path-only profile seeded from the library's
 /// import naming script. Nothing is assigned to a root, so seeding never

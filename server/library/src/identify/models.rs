@@ -8,7 +8,7 @@ use crate::matching::{PenaltyShare, Release};
 
 pub use crate::identity::DecisionSource;
 
-/// Per-track verdict against one candidate, ported from v2.
+/// Per-track verdict against one candidate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum EvidenceClass {
@@ -17,7 +17,7 @@ pub enum EvidenceClass {
     Contradictory,
 }
 
-/// Terminal outcomes of one identification attempt, ported from v2.
+/// Terminal outcomes of one identification attempt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum IdentificationOutcome {

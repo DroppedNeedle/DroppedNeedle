@@ -12,7 +12,7 @@
 //! `staging`). Custom tags and unknown native frames stay preserved
 //! by the save wrapper's byte-level handling, not by this document.
 //!
-//! The staged writer contract lives in `staging` now: managed-field
+//! The staged writer contract lives in `staging`: managed-field
 //! names outside the save wrapper's surface block at preview time,
 //! and unknown frames round-trip untouched through the real tag
 //! stack. There is no document-level simulation of a save here.

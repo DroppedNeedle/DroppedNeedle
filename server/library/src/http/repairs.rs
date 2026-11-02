@@ -1,6 +1,6 @@
 //! Identity repair, identity preparation and scan diagnostics routes, at
-//! v2's paths under `/api/v3/library`. Every route is admin-only, as in
-//! v2. Store work runs on a blocking thread.
+//! v2's paths under `/api/v3/library`. Every route is admin-only. Store work
+//! runs on a blocking thread.
 
 use std::collections::BTreeMap;
 

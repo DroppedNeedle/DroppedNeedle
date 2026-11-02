@@ -7,7 +7,7 @@ use sha2::{Digest as _, Sha256};
 use super::models::{Candidate, Dismissal, Group, GroupInputs, GroupPage, GroupState, Member};
 use super::reasons;
 
-/// Largest page of groups, as in v2.
+/// Largest page of groups.
 pub const PAGE_MAX: usize = 100;
 
 /// Every group, open ones from same-name records and resolved ones from
@@ -283,8 +283,7 @@ fn sort_key(group: &Group) -> (String, &str) {
 
 /// One page of groups after `after`, the sort key the last page ended
 /// on, so a page boundary survives groups disappearing between reads. The
-/// state counts cover every group, before the state and search filters,
-/// as in v2.
+/// state counts cover every group, before the state and search filters.
 pub fn page(
     groups: Vec<Group>,
     limit: usize,

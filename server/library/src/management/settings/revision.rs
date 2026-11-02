@@ -7,8 +7,7 @@ use droppedneedle_kernel::runtime_config::sections::{
     LibraryManagement, LibraryManagementProfile, NamingScript, TaggingScript,
 };
 
-/// Strip the legacy-compat shims before hashing (v2
-/// `_remove_default_*`): default lyrics preservation, default
+/// Strip the legacy-compat shims before hashing: default lyrics preservation, default
 /// multi-disc naming (`inherit` + null script), and the default
 /// identity section (automatic acceptance off).
 fn strip_legacy_shims(profile: &mut serde_json::Value) {

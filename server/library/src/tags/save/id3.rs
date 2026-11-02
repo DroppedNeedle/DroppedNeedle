@@ -183,7 +183,7 @@ fn id3_native(tag: &DeepId3) -> BTreeMap<String, Vec<String>> {
         }
         out.insert(format!("id3:{key}"), text.values.clone());
     }
-    // Comment, link, private and object frames, as v2's scrub saw them:
+    // Comment, link, private and object frames, as the scrub sees them:
     // each value is one frame's raw payload (base64), so a restore writes
     // the same bytes back. Frames left out of the list are never touched
     // (see `raw_listing`).

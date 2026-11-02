@@ -4,8 +4,7 @@
 //! history pages, estimates, failed paths, pause, resume and stop, the
 //! identification pause switch, and the activity feed. Everything here is
 //! for administrators except the activity feed, which every signed-in
-//! user reads (administrators see a little more). Ported from v2's
-//! `library_scan_target` routes.
+//! user reads (administrators see a little more).
 
 use crate::activity::Activity;
 use crate::scans::Scans;

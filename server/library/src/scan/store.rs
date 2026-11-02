@@ -133,8 +133,7 @@ pub struct WindowOutcome {
     pub failed: Vec<(String, String, String)>,
 }
 
-/// Store errors. Spelling mirrors the v2 exception mapping: stale reads
-/// fail loudly, missing runs are not-found. The database's own answers
+/// Store errors. Stale reads fail loudly, missing runs are not-found. The database's own answers
 /// that a caller branches on keep their own variants.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ScanStoreError {

@@ -1,6 +1,6 @@
 //! The Library Management service behind `/settings/library-management/*`.
 //!
-//! Ports v2's `LibraryManagementProfileService`: settings reads and CAS
+//! Settings reads and CAS
 //! saves, impact previews, profile create/copy/update/delete, preset
 //! diffs, activation health, and profile sharing. Every write goes
 //! through [`LibraryManagementService::save_settings`], which normalizes,
@@ -8,7 +8,7 @@
 //! change without a current confirmed dry run.
 //!
 //! Settings are read from the store on every call, never cached. The
-//! first read seeds the presets (v2 seeds exactly once, from the naming
+//! first read seeds the presets (exactly once, from the naming
 //! template configured before Library Management existed) and later
 //! reads persist preset-catalog migrations.
 //!

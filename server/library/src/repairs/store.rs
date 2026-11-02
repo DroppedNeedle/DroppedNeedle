@@ -1234,7 +1234,7 @@ pub fn settle_finding(
 // Findings.
 // ---------------------------------------------------------------------------
 
-/// The finding codes a category lists, per purpose (v2's groups).
+/// The finding codes a category lists, per purpose.
 pub fn category_codes(purpose: Purpose, category: &str) -> Option<&'static [FindingCode]> {
     use FindingCode as F;
     let codes: &[FindingCode] = match (purpose, category) {

@@ -497,7 +497,7 @@ pub enum LyricsAnswer {
     Found(LyricsFound),
 }
 
-/// Ask LRCLIB for one track's lyrics by its exact signature (v2's
+/// Ask LRCLIB for one track's lyrics by its exact signature (the
 /// accuracy gate: title, artist, album and a length within two seconds),
 /// at background priority for an automatic run.
 pub fn lyrics(

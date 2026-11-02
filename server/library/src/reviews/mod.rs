@@ -6,7 +6,7 @@
 //! editions dropped when albums were combined, and repair findings.
 //!
 //! Choosing a candidate seals through the identify service. This module
-//! settles the rest of what v2 offered: keep as tagged, dismiss (close
+//! settles the rest: keep as tagged, dismiss (close
 //! without a decision), detach (take the match off and keep the tags),
 //! exclude (take the files out of the library) and restore (put them
 //! back). Each runs inside the caller's transaction, and only while the

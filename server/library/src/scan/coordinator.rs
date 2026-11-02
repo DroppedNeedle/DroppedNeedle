@@ -1,7 +1,7 @@
 //! Single durable entry point for every scan trigger.
 //!
-//! Port of v2's library scan coordinator plus the indexing and
-//! reconciliation phases (v2's library indexer and reconciler). Tag reads
+//! Library scan coordinator plus the indexing and reconciliation phases.
+//! Tag reads
 //! ride the [`TagReader`](super::seams::TagReader) seam with bounded
 //! concurrency on the blocking pool; each index window commits its catalog
 //! rows, inventory marks, counters, and identify offers in one transaction,
@@ -53,7 +53,7 @@ fn release_scan_memory() {
     }
 }
 
-/// Index batch size between checkpoints (v2 commits per tag batch).
+/// Index batch size between checkpoints.
 pub const INDEX_CHECKPOINT_EVERY: usize = 16;
 /// Inventory rows processed per index page. The coordinator streams the
 /// run's inventory in pages instead of holding all rows resident; 5,000
@@ -63,13 +63,12 @@ pub const INDEX_PAGE_SIZE: usize = 5_000;
 /// [`INDEX_CHECKPOINT_EVERY`] rows; only the SQLite flush is coarser, so
 /// a crash re-offers at most one window next run.
 pub const INDEX_FLUSH_EVERY: usize = 256;
-/// Bound on stale retries when settling control (v2
-/// `SETTLE_STALE_MAX_RETRIES`).
+/// Bound on stale retries when settling control.
 pub const SETTLE_STALE_MAX_RETRIES: u32 = 10;
-/// Counter-event throttle (v2 `COUNTER_EVENT_INTERVAL_SECONDS`).
+/// Counter-event throttle.
 pub const COUNTER_EVENT_INTERVAL_SECS: f64 = 2.0;
 
-/// Live resolver source. v2 re-reads the resolver through a getter every
+/// Live resolver source. The resolver is re-read at every
 /// checkpoint so settings-save rebuilds never strand a run on stale
 /// policy; this trait is that getter.
 pub trait ResolverSource: Send + Sync {
@@ -166,7 +165,7 @@ impl std::fmt::Display for ScanRequestError {
 
 impl std::error::Error for ScanRequestError {}
 
-/// Scan event published to the event bus (v2 `LibraryScanEventPublisher`).
+/// Scan event published to the event bus.
 #[derive(Debug, Clone)]
 pub struct ScanEvent {
     pub id: String,
@@ -181,8 +180,8 @@ pub struct ScanEvent {
     pub changed: bool,
 }
 
-/// Durable-revision scan invalidations with counter-rate throttling (v2
-/// scan events). Terminal states drop their throttle entry; runs end via
+/// Durable-revision scan invalidations with counter-rate throttling.
+/// Terminal states drop their throttle entry; runs end via
 /// store transitions, never publisher callbacks.
 #[derive(Clone)]
 pub struct ScanEventPublisher {
@@ -243,7 +242,7 @@ fn default_id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
-/// Scan coordinator (v2 `LibraryScanCoordinator`).
+/// Scan coordinator.
 pub struct LibraryScanCoordinator<T: TagReader> {
     store: Arc<SqliteScanStore>,
     inventory: InventoryScanner,
@@ -402,7 +401,7 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
         );
     }
 
-    /// Request a scan run (v2 `request_run`, validations included).
+    /// Request a scan run, validations included.
     pub fn request_run(
         &self,
         request: &ScanRequest,
@@ -446,9 +445,8 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
             .request_run(request, &run_id, self.now())
             .map_err(ScanRequestError::Store)?;
         if result.disposition != Disposition::Conflict {
-            // v2 request_scan_run wakes the supervisor for every accepted
-            // disposition; the store here has no wakeups, so the
-            // coordinator wakes instead.
+            // Every accepted disposition wakes the supervisor. The store here has
+            // no wakeups, so the coordinator wakes instead.
             if let Some(wakeups) = &self.wakeups {
                 wakeups.notify("scan");
             }
@@ -495,8 +493,7 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
     }
 
     /// One history page, after the `(terminal_at, run_id)` the last page
-    /// ended on, and the key the next page starts after (v2
-    /// `history_page`).
+    /// ended on, and the key the next page starts after.
     pub fn history_page(
         &self,
         limit: usize,
@@ -516,7 +513,7 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
         Ok((items, next))
     }
 
-    /// One page of a run's failures (v2 `scan_run_failures`). An unknown
+    /// One page of a run's failures. An unknown
     /// run is not-found, never an empty page.
     pub fn scan_run_failures(
         &self,
@@ -528,13 +525,12 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
         self.store.failures_page(run_id, limit, after)
     }
 
-    /// Approximate file count for the scopes plus when it was taken (v2
-    /// `estimate`).
+    /// Approximate file count for the scopes plus when it was taken.
     pub fn estimate(&self, scopes: &[ScanScope]) -> Result<(u64, f64), ScanStoreError> {
         Ok((self.store.estimate_scopes(scopes)?, self.now()))
     }
 
-    /// Pause, resume, or stop a run (v2 `control`). A pause or stop of the
+    /// Pause, resume, or stop a run. A pause or stop of the
     /// run being driven trips its stop flag, so a long read, a chunked
     /// write or a wait on a busy database ends early. The worker is woken
     /// after every control: a resumed run, a run freed for the next one, or
@@ -586,7 +582,7 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
         self.store.drop_classify_snapshot();
     }
 
-    /// Boot recovery (v2 `recover` / `recover_stopping`).
+    /// Boot recovery.
     pub fn recover(&self) -> Result<Vec<ScanRun>, ScanStoreError> {
         if !self.resolvers.resolver().enabled() {
             return self.recover_stopping();
@@ -620,7 +616,7 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
         Ok(runs)
     }
 
-    /// Settle a pausing/stopping run (v2 `_settle_pending_control`). Its
+    /// Settle a pausing/stopping run. Its
     /// writes wait out a busy database: they are the answer to the stop.
     fn settle_pending_control(&self, run_id: &str) -> ScanRun {
         let mut stale_retries = 0u32;
@@ -726,7 +722,7 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
         }
     }
 
-    /// Drive one run to the next stopping point (v2 `run_once`). Returns
+    /// Drive one run to the next stopping point. Returns
     /// the run, or `None` when no work was available.
     pub async fn run_once(&self, root_paths: &HashMap<String, PathBuf>) -> Option<ScanRun> {
         self.drive(root_paths, &RunStop::default()).await
@@ -827,8 +823,8 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
             return self.settle_pending_control(&run.id);
         }
         if scopes.is_empty() {
-            // v2 indexes scopes[0] and the IndexError becomes
-            // UNEXPECTED_WORKER_FAILURE; fail the same way directly.
+            // Quirk (v2): with no scopes, v2 indexed scopes[0] and its IndexError
+            // became UNEXPECTED_WORKER_FAILURE. Fail the same way directly.
             return self
                 .fail_active(&run, FailureCode::UnexpectedWorkerFailure)
                 .await;
@@ -1019,7 +1015,7 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
         }
     }
 
-    /// Fail an active run (v2 `run_once` crash path). Its writes wait out
+    /// Fail an active run. Its writes wait out
     /// a busy database.
     async fn fail_active(&self, run: &ScanRun, code: FailureCode) -> ScanRun {
         let (current, _, _) = match self.store.reread_run(&RunStop::never(), &run.id) {
@@ -1101,7 +1097,7 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
             })?
     }
 
-    /// Indexing phase (v2 `LibraryIndexer.index`): page through the
+    /// Indexing phase: page through the
     /// unprocessed inventory, read tags for new and changed files with
     /// bounded concurrency, and commit each window of rows atomically.
     /// A pause, stop, or shutdown between windows loses nothing: the rows
@@ -1430,7 +1426,7 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
         Some(window)
     }
 
-    /// Reconciliation phase (v2 `LibraryReconciler`): catalog rows under a
+    /// Reconciliation phase: catalog rows under a
     /// cleanly walked scope that the walk did not see are marked missing,
     /// never deleted. Only completed scopes qualify. A scope that would
     /// lose most of its tracks at once (an unmounted share looks exactly
@@ -1772,7 +1768,7 @@ const MASS_MISSING_MIN_INDEXED: usize = 20;
 /// True when a walk would mark so much of a scope missing that a vanished
 /// mount is the likelier story: a walk that found none of the scope's
 /// files at all (an unmounted share or an empty mount point, whatever its
-/// size, as v2 protects), or more than half of a larger scope.
+/// size), or more than half of a larger scope.
 fn mass_missing(missing: usize, indexed: usize) -> bool {
     let nothing_left = missing > 0 && missing == indexed;
     nothing_left || (indexed >= MASS_MISSING_MIN_INDEXED && missing * 2 > indexed)
@@ -1808,7 +1804,7 @@ fn window_failures(window: &IndexWindow, now: f64) -> Vec<ScanFailureRecord> {
 }
 
 impl<T: TagReader + 'static> Checkpoint for LibraryScanCoordinator<T> {
-    /// v2 `checkpoint`: fast true while policy matches and no control is
+    /// Checkpoint: fast true while policy matches and no control is
     /// pending, otherwise settle or supersede through the store. A run
     /// that cannot be read answers false, logged: the drive ends and the
     /// run keeps its state.

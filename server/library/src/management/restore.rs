@@ -24,7 +24,7 @@ use crate::publish::session::BaselineSkip;
 use crate::publish::snapshots::sha256_hex;
 use crate::publish::undo::BaselineBlock;
 
-/// The phrase a purge must be confirmed with (as in v2).
+/// The phrase a purge must be confirmed with.
 pub const PURGE_CONFIRMATION: &str = "CONFIRM";
 
 /// A request for a baseline restore preview.

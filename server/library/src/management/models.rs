@@ -435,7 +435,7 @@ pub struct DesiredDocument {
     pub artwork: Vec<ArtworkChoice>,
 }
 
-/// One piece of cover art a plan writes (v2's artwork choice).
+/// One piece of cover art a plan writes.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ArtworkChoice {

@@ -3729,7 +3729,7 @@ export interface paths {
          * Where the MusicBrainz release editor sends the curator back. Public:
          *     the one-time token identifies the contribution. Every outcome is a 303
          *     to the web app: the contribution page on success, the library page
-         *     with `musicbrainz=callback-error` otherwise (v2's contract).
+         *     with `musicbrainz=callback-error` otherwise.
          */
         get: operations["musicbrainz_callback"];
         put?: never;
@@ -11525,12 +11525,12 @@ export interface components {
             expected_row_revision: number;
         };
         /**
-         * @description Where a draft field value came from, v2 `ContributionFieldSource`.
+         * @description Where a draft field value came from. The strings match v2's.
          * @enum {string}
          */
         ContributionFieldSource: "local" | "discogs" | "entered_here";
         /**
-         * @description Follow-up actions the UI may offer, v2 `ContributionNextAction` verbatim.
+         * @description Follow-up actions the UI may offer. The strings match v2's.
          * @enum {string}
          */
         ContributionNextAction: "edit_draft" | "refresh_discogs" | "run_duplicate_check" | "attach_existing" | "seed_musicbrainz" | "retry_verification" | "rebuild" | "cancel";
@@ -11593,7 +11593,7 @@ export interface components {
             sources: components["schemas"]["SourceReference"][];
         };
         /**
-         * @description Contribution lifecycle states, v2 `ContributionState` verbatim.
+         * @description Contribution lifecycle states. The strings match v2's.
          * @enum {string}
          */
         ContributionState: "draft" | "ready" | "seeded" | "verifying" | "linked" | "needs_review" | "stale" | "cancelled";
@@ -12689,8 +12689,8 @@ export interface components {
             schema_version: number;
         };
         /**
-         * @description Duplicate evidence kinds, ordered weakest-last (v2 sort key
-         *     exact_discogs_url < release_group < barcode < similar).
+         * @description Duplicate evidence kinds, ordered weakest-last:
+         *     exact_discogs_url < release_group < barcode < similar.
          * @enum {string}
          */
         DuplicateEvidenceKind: "exact_discogs_url" | "release_group" | "barcode" | "similar";
@@ -13426,7 +13426,7 @@ export interface components {
          */
         EventsSweepScope: "followed" | "library";
         /**
-         * @description Per-track verdict against one candidate, ported from v2.
+         * @description Per-track verdict against one candidate.
          * @enum {string}
          */
         EvidenceClass: "supported" | "unknown" | "contradictory";
@@ -20740,7 +20740,7 @@ export interface components {
             stream_revision: number;
         };
         /**
-         * @description How `request_run` disposed of a request (v2 `ScanRequestResult`).
+         * @description How `request_run` disposed of a request.
          * @enum {string}
          */
         ScanDisposition: "started" | "queued" | "coalesced" | "expanded" | "conflict";
@@ -20757,7 +20757,7 @@ export interface components {
             estimated_file_count: number | null;
         };
         /**
-         * @description Classify verdict. Spelling matches v2 `comparison_result` exactly.
+         * @description Classify verdict. Its spelling is kept from v2, since the values are stored.
          * @enum {string}
          */
         ScanFileVerdict: "new" | "changed" | "unchanged" | "excluded" | "candidate_missing";
@@ -37868,10 +37868,7 @@ export interface operations {
                  *     answers STALE_REVISION and nothing moves.
                  */
                 expected_revision: number;
-                /**
-                 * @description Move the track's file into the recycle bin too. On by default, as
-                 *     in v2 (where it deleted the file outright).
-                 */
+                /** @description Move the track's file into the recycle bin too. On by default. */
                 delete_file?: boolean;
             };
             header?: never;

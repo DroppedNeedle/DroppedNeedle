@@ -45,7 +45,7 @@ pub fn evaluation(
             Some(candidate(facts, release, matched, evidence, automatic_safe))
         })
         .collect();
-    // v2's order: what would seal on its own, then the best score.
+    // Order: what would seal on its own, then the best score.
     candidates.sort_by(|a, b| {
         b.automatic_safe
             .cmp(&a.automatic_safe)
@@ -126,7 +126,7 @@ fn candidate(
     }
 }
 
-/// v2's album name gate as a verdict: within the gate supports the
+/// The album name gate as a verdict: within the gate supports the
 /// candidate, beyond it contradicts, and a blank local name says nothing.
 pub fn name_class(local: &str, release: &str) -> EvidenceClass {
     if local.trim().is_empty() {

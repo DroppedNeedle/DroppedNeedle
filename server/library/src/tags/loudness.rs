@@ -1,7 +1,7 @@
 //! ReplayGain 2.0 analysis: EBU R128 integrated loudness (ITU-R BS.1770
 //! K-weighting, 400 ms blocks every 100 ms, the -70 LUFS absolute gate
 //! and the -10 LU relative gate) against the -18 LUFS reference, and the
-//! sample peak. v2 ran loudgain for this; the numbers are written the way
+//! sample peak. The numbers are written the way
 //! loudgain writes them (`-6.52 dB`, `0.988525`).
 //!
 //! Files are decoded one packet at a time, so memory stays flat however

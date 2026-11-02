@@ -3,11 +3,10 @@
 //! Owns the library root registry, the filesystem walk, scan runs, the
 //! rolling scheduler, the filesystem watcher and worker supervision. The
 //! library-revision poller behind `activity.changed` lives in
-//! `droppedneedle_kernel::events`. Ported from v2's native library services
-//! (inventory scanner, scan coordinator, scheduler, supervisor, filesystem
-//! watcher and coordinator, indexer, reconciler, file revision, scan
-//! events) plus the scan half of its library store and work
-//! models.
+//! `droppedneedle_kernel::events`. Covers the inventory scanner, scan
+//! coordinator, scheduler, supervisor, filesystem watcher, indexer,
+//! reconciler, file revision, scan events, and the scan half of the library
+//! store and work models.
 //!
 //! ## Boundary
 //!
@@ -27,7 +26,8 @@
 //! `server/tests/library/library_scan.rs` pins zero file writes across full
 //! runs.
 //!
-//! v2 quirks and bug fixes are cited where the code handles them: degraded
+//! Quirks kept from v2 and v2's bug fixes are cited where the code handles
+//! them: degraded
 //! and superseded walks, wedged probes and the detach cap, heartbeats,
 //! NFC twins, non-UTF-8 names, non-regular files, deferred tag reads,
 //! legacy float mtimes, skip-and-report on unreachable roots (GH-296),

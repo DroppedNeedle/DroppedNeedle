@@ -809,7 +809,7 @@ impl ReleaseSource for CachedMusicBrainz {
 }
 
 /// An edition-finder row from a release search hit; hits without a
-/// release group are skipped, as v2 did.
+/// release group are skipped.
 pub fn edition_from_hit(hit: ReleaseSearchHit) -> Option<Edition> {
     let release_group_mbid = hit.release_group.as_ref()?.id.to_ascii_lowercase();
     let label = hit.label_info.first();

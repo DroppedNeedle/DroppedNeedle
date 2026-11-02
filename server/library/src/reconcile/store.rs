@@ -287,7 +287,7 @@ pub fn progress(conn: &Connection) -> Result<i64, ReconcileError> {
 }
 
 /// Proofs, albums, and tracks the given artists are credited on. Capped
-/// like v2: 500 proofs, 250 albums, 500 tracks.
+/// at 500 proofs, 250 albums, 500 tracks.
 pub fn references(conn: &Connection, ids: &[String]) -> Result<GroupReferences, ReconcileError> {
     let unique: BTreeSet<&str> = ids.iter().map(String::as_str).collect();
     if unique.is_empty() {

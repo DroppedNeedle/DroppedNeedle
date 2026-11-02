@@ -34,11 +34,11 @@ use super::stop::RunStop;
 use super::store::ScanStoreError;
 use super::walk::{FolderDigest, folder_digests};
 
-/// Default poll interval (v2 `DEFAULT_POLL_INTERVAL_SECONDS`).
+/// Default poll interval.
 pub const DEFAULT_POLL_INTERVAL_SECS: f64 = 300.0;
-/// Default batching window (v2 `DEFAULT_BATCH_WINDOW_SECONDS`).
+/// Default batching window.
 pub const DEFAULT_BATCH_WINDOW_SECS: f64 = 60.0;
-/// Minimum poll interval; lower values clamp (v2 `_MIN_POLL_INTERVAL_SECONDS`).
+/// Minimum poll interval; lower values clamp.
 pub const MIN_POLL_INTERVAL_SECS: f64 = 1.0;
 
 /// Watcher settings: enabled flag, poll interval, batch window.
@@ -98,8 +98,7 @@ impl WorkWakeups {
     }
 }
 
-/// Hook B dirty scope marks (v2 supervisor `dirty_scopes_getter` /
-/// `dirty_scopes_clearer`). Hints only: marks clear on a non-conflict
+/// Hook B dirty scope marks. Hints only: marks clear on a non-conflict
 /// request, and a crash loses them safely since the next rolling scan
 /// converges.
 #[derive(Debug, Clone, Default)]
@@ -339,8 +338,8 @@ async fn record(
     }
 }
 
-/// Poll every root once and update the batch timer (v2
-/// `watch_library_filesystem` body, one iteration). The caller asks for
+/// Poll every root once and update the batch timer, one iteration. The
+/// caller asks for
 /// the scan on [`WatcherAction::Due`], through [`ask_for_changes`].
 #[allow(clippy::too_many_arguments)]
 pub async fn poll_once(

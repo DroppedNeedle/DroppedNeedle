@@ -4,7 +4,7 @@
 //! them, the album rows a scan would not join by itself, which a person
 //! joins or dismisses.
 //!
-//! Every route is admin-only, as in v2. Store work runs on a blocking
+//! Every route is admin-only. Store work runs on a blocking
 //! thread.
 
 use std::collections::BTreeMap;

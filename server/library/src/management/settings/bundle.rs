@@ -42,7 +42,7 @@ pub const MAX_PROFILE_BUNDLE_BYTES: usize = 1_048_576;
 pub const MAX_PROFILE_SHARE_CODE_CHARS: usize = 1_500_000;
 /// UUID namespace for deterministic preview ids.
 pub const PROFILE_PREVIEW_NAMESPACE: &str = "54f7ffdf-3c94-58d4-8c08-7a21304ea02d";
-/// Longest profile or script name (v2 `MAX_MANAGEMENT_NAME_LENGTH`).
+/// Longest profile or script name.
 pub const MAX_MANAGEMENT_NAME_LENGTH: usize = 120;
 
 /// The document version and share-code prefix v2 wrote.

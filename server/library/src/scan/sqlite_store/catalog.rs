@@ -601,7 +601,7 @@ impl SqliteScanStore {
     }
 
     /// Catalog tracks under any of the scopes, each counted once, missing
-    /// rows included (v2 `estimate_scan_scope`). An approximate size for
+    /// rows included. An approximate size for
     /// the scan a caller is about to request.
     pub fn estimate_scopes(&self, scopes: &[ScanScope]) -> Result<u64, ScanStoreError> {
         if scopes.is_empty() {

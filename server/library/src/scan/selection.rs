@@ -1,7 +1,7 @@
 //! Scope selection for scans someone asks for by hand.
 //!
 //! A caller names roots and path rules by id; this turns those ids into
-//! the scopes a run walks (v2 `_selected_scopes`). No ids means every
+//! the scopes a run walks. No ids means every
 //! root. A rule whose root is also selected, or a rule inside another
 //! selected rule, adds nothing: the wider scope already walks it.
 

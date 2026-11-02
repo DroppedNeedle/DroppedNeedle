@@ -1,7 +1,7 @@
 //! Artist reconciliation routes: progress, duplicate artist groups, one
 //! group's evidence, and marking a group as distinct people.
 //!
-//! Admin-only, as in v2. Store work runs on a blocking thread.
+//! Admin-only. Store work runs on a blocking thread.
 
 use std::collections::BTreeMap;
 

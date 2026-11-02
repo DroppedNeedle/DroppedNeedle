@@ -9,7 +9,7 @@
 //!   each needs an exact release with every file placed on its track.
 //!   Apply places the files where the release supports it and uses a
 //!   suggested edition where the album has none. With automatic edition
-//!   acceptance on, a suggestion that passes v2's gate is applied during
+//!   acceptance on, a suggestion that passes the automatic gate is applied during
 //!   the check itself, as a confirmed automatic match.
 //! - Catalog cleanup tidies album rows: once after an upgrade from v2,
 //!   then after each scan that ends (for the albums it touched) and after

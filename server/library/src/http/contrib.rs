@@ -2,7 +2,7 @@
 //!
 //! Thirteen session-gated routes under `/api/v3/library` drive the draft,
 //! the Discogs source, the duplicate check, the seeded release editor and
-//! verification (v2 `library_contributions.py`). The release editor sends
+//! verification. The release editor sends
 //! the curator's browser back to a public callback, served at the v3 path
 //! and at the v1 path a seed opened before the upgrade still points at.
 //!
@@ -35,7 +35,7 @@ use droppedneedle_auth::{Curator, User};
 use std::sync::Arc;
 
 // ---------------------------------------------------------------------------
-// DTOs (v2 `api/v1/schemas/library_contributions.py`)
+// DTOs
 // ---------------------------------------------------------------------------
 
 /// Save an edited draft.
@@ -169,7 +169,7 @@ type Answer<T> = Result<Json<T>, ApiError>;
 // ---------------------------------------------------------------------------
 
 /// The contribution routes. The callback is public: the one-time token
-/// identifies the contribution, as in v2's public route.
+/// identifies the contribution.
 pub fn routes() -> Routes<LibraryServices> {
     Routes::new()
         .curator(routes!(create_contribution))
@@ -592,7 +592,7 @@ pub async fn retry_verification(
 /// Where the MusicBrainz release editor sends the curator back. Public:
 /// the one-time token identifies the contribution. Every outcome is a 303
 /// to the web app: the contribution page on success, the library page
-/// with `musicbrainz=callback-error` otherwise (v2's contract).
+/// with `musicbrainz=callback-error` otherwise.
 #[utoipa::path(
     get,
     tag = "library management",

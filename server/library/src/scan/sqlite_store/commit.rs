@@ -4,7 +4,7 @@
 //! crash either lands the whole window or none of it, so a resumed run
 //! picks up at the first unprocessed row with nothing counted twice.
 //!
-//! Catalog rows follow v2's indexer: display names come from tags, then
+//! Catalog rows: display names come from tags, then
 //! the path parse, then placeholders, each with its provenance; artists
 //! key by name and sort name.
 //!
@@ -12,7 +12,7 @@
 //! persistent key (release MBID, else the tagged album artist and title),
 //! so when its files move or are organized the album row follows them
 //! with its identity and reviews. Copies of one album in different
-//! folders still stay separate albums, as in v2. A file that appears where a
+//! folders still stay separate albums. A file that appears where a
 //! track's file just went away continues that track (same album names,
 //! disc and track number, plus the same recording MBID or the same title
 //! and duration), so
@@ -162,8 +162,8 @@ fn album_presence(
 /// A track whose grouping came from an earlier DroppedNeedle version
 /// (`legacy`: v2 grouped it, and v3 has not moved it since) first stays in
 /// the album it was in while the file still names that album, wherever the
-/// album's other tracks sit: v2 grouped differently in places, and its
-/// album ids must not change under the people using them.
+/// album's other tracks sit. Album ids must not change under the people
+/// using them.
 fn resolve_album(
     tx: &Connection,
     names: &AlbumNames<'_>,

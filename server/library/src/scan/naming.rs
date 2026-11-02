@@ -1,4 +1,4 @@
-//! Path-derived names for the catalog, ported from v2's album grouper and
+//! Path-derived names for the catalog: the album grouper and
 //! filename parser: the grouping directory an album keys on (disc folders
 //! fold into their parent) and the best-effort artist, album, title, and
 //! track number for files whose tags leave them out. Also the keys artist

@@ -5,9 +5,8 @@
 //! publisher moves bytes through prepare, publish, catalog commit, and
 //! cleanup. Nothing else writes managed files.
 //!
-//! The port keeps the behavior of v2's library management publisher and
-//! its recovery, undo and baseline services; nothing working there is
-//! removed.
+//! Recovery, undo and baselines keep the behavior of v2's library
+//! management publisher.
 //!
 //! # Crash semantics
 //!

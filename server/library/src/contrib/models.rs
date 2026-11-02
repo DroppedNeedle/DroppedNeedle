@@ -56,7 +56,7 @@ pub fn seed_edit_note(discogs_url: Option<&str>) -> String {
 // State machine
 // ---------------------------------------------------------------------------
 
-/// Contribution lifecycle states, v2 `ContributionState` verbatim.
+/// Contribution lifecycle states. The strings match v2's.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ContributionState {
@@ -81,7 +81,7 @@ crate::scan::models::spelled!(ContributionState {
     Cancelled => "cancelled",
 });
 
-/// Follow-up actions the UI may offer, v2 `ContributionNextAction` verbatim.
+/// Follow-up actions the UI may offer. The strings match v2's.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ContributionNextAction {
@@ -95,7 +95,7 @@ pub enum ContributionNextAction {
     Cancel,
 }
 
-/// Where a draft field value came from, v2 `ContributionFieldSource`.
+/// Where a draft field value came from. The strings match v2's.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ContributionFieldSource {
@@ -105,8 +105,8 @@ pub enum ContributionFieldSource {
     EnteredHere,
 }
 
-/// Duplicate evidence kinds, ordered weakest-last (v2 sort key
-/// exact_discogs_url < release_group < barcode < similar).
+/// Duplicate evidence kinds, ordered weakest-last:
+/// exact_discogs_url < release_group < barcode < similar.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, ToSchema,
 )]

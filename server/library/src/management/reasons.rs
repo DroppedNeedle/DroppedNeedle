@@ -35,8 +35,7 @@ impl From<Reason> for ItemReason {
     }
 }
 
-/// Lyrics or ReplayGain the profile requires could not be had (v2's
-/// `METADATA_UNAVAILABLE`).
+/// Lyrics or ReplayGain the profile requires could not be had.
 pub fn metadata_unavailable(what: &str) -> ItemReason {
     ItemReason {
         code: "METADATA_UNAVAILABLE".to_owned(),

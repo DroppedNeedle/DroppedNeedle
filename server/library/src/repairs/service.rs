@@ -337,8 +337,8 @@ impl RepairWorker {
                 .is_some_and(CancellationToken::is_cancelled)
     }
 
-    /// Queue a cleanup of albums identification finished with (v2's
-    /// per-album hygiene after identification), one job per page of
+    /// Queue a cleanup of albums identification finished with (per-album
+    /// hygiene after identification), one job per page of
     /// finished identifications after the stored watermark. Each job is
     /// queued in the write that moves the watermark past its page, so a
     /// restart neither repeats nor skips one, and a busy database leaves
@@ -569,7 +569,7 @@ impl RepairWorker {
     }
 
     /// After each finished scan, queue a cleanup of the albums that scan
-    /// changed and of empty album shells (v2's per-album hygiene). Checked
+    /// changed and of empty album shells (per-album hygiene). Checked
     /// once per run; nothing is queued when no album qualifies.
     fn queue_hygiene_after_scan(&self) -> Result<(), OperationError> {
         let Some(run) = self.db.read_blocking(

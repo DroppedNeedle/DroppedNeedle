@@ -1,4 +1,4 @@
-//! Identity product rules from v2: who may overwrite whom, and when an
+//! Identity product rules: who may overwrite whom, and when an
 //! automatic identity retracts.
 //! Matching files to releases lives in `crate::matching`.
 //!

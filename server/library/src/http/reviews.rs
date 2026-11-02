@@ -9,7 +9,7 @@
 //! Reading is open to every signed-in user, as before. Choosing, keeping
 //! tags, dismissing and detaching are curator work, like other identity
 //! decisions. Excluding, restoring and retrying change what the library
-//! holds or start a job, so they are admin-only, as in v2.
+//! holds or start a job, so they are admin-only.
 
 use axum::{
     Json,

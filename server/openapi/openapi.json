@@ -13129,7 +13129,7 @@
         "tags": [
           "library management"
         ],
-        "summary": "Where the MusicBrainz release editor sends the curator back. Public:\nthe one-time token identifies the contribution. Every outcome is a 303\nto the web app: the contribution page on success, the library page\nwith `musicbrainz=callback-error` otherwise (v2's contract).",
+        "summary": "Where the MusicBrainz release editor sends the curator back. Public:\nthe one-time token identifies the contribution. Every outcome is a 303\nto the web app: the contribution page on success, the library page\nwith `musicbrainz=callback-error` otherwise.",
         "operationId": "musicbrainz_callback",
         "parameters": [
           {
@@ -20973,7 +20973,7 @@
           {
             "name": "delete_file",
             "in": "query",
-            "description": "Move the track's file into the recycle bin too. On by default, as\nin v2 (where it deleted the file outright).",
+            "description": "Move the track's file into the recycle bin too. On by default.",
             "required": false,
             "schema": {
               "type": "boolean"
@@ -38811,7 +38811,7 @@
       },
       "ContributionFieldSource": {
         "type": "string",
-        "description": "Where a draft field value came from, v2 `ContributionFieldSource`.",
+        "description": "Where a draft field value came from. The strings match v2's.",
         "enum": [
           "local",
           "discogs",
@@ -38820,7 +38820,7 @@
       },
       "ContributionNextAction": {
         "type": "string",
-        "description": "Follow-up actions the UI may offer, v2 `ContributionNextAction` verbatim.",
+        "description": "Follow-up actions the UI may offer. The strings match v2's.",
         "enum": [
           "edit_draft",
           "refresh_discogs",
@@ -39070,7 +39070,7 @@
       },
       "ContributionState": {
         "type": "string",
-        "description": "Contribution lifecycle states, v2 `ContributionState` verbatim.",
+        "description": "Contribution lifecycle states. The strings match v2's.",
         "enum": [
           "draft",
           "ready",
@@ -41645,7 +41645,7 @@
       },
       "DuplicateEvidenceKind": {
         "type": "string",
-        "description": "Duplicate evidence kinds, ordered weakest-last (v2 sort key\nexact_discogs_url < release_group < barcode < similar).",
+        "description": "Duplicate evidence kinds, ordered weakest-last:\nexact_discogs_url < release_group < barcode < similar.",
         "enum": [
           "exact_discogs_url",
           "release_group",
@@ -43234,7 +43234,7 @@
       },
       "EvidenceClass": {
         "type": "string",
-        "description": "Per-track verdict against one candidate, ported from v2.",
+        "description": "Per-track verdict against one candidate.",
         "enum": [
           "supported",
           "unknown",
@@ -59793,7 +59793,7 @@
       },
       "ScanDisposition": {
         "type": "string",
-        "description": "How `request_run` disposed of a request (v2 `ScanRequestResult`).",
+        "description": "How `request_run` disposed of a request.",
         "enum": [
           "started",
           "queued",
@@ -59835,7 +59835,7 @@
       },
       "ScanFileVerdict": {
         "type": "string",
-        "description": "Classify verdict. Spelling matches v2 `comparison_result` exactly.",
+        "description": "Classify verdict. Its spelling is kept from v2, since the values are stored.",
         "enum": [
           "new",
           "changed",

@@ -2,7 +2,7 @@
 //! scripts, revisions, impact classification, activation health, and
 //! profile sharing.
 //!
-//! Ports v2's profile service over the `library_management` section and
+//! The profile service over the `library_management` section and
 //! works on the section types directly. All content revisions (settings,
 //! profile, script, naming-policy) hash byte-compatibly with v2
 //! (ASCII-escaped canonical JSON), so migrated activations and CAS tokens

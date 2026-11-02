@@ -1,5 +1,5 @@
 //! Scan diagnostics: a bounded, redacted JSON report of one scan run to
-//! attach to a bug report (v2's `library_diagnostics_service`).
+//! attach to a bug report.
 //!
 //! It holds the run's counters and timings, its scopes, the files it
 //! inventoried and the files that failed, with every path replaced by its

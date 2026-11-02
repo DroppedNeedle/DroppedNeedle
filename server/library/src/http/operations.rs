@@ -2,7 +2,7 @@
 //! MusicBrainz releases for the edition finder, and undo an automatic
 //! edition.
 //!
-//! Every route is admin-only, as in v2, except the release search, which
+//! Every route is admin-only, except the release search, which
 //! curators use to choose an edition. Store work runs on
 //! a blocking thread; the release search awaits MusicBrainz.
 

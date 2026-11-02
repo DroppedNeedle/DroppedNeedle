@@ -1309,7 +1309,7 @@ impl Management {
     }
 
     /// Apply a preview automatic management made, when nothing in it is
-    /// blocked (as v2 did). A preview with a blocked file waits on the
+    /// blocked. A preview with a blocked file waits on the
     /// operations page with each file's reason, for an administrator.
     /// True when the run applies or had nothing to apply; `Busy` when the
     /// database was too busy to start it, and the preview waits.
@@ -1465,7 +1465,7 @@ impl Management {
                 ),
         };
         // Files that move take their whole album along, so an album is
-        // never split between its old and new folder (as in v2). An
+        // never split between its old and new folder. An
         // album-wide tag edit changes every file of the album too.
         let organizes = pinned.profile.organization.rename_enabled
             || pinned.profile.organization.move_enabled
@@ -2259,7 +2259,7 @@ fn planning_intent(snapshot: &Snapshot) -> Result<JobIntent, ManagementError> {
 }
 
 /// A dry run for turning on automatic management only proves settings;
-/// it is never applied (v2's rule and sentence).
+/// it is never applied.
 fn refuse_activation(snapshot: &Snapshot) -> Result<(), ManagementError> {
     if snapshot.proposed_settings_revision.is_some() {
         return Err(ManagementError::Invalid(

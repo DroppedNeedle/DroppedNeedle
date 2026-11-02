@@ -1,6 +1,6 @@
 //! Automatic management: once an imported or newly identified album is
-//! ready, run its library folder's profile on it without asking, as v2
-//! did after a scan or an import. It only runs for folders whose
+//! ready, run its library folder's profile on it without asking, after a scan
+//! or an import. It only runs for folders whose
 //! automatic switch is on and whose dry run is still current, never for
 //! an album whose match is unconfirmed (unless "Also manage unconfirmed
 //! matches" is on), and always from the album's chosen edition: a new
@@ -37,7 +37,7 @@ use droppedneedle_kernel::runtime_config::sections::{
 };
 
 /// How long after it was last queued automatic management looks at an
-/// album (v2's settle window, per album).
+/// album.
 pub const SETTLE_SECONDS: f64 = 30.0;
 /// Shown in the skipped list for a waiting album a live identification
 /// job holds back; never stored.
@@ -747,7 +747,7 @@ impl Management {
             return Ok(Gate::NotYet(Verdict::Wait("IDENTITY_NOT_ACCEPTED")));
         };
         // A custom edition is managed automatically only where the folder
-        // says so (v2's automatic_custom_editions).
+        // says so.
         let custom = identity.release_mbid.is_none()
             && identity.release_group_mbid.is_some()
             && self

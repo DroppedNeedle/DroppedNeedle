@@ -202,8 +202,7 @@ impl SqliteScanStore {
 
     /// One keyset page of a run's recorded failures, oldest first.
     /// `after` is the cursor the previous page handed back; the answer
-    /// carries the next cursor while more rows remain (v2
-    /// `list_scan_run_failures`).
+    /// carries the next cursor while more rows remain.
     pub fn failures_page(
         &self,
         run_id: &str,
@@ -897,7 +896,7 @@ fn request_run_inner(
                 ],
             )?;
         }
-        // Quirk port: aggregate_scope derives from the request alone.
+        // Quirk (v2): aggregate_scope derives from the request alone.
         let aggregate = if request
             .scopes
             .iter()

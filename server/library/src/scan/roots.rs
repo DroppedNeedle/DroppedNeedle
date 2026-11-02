@@ -361,8 +361,7 @@ impl RootRegistry {
             .collect()
     }
 
-    /// Whole-root scopes for every non-excluded root (v2
-    /// `LibraryAutomaticScanScheduler.scheduled_scopes`, root half). The
+    /// Whole-root scopes for every non-excluded root. The
     /// excluded-root rule half lives in the scheduler and resolves against
     /// this same registry.
     pub fn scheduled_root_scopes(&self) -> Vec<ScanScope> {
@@ -512,9 +511,8 @@ pub fn yielded_home(yielded: &[Overlap], relative: &str) -> Option<(String, Stri
 }
 
 /// Policy resolver over the registry: longest-prefix root match, then the
-/// deepest covering rule inside it. Mirrors the v2
-/// `LibraryPolicyResolver.resolve` contract (returns `None` for paths
-/// under no root).
+/// deepest covering rule inside it. Returns `None` for paths under no
+/// root.
 #[derive(Debug, Clone)]
 pub struct PolicyResolver {
     registry: RootRegistry,

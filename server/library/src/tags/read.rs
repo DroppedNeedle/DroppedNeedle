@@ -1,8 +1,8 @@
-//! Tag reads through lofty's generic items, mirroring v2's field mapping.
+//! Tag reads through lofty's generic items.
 //!
 //! Rule zero (see `save/mod.rs`) cuts both ways: native tags are for
 //! writes, and generic items are for reads. The generic `Tag` lofty builds
-//! on read is complete for every field v2 surfaces (multi-values arrive as
+//! on read is complete for every field the app surfaces (multi-values arrive as
 //! separate items, UFID and TXXX spellings included), while the native
 //! round-trip mangles known `TXXX` description case and drops follow-on
 //! values on several text frames. So reads never touch native tags.
@@ -44,7 +44,7 @@ pub struct AudioArtistCredit {
     pub join_phrase: String,
 }
 
-/// Tag metadata read from an audio file. Field-for-field the v2 `AudioTag`.
+/// Tag metadata read from an audio file, with the fields of v2's `AudioTag`.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct AudioTag {
     pub title: String,
@@ -120,7 +120,7 @@ impl std::fmt::Debug for EditionTags {
     }
 }
 
-/// Read tags plus technical info, like v2's `AudioTagger.read_tags`.
+/// Read tags plus technical info.
 pub fn read_tags(path: &Path) -> Result<(AudioTag, super::AudioInfo), TagsError> {
     let format = format_for_path(path)?;
     let tag = read_tag_only(path, format)?;
@@ -360,8 +360,7 @@ fn select_tag(tagged: &TaggedFile, format: AudioFormat) -> Option<&Tag> {
 
 /// First embedded cover-art blob, or `None` when the file has none.
 pub fn read_cover_art(path: &Path) -> Result<Option<Vec<u8>>, TagsError> {
-    // WMA is unrecognized even here: v2 returned None by falling through,
-    // v3 rejects the extension before any reader runs.
+    // WMA is not read: the extension is rejected before any reader runs.
     format_for_path(path)?;
     let file = File::open(path).map_err(|source| TagsError::Io {
         path: path.display().to_string(),
@@ -581,7 +580,8 @@ fn year_of(values: &[String]) -> Option<i32> {
 /// as the album's release date, a FLAC `DATE` or an ID3 `TDRC` alone does
 /// not) and its source at tag v0.62.0 (github.com/navidrome/navidrome):
 /// `resources/mappings.yaml` for the `releasedate` aliases, `mapDates` in
-/// `model/metadata/map_mediafile.go` for step 4, and `ToAlbum` in
+/// `model/metadata/map_mediafile.go` for how the release date is picked, and
+/// `ToAlbum` in
 /// `model/mediafile.go`, where an album keeps the value only when every
 /// track has the same one. Item keys per lofty 0.25.4's table in
 /// `tag/item.rs`: `©day` is `RecordingDate`, Vorbis `YEAR` is `Year`.

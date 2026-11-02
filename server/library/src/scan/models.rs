@@ -546,7 +546,7 @@ spelled!(EffectivePolicy {
     Excluded => "excluded",
 });
 
-/// Durable scan run. Counters live alongside the row, as in v2.
+/// Durable scan run. Counters live alongside the row.
 #[derive(Debug, Clone)]
 pub struct ScanRun {
     pub id: String,
@@ -577,7 +577,7 @@ pub struct ScanRequest {
     pub policy_revision: String,
 }
 
-/// How `request_run` disposed of a request (v2 `ScanRequestResult`).
+/// How `request_run` disposed of a request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 #[schema(as = ScanDisposition)]
@@ -621,7 +621,7 @@ pub struct ScanInventoryItem {
     pub scope_relative_path: String,
 }
 
-/// Classify verdict. Spelling matches v2 `comparison_result` exactly.
+/// Classify verdict. Its spelling is kept from v2, since the values are stored.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 #[schema(as = ScanFileVerdict)]
@@ -641,7 +641,7 @@ spelled!(Verdict {
     CandidateMissing => "candidate_missing",
 });
 
-/// One auditable skip or failure row (v2 `ScanFailureRecord`).
+/// One auditable skip or failure row.
 #[derive(Debug, Clone)]
 pub struct ScanFailureRecord {
     pub root_id: String,
@@ -652,8 +652,8 @@ pub struct ScanFailureRecord {
     pub phase: ScanPhase,
 }
 
-/// Discovery state per (run, scope). Matches the v2 scope-discovery column
-/// values: a clean walk lands `completed`, a degraded one `partially_read`,
+/// Discovery state per (run, scope). The stored values are v2's
+/// scope-discovery column values: a clean walk lands `completed`, a degraded one `partially_read`,
 /// an unreachable root `unavailable`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -767,9 +767,8 @@ impl std::fmt::Display for FailureCode {
     }
 }
 
-/// True when `ancestor` covers `descendant` within one root (v2
-/// `_scan_scope_covers_path`: `.` covers everything, otherwise exact or
-/// slash-prefix match).
+/// True when `ancestor` covers `descendant` within one root: `.` covers
+/// everything, otherwise exact or slash-prefix match.
 pub fn scope_covers_path(ancestor: &str, descendant: &str) -> bool {
     ancestor == "." || ancestor == descendant || descendant.starts_with(&format!("{ancestor}/"))
 }

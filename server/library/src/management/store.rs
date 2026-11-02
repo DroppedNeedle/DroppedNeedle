@@ -4,7 +4,7 @@
 //! plus a `library_management_job_snapshots` row with what it pinned.
 //! Planned files live in `library_management_plan_items`; applying adds
 //! one `library_operation_work` row per album (`ordinal` is the album's
-//! bundle ordinal, as in v2). The job and work rows are written through
+//! bundle ordinal). The job and work rows are written through
 //! [`crate::jobs`]; this file holds the snapshot and plan SQL. Migrated v2
 //! history reads through the same queries. Plain SQL on a caller's
 //! connection; the service owns the transactions.

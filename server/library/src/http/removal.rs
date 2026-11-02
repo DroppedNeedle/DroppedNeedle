@@ -160,8 +160,7 @@ pub struct RemoveTrackQuery {
     /// The track's `row_revision` as the person saw it. Another revision
     /// answers STALE_REVISION and nothing moves.
     pub expected_revision: i64,
-    /// Move the track's file into the recycle bin too. On by default, as
-    /// in v2 (where it deleted the file outright).
+    /// Move the track's file into the recycle bin too. On by default.
     #[serde(default = "default_true")]
     pub delete_file: bool,
 }

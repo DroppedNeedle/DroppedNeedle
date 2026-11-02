@@ -4,12 +4,11 @@
 //!
 //! - Accept at a library distance of at most [`ACCEPT_ALBUM`] (0.20) with
 //!   no paired track worse than [`ACCEPT_TRACK`] (0.40): Lidarr's
-//!   `CloseAlbumMatch` and `CloseTrackMatch`. The same 0.40 was v2's pair
-//!   ceiling.
-//! - Show a curator anything up to [`REVIEW_CEILING`] (0.35), v2's album
+//!   `CloseAlbumMatch` and `CloseTrackMatch`.
+//! - Show a curator anything up to [`REVIEW_CEILING`] (0.35), the album
 //!   distance ceiling; past it the album has no plausible candidate.
 //! - The best release group must beat every other group by
-//!   [`GROUP_MARGIN`] (0.05), v2's margin floor. Editions of one group
+//!   [`GROUP_MARGIN`] (0.05), the margin floor. Editions of one group
 //!   are not rivals: they go through edition choice instead. Within the
 //!   margin, a group still wins when the files make up one of its
 //!   releases completely and closely (see below) and that release's full
@@ -21,14 +20,14 @@
 //!   release has another status (a promotional copy filed as its own
 //!   group); a release with no status is never counted as another status.
 //! - Edition choice looks at the group's editions within
-//!   [`EDITION_COHORT`] (0.10, v2's consensus epsilon) of the best and
+//!   [`EDITION_COHORT`] (0.10, the consensus epsilon) of the best and
 //!   prefers the release the tags name, then one whose barcode or catalog
 //!   number the tags carry, then the closest full tracklist (missing tracks
 //!   count here), then the fewest contradicted tag hints (media, country,
 //!   disc count), then the closest exact track lengths, then the saved
-//!   edition preferences (v2's order without them: Official status,
+//!   edition preferences (the order without them: Official status,
 //!   earliest date, worldwide country), then MBID.
-//! - A lone candidate (no other release group plausible) needs v2's
+//! - A lone candidate (no other release group plausible) needs a
 //!   quorum: two tracks paired within 0.40, or a recording or
 //!   release-track MBID on any file. A complete close fit also passes:
 //!   no missing or unmatched tracks, a non-blank album title and artist
@@ -52,7 +51,7 @@
 //!   eight-track album pass, two extra files around a two-track single do
 //!   not. Each one still counts in the distance.
 //! - Live releases, and compilations the tags do not call compilations,
-//!   need confirmation (v2): unless every file carries its release-track
+//!   need confirmation: unless every file carries its release-track
 //!   id, only the release group is pinned. A track id set aside as
 //!   another edition's (see `score`) does not name its track. Untagged
 //!   files still confirm one when the group won clearly (no rival group
@@ -158,7 +157,7 @@ pub enum Verdict {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct EditionPrefs<'a> {
     pub tagged: Option<&'a str>,
-    /// `None` falls back to v2's order: Official, earliest, worldwide.
+    /// `None` falls back to the default order: Official, earliest, worldwide.
     pub preferences: Option<&'a Preferences>,
     /// The release group the files name, lowercase.
     pub named_group: Option<&'a str>,
@@ -502,7 +501,7 @@ fn other_status(release: &Release) -> bool {
         && !official(release)
 }
 
-/// v2's lone-candidate quorum (`_lone_eligible_supported`).
+/// The lone-candidate quorum.
 fn quorum(local: &LocalAlbum, matched: &ReleaseMatch) -> bool {
     let close = matched
         .pairs
@@ -706,7 +705,7 @@ fn worldwide(release: &Release) -> bool {
     release.country.as_deref() == Some("XW")
 }
 
-/// v2's mixed-precision date order: earlier first, a more precise date
+/// Mixed-precision date order: earlier first, a more precise date
 /// before a vaguer one of the same prefix, no date last.
 fn date_key(date: Option<&str>) -> (u32, u32, u32) {
     const UNKNOWN: u32 = 100;

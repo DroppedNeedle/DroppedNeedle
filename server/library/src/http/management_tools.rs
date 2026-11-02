@@ -1,8 +1,8 @@
 //! Library Management tools besides profile runs: the tag editor, back to
 //! the originals (restore previews and the purge), settling a duplicate,
 //! the publish journal's writes that need an administrator, and the dry
-//! run that turns automatic management on. Every route is admin-only, as
-//! in v2. Store and file work runs on a blocking thread.
+//! run that turns automatic management on. Every route is admin-only. Store and
+//! file work runs on a blocking thread.
 
 use std::collections::BTreeMap;
 
