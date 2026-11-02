@@ -14,7 +14,7 @@ use crate::passwords::StoredPassword;
 use crate::session::store::{
     NewSession, SessionKind, SessionRecord, SessionStoreError, ValidSession,
 };
-use crate::session::tokens::{constant_time_eq, expires_at};
+use crate::session::tokens::{expires_at, secret_eq};
 use crate::times::{ms_to_secs, secs_to_ms};
 use crate::users::models::{ManagedSession, SessionOwner};
 use crate::users::roles::Role;
@@ -221,7 +221,7 @@ impl Sessions {
             return Ok(None);
         };
         let stored: String = row.get("token_hash");
-        if !constant_time_eq(&stored, token_hash) {
+        if !secret_eq(&stored, token_hash) {
             return Ok(None);
         }
         if row.get::<i64, _>("revoked") != 0 {

@@ -40,7 +40,7 @@ use crate::subsonic::{
     Credentials, Ctx, Settings, classify, endpoint, failure, normalize_endpoint,
 };
 use droppedneedle_auth::compat_auth::jellyfin::extract_token;
-use droppedneedle_auth::compat_auth::prod::{ProdCompatPasswords, SecretMatch};
+use droppedneedle_auth::compat_auth::prod::{CompatPasswords, SecretMatch};
 use droppedneedle_auth::compat_auth::subsonic::decode_subsonic_password;
 use droppedneedle_auth::session::client_ip::ClientIp;
 use droppedneedle_kernel::clock::Clock;
@@ -113,7 +113,7 @@ pub struct CompatLimits {
     /// Clock origin for bucket timestamps.
     pub started: Arc<Instant>,
     /// App passwords, to find the bucket a Jellyfin token takes.
-    pub passwords: ProdCompatPasswords,
+    pub passwords: CompatPasswords,
     /// Server name/version for Subsonic limit envelopes, read per request.
     pub settings: LiveSettings,
     /// Peers whose `X-Forwarded-For` names the client; loopback by default.
@@ -122,7 +122,7 @@ pub struct CompatLimits {
 
 impl CompatLimits {
     /// Wrap the buckets, the app passwords, and the settings.
-    pub fn new(passwords: ProdCompatPasswords, settings: LiveSettings) -> Self {
+    pub fn new(passwords: CompatPasswords, settings: LiveSettings) -> Self {
         Self {
             limits: Arc::new(Mutex::new(ratelimit::CompatRateLimits::new())),
             started: Arc::new(Instant::now()),
@@ -458,7 +458,7 @@ pub struct SubsonicState {
     /// Clock origin for bucket timestamps.
     pub started: Arc<Instant>,
     /// App passwords, to tell a revoked one from a guess.
-    pub passwords: ProdCompatPasswords,
+    pub passwords: CompatPasswords,
     /// How apps reach this server, for the address in picture links.
     pub listener: ListenerConfig,
     /// Wall time, stamped on each request.
@@ -795,7 +795,7 @@ fn subsonic_presented(credentials: &Credentials) -> Option<Vec<&[u8]>> {
 /// revoked: telling which secret made it would mean decrypting and trying
 /// every revoked one, and `reset-key` leaves none to try. A store failure
 /// answers `false`, so the denial counts.
-async fn presents_revoked(passwords: &ProdCompatPasswords, credentials: &Credentials) -> bool {
+async fn presents_revoked(passwords: &CompatPasswords, credentials: &Credentials) -> bool {
     let secret = match credentials {
         Credentials::Password { password, .. } => decode_subsonic_password(password),
         Credentials::ApiKey { key } => key.clone(),

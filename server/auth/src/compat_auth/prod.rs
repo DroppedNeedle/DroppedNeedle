@@ -37,13 +37,13 @@ pub enum SecretMatch {
 
 /// Compat-contract store over the real users tables.
 #[derive(Clone)]
-pub struct ProdCompatPasswords {
+pub struct CompatPasswords {
     users: UsersDeps,
     crypto: Arc<Crypto>,
     touched: Arc<Mutex<HashMap<String, Instant>>>,
 }
 
-impl ProdCompatPasswords {
+impl CompatPasswords {
     /// Wrap the users deps and the config crypto handle.
     pub fn new(users: UsersDeps, crypto: Arc<Crypto>) -> Self {
         Self {

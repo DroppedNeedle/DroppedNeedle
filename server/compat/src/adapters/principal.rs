@@ -6,7 +6,7 @@
 
 use crate::subsonic::auth::Credentials;
 use crate::subsonic::error::SubsonicError;
-use droppedneedle_auth::compat_auth::prod::ProdCompatPasswords;
+use droppedneedle_auth::compat_auth::prod::CompatPasswords;
 use droppedneedle_auth::compat_auth::subsonic::{SubsonicDenied, SubsonicParams, authenticate};
 use droppedneedle_auth::users::UsersDeps;
 
@@ -87,13 +87,13 @@ impl CompatPrincipal {
 /// 40 like an unknown credential.
 #[derive(Clone)]
 pub struct SubsonicVerifier {
-    passwords: ProdCompatPasswords,
+    passwords: CompatPasswords,
     users: UsersDeps,
 }
 
 impl SubsonicVerifier {
     /// Wrap the password store and the users the profiles come from.
-    pub fn new(passwords: ProdCompatPasswords, users: UsersDeps) -> Self {
+    pub fn new(passwords: CompatPasswords, users: UsersDeps) -> Self {
         Self { passwords, users }
     }
 

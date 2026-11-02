@@ -8,7 +8,7 @@
 //!
 //! # What the handlers call
 //!
-//! - Auth: [`ProdCompatPasswords`](droppedneedle_auth::compat_auth::prod::ProdCompatPasswords)
+//! - Auth: [`CompatPasswords`](droppedneedle_auth::compat_auth::prod::CompatPasswords)
 //!   over the real users tables (app passwords only, never native tokens
 //!   or account passwords). The Subsonic
 //!   [`SubsonicVerifier`](adapters::principal::SubsonicVerifier) maps

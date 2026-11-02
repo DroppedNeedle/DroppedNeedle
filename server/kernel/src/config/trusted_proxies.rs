@@ -3,6 +3,7 @@
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
+use ipnet::IpNet;
 use thiserror::Error;
 
 /// Proxies trusted to set `X-Forwarded-*` headers.
@@ -16,22 +17,13 @@ use thiserror::Error;
 pub struct TrustedProxies {
     trust_all: bool,
     hosts: Vec<IpAddr>,
-    networks: Vec<Subnet>,
+    networks: Vec<IpNet>,
 }
 
 /// One bad entry in a trusted-proxy list.
 #[derive(Debug, Error, PartialEq, Eq)]
 #[error("invalid trusted proxy entry {0:?}: expected an IP, a CIDR, or \"*\"")]
 pub struct InvalidProxyEntry(pub String);
-
-/// A parsed CIDR subnet, stored as base address plus prefix length.
-#[derive(Debug, Clone, Copy)]
-enum Subnet {
-    /// IPv4 base plus prefix length (0-32).
-    V4 { base: u32, prefix: u8 },
-    /// IPv6 base plus prefix length (0-128).
-    V6 { base: u128, prefix: u8 },
-}
 
 impl TrustedProxies {
     /// Loopback only (`127.0.0.1`, `::1`): direct-serve and same-host-proxy
@@ -61,9 +53,9 @@ impl TrustedProxies {
                 continue;
             }
             if let Some((addr, prefix)) = entry.split_once('/') {
-                let subnet = parse_subnet(addr.trim(), prefix.trim())
-                    .map_err(|()| InvalidProxyEntry(entry.to_owned()))?;
-                proxies.networks.push(subnet);
+                let network = parse_network(addr, prefix)
+                    .ok_or_else(|| InvalidProxyEntry(entry.to_owned()))?;
+                proxies.networks.push(network);
             } else {
                 let host: IpAddr = entry
                     .parse()
@@ -91,7 +83,7 @@ impl TrustedProxies {
             IpAddr::V6(mapped) => mapped.to_ipv4_mapped().map(IpAddr::V4).unwrap_or(ip),
             IpAddr::V4(_) => ip,
         };
-        self.hosts.contains(&ip) || self.networks.iter().any(|net| net.contains(ip))
+        self.hosts.contains(&ip) || self.networks.iter().any(|net| net.contains(&ip))
     }
 }
 
@@ -101,63 +93,11 @@ impl Default for TrustedProxies {
     }
 }
 
-impl Subnet {
-    /// True when the address falls inside this subnet (same family only).
-    fn contains(self, ip: IpAddr) -> bool {
-        match (self, ip) {
-            (Subnet::V4 { base, prefix }, IpAddr::V4(addr)) => {
-                let mask = prefix_mask_u32(prefix);
-                u32::from(addr) & mask == base & mask
-            }
-            (Subnet::V6 { base, prefix }, IpAddr::V6(addr)) => {
-                let mask = prefix_mask_u128(prefix);
-                u128::from(addr) & mask == base & mask
-            }
-            _ => false,
-        }
-    }
-}
-
-/// Parse one `address/prefix` CIDR entry.
-fn parse_subnet(addr: &str, prefix: &str) -> Result<Subnet, ()> {
-    let prefix: u8 = prefix.parse().map_err(|_| ())?;
-    if let Ok(v4) = addr.parse::<Ipv4Addr>() {
-        if prefix > 32 {
-            return Err(());
-        }
-        return Ok(Subnet::V4 {
-            base: u32::from(v4),
-            prefix,
-        });
-    }
-    if let Ok(v6) = addr.parse::<Ipv6Addr>() {
-        if prefix > 128 {
-            return Err(());
-        }
-        return Ok(Subnet::V6 {
-            base: u128::from(v6),
-            prefix,
-        });
-    }
-    Err(())
-}
-
-/// High `prefix` bits set for an IPv4 netmask.
-fn prefix_mask_u32(prefix: u8) -> u32 {
-    if prefix == 0 {
-        0
-    } else {
-        u32::MAX << (32 - prefix)
-    }
-}
-
-/// High `prefix` bits set for an IPv6 netmask.
-fn prefix_mask_u128(prefix: u8) -> u128 {
-    if prefix == 0 {
-        0
-    } else {
-        u128::MAX << (128 - prefix)
-    }
+/// One `address/prefix` entry. The address goes through `IpAddr`, which
+/// refuses leading zeros that some tools read as octal.
+fn parse_network(addr: &str, prefix: &str) -> Option<IpNet> {
+    let addr: IpAddr = addr.trim().parse().ok()?;
+    IpNet::new(addr, prefix.trim().parse().ok()?).ok()
 }
 
 #[cfg(test)]
@@ -189,5 +129,19 @@ mod tests {
         assert!(loopback.is_trusted(peer("127.0.0.1:9")));
         assert!(!loopback.is_trusted(peer("192.168.1.2:9")));
         assert!(loopback.is_trusted(peer("[::ffff:127.0.0.1]:9")));
+
+        let host_bits = TrustedProxies::parse("10.0.0.5/8").unwrap();
+        assert!(host_bits.is_trusted(peer("10.9.8.7:1")));
+        assert!(!host_bits.is_trusted(peer("11.0.0.1:1")));
+        assert!(host_bits.is_trusted(peer("[::ffff:10.1.2.3]:1")));
+
+        let every_v4 = TrustedProxies::parse("0.0.0.0/0").unwrap();
+        assert!(every_v4.is_trusted(peer("203.0.113.9:1")));
+        assert!(!every_v4.is_trusted(peer("[2001:db8::1]:1")));
+
+        let spaced = TrustedProxies::parse("10.0.0.0 / 8").unwrap();
+        assert!(spaced.is_trusted(peer("10.0.0.1:1")));
+
+        assert!(TrustedProxies::parse("010.0.0.0/8").is_err());
     }
 }

@@ -10,7 +10,8 @@
 
 use sha2::{Digest, Sha256};
 
-use super::prod::ProdCompatPasswords;
+use super::prod::CompatPasswords;
+use crate::session::tokens::secret_eq;
 
 /// Generic error.
 pub const GENERIC: u8 = 0;
@@ -108,7 +109,7 @@ pub struct SubsonicStoreError;
 /// keys, presence conflicts, apiKey rules, presence of `u`, length caps,
 /// user lookup, then per-scheme verification.
 pub async fn authenticate(
-    store: &ProdCompatPasswords,
+    store: &CompatPasswords,
     params: &SubsonicParams,
 ) -> Result<SubsonicPrincipal, SubsonicDenied> {
     for key in ["u", "t", "s", "p", "apiKey", "c"] {
@@ -193,7 +194,7 @@ pub async fn authenticate(
             .await
             .map_err(|_| SubsonicDenied::new(GENERIC))?;
         for secret in &secrets {
-            if constant_time_eq(&md5_hex(&format!("{}{salt}", secret.plaintext)), &target) {
+            if secret_eq(&md5_hex(&format!("{}{salt}", secret.plaintext)), &target) {
                 store.note_use(&secret.plaintext, client).await;
                 return Ok(SubsonicPrincipal { user_id });
             }
@@ -227,45 +228,15 @@ pub fn decode_subsonic_password(p: &str) -> String {
         return p.to_owned();
     };
     let digits: String = hex.chars().filter(|c| !c.is_ascii_whitespace()).collect();
-    if digits.len() % 2 != 0 {
-        return p.to_owned();
-    }
-    let mut bytes = Vec::with_capacity(digits.len() / 2);
-    let chars: Vec<char> = digits.chars().collect();
-    for pair in chars.chunks(2) {
-        let (Some(hi), Some(lo)) = (pair[0].to_digit(16), pair[1].to_digit(16)) else {
-            return p.to_owned();
-        };
-        bytes.push((hi * 16 + lo) as u8);
-    }
-    String::from_utf8(bytes).unwrap_or_else(|_| p.to_owned())
+    hex::decode(digits)
+        .ok()
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .unwrap_or_else(|| p.to_owned())
 }
 
 /// SHA-256 hex of a secret (lookup hash).
 pub fn sha256_hex(value: &str) -> String {
     format!("{:x}", Sha256::digest(value.as_bytes()))
-}
-
-/// Fixed-time string equality for hashes.
-pub fn constant_time_eq(a: &str, b: &str) -> bool {
-    let (x, y) = (a.as_bytes(), b.as_bytes());
-    if x.len() != y.len() {
-        return false;
-    }
-    let mut diff = 0u8;
-    for i in 0..x.len() {
-        diff |= x[i] ^ y[i];
-    }
-    diff == 0
-}
-
-/// Lowercase hex of `value` bytes.
-pub fn hex_encode(bytes: &[u8]) -> String {
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        out.push_str(&format!("{byte:02x}"));
-    }
-    out
 }
 
 /// MD5 hex digest (RFC 1321). Used only for the Subsonic token scheme

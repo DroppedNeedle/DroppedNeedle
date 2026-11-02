@@ -17,6 +17,10 @@
 
 use std::collections::HashMap;
 
+use time::PrimitiveDateTime;
+use time::format_description::BorrowedFormatItem;
+use time::macros::format_description;
+
 use crate::executor::Url;
 
 use super::xml::{self, Element};
@@ -449,6 +453,13 @@ fn attr_any_case<'a>(element: &'a Element, name: &str) -> Option<&'a str> {
         .map(|(_, value)| value.as_str())
 }
 
+/// The date and clock of an RFC 2822 time, seconds optional.
+const RFC2822_STAMP: &[BorrowedFormatItem<'_>] = format_description!(
+    version = 2,
+    "[day padding:none] [month repr:short case_sensitive:false] [year] \
+     [hour padding:none]:[minute][optional [:[second]]]"
+);
+
 /// RFC 2822 (`pubDate`, `usenetdate`) to unix time, as the release
 /// dates are kept.
 #[must_use]
@@ -456,53 +467,26 @@ pub fn parse_rfc2822_date(value: &str) -> Option<f64> {
     rfc2822_seconds(value).map(|seconds| seconds as f64)
 }
 
-/// RFC 2822 to unix seconds. Weekday optional; numeric zones plus
-/// GMT/UT/single military letters; `None` on garbage.
+/// RFC 2822 to unix seconds; `None` on garbage. Goes easier than the RFC on
+/// what indexers send: the weekday is not checked, months and zones take any
+/// case, the hour may be one digit, and a missing zone means UTC. The zone is
+/// read here because `time`'s RFC 2822 parser loses the sign of `-0030`.
 fn rfc2822_seconds(value: &str) -> Option<i64> {
     let text = value.trim();
-    let without_weekday = text
-        .split_once(',')
-        .map(|(_, rest)| rest.trim())
-        .unwrap_or(text);
-    let mut parts = without_weekday.split_whitespace();
-    let day: i64 = parts.next()?.parse().ok()?;
-    let month = month_number(parts.next()?)?;
-    let year: i64 = parts.next()?.parse().ok()?;
-    let clock = parts.next()?;
-    let mut clock_parts = clock.split(':');
-    let hour: i64 = clock_parts.next()?.parse().ok()?;
-    let minute: i64 = clock_parts.next()?.parse().ok()?;
-    let second: i64 = clock_parts.next().unwrap_or("0").parse().ok()?;
-    let zone = parts.next().unwrap_or("GMT");
-    let offset_seconds = zone_offset_seconds(zone)?;
-    let days = days_from_civil(year, month, day)?;
-    Some(days * 86_400 + hour * 3_600 + minute * 60 + second - offset_seconds)
-}
-
-fn month_number(name: &str) -> Option<i64> {
-    match name.to_ascii_lowercase().as_str() {
-        "jan" => Some(1),
-        "feb" => Some(2),
-        "mar" => Some(3),
-        "apr" => Some(4),
-        "may" => Some(5),
-        "jun" => Some(6),
-        "jul" => Some(7),
-        "aug" => Some(8),
-        "sep" => Some(9),
-        "oct" => Some(10),
-        "nov" => Some(11),
-        "dec" => Some(12),
-        _ => None,
-    }
+    let dated = text.split_once(',').map_or(text, |(_, rest)| rest);
+    let words: Vec<&str> = dated.split_whitespace().collect();
+    let (stamp, zone) = match words.split_last() {
+        Some((last, rest)) if !last.contains(':') => (rest, *last),
+        _ => (words.as_slice(), "GMT"),
+    };
+    let local = PrimitiveDateTime::parse(&stamp.join(" "), RFC2822_STAMP).ok()?;
+    Some(local.assume_utc().unix_timestamp() - zone_offset_seconds(zone)?)
 }
 
 fn zone_offset_seconds(zone: &str) -> Option<i64> {
-    let zone = zone.trim();
-    if zone.eq_ignore_ascii_case("gmt")
-        || zone.eq_ignore_ascii_case("ut")
-        || zone.eq_ignore_ascii_case("utc")
-        || zone.eq_ignore_ascii_case("z")
+    if ["gmt", "ut", "utc", "z"]
+        .iter()
+        .any(|name| zone.eq_ignore_ascii_case(name))
     {
         return Some(0);
     }
@@ -514,10 +498,12 @@ fn zone_offset_seconds(zone: &str) -> Option<i64> {
             return None;
         }
         let position = i64::from(letter as u8 - b'A');
-        return Some(if letter < 'N' {
+        return Some(if letter < 'J' {
             (position + 1) * 3_600
+        } else if letter < 'N' {
+            position * 3_600
         } else {
-            -(position + 1 - 13) * 3_600
+            -(position - 12) * 3_600
         });
     }
     if zone.len() == 5 && (zone.starts_with('+') || zone.starts_with('-')) {
@@ -529,8 +515,8 @@ fn zone_offset_seconds(zone: &str) -> Option<i64> {
     None
 }
 
-/// Howard Hinnant's days-from-civil; `None` for out-of-range input.
-/// Shared with the Prowlarr ISO-8601 parser (never a second copy).
+/// Howard Hinnant's days-from-civil; `None` for out-of-range input. The
+/// Prowlarr ISO-8601 parser's date step.
 #[must_use]
 pub fn days_from_civil(year: i64, month: i64, day: i64) -> Option<i64> {
     if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
@@ -543,4 +529,33 @@ pub fn days_from_civil(year: i64, month: i64, day: i64) -> Option<i64> {
     let day_of_year = (153 * month_prime + 2) / 5 + day - 1;
     let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
     Some(era * 146_097 + day_of_era - 719_468)
+}
+
+#[cfg(test)]
+mod date_tests {
+    use super::rfc2822_seconds;
+
+    #[test]
+    fn indexer_dates_read_as_they_are_sent() {
+        const AT: i64 = 1_771_526_735; // 2026-02-19T18:45:35Z
+        for (text, expected) in [
+            ("Thu, 19 Feb 2026 18:45:35 +0000", Some(AT)),
+            ("Mon, 19 Feb 2026 18:45:35 GMT", Some(AT)),
+            ("19 feb 2026 18:45:35 UTC", Some(AT)),
+            ("19 Feb 2026 18:45:35 utc", Some(AT)),
+            ("19 Feb 2026 18:45:35", Some(AT)),
+            ("19  Feb 2026 19:45:35 +0100", Some(AT)),
+            ("19 Feb 2026 17:15:35 -0130", Some(AT)),
+            ("19 Feb 2026 18:15:35 -0030", Some(AT)),
+            ("19 Feb 2026 8:45:35 -1000", Some(AT)),
+            ("19 Feb 2026 19:45:35 A", Some(AT)),
+            ("19 Feb 2026 17:45:35 N", Some(AT)),
+            ("19 Feb 2026 18:45 GMT", Some(AT - 35)),
+            ("not a date", None),
+            ("19 Feb 2026 18:45:35 J", None),
+            ("", None),
+        ] {
+            assert_eq!(rfc2822_seconds(text), expected, "{text:?}");
+        }
+    }
 }

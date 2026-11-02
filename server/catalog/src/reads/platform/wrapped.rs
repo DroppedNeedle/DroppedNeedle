@@ -26,7 +26,7 @@ use axum::{
 use futures_util::future::BoxFuture;
 use sha2::{Digest, Sha256};
 
-use droppedneedle_auth::session::tokens::constant_time_eq;
+use droppedneedle_auth::session::tokens::secret_eq;
 use droppedneedle_kernel::error::ApiError;
 use droppedneedle_kernel::mount::{OwnCredential, Routes, routes};
 use droppedneedle_kernel::runtime_config::{Live, secret_sections::WrappedSettings};
@@ -326,7 +326,7 @@ pub fn check_key(headers: &HeaderMap, expected: &str) -> bool {
         return false;
     };
     let digest = |bytes: &[u8]| format!("{:x}", Sha256::digest(bytes));
-    constant_time_eq(&digest(presented.as_bytes()), &digest(expected.as_bytes()))
+    secret_eq(&digest(presented.as_bytes()), &digest(expected.as_bytes()))
 }
 
 /// Key-gate rejection. Status 401 with the v2 message verbatim, and

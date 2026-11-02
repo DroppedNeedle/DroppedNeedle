@@ -54,16 +54,6 @@ pub const MAX_AUTH_VALUE_LEN: usize = 1024;
 /// Prefix marking companion rows in the shared token table, kept from v2.
 pub const COMPANION_LABEL_PREFIX: &str = "DroppedNeedle companion \u{b7} ";
 
-fn hex_encode(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        out.push(HEX[(byte >> 4) as usize] as char);
-        out.push(HEX[(byte & 0x0f) as usize] as char);
-    }
-    out
-}
-
 /// Fill a buffer from the OS generator. Failure is a 500, never a fallback.
 fn random_bytes<const N: usize>() -> Result<[u8; N], UsersError> {
     let mut buf = [0u8; N];
@@ -468,7 +458,7 @@ pub async fn upload_avatar(
         .save(caller.user_id(), content_type, &bytes)
         .await
         .map_err(store_internal)?;
-    let nonce = hex_encode(&random_bytes::<3>()?);
+    let nonce = hex::encode(random_bytes::<3>()?);
     let version = format!("{}-{nonce}", clock_now(deps));
     let url = avatar_url(caller.user_id(), &version);
     deps.users
@@ -1527,7 +1517,7 @@ pub async fn verify_app_password(
         .get_active_by_sha256(&digest)
         .await
         .ok()??;
-    if !tokens::constant_time_eq(&row.secret_sha256, &digest) {
+    if !tokens::secret_eq(&row.secret_sha256, &digest) {
         return None;
     }
     let owner = deps.users.get_by_id(&row.user_id).await.ok()??;

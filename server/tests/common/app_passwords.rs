@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use droppedneedle_auth::compat_auth::prod::ProdCompatPasswords;
+use droppedneedle_auth::compat_auth::prod::CompatPasswords;
 use droppedneedle_auth::session::tokens;
 use droppedneedle_auth::users::models::AppPasswordRecord;
 use droppedneedle_kernel::clock::Clock as _;
@@ -46,7 +46,7 @@ impl AuthRig {
     }
 
     /// The compat app-password store over the rig's users.
-    pub fn compat_passwords(&self) -> ProdCompatPasswords {
-        ProdCompatPasswords::new(self.deps.clone(), Arc::clone(&self.deps.crypto))
+    pub fn compat_passwords(&self) -> CompatPasswords {
+        CompatPasswords::new(self.deps.clone(), Arc::clone(&self.deps.crypto))
     }
 }

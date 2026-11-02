@@ -2,7 +2,7 @@
 //! adapters they call.
 //!
 //! - Auth: the routes name the app-password store,
-//!   [`droppedneedle_auth::compat_auth::prod::ProdCompatPasswords`],
+//!   [`droppedneedle_auth::compat_auth::prod::CompatPasswords`],
 //!   directly; this file only adds the thin [`Principal`] view over its
 //!   `JellyfinUser`. Login bodies reuse `compat_auth`'s
 //!   `login_echo_json`, so the Finamp/Manet login contract has one owner.

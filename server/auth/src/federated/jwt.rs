@@ -8,6 +8,10 @@
 //!
 //! v2 decoded the `id_token` payload without checking anything. Here a
 //! token that fails any check fails the login.
+//!
+//! The JOSE parsing stays here with `ring` doing the cryptography:
+//! jsonwebtoken 10 and 11 need `rsa` (RUSTSEC-2023-0071) or `aws-lc-rs`, a
+//! second C crypto library.
 
 use base64::Engine as _;
 use base64::alphabet::URL_SAFE;
@@ -18,7 +22,7 @@ use serde_json::{Map, Value};
 use thiserror::Error;
 
 use super::oidc_models::{Jwk, JwtHeader};
-use crate::session::tokens::constant_time_eq;
+use crate::session::tokens::secret_eq;
 
 /// Allowed clock difference between us and the provider, in seconds.
 pub const CLOCK_LEEWAY_SECS: i64 = 60;
@@ -290,7 +294,7 @@ fn check_claims(claims: &Map<String, Value>, rules: &IdTokenRules<'_>) -> Result
         return Err(IdTokenError::Claim("nbf"));
     }
     match text("nonce") {
-        Some(nonce) if constant_time_eq(nonce, rules.nonce) => {}
+        Some(nonce) if secret_eq(nonce, rules.nonce) => {}
         _ => return Err(IdTokenError::Claim("nonce")),
     }
     if text("sub").is_none_or(str::is_empty) {
@@ -425,5 +429,105 @@ mod tests {
             verify_id_token(&hmac, &[], &rules()),
             Err(IdTokenError::Algorithm("HS256".to_owned()))
         );
+    }
+
+    /// No spelling of `none` passes, not even with a secret set or with the
+    /// provider advertising it.
+    #[test]
+    fn no_spelling_of_none_is_accepted() {
+        let key = signer();
+        let advertised = ["none".to_owned(), "None".to_owned()];
+        for alg in ["none", "None", "NONE", "nOnE"] {
+            let head = format!(
+                "{}.{}",
+                B64URL.encode(json!({"alg": alg}).to_string()),
+                B64URL.encode(claims().to_string())
+            );
+            for token in [format!("{head}."), format!("{head}.c2ln")] {
+                for rules in [
+                    rules(),
+                    IdTokenRules {
+                        client_secret: Some("secret"),
+                        allowed_algs: &[],
+                        ..rules()
+                    },
+                    IdTokenRules {
+                        allowed_algs: &advertised,
+                        ..rules()
+                    },
+                ] {
+                    assert_eq!(
+                        verify_id_token(&token, std::slice::from_ref(&key.jwk), &rules),
+                        Err(IdTokenError::Algorithm(alg.to_owned())),
+                        "{token}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Public key material never verifies an HMAC, and a key only verifies
+    /// the family it belongs to.
+    #[test]
+    fn a_public_key_is_never_taken_for_another_kind_of_key() {
+        let key = signer();
+        let hmac_signed = |secret: &[u8]| {
+            let head = format!(
+                "{}.{}",
+                B64URL.encode(json!({"alg": "HS256", "kid": "k1"}).to_string()),
+                B64URL.encode(claims().to_string())
+            );
+            let mut mac =
+                <Hmac<sha2::Sha256> as hmac::digest::KeyInit>::new_from_slice(secret).unwrap();
+            mac.update(head.as_bytes());
+            format!("{head}.{}", B64URL.encode(mac.finalize().into_bytes()))
+        };
+        let keys = std::slice::from_ref(&key.jwk);
+        let forged = hmac_signed(key.jwk.x.as_deref().unwrap().as_bytes());
+        // With no client secret, HMAC is refused outright.
+        assert_eq!(
+            verify_id_token(&forged, keys, &rules()),
+            Err(IdTokenError::Algorithm("HS256".to_owned()))
+        );
+        // With one, only the secret verifies: the published key does not.
+        let with_secret = IdTokenRules {
+            client_secret: Some("the-client-secret"),
+            ..rules()
+        };
+        assert_eq!(
+            verify_id_token(&forged, keys, &with_secret),
+            Err(IdTokenError::Signature)
+        );
+        // A provider that does not advertise HMAC refuses even the real secret.
+        let advertised = ["ES256".to_owned()];
+        assert_eq!(
+            verify_id_token(
+                &hmac_signed(b"the-client-secret"),
+                keys,
+                &IdTokenRules {
+                    allowed_algs: &advertised,
+                    ..with_secret
+                }
+            ),
+            Err(IdTokenError::Algorithm("HS256".to_owned()))
+        );
+        // An EC key is no candidate for RSA, PSS, EdDSA or the other curve,
+        // even with its `alg` left open.
+        let signed = sign(&key, json!({"alg": "ES256", "kid": "k1"}), claims());
+        let (_, rest) = signed.split_once('.').unwrap();
+        let mut open_key = key.jwk.clone();
+        open_key.alg = None;
+        for alg in ["RS256", "PS256", "EdDSA", "ES384"] {
+            let header = B64URL.encode(json!({"alg": alg, "kid": "k1"}).to_string());
+            assert_eq!(
+                verify_id_token(
+                    &format!("{header}.{rest}"),
+                    std::slice::from_ref(&open_key),
+                    &rules()
+                ),
+                Err(IdTokenError::UnknownKey),
+                "{alg}"
+            );
+        }
     }
 }

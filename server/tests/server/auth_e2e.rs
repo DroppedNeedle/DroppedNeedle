@@ -22,7 +22,7 @@ use axum::http::{HeaderMap, Request, StatusCode};
 use droppedneedle::docs::ApiDoc;
 use droppedneedle::{AppState, create_app};
 use droppedneedle_auth::compat_auth::jellyfin::{authenticate_by_name, resolve_token};
-use droppedneedle_auth::compat_auth::prod::ProdCompatPasswords;
+use droppedneedle_auth::compat_auth::prod::CompatPasswords;
 use droppedneedle_auth::compat_auth::subsonic::{
     SubsonicDenied, SubsonicParams, WRONG_CREDENTIALS, authenticate, md5_hex,
 };
@@ -803,7 +803,7 @@ async fn the_secure_cookie_outranks_the_plain_one_and_sign_out_ends_both() {
             .iter()
             .any(|value| value.starts_with(&format!("{SECURE_COOKIE}=; "))
                 && value.contains("Max-Age=0")
-                && value.ends_with("; Secure")),
+                && value.contains("; Secure; ")),
         "{cleared:?}"
     );
     assert_eq!(me(format!("{PLAIN_COOKIE}={a}")).await, None);
@@ -971,7 +971,7 @@ async fn journey_c_app_password_compat_accepts_native_rejects() {
     let admin_token = admin_token.as_str().expect("admin token").to_owned();
     let admin_auth = bearer(admin_token.as_str());
     let admin_headers = [("authorization", admin_auth.as_str())];
-    let compat = ProdCompatPasswords::new(e2e.users(), Arc::clone(&e2e.crypto));
+    let compat = CompatPasswords::new(e2e.users(), Arc::clone(&e2e.crypto));
 
     // Create one app password; the secret shows exactly once.
     let (status, body, _) = call(

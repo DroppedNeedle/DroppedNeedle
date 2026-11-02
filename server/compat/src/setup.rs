@@ -2,7 +2,7 @@
 //! routers.
 //!
 //! [`CompatSetup`] is the one `AppState` field compat adds. It binds auth
-//! to the app-password store ([`ProdCompatPasswords`]), the library to the
+//! to the app-password store ([`CompatPasswords`]), the library to the
 //! v3 catalog and the shared collections ([`CompatLibrary`]), queues and
 //! bookmarks to SQLite, playback to the reporting services and streaming to
 //! the stream engine. Settings (kill switches, names, transcode policy)
@@ -30,7 +30,7 @@ use crate::http::{CompatLimits, SubsonicState, cors_layer, limits_layer, subsoni
 use crate::jellyfin::{JellyfinState, routes as jellyfin_routes};
 use crate::settings::LiveSettings;
 use crate::shared::address::ListenerConfig;
-use droppedneedle_auth::compat_auth::prod::ProdCompatPasswords;
+use droppedneedle_auth::compat_auth::prod::CompatPasswords;
 use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_catalog::reads::ReadsSetup;
 use droppedneedle_kernel::db::Db;
@@ -113,7 +113,7 @@ pub struct CompatSetup {
 impl CompatSetup {
     /// Build the adapters and mount both routers.
     pub fn build(deps: CompatDeps) -> Self {
-        let passwords = ProdCompatPasswords::new(deps.users.clone(), Arc::clone(&deps.crypto));
+        let passwords = CompatPasswords::new(deps.users.clone(), Arc::clone(&deps.crypto));
         let playback = CompatPlayback::new(deps.playback);
         let store = SubsonicStore::new(
             deps.library.clone(),

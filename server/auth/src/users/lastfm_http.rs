@@ -9,7 +9,7 @@ use droppedneedle_providers::lastfm::{LastFmClient, LastFmCredentials};
 use droppedneedle_providers::{ProviderError, RequestPriority};
 
 use super::stores::{BoxFuture, LastFmAuthClient, LastFmError};
-use crate::federated::oidc::form_encode;
+use crate::federated::oidc::form_query;
 
 /// Where the user approves a token.
 pub const AUTH_PAGE: &str = "https://www.last.fm/api/auth/";
@@ -70,11 +70,8 @@ impl LastFmAuthClient for LastFmAuthHttp {
                 .await
                 .map_err(|error| link_error(&error, false))?
                 .token;
-            let auth_url = format!(
-                "{AUTH_PAGE}?api_key={}&token={}",
-                form_encode(api_key),
-                form_encode(&token)
-            );
+            let query = form_query(&[("api_key", api_key), ("token", &token)]);
+            let auth_url = format!("{AUTH_PAGE}?{query}");
             Ok((token, auth_url))
         })
     }

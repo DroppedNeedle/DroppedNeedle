@@ -13,7 +13,7 @@ use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use droppedneedle_auth::federated::jellyfin_login::emby_auth_header;
 use droppedneedle_auth::federated::oidc::{
-    AuthorizeParams, OidcConfig, RawClaims, authorize_url, form_encode, normalise_claims,
+    AuthorizeParams, OidcConfig, RawClaims, authorize_url, form_query, normalise_claims,
     pkce_challenge,
 };
 use droppedneedle_auth::federated::password_import::SESSIONS_SURVIVE_IMPORT;
@@ -309,8 +309,8 @@ async fn land(
         app.clone(),
         "GET",
         &format!(
-            "{path}?code={OIDC_CODE}&state={}",
-            form_encode(&login.state)
+            "{path}?{}",
+            form_query(&[("code", OIDC_CODE), ("state", &login.state)])
         ),
         headers,
         None,
@@ -367,7 +367,7 @@ async fn oidc_sign_in_verifies_the_id_token_and_creates_the_first_admin() {
     assert!(
         sent[1].starts_with("__Secure-droppedneedle_oidc_state=; ")
             && sent[1].contains("Max-Age=0")
-            && sent[1].ends_with("; Secure"),
+            && sent[1].contains("; Secure; "),
         "{sent:?}"
     );
     // A callback in a browser that did not start the login is refused.
@@ -468,7 +468,7 @@ async fn oidc_sign_in_verifies_the_id_token_and_creates_the_first_admin() {
         marked
             .cookie
             .starts_with("__Secure-droppedneedle_oidc_state=")
-            && marked.set_cookies[0].ends_with("; Secure"),
+            && marked.set_cookies[0].contains("; Secure; "),
         "{:?}",
         marked.set_cookies
     );
@@ -488,7 +488,7 @@ async fn oidc_sign_in_verifies_the_id_token_and_creates_the_first_admin() {
         cleared.iter().any(
             |value| value.starts_with("__Secure-droppedneedle_oidc_state=; ")
                 && value.contains("Max-Age=0")
-                && value.ends_with("; Secure")
+                && value.contains("; Secure; ")
         ),
         "{cleared:?}"
     );
@@ -1410,6 +1410,9 @@ async fn old_sessions_die_on_import_while_new_logins_work() {
     let live = issuer.issue_session(&user.id, None).await.unwrap();
     assert!(is_live(live.clone()).await);
 
+    // A v2 export carries no sessions and the import writes none, so a
+    // session from before it cannot be there afterwards. Revoking them here
+    // puts the database in that state.
     rig.auth
         .sessions
         .revoke_all_for_user(&user.id)
@@ -1451,7 +1454,7 @@ async fn imported_app_passwords_verify_on_both_compat_paths() {
     let principal = subsonic::authenticate(&passwords, &params).await.unwrap();
     assert_eq!(principal.user_id, "user-imma");
 
-    let hexed = format!("enc:{}", subsonic::hex_encode(b"imported-secret-1"));
+    let hexed = format!("enc:{}", hex::encode(b"imported-secret-1"));
     let params = subsonic::SubsonicParams::new(vec![("u", "Imma"), ("p", &hexed)]);
     let principal = subsonic::authenticate(&passwords, &params).await.unwrap();
     assert_eq!(principal.user_id, "user-imma");

@@ -19,7 +19,7 @@ use axum::routing::{MethodFilter, MethodRouter, on};
 use droppedneedle_auth::compat_auth::jellyfin::{
     JellyfinDenied, JellyfinRequest, extract_client, extract_token, resolve_token, server_id,
 };
-use droppedneedle_auth::compat_auth::prod::ProdCompatPasswords;
+use droppedneedle_auth::compat_auth::prod::CompatPasswords;
 use droppedneedle_kernel::error::{ApiError, Unavailable};
 use droppedneedle_kernel::ids::RequestId;
 use droppedneedle_kernel::mount::CompatRoutes;
@@ -49,7 +49,7 @@ use super::system::*;
 #[derive(Clone)]
 pub struct JellyfinState {
     /// App-password store.
-    pub passwords: ProdCompatPasswords,
+    pub passwords: CompatPasswords,
     /// Library reads.
     pub library: JellyfinLibrary,
     /// Audio over the stream gateway.
@@ -69,7 +69,7 @@ pub struct JellyfinState {
 impl JellyfinState {
     /// Assemble state; `server_id()` is restart-stable.
     pub fn new(
-        passwords: ProdCompatPasswords,
+        passwords: CompatPasswords,
         library: JellyfinLibrary,
         engine: CompatAudio,
         sessions: CompatPlayback,
@@ -509,7 +509,7 @@ impl QueryTokens {
 /// A revoked app password gets the same 401, marked so it does not count.
 /// A credential-store failure keeps its own status, never a 401.
 pub(super) async fn sign_in(
-    State(passwords): State<ProdCompatPasswords>,
+    State(passwords): State<CompatPasswords>,
     mut request: Request<Body>,
     next: Next,
 ) -> Response {

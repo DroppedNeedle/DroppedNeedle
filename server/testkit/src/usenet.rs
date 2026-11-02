@@ -142,6 +142,8 @@ pub struct SabnzbdState {
     pub queue_fail_500: usize,
     /// Countdown of HTTP 500s served on `mode=addfile` (no-retry test).
     pub addfile_fail_500: usize,
+    /// Countdown of 308 redirects to the same address on `mode=addfile`.
+    pub addfile_redirect_308: usize,
     /// Forced error form for every `/api` call, until cleared.
     pub api_error: Option<SabErrorForm>,
     /// When true, addurl rejects echoing the submitted URL (redaction test).
@@ -440,6 +442,15 @@ async fn sab_api(
             json_response(json!({"history": {"slots": slots, "noofslots": count}}))
         }
         "addfile" => {
+            if state.addfile_redirect_308 > 0 {
+                state.addfile_redirect_308 -= 1;
+                let location = format!("/api?{raw_query}");
+                return (
+                    StatusCode::PERMANENT_REDIRECT,
+                    [(header::LOCATION, location)],
+                )
+                    .into_response();
+            }
             if state.addfile_fail_500 > 0 {
                 state.addfile_fail_500 -= 1;
                 return (StatusCode::INTERNAL_SERVER_ERROR, "blip").into_response();

@@ -7,6 +7,7 @@
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE};
 use sha2::{Digest, Sha256};
+use subtle::ConstantTimeEq as _;
 use thiserror::Error;
 
 /// Random bytes per token (v2 `TOKEN_BYTES`).
@@ -43,16 +44,8 @@ pub fn expires_at(now_unix: i64) -> i64 {
 
 /// Fixed-time equality for stored hashes. Lengths are constant in practice
 /// (64 hex chars); a length mismatch still returns without comparing.
-pub fn constant_time_eq(a: &str, b: &str) -> bool {
-    let (x, y) = (a.as_bytes(), b.as_bytes());
-    if x.len() != y.len() {
-        return false;
-    }
-    let mut diff = 0u8;
-    for i in 0..x.len() {
-        diff |= x[i] ^ y[i];
-    }
-    diff == 0
+pub fn secret_eq(a: &str, b: &str) -> bool {
+    a.as_bytes().ct_eq(b.as_bytes()).into()
 }
 
 #[cfg(test)]
@@ -81,8 +74,8 @@ mod tests {
             hash,
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         );
-        assert!(constant_time_eq(&hash, &hash));
-        assert!(!constant_time_eq(&hash, &hash_token("abd")));
-        assert!(!constant_time_eq(&hash, "short"));
+        assert!(secret_eq(&hash, &hash));
+        assert!(!secret_eq(&hash, &hash_token("abd")));
+        assert!(!secret_eq(&hash, "short"));
     }
 }

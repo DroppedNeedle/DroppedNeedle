@@ -11,7 +11,7 @@
 
 use sha2::{Digest, Sha256};
 
-use super::prod::{ProdCompatPasswords, SecretMatch};
+use super::prod::{CompatPasswords, SecretMatch};
 
 /// Stable server id: `sha256("droppedneedle-jellyfin-server")` hex,
 /// first 32 chars (v2 `models.py` parity, restart-stable).
@@ -203,7 +203,7 @@ impl JellyfinDenied {
 
 /// `AuthenticateByName`: check the username plus app password.
 pub async fn authenticate_by_name(
-    store: &ProdCompatPasswords,
+    store: &CompatPasswords,
     username: &str,
     password: &str,
     client: Option<&str>,
@@ -227,7 +227,7 @@ pub async fn authenticate_by_name(
 /// Resolve a request token to its user. `None`, empty, overlong, unknown
 /// and revoked tokens all deny identically on the wire.
 pub async fn resolve_token(
-    store: &ProdCompatPasswords,
+    store: &CompatPasswords,
     token: Option<&str>,
 ) -> Result<JellyfinUser, JellyfinDenied> {
     let Some(token) = token else {
@@ -459,9 +459,8 @@ fn push_kv(out: &mut String, first: bool, key: &str, value: &str) {
     }
     out.push('"');
     out.push_str(key);
-    out.push_str("\":\"");
-    json_escape_into(out, value);
-    out.push('"');
+    out.push_str("\":");
+    out.push_str(&serde_json::Value::from(value).to_string());
 }
 
 fn push_bool(out: &mut String, first: bool, key: &str, value: bool) {
@@ -482,20 +481,6 @@ fn push_raw(out: &mut String, first: bool, key: &str, raw: &str) {
     out.push_str(key);
     out.push_str("\":");
     out.push_str(raw);
-}
-
-fn json_escape_into(out: &mut String, value: &str) {
-    for c in value.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
-            c => out.push(c),
-        }
-    }
 }
 
 #[cfg(test)]

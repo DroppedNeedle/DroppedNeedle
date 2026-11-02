@@ -24,14 +24,19 @@ axum = { version = "0.8", features = ["json", "query", "http1", "matched-path", 
 base64 = "0.22"
 bcrypt = "0.17"
 caseless = "0.2"
+# Builds and reads our cookies. MIT or Apache-2.0; no optional features, so it
+# brings only time and a build-time version_check, both already in the tree.
+cookie = "0.18"
 chacha20poly1305 = "0.10"
 flate2 = "1"
 futures-util = "0.3"
 getrandom = "0.3"
+hex = "0.4"
+ipnet = "2"
 libc = "0.2"
 lofty = "0.25"
 md5 = "0.7"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["multipart", "rustls-tls"] }
 ring = "0.17"
 sha1 = "0.10"
 rubato = "0.16"
@@ -42,6 +47,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
 socket2 = "0.6"
 sha2 = "0.10"
+subtle = "2"
 sqlx = { version = "0.8", default-features = false, features = ["sqlite", "runtime-tokio", "macros", "migrate"] }
 symphonia = { version = "0.6", features = ["aac", "alac", "isomp4", "mp3"] }
 symphonia-adapter-libopus = "0.3"
@@ -53,6 +59,7 @@ tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["cors", "compression-br", "compression-gzip", "fs"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+url = "2"
 utoipa = "5"
 # Registers each route and its document entry from one `#[utoipa::path]`.
 # 0.3 needs utoipa 6.
@@ -63,7 +70,7 @@ aes = "0.8"
 cbc = { version = "0.1", features = ["alloc"] }
 hmac = "0.12"
 toml = "1"
-time = { version = "0.3", default-features = false, features = ["std", "formatting"] }
+time = { version = "0.3", default-features = false, features = ["std", "formatting", "macros", "parsing"] }
 # Daily scans run at local time in the server's time zone. Reads IANA zones
 # from the system database (the image ships tzdata) and handles
 # daylight-saving gaps and repeats. MIT or Unlicense; it brings jiff-core
@@ -143,6 +150,7 @@ droppedneedle-testkit = { path = "testkit", version = "0.1.0" }
 droppedneedle-tool = { workspace = true, features = ["test-support"] }
 tokio = { version = "1", features = ["test-util"] }
 flate2.workspace = true
+hex.workspace = true
 image.workspace = true
 md5.workspace = true
 lofty.workspace = true

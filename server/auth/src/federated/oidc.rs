@@ -427,15 +427,17 @@ pub fn authorize_url(
     } else {
         '?'
     };
-    format!(
-        "{authorization_endpoint}{separator}response_type=code&client_id={}&redirect_uri={}&scope={}&state={}&code_challenge={}&code_challenge_method=S256&nonce={}",
-        form_encode(&config.client_id),
-        form_encode(&config.redirect_uri),
-        form_encode(&config.scopes),
-        form_encode(params.state),
-        form_encode(params.challenge),
-        form_encode(params.nonce),
-    )
+    let query = form_query(&[
+        ("response_type", "code"),
+        ("client_id", &config.client_id),
+        ("redirect_uri", &config.redirect_uri),
+        ("scope", &config.scopes),
+        ("state", params.state),
+        ("code_challenge", params.challenge),
+        ("code_challenge_method", "S256"),
+        ("nonce", params.nonce),
+    ]);
+    format!("{authorization_endpoint}{separator}{query}")
 }
 
 /// The nonce for a login, derived from its PKCE verifier: unpadded
@@ -449,20 +451,11 @@ pub fn nonce_for(verifier: &str) -> String {
     URL_SAFE_NO_PAD.encode(digest.finalize())
 }
 
-/// Percent-encode one form value (Python `quote_plus` parity: alnum plus
-/// `-_.~` pass through, space becomes `+`, the rest `%XX` uppercase).
-pub fn form_encode(value: &str) -> String {
-    let mut out = String::with_capacity(value.len());
-    for byte in value.bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(byte as char);
-            }
-            b' ' => out.push('+'),
-            other => out.push_str(&format!("%{other:02X}")),
-        }
-    }
-    out
+/// The pairs as a form-encoded query string, in the order given.
+pub fn form_query(pairs: &[(&str, &str)]) -> String {
+    url::form_urlencoded::Serializer::new(String::new())
+        .extend_pairs(pairs)
+        .finish()
 }
 
 /// S256 challenge for a verifier: unpadded base64url of its SHA-256.
@@ -602,11 +595,10 @@ mod tests {
     }
 
     #[test]
-    fn form_encode_matches_quote_plus() {
-        assert_eq!(form_encode("a b+c~d"), "a+b%2Bc~d");
+    fn form_query_encodes_each_value() {
         assert_eq!(
-            form_encode("https://x.test/cb?a=1"),
-            "https%3A%2F%2Fx.test%2Fcb%3Fa%3D1"
+            form_query(&[("a", "a b+c~d"), ("b", "https://x.test/cb?a=1")]),
+            "a=a+b%2Bc%7Ed&b=https%3A%2F%2Fx.test%2Fcb%3Fa%3D1"
         );
     }
 

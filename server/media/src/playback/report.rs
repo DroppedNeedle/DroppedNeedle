@@ -348,7 +348,8 @@ fn submit_counted_play(
     track_id: Option<&str>,
     now: i64,
 ) -> ScrobbleResponse {
-    let played_at = report.played_at.unwrap_or(now);
+    // A client's clock can run ahead; a play has not happened in the future.
+    let played_at = report.played_at.map_or(now, |at| at.min(now));
     let dedup_key = ScrobbleDedup::key(user_id, &report.artist_name, &report.track_name, played_at);
     if deps.dedup.is_duplicate(&dedup_key, now) {
         return ScrobbleResponse {

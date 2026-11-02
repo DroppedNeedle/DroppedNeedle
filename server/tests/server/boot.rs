@@ -442,7 +442,7 @@ async fn login_behind_a_trusted_tls_proxy_sets_a_secure_cookie() {
     assert!(
         plain[1].starts_with("__Secure-droppedneedle_sid=; ")
             && plain[1].contains("Max-Age=0")
-            && plain[1].ends_with("; Secure"),
+            && plain[1].contains("; Secure; "),
         "{plain:?}"
     );
 
@@ -459,7 +459,7 @@ async fn login_behind_a_trusted_tls_proxy_sets_a_secure_cookie() {
     let cookie = set_cookies(login.headers());
     assert_eq!(cookie.len(), 1, "{cookie:?}");
     assert!(
-        cookie[0].starts_with("__Secure-droppedneedle_sid=") && cookie[0].ends_with("; Secure"),
+        cookie[0].starts_with("__Secure-droppedneedle_sid=") && cookie[0].contains("; Secure; "),
         "{cookie:?}"
     );
     running.shut_down().await;
@@ -510,7 +510,7 @@ async fn the_answer_to_a_login_from_a_stated_https_address_sets_a_secure_cookie(
     assert_eq!(setup.status(), 201);
     let cookie = setup.headers()["set-cookie"].to_str().unwrap();
     assert!(
-        cookie.starts_with("__Secure-droppedneedle_sid=") && cookie.ends_with("; Secure"),
+        cookie.starts_with("__Secure-droppedneedle_sid=") && cookie.contains("; Secure; "),
         "setup: {cookie}"
     );
     let admin = cookie.split(';').next().unwrap().to_owned();
@@ -536,7 +536,7 @@ async fn the_answer_to_a_login_from_a_stated_https_address_sets_a_secure_cookie(
             assert_eq!(login.status(), 200, "{origin:?}");
             let cookie = login.headers()["set-cookie"].to_str().unwrap().to_owned();
             assert!(cookie.contains("HttpOnly; SameSite=Lax"), "{cookie}");
-            let secure = cookie.ends_with("; Secure");
+            let secure = cookie.contains("; Secure; ");
             let name = if secure {
                 "__Secure-droppedneedle_sid="
             } else {

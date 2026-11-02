@@ -12,7 +12,10 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use futures_util::TryStreamExt as _;
 use reqwest::Client;
+use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderValue};
+use reqwest::multipart::{Form, Part};
 use thiserror::Error;
 use tokio::sync::Mutex;
 
@@ -522,14 +525,16 @@ impl SabnzbdClient {
             pp_text = value.to_string();
             params.push(("pp", &pp_text));
         }
-        let (body, content_type) = multipart_nzb(job_name, nzb_bytes);
+        let (body, content_type) = multipart_nzb(job_name, nzb_bytes)
+            .await
+            .map_err(|err| ClientError::transport(Service::Sabnzbd, transport_error(err)))?;
         let url = self.api_url();
         let query = self.suffixed(&params);
         let response = self
             .http
             .post(&url)
             .query(&query)
-            .header("content-type", content_type)
+            .header(CONTENT_TYPE, content_type)
             .body(body)
             .timeout(timeout)
             .send()
@@ -729,7 +734,8 @@ impl SabnzbdClient {
         response: reqwest::Response,
     ) -> Result<serde_json::Value, SabnzbdError> {
         let status = response.status().as_u16();
-        if status >= 400 {
+        // A 3xx here is a redirect the client did not follow, not an answer.
+        if status >= 300 {
             let wait = retry_after(response.headers());
             let snippet = response_snippet(response).await;
             return Err(ClientError::for_status(
@@ -877,21 +883,24 @@ fn looks_like_nzb(head: &[u8]) -> bool {
         || lower.windows(4).any(|w| w == b"<nzb")
 }
 
-/// Hand-rolled multipart/form-data: the crate has no multipart feature,
-/// and the shape is one file field. Field `name`, filename
-/// `{job_name}.nzb`, type `application/x-nzb`.
-fn multipart_nzb(job_name: &str, nzb_bytes: &[u8]) -> (Vec<u8>, String) {
-    let boundary = "droppedneedle-nzb-boundary";
-    let mut body = Vec::new();
-    body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
-    body.extend_from_slice(
-        format!("Content-Disposition: form-data; name=\"name\"; filename=\"{job_name}.nzb\"\r\n")
-            .as_bytes(),
-    );
-    body.extend_from_slice(b"Content-Type: application/x-nzb\r\n\r\n");
-    body.extend_from_slice(nzb_bytes);
-    body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
-    (body, format!("multipart/form-data; boundary={boundary}"))
+/// The one file field SABnzbd reads: field `name`, filename
+/// `{job_name}.nzb`, type `application/x-nzb`. The filename goes as written,
+/// not percent-encoded, as it always has. Answers the finished body and its
+/// content type: a body in memory can be sent again after a 307 or 308, and a
+/// form's stream cannot.
+async fn multipart_nzb(
+    job_name: &str,
+    nzb_bytes: &[u8],
+) -> Result<(Vec<u8>, String), reqwest::Error> {
+    let mut headers = HeaderMap::new();
+    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/x-nzb"));
+    let part = Part::bytes(nzb_bytes.to_vec())
+        .file_name(format!("{job_name}.nzb"))
+        .headers(headers);
+    let form = Form::new().percent_encode_noop().part("name", part);
+    let content_type = format!("multipart/form-data; boundary={}", form.boundary());
+    let chunks: Vec<_> = form.into_stream().try_collect().await?;
+    Ok((chunks.concat(), content_type))
 }
 
 // ---------------------------------------------------------------------------

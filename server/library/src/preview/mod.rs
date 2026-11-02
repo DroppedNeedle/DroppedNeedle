@@ -13,7 +13,7 @@
 
 use crate::operations::reasons::Reason;
 use crate::settings::LibrarySettings;
-use droppedneedle_auth::session::tokens::constant_time_eq;
+use droppedneedle_auth::session::tokens::secret_eq;
 
 /// How long a preview stays good.
 pub const TTL_SECS: i64 = 15 * 60;
@@ -121,7 +121,7 @@ pub fn verify(
         return Err(TokenFault::Expired);
     }
     let expected = token(signer, purpose, actor, material, issued, Expiry::FromIssue);
-    if !constant_time_eq(presented, &expected) {
+    if !secret_eq(presented, &expected) {
         return Err(TokenFault::Stale);
     }
     Ok(())
@@ -167,7 +167,7 @@ pub fn verify_until(
         issued,
         Expiry::At(expires_at),
     );
-    if !constant_time_eq(presented, &expected) {
+    if !secret_eq(presented, &expected) {
         return Err(TokenFault::Stale);
     }
     if issued > now.saturating_add(CLOCK_SLACK_SECS) || now > expires_at {

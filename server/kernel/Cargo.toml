@@ -16,6 +16,7 @@ const_format.workspace = true
 futures-util.workspace = true
 getrandom.workspace = true
 hmac.workspace = true
+ipnet.workspace = true
 libc.workspace = true
 reqwest.workspace = true
 rusqlite.workspace = true

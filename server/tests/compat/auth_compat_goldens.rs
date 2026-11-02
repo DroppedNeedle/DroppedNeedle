@@ -7,10 +7,10 @@ use droppedneedle_auth::compat_auth::jellyfin::{
     authenticate_by_name, effective_name, extract_client, extract_device, extract_token,
     login_echo_json, resolve_token, server_id,
 };
-use droppedneedle_auth::compat_auth::prod::ProdCompatPasswords;
+use droppedneedle_auth::compat_auth::prod::CompatPasswords;
 use droppedneedle_auth::compat_auth::subsonic::{
     MAX_CLIENT_NAME_LENGTH, MAX_ENCODED_PASSWORD_LENGTH, SubsonicDenied, SubsonicParams,
-    authenticate, decode_subsonic_password, hex_encode, md5_hex, sha256_hex,
+    authenticate, decode_subsonic_password, md5_hex, sha256_hex,
 };
 use droppedneedle_auth::users::roles::Role;
 use droppedneedle_compat::subsonic::error::{
@@ -30,7 +30,7 @@ use crate::common::auth::{AuthRig, PASSWORD};
 
 /// Alice (user) and Bob (admin), each with the account password
 /// [`PASSWORD`] and one app password.
-async fn passwords(tag: &str) -> (AuthRig, ProdCompatPasswords) {
+async fn passwords(tag: &str) -> (AuthRig, CompatPasswords) {
     let rig = AuthRig::new(tag).await;
     for (name, role) in [("alice", Role::User), ("bob", Role::Admin)] {
         let user = rig.seed_user(name, role).await;
@@ -249,7 +249,7 @@ async fn password_scheme_handles_plain_hex_and_rejection() {
         "user-alice"
     );
 
-    let hexed = format!("enc:{}", hex_encode(b"alice-secret"));
+    let hexed = format!("enc:{}", hex::encode(b"alice-secret"));
     let params = SubsonicParams::new(vec![("u", "alice"), ("p", &hexed)]);
     assert_eq!(
         authenticate(&store, &params).await.unwrap().user_id,

@@ -38,7 +38,7 @@ use std::time::{Duration, Instant};
 use super::plex_http::{PlexTv, PlexTvError};
 use super::users::{FederatedProfile, PROVIDER_PLEX, StoredUser, find_or_create_federated_user};
 use super::{FederatedError, MediaLinks, json_string};
-use crate::session::tokens::{constant_time_eq, hash_token, mint_token};
+use crate::session::tokens::{hash_token, mint_token, secret_eq};
 use crate::sqlite::{FederatedUsers, Sessions};
 use crate::users::stores::BoxFuture;
 
@@ -219,7 +219,7 @@ impl PendingPins {
             .lock()
             .map_err(|_| FederatedError::StoreUnavailable("plex pin lock".to_owned()))?;
         let pin = pins.get(&claim.pin_id).ok_or_else(unknown_pin)?;
-        let secret_ok = constant_time_eq(&hash_token(claim.pin_secret), &pin.secret_hash);
+        let secret_ok = secret_eq(&hash_token(claim.pin_secret), &pin.secret_hash);
         if !secret_ok
             || pin.purpose != purpose
             || pin.user_id.as_deref() != claim.user_id

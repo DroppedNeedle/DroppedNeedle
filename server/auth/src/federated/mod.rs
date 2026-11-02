@@ -155,28 +155,7 @@ pub fn endpoint(base: &Url, segments: &[&str]) -> Url {
     url
 }
 
-/// Append `value` as one JSON string literal (quotes included).
+/// `value` as one JSON string literal (quotes included).
 pub fn json_string(value: &str) -> String {
-    let mut out = String::with_capacity(value.len() + 2);
-    out.push('"');
-    json_escape_into(&mut out, value);
-    out.push('"');
-    out
-}
-
-/// Escape `value` for embedding in a JSON string (no surrounding quotes).
-pub fn json_escape_into(out: &mut String, value: &str) {
-    for c in value.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if (c as u32) < 0x20 => {
-                out.push_str(&format!("\\u{:04x}", c as u32));
-            }
-            c => out.push(c),
-        }
-    }
+    serde_json::Value::from(value).to_string()
 }

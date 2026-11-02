@@ -160,6 +160,33 @@ async fn sab_addfile_multipart_shape() {
     std::fs::remove_dir_all(&mount).ok();
 }
 
+/// A proxy in front of SABnzbd that answers the POST with a 308 costs nothing:
+/// the upload is sent again, whole, and the job is added once.
+#[tokio::test]
+async fn sab_addfile_survives_a_308_redirect() {
+    let mock = SabnzbdMock::new();
+    mock.state().addfile_redirect_308 = 1;
+    let (base, _server) = serve_loopback(mock.router()).await.expect("mock serves");
+    let mount = temp_dir("addfile-308");
+    let queue = queue_for(&mock, &base, mount.to_path_buf());
+
+    let handle = queue
+        .enqueue_album(
+            "t1",
+            Some(&format!("{base}/nzb/good")),
+            Some("audio"),
+            None,
+            None,
+        )
+        .await
+        .expect("enqueue");
+    assert_eq!(handle.nzo_id, "nzo-test-1");
+
+    let calls = mock.state().add_file_requests.clone();
+    assert_eq!(calls.len(), 1);
+    assert!(String::from_utf8_lossy(&calls[0].body).contains("<nzb"));
+}
+
 /// A no-response transport failure falls back to `addurl`: SABnzbd
 /// fetches the enclosure itself, for indexers only it can reach.
 #[tokio::test]

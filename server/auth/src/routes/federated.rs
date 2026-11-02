@@ -22,7 +22,7 @@ use crate::routes::native::{AuthSessionBody, PeerAddr, login_user};
 use crate::session::cookies;
 use crate::session::rate_limit::{LOGIN_CLASS, RateLimiter, rate_limited};
 use crate::session::stated::StatedAddresses;
-use crate::session::tokens::{constant_time_eq, hash_token};
+use crate::session::tokens::{hash_token, secret_eq};
 use crate::sqlite::{FederatedUsers, Sessions, Users};
 use crate::users::roles::{Admin, RoleRequired, User};
 use axum::{
@@ -157,7 +157,7 @@ pub async fn oidc_authorize_handler(
             for value in cookies::OIDC_STATE_COOKIE.set(
                 &hash_token(&login_state),
                 &oidc_state_cookie_path(&state.base_path),
-                STATE_TTL_SECS,
+                STATE_TTL_SECS as i64,
                 secure,
             ) {
                 cookies::push_set_cookie(response.headers_mut(), &value);
@@ -194,7 +194,7 @@ pub async fn oidc_callback_handler(
     // The callback must land in the browser that started this login.
     let bound = cookies::OIDC_STATE_COOKIE
         .read(&headers)
-        .is_some_and(|cookie| constant_time_eq(&cookie, &hash_token(&query.state)));
+        .is_some_and(|cookie| secret_eq(&cookie, &hash_token(&query.state)));
     if !bound {
         tracing::debug!("oidc callback without the matching state cookie");
         return Err(AuthRouteError::auth_failed(OIDC_FAILED).into());
