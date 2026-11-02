@@ -62,6 +62,16 @@ pub const DEPLOYMENT_VARS: &[DeploymentVar] = &[
         note: "Holds data_enc.key, the key that seals stored secrets.",
     },
     DeploymentVar {
+        env_name: "COMMIT_TAG",
+        default: "dev",
+        note: "The image's tag, set by the image build; the version answer shows it.",
+    },
+    DeploymentVar {
+        env_name: "BUILD_DATE",
+        default: "",
+        note: "When the image was built, set by the image build.",
+    },
+    DeploymentVar {
         env_name: "BASE_PATH",
         default: "",
         note: "Reverse-proxy mount prefix.",

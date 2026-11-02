@@ -90,6 +90,11 @@ pub struct AppConfig {
     /// background while they use them (`DISCOVER_WARMER_ENABLED`, on by
     /// default). Off, pages still build when someone opens them.
     pub discover_warmer: bool,
+    /// The image's tag (`COMMIT_TAG`), set by the image build; `dev` when
+    /// unset. The version answer and the provider cache's stamp read it.
+    pub commit_tag: String,
+    /// When the image was built (`BUILD_DATE`), when it records that.
+    pub build_date: Option<String>,
     /// Mounts the `__test__` failure hooks. Constructor-only on purpose: no
     /// environment variable can switch these on in a production binary.
     #[cfg(any(test, feature = "test-support"))]
@@ -132,6 +137,8 @@ impl AppConfig {
             http: HttpSettings::default(),
             shutdown_grace: DEFAULT_SHUTDOWN_GRACE,
             discover_warmer: true,
+            commit_tag: "dev".to_owned(),
+            build_date: None,
             #[cfg(any(test, feature = "test-support"))]
             test_hooks: false,
             debug_cors: false,
@@ -251,6 +258,10 @@ impl AppConfig {
                 }
             };
         }
+        if let Some(tag) = env("COMMIT_TAG") {
+            config.commit_tag = tag;
+        }
+        config.build_date = env("BUILD_DATE");
         Ok(config)
     }
 
@@ -485,8 +496,15 @@ mod tests {
             ("LOG_LEVEL", "warning"),
             ("HTTP_TIMEOUT", "2.5"),
             ("SHUTDOWN_GRACE_PERIOD", "3"),
+            ("COMMIT_TAG", "v3.1.0"),
+            ("BUILD_DATE", "2026-11-02T10:00:00Z"),
         ])
         .unwrap();
+        assert_eq!(config.commit_tag, "v3.1.0");
+        assert_eq!(config.build_date.as_deref(), Some("2026-11-02T10:00:00Z"));
+        let unset = load(&[("COMMIT_TAG", " ")]).unwrap();
+        assert_eq!(unset.commit_tag, "dev");
+        assert_eq!(unset.build_date, None);
         assert_eq!(config.port, 9000);
         assert_eq!(config.bind_host, BindHost::Fixed("::1".parse().unwrap()));
         assert_eq!(

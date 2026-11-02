@@ -136,7 +136,11 @@ impl ReadsSetup {
             settings,
         );
         let clock = Arc::clone(&platform.clock);
-        let platform = platform_state(&users, settings, inputs, &artwork);
+        let running = platform::version::VersionInfo {
+            version: platform.config.commit_tag.clone(),
+            build_date: platform.config.build_date.clone(),
+        };
+        let platform = platform_state(&users, settings, inputs, &artwork, running);
         // Saved links search through discover's YouTube client, so both
         // spend from one daily budget.
         let youtube = youtube::YouTubeLinks::new(
@@ -229,6 +233,7 @@ fn platform_state(
     settings: &droppedneedle_kernel::runtime_config::ConfigStore,
     inputs: ReadsInputs,
     artwork: &platform::artwork::ArtworkService,
+    running: platform::version::VersionInfo,
 ) -> platform::PlatformState {
     use platform::{
         covers::CoversState,
@@ -247,6 +252,7 @@ fn platform_state(
         CoversState::new(Arc::new(artwork.clone())),
         VersionState::new(Arc::new(GitHubReleases::new(
             inputs.providers.github.clone(),
+            running,
         ))),
         WrappedState::new(ConfigWrappedKey::new(settings.live()), wrapped),
     )

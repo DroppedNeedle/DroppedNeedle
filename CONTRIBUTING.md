@@ -18,7 +18,8 @@ The server is Rust (Axum, tokio, SQLite through sqlx and rusqlite). The frontend
 
 - Rust via rustup
 - `cmake` (the Opus decoder builds a bundled C library)
-- Node.js 22+ and pnpm
+- Node.js at the version in `.github/node-version`
+- pnpm through corepack: run `corepack enable` once, and `pnpm` uses the version in `frontend/package.json`
 - Docker, to build the image
 
 ### Running locally

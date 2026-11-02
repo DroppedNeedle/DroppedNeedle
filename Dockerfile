@@ -2,15 +2,19 @@
 # binary is one tokio runtime and compose must never scale it past 1, because
 # durable-operation ownership lives in-process.
 
-FROM node:22-bookworm-slim AS frontend
+# Base images name the exact versions in .github/node-version and
+# rust-toolchain.toml; CI fails when they drift apart.
+FROM node:22.23.4-bookworm-slim AS frontend
 
 WORKDIR /app/frontend
 
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
+ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 
-RUN npm install -g pnpm@10.33.0
+RUN corepack enable
 
+# corepack runs the pnpm version named by packageManager in package.json.
 COPY frontend/package.json frontend/pnpm-lock.yaml frontend/pnpm-workspace.yaml ./
 RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm install --frozen-lockfile
 
@@ -22,7 +26,7 @@ COPY frontend/ ./
 ENV DROPPEDNEEDLE_BASE_PATH_PLACEHOLDER=1
 RUN pnpm run build
 
-FROM rust:1.89-bookworm AS builder
+FROM rust:1.89.0-bookworm AS chef
 
 # Audio decode: opusic-sys (via symphonia-adapter-libopus) builds a
 # bundled C library through the `cmake` crate, which shells out to the cmake
@@ -31,31 +35,35 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends cmake \
     && rm -rf /var/lib/apt/lists/*
 
+RUN cargo install cargo-chef --version 0.1.78 --locked
+
 WORKDIR /app
 COPY rust-toolchain.toml ./
+
+# The recipe is the manifests and the lock file with every source stripped,
+# so the layer that compiles third-party crates is keyed on nothing else.
+FROM chef AS planner
+COPY server/ ./server/
+RUN cd server && cargo chef prepare --recipe-path /app/recipe.json
+
+FROM chef AS dependencies
+COPY --from=planner /app/recipe.json ./recipe.json
+RUN mkdir -p server \
+    && cd server \
+    && cargo chef cook --release --locked --recipe-path /app/recipe.json --bins -p droppedneedle -p droppedneedle-tool
+
+FROM dependencies AS builder
 COPY server/ ./server/
 # The Python plugin helper is compiled into the binary.
 COPY sdk/ ./sdk/
 
-# The version check reports these; they are baked into the binary.
-ARG COMMIT_TAG=dev
-ARG BUILD_DATE=unknown
-ENV COMMIT_TAG=${COMMIT_TAG} BUILD_DATE=${BUILD_DATE}
-
-RUN cargo build --release --locked --manifest-path server/Cargo.toml --bins -p droppedneedle -p droppedneedle-tool
+# Only the binaries stay in this layer, which keeps the build cache small.
+RUN cargo build --release --locked --manifest-path server/Cargo.toml --bins -p droppedneedle -p droppedneedle-tool \
+    && mkdir /out \
+    && cp server/target/release/droppedneedle server/target/release/droppedneedle-tool /out/ \
+    && rm -rf server/target
 
 FROM debian:bookworm-slim
-
-ARG COMMIT_TAG=dev
-ARG BUILD_DATE=unknown
-
-LABEL org.opencontainers.image.title="DroppedNeedle v3" \
-      org.opencontainers.image.description="DroppedNeedle v3 server: music requests, library management and streaming" \
-      org.opencontainers.image.url="https://github.com/DroppedNeedle/DroppedNeedle" \
-      org.opencontainers.image.source="https://github.com/DroppedNeedle/DroppedNeedle" \
-      org.opencontainers.image.version="${COMMIT_TAG}" \
-      org.opencontainers.image.created="${BUILD_DATE}" \
-      org.opencontainers.image.licenses="AGPL-3.0-or-later"
 
 ENV PORT=8688
 
@@ -76,8 +84,8 @@ RUN apt-get update \
 RUN groupadd -r -g 1000 droppedneedle \
     && useradd -r -u 1000 -g droppedneedle -d /app -s /sbin/nologin droppedneedle
 
-COPY --from=builder /app/server/target/release/droppedneedle /usr/local/bin/droppedneedle
-COPY --from=builder /app/server/target/release/droppedneedle-tool /usr/local/bin/droppedneedle-tool
+COPY --from=builder /out/droppedneedle /usr/local/bin/droppedneedle
+COPY --from=builder /out/droppedneedle-tool /usr/local/bin/droppedneedle-tool
 # The pristine web UI; the server stamps a copy into /app/cache/static at
 # startup (DROPPEDNEEDLE_STATIC_DIR defaults to /app/static).
 COPY --from=frontend /app/frontend/build /app/static
@@ -87,10 +95,24 @@ RUN mkdir -p /app/cache /app/config /app/plugins /app/imports \
     && chown droppedneedle:droppedneedle /app/cache /app/config /app/plugins /app/imports \
     && chmod 0755 /app/entrypoint.sh
 
+# The server reads these two at start and the About page shows them. They come
+# last so a new tag or date reuses every layer above.
+ARG COMMIT_TAG=dev
+ARG BUILD_DATE=
+ENV COMMIT_TAG=${COMMIT_TAG} BUILD_DATE=${BUILD_DATE}
+
+LABEL org.opencontainers.image.title="DroppedNeedle v3" \
+      org.opencontainers.image.description="DroppedNeedle v3 server: music requests, library management and streaming" \
+      org.opencontainers.image.url="https://github.com/DroppedNeedle/DroppedNeedle" \
+      org.opencontainers.image.source="https://github.com/DroppedNeedle/DroppedNeedle" \
+      org.opencontainers.image.version="${COMMIT_TAG}" \
+      org.opencontainers.image.created="${BUILD_DATE}" \
+      org.opencontainers.image.licenses="AGPL-3.0-or-later"
+
 EXPOSE 8688
 
 # Shell form so ${PORT} and ${BASE_PATH} expand from the container env.
-HEALTHCHECK --interval=30s --timeout=10s --start-period=10m --retries=3 \
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD curl -fsS "http://localhost:${PORT}${BASE_PATH:-}/health" || exit 1
 
 ENTRYPOINT ["tini", "--", "/app/entrypoint.sh"]

@@ -152,6 +152,10 @@ toml.workspace = true
 tracing-subscriber.workspace = true
 zip.workspace = true
 
+# The shipped binaries carry no symbols or debug info.
+[profile.release]
+strip = true
+
 # Debug builds carry line tables for this crate and no debug info for
 # dependencies. Full debug info nearly doubled the time of a clean test
 # build and made the test binary over 1 GB. Panics and backtraces still

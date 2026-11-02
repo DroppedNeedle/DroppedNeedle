@@ -2,7 +2,7 @@
 # browser journeys in e2e-container.sh. Built from the repository root:
 #   docker build -f server/scripts/e2e-mocks.Dockerfile .
 
-FROM rust:1.89-bookworm AS builder
+FROM rust:1.89.0-bookworm AS builder
 
 WORKDIR /app
 COPY rust-toolchain.toml ./

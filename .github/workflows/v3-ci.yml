@@ -87,6 +87,7 @@ jobs:
               - '.dockerignore'
               - 'entrypoint.sh'
               - 'rust-toolchain.toml'
+              - '.github/node-version'
               - '.github/workflows/v3-ci.yml'
 
   test:
@@ -265,6 +266,40 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v7
 
+      - name: Base images match the pinned versions
+        run: |
+          node_version=$(cat .github/node-version)
+          rust_version=$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)
+          grep -q "^FROM node:${node_version}-bookworm-slim " Dockerfile
+          grep -q "^FROM rust:${rust_version}-bookworm " Dockerfile
+          grep -q "^FROM rust:${rust_version}-bookworm " server/scripts/e2e-mocks.Dockerfile
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      # Each image keeps its layers in its own cache scope, so a source-only
+      # change rebuilds only our crates.
+      - name: Build the image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          load: true
+          tags: droppedneedle-v3:e2e
+          cache-from: type=gha,scope=e2e
+          cache-to: type=gha,mode=max,scope=e2e
+          provenance: false
+
+      - name: Build the mocks image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: server/scripts/e2e-mocks.Dockerfile
+          load: true
+          tags: droppedneedle-v3:e2e-mocks
+          cache-from: type=gha,scope=e2e-mocks
+          cache-to: type=gha,mode=max,scope=e2e-mocks
+          provenance: false
+
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
         with:
@@ -287,6 +322,9 @@ jobs:
         run: pnpm exec playwright install --with-deps chromium
 
       - name: Boot, probe, stop, then the browser journeys
+        env:
+          DN_E2E_IMAGE: droppedneedle-v3:e2e
+          DN_E2E_MOCKS_IMAGE: droppedneedle-v3:e2e-mocks
         run: ./server/scripts/e2e-container.sh
 
       - name: Upload journey traces

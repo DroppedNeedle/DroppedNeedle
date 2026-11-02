@@ -82,7 +82,12 @@ pub async fn open_platform(config: AppConfig) -> Result<Opened, BootError> {
     // After the data lock and the data-directory check, so a refused
     // folder never gains a new file. It takes a lock of its own: the
     // database may live elsewhere.
-    let cache_db = CacheDb::open(&config.cache_dir, &config.library_db_path).await;
+    let cache_db = CacheDb::open(
+        &config.cache_dir,
+        &config.library_db_path,
+        &config.commit_tag,
+    )
+    .await;
     // The one supervisor every background loop runs on, and its token the
     // one stop. Starting it clears the last start's loop rows, so it comes
     // before anything writes one.

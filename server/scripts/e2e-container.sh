@@ -14,11 +14,14 @@
 # throwaway copy of two audio fixtures, removed on exit. The journeys need the
 # frontend dependencies and Playwright's Chromium
 # (make frontend-install frontend-browser-install).
+#
+# DN_E2E_IMAGE and DN_E2E_MOCKS_IMAGE name images already built; each one set
+# skips that build.
 set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
-IMAGE="droppedneedle-v3:e2e"
-MOCKS_IMAGE="droppedneedle-v3:e2e-mocks"
+IMAGE="${DN_E2E_IMAGE:-droppedneedle-v3:e2e}"
+MOCKS_IMAGE="${DN_E2E_MOCKS_IMAGE:-droppedneedle-v3:e2e-mocks}"
 NAME="dn-e2e-smoke"
 APP="dn-e2e-app"
 MOCKS="dn-e2e-mocks"
@@ -66,8 +69,12 @@ curl_inside() {
 }
 
 echo "--- build ---"
-docker build -f "$ROOT/Dockerfile" -t "$IMAGE" "$ROOT" || fail "docker build failed"
-docker build -f "$ROOT/server/scripts/e2e-mocks.Dockerfile" -t "$MOCKS_IMAGE" "$ROOT" || fail "mocks build failed"
+if [ -z "${DN_E2E_IMAGE:-}" ]; then
+  docker build -f "$ROOT/Dockerfile" -t "$IMAGE" "$ROOT" || fail "docker build failed"
+fi
+if [ -z "${DN_E2E_MOCKS_IMAGE:-}" ]; then
+  docker build -f "$ROOT/server/scripts/e2e-mocks.Dockerfile" -t "$MOCKS_IMAGE" "$ROOT" || fail "mocks build failed"
+fi
 
 cleanup
 

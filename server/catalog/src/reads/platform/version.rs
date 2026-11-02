@@ -12,8 +12,8 @@
 //! update is available; a missing latest release answers with the current
 //! version alone.
 //!
-//! The running version is the `COMMIT_TAG` the image was built with (v2
-//! read the same name from the container environment), else `dev`.
+//! The running version is the image's `COMMIT_TAG`, which `AppConfig`
+//! reads at start, else `dev`.
 
 use std::sync::Arc;
 
@@ -84,22 +84,6 @@ pub trait ReleaseSource: Send + Sync + 'static {
     fn release_history(&self) -> BoxFuture<'_, Vec<GitHubRelease>>;
 }
 
-/// The running build: `COMMIT_TAG` and `BUILD_DATE` as baked in at compile
-/// time by the image build, else `dev` like v2.
-pub fn build_version() -> VersionInfo {
-    let version = option_env!("COMMIT_TAG")
-        .map(str::trim)
-        .filter(|tag| !tag.is_empty())
-        .unwrap_or("dev");
-    VersionInfo {
-        version: version.to_owned(),
-        build_date: option_env!("BUILD_DATE")
-            .map(str::trim)
-            .filter(|date| !date.is_empty())
-            .map(str::to_owned),
-    }
-}
-
 /// Production release data: the build tag plus GitHub releases.
 #[derive(Debug, Clone)]
 pub struct GitHubReleases {
@@ -109,11 +93,11 @@ pub struct GitHubReleases {
 
 impl GitHubReleases {
     /// Wrap the releases client for the running build.
-    pub fn new(client: droppedneedle_providers::github::GitHubClient) -> Self {
-        Self {
-            client,
-            current: build_version(),
-        }
+    pub fn new(
+        client: droppedneedle_providers::github::GitHubClient,
+        current: VersionInfo,
+    ) -> Self {
+        Self { client, current }
     }
 }
 
