@@ -70,7 +70,7 @@ async fn fresh_migrate_marks_version_and_seeds() {
         .unwrap();
     assert_eq!(applied, migration_count());
 
-    assert_eq!(table_names(&pool).await.len(), 174);
+    assert_eq!(table_names(&pool).await.len(), 175);
     let triggers: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'")
             .fetch_one(&pool)
@@ -8874,6 +8874,89 @@ async fn a_held_file_can_wait_on_an_album_check_after_upgrade() {
         .await
         .unwrap();
     assert_eq!(marks().await, 0, "an album's marks go with the album");
+}
+
+/// Migration 0128 stops recording a file Undo or "Restore originals" put
+/// back as one Library Management generated, and adds the kept original
+/// covers. A row recorded before still matches the rule, an output with no
+/// `put_back` mark reads as not put back, and one marked put back is never
+/// recorded.
+#[tokio::test]
+async fn put_back_covers_are_not_recorded_as_generated_after_upgrade() {
+    let pool = scratch_pool().await;
+    run_migrations(&pool, &migrator_through(127)).await.unwrap();
+    let operation = |id: &str, output: serde_json::Value| {
+        format!(
+            "INSERT INTO library_publish_operations (bundle_id, bundle_json, created_at) \
+             VALUES ('{id}', '{}', 1); \
+             INSERT INTO library_publish_journal (id, bundle_id, kind, dest_root, dest_rel, \
+             staged, staged_sha256, state, seq) VALUES ('{id}-o', '{id}', 'output', 'music', \
+             'a/cover.jpg', '/t', '{id}-sha', 'staged', 1); \
+             UPDATE library_publish_journal SET state = 'committed' WHERE id = '{id}-o';",
+            serde_json::json!({"id": id, "items": [{"track_id": "t1", "outputs": [output]}]})
+        )
+    };
+    let output = |id: &str, put_back: Option<bool>| {
+        let mut output = serde_json::json!({"dest_root": "music", "dest_rel": "a/cover.jpg",
+            "sha256": format!("{id}-sha"), "size": 3, "kind": "artwork"});
+        if let Some(put_back) = put_back {
+            output["put_back"] = put_back.into();
+        }
+        output
+    };
+    sqlx::raw_sql(&format!(
+        "PRAGMA foreign_keys = OFF; {}",
+        operation("before", output("before", None))
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    run_migrations(&pool, &migrator_through(128)).await.unwrap();
+
+    sqlx::raw_sql(&format!(
+        "PRAGMA foreign_keys = OFF; {} {} {}",
+        operation("unmarked", output("unmarked", None)),
+        operation("generated", output("generated", Some(false))),
+        operation("put-back", output("put-back", Some(true)))
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    let rows = |table: &'static str| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_scalar::<_, String>(&format!(
+                "SELECT journal_id FROM {table} ORDER BY journal_id"
+            ))
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    let kept = rows("library_publish_outputs").await;
+    assert_eq!(kept, ["before-o", "generated-o", "unmarked-o"]);
+    assert_eq!(
+        rows("library_publish_outputs_rule").await,
+        kept,
+        "the rule still matches every row kept, the one from before included"
+    );
+
+    let sql: String = sqlx::query_scalar(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' \
+         AND name = 'library_publish_cover_baselines'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(sql.trim_end().ends_with("STRICT"), "{sql}");
+    sqlx::raw_sql(
+        "INSERT INTO library_publish_cover_baselines (track_id, root_id, rel, blob_sha256, \
+         created_at) VALUES ('gone-track', 'music', 'a/cover.jpg', 'sha', 1)",
+    )
+    .execute(&pool)
+    .await
+    .expect("a kept cover outlives its track row");
 }
 
 /// The runner's `-- no-transaction` path and the table-rebuild recipe in the

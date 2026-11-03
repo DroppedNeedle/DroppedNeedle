@@ -438,6 +438,36 @@ impl<'a> BaselineStore<'a> {
         Ok(())
     }
 
+    /// Keep `blob_sha256` as the cover file track `track_id`'s first
+    /// publish replaced at `root`/`rel`, at `now_ms`. False when one was
+    /// kept there before: the first stays.
+    pub fn capture_cover(
+        &self,
+        track_id: &str,
+        root: &str,
+        rel: &str,
+        blob_sha256: &str,
+        now_ms: i64,
+    ) -> Result<bool, PublishError> {
+        let changed = self.conn.execute(
+            crate::publish::sql::WRITE_COVER_BASELINE.text(),
+            rusqlite::params![track_id, root, rel, blob_sha256, now_ms],
+        )?;
+        Ok(changed > 0)
+    }
+
+    /// The cover files kept as a track's originals: (root, rel, blob hash).
+    pub fn covers(&self, track_id: &str) -> Result<Vec<(String, String, String)>, PublishError> {
+        self.conn
+            .prepare_cached(crate::publish::sql::COVER_BASELINES.text())?
+            .query_map(rusqlite::params![track_id], |row| {
+                let row = sql::CoverBaseline::read(row)?;
+                Ok((row.root_id, row.rel, row.blob_sha256))
+            })?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(PublishError::from)
+    }
+
     /// Load one baseline: (blob hash, original root, original rel path).
     pub fn get(&self, track_id: &str) -> Result<Option<(String, String, String)>, PublishError> {
         self.conn

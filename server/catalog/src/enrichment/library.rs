@@ -251,6 +251,36 @@ impl EnrichmentPort for LiveEnrichment {
         })
     }
 
+    fn edition_cover<'a>(
+        &'a self,
+        release_mbid: &'a str,
+        background: bool,
+    ) -> BoxFuture<'a, Result<Option<Cover>, String>> {
+        Box::pin(async move {
+            let artwork = self
+                .artwork
+                .as_ref()
+                .ok_or_else(|| "artwork is switched off".to_owned())?;
+            match artwork
+                .edition_front_cover(
+                    release_mbid,
+                    if background {
+                        RequestPriority::BackgroundSync
+                    } else {
+                        RequestPriority::ImageFetch
+                    },
+                )
+                .await
+            {
+                Ok(found) => Ok(found.map(|cover| Cover {
+                    bytes: cover.bytes,
+                    mime: cover.content_type,
+                })),
+                Err(()) => Err("the cover is still being fetched".to_owned()),
+            }
+        })
+    }
+
     fn release_extras<'a>(
         &'a self,
         release_mbid: &'a str,

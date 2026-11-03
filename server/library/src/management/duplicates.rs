@@ -254,8 +254,18 @@ impl Management {
                 });
             }
         }
-        // A cover the archive's replaces (planner `cover_file`) gets its
-        // bin entry the same way; it carries no track.
+        Ok(())
+    }
+
+    /// Give each generated file that replaces one (a cover the edition's
+    /// archive cover replaces, or Undo bringing the old one back) a fresh
+    /// bin entry for the file it replaces, in every kind of run. It waits
+    /// and refuses as a duplicate's replacement does.
+    pub(super) fn plan_output_bins(
+        &self,
+        plans: &mut [crate::publish::PlanItem],
+    ) -> Result<(), Refused> {
+        let mutations = &self.parts.mutations;
         for plan in plans.iter_mut() {
             for output in &mut plan.outputs {
                 let Some(replaced) = output.replaces.as_mut() else {

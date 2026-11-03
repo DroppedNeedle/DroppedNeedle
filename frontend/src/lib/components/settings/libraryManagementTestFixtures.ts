@@ -187,7 +187,8 @@ export function baseSettings(): LibraryManagementSettingsResponse {
 					embedded_format: 'jpeg',
 					external_maximum_size: 0,
 					external_format: 'original',
-					never_replace_with_smaller: true
+					never_replace_with_smaller: true,
+					use_edition_cover: false
 				},
 				organization: {
 					rename_enabled: true,

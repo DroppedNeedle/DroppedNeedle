@@ -235,6 +235,12 @@ impl Management {
                         });
                     }
                     item.diff.tags_changed = !item.diff.field_mutations.is_empty();
+                    item.diff.generated = super::service::put_back_files(&plan);
+                    for left in &file.sidecars_left {
+                        item.facts.warnings.push(format!(
+                            "{left} changed or its original is gone, so it stays as it is."
+                        ));
+                    }
                     if item.diff.changes_anything() {
                         item.desired.plan = Some(plan);
                     }
@@ -418,6 +424,7 @@ impl Management {
                 [],
             )? as i64;
             tx.execute(crate::management::sql::DROP_PUBLISH_BASELINES.text(), [])?;
+            tx.execute(crate::management::sql::DROP_COVER_BASELINES.text(), [])?;
             // Originals v2 recorded: without this, files v2 managed
             // would wait for an original that will never come.
             tx.execute(

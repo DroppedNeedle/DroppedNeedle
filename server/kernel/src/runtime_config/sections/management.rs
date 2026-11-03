@@ -384,6 +384,13 @@ pub struct ArtworkManagementSettings {
     pub external_format: ArtworkOutputFormat,
     /// Never replace art with smaller art.
     pub never_replace_with_smaller: bool,
+    /// Replace the album's cover (embedded, and its one `cover.*` file)
+    /// with the Cover Art Archive's front for an accepted exact release.
+    /// The replaced file goes to the recycle bin; Undo puts it back. Read
+    /// only while external artwork is on. Left out while off, so profiles
+    /// and share codes saved before it keep their revisions and hashes.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub use_edition_cover: bool,
 }
 
 impl Default for ArtworkManagementSettings {
@@ -409,6 +416,7 @@ impl Default for ArtworkManagementSettings {
             external_maximum_size: 0,
             external_format: ArtworkOutputFormat::Original,
             never_replace_with_smaller: true,
+            use_edition_cover: false,
         }
     }
 }

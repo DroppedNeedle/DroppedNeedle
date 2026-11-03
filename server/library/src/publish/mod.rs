@@ -154,6 +154,11 @@ pub const STARTUP_RECOVERY_LIMIT: usize = 500;
 /// Default per-operation undo retention in days.
 pub const DEFAULT_UNDO_RETENTION_DAYS: u32 = 90;
 
+/// The largest cover file a generated cover replaces: its bytes are kept
+/// for undo, so a larger one is left alone. The scan reads folder art up
+/// to the same size.
+pub const REPLACED_COVER_MAX_BYTES: u64 = 25 * 1024 * 1024;
+
 /// What a publisher gate refused: the sentence a person reads, and the
 /// track and file it was about when the gate knew them.
 #[derive(Debug, Clone, PartialEq, Eq)]

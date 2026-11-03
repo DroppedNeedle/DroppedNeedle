@@ -2110,6 +2110,7 @@ fn generated_files_land_and_go_away_journaled() {
         size: cover.len() as u64,
         kind: OutputKind::Artwork,
         replaces: None,
+        put_back: false,
     };
     let fp = write_fixture_source(&fix, "music", "staging/a.flac", "management_full.flac");
     let mut item = plan_item(
@@ -2187,125 +2188,292 @@ fn generated_files_land_and_go_away_journaled() {
     assert!(hidden_leftovers(&fix.dir).is_empty());
 }
 
+const IMPORTED_COVER: &[u8] = b"imported-cover-of-another-record";
+const ARCHIVE_COVER: &[u8] = b"archive-cover-bytes";
+
+/// How [`replace_cover`] runs its publish.
+#[derive(Default)]
+struct CoverRun {
+    /// Make the commit fail.
+    break_commit: bool,
+    /// Stop the publish there.
+    crash: Option<CrashPoint>,
+    /// The cover is one Undo brings back.
+    put_back: bool,
+    /// Publish over this sandbox, made from the fixture, instead of the
+    /// fixture's own.
+    sandbox: Option<fn(&Fixture) -> Sandbox>,
+}
+
+/// Publish a same-path retag whose plan writes the archive's cover over
+/// `staging/cover.jpg`, which holds `on_disk` (mode 0640) and is expected
+/// to hold [`IMPORTED_COVER`]. Answers the fixture, the cover's path, its
+/// bin entry and the publish's result.
+fn replace_cover(
+    name: &str,
+    on_disk: &[u8],
+    run: CoverRun,
+) -> (Fixture, PathBuf, PathBuf, Result<(), PublishError>) {
+    use std::os::unix::fs::PermissionsExt as _;
+    let fix = fixture(name);
+    let sha = undo_put(&fix, ARCHIVE_COVER);
+    let fp = write_fixture_source(&fix, "music", "staging/a.flac", "management_full.flac");
+    let path = fix.sandbox.resolve("music", "staging/cover.jpg").unwrap();
+    std::fs::write(&path, on_disk).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640)).unwrap();
+    let bin = fix.dir.join("bin/entry/cover.jpg");
+    let mut item = plan_item(
+        "track-a",
+        "staging/a.flac",
+        "staging/a.flac",
+        fp,
+        PlanKind::SamePath,
+    );
+    item.outputs.push(publish::GeneratedOutput {
+        dest_root: "music".to_string(),
+        dest_rel: "staging/cover.jpg".to_string(),
+        sha256: sha,
+        size: ARCHIVE_COVER.len() as u64,
+        kind: OutputKind::Artwork,
+        replaces: Some(publish::Replacement {
+            sha256: sha256_hex(IMPORTED_COVER),
+            track_id: None,
+            recycle_to: bin.display().to_string(),
+        }),
+        put_back: run.put_back,
+    });
+    let bundle = PlanBundle {
+        id: format!("bundle-{name}"),
+        items: vec![item],
+        profile_revision: 7,
+        naming_revision: 3,
+        policy_revision: 5,
+        put_back: None,
+        added: None,
+        removal: None,
+    };
+    let mut docs = BTreeMap::new();
+    docs.insert("track-a".to_string(), TagDocument::empty());
+    let (sealed, live) = seal(&bundle);
+    let mut publisher = Publisher::new(
+        run.sandbox
+            .map_or_else(|| fix.sandbox.clone(), |make| make(&fix)),
+        restart(&fix),
+        FixedSpace(u64::MAX),
+        jobs(&restart(&fix)),
+        std::sync::Arc::new(ManualClock::at(DAY_50_MS)),
+        blobs(&fix),
+    );
+    if run.break_commit {
+        let db_path = fix.db_path.clone();
+        publisher.set_before_place(Some(Box::new(move |_| {
+            droppedneedle_kernel::db::open_connection(&db_path)
+                .unwrap()
+                .execute(
+                    "UPDATE local_tracks SET relative_path = 'elsewhere/a.flac' \
+                     WHERE id = 'track-a'",
+                    [],
+                )
+                .unwrap();
+        })));
+    }
+    publisher.set_crash_point(run.crash);
+    let published = publisher.publish(&sealed, &live, &docs);
+    (fix, path, bin, published.map(|_| ()))
+}
+
 /// A generated cover may replace the one file it names: a cover that came
 /// with imported files, which the archive's cover replaces. The old one is
 /// set aside under the journal and reaches its recycle bin only after the
-/// commit; a publish that unwinds puts it back; one that changed since
-/// planning is never touched.
+/// commit, its bytes kept for undo and, as the cover the album came with,
+/// as the track's original; the new one keeps its permission bits. A
+/// publish that unwinds puts it back; one that changed since planning is
+/// never touched.
 #[test]
 fn a_generated_cover_replaces_the_imported_one_through_the_bin() {
-    let imported = b"imported-cover-of-another-record".to_vec();
-    let archive = b"archive-cover-bytes".to_vec();
-    // `break_commit` makes the commit fail; `crash` stops the publish there.
-    let run = |name: &str, on_disk: &[u8], break_commit: bool, crash: Option<CrashPoint>| {
-        let fix = fixture(name);
-        let sha = undo_put(&fix, &archive);
-        let fp = write_fixture_source(&fix, "music", "staging/a.flac", "management_full.flac");
-        let path = fix.sandbox.resolve("music", "staging/cover.jpg").unwrap();
-        std::fs::write(&path, on_disk).unwrap();
-        let bin = fix.dir.join("bin/entry/cover.jpg");
-        let mut item = plan_item(
-            "track-a",
-            "staging/a.flac",
-            "staging/a.flac",
-            fp,
-            PlanKind::SamePath,
-        );
-        item.outputs.push(publish::GeneratedOutput {
-            dest_root: "music".to_string(),
-            dest_rel: "staging/cover.jpg".to_string(),
-            sha256: sha,
-            size: archive.len() as u64,
-            kind: OutputKind::Artwork,
-            replaces: Some(publish::Replacement {
-                sha256: sha256_hex(&imported),
-                track_id: None,
-                recycle_to: bin.display().to_string(),
-            }),
-        });
-        let bundle = PlanBundle {
-            id: format!("bundle-{name}"),
-            items: vec![item],
-            profile_revision: 7,
-            naming_revision: 3,
-            policy_revision: 5,
-            put_back: None,
-            added: None,
-            removal: None,
-        };
-        let mut docs = BTreeMap::new();
-        docs.insert("track-a".to_string(), TagDocument::empty());
-        let (sealed, live) = seal(&bundle);
-        let mut publisher = open_publisher(&fix);
-        if break_commit {
-            let db_path = fix.db_path.clone();
-            publisher.set_before_place(Some(Box::new(move |_| {
-                droppedneedle_kernel::db::open_connection(&db_path)
-                    .unwrap()
-                    .execute(
-                        "UPDATE local_tracks SET relative_path = 'elsewhere/a.flac' \
-                         WHERE id = 'track-a'",
-                        [],
-                    )
-                    .unwrap();
-            })));
-        }
-        publisher.set_crash_point(crash);
-        let published = publisher.publish(&sealed, &live, &docs);
-        (fix, path, bin, published.map(|_| ()))
-    };
-
-    let (fix, path, bin, published) = run("cover-replace", &imported, false, None);
+    use std::os::unix::fs::PermissionsExt as _;
+    let (fix, path, bin, published) =
+        replace_cover("cover-replace", IMPORTED_COVER, CoverRun::default());
     published.expect("the cover replaces the imported one");
     assert_eq!(
         std::fs::read(&path).unwrap(),
-        archive,
+        ARCHIVE_COVER,
         "the archive's cover is in place"
     );
     assert_eq!(
+        std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+        0o640,
+        "it keeps the replaced file's permission bits"
+    );
+    assert_eq!(
         std::fs::read(&bin).unwrap(),
-        imported,
+        IMPORTED_COVER,
         "the imported one is in the bin"
     );
     assert!(hidden_leftovers(&fix.dir).is_empty());
-
-    // A crash once the imported cover is set aside resumes; it reaches the
-    // bin only after the commit.
-    let (fix, path, bin, published) = run(
-        "cover-replace-crash",
-        &imported,
-        false,
-        Some(CrashPoint::BeforeCatalogCommit),
+    let conn = open_db(&fix);
+    let kept: (String, String, String) = conn
+        .query_row(
+            "SELECT root_id, rel, blob_sha256 FROM library_publish_cover_baselines \
+             WHERE track_id = 'track-a'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(
+        kept,
+        (
+            "music".to_owned(),
+            "staging/cover.jpg".to_owned(),
+            sha256_hex(IMPORTED_COVER)
+        )
     );
-    assert!(matches!(published, Err(PublishError::InjectedCrash(_))));
-    assert!(!bin.exists(), "nothing is recycled before the commit");
-    let db = restart(&fix);
-    let results = reconcile(&db, &fix.sandbox).unwrap();
-    assert_eq!(results[0].action, publish::RecoveryAction::ResumedCommitted);
-    assert_eq!(std::fs::read(&path).unwrap(), archive);
-    assert_eq!(std::fs::read(&bin).unwrap(), imported);
-    assert!(hidden_leftovers(&fix.dir).is_empty());
+    let owners: Vec<String> = conn
+        .prepare("SELECT owner_kind FROM library_publish_blob_refs WHERE sha256 = ?1 ORDER BY 1")
+        .unwrap()
+        .query_map([sha256_hex(IMPORTED_COVER)], |row| row.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(
+        owners,
+        ["baseline", "operation"],
+        "kept for undo and restore"
+    );
+    assert_eq!(outputs_follow_the_rule(&conn), 1);
 
-    let (fix, path, bin, published) = run("cover-replace-unwind", &imported, true, None);
+    let (fix, path, bin, published) = replace_cover(
+        "cover-replace-unwind",
+        IMPORTED_COVER,
+        CoverRun {
+            break_commit: true,
+            ..CoverRun::default()
+        },
+    );
     assert!(published.is_err());
     assert_eq!(
         std::fs::read(&path).unwrap(),
-        imported,
+        IMPORTED_COVER,
         "an unwind puts it back"
     );
     assert!(!bin.exists(), "nothing reaches the bin");
     assert!(hidden_leftovers(&fix.dir).is_empty());
 
-    let (fix, path, bin, published) = run(
+    let (fix, path, bin, published) = replace_cover(
         "cover-replace-changed",
         b"edited-since-planning",
-        false,
-        None,
+        CoverRun::default(),
     );
-    assert!(published.is_err());
+    assert!(matches!(published, Err(PublishError::Validation(_))));
     assert_eq!(std::fs::read(&path).unwrap(), b"edited-since-planning");
     assert!(!bin.exists());
     assert!(hidden_leftovers(&fix.dir).is_empty());
+}
+
+/// A crash at any point of a cover replacement, from staging to the move
+/// into the recycle bin, loses neither cover: recovery either finishes it
+/// (the archive's cover in place, the old one in the bin) or puts the old
+/// one back, and leaves no hidden file.
+#[test]
+fn a_cover_replacement_loses_nothing_at_any_crash() {
+    for crash in CrashPoint::all() {
+        let name = format!("cover-crash-{crash:?}").to_lowercase();
+        let (fix, path, bin, published) = replace_cover(
+            &name,
+            IMPORTED_COVER,
+            CoverRun {
+                crash: Some(crash),
+                ..CoverRun::default()
+            },
+        );
+        assert!(
+            matches!(published, Err(PublishError::InjectedCrash(_))),
+            "{crash:?}: {published:?}"
+        );
+        if matches!(crash, CrashPoint::AfterStage | CrashPoint::AfterFirstRename) {
+            assert!(
+                !bin.exists(),
+                "{crash:?}: nothing is recycled before the commit"
+            );
+        }
+        reconcile(&restart(&fix), &fix.sandbox).unwrap();
+        let at_home = std::fs::read(&path).unwrap();
+        if at_home == ARCHIVE_COVER {
+            assert_eq!(std::fs::read(&bin).unwrap(), IMPORTED_COVER, "{crash:?}");
+        } else {
+            assert_eq!(at_home, IMPORTED_COVER, "{crash:?}");
+            assert!(!bin.exists(), "{crash:?}");
+        }
+        assert!(hidden_leftovers(&fix.dir).is_empty(), "{crash:?}");
+    }
+}
+
+/// A cover replacement checks its bin before anything moves: while the
+/// bins are unknown it waits, and a library folder with no bin refuses it.
+/// Either way the old cover stays where it is.
+#[test]
+fn a_cover_replacement_waits_for_a_bin_and_refuses_without_one() {
+    let (fix, path, _, published) = replace_cover(
+        "cover-bins-unknown",
+        IMPORTED_COVER,
+        CoverRun {
+            sandbox: Some(|fix| {
+                fix.sandbox
+                    .clone()
+                    .with_bins_unknown(publish::bin::BinsUnknown::SettingsUnread)
+            }),
+            ..CoverRun::default()
+        },
+    );
+    assert!(
+        matches!(published, Err(PublishError::BinsUnknown(_))),
+        "{published:?}"
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), IMPORTED_COVER);
+    assert!(hidden_leftovers(&fix.dir).is_empty());
+
+    let (fix, path, _, published) = replace_cover(
+        "cover-no-bin",
+        IMPORTED_COVER,
+        CoverRun {
+            sandbox: Some(|fix| {
+                Sandbox::new(vec![
+                    Root::library("music", fix.dir.join("music")),
+                    Root::library("incoming", fix.dir.join("incoming")),
+                ])
+                .unwrap()
+            }),
+            ..CoverRun::default()
+        },
+    );
+    assert!(
+        matches!(published, Err(PublishError::Interrupted(_))),
+        "{published:?}"
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), IMPORTED_COVER);
+    assert!(hidden_leftovers(&fix.dir).is_empty());
+}
+
+/// A cover Undo brings back is the person's own: the publish places it like
+/// any generated file, but records it as nothing Library Management made,
+/// so a later "Restore originals" never takes it away.
+#[test]
+fn a_put_back_cover_is_not_recorded_as_generated() {
+    let (fix, path, _, published) = replace_cover(
+        "cover-put-back",
+        IMPORTED_COVER,
+        CoverRun {
+            put_back: true,
+            ..CoverRun::default()
+        },
+    );
+    published.expect("the cover is put back");
+    assert_eq!(std::fs::read(&path).unwrap(), ARCHIVE_COVER);
+    assert_eq!(
+        outputs_follow_the_rule(&open_db(&fix)),
+        0,
+        "nothing recorded"
+    );
 }
 
 /// An unwind that linked a set-aside generated file back to its name and
@@ -2338,6 +2506,7 @@ fn interrupted_generated_put_back_is_finished_by_recovery() {
         size: cover.len() as u64,
         kind: OutputKind::Artwork,
         replaces: None,
+        put_back: false,
     });
     let bundle = PlanBundle {
         id: "bundle-undo".to_string(),

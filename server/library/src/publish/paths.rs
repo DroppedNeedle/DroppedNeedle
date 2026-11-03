@@ -797,6 +797,27 @@ pub fn hash_regular_file(path: &Path) -> Result<Hashed, PublishError> {
     stream(path, &mut file, stat, |_| Ok(()))
 }
 
+/// Read the symlink-free regular file at `path` whole, hashing it in the
+/// same read. A file larger than `cap` bytes is refused before anything
+/// is read, and so is one that grows past it while it is read.
+pub fn read_regular_capped(path: &Path, cap: u64) -> Result<(Vec<u8>, Hashed), PublishError> {
+    let (mut file, stat) = open_regular(path)?;
+    let too_large =
+        || PublishError::Validation(format!("{} is too large to keep", message_name(path)).into());
+    if stat.size > cap {
+        return Err(too_large());
+    }
+    let mut bytes = Vec::with_capacity(usize::try_from(stat.size).unwrap_or_default());
+    let hashed = stream(path, &mut file, stat, |piece| {
+        if bytes.len() as u64 + piece.len() as u64 > cap {
+            return Err(too_large());
+        }
+        bytes.extend_from_slice(piece);
+        Ok(())
+    })?;
+    Ok((bytes, hashed))
+}
+
 /// Whether the symlink-free regular file at `path` holds `sha256`.
 pub fn holds(path: &Path, sha256: &str) -> bool {
     hash_regular_file(path).is_ok_and(|hashed| hashed.sha256 == sha256)

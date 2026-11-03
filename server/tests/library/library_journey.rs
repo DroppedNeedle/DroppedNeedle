@@ -23550,6 +23550,17 @@ impl droppedneedle_library::management::enrich::EnrichmentPort for LiveAcoustId 
             .front_cover(release_mbid, release_group_mbid, background)
     }
 
+    fn edition_cover<'a>(
+        &'a self,
+        release_mbid: &'a str,
+        background: bool,
+    ) -> futures_util::future::BoxFuture<
+        'a,
+        Result<Option<droppedneedle_library::management::enrich::Cover>, String>,
+    > {
+        self.scripted.edition_cover(release_mbid, background)
+    }
+
     fn release_extras<'a>(
         &'a self,
         release_mbid: &'a str,
@@ -27321,4 +27332,475 @@ async fn catalog_rows_from_before_the_upgrade_take_a_scan_and_a_merge() {
         .await;
     assert_eq!(status, StatusCode::OK, "{artist}");
     assert_eq!(artist["date_added"], json!(1_700_000_000.5));
+}
+
+/// A small solid PNG of `colour`, standing in for a cover.
+fn cover_png(colour: [u8; 3]) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    image::RgbImage::from_pixel(8, 8, image::Rgb(colour))
+        .write_to(
+            &mut std::io::Cursor::new(&mut bytes),
+            image::ImageFormat::Png,
+        )
+        .expect("png");
+    bytes
+}
+
+/// Scripted outside sources whose archive has `edition` as the matched
+/// edition's own front, and another cover as the one the pages show.
+fn edition_sources(
+    edition: Result<Option<Vec<u8>>, String>,
+) -> Arc<droppedneedle_library::management::enrich::ScriptedEnrichment> {
+    use droppedneedle_library::management::enrich::{Cover, ScriptedEnrichment};
+    let cover = |bytes: Vec<u8>| Cover {
+        bytes,
+        mime: "image/png".to_owned(),
+    };
+    Arc::new(ScriptedEnrichment {
+        cover: Some(cover(cover_png([20, 200, 20]))),
+        edition: std::sync::Mutex::new(Some(edition.map(|found| found.map(cover)))),
+        ..Default::default()
+    })
+}
+
+/// A profile that keeps albums where they are and writes cover files with
+/// the edition's archive cover.
+fn edition_cover_profile(
+    profile: &mut droppedneedle_kernel::runtime_config::sections::LibraryManagementProfile,
+) {
+    profile.organization.rename_enabled = false;
+    profile.organization.move_enabled = false;
+    profile.artwork.embedded_enabled = false;
+    profile.artwork.external_enabled = true;
+    profile.artwork.use_edition_cover = true;
+}
+
+impl ManagedLibrary {
+    /// Turn the profile's edition cover on or off.
+    fn use_edition_cover(&self, on: bool) {
+        use droppedneedle_kernel::runtime_config::sections::LibraryManagement;
+        use droppedneedle_library::management::settings as lm;
+        let store = self.library.settings.store();
+        let mut settings = store.get::<LibraryManagement>().expect("settings read");
+        for profile in settings
+            .profiles
+            .iter_mut()
+            .filter(|profile| profile.id == lm::PICARD_ORGANIZER_PROFILE_ID)
+        {
+            profile.artwork.use_edition_cover = on;
+        }
+        store.save_blocking(settings).expect("settings saved");
+        lm::service::LibraryManagementService::new(Arc::new(store.clone()))
+            .get_settings()
+            .expect("settings normalized");
+    }
+
+    /// Preview the album and apply it; returns the run's job id and what
+    /// its file generated.
+    async fn run_album(&self, album: &str, key: &str) -> (String, Vec<String>) {
+        use droppedneedle_library::management::models::SelectionKind;
+        let (handle, items) = self.preview(SelectionKind::Albums, &[album], key).await;
+        let generated = items
+            .iter()
+            .flat_map(|item| &item.diff.generated)
+            .map(|file| file.destination_relative_path.clone())
+            .collect();
+        if items.iter().any(|item| item.diff.changes_anything()) {
+            let applied = management_apply(&self.library, &handle).await;
+            assert_eq!(
+                applied.job.state.as_str(),
+                "succeeded",
+                "{:?}",
+                applied.job.terminal_code
+            );
+        }
+        (handle.job_id, generated)
+    }
+
+    /// Preview the undo of run `job_id` and apply it; returns its items.
+    async fn undo_run(
+        &self,
+        job_id: &str,
+        key: &str,
+    ) -> Vec<droppedneedle_library::management::models::PlannedItem> {
+        let management = self.management();
+        let detail = management.detail(job_id).expect("detail");
+        let undo = management
+            .undo_preview(job_id, detail.job.row_revision, key, "admin")
+            .expect("undo preview");
+        assert!(management_step(&self.library).await, "undo planning runs");
+        let items = management
+            .items(&undo.job_id, -1, 100, &Default::default())
+            .expect("items")
+            .items;
+        let undone = management_apply(&self.library, &undo).await;
+        assert_eq!(
+            undone.job.state.as_str(),
+            "succeeded",
+            "{:?}",
+            undone.job.terminal_code
+        );
+        items
+    }
+
+    /// Restore the album's originals.
+    async fn restore_album(&self, album: &str, key: &str) {
+        use droppedneedle_library::management::models::{Selection, SelectionKind};
+        use droppedneedle_library::management::restore::RestoreRequest;
+        let management = self.management();
+        let handle = management
+            .create_restore_preview(
+                RestoreRequest {
+                    selection: Selection {
+                        kind: SelectionKind::Albums,
+                        ids: vec![album.to_owned()],
+                        catalog_filter: None,
+                    },
+                    expected_settings_revision: self.settings_revision(),
+                    expected_policy_revision: self
+                        .library
+                        .core
+                        .policy_revision()
+                        .expect("policy revision"),
+                    idempotency_key: key.to_owned(),
+                },
+                "admin",
+            )
+            .expect("restore preview queued");
+        assert!(
+            management_step(&self.library).await,
+            "restore planning runs"
+        );
+        let restored = management_apply(&self.library, &handle).await;
+        assert_eq!(
+            restored.job.state.as_str(),
+            "succeeded",
+            "{:?}",
+            restored.job.terminal_code
+        );
+    }
+
+    /// The bytes of every file in the library folder's recycle bin.
+    fn binned(&self) -> Vec<Vec<u8>> {
+        let mut found: Vec<Vec<u8>> = walk_files(&self.music.join(".recycle"))
+            .iter()
+            .map(|path| std::fs::read(path).expect("bin copy reads"))
+            .collect();
+        found.sort();
+        found
+    }
+}
+
+/// With the profile's edition cover on, an album matched to an accepted
+/// release has its folder's one cover file replaced by the archive's front
+/// for that release, in its own name and permission bits; the old one goes
+/// to the recycle bin and a second run changes nothing. Undo puts the old
+/// one back, and it stays the person's: a later "Restore originals" keeps
+/// it. A run with the setting off leaves it alone, and "Restore originals"
+/// after a replacement puts the album's first cover back.
+#[tokio::test]
+async fn the_edition_cover_replaces_a_cover_file_and_undo_and_restore_bring_it_back() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let archive = cover_png([30, 30, 200]);
+    let own = cover_png([200, 30, 30]);
+    let sources = edition_sources(Ok(Some(archive.clone())));
+    let managed =
+        ManagedLibrary::scripted("lm-edition-cover", edition_cover_profile, sources.clone()).await;
+    let (album, _) = managed.add_album("edition", 1).await;
+    let cover = managed.music.join("edition/cover.png");
+    std::fs::write(&cover, &own).unwrap();
+    std::fs::set_permissions(&cover, std::fs::Permissions::from_mode(0o640)).unwrap();
+    let held = || std::fs::read(&cover).expect("cover reads");
+
+    let (run, generated) = managed.run_album(&album, "replace").await;
+    assert_eq!(generated, ["edition/cover.png"]);
+    assert_eq!(held(), archive, "the edition's cover replaced the file");
+    assert_eq!(
+        std::fs::metadata(&cover).unwrap().permissions().mode() & 0o777,
+        0o640
+    );
+    assert_eq!(
+        managed.binned(),
+        std::slice::from_ref(&own),
+        "the old one is in the bin"
+    );
+    assert_eq!(sources.edition_asks.lock().unwrap().len(), 1);
+    let (_, generated) = managed.run_album(&album, "again").await;
+    assert!(generated.is_empty(), "a second run changes nothing");
+
+    let undo = managed.undo_run(&run, "undo").await;
+    assert!(
+        undo.iter()
+            .flat_map(|item| &item.diff.generated)
+            .any(|file| file.destination_relative_path == "edition/cover.png"),
+        "the undo preview lists the cover it puts back"
+    );
+    assert_eq!(held(), own, "undo put the old cover back");
+
+    managed.use_edition_cover(false);
+    let (_, generated) = managed.run_album(&album, "off").await;
+    assert!(generated.is_empty(), "with the setting off the cover stays");
+    managed.restore_album(&album, "restore-after-undo").await;
+    assert_eq!(held(), own, "the cover undo put back is kept");
+
+    managed.use_edition_cover(true);
+    managed.run_album(&album, "replace-again").await;
+    assert_eq!(held(), archive);
+    managed.restore_album(&album, "restore").await;
+    assert_eq!(held(), own, "restore puts the album's first cover back");
+}
+
+/// The edition's cover never replaces a cover file where it may not: an
+/// album marked as looking wrong is never asked about, a folder another
+/// album's tracks share keeps its cover, and an archive that cannot answer
+/// changes no file.
+#[tokio::test]
+async fn the_edition_cover_leaves_a_cover_alone_where_it_may_not_replace_it() {
+    let archive = cover_png([30, 30, 200]);
+    let own = cover_png([200, 30, 30]);
+    let sources = edition_sources(Ok(Some(archive)));
+    let managed = ManagedLibrary::scripted(
+        "lm-edition-cover-left",
+        edition_cover_profile,
+        sources.clone(),
+    )
+    .await;
+    let asks = || sources.edition_asks.lock().unwrap().len();
+
+    let (wrong, _) = managed.add_album("wrong", 1).await;
+    let (shared, _) = managed.add_album("shared", 1).await;
+    let (down, _) = managed.add_album("down", 1).await;
+    for folder in ["wrong", "shared", "down"] {
+        std::fs::write(managed.music.join(format!("{folder}/cover.png")), &own).unwrap();
+    }
+    managed
+        .library
+        .scan_store
+        .db()
+        .run_sql(&format!(
+            "INSERT INTO library_album_looks_wrong (local_album_id, user_id, created_at) \
+             VALUES ('{wrong}', 'admin', 1)"
+        ))
+        .expect("marked as looking wrong");
+    managed
+        .library
+        .scan_store
+        .db()
+        .run_sql(
+            "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, \
+             updated_at) VALUES ('other-artist', 'Other', 'other', 'person', 1, 1); \
+             INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+             album_artist_name, album_artist_name_folded, album_artist_id, grouping_source, \
+             created_at, updated_at) VALUES ('other-album', 'music', 'other', 'Other', \
+             'other', 'Other', 'other', 'other-artist', 'automatic', 1, 1); \
+             INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
+             path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
+             album_title, album_title_folded, file_format, availability, ingest_source, \
+             imported_at, membership_source) VALUES ('other-track', 'other-album', 'music', \
+             '/elsewhere/zz.flac', 'shared/zz.flac', 'other-hash', 1, 1, 's1', 'Other', \
+             'other', 'Other', 'other', 'flac', 'indexed', 'scan', 1, 'automatic');",
+        )
+        .expect("another album in the folder");
+
+    let (_, generated) = managed.run_album(&wrong, "wrong").await;
+    assert!(generated.is_empty());
+    assert_eq!(
+        asks(),
+        0,
+        "an album marked as looking wrong is never asked about"
+    );
+    assert_eq!(
+        std::fs::read(managed.music.join("wrong/cover.png")).unwrap(),
+        own
+    );
+
+    let (_, generated) = managed.run_album(&shared, "shared").await;
+    assert!(generated.is_empty());
+    assert_eq!(asks(), 1);
+    assert_eq!(
+        std::fs::read(managed.music.join("shared/cover.png")).unwrap(),
+        own
+    );
+
+    *sources.edition.lock().unwrap() = Some(Err("the archive answered 503".to_owned()));
+    let (_, generated) = managed.run_album(&down, "down").await;
+    assert!(generated.is_empty());
+    assert_eq!(asks(), 2);
+    assert_eq!(
+        std::fs::read(managed.music.join("down/cover.png")).unwrap(),
+        own,
+        "an archive that cannot answer changes no file"
+    );
+    assert_eq!(managed.binned(), Vec::<Vec<u8>>::new());
+}
+
+/// Undo of a run that replaced a cover file someone has changed since
+/// still undoes the run's tags, and leaves that cover as it is and says so.
+#[tokio::test]
+async fn undo_keeps_an_edited_edition_cover_and_still_undoes_the_tags() {
+    use droppedneedle_library::tags::save::TagEdit;
+    use droppedneedle_library::tags::{AudioFormat, TagField, read::read_tag_only};
+    let archive = cover_png([30, 30, 200]);
+    let own = cover_png([200, 30, 30]);
+    let edited = cover_png([200, 200, 30]);
+    let managed = ManagedLibrary::scripted(
+        "lm-edition-cover-edited",
+        edition_cover_profile,
+        edition_sources(Ok(Some(archive.clone()))),
+    )
+    .await;
+    let (album, tracks) = managed.add_album("edited", 1).await;
+    managed
+        .edit_outside(
+            &tracks[0],
+            TagEdit::verbatim(TagField::Title, vec!["A title of my own".to_owned()]),
+        )
+        .await;
+    let cover = managed.music.join("edited/cover.png");
+    std::fs::write(&cover, &own).unwrap();
+    let track = managed.music.join("edited/01.flac");
+    let title = || {
+        read_tag_only(&track, AudioFormat::Flac)
+            .expect("tags read")
+            .title
+    };
+    let before = title();
+
+    let (run, _) = managed.run_album(&album, "replace").await;
+    assert_eq!(std::fs::read(&cover).unwrap(), archive);
+    assert_ne!(title(), before, "the run wrote the release's title");
+    std::fs::write(&cover, &edited).unwrap();
+
+    let undo = managed.undo_run(&run, "undo").await;
+    assert_eq!(title(), before, "the tags are undone");
+    assert_eq!(
+        std::fs::read(&cover).unwrap(),
+        edited,
+        "the edited cover stays"
+    );
+    assert!(
+        undo.iter()
+            .flat_map(|item| &item.facts.warnings)
+            .any(|warning| warning.contains("edited/cover.png")),
+        "the undo preview says so"
+    );
+}
+
+/// "Restore originals" brings back the cover file the edition's cover
+/// replaced even when that cover is no longer there (someone removed it,
+/// or it moved with the album): the kept original goes back where nothing
+/// stands.
+#[tokio::test]
+async fn restore_brings_the_replaced_cover_back_when_the_archive_cover_is_gone() {
+    let archive = cover_png([30, 30, 200]);
+    let own = cover_png([200, 30, 30]);
+    let managed = ManagedLibrary::scripted(
+        "lm-edition-cover-gone",
+        edition_cover_profile,
+        edition_sources(Ok(Some(archive.clone()))),
+    )
+    .await;
+    let (album, _) = managed.add_album("gone", 1).await;
+    let cover = managed.music.join("gone/cover.png");
+    std::fs::write(&cover, &own).unwrap();
+
+    managed.run_album(&album, "replace").await;
+    assert_eq!(std::fs::read(&cover).unwrap(), archive);
+    std::fs::remove_file(&cover).unwrap();
+
+    managed.restore_album(&album, "restore").await;
+    assert_eq!(
+        std::fs::read(&cover).expect("the original cover is back"),
+        own
+    );
+}
+
+/// The edition's cover follows the album's match up to the moment it is
+/// written: with unconfirmed matches managed, a best guess is never asked
+/// about and keeps its cover, and an album marked as looking wrong after
+/// its preview is refused at apply with its files left as they were.
+#[tokio::test]
+async fn the_edition_cover_is_refused_for_a_guess_and_for_a_match_marked_wrong_after_preview() {
+    use droppedneedle_kernel::runtime_config::sections::EditionPreferences;
+    use droppedneedle_library::management::models::SelectionKind;
+    let archive = cover_png([30, 30, 200]);
+    let own = cover_png([200, 30, 30]);
+    let sources = edition_sources(Ok(Some(archive)));
+    let managed = ManagedLibrary::scripted(
+        "lm-edition-cover-gate",
+        edition_cover_profile,
+        sources.clone(),
+    )
+    .await;
+    let asks = || sources.edition_asks.lock().unwrap().len();
+    let (guess, _) = managed.add_album("guess", 1).await;
+    let (late, late_tracks) = managed.add_album("late", 1).await;
+    for folder in ["guess", "late"] {
+        std::fs::write(managed.music.join(format!("{folder}/cover.png")), &own).unwrap();
+    }
+    let store = managed.library.settings.store();
+    let mut preferences = store.get::<EditionPreferences>().expect("preferences read");
+    preferences.manage_unconfirmed = true;
+    store.save_blocking(preferences).expect("preferences saved");
+    managed
+        .library
+        .scan_store
+        .db()
+        .run_sql(&format!(
+            "INSERT INTO library_album_match_state (local_album_id, state, reason_code, \
+             updated_at) VALUES ('{guess}', 'unconfirmed', 'LOW_CONFIDENCE', 0)"
+        ))
+        .expect("a best guess");
+
+    let (_, generated) = managed.run_album(&guess, "guess").await;
+    assert!(generated.is_empty());
+    assert_eq!(asks(), 0, "a best guess is never asked about");
+    assert_eq!(
+        std::fs::read(managed.music.join("guess/cover.png")).unwrap(),
+        own
+    );
+
+    let track = managed.path(&late_tracks[0]);
+    let before = file_sha256(&track);
+    let (handle, items) = managed
+        .preview(SelectionKind::Albums, &[&late], "late")
+        .await;
+    assert!(
+        items
+            .iter()
+            .flat_map(|item| &item.diff.generated)
+            .any(|file| file.destination_relative_path == "late/cover.png"),
+        "the preview replaces the cover"
+    );
+    managed
+        .library
+        .scan_store
+        .db()
+        .run_sql(&format!(
+            "INSERT INTO library_album_looks_wrong (local_album_id, user_id, created_at) \
+             VALUES ('{late}', 'admin', 1)"
+        ))
+        .expect("marked as looking wrong");
+    management_apply(&managed.library, &handle).await;
+    let results = managed
+        .management()
+        .results(&handle.job_id, -1, 50)
+        .expect("results");
+    assert!(
+        results.items.iter().any(|item| item
+            .failure
+            .as_ref()
+            .is_some_and(|reason| reason.code == "MATCH_CHANGED")),
+        "{:?}",
+        results
+            .items
+            .iter()
+            .map(|item| &item.failure)
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        std::fs::read(managed.music.join("late/cover.png")).unwrap(),
+        own
+    );
+    assert_eq!(file_sha256(&track), before, "the files are left alone");
 }

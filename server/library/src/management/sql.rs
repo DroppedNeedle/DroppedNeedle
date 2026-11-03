@@ -124,6 +124,15 @@ droppedneedle_kernel::sql! {
     pub(super) ALBUM_HAS_CUSTOM_EDITION = "SELECT 1 FROM library_custom_edition_active WHERE local_album_id = ?1";
     pub(super) EDITION_REMAP_ATTEMPTS = "SELECT attempts FROM library_edition_remap_queue WHERE local_album_id = ?1";
     pub(super) MATCH_GATE = "SELECT state, reason_code FROM library_album_match_state WHERE local_album_id = ?1";
+    /// Whether anyone marked album `?1`'s match as looking wrong.
+    pub(super) LOOKS_WRONG = "SELECT EXISTS (SELECT 1 FROM library_album_looks_wrong \
+         WHERE local_album_id = ?1)";
+    /// Whether a track of an album other than `?3` sits directly in folder
+    /// `?2` (empty, or ending in `/`) of library folder `?1`.
+    pub(super) FOLDER_SHARED = "SELECT EXISTS (SELECT 1 FROM local_tracks \
+         WHERE root_id = ?1 AND relative_path >= ?2 AND relative_path < ?2 || char(1114111) \
+         AND instr(substr(relative_path, length(?2) + 1), '/') = 0 \
+         AND local_album_id IS NOT ?3)";
     pub(super) OVERRIDES = "SELECT id, row_revision, field_name, mode, value_json FROM library_management_overrides \
          WHERE local_album_id = ?1 OR local_track_id = ?2 \
          ORDER BY subject_kind, field_name, id";
@@ -144,6 +153,7 @@ droppedneedle_kernel::sql! {
                      FROM library_management_baseline_purges WHERE idempotency_key = ?1";
     pub(super) DROP_BASELINE_BLOB_REFS = "DELETE FROM library_publish_blob_refs WHERE owner_kind IN ('baseline', 'v2_baseline')";
     pub(super) DROP_PUBLISH_BASELINES = "DELETE FROM library_publish_baselines";
+    pub(super) DROP_COVER_BASELINES = "DELETE FROM library_publish_cover_baselines";
     pub(super) DETACH_BASELINES = "UPDATE library_track_management_state SET baseline_id = NULL, \
                  row_revision = row_revision + 1 WHERE baseline_id IS NOT NULL";
     pub(super) DROP_MANAGEMENT_BASELINES = "DELETE FROM library_management_baselines";

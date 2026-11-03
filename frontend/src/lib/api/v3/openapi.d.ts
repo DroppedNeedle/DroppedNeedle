@@ -10954,6 +10954,15 @@ export interface components {
              * @default true
              */
             never_replace_with_smaller: boolean;
+            /**
+             * @description Replace the album's cover (embedded, and its one `cover.*` file)
+             *     with the Cover Art Archive's front for an accepted exact release.
+             *     The replaced file goes to the recycle bin; Undo puts it back. Read
+             *     only while external artwork is on. Left out while off, so profiles
+             *     and share codes saved before it keep their revisions and hashes.
+             * @default false
+             */
+            use_edition_cover: boolean;
         };
         /**
          * @description Artwork output format.

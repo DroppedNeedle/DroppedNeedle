@@ -8,7 +8,7 @@
 
 use crate::identity::ReleaseIdentity;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::adapters::FsSpaceProbe;
@@ -17,8 +17,8 @@ use crate::publish::bin::BinSource;
 use crate::publish::journal::{JournalState, JournalStore};
 use crate::publish::paths::{ResolvedRoot, Root, left_out};
 use crate::publish::planner::{
-    Capability, CollisionGate, DiskPreflight, FileFingerprint, PlanBundle, PlanItem, PlanKind,
-    STAGED_HEADROOM_BYTES, SealRecheck, SealedPreview,
+    Capability, CollisionGate, DiskPreflight, FileFingerprint, GeneratedOutput, PlanBundle,
+    PlanItem, PlanKind, STAGED_HEADROOM_BYTES, SealRecheck, SealedPreview,
 };
 use crate::publish::publisher::{PublishOutcome, Publisher, locate};
 use crate::publish::recovery::{LEFTOVER_LIST_MAX, Leftover, LeftoverReport};
@@ -2526,7 +2526,7 @@ impl Publishing {
 
         // Everything the undo reads from the database, in one read that
         // ends before any file is looked at.
-        let (sources, outputs) = self
+        let (sources, outputs, replaced) = self
             .db
             .read_blocking("publish.undo_sources", |conn| {
                 let Some(source) = crate::publish::operations::load_operation(conn, bundle_id)?
@@ -2560,7 +2560,8 @@ impl Publishing {
                     ));
                 }
                 let outputs = crate::publish::operations::outputs_of(conn, bundle_id)?;
-                Ok::<_, PublishError>(Some((rows, outputs)))
+                let replaced = replaced_files(conn, blobs, &source)?;
+                Ok::<_, PublishError>(Some((rows, outputs, replaced)))
             })
             .map_err(publish_error)?
             .ok_or(ServiceError::NotFound)?;
@@ -2698,8 +2699,10 @@ impl Publishing {
             if !sidecars.is_empty() {
                 capabilities.push(Capability::Sidecars);
             }
-            // Files the run generated go away, while they are still what it wrote.
+            // Files the run generated go away, while they are still what it
+            // wrote; one that replaced a file gives that file back.
             let mut removals = Vec::new();
+            let mut put_back = Vec::new();
             for output in outputs
                 .get(item.track_id.as_str())
                 .map(Vec::as_slice)
@@ -2709,10 +2712,18 @@ impl Publishing {
                     .sandbox
                     .resolve_no_symlink(&output.dest_root, &output.dest_rel)
                     .is_ok_and(|path| crate::publish::paths::holds(&path, &output.sha256));
-                if unchanged {
-                    removals.push(output.clone());
-                } else {
-                    left.push(output.dest_rel.clone());
+                let key = (
+                    output.dest_root.clone(),
+                    output.dest_rel.clone(),
+                    output.sha256.clone(),
+                );
+                match (unchanged, replaced.get(&key)) {
+                    (true, None) => removals.push(output.clone()),
+                    (true, Some(Some((sha256, size)))) => {
+                        put_back.push(self.giving_back(&open.sandbox, output, sha256, *size))
+                    }
+                    // Changed since, or the replaced bytes are gone: it stays.
+                    _ => left.push(output.dest_rel.clone()),
                 }
             }
             files.eligible.push(UndoFile {
@@ -2739,13 +2750,51 @@ impl Publishing {
                     staged_bytes_estimate: fingerprint.size + STAGED_HEADROOM_BYTES,
                     adopt: None,
                     replaces: None,
-                    outputs: Vec::new(),
+                    outputs: put_back,
                     removals,
                     sealed: None,
                 },
             });
         }
         Ok(files)
+    }
+
+    /// The file an earlier run replaced at `output`'s place, given back
+    /// over it: `sha256` and `size` are the replaced bytes, kept in the
+    /// blob store. The generated file goes to a fresh bin entry, which a
+    /// management run chooses again at apply.
+    fn giving_back(
+        &self,
+        sandbox: &Sandbox,
+        output: &GeneratedOutput,
+        sha256: &str,
+        size: u64,
+    ) -> GeneratedOutput {
+        let name = Path::new(&output.dest_rel)
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let recycle_to = sandbox
+            .bin_for(&output.dest_root)
+            .ok()
+            .and_then(|bin| {
+                crate::publish::bin::fresh_entry(&bin.dir, &name, self.core.clock.now_system())
+            })
+            .map(|entry| entry.display().to_string())
+            .unwrap_or_default();
+        GeneratedOutput {
+            dest_root: output.dest_root.clone(),
+            dest_rel: output.dest_rel.clone(),
+            sha256: sha256.to_owned(),
+            size,
+            kind: output.kind,
+            replaces: Some(crate::publish::Replacement {
+                sha256: output.sha256.clone(),
+                track_id: None,
+                recycle_to,
+            }),
+            put_back: true,
+        }
     }
 
     /// Restore tracks to their immutable first-management baselines.
@@ -2843,17 +2892,24 @@ impl Publishing {
                             Some((blob_sha, _, _)) => Some(blobs.fetch(conn, &blob_sha)?),
                             None => None,
                         };
-                        Ok((bytes, locate(conn, track_id)?))
+                        let mut covers = HashMap::new();
+                        for (root, rel, sha256) in baselines.covers(track_id)? {
+                            let size = blobs.fetch(conn, &sha256)?.map(|bytes| bytes.len() as u64);
+                            covers.insert((root, rel), size.map(|size| (sha256, size)));
+                        }
+                        Ok((bytes, locate(conn, track_id)?, covers))
                     })
                     .collect::<Result<Vec<_>, PublishError>>()
             })
             .map_err(publish_error)?;
+        let mut cover_originals: HashMap<String, CoverOriginals> = HashMap::new();
         let mut files = BaselineFiles::default();
         let mut inputs = Vec::new();
         let mut current_locs: HashMap<String, (String, String)> = HashMap::new();
         let mut live: HashMap<String, (FileFingerprint, AudioFormat, ReleaseIdentity)> =
             HashMap::new();
-        for (track_id, (bytes, located)) in track_ids.iter().zip(sources) {
+        for (track_id, (bytes, located, covers)) in track_ids.iter().zip(sources) {
+            cover_originals.insert(track_id.clone(), covers);
             let baseline = match bytes {
                 Some(Some(bytes)) => Some(
                     crate::publish::undo::BeforeState::from_bytes(&bytes).map_err(publish_error)?,
@@ -2944,20 +3000,69 @@ impl Publishing {
             let updates =
                 crate::publish::staging::restore_updates(&before.doc, &current, &live_loc.1);
             // Files management generated for the track (a cover, an
-            // `.lrc`) go too, while they still hold the bytes it wrote.
-            let removals: Vec<_> = self
+            // `.lrc`) go too, while they still hold the bytes it wrote; a
+            // cover file it replaced comes back over its own.
+            let originals = cover_originals.remove(&track_id).unwrap_or_default();
+            let mut removals = Vec::new();
+            let mut put_back = Vec::new();
+            let mut left = Vec::new();
+            let generated = self
                 .db
                 .read_blocking("publish.generated_for_track", |conn| {
                     crate::publish::operations::generated_for_track(conn, &track_id)
                 })
-                .map_err(publish_error)?
-                .into_iter()
-                .filter(|output| {
-                    sandbox
-                        .resolve_no_symlink(&output.dest_root, &output.dest_rel)
-                        .is_ok_and(|path| crate::publish::paths::holds(&path, &output.sha256))
-                })
+                .map_err(publish_error)?;
+            let mut settled = BTreeSet::new();
+            for output in generated {
+                let unchanged = sandbox
+                    .resolve_no_symlink(&output.dest_root, &output.dest_rel)
+                    .is_ok_and(|path| crate::publish::paths::holds(&path, &output.sha256));
+                if !unchanged {
+                    continue;
+                }
+                let place = (output.dest_root.clone(), output.dest_rel.clone());
+                match originals.get(&place) {
+                    None => removals.push(output),
+                    Some(Some((sha256, size))) => {
+                        put_back.push(self.giving_back(&sandbox, &output, sha256, *size));
+                    }
+                    // The original's bytes are gone: the cover stays.
+                    Some(None) => left.push(output.dest_rel.clone()),
+                }
+                settled.insert(place);
+            }
+            // A kept original whose place holds no cover of ours (it moved
+            // with the album, or someone removed or changed it) comes back
+            // where nothing stands, and is listed where something else does.
+            let mut unsettled: Vec<_> = originals
+                .iter()
+                .filter(|(place, _)| !settled.contains(*place))
                 .collect();
+            unsettled.sort();
+            for ((root, rel), kept) in unsettled {
+                let at = sandbox.resolve_no_symlink(root, rel);
+                match (kept, at) {
+                    (Some((sha256, _)), Ok(path))
+                        if crate::publish::paths::holds(&path, sha256) => {}
+                    (Some((sha256, size)), Ok(path))
+                        if matches!(
+                            std::fs::symlink_metadata(&path),
+                            Err(error) if error.kind() == std::io::ErrorKind::NotFound
+                        ) =>
+                    {
+                        put_back.push(GeneratedOutput {
+                            dest_root: root.clone(),
+                            dest_rel: rel.clone(),
+                            sha256: sha256.clone(),
+                            size: *size,
+                            kind: crate::publish::OutputKind::Artwork,
+                            replaces: None,
+                            put_back: true,
+                        });
+                    }
+                    _ => left.push(rel.clone()),
+                }
+            }
             let mut capabilities = Vec::new();
             if !updates.is_empty() {
                 capabilities.push(Capability::Metadata);
@@ -2971,7 +3076,7 @@ impl Publishing {
             }
             files.eligible.push(UndoFile {
                 current: current.managed.named(),
-                sidecars_left: Vec::new(),
+                sidecars_left: left,
                 plan: PlanItem {
                     track_id: track_id.clone(),
                     source_root: live_loc.0.clone(),
@@ -2993,7 +3098,7 @@ impl Publishing {
                     staged_bytes_estimate: fingerprint.size + STAGED_HEADROOM_BYTES,
                     adopt: None,
                     replaces: None,
-                    outputs: Vec::new(),
+                    outputs: put_back,
                     removals,
                     sealed: None,
                 },
@@ -3059,6 +3164,40 @@ impl Publishing {
                 .collect(),
         })
     }
+}
+
+/// A track's kept original cover files by place (root, rel): the bytes'
+/// hash and size, or `None` when the bytes are gone.
+type CoverOriginals = HashMap<(String, String), Option<(String, u64)>>;
+
+/// A generated file's root, rel and bytes, and the replaced bytes' hash
+/// and size (`None` when they are no longer kept).
+type ReplacedFiles = HashMap<(String, String, String), Option<(String, u64)>>;
+
+/// The files a recorded run's generated files replaced.
+fn replaced_files(
+    conn: &rusqlite::Connection,
+    blobs: &BlobStore,
+    source: &PlanBundle,
+) -> Result<ReplacedFiles, PublishError> {
+    let mut replaced = HashMap::new();
+    for output in source.items.iter().flat_map(|item| &item.outputs) {
+        let Some(old) = &output.replaces else {
+            continue;
+        };
+        let size = blobs
+            .fetch(conn, &old.sha256)?
+            .map(|bytes| bytes.len() as u64);
+        replaced.insert(
+            (
+                output.dest_root.clone(),
+                output.dest_rel.clone(),
+                output.sha256.clone(),
+            ),
+            size.map(|size| (old.sha256.clone(), size)),
+        );
+    }
+    Ok(replaced)
 }
 
 /// Per-file undo blocks as a compact message.

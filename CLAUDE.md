@@ -462,6 +462,13 @@ Run from the repo root. `make help` lists every target.
   The one other link followed is a library folder's `.recycle`, and only
   once its target is checked to lie outside every library and download
   folder.
+- One exception to "never overwrite", opt-in per profile: with "Use the
+  edition's archive cover" on, a run may replace the single `cover.*` in an
+  album's own folder with the Cover Art Archive's front for an accepted
+  exact release not marked "Looks wrong". It does so only through the
+  publisher's replace, never in a folder shared with another album. The
+  old file goes to the recycle bin, and Undo and Restore originals put it
+  back.
 - A configured recycle bin that cannot be reached makes removals and
   upgrades wait; files never fall back to a library folder's `.recycle`
   while it is down.

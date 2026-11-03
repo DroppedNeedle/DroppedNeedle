@@ -479,6 +479,31 @@ impl ArtworkService {
         if warming { Err(()) } else { Ok(None) }
     }
 
+    /// The archive's front cover for exactly this release, at full size,
+    /// asked at `priority`: never the album's own files, its release
+    /// group's or TheAudioDB's, which may show another edition. Library
+    /// Management replaces an album's cover with it when the profile asks.
+    /// `Ok(None)` when the archive has no front for the release (remembered
+    /// like any "no art" answer); `Err` when it could not answer now.
+    pub async fn edition_front_cover(
+        &self,
+        release_mbid: &str,
+        priority: RequestPriority,
+    ) -> Result<Option<CoverBytes>, ()> {
+        let mbid = release_mbid.trim().to_ascii_lowercase();
+        if !is_valid_mbid(&mbid) {
+            return Ok(None);
+        }
+        match self
+            .remote_cover(EntityKind::Release, &mbid, None, PRECACHE_WAIT, priority)
+            .await
+        {
+            CoverLookup::Found(cover) => Ok(Some(cover)),
+            CoverLookup::Missing => Ok(None),
+            CoverLookup::Warming => Err(()),
+        }
+    }
+
     /// Whether TheAudioDB's thumbnail for a release group is settled.
     pub async fn audiodb_cover_cached(&self, mbid: &str) -> bool {
         self.settled(&audiodb_cover_key(mbid)).await

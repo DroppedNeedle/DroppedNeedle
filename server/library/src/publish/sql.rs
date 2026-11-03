@@ -189,12 +189,16 @@ droppedneedle_kernel::sql! {
              WHERE removed_at < ?1 OR (removed_at = ?1 AND bundle_id < ?2) \
              ORDER BY removed_at DESC, bundle_id DESC LIMIT ?3";
     /// The files in the bin of the bundles in the JSON array `?1`: each
-    /// copy, its row's state and its track's album. `?2` is the state of a
-    /// row that waits for an admin.
+    /// copy, its row's state and its track's album (for a cover a generated
+    /// one replaced, the album of its bundle's tracks). `?2` is the state
+    /// of a row that waits for an admin.
     pub(super) BIN_FILES = "SELECT j.bundle_id, r.recycle_to, j.state, t.local_album_id \
              FROM library_publish_replacements r \
              JOIN library_publish_journal j ON j.id = r.journal_id \
-             LEFT JOIN local_tracks t ON t.id = r.replaced_track_id \
+             LEFT JOIN local_tracks t ON t.id = COALESCE(r.replaced_track_id, \
+                 CASE WHEN j.kind = 'output' THEN (SELECT a.track_id FROM library_publish_journal a \
+                 WHERE a.bundle_id = j.bundle_id AND a.kind = 'audio' AND a.track_id IS NOT NULL \
+                 ORDER BY a.id LIMIT 1) END) \
              WHERE j.bundle_id IN (SELECT value FROM json_each(?1)) AND " + (in_bin!("?2")) + " \
              ORDER BY j.bundle_id, r.journal_id";
     /// The undo records of the bundles in the JSON array `?1`: reason,
@@ -496,6 +500,18 @@ droppedneedle_kernel::sql! {
              VALUES (?1, 'baseline', ?2)";
     pub(super) BASELINE_ROW = "SELECT blob_sha256, original_root, original_rel
                  FROM library_publish_baselines WHERE track_id = ?1";
+    /// Keep a cover file's first replaced bytes for track `?1` at
+    /// `?2`/`?3`; a cover kept there before wins.
+    pub(super) WRITE_COVER_BASELINE = "INSERT OR IGNORE INTO library_publish_cover_baselines \
+             (track_id, root_id, rel, blob_sha256, created_at) VALUES (?1, ?2, ?3, ?4, ?5)";
+    /// The cover files kept as track `?1`'s originals.
+    pub(super) COVER_BASELINES = "SELECT root_id, rel, blob_sha256 \
+             FROM library_publish_cover_baselines WHERE track_id = ?1 ORDER BY root_id, rel";
+    /// Whether bytes `?2` are a file a publish generated for track `?1` or
+    /// another track of its album, at any path.
+    pub(super) GENERATED_BEFORE = "SELECT EXISTS (SELECT 1 FROM library_publish_outputs \
+             WHERE sha256 = ?2 AND (track_id = ?1 OR track_id IN (SELECT t.id FROM local_tracks t \
+             WHERE t.local_album_id = (SELECT a.local_album_id FROM local_tracks a WHERE a.id = ?1))))";
     pub(super) V2_ORIGINAL_MISSING = "SELECT (EXISTS(SELECT 1 FROM library_track_management_state m \
                  WHERE m.local_track_id = ?1 AND m.baseline_id IS NOT NULL) \
                  OR EXISTS(SELECT 1 FROM library_management_baselines v \
@@ -710,6 +726,11 @@ droppedneedle_kernel::sql! {
         track_id: String,
         blob_sha256: String,
         expiry_day: i64,
+    }
+    pub(super) row CoverBaseline for [COVER_BASELINES] {
+        root_id: String,
+        rel: String,
+        blob_sha256: String,
     }
     pub(super) row BaselineRow for [BASELINE_ROW] {
         blob_sha256: String,

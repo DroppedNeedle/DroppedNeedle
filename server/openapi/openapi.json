@@ -37869,6 +37869,11 @@
             "type": "boolean",
             "description": "Never replace art with smaller art.",
             "default": true
+          },
+          "use_edition_cover": {
+            "type": "boolean",
+            "description": "Replace the album's cover (embedded, and its one `cover.*` file)\nwith the Cover Art Archive's front for an accepted exact release.\nThe replaced file goes to the recycle bin; Undo puts it back. Read\nonly while external artwork is on. Left out while off, so profiles\nand share codes saved before it keep their revisions and hashes.",
+            "default": false
           }
         }
       },

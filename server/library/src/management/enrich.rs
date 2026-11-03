@@ -72,6 +72,14 @@ pub trait EnrichmentPort: Send + Sync {
         release_group_mbid: &'a str,
         background: bool,
     ) -> BoxFuture<'a, Result<Option<Cover>, String>>;
+    /// The archive's front cover for exactly this release: never local
+    /// art or another edition's. `Ok(None)` when the archive has none.
+    /// `background` asks at background priority (automatic runs).
+    fn edition_cover<'a>(
+        &'a self,
+        release_mbid: &'a str,
+        background: bool,
+    ) -> BoxFuture<'a, Result<Option<Cover>, String>>;
     /// The parts of a release `wants` names, in one MusicBrainz lookup:
     /// its recording and work credits, its credited artists' own names
     /// and aliases. `Err` when MusicBrainz could not answer or no longer
@@ -400,6 +408,10 @@ pub struct AlbumExtras {
     pub cover: Option<Cover>,
     /// The cover could not be fetched now.
     pub cover_deferred: bool,
+    /// `cover` is the archive's front for the album's accepted exact
+    /// release, asked for because the profile uses it: only then may it
+    /// replace a cover file already beside the album.
+    pub edition_cover: bool,
     /// The library track whose plan carries the album's cover file.
     pub cover_owner: Option<String>,
     /// Whether the recording and work credits are on the release.
@@ -440,13 +452,16 @@ pub struct ReplayGainValues {
 
 /// Ask the outside sources the profile needs for one album. Credits and
 /// artist names the profile writes are fetched onto `release` (and its stored document)
-/// first; `automatic` runs ask at background priority.
+/// first; `automatic` runs ask at background priority. `exact_edition`
+/// says the album's match is an accepted exact release nobody marked as
+/// looking wrong: only then is the archive asked for that edition's cover.
 pub fn gather(
     port: Option<&dyn EnrichmentPort>,
     store: &SqliteIdentifyStore,
     profile: &droppedneedle_kernel::runtime_config::sections::LibraryManagementProfile,
     release: &mut Release,
     automatic: bool,
+    exact_edition: bool,
 ) -> AlbumExtras {
     use droppedneedle_kernel::runtime_config::sections::GenreSource;
     let parts = ensure_release_extras(port, store, profile, release, automatic);
@@ -467,9 +482,30 @@ pub fn gather(
         } else {
             release.id.as_str()
         };
-        match wait(port.front_cover(release_id, &release.release_group_id, automatic)) {
-            Some(cover) => extras.cover = cover,
+        // The edition's own cover when the profile uses it.
+        let edition = if artwork.external_enabled
+            && artwork.use_edition_cover
+            && exact_edition
+            && !release_id.is_empty()
+        {
+            wait(port.edition_cover(release_id, automatic))
+        } else {
+            Some(None)
+        };
+        match edition {
+            // The archive could not answer: nothing changes.
             None => extras.cover_deferred = true,
+            Some(Some(cover)) => {
+                extras.cover = Some(cover);
+                extras.edition_cover = true;
+            }
+            // Not asked, or the archive has none: the cover the pages show.
+            Some(None) => {
+                match wait(port.front_cover(release_id, &release.release_group_id, automatic)) {
+                    Some(cover) => extras.cover = cover,
+                    None => extras.cover_deferred = true,
+                }
+            }
         }
     }
     if profile.genres.enabled {
@@ -629,6 +665,11 @@ pub struct ScriptedEnrichment {
     pub listenbrainz: Option<Vec<Candidate>>,
     pub lyrics: Option<LyricsFound>,
     pub cover: Option<Cover>,
+    /// What the archive answers for the edition's own cover; `None`
+    /// answers that it has none.
+    pub edition: std::sync::Mutex<Option<Result<Option<Cover>, String>>>,
+    /// The releases whose own cover was asked for.
+    pub edition_asks: std::sync::Mutex<Vec<String>>,
     /// The credits MusicBrainz answers with; `None` while it is down.
     pub relations: std::sync::Mutex<Option<crate::matching::model::ReleaseRelations>>,
     /// The artist names MusicBrainz answers with; `None` while it is down.
@@ -695,6 +736,23 @@ impl EnrichmentPort for ScriptedEnrichment {
         _background: bool,
     ) -> BoxFuture<'a, Result<Option<Cover>, String>> {
         let answer = Ok(self.cover.clone());
+        Box::pin(async move { answer })
+    }
+
+    fn edition_cover<'a>(
+        &'a self,
+        release_mbid: &'a str,
+        _background: bool,
+    ) -> BoxFuture<'a, Result<Option<Cover>, String>> {
+        if let Ok(mut asked) = self.edition_asks.lock() {
+            asked.push(release_mbid.to_owned());
+        }
+        let answer = self
+            .edition
+            .lock()
+            .ok()
+            .and_then(|answer| answer.clone())
+            .unwrap_or(Ok(None));
         Box::pin(async move { answer })
     }
 

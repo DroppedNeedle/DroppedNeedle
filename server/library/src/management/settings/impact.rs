@@ -184,6 +184,7 @@ pub fn is_restrictive_profile_change(
         &["genres", "enabled"],
         &["artwork", "embedded_enabled"],
         &["artwork", "external_enabled"],
+        &["artwork", "use_edition_cover"],
         &["organization", "rename_enabled"],
         &["organization", "move_enabled"],
         &["organization", "move_sidecars"],

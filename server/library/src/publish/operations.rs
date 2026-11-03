@@ -60,6 +60,19 @@ pub fn generated_for_track(
     Ok(out)
 }
 
+/// Whether `sha256` is a file a committed publish generated for
+/// `track_id` or another track of its album, at any path: a cover of ours
+/// that moved with the album is not the album's original.
+pub fn generated_before(
+    conn: &Connection,
+    track_id: &str,
+    sha256: &str,
+) -> Result<bool, PublishError> {
+    conn.prepare_cached(super::sql::GENERATED_BEFORE.text())?
+        .query_row(rusqlite::params![track_id, sha256], |row| row.get(0))
+        .map_err(PublishError::from)
+}
+
 /// The files one committed operation generated, by track, in plan order.
 /// Empty for an operation that never committed.
 pub fn outputs_of(
@@ -103,6 +116,7 @@ fn output_of(
         size,
         kind,
         replaces: None,
+        put_back: false,
     })
 }
 

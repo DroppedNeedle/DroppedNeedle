@@ -58,6 +58,16 @@
 			description="Write a cover file beside the album."
 			bind:checked={artwork.external_enabled}
 		/>
+		<div class="sm:col-span-2">
+			<ToggleRow
+				label="Use the edition's archive cover"
+				description="Replace the cover with the Cover Art Archive's for the matched edition. The old one goes to the recycle bin."
+				disabled={!artwork.external_enabled}
+				bind:checked={
+					() => artwork.use_edition_cover ?? false, (on) => (artwork.use_edition_cover = on)
+				}
+			/>
+		</div>
 		<LibraryManagementEditorAdvanced
 			class="sm:col-span-2"
 			title="Advanced artwork rules"

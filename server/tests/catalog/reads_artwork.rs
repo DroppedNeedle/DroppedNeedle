@@ -972,3 +972,72 @@ fn unix_now() -> u64 {
     use droppedneedle_kernel::clock::Clock as _;
     u64::try_from(droppedneedle_kernel::clock::SystemClock.now_unix()).unwrap_or(0)
 }
+
+/// Library Management's edition cover is the archive's front for exactly
+/// the matched release, even while the pages prefer the album's own art,
+/// and never another edition's: a release the archive has no front for
+/// answers none rather than its release group's. The pages, and the
+/// cover Library Management uses without the setting, keep the album's
+/// own art.
+#[tokio::test]
+async fn the_edition_cover_is_the_releases_archive_front_only() {
+    use droppedneedle_providers::RequestPriority;
+    const RELEASE: &str = "0a1b2c3d-0000-4000-8000-0000000000aa";
+    const BARE: &str = "0a1b2c3d-0000-4000-8000-0000000000bb";
+    let release_front = |mbid: &str| format!("{COVER_ART_ARCHIVE_BASE}/release/{mbid}/front");
+    let files = ScratchDir::new("reads-artwork-edition");
+    let track = files.join("01.flac");
+    std::fs::copy("tests/fixtures/library/management_full.flac", &track).unwrap();
+    let rig = rig(Some(&track)).await;
+    rig.runtime
+        .db()
+        .write(Lane::Foreground, "edition seed", |tx| {
+            tx.execute(
+                "UPDATE local_album_external_identities SET release_mbid = ?1",
+                [RELEASE],
+            )
+            .map_err(DbError::from)
+        })
+        .await
+        .unwrap();
+    let store = SqliteScanStore::new(
+        rig.runtime.db().clone(),
+        std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+    );
+    store.refresh_album_artwork(&|| false).unwrap();
+    rig.archive
+        .wire
+        .answer(&release_front(RELEASE), 307, &[("location", CDN)], "");
+    rig.archive.wire.answer(&release_front(BARE), 404, &[], "");
+    let service = rig.service(true);
+
+    let usual = service
+        .front_cover(RELEASE, RG, None, RequestPriority::BackgroundSync)
+        .await
+        .expect("answered")
+        .expect("a cover");
+    assert_eq!(
+        usual.source, "embedded",
+        "the usual cover prefers local art"
+    );
+    assert!(rig.archive.calls().is_empty());
+
+    let edition = service
+        .edition_front_cover(RELEASE, RequestPriority::BackgroundSync)
+        .await
+        .expect("answered")
+        .expect("the archive has the release's front");
+    assert_eq!(edition.bytes, PNG_BYTES);
+    assert_eq!(edition.source, "cover-art-archive");
+
+    let none = service
+        .edition_front_cover(BARE, RequestPriority::BackgroundSync)
+        .await
+        .expect("answered");
+    assert!(none.is_none(), "no front for the release is no cover");
+    let calls = rig.archive.calls();
+    assert!(
+        calls.iter().all(|url| !url.contains("/release-group/")),
+        "never another edition's cover: {calls:?}"
+    );
+}

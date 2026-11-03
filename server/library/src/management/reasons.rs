@@ -235,6 +235,16 @@ pub fn album_changed() -> ItemReason {
     )
 }
 
+/// Why a run that would replace an album's cover with its edition's
+/// archive cover left the album alone at apply.
+pub fn edition_cover_withdrawn() -> ItemReason {
+    ItemReason::new(
+        "MATCH_CHANGED",
+        "This album's match was changed, or marked as looking wrong, after the preview was made, so its cover was left alone.",
+        "Make a new preview.",
+    )
+}
+
 /// What a person's preview of a taken-over album says on each file.
 pub const TAKEN_OVER_WARNING: &str = "This album is left unmanaged because its files were changed outside DroppedNeedle. Applying this preview overwrites those changes.";
 
