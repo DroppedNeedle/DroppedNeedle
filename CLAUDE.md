@@ -658,8 +658,14 @@ Run from the repo root. `make help` lists every target.
 - SPA only: `ssr = false`, adapter-static, thin load functions.
 - Svelte 5 runes only: `$props()`, `$state`, `$derived`, callback props. No
   `export let`, `$:`, `createEventDispatcher` or `any`.
-- Data fetching is TanStack Query only, in per-feature modules under
-  `src/lib/queries/` with `get<Thing>Query` hooks. Calls go through the `api`
+- Code lives by feature in `src/lib/features/<name>/` (`components/`,
+  `queries/`, `state/`). Another feature imports only the modules that
+  feature lists in `src/lib/features/public.json`; eslint refuses any other
+  path into it, and a spec holds the list to the folders and files. Shared
+  pieces live in `lib/ui` (the kit), `lib/media` and `lib/shell`, and the
+  query core (client, keys, effects, events, persister) in `lib/queries`.
+- Data fetching is TanStack Query only, in each feature's `queries/` with
+  `get<Thing>Query` hooks. Calls go through the `api`
   client with URL builders and forward the abort signal. Types come from the
   generated contract. Query parameters and DELETE bodies are typed from the
   contract; the client has no untyped request methods.
@@ -671,7 +677,7 @@ Run from the repo root. `make help` lists every target.
   metadata source carries `meta.provider`, so a source switch drops it.
 - An effect that seeds a form from `query.data` guards itself: any change to
   the query re-runs it.
-- A small feature's queries are one file, `lib/queries/<feature>.svelte.ts`; a
+- A small feature's queries are one file in its `queries/` folder; a
   hook names its route, with no alias file. The keys `effects.ts` sweeps live
   in `lib/queries/featureKeys.ts`, so it imports no hooks.
 - Change the cache only through `setQueryDataWithPersister` and
@@ -714,7 +720,7 @@ Run from the repo root. `make help` lists every target.
   path.
 - A library view says `art_missing` when the server knows the cover routes
   would answer 404; the web UI asks for no cover a view marks missing.
-- Navigation destinations live in `lib/components/shell/navItems.ts`; the
+- Navigation destinations live in `lib/shell/navItems.ts`; the
   sidebar, the bottom bar and the More sheet all render from it.
 - A Discover or Home section is one entry in the registry in
   `catalog/src/discover/sections.rs` (its page, zone, settings
