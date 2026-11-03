@@ -490,7 +490,10 @@ async fn album_art_rebuild_keeps_rows_and_triggers() {
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert_eq!(kept, ("embedded".to_owned(), Some("track.flac".to_owned()), 4));
+    assert_eq!(
+        kept,
+        ("embedded".to_owned(), Some("track.flac".to_owned()), 4)
+    );
     let triggers: Vec<String> = sqlx::query_scalar(
         "SELECT name FROM sqlite_master WHERE type = 'trigger' \
          AND tbl_name = 'local_album_artwork' ORDER BY name",
