@@ -13,8 +13,8 @@ use serde::{Deserialize, Deserializer};
 
 /// `GET /1/user/{user}/listens`.
 ///
+/// Verified against api.listenbrainz.org/1/user/{user}/listens on 2026-11-03: tests/fixtures/listenbrainz/listens_account.json.
 /// Verified against api.listenbrainz.org/1/user/{user}/listens on 2026-11-02: tests/fixtures/listenbrainz/listens_unknown_user.json (the 404 only).
-/// Not verified: the 200 answer needs an account, recorded later.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ListensAnswer {
     /// The envelope.
@@ -258,8 +258,8 @@ pub struct ValidateTokenAnswer {
 
 /// `GET /1/user/{user}/listen-count`.
 ///
+/// Verified against api.listenbrainz.org/1/user/{user}/listen-count on 2026-11-03: tests/fixtures/listenbrainz/listen_count_account.json.
 /// Verified against api.listenbrainz.org/1/user/{user}/listen-count on 2026-11-02: tests/fixtures/listenbrainz/listen_count_unknown_user.json (the 404 only).
-/// Not verified: the 200 answer needs an account, recorded later.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ListenCountAnswer {
     /// The envelope.
@@ -278,7 +278,8 @@ pub struct ListenCountPayload {
 /// `GET /1/stats/sitewide/artists` and `GET /1/stats/user/{user}/artists`.
 ///
 /// Verified against api.listenbrainz.org/1/stats/sitewide/artists on 2026-11-02: tests/fixtures/listenbrainz/sitewide_artists.json.
-/// Not verified: /1/stats/user/{user}/artists needs an account, recorded later.
+/// The account answered 204 on 2026-11-03 (`count=5`), which reads as an
+/// empty list. Not verified: the 200 answer of /1/stats/user/{user}/artists.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ArtistStatsAnswer {
     /// The envelope.
@@ -316,7 +317,8 @@ pub struct ArtistStatRow {
 /// `GET /1/stats/user/{user}/release-groups`.
 ///
 /// Verified against api.listenbrainz.org/1/stats/sitewide/release-groups on 2026-11-02: tests/fixtures/listenbrainz/sitewide_release_groups.json.
-/// Not verified: /1/stats/user/{user}/release-groups needs an account, recorded later.
+/// The account answered 204 on 2026-11-03 (`count=5`), which reads as an
+/// empty list. Not verified: the 200 answer of /1/stats/user/{user}/release-groups.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ReleaseGroupStatsAnswer {
     /// The envelope.
@@ -353,7 +355,8 @@ pub struct ReleaseGroupStatRow {
 
 /// `GET /1/stats/user/{user}/recordings`.
 ///
-/// Not verified: needs an account, recorded later.
+/// The account answered 204 on 2026-11-03 (`count=5`), which reads as an
+/// empty list. Not verified: the 200 answer.
 #[derive(Debug, Clone, Deserialize)]
 pub struct RecordingStatsAnswer {
     /// The envelope.
@@ -386,7 +389,8 @@ pub struct RecordingStatRow {
 
 /// `GET /1/user/{user}/similar-users`.
 ///
-/// Not verified: needs an account, recorded later.
+/// Verified against api.listenbrainz.org/1/user/{user}/similar-users on 2026-11-03: tests/fixtures/listenbrainz/similar_users_account.json (an empty list, for a new account).
+/// Not verified: a row, since the account has none.
 #[derive(Debug, Clone, Deserialize)]
 pub struct SimilarUsersAnswer {
     /// The similar users, most similar first.
@@ -403,7 +407,8 @@ pub struct SimilarUserRow {
 
 /// `GET /1/stats/user/{user}/genre-activity`.
 ///
-/// Not verified: needs an account, recorded later.
+/// The account answered 204 on 2026-11-03 (no parameters), which reads as an
+/// empty list. Not verified: the 200 answer.
 #[derive(Debug, Clone, Deserialize)]
 pub struct GenreActivityAnswer {
     /// One row per genre and hour bucket.
@@ -423,7 +428,8 @@ pub struct GenreActivityRow {
 
 /// `GET /1/user/{user}/fresh_releases`.
 ///
-/// Not verified: needs an account, recorded later.
+/// Verified against api.listenbrainz.org/1/user/{user}/fresh_releases on 2026-11-03: tests/fixtures/listenbrainz/fresh_releases_account.json (an empty list, for a new account).
+/// Not verified: a row, since the account has none.
 #[derive(Debug, Clone, Deserialize)]
 pub struct FreshReleasesAnswer {
     /// The envelope.
@@ -456,9 +462,9 @@ pub struct FreshReleaseRow {
 
 /// `GET /1/feedback/user/{user}/get-feedback`.
 ///
-/// Not verified: needs an account, recorded later. Every spelling here and on
-/// the row types was read by the code this replaces. They stay until the
-/// recording shows which are real. A list under no spelling fails decoding.
+/// Verified against api.listenbrainz.org/1/feedback/user/{user}/get-feedback on 2026-11-03 with `score=1&count=5`: tests/fixtures/listenbrainz/feedback_account.json. Its rows carry no metadata.
+/// Not verified: `metadata=true`, which the loved-recordings and loved-artist reads send, so the `track_metadata` shape stays unconfirmed.
+/// No spelling is removed: the recording covers the count read only, and both reads decode through this type. A list under no spelling fails decoding.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(untagged)]
 pub enum FeedbackAnswer {
@@ -564,9 +570,11 @@ pub struct FeedbackMetadata {
     pub mbid_mapping: Option<MbidMapping>,
 }
 
-/// `GET /1/user/{user}/playlists/recommendations`. A 404 is "none yet".
+/// `GET /1/user/{user}/playlists/recommendations`.
 ///
-/// Not verified: needs an account, recorded later.
+/// Verified against api.listenbrainz.org/1/user/{user}/playlists/recommendations on 2026-11-03: tests/fixtures/listenbrainz/recommendation_playlists_account.json (an empty list, for a new account).
+/// Not verified: an entry of `playlists`. The older code read a 404 as "none
+/// yet"; no 404 is recorded for this endpoint.
 #[derive(Debug, Clone, Deserialize)]
 pub struct RecommendationPlaylistsAnswer {
     /// The playlists. Required: an answer without the list is not "none".
@@ -626,8 +634,8 @@ pub struct AlgorithmMetadata {
 
 /// `GET /1/playlist/{id}`. A 404 is a playlist that was replaced.
 ///
-/// Not verified: no public playlist id to record yet; it comes with the
-/// account's recommendations.
+/// Not verified: no playlist id to record. The account has no recommended
+/// playlist to take one from (2026-11-03).
 #[derive(Debug, Clone, Deserialize)]
 pub struct PlaylistAnswer {
     /// The JSPF playlist.

@@ -12,6 +12,7 @@ use droppedneedle_providers::executor::{Method, Scripted, ScriptedWire};
 use droppedneedle_providers::geocoding::DEFAULT_CITY_COUNT;
 use droppedneedle_providers::lastfm::{ArtistInfo, LastFmCredentials};
 use droppedneedle_providers::listenbrainz::ListenBrainzCredentials;
+use droppedneedle_providers::listenbrainz::models::ListenCountAnswer;
 use droppedneedle_providers::musicbrainz::{self, Criticality, MbSource};
 use droppedneedle_providers::youtube::{YouTubeClient, YouTubeSettings, YoutubeError};
 use droppedneedle_providers::{
@@ -94,6 +95,12 @@ enum ListenBrainzRead {
     Similar,
     SitewideArtists,
     SitewideReleaseGroups,
+    ListenCount,
+    Listens,
+    Feedback,
+    FreshReleases,
+    SimilarUsers,
+    RecommendationPlaylists,
 }
 
 /// The album the Deezer album search fixture names first, and its track list.
@@ -846,6 +853,55 @@ const ROWS: &[Row] = &[
         identity: "/payload/release_groups/0/listen_count",
     },
     Row {
+        name: "listenbrainz /1/user/{user}/listen-count",
+        provider: Provider::ListenBrainz(ListenBrainzRead::ListenCount),
+        body: include_str!("../fixtures/listenbrainz/listen_count_account.json"),
+        kind: PayloadKind::Decode,
+        identity: "/payload/count",
+    },
+    Row {
+        name: "listenbrainz /1/user/{user}/listens, list",
+        provider: Provider::ListenBrainz(ListenBrainzRead::Listens),
+        body: include_str!("../fixtures/listenbrainz/listens_account.json"),
+        kind: PayloadKind::Decode,
+        identity: "/payload/listens",
+    },
+    Row {
+        name: "listenbrainz /1/user/{user}/listens, listened_at",
+        provider: Provider::ListenBrainz(ListenBrainzRead::Listens),
+        body: include_str!("../fixtures/listenbrainz/listens_account.json"),
+        kind: PayloadKind::Decode,
+        identity: "/payload/listens/0/listened_at",
+    },
+    Row {
+        name: "listenbrainz get-feedback, list",
+        provider: Provider::ListenBrainz(ListenBrainzRead::Feedback),
+        body: include_str!("../fixtures/listenbrainz/feedback_account.json"),
+        kind: PayloadKind::Decode,
+        identity: "/feedback",
+    },
+    Row {
+        name: "listenbrainz /1/user/{user}/fresh_releases, list",
+        provider: Provider::ListenBrainz(ListenBrainzRead::FreshReleases),
+        body: include_str!("../fixtures/listenbrainz/fresh_releases_account.json"),
+        kind: PayloadKind::Decode,
+        identity: "/payload/releases",
+    },
+    Row {
+        name: "listenbrainz /1/user/{user}/similar-users, list",
+        provider: Provider::ListenBrainz(ListenBrainzRead::SimilarUsers),
+        body: include_str!("../fixtures/listenbrainz/similar_users_account.json"),
+        kind: PayloadKind::Decode,
+        identity: "/payload",
+    },
+    Row {
+        name: "listenbrainz /1/user/{user}/playlists/recommendations, list",
+        provider: Provider::ListenBrainz(ListenBrainzRead::RecommendationPlaylists),
+        body: include_str!("../fixtures/listenbrainz/recommendation_playlists_account.json"),
+        kind: PayloadKind::Decode,
+        identity: "/playlists",
+    },
+    Row {
         name: "youtube /search, video id",
         provider: Provider::YouTubeSearch,
         body: include_str!("../fixtures/youtube/search_found.json"),
@@ -1460,6 +1516,66 @@ async fn listenbrainz(read: ListenBrainzRead, body: &str) -> Result<bool, Provid
                 .sitewide_top_release_groups("all_time", 5, 0, PRIORITY)
                 .await?
                 .is_empty()
+        }
+        ListenBrainzRead::ListenCount => {
+            // `verify` turns a decode failure into a verdict, so the model is
+            // read here directly.
+            serde_json::from_str::<ListenCountAnswer>(body).map_err(|error| {
+                ProviderError::Payload {
+                    provider: "listenbrainz",
+                    kind: PayloadKind::Decode,
+                    message: error.to_string(),
+                }
+            })?;
+            true
+        }
+        ListenBrainzRead::Listens => {
+            !answer(Method::Get, "/1/user/DroppedNeedle/listens".to_owned())
+                .listenbrainz
+                .user_listens("DroppedNeedle", 3, &creds, PRIORITY)
+                .await?
+                .is_empty()
+        }
+        ListenBrainzRead::Feedback => {
+            answer(
+                Method::Get,
+                "/1/feedback/user/DroppedNeedle/get-feedback".to_owned(),
+            )
+            .listenbrainz
+            .user_loved_sample("DroppedNeedle", 5, PRIORITY)
+            .await?
+                > 0
+        }
+        // The recorded lists are empty for the new account: decoding them is the check.
+        ListenBrainzRead::FreshReleases => {
+            answer(
+                Method::Get,
+                "/1/user/DroppedNeedle/fresh_releases".to_owned(),
+            )
+            .listenbrainz
+            .user_fresh_releases("DroppedNeedle", PRIORITY)
+            .await?;
+            true
+        }
+        ListenBrainzRead::SimilarUsers => {
+            answer(
+                Method::Get,
+                "/1/user/DroppedNeedle/similar-users".to_owned(),
+            )
+            .listenbrainz
+            .similar_users("DroppedNeedle", PRIORITY)
+            .await?;
+            true
+        }
+        ListenBrainzRead::RecommendationPlaylists => {
+            answer(
+                Method::Get,
+                "/1/user/DroppedNeedle/playlists/recommendations".to_owned(),
+            )
+            .listenbrainz
+            .recommendation_playlists("DroppedNeedle", &creds, PRIORITY)
+            .await?;
+            true
         }
     })
 }

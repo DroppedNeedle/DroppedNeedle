@@ -65,6 +65,13 @@ const LASTFM_BOUNDS: [(&str, u64); 4] = [
 const USER: &str = "user-1";
 const HOUR_MS: i64 = 3_600_000;
 const GENRES: [&str; 4] = ["rock", "jazz", "folk", "metal"];
+const SIMILAR_USERS_BODY: &str =
+    include_str!("../fixtures/listenbrainz/similar_users_account.json");
+const FRESH_RELEASES_BODY: &str =
+    include_str!("../fixtures/listenbrainz/fresh_releases_account.json");
+const FEEDBACK_BODY: &str = include_str!("../fixtures/listenbrainz/feedback_account.json");
+const RECOMMENDATION_PLAYLISTS_BODY: &str =
+    include_str!("../fixtures/listenbrainz/recommendation_playlists_account.json");
 const LIBRARY_ARTISTS: u32 = 20;
 const SIMILAR_POOL: u32 = 5_000;
 const DAYS: [(&str, u32); 4] = [("cold", 0), ("warm", 1), ("monday", 7), ("day 15", 15)];
@@ -122,6 +129,11 @@ fn lb_answer(uri: &Uri, body: &[u8]) -> Value {
         .filter(|part| !part.is_empty())
         .collect();
     let asked: Value = serde_json::from_slice(body).unwrap_or(Value::Null);
+    let recorded =
+        |text: &str| -> Value { serde_json::from_str(text).expect("a recorded answer parses") };
+    let metadata_read = uri
+        .query()
+        .is_some_and(|query| query.contains("metadata=true"));
     let artist_stat = |n: u32| {
         json!({"artist_name": format!("Artist {n}"), "listen_count": 100 - n,
                "artist_mbids": [mbid('a', n)]})
@@ -132,7 +144,11 @@ fn lb_answer(uri: &Uri, body: &[u8]) -> Value {
                "artist_mbids": [mbid('a', 1 + n % 10)]})
     };
     match &parts[2..] {
-        ["stats", "sitewide", "artists"] | ["stats", "user", _, "artists"] => {
+        ["stats", "sitewide", "artists"] => json!({"payload": {"artists": (1..=10)
+            .map(|n| json!({"artist_name": format!("Artist {n}"), "listen_count": 100 - n,
+                            "artist_mbid": mbid('a', n)}))
+            .collect::<Vec<_>>()}}),
+        ["stats", "user", _, "artists"] => {
             json!({"payload": {"artists": (1..=10).map(artist_stat).collect::<Vec<_>>()}})
         }
         ["stats", _, .., "release-groups"] => {
@@ -142,28 +158,18 @@ fn lb_answer(uri: &Uri, body: &[u8]) -> Value {
             .iter()
             .map(|genre| json!({"genre": genre, "listen_count": 40}))
             .collect::<Vec<_>>()}),
-        ["user", _, "similar-users"] => {
-            json!({"payload": [{"user_name": "twin-one"}, {"user_name": "twin-two"}]})
+        ["user", _, "similar-users"] => recorded(SIMILAR_USERS_BODY),
+        ["user", _, "fresh_releases"] => recorded(FRESH_RELEASES_BODY),
+        // `metadata=true` is not recorded yet, so those rows stay generated.
+        ["feedback", ..] if metadata_read => {
+            json!({"feedback": (1..=6)
+                .map(|n| json!({"recording_mbid": mbid('f', n), "track_metadata": {
+                    "track_name": format!("Loved {n}"), "artist_name": format!("Artist {n}"),
+                    "mbid_mapping": {"artist_mbids": [mbid('a', n + 10)]}}}))
+                .collect::<Vec<_>>()})
         }
-        ["user", _, "fresh_releases"] => json!({"payload": {"releases": (1..=5)
-            .map(|n| json!({"release_group_mbid": mbid('e', n), "release_name": format!("New {n}"),
-                            "artist_credit_name": "Fresh", "artist_mbids": [mbid('a', n)]}))
-            .collect::<Vec<_>>()}}),
-        ["feedback", ..] => json!({"feedback": (1..=6)
-            .map(|n| json!({"recording_mbid": mbid('f', n), "track_metadata": {
-                "track_name": format!("Loved {n}"), "artist_name": format!("Artist {n}"),
-                "mbid_mapping": {"artist_mbids": [mbid('a', n + 10)]}}}))
-            .collect::<Vec<_>>()}),
-        ["user", _, "playlists", "recommendations"] => {
-            json!({"playlists": (["jams", "exploration"])
-            .iter()
-            .enumerate()
-            .map(|(at, patch)| json!({"playlist": {
-                "identifier": format!("https://listenbrainz.org/playlist/{}", mbid('9', at as u32)),
-                "extension": {"https://musicbrainz.org/doc/jspf#playlist": {"additional_metadata":
-                    {"algorithm_metadata": {"source_patch": format!("weekly-{patch}")}}}}}}))
-            .collect::<Vec<_>>()})
-        }
+        ["feedback", ..] => recorded(FEEDBACK_BODY),
+        ["user", _, "playlists", "recommendations"] => recorded(RECOMMENDATION_PLAYLISTS_BODY),
         ["playlist", id] => {
             let base = number_of(id) % 1000;
             json!({"playlist": {"title": "Weekly", "date": "2024-01-01", "track": (0..50)

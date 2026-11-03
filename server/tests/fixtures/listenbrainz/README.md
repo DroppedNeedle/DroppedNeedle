@@ -1,8 +1,10 @@
 # ListenBrainz answers
 
-Recorded answers from `https://api.listenbrainz.org`, fetched on 2026-11-02
-with the app's User-Agent. Every request was keyless and read-only; the two
-POSTs are lookups that change nothing. Each file holds the body as answered,
+Recorded answers from `https://api.listenbrainz.org`, with the app's
+User-Agent. The public answers were fetched on 2026-11-02; the account answers
+on 2026-11-03, for the throwaway account `DroppedNeedle`. Every request was
+read-only; the two POSTs are lookups that change nothing. The recording log
+names no token for the account reads. Each file holds the body as answered,
 unchanged except re-indented, apart from the two popularity lists below. None
 holds a key, token or personal data. Names, tags and links are catalogue data.
 
@@ -38,11 +40,35 @@ holds a key, token or personal data. Names, tags and links are catalogue data.
 - `sitewide_release_groups.json`: HTTP 200 to
   `GET /1/stats/sitewide/release-groups` with `count=5`.
 
-Not recorded yet: the 200 answers to `/1/user/{user}/listens` and
-`/1/user/{user}/listen-count`, and the answer to a good token at
-`/1/validate-token`, and the answers to `/1/stats/user/{user}/artists`,
-`/1/stats/user/{user}/recordings`, `/1/stats/user/{user}/release-groups`,
-`/1/stats/user/{user}/genre-activity`,
-`/1/feedback/user/{user}/get-feedback`, `/1/user/{user}/fresh_releases`,
-`/1/user/{user}/similar-users`, `/1/user/{user}/playlists/recommendations` and
-`/1/playlist/{id}`. They need an account.
+Account answers, 2026-11-03, for `DroppedNeedle` (listen count 28, three loved
+recordings, no releases, similar users or recommended playlists yet):
+
+- `listen_count_account.json`: HTTP 200 to `GET /1/user/DroppedNeedle/listen-count`.
+- `listens_account.json`: HTTP 200 to `GET /1/user/DroppedNeedle/listens?count=3`.
+  Three listens, newest first.
+- `feedback_account.json`: HTTP 200 to
+  `GET /1/feedback/user/DroppedNeedle/get-feedback?score=1&count=5`. Three rows,
+  each with `track_metadata` null: this request asks for no metadata.
+- `fresh_releases_account.json`: HTTP 200 to
+  `GET /1/user/DroppedNeedle/fresh_releases?past=true&future=false`. An empty list.
+- `similar_users_account.json`: HTTP 200 to `GET /1/user/DroppedNeedle/similar-users`.
+  An empty list.
+- `recommendation_playlists_account.json`: HTTP 200 to
+  `GET /1/user/DroppedNeedle/playlists/recommendations`. An empty list.
+
+No file: HTTP 204 with an empty body while a new account's stats are not
+computed yet. Recorded for `GET /1/stats/user/DroppedNeedle/artists?count=5`,
+`.../recordings?count=5`, `.../release-groups?count=5` and
+`GET /1/stats/user/DroppedNeedle/genre-activity`.
+
+Not recorded yet:
+
+- `get-feedback` with `metadata=true`, which the loved-recordings and
+  loved-artist reads send. The `track_metadata` shape is unverified.
+- The 200 answers of the user stats endpoints. The account answered 204 with
+  `count=5` only, not with the `range` and `offset` the reads also send.
+- A row of `fresh_releases`, `similar-users` or `playlists/recommendations`:
+  the account's lists are empty.
+- `/1/playlist/{id}`: the account has no recommended playlist to take an id from.
+- The answer to a good token at `/1/validate-token`: only a made-up token is
+  recorded.

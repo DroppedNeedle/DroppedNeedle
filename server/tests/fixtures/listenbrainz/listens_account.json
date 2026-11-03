@@ -1,0 +1,130 @@
+{
+  "payload": {
+    "count": 3,
+    "latest_listen_ts": 1793640555,
+    "listens": [
+      {
+        "inserted_at": 1793637991,
+        "listened_at": 1793640555,
+        "recording_msid": "9c33cbb3-57a3-40ad-a425-229500f189e5",
+        "track_metadata": {
+          "additional_info": {
+            "artist_mbids": [
+              "4ad8190b-d2fd-46f8-a3d9-c0f55c034976"
+            ],
+            "duration_ms": 169000,
+            "recording_mbid": "45e47bd3-daad-4a09-bd4b-6e078c85b540",
+            "release_mbid": "424853ab-413d-45fd-b467-318340548b32",
+            "submission_client": "listenbrainz web",
+            "track_mbid": "ba0fd239-95a3-4bd1-894f-4b1166ae0b80",
+            "tracknumber": "14"
+          },
+          "artist_name": "Poppy",
+          "mbid_mapping": {
+            "artist_mbids": [
+              "4ad8190b-d2fd-46f8-a3d9-c0f55c034976"
+            ],
+            "artists": [
+              {
+                "artist_credit_name": "Poppy",
+                "artist_mbid": "4ad8190b-d2fd-46f8-a3d9-c0f55c034976",
+                "join_phrase": ""
+              }
+            ],
+            "caa_id": 42951214547,
+            "caa_release_mbid": "19ca283e-5078-4de5-bdcb-b037953364e6",
+            "recording_mbid": "45e47bd3-daad-4a09-bd4b-6e078c85b540",
+            "recording_name": "Don\u2019t Ask",
+            "release_group_mbid": "a3848f9a-3dbf-4458-8aaf-4598315f0d31",
+            "release_mbid": "424853ab-413d-45fd-b467-318340548b32"
+          },
+          "release_name": "I Disagree (more)",
+          "track_name": "Don\u2019t Ask"
+        },
+        "user_name": "DroppedNeedle"
+      },
+      {
+        "inserted_at": 1793637991,
+        "listened_at": 1793640378,
+        "recording_msid": "a3de3561-3d86-4495-812a-599828b31ebf",
+        "track_metadata": {
+          "additional_info": {
+            "artist_mbids": [
+              "4ad8190b-d2fd-46f8-a3d9-c0f55c034976"
+            ],
+            "duration_ms": 177000,
+            "recording_mbid": "08dfc2dd-9621-4dfc-85de-ddd086d8ffd8",
+            "release_mbid": "424853ab-413d-45fd-b467-318340548b32",
+            "submission_client": "listenbrainz web",
+            "track_mbid": "e8031029-094a-4ba5-81d7-86c86cff0545",
+            "tracknumber": "13"
+          },
+          "artist_name": "Poppy",
+          "mbid_mapping": {
+            "artist_mbids": [
+              "4ad8190b-d2fd-46f8-a3d9-c0f55c034976"
+            ],
+            "artists": [
+              {
+                "artist_credit_name": "Poppy",
+                "artist_mbid": "4ad8190b-d2fd-46f8-a3d9-c0f55c034976",
+                "join_phrase": ""
+              }
+            ],
+            "caa_id": 42951214547,
+            "caa_release_mbid": "19ca283e-5078-4de5-bdcb-b037953364e6",
+            "recording_mbid": "08dfc2dd-9621-4dfc-85de-ddd086d8ffd8",
+            "recording_name": "Khaos x4",
+            "release_group_mbid": "a3848f9a-3dbf-4458-8aaf-4598315f0d31",
+            "release_mbid": "424853ab-413d-45fd-b467-318340548b32"
+          },
+          "release_name": "I Disagree (more)",
+          "track_name": "Khaos x4"
+        },
+        "user_name": "DroppedNeedle"
+      },
+      {
+        "inserted_at": 1793637991,
+        "listened_at": 1793640260,
+        "recording_msid": "adb56362-6b04-4699-b805-b5c295c007e2",
+        "track_metadata": {
+          "additional_info": {
+            "artist_mbids": [
+              "4ad8190b-d2fd-46f8-a3d9-c0f55c034976"
+            ],
+            "duration_ms": 118000,
+            "recording_mbid": "675af55f-3bc9-4f82-869d-23c3f95b8a9c",
+            "release_mbid": "424853ab-413d-45fd-b467-318340548b32",
+            "submission_client": "listenbrainz web",
+            "track_mbid": "0c58f739-095d-4ae4-b9a8-05a531566bf1",
+            "tracknumber": "12"
+          },
+          "artist_name": "Poppy",
+          "mbid_mapping": {
+            "artist_mbids": [
+              "4ad8190b-d2fd-46f8-a3d9-c0f55c034976"
+            ],
+            "artists": [
+              {
+                "artist_credit_name": "Poppy",
+                "artist_mbid": "4ad8190b-d2fd-46f8-a3d9-c0f55c034976",
+                "join_phrase": ""
+              }
+            ],
+            "caa_id": 42951214547,
+            "caa_release_mbid": "19ca283e-5078-4de5-bdcb-b037953364e6",
+            "recording_mbid": "675af55f-3bc9-4f82-869d-23c3f95b8a9c",
+            "recording_name": "Bleep Bloop",
+            "release_group_mbid": "a3848f9a-3dbf-4458-8aaf-4598315f0d31",
+            "release_mbid": "424853ab-413d-45fd-b467-318340548b32"
+          },
+          "release_name": "I Disagree (more)",
+          "track_name": "Bleep Bloop"
+        },
+        "user_name": "DroppedNeedle"
+      }
+    ],
+    "oldest_listen_ts": 1793551626,
+    "user_id": "DroppedNeedle"
+  }
+}
