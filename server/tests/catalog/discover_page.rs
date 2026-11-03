@@ -466,11 +466,7 @@ async fn because_entries(on: bool) -> Vec<(String, String, String)> {
         *network = Arc::new(script);
     }));
     call(&app, "GET", "/api/v3/discover", None).await;
-    let page = after_commits(&rig.platform.db, "the blended page was built", || async {
-        let (_, page) = call(&app, "GET", "/api/v3/discover", None).await;
-        (page["refreshing"] == false).then_some(page)
-    })
-    .await;
+    let page = settled_page(&rig, &app, "the blended page was built").await;
     content(&page, "because_you_listen_to")["entries"]
         .as_array()
         .expect("because entries")
