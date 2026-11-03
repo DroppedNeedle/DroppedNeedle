@@ -593,11 +593,11 @@ impl LocalCatalog {
         }
         let (album_counts, credit_counts) = self.artist_counts(&ids).await?;
         for artist in &mut artists {
-            artist.album_count = album_counts.get(&artist.id).copied().unwrap_or(0);
+            (artist.album_count, artist.led_track_count) =
+                album_counts.get(&artist.id).copied().unwrap_or_default();
             let credits: Credits = credit_counts.get(&artist.id).copied().unwrap_or_default();
             (
                 artist.track_count,
-                artist.led_track_count,
                 artist.appearance_album_count,
                 artist.appearance_track_count,
             ) = credits;
@@ -605,13 +605,13 @@ impl LocalCatalog {
         Ok(artists)
     }
 
-    /// Batched artist aggregates for one id set: owned albums led per id,
-    /// plus [`Credits`] per id. Ids with no rows are absent from the maps
+    /// Batched artist aggregates for one id set: owned albums led per id
+    /// and their tracks, plus [`Credits`] per id. Ids with no rows are absent from the maps
     /// and read as zero.
     async fn artist_counts(
         &self,
         ids: &[String],
-    ) -> Result<(HashMap<String, u64>, HashMap<String, Credits>), StoreError> {
+    ) -> Result<(HashMap<String, (u64, u64)>, HashMap<String, Credits>), StoreError> {
         let values = texts(ids);
         let albums = self
             .read("library.artists.list", move |conn| {
@@ -619,7 +619,12 @@ impl LocalCatalog {
                     conn,
                     &sql::artist_album_counts(ListLen::new(values.len())),
                     &values,
-                    |row| Ok((row.get::<_, String>(0)?, unsigned(row.get(1)?))),
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            (unsigned(row.get(1)?), unsigned(row.get(2)?)),
+                        ))
+                    },
                 )
             })
             .await?;
@@ -637,7 +642,6 @@ impl LocalCatalog {
                                 unsigned(row.get(1)?),
                                 unsigned(row.get(2)?),
                                 unsigned(row.get(3)?),
-                                unsigned(row.get(4)?),
                             ),
                         ))
                     },

@@ -206,7 +206,8 @@ pub struct ArtistView {
     pub album_count: u64,
     /// Streamable tracks credited to this artist.
     pub track_count: u64,
-    /// Streamable tracks credited to this artist on albums it leads.
+    /// Streamable tracks on albums this artist leads, whoever is credited
+    /// on them.
     pub led_track_count: u64,
     /// Albums where this artist appears without leading.
     pub appearance_album_count: u64,

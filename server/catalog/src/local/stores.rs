@@ -229,7 +229,8 @@ pub struct ArtistRecord {
     pub album_count: u64,
     /// Streamable tracks credited.
     pub track_count: u64,
-    /// Streamable tracks credited on albums this artist leads.
+    /// Streamable tracks on albums this artist leads, whoever is credited
+    /// on them.
     pub led_track_count: u64,
     /// Albums with an appearance but no lead.
     pub appearance_album_count: u64,
