@@ -33,7 +33,7 @@ describe('role-gated loads', () => {
 		await expect(result).rejects.toMatchObject({ status: 302, location });
 	});
 
-	it('admits any signed-in user to Unconfirmed matches', async () => {
+	it('admits any signed-in user to Check albums', async () => {
 		await expect(reviewLoad({ parent: async () => ({ user: regular }) } as never)).resolves.toEqual(
 			{}
 		);

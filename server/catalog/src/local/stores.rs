@@ -319,6 +319,15 @@ pub struct StatsRecord {
 pub struct StatsExtras {
     /// Identification reviews waiting on a person.
     pub review_count: u64,
+    /// Albums whose edition is a best guess.
+    pub guess_count: u64,
+    /// Albums nothing on MusicBrainz fits.
+    pub not_found_count: u64,
+    /// Albums someone marked "Looks wrong".
+    pub looks_wrong_count: u64,
+    /// Albums to check, each once: a best guess, marked "Looks wrong" or
+    /// with an open review.
+    pub check_count: u64,
     /// Albums with streamable tracks and no MusicBrainz identity.
     pub local_only_count: u64,
     /// When the last scan finished successfully, unix seconds.

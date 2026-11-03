@@ -257,6 +257,8 @@ droppedneedle_kernel::sql! {
     family ATTEMPT_FACTS = attempt_facts;
     /// The newest import decision per task.
     family DECISION_FACTS = decision_facts;
+    /// Library albums holding a doubted guess on each task's release group.
+    family DOUBTED_GUESS_FACTS = doubted_guess_facts;
     /// The admins' activity revision.
     pub(super) GLOBAL_REVISION = "SELECT revision FROM download_activity_global_revision \
              WHERE singleton = 1";
@@ -385,6 +387,19 @@ pub(super) fn attempt_facts(tasks: ListLen) -> String {
              ELSE 'not_tracked' \
            END \
          FROM download_attempts WHERE task_id IN ({}) GROUP BY task_id",
+        marks(tasks)
+    )
+}
+
+/// Per task: a library album whose guess is on the task's release group
+/// but whose files name another album. Owning nothing through the guess,
+/// it settles no want; the person may still have the album.
+pub(super) fn doubted_guess_facts(tasks: ListLen) -> String {
+    format!(
+        "SELECT t.id, d.album_id, d.title FROM download_tasks t \
+         JOIN ({}) d ON d.group_mbid = lower(t.release_group_mbid) \
+         WHERE t.id IN ({}) ORDER BY t.id, d.album_id",
+        droppedneedle_library::doubted_guesses!("IS NOT NULL"),
         marks(tasks)
     )
 }

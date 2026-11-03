@@ -6,6 +6,7 @@
 	import DownloadsNavBadge from '$lib/components/DownloadsNavBadge.svelte';
 	import NewReleasesNavBadge from '$lib/components/NewReleasesNavBadge.svelte';
 	import PendingApprovalNavBadge from '$lib/components/PendingApprovalNavBadge.svelte';
+	import CheckAlbumsNavBadge from '$lib/components/CheckAlbumsNavBadge.svelte';
 	import type { NavBadge } from './navItems';
 
 	interface Props {
@@ -36,6 +37,8 @@
 	<NewReleasesNavBadge />
 {:else if badge === 'approvals'}
 	<PendingApprovalNavBadge />
+{:else if badge === 'check-albums'}
+	<CheckAlbumsNavBadge />
 {:else if badge === 'update' && updateAvailable}
 	{#if place === 'bottom'}
 		<span class="droppedneedle-bottom-nav__badge" aria-label="Update available">

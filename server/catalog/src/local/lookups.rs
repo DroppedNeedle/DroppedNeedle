@@ -42,14 +42,36 @@ enum Owners {
 impl LocalCatalog {
     /// Review, local-only and last-scan totals.
     pub async fn stats_extras(&self) -> Result<StatsExtras, StoreError> {
-        let (reviews, local_only, last_scan): (i64, i64, Option<f64>) = self
+        let (reviews, guesses, not_found, looks_wrong, to_check, local_only, last_scan): (
+            i64,
+            i64,
+            i64,
+            i64,
+            i64,
+            i64,
+            Option<f64>,
+        ) = self
             .read("library.stats.extras", |conn| {
                 let mut statement = conn.prepare_cached(sql::STATS_EXTRAS.text())?;
-                statement.query_row([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+                statement.query_row([], |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                        row.get(6)?,
+                    ))
+                })
             })
             .await?;
         Ok(StatsExtras {
             review_count: unsigned(reviews),
+            guess_count: unsigned(guesses),
+            not_found_count: unsigned(not_found),
+            looks_wrong_count: unsigned(looks_wrong),
+            check_count: unsigned(to_check),
             local_only_count: unsigned(local_only),
             last_scan_at: last_scan,
         })

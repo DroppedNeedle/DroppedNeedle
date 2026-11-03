@@ -80,7 +80,10 @@ function fakeLibrary(options: { downloadAllowed: boolean }): FakeApi {
 			release_group_mbid: null,
 			state: 'unidentified',
 			undo_available: false,
-			writing: false
+			writing: false,
+			disputed_tracks: [],
+			looks_wrong: false,
+			looks_wrong_count: 0
 		},
 		'GET /api/v3/library/albums/{album_id}/history': { items: [] },
 		'POST /api/v3/ratings/lookup': { albums: {}, artists: {}, tracks: {} }
@@ -120,6 +123,29 @@ describe('local album page track menu', () => {
 
 describe('local album page with a pending review', () => {
 	const pending = { ...album, pending_review_id: 'review-1' };
+	const guess: RouteData<'GET /api/v3/library/albums/{album_id}/edition'> = {
+		album_id: album.id,
+		candidates: [],
+		edition_kind: 'release',
+		files_by_itself: false,
+		keeps_own_tags: false,
+		identifying: false,
+		identity_revision: 2,
+		placing: null,
+		reason: {
+			code: 'WEAK_MATCH',
+			message: 'Closest we found, but some tracks differ.',
+			action: ''
+		},
+		release_mbid: 'release-1',
+		release_group_mbid: 'group-1',
+		state: 'unconfirmed',
+		undo_available: false,
+		writing: false,
+		disputed_tracks: [],
+		looks_wrong: false,
+		looks_wrong_count: 0
+	};
 	const signIn = (role: 'admin' | 'user') =>
 		authStore.setUser(
 			toAuthUser({
@@ -133,13 +159,18 @@ describe('local album page with a pending review', () => {
 			})
 		);
 
-	it('shows a signed-in user the badge without the link', async () => {
+	it('shows a signed-in user why it is a guess and "Looks wrong", without the review link', async () => {
 		signIn('user');
-		fakeLibrary({ downloadAllowed: true }).use({ 'GET /api/v3/library/albums/{id}': pending });
+		fakeLibrary({ downloadAllowed: true }).use({
+			'GET /api/v3/library/albums/{id}': pending,
+			'GET /api/v3/library/albums/{album_id}/edition': guess,
+			'GET /api/v3/library/albums/{album_id}/edition/plan': apiError(404, 'NOT_FOUND', 'No plan')
+		});
 		await renderWithQuery(LocalAlbumPage, { albumId: album.id });
-		await expect.element(page.getByText('Needs review')).toBeVisible();
+		await expect.element(page.getByText('Closest we found, but some tracks differ.')).toBeVisible();
+		await expect.element(page.getByRole('button', { name: 'Looks wrong' })).toBeVisible();
 		await expect
-			.element(page.getByRole('link', { name: 'Open identification review' }))
+			.element(page.getByRole('link', { name: 'Needs you: open its review' }))
 			.not.toBeInTheDocument();
 	});
 
@@ -149,13 +180,15 @@ describe('local album page with a pending review', () => {
 			'GET /api/v3/library/albums/{id}': pending,
 			'GET /api/v3/library/albums': { items: [], total: 0, next: null },
 			'GET /api/v3/library/albums/{album_id}/removals': { items: [] },
-			'GET /api/v3/library/retag-pairs': { items: [], next_cursor: null, total: 0 }
+			'GET /api/v3/library/retag-pairs': { items: [], next_cursor: null, total: 0 },
+			'GET /api/v3/library/albums/{album_id}/edition': guess,
+			'GET /api/v3/library/albums/{album_id}/edition/plan': apiError(404, 'NOT_FOUND', 'No plan')
 		});
 		await renderWithQuery(LocalAlbumPage, { albumId: album.id });
-		await expect.element(page.getByText('Needs review')).toBeVisible();
 		await expect
-			.element(page.getByRole('link', { name: 'Open identification review' }))
+			.element(page.getByRole('link', { name: 'Needs you: open its review' }))
 			.toHaveAttribute('href', expect.stringContaining('/library/review?review=review-1'));
+		await expect.element(page.getByRole('button', { name: 'Looks wrong' })).not.toBeInTheDocument();
 	});
 });
 
@@ -177,7 +210,10 @@ describe('local album page and its edition', () => {
 				release_group_mbid: 'group-1',
 				state: 'chosen',
 				undo_available: false,
-				writing: false
+				writing: false,
+				disputed_tracks: [],
+				looks_wrong: false,
+				looks_wrong_count: 0
 			},
 			'GET /api/v3/library/albums/{album_id}/edition/plan': {
 				album_id: album.id,

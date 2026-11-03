@@ -4,6 +4,8 @@ interface Toast {
 	message: string;
 	type: 'success' | 'error' | 'info' | 'warning';
 	duration?: number;
+	/** One button beside the message, such as Undo. The toast closes when it runs. */
+	action?: { label: string; run: () => unknown };
 }
 
 function createToastStore() {

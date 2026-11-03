@@ -33,6 +33,7 @@ pub enum Reason {
     NoBetterThanYours,
     OwnedElsewhere,
     OwnedOnAlbum,
+    AlbumNeedsCheck,
     NoAlbumMatch,
     AlbumNotFound,
     TagsDisagree,
@@ -114,7 +115,7 @@ pub enum ReasonKind {
 
 impl Reason {
     /// Every reason, in declaration order.
-    pub const ALL: [Reason; 70] = [
+    pub const ALL: [Reason; 71] = [
         Self::WeakMatch,
         Self::NoArtistEvidence,
         Self::MostlyUnmatched,
@@ -128,6 +129,7 @@ impl Reason {
         Self::NoBetterThanYours,
         Self::OwnedElsewhere,
         Self::OwnedOnAlbum,
+        Self::AlbumNeedsCheck,
         Self::NoAlbumMatch,
         Self::AlbumNotFound,
         Self::TagsDisagree,
@@ -215,6 +217,7 @@ impl Reason {
             Self::FormatNotListed => "format_not_listed",
             Self::TargetOccupied => "target_occupied",
             Self::UpgradeBlocked => "upgrade_blocked",
+            Self::AlbumNeedsCheck => "album_needs_check",
             Self::LibraryChanged => "library_changed",
             Self::LibraryUnavailable => "library_unavailable",
             Self::NamingScriptFailed => "naming_script_failed",
@@ -335,6 +338,9 @@ impl Reason {
             }
             Self::UpgradeBlocked => {
                 "Your copy could not be taken away, so the better file was not added. Both are kept."
+            }
+            Self::AlbumNeedsCheck => {
+                "A better copy is waiting: this album's match needs checking first."
             }
             Self::LibraryChanged => {
                 "Something in the library changed while these files were going in, so nothing was changed."
@@ -492,6 +498,9 @@ impl Reason {
             Self::UpgradeBlocked => {
                 "Nothing to do: DroppedNeedle tries again by itself. If it keeps happening, check the recycle bin folder in Settings, Library."
             }
+            Self::AlbumNeedsCheck => {
+                "Discard it, or choose Import: it replaces yours only if it is better, and yours then goes to the recycle bin."
+            }
             Self::LibraryChanged => "Nothing to do: DroppedNeedle tries again by itself.",
             Self::LibraryUnavailable => {
                 "Check that a library folder is set up and has free space, then try again."
@@ -603,6 +612,7 @@ impl Reason {
             | Self::NoBetterThanYours
             | Self::OwnedElsewhere
             | Self::OwnedOnAlbum
+            | Self::AlbumNeedsCheck
             | Self::NoAlbumMatch
             | Self::AlbumNotFound
             | Self::TagsDisagree
@@ -698,6 +708,7 @@ impl Reason {
             | Self::NoBetterThanYours
             | Self::OwnedElsewhere
             | Self::OwnedOnAlbum
+            | Self::AlbumNeedsCheck
             | Self::NoAlbumMatch
             | Self::AlbumNotFound
             | Self::TagsDisagree
@@ -928,6 +939,7 @@ mod tests {
             (Reason::NoBetterThanYours, PersonHeld),
             (Reason::OwnedElsewhere, PersonHeld),
             (Reason::OwnedOnAlbum, PersonHeld),
+            (Reason::AlbumNeedsCheck, Held { local: true }),
             (Reason::NoAlbumMatch, NotProduced(false)),
             (Reason::AlbumNotFound, NotProduced(false)),
             (Reason::TagsDisagree, NotProduced(false)),

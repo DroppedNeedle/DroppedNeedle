@@ -70,7 +70,7 @@ async fn fresh_migrate_marks_version_and_seeds() {
         .unwrap();
     assert_eq!(applied, migration_count());
 
-    assert_eq!(table_names(&pool).await.len(), 173);
+    assert_eq!(table_names(&pool).await.len(), 174);
     let triggers: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'")
             .fetch_one(&pool)
@@ -8735,6 +8735,110 @@ async fn a_held_file_can_be_outside_the_recipe_after_upgrade() {
         .await
         .unwrap();
     assert_eq!(revision().await, before + 1);
+}
+
+/// Migration 0126 adds "Looks wrong" marks and lets a better copy wait on
+/// an album's match. A file held for that before, as owned_on_album with
+/// its old sentence, takes the new reason; every other held file stays as
+/// it was, the triggers still move the activity revision, and a mark goes
+/// with its album or its user.
+#[tokio::test]
+async fn a_held_file_can_wait_on_an_album_check_after_upgrade() {
+    let pool = scratch_pool().await;
+    run_migrations(&pool, &migrator_through(125)).await.unwrap();
+    sqlx::raw_sql(
+        "INSERT INTO auth_users (id, display_name, role, created_at) \
+         VALUES ('u1', 'U', 'user', 1), ('u2', 'V', 'user', 1); \
+         INSERT INTO acquire_held_entries (id, user_id, origin, group_key, state, \
+             created_at, expires_at) \
+         VALUES (1, 'u1', 'upload', 'upload:1', 'held', 1, 2); \
+         INSERT INTO acquire_held_files (id, entry_id, root, path, original_name, \
+             source, reason, reason_detail, state, created_at) \
+         VALUES (7, 1, 'drop', 'a.flac', '01.flac', 'upload', 'owned_on_album', \
+             'said', 'held', 5), \
+             (8, 1, 'drop', 'b.flac', '02.flac', 'upload', 'owned_on_album', \
+             'This album''s match needs checking first.', 'held', 6);",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    run_migrations(&pool, &migrator_through(126)).await.unwrap();
+
+    let kept: (String, String, Option<String>, String, i64) = sqlx::query_as(
+        "SELECT path, reason, reason_detail, state, created_at FROM acquire_held_files \
+         WHERE id = 7",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        kept,
+        (
+            "a.flac".to_owned(),
+            "owned_on_album".to_owned(),
+            Some("said".to_owned()),
+            "held".to_owned(),
+            5,
+        )
+    );
+    let carried: (String, Option<String>) =
+        sqlx::query_as("SELECT reason, reason_detail FROM acquire_held_files WHERE id = 8")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(carried, ("album_needs_check".to_owned(), None));
+    let revision = || {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_scalar::<_, i64>(
+                "SELECT revision FROM download_activity_user_revisions WHERE user_id = 'u1'",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    let before = revision().await;
+    sqlx::raw_sql("UPDATE acquire_held_files SET reason = 'album_needs_check' WHERE id = 7")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(revision().await, before + 1);
+
+    sqlx::raw_sql(
+        "PRAGMA foreign_keys = ON; \
+         INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) \
+         VALUES ('artist-1', 'Someone', 'someone', 'person', 0, 0); \
+         INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+             album_artist_id, grouping_source, created_at, updated_at) \
+         VALUES ('album-1', 'root-1', 'g-1', 'One', 'one', 'artist-1', 'manual', 0, 0); \
+         INSERT INTO library_album_looks_wrong (local_album_id, user_id, created_at) \
+         VALUES ('album-1', 'u1', 10), ('album-1', 'u2', 11);",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let marks = || {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM library_album_looks_wrong")
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+        }
+    };
+    assert_eq!(marks().await, 2);
+    sqlx::raw_sql("PRAGMA foreign_keys = ON; DELETE FROM auth_users WHERE id = 'u2'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(marks().await, 1, "a user's mark goes with the user");
+    sqlx::raw_sql("PRAGMA foreign_keys = ON; DELETE FROM local_albums WHERE id = 'album-1'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(marks().await, 0, "an album's marks go with the album");
 }
 
 /// The runner's `-- no-transaction` path and the table-rebuild recipe in the

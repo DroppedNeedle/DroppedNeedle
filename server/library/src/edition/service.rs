@@ -5,6 +5,7 @@ use crate::edition::choice;
 use crate::edition::decisions;
 use crate::edition::decisions::indexed_track_ids;
 use crate::edition::hand_match;
+use crate::edition::looks_wrong;
 use crate::edition::models::EditionChoice;
 use crate::edition::models::ReleaseSearch;
 use crate::edition::models::UndoOutcome;
@@ -54,13 +55,13 @@ impl Operations {
     /// One page of the albums whose match waits for a person. Blocking.
     pub fn waiting_albums(
         &self,
-        unmatched: bool,
+        which: crate::edition::status::Waiting,
         limit: u32,
         offset: u32,
     ) -> Result<(Vec<crate::edition::status::WaitingAlbum>, u64), OperationError> {
         self.db.read_blocking("operations.waiting_albums", |conn| {
             Ok::<_, OperationError>(crate::edition::status::waiting_albums(
-                conn, unmatched, limit, offset,
+                conn, which, limit, offset,
             )?)
         })
     }
@@ -99,13 +100,15 @@ impl Operations {
                 ops.db
                     .write_blocking(Lane::Foreground, "operations.choose_edition", |tx| {
                         choice::guard_revision(tx, &album, expected_identity_revision)?;
-                        choice::choose(
+                        let chosen = choice::choose(
                             tx,
                             &album,
                             &candidate,
                             actor.as_deref(),
                             ops.clock.now_secs(),
-                        )
+                        )?;
+                        looks_wrong::clear(tx, &album)?;
+                        Ok::<_, OperationError>(chosen)
                     })?;
             ops.store.link_after_command(&album);
             Ok::<_, OperationError>(chosen)
@@ -166,7 +169,8 @@ impl Operations {
                         &guard,
                         &actor,
                         ops.clock.now_secs(),
-                    )
+                    )?;
+                    Ok::<_, OperationError>(looks_wrong::clear(tx, &album)?)
                 })
         })
         .await
@@ -188,7 +192,8 @@ impl Operations {
                     expected_identity_revision,
                     actor,
                     self.clock.now_secs(),
-                )
+                )?;
+                Ok::<_, OperationError>(looks_wrong::clear(tx, album_id)?)
             })
     }
 
@@ -428,7 +433,9 @@ impl Operations {
                         &candidate,
                         ops.clock.now_secs(),
                         ops.clock.now_ms(),
-                    )
+                    )?;
+                    // The match makes the edition the person's choice.
+                    Ok::<_, OperationError>(looks_wrong::clear(tx, &album)?)
                 })
         })
         .await
@@ -477,7 +484,8 @@ impl Operations {
         self.db
             .write_blocking(Lane::Foreground, "operations.hand_back", |tx| {
                 choice::guard_revision(tx, album_id, expected_identity_revision)?;
-                choice::hand_back(tx, album_id, actor, self.clock.now_secs())
+                choice::hand_back(tx, album_id, actor, self.clock.now_secs())?;
+                Ok::<_, OperationError>(looks_wrong::clear(tx, album_id)?)
             })
     }
 
@@ -492,7 +500,8 @@ impl Operations {
         self.db
             .write_blocking(Lane::Foreground, "operations.confirm_match", |tx| {
                 choice::guard_revision(tx, album_id, expected_identity_revision)?;
-                choice::confirm(tx, album_id, actor, self.clock.now_secs())
+                choice::confirm(tx, album_id, actor, self.clock.now_secs())?;
+                Ok::<_, OperationError>(looks_wrong::clear(tx, album_id)?)
             })?;
         self.store.link_after_command(album_id);
         Ok(())

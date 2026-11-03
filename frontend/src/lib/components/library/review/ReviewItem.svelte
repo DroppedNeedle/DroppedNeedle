@@ -42,15 +42,15 @@
 	}: Props = $props();
 
 	const STATE_LABEL: Record<LibraryReview['state'], string> = {
-		pending: 'Needs a decision',
+		pending: 'Needs you',
 		approved: 'Resolved',
-		dismissed: 'Closed',
-		rejected: 'Kept as tagged',
+		dismissed: 'Left for later',
+		rejected: 'Tags kept',
 		excluded: 'Excluded'
 	};
 </script>
 
-<li class="rounded-box border border-base-content/10 bg-base-100">
+<li class="rounded-box border border-base-content/10 bg-base-100" data-review={review.id}>
 	<div class="flex items-start gap-3 p-3">
 		{#if selectable}
 			<input
@@ -63,6 +63,7 @@
 			/>
 		{/if}
 		<button
+			data-row-focus
 			class="flex min-w-0 flex-1 items-start gap-2 text-left"
 			aria-expanded={open}
 			onclick={ontoggleopen}
@@ -98,7 +99,7 @@
 				{#if review.state === 'pending'}
 					{#if authStore.isTrusted}
 						<Button size="sm" disabled={busy} onclick={() => onaction('keep_tagged')}
-							>Keep as tagged</Button
+							>Keep my tags</Button
 						>
 						<Button
 							variant="ghost"
@@ -108,14 +109,13 @@
 							onclick={() => onaction('detach')}>Remove match</Button
 						>
 						<Button variant="ghost" size="sm" disabled={busy} onclick={() => onaction('dismiss')}
-							>Close without deciding</Button
+							>Decide later</Button
 						>
 					{/if}
 					{#if authStore.isAdmin}
 						<!-- Retrying would only meet the edition a person chose. -->
 						{#if !review.manual_identity}
-							<Button variant="ghost" size="sm" disabled={busy} onclick={onretry}
-								>Retry identification</Button
+							<Button variant="ghost" size="sm" disabled={busy} onclick={onretry}>Look again</Button
 							>
 						{/if}
 						<Button

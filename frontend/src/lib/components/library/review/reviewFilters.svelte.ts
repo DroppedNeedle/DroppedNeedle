@@ -11,8 +11,8 @@ type JobState = NonNullable<LibraryReviewParams['jobState']>;
 
 /** The five views, as the stored states they show. */
 export const REVIEW_VIEWS: { state: LibraryReviewState; label: string }[] = [
-	{ state: 'pending', label: 'Needs a decision' },
-	{ state: 'rejected', label: 'Kept as tagged' },
+	{ state: 'pending', label: 'Open' },
+	{ state: 'rejected', label: 'Tags kept' },
 	{ state: 'excluded', label: 'Excluded' },
 	{ state: 'resolved', label: 'Resolved' },
 	{ state: 'all', label: 'All' }

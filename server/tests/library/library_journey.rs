@@ -6652,6 +6652,210 @@ async fn a_library_folder_reached_through_a_symlink_takes_writes() {
     assert!(second.exists(), "the file stays");
 }
 
+/// A best guess in Check albums names what "That's right" confirms and
+/// why it is a guess; a "Looks wrong" mark lists the album for curators,
+/// and confirming the guess or approving a review clears every mark.
+#[tokio::test]
+async fn check_albums_names_the_guess_and_settling_clears_looks_wrong() {
+    let rig = Rig::start("lib-check-albums").await;
+    let app = &rig.app;
+    let auth = app.login_admin().await;
+    let headers = [("authorization", auth.as_str())];
+    let music = app.config.root_app_dir.join("music");
+    plant(&music, "album-g/01.flac", "flac_full_01.flac");
+    plant(&music, "album-g/02.flac", "flac_full_02.flac");
+    let paused_at = rig.pause_identification().await;
+    app.add_library_folder("music", &music).await;
+    let track_id = rig
+        .scan_store
+        .track_at("music", "album-g/01.flac")
+        .unwrap()
+        .expect("track indexed");
+    let album = track_album(app, &headers, &track_id).await;
+    let fit = tagged_release(&rig.identify_store, &album);
+    rig.identify.set_recall(RecallResult {
+        releases: vec![fit.clone()],
+        ..RecallResult::default()
+    });
+    rig.resume_identification(paused_at).await;
+    rig.identified(&album, 1).await;
+    let candidates = json!([{
+        "candidate_key": format!("release:{}", fit.id),
+        "release_group_mbid": fit.release_group_id,
+        "release_mbid": fit.id,
+        "album_title": "The Guess",
+        "album_artist_name": "Someone Else",
+        "track_evidence": [{
+            "local_track_id": track_id,
+            "classification": "supported",
+            "evidence_kinds": ["title_and_length"],
+            "recording_mbid": null,
+            "release_track_mbid": null
+        }],
+        "score": 0.8,
+        "reason_code": "CLOSE_MATCH"
+    }]);
+    app.seed_with(
+        "INSERT INTO library_album_match_state (local_album_id, state, reason_code, \
+         release_mbid, candidates_json, updated_at) \
+         VALUES (?1, 'unconfirmed', 'NAMED_GROUP_DIFFERS', ?2, ?3, 1)",
+        rusqlite::params![album, fit.id, candidates.to_string()],
+    )
+    .await;
+    let title = app
+        .call(
+            "GET",
+            &format!("/api/v3/library/albums/{album}"),
+            &headers,
+            None,
+        )
+        .await
+        .1["title"]
+        .as_str()
+        .expect("album title")
+        .to_owned();
+
+    let list = |state: &'static str| async move {
+        let (status, body) = app
+            .call(
+                "GET",
+                &format!("/api/v3/library/unconfirmed?state={state}"),
+                &headers,
+                None,
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        body
+    };
+    let body = list("unconfirmed").await;
+    let row = &body["items"][0];
+    assert_eq!(row["album_id"], json!(album), "{body}");
+    assert_eq!(row["guess"]["title"], json!("The Guess"), "{body}");
+    assert_eq!(row["guess"]["matched_files"], json!(1), "{body}");
+    assert_eq!(row["file_count"], json!(2), "{body}");
+    assert_eq!(
+        row["reason"]["message"],
+        json!(format!(
+            "Your files say {title}. This fits The Guess better."
+        )),
+        "{body}"
+    );
+
+    let mark = format!("/api/v3/library/albums/{album}/looks-wrong");
+    let (status, body) = app
+        .call("PUT", &mark, &headers, Some(json!({"looks_wrong": true})))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let body = list("looks_wrong").await;
+    assert_eq!(body["total"], json!(1), "{body}");
+    assert_eq!(body["items"][0]["looks_wrong_count"], json!(1), "{body}");
+    assert_eq!(body["items"][0]["state"], json!("unconfirmed"), "{body}");
+
+    let edition = format!("/api/v3/library/albums/{album}/edition");
+    let (status, body) = app
+        .call(
+            "POST",
+            &format!("{edition}/confirm"),
+            &headers,
+            Some(json!({
+                "expected_identity_revision": edition_revision(app, &headers, &album).await,
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["state"], json!("chosen"), "{body}");
+    assert_eq!(body["looks_wrong_count"], json!(0), "{body}");
+    assert_eq!(list("looks_wrong").await["total"], json!(0));
+    assert_eq!(list("unconfirmed").await["total"], json!(0));
+
+    // Approving a review settles the album as well.
+    let (status, body) = app
+        .call("PUT", &mark, &headers, Some(json!({"looks_wrong": true})))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    app.seed_with(
+        "INSERT INTO library_identify_reviews (id, local_album_id, reason_code, candidates_json, \
+         state, created_at, updated_at) VALUES ('rv-approve', ?1, 'EDITION_MERGED', ?2, 'pending', 1, 1)",
+        rusqlite::params![album, candidates.to_string()],
+    )
+    .await;
+    let (_, review) = app
+        .call("GET", "/api/v3/library/reviews/rv-approve", &headers, None)
+        .await;
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/v3/library/reviews/rv-approve/approve",
+            &headers,
+            Some(json!({
+                "candidate_key": format!("release:{}", fit.id),
+                "expected_revision": review["row_revision"],
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(list("looks_wrong").await["total"], json!(0));
+}
+
+/// A person who kept the tags or left a review for later can reopen it;
+/// a review the system closed, with nobody's decision on it, cannot.
+#[tokio::test]
+async fn only_a_review_a_person_closed_reopens() {
+    let rig = Rig::start("lib-review-reopen").await;
+    let app = &rig.app;
+    let auth = app.login_admin().await;
+    let headers = [("authorization", auth.as_str())];
+    app.seed(
+        "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) \
+         VALUES ('re-artist', 'Someone', 'someone', 'person', 0, 0); \
+         INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+         album_artist_id, grouping_source, created_at, updated_at) VALUES \
+         ('re-album', 'root-1', 'g-re', 'Something', 'something', 're-artist', 'manual', 0, 0); \
+         INSERT INTO library_identify_reviews (id, local_album_id, reason_code, candidates_json, \
+         state, created_at, updated_at) VALUES \
+         ('rv-system', 're-album', 'EDITION_MERGED', '[]', 'dismissed', 1, 1), \
+         ('rv-person', 're-album', 'EDITION_MERGED', '[]', 'pending', 1, 1)",
+    )
+    .await;
+    let revision = |id: &'static str| async move {
+        app.call(
+            "GET",
+            &format!("/api/v3/library/reviews/{id}"),
+            &headers,
+            None,
+        )
+        .await
+        .1["row_revision"]
+            .clone()
+    };
+    let reopen = |id: &'static str, revision: Value| async move {
+        app.call(
+            "POST",
+            &format!("/api/v3/library/reviews/{id}/reopen"),
+            &headers,
+            Some(json!({"expected_revision": revision})),
+        )
+        .await
+    };
+
+    let (status, body) = reopen("rv-system", revision("rv-system").await).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"]["code"], json!("REVIEW_NOT_CLOSED"), "{body}");
+
+    let (status, kept) = app
+        .call(
+            "POST",
+            "/api/v3/library/reviews/rv-person/keep-tagged",
+            &headers,
+            Some(json!({"expected_revision": revision("rv-person").await})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{kept}");
+    let (status, body) = reopen("rv-person", kept["row_revision"].clone()).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["state"], json!("pending"), "{body}");
+}
+
 /// One edition operation: a person chooses another edition (partial
 /// mapping), automatic passes leave it alone, undo takes it back, and
 /// "Let DroppedNeedle choose" returns the album to its best fit.

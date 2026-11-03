@@ -175,9 +175,6 @@
 				<div class="flex flex-wrap items-center gap-2">
 					{#if hasFiles}<LibraryFormatBadge format={album.format} />{:else}<NoFilesBadge />{/if}
 					{#if album.is_compilation}<span class="badge badge-ghost">Compilation</span>{/if}
-					{#if album.pending_review_id}<span class="badge badge-warning badge-outline"
-							>Needs review</span
-						>{/if}
 				</div>
 				<h1 class="mt-3 text-3xl font-black tracking-tight sm:text-5xl">{album.title}</h1>
 				<a
@@ -247,13 +244,6 @@
 					{/if}
 					{#if authStore.isAdmin}<AlbumOrganizationDialog {album} {tracks} />{/if}
 				</div>
-				{#if album.pending_review_id && authStore.isAdmin}
-					<a
-						class="link link-warning mt-3 inline-block text-sm"
-						href={withBasePath(`/library/review?review=${album.pending_review_id}`)}
-						>Open identification review</a
-					>
-				{/if}
 			</div>
 		</header>
 

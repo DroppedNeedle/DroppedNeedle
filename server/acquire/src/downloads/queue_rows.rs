@@ -328,6 +328,9 @@ pub struct TaskFacts {
     pub held_for_review: bool,
     /// The newest import decision.
     pub decision: Option<DecisionFacts>,
+    /// A library album, id and title, whose guess is this task's album
+    /// but whose files name another: the person may have it already.
+    pub doubted_guess: Option<(String, String)>,
 }
 
 /// The newest import decision of a task.
@@ -415,6 +418,17 @@ impl DownloadStore<'_> {
         for task_id in HeldRows::new(self.conn).tasks_holding(task_ids)? {
             if let Some(entry) = facts.get_mut(&task_id) {
                 entry.held_for_review = true;
+            }
+        }
+
+        let mut stmt = self.conn.prepare_cached(&sql::doubted_guess_facts(len))?;
+        let mut rows = stmt.query(ids())?;
+        while let Some(row) = rows.next()? {
+            let task_id: String = row.get(0)?;
+            if let Some(entry) = facts.get_mut(&task_id)
+                && entry.doubted_guess.is_none()
+            {
+                entry.doubted_guess = Some((row.get(1)?, row.get(2)?));
             }
         }
 

@@ -44,8 +44,8 @@
 
 <ConfirmDialog
 	bind:open
-	title="Use a shared release"
-	confirmLabel="Use this release"
+	title="Use a shared edition"
+	confirmLabel="Use this edition"
 	canConfirm={Boolean(chosen)}
 	onconfirm={useChosen}
 >
@@ -76,6 +76,6 @@
 			</p>
 		</fieldset>
 	{:else}
-		<p class="text-sm">These albums share no release. Pick one for each instead.</p>
+		<p class="text-sm">These albums share no edition. Pick one for each instead.</p>
 	{/if}
 </ConfirmDialog>

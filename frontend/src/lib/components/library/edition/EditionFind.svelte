@@ -1,6 +1,7 @@
 <!--
 	"Not listed?": paste a MusicBrainz release link or id to compare that
-	release, or search MusicBrainz by title and artist.
+	release, a release group link to list that album's editions, or search
+	MusicBrainz by title and artist.
 -->
 <script lang="ts">
 	import { Search } from 'lucide-svelte';
@@ -12,6 +13,8 @@
 		artist: string;
 		searching: boolean;
 		onpaste: (release: string) => void;
+		/** A release group link was pasted: list its editions. */
+		onpastegroup: (group: string) => void;
 		onsearch: () => void;
 	}
 
@@ -20,21 +23,50 @@
 		artist = $bindable(''),
 		searching,
 		onpaste,
+		onpastegroup,
 		onsearch
 	}: Props = $props();
 
-	const MBID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
-	const pasted = $derived(title.match(MBID)?.[0]?.toLowerCase() ?? null);
+	const MBID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+	/**
+	 * What was pasted, read from the link's path: `/release/<id>` or a bare
+	 * id is a release, `/release-group/<id>` an album whose editions to
+	 * list. Anything else is a title to search for.
+	 */
+	function readPaste(text: string): { kind: 'release' | 'group'; mbid: string } | null {
+		const value = text.trim();
+		if (MBID.test(value)) return { kind: 'release', mbid: value.toLowerCase() };
+		let url: URL;
+		try {
+			url = new URL(value);
+		} catch {
+			return null;
+		}
+		const [kind, id] = url.pathname.split('/').filter(Boolean);
+		if (!id || !MBID.test(id)) return null;
+		if (kind === 'release') return { kind: 'release', mbid: id.toLowerCase() };
+		if (kind === 'release-group') return { kind: 'group', mbid: id.toLowerCase() };
+		return null;
+	}
+
+	const pasted = $derived(readPaste(title));
+
+	function use(paste: NonNullable<typeof pasted>): void {
+		if (paste.kind === 'group') onpastegroup(paste.mbid);
+		else onpaste(paste.mbid);
+	}
 
 	let lastPasted: string | null = null;
 	$effect(() => {
-		if (pasted && pasted !== lastPasted) onpaste(pasted);
-		lastPasted = pasted;
+		const key = pasted ? `${pasted.kind}:${pasted.mbid}` : null;
+		if (pasted && key !== lastPasted) use(pasted);
+		lastPasted = key;
 	});
 
 	function submit(event: SubmitEvent): void {
 		event.preventDefault();
-		if (pasted) onpaste(pasted);
+		if (pasted) use(pasted);
 		else if (title.trim()) onsearch();
 	}
 </script>

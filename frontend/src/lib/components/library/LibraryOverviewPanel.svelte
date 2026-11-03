@@ -116,6 +116,7 @@
 	const libraryEnabled = $derived(settingsQuery.data?.enabled ?? true);
 	const totalTracks = $derived(statsQuery.data?.total_tracks ?? 0);
 	const localOnlyCount = $derived(statsQuery.data?.local_only_count ?? 0);
+	const guessCount = $derived(statsQuery.data?.guess_count ?? 0);
 	const latestTerminalRun = $derived(historyQuery.data?.pages[0]?.items[0] ?? null);
 	const reviewCount = $derived(reviewsQuery.data ?? 0);
 	const readyPreviewCount = $derived(
@@ -422,10 +423,11 @@
 			>
 			<span
 				class="mt-1 block text-xs font-semibold tracking-[0.15em] text-base-content/55 uppercase"
-				>Needs review</span
+				>Needs you</span
 			>
 			<span class="mt-0.5 block text-xs text-base-content/45"
-				>{localOnlyCount.toLocaleString()} local-only</span
+				>{guessCount.toLocaleString()} best {guessCount === 1 ? 'guess' : 'guesses'} · {localOnlyCount.toLocaleString()}
+				local-only</span
 			>
 		</Card>
 		{#if attentionCount > 0}

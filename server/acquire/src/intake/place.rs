@@ -172,10 +172,6 @@ impl Planned {
     }
 }
 
-/// Why a better file waits: tagging would refuse the album it would replace
-/// a file on, and only a person importing it passes that check.
-const NEEDS_A_PERSON: &str = "This album's match needs checking first.";
-
 /// A library read that failed: never taken as "nothing to replace", so the
 /// batch waits and lands on a later pass, as a busy journal read does.
 fn library_busy(error: droppedneedle_kernel::db::DbError) -> Deferred {
@@ -290,12 +286,7 @@ async fn plan(
             }
             if old.availability == "indexed" && old.replace_refused && gate != Gate::PersonChoseFile
             {
-                planned.hold(
-                    file,
-                    Some(track),
-                    Reason::OwnedOnAlbum,
-                    NEEDS_A_PERSON.to_owned(),
-                );
+                planned.hold(file, Some(track), Reason::AlbumNeedsCheck, String::new());
                 continue;
             }
             if old.availability == "indexed" {
@@ -430,12 +421,7 @@ async fn plan(
                 .all(|copy| quality::beats(tier(file), copy.tier))
         {
             if gate != Gate::PersonChoseFile && copies.iter().any(|copy| copy.replace_refused) {
-                planned.hold(
-                    file,
-                    Some(track),
-                    Reason::OwnedOnAlbum,
-                    NEEDS_A_PERSON.to_owned(),
-                );
+                planned.hold(file, Some(track), Reason::AlbumNeedsCheck, String::new());
                 continue;
             }
             for copy in &copies {

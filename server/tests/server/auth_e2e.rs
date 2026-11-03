@@ -1253,6 +1253,12 @@ const EXCEPTIONS: &[(&str, &str, Exception, &str)] = &[
         "an empty object fails to decode before the handler runs",
     ),
     (
+        "PUT",
+        "/api/v3/library/albums/{album_id}/looks-wrong",
+        Exception::Body(looks_wrong_body),
+        "any signed-in user marks an album; an empty object fails to decode before the handler runs",
+    ),
+    (
         "POST",
         "/api/v3/settings/musicbrainz/verify",
         Exception::Body(verify_body),
@@ -1322,6 +1328,11 @@ const EXCEPTIONS: &[(&str, &str, Exception, &str)] = &[
 
 fn item_match_body() -> Value {
     json!({"release_group_mbid": "e2e-dummy-id"})
+}
+
+/// Taking back a mark the caller never made: nothing changes.
+fn looks_wrong_body() -> Value {
+    json!({"looks_wrong": false})
 }
 
 /// A BrainzMash binding on a non-BrainzMash selection: refused with 400

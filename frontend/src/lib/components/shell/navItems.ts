@@ -20,11 +20,12 @@ import {
 } from 'lucide-svelte';
 import { withBasePath } from '$lib/utils/basePath';
 
-/** Who sees a destination: everyone, or admins. */
-export type NavAudience = 'everyone' | 'admin';
+/** Who sees a destination: everyone, curators (admins and trusted users), or admins. */
+export type NavAudience = 'everyone' | 'curator' | 'admin';
 
 /** A live marker on a destination; each nav draws it in its own style. */
-export type NavBadge = 'library-sync' | 'downloads' | 'following' | 'approvals' | 'update';
+export type NavBadge =
+	'library-sync' | 'downloads' | 'following' | 'approvals' | 'check-albums' | 'update';
 
 /** The sidebar's sections, top to bottom. `footer` is the icon row at the bottom. */
 export type SidebarGroup = 'search' | 'browse' | 'requests' | 'admin' | 'footer';
@@ -54,6 +55,8 @@ export interface NavItem {
 
 export interface NavViewer {
 	isAdmin: boolean;
+	/** Admin or trusted: may act on albums' editions. */
+	isCurator: boolean;
 }
 
 export const exactly =
@@ -66,7 +69,7 @@ export const within =
 	(path) =>
 		path === prefix || path.startsWith(`${prefix}/`);
 
-// Library Management, the Review Queue and the Recycle Bin live under /library but are their
+// Library Management, Check albums and the Recycle Bin live under /library but are their
 // own destinations.
 const inLibrary: NavMatch = (path) =>
 	within('/library')(path) &&
@@ -177,10 +180,11 @@ export const navItems: NavItem[] = [
 	},
 	{
 		id: 'review',
-		label: 'Review Queue',
+		label: 'Check albums',
 		icon: ListChecks,
 		href: '/library/review',
-		audience: 'admin',
+		audience: 'curator',
+		badge: 'check-albums',
 		sidebar: { group: 'admin', active: within('/library/review') },
 		more: { active: within('/library/review') }
 	},
@@ -208,6 +212,7 @@ export const navItems: NavItem[] = [
 
 export function canSee(item: NavItem, viewer: NavViewer): boolean {
 	if (item.audience === 'admin') return viewer.isAdmin;
+	if (item.audience === 'curator') return viewer.isCurator;
 	return true;
 }
 

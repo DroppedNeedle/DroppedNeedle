@@ -16,6 +16,7 @@
 	import { nowSeconds, startSharedClock } from '$lib/stores/clock.svelte';
 	import type { DownloadTask } from '$lib/types';
 	import { albumHref, artistHref } from '$lib/utils/entityRoutes';
+	import { withBasePath } from '$lib/utils/basePath';
 	import { formatRelativeTime } from '$lib/utils/formatting';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
@@ -44,6 +45,13 @@
 
 	function rungLabel(minutes: number): string {
 		return minutes < 60 ? `${minutes}m` : `${Math.round(minutes / 60)}h`;
+	}
+
+	// A library album whose guess is this album, though its files name
+	// another: curators open its edition sheet, everyone else its page.
+	function maybeHaveHref(albumId: string): string {
+		const page = `/album/${encodeURIComponent(albumId)}`;
+		return withBasePath(authStore.isTrusted ? `${page}?edition=choose&from=downloads` : page);
 	}
 
 	let retried = $state(false);
@@ -113,6 +121,12 @@
 			</p>
 			{#if task.reason}
 				<p class="mt-0.5 line-clamp-2 text-xs text-base-content/45">{task.reason.text}</p>
+			{/if}
+			{#if task.maybe_have}
+				<p class="mt-1 text-xs text-base-content/70">
+					You may have this: {task.maybe_have.title} is a guess.
+					<a class="link" href={maybeHaveHref(task.maybe_have.album_id)}>Check it</a>
+				</p>
 			{/if}
 		</div>
 

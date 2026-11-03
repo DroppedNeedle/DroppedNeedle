@@ -54,6 +54,9 @@ pub const LENGTH_MAX_SECS: f64 = 30.0;
 pub const SAME_MASTER_SECS: f64 = 3.0;
 /// The evidence kind on a file whose fingerprint its length overruled.
 pub const FINGERPRINT_OVERRULED: &str = "acoustid_overruled";
+/// The evidence kind on a file whose audio names another track of the
+/// release than the one its description fits.
+pub const FINGERPRINT_DISPUTED: &str = "acoustid_disputed";
 
 /// What ties a local track to its release track.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

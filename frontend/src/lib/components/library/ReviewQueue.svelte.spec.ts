@@ -51,7 +51,10 @@ const EDITION: RouteData<'GET /api/v3/library/albums/{album_id}/edition'> = {
 	release_mbid: null,
 	state: 'unidentified',
 	undo_available: false,
-	writing: false
+	writing: false,
+	disputed_tracks: [],
+	looks_wrong: false,
+	looks_wrong_count: 0
 };
 
 const REVIEWS = [review('r1', 'Kid A', 'EDITION_MERGED'), review('r2', 'Amnesiac', 'REPAIR')];
@@ -105,7 +108,7 @@ describe('review queue', () => {
 
 		await expect.element(page.getByText('Kid A')).toBeVisible();
 		await expect.element(page.getByText('Amnesiac')).not.toBeInTheDocument();
-		await expect.element(page.getByRole('tab', { name: 'Kept as tagged 4' })).toBeVisible();
+		await expect.element(page.getByRole('tab', { name: 'Tags kept 4' })).toBeVisible();
 		await expect.element(page.getByRole('tab', { name: 'Resolved 1' })).toBeVisible();
 
 		await page.getByRole('combobox', { name: 'Order' }).selectOptions('title');
@@ -191,11 +194,11 @@ describe('review queue', () => {
 
 		await page.getByRole('checkbox', { name: 'Select Kid A' }).click();
 		await page.getByRole('checkbox', { name: 'Select Amnesiac' }).click();
-		await page.getByRole('button', { name: 'Use a shared release' }).click();
-		const dialog = page.getByRole('dialog', { name: 'Use a shared release' });
+		await page.getByRole('button', { name: 'Use a shared edition' }).click();
+		const dialog = page.getByRole('dialog', { name: 'Use a shared edition' });
 		await expect.element(dialog.getByRole('radio', { name: /Shared Release/ })).toBeChecked();
 
-		await dialog.getByRole('button', { name: 'Use this release' }).click();
+		await dialog.getByRole('button', { name: 'Use this edition' }).click();
 		await vi.waitFor(() =>
 			expect(api.calls('POST /api/v3/library/reviews/bulk-apply')).toHaveLength(1)
 		);
@@ -250,7 +253,7 @@ describe('review queue', () => {
 		});
 		await renderWithQuery(ReviewQueue, {});
 
-		await expect.element(page.getByText('Keeping as tagged')).toBeVisible();
+		await expect.element(page.getByText('Keeping the tags')).toBeVisible();
 		await expect.element(page.getByText('12 of 30 reviews · 2 left alone')).toBeVisible();
 		await page.getByRole('button', { name: 'Pause review change' }).click();
 		await vi.waitFor(() =>

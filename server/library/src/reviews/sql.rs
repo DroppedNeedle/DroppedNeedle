@@ -12,6 +12,26 @@ droppedneedle_kernel::sql! {
          ORDER BY disc_number, track_number, id";
     pub(super) REVIEW_GUARD_ROW = "SELECT local_album_id, state, row_revision FROM library_identify_reviews \
              WHERE id = ?1";
+    /// Review `?1` as a reopen reads it: who closed it, the revisions noted
+    /// then, the album's match row revision now (0 without one), and
+    /// whether the album has another open review.
+    pub(super) REOPEN_GUARD = "SELECT r.local_album_id, r.state, r.row_revision, r.resolved_by_user_id, \
+         r.reopen_review_revision, r.reopen_identity_revision, \
+         (SELECT COALESCE(MAX(e.row_revision), 0) FROM local_album_external_identities e \
+          WHERE e.local_album_id = r.local_album_id AND e.provider = 'musicbrainz') AS identity_revision, \
+         EXISTS(SELECT 1 FROM library_identify_reviews o WHERE o.local_album_id = r.local_album_id \
+          AND o.state = 'pending' AND o.id <> r.id) AS other_pending \
+         FROM library_identify_reviews r WHERE r.id = ?1";
+    /// A person closed review `?1`: note its revision and its album's match
+    /// row revision, which a reopen must find unchanged.
+    pub(super) NOTE_REOPENABLE = "UPDATE library_identify_reviews SET reopen_review_revision = row_revision, \
+         reopen_identity_revision = (SELECT COALESCE(MAX(e.row_revision), 0) \
+         FROM local_album_external_identities e \
+         WHERE e.local_album_id = library_identify_reviews.local_album_id AND e.provider = 'musicbrainz') \
+         WHERE id = ?1";
+    /// Review `?1` is open again; it can no longer be reopened.
+    pub(super) CLEAR_REOPENABLE = "UPDATE library_identify_reviews SET reopen_review_revision = NULL, \
+         reopen_identity_revision = NULL WHERE id = ?1";
     pub(super) MARK = "UPDATE library_identify_reviews SET state = ?3, resolved_by_user_id = (SELECT id FROM auth_users WHERE id = ?4), \
          updated_at = ?5 WHERE id = ?1 AND state = ?2";
     pub(super) EXCLUDE_TRACK = "UPDATE local_tracks SET manual_excluded = 1, \
@@ -81,6 +101,16 @@ droppedneedle_kernel::sql! {
     pub(super) row TrackTitle for [WITH_TRACKS] {
         id: String,
         title: String,
+    }
+    pub(super) row ReopenGuard for [REOPEN_GUARD] {
+        local_album_id: String,
+        state: ReviewState,
+        row_revision: i64,
+        resolved_by_user_id: Option<String>,
+        reopen_review_revision: Option<i64>,
+        reopen_identity_revision: Option<i64>,
+        identity_revision: i64,
+        other_pending: bool,
     }
     pub(super) row ReviewGuard for [REVIEW_GUARD_ROW] {
         local_album_id: String,

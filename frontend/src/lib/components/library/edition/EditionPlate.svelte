@@ -1,19 +1,27 @@
 <!--
 	The edition plate on a library album's page: which edition the copy is,
 	who picked it, how many of its tracks the files hold and whether its
-	folder keeps its own tags. For curators it opens the edition sheet, as
-	`?edition=choose` in the address does. With `request` and no copies it
-	names the edition a request gets, and opens the sheet to pick another
-	until the download starts.
+	folder keeps its own tags. Under it, for everyone, why a best guess or a
+	missing match is what it is; for curators, the review waiting on them,
+	and for everyone else a "Looks wrong" button. For curators the plate
+	opens the edition sheet, as `?edition=choose` in the address does; with
+	`from` (Check albums or Downloads) the sheet goes back there when it
+	closes. With `request` and no copies it names the edition a request
+	gets, and opens the sheet to pick another until the download starts.
 -->
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import { ChevronRight, Hand } from 'lucide-svelte';
+	import { ChevronRight, Flag, Hand } from 'lucide-svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
+	import { toastStore } from '$lib/stores/toast';
 	import Button from '$lib/ui/Button.svelte';
+	import { withBasePath } from '$lib/utils/basePath';
+	import { createImportHeldMutation } from '$lib/queries/downloads/HeldQueries.svelte';
+	import { getLibraryAlbumDetailQuery } from '$lib/queries/library/LibraryQueries.svelte';
 	import type { AlbumView } from '$lib/types';
 	import {
+		createMarkLooksWrongMutation,
 		getAlbumEditionStatusQuery,
 		getAlbumEditionsQuery,
 		getEditionPlanQuery
@@ -21,7 +29,14 @@
 	import { albumHref } from '$lib/utils/entityRoutes';
 	import EditionDisc from './EditionDisc.svelte';
 	import EditionSheet from './EditionSheet.svelte';
-	import { editionFactsLine, editionName, moreCopies, plateCopy } from './editionCopy';
+	import {
+		editionFactsLine,
+		editionName,
+		failureSentence,
+		moreCopies,
+		plateCopy,
+		type PlateCopy
+	} from './editionCopy';
 	import type { EditionRequestPick } from './editionSheetState.svelte';
 
 	interface Props {
@@ -101,22 +116,95 @@
 		sheetOpen = true;
 	}
 
+	// Where the sheet goes back to when it closes: a Check albums list at
+	// the next album, or Downloads, where a held better copy waits.
+	const LISTS = ['unconfirmed', 'unmatched', 'looks_wrong'];
+	let back = $state<{ label: string; href: string } | null>(null);
+	let heldRetry = $state<{ entryId: number; fileIds: number[] } | null>(null);
+
+	function readReturn(params: URLSearchParams): void {
+		const from = params.get('from') ?? '';
+		if (LISTS.includes(from)) {
+			const next = params.get('next');
+			const query = new URLSearchParams([
+				...(from !== 'unconfirmed' ? [['view', from]] : []),
+				...(next ? [['focus', next]] : [])
+			]).toString();
+			back = { label: 'Back to Check albums', href: `/library/review${query ? `?${query}` : ''}` };
+		} else if (from === 'downloads') {
+			back = { label: 'Back to Downloads', href: '/downloads' };
+			const entryId = Number(params.get('held'));
+			const fileIds = (params.get('files') ?? '')
+				.split(',')
+				.map(Number)
+				.filter((id) => Number.isInteger(id) && id > 0);
+			heldRetry =
+				Number.isInteger(entryId) && entryId > 0 && fileIds.length ? { entryId, fileIds } : null;
+		}
+	}
+
 	let askedToChoose = false;
 	$effect(() => {
 		if (askedToChoose || !canEdit || !copy) return;
 		if (page.url.searchParams.get('edition') !== 'choose') return;
 		askedToChoose = true;
+		readReturn(page.url.searchParams);
 		openSheet();
 		// Taken from the address once used, so a reload or a later redirect
 		// does not open the sheet again.
 		const url = new URL(page.url);
-		url.searchParams.delete('edition');
+		for (const key of ['edition', 'from', 'next', 'held', 'files']) url.searchParams.delete(key);
 		void goto(url, { replaceState: true, noScroll: true, keepFocus: true });
 	});
 
-	function closed(movedTo: string | null): void {
-		if (movedTo) void goto(albumHref(movedTo));
+	// A better copy held for this album's check goes in as soon as a person
+	// settles the edition, instead of at the held list's next pass.
+	const importHeld = createImportHeldMutation();
+	function settled(): void {
+		const retry = heldRetry;
+		if (!retry) return;
+		heldRetry = null;
+		importHeld.mutate({ entryId: retry.entryId, fileIds: retry.fileIds });
 	}
+
+	function closed(movedTo: string | null): void {
+		const to = back;
+		back = null;
+		heldRetry = null;
+		if (to) void goto(withBasePath(to.href));
+		else if (movedTo) void goto(albumHref(movedTo));
+	}
+
+	// "Looks wrong": anyone who cannot change the edition can say so.
+	const markWrong = createMarkLooksWrongMutation();
+	async function toggleLooksWrong(): Promise<void> {
+		if (!copy || !status) return;
+		const looksWrong = !status.looks_wrong;
+		try {
+			await markWrong.mutateAsync({ userId: userId(), localId: copy.id, looksWrong });
+			toastStore.show({
+				message: looksWrong ? 'Thanks. A curator will check it.' : 'Mark taken back.',
+				type: 'success'
+			});
+		} catch (error) {
+			toastStore.show({
+				message: failureSentence(error, "The mark couldn't be saved."),
+				type: 'error'
+			});
+		}
+	}
+
+	// Why a guess, or no match, is what it is: shown to everyone.
+	const reason = $derived(
+		status && (status.state === 'unconfirmed' || status.state === 'unmatched')
+			? status.reason.message
+			: null
+	);
+	// The open review of the copy, from its library detail.
+	const detailQuery = getLibraryAlbumDetailQuery(() => (canEdit ? (copy?.id ?? '') : ''));
+	const reviewId = $derived(
+		detailQuery.data?.id === copy?.id ? (detailQuery.data?.pending_review_id ?? null) : null
+	);
 </script>
 
 {#if wanted && wantedLines}
@@ -168,25 +256,54 @@
 		<Button variant="ghost" size="xs" onclick={() => statusQuery.refetch()}>Retry</Button>
 	</p>
 {:else if lines}
+	{@render plate(lines)}
+	{#if reason || (canEdit && reviewId) || (!canEdit && status)}
+		<div class="mt-2 flex max-w-xl flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+			{#if reason}
+				<p class="text-base-content/70">{reason}</p>
+			{/if}
+			{#if canEdit && reviewId}
+				<a
+					class="link link-warning text-sm"
+					href={withBasePath(`/library/review?review=${encodeURIComponent(reviewId)}`)}
+					>Needs you: open its review</a
+				>
+			{/if}
+			{#if !canEdit && status}
+				<Button
+					variant="ghost"
+					size="xs"
+					icon={Flag}
+					aria-pressed={status.looks_wrong}
+					loading={markWrong.isPending}
+					onclick={() => void toggleLooksWrong()}
+					>{status.looks_wrong ? 'Marked as wrong' : 'Looks wrong'}</Button
+				>
+			{/if}
+		</div>
+	{/if}
+{/if}
+
+{#snippet plate(plateLines: PlateCopy)}
 	{#if canEdit}
 		<button
 			type="button"
 			class="flex w-full max-w-xl items-center gap-3 rounded-box border border-base-content/10 bg-base-100/40 p-3 text-left backdrop-blur-sm transition-colors hover:border-primary/40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary motion-reduce:transition-none"
-			aria-label={lines.label}
+			aria-label={plateLines.label}
 			onclick={openSheet}
 		>
-			{@render body(lines)}
+			{@render body(plateLines)}
 		</button>
 	{:else}
 		<div
 			class="flex w-full max-w-xl items-center gap-3 rounded-box border border-base-content/10 bg-base-100/40 p-3 backdrop-blur-sm"
 			role="group"
-			aria-label={lines.label.replace(/ (Change|Choose) edition$/, '')}
+			aria-label={plateLines.label.replace(/ (Change|Choose) edition$/, '')}
 		>
-			{@render body(lines)}
+			{@render body(plateLines)}
 		</div>
 	{/if}
-{/if}
+{/snippet}
 
 {#snippet wantedBody(wantedCopy: NonNullable<typeof wantedLines>)}
 	<EditionDisc fill={0} tone={wanted?.locked ? 'busy' : 'none'} spinning={false} />
@@ -244,5 +361,12 @@
 {#if sheetMounted && wanted}
 	<EditionSheet bind:open={sheetOpen} copies={[]} {groupMbid} request={wanted} />
 {:else if sheetMounted && sheetCopies.length}
-	<EditionSheet bind:open={sheetOpen} copies={sheetCopies} {groupMbid} onclose={closed} />
+	<EditionSheet
+		bind:open={sheetOpen}
+		copies={sheetCopies}
+		{groupMbid}
+		onclose={closed}
+		backLabel={back?.label ?? null}
+		onsettled={settled}
+	/>
 {/if}

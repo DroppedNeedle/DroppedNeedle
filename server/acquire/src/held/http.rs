@@ -159,6 +159,9 @@ pub struct HeldEntryResponse {
     /// in milliseconds. `None` when no file offers Retry, or when the next
     /// try is at the held loop's next pass (within five minutes).
     pub next_retry_at: Option<i64>,
+    /// The library album whose match a person should check before the
+    /// better copy held here can go in: its "Check this album" target.
+    pub check_album_id: Option<String>,
     pub files: Vec<HeldFileResponse>,
 }
 
@@ -167,6 +170,7 @@ impl From<Entry> for HeldEntryResponse {
         let retries = entry.files.iter().any(retries_by_itself);
         Self {
             next_retry_at: entry.retry_at.filter(|_| retries),
+            check_album_id: None,
             id: entry.id,
             origin: entry.origin,
             state: entry.state,
@@ -333,8 +337,18 @@ pub async fn list_handler(
             query.all,
         )
         .await?;
+    let mut check = service.albums_to_check(&entries).await;
     Ok(Json(HeldListResponse {
-        entries: entries.into_iter().map(Into::into).collect(),
+        entries: entries
+            .into_iter()
+            .map(|entry| {
+                let album = check.remove(&entry.id);
+                HeldEntryResponse {
+                    check_album_id: album,
+                    ..entry.into()
+                }
+            })
+            .collect(),
     }))
 }
 

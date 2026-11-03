@@ -1,12 +1,11 @@
 <!--
 	What an opened review rests on: the album's cover and current edition,
-	each release it could be with how every file fits (and the MusicBrainz
-	recording it matched), and the album's history.
+	each edition it could be with how every file fits, in words, and the
+	album's history.
 -->
 <script lang="ts">
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import AlbumHistory from '$lib/components/library/AlbumHistory.svelte';
-	import { outsideLink } from '$lib/components/outsideLink';
 	import Button from '$lib/ui/Button.svelte';
 	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
@@ -15,6 +14,7 @@
 		type EditionStatus
 	} from '$lib/queries/albums/EditionQueries.svelte';
 	import type { LibraryReview } from '$lib/queries/library/LibraryReviewQueries.svelte';
+	import { fitLine } from '../edition/editionCopy';
 
 	interface Props {
 		review: LibraryReview;
@@ -33,17 +33,15 @@
 		chosen: 'Chosen by a person',
 		confirmed: 'Picked by DroppedNeedle',
 		unconfirmed: 'Best guess',
-		unmatched: 'Keeps its own tags',
+		unmatched: 'Not found',
 		unidentified: 'Not identified'
 	};
 
-	function percent(score: number): string {
-		return `${Math.round(Math.max(0, Math.min(1, score)) * 100)}%`;
-	}
-
-	function short(mbid: string): string {
-		return mbid.slice(0, 8);
-	}
+	const FIT: Record<string, { label: string; tone: string }> = {
+		supported: { label: 'Fits', tone: 'badge-success' },
+		contradictory: { label: "Doesn't fit", tone: 'badge-error' }
+	};
+	const UNSURE = { label: 'Unsure', tone: 'badge-ghost' };
 
 	const current = $derived(status.data?.release_mbid ?? null);
 </script>
@@ -66,14 +64,6 @@
 				{/snippet}
 				{#snippet children(edition)}
 					<p class="font-medium">{IDENTITY[edition.state]}</p>
-					{#if edition.release_mbid}
-						<a
-							class="link font-mono text-xs text-base-content/60"
-							href={outsideLink(`https://musicbrainz.org/release/${edition.release_mbid}`)}
-							target="_blank"
-							rel="noopener noreferrer">Release {short(edition.release_mbid)}</a
-						>
-					{/if}
 					<p class="text-xs text-base-content/60">{edition.reason.message}</p>
 				{/snippet}
 			</QueryBoundary>
@@ -93,10 +83,15 @@
 									>{/if}
 							</p>
 							<p class="truncate text-xs text-base-content/60">
-								{candidate.album_artist_name}
-								{#if candidate.score > 0}· {percent(candidate.score)} fit{/if}
-								{#if candidate.supported_tracks}· {candidate.supported_tracks} agree{/if}
-								{#if candidate.contradictory_tracks}· {candidate.contradictory_tracks} disagree{/if}
+								{[
+									candidate.album_artist_name,
+									fitLine(candidate.supported_tracks, candidate.track_evidence.length),
+									candidate.contradictory_tracks
+										? `${candidate.contradictory_tracks} don't fit`
+										: null
+								]
+									.filter(Boolean)
+									.join(' · ')}
 							</p>
 						</div>
 						{#if authStore.isTrusted && review.state === 'pending'}
@@ -104,7 +99,7 @@
 								variant="primary"
 								size="xs"
 								disabled={busy}
-								onclick={() => onchoose(candidate.candidate_key)}>Use this release</Button
+								onclick={() => onchoose(candidate.candidate_key)}>Use this edition</Button
 							>
 						{/if}
 					</div>
@@ -113,28 +108,10 @@
 							<summary class="cursor-pointer text-base-content/60">How each file fits</summary>
 							<ul class="mt-1 space-y-1">
 								{#each candidate.track_evidence as evidence (evidence.local_track_id)}
+									{@const fit = FIT[evidence.classification] ?? UNSURE}
 									<li class="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-										<span
-											class="badge badge-xs {evidence.classification === 'supported'
-												? 'badge-success'
-												: evidence.classification === 'contradictory'
-													? 'badge-error'
-													: 'badge-ghost'}">{evidence.classification}</span
-										>
-										<span class="min-w-0 truncate">{evidence.title || evidence.local_track_id}</span
-										>
-										{#if evidence.evidence_kinds.length}<span class="text-base-content/50"
-												>({evidence.evidence_kinds.join(', ')})</span
-											>{/if}
-										{#if evidence.recording_mbid}<a
-												class="link font-mono text-base-content/60"
-												title={evidence.recording_mbid}
-												href={outsideLink(
-													`https://musicbrainz.org/recording/${evidence.recording_mbid}`
-												)}
-												target="_blank"
-												rel="noopener noreferrer">Recording {short(evidence.recording_mbid)}</a
-											>{/if}
+										<span class="badge badge-xs {fit.tone}">{fit.label}</span>
+										<span class="min-w-0 truncate">{evidence.title || 'Untitled file'}</span>
 									</li>
 								{/each}
 							</ul>
@@ -145,8 +122,7 @@
 		</ul>
 	{:else}
 		<p class="text-sm text-base-content/60">
-			No candidates were kept with this review. Retry identification, or pick an edition from the
-			album page.
+			No candidates were kept with this review. Look again, or pick an edition from the album page.
 		</p>
 	{/if}
 

@@ -22,7 +22,8 @@ use super::player::{
 use super::stores::{AlbumSort, ArtistScope, ArtistSort, TrackSort};
 use droppedneedle_library::identity::asked_groups;
 use droppedneedle_library::{
-    all_owners, copy_of_group, named_group_guess, not_yet_identified, owns_group, recording_mbid,
+    all_owners, copy_of_group, match_flag_state, named_group_guess, not_yet_identified, owns_group,
+    recording_mbid,
 };
 
 droppedneedle_kernel::sql! {
@@ -408,11 +409,25 @@ droppedneedle_kernel::sql! {
     /// Indexed tracks per format, the zero rows left out as GROUP BY would.
     pub(crate) STATS_FORMATS = "SELECT file_format AS format, indexed_tracks AS total \
         FROM catalog_track_format_stats WHERE indexed_tracks > 0";
-    /// Review, local-only and last-scan totals. Local-only albums are owned
-    /// albums with no identity row; the last scan is the newest completed
-    /// run.
+    /// Review, Check albums, local-only and last-scan totals; `to_check`
+    /// counts each album once, whichever of the three lists it is on. Local-only
+    /// albums are owned albums with no identity row; best guesses and
+    /// albums nothing fits are live albums with that match state; the last
+    /// scan is the newest completed run.
     pub(crate) STATS_EXTRAS = "SELECT \
         (SELECT COUNT(*) FROM library_identify_reviews WHERE state = 'pending') AS reviews, \
+        (SELECT COUNT(*) FROM local_albums a WHERE a.retired_into_album_id IS NULL \
+         AND " + (match_flag_state!("a.id", "unconfirmed")) + ") AS guesses, \
+        (SELECT COUNT(*) FROM local_albums a WHERE a.retired_into_album_id IS NULL \
+         AND " + (match_flag_state!("a.id", "unmatched")) + ") AS not_found, \
+        (SELECT COUNT(DISTINCT w.local_album_id) FROM library_album_looks_wrong w \
+         JOIN local_albums a ON a.id = w.local_album_id \
+         WHERE a.retired_into_album_id IS NULL) AS looks_wrong, \
+        (SELECT COUNT(*) FROM local_albums a WHERE a.retired_into_album_id IS NULL AND ("
+        + (match_flag_state!("a.id", "unconfirmed")) + " \
+         OR EXISTS (SELECT 1 FROM library_album_looks_wrong w WHERE w.local_album_id = a.id) \
+         OR EXISTS (SELECT 1 FROM library_identify_reviews r \
+         WHERE r.local_album_id = a.id AND r.state = 'pending'))) AS to_check, \
         (SELECT COUNT(*) FROM local_albums a WHERE " + (owned_album!("a"))
         + " AND NOT EXISTS (SELECT 1 FROM local_album_external_identities i \
         WHERE i.local_album_id = a.id AND " + (musicbrainz!("i")) + ")) AS local_only, \

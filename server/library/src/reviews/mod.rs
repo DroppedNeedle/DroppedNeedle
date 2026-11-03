@@ -25,6 +25,7 @@ use crate::identify::models::{ReviewItem, ReviewState};
 use crate::identify::sqlite::{bump_identification_stream, review_item};
 use crate::jobs::models::OperationError;
 use crate::reasons;
+use crate::reviews::sql::ReopenGuard;
 use crate::reviews::sql::RequesterRow;
 use crate::reviews::sql::ReviewById;
 use crate::reviews::sql::ReviewCount;
@@ -125,6 +126,9 @@ pub enum ReviewAction {
     Detach,
     Exclude,
     Restore,
+    /// A review whose tags were kept, or that was left for later, waits
+    /// for a decision again.
+    Reopen,
 }
 
 /// A review with its album's columns, from either row its statements
@@ -639,10 +643,12 @@ pub fn settle(
     actor: &str,
     now: f64,
 ) -> Result<(), OperationError> {
-    let (needed, settled) = if action == ReviewAction::Restore {
-        (ReviewState::Excluded, reasons::REVIEW_NOT_EXCLUDED)
-    } else {
-        (ReviewState::Pending, reasons::REVIEW_SETTLED)
+    if action == ReviewAction::Reopen {
+        return reopen(tx, review_id, expected_revision, actor, now);
+    }
+    let (needed, settled) = match action {
+        ReviewAction::Restore => (ReviewState::Excluded, reasons::REVIEW_NOT_EXCLUDED),
+        _ => (ReviewState::Pending, reasons::REVIEW_SETTLED),
     };
     let album_id = guard(tx, review_id, expected_revision, needed, settled)?;
     let next = match action {
@@ -660,10 +666,78 @@ pub fn settle(
             restore(tx, review_id, &album_id, actor, now)?;
             ReviewState::Dismissed
         }
+        ReviewAction::Reopen => ReviewState::Pending,
     };
     if !mark(tx, review_id, state_name(needed), next, actor, now)? {
         return Err(OperationError::Conflict(reasons::REVIEW_SETTLED));
     }
+    // A person who kept the tags or left the review for later may take it
+    // back while nothing has changed since: the review's revision and the
+    // album's match row are noted as they are now.
+    if matches!(action, ReviewAction::KeepTagged | ReviewAction::Dismiss) {
+        tx.prepare_cached(crate::reviews::sql::NOTE_REOPENABLE.text())?
+            .execute([review_id])?;
+    }
+    Ok(())
+}
+
+/// Put a review a person closed with "Keep my tags" or "Decide later" back
+/// to pending, decided on its `expected_revision`. Only while the review
+/// and the album's match row are as they were when it was closed, and the
+/// album has no other open review; anything the system closed, and
+/// anything closed another way, is refused. The audit records who did it.
+fn reopen(
+    tx: &Transaction<'_>,
+    review_id: &str,
+    expected_revision: i64,
+    actor: &str,
+    now: f64,
+) -> Result<(), OperationError> {
+    let row = tx
+        .query_row(
+            crate::reviews::sql::REOPEN_GUARD.text(),
+            [review_id],
+            ReopenGuard::read,
+        )
+        .optional()?
+        .ok_or(OperationError::NotFound(reasons::REVIEW_NOT_FOUND))?;
+    if row.row_revision != expected_revision {
+        return Err(OperationError::Conflict(reasons::REVIEW_STALE));
+    }
+    let reopenable = matches!(row.state, ReviewState::Dismissed | ReviewState::Rejected)
+        && row.resolved_by_user_id.is_some()
+        && row.reopen_review_revision == Some(row.row_revision)
+        && row.reopen_identity_revision == Some(row.identity_revision)
+        && !row.other_pending;
+    if !reopenable {
+        return Err(OperationError::Conflict(reasons::REVIEW_NOT_CLOSED));
+    }
+    // An open review is nobody's decision yet.
+    if !mark(
+        tx,
+        review_id,
+        state_name(row.state),
+        ReviewState::Pending,
+        "",
+        now,
+    )? {
+        return Err(OperationError::Conflict(reasons::REVIEW_SETTLED));
+    }
+    tx.prepare_cached(crate::reviews::sql::CLEAR_REOPENABLE.text())?
+        .execute([review_id])?;
+    record_action(
+        tx,
+        CatalogAction {
+            actor,
+            kind: "review_reopened",
+            album_id: &row.local_album_id,
+            job_id: None,
+            before: serde_json::json!({ "review_id": review_id, "state": state_name(row.state) }),
+            after: serde_json::json!({ "review_id": review_id, "state": "pending" }),
+            reason: "REVIEW_REOPENED",
+        },
+        now,
+    )?;
     Ok(())
 }
 

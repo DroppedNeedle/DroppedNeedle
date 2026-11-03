@@ -9001,7 +9001,7 @@
         "tags": [
           "library management"
         ],
-        "summary": "\"Looks right\": confirm the album's unconfirmed best guess.",
+        "summary": "\"That's right\": confirm the album's unconfirmed best guess.",
         "operationId": "confirm_edition",
         "parameters": [
           {
@@ -10262,6 +10262,145 @@
           {
             "session": [
               "user"
+            ]
+          }
+        ]
+      }
+    },
+    "/api/v3/library/albums/{album_id}/looks-wrong": {
+      "put": {
+        "tags": [
+          "library management"
+        ],
+        "summary": "\"Looks wrong\": mark the album's match as looking wrong, so curators\ncheck it, or take your own mark back. Each person's mark is their own.",
+        "operationId": "mark_looks_wrong",
+        "parameters": [
+          {
+            "name": "album_id",
+            "in": "path",
+            "description": "Local album id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LooksWrongBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The caller's mark",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LooksWrongView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "No `looks_wrong` given",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown album",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "library management"
+        ],
+        "summary": "A curator finds nothing wrong with the album's match: every \"Looks\nwrong\" mark on it goes. Choosing, confirming or handing back its\nedition clears them too.",
+        "operationId": "clear_looks_wrong",
+        "parameters": [
+          {
+            "name": "album_id",
+            "in": "path",
+            "description": "Local album id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No mark is left"
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Curator role required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown album",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "curator"
             ]
           }
         ]
@@ -19567,6 +19706,95 @@
         ]
       }
     },
+    "/api/v3/library/reviews/{id}/reopen": {
+      "post": {
+        "tags": [
+          "library management"
+        ],
+        "summary": "Reopen a review whose tags were kept, or that was left for later: it\nwaits for a decision again. The album stays as it is.",
+        "operationId": "reopen_review",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Review id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewActionBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Reopened review",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Curator role required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown review id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The review is not closed, or changed since it was read (STALE_REVISION)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "curator"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/library/reviews/{id}/restore": {
       "post": {
         "tags": [
@@ -21138,7 +21366,8 @@
               "description": "Which albums the unconfirmed list shows.",
               "enum": [
                 "unconfirmed",
-                "unmatched"
+                "unmatched",
+                "looks_wrong"
               ]
             }
           },
@@ -41528,6 +41757,17 @@
           "id": {
             "type": "string"
           },
+          "maybe_have": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/MaybeHaveView",
+                "description": "A library album whose edition is a guess of this album, though its\nfiles name another: \"You may have this\"."
+              }
+            ]
+          },
           "next_retry_at": {
             "type": [
               "number",
@@ -42833,7 +43073,10 @@
           "identifying",
           "files_by_itself",
           "writing",
-          "keeps_own_tags"
+          "keeps_own_tags",
+          "disputed_tracks",
+          "looks_wrong",
+          "looks_wrong_count"
         ],
         "properties": {
           "album_id": {
@@ -42861,6 +43104,13 @@
             ],
             "description": "Who chose the edition, for a chosen one."
           },
+          "disputed_tracks": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Titles of the files whose audio sounds like another track of the\nguess (`AUDIO_DISAGREES`)."
+          },
           "edition_kind": {
             "$ref": "#/components/schemas/EditionKind",
             "description": "`release` (a MusicBrainz release), `custom` (a custom edition),\n`group_only` (a release group with no release chosen) or `none`."
@@ -42881,6 +43131,23 @@
           "keeps_own_tags": {
             "type": "boolean",
             "description": "A file of the album sits in a folder that keeps its own tags (the\nLocal metadata policy, of the folder or a path rule): the app\nwrites no tags or names there, and downloads land as they came."
+          },
+          "looks_wrong": {
+            "type": "boolean",
+            "description": "The caller marked the album's match \"Looks wrong\"."
+          },
+          "looks_wrong_count": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How many people marked it.",
+            "minimum": 0
+          },
+          "named_release_group_mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The release group every file's tags name, when the guess fits\nanother (`NAMED_GROUP_DIFFERS`): its editions are worth a look."
           },
           "placing": {
             "oneOf": [
@@ -44745,6 +45012,13 @@
               "string",
               "null"
             ]
+          },
+          "check_album_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The library album whose match a person should check before the\nbetter copy held here can go in: its \"Check this album\" target."
           },
           "created_at": {
             "type": "integer",
@@ -48476,6 +48750,30 @@
           }
         }
       },
+      "LooksWrongBody": {
+        "type": "object",
+        "description": "Mark an album's match as looking wrong, or take the mark back.",
+        "required": [
+          "looks_wrong"
+        ],
+        "properties": {
+          "looks_wrong": {
+            "type": "boolean"
+          }
+        }
+      },
+      "LooksWrongView": {
+        "type": "object",
+        "description": "The caller's own \"Looks wrong\" mark.",
+        "required": [
+          "looks_wrong"
+        ],
+        "properties": {
+          "looks_wrong": {
+            "type": "boolean"
+          }
+        }
+      },
       "LoopState": {
         "type": "string",
         "description": "Liveness of a loop row. The table's CHECK still allows `idle`, which\nnothing writes since every loop runs on the supervisor.",
@@ -50455,6 +50753,22 @@
               "$ref": "#/components/schemas/RemotesTrackView"
             },
             "description": "Album tracks, when found."
+          }
+        }
+      },
+      "MaybeHaveView": {
+        "type": "object",
+        "description": "A library album that may already be the one a download hunts for.",
+        "required": [
+          "album_id",
+          "title"
+        ],
+        "properties": {
+          "album_id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
           }
         }
       },
@@ -53445,7 +53759,9 @@
                 "state",
                 "reason",
                 "updated_at",
-                "identity_revision"
+                "identity_revision",
+                "file_count",
+                "looks_wrong_count"
               ],
               "properties": {
                 "album_id": {
@@ -53454,10 +53770,33 @@
                 "artist_name": {
                   "type": "string"
                 },
+                "file_count": {
+                  "type": "integer",
+                  "format": "int32",
+                  "description": "Indexed files the album holds.",
+                  "minimum": 0
+                },
+                "guess": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/WaitingGuessView",
+                      "description": "What \"That's right\" confirms, for a best guess."
+                    }
+                  ]
+                },
                 "identity_revision": {
                   "type": "integer",
                   "format": "int64",
-                  "description": "The identity's row revision, 0 when the album has none. \"Looks\nright\" echoes it."
+                  "description": "The identity's row revision, 0 when the album has none. \"That's\nright\" echoes it."
+                },
+                "looks_wrong_count": {
+                  "type": "integer",
+                  "format": "int32",
+                  "description": "How many people marked the match \"Looks wrong\".",
+                  "minimum": 0
                 },
                 "reason": {
                   "$ref": "#/components/schemas/ReasonView"
@@ -53476,14 +53815,16 @@
                 },
                 "state": {
                   "$ref": "#/components/schemas/EditionState",
-                  "description": "`unconfirmed` or `unmatched`."
+                  "description": "`unconfirmed` or `unmatched`; in the \"Looks wrong\" list, any state."
                 },
                 "title": {
-                  "type": "string"
+                  "type": "string",
+                  "description": "The album as its files have it."
                 },
                 "updated_at": {
                   "type": "number",
-                  "format": "double"
+                  "format": "double",
+                  "description": "When it was listed (epoch seconds): the match, or the newest\n\"Looks wrong\" mark."
                 }
               }
             }
@@ -56853,6 +57194,7 @@
           "no_better_than_yours",
           "owned_elsewhere",
           "owned_on_album",
+          "album_needs_check",
           "no_album_match",
           "album_not_found",
           "tags_disagree",
@@ -62755,9 +63097,19 @@
           "favorite_artists",
           "favorite_tracks",
           "review_count",
+          "guess_count",
+          "not_found_count",
+          "looks_wrong_count",
+          "check_count",
           "local_only_count"
         ],
         "properties": {
+          "check_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Albums to check, each once: a best guess, marked \"Looks wrong\" or\nwith an open review.",
+            "minimum": 0
+          },
           "favorite_albums": {
             "type": "integer",
             "format": "int64",
@@ -62788,6 +63140,12 @@
               "type": "string"
             }
           },
+          "guess_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Albums whose edition is a best guess.",
+            "minimum": 0
+          },
           "last_scan_at": {
             "type": [
               "number",
@@ -62802,10 +63160,22 @@
             "description": "Albums with streamable tracks and no MusicBrainz identity.",
             "minimum": 0
           },
+          "looks_wrong_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Albums someone marked \"Looks wrong\".",
+            "minimum": 0
+          },
+          "not_found_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Albums nothing on MusicBrainz fits.",
+            "minimum": 0
+          },
           "review_count": {
             "type": "integer",
             "format": "int64",
-            "description": "Identification reviews waiting on a person.",
+            "description": "Identification reviews waiting on a person (\"Needs you\").",
             "minimum": 0
           },
           "total_albums": {
@@ -65447,7 +65817,9 @@
           "state",
           "reason",
           "updated_at",
-          "identity_revision"
+          "identity_revision",
+          "file_count",
+          "looks_wrong_count"
         ],
         "properties": {
           "album_id": {
@@ -65456,10 +65828,33 @@
           "artist_name": {
             "type": "string"
           },
+          "file_count": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Indexed files the album holds.",
+            "minimum": 0
+          },
+          "guess": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/WaitingGuessView",
+                "description": "What \"That's right\" confirms, for a best guess."
+              }
+            ]
+          },
           "identity_revision": {
             "type": "integer",
             "format": "int64",
-            "description": "The identity's row revision, 0 when the album has none. \"Looks\nright\" echoes it."
+            "description": "The identity's row revision, 0 when the album has none. \"That's\nright\" echoes it."
+          },
+          "looks_wrong_count": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How many people marked the match \"Looks wrong\".",
+            "minimum": 0
           },
           "reason": {
             "$ref": "#/components/schemas/ReasonView"
@@ -65478,14 +65873,49 @@
           },
           "state": {
             "$ref": "#/components/schemas/EditionState",
-            "description": "`unconfirmed` or `unmatched`."
+            "description": "`unconfirmed` or `unmatched`; in the \"Looks wrong\" list, any state."
           },
           "title": {
-            "type": "string"
+            "type": "string",
+            "description": "The album as its files have it."
           },
           "updated_at": {
             "type": "number",
-            "format": "double"
+            "format": "double",
+            "description": "When it was listed (epoch seconds): the match, or the newest\n\"Looks wrong\" mark."
+          }
+        }
+      },
+      "WaitingGuessView": {
+        "type": "object",
+        "description": "The guess an album holds, as its row in the list names it.",
+        "required": [
+          "title",
+          "artist_name",
+          "release_group_mbid",
+          "matched_files"
+        ],
+        "properties": {
+          "artist_name": {
+            "type": "string"
+          },
+          "matched_files": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Files the guess accounts for closely.",
+            "minimum": 0
+          },
+          "release_group_mbid": {
+            "type": "string"
+          },
+          "release_mbid": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": "string"
           }
         }
       },

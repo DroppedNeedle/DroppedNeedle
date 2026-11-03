@@ -3,7 +3,7 @@
 //! - `GET /library/albums/{id}/edition`: where the edition stands and why.
 //! - `PUT /library/albums/{id}/edition`: choose any release as the edition.
 //! - `DELETE /library/albums/{id}/edition`: "Let DroppedNeedle choose".
-//! - `POST /library/albums/{id}/edition/confirm`: "Looks right".
+//! - `POST /library/albums/{id}/edition/confirm`: "That's right".
 //! - `POST /library/albums/{id}/edition/undo`: take back the last change.
 //! - `POST /library/albums/{id}/edition/custom`: keep the files as they are
 //!   as a custom edition of a release's group (admins).
@@ -23,7 +23,12 @@
 //!   in the album's files, as the folder's profile writes them; then
 //!   `GET .../tags/{job_id}` to read it, `POST .../tags/{job_id}/apply` to
 //!   write it, and `POST .../tags/{job_id}/undo` to plan putting it back.
-//! - `GET /library/unconfirmed`: albums whose match waits for a look.
+//! - `GET /library/unconfirmed`: albums whose match waits for a look, or
+//!   that someone marked "Looks wrong".
+//! - `PUT /library/albums/{id}/looks-wrong`: mark the album's match as
+//!   looking wrong, or take your own mark back (any signed-in user).
+//! - `DELETE /library/albums/{id}/looks-wrong`: a curator finds nothing
+//!   wrong, and every mark on the album goes.
 //!
 //! Changing an edition is for curators (admins and trusted users), as
 //! pinning was; reading is open to every signed-in user. Every change sends
@@ -51,6 +56,7 @@ use crate::edition::plan::PlanReading;
 use crate::edition::status::EditionKind;
 use crate::edition::status::EditionState;
 use crate::edition::status::EditionStatus;
+use crate::edition::status::Waiting;
 use crate::edition::status::WaitingAlbum;
 use crate::identify::models::CandidateEvidence;
 use crate::jobs::models::OperationError;
@@ -85,6 +91,8 @@ pub fn routes() -> Routes<LibraryServices> {
         .curator(routes!(apply_edition_tags))
         .curator(routes!(undo_edition_tags))
         .user(routes!(list_unconfirmed))
+        .user(routes!(mark_looks_wrong))
+        .curator(routes!(clear_looks_wrong))
 }
 
 /// One candidate the matcher scored, as the edition picker shows it.
@@ -166,6 +174,47 @@ pub struct EditionStatusView {
     /// Local metadata policy, of the folder or a path rule): the app
     /// writes no tags or names there, and downloads land as they came.
     pub keeps_own_tags: bool,
+    /// The release group every file's tags name, when the guess fits
+    /// another (`NAMED_GROUP_DIFFERS`): its editions are worth a look.
+    pub named_release_group_mbid: Option<String>,
+    /// Titles of the files whose audio sounds like another track of the
+    /// guess (`AUDIO_DISAGREES`).
+    pub disputed_tracks: Vec<String>,
+    /// The caller marked the album's match "Looks wrong".
+    pub looks_wrong: bool,
+    /// How many people marked it.
+    pub looks_wrong_count: u32,
+}
+
+/// A match reason, with the album's own facts in its sentence where it
+/// names them.
+fn match_reason_view(
+    reason: reasons::Reason,
+    album: &str,
+    guess: Option<&CandidateEvidence>,
+) -> ReasonView {
+    let disputed = guess.map_or(0, |guess| {
+        guess
+            .track_evidence
+            .iter()
+            .filter(|track| {
+                track
+                    .evidence_kinds
+                    .iter()
+                    .any(|kind| kind == crate::matching::score::FINGERPRINT_DISPUTED)
+            })
+            .count()
+    });
+    let facts = reasons::MatchFacts {
+        album,
+        guess: guess.map(|guess| guess.album_title.as_str()),
+        disputed,
+    };
+    let mut view = ReasonView::from(reason);
+    if let Some(message) = reasons::match_sentence(reason.code, facts) {
+        view.message = message;
+    }
+    view
 }
 
 /// The chosen edition's files are still being placed on it.
@@ -176,8 +225,22 @@ pub struct EditionPlacingView {
 }
 
 impl EditionStatusView {
-    fn of(status: EditionStatus, writes: AutomaticWrites, keeps_own_tags: bool) -> Self {
+    fn of(
+        status: EditionStatus,
+        writes: AutomaticWrites,
+        keeps_own_tags: bool,
+        (looks_wrong, looks_wrong_count): (bool, u32),
+    ) -> Self {
+        let reason = match_reason_view(
+            status.reason,
+            &status.album_title,
+            crate::edition::status::guess_of(&status.candidates, status.release_mbid.as_deref()),
+        );
         Self {
+            looks_wrong,
+            looks_wrong_count,
+            named_release_group_mbid: status.named_release_group_mbid,
+            disputed_tracks: status.disputed_tracks,
             keeps_own_tags,
             identity_revision: status.identity_revision,
             edition_kind: status.edition_kind,
@@ -193,7 +256,7 @@ impl EditionStatusView {
             release_mbid: status.release_mbid,
             chosen_by_user_id: status.chosen_by_user_id,
             chosen_at: status.chosen_at,
-            reason: status.reason.into(),
+            reason,
             candidates: status.candidates.iter().map(Into::into).collect(),
             undo_available: status.undo_available,
         }
@@ -437,6 +500,8 @@ pub enum WaitingState {
     Unconfirmed,
     /// Not matched at all.
     Unmatched,
+    /// Someone marked the match "Looks wrong", whatever its state.
+    LooksWrong,
 }
 
 /// Paging for the unconfirmed list.
@@ -456,29 +521,59 @@ pub struct UnconfirmedQuery {
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct WaitingAlbumView {
     pub album_id: String,
+    /// The album as its files have it.
     pub title: String,
     pub artist_name: String,
-    /// `unconfirmed` or `unmatched`.
+    /// `unconfirmed` or `unmatched`; in the "Looks wrong" list, any state.
     pub state: EditionState,
     pub release_mbid: Option<String>,
     pub release_group_mbid: Option<String>,
     pub reason: ReasonView,
+    /// When it was listed (epoch seconds): the match, or the newest
+    /// "Looks wrong" mark.
     pub updated_at: f64,
-    /// The identity's row revision, 0 when the album has none. "Looks
+    /// The identity's row revision, 0 when the album has none. "That's
     /// right" echoes it.
     pub identity_revision: i64,
+    /// What "That's right" confirms, for a best guess.
+    pub guess: Option<WaitingGuessView>,
+    /// Indexed files the album holds.
+    pub file_count: u32,
+    /// How many people marked the match "Looks wrong".
+    pub looks_wrong_count: u32,
+}
+
+/// The guess an album holds, as its row in the list names it.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct WaitingGuessView {
+    pub title: String,
+    pub artist_name: String,
+    pub release_group_mbid: String,
+    pub release_mbid: Option<String>,
+    /// Files the guess accounts for closely.
+    pub matched_files: u32,
 }
 
 impl From<WaitingAlbum> for WaitingAlbumView {
     fn from(album: WaitingAlbum) -> Self {
+        let reason = match_reason_view(album.reason, &album.title, album.guess.as_ref());
         Self {
+            guess: album.guess.map(|guess| WaitingGuessView {
+                matched_files: u32::try_from(guess.supported_count()).unwrap_or(u32::MAX),
+                title: guess.album_title,
+                artist_name: guess.album_artist_name,
+                release_group_mbid: guess.release_group_mbid,
+                release_mbid: guess.release_mbid,
+            }),
+            file_count: album.file_count,
+            looks_wrong_count: album.looks_wrong,
             album_id: album.local_album_id,
             title: album.title,
             artist_name: album.artist_name,
             state: album.state,
             release_mbid: album.release_mbid,
             release_group_mbid: album.release_group_mbid,
-            reason: album.reason.into(),
+            reason,
             updated_at: album.updated_at,
             identity_revision: album.identity_revision,
         }
@@ -489,6 +584,7 @@ fn read_status(
     ops: &Operations,
     management: &Management,
     album_id: &str,
+    user_id: &str,
 ) -> Result<EditionStatusView, OperationError> {
     let status = ops
         .edition_status(album_id)?
@@ -499,17 +595,26 @@ fn read_status(
     };
     let writes = management.writes_by_itself(album_id).map_err(managed)?;
     let keeps_own_tags = management.keeps_own_tags(album_id).map_err(managed)?;
-    Ok(EditionStatusView::of(status, writes, keeps_own_tags))
+    let looks_wrong = ops.looks_wrong_of(album_id, user_id)?;
+    Ok(EditionStatusView::of(
+        status,
+        writes,
+        keeps_own_tags,
+        looks_wrong,
+    ))
 }
 
+/// The album's edition as `user_id` reads it: their own "Looks wrong" mark
+/// is theirs.
 async fn status_of(
     services: &LibraryServices,
     album_id: &str,
+    user_id: &str,
 ) -> Result<EditionStatusView, ApiError> {
     let ops = services.operations.clone();
     let management = services.management.clone();
-    let album_id = album_id.to_owned();
-    blocking(move || read_status(&ops, &management, &album_id)).await
+    let (album_id, user_id) = (album_id.to_owned(), user_id.to_owned());
+    blocking(move || read_status(&ops, &management, &album_id, &user_id)).await
 }
 
 /// Where the album's edition stands, and why.
@@ -526,10 +631,12 @@ async fn status_of(
 )]
 pub async fn get_edition(
     State(services): State<LibraryServices>,
-    _caller: User,
+    User(caller): User,
     Path(album_id): Path<String>,
 ) -> Result<Json<EditionStatusView>, ApiError> {
-    Ok(Json(status_of(&services, &album_id).await?))
+    Ok(Json(
+        status_of(&services, &album_id, caller.user_id()).await?,
+    ))
 }
 
 /// Choose the album's edition: any release, from this album's release
@@ -566,7 +673,7 @@ pub async fn choose_edition(
             Some(caller.user_id()),
         )
         .await?;
-    let status = status_of(&services, &album_id).await?;
+    let status = status_of(&services, &album_id, caller.user_id()).await?;
     Ok(Json(EditionChoiceView {
         album_id: choice.local_album_id,
         release_group_mbid: choice.release_group_mbid,
@@ -612,10 +719,12 @@ pub async fn hand_back_edition(
     let (album, user) = (album_id.clone(), caller.user_id().to_owned());
     let expected = query.expected_identity_revision;
     blocking(move || ops.hand_back_edition(&album, expected, &user)).await?;
-    Ok(Json(status_of(&services, &album_id).await?))
+    Ok(Json(
+        status_of(&services, &album_id, caller.user_id()).await?,
+    ))
 }
 
-/// "Looks right": confirm the album's unconfirmed best guess.
+/// "That's right": confirm the album's unconfirmed best guess.
 #[utoipa::path(
     post,
     tag = "library management",
@@ -640,7 +749,9 @@ pub async fn confirm_edition(
     let (album, user) = (album_id.clone(), caller.user_id().to_owned());
     let expected = body.expected_identity_revision;
     blocking(move || ops.confirm_match(&album, expected, &user)).await?;
-    Ok(Json(status_of(&services, &album_id).await?))
+    Ok(Json(
+        status_of(&services, &album_id, caller.user_id()).await?,
+    ))
 }
 
 /// Take back the album's last edition change.
@@ -668,7 +779,9 @@ pub async fn undo_edition(
     let (album, user) = (album_id.clone(), caller.user_id().to_owned());
     let expected = body.expected_identity_revision;
     blocking(move || ops.undo_edition_choice(&album, expected, &user)).await?;
-    Ok(Json(status_of(&services, &album_id).await?))
+    Ok(Json(
+        status_of(&services, &album_id, caller.user_id()).await?,
+    ))
 }
 
 /// Seal a custom edition.
@@ -722,7 +835,9 @@ pub async fn seal_custom_edition(
             caller.user_id(),
         )
         .await?;
-    Ok(Json(status_of(&services, &album_id).await?))
+    Ok(Json(
+        status_of(&services, &album_id, caller.user_id()).await?,
+    ))
 }
 
 /// Leave the album unmanaged: its exact edition goes (the release group
@@ -751,7 +866,9 @@ pub async fn leave_unmanaged(
     let ops = services.operations.clone();
     let (album, user) = (album_id.clone(), caller.user_id().to_owned());
     blocking(move || ops.leave_unmanaged(&album, body.expected_identity_revision, &user)).await?;
-    Ok(Json(status_of(&services, &album_id).await?))
+    Ok(Json(
+        status_of(&services, &album_id, caller.user_id()).await?,
+    ))
 }
 
 /// What taking an edition would do: which files keep their place, which
@@ -838,7 +955,9 @@ pub async fn match_edition_file(
             caller.user_id(),
         )
         .await?;
-    Ok(Json(status_of(&services, &album_id).await?))
+    Ok(Json(
+        status_of(&services, &album_id, caller.user_id()).await?,
+    ))
 }
 
 /// Undo a file's match by hand.
@@ -873,7 +992,9 @@ pub async fn unmatch_edition_file(
     let (album, track, user) = (album_id.clone(), track_id, caller.user_id().to_owned());
     let expected = query.expected_identity_revision;
     blocking(move || ops.unmatch_file(&album, &track, expected, &user)).await?;
-    Ok(Json(status_of(&services, &album_id).await?))
+    Ok(Json(
+        status_of(&services, &album_id, caller.user_id()).await?,
+    ))
 }
 
 /// Extra files to move to the recycle bin.
@@ -953,10 +1074,14 @@ pub async fn list_unconfirmed(
     _caller: User,
     ValidQuery(query): ValidQuery<UnconfirmedQuery>,
 ) -> Result<Json<Page<WaitingAlbumView>>, ApiError> {
-    let unmatched = query.state == Some(WaitingState::Unmatched);
+    let which = match query.state.unwrap_or(WaitingState::Unconfirmed) {
+        WaitingState::Unconfirmed => Waiting::Unconfirmed,
+        WaitingState::Unmatched => Waiting::Unmatched,
+        WaitingState::LooksWrong => Waiting::LooksWrong,
+    };
     let paging = PageRequest::<u32>::read(query.limit, query.cursor.as_deref(), 50, PAGE_MAX)?;
     let (limit, offset) = (paging.limit as u32, paging.after.unwrap_or(0));
-    let (items, total) = blocking(move || ops.waiting_albums(unmatched, limit, offset)).await?;
+    let (items, total) = blocking(move || ops.waiting_albums(which, limit, offset)).await?;
     let items = items.into_iter().map(Into::into).collect();
     Ok(Json(Page::at_offset(
         items,
@@ -964,6 +1089,69 @@ pub async fn list_unconfirmed(
         limit.into(),
         total,
     )))
+}
+
+/// Mark an album's match as looking wrong, or take the mark back.
+#[derive(Debug, Clone, Deserialize, ToSchema)]
+pub struct LooksWrongBody {
+    pub looks_wrong: bool,
+}
+
+/// The caller's own "Looks wrong" mark.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct LooksWrongView {
+    pub looks_wrong: bool,
+}
+
+/// "Looks wrong": mark the album's match as looking wrong, so curators
+/// check it, or take your own mark back. Each person's mark is their own.
+#[utoipa::path(
+    put,
+    tag = "library management",
+    path = "/api/v3/library/albums/{album_id}/looks-wrong",
+    params(("album_id" = String, Path, description = "Local album id")),
+    request_body = LooksWrongBody,
+    responses(
+        (status = 200, description = "The caller's mark", body = LooksWrongView),
+        (status = 400, description = "No `looks_wrong` given"),
+        (status = 401, description = "Not authenticated"),
+        (status = 404, description = "Unknown album"),
+    )
+)]
+pub async fn mark_looks_wrong(
+    State(ops): State<Operations>,
+    User(caller): User,
+    Path(album_id): Path<String>,
+    ValidJson(body): ValidJson<LooksWrongBody>,
+) -> Result<Json<LooksWrongView>, ApiError> {
+    let user = caller.user_id().to_owned();
+    let looks_wrong = body.looks_wrong;
+    blocking(move || ops.mark_looks_wrong(&album_id, &user, looks_wrong)).await?;
+    Ok(Json(LooksWrongView { looks_wrong }))
+}
+
+/// A curator finds nothing wrong with the album's match: every "Looks
+/// wrong" mark on it goes. Choosing, confirming or handing back its
+/// edition clears them too.
+#[utoipa::path(
+    delete,
+    tag = "library management",
+    path = "/api/v3/library/albums/{album_id}/looks-wrong",
+    params(("album_id" = String, Path, description = "Local album id")),
+    responses(
+        (status = 204, description = "No mark is left"),
+        (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Curator role required"),
+        (status = 404, description = "Unknown album"),
+    )
+)]
+pub async fn clear_looks_wrong(
+    State(ops): State<Operations>,
+    _caller: Curator,
+    Path(album_id): Path<String>,
+) -> Result<axum::http::StatusCode, ApiError> {
+    blocking(move || ops.clear_looks_wrong(&album_id)).await?;
+    Ok(axum::http::StatusCode::NO_CONTENT)
 }
 
 // ---------------------------------------------------------------------------

@@ -162,6 +162,7 @@ user_event_seen
 
 [library]
 library_album_departures
+library_album_looks_wrong
 library_album_match_state
 library_album_takeovers
 library_artist_credit_proofs

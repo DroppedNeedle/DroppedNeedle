@@ -334,6 +334,11 @@ pub const REVIEW_CANDIDATE_NOT_FOUND: Reason = reason(
     "This review does not list that release.",
     "Reload the review and pick one of its releases.",
 );
+pub const REVIEW_NOT_CLOSED: Reason = reason(
+    "REVIEW_NOT_CLOSED",
+    "Only a review someone closed with Keep my tags or Decide later can be reopened, while its album is unchanged and has no other open review.",
+    "Reload the list to see the review's current state.",
+);
 pub const REVIEW_NOT_EXCLUDED: Reason = reason(
     "REVIEW_NOT_EXCLUDED",
     "This album's files were not taken out from its review, so there is nothing to put back.",
@@ -615,37 +620,37 @@ pub fn match_reason(code: &str) -> Reason {
         "EDITION_UNCERTAIN" => reason(
             "EDITION_UNCERTAIN",
             "The album is clear, but this is a live or compilation release, so the exact edition is a best guess.",
-            "Check the tracklist; confirm it or pick another edition.",
+            "Check the tracklist, then choose That's right or another edition.",
         ),
         "AMBIGUOUS_CANDIDATES" => reason(
             "AMBIGUOUS_CANDIDATES",
-            "Two different albums fit the files about equally well; this one fit slightly better.",
-            "Compare the candidates and confirm the right one.",
+            "Two albums fit about equally. We picked this one.",
+            "Compare them and choose the right one.",
         ),
         "TAGGED_RELEASE_UNREADABLE" => reason(
             "TAGGED_RELEASE_UNREADABLE",
             "MusicBrainz's answer for the release your files name could not be read, so this edition is a best guess.",
-            "Confirm it or pick another edition.",
+            "Choose That's right or another edition.",
         ),
         "NAMED_GROUP_DIFFERS" => reason(
             "NAMED_GROUP_DIFFERS",
-            "Fits best, but the files' tags or earlier match name another album.",
-            "Confirm it or pick another edition.",
+            "Your files name another album. This one fits better.",
+            "Check it, then choose That's right or another edition.",
         ),
         "AUDIO_DISAGREES" => reason(
             "AUDIO_DISAGREES",
-            "Fits best, but some files' audio matches other tracks.",
-            "Check the tracklist and confirm it.",
+            "Some tracks sound like other songs.",
+            "Listen to them, then choose That's right or another edition.",
         ),
         "WEAK_MATCH" => reason(
             "WEAK_MATCH",
-            "This edition is the closest fit, but some titles, lengths or track counts differ.",
-            "Check the tracklist; confirm it or pick another edition.",
+            "Closest we found, but some tracks differ.",
+            "Check the tracklist, then choose That's right or another edition.",
         ),
         "INSUFFICIENT_EVIDENCE" => reason(
             "INSUFFICIENT_EVIDENCE",
             "Only one release came close and the files carry too little to be sure.",
-            "Check the tracklist; confirm it or pick another edition.",
+            "Check the tracklist, then choose That's right or another edition.",
         ),
         "CONFLICTING_TRACK_EVIDENCE" => reason(
             "CONFLICTING_TRACK_EVIDENCE",
@@ -689,7 +694,43 @@ pub fn match_reason(code: &str) -> Reason {
             } else {
                 "This album's match has a reason this version does not describe."
             },
-            "Check the tracklist; confirm it or pick another edition.",
+            "Check the tracklist, then choose That's right or another edition.",
         ),
+    }
+}
+
+/// The facts a match reason's sentence can name.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct MatchFacts<'a> {
+    /// The album's own title, as its files have it.
+    pub album: &'a str,
+    /// The title of the guess the album holds.
+    pub guess: Option<&'a str>,
+    /// Files whose audio sounds like another track of the guess.
+    pub disputed: usize,
+}
+
+/// A match reason's sentence with the album's own facts, for the reasons
+/// that name them: the album the files say and the guess, or how many
+/// tracks sound like other songs. `None` keeps the plain sentence.
+pub fn match_sentence(code: &str, facts: MatchFacts<'_>) -> Option<String> {
+    match code {
+        "NAMED_GROUP_DIFFERS" => {
+            let guess = facts.guess.filter(|guess| !guess.trim().is_empty())?;
+            let album = facts.album.trim();
+            if album.is_empty() || album.eq_ignore_ascii_case(guess.trim()) {
+                return None;
+            }
+            Some(format!(
+                "Your files say {album}. This fits {} better.",
+                guess.trim()
+            ))
+        }
+        "AUDIO_DISAGREES" => match facts.disputed {
+            0 => None,
+            1 => Some("1 track sounds like another song.".to_owned()),
+            n => Some(format!("{n} tracks sound like other songs.")),
+        },
+        _ => None,
     }
 }

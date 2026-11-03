@@ -191,7 +191,10 @@ function routes(): FakeApi {
 			release_group_mbid: plan ? albumId : null,
 			state: plan ? 'chosen' : 'unidentified',
 			undo_available: false,
-			writing: false
+			writing: false,
+			disputed_tracks: [],
+			looks_wrong: false,
+			looks_wrong_count: 0
 		}),
 		'GET /api/v3/library/albums/{album_id}/edition/plan': () =>
 			plan ?? apiError(404, 'NOT_FOUND', 'No edition chosen'),

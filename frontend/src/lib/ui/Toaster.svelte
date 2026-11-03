@@ -41,6 +41,17 @@
 				<Info class="size-5 shrink-0" aria-hidden="true" />
 			{/if}
 			<span class="text-sm">{$toastStore.message}</span>
+			{#if $toastStore.action}
+				{@const action = $toastStore.action}
+				<button
+					type="button"
+					class="btn btn-ghost btn-xs"
+					onclick={() => {
+						toastStore.hide();
+						void action.run();
+					}}>{action.label}</button
+				>
+			{/if}
 			<button
 				type="button"
 				class="btn btn-circle btn-ghost btn-xs"

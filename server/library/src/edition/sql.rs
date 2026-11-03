@@ -1,5 +1,9 @@
 //! The SQL of an album's edition.
 
+// `sql!` joins one token per part, so a part built by a definition macro
+// is written in parentheses.
+#![allow(unused_parens, clippy::double_parens)]
+
 use droppedneedle_kernel::db::time::Millis;
 
 use crate::identity::sql::PERSONS;
@@ -59,13 +63,54 @@ droppedneedle_kernel::sql! {
          WHERE s.state = ?1 AND a.retired_into_album_id IS NULL";
     pub(super) WAITING_ALBUM_PAGE = "SELECT s.local_album_id, a.title, COALESCE(a.album_artist_name, '') AS artist_name, s.reason_code, \
          e.release_mbid, e.release_group_mbid, s.updated_at, \
-         COALESCE(e.row_revision, 0) AS identity_revision \
+         COALESCE(e.row_revision, 0) AS identity_revision, s.candidates_json, \
+         (SELECT COUNT(*) FROM local_tracks t WHERE t.local_album_id = s.local_album_id \
+          AND t.availability = 'indexed') AS file_count, \
+         (SELECT COUNT(*) FROM library_album_looks_wrong w \
+          WHERE w.local_album_id = s.local_album_id) AS looks_wrong \
          FROM library_album_match_state s \
          JOIN local_albums a ON a.id = s.local_album_id \
          LEFT JOIN local_album_external_identities e \
            ON e.local_album_id = s.local_album_id AND e.provider = ?2 \
          WHERE s.state = ?1 AND a.retired_into_album_id IS NULL \
          ORDER BY s.updated_at DESC, s.local_album_id LIMIT ?3 OFFSET ?4";
+    /// The album artist's name, as its files have it.
+    pub(super) ALBUM_ARTIST_NAME = "SELECT COALESCE(album_artist_name, '') FROM local_albums WHERE id = ?1";
+    /// The album's title and how many indexed files it holds.
+    pub(super) ALBUM_FACTS = "SELECT a.title, (SELECT COUNT(*) FROM local_tracks t \
+         WHERE t.local_album_id = a.id AND t.availability = 'indexed') AS file_count \
+         FROM local_albums a WHERE a.id = ?1";
+    /// The one release group every indexed file of album `?1` names in its
+    /// tags, lowered: no row when they name none or more than one.
+    pub(super) NAMED_GROUP = "SELECT MIN(lower(trim(embedded_release_group_mbid))) FROM local_tracks \
+         WHERE local_album_id = ?1 AND availability = 'indexed' \
+         AND lower(trim(embedded_release_group_mbid)) GLOB '" + (crate::mbid_shape!()) + "' \
+         HAVING COUNT(DISTINCT lower(trim(embedded_release_group_mbid))) = 1 \
+         AND COUNT(*) = (SELECT COUNT(*) FROM local_tracks \
+         WHERE local_album_id = ?1 AND availability = 'indexed')";
+    /// Titles of album `?1`'s tracks, by id.
+    pub(super) TRACK_TITLE = "SELECT title FROM local_tracks WHERE id = ?1 AND local_album_id = ?2";
+    /// "Looks wrong": user `?2` flags album `?1`, at `?3`.
+    pub(super) LOOKS_WRONG_SET = "INSERT INTO library_album_looks_wrong (local_album_id, user_id, created_at) \
+         VALUES (?1, ?2, ?3) ON CONFLICT (local_album_id, user_id) DO NOTHING";
+    /// User `?2` takes back their flag on album `?1`.
+    pub(super) LOOKS_WRONG_UNSET = "DELETE FROM library_album_looks_wrong WHERE local_album_id = ?1 AND user_id = ?2";
+    /// Every flag on album `?1` goes: a person settled its edition.
+    pub(crate) LOOKS_WRONG_CLEAR = "DELETE FROM library_album_looks_wrong WHERE local_album_id = ?1";
+    /// Whether user `?2` flagged album `?1`, and how many people did.
+    pub(super) LOOKS_WRONG_OF = "SELECT \
+         EXISTS(SELECT 1 FROM library_album_looks_wrong WHERE local_album_id = ?1 AND user_id = ?2), \
+         (SELECT COUNT(*) FROM library_album_looks_wrong WHERE local_album_id = ?1)";
+    /// Live albums someone flagged.
+    pub(super) LOOKS_WRONG_ALBUM_COUNT = "SELECT COUNT(DISTINCT w.local_album_id) \
+         FROM library_album_looks_wrong w JOIN local_albums a ON a.id = w.local_album_id \
+         WHERE a.retired_into_album_id IS NULL";
+    /// One page of the albums someone flagged, newest flag first.
+    pub(super) LOOKS_WRONG_PAGE = "SELECT w.local_album_id, MAX(w.created_at) AS flagged_at, \
+         COUNT(*) AS looks_wrong \
+         FROM library_album_looks_wrong w JOIN local_albums a ON a.id = w.local_album_id \
+         WHERE a.retired_into_album_id IS NULL \
+         GROUP BY w.local_album_id ORDER BY flagged_at DESC, w.local_album_id LIMIT ?1 OFFSET ?2";
     /// The release of album `?1` a person chose, when it is `?3` and no custom edition is active.
     pub(super) RELEASE_A_PERSON_CHOSE = "SELECT release_mbid FROM local_album_external_identities \
                  WHERE local_album_id = ?1 AND provider = ?2 \
@@ -111,5 +156,17 @@ droppedneedle_kernel::sql! {
         release_group_mbid: Option<String>,
         updated_at: Millis,
         identity_revision: i64,
+        candidates_json: String,
+        file_count: i64,
+        looks_wrong: i64,
+    }
+    pub(super) row LooksWrongAlbumRow for [LOOKS_WRONG_PAGE] {
+        local_album_id: String,
+        flagged_at: Millis,
+        looks_wrong: i64,
+    }
+    pub(super) row AlbumFactsRow for [ALBUM_FACTS] {
+        title: String,
+        file_count: i64,
     }
 }

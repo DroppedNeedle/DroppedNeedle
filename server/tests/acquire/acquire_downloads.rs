@@ -1632,6 +1632,99 @@ async fn a_retry_never_replaces_a_library_copy_by_itself() {
     );
 }
 
+/// A better copy held because the album it would replace a file on has a
+/// match to check is never put in by the held list's retry, before or
+/// after the album is checked: only a person's import replaces the old
+/// copy, which then goes to the recycle bin.
+#[tokio::test]
+async fn a_better_copy_on_a_flagged_album_waits_for_a_persons_import() {
+    let dummy = held_release();
+    let rig = HeldRig::new(vec![dummy.clone()]).await;
+    let album = rig.music.join("Portishead/Dummy");
+    held_copy(&rig.held_dir, "low.mp3", "mp3_full_01.mp3", "Mysterons", 1);
+    seed_held(
+        &rig.db,
+        "task:t-low",
+        "held",
+        vec![("low.mp3", dummy.tracks[0].clone(), Reason::TargetOccupied)],
+    )
+    .await;
+    rig.acquire.held.tend().await;
+    let yours = album.join("0101 Mysterons.mp3");
+    assert!(yours.is_file(), "the album has its lower-quality copy");
+    let flag = |sql: &'static str| {
+        let db = rig.db.clone();
+        async move {
+            db.write("test.flag", move |tx| {
+                tx.execute(sql, [])?;
+                Ok(())
+            })
+            .await
+            .expect("flag write");
+        }
+    };
+    flag(
+        "INSERT INTO library_album_match_state (local_album_id, state, reason_code, updated_at) \
+         SELECT id, 'unconfirmed', 'WEAK_MATCH', 1 FROM local_albums WHERE title = 'Dummy'",
+    )
+    .await;
+
+    held_copy(
+        &rig.held_dir,
+        "better.flac",
+        "flac_full_01.flac",
+        "Mysterons",
+        1,
+    );
+    let entry = seed_held(
+        &rig.db,
+        "task:t-better",
+        "held",
+        vec![(
+            "better.flac",
+            dummy.tracks[0].clone(),
+            Reason::AlbumNeedsCheck,
+        )],
+    )
+    .await;
+    rig.acquire.held.tend().await;
+    assert!(
+        yours.is_file(),
+        "the library's copy stays while the flag does"
+    );
+    assert_eq!(
+        held_file(&rig.db, "better.flac").await,
+        ("held".to_owned(), "album_needs_check".to_owned()),
+    );
+
+    // Checking the album is not a decision to replace: the copy still waits.
+    flag("DELETE FROM library_album_match_state").await;
+    rig.clock.advance(60 * MINUTE);
+    rig.acquire.held.tend().await;
+    assert!(yours.is_file(), "nothing replaces your copy by itself");
+    assert_eq!(
+        held_file(&rig.db, "better.flac").await,
+        ("held".to_owned(), "album_needs_check".to_owned()),
+    );
+
+    // A person's import replaces it, the better copy being better.
+    let viewer = droppedneedle_acquire::downloads::queue_rows::Viewer {
+        user_id: "u-ada".to_owned(),
+        admin: false,
+    };
+    rig.acquire
+        .held
+        .import(&viewer, entry, None, "u-ada")
+        .await
+        .expect("the import runs");
+    assert!(
+        album.join("0101 Mysterons.flac").is_file(),
+        "the better copy went in"
+    );
+    assert!(!yours.exists(), "yours went to the recycle bin");
+    assert_eq!(held_file(&rig.db, "better.flac").await.0, "imported");
+}
+
 /// A pass that finds the database busy, or no library set up yet, spends
 /// no try: the entry waits for the next pass as it was, never left claimed.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

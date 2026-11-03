@@ -401,12 +401,12 @@ export function customEditionSentence(album: string): string {
 export const LEAVE_UNMANAGED_SENTENCE =
 	'DroppedNeedle stops retagging and renaming these files and drops the edition it guessed. Choose "Manage it again" on the album page to undo this.';
 
-export const SHEET_DESCRIPTION = 'Pick the release your copy is, or the one you want it to become.';
+export const SHEET_DESCRIPTION = 'Pick the edition your copy is, or the one you want it to become.';
 
 // The app stepped back from the album by itself; choosing an edition
 // does not hand it back.
 export const LEFT_UNMANAGED_NOTE =
-	'This album is left unmanaged. Choosing an edition does not hand it back: DroppedNeedle leaves its files alone until you choose "Manage it again". Writing the edition\'s tags to the files overwrites the changes made outside DroppedNeedle.';
+	'Left alone. Files stay as they are until you choose Manage it again.';
 
 // Matching one file to an edition track by hand (curators, on the album's
 // own edition).

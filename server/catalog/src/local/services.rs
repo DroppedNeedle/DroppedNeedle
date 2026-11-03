@@ -734,6 +734,10 @@ pub async fn stats(deps: &LibraryDeps, user_id: &str) -> Result<StatsView, Libra
         favorite_artists: artists,
         favorite_tracks: tracks,
         review_count: extras.review_count,
+        guess_count: extras.guess_count,
+        not_found_count: extras.not_found_count,
+        looks_wrong_count: extras.looks_wrong_count,
+        check_count: extras.check_count,
         local_only_count: extras.local_only_count,
         last_scan_at: extras.last_scan_at,
     })

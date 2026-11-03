@@ -377,7 +377,8 @@ export const EFFECTS = {
 	anyDiscoverChanged: (): Sweep[] => [{ everyScope: [DiscoverQueryKeyFactory.feature] }],
 	/**
 	 * One library album's edition: its status and plans, its detail, tracks
-	 * and copies, the library status the album pages read, and the waiting list.
+	 * and copies, the library status the album pages read, the Check albums
+	 * lists and the counts they show, and the reviews a choice settles.
 	 */
 	editionChanged: (userId: UserId, localId: string): Sweep[] => [
 		{ key: LibraryQueryKeyFactory.catalog.edition(userId, localId) },
@@ -385,7 +386,9 @@ export const EFFECTS = {
 		{ key: LibraryQueryKeyFactory.catalog.albumTracksPrefix(userId, localId) },
 		{ key: LibraryQueryKeyFactory.catalog.albumCopiesPrefix(userId) },
 		{ key: LibraryQueryKeyFactory.albumPrefix(userId) },
-		{ key: LibraryQueryKeyFactory.catalog.unconfirmedPrefix(userId) }
+		{ key: LibraryQueryKeyFactory.catalog.unconfirmedPrefix(userId) },
+		{ key: LibraryQueryKeyFactory.catalog.stats(userId) },
+		{ key: LibraryQueryKeyFactory.reviewsPrefix() }
 	],
 	/** One release group's album page: header, tracklist, editions and where to buy it. */
 	albumGroupChanged: (userId: UserId, group: string): Sweep[] => [

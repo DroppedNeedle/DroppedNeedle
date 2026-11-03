@@ -7937,7 +7937,7 @@ async fn an_upgrade_on_a_flagged_album_is_held_and_the_old_copy_stays() {
         gate: Auto,
         held_for: Reason::TagMismatch,
         flagged: true,
-        expect: Seen::Held(Reason::OwnedOnAlbum),
+        expect: Seen::Held(Reason::AlbumNeedsCheck),
     };
     let rows = [
         ("flagged copy, downloaded", base),
@@ -8007,7 +8007,7 @@ async fn importing_that_held_file_replaces_when_better() {
         taken: false,
         changes: 0,
         gate: Gate::PersonChoseFile,
-        held_for: Reason::OwnedOnAlbum,
+        held_for: Reason::AlbumNeedsCheck,
         flagged: true,
         expect: Seen::Imported { joined: true },
     };

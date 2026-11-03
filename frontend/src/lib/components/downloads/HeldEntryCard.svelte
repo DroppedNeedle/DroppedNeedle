@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Check, ChevronDown, RefreshCw, RotateCcw, Search, Trash2 } from 'lucide-svelte';
+	import { Check, ChevronDown, Disc3, RefreshCw, RotateCcw, Search, Trash2 } from 'lucide-svelte';
 	import { SvelteMap } from 'svelte/reactivity';
 
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
@@ -17,6 +17,7 @@
 	import ConfirmDialog from '$lib/ui/ConfirmDialog.svelte';
 	import CoverPlaceholder from '$lib/ui/CoverPlaceholder.svelte';
 	import { albumHref } from '$lib/utils/entityRoutes';
+	import { withBasePath } from '$lib/utils/basePath';
 
 	import HeldFileRow from './HeldFileRow.svelte';
 	import { keptUntil, nextTry } from './heldExpiry';
@@ -82,6 +83,23 @@
 	const retryIds = $derived(idsOffering('retry'));
 	const recheckIds = $derived(idsOffering('recheck'));
 	const canMatch = $derived(authStore.isTrusted);
+
+	// A better copy waits until a curator checks the album it would go on:
+	// its edition sheet, which runs the held files once the edition is
+	// settled and comes back here.
+	const checkIds = $derived(
+		files.filter((file) => file.reason === 'album_needs_check').map((file) => file.id)
+	);
+	const checkHref = $derived.by(() => {
+		if (!entry.check_album_id || !checkIds.length || !authStore.isTrusted) return null;
+		const query = new URLSearchParams({
+			edition: 'choose',
+			from: 'downloads',
+			held: String(entry.id),
+			files: checkIds.join(',')
+		});
+		return withBasePath(`/album/${encodeURIComponent(entry.check_album_id)}?${query}`);
+	});
 
 	const expiry = $derived(keptUntil(entry.expires_at));
 	const retrying = $derived(
@@ -166,6 +184,11 @@
 			{#if single && files[0]}
 				<div class="mt-3 border-t border-base-content/8 pt-3">
 					<HeldFileRow {entry} file={files[0]}>
+						{#if checkHref}
+							<Button variant="primary" size="xs" icon={Disc3} href={checkHref}
+								>Check this album</Button
+							>
+						{/if}
 						{#if retryTaskId}
 							{@render retryDownloadButton('xs')}
 						{/if}
@@ -194,6 +217,11 @@
 				</ul>
 
 				<div class="mt-3 flex flex-wrap items-center gap-2">
+					{#if checkHref}
+						<Button variant="primary" size="sm" icon={Disc3} href={checkHref}
+							>Check this album</Button
+						>
+					{/if}
 					{#if importIds.length > 0}
 						<Button
 							variant="primary"

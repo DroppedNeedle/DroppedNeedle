@@ -141,10 +141,10 @@
 					{/key}
 				{:else if tags === 'written'}
 					<span
-						>Tags and file names are written. You can undo that from {#if authStore.isAdmin}<a
+						>Tags and file names are written. {#if authStore.isAdmin}Undo that from <a
 								class="link"
 								href={withBasePath('/library/management/history')}>History</a
-							>{:else}History{/if}.</span
+							>.{:else}An admin can undo that from History.{/if}</span
 					>
 				{:else}
 					<span>{tagsSentence(tags)}</span>

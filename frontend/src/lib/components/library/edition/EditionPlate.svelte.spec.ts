@@ -109,7 +109,12 @@ vi.mock('$lib/queries/albums/EditionQueries.svelte', () => ({
 	createMatchEditionFileMutation: () => mutation(),
 	createUnmatchEditionFileMutation: () => mutation(),
 	createSealCustomEditionMutation: () => mutation((...args: unknown[]) => h.seal(...args)),
-	createLeaveAlbumUnmanagedMutation: () => mutation((...args: unknown[]) => h.leave(...args))
+	createLeaveAlbumUnmanagedMutation: () => mutation((...args: unknown[]) => h.leave(...args)),
+	createMarkLooksWrongMutation: () => mutation(),
+	createClearLooksWrongMutation: () => mutation()
+}));
+vi.mock('$lib/queries/downloads/HeldQueries.svelte', () => ({
+	createImportHeldMutation: () => ({ mutate: vi.fn(), isPending: false })
 }));
 vi.mock('$lib/queries/downloads/DownloadQueries.svelte', () => ({
 	getAlbumDownloadsQuery: () => ({

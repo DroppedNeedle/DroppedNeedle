@@ -6,7 +6,7 @@ use super::models::{
     AlbumIdentity, CandidateEvidence, EvidenceClass, LocalAlbumFacts, TrackEvidence,
 };
 use crate::matching::decide::{ACCEPT_ALBUM, ACCEPT_TRACK, REVIEW_CEILING};
-use crate::matching::score::{FINGERPRINT_OVERRULED, LIBRARY_EXCLUDED};
+use crate::matching::score::{FINGERPRINT_DISPUTED, FINGERPRINT_OVERRULED, LIBRARY_EXCLUDED};
 use crate::matching::{EditionHints, LocalAlbum, LocalTrack, Release, ReleaseMatch, usable_mbid};
 use droppedneedle_providers::musicbrainz::is_valid_mbid;
 
@@ -214,6 +214,9 @@ pub fn candidate_evidence(
                     }];
                     if matched.overruled.contains(&index) {
                         evidence_kinds.push(FINGERPRINT_OVERRULED.to_owned());
+                    }
+                    if matched.disputed.contains(&index) {
+                        evidence_kinds.push(FINGERPRINT_DISPUTED.to_owned());
                     }
                     TrackEvidence {
                         local_track_id: track.id.clone(),

@@ -136,7 +136,9 @@ const EXPECTED: Record<keyof typeof EFFECTS, Sweep[]> = {
 		key(U, 'library', 'catalog', 'album-tracks', 'job'),
 		key(U, 'library', 'catalog', 'album-copies'),
 		key(U, 'library', 'album'),
-		key(U, 'library', 'catalog', 'unconfirmed')
+		key(U, 'library', 'catalog', 'unconfirmed'),
+		key(U, 'library', 'catalog', 'stats'),
+		key('admin', 'library', 'reviews')
 	],
 	albumGroupChanged: [
 		key(U, 'albums', 'basic', 'job'),

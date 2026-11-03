@@ -68,7 +68,7 @@
 	// Session-wide reads: the sidebar, page gates, album cards and images use them.
 	getIntegrationStatusQuery();
 	loadAdvancedSettings();
-	const viewer = $derived({ isAdmin: authStore.isAdmin });
+	const viewer = $derived({ isAdmin: authStore.isAdmin, isCurator: authStore.isTrusted });
 
 	const NAV_PROGRESS_DELAY_MS = 120;
 	const NAV_PROGRESS_MIN_VISIBLE_MS = 220;

@@ -981,7 +981,8 @@ mod tests {
 
     #[test]
     fn the_reason_check_lists_every_spelling() {
-        let migration = include_str!("../../../migrations/0125_acquire_format_not_listed.sql");
+        let migration =
+            include_str!("../../../migrations/0126_looks_wrong_and_album_needs_check.sql");
         let check = migration
             .split("reason TEXT NOT NULL CHECK (reason IN (")
             .nth(1)

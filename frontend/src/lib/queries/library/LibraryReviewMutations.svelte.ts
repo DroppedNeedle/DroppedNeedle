@@ -33,14 +33,15 @@ function reviewState(options?: { catalog?: boolean }): Effect[] {
 // person: the list reloads so they decide on what it shows now.
 const reloadReviews = () => applyEffects(reviewsChanged());
 
-export type ReviewAction = 'keep_tagged' | 'dismiss' | 'detach' | 'exclude' | 'restore';
+export type ReviewAction = 'keep_tagged' | 'dismiss' | 'detach' | 'exclude' | 'restore' | 'reopen';
 
 const ACTION_TOAST: Record<ReviewAction, string> = {
-	keep_tagged: 'Kept as tagged',
-	dismiss: 'Review closed',
+	keep_tagged: 'Tags kept',
+	dismiss: 'Left for later',
 	detach: 'Match removed; the album keeps its tags. Undo it from the album page.',
 	exclude: 'Album taken out of the library',
-	restore: 'Album is back in the library'
+	restore: 'Album is back in the library',
+	reopen: 'Reopened'
 };
 
 /** One review action, decided on the review's `row_revision` as it was read. */
@@ -48,11 +49,18 @@ export interface ReviewActionInput {
 	reviewId: string;
 	revision: number;
 	action: ReviewAction;
+	/** The album, named in the toast. */
+	title?: string;
 }
 
 function post({ reviewId, revision, action }: ReviewActionInput) {
 	const body = { expected_revision: revision };
 	switch (action) {
+		case 'reopen':
+			return api.v3.POST(
+				v3('/api/v3/library/reviews/{id}/reopen', { path: { id: reviewId } }),
+				body
+			);
 		case 'keep_tagged':
 			return api.v3.POST(
 				v3('/api/v3/library/reviews/{id}/keep-tagged', { path: { id: reviewId } }),
@@ -84,11 +92,17 @@ function post({ reviewId, revision, action }: ReviewActionInput) {
 /** Settle one review. `keep_tagged` and `dismiss` leave the catalog as it is. */
 export function createActOnLibraryReviewMutation() {
 	return createAppMutation(() => ({
-		mutationFn: async (input: ReviewActionInput) => {
-			await post(input);
-		},
-		onSuccess: (_result, input) => {
-			toastStore.show({ message: ACTION_TOAST[input.action], type: 'success' });
+		mutationFn: (input: ReviewActionInput) => post(input),
+		onSuccess: (_review, input) => {
+			// Keeping the tags and leaving it for later offer Reopen; the page
+			// that acted shows that toast with its own reopen.
+			if (input.action === 'keep_tagged' || input.action === 'dismiss') return;
+			toastStore.show({
+				message: input.title
+					? `${ACTION_TOAST[input.action]}: ${input.title}.`
+					: `${ACTION_TOAST[input.action]}.`,
+				type: 'success'
+			});
 		},
 		effects: (_result, input) =>
 			reviewState({ catalog: input.action !== 'dismiss' && input.action !== 'keep_tagged' }),

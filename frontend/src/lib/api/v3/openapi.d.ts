@@ -2907,7 +2907,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** "Looks right": confirm the album's unconfirmed best guess. */
+        /** "That's right": confirm the album's unconfirmed best guess. */
         post: operations["confirm_edition"];
         delete?: never;
         options?: never;
@@ -3146,6 +3146,31 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/albums/{album_id}/looks-wrong": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * "Looks wrong": mark the album's match as looking wrong, so curators
+         *     check it, or take your own mark back. Each person's mark is their own.
+         */
+        put: operations["mark_looks_wrong"];
+        post?: never;
+        /**
+         * A curator finds nothing wrong with the album's match: every "Looks
+         *     wrong" mark on it goes. Choosing, confirming or handing back its
+         *     edition clears them too.
+         */
+        delete: operations["clear_looks_wrong"];
         options?: never;
         head?: never;
         patch?: never;
@@ -5061,6 +5086,26 @@ export interface paths {
         put?: never;
         /** Keep the album as tagged: nothing seals, and the review settles. */
         post: operations["keep_tagged_review"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/reviews/{id}/reopen": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reopen a review whose tags were kept, or that was left for later: it
+         *     waits for a decision again. The album stays as it is.
+         */
+        post: operations["reopen_review"];
         delete?: never;
         options?: never;
         head?: never;
@@ -12676,6 +12721,7 @@ export interface components {
             /** @description Files of this task wait in the held list for a decision. */
             held_for_review: boolean;
             id: string;
+            maybe_have?: null | components["schemas"]["MaybeHaveView"];
             /**
              * Format: double
              * @description When the next automatic retry is due, if one will run.
@@ -13207,6 +13253,11 @@ export interface components {
             /** @description Who chose the edition, for a chosen one. */
             chosen_by_user_id?: string | null;
             /**
+             * @description Titles of the files whose audio sounds like another track of the
+             *     guess (`AUDIO_DISAGREES`).
+             */
+            disputed_tracks: string[];
+            /**
              * @description `release` (a MusicBrainz release), `custom` (a custom edition),
              *     `group_only` (a release group with no release chosen) or `none`.
              */
@@ -13234,6 +13285,18 @@ export interface components {
              *     writes no tags or names there, and downloads land as they came.
              */
             keeps_own_tags: boolean;
+            /** @description The caller marked the album's match "Looks wrong". */
+            looks_wrong: boolean;
+            /**
+             * Format: int32
+             * @description How many people marked it.
+             */
+            looks_wrong_count: number;
+            /**
+             * @description The release group every file's tags name, when the guess fits
+             *     another (`NAMED_GROUP_DIFFERS`): its editions are worth a look.
+             */
+            named_release_group_mbid?: string | null;
             placing?: null | components["schemas"]["EditionPlacingView"];
             /** @description Why the edition is what it is, and what to do about it. */
             reason: components["schemas"]["ReasonView"];
@@ -14071,6 +14134,11 @@ export interface components {
         HeldEntryResponse: {
             album_title?: string | null;
             artist_name?: string | null;
+            /**
+             * @description The library album whose match a person should check before the
+             *     better copy held here can go in: its "Check this album" target.
+             */
+            check_album_id?: string | null;
             /**
              * Format: int64
              * @description When it was made, in milliseconds.
@@ -15862,6 +15930,14 @@ export interface components {
             /** @description Username, matched case-insensitively. */
             username: string;
         };
+        /** @description Mark an album's match as looking wrong, or take the mark back. */
+        LooksWrongBody: {
+            looks_wrong: boolean;
+        };
+        /** @description The caller's own "Looks wrong" mark. */
+        LooksWrongView: {
+            looks_wrong: boolean;
+        };
         /**
          * @description Liveness of a loop row. The table's CHECK still allows `idle`, which
          *     nothing writes since every loop runs on the supervisor.
@@ -16610,6 +16686,11 @@ export interface components {
             source: components["schemas"]["SourceName"];
             /** @description Album tracks, when found. */
             tracks: components["schemas"]["RemotesTrackView"][];
+        };
+        /** @description A library album that may already be the one a download hunts for. */
+        MaybeHaveView: {
+            album_id: string;
+            title: string;
         };
         /**
          * @description MusicBrainz source tier.
@@ -17881,18 +17962,34 @@ export interface components {
                 album_id: string;
                 artist_name: string;
                 /**
+                 * Format: int32
+                 * @description Indexed files the album holds.
+                 */
+                file_count: number;
+                guess?: null | components["schemas"]["WaitingGuessView"];
+                /**
                  * Format: int64
-                 * @description The identity's row revision, 0 when the album has none. "Looks
+                 * @description The identity's row revision, 0 when the album has none. "That's
                  *     right" echoes it.
                  */
                 identity_revision: number;
+                /**
+                 * Format: int32
+                 * @description How many people marked the match "Looks wrong".
+                 */
+                looks_wrong_count: number;
                 reason: components["schemas"]["ReasonView"];
                 release_group_mbid?: string | null;
                 release_mbid?: string | null;
-                /** @description `unconfirmed` or `unmatched`. */
+                /** @description `unconfirmed` or `unmatched`; in the "Looks wrong" list, any state. */
                 state: components["schemas"]["EditionState"];
+                /** @description The album as its files have it. */
                 title: string;
-                /** Format: double */
+                /**
+                 * Format: double
+                 * @description When it was listed (epoch seconds): the match, or the newest
+                 *     "Looks wrong" mark.
+                 */
                 updated_at: number;
             }[];
             /** @description Pass back as `cursor` for the next page; null on the last. */
@@ -19467,7 +19564,7 @@ export interface components {
          * @description One reason, stored and sent by its snake_case spelling.
          * @enum {string}
          */
-        Reason: "weak_match" | "no_artist_evidence" | "mostly_unmatched" | "tag_mismatch" | "fingerprint_mismatch" | "fingerprint_unconfirmed" | "album_version_only" | "no_release" | "no_tracks" | "version_lower_quality" | "no_better_than_yours" | "owned_elsewhere" | "owned_on_album" | "no_album_match" | "album_not_found" | "tags_disagree" | "not_chosen_edition" | "samples" | "too_many_files" | "interrupted" | "import_failed" | "held_by_earlier_version" | "format_not_listed" | "target_occupied" | "upgrade_blocked" | "library_changed" | "library_unavailable" | "naming_script_failed" | "library_folder_missing" | "library_off" | "local_fault" | "files_missing" | "files_unlisted" | "outside_downloads_folder" | "size_mismatch" | "corrupt" | "no_audio" | "sample" | "wrong_edition" | "not_pinned_edition" | "wrong_album" | "quality_rejected" | "not_an_upgrade" | "wrong_track" | "stalled" | "queue_timeout" | "queue_gave_way" | "never_started" | "deadline" | "source_failed" | "no_source" | "download_failed" | "album_lookup_unavailable" | "recording_unknown" | "no_album_for_recording" | "no_album_folder" | "no_album_release" | "album_releases_exhausted" | "track_not_found" | "nothing_allowed" | "no_download_source" | "settings_unreadable" | "journal_unreadable" | "musicbrainz_unavailable" | "acoustid_unavailable" | "held_for_review" | "tracks_missing" | "already_owned" | "cancelled" | "moved_on";
+        Reason: "weak_match" | "no_artist_evidence" | "mostly_unmatched" | "tag_mismatch" | "fingerprint_mismatch" | "fingerprint_unconfirmed" | "album_version_only" | "no_release" | "no_tracks" | "version_lower_quality" | "no_better_than_yours" | "owned_elsewhere" | "owned_on_album" | "album_needs_check" | "no_album_match" | "album_not_found" | "tags_disagree" | "not_chosen_edition" | "samples" | "too_many_files" | "interrupted" | "import_failed" | "held_by_earlier_version" | "format_not_listed" | "target_occupied" | "upgrade_blocked" | "library_changed" | "library_unavailable" | "naming_script_failed" | "library_folder_missing" | "library_off" | "local_fault" | "files_missing" | "files_unlisted" | "outside_downloads_folder" | "size_mismatch" | "corrupt" | "no_audio" | "sample" | "wrong_edition" | "not_pinned_edition" | "wrong_album" | "quality_rejected" | "not_an_upgrade" | "wrong_track" | "stalled" | "queue_timeout" | "queue_gave_way" | "never_started" | "deadline" | "source_failed" | "no_source" | "download_failed" | "album_lookup_unavailable" | "recording_unknown" | "no_album_for_recording" | "no_album_folder" | "no_album_release" | "album_releases_exhausted" | "track_not_found" | "nothing_allowed" | "no_download_source" | "settings_unreadable" | "journal_unreadable" | "musicbrainz_unavailable" | "acoustid_unavailable" | "held_for_review" | "tracks_missing" | "already_owned" | "cancelled" | "moved_on";
         /** @description How many reviews one reason holds. */
         ReasonCount: {
             /** Format: int64 */
@@ -21981,6 +22078,12 @@ export interface components {
         StatsView: {
             /**
              * Format: int64
+             * @description Albums to check, each once: a best guess, marked "Looks wrong" or
+             *     with an open review.
+             */
+            check_count: number;
+            /**
+             * Format: int64
              * @description Albums the caller favorited.
              */
             favorite_albums: number;
@@ -21999,6 +22102,11 @@ export interface components {
                 [key: string]: number;
             };
             /**
+             * Format: int64
+             * @description Albums whose edition is a best guess.
+             */
+            guess_count: number;
+            /**
              * Format: double
              * @description When the last library scan finished successfully, unix seconds.
              */
@@ -22010,7 +22118,17 @@ export interface components {
             local_only_count: number;
             /**
              * Format: int64
-             * @description Identification reviews waiting on a person.
+             * @description Albums someone marked "Looks wrong".
+             */
+            looks_wrong_count: number;
+            /**
+             * Format: int64
+             * @description Albums nothing on MusicBrainz fits.
+             */
+            not_found_count: number;
+            /**
+             * Format: int64
+             * @description Identification reviews waiting on a person ("Needs you").
              */
             review_count: number;
             /**
@@ -23059,19 +23177,47 @@ export interface components {
             album_id: string;
             artist_name: string;
             /**
+             * Format: int32
+             * @description Indexed files the album holds.
+             */
+            file_count: number;
+            guess?: null | components["schemas"]["WaitingGuessView"];
+            /**
              * Format: int64
-             * @description The identity's row revision, 0 when the album has none. "Looks
+             * @description The identity's row revision, 0 when the album has none. "That's
              *     right" echoes it.
              */
             identity_revision: number;
+            /**
+             * Format: int32
+             * @description How many people marked the match "Looks wrong".
+             */
+            looks_wrong_count: number;
             reason: components["schemas"]["ReasonView"];
             release_group_mbid?: string | null;
             release_mbid?: string | null;
-            /** @description `unconfirmed` or `unmatched`. */
+            /** @description `unconfirmed` or `unmatched`; in the "Looks wrong" list, any state. */
             state: components["schemas"]["EditionState"];
+            /** @description The album as its files have it. */
             title: string;
-            /** Format: double */
+            /**
+             * Format: double
+             * @description When it was listed (epoch seconds): the match, or the newest
+             *     "Looks wrong" mark.
+             */
             updated_at: number;
+        };
+        /** @description The guess an album holds, as its row in the list names it. */
+        WaitingGuessView: {
+            artist_name: string;
+            /**
+             * Format: int32
+             * @description Files the guess accounts for closely.
+             */
+            matched_files: number;
+            release_group_mbid: string;
+            release_mbid?: string | null;
+            title: string;
         };
         /**
          * @description Why a live request waits. It starts by itself once the cause clears.
@@ -30773,6 +30919,108 @@ export interface operations {
             };
         };
     };
+    mark_looks_wrong: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Local album id */
+                album_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LooksWrongBody"];
+            };
+        };
+        responses: {
+            /** @description The caller's mark */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LooksWrongView"];
+                };
+            };
+            /** @description No `looks_wrong` given */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unknown album */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    clear_looks_wrong: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Local album id */
+                album_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No mark is left */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Curator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unknown album */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     hand_back_management: {
         parameters: {
             query?: never;
@@ -37308,6 +37556,69 @@ export interface operations {
             };
         };
     };
+    reopen_review: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Review id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReviewActionBody"];
+            };
+        };
+        responses: {
+            /** @description Reopened review */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewView"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Curator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unknown review id */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The review is not closed, or changed since it was read (STALE_REVISION) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     restore_review: {
         parameters: {
             query?: never;
@@ -38394,7 +38705,7 @@ export interface operations {
         parameters: {
             query?: {
                 /** @description Default: `unconfirmed`. */
-                state?: "unconfirmed" | "unmatched";
+                state?: "unconfirmed" | "unmatched" | "looks_wrong";
                 /** @description Page size, 1 to 200 (default 50); more is read as 200. */
                 limit?: number;
                 /** @description `next_cursor` from the previous page. */

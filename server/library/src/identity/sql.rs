@@ -79,6 +79,45 @@ macro_rules! match_flagged {
     };
 }
 
+/// The album, a column holding its id, carries a match flag in `$state`:
+/// `unconfirmed` (a best guess) or `unmatched` (nothing fits).
+#[macro_export]
+macro_rules! match_flag_state {
+    ($album_id:literal, $state:literal) => {
+        concat!(
+            "EXISTS (SELECT 1 FROM library_album_match_state mfst WHERE mfst.local_album_id = ",
+            $album_id,
+            " AND mfst.state = '",
+            $state,
+            "')"
+        )
+    };
+}
+
+/// Live albums holding a guess their files' tags contradict on a release
+/// group: `album_id`, `title` and the lowered `group_mbid`. Owning nothing
+/// through the guess, such an album settles no want for the group, though
+/// the person may have it. `$test` finishes the comparison of the lowered
+/// group, as in [`owns_group!`].
+#[macro_export]
+macro_rules! doubted_guesses {
+    ($test:literal) => {
+        concat!(
+            "SELECT dge.local_album_id AS album_id, dgb.title AS title, \
+             lower(dge.release_group_mbid) AS group_mbid \
+             FROM local_album_external_identities dge \
+             JOIN local_albums dgb ON dgb.id = dge.local_album_id \
+             WHERE lower(dge.release_group_mbid) ",
+            $test,
+            " AND dge.provider = 'musicbrainz' \
+             AND EXISTS (SELECT 1 FROM library_album_match_state dgs \
+             WHERE dgs.local_album_id = dge.local_album_id \
+             AND dgs.reason_code = 'NAMED_GROUP_DIFFERS') \
+             AND +dgb.retired_into_album_id IS NULL AND +dgb.has_indexed_track = 1"
+        )
+    };
+}
+
 /// The album, a column holding its id, holds a guess its files' tags
 /// contradict (flagged `NAMED_GROUP_DIFFERS`): its row names no copy of the
 /// group it guessed.

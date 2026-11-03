@@ -177,6 +177,16 @@ pub struct DownloadTaskResponse {
     pub reason: Option<DownloadTaskReason>,
     /// The import's decision on the newest landing.
     pub decision: Option<ImportDecisionView>,
+    /// A library album whose edition is a guess of this album, though its
+    /// files name another: "You may have this".
+    pub maybe_have: Option<MaybeHaveView>,
+}
+
+/// A library album that may already be the one a download hunts for.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct MaybeHaveView {
+    pub album_id: String,
+    pub title: String,
 }
 
 impl From<TaskView> for DownloadTaskResponse {
@@ -265,6 +275,9 @@ impl From<TaskView> for DownloadTaskResponse {
                 files_held: decision.files_held,
                 decided_at: decision.decided_at,
             }),
+            maybe_have: facts
+                .doubted_guess
+                .map(|(album_id, title)| MaybeHaveView { album_id, title }),
         }
     }
 }

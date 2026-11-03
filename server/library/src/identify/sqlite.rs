@@ -1699,6 +1699,8 @@ fn approve_tx(
             now: clock.now_secs(),
         },
     )?;
+    // A person settled the album's edition: its "Looks wrong" marks go.
+    crate::edition::looks_wrong::clear(tx, album)?;
     bump_identification_stream(tx)?;
     Ok(true)
 }

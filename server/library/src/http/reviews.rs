@@ -67,6 +67,7 @@ pub fn routes() -> Routes<LibraryServices> {
         .curator(routes!(detach_review))
         .admin(routes!(exclude_review))
         .admin(routes!(restore_review))
+        .curator(routes!(reopen_review))
         .admin(routes!(retry_review))
 }
 
@@ -525,6 +526,32 @@ pub async fn restore_review(
 ) -> Result<Json<ReviewView>, ApiError> {
     let actor = caller.user_id().to_owned();
     act(ops, id, ReviewAction::Restore, body, actor).await
+}
+
+/// Reopen a review whose tags were kept, or that was left for later: it
+/// waits for a decision again. The album stays as it is.
+#[utoipa::path(
+    post,
+    tag = "library management",
+    path = "/api/v3/library/reviews/{id}/reopen",
+    params(("id" = String, Path, description = "Review id")),
+    request_body = ReviewActionBody,
+    responses(
+        (status = 200, description = "Reopened review", body = ReviewView),
+        (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Curator role required"),
+        (status = 404, description = "Unknown review id"),
+        (status = 409, description = "The review is not closed, or changed since it was read (STALE_REVISION)"),
+    )
+)]
+pub async fn reopen_review(
+    State(ops): State<Operations>,
+    caller: Curator,
+    Path(id): Path<String>,
+    ValidJson(body): ValidJson<ReviewActionBody>,
+) -> Result<Json<ReviewView>, ApiError> {
+    let actor = caller.user_id().to_owned();
+    act(ops, id, ReviewAction::Reopen, body, actor).await
 }
 
 /// Start identification again for the review's album. The new job

@@ -23,7 +23,7 @@ import type { Getter } from 'runed';
 import { api } from '$lib/api/client';
 import { ApiError } from '$lib/api/errors';
 import { v3 } from '$lib/api/v3/endpoint';
-import type { components } from '$lib/api/v3/openapi';
+import type { components, operations } from '$lib/api/v3/openapi';
 import { STALE_LIVE, STALE_SLOW } from '$lib/queries/staleTime';
 import { DownloadQueryKeyFactory } from '$lib/queries/downloads/DownloadQueryKeyFactory';
 import { LibraryQueryKeyFactory } from '$lib/queries/library/LibraryQueryKeyFactory';
@@ -364,9 +364,14 @@ export function createUnmatchEditionFileMutation() {
 	}));
 }
 
+export type WaitingState = NonNullable<
+	NonNullable<operations['list_unconfirmed']['parameters']['query']>['state']
+>;
+export type WaitingAlbum = components['schemas']['WaitingAlbumView'];
+
 export const getWaitingAlbumsQuery = (
 	getUserId: Getter<EditionUserId>,
-	getState: Getter<'unconfirmed' | 'unmatched'>,
+	getState: Getter<WaitingState>,
 	limit = 50
 ) =>
 	createInfiniteQuery(() => {
@@ -447,6 +452,29 @@ export function createHandBackAlbumEditionMutation() {
 				})
 			);
 		},
+		effects: (_d, variables) => editionScope(variables)
+	}));
+}
+
+/** "Looks wrong": the caller marks the album's match, or takes their mark back. */
+export function createMarkLooksWrongMutation() {
+	return createAppMutation(() => ({
+		mutationFn: ({ localId, looksWrong }: EditionTarget & { looksWrong: boolean }) =>
+			api.v3.PUT(
+				v3('/api/v3/library/albums/{album_id}/looks-wrong', { path: { album_id: localId } }),
+				{ looks_wrong: looksWrong }
+			),
+		effects: (_d, variables) => editionScope(variables)
+	}));
+}
+
+/** A curator finds nothing wrong: every "Looks wrong" mark on the album goes. */
+export function createClearLooksWrongMutation() {
+	return createAppMutation(() => ({
+		mutationFn: ({ localId }: EditionTarget) =>
+			api.v3.DELETE(
+				v3('/api/v3/library/albums/{album_id}/looks-wrong', { path: { album_id: localId } })
+			),
 		effects: (_d, variables) => editionScope(variables)
 	}));
 }

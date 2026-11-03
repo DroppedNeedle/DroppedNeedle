@@ -30,6 +30,7 @@
 		editionName,
 		editionYear,
 		extrasButton,
+		failureSentence,
 		formatsLabel,
 		getMissingLabel,
 		otherAlbumSentence,
@@ -107,8 +108,10 @@
 	let confirmExtras = $state(false);
 
 	const extras = $derived(query.data?.files.filter((file) => file.fate !== 'keep') ?? []);
+	// Only the server's "MusicBrainz is not answering" (503) means that;
+	// any other failure is told as it is.
 	function musicBrainzDown(error: unknown): boolean {
-		return error instanceof ApiError && (error.status === 0 || error.status >= 500);
+		return error instanceof ApiError && error.status === 503;
 	}
 	const musicBrainzLink = $derived(outsideLink(`https://musicbrainz.org/release/${release}`));
 
@@ -137,9 +140,7 @@
 				<p>
 					{musicBrainzDown(error)
 						? MUSICBRAINZ_DOWN
-						: error instanceof Error
-							? error.message
-							: "This edition couldn't be compared with your files."}
+						: failureSentence(error, "This edition couldn't be compared with your files.")}
 				</p>
 				<Button variant="outline" size="sm" onclick={retry}>Retry</Button>
 			</div>
@@ -161,7 +162,9 @@
 					retryOnError={false}
 				/>
 				<div class="min-w-0">
-					<h3 class="text-lg font-bold">{editionName(plan.edition)}</h3>
+					<h3 id="edition-detail-title" class="text-lg font-bold" tabindex="-1">
+						{editionName(plan.edition)}
+					</h3>
 					<p class="text-sm text-base-content/70">
 						{[
 							plan.artist_name,

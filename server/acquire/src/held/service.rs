@@ -12,7 +12,7 @@
 //! never runs on it at once. The loop also presses Retry by itself on
 //! files our side could not take, at growing gaps.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -234,6 +234,50 @@ impl HeldService {
             )
         })
         .await
+    }
+
+    /// For each entry holding a better copy that waits on an album's match,
+    /// the library album to check: the first copy of a held track whose
+    /// album still refuses the replacement. An entry whose album has been
+    /// checked since, or whose copies cannot be read, has none.
+    pub async fn albums_to_check(&self, entries: &[Entry]) -> HashMap<i64, String> {
+        let mut found = HashMap::new();
+        let Ok(library) = self.library() else {
+            return found;
+        };
+        for entry in entries {
+            let Some(group) = entry.release_group_mbid.as_deref() else {
+                continue;
+            };
+            for file in &entry.files {
+                let pairing = &file.pairing;
+                let (Some(release), Some(track), Some(recording)) = (
+                    pairing.release_mbid.as_deref(),
+                    pairing.release_track_mbid.as_deref(),
+                    pairing.recording_mbid.as_deref(),
+                ) else {
+                    continue;
+                };
+                if file.reason != Reason::AlbumNeedsCheck {
+                    continue;
+                }
+                match library
+                    .owned_copies(group, None, release, track, recording)
+                    .await
+                {
+                    Ok(copies) => {
+                        if let Some(copy) = copies.into_iter().find(|copy| copy.replace_refused) {
+                            found.insert(entry.id, copy.album_id);
+                            break;
+                        }
+                    }
+                    Err(error) => {
+                        tracing::warn!(entry_id = entry.id, %error, "the album to check could not be read");
+                    }
+                }
+            }
+        }
+        found
     }
 
     /// One open entry the viewer may act on. Someone else's answers not
