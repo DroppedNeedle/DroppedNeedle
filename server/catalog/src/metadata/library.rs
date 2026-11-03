@@ -10,7 +10,6 @@
 use std::collections::HashSet;
 
 use droppedneedle_kernel::db::statement::ListLen;
-use droppedneedle_library::identity::DecisionSource;
 use droppedneedle_library::identity::reads::copy_for_group;
 use rusqlite::types::Value;
 
@@ -303,7 +302,7 @@ impl LocalCatalog {
             chosen_release: copy
                 .release_mbid
                 .clone()
-                .filter(|_| copy.source == DecisionSource::Manual),
+                .filter(|_| copy.source.is_persons_choice()),
             owned_release: copy.release_mbid.filter(|_| copy.file_count > 0),
             file_count: u32::try_from(copy.file_count)
                 .ok()

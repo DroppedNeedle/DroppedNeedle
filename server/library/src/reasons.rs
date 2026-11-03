@@ -667,6 +667,11 @@ pub fn match_reason(code: &str) -> Reason {
             "Someone took this album's MusicBrainz match off from its review, so it keeps its own tags.",
             "Pick an edition yourself when you're ready, or leave it as it is.",
         ),
+        "AUTOMATIC_EDITION_UNDONE" => reason(
+            "AUTOMATIC_EDITION_UNDONE",
+            "Someone undid this album's automatic match, so it keeps its own tags.",
+            "Pick an edition yourself when you're ready, or leave it as it is.",
+        ),
         "UNIDENTIFIED" => reason(
             "UNIDENTIFIED",
             "This album has not been matched to MusicBrainz yet.",

@@ -97,6 +97,10 @@ pub trait CutoffList: Send + Sync {
     /// than its back-off ago.
     fn resting(&self, now: i64) -> BoxFuture<'_, Result<HashSet<String>, StoreFailure>>;
 
+    /// Release groups whose copy, the one the group opens, carries a match
+    /// flag: an upgrade there would only be held for a person.
+    fn flagged(&self) -> BoxFuture<'_, Result<HashSet<String>, StoreFailure>>;
+
     /// When the newest upgrade task was made (unix seconds), the sweep's
     /// last run across a restart.
     fn last_upgrade_at(&self) -> BoxFuture<'_, Result<Option<i64>, StoreFailure>>;
@@ -341,6 +345,16 @@ impl CutoffList for UpgradeWorklist {
 
     fn resting(&self, now: i64) -> BoxFuture<'_, Result<HashSet<String>, StoreFailure>> {
         Box::pin(self.list_resting(now))
+    }
+
+    fn flagged(&self) -> BoxFuture<'_, Result<HashSet<String>, StoreFailure>> {
+        Box::pin(async move {
+            let groups: Vec<String> = read(self.db.db(), "upgrades.flagged_groups", |conn| {
+                read_rows(conn, sql::FLAGGED_GROUPS.text(), [], |row| row.get(0))
+            })
+            .await?;
+            Ok(groups.into_iter().collect())
+        })
     }
 
     fn last_upgrade_at(&self) -> BoxFuture<'_, Result<Option<i64>, StoreFailure>> {

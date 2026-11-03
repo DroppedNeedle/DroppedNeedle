@@ -492,9 +492,24 @@ Run from the repo root. `make help` lists every target.
   write drops it. It is the one exception to "unrelated tags survive".
 - Publisher phases keep their crash-injection tests. Archive extraction
   rejects traversal and links, and enforces size limits.
+- Acquire replaces no file on an album tagging would refuse (the same
+  check), or on an album with no match whose files' tags name different
+  groups. The new file is held and the old stays. Only a person importing
+  that held file passes the check; the quality comparison still runs.
 
 **Identity** (product rules, not up for debate)
-- Release pins steer the edition hint only, never catalog identity.
+- An edition a person chose is the album's identity; a v2 pin carries as
+  one. Reads of identity have two tiers. Usable (a row exists) serves
+  pages, playback and compat. Accepted (a release, no match flag, no custom
+  edition) serves proof, merges and retag joins. Ownership is one
+  definition, `owns_group!` in `library/src/identity/`, which the catalog
+  and acquire share. An album owns a group through its row, unless the row
+  is a guess flagged `NAMED_GROUP_DIFFERS`. It owns one through its files'
+  tags only when it has no row and no match flag, or holds such a guess,
+  and no file names another group. A match taken off, withdrawn or undone,
+  or a finished identification that found nothing, is never brought back
+  by tags. A landing never clears a person's detach or a
+  `NAMED_GROUP_DIFFERS` flag.
 - Manual and imported identities survive rescans and moves. Automatic ones
   stay revisable and retract on contradiction.
 - Automatic artist reconciliation needs provider proof, never name similarity

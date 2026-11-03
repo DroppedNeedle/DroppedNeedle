@@ -140,8 +140,9 @@ impl FileCatalog {
             .await
     }
 
-    /// The oldest live album with a streamable track holding a MusicBrainz
-    /// release group, else release. Ids compare case-insensitively.
+    /// The album a MusicBrainz release group opens when it has a streamable
+    /// track (the one the pages show), else the oldest live album with one
+    /// identified as the release. Ids compare case-insensitively.
     pub async fn album_by_mbid(&self, mbid: &str) -> Result<Option<String>, DbError> {
         let needle = mbid.trim().to_lowercase();
         self.db

@@ -698,8 +698,16 @@ pub fn undo_automatic(
         }
         None => {
             // The row is the automatic one (`fresh`); a carried undo stays,
-            // keyed to the album having no match.
+            // keyed to the album having no match. A flag says so (the one put
+            // back, else a new one), so the files' tags do not bring the
+            // match back.
             delete_album_row(tx, album_id, Rows::Revisable)?;
+            tx.prepare_cached(sql::MARK_UNMATCHED_UNLESS_FLAGGED.text())?
+                .execute(params![
+                    album_id,
+                    "AUTOMATIC_EDITION_UNDONE",
+                    crate::clock::ms(now)
+                ])?;
         }
     }
     for track_id in indexed_track_ids(tx, album_id)? {

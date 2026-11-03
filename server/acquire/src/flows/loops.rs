@@ -41,7 +41,7 @@ use droppedneedle_kernel::events::{AutoDownloadEnqueued, UserNotice, WantedNotic
 use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
 use droppedneedle_kernel::runtime_config::sections::{
-    DownloadPolicy, UserPreferences, WantedWatcher,
+    DownloadPolicy, EditionPreferences, UserPreferences, WantedWatcher,
 };
 
 /// Wanted-watcher sweep cadence in seconds.
@@ -1079,6 +1079,9 @@ pub struct SweepDeps {
     pub downloads: Arc<DownloadDispatch>,
     /// Durable ticks.
     pub ticks: Arc<dyn TickSink>,
+    /// Edition preferences: whether management may touch unconfirmed
+    /// matches, as the landing's replace check reads it.
+    pub editions: Live<EditionPreferences>,
 }
 
 /// Run one background-upgrade sweep: while upgrades are allowed
@@ -1112,7 +1115,7 @@ pub async fn sweep_tick(now: i64, deps: &SweepDeps) -> SweepSummary {
             return summary;
         }
     };
-    let resting = match deps.worklist.resting(now).await {
+    let mut resting = match deps.worklist.resting(now).await {
         Ok(resting) => resting,
         Err(error) => {
             tracing::warn!(?error, "upgrade sweep could not read its back-off");
@@ -1120,6 +1123,23 @@ pub async fn sweep_tick(now: i64, deps: &SweepDeps) -> SweepSummary {
             return summary;
         }
     };
+    // An upgrade of a group whose copy is flagged would only be held, unless
+    // management may touch unconfirmed matches (never while that does not
+    // read).
+    let manage_unconfirmed = deps
+        .editions
+        .read()
+        .is_some_and(|editions| editions.manage_unconfirmed);
+    if !manage_unconfirmed {
+        match deps.worklist.flagged().await {
+            Ok(flagged) => resting.extend(flagged),
+            Err(error) => {
+                tracing::warn!(?error, "upgrade sweep could not read the flagged albums");
+                summary.errors += 1;
+                return summary;
+            }
+        }
+    }
     for item in items {
         if summary.enqueued >= policy.max_per_run {
             break;

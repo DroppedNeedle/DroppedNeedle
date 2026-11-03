@@ -13,14 +13,15 @@ use droppedneedle_library::corrections::continuation::CURRENT_TRACK;
 use rusqlite::types::Value;
 
 use super::definitions::{
-    copy_order, live_album, live_track, musicbrainz, owned_album, owned_artist,
-    owned_release_groups, recording_mbid, track_codec,
+    live_album, live_track, musicbrainz, owned_album, owned_artist, recording_mbid, track_codec,
 };
 use super::player::{
     AlbumKey, AlbumSequence, AlbumShape, HistoryKey, ItemKind, KeyedBy, PlayedFilter, TextMatch,
     TrackKey, TrackSequence, TrackShape,
 };
 use super::stores::{AlbumSort, ArtistScope, ArtistSort, TrackSort};
+use droppedneedle_library::identity::asked_groups;
+use droppedneedle_library::{all_owners, copy_of_group, not_yet_identified, owns_group};
 
 droppedneedle_kernel::sql! {
     /// One album's aggregate columns over [`ALBUM_JOINS`].
@@ -112,11 +113,9 @@ droppedneedle_kernel::sql! {
         FROM library_album_takeovers WHERE local_album_id = ?1 \
         AND NOT EXISTS (SELECT 1 FROM library_management_exclusions \
         WHERE local_album_id = ?1) LIMIT 1";
-    /// The live copy one release group names: one with files first, then
-    /// one picked by hand, then the oldest.
+    /// The album one release group (`?1`, any case) opens.
     pub(crate) ALBUM_BY_GROUP = "SELECT " + ALBUM_COLUMNS + " " + ALBUM_JOINS
-        + " WHERE ae.release_group_mbid = ? AND " + (live_album!("a"))
-        + " GROUP BY a.id ORDER BY " + (copy_order!("a", "ae")) + " LIMIT 1";
+        + " WHERE a.id = (" + (copy_of_group!("= lower(?1)")) + ") GROUP BY a.id";
     /// Other live albums of an album's release group, oldest first.
     pub(crate) ALBUM_COPIES = "SELECT " + ALBUM_COLUMNS + " " + ALBUM_JOINS
         + " WHERE ae.release_group_mbid = \
@@ -465,12 +464,9 @@ droppedneedle_kernel::sql! {
     /// Owned albums identified as one of the releases: album id and the
     /// lowercase release.
     family OWNERS_BY_RELEASE = owners_by_release;
-    /// The live copy of one release group (`?1`, lowercase) when no copy is
-    /// owned: one with files first, then one picked by hand, then the oldest.
-    pub(crate) LIVE_COPY_BY_GROUP = "SELECT b.id FROM local_album_external_identities e \
-        JOIN local_albums b ON b.id = e.local_album_id \
-        WHERE lower(e.release_group_mbid) = ?1 AND " + (musicbrainz!("e")) + " AND "
-        + (live_album!("b")) + " ORDER BY " + (copy_order!("b", "e")) + " LIMIT 1";
+    /// The album one release group (`?1`, lowercase) opens when no copy is
+    /// owned.
+    pub(crate) LIVE_COPY_BY_GROUP = (copy_of_group!("= ?1"));
 
     /// Every identified artist credited on an owned album: lowercase MBID
     /// and display name, by name.
@@ -507,7 +503,7 @@ droppedneedle_kernel::sql! {
         WHERE album_credit.local_album_id = t.local_album_id \
         AND album_credit.local_artist_id = credit.local_artist_id) LIMIT 1";
     /// Every owned release group, lowercase and sorted.
-    pub(crate) OWNED_GROUPS = "SELECT DISTINCT * FROM (" + (owned_release_groups!())
+    pub(crate) OWNED_GROUPS = "SELECT DISTINCT group_mbid FROM (" + (all_owners!())
         + ") ORDER BY 1";
     /// Request statuses that count as requested on catalog pages: open, not
     /// finished.
@@ -534,11 +530,8 @@ droppedneedle_kernel::sql! {
     pub(crate) LOCAL_ALBUM = "SELECT b.id, b.title, COALESCE(b.album_artist_name, ''), b.year, \
         (SELECT ae.provider_artist_id FROM local_artist_external_identities ae \
          WHERE ae.local_artist_id = b.album_artist_id AND " + (musicbrainz!("ae"))
-        + "), b.has_indexed_track \
-        FROM local_album_external_identities e \
-        JOIN local_albums b ON b.id = e.local_album_id \
-        WHERE lower(e.release_group_mbid) = ? AND " + (musicbrainz!("e")) + " AND "
-        + (live_album!("b")) + " ORDER BY " + (copy_order!("b", "e")) + " LIMIT 1";
+        + "), b.has_indexed_track FROM local_albums b WHERE b.id = ("
+        + (copy_of_group!("= ?1")) + ")";
     /// The catalog pages' tracks of one album: disc, track and title order.
     pub(crate) LOCAL_ALBUM_TRACKS = "SELECT " + TRACK_COLUMNS + " " + TRACK_JOINS
         + " WHERE t.local_album_id = ? AND t.availability = 'indexed' \
@@ -1495,21 +1488,22 @@ pub(crate) fn current_albums(ids: ListLen) -> String {
 /// Owned albums holding one of `ids` lowercase release groups.
 pub(crate) fn owners_by_group(ids: ListLen) -> String {
     format!(
-        "SELECT e.local_album_id, lower(e.release_group_mbid) \
-         FROM local_album_external_identities e JOIN local_albums b ON b.id = e.local_album_id \
-         WHERE lower(e.release_group_mbid) IN ({}) AND {} AND {}",
-        marks(ids),
-        musicbrainz!("e"),
-        owned_album!("b")
+        "{}SELECT album_id, group_mbid FROM ({})",
+        asked_groups(ids),
+        owns_group!("IN (SELECT g FROM asked)")
     )
 }
 
-/// Owned albums identified as one of `ids` lowercase releases.
+/// Owned albums identified as one of `ids` lowercase releases, never through
+/// a guess flagged `NAMED_GROUP_DIFFERS`. Tags are not read: nothing indexes
+/// a track's tagged release, and a tag-only album is reached by its group.
 pub(crate) fn owners_by_release(ids: ListLen) -> String {
     format!(
         "SELECT e.local_album_id, lower(e.release_mbid) \
          FROM local_album_external_identities e JOIN local_albums b ON b.id = e.local_album_id \
-         WHERE e.release_mbid IS NOT NULL AND lower(e.release_mbid) IN ({}) AND {} AND {}",
+         WHERE e.release_mbid IS NOT NULL AND lower(e.release_mbid) IN ({}) AND {} AND {} \
+         AND NOT EXISTS (SELECT 1 FROM library_album_match_state s \
+         WHERE s.local_album_id = e.local_album_id AND s.reason_code = 'NAMED_GROUP_DIFFERS')",
         marks(ids),
         musicbrainz!("e"),
         owned_album!("b")
@@ -2131,19 +2125,21 @@ pub(crate) fn player_existing(kind: ItemKind, ids: ListLen) -> String {
     )
 }
 
-/// For `ids` albums, the accepted match's release and release group, or,
-/// for an album with none, each indexed track's tag ids: an accepted album
-/// is one row with no tracks joined.
+/// For `ids` albums, the match's release and release group, or, for an
+/// album identification has not reached, each indexed track's tag ids: a
+/// matched album is one row with no tracks joined, and an album whose match
+/// was taken off or that found none sends no ids.
 pub(crate) fn player_album_ids(ids: ListLen) -> String {
     format!(
         "SELECT a.id, ae.release_mbid, ae.release_group_mbid, \
          t.embedded_release_mbid, t.embedded_release_group_mbid \
          FROM local_albums a \
          LEFT JOIN local_album_external_identities ae ON ae.local_album_id = a.id AND {} \
-         LEFT JOIN local_tracks t ON ae.local_album_id IS NULL \
+         LEFT JOIN local_tracks t ON ae.local_album_id IS NULL AND {} \
          AND t.local_album_id = a.id AND t.availability = 'indexed' \
          WHERE a.id IN ({})",
         musicbrainz!("ae"),
+        not_yet_identified!("a"),
         marks(ids)
     )
 }

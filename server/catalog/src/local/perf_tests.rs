@@ -3003,9 +3003,17 @@ async fn history_plans_read_the_listeners_plays_first() {
     assert_history_plans(fixture.db(), "with statistics").await;
 }
 
+/// The release group the 100k seed's album `album` is: its files' tags name
+/// it, and every even album's match row too.
+fn perf_group(album: usize) -> String {
+    format!("0a0b0c0d-0000-4000-8000-{album:012}")
+}
+
 /// Seed 500 artists, 10,000 albums, and 100,000 tracks through the writer
 /// lane, so the FTS oracle and format totals populate exactly like
 /// production writes. Deterministic names; the miss query hits nothing.
+/// Every file's tags name its album's release group, and every even album
+/// is matched to it, so ownership reads meet both kinds.
 async fn seed_100k(fixture: &Fixture) {
     let mut artists = String::from(
         "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) VALUES ",
@@ -3060,7 +3068,8 @@ async fn seed_100k(fixture: &Fixture) {
              path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
              artist_name, artist_name_folded, album_title, album_title_folded, album_artist_name, \
              album_artist_name_folded, disc_number, track_number, year, duration_seconds, \
-             file_format, availability, ingest_source, imported_at, membership_source) VALUES ",
+             file_format, availability, ingest_source, imported_at, membership_source, \
+             embedded_release_group_mbid) VALUES ",
         );
         let mut credits = String::from(
             "INSERT INTO local_track_artists (local_track_id, position, local_artist_id, role) VALUES ",
@@ -3077,7 +3086,7 @@ async fn seed_100k(fixture: &Fixture) {
                  4000, 1, 'ps{id:06}', 'Perf Track {id:06}', 'perf track {id:06}', \
                  'Perf Artist {:04}', 'perf artist {:04}', 'Perf Album {:05}', 'perf album {:05}', \
                  'Perf Artist {:04}', 'perf artist {:04}', 1, {}, 1994, 200.0, '{format}', 'indexed', \
-                 'scan', 1000000, 'automatic')",
+                 'scan', 1000000, 'automatic', '{}')",
                 id / 10,
                 (id / 10) / 20,
                 (id / 10) / 20,
@@ -3086,6 +3095,7 @@ async fn seed_100k(fixture: &Fixture) {
                 (id / 10) / 20,
                 (id / 10) / 20,
                 id % 10 + 1,
+                perf_group(id / 10),
             ));
             credits.push_str(&format!(
                 "('p-t{id:06}', 0, 'p-a{:04}', 'main')",
@@ -3097,6 +3107,173 @@ async fn seed_100k(fixture: &Fixture) {
         write_batch(fixture, "perf tracks", tracks).await;
         write_batch(fixture, "perf track credits", credits).await;
     }
+    let matches: Vec<String> = (0..10000)
+        .step_by(2)
+        .map(|album| {
+            format!(
+                "('p-al{album:05}', 'musicbrainz', '{}', 'automatic', 1000000)",
+                perf_group(album)
+            )
+        })
+        .collect();
+    write_batch(
+        fixture,
+        "perf album matches",
+        format!(
+            "INSERT INTO local_album_external_identities (local_album_id, provider, \
+             release_group_mbid, decision_source, selected_at) VALUES {};",
+            matches.join(", ")
+        ),
+    )
+    .await;
+}
+
+/// A probe of one release group's owners, as acquisition asks it.
+const GROUP_OWNED: &str = concat!(
+    "SELECT EXISTS (",
+    droppedneedle_library::owns_group!("= ?1"),
+    ")"
+);
+
+/// The plan lines of the ownership reads that name one group or a list,
+/// with no line that walks the tracks, the matches or the albums.
+async fn assert_owned_plans(db: &Db) {
+    let one = [ExplainBind::Text(None)];
+    let three = [ExplainBind::Text(None); 3];
+    let owners = sql::owners_by_group(ListLen::new(3));
+    let feed = concat!(
+        "SELECT n.release_group_mbid FROM acquire_new_release_feed n WHERE NOT EXISTS (",
+        droppedneedle_library::owns_group!("= +n.release_group_mbid_lower"),
+        ")"
+    );
+    for (name, text, binds) in [
+        ("group owned", GROUP_OWNED, &one[..]),
+        ("page album", sql::LOCAL_ALBUM.text(), &one[..]),
+        ("live copy", sql::LIVE_COPY_BY_GROUP.text(), &one[..]),
+        ("owners by group", owners.as_str(), &three[..]),
+        ("feed not owned", feed, &[][..]),
+    ] {
+        let plan = explain(db, text, binds).await;
+        for index in [
+            "idx_local_album_identity_rg_lower",
+            "idx_local_tracks_release_group_lower",
+        ] {
+            assert!(
+                plan.iter().any(|line| line.contains(index)),
+                "{name}: no {index} in {plan:?}"
+            );
+        }
+        assert!(
+            !plan.iter().any(|line| {
+                let mut words = line.split_whitespace();
+                words.next() == Some("SCAN")
+                    && matches!(
+                        words.next(),
+                        Some("ogt" | "oga" | "oge" | "ogb" | "gce" | "b" | "e" | "t")
+                    )
+            }),
+            "{name} scans: {plan:?}"
+        );
+    }
+}
+
+/// Ownership reads reach a group's albums by key, through the two lowered
+/// indexes: the matches' release group and the files' tagged one.
+#[tokio::test]
+async fn owned_plans_probe_by_key() {
+    let fixture = seed_small().await;
+    assert_owned_plans(fixture.db()).await;
+}
+
+/// Acceptance: the ownership reads on a 100k catalog with half its albums
+/// matched and every file tagged. A keyed probe holds the 10 ms budget; the
+/// whole owned set is timed and reported. Ignored by default, as the other
+/// timings are.
+#[tokio::test]
+#[ignore = "100k acceptance timing; run explicitly with --release on reference hardware"]
+async fn perf_100k_owned_reads_hold_p95() {
+    let fixture = seed_small().await;
+    seed_100k(&fixture).await;
+    let db = fixture.db().clone();
+    db.write(Lane::Foreground, "analyze", |tx| {
+        tx.execute_batch("ANALYZE")?;
+        Ok::<_, DbError>(())
+    })
+    .await
+    .expect("analyze runs");
+    assert_owned_plans(&db).await;
+    let groups: Vec<String> = (0..20).map(|n| perf_group(n * 499)).collect();
+    let owners = sql::owners_by_group(ListLen::new(groups.len()));
+    let list: Vec<Value> = groups.iter().map(|group| text(group)).collect();
+    let keyed: Vec<(&str, String, Vec<Value>)> = vec![
+        (
+            "group_owned_matched",
+            GROUP_OWNED.to_owned(),
+            vec![text(&perf_group(4242))],
+        ),
+        (
+            "group_owned_tags",
+            GROUP_OWNED.to_owned(),
+            vec![text(&perf_group(4243))],
+        ),
+        (
+            "group_owned_miss",
+            GROUP_OWNED.to_owned(),
+            vec![text("0a0b0c0d-0000-4000-8000-ffffffffffff")],
+        ),
+        (
+            "page_album_matched",
+            sql::LOCAL_ALBUM.text().to_owned(),
+            vec![text(&perf_group(4242))],
+        ),
+        (
+            "page_album_tags",
+            sql::LOCAL_ALBUM.text().to_owned(),
+            vec![text(&perf_group(4243))],
+        ),
+        (
+            "live_copy_matched",
+            sql::LIVE_COPY_BY_GROUP.text().to_owned(),
+            vec![text(&perf_group(4242))],
+        ),
+        ("owners_by_group_20", owners, list),
+    ];
+    let worklist = concat!(
+        "SELECT o.group_mbid, t.file_format FROM (",
+        droppedneedle_library::all_owners!(),
+        ") o JOIN local_tracks t ON t.local_album_id = o.album_id \
+         WHERE +t.availability = 'indexed'"
+    );
+    let whole: Vec<(&str, String, Vec<Value>)> = vec![
+        ("owned_set", sql::OWNED_GROUPS.text().to_owned(), Vec::new()),
+        ("upgrade_worklist", worklist.to_owned(), Vec::new()),
+    ];
+    let mut report = Vec::new();
+    for (budgeted, rows) in [(true, &keyed), (false, &whole)] {
+        for (name, statement, values) in rows {
+            let mut samples = Vec::new();
+            for round in 0..53 {
+                let tick = std::time::Instant::now();
+                let found: Vec<Value> =
+                    fetch(&db, statement, values.clone(), |row| row.get(0)).await;
+                let ms = tick.elapsed().as_secs_f64() * 1000.0;
+                if round >= 3 {
+                    samples.push(ms);
+                }
+                assert!(!found.is_empty() || name.ends_with("miss"), "{name}");
+            }
+            let p95 = percentile(&mut samples, 95.0);
+            let p50 = percentile(&mut samples, 50.0);
+            report.push(format!("{name}: p50 {p50:.2} ms, p95 {p95:.2} ms"));
+            if budgeted && !cfg!(debug_assertions) {
+                assert!(
+                    p95 < 10.0,
+                    "{name} p95 {p95:.2} ms exceeds the 10 ms budget"
+                );
+            }
+        }
+    }
+    eprintln!("100k ownership reads:\n{}", report.join("\n"));
 }
 
 /// Plays over the 100k catalog: `p-u1` has played every 50th track one to

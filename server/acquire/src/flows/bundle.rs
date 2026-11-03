@@ -91,6 +91,7 @@ pub(crate) fn flows_bundle(
         admins: admins.clone(),
         downloads: dispatch.clone(),
         ticks: ticks.clone(),
+        editions: settings.live(),
     });
     let sync_deps = Arc::new(SyncDeps {
         ledger: ledger.clone(),

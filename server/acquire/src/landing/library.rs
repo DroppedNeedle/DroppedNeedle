@@ -2,7 +2,7 @@
 //! MusicBrainz release source, what the catalog already holds (read over
 //! the shared database), and the library's import seam for publishing.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -262,7 +262,7 @@ impl LandingLibrary for LibraryLanding {
         release_mbid: &'a str,
         release_track_mbid: &'a str,
         recording_mbid: &'a str,
-    ) -> BoxFuture<'a, Vec<OwnedCopy>> {
+    ) -> BoxFuture<'a, Result<Vec<OwnedCopy>, DbError>> {
         Box::pin(async move {
             let values = (
                 release_group_mbid.to_ascii_lowercase(),
@@ -276,24 +276,54 @@ impl LandingLibrary for LibraryLanding {
                         .map_err(DbError::from)
                 })
                 .await;
-            let rows: Vec<GroupCopy> = match read {
-                Ok(rows) => rows,
-                Err(error) => {
-                    tracing::warn!(%error, "library copies unreadable; nothing is replaced");
-                    return Vec::new();
-                }
-            };
+            let mut rows: Vec<GroupCopy> = read?;
+            // A file naming the group on a mixed album is not a copy the
+            // group owns, but a person may still replace it from the held list.
+            let mut mixed: HashSet<String> = HashSet::new();
+            if album.is_none() {
+                let group = release_group_mbid.to_ascii_lowercase();
+                let read = self
+                    .library
+                    .db
+                    .read("landing.mixed_tag_copies", move |conn| {
+                        read_rows(
+                            conn,
+                            sql::MIXED_TAG_COPIES.text(),
+                            (group,),
+                            GroupCopy::from_row,
+                        )
+                        .map_err(DbError::from)
+                    })
+                    .await;
+                let found = read?;
+                mixed.extend(found.iter().map(|row| row.album_id.clone()));
+                rows.extend(found);
+            }
+            let mut refused: HashMap<String, bool> = HashMap::new();
             let mut seen = HashSet::new();
-            copies_to_replace(&rows, release_mbid, release_track_mbid, recording_mbid)
-                .into_iter()
-                .filter(|row| seen.insert(row.track_id.clone()))
-                .map(|row| OwnedCopy {
+            let mut copies = Vec::new();
+            for row in copies_to_replace(&rows, release_mbid, release_track_mbid, recording_mbid) {
+                if !seen.insert(row.track_id.clone()) {
+                    continue;
+                }
+                let replace_refused = match refused.get(&row.album_id) {
+                    Some(known) => *known,
+                    None => {
+                        let found = mixed.contains(&row.album_id)
+                            || self.management.refuses_replacing(&row.album_id).await?;
+                        refused.insert(row.album_id.clone(), found);
+                        found
+                    }
+                };
+                copies.push(OwnedCopy {
                     track_id: row.track_id.clone(),
                     album_id: row.album_id.clone(),
                     release_mbid: row.album_release_mbid.clone(),
                     tier: tier_of(&row.format, row.bitrate, row.depth),
-                })
-                .collect()
+                    replace_refused,
+                });
+            }
+            Ok(copies)
         })
     }
 
@@ -302,7 +332,7 @@ impl LandingLibrary for LibraryLanding {
         track_id: &'a str,
         planned: &'a PlannedAlbum,
         release: &'a Release,
-    ) -> BoxFuture<'a, Option<VersionRow>> {
+    ) -> BoxFuture<'a, Result<Option<VersionRow>, DbError>> {
         Box::pin(async move {
             let release_tracks = serde_json::to_string(
                 &release
@@ -342,29 +372,23 @@ impl LandingLibrary for LibraryLanding {
                     .map_err(DbError::from)
                 })
                 .await;
-            let row: Option<TrackVersion> = match read {
-                Ok(row) => row,
-                Err(error) => {
-                    tracing::warn!(%error, track_id, "track to replace unreadable; nothing is replaced");
-                    return None;
-                }
+            let row: Option<TrackVersion> = read?;
+            let Some((availability, format, bitrate, depth, on_planned, alias, on_release, album)) =
+                row
+            else {
+                return Ok(None);
             };
-            let (availability, format, bitrate, depth, on_planned, alias, on_release, album) = row?;
-            let held = match crate::edition::copy_is_held(&self.library.db, &album).await {
-                Ok(held) => held,
-                Err(error) => {
-                    tracing::warn!(%error, album, "album hold unreadable; nothing is replaced");
-                    return None;
-                }
-            };
-            Some(VersionRow {
+            let held = crate::edition::copy_is_held(&self.library.db, &album).await?;
+            let replace_refused = self.management.refuses_replacing(&album).await?;
+            Ok(Some(VersionRow {
                 on_planned,
+                replace_refused,
                 availability,
                 alias,
                 on_release,
                 held,
                 tier: tier_of(&format, bitrate, depth),
-            })
+            }))
         })
     }
 

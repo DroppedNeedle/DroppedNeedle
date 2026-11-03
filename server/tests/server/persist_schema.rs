@@ -4227,22 +4227,23 @@ fn every_registered_statement_prepares() {
 /// lists, totals and unplayed halves over the whole library (one album's
 /// or one exact title's are families of their own, checked here), and
 /// their lists of every track and genre. Also the upgrade worklist, which
-/// reads every identified track to find each album's worst file, and the
-/// quota's library total, which sums every indexed track (10 ms on 100k
+/// reads every owned album's tracks to find each album's worst file, the
+/// whole owned set (Weekly Mix's, and the groups the upgrade sweep leaves
+/// to a person), which reads every tagged track for albums owned through
+/// their tags, and the quota's library total, which sums every indexed track (10 ms on 100k
 /// tracks). The acquire reads of one release group's or one recording's
 /// tracks (the album and recording quality checks and "the library holds
 /// it") walk only because no index covers lowered release-group or
 /// recording ids; the expression indexes that cover them take them off
-/// this list. The library's four: the scan's pass over every indexed track
-/// of a live album, the search for a release group across every indexed
-/// track, the continuation sweep's walk of every missing track when no
-/// album is named, and the remap sweep over every identified album's tracks.
+/// this list. The library's three: the scan's pass over every indexed track
+/// of a live album, the continuation sweep's walk of every missing track
+/// when no album is named, and the remap sweep over every identified album's
+/// tracks.
 /// Discover's three: radio's two track reads, which filter on ids worked out
 /// per track over the whole library, and the check for any local file, which
 /// stops at the first row.
 const TRACK_WALKS: &[&str] = &[
     "droppedneedle_library::scan::sql::ALBUM_TRACKS",
-    "droppedneedle_library::import::sql::GROUP_HELD",
     "droppedneedle_library::corrections::sql::CANDIDATE_ALBUMS",
     "droppedneedle_library::corrections::sql::CANDIDATES",
     "droppedneedle_catalog::local::sql::TRACK_PAGE_LIKE",
@@ -4263,6 +4264,8 @@ const TRACK_WALKS: &[&str] = &[
     "droppedneedle_compat::jellyfin::ids::sql::NEW_TRACKS",
     "droppedneedle_compat::jellyfin::ids::sql::GENRE_NAMES",
     "droppedneedle_acquire::flows::sql::IDENTIFIED_TRACKS",
+    "droppedneedle_acquire::flows::sql::FLAGGED_GROUPS",
+    "droppedneedle_catalog::local::sql::OWNED_GROUPS",
     "droppedneedle_acquire::requests::sql::LIBRARY_BYTES",
     "droppedneedle_catalog::discover::sql::RADIO_TRACKS_BY_ARTISTS",
     "droppedneedle_catalog::discover::sql::RADIO_TRACKS_OF_ALBUMS",

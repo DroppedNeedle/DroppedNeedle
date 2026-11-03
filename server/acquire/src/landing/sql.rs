@@ -2,30 +2,24 @@
 //! already has, one track a download would replace, and the files a
 //! finished import placed.
 
+// `sql!` joins one token per part, so a part built by a definition macro
+// is written in parentheses.
+#![allow(unused_parens, clippy::double_parens)]
+
+use droppedneedle_library::{names_another_group, not_yet_identified, owns_group};
+
 droppedneedle_kernel::sql! {
-    /// Indexed library tracks with their album's identity and their own,
-    /// the one notion of "the library holds it" the landing and the wanted
-    /// watcher share: an album identified as the group (`?1`, lowered),
-    /// or, in an album with no identity yet, a file whose own tags name
-    /// the group. An album identified as another group never counts for
-    /// its files' tags. Only MusicBrainz identities count. The `t.id IN`
-    /// list names every track either side could match, through the
-    /// lowered-id indexes, so the tracks are reached by key.
+    /// Indexed library tracks of the albums that own the group (`?1`,
+    /// lowered), with their album's identity and their own: the one notion
+    /// of "the library holds it" the landing and the wanted watcher share.
     pub(crate) fragment OWNED_TRACKS_FROM = "FROM local_tracks t \
-         JOIN local_albums b ON b.id = t.local_album_id AND b.retired_into_album_id IS NULL \
+         JOIN local_albums b ON b.id = t.local_album_id \
          LEFT JOIN local_album_external_identities ai \
            ON ai.local_album_id = b.id AND ai.provider = 'musicbrainz' \
          LEFT JOIN local_track_external_identities ti \
            ON ti.local_track_id = t.id AND ti.provider = 'musicbrainz' \
-         WHERE t.availability = 'indexed' \
-           AND t.id IN (SELECT gt.id FROM local_album_external_identities ga \
-               JOIN local_tracks gt ON gt.local_album_id = ga.local_album_id \
-               WHERE ga.provider = 'musicbrainz' AND lower(ga.release_group_mbid) = ?1 \
-             UNION ALL SELECT id FROM local_tracks \
-               WHERE embedded_release_group_mbid IS NOT NULL \
-                 AND lower(embedded_release_group_mbid) = ?1) \
-           AND (lower(ai.release_group_mbid) = ?1 \
-             OR (ai.local_album_id IS NULL AND lower(t.embedded_release_group_mbid) = ?1))";
+         WHERE +t.availability = 'indexed' AND t.local_album_id IN (SELECT album_id FROM ("
+         + (owns_group!("= ?1")) + "))";
     /// [`OWNED_TRACKS_FROM`] kept to one library album when `?2` names one,
     /// followed to the album it was merged into. An album since deleted
     /// keeps nothing: the whole group is read.
@@ -44,12 +38,27 @@ droppedneedle_kernel::sql! {
     /// and the release its identity names, the copy's release track and
     /// recording, and its quality facts, in the order `GroupCopy::from_row`
     /// reads them.
-    pub(super) GROUP_COPIES = "SELECT t.id, b.id, \
+    pub(super) GROUP_COPIES = "SELECT " + GROUP_COPY_COLUMNS + " " + OWNED_TRACKS_FROM + IN_ALBUM;
+    /// What [`GROUP_COPIES`] reads.
+    fragment GROUP_COPY_COLUMNS = "t.id, b.id, \
          lower(COALESCE(ai.release_mbid, t.embedded_release_mbid, '')), \
          COALESCE(ai.release_mbid, ''), \
          lower(COALESCE(ti.release_track_mbid, t.embedded_release_track_mbid, '')), \
          lower(COALESCE(ti.recording_mbid, t.embedded_recording_mbid, '')), \
-         t.file_format, t.bit_rate, t.bit_depth " + OWNED_TRACKS_FROM + IN_ALBUM;
+         t.file_format, t.bit_rate, t.bit_depth";
+    /// Files naming group `?1` on an album identification has not reached
+    /// whose other files name another group. Such an album owns nothing, and
+    /// these copies are never replaced by themselves.
+    pub(super) MIXED_TAG_COPIES = "SELECT " + GROUP_COPY_COLUMNS + " \
+         FROM local_tracks t \
+         JOIN local_albums b ON b.id = t.local_album_id AND +b.retired_into_album_id IS NULL \
+         LEFT JOIN local_album_external_identities ai \
+           ON ai.local_album_id = b.id AND ai.provider = 'musicbrainz' \
+         LEFT JOIN local_track_external_identities ti \
+           ON ti.local_track_id = t.id AND ti.provider = 'musicbrainz' \
+         WHERE t.embedded_release_group_mbid IS NOT NULL \
+         AND lower(t.embedded_release_group_mbid) = ?1 AND +t.availability = 'indexed' AND "
+         + (not_yet_identified!("b")) + " AND " + (names_another_group!("t"));
     /// One track (`?1`) a download would replace: its availability and
     /// quality, whether it sits on the planned album (`?2`) identified as
     /// the planned release (`?3`), whether it is an alias, whether its

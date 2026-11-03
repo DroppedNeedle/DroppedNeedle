@@ -3612,6 +3612,136 @@ fn an_admin_undo_keeps_the_persons_undo() {
     );
 }
 
+/// Whether acquisition counts `group` as in the library.
+fn library_holds(rig: &Rig, group: &str) -> bool {
+    let db = droppedneedle_kernel::db::Db::open_for_tests(&rig.path()).expect("db opens");
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime")
+        .block_on(droppedneedle_acquire::edition::library_holds(&db, group))
+        .expect("holdings read")
+}
+
+/// An album whose files all name `group`, as a scan leaves it.
+fn tagged_album(rig: &Rig, album: &str, track: &str, group: &str) {
+    let mut facts = album_facts(album, &[(track, Some(RECORDING_1))]);
+    facts.tracks[0].release_group_mbid = Some(group.to_owned());
+    rig.seed_album(&facts);
+}
+
+/// An administrator undoes the automatic edition of an album that had no
+/// match before: the album is left unmatched, flagged, and the files' tags
+/// do not make it own the group again.
+#[test]
+fn an_undone_automatic_edition_does_not_return_through_its_tags() {
+    use droppedneedle_library::edition::decisions;
+
+    let rig = rig_with_recall(RecallResult::default());
+    rig.run(
+        "INSERT INTO auth_users (id, display_name, role, created_at) \
+         VALUES ('curator-1', 'Curator', 'admin', 0);",
+    );
+    tagged_album(&rig, "album-1", "t1", GROUP_A);
+    let sealed = rig.store.seal_automatic(&AutomaticSeal {
+        local_album_id: "album-1".to_owned(),
+        release_group_mbid: GROUP_A.to_owned(),
+        release_mbid: Some(RELEASE_A1.to_owned()),
+        tracks: Vec::new(),
+        flag: None,
+    });
+    assert_eq!(sealed.ok(), Some(true));
+    assert!(library_holds(&rig, GROUP_A));
+    let (album_revision, identity_revision) =
+        decisions::live_automatic_edition_undo(&rig.db, "album-1")
+            .expect("reads")
+            .expect("an automatic undo is live");
+    let undone = rig.change(|tx| {
+        decisions::undo_automatic_edition(
+            tx,
+            "album-1",
+            album_revision,
+            identity_revision,
+            "curator-1",
+            2.0,
+        )
+        .map(|undone| undone.outcome)
+    });
+    assert_eq!(
+        undone,
+        Ok(droppedneedle_library::identity::AutomaticUndone::ClearedToReview)
+    );
+    assert!(
+        rig.identity_tables("album-1")
+            .contains(&"flag unmatched AUTOMATIC_EDITION_UNDONE".to_owned()),
+        "{:?}",
+        rig.identity_tables("album-1")
+    );
+    assert!(!library_holds(&rig, GROUP_A));
+}
+
+/// A download landing on an album a person detached, or on a guess the
+/// files' tags contradict, keeps the album's row and flag as they are: the
+/// landing adds its files and their recordings only.
+#[test]
+fn a_landing_keeps_a_detach_and_a_named_group_flag() {
+    use droppedneedle_library::identity::{ImportedFile, ReleaseIdentity, adopt_import};
+
+    let rig = rig_with_recall(RecallResult::default());
+    let landed = ReleaseIdentity {
+        release_mbid: RELEASE_A1.to_owned(),
+        release_group_mbid: GROUP_A.to_owned(),
+        recording_mbid: RECORDING_1.to_owned(),
+        release_track_mbid: "rt-landed".to_owned(),
+        album_identity_revision: 1,
+        mapping_revision: 1,
+    };
+    // The guess is the very release the download lands, which a landing
+    // would otherwise take as confirming it.
+    tagged_album(&rig, "album-1", "t1", GROUP_A);
+    tagged_album(&rig, "album-2", "t2", GROUP_B);
+    rig.run(&format!(
+        "INSERT INTO library_album_match_state (local_album_id, state, reason_code, \
+         candidates_json, updated_at) VALUES \
+         ('album-1', 'unmatched', 'DETACHED_BY_PERSON', '[]', 0), \
+         ('album-2', 'unconfirmed', 'NAMED_GROUP_DIFFERS', '[]', 0); \
+         INSERT INTO local_album_external_identities (local_album_id, provider, \
+         release_group_mbid, release_mbid, decision_source, selected_at, row_revision) \
+         VALUES ('album-2', 'musicbrainz', '{GROUP_A}', '{RELEASE_A1}', 'automatic', 0, 1);"
+    ));
+    for (album, track) in [("album-1", "t1"), ("album-2", "t2")] {
+        let before: Vec<String> = rig
+            .identity_tables(album)
+            .into_iter()
+            .filter(|line| !line.starts_with("track "))
+            .collect();
+        let adopted = rig.change(|tx| {
+            adopt_import(
+                tx,
+                &[ImportedFile {
+                    track_id: track,
+                    identity: &landed,
+                    joined: false,
+                }],
+                1.0,
+            )
+            .map_err(Into::into)
+        });
+        assert_eq!(adopted, Ok(()));
+        let tables = rig.identity_tables(album);
+        let after: Vec<String> = tables
+            .iter()
+            .filter(|line| !line.starts_with("track "))
+            .cloned()
+            .collect();
+        assert_eq!(after, before, "{album}");
+        assert!(
+            tables.contains(&format!("track {track} {RECORDING_1} - - -/- automatic 1")),
+            "{album}: {tables:?}"
+        );
+    }
+}
+
 /// A re-seal on another release takes the revisable rows of the files it
 /// did not write off the old release, keeping their recording, and the
 /// administrator's undo puts them back. A retraction deletes the automatic
@@ -4437,9 +4567,14 @@ async fn person_commands_leave_what_their_rule_says() {
 
     // An automatic edition with nothing before it is undone: no undo row
     // is left, an older choice undo included, and an acceptance's own undo
-    // gives its match state back.
+    // gives its match state back. With none to give back, the album is
+    // flagged unmatched.
     for (album, choice_undo, flag) in [
-        ("c", 5, Vec::new()),
+        (
+            "c",
+            5,
+            vec!["flag unmatched AUTOMATIC_EDITION_UNDONE".to_owned()],
+        ),
         ("d", 2, vec!["flag unconfirmed OLD".to_owned()]),
     ] {
         rig.seed_album(&album_facts(album, &[(format!("{album}1").as_str(), None)]));

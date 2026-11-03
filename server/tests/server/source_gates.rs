@@ -390,6 +390,30 @@ const IDENTITY_USES: &[(&str, &str)] = &[
         "closes an album's pending reviews",
     ),
     ("matching::Release", "the stored release document's type"),
+    (
+        "mbid_shape",
+        "its own SQL definition, exported at the crate root for the areas above",
+    ),
+    (
+        "not_yet_identified",
+        "its own SQL definition, exported at the crate root for the areas above",
+    ),
+    (
+        "names_another_group",
+        "its own SQL definition, exported at the crate root for the areas above",
+    ),
+    (
+        "owns_group",
+        "its own SQL definition, exported at the crate root for the areas above",
+    ),
+    (
+        "group_copies",
+        "its own SQL definition, exported at the crate root for the areas above",
+    ),
+    (
+        "persons_choice",
+        "its own SQL definition, exported at the crate root for the areas above",
+    ),
 ];
 
 /// The identity module uses only what [`IDENTITY_USES`] lists from the

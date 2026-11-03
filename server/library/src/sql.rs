@@ -1,6 +1,10 @@
 //! The SQL of the crate root files, and the one list of placeholders the
 //! crate's family builders share.
 
+// `sql!` joins one token per part, so a part built by a definition macro
+// is written in parentheses.
+#![allow(unused_parens, clippy::double_parens)]
+
 use droppedneedle_kernel::db::statement::ListLen;
 use droppedneedle_kernel::db::time::Millis;
 
@@ -26,10 +30,8 @@ droppedneedle_kernel::sql! {
     pub(super) EXCLUSION_REVISION = "SELECT row_revision FROM library_management_exclusions \
                          WHERE local_album_id = ?1";
     pub(super) ALBUM_RETIRED_INTO = "SELECT retired_into_album_id FROM local_albums WHERE id = ?1";
-    pub(super) LIVE_ALBUM_OF_RELEASE_GROUP = "SELECT b.id FROM local_album_external_identities e \
-                 JOIN local_albums b ON b.id = e.local_album_id \
-                 WHERE lower(e.release_group_mbid) = lower(?1) \
-                 AND b.retired_into_album_id IS NULL ORDER BY b.created_at LIMIT 1";
+    /// The album a release group (`?1`, any case) opens, as the pages do.
+    pub(super) LIVE_ALBUM_OF_RELEASE_GROUP = (crate::copy_of_group!("= lower(?1)"));
     pub(super) ALBUM_TRACKS = "SELECT id, local_album_id, root_id, relative_path FROM local_tracks \
                  WHERE local_album_id = ?1 AND availability = 'indexed' \
                  ORDER BY disc_number, track_number, id";

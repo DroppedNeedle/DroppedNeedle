@@ -1,24 +1,35 @@
 //! The flows' statements: the upgrade worklist's reads of the library and
 //! the download tasks, and the admin directory.
 
+// `sql!` joins one token per part, so a part built by a definition macro
+// is written in parentheses.
+#![allow(unused_parens, clippy::double_parens)]
+
 use droppedneedle_kernel::db::statement::ListLen;
+use droppedneedle_library::{all_owners, copy_of_group};
 
 use crate::landing::sql::OWNED_TRACKS_FROM;
 
 droppedneedle_kernel::sql! {
-    /// Every indexed track of an identified album with its quality facts:
-    /// `(group, title, artist, year, artist mbid, format, bitrate, depth)`.
-    pub(crate) IDENTIFIED_TRACKS = "SELECT \
-             lower(COALESCE(ai.release_group_mbid, t.embedded_release_group_mbid)), \
+    /// Every indexed track of an album that owns a group, with its quality
+    /// facts: `(group, title, artist, year, artist mbid, format, bitrate,
+    /// depth)`.
+    pub(crate) IDENTIFIED_TRACKS = "SELECT o.group_mbid, \
              b.title, b.album_artist_name, b.year, ae.provider_artist_id, \
              t.file_format, t.bit_rate, t.bit_depth \
-         FROM local_tracks t \
-         JOIN local_albums b ON b.id = t.local_album_id AND b.retired_into_album_id IS NULL \
-         LEFT JOIN local_album_external_identities ai ON ai.local_album_id = b.id \
+         FROM (" + (all_owners!()) + ") o \
+         JOIN local_tracks t ON t.local_album_id = o.album_id \
+         JOIN local_albums b ON b.id = o.album_id \
          LEFT JOIN local_artist_external_identities ae \
            ON ae.local_artist_id = b.album_artist_id \
-         WHERE t.availability = 'indexed' \
-           AND COALESCE(ai.release_group_mbid, t.embedded_release_group_mbid, '') <> ''";
+         WHERE +t.availability = 'indexed'";
+    /// Groups whose copy, the one the group opens, carries a match flag and
+    /// owns the group: an upgrade would land there and be held, so the
+    /// automatic sweep leaves them to a person.
+    pub(crate) FLAGGED_GROUPS = "SELECT DISTINCT o.group_mbid FROM ("
+        + (all_owners!()) + ") o \
+         JOIN library_album_match_state s ON s.local_album_id = o.album_id \
+         WHERE o.album_id = (" + (copy_of_group!("= o.group_mbid")) + ")";
     /// The quality facts of the library's tracks of release group `?1`.
     pub(crate) GROUP_TRACK_QUALITY = "SELECT t.file_format, t.bit_rate, t.bit_depth "
         + OWNED_TRACKS_FROM;

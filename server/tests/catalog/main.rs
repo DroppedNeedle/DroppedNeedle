@@ -14,6 +14,7 @@ mod reads_collections;
 mod reads_discover;
 mod reads_enrichment;
 mod reads_library;
+mod reads_ownership;
 mod reads_platform;
 mod reads_search;
 mod reads_youtube;

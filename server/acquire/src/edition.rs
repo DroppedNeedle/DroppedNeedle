@@ -5,10 +5,10 @@
 //! edition", upgrades, the wanted watcher and single-track downloads all
 //! go through it, so the release they fetch is the release the library
 //! shows. The answer is the album's identity row, the library's one record
-//! of its edition: a release a person chose (`manual`), or the release the
-//! matcher picked as the best fit for the files. An album the library does
-//! not hold has no chosen edition; the request's own release (if any)
-//! stands.
+//! of its edition: a release a person chose (a v2 pin carries as one), or
+//! the release the matcher picked as the best fit for the files. An album
+//! the library does not hold has no chosen edition, and neither does a guess
+//! the files' tags contradict; the request's own release (if any) stands.
 
 use droppedneedle_kernel::db::{Db, DbError};
 use droppedneedle_library::identity::DecisionSource;
@@ -80,7 +80,7 @@ fn pick(identity: Option<&str>, source: DecisionSource) -> Option<ChosenEdition>
     let release_mbid = identity
         .map(|mbid| mbid.trim().to_ascii_lowercase())
         .filter(|mbid| !mbid.is_empty())?;
-    let basis = if source == DecisionSource::Manual {
+    let basis = if source.is_persons_choice() {
         EditionBasis::Manual
     } else {
         EditionBasis::BestFit
@@ -107,9 +107,11 @@ pub async fn copy_is_held(db: &Db, album_id: &str) -> Result<bool, DbError> {
 /// indexed track: the check the landing, the wanted watcher and library
 /// presence share.
 pub async fn library_holds(db: &Db, release_group_mbid: &str) -> Result<bool, DbError> {
-    let group = release_group_mbid.to_ascii_lowercase();
+    let group = release_group_mbid.to_owned();
     db.read("acquire.edition.library_holds", move |conn| {
-        Ok(conn.query_row(sql::LIBRARY_HOLDS.text(), [group], |row| row.get(0))?)
+        Ok(droppedneedle_library::identity::reads::group_owned(
+            conn, &group,
+        )?)
     })
     .await
 }

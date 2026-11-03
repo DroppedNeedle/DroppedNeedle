@@ -9,7 +9,8 @@
 use droppedneedle_kernel::db::statement::ListLen;
 
 use super::sqlite::HistoryOrder;
-use crate::landing::sql::OWNED_TRACKS_FROM;
+use droppedneedle_library::identity::asked_groups;
+use droppedneedle_library::owns_group;
 
 droppedneedle_kernel::sql! {
     /// Settle the rows linked to one task (`?1`) as `?2`, stamping
@@ -456,8 +457,6 @@ droppedneedle_kernel::sql! {
          OR EXISTS(SELECT 1 FROM library_album_takeovers WHERE local_album_id = ?1) \
          OR EXISTS(SELECT 1 FROM library_management_automatic_queue \
            WHERE local_album_id = ?1 AND retag_followed_at IS NOT NULL)";
-    /// Whether the library holds release group `?1` (lowercased).
-    pub(crate) LIBRARY_HOLDS = "SELECT EXISTS (SELECT 1 " + OWNED_TRACKS_FROM + ")";
     /// Who owns discovery batch `?1`.
     pub(crate) BATCH_OWNER = "SELECT user_id FROM acquire_discovery_batches WHERE id = ?1";
     /// One discovery batch (`?1`): `(id, user, name, section, created_at)`.
@@ -548,19 +547,20 @@ pub(crate) fn history_page(order: HistoryOrder) -> String {
 }
 
 /// Owned tracks of `groups` lowercased release groups:
-/// `(track id, group, recording, track number, disc number)`. The `+`
-/// keeps the planner off the availability index, so tracks are reached
-/// by their album from the group's identity rows.
+/// `(track id, group, recording, track number, disc number)`, the recording
+/// its identity's, else the file's own. The `+` keeps the planner off the
+/// availability index, so tracks are reached by their album from its owners.
 pub(crate) fn mix_library_files(groups: ListLen) -> String {
     format!(
-        "SELECT t.id, lower(ae.release_group_mbid), lower(te.recording_mbid), \
-         t.track_number, t.disc_number FROM local_tracks t \
-         JOIN local_albums b ON b.id = t.local_album_id \
-         JOIN local_album_external_identities ae ON ae.local_album_id = b.id \
-         JOIN local_track_external_identities te \
+        "{}SELECT t.id, o.group_mbid, \
+         lower(COALESCE(te.recording_mbid, t.embedded_recording_mbid)), \
+         t.track_number, t.disc_number FROM ({}) o \
+         JOIN local_tracks t ON t.local_album_id = o.album_id \
+         LEFT JOIN local_track_external_identities te \
          ON te.local_track_id = t.id AND te.provider = 'musicbrainz' \
-         WHERE b.retired_into_album_id IS NULL AND +t.availability = 'indexed' \
-         AND te.recording_mbid IS NOT NULL AND lower(ae.release_group_mbid) IN ({})",
-        marks(groups)
+         WHERE +t.availability = 'indexed' \
+         AND COALESCE(te.recording_mbid, t.embedded_recording_mbid) IS NOT NULL",
+        asked_groups(groups),
+        owns_group!("IN (SELECT g FROM asked)")
     )
 }

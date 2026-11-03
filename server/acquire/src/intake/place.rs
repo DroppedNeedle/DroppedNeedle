@@ -172,6 +172,21 @@ impl Planned {
     }
 }
 
+/// Why a better file waits: tagging would refuse the album it would replace
+/// a file on, and only a person importing it passes that check.
+const NEEDS_A_PERSON: &str = "This album's match needs checking first.";
+
+/// A library read that failed: never taken as "nothing to replace", so the
+/// batch waits and lands on a later pass, as a busy journal read does.
+fn library_busy(error: droppedneedle_kernel::db::DbError) -> Deferred {
+    tracing::warn!(%error, "the library's copies could not be read; the batch waits");
+    Deferred {
+        reason: Reason::JournalUnreadable,
+        detail: "the library's copies could not be read just now".to_owned(),
+        outage: false,
+    }
+}
+
 /// Steps 1 to 4: versions, upgrades, the join, the fingerprint gate.
 async fn plan(
     library: &dyn LandingLibrary,
@@ -232,6 +247,7 @@ async fn plan(
             let old = library
                 .version_row(&version.local_track_id, copy, release)
                 .await
+                .map_err(library_busy)?
                 .filter(|row| {
                     row.on_planned
                         && !row.alias
@@ -272,6 +288,16 @@ async fn plan(
                 );
                 continue;
             }
+            if old.availability == "indexed" && old.replace_refused && gate != Gate::PersonChoseFile
+            {
+                planned.hold(
+                    file,
+                    Some(track),
+                    Reason::OwnedOnAlbum,
+                    NEEDS_A_PERSON.to_owned(),
+                );
+                continue;
+            }
             if old.availability == "indexed" {
                 replaces.insert(file, vec![version.local_track_id.clone()]);
             }
@@ -295,13 +321,9 @@ async fn plan(
         .map(|copy| copy.album_id.as_str());
     let mut replaced_on: Vec<(String, String)> = Vec::new();
     let mut group_owned: Option<crate::landing::ports::OwnedTracks> = None;
-    for (file, track) in owned {
-        if handled.contains(&track) {
-            planned.owned(gate, file, track);
-            continue;
-        }
+    let compares = |track: usize| {
         let release_track = &release.tracks[track];
-        let compares = match &batch.origin {
+        match &batch.origin {
             _ if gate.imports_held() => true,
             Origin::Upload { .. } => true,
             Origin::Download { upgrade, .. } => {
@@ -311,8 +333,44 @@ async fn plan(
                         .asked
                         .contains(&(release_track.disc.max(1), release_track.position))
             }
-        };
-        if !compares {
+        }
+    };
+    // A file about to be placed whose track sits on an album that owns
+    // nothing because its tags disagree is compared like an owned one, so
+    // that album's copy is not joined by a second one unasked.
+    if join_album.is_none() {
+        let mut placed = Vec::with_capacity(import.len());
+        for (file, track) in std::mem::take(&mut import) {
+            let release_track = &release.tracks[track];
+            let on_mixed_album = !handled.contains(&track)
+                && compares(track)
+                && library
+                    .owned_copies(
+                        &release.release_group_id,
+                        None,
+                        &release.id,
+                        &release_track.id,
+                        &release_track.recording_id,
+                    )
+                    .await
+                    .map_err(library_busy)?
+                    .iter()
+                    .any(|copy| copy.replace_refused);
+            if on_mixed_album {
+                owned.push((file, track));
+            } else {
+                placed.push((file, track));
+            }
+        }
+        import = placed;
+    }
+    for (file, track) in owned {
+        if handled.contains(&track) {
+            planned.owned(gate, file, track);
+            continue;
+        }
+        let release_track = &release.tracks[track];
+        if !compares(track) {
             planned.owned(gate, file, track);
             continue;
         }
@@ -324,7 +382,8 @@ async fn plan(
                 &release_track.id,
                 &release_track.recording_id,
             )
-            .await;
+            .await
+            .map_err(library_busy)?;
         if copies.is_empty() {
             // Owned elsewhere than this release's copy: a person's import
             // is placed as asked, anything else is left as owned. A retry
@@ -370,6 +429,15 @@ async fn plan(
                 .iter()
                 .all(|copy| quality::beats(tier(file), copy.tier))
         {
+            if gate != Gate::PersonChoseFile && copies.iter().any(|copy| copy.replace_refused) {
+                planned.hold(
+                    file,
+                    Some(track),
+                    Reason::OwnedOnAlbum,
+                    NEEDS_A_PERSON.to_owned(),
+                );
+                continue;
+            }
             for copy in &copies {
                 let on = (copy.album_id.clone(), copy.release_mbid.clone());
                 if !replaced_on.contains(&on) {

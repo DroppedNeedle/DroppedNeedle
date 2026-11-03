@@ -135,14 +135,20 @@ fn seal(
     {
         return Ok(());
     }
+    // A person's detach, an undone automatic edition and a guess the files
+    // contradict outlast a landing:
+    // the album's row and flag stay, and its files keep only their recordings.
+    let keeps_flag: bool = tx
+        .prepare_cached(sql::FLAG_A_LANDING_KEEPS.text())?
+        .query_row(params![album], |row| row.get(0))?;
     let answers = |held: &str| match &stored {
         Some(document) => document.answers_to(held),
         None => release.release_mbid.eq_ignore_ascii_case(held),
     };
     // An album that already has an exact edition keeps it: a download
     // matched to another edition adds its files without flipping the
-    // album. A whole-album download verified against the album's own
-    // edition confirms an unsure match.
+    // album. A download of the album's own edition that was not fetched to
+    // join it confirms an unsure match, whatever its file count.
     let held = current
         .as_ref()
         .and_then(|row| row.release_mbid.clone())
@@ -152,7 +158,9 @@ fn seal(
         .zip(on_album)
         .any(|(file, on)| *on && file.joined);
     let mut wrote = false;
-    if held.is_some() {
+    if keeps_flag {
+        tracing::info!(album, "landing keeps the album's match flag");
+    } else if held.is_some() {
         tracing::info!(
             album,
             release = release.release_mbid,
@@ -191,7 +199,7 @@ fn seal(
                 recording_mbid: Some(file.identity.recording_mbid.clone()),
                 // A track of another edition, or on another album, keeps
                 // only its recording.
-                release_track_mbid: (held.is_none() && *on)
+                release_track_mbid: (held.is_none() && !keeps_flag && *on)
                     .then(|| file.identity.release_track_mbid.clone()),
                 decision_source: DecisionSource::Automatic,
                 row_revision: current.as_ref().map_or(1, |row| row.row_revision + 1),

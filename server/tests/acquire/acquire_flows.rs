@@ -651,7 +651,7 @@ async fn upgrade_sweep_gates_and_cap() {
                     format!("t{n}"),
                     format!("al{n}"),
                     format!("/m/{n}.mp3"),
-                    format!("rg-{n}"),
+                    format!("0a0b0c0d-0000-4000-8000-{n:012}"),
                 ],
             )?;
         }
@@ -660,8 +660,15 @@ async fn upgrade_sweep_gates_and_cap() {
     .await
     .unwrap();
     db.add_user("user-1", "Owner", "user").await.unwrap();
-    // rg-0 is already downloading, so the sweep queues nothing for it.
-    seed_task(&db, "task-0", "rg-0", TaskStatus::Downloading).await;
+    // The first album is already downloading, so the sweep queues nothing
+    // for it.
+    seed_task(
+        &db,
+        "task-0",
+        "0a0b0c0d-0000-4000-8000-000000000000",
+        TaskStatus::Downloading,
+    )
+    .await;
     let admins = AdminDirectory::over_users(db.clone());
     let settings = settings(&db);
     settings
@@ -680,6 +687,7 @@ async fn upgrade_sweep_gates_and_cap() {
         admins,
         downloads: dispatch(&db, &settings),
         ticks: ticks(&EventHub::new()),
+        editions: settings.live(),
     };
     let idle = sweep_tick(NOW, &deps).await;
     assert!(idle.skipped_no_admin);
@@ -695,7 +703,10 @@ async fn upgrade_sweep_gates_and_cap() {
         .filter(|task| task.origin == "upgrade")
         .collect();
     assert_eq!(grabs.len(), 2);
-    assert_eq!(grabs[0].release_group_mbid, "rg-1");
+    assert_eq!(
+        grabs[0].release_group_mbid,
+        "0a0b0c0d-0000-4000-8000-000000000001"
+    );
     assert_eq!(grabs[0].user_id, "admin-1");
 }
 
@@ -704,13 +715,15 @@ async fn upgrade_sweep_gates_and_cap() {
 // files still carry the old tag does not make that group held.
 #[tokio::test]
 async fn presence_trusts_a_tag_only_for_an_unidentified_album() {
+    const RG_X: &str = "0a0b0c0d-0000-4000-8000-00000000000a";
+    const RG_U: &str = "0a0b0c0d-0000-4000-8000-00000000000b";
     let db = AcquireDb::scratch().unwrap();
     db.write("test.seed_library", |tx| {
         tx.execute_batch(
             "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at)
                VALUES ('ar1', 'A', 'a', 'person', 0, 0);",
         )?;
-        for (album, tag) in [("identified", "rg-x"), ("unidentified", "rg-u")] {
+        for (album, tag) in [("identified", RG_X), ("unidentified", RG_U)] {
             tx.execute(
                 "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded,
                    album_artist_id, album_artist_name, grouping_source, created_at, updated_at)
@@ -738,7 +751,7 @@ async fn presence_trusts_a_tag_only_for_an_unidentified_album() {
     .unwrap();
     let library = LibraryPresence::over_catalog(db.db().clone());
     assert!(
-        !library.contains("rg-x").await,
+        !library.contains(RG_X).await,
         "an album identified as another group never holds its files' tag"
     );
     assert!(
@@ -746,7 +759,7 @@ async fn presence_trusts_a_tag_only_for_an_unidentified_album() {
         "the album's own group is held"
     );
     assert!(
-        library.contains("rg-u").await,
+        library.contains(RG_U).await,
         "an unidentified album's tag stands in for its identity"
     );
 }

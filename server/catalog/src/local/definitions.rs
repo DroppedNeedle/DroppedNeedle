@@ -14,12 +14,16 @@
 //!   retired one is a leftover no read lists, counts or returns.
 //! - **Owned** means live and has files. Membership, search's
 //!   `in_library`, the catalog pages' local fallback, Discover and follows
-//!   all read this one meaning. A release group is owned when any copy of
-//!   it is. An artist is owned when it is live and credited on an owned
-//!   album. Being identified (`linked`) is not ownership.
+//!   all read this one meaning. A release group is owned by the one
+//!   definition catalog and acquisition share,
+//!   [`droppedneedle_library::owns_group`]. An artist is owned when it is
+//!   live and credited on an owned album. Being identified (`linked`) is not
+//!   ownership.
 //! - **Recording id.** A track's recording id in an answer is the accepted
-//!   identity's, else the one in the file's tags. It is shown and sent,
-//!   never stored as identity and never used to match or own anything. The
+//!   identity's, else the one in the file's tags. It is shown and sent, and
+//!   Weekly Mix finds the library file for a recording it picked by it; it
+//!   is never stored as identity and never used to identify or own anything.
+//!   The
 //!   web player sends it with a play through another server or a YouTube
 //!   link, and such a play is filed by the id it carries
 //!   (`library/src/repairs/plays.rs`).
@@ -65,25 +69,6 @@ macro_rules! owned_album {
     };
 }
 
-/// The order a lookup by release group picks a copy in, over an album
-/// alias and its identity alias: a copy with files first, then one picked
-/// by hand, then the oldest. The same order as the identity read
-/// acquisition follows.
-macro_rules! copy_order {
-    ($album:literal, $identity:literal) => {
-        concat!(
-            $album,
-            ".has_indexed_track DESC, ",
-            $identity,
-            ".decision_source <> 'manual', ",
-            $album,
-            ".created_at ASC, ",
-            $album,
-            ".id ASC"
-        )
-    };
-}
-
 /// The provider every identity join names, over an identity alias.
 macro_rules! musicbrainz {
     ($identity:literal) => {
@@ -121,19 +106,6 @@ macro_rules! track_codec {
     };
 }
 
-/// Every owned release group, lowercased: a subquery for `IN (...)`.
-macro_rules! owned_release_groups {
-    () => {
-        concat!(
-            "SELECT lower(oe.release_group_mbid) FROM local_album_external_identities oe \
-             JOIN local_albums ob ON ob.id = oe.local_album_id WHERE ",
-            $crate::local::definitions::musicbrainz!("oe"),
-            " AND ",
-            $crate::local::definitions::owned_album!("ob")
-        )
-    };
-}
-
 /// An owned artist, over an artist alias: live and credited on an owned
 /// album.
 macro_rules! owned_artist {
@@ -151,6 +123,5 @@ macro_rules! owned_artist {
 }
 
 pub(crate) use {
-    copy_order, live_album, live_track, musicbrainz, owned_album, owned_artist,
-    owned_release_groups, recording_mbid, track_codec,
+    live_album, live_track, musicbrainz, owned_album, owned_artist, recording_mbid, track_codec,
 };

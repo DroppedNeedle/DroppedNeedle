@@ -427,7 +427,10 @@ impl Imports {
             && !self
                 .db
                 .read_blocking("import.group_held", |conn| {
-                    Ok::<_, PublishError>(group_held(conn, &import.release.release_group_id)?)
+                    Ok::<_, PublishError>(crate::identity::reads::group_owned(
+                        conn,
+                        &import.release.release_group_id,
+                    )?)
                 })
                 .map_err(store_fault)?;
         let tagged = plain
@@ -1393,18 +1396,4 @@ pub(crate) fn recovered_provenance(staged: &Path, bundle_id: &str, track_id: &st
         join: file.and(provenance.join.clone()),
         track: file.and_then(|file| file.track.clone()),
     }
-}
-
-/// Whether the library holds an indexed album of release group `group`
-/// (its sealed identity, else its files' own tags), as the landing reads
-/// what is already owned. An empty group is held by nothing.
-fn group_held(conn: &rusqlite::Connection, group: &str) -> rusqlite::Result<bool> {
-    if group.is_empty() {
-        return Ok(false);
-    }
-    conn.query_row(
-        crate::import::sql::GROUP_HELD.text(),
-        rusqlite::params![group.to_ascii_lowercase()],
-        |row| row.get(0),
-    )
 }

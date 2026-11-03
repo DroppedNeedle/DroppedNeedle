@@ -148,6 +148,31 @@ impl Management {
         }
     }
 
+    /// Whether acquisition must leave the album's files where they are: the
+    /// match check tagging makes ([`planner::match_gate`]), lifted only when
+    /// the edition preferences let it manage unconfirmed matches, which do
+    /// not when they cannot be read. A read that fails is an error, never an
+    /// answer: the caller puts the work back.
+    pub async fn refuses_replacing(
+        &self,
+        album_id: &str,
+    ) -> Result<bool, droppedneedle_kernel::db::DbError> {
+        let manage_unconfirmed = planner::manage_unconfirmed(&self.parts);
+        let album = album_id.to_owned();
+        let reason = self
+            .parts
+            .db
+            .read("management.match_gate", move |conn| {
+                Ok::<_, droppedneedle_kernel::db::DbError>(planner::match_gate(
+                    conn,
+                    &album,
+                    manage_unconfirmed,
+                )?)
+            })
+            .await?;
+        Ok(reason.is_some())
+    }
+
     /// Hand running jobs back to the queue once `shutdown` is cancelled.
     pub fn stopping_with(
         mut self,

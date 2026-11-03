@@ -10,30 +10,20 @@ use droppedneedle_kernel::db::statement::ListLen;
 use droppedneedle_kernel::db::time::Millis;
 
 use crate::artwork::local::art_tracks_column;
-use crate::local::definitions::{
-    live_album, musicbrainz, owned_album, owned_artist, owned_release_groups, track_codec,
-};
+use crate::local::definitions::{live_album, musicbrainz, owned_album, owned_artist, track_codec};
+use droppedneedle_library::identity::asked_groups;
+use droppedneedle_library::{not_yet_identified, owns_group};
 
 droppedneedle_kernel::sql! {
     // -- ownership -----------------------------------------------------------
 
-    /// A release group's oldest owned album, up to the id list.
-    fragment OWNED_ALBUMS_START = (concat!(
-        "SELECT ae.release_group_mbid AS mbid, (SELECT o.local_album_id \
-         FROM local_album_external_identities o JOIN local_albums a ON a.id = o.local_album_id \
-         WHERE o.release_group_mbid = ae.release_group_mbid AND ",
-        musicbrainz!("o"),
-        " AND ",
-        owned_album!("a"),
-        " ORDER BY a.created_at, a.id LIMIT 1) AS local_id \
-         FROM local_album_external_identities ae \
-         WHERE ae.release_group_mbid IN ("
-    ));
-    /// What follows the id list.
-    fragment OWNED_ALBUMS_END = (concat!(
-        ") AND ",
-        musicbrainz!("ae"),
-        " GROUP BY ae.release_group_mbid HAVING local_id IS NOT NULL"
+    /// Each asked release group's oldest owned album.
+    fragment OLDEST_OWNERS = (concat!(
+        "SELECT mbid, local_id FROM (SELECT o.group_mbid AS mbid, o.album_id AS local_id, \
+         ROW_NUMBER() OVER (PARTITION BY o.group_mbid ORDER BY a.created_at, a.id) AS pick \
+         FROM (",
+        owns_group!("IN (SELECT g FROM asked)"),
+        ") o JOIN local_albums a ON a.id = o.album_id) WHERE pick = 1"
     ));
     /// The owned local artist carrying an MBID, up to the id list.
     fragment OWNED_ARTISTS_START = "SELECT lower(ai.provider_artist_id) AS mbid, \
@@ -60,7 +50,9 @@ droppedneedle_kernel::sql! {
 
     // -- the discover page's library reads ------------------------------------
 
-    /// Identified owned albums, newest changes first.
+    /// Identified owned albums, newest changes first. A guess the files'
+    /// tags contradict is not one; neither is an album owned through its
+    /// tags alone, which has no match to list.
     pub(super) IDENTIFIED_ALBUMS = (concat!(
         "SELECT lower(ae.release_group_mbid) AS release_group_mbid, \
          lower(aie.provider_artist_id) AS artist_mbid \
@@ -72,7 +64,9 @@ droppedneedle_kernel::sql! {
         musicbrainz!("aie"),
         " WHERE ",
         owned_album!("a"),
-        " GROUP BY a.id ORDER BY a.updated_at DESC, a.id LIMIT ?1"
+        " AND NOT EXISTS (SELECT 1 FROM library_album_match_state s \
+         WHERE s.local_album_id = a.id AND s.reason_code = 'NAMED_GROUP_DIFFERS') \
+         GROUP BY a.id ORDER BY a.updated_at DESC, a.id LIMIT ?1"
     ));
     pub(super) row IdentifiedAlbum for [IDENTIFIED_ALBUMS] {
         release_group_mbid: String,
@@ -189,8 +183,8 @@ droppedneedle_kernel::sql! {
          n.first_release_date AS first_release_date \
          FROM acquire_new_release_feed n JOIN acquire_followed_artists f \
          ON f.artist_mbid_lower = n.artist_mbid_lower AND f.user_id = ?1 \
-         WHERE n.release_group_mbid_lower NOT IN (",
-        owned_release_groups!(),
+         WHERE NOT EXISTS (",
+        owns_group!("= +n.release_group_mbid_lower"),
         ") ORDER BY n.first_release_date DESC, n.discovered_at DESC LIMIT ?2"
     ));
     pub(super) row FollowedReleaseColumns for [FOLLOWED_RELEASES] {
@@ -333,7 +327,9 @@ droppedneedle_kernel::sql! {
          lower(COALESCE(tae.provider_artist_id, t.embedded_artist_mbid, '')) AS artist_mbid, \
          lower(COALESCE(aae.provider_artist_id, t.embedded_album_artist_mbid, '')) \
              AS album_artist_mbid, \
-         lower(COALESCE(ae.release_group_mbid, t.embedded_release_group_mbid)) AS release_group_mbid \
+         lower(COALESCE(ae.release_group_mbid, CASE WHEN "
+         + (not_yet_identified!("a"))
+         + " THEN t.embedded_release_group_mbid END)) AS release_group_mbid \
          FROM local_tracks t \
          JOIN local_albums a ON a.id = t.local_album_id \
          LEFT JOIN local_track_artists ta ON ta.local_track_id = t.id AND ta.position = 0 \
@@ -519,7 +515,7 @@ fn marks(len: ListLen) -> String {
 
 /// `OWNED_ALBUMS`.
 pub(super) fn owned_albums(ids: ListLen) -> String {
-    format!("{OWNED_ALBUMS_START}{}{OWNED_ALBUMS_END}", marks(ids))
+    format!("{}{OLDEST_OWNERS}", asked_groups(ids))
 }
 
 /// `OWNED_ARTISTS`.

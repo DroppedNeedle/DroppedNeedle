@@ -284,10 +284,24 @@ pub struct CopyEdition {
     pub file_count: i64,
 }
 
+/// Whether the library owns `release_group_mbid`, in any case: the one
+/// definition in `owns_group!`. An empty group is owned
+/// by nothing.
+pub fn group_owned(conn: &Connection, release_group_mbid: &str) -> rusqlite::Result<bool> {
+    if release_group_mbid.is_empty() {
+        return Ok(false);
+    }
+    conn.prepare_cached(sql::GROUP_OWNED.text())?
+        .query_row(params![release_group_mbid.to_ascii_lowercase()], |row| {
+            row.get(0)
+        })
+}
+
 /// The copy of `release_group_mbid` the library shows, over live albums, so
 /// a download joins the copy a person sees: a copy with files first, then
-/// one picked by hand (`manual`), then the oldest. The group matches
-/// ignoring ASCII case. `None` when no live copy is identified as the group.
+/// one a person chose, then the oldest. The group matches ignoring ASCII
+/// case. `None` when no live copy is identified as the group; a guess flagged
+/// `NAMED_GROUP_DIFFERS` does not stand in for it.
 pub fn copy_for_group(
     conn: &Connection,
     release_group_mbid: &str,

@@ -7,7 +7,7 @@
 
 use droppedneedle_kernel::db::statement::ListLen;
 
-use crate::local::definitions::owned_release_groups;
+use droppedneedle_library::owns_group;
 
 droppedneedle_kernel::sql! {
     /// The caller may read the playlist: it is theirs, or it is public.
@@ -217,8 +217,8 @@ droppedneedle_kernel::sql! {
         followed_at: f64,
         updated_at: f64,
     }
-    /// Release groups the library owns, lowercased.
-    fragment OWNED_GROUPS = (owned_release_groups!());
+    /// The albums that own the feed row `n`'s release group.
+    fragment OWNERS = (owns_group!("= +n.release_group_mbid_lower"));
     /// How many release sightings a filter matches.
     family RELEASE_COUNT = release_count;
     /// One page of release sightings, in `ReleaseRow`'s mapper order.
@@ -227,7 +227,7 @@ droppedneedle_kernel::sql! {
     pub(super) UNSEEN_RELEASES = "SELECT COUNT(*) FROM acquire_new_release_feed n \
          JOIN acquire_followed_artists f \
          ON f.artist_mbid_lower = n.artist_mbid_lower AND f.user_id = ?1 \
-         WHERE n.release_group_mbid_lower NOT IN (" + OWNED_GROUPS + ") \
+         WHERE NOT EXISTS (" + OWNERS + ") \
          AND n.discovered_at > COALESCE( \
          (SELECT seen_at FROM catalog_new_release_seen_marks WHERE user_id = ?1), 0)";
     /// Move a user's seen marker.
@@ -270,9 +270,7 @@ fn release_from(owned_too: bool, since: bool) -> String {
          ON f.artist_mbid_lower = n.artist_mbid_lower AND f.user_id = ? WHERE 1 = 1"
         .to_owned();
     if !owned_too {
-        from.push_str(&format!(
-            " AND n.release_group_mbid_lower NOT IN ({OWNED_GROUPS})"
-        ));
+        from.push_str(&format!(" AND NOT EXISTS ({OWNERS})"));
     }
     if since {
         from.push_str(
@@ -292,7 +290,7 @@ pub(super) fn release_count(owned_too: bool, since: bool) -> String {
 pub(super) fn release_page(owned_too: bool, since: bool) -> String {
     format!(
         "SELECT n.release_group_mbid, n.title, n.artist_name, f.artist_mbid, n.primary_type, \
-         n.first_release_date, n.release_group_mbid_lower IN ({OWNED_GROUPS}) \
+         n.first_release_date, EXISTS ({OWNERS}) \
          {} ORDER BY n.first_release_date DESC, n.discovered_at DESC LIMIT ? OFFSET ?",
         release_from(owned_too, since)
     )

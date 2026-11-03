@@ -49,6 +49,9 @@ pub struct OwnedCopy {
     pub release_mbid: String,
     /// Quality tier of the file (see [`super::quality::tier_for`]).
     pub tier: &'static str,
+    /// Automatic work leaves it where it is: its album carries a match flag
+    /// tagging would refuse, or its files' tags disagree.
+    pub replace_refused: bool,
 }
 
 /// A library track a landed file may replace as another version of a
@@ -67,6 +70,9 @@ pub struct VersionRow {
     /// The app leaves its album's files as they are
     /// ([`crate::edition::copy_is_held`]).
     pub held: bool,
+    /// Automatic work leaves it where it is: its album carries a match flag
+    /// tagging would refuse.
+    pub replace_refused: bool,
     /// Quality tier from the format, bit rate and depth on its row, which
     /// stay after its file is gone.
     pub tier: &'static str,
@@ -202,7 +208,8 @@ pub trait LandingLibrary: Send + Sync {
     /// The copies an upgrade of one release track would replace: in the
     /// local album of `release_mbid` only (with `album`, in that album
     /// only), matched by release track, else by recording when no copy of
-    /// the release track exists.
+    /// the release track exists. An error means the library could not be
+    /// read, which is never "no copies": the landing waits.
     fn owned_copies<'a>(
         &'a self,
         release_group_mbid: &'a str,
@@ -210,17 +217,18 @@ pub trait LandingLibrary: Send + Sync {
         release_mbid: &'a str,
         release_track_mbid: &'a str,
         recording_mbid: &'a str,
-    ) -> BoxFuture<'a, Vec<OwnedCopy>>;
+    ) -> BoxFuture<'a, Result<Vec<OwnedCopy>, DbError>>;
 
     /// The library track `track_id` as a file landed for `planned` on
     /// `release` would replace it ("Replace tracks you have in another
-    /// version"). `None` when it is gone or cannot be read.
+    /// version"). `None` when it is gone; an error when the library could
+    /// not be read, and the landing waits.
     fn version_row<'a>(
         &'a self,
         track_id: &'a str,
         planned: &'a crate::downloads::plan::PlannedAlbum,
         release: &'a Release,
-    ) -> BoxFuture<'a, Option<VersionRow>>;
+    ) -> BoxFuture<'a, Result<Option<VersionRow>, DbError>>;
 
     /// AcoustID recordings heard in each file, by the caller's key. Empty
     /// when no AcoustID key is set; an error when AcoustID could not be
