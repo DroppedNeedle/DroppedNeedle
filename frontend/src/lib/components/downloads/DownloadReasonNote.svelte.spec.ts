@@ -72,4 +72,27 @@ describe('DownloadReasonNote', () => {
 			.element(page.getByText('Waiting: no download source configured.'))
 			.toHaveClass(/text-warning/);
 	});
+
+	it('says what a clean import removed from the held list', async () => {
+		render(DownloadReasonNote, {
+			task: task({
+				status: 'completed',
+				decision: {
+					outcome: 'imported',
+					reason_code: null,
+					reason_text: null,
+					reason_action: null,
+					detail: 'Removed the held copy not in your quality settings',
+					files_total: 12,
+					files_imported: 12,
+					files_held: 0,
+					decided_at: 0
+				}
+			})
+		});
+
+		await expect
+			.element(page.getByText('Removed the held copy not in your quality settings'))
+			.toBeVisible();
+	});
 });

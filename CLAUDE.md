@@ -573,10 +573,12 @@ Run from the repo root. `make help` lists every target.
   itself (`Gate::HeldRetry`), and that retry never places a file on an
   album a person moved it away from, never adds a second copy and never
   replaces a library copy: those wait for a person.
-- A source outside the download settings is never taken by automatic
-  work (picks, failover, the search review, the wanted watcher). A person
+- A source outside the download settings, or a format or step the quality
+  recipe doesn't list, is never taken by automatic work (picks, failover,
+  the search review, the wanted watcher); such a landing is held, one set
+  per user and album, discarded once a complete copy imports. A person
   may pick it behind a confirm the server enforces, and only that pinned
-  attempt's files skip the quality range (`quality_waived` in the plan
+  attempt's files skip the range and the recipe (`quality_waived` in the plan
   and `pinned` on the handle); every other landing check still runs.
 
 ## Frontend (SvelteKit, Svelte 5, TypeScript)

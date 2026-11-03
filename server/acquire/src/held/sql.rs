@@ -109,6 +109,12 @@ droppedneedle_kernel::sql! {
              AND f.source_task_id IN (SELECT id FROM download_tasks \
                  WHERE user_id = ?1 AND download_type = 'track' \
                    AND recording_mbid = ?2 AND id != ?3)";
+    /// The files user `?1` holds under group `?2` because the recipe does
+    /// not list them.
+    pub(super) FORMAT_SET_FILES = FILE_ROW + " f WHERE f.state = 'held' \
+             AND f.reason = 'format_not_listed' \
+             AND f.entry_id IN (SELECT id FROM acquire_held_entries \
+                 WHERE user_id = ?1 AND group_key = ?2 AND state IN " + OPEN + ")";
     /// Entries past their expiry at `?1`, oldest first, at most `?2`.
     pub(super) DUE_ENTRIES = "SELECT id FROM acquire_held_entries \
              WHERE state = 'held' AND expires_at <= ?1 ORDER BY expires_at, id LIMIT ?2";

@@ -92,7 +92,12 @@ export function batchRequestCopy(requested: number, skipped: number, overflow: n
 // Failure / empty-state classification (purely from DownloadTask fields)
 // ---------------------------------------------------------------------------
 
-export type AcquisitionEmptyState = 'probe-mismatch' | 'nothing-found' | 'source-failure';
+export type AcquisitionEmptyState =
+	| 'probe-mismatch'
+	| 'nothing-found'
+	| 'outside-settings'
+	| 'held-outside-settings'
+	| 'source-failure';
 
 export interface EmptyStateSource {
 	status?: string;
@@ -107,6 +112,14 @@ export const EMPTY_STATE_COPY: Record<AcquisitionEmptyState, { title: string; de
 	'probe-mismatch': {
 		title: 'Quality did not match what was promised',
 		detail: 'The downloaded file failed verification against the advertised quality.'
+	},
+	'outside-settings': {
+		title: 'No copy your settings allow',
+		detail: 'Copies exist, but none your download settings allow. Pick a source to take one.'
+	},
+	'held-outside-settings': {
+		title: 'Held: not in your quality settings',
+		detail: 'The files wait on the Held list for you to import or discard.'
 	},
 	'source-failure': {
 		title: 'The source gave up',
@@ -126,13 +139,16 @@ const NOTHING_FOUND: ReadonlySet<Reason> = new Set<Reason>([
 
 /**
  * Classifies a non-productive task purely from persisted fields. Precedence:
- * a quality refusal -> probe mismatch; no source had it -> nothing-found; any other
+ * a quality refusal -> probe mismatch; only refused copies -> outside-settings; unlisted
+ * files held -> held-outside-settings; no source had it -> nothing-found; any other
  * outcome -> source-failure; otherwise null (healthy/active task, no extra UI).
  */
 export function classifyEmptyState(task: EmptyStateSource): AcquisitionEmptyState | null {
 	const outcome = task.outcome_code ?? null;
 	if (outcome === 'quality_rejected') return 'probe-mismatch';
 	if (outcome === null) return null;
+	if (outcome === 'nothing_allowed') return 'outside-settings';
+	if (outcome === 'format_not_listed') return 'held-outside-settings';
 	if (NOTHING_FOUND.has(outcome)) return 'nothing-found';
 	return 'source-failure';
 }

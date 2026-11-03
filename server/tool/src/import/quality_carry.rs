@@ -188,8 +188,8 @@ pub(super) fn convert_policy(
             "settings",
             "download_policy.flac_mp3_only".to_owned(),
             "imported",
-            "turned on. Other formats are still accepted, but rank after FLAC and MP3 of \
-             the same completeness."
+            "turned on. Other formats are no longer taken automatically. A person can \
+             still pick one."
                 .to_owned(),
         );
     }
@@ -216,7 +216,7 @@ pub(super) fn convert_policy(
         "quality_cutoff".to_owned(),
         Value::from(policy.quality_cutoff),
     );
-    object.insert("flac_mp3_only".to_owned(), Value::from(true));
+    object.remove("flac_mp3_only");
     Ok(())
 }
 

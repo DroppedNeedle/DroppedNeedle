@@ -1162,6 +1162,7 @@ async fn seed(app: &TestApp, kind: Owned, owner: &Who, n: u32) -> Ids {
                     quiet_streak: 0,
                     next_check_at: u64::MAX / 2,
                     new_candidate_count: 1,
+                    last_outcome: None,
                 })
                 .await
                 .expect("watch enrols");

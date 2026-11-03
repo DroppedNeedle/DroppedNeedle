@@ -40715,11 +40715,6 @@
             "description": "Frozen-transfer stall timeout.",
             "default": 30
           },
-          "flac_mp3_only": {
-            "type": "boolean",
-            "description": "Always on. Other formats are still accepted, but rank after FLAC and\nMP3 of the same completeness.",
-            "default": true
-          },
           "ignored_terms": {
             "type": "array",
             "items": {
@@ -40790,7 +40785,7 @@
             "items": {
               "$ref": "#/components/schemas/QualityRecipeEntry"
             },
-            "description": "Ordered quality recipe, earlier entries preferred. A save needs at\nleast one entry."
+            "description": "Ordered quality recipe, earlier entries preferred. Automatic work takes\nonly what it lists. A save needs at least one entry."
           },
           "required_terms": {
             "type": "array",
@@ -56457,6 +56452,7 @@
           "interrupted",
           "import_failed",
           "held_by_earlier_version",
+          "format_not_listed",
           "target_occupied",
           "upgrade_blocked",
           "library_changed",
@@ -56493,6 +56489,7 @@
           "no_album_release",
           "album_releases_exhausted",
           "track_not_found",
+          "nothing_allowed",
           "no_download_source",
           "settings_unreadable",
           "journal_unreadable",
@@ -64528,6 +64525,17 @@
             "$ref": "#/components/schemas/WatchKind",
             "description": "The whole album or the gaps of a short one."
           },
+          "last_outcome": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/WatchOutcome",
+                "description": "What the last check found, once one ran."
+              }
+            ]
+          },
           "musicbrainz_id": {
             "type": "string",
             "description": "Release-group MBID."
@@ -64789,6 +64797,20 @@
         "enum": [
           "missing",
           "partial"
+        ]
+      },
+      "WatchOutcome": {
+        "type": "string",
+        "description": "What a wanted watch's last check found.",
+        "enum": [
+          "found",
+          "seen",
+          "dispatched",
+          "quiet",
+          "outside_settings",
+          "error",
+          "in_library",
+          "imported"
         ]
       },
       "WatchState": {

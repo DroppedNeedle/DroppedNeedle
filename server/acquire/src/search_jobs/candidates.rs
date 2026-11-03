@@ -47,7 +47,7 @@ pub enum CandidateTier {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum CandidateRefusal {
-    /// Its quality is outside the band the landing keeps.
+    /// Its format or quality is outside what the settings list.
     QualityOutsideRange,
     /// It is bigger than the size cap.
     OverSizeCap,
@@ -63,7 +63,7 @@ impl CandidateRefusal {
     /// The reason, as the end of a sentence.
     pub fn text(self) -> &'static str {
         match self {
-            Self::QualityOutsideRange => "its quality is outside your range",
+            Self::QualityOutsideRange => "its format or quality isn't in your settings",
             Self::OverSizeCap => "it is over your size limit",
             Self::IgnoredTerm => "its title has a term you ignore",
             Self::RequiredTermMissing => "its title lacks a term you require",
@@ -225,7 +225,7 @@ impl Candidate {
         self.view.refusal.first().copied()
     }
 
-    /// Whether a confirmed pick of it keeps files outside the quality band.
+    /// Whether a confirmed pick of it keeps files the settings do not list.
     pub fn waives_quality(&self) -> bool {
         self.view
             .refusal
@@ -254,7 +254,7 @@ impl Candidate {
     }
 
     /// A ranked Soulseek folder; one whose known quality is outside the
-    /// band is refused.
+    /// band or the recipe is refused.
     pub fn from_folder(pick: FolderPick) -> Self {
         let refusal = if pick.out_of_band {
             vec![CandidateRefusal::QualityOutsideRange]

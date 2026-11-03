@@ -619,7 +619,6 @@ async fn an_old_recipe_step_still_reads_after_the_copy() {
     let app = TestApp::start_prepared("settings-ingest-recipe", |config| {
         Crypto::load_or_generate(&config.config_dir()).unwrap();
         let file = json!({"download_policy": {
-            "flac_mp3_only": true,
             "quality_recipe": [
                 {"format": "flac", "quality": "cd", "min_bitrate_kbps": null,
                  "target_bitrate_kbps": null, "max_bitrate_kbps": null,

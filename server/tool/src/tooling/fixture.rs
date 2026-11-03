@@ -843,11 +843,12 @@ fn build_user_data(
                 ('download-running', '{bob}', '{PENDING_REQUEST_MBID}', 'Artist', 'Next',
                  'downloading', NULL, 1700001100.0, NULL, 1700001100.0);
          INSERT INTO wanted_watches (release_group_mbid_lower, release_group_mbid, user_id,
-             artist_name, album_title, kind, state, created_at, next_check_at)
+             artist_name, album_title, kind, state, created_at, next_check_at, last_outcome)
          VALUES ('bbbbbbbb-0000-4000-8000-000000000001', 'BBBBBBBB-0000-4000-8000-000000000001',
-                 '{alice}', 'Artist', 'Rare', 'missing', 'watching', 1700000000.0, 1700086400.0),
+                 '{alice}', 'Artist', 'Rare', 'missing', 'watching', 1700000000.0, 1700086400.0,
+                 'seen_only'),
                 ('{DORMANT_WATCH_MBID}', '{DORMANT_WATCH_MBID}', '{alice}', 'Artist', 'Asleep',
-                 'missing', 'dormant', 1600000000.5, 1900000000.0);
+                 'missing', 'dormant', 1600000000.5, 1900000000.0, 'no_results');
          INSERT INTO wanted_seen_candidates (release_group_mbid_lower, source, identity,
              first_seen_at)
          VALUES ('bbbbbbbb-0000-4000-8000-000000000001', 'soulseek', 'peer/Rare', 1700000300.0);

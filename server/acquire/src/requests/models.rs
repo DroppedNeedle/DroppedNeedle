@@ -491,6 +491,9 @@ pub struct WantedItem {
     pub next_check_at: Option<u64>,
     /// Unseen candidate count.
     pub new_candidate_count: u32,
+    /// What the last check found, once one ran.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_outcome: Option<super::ledger::WatchOutcome>,
     /// Epoch seconds when created.
     pub created_at: u64,
     /// Artist MBID.

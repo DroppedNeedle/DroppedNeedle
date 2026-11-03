@@ -15,8 +15,7 @@ import {
 
 const basePolicy = {
 	quality_min: 'mp3_192',
-	quality_max: 'lossless',
-	flac_mp3_only: true
+	quality_max: 'lossless'
 } as DownloadPolicySettings;
 
 describe('quality recipe model', () => {

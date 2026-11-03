@@ -459,6 +459,11 @@ PluginSearchResult(
 )
 ```
 
+Automatic downloads skip a result whose `quality_tier` is outside the user's
+quality settings, or whose `files` include audio in a format those settings
+don't list. They can still pick it by hand. A result that says neither is judged
+when its files land.
+
 You rank your source; DroppedNeedle applies its rules on top, the same as
 for every other source. Quarantined releases are dropped. A score of
 `preflight_score_auto_accept` (0.70 by default) or more downloads

@@ -2471,6 +2471,114 @@ async fn a_landing_waits_out_its_own_stopped_publish() {
     assert_eq!(files_under(&music, "flac").len(), 1);
 }
 
+/// A complete album that arrives with a bonus file in a format the recipe
+/// does not list (a Usenet or plugin release, fetched whole) is imported
+/// without that file, which pairs with no track.
+#[tokio::test]
+async fn a_bonus_file_the_recipe_does_not_list_is_left_out() {
+    let db = AcquireDb::scratch().expect("scratch db");
+    db.add_user("u-ada", "Ada", "user").await.expect("user");
+    let dir = db.path().parent().expect("scratch dir").to_path_buf();
+    let config = Arc::new(
+        ConfigStore::scratch(&dir, Crypto::from_key_bytes(&[7u8; 32]).expect("key"))
+            .expect("config"),
+    );
+    let platform = TestPlatform::on(db.db(), &dir)
+        .settings(config)
+        .build()
+        .await;
+    let (library, _) = library_at(&platform);
+    let music = dir.join("music");
+    std::fs::create_dir_all(&music).expect("music root");
+    library
+        .scans
+        .add_root(
+            Some("music".to_owned()),
+            music.to_string_lossy().into_owned(),
+            EffectivePolicy::Automatic,
+        )
+        .expect("root adds");
+    let job = dir.join("downloads").join("job");
+    let titles = &TITLES[..];
+    let tracks: Vec<PathBuf> = TITLES
+        .iter()
+        .zip(FIXTURES)
+        .zip(1u32..)
+        .map(|((title, fixture), number)| {
+            let file = land_file(
+                &job,
+                &format!("{number:02} - {title}.flac"),
+                fixture,
+                title,
+                number,
+            );
+            // The tracks name their release, as a scene release's do.
+            save_tags(
+                &file,
+                &[TagEdit::new(
+                    TagField::MusicBrainzReleaseId,
+                    vec![GOOD_RELEASE.to_owned()],
+                )],
+            )
+            .expect("release id");
+            file
+        })
+        .collect();
+    let bonus = land_file(
+        &job,
+        "99 - Interview.ogg",
+        "management_full.ogg",
+        "Interview",
+        99,
+    );
+    let lengths: Vec<_> = tracks.iter().map(|track| length_ms(track)).collect();
+    let releases: Arc<dyn ReleaseSource> = Arc::new(Releases(vec![release(
+        GOOD_RELEASE,
+        GOOD_GROUP,
+        titles,
+        &lengths,
+    )]));
+    let acquire = acquire_over(
+        &platform,
+        &library,
+        Arc::new(LibraryLanding::new(&library, every_priority(releases))),
+    );
+    acquire
+        .journal
+        .run("test.seed", |store| {
+            store.insert_task(&new_task("t-bonus", GOOD_GROUP), 1.0)
+        })
+        .await
+        .expect("task");
+    let task = acquire.journal.read_task("t-bonus").await.unwrap().unwrap();
+    let report = acquire
+        .landing
+        .land(
+            &task,
+            None,
+            Landed {
+                mounts: vec![dir.join("downloads").into()],
+                files: tracks
+                    .into_iter()
+                    .chain([bonus])
+                    .map(Reported::path)
+                    .collect(),
+            },
+            false,
+        )
+        .await;
+    assert!(
+        matches!(report.result, LandingResult::Imported { complete: true }),
+        "{:?}",
+        report.result
+    );
+    assert_eq!(files_under(&music, "flac").len(), 2);
+    assert!(
+        files_under(&music, "ogg").is_empty(),
+        "the bonus is left out"
+    );
+}
+
 /// A person confirmed a pick outside the quality band: the attempt that
 /// fetched exactly that pick imports its files, while the same files from
 /// any other attempt of the task (a failover) are refused on quality.
@@ -2585,10 +2693,10 @@ async fn a_quality_waiver_keeps_only_the_pinned_attempts_files() {
             );
             assert_eq!(files_under(&music, "flac").len(), 1);
         } else {
-            let LandingResult::Rejected(rejection) = result else {
+            let LandingResult::Held { code, .. } = result else {
                 panic!("an attempt that is not the pick was kept: {result:?}");
             };
-            assert_eq!(rejection.code, Reason::QualityRejected);
+            assert_eq!(code.code(), "format_not_listed");
             assert!(files_under(&music, "flac").is_empty());
         }
     }

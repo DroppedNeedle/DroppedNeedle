@@ -619,6 +619,17 @@ async fn user_data_carries_resumes_and_repeats_as_noop() {
             1_700_000_000_000
         )
     );
+    // v2's check outcomes land in v3's spelling, which the wanted view reads.
+    let outcomes: Vec<Option<String>> = sqlx::query_scalar(
+        "SELECT last_outcome FROM wanted_watches ORDER BY release_group_mbid_lower",
+    )
+    .fetch_all(&pool)
+    .await
+    .expect("outcomes read");
+    assert_eq!(
+        outcomes,
+        [Some("seen".to_owned()), Some("quiet".to_owned())]
+    );
     let dormant: (String, i64, i64) = sqlx::query_as(
         "SELECT state, created_at, next_check_at FROM wanted_watches \
          WHERE release_group_mbid_lower = ?",

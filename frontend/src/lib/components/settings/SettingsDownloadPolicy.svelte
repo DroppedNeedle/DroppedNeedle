@@ -61,7 +61,6 @@
 			quality_min: qualityMin,
 			quality_max: qualityMax,
 			quality_cutoff: clampCutoff(policy.quality_cutoff, qualityMin, qualityMax),
-			flac_mp3_only: true,
 			quality_recipe: stripRecipeIds(recipe),
 			quality_recipe_status: 'v2',
 			quality_recipe_error: null

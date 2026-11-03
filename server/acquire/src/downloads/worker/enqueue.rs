@@ -193,7 +193,12 @@ impl DownloadWorker {
                         SourceError::Rejected {
                             reason: refused, ..
                         } => {
-                            if TrackReason::from_reason(*refused).is_some() {
+                            // "Only copies your settings refuse" says more
+                            // than another source having nothing.
+                            if *refused == Reason::NothingAllowed
+                                || (reason != Some(Reason::NothingAllowed)
+                                    && TrackReason::from_reason(*refused).is_some())
+                            {
                                 reason = Some(*refused);
                             }
                         }

@@ -578,6 +578,7 @@ impl SearchJobs {
                         quiet_streak: 0,
                         next_check_at: now.saturating_add(u64::try_from(next).unwrap_or(0)),
                         new_candidate_count: 0,
+                        last_outcome: None,
                     })
                     .await
                     .map_err(refused)?;

@@ -29,7 +29,7 @@ use crate::downloads::state::TaskStatus;
 use crate::follows::Follows;
 use crate::follows::cursors::{FeedRelease, FollowCursor, Follower, PendingRelease};
 use crate::requests::error::RequestsError;
-use crate::requests::ledger::{RequestStatus, WantedWatch, WatchKind, WatchState};
+use crate::requests::ledger::{RequestStatus, WantedWatch, WatchKind, WatchOutcome, WatchState};
 use crate::requests::models::RequestKind;
 use crate::requests::service::{FollowIntake, FollowRelease, RequestsService};
 use crate::requests::settle::announce_fulfilled;
@@ -203,7 +203,7 @@ async fn check_watch(
     if deps.library.contains(&watch.key).await {
         let fulfilled = deps
             .ledger
-            .settle_in_library(&watch.key, "in_library", at)
+            .settle_in_library(&watch.key, WatchOutcome::InLibrary, at)
             .await?;
         announce_fulfilled(deps.ticks.as_ref(), fulfilled, now);
         notify_wanted(deps, watch, UserNotice::WantedFulfilled, |_| {});
@@ -218,7 +218,7 @@ async fn check_watch(
             tracing::debug!(key = %watch.key, "wanted check waits for a download source");
             return Ok(());
         }
-        Ok(Some(candidates)) => Ok(candidates),
+        Ok(Some(found)) => Ok(found),
         Err(cause) => Err(cause),
     };
     let date = watch_date(
@@ -232,16 +232,17 @@ async fn check_watch(
         at + u64::try_from(interval_seconds(date.schedule.as_deref(), streak, now)).unwrap_or(0)
     };
     let found = date.found;
-    let check = |quiet_streak: u32, outcome: &'static str| WatchCheck {
+    let check = |quiet_streak: u32, outcome: WatchOutcome| WatchCheck {
         quiet_streak,
         next_check_at: next(quiet_streak),
         now: at,
         outcome,
         first_release_date: found.clone(),
-        ..WatchCheck::default()
+        seen: Vec::new(),
+        new_candidates: None,
     };
     match searched {
-        Ok(candidates) if !candidates.is_empty() => {
+        Ok(WatchSearch { candidates, .. }) if !candidates.is_empty() => {
             let seen: Vec<(String, String)> = candidates
                 .iter()
                 .map(|candidate| (candidate.view.source.clone(), candidate.seen_identity()))
@@ -258,7 +259,7 @@ async fn check_watch(
                             &watch.key,
                             WatchCheck {
                                 seen,
-                                ..check(streak, "seen")
+                                ..check(streak, WatchOutcome::Seen)
                             },
                         )
                         .await?;
@@ -271,7 +272,7 @@ async fn check_watch(
                         WatchCheck {
                             seen,
                             new_candidates: Some(fresh),
-                            ..check(0, "found")
+                            ..check(0, WatchOutcome::Found)
                         },
                     )
                     .await?;
@@ -341,7 +342,7 @@ async fn check_watch(
                             &watch.key,
                             WatchCheck {
                                 seen,
-                                ..check(0, "dispatched")
+                                ..check(0, WatchOutcome::Dispatched)
                             },
                         )
                         .await?;
@@ -362,16 +363,21 @@ async fn check_watch(
                 Err(cause) => {
                     tracing::warn!(key = %watch.key, %cause, "wanted dispatch failed");
                     deps.watches
-                        .record_check(&watch.key, check(0, "error"))
+                        .record_check(&watch.key, check(0, WatchOutcome::Error))
                         .await?;
                     summary.errors += 1;
                 }
             }
         }
-        Ok(_) => {
+        Ok(WatchSearch { refused, .. }) => {
             let streak = watch.quiet_streak.saturating_add(1);
+            let outcome = if refused {
+                WatchOutcome::OutsideSettings
+            } else {
+                WatchOutcome::Quiet
+            };
             deps.watches
-                .record_check(&watch.key, check(streak, "quiet"))
+                .record_check(&watch.key, check(streak, outcome))
                 .await?;
         }
         Err(cause) => {
@@ -379,7 +385,7 @@ async fn check_watch(
             // one bad want never kills the sweep.
             tracing::warn!(key = %watch.key, %cause, "wanted search failed");
             deps.watches
-                .record_check(&watch.key, check(0, "error"))
+                .record_check(&watch.key, check(0, WatchOutcome::Error))
                 .await?;
             summary.errors += 1;
         }
@@ -404,6 +410,14 @@ async fn cancelled_meanwhile(
         }))
 }
 
+/// What one search for a watch's album turned up.
+struct WatchSearch {
+    /// The copies the download settings allow.
+    candidates: Vec<crate::search_jobs::candidates::Candidate>,
+    /// Some were found that the settings refuse.
+    refused: bool,
+}
+
 /// Ask every source that is on for the watch's album, through the same
 /// search (and gates) as a manual search. Candidates outside the download
 /// settings do not count as found. `None` when no source is on or the
@@ -411,7 +425,7 @@ async fn cancelled_meanwhile(
 async fn search_watch(
     deps: &WantedDeps,
     watch: &WantedWatch,
-) -> Result<Option<Vec<crate::search_jobs::candidates::Candidate>>, String> {
+) -> Result<Option<WatchSearch>, String> {
     let Some(sources) = deps.sources.current().filter(|sources| !sources.is_empty()) else {
         return Ok(None);
     };
@@ -428,8 +442,12 @@ async fn search_watch(
     if candidates.is_empty() && failed > 0 && failed == sources.len() {
         return Err("every download source failed".to_owned());
     }
+    let listed = candidates.len();
     candidates.retain(|candidate| !candidate.is_refused());
-    Ok(Some(candidates))
+    Ok(Some(WatchSearch {
+        refused: candidates.len() < listed,
+        candidates,
+    }))
 }
 
 /// Tell the watch's owner what the watcher did.
@@ -511,6 +529,7 @@ async fn enrol_watches(now: i64, settings: &WantedSettings, deps: &WantedDeps) -
                 quiet_streak: 0,
                 next_check_at: epoch(now + interval_seconds(date.schedule.as_deref(), 0, now)),
                 new_candidate_count: 0,
+                last_outcome: None,
             };
             match deps.watches.enrol(watch).await {
                 Ok(true) => {
@@ -1285,7 +1304,7 @@ pub async fn sync_tick(now: i64, deps: &SyncDeps) -> SyncSummary {
         }
         match deps
             .ledger
-            .settle_in_library(&key, "in_library", epoch(now))
+            .settle_in_library(&key, WatchOutcome::InLibrary, epoch(now))
             .await
         {
             Ok(fulfilled) => {

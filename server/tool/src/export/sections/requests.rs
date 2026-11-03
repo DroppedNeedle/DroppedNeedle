@@ -328,7 +328,15 @@ pub const WANTED_WATCHES: TableSection = TableSection {
             now_millis!(),
             ") END"
         )),
-        col("last_outcome"),
+        // v2's spellings of what a check found, as v3 reads them; anything
+        // else says nothing.
+        Column::new("last_outcome").from_sql_of(
+            "last_outcome",
+            "CASE s.last_outcome WHEN 'no_results' THEN 'quiet' \
+             WHEN 'seen_only' THEN 'seen' WHEN 'new_manual' THEN 'found' \
+             WHEN 'auto_dispatched' THEN 'dispatched' WHEN 'satisfied' THEN 'in_library' \
+             WHEN 'error' THEN 'error' WHEN 'imported' THEN 'imported' ELSE NULL END",
+        ),
         Column::new("new_candidate_count")
             .from_sql_of("new_candidate_count", whole_or!("new_candidate_count", 0)),
     ],

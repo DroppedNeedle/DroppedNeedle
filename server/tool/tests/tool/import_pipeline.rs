@@ -1331,7 +1331,7 @@ async fn a_v2_policy_lands_as_a_recipe_with_its_range() {
     assert_eq!(policy["quality_min"], "mp3_192");
     assert_eq!(policy["quality_max"], "lossless");
     assert_eq!(policy["quality_cutoff"], "mp3_320");
-    assert_eq!(policy["flac_mp3_only"], true);
+    assert!(policy.get("flac_mp3_only").is_none());
     assert!(policy.get("lossless_preference").is_none());
     let line = |key: &str| {
         lines

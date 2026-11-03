@@ -375,7 +375,8 @@
 			<div>
 				<h4 class="font-semibold">Try in this order</h4>
 				<p class="text-sm text-base-content/60">
-					Soulseek prefers earlier entries when copies are equally complete.
+					Soulseek prefers earlier entries when copies are equally complete. Anything not listed
+					here is only downloaded if you pick it.
 				</p>
 			</div>
 			<span class="text-xs uppercase tracking-[0.12em] text-base-content/45"

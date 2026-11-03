@@ -9,7 +9,7 @@
 
 use rusqlite::{Connection, OptionalExtension, params};
 
-use super::ledger::RequestStatus;
+use super::ledger::{RequestStatus, WatchOutcome};
 use super::models::RequestKind;
 use super::sql;
 use crate::downloads::state::TaskStatus;
@@ -112,7 +112,7 @@ pub(crate) fn on_task_settled(
 pub(crate) fn on_album_in_library(
     conn: &Connection,
     release_group_mbid: &str,
-    watch_outcome: &str,
+    watch_outcome: WatchOutcome,
     at_ms: i64,
 ) -> rusqlite::Result<Vec<Fulfilled>> {
     let key = release_group_mbid.trim().to_lowercase();

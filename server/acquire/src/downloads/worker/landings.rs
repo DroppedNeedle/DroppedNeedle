@@ -278,6 +278,33 @@ impl DownloadWorker {
                 // the person decides. The source is not blamed.
                 self.settle_short(task, attempt, &report.result, now).await;
             }
+            LandingResult::Held {
+                code: Reason::FormatNotListed,
+                detail,
+            } if origin == Origin::Poll && (report.files_held > 0 || report.format_set_held) => {
+                // The album holds a copy, this one or an earlier one, so
+                // this source goes as a refused one does and the next one is
+                // tried. A copy that could not be held keeps its source.
+                self.forget_landing(&task.id);
+                self.fail_over(
+                    now,
+                    task,
+                    attempt,
+                    source,
+                    handle,
+                    TaskOutcome::new(Reason::FormatNotListed, &detail),
+                    Some(QuarantineReason::VerifyFailed),
+                )
+                .await;
+            }
+            LandingResult::Held {
+                code: Reason::FormatNotListed,
+                ..
+            } => {
+                // Nothing could be held: the files stay where they landed
+                // for a person, and the source with them.
+                self.settle_short(task, attempt, &report.result, now).await;
+            }
             LandingResult::Imported { complete: false } | LandingResult::Held { .. } => {
                 if origin == Origin::Poll && self.can_fail_over(task).await {
                     // A release that finished but did not deliver what

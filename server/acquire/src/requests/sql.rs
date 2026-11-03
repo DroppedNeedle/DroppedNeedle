@@ -298,7 +298,7 @@ droppedneedle_kernel::sql! {
     fragment WATCH_SELECT = "SELECT w.release_group_mbid_lower, w.user_id, u.display_name, \
          w.artist_name, w.album_title, w.artist_mbid, w.year, w.cover_url, w.kind, w.state, \
          w.created_at, w.first_release_date, w.check_count, w.quiet_streak, w.next_check_at, \
-         w.new_candidate_count FROM wanted_watches w LEFT JOIN auth_users u ON u.id = w.user_id";
+         w.new_candidate_count, w.last_outcome FROM wanted_watches w LEFT JOIN auth_users u ON u.id = w.user_id";
     /// One watch by its key.
     pub(crate) WATCH_BY_KEY = WATCH_SELECT + " WHERE w.release_group_mbid_lower = ?1";
     /// Watches of user `?2`, or every watch when `?1`, newest first.

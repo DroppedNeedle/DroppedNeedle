@@ -28,12 +28,14 @@ use super::downloads::sources::{
     DownloadSource, Materialization, SourceError, SourceHandle, TransferProgress,
 };
 use super::downloads::store::TaskRow;
+use super::landing::quality::names_format;
 use super::reason::Reason;
 use super::search_jobs::candidates::{Candidate, CandidateRefusal, MAX_PER_SOURCE, Pin};
 use super::search_jobs::pinned;
 use super::target::reasons::TrackReason;
 use super::target::{SearchTarget, Targets};
 use super::usenet::policy::{QualityTier, UsenetPolicy};
+use droppedneedle_library::tags::format_for_extension;
 use droppedneedle_plugins::capabilities::acquisition::{
     PluginEnqueue, PluginSearchResult, PluginTaskHandle,
 };
@@ -118,6 +120,20 @@ pub fn rank_plugin_releases(
     ranked
 }
 
+/// Whether a file a release lists is audio the recipe does not list. A
+/// release that lists no files says nothing: the landing decides.
+fn lists_unnamed_format(release: &PluginSearchResult, policy: &ReleasePolicy) -> bool {
+    release.files.iter().any(|file| {
+        let extension = std::path::Path::new(&file.filename)
+            .extension()
+            .map(|extension| extension.to_string_lossy().to_ascii_lowercase());
+        extension
+            .as_deref()
+            .and_then(format_for_extension)
+            .is_some_and(|format| !names_format(&policy.usenet.quality_recipe, format.as_str()))
+    })
+}
+
 /// Score every release that is not blocklisted, with the gates each one
 /// fails: those that pass every gate first, then the rest, each part
 /// ranked as [`rank_plugin_releases`] ranks.
@@ -155,7 +171,8 @@ pub fn score_plugin_releases(
             };
             let fails = [
                 (
-                    tier.is_some_and(|tier| !policy.usenet.accepts_tier(tier)),
+                    tier.is_some_and(|tier| !policy.usenet.accepts_tier(tier))
+                        || lists_unnamed_format(&release, policy),
                     CandidateRefusal::QualityOutsideRange,
                 ),
                 (
@@ -440,16 +457,23 @@ impl PluginDownloadSource {
         let tried = super::sources::tried_releases(&self.journal, task_id, &self.tag).await?;
         let untried =
             |release: &ScoredRelease| !tried.contains(&release_identity(&release.release));
-        let automatic = |results: Vec<PluginSearchResult>| -> Vec<ScoredRelease> {
-            rank_plugin_releases(results, &self.policy, &blocked)
+        // The releases an automatic pick may take, and whether the settings
+        // refused any.
+        let automatic = |results: Vec<PluginSearchResult>| -> (Vec<ScoredRelease>, bool) {
+            let scored = score_plugin_releases(results, &self.policy, &blocked);
+            let refused = scored.iter().any(|release| !release.refusal.is_empty());
+            let taken = scored
                 .into_iter()
+                .filter(|release| release.refusal.is_empty())
+                .take(RANKED_MAX)
                 .filter(|release| release.band == Band::Auto)
-                .collect()
+                .collect();
+            (taken, refused)
         };
-        let albums = if target.has_album() {
+        let (albums, mut refused_any) = if target.has_album() {
             automatic(self.album_releases(&target).await)
         } else {
-            Vec::new()
+            (Vec::new(), false)
         };
         let album_count = albums.len();
         let mut pick = albums.into_iter().find(untried);
@@ -458,13 +482,13 @@ impl PluginDownloadSource {
         {
             // Every album release is used up: a release of the lone track
             // is the last resort, and the reason is recorded.
-            pick = automatic(
+            let (lone, refused) = automatic(
                 self.host
                     .search_track(&self.key, &track.artist, &track.title, None)
                     .await,
-            )
-            .into_iter()
-            .find(untried);
+            );
+            refused_any |= refused;
+            pick = lone.into_iter().find(untried);
             if pick.is_some()
                 && let Some(targets) = self.targets.as_ref()
             {
@@ -478,7 +502,11 @@ impl PluginDownloadSource {
         }
         let pick = pick.ok_or_else(|| {
             SourceError::rejected(
-                Reason::NoSource,
+                if refused_any {
+                    Reason::NothingAllowed
+                } else {
+                    Reason::NoSource
+                },
                 format!(
                     "{} has no automatic candidate {candidate_index} for {task_id}",
                     self.key
@@ -624,6 +652,7 @@ impl PluginDownloadSource {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use droppedneedle_plugins::capabilities::acquisition::PluginFileRef;
 
     fn release(title: &str, score: f64, tier: &str) -> PluginSearchResult {
         PluginSearchResult {
@@ -633,6 +662,50 @@ mod tests {
             quality_tier: tier.to_owned(),
             ..PluginSearchResult::default()
         }
+    }
+
+    // A listed file is the only thing a plugin says about a format before the
+    // download; a release that lists none is left to the landing.
+    #[test]
+    fn a_listed_file_the_recipe_does_not_list_refuses_the_release() {
+        let policy = ReleasePolicy {
+            usenet: UsenetPolicy::v2_defaults(),
+            ignored_terms: Vec::new(),
+            required_terms: Vec::new(),
+            auto_accept: 0.70,
+            manual_min: 0.50,
+        };
+        let with_file = |name: &str| {
+            let mut listed = release(name, 0.9, "lossless");
+            listed.files = vec![PluginFileRef {
+                filename: format!("Album/01.{name}"),
+                ..PluginFileRef::default()
+            }];
+            listed
+        };
+        let scored = score_plugin_releases(
+            vec![
+                with_file("ogg"),
+                with_file("flac"),
+                with_file("cue"),
+                release("none", 0.9, "lossless"),
+            ],
+            &policy,
+            &Blocklist::for_source(&SourceTag::plugin("plugin:x"), Vec::new()),
+        );
+        let refused: Vec<(&str, bool)> = scored
+            .iter()
+            .map(|scored| (scored.release.title.as_str(), !scored.refusal.is_empty()))
+            .collect();
+        assert_eq!(
+            refused,
+            [
+                ("cue", false),
+                ("flac", false),
+                ("none", false),
+                ("ogg", true)
+            ]
+        );
     }
 
     #[test]

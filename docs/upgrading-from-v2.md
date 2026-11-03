@@ -382,11 +382,12 @@ machine and its data folders can run it.
 - **Quality settings.** A v2 quality range becomes the matching quality
   recipe, with FLAC at every resolution for "lossless". A policy capped at
   16-bit and 48 kHz or lower, as v2's default was from August 2026, gets FLAC
-  up to CD quality instead, so a 24-bit folder ranks after MP3 rather than
-  being refused. Other formats are still accepted, but rank after FLAC and MP3
-  of the same completeness. The other lossless caps and preferences, the lossy
-  bitrate bounds and the unknown-quality setting are not applied, and the
-  import report names any you had changed.
+  up to CD quality instead, so a 24-bit folder is not downloaded automatically,
+  as v2 refused it. Automatic downloads take only what the recipe lists, even
+  if v2 had "FLAC and MP3 only" turned off: you can still pick another format
+  by hand, and one that lands anyway is held for you. The other lossless caps
+  and preferences, the lossy bitrate bounds and the unknown-quality setting
+  are not applied, and the import report names any you had changed.
 - **Reverse proxy headers.** v2 accepted a change from the web UI whatever
   address the page was on. v3 only accepts it from the address it believes
   it is served at, so your proxy has to tell it the truth. List the proxy

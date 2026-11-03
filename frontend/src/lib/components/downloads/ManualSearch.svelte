@@ -69,8 +69,7 @@
 	let confirmOpen = $state(false);
 	const confirmMessage = $derived.by(() => {
 		if (!confirming) return '';
-		const reason = REFUSAL_LABELS[confirming.refusal];
-		return `Outside your download settings: ${reason.charAt(0).toLowerCase()}${reason.slice(1)}. Download it anyway?`;
+		return `${REFUSAL_LABELS[confirming.refusal]}. Download it anyway?`;
 	});
 
 	function askFirst(index: number, refusal: CandidateRefusal) {

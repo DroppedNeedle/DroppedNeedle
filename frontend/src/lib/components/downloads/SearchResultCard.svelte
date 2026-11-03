@@ -3,7 +3,7 @@
 
 	/** Why a candidate is outside the download settings, as a short label. */
 	export const REFUSAL_LABELS: Record<CandidateRefusal, string> = {
-		quality_outside_range: 'Quality outside your range',
+		quality_outside_range: 'Not in your quality settings',
 		over_size_cap: 'Over your size limit',
 		ignored_term: 'Has a term you ignore',
 		required_term_missing: 'Missing a term you require',

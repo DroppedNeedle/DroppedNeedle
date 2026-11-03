@@ -12266,12 +12266,6 @@ export interface components {
              */
             download_stall_timeout_minutes: number;
             /**
-             * @description Always on. Other formats are still accepted, but rank after FLAC and
-             *     MP3 of the same completeness.
-             * @default true
-             */
-            flac_mp3_only: boolean;
-            /**
              * @description Terms that reject a candidate.
              * @default []
              */
@@ -12334,8 +12328,8 @@ export interface components {
              */
             quality_min: string;
             /**
-             * @description Ordered quality recipe, earlier entries preferred. A save needs at
-             *     least one entry.
+             * @description Ordered quality recipe, earlier entries preferred. Automatic work takes
+             *     only what it lists. A save needs at least one entry.
              */
             quality_recipe?: components["schemas"]["QualityRecipeEntry"][];
             /**
@@ -19297,7 +19291,7 @@ export interface components {
          * @description One reason, stored and sent by its snake_case spelling.
          * @enum {string}
          */
-        Reason: "weak_match" | "no_artist_evidence" | "mostly_unmatched" | "tag_mismatch" | "fingerprint_mismatch" | "fingerprint_unconfirmed" | "album_version_only" | "no_release" | "no_tracks" | "version_lower_quality" | "no_better_than_yours" | "owned_elsewhere" | "owned_on_album" | "no_album_match" | "album_not_found" | "tags_disagree" | "not_chosen_edition" | "samples" | "too_many_files" | "interrupted" | "import_failed" | "held_by_earlier_version" | "target_occupied" | "upgrade_blocked" | "library_changed" | "library_unavailable" | "naming_script_failed" | "library_folder_missing" | "library_off" | "local_fault" | "files_missing" | "files_unlisted" | "outside_downloads_folder" | "size_mismatch" | "corrupt" | "no_audio" | "sample" | "wrong_edition" | "not_pinned_edition" | "wrong_album" | "quality_rejected" | "not_an_upgrade" | "wrong_track" | "stalled" | "queue_timeout" | "queue_gave_way" | "never_started" | "deadline" | "source_failed" | "no_source" | "download_failed" | "album_lookup_unavailable" | "recording_unknown" | "no_album_for_recording" | "no_album_folder" | "no_album_release" | "album_releases_exhausted" | "track_not_found" | "no_download_source" | "settings_unreadable" | "journal_unreadable" | "musicbrainz_unavailable" | "acoustid_unavailable" | "held_for_review" | "tracks_missing" | "already_owned" | "cancelled" | "moved_on";
+        Reason: "weak_match" | "no_artist_evidence" | "mostly_unmatched" | "tag_mismatch" | "fingerprint_mismatch" | "fingerprint_unconfirmed" | "album_version_only" | "no_release" | "no_tracks" | "version_lower_quality" | "no_better_than_yours" | "owned_elsewhere" | "owned_on_album" | "no_album_match" | "album_not_found" | "tags_disagree" | "not_chosen_edition" | "samples" | "too_many_files" | "interrupted" | "import_failed" | "held_by_earlier_version" | "format_not_listed" | "target_occupied" | "upgrade_blocked" | "library_changed" | "library_unavailable" | "naming_script_failed" | "library_folder_missing" | "library_off" | "local_fault" | "files_missing" | "files_unlisted" | "outside_downloads_folder" | "size_mismatch" | "corrupt" | "no_audio" | "sample" | "wrong_edition" | "not_pinned_edition" | "wrong_album" | "quality_rejected" | "not_an_upgrade" | "wrong_track" | "stalled" | "queue_timeout" | "queue_gave_way" | "never_started" | "deadline" | "source_failed" | "no_source" | "download_failed" | "album_lookup_unavailable" | "recording_unknown" | "no_album_for_recording" | "no_album_folder" | "no_album_release" | "album_releases_exhausted" | "track_not_found" | "nothing_allowed" | "no_download_source" | "settings_unreadable" | "journal_unreadable" | "musicbrainz_unavailable" | "acoustid_unavailable" | "held_for_review" | "tracks_missing" | "already_owned" | "cancelled" | "moved_on";
         /** @description How many reviews one reason holds. */
         ReasonCount: {
             /** Format: int64 */
@@ -22722,6 +22716,7 @@ export interface components {
             created_at: number;
             /** @description The whole album or the gaps of a short one. */
             kind: components["schemas"]["WatchKind"];
+            last_outcome?: null | components["schemas"]["WatchOutcome"];
             /** @description Release-group MBID. */
             musicbrainz_id: string;
             /**
@@ -22859,6 +22854,11 @@ export interface components {
          * @enum {string}
          */
         WatchKind: "missing" | "partial";
+        /**
+         * @description What a wanted watch's last check found.
+         * @enum {string}
+         */
+        WatchOutcome: "found" | "seen" | "dispatched" | "quiet" | "outside_settings" | "error" | "in_library" | "imported";
         /**
          * @description A wanted watch's state. The `wanted_watches.state` CHECK lists exactly
          *     these values.

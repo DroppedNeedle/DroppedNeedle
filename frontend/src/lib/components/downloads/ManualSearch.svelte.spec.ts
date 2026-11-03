@@ -87,16 +87,12 @@ describe('picking a source by hand', () => {
 		await renderWithQuery(ManualSearch, { jobId: 'job-1' });
 
 		const refused = page.getByRole('article').filter({ hasText: 'mp3peer' });
-		await expect.element(refused.getByText('Quality outside your range')).toBeVisible();
+		await expect.element(refused.getByText('Not in your quality settings')).toBeVisible();
 
 		await refused.getByRole('button', { name: /^Pick Dummy \[MP3\]/ }).click();
 		const dialog = page.getByRole('dialog');
 		await expect
-			.element(
-				dialog.getByText(
-					'Outside your download settings: quality outside your range. Download it anyway?'
-				)
-			)
+			.element(dialog.getByText('Not in your quality settings. Download it anyway?'))
 			.toBeVisible();
 		await dialog.getByRole('button', { name: 'Cancel' }).click();
 		await expect.element(page.getByRole('dialog')).not.toBeInTheDocument();

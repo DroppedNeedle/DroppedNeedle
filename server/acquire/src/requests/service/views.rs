@@ -207,6 +207,7 @@ impl RequestsService {
                 check_count: watch.check_count,
                 next_check_at: Some(watch.next_check_at),
                 new_candidate_count: watch.new_candidate_count,
+                last_outcome: watch.last_outcome,
                 created_at: watch.created_at,
                 artist_mbid: watch.artist_mbid,
                 year: watch.year,

@@ -2,45 +2,21 @@
 //! quality band the landing keeps, the order of preference inside it, and
 //! the search timings.
 //!
-//! The band is the gate at the pick, so a folder the landing would refuse
-//! is never fetched. The saved recipe orders the folders that are left.
+//! The band and the recipe are the gate at the pick, so a folder the landing
+//! would refuse or hold is never fetched. The recipe orders what is left.
 
 use std::time::Duration;
 
 use droppedneedle_kernel::runtime_config::sections::{
-    DownloadPolicy as SavedPolicy, QualityRecipeEntry, RecipeFormat, RecipeQuality,
+    DownloadPolicy as SavedPolicy, QualityRecipeEntry,
 };
 
-use crate::landing::quality::{in_range, tier_for};
+use crate::landing::quality::{RecipeFit, in_range, recipe_fit, tier_for};
 
 /// Known-unimportable audio containers (DSD families). A
 /// declared DSD release must not spend
 /// bandwidth even when a noisy title claims "lossless".
 pub const NOT_IMPORTABLE_EXTENSIONS: [&str; 3] = ["dsd", "dsf", "dff"];
-
-/// Fixed lossless detail ladder: 0 cd (at
-/// most 16-bit / 48 kHz), 1 24_48, 2 24_96, 3 24_192, 4 hi_res, 5 partial
-/// (resolution unknown).
-const LOSSLESS_DETAIL_STEPS: [&str; 6] = ["cd", "24_48", "24_96", "24_192", "hi_res", "partial"];
-
-/// Where trusted depth and rate sit on the ladder; either axis absent is
-/// the `partial` step.
-fn lossless_detail_step(bit_depth: Option<i32>, sample_rate_hz: Option<i32>) -> usize {
-    let (Some(depth), Some(rate)) = (bit_depth, sample_rate_hz) else {
-        return 5;
-    };
-    if depth <= 16 && rate <= 48_000 {
-        0
-    } else if depth <= 24 && rate <= 48_000 {
-        1
-    } else if depth <= 24 && rate <= 96_000 {
-        2
-    } else if depth <= 24 && rate <= 192_000 {
-        3
-    } else {
-        4
-    }
-}
 
 /// The tier a search result shows, by the landing's rules, or `None` when
 /// the search does not show it: a lossy file with no bitrate, or an MP4
@@ -105,12 +81,8 @@ impl DownloadPolicy {
         in_range(tier, &self.quality_min, &self.quality_max)
     }
 
-    /// Rank one file by preference: the index of the first recipe entry it
-    /// satisfies, or `None` when nothing admits it.
-    ///
-    /// `bitrate_kbps` counts for lossy files only: FLAC bitrate varies with
-    /// compression. A FLAC file whose resolution the search does not show
-    /// still matches a standard FLAC entry.
+    /// Rank one file by preference: the recipe entry it satisfies, or `None`
+    /// when nothing admits it or the search does not show enough to say.
     #[must_use]
     pub fn recipe_rank(
         &self,
@@ -119,41 +91,28 @@ impl DownloadPolicy {
         bit_depth: Option<i32>,
         sample_rate_hz: Option<i32>,
     ) -> Option<usize> {
-        let extension = extension.to_ascii_lowercase();
-        if NOT_IMPORTABLE_EXTENSIONS.contains(&extension.as_str()) {
-            return None;
+        match self.recipe_fit(extension, bitrate_kbps, bit_depth, sample_rate_hz) {
+            RecipeFit::Step(index) => Some(index),
+            RecipeFit::Unshown | RecipeFit::Outside => None,
         }
-        self.quality_recipe.iter().position(|entry| {
-            if entry.format == RecipeFormat::Mp3 {
-                let Some(bitrate) = bitrate_kbps.filter(|_| extension == "mp3") else {
-                    return false;
-                };
-                let bitrate = i64::from(bitrate);
-                let minimum = entry.min_bitrate_kbps.unwrap_or(16);
-                bitrate >= minimum && entry.max_bitrate_kbps.is_none_or(|max| bitrate <= max)
-            } else if extension != "flac" {
-                false
-            } else if entry.quality == RecipeQuality::Custom {
-                // An exact resolution needs both axes shown.
-                match (
-                    entry.bit_depth,
-                    entry.sample_rate_hz,
-                    bit_depth,
-                    sample_rate_hz,
-                ) {
-                    (Some(want_depth), Some(want_rate), Some(depth), Some(rate)) => {
-                        i64::from(depth) == want_depth && i64::from(rate) == want_rate
-                    }
-                    _ => false,
-                }
-            } else {
-                let want_step = LOSSLESS_DETAIL_STEPS
-                    .iter()
-                    .position(|step| *step == entry.quality.as_str())
-                    .unwrap_or(0);
-                let have_step = lossless_detail_step(bit_depth, sample_rate_hz);
-                have_step <= want_step || have_step == 5
-            }
-        })
+    }
+
+    /// What the recipe says about one search result. Bitrate counts for
+    /// lossy files only: FLAC bitrate varies with compression.
+    #[must_use]
+    pub fn recipe_fit(
+        &self,
+        extension: &str,
+        bitrate_kbps: Option<i32>,
+        bit_depth: Option<i32>,
+        sample_rate_hz: Option<i32>,
+    ) -> RecipeFit {
+        recipe_fit(
+            &self.quality_recipe,
+            extension,
+            bitrate_kbps,
+            bit_depth,
+            sample_rate_hz,
+        )
     }
 }

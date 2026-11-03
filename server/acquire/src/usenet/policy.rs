@@ -6,8 +6,20 @@
 
 use std::time::Duration;
 
+use crate::landing::quality::{RecipeFit, names_format, recipe_fit};
 use crate::settings::{clamp_u32, clamp_u64};
-use droppedneedle_kernel::runtime_config::sections::DownloadPolicy;
+use droppedneedle_kernel::runtime_config::sections::{DownloadPolicy, QualityRecipeEntry};
+
+/// Words in a release title that name a format a recipe cannot list.
+const OTHER_FORMAT_WORDS: [&str; 7] = ["ogg", "vorbis", "opus", "aac", "m4a", "alac", "wav"];
+
+/// A text's words, lowercased.
+fn words(text: &str) -> Vec<String> {
+    text.split(|ch: char| !ch.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .map(str::to_lowercase)
+        .collect()
+}
 
 /// Audio quality tiers, best first.
 ///
@@ -67,7 +79,7 @@ impl QualityTier {
 /// Accepted quality range plus the Usenet timeout/retention knobs.
 ///
 /// Shipped defaults: `quality_min "mp3_320"`, `quality_max "lossless"`,
-/// `flac_mp3_only` on, 30-minute stall / 2-hour queued watchdogs,
+/// the default recipe, 30-minute stall / 2-hour queued watchdogs,
 /// 30-minute minimum release age, unbounded retention/size.
 #[derive(Debug, Clone)]
 pub struct UsenetPolicy {
@@ -75,8 +87,8 @@ pub struct UsenetPolicy {
     pub quality_min: QualityTier,
     /// Ceiling of the accepted contiguous tier band.
     pub quality_max: QualityTier,
-    /// Restrict acceptable formats to FLAC + MP3 (default on).
-    pub flac_mp3_only: bool,
+    /// The saved recipe: what automatic picks may take.
+    pub quality_recipe: Vec<QualityRecipeEntry>,
     /// Stop upgrading once the worst held track reaches this tier.
     pub quality_cutoff: QualityTier,
     /// Per-indexer HTTP call budget.
@@ -102,7 +114,7 @@ impl Default for UsenetPolicy {
         UsenetPolicy {
             quality_min: QualityTier::Mp3_320,
             quality_max: QualityTier::Mp3_320,
-            flac_mp3_only: true,
+            quality_recipe: DownloadPolicy::default().quality_recipe,
             quality_cutoff: QualityTier::Lossless,
             indexer_timeout: Duration::from_secs(30),
             enqueue_timeout: Duration::from_secs(60),
@@ -138,7 +150,7 @@ impl UsenetPolicy {
         if let Some(tier) = QualityTier::parse(&policy.quality_cutoff) {
             out.quality_cutoff = tier;
         }
-        out.flac_mp3_only = policy.flac_mp3_only;
+        out.quality_recipe.clone_from(&policy.quality_recipe);
         out.retention_days = clamp_u32(policy.usenet_retention_days);
         out.max_size_mb = clamp_u64(policy.max_size_mb);
         out.stall_timeout =
@@ -153,14 +165,44 @@ impl UsenetPolicy {
         tier.rank() >= self.quality_min.rank() && tier.rank() <= self.quality_max.rank()
     }
 
-    /// Whether a release's Newznab categories leave it inside the band:
-    /// lossless (3040) needs a band that reaches lossless, MP3 (3010) one
-    /// that reaches below it. Other categories, and none, say nothing.
+    /// Whether a release's Newznab categories leave it inside the settings:
+    /// lossless (3040) needs a band that reaches lossless and a FLAC entry,
+    /// MP3 (3010) a band that reaches below it and an MP3 entry. Other
+    /// categories, and none, say nothing.
     pub fn accepts_categories(&self, category_ids: &[i32]) -> bool {
-        let lossless_out =
-            category_ids.contains(&3040) && self.quality_max != QualityTier::Lossless;
-        let lossy_out = category_ids.contains(&3010) && self.quality_min == QualityTier::Lossless;
+        let lossless_out = category_ids.contains(&3040)
+            && (self.quality_max != QualityTier::Lossless
+                || !names_format(&self.quality_recipe, "flac"));
+        let lossy_out = category_ids.contains(&3010)
+            && (self.quality_min == QualityTier::Lossless
+                || !names_format(&self.quality_recipe, "mp3"));
         !(lossless_out || lossy_out)
+    }
+
+    /// Whether a release's title leaves it inside the recipe. It is refused
+    /// when it names another format and neither FLAC nor MP3, or says 24-bit
+    /// or hi-res where no FLAC entry admits 24-bit. Words of `names` (the
+    /// artist and title asked for) say nothing, so an album called Opus
+    /// stands. Whatever the title does not say, the landing decides.
+    pub fn accepts_title(&self, title: &str, names: &[&str]) -> bool {
+        let asked: Vec<String> = names.iter().flat_map(|name| words(name)).collect();
+        let said: Vec<String> = words(title)
+            .into_iter()
+            .filter(|word| !asked.contains(word))
+            .collect();
+        let says = |word: &str| said.iter().any(|known| known == word);
+        let says_pair = |first: &str, second: &str| {
+            said.windows(2)
+                .any(|pair| pair[0] == first && pair[1] == second)
+        };
+        let other_format = OTHER_FORMAT_WORDS.iter().any(|word| says(word));
+        if other_format && !says("flac") && !says("mp3") {
+            return false;
+        }
+        let hi_res =
+            says("24bit") || says_pair("24", "bit") || says("hires") || says_pair("hi", "res");
+        !hi_res
+            || recipe_fit(&self.quality_recipe, "flac", None, Some(24), None) != RecipeFit::Outside
     }
 
     /// Retention gate: `None` age is unknown, never rejected; otherwise the
@@ -181,5 +223,44 @@ impl UsenetPolicy {
             return true;
         }
         size_bytes <= self.max_size_mb * 1024 * 1024
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // A word in a title is only evidence when it names a format, and never
+    // when it is the album or artist asked for.
+    #[test]
+    fn a_title_refuses_only_what_it_says() {
+        let default = UsenetPolicy::v2_defaults();
+        let capped = UsenetPolicy {
+            quality_recipe: serde_json::from_value(serde_json::json!([
+                {"format": "flac", "quality": "cd"},
+            ]))
+            .expect("recipe"),
+            ..UsenetPolicy::v2_defaults()
+        };
+        let album: &[&str] = &["Portishead", "Dummy"];
+        let opus: &[&str] = &["Schiller", "Opus"];
+        let rows: &[(&UsenetPolicy, &str, &[&str], bool)] = &[
+            (&default, "Portishead - Dummy (1994) [OGG]", album, false),
+            (&default, "Portishead-Dummy-WEB-2022-AAC", album, false),
+            (&default, "Portishead - Dummy FLAC + OGG", album, true),
+            (&default, "Portishead - Dummy (1994)", album, true),
+            (&default, "Schiller - Opus (2013)", opus, true),
+            (&default, "Schiller - Opus [OPUS]", album, false),
+            (&default, "Enigma - Opus Dei Waves", album, false),
+            (&default, "Artist - Wave of Mutilation", album, true),
+            (&default, "Portishead - Dummy 24bit FLAC", album, true),
+            (&capped, "Portishead - Dummy 24bit FLAC", album, false),
+            (&capped, "Portishead - Dummy [24 bit]", album, false),
+            (&capped, "Portishead - Dummy Hi-Res", album, false),
+            (&capped, "Portishead - Dummy FLAC", album, true),
+        ];
+        for (policy, title, names, want) in rows {
+            assert_eq!(policy.accepts_title(title, names), *want, "{title}");
+        }
     }
 }

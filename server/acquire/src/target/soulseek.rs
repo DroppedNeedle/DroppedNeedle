@@ -10,7 +10,7 @@ use super::SearchTarget;
 use super::reasons::TrackReason;
 use crate::client_error::ClientError;
 use crate::reason::Reason;
-use crate::slskd::folders::{FolderPick, RankRequest, rank_folders};
+use crate::slskd::folders::{FolderPick, RankRequest, rank_folders, rank_listing};
 use crate::slskd::{SearchResult, SlskdHttp, SlskdRepository};
 
 /// The folder chosen, and why a lone-track share was used when it was.
@@ -29,6 +29,29 @@ pub enum SoulseekMiss {
     Search(ClientError),
     /// Nothing usable was found: why, and the text the log keeps.
     Nothing { reason: Reason, detail: String },
+}
+
+const NO_FOLDER: &str = "slskd has no untried folder for this album";
+
+/// Why no folder could be picked: folders were found but the settings refuse
+/// each of them, or else `reason`.
+fn miss<H: SlskdHttp>(
+    hits: &[SearchResult],
+    request: RankRequest<'_>,
+    repo: &SlskdRepository<H>,
+    reason: Reason,
+    detail: &str,
+) -> SoulseekMiss {
+    if rank_listing(hits, request, repo.policy()).is_empty() {
+        return SoulseekMiss::Nothing {
+            reason,
+            detail: detail.to_owned(),
+        };
+    }
+    SoulseekMiss::Nothing {
+        reason: Reason::NothingAllowed,
+        detail: "slskd has folders for this, but none in your quality settings".to_owned(),
+    }
 }
 
 /// Search and pick. `keep` drops hits that may not be tried again
@@ -62,10 +85,7 @@ pub async fn choose<H: SlskdHttp>(
                 });
             }
             (None, None) => {
-                return Err(SoulseekMiss::Nothing {
-                    reason: Reason::NoSource,
-                    detail: "slskd has no untried folder for this album".to_owned(),
-                });
+                return Err(miss(&hits, request, repo, Reason::NoSource, NO_FOLDER));
             }
             (Some(_), Some(pick)) if !pick.lone_track => {
                 return Ok(SoulseekChoice {
@@ -77,10 +97,7 @@ pub async fn choose<H: SlskdHttp>(
         }
     }
     let Some(track) = target.track.as_ref() else {
-        return Err(SoulseekMiss::Nothing {
-            reason: Reason::NoSource,
-            detail: "slskd has no untried folder for this album".to_owned(),
-        });
+        return Err(miss(&hits, request, repo, Reason::NoSource, NO_FOLDER));
     };
     // No album folder holds the track: search for the track itself. Its
     // results can still turn up an album folder, which wins as usual.
@@ -98,10 +115,13 @@ pub async fn choose<H: SlskdHttp>(
         }
     }
     let Some(pick) = rank_folders(&hits, request, policy).into_iter().next() else {
-        return Err(SoulseekMiss::Nothing {
-            reason: TrackReason::TrackNotFound.into(),
-            detail: TrackReason::TrackNotFound.to_string(),
-        });
+        return Err(miss(
+            &hits,
+            request,
+            repo,
+            TrackReason::TrackNotFound.into(),
+            &TrackReason::TrackNotFound.to_string(),
+        ));
     };
     let lone_reason = if pick.lone_track || !target.has_album() {
         Some(track.no_album.unwrap_or(TrackReason::NoAlbumFolder))

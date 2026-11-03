@@ -214,7 +214,7 @@ impl SlskdSource {
 
     /// A manual search: the album's folders, ranked against the edition's
     /// tracklist the same way the automatic path ranks them, with folders
-    /// outside the quality band last. Blocklisted files are left out.
+    /// outside the band or the recipe last. Blocklisted files are left out.
     async fn search_album(&self, target: &SearchTarget) -> Result<Vec<Candidate>, SourceError> {
         if !self.repo.is_configured() {
             return Ok(Vec::new());
@@ -510,15 +510,27 @@ impl SabnzbdSource {
         self
     }
 
-    /// The releases an automatic pick may take: [`Self::listed`] minus
-    /// those outside the download settings. Nobody waits on a pick, so the
-    /// indexers are asked at background priority.
-    async fn candidates(&self, query: &IndexerQuery<'_>) -> Vec<IndexerResult> {
+    /// What an automatic pick has to go on: [`Self::listed`] split into the
+    /// releases it may take and those outside the download settings. Nobody
+    /// waits on a pick, so the indexers are asked at background priority.
+    async fn candidates(
+        &self,
+        query: &IndexerQuery<'_>,
+    ) -> (Vec<IndexerResult>, Vec<IndexerResult>) {
+        let names: Vec<&str> = match query {
+            IndexerQuery::Album(target) => {
+                let mut names = vec![target.artist.as_str(), target.album_title.as_str()];
+                if let Some(track) = &target.track {
+                    names.extend([track.artist.as_str(), track.title.as_str()]);
+                }
+                names
+            }
+            IndexerQuery::Track { artist, title } => vec![*artist, *title],
+        };
         self.listed(query, RequestPriority::BackgroundSync)
             .await
             .into_iter()
-            .filter(|hit| self.refusals(hit).is_empty())
-            .collect()
+            .partition(|hit| self.refusals(hit, &names).is_empty())
     }
 
     /// Search every indexer and drop what cannot be fetched: an NZB URL is
@@ -555,11 +567,15 @@ impl SabnzbdSource {
         }
     }
 
-    /// How a release is outside the download settings: a category that
-    /// names a tier outside the band, or a size over the cap.
-    fn refusals(&self, hit: &IndexerResult) -> Vec<CandidateRefusal> {
+    /// How a release is outside the download settings: a category or a
+    /// title that says the recipe does not list it, or a size over the cap.
+    /// `names` is what was asked for, which the title's words never count
+    /// against.
+    fn refusals(&self, hit: &IndexerResult, names: &[&str]) -> Vec<CandidateRefusal> {
         let mut refusal = Vec::new();
-        if !self.policy.accepts_categories(&hit.usenet.category_ids) {
+        if !self.policy.accepts_categories(&hit.usenet.category_ids)
+            || !self.policy.accepts_title(&hit.usenet.title, names)
+        {
             refusal.push(CandidateRefusal::QualityOutsideRange);
         }
         if !self.policy.within_size_cap(hit.usenet.size_bytes) {
@@ -572,36 +588,48 @@ impl SabnzbdSource {
     /// tried by it. Usenet has no folder search, so a single track is
     /// fetched as part of an album release; only when every album release
     /// is used up does the walk go on to releases found for the track
-    /// alone, with the reason recorded.
+    /// alone, with the reason recorded. Nothing to take answers why:
+    /// [`Reason::NothingAllowed`] when the settings refused what was listed.
     async fn pick(
         &self,
         task: &TaskRow,
         target: &SearchTarget,
         blocked: &Blocklist,
         tried: &HashSet<String>,
-    ) -> Option<IndexerResult> {
+    ) -> Result<IndexerResult, Reason> {
         let usable = |hit: &IndexerResult| {
             let identity = usenet_identity(&hit.usenet.title, hit.usenet.size_bytes);
             !blocked.blocks(&identity) && !tried.contains(&identity)
         };
-        let albums = if target.has_album() {
+        let (albums, mut refused) = if target.has_album() {
             self.candidates(&IndexerQuery::Album(target)).await
         } else {
-            Vec::new()
+            (Vec::new(), Vec::new())
         };
         let album_count = albums.len();
         if let Some(pick) = albums.into_iter().find(usable) {
-            return Some(pick);
+            return Ok(pick);
         }
-        let track = target.track.as_ref()?;
-        let lone = self
+        let miss = |refused: &[IndexerResult]| {
+            if refused.iter().any(usable) {
+                Reason::NothingAllowed
+            } else {
+                Reason::NoSource
+            }
+        };
+        let Some(track) = target.track.as_ref() else {
+            return Err(miss(&refused));
+        };
+        let (found, more_refused) = self
             .candidates(&IndexerQuery::Track {
                 artist: &track.artist,
                 title: &track.title,
             })
-            .await
-            .into_iter()
-            .find(usable)?;
+            .await;
+        refused.extend(more_refused);
+        let Some(lone) = found.into_iter().find(usable) else {
+            return Err(miss(&refused));
+        };
         let reason = match (track.no_album, album_count) {
             (Some(reason), _) => reason,
             (None, 0) => TrackReason::NoAlbumRelease,
@@ -610,7 +638,7 @@ impl SabnzbdSource {
         if let Some(targets) = self.targets.as_ref() {
             targets.record_lone_track(task, reason);
         }
-        Some(lone)
+        Ok(lone)
     }
 }
 
@@ -643,7 +671,10 @@ impl SabnzbdSource {
             .unblocked_albums(target, &blocked, RequestPriority::UserInitiated)
             .await
             .iter()
-            .map(|hit| Candidate::from_release(hit, target, self.refusals(hit)))
+            .map(|hit| {
+                let names = [target.artist.as_str(), target.album_title.as_str()];
+                Candidate::from_release(hit, target, self.refusals(hit, &names))
+            })
             .partition(|candidate| !candidate.is_refused());
         listing.extend(refused);
         listing.truncate(MAX_PER_SOURCE);
@@ -752,9 +783,9 @@ impl SabnzbdSource {
                 let tried = tried_releases(&self.journal, task_id, &SourceTag::Usenet).await?;
                 self.pick(&task, &target, &blocked, &tried)
                     .await
-                    .ok_or_else(|| {
+                    .map_err(|reason| {
                         SourceError::rejected(
-                            Reason::NoSource,
+                            reason,
                             format!("usenet has no candidate {candidate_index} for {task_id}"),
                         )
                     })?

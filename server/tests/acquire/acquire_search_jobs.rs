@@ -17,6 +17,7 @@ use droppedneedle_acquire::requests::quota::QuotaLedger;
 use droppedneedle_acquire::search_jobs::candidates::{
     CandidateNoteCode, CandidateRefusal, CandidateTier,
 };
+use droppedneedle_acquire::search_jobs::review::ReviewMode;
 use droppedneedle_acquire::search_jobs::store::{
     COMPLETED, JobPayload, JobStore, NewJob, PickRefusal, PickedTask,
 };
@@ -456,12 +457,37 @@ struct Copy {
     folder: &'static str,
     album_tag: &'static str,
     bitrate: Option<i32>,
+    file: KeptFile,
+}
+
+/// The file a peer shares.
+#[derive(Clone, Copy)]
+struct KeptFile {
+    /// Its name, which says its format.
+    name: &'static str,
+    fixture: &'static str,
+}
+
+impl KeptFile {
+    const MP3: Self = Self {
+        name: "01 - Mysterons.mp3",
+        fixture: "mp3_full_01.mp3",
+    };
+    /// An MP3 at about 192 kbps, which [`gap_policy`] does not list.
+    const GAP_MP3: Self = Self {
+        fixture: "management_full.mp3",
+        ..Self::MP3
+    };
+    const OGG: Self = Self {
+        name: "01 - Mysterons.ogg",
+        fixture: "management_full.ogg",
+    };
 }
 
 /// The search service and a worker that lands into a real library, over
 /// the slskd mock whose peers share `copies` (each already downloaded
-/// into the mock's folder). The download settings keep lossless only, so
-/// every copy, an MP3, is outside the band.
+/// into the mock's folder). [`kept_rig`]'s settings keep lossless only, so
+/// every MP3 copy is outside the band.
 struct KeptRig {
     jobs: Arc<SearchJobs>,
     worker: Arc<DownloadWorker>,
@@ -474,6 +500,15 @@ struct KeptRig {
 }
 
 async fn kept_rig(copies: &[Copy]) -> KeptRig {
+    kept_rig_with(
+        copies,
+        json!({"quality_min": "lossless", "quality_max": "lossless"}),
+    )
+    .await
+}
+
+/// As [`kept_rig`], with the download policy.
+async fn kept_rig_with(copies: &[Copy], saved: Value) -> KeptRig {
     use crate::acquire_landing::{Releases, land_file, length_ms, release};
     use crate::common::TestPlatform;
     use crate::common::library::{every_priority, library_at};
@@ -514,8 +549,8 @@ async fn kept_rig(copies: &[Copy]) -> KeptRig {
     for copy in copies {
         let file = land_file(
             &downloads.join(copy.folder),
-            "01 - Mysterons.mp3",
-            "mp3_full_01.mp3",
+            copy.file.name,
+            copy.file.fixture,
             "Mysterons",
             1,
         );
@@ -530,8 +565,8 @@ async fn kept_rig(copies: &[Copy]) -> KeptRig {
         length = length_ms(&file);
         let size = std::fs::metadata(&file).expect("file").len();
         let mut entry = json!({
-            "filename": format!("@@music\\Portishead\\{}\\01 - Mysterons.mp3", copy.folder),
-            "size": size, "extension": "mp3",
+            "filename": format!("@@music\\Portishead\\{}\\{}", copy.folder, copy.file.name),
+            "size": size, "extension": copy.file.name.rsplit('.').next(),
             "length": length.map(|ms| ms as f64 / 1000.0),
         });
         if let Some(bitrate) = copy.bitrate {
@@ -569,23 +604,20 @@ async fn kept_rig(copies: &[Copy]) -> KeptRig {
     );
     let releases: Arc<dyn ReleaseSource> = Arc::new(Releases(vec![edition]));
 
-    let lossless_only = DownloadPolicy {
-        quality_min: "lossless".to_owned(),
-        quality_max: "lossless".to_owned(),
-        search_timeout: Duration::from_secs(2),
-        completion_grace: Duration::from_secs(2),
-        poll_interval: Duration::from_millis(10),
-        ..DownloadPolicy::default()
-    };
     let band = dir.join("band");
     std::fs::create_dir_all(&band).expect("settings dir");
     std::fs::write(
         band.join("config.json"),
-        json!({"download_policy": {"quality_min": "lossless", "quality_max": "lossless"}})
-            .to_string(),
+        json!({"download_policy": saved}).to_string(),
     )
     .expect("config.json");
     let settings = droppedneedle_acquire::settings::scratch_settings(&band).expect("settings");
+    let repo_policy = DownloadPolicy {
+        search_timeout: Duration::from_secs(2),
+        completion_grace: Duration::from_secs(2),
+        poll_interval: Duration::from_millis(10),
+        ..DownloadPolicy::from_saved(&settings.live().read().expect("policy reads"))
+    };
 
     let journal = Arc::new(Journal::new(db.clone(), quiet_ticks()));
     let landing = Arc::new(LandingService::new(
@@ -607,7 +639,7 @@ async fn kept_rig(copies: &[Copy]) -> KeptRig {
         &mock.base_url(),
         MOCK_API_KEY,
         downloads,
-        lossless_only,
+        repo_policy,
     );
     let source = SlskdSource::new(Arc::new(repo), journal.clone()).with_targets(targets.clone());
     let events = EventHub::new();
@@ -615,7 +647,11 @@ async fn kept_rig(copies: &[Copy]) -> KeptRig {
         DownloadWorker::fixed(
             journal.clone(),
             vec![crate::as_source(Arc::new(source))],
-            WorkerConfig::default(),
+            // Each pick is the source's own, on the pass that asks for it.
+            WorkerConfig {
+                review: ReviewMode::Off,
+                ..WorkerConfig::default()
+            },
             events.clone(),
             Default::default(),
         )
@@ -693,6 +729,46 @@ impl KeptRig {
         panic!("task {task_id} never settled");
     }
 
+    /// A queued album download nobody picked a copy for.
+    async fn automatic_task(&self) -> String {
+        let task_id = "0123456789abcdef0123456789abcdef";
+        self.journal
+            .run("test.seed", move |store| {
+                store.insert_task(
+                    &NewTask {
+                        id: task_id.to_owned(),
+                        user_id: "u1".to_owned(),
+                        artist_name: "Portishead".to_owned(),
+                        album_title: "Dummy".to_owned(),
+                        release_group_mbid: KEPT_GROUP.to_owned(),
+                        origin: "user".to_owned(),
+                        retry_count: 0,
+                    },
+                    1_000.0,
+                )?;
+                store.set_task_details(
+                    task_id,
+                    &TaskDetails {
+                        release_mbid: Some(KEPT_RELEASE.to_owned()),
+                        year: Some(1994),
+                        ..TaskDetails::default()
+                    },
+                    1_000.0,
+                )
+            })
+            .await
+            .expect("task seeds");
+        task_id.to_owned()
+    }
+
+    /// Each held file's reason and state.
+    async fn held_files(&self) -> Vec<(String, String)> {
+        sqlx::query_as("SELECT reason, state FROM acquire_held_files ORDER BY id")
+            .fetch_all(self.db.db().sqlx())
+            .await
+            .expect("held files")
+    }
+
     async fn task_count(&self) -> i64 {
         sqlx::query_scalar("SELECT COUNT(*) FROM download_tasks")
             .fetch_one(self.db.db().sqlx())
@@ -712,6 +788,7 @@ async fn a_folder_outside_the_band_is_kept_once_its_pick_is_confirmed() {
         folder: "Dummy (MP3)",
         album_tag: "Dummy",
         bitrate: Some(320),
+        file: KeptFile::MP3,
     }])
     .await;
     let owner = principal("u1");
@@ -766,24 +843,26 @@ async fn a_folder_outside_the_band_is_kept_once_its_pick_is_confirmed() {
 
 /// A confirmed pick covers only the attempt that fetched it. When that
 /// attempt fails, the failover's folder (whose quality the search did not
-/// show) lands MP3 files outside the band, and they are refused on
-/// quality.
+/// show) lands MP3 files the recipe does not list, and they are held.
 #[tokio::test]
-async fn a_failover_after_a_confirmed_pick_is_held_to_the_band() {
-    let rig = kept_rig(&[
-        Copy {
-            username: "picked",
-            folder: "Dummy (MP3)",
-            album_tag: "Third",
-            bitrate: Some(320),
-        },
-        Copy {
-            username: "fallback",
-            folder: "Dummy (web)",
-            album_tag: "Dummy",
-            bitrate: None,
-        },
-    ])
+async fn a_failover_after_a_confirmed_pick_is_held_to_the_recipe() {
+    let rig = kept_rig_with(
+        &[
+            Copy {
+                username: "picked",
+                album_tag: "Third",
+                ..OGG_FOLDER
+            },
+            Copy {
+                username: "fallback",
+                folder: "Dummy (web)",
+                album_tag: "Dummy",
+                bitrate: None,
+                file: KeptFile::GAP_MP3,
+            },
+        ],
+        gap_policy(),
+    )
     .await;
     let owner = principal("u1");
     let (job_id, payload) = rig.search(&owner).await;
@@ -832,11 +911,199 @@ async fn a_failover_after_a_confirmed_pick_is_held_to_the_band() {
     .expect("decisions");
     assert_eq!(
         reasons.last().cloned().flatten().as_deref(),
-        Some("quality_rejected"),
+        Some("format_not_listed"),
         "{reasons:?}"
     );
     assert!(
         crate::acquire_landing::files_under(&rig.music, "mp3").is_empty(),
         "nothing outside the band was kept"
     );
+}
+
+/// A folder whose bitrate the search does not show.
+const GAP_FOLDER: Copy = Copy {
+    username: "gappeer",
+    folder: "Dummy (MP3)",
+    album_tag: "Dummy",
+    bitrate: None,
+    file: KeptFile::GAP_MP3,
+};
+
+const OGG_FOLDER: Copy = Copy {
+    username: "oggpeer",
+    folder: "Dummy (OGG)",
+    album_tag: "Dummy",
+    bitrate: Some(320),
+    file: KeptFile::OGG,
+};
+
+/// The default policy lists FLAC and MP3 at 320, which an OGG at 320 reaches
+/// by tier alone.
+fn default_policy() -> Value {
+    json!({"quality_min": "mp3_320", "quality_max": "lossless"})
+}
+
+/// MP3 at 320 and above, or below 192: an MP3 at 192 to 319 is inside the
+/// band but between the steps. A search that shows no bitrate cannot tell.
+fn gap_policy() -> Value {
+    json!({"quality_recipe": [
+        {"format": "mp3", "quality": "320_plus"},
+        {"format": "mp3", "quality": "below_192"},
+    ]})
+}
+
+/// An automatic download with only an OGG folder to take starts nothing and
+/// says why, in the task's own reason.
+#[tokio::test]
+async fn an_automatic_download_takes_no_format_the_recipe_does_not_list() {
+    let rig = kept_rig_with(&[OGG_FOLDER], default_policy()).await;
+    let task = rig.automatic_task().await;
+    let task = rig.settle(&task).await;
+
+    assert_eq!(task.status.as_str(), "failed", "{:?}", task.error_message);
+    assert_eq!(
+        task.outcome_code.map(|reason| reason.code()),
+        Some("nothing_allowed")
+    );
+    let attempts: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM download_attempts")
+        .fetch_one(rig.db.db().sqlx())
+        .await
+        .expect("attempt count");
+    assert_eq!(attempts, 0, "nothing was fetched");
+}
+
+/// A person may take that folder, behind the confirm the server enforces, and
+/// only then is it placed.
+#[tokio::test]
+async fn a_confirmed_pick_keeps_a_format_the_recipe_does_not_list() {
+    let rig = kept_rig_with(&[OGG_FOLDER], default_policy()).await;
+    let owner = principal("u1");
+    let (job_id, payload) = rig.search(&owner).await;
+    assert_eq!(
+        payload.candidates[0].view.refusal,
+        [CandidateRefusal::QualityOutsideRange]
+    );
+    let refused = rig
+        .jobs
+        .pick(&owner, &job_id, 0, false)
+        .await
+        .expect_err("an unconfirmed pick is refused");
+    assert!(matches!(refused, SearchJobError::PolicyBreak(_)));
+
+    let task_id = rig
+        .jobs
+        .pick(&owner, &job_id, 0, true)
+        .await
+        .expect("a confirmed pick starts");
+    let task = rig.settle(&task_id).await;
+    assert_eq!(
+        task.status.as_str(),
+        "completed",
+        "{:?}",
+        task.error_message
+    );
+    assert_eq!(
+        crate::acquire_landing::files_under(&rig.music, "ogg").len(),
+        1
+    );
+}
+
+/// Files that turn out to be a quality the recipe does not list are held,
+/// not placed, and the release is not tried again.
+#[tokio::test]
+async fn an_unlisted_landing_is_held_not_placed() {
+    let rig = kept_rig_with(&[GAP_FOLDER], gap_policy()).await;
+    let task = rig.automatic_task().await;
+    let task = rig.settle(&task).await;
+
+    assert_eq!(task.status.as_str(), "failed", "{:?}", task.error_message);
+    assert_eq!(
+        task.outcome_code.map(|reason| reason.code()),
+        Some("format_not_listed")
+    );
+    assert!(
+        crate::acquire_landing::files_under(&rig.music, "mp3").is_empty(),
+        "nothing is placed"
+    );
+    assert_eq!(
+        rig.held_files().await,
+        [("format_not_listed", "held")].map(owned)
+    );
+    let blocked: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM download_quarantine")
+        .fetch_one(rig.db.db().sqlx())
+        .await
+        .expect("quarantine count");
+    assert!(blocked > 0, "the release is not tried again");
+}
+
+/// An album keeps one held set of unlisted copies: the second landing copies
+/// nothing. A complete allowed import then discards the set and says so.
+#[tokio::test]
+async fn an_album_holds_one_unlisted_set_until_a_complete_copy_lands() {
+    let rig = kept_rig_with(
+        &[
+            Copy {
+                username: "a-gap",
+                ..GAP_FOLDER
+            },
+            Copy {
+                username: "b-gap",
+                folder: "Dummy (MP3 2)",
+                ..GAP_FOLDER
+            },
+            Copy {
+                username: "c-320",
+                folder: "Dummy (MP3 320)",
+                file: KeptFile::MP3,
+                ..GAP_FOLDER
+            },
+        ],
+        gap_policy(),
+    )
+    .await;
+    let task = rig.automatic_task().await;
+    let task = rig.settle(&task).await;
+    assert_eq!(
+        task.status.as_str(),
+        "completed",
+        "{:?}",
+        task.error_message
+    );
+
+    let decisions: Vec<(Option<String>, i64, Option<String>)> = sqlx::query_as(
+        "SELECT reason_code, files_held, detail FROM download_import_decisions \
+         ORDER BY decided_at",
+    )
+    .fetch_all(rig.db.db().sqlx())
+    .await
+    .expect("decisions");
+    let held: Vec<_> = decisions
+        .iter()
+        .map(|(code, held, _)| (code.as_deref(), *held))
+        .collect();
+    assert_eq!(
+        held,
+        [
+            (Some("format_not_listed"), 1),
+            (Some("format_not_listed"), 0),
+            (None, 0),
+        ]
+    );
+    // The import that ended the held set says so where its download shows.
+    assert_eq!(
+        decisions[2].2.as_deref(),
+        Some("Removed the held copy not in your quality settings")
+    );
+    assert_eq!(
+        crate::acquire_landing::files_under(&rig.music, "mp3").len(),
+        1
+    );
+    assert_eq!(
+        rig.held_files().await,
+        [("format_not_listed", "discarded")].map(owned)
+    );
+}
+
+fn owned((reason, state): (&str, &str)) -> (String, String) {
+    (reason.to_owned(), state.to_owned())
 }

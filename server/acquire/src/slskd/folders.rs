@@ -13,8 +13,8 @@
 //!    worst file's place in the quality recipe;
 //! 4. speed: a free upload slot, a short queue, a fast uploader.
 //!
-//! A folder whose quality the search shows outside the band the landing
-//! keeps is left out of automatic picks ([`rank_folders`]), so it is never
+//! A folder whose files the search shows outside the band or the recipe is
+//! left out of automatic picks ([`rank_folders`]), so it is never
 //! fetched only to be refused. A manual search lists it after every other
 //! folder ([`rank_listing`]), for a person to take on purpose.
 //!
@@ -29,7 +29,7 @@ use std::collections::{BTreeSet, HashMap};
 use super::policy::{DownloadPolicy, search_tier};
 use super::repository::SearchResult;
 use crate::downloads::plan::{ExpectedTrack, TrackPosition};
-use crate::landing::quality::worst;
+use crate::landing::quality::{RecipeFit, worst};
 use droppedneedle_library::matching::strings::{fold, string_dist};
 use droppedneedle_library::tags::{AudioFormat, format_for_extension};
 
@@ -81,7 +81,8 @@ pub struct FolderPick {
     /// Of the wanted positions, how many this folder holds (all of its
     /// audio files when nothing in particular is wanted).
     pub held: usize,
-    /// The worst quality the search shows is outside the band.
+    /// What the search shows of a file to fetch is outside the band or the
+    /// recipe.
     pub out_of_band: bool,
     has_free_slot: bool,
     queue_length: i64,
@@ -89,8 +90,8 @@ pub struct FolderPick {
 }
 
 /// Rank folders best first for an automatic pick. Folders that cannot
-/// serve the wanted positions, or whose known quality is outside the band,
-/// are left out.
+/// serve the wanted positions, or whose known quality is outside the band or
+/// the recipe, are left out.
 pub fn rank_folders(
     hits: &[SearchResult],
     request: RankRequest<'_>,
@@ -254,7 +255,25 @@ fn judge(
         assigned.get(&track).map(|file| audio[*file].hit.clone())
     });
     let to_fetch: Vec<SearchResult> = if request.wanted.is_empty() {
-        files.iter().map(|hit| (*hit).clone()).collect()
+        // A bonus file the recipe does not list is no reason to refuse the
+        // album it sits beside: with a tracklist to say which files are the
+        // album, it is left behind.
+        let paired: Vec<&str> = assigned
+            .values()
+            .map(|file| audio[*file].hit.filename.as_str())
+            .collect();
+        files
+            .iter()
+            .filter(|hit| {
+                request.tracklist.is_empty()
+                    || paired.contains(&hit.filename.as_str())
+                    || landing_format(&hit.extension).is_none_or(|format| {
+                        policy.recipe_fit(format, hit.bitrate, hit.bit_depth, hit.sample_rate)
+                            != RecipeFit::Outside
+                    })
+            })
+            .map(|hit| (*hit).clone())
+            .collect()
     } else if request.single_track {
         wanted_files.collect::<Option<_>>()?
     } else {
@@ -275,8 +294,12 @@ fn judge(
     let tiers: Vec<Option<&str>> = audio_to_fetch()
         .map(|(format, hit)| search_tier(format, hit.bitrate, hit.bit_depth))
         .collect();
-    let out_of_band =
-        worst(tiers.iter().flatten().copied()).is_some_and(|tier| !policy.in_band(tier));
+    let out_of_band = worst(tiers.iter().flatten().copied())
+        .is_some_and(|tier| !policy.in_band(tier))
+        || audio_to_fetch().any(|(format, hit)| {
+            policy.recipe_fit(format, hit.bitrate, hit.bit_depth, hit.sample_rate)
+                == RecipeFit::Outside
+        });
     let unknown_quality = tiers.iter().any(Option::is_none);
     let quality = audio_to_fetch()
         .map(|(format, hit)| {
@@ -583,6 +606,58 @@ mod tests {
             title: Some(title.to_owned()),
             release_track_mbid: None,
         }
+    }
+
+    // A format the recipe does not list refuses a folder only when it is the
+    // album: a bonus file is left behind, a track never is.
+    #[test]
+    fn an_unlisted_file_refuses_a_folder_only_when_it_is_a_track() {
+        let tracklist = vec![
+            track(1, "Safe From Harm", 331.0),
+            track(2, "One Love", 288.0),
+        ];
+        let flac = |name: &str, seconds: f64| hit("p", &format!("M\\A\\{name}"), seconds, true);
+        let other = |name: &str, seconds: f64, extension: &str| SearchResult {
+            extension: extension.to_owned(),
+            bitrate: Some(320),
+            ..flac(name, seconds)
+        };
+        let album = [
+            flac("01 Safe From Harm.flac", 331.0),
+            flac("02 One Love.flac", 288.0),
+        ];
+        let request = |tracklist| RankRequest {
+            tracklist,
+            wanted: &[],
+            single_track: false,
+        };
+        let policy = DownloadPolicy::default();
+
+        for stray in [
+            other("Bonus Interview.ogg", 90.0, "ogg"),
+            other("Video Edit.mp4", 90.0, "mp4"),
+        ] {
+            let mut hits = album.to_vec();
+            hits.push(stray);
+            let picks = rank_folders(&hits, request(&tracklist), &policy);
+            assert_eq!(picks.len(), 1, "the album is taken");
+            assert_eq!(picks[0].files.len(), 2, "without the stray");
+        }
+
+        let half = [
+            flac("01 Safe From Harm.flac", 331.0),
+            other("02 One Love.ogg", 288.0, "ogg"),
+        ];
+        assert!(rank_folders(&half, request(&tracklist), &policy).is_empty());
+        let listed = rank_listing(&half, request(&tracklist), &policy);
+        assert!(listed[0].out_of_band, "a person may still take it");
+
+        let mut unknown = album.to_vec();
+        unknown.push(other("Bonus Interview.ogg", 90.0, "ogg"));
+        assert!(
+            rank_folders(&unknown, request(&[]), &policy).is_empty(),
+            "with no tracklist nothing says it is a stray"
+        );
     }
 
     #[test]

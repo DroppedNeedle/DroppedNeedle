@@ -1180,7 +1180,11 @@ impl DropImports {
                 None
             }
         };
-        match self.ledger.settle_in_library(&group, "imported", at).await {
+        match self
+            .ledger
+            .settle_in_library(&group, crate::requests::ledger::WatchOutcome::Imported, at)
+            .await
+        {
             Ok(fulfilled) => {
                 // A request with no owner left is credited to the uploader.
                 let fulfilled = fulfilled

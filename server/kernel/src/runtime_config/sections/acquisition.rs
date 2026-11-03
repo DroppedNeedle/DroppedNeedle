@@ -673,9 +673,6 @@ pub struct DownloadPolicy {
     pub quality_min: String,
     /// Best accepted tier label, set from the recipe.
     pub quality_max: String,
-    /// Always on. Other formats are still accepted, but rank after FLAC and
-    /// MP3 of the same completeness.
-    pub flac_mp3_only: bool,
     /// Preflight auto-accept score.
     pub preflight_score_auto_accept: f64,
     /// Preflight manual-review floor.
@@ -725,8 +722,8 @@ pub struct DownloadPolicy {
     // A row or request without the key decodes as empty, never as the default
     // policy's recipe: a stored row is then converted from its own range, and
     // a save is refused.
-    /// Ordered quality recipe, earlier entries preferred. A save needs at
-    /// least one entry.
+    /// Ordered quality recipe, earlier entries preferred. Automatic work takes
+    /// only what it lists. A save needs at least one entry.
     #[serde(default)]
     #[schema(default)]
     pub quality_recipe: Vec<QualityRecipeEntry>,
@@ -741,7 +738,6 @@ impl Default for DownloadPolicy {
         Self {
             quality_min: "mp3_320".to_owned(),
             quality_max: "lossless".to_owned(),
-            flac_mp3_only: true,
             preflight_score_auto_accept: 0.70,
             preflight_score_manual_min: 0.50,
             download_stall_timeout_minutes: 30,
@@ -932,13 +928,6 @@ impl Section for DownloadPolicy {
                 ),
             ));
         }
-        if !self.flac_mp3_only {
-            return Err(validation(
-                key,
-                "quality_recipe",
-                "only works with FLAC and MP3 only on".to_owned(),
-            ));
-        }
         validate_quality_recipe(&self.quality_recipe)?;
         if !matches!(
             self.search_review.as_str(),
@@ -975,7 +964,6 @@ impl Section for DownloadPolicy {
             best.clone_into(&mut self.quality_max);
         }
         self.heal_tiers();
-        self.flac_mp3_only = true;
     }
 }
 

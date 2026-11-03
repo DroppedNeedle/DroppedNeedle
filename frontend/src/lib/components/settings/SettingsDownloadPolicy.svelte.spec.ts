@@ -20,7 +20,6 @@ const recipe: QualityRecipeEntry[] = [
 const basePolicy: DownloadPolicySettings = {
 	quality_min: 'mp3_320',
 	quality_max: 'lossless',
-	flac_mp3_only: true,
 	preflight_score_auto_accept: 0.7,
 	preflight_score_manual_min: 0.5,
 	download_stall_timeout_minutes: 30,

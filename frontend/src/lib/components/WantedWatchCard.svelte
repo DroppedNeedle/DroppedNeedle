@@ -85,6 +85,10 @@
 					{/if}
 					<span class="text-base-content/20">•</span>
 					<span class="text-base-content/40">{checkedLabel}</span>
+					{#if item.last_outcome === 'outside_settings'}
+						<span class="text-base-content/20">•</span>
+						<span class="text-base-content/60">only copies your settings refuse</span>
+					{/if}
 				{:else if item.state === 'stopped'}
 					<span class="text-base-content/50 flex items-center gap-1">
 						<CircleStop class="h-3 w-3" />

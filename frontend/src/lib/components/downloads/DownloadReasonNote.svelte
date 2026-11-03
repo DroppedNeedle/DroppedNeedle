@@ -26,6 +26,10 @@
 		if (decision.files_held > 0) parts.push(`${decision.files_held} held`);
 		return parts.join(', ');
 	});
+	// What a clean import did beside placing the files.
+	const importNote = $derived(
+		task.decision?.outcome === 'imported' ? (task.decision.detail ?? null) : null
+	);
 </script>
 
 {#if reason}
@@ -36,4 +40,6 @@
 			<p class="text-base-content/50">{tally}</p>
 		{/if}
 	</div>
+{:else if importNote}
+	<p class="mt-1 text-xs text-base-content/60">{importNote}</p>
 {/if}

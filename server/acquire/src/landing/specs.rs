@@ -26,8 +26,10 @@ use super::matching::{
     FoundRelease, MatchState, MatchSummary, album_tag, file_name_parts, is_various,
 };
 use super::probe::Landing;
+use super::quality::{RecipeFit, names_format, recipe_fit};
 use crate::downloads::quarantine::QuarantineReason;
 use crate::reason::Reason;
+use droppedneedle_kernel::runtime_config::sections::{QualityRecipeEntry, recipe_for_range};
 use droppedneedle_library::matching::decide::{ACCEPT_ALBUM, ACCEPT_TRACK};
 use droppedneedle_library::matching::model::credit_text;
 use droppedneedle_library::matching::score::{NAME_GATE, SAME_MASTER_SECS, Support, TrackPair};
@@ -172,6 +174,8 @@ impl Target {
 pub struct QualityPolicy {
     pub quality_min: String,
     pub quality_max: String,
+    /// The saved recipe: what may be kept without a person.
+    pub quality_recipe: Vec<QualityRecipeEntry>,
     /// For an upgrade: the tier the library holds, which the download
     /// must strictly beat.
     pub held_tier: Option<String>,
@@ -182,6 +186,7 @@ impl Default for QualityPolicy {
         Self {
             quality_min: "low".to_owned(),
             quality_max: "lossless".to_owned(),
+            quality_recipe: recipe_for_range("low", "lossless", &[]),
             held_tier: None,
         }
     }
@@ -229,6 +234,7 @@ pub fn match_specs() -> Vec<Box<dyn ImportSpec>> {
         Box::new(ArtistEvidence),
         Box::new(OwnArtist),
         Box::new(CloseTrackMatch),
+        Box::new(RecipeListed),
         Box::new(FilesAccountedFor),
         Box::new(RightTrack),
         Box::new(NotAlreadyImported),
@@ -615,9 +621,11 @@ impl ImportSpec for WrongAlbum {
     }
 }
 
-/// The files' real quality must sit inside the policy band, unless a person
-/// confirmed the candidate this attempt fetched outside it. Never blocklisted:
-/// a peer's labels were wrong, not its files broken.
+/// The files in a format the recipe lists must sit inside its band, unless a
+/// person confirmed the candidate this attempt fetched outside it. Never
+/// blocklisted: a peer's labels were wrong, not its files broken. Files in
+/// other formats are judged once matching says which are the album's
+/// ([`RecipeListed`]).
 struct QualityAllowed;
 
 impl ImportSpec for QualityAllowed {
@@ -626,11 +634,16 @@ impl ImportSpec for QualityAllowed {
     }
 
     fn check(&self, subject: &Subject<'_>) -> Verdict {
-        let Some(tier) = super::quality::worst(subject.landing.audio.iter().map(|f| f.tier()))
-        else {
+        let policy = subject.policy;
+        let listed = subject
+            .landing
+            .audio
+            .iter()
+            .filter(|file| names_format(&policy.quality_recipe, file.format.as_str()))
+            .map(|file| file.tier());
+        let Some(tier) = super::quality::worst(listed) else {
             return Verdict::accept();
         };
-        let policy = subject.policy;
         if subject.target.quality_waived
             || super::quality::in_range(tier, &policy.quality_min, &policy.quality_max)
         {
@@ -645,6 +658,69 @@ impl ImportSpec for QualityAllowed {
                 policy.quality_min, policy.quality_max
             ),
         )
+    }
+}
+
+/// Every file that is one of the release's tracks must be what the quality
+/// recipe lists, unless a person confirmed the candidate this attempt
+/// fetched outside it. A file that pairs with no track is left out as an
+/// extra, whatever it is. Otherwise the download is held for a person, and
+/// the release is blocklisted so the next source is tried.
+struct RecipeListed;
+
+impl ImportSpec for RecipeListed {
+    fn name(&self) -> &'static str {
+        "recipe_listed"
+    }
+
+    fn check(&self, subject: &Subject<'_>) -> Verdict {
+        if subject.target.quality_waived {
+            return Verdict::accept();
+        }
+        let Some(found) = subject.matched.and_then(MatchSummary::best) else {
+            return Verdict::accept();
+        };
+        let recipe = &subject.policy.quality_recipe;
+        let requested = subject
+            .target
+            .is_track
+            .then(|| found.requested_pair(subject.target).map(|pair| pair.local));
+        for pair in &found.scored.pairs {
+            if requested.is_some_and(|wanted| wanted != Some(pair.local)) {
+                continue;
+            }
+            let Some(file) = subject.landing.audio.get(pair.local) else {
+                continue;
+            };
+            let format = file.format.as_str();
+            if !names_format(recipe, format) {
+                return Verdict::hold(
+                    Reason::FormatNotListed,
+                    format!("{} isn't in your quality settings", format.to_uppercase()),
+                );
+            }
+            let fit = recipe_fit(
+                recipe,
+                format,
+                file.header
+                    .bitrate_kbps
+                    .and_then(|rate| i32::try_from(rate).ok()),
+                file.header.bit_depth.map(i32::from),
+                file.header
+                    .sample_rate
+                    .and_then(|rate| i32::try_from(rate).ok()),
+            );
+            if fit == RecipeFit::Outside {
+                return Verdict::hold(
+                    Reason::FormatNotListed,
+                    format!(
+                        "{} at this quality isn't in your quality settings",
+                        format.to_uppercase()
+                    ),
+                );
+            }
+        }
+        Verdict::accept()
     }
 }
 

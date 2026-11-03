@@ -54,7 +54,8 @@ use super::downloads::plan::{PlannedAlbum, TaskPlan};
 use super::downloads::sources::SourceHandle;
 use super::downloads::store::{StoreError, TaskDetails, TaskRow};
 use crate::held::store::{
-    EntryOrigin, FileState, GroupKey, HeldRoot, HeldRows, NewEntry, NewFile, Pairing as HeldPairing,
+    EntryOrigin, FileState, GroupKey, HeldFile, HeldRoot, HeldRows, NewEntry, NewFile,
+    Pairing as HeldPairing,
 };
 use crate::intake;
 use crate::reason::Reason;
@@ -151,7 +152,13 @@ pub struct LandingReport {
     /// already taken, an upgrade waiting): another source would not help,
     /// so the task settles without blocklisting this one.
     pub local_only: bool,
+    /// Files the recipe does not list were not copied because the album
+    /// already holds a set of them.
+    pub format_set_held: bool,
 }
+
+/// What an import that discarded the album's held set of unlisted files says.
+const FORMAT_SET_DISCARDED: &str = "Removed the held copy not in your quality settings";
 
 /// The landing service the worker calls.
 pub struct LandingService {
@@ -174,6 +181,10 @@ struct Acted {
     local_only: bool,
     /// Imported source files, removed once the decision is recorded.
     imported_sources: Vec<PathBuf>,
+    /// See [`LandingReport::format_set_held`].
+    format_set_held: bool,
+    /// What a person reads about a clean import.
+    note: Option<String>,
 }
 
 impl Acted {
@@ -185,6 +196,16 @@ impl Acted {
             missing: Vec::new(),
             local_only: false,
             imported_sources: Vec::new(),
+            format_set_held: false,
+            note: None,
+        }
+    }
+
+    /// Decided by a hold of [`LandingService::hold_decided`].
+    fn holding(decision: Decision, (held, format_set_held): (usize, bool)) -> Self {
+        Self {
+            format_set_held,
+            ..Self::decided(decision, held)
         }
     }
 }
@@ -364,6 +385,7 @@ impl LandingService {
         let mut policy = QualityPolicy {
             quality_min: settings.quality_min.clone(),
             quality_max: settings.quality_max.clone(),
+            quality_recipe: settings.quality_recipe.clone(),
             held_tier: None,
         };
         if target.origin == "upgrade"
@@ -384,7 +406,7 @@ impl LandingService {
                     distance: None,
                 };
                 let held = self.hold_decided(task, &target, &landing, &decision).await;
-                Acted::decided(decision, held)
+                Acted::holding(decision, held)
             }
             (None, None) => Acted::decided(
                 Decision {
@@ -421,16 +443,45 @@ impl LandingService {
                     }
                     _ => {
                         let held = self.hold_decided(task, &target, &landing, &decision).await;
-                        Acted::decided(decision, held)
+                        Acted::holding(decision, held)
                     }
                 }
             }
         };
+        let mut acted = acted;
+        // A complete allowed copy ends the album's held set of files the
+        // recipe does not list, and the import says so. A subset of the
+        // album ("get missing tracks") is not a complete copy.
+        if target.album_wanted.is_empty()
+            && matches!(&acted.decision.outcome, Outcome::Import(plan) if plan.complete)
+            && self.discard_format_holds(task, &target).await > 0
+        {
+            acted.note = Some(FORMAT_SET_DISCARDED.to_owned());
+        }
         let report = self.finish(task, attempt_id, acted, &landing).await;
         if target.album_version && matches!(report.result, LandingResult::Imported { .. }) {
             self.discard_album_version_holds(task).await;
         }
         report
+    }
+
+    /// The group a task's held files are kept under.
+    fn hold_key(task: &TaskRow, target: &Target) -> GroupKey {
+        GroupKey::for_download(
+            &task.download_type,
+            task.recording_mbid.as_deref(),
+            Some(target.release_group_mbid.as_str()),
+            &task.id,
+        )
+    }
+
+    /// A complete allowed copy came in: the copies held because the recipe
+    /// does not list them have nothing left to decide. Answers how many
+    /// were discarded.
+    async fn discard_format_holds(&self, task: &TaskRow, target: &Target) -> usize {
+        let (user_id, key) = (task.user_id.clone(), Self::hold_key(task, target).text());
+        self.discard_holds(task, move |rows| rows.format_set_files(&user_id, &key))
+            .await
     }
 
     /// The song came in from its album: the copies earlier downloads held
@@ -445,11 +496,24 @@ impl LandingService {
             return;
         };
         let (user_id, task_id) = (task.user_id.clone(), task.id.clone());
+        self.discard_holds(task, move |rows| {
+            rows.album_version_files(&user_id, &recording, &task_id)
+        })
+        .await;
+    }
+
+    /// Discard the held files `select` names, leaving alone any entry a
+    /// person is acting on. Answers how many were discarded.
+    async fn discard_holds(
+        &self,
+        task: &TaskRow,
+        select: impl FnOnce(&HeldRows<'_>) -> rusqlite::Result<Vec<HeldFile>> + Send + 'static,
+    ) -> usize {
         let db = self.journal.db();
         let claimed = db
-            .write_background("downloads.album_version_claim", move |tx| {
+            .write_background("downloads.held_discard_claim", move |tx| {
                 let rows = HeldRows::new(tx);
-                let files = rows.album_version_files(&user_id, &recording, &task_id)?;
+                let files = select(&rows)?;
                 let mut claimed: Vec<i64> = Vec::new();
                 let mut in_use: Vec<i64> = Vec::new();
                 for file in &files {
@@ -473,15 +537,15 @@ impl LandingService {
         let (claimed, files, in_use) = match claimed {
             Ok(claimed) => claimed,
             Err(error) => {
-                tracing::warn!(task_id = %task.id, %error, "album version holds not discarded");
-                return;
+                tracing::warn!(task_id = %task.id, %error, "held files not discarded");
+                return 0;
             }
         };
         if in_use > 0 {
-            tracing::info!(task_id = %task.id, in_use, "album version holds in use are left to the person");
+            tracing::info!(task_id = %task.id, in_use, "held files in use are left to the person");
         }
         if claimed.is_empty() {
-            return;
+            return 0;
         }
         let mut gone: Vec<i64> = Vec::with_capacity(files.len());
         for (file, path) in &files {
@@ -489,10 +553,11 @@ impl LandingService {
                 gone.push(*file);
             }
         }
+        let discarded = gone.len();
         let clock = db.clock().clone();
         let entries = claimed.clone();
         let settled = db
-            .write_background("downloads.album_version_discard", move |tx| {
+            .write_background("downloads.held_discard", move |tx| {
                 let rows = HeldRows::new(tx);
                 let now = clock.now_ms();
                 for file in &gone {
@@ -505,10 +570,10 @@ impl LandingService {
             })
             .await;
         if let Err(error) = settled {
-            tracing::warn!(task_id = %task.id, %error, "album version holds not discarded");
+            tracing::warn!(task_id = %task.id, %error, "held files not discarded");
             let clock = db.clock().clone();
             let released = db
-                .write_background("downloads.album_version_release", move |tx| {
+                .write_background("downloads.held_discard_release", move |tx| {
                     let rows = HeldRows::new(tx);
                     let now = clock.now_ms();
                     for entry in &claimed {
@@ -518,9 +583,11 @@ impl LandingService {
                 })
                 .await;
             if let Err(error) = released {
-                tracing::warn!(task_id = %task.id, %error, "album version holds stay claimed until the next start");
+                tracing::warn!(task_id = %task.id, %error, "held files stay claimed until the next start");
             }
+            return 0;
         }
+        discarded
     }
 
     /// Record a rejection made before anything on disk was read.
@@ -545,17 +612,22 @@ impl LandingService {
         .await
     }
 
-    /// Hold every audio file of a decision that holds.
+    /// Hold every audio file of a decision that holds. Answers how many
+    /// were held, and whether none were because the album already holds
+    /// its one set of files the recipe does not list.
     async fn hold_decided(
         &self,
         task: &TaskRow,
         target: &Target,
         landing: &Landing,
         decision: &Decision,
-    ) -> usize {
+    ) -> (usize, bool) {
         let Outcome::Hold { code, detail } = &decision.outcome else {
-            return 0;
+            return (0, false);
         };
+        if *code == Reason::FormatNotListed && self.format_set_held(task, target).await {
+            return (0, true);
+        }
         let held: Vec<Held<'_>> = landing
             .audio
             .iter()
@@ -566,7 +638,30 @@ impl LandingService {
                 detail: detail.clone(),
             })
             .collect();
-        self.hold(task, target, landing, None, held).await
+        (self.hold(task, target, landing, None, held).await, false)
+    }
+
+    /// Whether this album's open entry already holds copies the recipe does
+    /// not list. One that cannot be read counts as none, so nothing is lost.
+    async fn format_set_held(&self, task: &TaskRow, target: &Target) -> bool {
+        let (user_id, key) = (task.user_id.clone(), Self::hold_key(task, target).text());
+        let held = self
+            .journal
+            .db()
+            .db()
+            .read("downloads.format_set_held", move |conn| {
+                Ok::<_, droppedneedle_kernel::db::DbError>(
+                    HeldRows::new(conn).format_set_files(&user_id, &key)?,
+                )
+            })
+            .await;
+        match held {
+            Ok(files) => !files.is_empty(),
+            Err(error) => {
+                tracing::warn!(task_id = %task.id, %error, "held set unreadable; holding this copy");
+                false
+            }
+        }
     }
 
     /// A landing that finds no files because this attempt already imported
@@ -600,6 +695,7 @@ impl LandingService {
             files_held: usize::try_from(last.files_held).unwrap_or(0),
             // Short with nothing left to ask a source for: local holds.
             local_only: !complete && last.missing_positions.trim() == "[]",
+            format_set_held: false,
         }))
     }
 
@@ -865,6 +961,8 @@ impl LandingService {
             missing,
             local_only,
             imported_sources,
+            format_set_held: false,
+            note: None,
         }
     }
 
@@ -937,12 +1035,7 @@ impl LandingService {
         let entry = NewEntry {
             user_id: task.user_id.clone(),
             origin: EntryOrigin::Download,
-            key: GroupKey::for_download(
-                &task.download_type,
-                task.recording_mbid.as_deref(),
-                Some(target.release_group_mbid.as_str()),
-                &task.id,
-            ),
+            key: Self::hold_key(task, target),
             release_group_mbid: non_empty(&target.release_group_mbid),
             recording_mbid: (task.download_type == "track")
                 .then(|| task.recording_mbid.clone())
@@ -976,6 +1069,8 @@ impl LandingService {
             missing,
             local_only,
             imported_sources,
+            format_set_held,
+            note,
         } = acted;
         let result = match &decision.outcome {
             Outcome::Import(plan) => LandingResult::Imported {
@@ -988,7 +1083,7 @@ impl LandingService {
             Outcome::Reject(rejection) => LandingResult::Rejected(rejection.clone()),
         };
         let (outcome, reason_code, detail) = match &result {
-            LandingResult::Imported { complete: true } => ("imported", None, None),
+            LandingResult::Imported { complete: true } => ("imported", None, note),
             LandingResult::Imported { complete: false } => {
                 ("partial", Some(Reason::TracksMissing), None)
             }
@@ -1069,6 +1164,7 @@ impl LandingService {
             files_imported: imported,
             files_held: held,
             local_only,
+            format_set_held,
         }
     }
 }

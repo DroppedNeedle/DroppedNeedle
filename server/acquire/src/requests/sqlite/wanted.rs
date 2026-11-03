@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use rusqlite::{Connection, OptionalExtension, Params, Transaction, params};
 
 use super::super::error::RequestsError;
-use super::super::ledger::{WantedWatch, WatchState};
+use super::super::ledger::{WantedWatch, WatchOutcome, WatchState};
 use super::super::sql;
 use super::{lane_error, ms_from_secs, ms_from_secs_f64, read, secs_from_ms};
 use crate::db::AcquireDb;
@@ -32,6 +32,13 @@ fn watch_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<WantedWatch> {
         quiet_streak: u32::try_from(row.get::<_, i64>(13)?).unwrap_or(0),
         next_check_at: secs_from_ms(row.get(14)?),
         new_candidate_count: u32::try_from(row.get::<_, i64>(15)?).unwrap_or(0),
+        last_outcome: row.get::<_, Option<String>>(16)?.and_then(|text| {
+            let outcome = WatchOutcome::parse(&text);
+            if outcome.is_none() {
+                tracing::warn!(outcome = %text, "a wanted watch's last outcome reads as none");
+            }
+            outcome
+        }),
     })
 }
 
@@ -64,7 +71,7 @@ pub enum WatchChange {
 }
 
 /// One check of a watch, as [`WantedStore::record_check`] writes it.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct WatchCheck {
     /// The quiet streak after this check.
     pub quiet_streak: u32,
@@ -73,7 +80,7 @@ pub struct WatchCheck {
     /// When the check ran (epoch seconds).
     pub now: u64,
     /// What the check found.
-    pub outcome: &'static str,
+    pub outcome: WatchOutcome,
     /// The release date, when this check found one.
     pub first_release_date: Option<String>,
     /// Every candidate the check saw, as `(source, identity)`.

@@ -8673,6 +8673,66 @@ async fn a_held_file_can_wait_for_acoustid_after_upgrade() {
     );
 }
 
+/// Migration 0125 lets a file wait for being outside the recipe. Every held
+/// file stays as it was, the new spelling is taken and the triggers still
+/// move the activity revision.
+#[tokio::test]
+async fn a_held_file_can_be_outside_the_recipe_after_upgrade() {
+    let pool = scratch_pool().await;
+    run_migrations(&pool, &migrator_through(124)).await.unwrap();
+    sqlx::raw_sql(
+        "INSERT INTO auth_users (id, display_name, role, created_at) \
+         VALUES ('u1', 'U', 'user', 1); \
+         INSERT INTO acquire_held_entries (id, user_id, origin, group_key, state, \
+             created_at, expires_at) \
+         VALUES (1, 'u1', 'upload', 'upload:1', 'held', 1, 2); \
+         INSERT INTO acquire_held_files (id, entry_id, root, path, original_name, \
+             source, reason, reason_detail, state, created_at) \
+         VALUES (7, 1, 'drop', 'a.flac', '01.flac', 'upload', 'acoustid_unavailable', \
+             'said', 'held', 5);",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    run_migrations(&pool, &migrator_through(125)).await.unwrap();
+
+    let kept: (String, String, Option<String>, String, i64) = sqlx::query_as(
+        "SELECT path, reason, reason_detail, state, created_at FROM acquire_held_files \
+         WHERE id = 7",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        kept,
+        (
+            "a.flac".to_owned(),
+            "acoustid_unavailable".to_owned(),
+            Some("said".to_owned()),
+            "held".to_owned(),
+            5,
+        )
+    );
+    let revision = || {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_scalar::<_, i64>(
+                "SELECT revision FROM download_activity_user_revisions WHERE user_id = 'u1'",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    let before = revision().await;
+    sqlx::raw_sql("UPDATE acquire_held_files SET reason = 'format_not_listed' WHERE id = 7")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(revision().await, before + 1);
+}
+
 /// The runner's `-- no-transaction` path and the table-rebuild recipe in the
 /// kernel's `schema::boot` module doc, proven on a parent that cascade,
 /// restrict and set-null children point at.

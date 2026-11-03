@@ -834,7 +834,7 @@ impl RequestStore {
     pub async fn settle_in_library(
         &self,
         key: &str,
-        watch_outcome: &'static str,
+        watch_outcome: crate::requests::ledger::WatchOutcome,
         at: u64,
     ) -> Result<Vec<Fulfilled>, RequestsError> {
         let key = key.to_owned();

@@ -1005,7 +1005,6 @@ fn one_tier_policy(tier: &str, format: RecipeFormat, quality: RecipeQuality) -> 
         quality_min: tier.to_owned(),
         quality_max: tier.to_owned(),
         quality_cutoff: tier.to_owned(),
-        flac_mp3_only: true,
         quality_recipe: vec![QualityRecipeEntry {
             format,
             quality,

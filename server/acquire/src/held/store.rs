@@ -811,6 +811,20 @@ impl<'c> HeldRows<'c> {
         Ok(rows)
     }
 
+    /// The files `user_id` holds under `group_key` because the recipe does
+    /// not list them: the one set an album keeps.
+    pub fn format_set_files(
+        &self,
+        user_id: &str,
+        group_key: &str,
+    ) -> rusqlite::Result<Vec<HeldFile>> {
+        let mut statement = self.conn.prepare_cached(sql::FORMAT_SET_FILES.text())?;
+        let rows = statement
+            .query_map(params![user_id, group_key], HeldFile::from_row)?
+            .collect::<Result<_, _>>()?;
+        Ok(rows)
+    }
+
     /// Entries past their expiry at `now`, oldest first.
     pub fn due(&self, now: i64, limit: i64) -> rusqlite::Result<Vec<i64>> {
         let mut statement = self.conn.prepare_cached(sql::DUE_ENTRIES.text())?;
@@ -967,7 +981,7 @@ mod tests {
 
     #[test]
     fn the_reason_check_lists_every_spelling() {
-        let migration = include_str!("../../../migrations/0112_acquire_acoustid_unavailable.sql");
+        let migration = include_str!("../../../migrations/0125_acquire_format_not_listed.sql");
         let check = migration
             .split("reason TEXT NOT NULL CHECK (reason IN (")
             .nth(1)

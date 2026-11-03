@@ -211,6 +211,65 @@ impl WatchState {
 
 sql_text!(WatchState);
 
+/// What a wanted watch's last check found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WatchOutcome {
+    /// New copies, shown as a badge.
+    Found,
+    /// Only copies seen before.
+    Seen,
+    /// A download was started.
+    Dispatched,
+    /// No copy anywhere.
+    Quiet,
+    /// Copies exist, but none the download settings allow.
+    OutsideSettings,
+    /// The search or the dispatch failed.
+    Error,
+    /// The album reached the library.
+    InLibrary,
+    /// The album came in through an upload.
+    Imported,
+}
+
+impl WatchOutcome {
+    /// Every outcome.
+    pub const ALL: [Self; 8] = [
+        Self::Found,
+        Self::Seen,
+        Self::Dispatched,
+        Self::Quiet,
+        Self::OutsideSettings,
+        Self::Error,
+        Self::InLibrary,
+        Self::Imported,
+    ];
+
+    /// Stored and wire form.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Found => "found",
+            Self::Seen => "seen",
+            Self::Dispatched => "dispatched",
+            Self::Quiet => "quiet",
+            Self::OutsideSettings => "outside_settings",
+            Self::Error => "error",
+            Self::InLibrary => "in_library",
+            Self::Imported => "imported",
+        }
+    }
+
+    /// Read back a stored outcome.
+    pub fn parse(value: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|outcome| outcome.as_str() == value)
+    }
+}
+
+sql_text!(WatchOutcome);
+
 /// What a wanted watch waits for. The `wanted_watches.kind` CHECK lists
 /// exactly these values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, utoipa::ToSchema)]
@@ -486,6 +545,8 @@ pub struct WantedWatch {
     pub next_check_at: u64,
     /// Unseen candidate count.
     pub new_candidate_count: u32,
+    /// What the last check found, once one ran.
+    pub last_outcome: Option<WatchOutcome>,
 }
 
 /// One auto-download approval row.

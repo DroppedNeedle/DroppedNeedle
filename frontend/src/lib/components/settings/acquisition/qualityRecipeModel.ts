@@ -60,7 +60,7 @@ export const SEARCH_REVIEW_OPTIONS = [
 	{
 		value: 'off',
 		label: 'Never wait',
-		hint: 'Download the best copy found, even when it may be incomplete or in the wrong quality.'
+		hint: 'Download the best copy found in your list, even when it may be incomplete.'
 	}
 ] as const;
 
