@@ -218,6 +218,8 @@ Run from the repo root. `make help` lists every target.
   lock (`DataLock::server`) and a second server on the folder refuses to
   start. A server started on v2 data holds only the server lock
   (`DataLock::server_only`) until Continue takes the shared lock.
+  rusqlite is the only SQLite library (`source_gates.rs` refuses another in
+  the lock).
 - One exception: provider answers are cached in `metadata-cache.db` (in
   `CACHE_DIR`, or beside `library.db` when that folder is refused), a
   throwaway file opened in `kernel/src/db/cache/` under a lock of its own,
@@ -237,6 +239,12 @@ Run from the repo root. `make help` lists every target.
   data lock held, the importer writes on one connection, because it attaches
   the export (which a transaction refuses) and a large section outlasts the
   lane's time limit.
+- Reads go through the `Db`'s read pools. A read closure holds one
+  connection and one snapshot for its whole length: on the request path it
+  runs one statement, and statements share a closure only when they must
+  agree (a library background read, an export), with a comment saying why.
+  A read that may run long uses `read_long`. A read closure calls nothing on
+  `Db` and waits on nothing.
 - A write closure fails with the caller's own error type
   (`E: From<DbError>`); an outcome a caller branches on is a variant of that
   type, never the text of a database error. A chunked write commits chunk by
@@ -779,6 +787,6 @@ Run from the repo root. `make help` lists every target.
 
 - GitHub URLs point at the `DroppedNeedle/DroppedNeedle` org repo. Never
   create repos under the old names.
-- The two ignored advisories (RUSTSEC-2023-0071 in CI, RUSTSEC-2024-0436 in
-  `deny.toml`) are reviewed. Re-check them when sqlx or lofty move.
+- The ignored advisory RUSTSEC-2024-0436 in `deny.toml` is reviewed.
+  Re-check it when lofty moves.
 - Migrations start from the v3 baseline. Never reuse a lower number.
