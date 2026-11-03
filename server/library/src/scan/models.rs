@@ -669,6 +669,59 @@ spelled!(InventoryState {
     Failed => "failed",
 });
 
+/// Whether a track's file is in the library, in `local_tracks.availability`:
+/// indexed, taken out of it, or not found by the last walk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Availability {
+    Indexed,
+    Excluded,
+    Missing,
+}
+
+spelled!(Availability {
+    Indexed => "indexed",
+    Excluded => "excluded",
+    Missing => "missing",
+});
+
+/// What an artist row stands for, in `local_artists.kind`. A scan makes
+/// `group` rows; the built-in rows are `various_artists` and `unknown`,
+/// and v2's rows may say `person`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArtistKind {
+    Person,
+    Group,
+    VariousArtists,
+    Unknown,
+}
+
+spelled!(ArtistKind {
+    Person => "person",
+    Group => "group",
+    VariousArtists => "various_artists",
+    Unknown => "unknown",
+});
+
+/// Where a track's genre came from, in `local_track_genres.source`. A scan
+/// writes `local`, from the file's tags; the others are v2's, carried by
+/// the upgrade.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GenreSource {
+    Local,
+    MusicBrainz,
+    ListenBrainz,
+    LastFm,
+    Override,
+}
+
+spelled!(GenreSource {
+    Local => "local",
+    MusicBrainz => "musicbrainz",
+    ListenBrainz => "listenbrainz",
+    LastFm => "lastfm",
+    Override => "override",
+});
+
 /// Who grouped an album or put a track on its album: the scan, v2's
 /// grouping carried by the upgrade, or a curator.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

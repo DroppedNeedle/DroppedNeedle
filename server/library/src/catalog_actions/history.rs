@@ -18,6 +18,7 @@ use std::collections::BTreeSet;
 use rusqlite::{Connection, OptionalExtension as _, params, params_from_iter};
 use serde::Deserialize;
 
+use crate::catalog_actions::ActionKind;
 use crate::catalog_actions::sql::FoldUndo;
 use crate::catalog_actions::sql::HistoryRow;
 use crate::corrections::continuation::SAME_FILE;
@@ -152,7 +153,7 @@ struct OtherAlbum {
 struct Row {
     id: String,
     actor: Option<String>,
-    kind: String,
+    kind: ActionKind,
     reason: Option<String>,
     before: String,
     after: String,
@@ -218,7 +219,7 @@ pub fn album_history(
             });
             continue;
         }
-        if row.kind == "continue_tracks" {
+        if row.kind == ActionKind::ContinueTracks {
             let Ok(continued) = serde_json::from_str::<Continued>(&row.after) else {
                 tracing::warn!(
                     action_id = row.id,
@@ -255,7 +256,7 @@ pub fn album_history(
             }
             continue;
         }
-        if row.kind == "other_music_at_path" {
+        if row.kind == ActionKind::OtherMusicAtPath {
             let Ok(replaced) = serde_json::from_str::<OtherMusic>(&row.after) else {
                 tracing::warn!(
                     action_id = row.id,
@@ -282,7 +283,7 @@ pub fn album_history(
             });
             continue;
         }
-        if row.kind == "new_copy_at_path" {
+        if row.kind == ActionKind::NewCopyAtPath {
             let Ok(copies) = serde_json::from_str::<NewCopies>(&row.after) else {
                 tracing::warn!(
                     action_id = row.id,
@@ -309,22 +310,23 @@ pub fn album_history(
             });
             continue;
         }
-        let kind = match (row.kind.as_str(), row.reason.as_deref()) {
-            ("merge_album", Some("RETAG_JOINED_ACROSS_SCANS" | "RETAG_JOINED_SAME_RELEASE")) => {
-                HistoryKind::RetagJoined
-            }
-            ("retag_first_half", Some("RETAG_FIRST_HALF_LEFT_AS_IT_WAS")) => {
+        let kind = match (row.kind, row.reason.as_deref()) {
+            (
+                ActionKind::MergeAlbum,
+                Some("RETAG_JOINED_ACROSS_SCANS" | "RETAG_JOINED_SAME_RELEASE"),
+            ) => HistoryKind::RetagJoined,
+            (ActionKind::RetagFirstHalf, Some("RETAG_FIRST_HALF_LEFT_AS_IT_WAS")) => {
                 HistoryKind::RetagHalfLeftAlone
             }
-            ("retag_dismissal_ended", _) => HistoryKind::RetagDismissalEnded,
+            (ActionKind::RetagDismissalEnded, _) => HistoryKind::RetagDismissalEnded,
             (
-                "merge_album",
+                ActionKind::MergeAlbum,
                 Some(
                     "AUTOMATIC_EMPTY_ALBUM_SHELL_CONVERGENCE"
                     | "AUTOMATIC_PROVIDER_CONTRADICTION_CATALOG_REPAIR",
                 ),
             ) => HistoryKind::LeftoverJoined,
-            ("album_artist", Some(hygiene::ARTIST_REPAIR_REASON)) => {
+            (ActionKind::AlbumArtist, Some(hygiene::ARTIST_REPAIR_REASON)) => {
                 let undo_id = hygiene::artist_repair_undoable(conn, &row.id)?.then_some(row.id);
                 entries.push(HistoryEntry {
                     kind: HistoryKind::ArtistFromTracks,
@@ -395,8 +397,8 @@ struct Unfolded {
 /// The kind of an album-level entry told by its row's kind alone, or
 /// `None` for the kinds read further below.
 fn album_event(row: &Row) -> Option<HistoryKind> {
-    Some(match row.kind.as_str() {
-        "automatic_exact_edition" => {
+    Some(match row.kind {
+        ActionKind::AutomaticExactEdition => {
             match serde_json::from_str::<Option<PriorAlbumIdentity>>(&row.before) {
                 Ok(Some(PriorAlbumIdentity {
                     release_mbid: Some(_),
@@ -405,11 +407,11 @@ fn album_event(row: &Row) -> Option<HistoryKind> {
                 _ => HistoryKind::EditionChosen,
             }
         }
-        "automatic_match_sealed" => return sealed_edition(row),
-        "automatic_match_withdrawn" => HistoryKind::MatchWithdrawn,
-        "undo_automatic_edition" => HistoryKind::EditionChangeUndone,
-        identity::FOLD_UNDONE => HistoryKind::UnfoldedFrom,
-        "management_hand_back_given_up" => HistoryKind::HandBackGivenUp,
+        ActionKind::AutomaticMatchSealed => return sealed_edition(row),
+        ActionKind::AutomaticMatchWithdrawn => HistoryKind::MatchWithdrawn,
+        ActionKind::UndoAutomaticEdition => HistoryKind::EditionChangeUndone,
+        ActionKind::FoldUndone => HistoryKind::UnfoldedFrom,
+        ActionKind::ManagementHandBackGivenUp => HistoryKind::HandBackGivenUp,
         _ => return None,
     })
 }
@@ -450,7 +452,7 @@ fn fold_undone(
         .query_row(
             params![
                 source,
-                identity::FOLD_UNDONE,
+                ActionKind::FoldUndone,
                 fold_id,
                 crate::clock::ms(since)
             ],

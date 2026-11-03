@@ -11,6 +11,7 @@ use super::person::{
 use super::sql;
 use super::undo::{record_and_keep, snapshot};
 use super::{IdentityError, PROVIDER, Refusal};
+use crate::catalog_actions::ActionKind;
 use crate::catalog_revision::bump_catalog;
 use crate::reviews::settle_reviews;
 
@@ -212,7 +213,7 @@ pub fn custom_edition(
         album_id,
         &before,
         actor,
-        "custom_edition",
+        ActionKind::CustomEdition,
         "CUSTOM_EDITION_SEALED",
         false,
         now,

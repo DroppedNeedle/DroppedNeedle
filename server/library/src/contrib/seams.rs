@@ -20,6 +20,7 @@ use futures_util::future::BoxFuture;
 
 use super::error::ContribError;
 use super::models::*;
+use crate::scan::models::Availability;
 
 // ---------------------------------------------------------------------------
 // Identity context (owned by scan/identify)
@@ -58,7 +59,7 @@ pub struct IdentityTrack {
     pub title: String,
     pub artist_name: Option<String>,
     pub duration_seconds: Option<f64>,
-    pub availability: String,
+    pub availability: Availability,
     pub disc_subtitle: Option<String>,
     pub relative_path: String,
     pub recording_mbid: Option<String>,

@@ -27,6 +27,7 @@ use std::path::Path;
 
 use rusqlite::{Connection, OptionalExtension as _, Transaction, params, params_from_iter};
 
+use crate::catalog_actions::ActionKind;
 use crate::catalog_actions::CatalogAction;
 use crate::catalog_actions::record_action;
 use crate::catalog_revision::bump_catalog;
@@ -129,7 +130,7 @@ fn audit(
         tx,
         CatalogAction {
             actor: "system",
-            kind: "merge_album",
+            kind: ActionKind::MergeAlbum,
             album_id: survivor,
             job_id: Some(job_id),
             before,
@@ -522,7 +523,7 @@ fn artist_from_tracks(
         tx,
         CatalogAction {
             actor: "system",
-            kind: "album_artist",
+            kind: ActionKind::AlbumArtist,
             album_id: &album.id,
             job_id: Some(job_id),
             before,
@@ -537,14 +538,12 @@ fn artist_from_tracks(
 /// The reason code of the audit row [`artist_from_tracks`] writes.
 pub const ARTIST_REPAIR_REASON: &str = "PLACEHOLDER_ARTIST_FROM_TRACKS";
 
-/// The audit kind of an undone placeholder-artist repair, recorded on the
-/// album. The repair never runs again on that album.
-pub const ARTIST_REPAIR_UNDONE: &str = "album_artist_undone";
-
 /// Whether a placeholder-artist repair of the album was undone.
 fn artist_repair_undone(conn: &Connection, album_id: &str) -> rusqlite::Result<bool> {
     conn.prepare_cached(crate::repairs::sql::ARTIST_REPAIR_UNDONE.text())?
-        .query_row(params![album_id, ARTIST_REPAIR_UNDONE], |row| row.get(0))
+        .query_row(params![album_id, ActionKind::AlbumArtistUndone], |row| {
+            row.get(0)
+        })
 }
 
 /// The album's artist fields and credits before the repair, as its audit
@@ -652,7 +651,7 @@ pub fn artist_repair_undoable(conn: &Connection, action_id: &str) -> rusqlite::R
 /// Undo the placeholder-artist repair recorded as audit row `action_id`,
 /// for `actor`: the album's artist id, name, folded name and sort name and
 /// its credits are what they were before it, an audit row
-/// ([`ARTIST_REPAIR_UNDONE`]) keeps the repair from running on the album
+/// (`album_artist_undone`) keeps the repair from running on the album
 /// again, and the catalog revision moves once. An identification the
 /// repair queued is taken back while it still waits. Only while the album
 /// still holds what the repair gave it. No artist row is made or deleted.
@@ -696,7 +695,7 @@ pub fn undo_artist_from_tracks(
         tx,
         CatalogAction {
             actor,
-            kind: ARTIST_REPAIR_UNDONE,
+            kind: ActionKind::AlbumArtistUndone,
             album_id: &album_id,
             job_id: None,
             before: serde_json::json!({ "repair_action_id": action_id }),

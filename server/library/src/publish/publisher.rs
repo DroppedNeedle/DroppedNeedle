@@ -36,6 +36,7 @@ use super::step::{AdoptionFrom, Advanced, Hooks, Run};
 use super::tags_seam::TagDocument;
 use super::{PublishError, paths};
 use crate::clock::LibraryClock as _;
+use crate::scan::models::Availability;
 use droppedneedle_kernel::clock::Clock;
 
 /// One track row in the atomic catalog commit.
@@ -346,7 +347,7 @@ fn changed_under(track_id: &str, bundle_id: &str) -> PublishError {
 /// the catalog still lists as indexed fails the commit until a scan has
 /// seen its file go.
 fn give_up_destination(conn: &Connection, track: &TrackCommit) -> Result<(), PublishError> {
-    let occupant: Option<(String, String)> = conn
+    let occupant: Option<(String, Availability)> = conn
         .query_row(
             crate::publish::sql::GIVE_UP_DESTINATION.text(),
             rusqlite::params![track.root_id, track.rel_path, track.track_id],
@@ -359,7 +360,7 @@ fn give_up_destination(conn: &Connection, track: &TrackCommit) -> Result<(), Pub
     let Some((occupant, availability)) = occupant else {
         return Ok(());
     };
-    if availability == "indexed" {
+    if availability == Availability::Indexed {
         return Err(PublishError::Catalog(
             format!(
                 "track {occupant} is still listed at the destination of track {}",
@@ -1248,7 +1249,7 @@ impl<P: SpaceProbe> Publisher<P> {
                         .iter()
                         .filter_map(|item| Some((item, item.track_id.as_deref()?)));
                     for (item, track_id) in tracks {
-                        let place: Option<(String, String, String)> = conn
+                        let place: Option<(String, String, Availability)> = conn
                             .prepare_cached(super::sql::TRACK_PLACE.text())?
                             .query_row(rusqlite::params![track_id], |row| {
                                 let row = super::sql::TrackPlace::read(row)?;
@@ -1258,7 +1259,7 @@ impl<P: SpaceProbe> Publisher<P> {
                         let ready = place.is_some_and(|(root, rel, availability)| {
                             root == item.root_id
                                 && rel == item.track_rel
-                                && super::put_back::ready(&availability, &rel, &item.relative_path)
+                                && super::put_back::ready(availability, &rel, &item.relative_path)
                         });
                         if !ready {
                             return Err(PublishError::Validation(

@@ -17,6 +17,7 @@ pub(crate) mod sql;
 
 use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
 
+use crate::catalog_actions::ActionKind;
 use crate::catalog_actions::CatalogAction;
 use crate::catalog_actions::record_action;
 use crate::catalog_revision::bump_catalog;
@@ -729,7 +730,7 @@ fn reopen(
         tx,
         CatalogAction {
             actor,
-            kind: "review_reopened",
+            kind: ActionKind::ReviewReopened,
             album_id: &row.local_album_id,
             job_id: None,
             before: serde_json::json!({ "review_id": review_id, "state": state_name(row.state) }),
@@ -830,9 +831,9 @@ fn audit(
     now: f64,
 ) -> Result<(), OperationError> {
     let (kind, reason) = if exclude {
-        ("review_exclude", "EXCLUDED_FROM_REVIEW")
+        (ActionKind::ReviewExclude, "EXCLUDED_FROM_REVIEW")
     } else {
-        ("review_restore", "RESTORED_FROM_REVIEW")
+        (ActionKind::ReviewRestore, "RESTORED_FROM_REVIEW")
     };
     record_action(
         tx,

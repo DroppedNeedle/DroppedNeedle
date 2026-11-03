@@ -13,6 +13,7 @@ use super::reads::{album_identity_row, identity_hash, identity_revision, track_i
 use super::sql;
 use super::undo::{Snapshot, carry_undo, keep_choice_undo, snapshot};
 use super::{DecisionSource, PROVIDER, Rows, delete_album_row};
+use crate::catalog_actions::ActionKind;
 use crate::catalog_actions::CatalogAction;
 use crate::catalog_actions::record_action;
 use crate::catalog_revision::bump_catalog;
@@ -145,7 +146,7 @@ pub fn seal_automatic(
             tx,
             CatalogAction {
                 actor: "system",
-                kind: "automatic_match_sealed",
+                kind: ActionKind::AutomaticMatchSealed,
                 album_id: album,
                 job_id: None,
                 before: serde_json::to_value(&prior).unwrap_or_default(),
@@ -237,7 +238,7 @@ fn withdrawn(
         tx,
         CatalogAction {
             actor: "system",
-            kind: "automatic_match_withdrawn",
+            kind: ActionKind::AutomaticMatchWithdrawn,
             album_id,
             job_id: None,
             before: serde_json::to_value(&replaced.identity).unwrap_or_default(),
@@ -408,7 +409,7 @@ pub fn accept_automatic(
         tx,
         CatalogAction {
             actor: "system",
-            kind: "automatic_exact_edition",
+            kind: ActionKind::AutomaticExactEdition,
             album_id,
             job_id: accepted.job_id,
             before: serde_json::to_value(&prior).unwrap_or_default(),

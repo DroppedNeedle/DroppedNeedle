@@ -26,6 +26,7 @@ use serde::{Deserialize, Serialize};
 use super::reads::{album_identity_row, identity_revision, indexed_track_ids, track_identity_rows};
 use super::sql;
 use super::{DecisionSource, IdentityError, PROVIDER, Refusal, Rows, delete_album_row};
+use crate::catalog_actions::ActionKind;
 use crate::catalog_actions::CatalogAction;
 use crate::catalog_actions::record_action;
 use crate::identify::models::{PriorAlbumIdentity, PriorTrackIdentity};
@@ -318,7 +319,7 @@ pub(crate) fn record_and_keep(
     album_id: &str,
     before: &Snapshot,
     actor: &str,
-    kind: &str,
+    kind: ActionKind,
     reason: &str,
     carried: bool,
     now: f64,
@@ -584,7 +585,7 @@ pub fn undo(
         tx,
         CatalogAction {
             actor,
-            kind: "edition_choice_undone",
+            kind: ActionKind::EditionChoiceUndone,
             album_id,
             job_id: None,
             before: serde_json::to_value(&current).unwrap_or_default(),
@@ -736,7 +737,7 @@ pub fn undo_automatic(
         tx,
         CatalogAction {
             actor: asked.actor,
-            kind: "undo_automatic_edition",
+            kind: ActionKind::UndoAutomaticEdition,
             album_id,
             job_id: None,
             before: serde_json::json!({ "identity": current, "tracks": current_tracks }),

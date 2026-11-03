@@ -30,6 +30,7 @@ use droppedneedle_kernel::db::Lane;
 use droppedneedle_kernel::jobs::queue::JobError;
 use rusqlite::{OptionalExtension, Transaction, params};
 
+use crate::catalog_actions::ActionKind;
 use crate::catalog_revision::bump_catalog;
 use crate::clock::LibraryClock as _;
 use crate::management::takeover;
@@ -870,7 +871,7 @@ impl Mutations {
                 record_action(
                     tx,
                     actor,
-                    "management_reenabled",
+                    ActionKind::ManagementReenabled,
                     &canonical,
                     None,
                     &before,
@@ -1429,7 +1430,7 @@ fn mark_missing(
 fn record_action(
     tx: &Transaction<'_>,
     actor: &str,
-    kind: &str,
+    kind: ActionKind,
     album_id: &str,
     track_id: Option<&str>,
     before: &serde_json::Value,

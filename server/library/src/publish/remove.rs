@@ -30,6 +30,8 @@ use super::planner::{
     removal_seals,
 };
 use super::{PublishError, sql};
+use crate::catalog_actions::ActionKind;
+use crate::scan::models::Availability;
 
 /// One track a removal takes away, as the caller found it, with what was
 /// read of its file before the publish lock.
@@ -760,7 +762,7 @@ pub(super) fn commit(
             &Action {
                 id: bundle_id,
                 actor: removal.actor.as_deref(),
-                kind: RECYCLED_KIND,
+                kind: ActionKind::FilesRecycled,
                 album_id: &undo.album_id,
                 track_id: None,
                 before: "{}",
@@ -817,9 +819,6 @@ pub(crate) fn moves_a_file(removal: &Removal) -> bool {
     !removal.sidecars.is_empty() || removal.items.iter().any(|item| item.file.is_some())
 }
 
-/// The catalog action kind of a removal's undo record.
-pub(crate) const RECYCLED_KIND: &str = "files_recycled";
-
 /// Mark an indexed track missing and record one `remove_track` catalog
 /// action for it; its rows and references stay. False when the track was
 /// not indexed. The rule a removal's commit and a catalog-only removal
@@ -847,12 +846,12 @@ pub(crate) fn mark_removed(
         &Action {
             id: &id,
             actor,
-            kind: "remove_track",
+            kind: ActionKind::RemoveTrack,
             album_id,
             track_id: Some(track_id),
-            before: &serde_json::json!({"availability": "indexed", "row_revision": revision - 1})
+            before: &serde_json::json!({"availability": Availability::Indexed.as_str(), "row_revision": revision - 1})
                 .to_string(),
-            after: &serde_json::json!({"availability": "missing", "row_revision": revision})
+            after: &serde_json::json!({"availability": Availability::Missing.as_str(), "row_revision": revision})
                 .to_string(),
             reason_code,
             at: now,
@@ -864,7 +863,7 @@ pub(crate) fn mark_removed(
 pub(super) struct Action<'a> {
     pub id: &'a str,
     pub actor: Option<&'a str>,
-    pub kind: &'a str,
+    pub kind: ActionKind,
     pub album_id: &'a str,
     pub track_id: Option<&'a str>,
     pub before: &'a str,

@@ -10,8 +10,8 @@ use droppedneedle_kernel::db::time::Millis;
 
 use crate::identity::sql::PERSONS;
 use crate::scan::models::{
-    ArtworkSource, Counter, EffectivePolicy, FailureCode, GroupingSource, Phase, RequestedControl,
-    ScanKind, ScanPhase, ScanTrigger, TagProvenance, Verdict,
+    ArtworkSource, Availability, Counter, EffectivePolicy, FailureCode, GroupingSource, Phase,
+    RequestedControl, ScanKind, ScanPhase, ScanTrigger, TagProvenance, Verdict,
 };
 use crate::scan::sqlite_store::sql::{
     MOVED_COLUMNS, MOVED_MATCH, SAME_PLACE, TRACK_GONE, TRACK_PRESENT, WALKED_PAST, awaits_admin,
@@ -187,7 +187,7 @@ droppedneedle_kernel::sql! {
              phase_timings_json = ?10, updated_at = ?11, row_revision = row_revision + 1, \
              event_revision = event_revision + 1 WHERE id = ?1";
     pub(super) INSERT_ARTIST = "INSERT INTO local_artists (id, display_name, sort_name, folded_name, normalized_name, \
-         kind, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4, 'group', ?5, ?5) \
+         kind, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4, ?6, ?5, ?5) \
          ON CONFLICT (id) DO NOTHING";
     pub(super) LIVE_ARTIST = "SELECT id FROM ( \
          SELECT id, 0 AS rank FROM local_artists WHERE id = ?1 AND retired_into_artist_id IS NULL \
@@ -402,9 +402,9 @@ droppedneedle_kernel::sql! {
     pub(super) WRITE_TRACK_CREDIT = "INSERT INTO local_track_artists (local_track_id, position, local_artist_id, role, \
          credited_name, join_phrase, artist_mbid) VALUES (?1, ?2, ?3, 'main', ?4, ?5, ?6)";
     pub(super) ALBUM_OF_TRACK = "SELECT local_album_id FROM local_tracks WHERE id = ?1";
-    pub(super) DROP_LOCAL_GENRES = "DELETE FROM local_track_genres WHERE local_track_id = ?1 AND source = 'local'";
+    pub(super) DROP_LOCAL_GENRES = "DELETE FROM local_track_genres WHERE local_track_id = ?1 AND source = ?2";
     pub(super) WRITE_LOCAL_GENRE = "INSERT OR IGNORE INTO local_track_genres (local_track_id, position, name, folded_name, \
-         source, source_document_revision) VALUES (?1, ?2, ?3, ?4, 'local', ?5)";
+         source, source_document_revision) VALUES (?1, ?2, ?3, ?4, ?6, ?5)";
     pub(super) RECORD_ALBUM_MOVE = "INSERT INTO library_scan_album_moves (run_id, root_id, relative_path, \
              local_track_id, previous_album_id) VALUES (?1, ?2, ?3, ?4, ?5) \
              ON CONFLICT (run_id, root_id, relative_path) DO UPDATE SET \
@@ -1163,7 +1163,7 @@ droppedneedle_kernel::sql! {
     pub(super) row TrackFacts for [TRACK_AT_PATH_FACTS] {
         id: String,
         local_album_id: String,
-        availability: String,
+        availability: Availability,
         duration_seconds: Option<f64>,
         embedded_recording_mbid: Option<String>,
         title_folded: String,

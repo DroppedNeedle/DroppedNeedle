@@ -4,6 +4,7 @@ use droppedneedle_kernel::db::time::Millis;
 
 use super::models::{ContributionState, ResultSource};
 use crate::identity::sql::PERSONS;
+use crate::scan::models::Availability;
 
 droppedneedle_kernel::sql! {
     /// Verifying contributions with no queued or running verification job.
@@ -36,8 +37,8 @@ droppedneedle_kernel::sql! {
     pub(super) ARTIST_IDENTITY = "SELECT provider_artist_id FROM local_artist_external_identities \
          WHERE local_artist_id = ?1 AND provider = ?2";
     pub(super) OFFER_MERGE = "INSERT OR IGNORE INTO local_artist_merge_candidates (id, left_artist_id, \
-         right_artist_id, reason_code, created_at, updated_at) \
-         VALUES (?1, ?2, ?3, 'SHARED_PROVIDER_IDENTITY', ?4, ?4)";
+         right_artist_id, reason_code, state, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, 'SHARED_PROVIDER_IDENTITY', ?5, ?4, ?4)";
     pub(super) INSERT_ATTEMPT = "INSERT INTO library_identification_attempts (id, local_album_id, trigger, \
          requested_by_user_id, input_tag_revision, input_policy_revision, input_file_revision, \
          matcher_version, state, terminal_reason_code, selected_candidate_key, candidate_count, \
@@ -166,7 +167,7 @@ droppedneedle_kernel::sql! {
         title: String,
         artist_name: Option<String>,
         duration_seconds: Option<f64>,
-        availability: String,
+        availability: Availability,
         disc_subtitle: Option<String>,
         relative_path: String,
         recording_mbid: Option<String>,

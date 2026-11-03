@@ -15,6 +15,7 @@ use super::undo::{
     ExclusionRow, exclusion_row, restore_album_row, restore_exclusion, restore_track_row,
 };
 use super::{DecisionSource, PROVIDER, Rows, delete_album_row};
+use crate::catalog_actions::ActionKind;
 use crate::catalog_actions::CatalogAction;
 use crate::catalog_actions::record_action;
 use crate::catalog_revision::bump_catalog;
@@ -23,10 +24,6 @@ use crate::identify::queue::offer_album;
 
 /// The reason code of a fold's audit row.
 pub const FOLD_REASON: &str = "AUTOMATIC_PROVIDER_CONTRADICTION_CATALOG_REPAIR";
-
-/// The audit kind of an undone fold, recorded on the album it brought
-/// back. A fold never runs again on that album.
-pub const FOLD_UNDONE: &str = "fold_undone";
 
 /// An album's takeover mark, as the fold keeps it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -61,7 +58,7 @@ pub struct Folded {
 /// Whether a fold of the album was undone: the repair leaves it alone.
 pub fn fold_undone(conn: &Connection, album_id: &str) -> rusqlite::Result<bool> {
     conn.prepare_cached(sql::FOLD_UNDONE.text())?
-        .query_row(params![album_id, FOLD_UNDONE], |row| row.get(0))
+        .query_row(params![album_id, ActionKind::FoldUndone], |row| row.get(0))
 }
 
 /// Drop the v2 match of `source_album_id` and of the files it moves
@@ -130,7 +127,7 @@ pub enum FoldUndo {
 /// files go back to it, its v2 match and its files' v2 matches are written
 /// again, its "leave unmanaged" and takeover mark come back, the merged
 /// alias goes, both albums are offered to identification, an audit row
-/// ([`FOLD_UNDONE`]) on the album keeps the repair from folding it again,
+/// (`fold_undone`) on the album keeps the repair from folding it again,
 /// and the catalog revision moves once. A match a person made since on a
 /// moved file is never replaced: the undo is then stale.
 ///
@@ -190,7 +187,7 @@ pub fn undo_fold(
         tx,
         CatalogAction {
             actor: actor.unwrap_or("system"),
-            kind: FOLD_UNDONE,
+            kind: ActionKind::FoldUndone,
             album_id: source,
             job_id: None,
             before: serde_json::json!({ "surviving_album_id": target }),

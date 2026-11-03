@@ -20,6 +20,7 @@ use super::models::{
 };
 use super::reasons;
 use crate::corrections::artist_convergence::{MOVED_BY_NAME, MOVED_WITH_ID};
+use crate::corrections::models::MergeCandidateState;
 use crate::corrections::sql::{ReferenceCount, ReferenceKind, references_of};
 use crate::reconcile::sql::{
     CandidateRow, DismissalRow, EvidenceRow, MergeActionRow, MergedArtist, MovedPair, OwnedRow,
@@ -398,7 +399,11 @@ pub fn dismiss(
             pairs += 1;
         }
     }
-    let mut values: Vec<rusqlite::types::Value> = vec![crate::clock::ms(now).into()];
+    let mut values: Vec<rusqlite::types::Value> = vec![
+        MergeCandidateState::Dismissed.as_str().to_owned().into(),
+        crate::clock::ms(now).into(),
+        MergeCandidateState::Open.as_str().to_owned().into(),
+    ];
     for _ in 0..2 {
         values.extend(unique.iter().map(|id| (*id).to_owned().into()));
     }

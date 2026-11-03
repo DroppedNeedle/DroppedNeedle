@@ -20,8 +20,10 @@ use super::artist_links::{
     LINK_GAVE_WAY, drop_app_link, mark_stale, placeholder, settle, touch_artist,
 };
 use super::sources::ArtistAnswer;
+use crate::catalog_actions::ActionKind;
 use crate::catalog_actions::ArtistAction;
 use crate::catalog_actions::record_artist_action;
+use crate::corrections::models::MergeCandidateState;
 
 /// A kept id is asked about again after this long, while it still
 /// disagrees with another id on a record.
@@ -197,7 +199,8 @@ fn suggest_merge(tx: &Transaction<'_>, artist: &str, mbid: &str, now: f64) -> ru
             format!("provider:{left}:{right}"),
             left,
             right,
-            crate::clock::ms(now)
+            crate::clock::ms(now),
+            MergeCandidateState::Open,
         ])?;
     Ok(())
 }
@@ -323,7 +326,7 @@ pub(crate) fn follow_person_links(
             tx,
             ArtistAction {
                 actor: "system",
-                kind: "follow_merged_artist_id",
+                kind: ActionKind::FollowMergedArtistId,
                 artist_id: artist,
                 before: serde_json::json!({ "provider_artist_id": retired }),
                 after: serde_json::json!({ "provider_artist_id": current }),

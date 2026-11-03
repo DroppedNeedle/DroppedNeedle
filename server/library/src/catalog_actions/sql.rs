@@ -3,6 +3,7 @@
 
 use droppedneedle_kernel::db::statement::ListLen;
 
+use super::ActionKind;
 use super::history::MAX_TITLES;
 
 droppedneedle_kernel::sql! {
@@ -56,7 +57,7 @@ droppedneedle_kernel::sql! {
     pub(super) row HistoryRow for [ALBUM_HISTORY_ROWS] {
         id: String,
         actor_user_id: Option<String>,
-        action_kind: String,
+        action_kind: ActionKind,
         reason_code: Option<String>,
         before_json: String,
         after_json: String,

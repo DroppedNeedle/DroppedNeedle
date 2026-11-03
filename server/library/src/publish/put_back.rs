@@ -36,7 +36,8 @@ use super::place::{self, PlaceError, Seams};
 use super::planner::{CopyIn, FileFingerprint, PlanBundle, PutBack, PutBackItem, RemoveFile};
 use super::snapshots::sha256_hex;
 use super::{HIDDEN_PREFIX, PublishError, sql};
-use crate::scan::models::EffectivePolicy;
+use crate::catalog_actions::ActionKind;
+use crate::scan::models::{Availability, EffectivePolicy};
 use crate::scan::roots::RootRegistry;
 use crate::scan::store::CommitIndexedItem;
 
@@ -95,9 +96,6 @@ impl From<droppedneedle_kernel::db::DbError> for Refusal {
 pub(crate) fn marker(removal_id: &str) -> String {
     serde_json::json!({ "undoes": removal_id }).to_string()
 }
-
-/// The catalog action kind of a put-back.
-const PUT_BACK_KIND: &str = "files_put_back";
 
 /// Whether a put-back already spent the removal `removal_id`'s undo.
 pub(super) fn spent(conn: &Connection, removal_id: &str) -> rusqlite::Result<bool> {
@@ -207,7 +205,7 @@ struct Found {
     row: FileJournal,
     file: Option<RemoveFile>,
     /// The track's (root, relative path, availability) now.
-    track: Option<(String, String, String)>,
+    track: Option<(String, String, Availability)>,
     /// The copy's identity when it landed in its bin entry, when recorded
     /// and readable.
     binned: Option<FileStat>,
@@ -505,9 +503,9 @@ pub fn plan(
             Some((root, at, availability))
                 if *root == row.dest_root && (at == rel || *at == gone) =>
             {
-                if ready(availability, at, rel) {
+                if ready(*availability, at, rel) {
                     TrackAt::Ready(at.clone())
-                } else if availability == "excluded" {
+                } else if *availability == Availability::Excluded {
                     TrackAt::Stuck(Refusal::Excluded)
                 } else {
                     TrackAt::Stuck(Refusal::Changed)
@@ -621,13 +619,13 @@ enum TrackAt {
 /// Whether a track is listed (indexed) at `root:rel`.
 fn listed_at(db: &Db, root: &str, rel: &str) -> Result<bool, PublishError> {
     db.read_blocking("publish.put_back_listed_at", |conn| {
-        let availability: Option<String> = conn
+        let availability: Option<Availability> = conn
             .prepare_cached(sql::TRACK_AT.text())?
             .query_row(params![root, rel], |row| {
                 Ok(sql::TrackAvailability::read(row)?.availability)
             })
             .optional()?;
-        Ok::<_, PublishError>(availability.as_deref() == Some("indexed"))
+        Ok::<_, PublishError>(availability == Some(Availability::Indexed))
     })
 }
 
@@ -657,8 +655,9 @@ fn home_device(home: &Path) -> Option<u64> {
 /// missing there or at the hidden name it gave the path up for, or still
 /// listed at the path while nothing is there (a scan continued it onto a
 /// file that has gone since; the placement refuses if one turns up).
-pub(super) fn ready(availability: &str, track_rel: &str, rel: &str) -> bool {
-    availability == "missing" || (availability == "indexed" && track_rel == rel)
+pub(super) fn ready(availability: Availability, track_rel: &str, rel: &str) -> bool {
+    availability == Availability::Missing
+        || (availability == Availability::Indexed && track_rel == rel)
 }
 
 /// Where a copy may be read from: under its bin (no link below the bin's
@@ -1050,7 +1049,7 @@ pub(super) fn commit(
                 format!("track {track_id} changed under bundle {bundle_id}").into(),
             )
         };
-        let place: Option<(String, String, String)> = conn
+        let place: Option<(String, String, Availability)> = conn
             .prepare_cached(sql::TRACK_PLACE.text())?
             .query_row(params![track_id], |row| {
                 let row = sql::TrackPlace::read(row)?;
@@ -1062,12 +1061,12 @@ pub(super) fn commit(
         };
         if root != item.root_id
             || rel != item.track_rel
-            || !ready(&availability, &rel, &item.relative_path)
+            || !ready(availability, &rel, &item.relative_path)
         {
             return Err(changed());
         }
         if item.track_rel != item.relative_path {
-            let occupant: Option<(String, String)> = conn
+            let occupant: Option<(String, Availability)> = conn
                 .prepare_cached(sql::TRACK_AT.text())?
                 .query_row(params![item.root_id, item.relative_path], |row| {
                     let row = sql::TrackAvailability::read(row)?;
@@ -1075,7 +1074,7 @@ pub(super) fn commit(
                 })
                 .optional()?;
             if let Some((occupant, availability)) = occupant {
-                if availability == "indexed" {
+                if availability == Availability::Indexed {
                     return Err(PublishError::Catalog(
                         format!(
                             "track {occupant} is still listed where track {track_id} goes back"
@@ -1122,7 +1121,7 @@ pub(super) fn commit(
         &super::remove::Action {
             id: &uuid::Uuid::new_v4().to_string(),
             actor: put_back.actor.as_deref(),
-            kind: PUT_BACK_KIND,
+            kind: ActionKind::FilesPutBack,
             album_id: &put_back.album_id,
             track_id: None,
             before: &marker(&put_back.removal_bundle),

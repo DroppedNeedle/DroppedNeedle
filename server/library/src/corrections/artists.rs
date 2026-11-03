@@ -14,7 +14,10 @@ use rusqlite::{OptionalExtension as _, Transaction, params, params_from_iter};
 use serde::Serialize;
 
 use super::merge_basis::MergeBasis;
-use super::models::{ArtistMergeOutcome, ArtistMergeRequest, CorrectionError, ProviderChoice};
+use super::models::{
+    ArtistAliasKind, ArtistMergeOutcome, ArtistMergeRequest, CorrectionError, MergeCandidateState,
+    ProviderChoice,
+};
 use super::reasons;
 use super::sql::{self, ReferenceKind};
 use crate::identify::sqlite::retarget_references;
@@ -259,9 +262,7 @@ pub(super) fn retire_artist(
         sql::DROP_ARTIST_LINK,
         sql::RETIRE_ARTIST_ROW,
         sql::REPOINT_ARTIST_ALIASES,
-        sql::ALIAS_RETIRED_ARTIST,
         sql::REPOINT_CREDIT_PROOFS,
-        sql::RESOLVE_MERGE_CANDIDATES,
     ];
     // Favorites (with their names), ratings and plays, the same way
     // identify merges move them.
@@ -280,7 +281,29 @@ pub(super) fn retire_artist(
         let wanted = stmt.parameter_count();
         stmt.execute(params_from_iter(values.into_iter().take(wanted)))?;
     }
+    tx.execute(
+        sql::ALIAS_RETIRED_ARTIST.text(),
+        params![artist, survivor, now, ArtistAliasKind::MergedArtist],
+    )?;
+    resolve_merge_candidates(tx, artist, now)?;
     Ok(())
+}
+
+/// Close every open candidate naming `artist`: it was merged.
+fn resolve_merge_candidates(
+    tx: &Transaction<'_>,
+    artist: &str,
+    now: f64,
+) -> rusqlite::Result<usize> {
+    tx.execute(
+        sql::RESOLVE_MERGE_CANDIDATES.text(),
+        params![
+            artist,
+            now,
+            MergeCandidateState::Resolved,
+            MergeCandidateState::Open
+        ],
+    )
 }
 
 fn repoint_merge_candidates(
@@ -296,7 +319,8 @@ fn repoint_merge_candidates(
             crate::clock::ms(now),
             CREDITS_MOVED,
             MOVED_BY_NAME,
-            MOVED_WITH_ID
+            MOVED_WITH_ID,
+            MergeCandidateState::Open,
         ])
 }
 
@@ -318,10 +342,7 @@ pub(super) fn retarget_retired(
         sql::REPOINT_ARTIST_ALIASES.text(),
         params![artist, survivor],
     )? as u64;
-    moved += tx.execute(
-        sql::RESOLVE_MERGE_CANDIDATES.text(),
-        params![artist, survivor, now],
-    )? as u64;
+    moved += resolve_merge_candidates(tx, artist, now)? as u64;
     for credits in [sql::RETARGET_ALBUM_CREDITS, sql::RETARGET_TRACK_CREDITS] {
         moved += tx.execute(credits.text(), params![artist, survivor, name])? as u64;
     }

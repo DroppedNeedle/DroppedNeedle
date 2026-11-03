@@ -3709,6 +3709,9 @@ fn state_columns() -> Vec<StateColumn> {
     use droppedneedle_kernel::runtime_config::sections::ListenSource;
     use droppedneedle_library::activity::store::{EventStream, QueueSwitch};
     use droppedneedle_library::contrib::models::{ContributionState, ResultSource};
+    use droppedneedle_library::corrections::models::{
+        AlbumAliasKind, ArtistAliasKind, MergeCandidateState,
+    };
     use droppedneedle_library::identify::artist_links::{CreditState, ProofSubject};
     use droppedneedle_library::identify::merged_ids::CheckState;
     use droppedneedle_library::identify::models::{
@@ -3729,8 +3732,8 @@ fn state_columns() -> Vec<StateColumn> {
     use droppedneedle_library::repairs::models::{FindingState, Phase as RepairPhase, Purpose};
     use droppedneedle_library::scan::RevisionKind;
     use droppedneedle_library::scan::models::{
-        EffectivePolicy, EndPassName, GroupingSource, Phase as StartedPhase, RequestedControl,
-        ScanKind, ScanPhase, ScanState, ScanTrigger, ScopeDiscoveryState, TagProvenance, Verdict,
+        ArtistKind, Availability, EffectivePolicy, EndPassName, GenreSource, GroupingSource,
+        Phase as StartedPhase, RequestedControl, ScanKind, ScanPhase, ScanState, ScanTrigger, ScopeDiscoveryState, TagProvenance, Verdict,
     };
     use droppedneedle_library::scan::sqlite_store::retag_pairs::{RetagPairReason, RetagPairState};
     use droppedneedle_library::tags::lyrics::LyricsSource;
@@ -3835,14 +3838,20 @@ fn state_columns() -> Vec<StateColumn> {
         state("library_scan_runs", "state", &ScanState::ALL, ScanState::as_str),
         state("library_scan_runs", "trigger", &ScanTrigger::ALL, ScanTrigger::as_str),
         state("library_work_control", "state", &QueueSwitch::ALL, QueueSwitch::as_str),
+        state("local_album_aliases", "kind", &AlbumAliasKind::ALL, AlbumAliasKind::as_str),
         state("local_album_external_identities", "decision_source", &DecisionSource::ALL, DecisionSource::as_str),
         state("local_albums", "grouping_source", &GroupingSource::ALL, GroupingSource::as_str),
+        state("local_artist_aliases", "kind", &ArtistAliasKind::ALL, ArtistAliasKind::as_str),
         state("local_artist_external_identities", "decision_source", &DecisionSource::ALL, DecisionSource::as_str),
+        state("local_artist_merge_candidates", "state", &MergeCandidateState::ALL, MergeCandidateState::as_str),
+        state("local_artists", "kind", &ArtistKind::ALL, ArtistKind::as_str),
         state("local_track_external_identities", "decision_source", &DecisionSource::ALL, DecisionSource::as_str),
+        state("local_track_genres", "source", &GenreSource::ALL, GenreSource::as_str),
         state("local_track_lyrics", "source", &LyricsSource::ALL, LyricsSource::as_str),
         state("local_tracks", "album_artist_provenance", &TagProvenance::ALL, TagProvenance::as_str),
         state("local_tracks", "album_title_provenance", &TagProvenance::ALL, TagProvenance::as_str),
         state("local_tracks", "applied_policy", &EffectivePolicy::ALL, EffectivePolicy::as_str),
+        state("local_tracks", "availability", &Availability::ALL, Availability::as_str),
         state("local_tracks", "membership_source", &GroupingSource::ALL, GroupingSource::as_str),
         state("local_tracks", "stat_revision_kind", &RevisionKind::ALL, RevisionKind::as_str),
         state("local_tracks", "title_provenance", &TagProvenance::ALL, TagProvenance::as_str),
@@ -3885,8 +3894,6 @@ const NOT_STATE: &[(&str, &str, &str)] = &[
 /// Why a column is not held to an enum yet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Pending {
-    /// It has a CHECK but no enum reads or writes it.
-    NoEnum,
     /// Its name says state and it has no CHECK: either an enum backs it
     /// (then it needs its CHECK) or it holds outside values (then it is
     /// exempt).
@@ -3901,7 +3908,7 @@ enum Pending {
 /// into one baseline: the fold would freeze each of these as it is.
 #[rustfmt::skip]
 const PENDING: &[(&str, &str, &str, Pending, &str)] = {
-    use Pending::{CheckChange, NoEnum, Unclassified};
+    use Pending::{CheckChange, Unclassified};
     &[
         // acquire
         ("acquire", "download_tasks", "origin", CheckChange, "DispatchOrigin"),
@@ -3909,18 +3916,12 @@ const PENDING: &[(&str, &str, &str, Pending, &str)] = {
         ("kernel", "durable_loops", "state", CheckChange, "db::durable::JobState"),
         // library
         ("library", "library_audio_fingerprint_outcomes", "state", CheckChange, "FingerprintState"),
-        ("library", "library_catalog_actions", "action_kind", Unclassified, "a closed set, written as text by every caller"),
+        ("library", "library_catalog_actions", "action_kind", CheckChange, "ActionKind"),
         ("library", "library_identification_attempts", "state", CheckChange, "AttemptState"),
         ("library", "library_publish_blob_refs", "owner_kind", CheckChange, "BlobOwner"),
         ("library", "library_scan_inventory", "processing_state", CheckChange, "InventoryState"),
-        ("library", "library_scan_run_scopes", "reconciliation_state", Unclassified, "nothing reads or writes it past its default"),
-        ("library", "local_album_aliases", "kind", NoEnum, "set in SQL text only"),
+        ("library", "library_scan_run_scopes", "reconciliation_state", Unclassified, "nothing reads or writes it: a migration drops it"),
         ("library", "local_album_artwork", "source", CheckChange, "ArtworkSource"),
-        ("library", "local_artist_aliases", "kind", NoEnum, "set in SQL text only"),
-        ("library", "local_artist_merge_candidates", "state", NoEnum, "set in SQL text only"),
-        ("library", "local_artists", "kind", NoEnum, "set in SQL text only"),
-        ("library", "local_track_genres", "source", NoEnum, "set in SQL text only"),
-        ("library", "local_tracks", "availability", NoEnum, "read as text across the library"),
     ]
 };
 

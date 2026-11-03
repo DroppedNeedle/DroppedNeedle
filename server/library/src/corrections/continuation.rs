@@ -43,15 +43,16 @@ use std::collections::{BTreeMap, BTreeSet};
 use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
 use serde_json::{Value, json};
 
+use crate::catalog_actions::ActionKind;
 use crate::catalog_actions::CatalogAction;
 use crate::catalog_actions::record_action;
 use crate::catalog_revision::bump_catalog;
 use crate::corrections::sql::HOLDING_ALIASES;
 use crate::identify::sqlite::retarget_references;
+use crate::scan::models::Availability;
 use droppedneedle_kernel::db::savepoint;
 
-/// Audit kind and reason of a continuation.
-const KIND: &str = "continue_tracks";
+/// Audit reason of a continuation.
 const REASON: &str = "TRACK_CONTINUED";
 /// The basis an audit row gives for a pair the scan proved itself: two
 /// rows for one file on disk, or one file moved to another folder.
@@ -418,7 +419,7 @@ fn pass(
             tx,
             CatalogAction {
                 actor: "system",
-                kind: KIND,
+                kind: ActionKind::ContinueTracks,
                 album_id: &album,
                 job_id: None,
                 before: json!({}),
@@ -500,14 +501,14 @@ pub(crate) fn pairs_among(
     let mut by_track: BTreeMap<String, Vec<Row>> = BTreeMap::new();
     let mut statement = conn.prepare_cached(crate::corrections::sql::PAIRS_AMONG.text())?;
     let rows = statement.query_map(params![albums], |row| {
-        let availability: String = row.get(2)?;
+        let availability: Availability = row.get(2)?;
         Ok((
             row.get::<_, String>(3)?,
             Row {
                 id: row.get(0)?,
                 album: row.get(1)?,
-                indexed: availability == "indexed",
-                missing: availability == "missing",
+                indexed: availability == Availability::Indexed,
+                missing: availability == Availability::Missing,
                 release: row.get(4)?,
                 alias_of: row.get(5)?,
             },

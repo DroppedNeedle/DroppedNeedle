@@ -295,8 +295,8 @@ pub(super) fn group_owned_tracks(ids: ListLen) -> String {
 pub(super) fn dismiss_group_candidates(ids: ListLen) -> String {
     let marks = crate::sql::marks(ids);
     format!(
-        "UPDATE local_artist_merge_candidates SET state = 'dismissed', updated_at = ?, \
-             row_revision = row_revision + 1 WHERE state = 'open' \
+        "UPDATE local_artist_merge_candidates SET state = ?, updated_at = ?, \
+             row_revision = row_revision + 1 WHERE state = ? \
              AND left_artist_id IN ({marks}) AND right_artist_id IN ({marks})"
     )
 }

@@ -17,6 +17,7 @@ use super::remap::queue_remap;
 use super::sql;
 use super::undo::{Snapshot, keep_choice_undo, record_and_keep, restore_track_row, snapshot};
 use super::{DecisionSource, IdentityError, PROVIDER, Placed, Refusal, Rows, delete_album_row};
+use crate::catalog_actions::ActionKind;
 use crate::catalog_actions::CatalogAction;
 use crate::catalog_actions::record_action;
 use crate::catalog_revision::bump_catalog;
@@ -314,7 +315,7 @@ pub fn choose(
         tx,
         CatalogAction {
             actor: actor.unwrap_or("system"),
-            kind: "edition_choice",
+            kind: ActionKind::EditionChoice,
             album_id,
             job_id: None,
             before: serde_json::to_value(&before.identity).unwrap_or_default(),
@@ -395,7 +396,7 @@ fn make_persons(
         tx,
         CatalogAction {
             actor,
-            kind: "edition_confirmed",
+            kind: ActionKind::EditionConfirmed,
             album_id,
             job_id: None,
             before: serde_json::to_value(before.identity.clone().unwrap_or_default())
@@ -438,7 +439,7 @@ pub fn hand_back(
         tx,
         CatalogAction {
             actor,
-            kind: "edition_choice_cleared",
+            kind: ActionKind::EditionChoiceCleared,
             album_id,
             job_id: None,
             before: serde_json::to_value(&identity).unwrap_or_default(),
@@ -494,7 +495,7 @@ pub fn leave_unmanaged(
         album_id,
         &before,
         actor,
-        "leave_unmanaged",
+        ActionKind::LeaveUnmanaged,
         "MANAGEMENT_EXCLUDED",
         false,
         now,
@@ -557,8 +558,10 @@ pub fn remove(
             reason,
             actor,
             job_id,
-        } => (reason, actor, job_id, "repair_detach", true),
-        Removal::Person { reason, actor } => (reason, Some(actor), None, "review_detach", false),
+        } => (reason, actor, job_id, ActionKind::RepairDetach, true),
+        Removal::Person { reason, actor } => {
+            (reason, Some(actor), None, ActionKind::ReviewDetach, false)
+        }
     };
     tx.prepare_cached(sql::DELETE_ALBUM_TRACK_ROWS.text())?
         .execute(params![album_id, PROVIDER])?;
@@ -634,7 +637,7 @@ pub fn approve(
         album_id,
         &before,
         approved.by_user_id,
-        "review_approve",
+        ActionKind::ReviewApprove,
         "REVIEW_APPROVED",
         false,
         approved.now,
@@ -711,7 +714,7 @@ pub fn hand_match(tx: &Transaction<'_>, matched: &Matched<'_>) -> rusqlite::Resu
         tx,
         CatalogAction {
             actor: matched.actor,
-            kind: "track_matched",
+            kind: ActionKind::TrackMatched,
             album_id,
             job_id: None,
             before: serde_json::to_value(&prior).unwrap_or_default(),
@@ -775,7 +778,7 @@ pub fn unmatch(
         tx,
         CatalogAction {
             actor,
-            kind: "track_match_undone",
+            kind: ActionKind::TrackMatchUndone,
             album_id,
             job_id: None,
             before: serde_json::to_value(current).unwrap_or_default(),

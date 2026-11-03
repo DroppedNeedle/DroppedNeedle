@@ -7,6 +7,7 @@ use rusqlite::{Connection, Transaction, params};
 
 use super::edition::drop_edition;
 use super::membership::retire;
+use crate::catalog_actions::ActionKind;
 use crate::catalog_actions::CatalogAction;
 use crate::catalog_actions::record_action;
 use crate::catalog_revision::bump_catalog;
@@ -145,7 +146,7 @@ pub(crate) fn merge_retagged(
             tx,
             CatalogAction {
                 actor: actor.unwrap_or("system"),
-                kind: "merge_album",
+                kind: ActionKind::MergeAlbum,
                 album_id: new,
                 job_id: None,
                 before: serde_json::json!({ "retired_album_id": old }),

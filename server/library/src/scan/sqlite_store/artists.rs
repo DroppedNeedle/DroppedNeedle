@@ -25,6 +25,7 @@ use rusqlite::{Connection, OptionalExtension as _, params};
 use super::commit::{UNKNOWN_ARTIST, UNKNOWN_ARTIST_ID};
 use crate::identify::artist_links::placeholder;
 use crate::identify::merged_ids;
+use crate::scan::models::ArtistKind;
 use crate::scan::naming::{VARIOUS_ARTISTS_ID, artist_key, artist_mbid_key};
 use crate::tags::AudioArtistCredit;
 use droppedneedle_kernel::db::fold_text;
@@ -134,7 +135,8 @@ fn insert_artist(tx: &Connection, id: &str, credit: &Credit, now: f64) -> rusqli
             credit.name,
             credit.sort_name,
             folded,
-            crate::clock::ms(now)
+            crate::clock::ms(now),
+            ArtistKind::Group,
         ])?;
     Ok(())
 }

@@ -18,6 +18,7 @@ use std::collections::{BTreeMap, HashSet};
 use super::PublishError;
 use super::paths::{CollisionKey, Sandbox, collision_key};
 use super::tags_seam::TagUpdates;
+use crate::scan::models::Availability;
 use crate::tags::AudioFormat;
 
 /// Content fingerprint pinned on a plan item.
@@ -547,7 +548,7 @@ pub(crate) fn removal_seals<'a>(
 ) -> Result<BTreeMap<String, RemoveSeal>, PublishError> {
     Ok(own_rows(conn, track_ids)?
         .into_iter()
-        .filter(|(_, row)| row.availability == "indexed")
+        .filter(|(_, row)| row.availability == Availability::Indexed)
         .map(|(id, row)| (id, RemoveSeal::of(&row)))
         .collect())
 }
@@ -609,7 +610,7 @@ impl PlanItem {
 struct OwnRow {
     root_id: String,
     relative_path: String,
-    availability: String,
+    availability: Availability,
     stat_revision: String,
     album_id: String,
     album_revision: Option<i64>,
@@ -676,7 +677,7 @@ pub fn seal_rows(
         let row = current.get(&item.track_id).ok_or_else(changed)?;
         if row.root_id != item.source_root
             || row.relative_path != item.source_rel
-            || row.availability != "indexed"
+            || row.availability != Availability::Indexed
         {
             return Err(changed());
         }
@@ -707,7 +708,7 @@ pub(crate) fn first_moved<'a>(
                 let mapping = (seal.mapping_revision != 0).then_some(seal.mapping_revision as i64);
                 row.root_id == seal.source_root
                     && row.relative_path == seal.source_rel
-                    && row.availability == "indexed"
+                    && row.availability == Availability::Indexed
                     && row.stat_revision == seal.row.stat_revision
                     && row.album_id == seal.row.album_id
                     && row.album_revision == Some(seal.album_identity_revision as i64)

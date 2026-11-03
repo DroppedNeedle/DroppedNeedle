@@ -18,8 +18,8 @@ use crate::scan::models::GroupingSource;
 
 use super::edition::{self, Settle};
 use super::models::{
-    AlbumGroup, CorrectionError, EditionChange, EditionChangeKind, IdentityChoice, MembershipKind,
-    MembershipOutcome, MembershipRequest,
+    AlbumAliasKind, AlbumGroup, CorrectionError, EditionChange, EditionChangeKind, IdentityChoice,
+    MembershipKind, MembershipOutcome, MembershipRequest,
 };
 use super::reasons;
 use crate::identify::sqlite::{bump_identification_stream, offer_album, retarget_references};
@@ -331,7 +331,12 @@ pub(crate) fn retire(
     )?;
     tx.execute(
         crate::corrections::sql::ADD_MERGED_ALBUM_ALIAS.text(),
-        params![album_id, successor, crate::clock::ms(now)],
+        params![
+            album_id,
+            successor,
+            crate::clock::ms(now),
+            AlbumAliasKind::MergedAlbum
+        ],
     )?;
     retarget_references(tx, "album", album_id, successor)?;
     // What a curator set on the old album carries over, unless the

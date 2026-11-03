@@ -5,6 +5,7 @@
 #![allow(unused_parens, clippy::double_parens)]
 
 use super::journal::{JournalKind, JournalState, MgmtState};
+use crate::scan::models::Availability;
 
 /// Where a file is in the recycle bin, over a replacement alias and its
 /// journal row's alias: its copy's row is not marked as gone, and its copy
@@ -688,11 +689,11 @@ droppedneedle_kernel::sql! {
     pub(super) row TrackPlace for [TRACK_PLACE] {
         root_id: String,
         relative_path: String,
-        availability: String,
+        availability: Availability,
     }
     pub(super) row TrackAvailability for [TRACK_AT, GIVE_UP_DESTINATION] {
         id: String,
-        availability: String,
+        availability: Availability,
     }
     pub(super) row JournalName for [JOURNAL_NAMES] {
         dest_root: String,
@@ -714,7 +715,7 @@ droppedneedle_kernel::sql! {
         id: String,
         root_id: String,
         relative_path: String,
-        availability: String,
+        availability: Availability,
         stat_revision: String,
         local_album_id: String,
         album_revision: Option<i64>,

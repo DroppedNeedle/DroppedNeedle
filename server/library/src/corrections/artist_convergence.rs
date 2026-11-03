@@ -55,6 +55,8 @@ pub(crate) use super::artists::{
 };
 use super::artists::{retarget_retired, retire_artist};
 use super::merge_basis::{Follow, MergeBasis, V2PlaceholderKept};
+use super::models::{ArtistAliasKind, MergeCandidateState};
+use crate::catalog_actions::ActionKind;
 use crate::catalog_actions::ArtistAction;
 use crate::catalog_actions::record_artist_action;
 use crate::catalog_revision::bump_catalog;
@@ -227,7 +229,8 @@ pub(crate) fn follow_moved(
                         from,
                         survivor,
                         CREDITS_MOVED,
-                        crate::clock::ms(now)
+                        crate::clock::ms(now),
+                        MergeCandidateState::Open,
                     ])?;
             }
             Followed::Stays => {}
@@ -324,7 +327,7 @@ fn merge_group(
         tx,
         ArtistAction {
             actor: "system",
-            kind: "merge_artist",
+            kind: ActionKind::MergeArtist,
             artist_id: &survivor,
             before: serde_json::json!({ "artist_ids": retire }),
             after: serde_json::json!({
@@ -368,7 +371,8 @@ pub(crate) fn record_move(
             from,
             to,
             reason,
-            crate::clock::ms(now)
+            crate::clock::ms(now),
+            MergeCandidateState::Open,
         ])?;
     Ok(())
 }
@@ -499,14 +503,19 @@ fn merge_v2_placeholder(
     )?;
     tx.execute(
         crate::corrections::sql::ALIAS_ROWS_MERGED_INTO.text(),
-        params![retiree, UNKNOWN_ARTIST_ID, now],
+        params![
+            retiree,
+            UNKNOWN_ARTIST_ID,
+            now,
+            ArtistAliasKind::MergedArtist
+        ],
     )?;
     touch_built_in(tx, now)?;
     record_artist_action(
         tx,
         ArtistAction {
             actor: "system",
-            kind: "merge_artist",
+            kind: ActionKind::MergeArtist,
             artist_id: UNKNOWN_ARTIST_ID,
             before: serde_json::json!({ "artist_ids": [retiree] }),
             after: serde_json::json!({

@@ -34,6 +34,7 @@ use super::transition::{
 };
 use super::worker::{Completion, VERIFY};
 use crate::clock::at_secs;
+use crate::corrections::models::MergeCandidateState;
 use crate::identify::artist_links::{LINK_SET_BY_PERSON, audit_link, placeholder, would_group};
 use crate::identify::merged_ids;
 use crate::identify::models::ReviewState;
@@ -366,7 +367,8 @@ fn offer_merge(conn: &Connection, a: &str, b: &str, now: f64) -> rusqlite::Resul
             format!("provider:{left}:{right}"),
             left,
             right,
-            crate::clock::ms(now)
+            crate::clock::ms(now),
+            MergeCandidateState::Open,
         ])?;
     Ok(())
 }

@@ -42,8 +42,8 @@ use sha2::{Digest as _, Sha256};
 use super::merged_ids;
 use super::sqlite::stored_release;
 use super::stores::StoreError;
-use crate::catalog_actions::ArtistAction;
 use crate::catalog_actions::record_artist_action;
+use crate::catalog_actions::{ActionKind, ArtistAction};
 use crate::catalog_revision::bump_catalog;
 use crate::corrections::artist_convergence::{CREDITS_MOVED, MOVED_BY_NAME, MOVED_WITH_ID};
 use crate::corrections::continuation::accepted_release;
@@ -816,11 +816,6 @@ impl UnlinkReason {
     }
 }
 
-/// The audit's action kinds for a change to an artist's link: one set
-/// where there was none, one moved to another id, one removed.
-pub const LINK_SET: &str = "artist_link_set";
-pub const LINK_MOVED: &str = "artist_link_moved";
-pub const LINK_REMOVED: &str = "artist_link_removed";
 /// The audit's reasons: the app linked a row its proofs and files name,
 /// the app's link went because nothing proves it any more or gave way to
 /// a person's link on another row, or a person set or cleared the link.
@@ -1098,10 +1093,10 @@ pub(crate) fn audit_link(
     now: f64,
 ) -> rusqlite::Result<()> {
     let kind = match (before, after) {
-        (None, _) => LINK_SET,
-        (Some(old), Some(new)) if old == new => LINK_SET,
-        (Some(_), Some(_)) => LINK_MOVED,
-        (Some(_), None) => LINK_REMOVED,
+        (None, _) => ActionKind::ArtistLinkSet,
+        (Some(old), Some(new)) if old == new => ActionKind::ArtistLinkSet,
+        (Some(_), Some(_)) => ActionKind::ArtistLinkMoved,
+        (Some(_), None) => ActionKind::ArtistLinkRemoved,
     };
     record_artist_action(
         tx,

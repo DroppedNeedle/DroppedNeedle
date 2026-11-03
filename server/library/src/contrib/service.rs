@@ -22,6 +22,7 @@ use super::rules::*;
 use super::seams::*;
 use super::sqlite::SqliteContributions;
 use super::transition::{CatalogScope, ContributionUpdate, Invalidation};
+use crate::scan::models::Availability;
 
 pub struct ContributionService {
     store: Arc<SqliteContributions>,
@@ -1070,7 +1071,7 @@ impl ContributionService {
         let tracks: Vec<&IdentityTrack> = context
             .tracks
             .iter()
-            .filter(|t| t.availability == "indexed")
+            .filter(|t| t.availability == Availability::Indexed)
             .collect();
         if tracks.is_empty() {
             return Err(ContribError::AlbumNotFound);

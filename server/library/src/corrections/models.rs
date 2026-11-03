@@ -5,8 +5,58 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::catalog_actions::ActionKind;
 use crate::identity::DecisionSource;
 use crate::reasons::Reason;
+
+/// Why an old album id still opens an album, in `local_album_aliases.kind`.
+/// A merge writes `merged_album`; the others are v2's, carried by the
+/// upgrade.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AlbumAliasKind {
+    LegacyReleaseGroup,
+    MergedAlbum,
+    CompatMigration,
+}
+
+droppedneedle_kernel::spelled!(AlbumAliasKind {
+    LegacyReleaseGroup => "legacy_release_group",
+    MergedAlbum => "merged_album",
+    CompatMigration => "compat_migration",
+});
+
+/// Why an old artist id still opens an artist, in
+/// `local_artist_aliases.kind`. A merge writes `merged_artist`; the others
+/// are v2's, carried by the upgrade.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArtistAliasKind {
+    LegacyArtist,
+    MergedArtist,
+    CompatMigration,
+}
+
+droppedneedle_kernel::spelled!(ArtistAliasKind {
+    LegacyArtist => "legacy_artist",
+    MergedArtist => "merged_artist",
+    CompatMigration => "compat_migration",
+});
+
+/// Where a pair of artist rows offered as one artist stands, in
+/// `local_artist_merge_candidates.state`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MergeCandidateState {
+    Open,
+    /// The rows were merged.
+    Resolved,
+    /// An admin told them apart.
+    Dismissed,
+}
+
+droppedneedle_kernel::spelled!(MergeCandidateState {
+    Open => "open",
+    Resolved => "resolved",
+    Dismissed => "dismissed",
+});
 
 /// Which album membership change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -29,6 +79,16 @@ impl MembershipKind {
             Self::Merge => "merge",
             Self::Move => "move",
             Self::Reset => "reset",
+        }
+    }
+
+    /// The audit row's kind for this change.
+    pub fn action(self) -> ActionKind {
+        match self {
+            Self::Split => ActionKind::Split,
+            Self::Merge => ActionKind::Merge,
+            Self::Move => ActionKind::Move,
+            Self::Reset => ActionKind::Reset,
         }
     }
 }

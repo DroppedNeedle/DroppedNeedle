@@ -13,6 +13,7 @@ use rusqlite::Transaction;
 
 use super::models::{ApplyResult, FindingCode, FindingState};
 use super::store::{self, OpenFinding};
+use crate::catalog_actions::ActionKind;
 use crate::catalog_actions::CatalogAction;
 use crate::catalog_actions::record_action;
 use crate::catalog_revision::bump_catalog;
@@ -185,7 +186,7 @@ fn place(
         tx,
         CatalogAction {
             actor: actor.unwrap_or("system"),
-            kind: "accept_management_track_mappings",
+            kind: ActionKind::AcceptManagementTrackMappings,
             album_id,
             job_id: Some(job_id),
             before: serde_json::json!({ "release_mbid": release }),

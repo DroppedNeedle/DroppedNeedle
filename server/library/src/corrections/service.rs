@@ -17,6 +17,7 @@ use super::models::{
 use super::reasons;
 use super::reset;
 use super::retag_pairs;
+use crate::catalog_actions::ActionKind;
 use crate::clock::LibraryClock as _;
 use crate::preview::{self, TokenFault};
 use crate::settings::LibrarySettings;
@@ -99,7 +100,7 @@ impl Corrections {
                 record(
                     tx,
                     &Audit {
-                        kind: request.kind.as_str(),
+                        kind: request.kind.action(),
                         album_id: Some(&album),
                         artist_id: None,
                         before: serde_json::json!({
@@ -171,7 +172,7 @@ impl Corrections {
                 record(
                     tx,
                     &Audit {
-                        kind: "merge_artist",
+                        kind: ActionKind::MergeArtist,
                         album_id: None,
                         artist_id: Some(&run.outcome.surviving_artist_id),
                         before: serde_json::json!({ "artist_ids": all, "basis": run.basis }),
@@ -311,7 +312,7 @@ fn replay(tx: &Transaction<'_>, key: Option<&str>) -> Result<Option<Applied>, Co
 }
 
 struct Audit<'a> {
-    kind: &'a str,
+    kind: ActionKind,
     album_id: Option<&'a str>,
     artist_id: Option<&'a str>,
     before: serde_json::Value,

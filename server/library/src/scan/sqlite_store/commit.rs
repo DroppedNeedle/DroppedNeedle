@@ -37,6 +37,7 @@ use super::hands_off::hold_replacements;
 use super::held_scopes;
 use super::retag_pairs::{self, RetagPairReason, RetagPairState};
 use super::*;
+use crate::catalog_actions::ActionKind;
 use crate::catalog_actions::CatalogAction;
 use crate::catalog_actions::record_action;
 use crate::catalog_revision::bump_catalog;
@@ -54,11 +55,12 @@ use crate::identify::sqlite::{
 use crate::management::{automatic, takeover};
 use crate::matching::model::EditionHints;
 use crate::publish::HIDDEN_PREFIX;
-use crate::scan::models::{EndPassName, GroupingSource, InventoryState, Phase, TagProvenance};
+use crate::scan::models::{
+    Availability, EndPassName, GenreSource, GroupingSource, InventoryState, Phase, TagProvenance,
+};
 use crate::scan::naming::{
     album_grouping_key, album_name_key, grouping_directory, parse_names_for_row,
 };
-use crate::scan::sql::OTHER_MUSIC_KIND;
 use crate::scan::store::{EditionFill, IndexWindow, LengthFill, WindowOutcome};
 use crate::tags::{AudioArtistCredit, AudioTag};
 use droppedneedle_kernel::db::savepoint;
@@ -269,15 +271,11 @@ pub(super) const DURATION_TOLERANCE_SECONDS: f64 = 1.0;
 /// the other, 2 seconds on most discs.
 const OTHER_MUSIC_SECONDS: f64 = 5.0;
 
-/// Audit kind of the tracks whose files were replaced by new copies of
-/// the same recordings.
-const NEW_COPY_KIND: &str = "new_copy_at_path";
-
 /// The row at a file's path, as read before the file is written.
 struct AtPath {
     id: String,
     album_id: String,
-    availability: String,
+    availability: Availability,
     duration_seconds: Option<f64>,
     recording_mbid: Option<String>,
     title_folded: String,
@@ -366,7 +364,7 @@ struct Written {
 /// read from a path or a file name is never a contradiction, and nothing
 /// else counts: not album names, artists, numbers, format or a match.
 fn other_music(row: &AtPath, item: &CommitIndexedItem) -> bool {
-    if row.availability != "indexed" && row.availability != "missing" {
+    if row.availability == Availability::Excluded {
         return false;
     }
     let lengths_apart = match (row.duration_seconds, item.tags.header.duration_seconds) {
@@ -419,7 +417,7 @@ fn new_copy(
     disc_number: i64,
     track_number: i64,
 ) -> bool {
-    if row.availability != "indexed" && row.availability != "missing" {
+    if row.availability == Availability::Excluded {
         return false;
     }
     let flac = matches!(
@@ -1334,7 +1332,7 @@ fn write_item(
         )?;
     }
     tx.prepare_cached(crate::scan::sql::DROP_LOCAL_GENRES.text())?
-        .execute(params![track_id])?;
+        .execute(params![track_id, GenreSource::Local])?;
     let genres: Vec<&String> = if tag.genres.is_empty() {
         tag.genre.iter().collect()
     } else {
@@ -1351,7 +1349,8 @@ fn write_item(
             position as i64,
             genre.trim(),
             fold_text(genre),
-            tag_revision
+            tag_revision,
+            GenreSource::Local,
         ])?;
     }
     let moved_from = previous
@@ -2392,7 +2391,7 @@ fn carry_one(
             tx,
             CatalogAction {
                 actor: "system",
-                kind: "retag_first_half",
+                kind: ActionKind::RetagFirstHalf,
                 album_id: new,
                 job_id: None,
                 before: serde_json::json!({ "from_album_id": old }),
@@ -2546,7 +2545,7 @@ fn record_other_music(
         tx,
         CatalogAction {
             actor: "system",
-            kind: OTHER_MUSIC_KIND,
+            kind: ActionKind::OtherMusicAtPath,
             album_id,
             job_id: None,
             before: serde_json::json!({}),
@@ -2586,7 +2585,7 @@ fn record_new_copies(
         tx,
         CatalogAction {
             actor: "system",
-            kind: NEW_COPY_KIND,
+            kind: ActionKind::NewCopyAtPath,
             album_id,
             job_id: None,
             before: serde_json::json!({}),
@@ -2740,7 +2739,7 @@ fn write_window(
                 tx,
                 CatalogAction {
                     actor: "system",
-                    kind: "retag_dismissal_ended",
+                    kind: ActionKind::RetagDismissalEnded,
                     album_id: &old,
                     job_id: None,
                     before: serde_json::json!({ "from_album_id": new }),

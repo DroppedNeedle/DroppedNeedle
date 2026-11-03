@@ -133,8 +133,8 @@ droppedneedle_kernel::sql! {
              WHERE artist_mbid = ?1) OR EXISTS (SELECT 1 FROM library_identify_artist_id_checks \
              WHERE canonical_mbid = ?1)";
     pub(super) SUGGEST_MERGE = "INSERT OR IGNORE INTO local_artist_merge_candidates (id, left_artist_id, \
-         right_artist_id, reason_code, created_at, updated_at) \
-         VALUES (?1, ?2, ?3, 'SHARED_PROVIDER_IDENTITY', ?4, ?4)";
+         right_artist_id, reason_code, state, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, 'SHARED_PROVIDER_IDENTITY', ?5, ?4, ?4)";
     pub(super) SETTLE_ARTIST_ID_CHECK = "UPDATE library_identify_artist_id_checks SET state = ?4, canonical_mbid = ?2, \
          checked_at = ?3 WHERE artist_mbid = ?1";
     pub(super) REPOINT_ARTIST_ID_CHECKS = "UPDATE library_identify_artist_id_checks SET canonical_mbid = ?2 \

@@ -383,6 +383,7 @@ const IDENTITY_USES: &[(&str, &str)] = &[
         "offers the album to identification and reads its input revision",
     ),
     ("identify::models", "the identity rows' data types"),
+    ("catalog_actions::ActionKind", "the audit row's kind"),
     ("catalog_actions::CatalogAction", "the audit row"),
     ("catalog_actions::record_action", "the audit row"),
     (

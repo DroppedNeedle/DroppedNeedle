@@ -90,7 +90,7 @@ use super::publish::publisher::{JoinedAlbum, copy_folder, joined_album};
 use super::publish::remove::{self, Probe, Refusal, Target};
 use super::publish::snapshots::sha256_hex;
 use super::publish::{PublishError, TagUpdates};
-use super::scan::models::EffectivePolicy;
+use super::scan::models::{Availability, EffectivePolicy};
 use super::scan::roots::{LibraryRoot, RootRegistry};
 use super::settings::LibrarySettings;
 use super::tags::read::{HeaderInfo, read_header_from};
@@ -1085,7 +1085,7 @@ impl Imports {
             )?
             .ok_or_else(|| "no free track id for an imported file".to_owned()));
         }
-        let at_path: Option<(String, String, String)> = conn
+        let at_path: Option<(String, String, Availability)> = conn
             .query_row(
                 crate::import::sql::PLANNED_TRACK_ID.text(),
                 rusqlite::params![root_id, dest_rel],
@@ -1093,13 +1093,13 @@ impl Imports {
             )
             .optional()?;
         if let Some((id, album, availability)) = at_path {
-            if availability != "excluded"
+            if availability != Availability::Excluded
                 && joined.is_some_and(|joined| joined.album_id == album)
                 && !replaced.iter().any(|(_, old)| *old == id)
             {
                 return Ok(Ok(id));
             }
-            if availability == "indexed" && !freed.contains(&id) {
+            if availability == Availability::Indexed && !freed.contains(&id) {
                 return Ok(Err(format!(
                     "a track of another album is still listed at {dest_rel}"
                 )));
