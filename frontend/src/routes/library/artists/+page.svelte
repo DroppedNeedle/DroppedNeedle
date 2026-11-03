@@ -9,6 +9,7 @@
 	import Card from '$lib/ui/Card.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import Input from '$lib/ui/Input.svelte';
+	import Tabs, { type TabItem } from '$lib/ui/Tabs.svelte';
 	import { getLibraryArtistsInfiniteQuery } from '$lib/queries/library/LibraryQueries.svelte';
 	import type { ArtistSort, LibraryArtistScope, ArtistView } from '$lib/types';
 	import { artistHref } from '$lib/utils/entityRoutes';
@@ -67,6 +68,10 @@
 	const total = $derived(response?.total ?? 0);
 	const albumArtistTotal = $derived(response?.album_artist_total ?? 0);
 	const contributorTotal = $derived(response?.contributor_total ?? 0);
+	const viewTabs = $derived<TabItem<'albums' | 'contributors'>[]>([
+		{ id: 'albums', label: 'Album artists', icon: Disc3, count: albumArtistTotal },
+		{ id: 'contributors', label: 'Contributors', icon: UsersRound, count: contributorTotal }
+	]);
 
 	let searchInput = $derived(browse.q);
 	let searchTimeout: ReturnType<typeof setTimeout> | undefined;
@@ -138,180 +143,157 @@
 		</div>
 	</header>
 
-	<nav
-		class="mb-6 grid overflow-hidden rounded-2xl border border-base-content/10 bg-base-200/45 p-1 sm:grid-cols-2"
-		aria-label="Artist library views"
+	<Tabs
+		tabs={viewTabs}
+		selected={browse.view}
+		onselect={selectView}
+		label="Artist library views"
+		idPrefix="artist-views"
+		class="mb-6"
 	>
-		<button
-			class="group flex items-center gap-3 rounded-xl px-4 py-3 text-left transition-colors"
-			class:bg-base-100={browse.view === 'albums'}
-			class:shadow-sm={browse.view === 'albums'}
-			onclick={() => selectView('albums')}
-			aria-current={browse.view === 'albums' ? 'page' : undefined}
-		>
-			<span class="rounded-xl bg-primary/10 p-2 text-primary"><Disc3 class="h-5 w-5" /></span>
-			<span class="min-w-0 flex-1">
-				<span class="block font-bold">Album artists</span>
-				<span class="block truncate text-xs text-base-content/55">Release-level ownership</span>
-			</span>
-			<span class="badge badge-ghost tabular-nums">{albumArtistTotal}</span>
-		</button>
-		<button
-			class="group flex items-center gap-3 rounded-xl px-4 py-3 text-left transition-colors"
-			class:bg-base-100={browse.view === 'contributors'}
-			class:shadow-sm={browse.view === 'contributors'}
-			onclick={() => selectView('contributors')}
-			aria-current={browse.view === 'contributors' ? 'page' : undefined}
-		>
-			<span class="rounded-xl bg-secondary/10 p-2 text-secondary"
-				><UsersRound class="h-5 w-5" /></span
-			>
-			<span class="min-w-0 flex-1">
-				<span class="block font-bold">Contributors</span>
-				<span class="block truncate text-xs text-base-content/55">Track-level appearances</span>
-			</span>
-			<span class="badge badge-ghost tabular-nums">{contributorTotal}</span>
-		</button>
-	</nav>
-
-	<div class="mb-6 flex flex-col gap-3 sm:flex-row">
-		<div class="relative flex-1">
-			<Input
-				icon={Search}
-				label="Search artists"
-				placeholder={browse.scope === 'album' ? 'Search album artists…' : 'Search contributors…'}
-				class="w-full pr-12"
-				value={searchInput}
-				oninput={handleSearchInput}
-			/>
-			{#if searchInput}
-				<IconButton
-					size="sm"
-					icon={X}
-					label="Clear search"
-					class="absolute right-2 top-1/2 -translate-y-1/2"
-					onclick={clearSearch}
+		<div class="mb-6 flex flex-col gap-3 sm:flex-row">
+			<div class="relative flex-1">
+				<Input
+					icon={Search}
+					label="Search artists"
+					placeholder={browse.scope === 'album' ? 'Search album artists…' : 'Search contributors…'}
+					class="w-full pr-12"
+					value={searchInput}
+					oninput={handleSearchInput}
 				/>
-			{/if}
-		</div>
-		<Button
-			variant={browse.favorites ? 'primary' : 'outline'}
-			icon={Heart}
-			aria-pressed={browse.favorites}
-			onclick={toggleFavorites}>Favourites</Button
-		>
-		<select
-			class="select"
-			value="{browse.sortBy}:{browse.sortOrder}"
-			onchange={handleSortChange}
-			aria-label="Sort artists"
-		>
-			{#if browse.favorites}<option value="hearted:asc">Recently favourited</option>{/if}
-			<option value="name:asc">Name A-Z</option>
-			<option value="name:desc">Name Z-A</option>
-			{#if browse.scope === 'album'}
-				<option value="album_count:desc">Most releases</option>
-				<option value="album_count:asc">Fewest releases</option>
-			{:else}
-				<option value="appearance_count:desc">Most appearances</option>
-				<option value="appearance_count:asc">Fewest appearances</option>
-			{/if}
-			<option value="date_added:desc">Newest first</option>
-			<option value="date_added:asc">Oldest first</option>
-		</select>
-	</div>
-
-	{#if artistsQuery.isError}
-		<div class="alert alert-error mb-6">
-			<span>Couldn't load artists.</span>
-			<Button variant="ghost" size="sm" onclick={() => artistsQuery.refetch()}>Retry</Button>
-		</div>
-	{:else if artistsQuery.isLoading}
-		<div class="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
-			{#each Array(12) as _, index (`skeleton-${index}`)}<ArtistCardSkeleton />{/each}
-		</div>
-	{:else if artists.length === 0}
-		<div class="flex min-h-100 flex-col items-center justify-center text-center">
-			<Mic class="mb-4 h-12 w-12 text-base-content/35" strokeWidth={1.5} />
-			<h2 class="mb-2 text-2xl font-semibold">
-				{browse.q
-					? 'No matching artists'
-					: browse.favorites
-						? 'No favourites here yet'
-						: 'Nothing in this view yet'}
-			</h2>
-			<p class="max-w-md text-base-content/65">
-				{browse.q
-					? 'Try a different search term.'
-					: browse.favorites
-						? 'Tap the heart on an artist to add them here.'
-						: browse.scope === 'album'
-							? 'Album artists appear here as releases are added to your library.'
-							: 'Track-level guests and featured artists will appear here.'}
-			</p>
-		</div>
-	{:else}
-		<p class="mb-3 text-sm text-base-content/55">
-			{total}
-			{total === 1 ? 'artist' : 'artists'} in this view
-		</p>
-		<div class="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
-			{#each artists as artist (artist.id)}
-				<Card
-					variant="raised"
-					padding="none"
-					href={artistHref(artist.artist_mbid ?? artist.id)}
-					class="group overflow-hidden"
-					aria-label={`Open ${artist.name}`}
-				>
-					<figure class="relative aspect-square overflow-hidden p-3">
-						<ArtistImage
-							mbid={artist.artist_mbid ?? ''}
-							localId={artist.id}
-							artMissing={artist.art_missing}
-							alt={artist.name}
-							size="full"
-							requestSize={250}
-							className="h-full w-full transition-transform duration-300 motion-safe:group-hover:scale-105"
-						/>
-						{#if artist.identity_state === 'local_only'}
-							<LocalIdentityBadge
-								state={artist.identity_state}
-								subject="artist"
-								compact
-								className="absolute left-3 top-3 z-10"
-							/>
-						{/if}
-					</figure>
-					<div class="flex flex-col gap-1 p-3 pt-0 text-center">
-						<h2 class="truncate font-semibold">{artist.name}</h2>
-						<p class="text-xs text-base-content/55">
-							{#if browse.scope === 'album'}
-								{artist.album_count}
-								{artist.album_count === 1 ? 'release' : 'releases'} ·
-								{artist.led_track_count}
-								{artist.led_track_count === 1 ? 'track' : 'tracks'}
-							{:else}
-								{artist.appearance_album_count}
-								{artist.appearance_album_count === 1 ? 'release' : 'releases'} ·
-								{artist.appearance_track_count}
-								{artist.appearance_track_count === 1 ? 'appearance' : 'appearances'}
-							{/if}
-						</p>
-					</div>
-				</Card>
-			{/each}
-		</div>
-		{#if artistsQuery.hasNextPage}
-			<div class="mt-6 flex justify-center">
-				<Button
-					variant="outline"
-					loading={artistsQuery.isFetchingNextPage}
-					onclick={() => artistsQuery.fetchNextPage()}
-				>
-					Load more ({artists.length} / {total})
-				</Button>
+				{#if searchInput}
+					<IconButton
+						size="sm"
+						icon={X}
+						label="Clear search"
+						class="absolute right-2 top-1/2 -translate-y-1/2"
+						onclick={clearSearch}
+					/>
+				{/if}
 			</div>
+			<Button
+				variant={browse.favorites ? 'primary' : 'outline'}
+				icon={Heart}
+				aria-pressed={browse.favorites}
+				onclick={toggleFavorites}>Favourites</Button
+			>
+			<select
+				class="select"
+				value="{browse.sortBy}:{browse.sortOrder}"
+				onchange={handleSortChange}
+				aria-label="Sort artists"
+			>
+				{#if browse.favorites}<option value="hearted:asc">Recently favourited</option>{/if}
+				<option value="name:asc">Name A-Z</option>
+				<option value="name:desc">Name Z-A</option>
+				{#if browse.scope === 'album'}
+					<option value="album_count:desc">Most releases</option>
+					<option value="album_count:asc">Fewest releases</option>
+				{:else}
+					<option value="appearance_count:desc">Most appearances</option>
+					<option value="appearance_count:asc">Fewest appearances</option>
+				{/if}
+				<option value="date_added:desc">Newest first</option>
+				<option value="date_added:asc">Oldest first</option>
+			</select>
+		</div>
+
+		{#if artistsQuery.isError}
+			<div class="alert alert-error mb-6">
+				<span>Couldn't load artists.</span>
+				<Button variant="ghost" size="sm" onclick={() => artistsQuery.refetch()}>Retry</Button>
+			</div>
+		{:else if artistsQuery.isLoading}
+			<div
+				class="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6"
+			>
+				{#each Array(12) as _, index (`skeleton-${index}`)}<ArtistCardSkeleton />{/each}
+			</div>
+		{:else if artists.length === 0}
+			<div class="flex min-h-100 flex-col items-center justify-center text-center">
+				<Mic class="mb-4 h-12 w-12 text-base-content/35" strokeWidth={1.5} />
+				<h2 class="mb-2 text-2xl font-semibold">
+					{browse.q
+						? 'No matching artists'
+						: browse.favorites
+							? 'No favourites here yet'
+							: 'Nothing in this view yet'}
+				</h2>
+				<p class="max-w-md text-base-content/65">
+					{browse.q
+						? 'Try a different search term.'
+						: browse.favorites
+							? 'Tap the heart on an artist to add them here.'
+							: browse.scope === 'album'
+								? 'Album artists appear here as releases are added to your library.'
+								: 'Track-level guests and featured artists will appear here.'}
+				</p>
+			</div>
+		{:else}
+			<p class="mb-3 text-sm text-base-content/55">
+				{total}
+				{total === 1 ? 'artist' : 'artists'} in this view
+			</p>
+			<div
+				class="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6"
+			>
+				{#each artists as artist (artist.id)}
+					<Card
+						variant="raised"
+						padding="none"
+						href={artistHref(artist.artist_mbid ?? artist.id)}
+						class="group overflow-hidden"
+						aria-label={`Open ${artist.name}`}
+					>
+						<figure class="relative aspect-square overflow-hidden p-3">
+							<ArtistImage
+								mbid={artist.artist_mbid ?? ''}
+								localId={artist.id}
+								artMissing={artist.art_missing}
+								alt={artist.name}
+								size="full"
+								requestSize={250}
+								className="h-full w-full transition-transform duration-300 motion-safe:group-hover:scale-105"
+							/>
+							{#if artist.identity_state === 'local_only'}
+								<LocalIdentityBadge
+									state={artist.identity_state}
+									subject="artist"
+									compact
+									className="absolute left-3 top-3 z-10"
+								/>
+							{/if}
+						</figure>
+						<div class="flex flex-col gap-1 p-3 pt-0 text-center">
+							<h2 class="truncate font-semibold">{artist.name}</h2>
+							<p class="text-xs text-base-content/55">
+								{#if browse.scope === 'album'}
+									{artist.album_count}
+									{artist.album_count === 1 ? 'release' : 'releases'} ·
+									{artist.led_track_count}
+									{artist.led_track_count === 1 ? 'track' : 'tracks'}
+								{:else}
+									{artist.appearance_album_count}
+									{artist.appearance_album_count === 1 ? 'release' : 'releases'} ·
+									{artist.appearance_track_count}
+									{artist.appearance_track_count === 1 ? 'appearance' : 'appearances'}
+								{/if}
+							</p>
+						</div>
+					</Card>
+				{/each}
+			</div>
+			{#if artistsQuery.hasNextPage}
+				<div class="mt-6 flex justify-center">
+					<Button
+						variant="outline"
+						loading={artistsQuery.isFetchingNextPage}
+						onclick={() => artistsQuery.fetchNextPage()}
+					>
+						Load more ({artists.length} / {total})
+					</Button>
+				</div>
+			{/if}
 		{/if}
-	{/if}
+	</Tabs>
 </main>

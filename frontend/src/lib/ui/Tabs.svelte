@@ -1,13 +1,18 @@
 <!--
 	A row of tabs and the panel they show. The tabs are one tab stop: arrow
 	keys, Home and End move between them and show the one reached. Each tab
-	may carry a quiet count. The panel is named by its tab, so the content
-	passed in reads as that tab's.
+	may carry an icon before its label, coloured while selected, and a quiet
+	count. The panel is named by its tab, so the content passed in reads as
+	that tab's.
 -->
 <script lang="ts" module>
+	import type { KitIcon } from './Button.svelte';
+
 	export interface TabItem<V extends string = string> {
 		id: V;
 		label: string;
+		/** A lucide icon before the label. */
+		icon?: KitIcon;
 		/** A quiet count after the label; nothing when absent. */
 		count?: number | null;
 	}
@@ -88,8 +93,11 @@
 			aria-controls={panelId}
 			tabindex={tab.id === selected ? 0 : -1}
 			onclick={() => onselect(tab.id)}
-			>{tab.label}{#if tab.count != null}&nbsp;<span class="badge badge-sm badge-ghost tabular-nums"
-					>{tab.count.toLocaleString()}</span
+			>{#if tab.icon}<tab.icon
+					class="h-4 w-4 {tab.id === selected ? 'text-primary' : ''}"
+					aria-hidden="true"
+				/>{/if}{tab.label}{#if tab.count != null}&nbsp;<span
+					class="badge badge-sm badge-ghost tabular-nums">{tab.count.toLocaleString()}</span
 				>{/if}</button
 		>
 	{/each}
