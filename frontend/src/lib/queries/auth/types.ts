@@ -7,18 +7,9 @@ export type AuthProviders = components['schemas']['AuthProvidersBody'];
 /** User payload returned by every endpoint that establishes a session. */
 export type AuthSessionUser = components['schemas']['UserResponse'];
 
-/** The least a login answer carries: the native UserResponse and the leaner
- * federated poll view both satisfy this, and it is all toAuthUser reads. */
-export interface SessionUserLike {
-	id: string;
-	display_name: string;
-	role: string;
-	email?: string | null;
-	avatar_url?: string | null;
-	username?: string | null;
-	username_display?: string | null;
-	providers?: string[];
-}
+/** A login answer's user: the native UserResponse, or the leaner federated
+ * view a Plex sign-in poll returns. */
+export type SessionUserLike = AuthSessionUser | components['schemas']['FederatedUserView'];
 
 export type LocalLoginVars = components['schemas']['LoginBody'];
 
@@ -68,6 +59,6 @@ export function toAuthUser(user: SessionUserLike): AuthUser {
 		avatar_url: user.avatar_url ?? null,
 		username: user.username ?? null,
 		username_display: user.username_display ?? null,
-		providers: user.providers ?? []
+		providers: 'providers' in user ? user.providers : []
 	};
 }

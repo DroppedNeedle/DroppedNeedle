@@ -2,7 +2,7 @@ import { page } from 'vitest/browser';
 import { createSubscriber } from 'svelte/reactivity';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
-import type { ServiceHealthItem } from '$lib/types';
+import type { ServiceHealthItem } from '$lib/queries/system.svelte';
 
 type QueryData = { degraded: ServiceHealthItem[] };
 

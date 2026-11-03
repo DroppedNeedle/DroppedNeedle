@@ -10,7 +10,7 @@
 	import { getSystemHealthQuery } from '$lib/queries/system.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import IconButton from '$lib/ui/IconButton.svelte';
-	import type { ServiceHealthItem } from '$lib/types';
+	import type { ServiceHealthItem } from '$lib/queries/system.svelte';
 
 	const query = getSystemHealthQuery();
 	const degraded = $derived<ServiceHealthItem[]>(query.data?.degraded ?? []);

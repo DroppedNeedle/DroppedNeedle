@@ -86,14 +86,6 @@ export type ArtistReleases = Omit<
 	eps: ReleaseGroup[];
 };
 
-export type UserPreferences = Schemas['UserPreferences'];
-
-export type ReleaseTypeOption = {
-	id: string;
-	title: string;
-	description: string;
-};
-
 export type Track = Schemas['AlbumTrack'];
 
 // The library's own album pages build one from a local album, which has no
@@ -105,12 +97,6 @@ export type AlbumBasicInfo = Omit<
 	Partial<Pick<Schemas['AlbumBasicInfo'], 'requested' | 'service_status'>>;
 
 export type AlbumTracksInfo = Schemas['AlbumTracksInfo'];
-
-export type OIDCConnectionSettings = components['schemas']['OidcConnection'];
-
-export type ServiceHealthItem = components['schemas']['ServiceHealthItem'];
-
-export type SystemHealthResponse = components['schemas']['SystemHealthResponse'];
 
 export type ResolvedTrack = {
 	release_group_mbid?: string | null;
@@ -192,45 +178,7 @@ export type CrateTrack = {
 	reason: CrateReason;
 };
 
-export type LastFmConnectionSettingsResponse = components['schemas']['LastFmSettings'];
-
-// mirrors backend api/v1/schemas/settings.py (GetItSettings)
-export type GetItSettings = components['schemas']['GetIt'];
-
-// How editions are ranked when the files do not settle it.
-export type EditionPreferences = components['schemas']['EditionPreferences'];
-
 export type PurchaseLink = components['schemas']['PurchaseLink'];
-
-// mirrors backend api/v1/schemas/settings.py (EventsSettings)
-export type EventsSettings = components['schemas']['EventsSettings'];
-
-export type WrappedSettingsResponse = components['schemas']['WrappedSettings'];
-
-export type ScrobbleSettings = {
-	scrobble_to_lastfm: boolean;
-	scrobble_to_listenbrainz: boolean;
-	navidrome_handles_external_scrobbles: boolean;
-};
-
-export type NowPlayingSubmission = {
-	track_name: string;
-	artist_name: string;
-	album_name: string;
-	duration_ms: number;
-	mbid?: string;
-	source?: string;
-};
-
-export type ScrobbleSubmission = {
-	track_name: string;
-	artist_name: string;
-	album_name: string;
-	timestamp: number;
-	duration_ms: number;
-	mbid?: string;
-	source?: string;
-};
 
 export type LastFmArtistEnrichment = components['schemas']['LastFmArtistEnrichment'];
 export type LastFmAlbumEnrichment = components['schemas']['LastFmAlbumEnrichment'];
@@ -283,27 +231,6 @@ export type SourcePlaylistDetail = {
 	tracks: SourcePlaylistTrack[];
 };
 
-export type NowPlayingSession = {
-	id: string;
-	user_name: string;
-	track_name: string;
-	artist_name: string;
-	album_name: string;
-	cover_url: string;
-	device_name: string;
-	is_paused: boolean;
-	// upstream servers use 'jellyfin'|'navidrome'|'plex'; the web player adds
-	// 'local'|'youtube'; connected apps report their client name (e.g. 'finamp')
-	source?: string;
-	progress_ms?: number;
-	duration_ms?: number;
-	audio_codec?: string;
-	bitrate?: number;
-	_isLocal?: boolean;
-	// owner chose 'track_hidden': identity + progress only, song fields blank
-	redacted?: boolean;
-};
-
 export type LyricLine = Schemas['LyricLine'];
 
 export type AlbumSort = 'recent' | 'title' | 'artist';
@@ -315,7 +242,6 @@ export type TrackView = Schemas['TrackView'];
 /** A held track with its quality tier against the upgrade cutoff. */
 export type LibraryStatusTrack = Schemas['LibraryStatusTrack'];
 
-export type ContributionState = Schemas['ContributionState'];
 export type ReleaseTextField = Schemas['ReleaseTextField'];
 export type ReleaseDraft = Schemas['ReleaseDraft'];
 export type ContributionDuplicateCandidate = Schemas['DuplicateCandidate'];
@@ -364,29 +290,5 @@ export interface HeldFileInEntry {
 export type HeldActionResult = components['schemas']['HeldActionResponse'];
 
 export type HeldRecheckAllResult = components['schemas']['HeldRecheckAllResponse'];
-
-// Connect Apps (inbound OpenSubsonic + Jellyfin compatibility)
-export type ConnectAppsSettings = components['schemas']['ConnectApps'];
-export type AppConnectSettings = components['schemas']['AppConnect'];
-export type AppConnectClient = components['schemas']['AppConnectClient'];
-export type ConnectRequest = components['schemas']['ConnectRequest'];
-export type AppConnectRequestView = components['schemas']['AppConnectRequestView'];
-export type MyConnectApps = components['schemas']['MyConnectApps'];
-
-export type AppPasswordView = components['schemas']['AppPasswordView'];
-
-// Admin oversight roster: every user's active app-passwords (never a secret).
-export type AdminAppPasswordView = components['schemas']['AdminAppPasswordView'];
-
-export type SectionPrefItem = components['schemas']['SectionPrefItem'];
-
-export interface SectionPrefsResponse {
-	pages: Record<string, SectionPrefItem[]>;
-}
-
-export interface SectionPrefsUpdate {
-	page: 'home' | 'discover' | 'sidebar';
-	sections: { key: string; enabled: boolean }[];
-}
 
 export type RadioSeedItem = components['schemas']['RadioSeedItem'];

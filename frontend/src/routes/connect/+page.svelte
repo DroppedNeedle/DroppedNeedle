@@ -11,7 +11,7 @@
 		getAppConnectRequestQuery,
 		type AppConnectQuery
 	} from '$lib/queries/connect-apps.svelte';
-	import type { ConnectRequest } from '$lib/types';
+	import type { ConnectRequest } from '$lib/queries/connect-apps.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { appAddress, framed, handBack } from '$lib/utils/appHandBack';
 	import { KeyRound, TriangleAlert } from 'lucide-svelte';

@@ -10,6 +10,7 @@ import { backupsChanged, createAppMutation } from '$lib/queries/effects';
 export type BackupView = components['schemas']['BackupView'];
 export type BackupRun = components['schemas']['BackupRunResponse'];
 export type RestoreReport = components['schemas']['RestoreReport'];
+export type ServiceHealthItem = components['schemas']['ServiceHealthItem'];
 
 /** The database backups on disk, oldest first, and how many are kept. Admin only. */
 export const getBackupsQuery = () =>

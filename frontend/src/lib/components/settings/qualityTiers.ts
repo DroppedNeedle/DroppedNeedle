@@ -1,7 +1,8 @@
-// left to right = worst to best; mirrors backend services.native.quality_tiers
-// (TIER_KEYS reversed). Consumed by the acquisition order editor, the upgrade
-// cutoff selector and the requests page tier labels so none can disagree about
-// the tier axis. Labels use lossy wording throughout ("MP3" never appears).
+// left to right = worst to best; mirrors the server's TIER_KEYS_WORST_FIRST
+// (kernel runtime_config, acquisition section). Consumed by the acquisition
+// order editor, the upgrade cutoff selector and the requests page tier labels
+// so none can disagree about the tier axis. Labels use lossy wording
+// throughout ("MP3" never appears).
 export interface QualityTier {
 	key: string;
 	label: string;

@@ -5,7 +5,7 @@
 		createSaveAppConnectSettingsMutation,
 		getAppConnectSettingsQuery
 	} from '$lib/queries/connect-apps.svelte';
-	import type { AppConnectSettings } from '$lib/types';
+	import type { AppConnectSettings } from '$lib/queries/connect-apps.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import CardTitle from '$lib/ui/CardTitle.svelte';

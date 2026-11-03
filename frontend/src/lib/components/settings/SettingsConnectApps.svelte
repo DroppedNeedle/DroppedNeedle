@@ -11,7 +11,7 @@
 		createSaveConnectAppsSettingsMutation
 	} from '$lib/queries/connect-apps.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
-	import type { AdminAppPasswordView } from '$lib/types';
+	import type { AdminAppPasswordView } from '$lib/queries/connect-apps.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import CardTitle from '$lib/ui/CardTitle.svelte';

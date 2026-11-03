@@ -4,8 +4,7 @@ import type { BrainzMashPendingProposal, MusicBrainzSettingsResponse } from './t
 type View = components['schemas']['MusicBrainzSettingsView'];
 type Proposal = components['schemas']['BrainzmashPendingProposal'];
 
-// The contract marks every settings field optional (serde defaults on the
-// server); the settings page needs them filled, so the defaults live here.
+// The settings page reads every field filled in, so the defaults live here.
 function toProposal(proposal: Proposal): BrainzMashPendingProposal {
 	return {
 		endpoint: proposal.endpoint ?? '',

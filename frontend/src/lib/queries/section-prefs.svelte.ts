@@ -2,10 +2,14 @@ import { key, userScope } from '$lib/queries/keys';
 import { api } from '$lib/api/client';
 import { v3 } from '$lib/api/v3/endpoint';
 import { authStore } from '$lib/stores/authStore.svelte';
-import type { SectionPrefsResponse, SectionPrefsUpdate } from '$lib/types';
+import type { components } from '$lib/api/v3/openapi';
 import { createQuery } from '@tanstack/svelte-query';
 import { setQueryDataWithPersister } from '$lib/queries/QueryClient';
 import { anyDiscoverChanged, applyEffects, homeChanged } from '$lib/queries/effects';
+
+export type SectionPrefItem = components['schemas']['SectionPrefItem'];
+export type SectionPrefsResponse = components['schemas']['SectionPrefsResponse'];
+export type SectionPrefsUpdate = components['schemas']['SectionPrefsUpdate'];
 
 export const SectionPrefsQueryKeyFactory = {
 	prefs: (userId: string | null | undefined) => key(userScope(userId), 'section-prefs')
@@ -13,21 +17,15 @@ export const SectionPrefsQueryKeyFactory = {
 
 const SECTION_PREFS_ENDPOINT = () => v3('/api/v3/me/section-prefs');
 
-// The contract leaves `pages` and `requires` optional; the page model fills them.
-function toResponse(data: { pages?: SectionPrefsResponse['pages'] }): SectionPrefsResponse {
-	return { pages: data.pages ?? {} };
-}
-
 export const getSectionPrefsQuery = () =>
 	createQuery(() => ({
 		queryKey: SectionPrefsQueryKeyFactory.prefs(authStore.user?.id),
-		queryFn: async ({ signal }) =>
-			toResponse(await api.v3.GET(SECTION_PREFS_ENDPOINT(), { signal }))
+		queryFn: ({ signal }) => api.v3.GET(SECTION_PREFS_ENDPOINT(), { signal })
 	}));
 
 /** Save one page's toggles; refreshes the prefs cache and invalidates the page data. */
 export async function saveSectionPrefs(update: SectionPrefsUpdate): Promise<void> {
-	const saved = toResponse(await api.v3.PUT(SECTION_PREFS_ENDPOINT(), update));
+	const saved = await api.v3.PUT(SECTION_PREFS_ENDPOINT(), update);
 	const userId = authStore.user?.id;
 	await setQueryDataWithPersister<SectionPrefsResponse>(
 		SectionPrefsQueryKeyFactory.prefs(userId),

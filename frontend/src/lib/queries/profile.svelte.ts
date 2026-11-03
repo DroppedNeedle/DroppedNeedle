@@ -43,26 +43,15 @@ export interface ProfileLibraryStats {
 	total_size_human: string | null;
 }
 
-export interface DisplayNameUpdateVars {
-	display_name: string;
-}
+export type DisplayNameUpdateVars = components['schemas']['DisplayNameUpdate'];
 
-export interface UsernameUpdateVars {
-	username: string;
-}
+export type UsernameUpdateVars = components['schemas']['UsernameUpdate'];
 
-export interface EmailUpdateVars {
-	email: string | null;
-}
+export type EmailUpdateVars = components['schemas']['EmailUpdate'];
 
-export interface ChangePasswordVars {
-	current_password: string;
-	new_password: string;
-}
+export type ChangePasswordVars = components['schemas']['PasswordChange'];
 
-export interface SetPasswordVars {
-	new_password: string;
-}
+export type SetPasswordVars = components['schemas']['LocalPasswordSet'];
 
 /** The current user's profile (identity only; see `ProfileData`). Keyed by
  *  `userId` so the cache never leaks across users on a shared browser. */

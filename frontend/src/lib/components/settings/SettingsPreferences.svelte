@@ -1,15 +1,21 @@
 <script lang="ts">
-	import type { UserPreferences, ReleaseTypeOption } from '$lib/types';
 	import {
 		createSaveReleasePreferencesMutation,
-		getReleasePreferencesQuery
+		getReleasePreferencesQuery,
+		type ReleasePreferences
 	} from '$lib/queries/settings/SectionSettingsQueries.svelte';
 	import AsyncButton from '$lib/ui/AsyncButton.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import CardActions from '$lib/ui/CardActions.svelte';
 	import CardTitle from '$lib/ui/CardTitle.svelte';
 
-	const DEFAULT_PREFERENCES: UserPreferences = {
+	interface ReleaseTypeOption {
+		id: string;
+		title: string;
+		description: string;
+	}
+
+	const DEFAULT_PREFERENCES: ReleasePreferences = {
 		primary_types: ['album', 'ep', 'single'],
 		secondary_types: ['studio']
 	};
@@ -17,7 +23,7 @@
 	const preferencesQuery = getReleasePreferencesQuery();
 	const saveMutation = createSaveReleasePreferencesMutation();
 
-	let preferences: UserPreferences = $state({
+	let preferences: ReleasePreferences = $state({
 		primary_types: [],
 		secondary_types: []
 	});

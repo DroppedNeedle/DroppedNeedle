@@ -2,7 +2,7 @@
 	import { onDestroy } from 'svelte';
 	import { SvelteMap } from 'svelte/reactivity';
 	import { Check, ExternalLink } from 'lucide-svelte';
-	import type { SectionPrefItem } from '$lib/types';
+	import type { SectionPrefItem } from '$lib/queries/section-prefs.svelte';
 	import { getSectionPrefsQuery, saveSectionPrefs } from '$lib/queries/section-prefs.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import { withBasePath } from '$lib/utils/basePath';

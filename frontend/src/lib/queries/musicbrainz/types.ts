@@ -2,19 +2,11 @@ import type { components } from '$lib/api/v3/openapi';
 // Page model for the MusicBrainz settings. The v3 view is adapted into it in
 // MusicBrainzAdapters.ts; the request bodies match the generated schemas.
 
-export type MusicBrainzSourceMode = 'brainzmash' | 'official' | 'mirror' | 'community';
+export type MusicBrainzSourceMode = components['schemas']['MbSourceMode'];
 
-export interface BrainzMashPendingProposal {
-	endpoint: string;
-	access_revision: string;
-	source_id: string;
-	generation: number;
-	disclosure_version: string;
-	consented: boolean;
-	verified: boolean;
-}
+export type BrainzMashPendingProposal = components['schemas']['BrainzmashPendingProposal'];
 
-export type BrainzMashActiveBinding = BrainzMashPendingProposal;
+export type BrainzMashActiveBinding = components['schemas']['BrainzmashActiveBinding'];
 
 export interface MusicBrainzSettingsResponse {
 	/** The source currently serving runtime MusicBrainz traffic. */

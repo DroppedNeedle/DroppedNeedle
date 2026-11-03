@@ -15,7 +15,7 @@
 		createRevokeAppPasswordMutation,
 		createSaveMyConnectAppsMutation
 	} from '$lib/queries/connect-apps.svelte';
-	import type { AppPasswordView } from '$lib/types';
+	import type { AppPasswordView } from '$lib/queries/connect-apps.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import ConfirmDialog from '$lib/ui/ConfirmDialog.svelte';

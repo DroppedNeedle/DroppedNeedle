@@ -12,12 +12,18 @@ import {
 	createAppMutation,
 	myConnectAppsChanged
 } from '$lib/queries/effects';
-import type {
-	AppConnectSettings,
-	ConnectAppsSettings,
-	ConnectRequest,
-	MyConnectApps
-} from '$lib/types';
+import type { components } from '$lib/api/v3/openapi';
+
+type Schemas = components['schemas'];
+
+// Connect Apps: the inbound OpenSubsonic and Jellyfin compatibility.
+export type ConnectAppsSettings = Schemas['ConnectApps'];
+export type AppConnectSettings = Schemas['AppConnect'];
+export type ConnectRequest = Schemas['ConnectRequest'];
+export type MyConnectApps = Schemas['MyConnectApps'];
+export type AppPasswordView = Schemas['AppPasswordView'];
+/** One active app-password in the admin roster; never carries a secret. */
+export type AdminAppPasswordView = Schemas['AdminAppPasswordView'];
 
 /** The server refuses a new app-password once a user has this many active. */
 export const APP_PASSWORD_CAP = 25;
