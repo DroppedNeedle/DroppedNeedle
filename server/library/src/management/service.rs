@@ -14,7 +14,7 @@ use droppedneedle_kernel::db::Lane;
 use super::models::{
     HistoryFilter, HistoryItem, ItemFilter, ItemPage, JobDetail, JobIntent, JobMode,
     ManagementError, Origin, PinnedProfile, PlannedItem, PreviewHandle, ResultPage, Revisions,
-    Selection, SelectionKind, Summary, TagEditMode,
+    Selection, SelectionKind, Summary, TagEditMode, TagScope,
 };
 use super::planner::{self, PlanContext};
 use super::profile::{self, CompiledScripts};
@@ -1498,7 +1498,7 @@ impl Management {
             || intent.tag_edit.as_ref().is_some_and(|edit| {
                 edit.fields
                     .iter()
-                    .any(|field| field.subject_kind == "album")
+                    .any(|field| field.subject_kind == TagScope::Album)
             });
         let picked: usize = albums
             .iter()

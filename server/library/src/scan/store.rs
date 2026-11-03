@@ -5,17 +5,26 @@ use std::collections::HashSet;
 
 use droppedneedle_kernel::db::DbError;
 
-use super::models::{Counter, EffectivePolicy, ScanInventoryItem};
+use super::models::{Counter, EffectivePolicy, InventoryState, ScanInventoryItem};
 use super::seams::ScannedTags;
 
 /// Stat-revision lineage for one catalog row. `exact` rows compare the
-/// `size:mtime_ns` string; `legacy_float` rows use the symmetric epsilon
-/// band and promote to exact on an unchanged verdict.
+/// `size:mtime_ns` string; the others, which v2 wrote, use the symmetric
+/// epsilon band and promote to exact on an unchanged verdict.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RevisionKind {
     Exact,
     LegacyFloat,
+    LegacyReview,
+    Unclassified,
 }
+
+droppedneedle_kernel::spelled!(RevisionKind {
+    Exact => "exact",
+    LegacyFloat => "legacy_float",
+    LegacyReview => "legacy_review",
+    Unclassified => "unclassified",
+});
 
 /// One catalog row: the durable memory of a previously scanned file.
 #[derive(Debug, Clone)]
@@ -66,7 +75,7 @@ pub struct IndexWindow {
     pub after: Option<(String, String)>,
     pub through: (String, String),
     pub items: Vec<CommitIndexedItem>,
-    pub failed: Vec<(String, String, &'static str)>,
+    pub failed: Vec<(String, String, InventoryState)>,
     /// Files whose catalog write was given up (root, path, why), reported
     /// back as refused rows are.
     pub refused: Vec<(String, String, String)>,

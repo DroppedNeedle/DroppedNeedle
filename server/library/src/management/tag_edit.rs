@@ -192,7 +192,7 @@ struct Subject {
 }
 
 /// A saved override: (subject kind, field) -> (id, mode, row revision).
-type SavedOverrides = BTreeMap<(String, String), (String, OverrideMode, i64)>;
+type SavedOverrides = BTreeMap<(TagScope, String), (String, OverrideMode, i64)>;
 
 impl Management {
     fn subject(&self, track_id: &str) -> Result<Subject, ManagementError> {
@@ -290,7 +290,7 @@ impl Management {
             .into_iter()
             .map(|field| {
                 let scope = scope(field);
-                let saved = saved.get(&(scope.as_str().to_owned(), field.name().to_owned()));
+                let saved = saved.get(&(scope, field.name().to_owned()));
                 EditorField {
                     field_name: field.name().to_owned(),
                     scope,
@@ -352,7 +352,7 @@ impl Management {
             }
             names.push(name.clone());
             let scope = scope(field);
-            let existing = saved.get(&(scope.as_str().to_owned(), name.clone()));
+            let existing = saved.get(&(scope, name.clone()));
             let values = if request.mode == TagEditMode::ResetCanonical {
                 if existing.is_none() {
                     return Err(ManagementError::Invalid(format!(
@@ -365,7 +365,7 @@ impl Management {
             };
             fields.push(TagEditField {
                 field_name: name.clone(),
-                subject_kind: scope.as_str().to_owned(),
+                subject_kind: scope,
                 values,
                 override_id: existing.map(|(id, _, _)| id.clone()),
                 expected_override_row_revision: existing.map(|(_, _, revision)| *revision),

@@ -3,31 +3,8 @@
 //! and a management job's phase. Each converts to and from SQL in one
 //! place, so no caller writes one as a literal.
 
-use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ToSql, ToSqlOutput, ValueRef};
+use droppedneedle_kernel::spelled;
 use serde::{Deserialize, Serialize};
-
-/// One SQL conversion for a closed set stored as text: the value is its
-/// `as_str`, and text outside the set fails decoding.
-macro_rules! sql_text {
-    ($type:ty) => {
-        impl ToSql for $type {
-            fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
-                Ok(ToSqlOutput::from(self.as_str()))
-            }
-        }
-
-        impl FromSql for $type {
-            fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
-                let text = value.as_str()?;
-                Self::parse(text).ok_or_else(|| {
-                    FromSqlError::Other(
-                        format!(concat!("not a ", stringify!($type), ": {}"), text).into(),
-                    )
-                })
-            }
-        }
-    };
-}
 
 /// What kind of work a job carries. A bulk review apply settles or
 /// retries many identification reviews, one work item per review.
@@ -40,28 +17,12 @@ pub enum OperationKind {
     LibraryManagement,
 }
 
-impl OperationKind {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::BulkReviewApply => "bulk_review_apply",
-            Self::Repair => "repair",
-            Self::ExplicitReidentification => "explicit_reidentification",
-            Self::LibraryManagement => "library_management",
-        }
-    }
-
-    pub fn parse(raw: &str) -> Option<Self> {
-        match raw {
-            "bulk_review_apply" => Some(Self::BulkReviewApply),
-            "repair" => Some(Self::Repair),
-            "explicit_reidentification" => Some(Self::ExplicitReidentification),
-            "library_management" => Some(Self::LibraryManagement),
-            _ => None,
-        }
-    }
-}
-
-sql_text!(OperationKind);
+spelled!(OperationKind {
+    BulkReviewApply => "bulk_review_apply",
+    Repair => "repair",
+    ExplicitReidentification => "explicit_reidentification",
+    LibraryManagement => "library_management",
+});
 
 /// Where a job is in its life.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
@@ -78,36 +39,16 @@ pub enum OperationState {
     Stopped,
 }
 
-impl OperationState {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Queued => "queued",
-            Self::Running => "running",
-            Self::Paused => "paused",
-            Self::Ready => "ready",
-            Self::Succeeded => "succeeded",
-            Self::Failed => "failed",
-            Self::Cancelled => "cancelled",
-            Self::Stopped => "stopped",
-        }
-    }
-
-    pub fn parse(raw: &str) -> Option<Self> {
-        match raw {
-            "queued" => Some(Self::Queued),
-            "running" => Some(Self::Running),
-            "paused" => Some(Self::Paused),
-            "ready" => Some(Self::Ready),
-            "succeeded" => Some(Self::Succeeded),
-            "failed" => Some(Self::Failed),
-            "cancelled" => Some(Self::Cancelled),
-            "stopped" => Some(Self::Stopped),
-            _ => None,
-        }
-    }
-}
-
-sql_text!(OperationState);
+spelled!(OperationState {
+    Queued => "queued",
+    Running => "running",
+    Paused => "paused",
+    Ready => "ready",
+    Succeeded => "succeeded",
+    Failed => "failed",
+    Cancelled => "cancelled",
+    Stopped => "stopped",
+});
 
 /// A control the running worker has not acted on yet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
@@ -118,26 +59,11 @@ pub enum ControlRequest {
     Stop,
 }
 
-impl ControlRequest {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::None => "none",
-            Self::Pause => "pause",
-            Self::Stop => "stop",
-        }
-    }
-
-    pub fn parse(raw: &str) -> Option<Self> {
-        match raw {
-            "none" => Some(Self::None),
-            "pause" => Some(Self::Pause),
-            "stop" => Some(Self::Stop),
-            _ => None,
-        }
-    }
-}
-
-sql_text!(ControlRequest);
+spelled!(ControlRequest {
+    None => "none",
+    Pause => "pause",
+    Stop => "stop",
+});
 
 /// Where one work item is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
@@ -150,30 +76,13 @@ pub enum WorkState {
     Skipped,
 }
 
-impl WorkState {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Pending => "pending",
-            Self::Running => "running",
-            Self::Succeeded => "succeeded",
-            Self::Failed => "failed",
-            Self::Skipped => "skipped",
-        }
-    }
-
-    pub fn parse(raw: &str) -> Option<Self> {
-        match raw {
-            "pending" => Some(Self::Pending),
-            "running" => Some(Self::Running),
-            "succeeded" => Some(Self::Succeeded),
-            "failed" => Some(Self::Failed),
-            "skipped" => Some(Self::Skipped),
-            _ => None,
-        }
-    }
-}
-
-sql_text!(WorkState);
+spelled!(WorkState {
+    Pending => "pending",
+    Running => "running",
+    Succeeded => "succeeded",
+    Failed => "failed",
+    Skipped => "skipped",
+});
 
 /// Where a management job is: planning its files, a preview waiting to be
 /// applied, writing (applying, undoing or restoring originals), or done.
@@ -189,29 +98,11 @@ pub enum ManagementPhase {
     Complete,
 }
 
-impl ManagementPhase {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Planning => "planning",
-            Self::Ready => "ready",
-            Self::Applying => "applying",
-            Self::Undoing => "undoing",
-            Self::Restoring => "restoring",
-            Self::Complete => "complete",
-        }
-    }
-
-    pub fn parse(raw: &str) -> Option<Self> {
-        match raw {
-            "planning" => Some(Self::Planning),
-            "ready" => Some(Self::Ready),
-            "applying" => Some(Self::Applying),
-            "undoing" => Some(Self::Undoing),
-            "restoring" => Some(Self::Restoring),
-            "complete" => Some(Self::Complete),
-            _ => None,
-        }
-    }
-}
-
-sql_text!(ManagementPhase);
+spelled!(ManagementPhase {
+    Planning => "planning",
+    Ready => "ready",
+    Applying => "applying",
+    Undoing => "undoing",
+    Restoring => "restoring",
+    Complete => "complete",
+});

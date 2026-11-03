@@ -212,6 +212,12 @@ pub enum Phase {
     Reconciling,
 }
 
+spelled!(Phase {
+    Discovering => "discovering",
+    Indexing => "indexing",
+    Reconciling => "reconciling",
+});
+
 impl Phase {
     /// The phase as the API spells it.
     pub const fn scan_phase(self) -> ScanPhase {
@@ -232,6 +238,37 @@ impl Phase {
         }
     }
 }
+
+/// A pass an ended run owes, in `library_scan_runs.next_end_pass`. The
+/// passes run in the order the store lists them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EndPassName {
+    JoinAcrossScans,
+    CarryToFirstHalf,
+    JoinReplaced,
+    KeepDepartures,
+    PlaceScanned,
+    ContinueTracks,
+    ContinueMoved,
+    ConvergeArtists,
+    HoldReplacements,
+    OfferHeldBack,
+    HeldScopes,
+}
+
+spelled!(EndPassName {
+    JoinAcrossScans => "scan_end_join_across_scans",
+    CarryToFirstHalf => "scan_end_carry_to_first_half",
+    JoinReplaced => "scan_end_join_replaced",
+    KeepDepartures => "scan_end_keep_departures",
+    PlaceScanned => "scan_end_place_scanned",
+    ContinueTracks => "scan_end_continue_tracks",
+    ContinueMoved => "scan_end_continue_moved",
+    ConvergeArtists => "scan_end_converge_artists",
+    HoldReplacements => "scan_end_hold_replacements",
+    OfferHeldBack => "scan_end_offer_held_back",
+    HeldScopes => "scan_end_held_scopes",
+});
 
 /// How a run ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -592,8 +629,76 @@ pub struct ScanFailureRecord {
     pub failure_code: FailureCode,
     pub recorded_at: f64,
     pub failure_detail: String,
-    pub phase: ScanPhase,
+    pub phase: Phase,
 }
+
+/// Where a track's title, album title or album artist came from: its tags,
+/// its path, or a stand-in. `absent` is what v2 gave rows it never read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TagProvenance {
+    Tag,
+    Parsed,
+    Placeholder,
+    Absent,
+}
+
+spelled!(TagProvenance {
+    Tag => "tag",
+    Parsed => "parsed",
+    Placeholder => "placeholder",
+    Absent => "absent",
+});
+
+/// What indexing made of one inventory row, in
+/// `library_scan_inventory.processing_state`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InventoryState {
+    Pending,
+    Indexed,
+    Skipped,
+    /// The tag-read capacity ran out; the read waits for a later run.
+    Deferred,
+    Failed,
+}
+
+spelled!(InventoryState {
+    Pending => "pending",
+    Indexed => "indexed",
+    Skipped => "skipped",
+    Deferred => "deferred",
+    Failed => "failed",
+});
+
+/// Who grouped an album or put a track on its album: the scan, v2's
+/// grouping carried by the upgrade, or a curator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GroupingSource {
+    Automatic,
+    LegacyImport,
+    Manual,
+}
+
+spelled!(GroupingSource {
+    Automatic => "automatic",
+    LegacyImport => "legacy_import",
+    Manual => "manual",
+});
+
+/// Where an album's cover was found, in `local_album_artwork.source`: an
+/// image in the album's folder or a picture embedded in one of its files.
+/// A `manual` row is left as it is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArtworkSource {
+    Embedded,
+    Folder,
+    Manual,
+}
+
+spelled!(ArtworkSource {
+    Embedded => "embedded",
+    Folder => "folder",
+    Manual => "manual",
+});
 
 /// Discovery state per (run, scope). The stored values are v2's
 /// scope-discovery column values: a clean walk lands `completed`, a degraded one `partially_read`,

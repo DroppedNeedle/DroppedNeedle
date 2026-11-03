@@ -21,8 +21,20 @@ use crate::jobs::{OperationKind, OperationState};
 /// Deferred jobs the activity card lists by name, at most this many.
 const DEFERRED_JOB_LIMIT: i64 = 20;
 
-/// Stream rows the activity revisions always carry.
-const STREAMS: [&str; 3] = ["scan", "identification", "operation"];
+/// A library event stream with a revision row, counting the changes its
+/// events report. The activity revisions always carry every one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EventStream {
+    Scan,
+    Identification,
+    Operation,
+}
+
+droppedneedle_kernel::spelled!(EventStream {
+    Scan => "scan",
+    Identification => "identification",
+    Operation => "operation",
+});
 
 /// What the identification pause switch says.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -341,7 +353,7 @@ pub fn operation_work(conn: &Connection) -> rusqlite::Result<Vec<OperationWork>>
 
 pub fn library_revisions(conn: &Connection) -> rusqlite::Result<BTreeMap<String, u64>> {
     let mut revisions = BTreeMap::new();
-    for kind in STREAMS {
+    for kind in EventStream::ALL {
         let value = conn
             .query_row(
                 crate::activity::sql::STREAM_REVISION.text(),
@@ -350,7 +362,7 @@ pub fn library_revisions(conn: &Connection) -> rusqlite::Result<BTreeMap<String,
             )
             .optional()?
             .unwrap_or(0);
-        revisions.insert(kind.to_owned(), value.max(0) as u64);
+        revisions.insert(kind.as_str().to_owned(), value.max(0) as u64);
     }
     revisions.insert(
         "catalog".to_owned(),

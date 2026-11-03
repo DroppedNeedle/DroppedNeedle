@@ -270,7 +270,7 @@ pub struct ContributionRow {
     pub duplicate_checked_at: Option<f64>,
     pub duplicate_input_revision: Option<String>,
     pub result_release_mbid: Option<String>,
-    pub result_source: Option<String>,
+    pub result_source: Option<ResultSource>,
     pub result_received_at: Option<f64>,
     pub seeded_at: Option<f64>,
     pub seed_token_hash: Option<String>,

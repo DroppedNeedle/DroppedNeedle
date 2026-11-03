@@ -76,30 +76,16 @@ pub enum JobMode {
     DuplicateResolution,
 }
 
+droppedneedle_kernel::spelled!(JobMode {
+    Preview => "preview",
+    Apply => "apply",
+    AutomaticApply => "automatic_apply",
+    Undo => "undo",
+    BaselineRestore => "baseline_restore",
+    DuplicateResolution => "duplicate_resolution",
+});
+
 impl JobMode {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Preview => "preview",
-            Self::Apply => "apply",
-            Self::AutomaticApply => "automatic_apply",
-            Self::Undo => "undo",
-            Self::BaselineRestore => "baseline_restore",
-            Self::DuplicateResolution => "duplicate_resolution",
-        }
-    }
-
-    pub fn parse(raw: &str) -> Option<Self> {
-        match raw {
-            "preview" => Some(Self::Preview),
-            "apply" => Some(Self::Apply),
-            "automatic_apply" => Some(Self::AutomaticApply),
-            "undo" => Some(Self::Undo),
-            "baseline_restore" => Some(Self::BaselineRestore),
-            "duplicate_resolution" => Some(Self::DuplicateResolution),
-            _ => None,
-        }
-    }
-
     /// Jobs that put files back rather than plan them from a profile.
     /// Their apply skips the profile and match checks: the publish seal
     /// already pins every file.
@@ -121,16 +107,12 @@ pub enum Origin {
     ScanDiscovered,
 }
 
-impl Origin {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Manual => "manual",
-            Self::Acquisition => "acquisition",
-            Self::DropImport => "drop_import",
-            Self::ScanDiscovered => "scan_discovered",
-        }
-    }
-}
+droppedneedle_kernel::spelled!(Origin {
+    Manual => "manual",
+    Acquisition => "acquisition",
+    DropImport => "drop_import",
+    ScanDiscovered => "scan_discovered",
+});
 
 /// How a tag edit is kept.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
@@ -146,7 +128,9 @@ pub enum TagEditMode {
 }
 
 /// Where a tag applies.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, utoipa::ToSchema,
+)]
 #[serde(rename_all = "snake_case")]
 #[schema(as = ManagementTagScope)]
 pub enum TagScope {
@@ -192,8 +176,8 @@ droppedneedle_kernel::spelled!(OverrideMode {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TagEditField {
     pub field_name: String,
-    /// `album` or `track`: album fields apply to every file of the album.
-    pub subject_kind: String,
+    /// Album fields apply to every file of the album.
+    pub subject_kind: TagScope,
     /// The new values; empty clears the field.
     pub values: Vec<String>,
     pub override_id: Option<String>,

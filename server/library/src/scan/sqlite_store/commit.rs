@@ -54,6 +54,7 @@ use crate::identify::sqlite::{
 use crate::management::{automatic, takeover};
 use crate::matching::model::EditionHints;
 use crate::publish::HIDDEN_PREFIX;
+use crate::scan::models::{EndPassName, GroupingSource, InventoryState, Phase, TagProvenance};
 use crate::scan::naming::{
     album_grouping_key, album_name_key, grouping_directory, parse_names_for_row,
 };
@@ -280,7 +281,7 @@ struct AtPath {
     duration_seconds: Option<f64>,
     recording_mbid: Option<String>,
     title_folded: String,
-    title_provenance: String,
+    title_provenance: TagProvenance,
     disc_number: i64,
     track_number: i64,
     sample_rate: Option<i64>,
@@ -387,7 +388,7 @@ fn other_music(row: &AtPath, item: &CommitIndexedItem) -> bool {
         (Some(old), Some(new)) => old != new,
         _ => {
             let title = tag.title.trim();
-            row.title_provenance == "tag"
+            row.title_provenance == TagProvenance::Tag
                 && !title.is_empty()
                 && row.title_folded != fold_text(title)
         }
@@ -449,7 +450,7 @@ fn new_copy(
         (Some(old), Some(new)) => old == new,
         _ => {
             let title = tag.title.trim();
-            row.title_provenance == "tag"
+            row.title_provenance == TagProvenance::Tag
                 && !title.is_empty()
                 && row.title_folded == fold_text(title)
                 && lengths.is_some_and(|apart| apart <= OTHER_MUSIC_SECONDS)
@@ -966,29 +967,29 @@ fn write_item(
         .and_then(|names| names.title.clone())
         .filter(|title| *title != file_stem);
     let (title, title_provenance) = if !raw_title.is_empty() {
-        (raw_title.to_owned(), "tag")
+        (raw_title.to_owned(), TagProvenance::Tag)
     } else if let Some(parsed) = parsed_title {
-        (parsed, "parsed")
+        (parsed, TagProvenance::Parsed)
     } else {
-        (file_stem.clone(), "placeholder")
+        (file_stem.clone(), TagProvenance::Placeholder)
     };
     let (album_title, album_title_provenance) = if !raw_album.is_empty() {
-        (raw_album.to_owned(), "tag")
+        (raw_album.to_owned(), TagProvenance::Tag)
     } else if let Some(album) = parsed
         .as_ref()
         .and_then(|names| names.album.clone())
         .filter(|album| *album != file_stem)
     {
-        (album, "parsed")
+        (album, TagProvenance::Parsed)
     } else {
-        (file_stem.clone(), "placeholder")
+        (file_stem.clone(), TagProvenance::Placeholder)
     };
     let (album_artist, album_artist_provenance) = if !raw_album_artist.is_empty() {
-        (raw_album_artist.to_owned(), "tag")
+        (raw_album_artist.to_owned(), TagProvenance::Tag)
     } else if let Some(artist) = parsed.as_ref().and_then(|names| names.artist.clone()) {
-        (artist, "parsed")
+        (artist, TagProvenance::Parsed)
     } else {
-        (UNKNOWN_ARTIST.to_owned(), "placeholder")
+        (UNKNOWN_ARTIST.to_owned(), TagProvenance::Placeholder)
     };
     let track_artist = non_empty(&tag.artist).unwrap_or_else(|| album_artist.clone());
     let track_number = if tag.track_number > 0 {
@@ -1027,7 +1028,8 @@ fn write_item(
         .filter(|mbid| !mbid.is_empty());
     let names = AlbumNames {
         release_mbid,
-        from_tags: album_title_provenance == "tag" && album_artist_provenance == "tag",
+        from_tags: album_title_provenance == TagProvenance::Tag
+            && album_artist_provenance == TagProvenance::Tag,
         directory: &directory,
         title_folded: fold_text(&album_title),
         artist_folded: fold_text(&album_artist),
@@ -1109,7 +1111,7 @@ fn write_item(
     // How the stored row holds its album: a curator's lock keeps it as is
     // (album row included), and a grouping carried from v2 holds while the
     // file still names the album.
-    let membership: Option<(String, bool)> = match &previous {
+    let membership: Option<(GroupingSource, bool)> = match &previous {
         Some((id, _)) => tx
             .prepare_cached(crate::scan::sql::TRACK_MEMBERSHIP.text())?
             .query_row(params![id], |row| {
@@ -1122,7 +1124,7 @@ fn write_item(
     let locked = membership.as_ref().is_some_and(|(_, locked)| *locked);
     let legacy = membership
         .as_ref()
-        .is_some_and(|(source, _)| source == "legacy_import");
+        .is_some_and(|(source, _)| *source == GroupingSource::LegacyImport);
     let joined = adopted.and_then(|adopted| adopted.album_id);
     let album_id = match (&previous, locked, joined) {
         (_, _, Some(joined)) => joined.to_owned(),
@@ -1744,7 +1746,7 @@ fn released_by(tx: &Connection, run_id: &str, album_id: &str) -> rusqlite::Resul
 /// One pass of what a run settles once it has ended: its name, which is
 /// also its lane turns' name, and the work.
 pub(super) struct EndPass {
-    pub(super) name: &'static str,
+    pub(super) name: EndPassName,
     pub(super) work: EndWork,
 }
 
@@ -1800,50 +1802,50 @@ pub(super) fn albums_left(conn: &Connection, run_id: &str) -> rusqlite::Result<V
 ///     those the run walked as expected are let go ([`held_scopes::settle`]).
 pub(super) const END_PASSES: [EndPass; 11] = [
     EndPass {
-        name: "scan_end_join_across_scans",
+        name: EndPassName::JoinAcrossScans,
         work: EndWork::Whole(join_across_scans),
     },
     EndPass {
-        name: "scan_end_carry_to_first_half",
+        name: EndPassName::CarryToFirstHalf,
         work: EndWork::Whole(|tx, run_id, now| carry_to_first_half(tx, run_id, now).map(|()| 0)),
     },
     EndPass {
-        name: "scan_end_join_replaced",
+        name: EndPassName::JoinReplaced,
         work: EndWork::Whole(|tx, _, now| join_replaced(tx, Scope::Library, now).map(|()| 0)),
     },
     EndPass {
-        name: "scan_end_keep_departures",
+        name: EndPassName::KeepDepartures,
         work: EndWork::ByAlbum {
             each: keep_departures_of,
             tidy: tidy_departures,
         },
     },
     EndPass {
-        name: "scan_end_place_scanned",
+        name: EndPassName::PlaceScanned,
         work: EndWork::Whole(|tx, _, now| place_scanned(tx, now).map(|()| 0)),
     },
     EndPass {
-        name: "scan_end_continue_tracks",
+        name: EndPassName::ContinueTracks,
         work: EndWork::Whole(|tx, _, now| continue_tracks(tx, Scope::Library, now).map(|()| 0)),
     },
     EndPass {
-        name: "scan_end_continue_moved",
+        name: EndPassName::ContinueMoved,
         work: EndWork::Whole(|tx, _, now| continue_moved(tx, now).map(|()| 0)),
     },
     EndPass {
-        name: "scan_end_converge_artists",
+        name: EndPassName::ConvergeArtists,
         work: EndWork::Whole(|tx, _, now| converge_artists(tx, now).map(|()| 0)),
     },
     EndPass {
-        name: "scan_end_hold_replacements",
+        name: EndPassName::HoldReplacements,
         work: EndWork::Whole(|tx, run_id, now| hold_replacements(tx, run_id, now).map(|()| 0)),
     },
     EndPass {
-        name: "scan_end_offer_held_back",
+        name: EndPassName::OfferHeldBack,
         work: EndWork::Whole(|tx, run_id, now| offer_held_back(tx, run_id, now)),
     },
     EndPass {
-        name: "scan_end_held_scopes",
+        name: EndPassName::HeldScopes,
         work: EndWork::Whole(|tx, run_id, now| held_scopes::settle(tx, run_id, now).map(|()| 0)),
     },
 ];
@@ -2473,7 +2475,7 @@ fn mark_window(
     tx: &Connection,
     window: &IndexWindow,
     indexed: &[(String, String, String)],
-    failed: &[(String, String, &'static str)],
+    failed: &[(String, String, InventoryState)],
     extra_counters: &[(Counter, i64)],
 ) -> rusqlite::Result<()> {
     let mut mark_indexed = tx.prepare_cached(crate::scan::sql::MARK_INVENTORY_INDEXED.text())?;
@@ -2634,7 +2636,7 @@ fn write_window(
     let is_fenced = |root: &str, path: &str| fenced.contains(&(root.to_owned(), path.to_owned()));
     let mut outcome = WindowOutcome::default();
     let mut indexed: Vec<(String, String, String)> = Vec::new();
-    let mut failed: Vec<(String, String, &'static str)> = window
+    let mut failed: Vec<(String, String, InventoryState)> = window
         .failed
         .iter()
         .map(|(root, path, state)| (root.clone(), path.clone(), *state))
@@ -2706,7 +2708,11 @@ fn write_window(
                 adjust.push((Counter::Indexed, -1));
                 adjust.extend(Counter::parse(item.verdict_counter).map(|verdict| (verdict, -1)));
                 adjust.push((Counter::Errored, 1));
-                failed.push((item.root_id.clone(), item.relative_path.clone(), "failed"));
+                failed.push((
+                    item.root_id.clone(),
+                    item.relative_path.clone(),
+                    InventoryState::Failed,
+                ));
                 outcome.failed.push((
                     item.root_id.clone(),
                     item.relative_path.clone(),
@@ -2799,7 +2805,7 @@ fn write_window(
             path,
             FailureCode::CatalogCommitFailed,
             format!("The catalog could not store this file: {error}"),
-            ScanPhase::Indexing.as_str(),
+            Phase::Indexing,
             crate::clock::ms(window.now),
         ])?;
     }
@@ -3019,7 +3025,7 @@ pub(super) fn give_up_window(window: &IndexWindow) -> Option<IndexWindow> {
     };
     given_up
         .failed
-        .push((row.0.clone(), row.1.clone(), "failed"));
+        .push((row.0.clone(), row.1.clone(), InventoryState::Failed));
     given_up.refused.push((
         row.0.clone(),
         row.1.clone(),

@@ -10,6 +10,7 @@ use super::models::{ApplyResult, Confidence, FindingCode, FindingState};
 use crate::identity::DecisionSource;
 use crate::identity::sql::REVISABLE;
 use crate::jobs::sql::live_job;
+use crate::scan::models::GroupingSource;
 
 droppedneedle_kernel::sql_choice! {
     /// Which albums a repair job covers.
@@ -506,7 +507,7 @@ droppedneedle_kernel::sql! {
         title_folded: String,
         artist_name: String,
         artist_folded: String,
-        grouping_source: String,
+        grouping_source: GroupingSource,
         grouping_locked: bool,
     }
     pub(super) row HygieneIdentity for [IDENTITY] {

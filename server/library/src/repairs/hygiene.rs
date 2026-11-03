@@ -42,6 +42,7 @@ use crate::repairs::sql::{
     AlbumArtistAndSort, ArtistRepairAction, CreditColumns, HygieneAlbum as Album, HygieneIdentity,
     HygieneTrack, LiveAlbumArtist, NamedTrack,
 };
+use crate::scan::models::GroupingSource;
 use crate::scan::naming::{UNKNOWN_ARTIST, UNKNOWN_ARTIST_ID};
 use crate::scan::sqlite_store::awaits_retag;
 use droppedneedle_kernel::db::fold::fold_text;
@@ -146,7 +147,7 @@ fn retire_empty_shell(
     job_id: &str,
     now: f64,
 ) -> rusqlite::Result<Option<serde_json::Value>> {
-    if album.grouping_source != "automatic" || album.grouping_locked {
+    if album.grouping_source != GroupingSource::Automatic || album.grouping_locked {
         return Ok(None);
     }
     let has_tracks: bool = tx.query_row(
@@ -244,7 +245,7 @@ fn fold_split_legacy_album(
     };
     // A fold a person undid stays undone.
     if decision != DecisionSource::LegacyImport
-        || album.grouping_source != "legacy_import"
+        || album.grouping_source != GroupingSource::LegacyImport
         || identity::fold_undone(tx, &album.id)?
     {
         return Ok(None);
@@ -426,7 +427,7 @@ fn artist_from_tracks(
 ) -> rusqlite::Result<Option<serde_json::Value>> {
     if album.artist_name != UNKNOWN_ARTIST
         || album.grouping_locked
-        || album.grouping_source == "manual"
+        || album.grouping_source == GroupingSource::Manual
     {
         return Ok(None);
     }

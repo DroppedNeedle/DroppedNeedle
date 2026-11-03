@@ -369,7 +369,7 @@ pub async fn scan_run_failures(
                 ScanRunFailureItem {
                     message: reason.message.to_owned(),
                     action: reason.action.to_owned(),
-                    phase: failure.phase,
+                    phase: failure.phase.scan_phase(),
                     root_id: failure.root_id,
                     relative_path: failure.relative_path,
                     failure_code: failure.failure_code,

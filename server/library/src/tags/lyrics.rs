@@ -54,16 +54,10 @@ pub enum LyricsSource {
     Tag,
 }
 
-impl LyricsSource {
-    /// The stored spelling, as the `local_track_lyrics.source` CHECK lists it.
-    #[must_use]
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Sidecar => "sidecar",
-            Self::Tag => "tag",
-        }
-    }
-}
+droppedneedle_kernel::spelled!(LyricsSource {
+    Sidecar => "sidecar",
+    Tag => "tag",
+});
 
 /// Why a payload was refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]

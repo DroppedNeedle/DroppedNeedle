@@ -219,6 +219,21 @@ droppedneedle_kernel::spelled!(JobState {
     Attention => "attention",
 });
 
+/// What AcoustID made of a kept fingerprint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FingerprintState {
+    Matched,
+    NoMatch,
+    /// Not asked yet: the lookup waits.
+    Deferred,
+}
+
+droppedneedle_kernel::spelled!(FingerprintState {
+    Matched => "matched",
+    NoMatch => "no_match",
+    Deferred => "deferred",
+});
+
 /// One ambiguous case waiting on a curator.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ReviewItem {

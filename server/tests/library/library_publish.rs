@@ -34,7 +34,7 @@ use publish::planner::{
 };
 use publish::publisher::{locate, read_revision};
 use publish::remove;
-use publish::snapshots::{BaselineStore, BlobStore, SnapshotStore, sha256_hex};
+use publish::snapshots::{BaselineStore, BlobOwner, BlobStore, SnapshotStore, sha256_hex};
 use publish::tags_seam::{TagDocument, TagTarget, TagUpdates};
 use publish::undo::{
     BaselineBlock, BaselineInput, BeforeState, UndoBlock, UndoInput, UndoLive,
@@ -4317,7 +4317,7 @@ fn snapshots_expire_baselines_stay_and_blobs_dedup() {
                 "test.keep",
                 &[bytes],
                 |tx, hashes| {
-                    SnapshotStore::new(tx).add_ref(&hashes[0], "preview", job)?;
+                    SnapshotStore::new(tx).add_ref(&hashes[0], BlobOwner::Preview, job)?;
                     Ok(hashes[0].clone())
                 },
             )

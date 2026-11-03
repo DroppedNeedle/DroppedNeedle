@@ -28,8 +28,9 @@ use sha2::{Digest as _, Sha256};
 use super::artist_links::{self, ArtistLink, ArtistLinkError};
 use super::merged_ids;
 use super::models::{
-    AlbumIdentity, Alias, AliasKind, AutomaticSeal, CandidateEvidence, IdentifyJob, JobState,
-    LocalAlbumFacts, LocalTrackFacts, MatchFlag, ReviewItem, ReviewState, TrackIdentity,
+    AlbumIdentity, Alias, AliasKind, AutomaticSeal, CandidateEvidence, FingerprintState,
+    IdentifyJob, JobState, LocalAlbumFacts, LocalTrackFacts, MatchFlag, ReviewItem, ReviewState,
+    TrackIdentity,
 };
 pub(crate) use super::queue::bump_identification_stream;
 use super::queue::{INSERT_JOB, idempotency_key};
@@ -572,7 +573,11 @@ impl SqliteIdentifyStore {
         duration_seconds: u32,
         matched: bool,
     ) -> Result<(), StoreError> {
-        let state = if matched { "matched" } else { "no_match" };
+        let state = if matched {
+            FingerprintState::Matched
+        } else {
+            FingerprintState::NoMatch
+        };
         self.put_fingerprint(
             local_track_id,
             stat_revision,
@@ -596,7 +601,7 @@ impl SqliteIdentifyStore {
             stat_revision,
             fingerprint,
             duration_seconds,
-            "deferred",
+            FingerprintState::Deferred,
         )
     }
 
@@ -606,7 +611,7 @@ impl SqliteIdentifyStore {
         stat_revision: &str,
         fingerprint: &str,
         duration_seconds: u32,
-        state: &'static str,
+        state: FingerprintState,
     ) -> Result<(), StoreError> {
         let now = self.clock.now_secs();
         self.db

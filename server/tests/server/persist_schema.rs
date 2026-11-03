@@ -3689,23 +3689,33 @@ fn state_columns() -> Vec<StateColumn> {
     use droppedneedle_auth::federated::password_import::HashScheme;
     use droppedneedle_auth::session::store::SessionKind;
     use droppedneedle_auth::users::roles::Role;
-    use droppedneedle_library::activity::store::QueueSwitch;
-    use droppedneedle_library::contrib::models::ContributionState;
-    use droppedneedle_library::identify::artist_links::CreditState;
+    use droppedneedle_library::activity::store::{EventStream, QueueSwitch};
+    use droppedneedle_library::contrib::models::{ContributionState, ResultSource};
+    use droppedneedle_library::identify::artist_links::{CreditState, ProofSubject};
     use droppedneedle_library::identify::merged_ids::CheckState;
     use droppedneedle_library::identify::models::{
         IdentifyKind, JobState, MatchFlagState, ReviewState,
     };
     use droppedneedle_library::identity::DecisionSource;
     use droppedneedle_library::identity::remap::RemapOrigin;
-    use droppedneedle_library::management::models::{Eligibility, OverrideMode};
+    use droppedneedle_library::jobs::models::Control;
+    use droppedneedle_library::jobs::{
+        ControlRequest, ManagementPhase, OperationKind, OperationState, WorkState,
+    };
+    use droppedneedle_library::management::models::{
+        Eligibility, JobMode, Origin, OverrideMode, TagScope,
+    };
     use droppedneedle_library::management::takeover::Cause;
+    use droppedneedle_library::publish::OutputKind;
     use droppedneedle_library::publish::journal::{JournalKind, JournalState, MgmtState};
+    use droppedneedle_library::repairs::models::{FindingState, Phase as RepairPhase, Purpose};
+    use droppedneedle_library::scan::RevisionKind;
     use droppedneedle_library::scan::models::{
-        EffectivePolicy, RequestedControl, ScanKind, ScanPhase, ScanState, ScanTrigger,
-        ScopeDiscoveryState, Verdict,
+        EffectivePolicy, EndPassName, GroupingSource, Phase as StartedPhase, RequestedControl,
+        ScanKind, ScanPhase, ScanState, ScanTrigger, ScopeDiscoveryState, TagProvenance, Verdict,
     };
     use droppedneedle_library::scan::sqlite_store::retag_pairs::{RetagPairReason, RetagPairState};
+    use droppedneedle_library::tags::lyrics::LyricsSource;
 
     vec![
         // acquire
@@ -3723,25 +3733,43 @@ fn state_columns() -> Vec<StateColumn> {
         // library
         state("library_album_match_state", "state", &MatchFlagState::ALL, MatchFlagState::as_str),
         state("library_album_takeovers", "cause", &Cause::ALL, Cause::as_str),
+        state("library_artist_credit_proofs", "subject_kind", &ProofSubject::ALL, ProofSubject::as_str),
         state("library_artist_reconciliation_state", "state", &CreditState::ALL, CreditState::as_str),
+        state("library_contribution_drafts", "result_source", &ResultSource::ALL, ResultSource::as_str),
         state("library_contribution_drafts", "state", &ContributionState::ALL, ContributionState::as_str),
         state("library_edition_remap_queue", "origin", &RemapOrigin::ALL, RemapOrigin::as_str),
+        state("library_event_stream_revisions", "stream_kind", &EventStream::ALL, EventStream::as_str),
         state("library_identify_artist_id_checks", "state", &CheckState::ALL, CheckState::as_str),
         state("library_identify_jobs", "kind", &IdentifyKind::ALL, IdentifyKind::as_str),
         state("library_identify_jobs", "state", &JobState::ALL, JobState::as_str),
         state("library_identify_reviews", "state", &ReviewState::ALL, ReviewState::as_str),
+        state("library_identity_repair_findings", "state", &FindingState::ALL, FindingState::as_str),
+        state("library_management_job_snapshots", "mode", &JobMode::ALL, JobMode::as_str),
+        state("library_management_job_snapshots", "origin", &Origin::ALL, Origin::as_str),
+        state("library_management_job_snapshots", "phase", &ManagementPhase::ALL, ManagementPhase::as_str),
         state("library_management_overrides", "mode", &OverrideMode::ALL, OverrideMode::as_str),
+        state("library_management_overrides", "subject_kind", &TagScope::ALL, TagScope::as_str),
         state("library_management_plan_items", "eligibility", &Eligibility::ALL, Eligibility::as_str),
+        state("library_operation_control_idempotency", "control", &Control::ALL, Control::as_str),
+        state("library_operation_jobs", "control_request", &ControlRequest::ALL, ControlRequest::as_str),
+        state("library_operation_jobs", "kind", &OperationKind::ALL, OperationKind::as_str),
+        state("library_operation_jobs", "state", &OperationState::ALL, OperationState::as_str),
+        state("library_operation_work", "state", &WorkState::ALL, WorkState::as_str),
         state("library_publish_journal", "commit_as", &MgmtState::ALL, MgmtState::as_str),
         state("library_publish_journal", "kind", &JournalKind::ALL, JournalKind::as_str),
         state("library_publish_journal", "state", &JournalState::ALL, JournalState::as_str),
+        state("library_publish_outputs", "kind", &OutputKind::ALL, OutputKind::as_str),
+        state("library_repair_snapshots", "phase", &RepairPhase::ALL, RepairPhase::as_str),
+        state("library_repair_snapshots", "purpose", &Purpose::ALL, Purpose::as_str),
         state("library_retag_pairs", "reason", &RetagPairReason::ALL, RetagPairReason::as_str),
         state("library_retag_pairs", "state", &RetagPairState::ALL, RetagPairState::as_str),
+        state("library_scan_failures", "phase", &StartedPhase::ALL, StartedPhase::as_str),
         state("library_scan_inventory", "comparison_result", &Verdict::ALL, Verdict::as_str),
         state("library_scan_inventory", "effective_policy", &EffectivePolicy::ALL, EffectivePolicy::as_str),
         state("library_scan_run_scopes", "discovery_state", &ScopeDiscoveryState::ALL, ScopeDiscoveryState::as_str),
         state("library_scan_run_scopes", "effective_policy", &EffectivePolicy::ALL, EffectivePolicy::as_str),
         state("library_scan_runs", "kind", &ScanKind::ALL, ScanKind::as_str),
+        state("library_scan_runs", "next_end_pass", &EndPassName::ALL, EndPassName::as_str),
         state("library_scan_runs", "phase", &ScanPhase::ALL, ScanPhase::as_str),
         state("library_scan_runs", "requested_control", &RequestedControl::ALL, RequestedControl::as_str),
         state("library_scan_runs", "resume_phase", &ScanPhase::ALL, ScanPhase::as_str),
@@ -3749,16 +3777,35 @@ fn state_columns() -> Vec<StateColumn> {
         state("library_scan_runs", "trigger", &ScanTrigger::ALL, ScanTrigger::as_str),
         state("library_work_control", "state", &QueueSwitch::ALL, QueueSwitch::as_str),
         state("local_album_external_identities", "decision_source", &DecisionSource::ALL, DecisionSource::as_str),
+        state("local_albums", "grouping_source", &GroupingSource::ALL, GroupingSource::as_str),
         state("local_artist_external_identities", "decision_source", &DecisionSource::ALL, DecisionSource::as_str),
         state("local_track_external_identities", "decision_source", &DecisionSource::ALL, DecisionSource::as_str),
+        state("local_track_lyrics", "source", &LyricsSource::ALL, LyricsSource::as_str),
+        state("local_tracks", "album_artist_provenance", &TagProvenance::ALL, TagProvenance::as_str),
+        state("local_tracks", "album_title_provenance", &TagProvenance::ALL, TagProvenance::as_str),
         state("local_tracks", "applied_policy", &EffectivePolicy::ALL, EffectivePolicy::as_str),
+        state("local_tracks", "membership_source", &GroupingSource::ALL, GroupingSource::as_str),
+        state("local_tracks", "stat_revision_kind", &RevisionKind::ALL, RevisionKind::as_str),
+        state("local_tracks", "title_provenance", &TagProvenance::ALL, TagProvenance::as_str),
     ]
 }
 
 /// TEXT columns whose name says state but that hold something else.
+#[rustfmt::skip]
 const NOT_STATE: &[(&str, &str, &str)] = &[
     ("auth_oidc_states", "state", "a random sign-in token"),
     ("spotify_auth_requests", "state", "a random sign-in token"),
+    ("library_management_baselines", "restore_status", "v2's, carried by the upgrade; nothing reads it"),
+    ("library_management_blobs", "kind", "v2's, carried by the upgrade; nothing reads it"),
+    ("library_management_metadata_snapshots", "entity_kind", "a provider's entity type"),
+    ("library_work_control", "queue_kind", "the row's key; its CHECK allows one value"),
+    ("local_album_artists", "role", "credits carried from v2 keep v2's role names"),
+    ("local_album_external_identities", "provider_source_mode", "v2's, carried by the upgrade; nothing reads it"),
+    ("local_artist_external_identities", "provider_source_mode", "v2's, carried by the upgrade; nothing reads it"),
+    ("local_entity_source_links", "decision_source", "v2's, carried by the upgrade; nothing reads it"),
+    ("local_track_artists", "role", "credits carried from v2 keep v2's role names"),
+    ("local_track_external_identities", "provider_source_mode", "v2's, carried by the upgrade; nothing reads it"),
+    ("local_tracks", "ingest_source", "how a file came in; v2's rows and provenance name their own"),
 ];
 
 /// Why a column is not held to an enum yet.
@@ -3773,6 +3820,9 @@ enum Pending {
     /// (then it needs its CHECK) or it holds outside values (then it is
     /// exempt).
     Unclassified,
+    /// Its enum reads and writes it, and a migration still has to make its
+    /// CHECK list the enum's values.
+    CheckChange,
 }
 
 /// Columns not held to an enum yet, by owning area, with the enum when
@@ -3780,7 +3830,7 @@ enum Pending {
 /// into one baseline: the fold would freeze each of these as it is.
 #[rustfmt::skip]
 const PENDING: &[(&str, &str, &str, Pending, &str)] = {
-    use Pending::{NoAll, NoEnum, Unclassified};
+    use Pending::{CheckChange, NoAll, NoEnum, Unclassified};
     &[
         // acquire
         ("acquire", "acquire_discovery_batch_items", "outcome", NoAll, "BatchOutcome"),
@@ -3825,55 +3875,19 @@ const PENDING: &[(&str, &str, &str, Pending, &str)] = {
         ("kernel", "durable_jobs", "state", NoAll, "jobs::queue::State"),
         ("kernel", "durable_loops", "state", NoAll, "db::durable::JobState"),
         // library
-        ("library", "library_artist_credit_proofs", "subject_kind", NoEnum, ""),
-        ("library", "library_audio_fingerprint_outcomes", "state", NoEnum, ""),
-        ("library", "library_catalog_actions", "action_kind", Unclassified, ""),
-        ("library", "library_contribution_drafts", "result_source", NoEnum, ""),
-        ("library", "library_event_stream_revisions", "stream_kind", NoEnum, ""),
-        ("library", "library_identification_attempts", "state", Unclassified, ""),
-        ("library", "library_identity_repair_findings", "state", NoAll, "FindingState"),
-        ("library", "library_management_baselines", "restore_status", NoEnum, ""),
-        ("library", "library_management_blobs", "kind", NoEnum, ""),
-        ("library", "library_management_job_snapshots", "mode", NoAll, "JobMode"),
-        ("library", "library_management_job_snapshots", "origin", NoAll, "Origin"),
-        ("library", "library_management_job_snapshots", "phase", NoAll, "ManagementPhase"),
-        ("library", "library_management_metadata_snapshots", "entity_kind", Unclassified, ""),
-        ("library", "library_management_overrides", "subject_kind", NoEnum, ""),
-        ("library", "library_operation_control_idempotency", "control", NoAll, "Control"),
-        ("library", "library_operation_jobs", "control_request", NoAll, "ControlRequest"),
-        ("library", "library_operation_jobs", "kind", NoAll, "OperationKind"),
-        ("library", "library_operation_jobs", "state", NoAll, "OperationState"),
-        ("library", "library_operation_work", "state", NoAll, "WorkState"),
-        ("library", "library_publish_blob_refs", "owner_kind", Unclassified, ""),
-        ("library", "library_publish_outputs", "kind", NoAll, "OutputKind"),
-        ("library", "library_repair_snapshots", "phase", NoAll, "repairs::models"),
-        ("library", "library_repair_snapshots", "purpose", NoAll, "Purpose"),
-        ("library", "library_scan_failures", "phase", NoAll, "scan::models::Phase"),
-        ("library", "library_scan_inventory", "processing_state", Unclassified, ""),
-        ("library", "library_scan_run_scopes", "reconciliation_state", Unclassified, ""),
-        ("library", "library_scan_runs", "next_end_pass", NoEnum, ""),
-        ("library", "library_work_control", "queue_kind", Unclassified, ""),
-        ("library", "local_album_aliases", "kind", NoEnum, ""),
-        ("library", "local_album_artists", "role", Unclassified, ""),
-        ("library", "local_album_artwork", "source", NoEnum, ""),
-        ("library", "local_album_external_identities", "provider_source_mode", Unclassified, ""),
-        ("library", "local_albums", "grouping_source", NoEnum, ""),
-        ("library", "local_artist_aliases", "kind", NoEnum, ""),
-        ("library", "local_artist_external_identities", "provider_source_mode", Unclassified, ""),
-        ("library", "local_artist_merge_candidates", "state", NoEnum, ""),
-        ("library", "local_artists", "kind", NoEnum, ""),
-        ("library", "local_entity_source_links", "decision_source", Unclassified, ""),
-        ("library", "local_track_artists", "role", Unclassified, ""),
-        ("library", "local_track_external_identities", "provider_source_mode", Unclassified, ""),
-        ("library", "local_track_genres", "source", NoEnum, ""),
-        ("library", "local_track_lyrics", "source", NoAll, "LyricsSource"),
-        ("library", "local_tracks", "album_artist_provenance", NoEnum, ""),
-        ("library", "local_tracks", "album_title_provenance", NoEnum, ""),
-        ("library", "local_tracks", "availability", NoEnum, ""),
-        ("library", "local_tracks", "ingest_source", Unclassified, ""),
-        ("library", "local_tracks", "membership_source", NoEnum, ""),
-        ("library", "local_tracks", "stat_revision_kind", NoEnum, ""),
-        ("library", "local_tracks", "title_provenance", NoEnum, ""),
+        ("library", "library_audio_fingerprint_outcomes", "state", CheckChange, "FingerprintState"),
+        ("library", "library_catalog_actions", "action_kind", Unclassified, "a closed set, written as text by every caller"),
+        ("library", "library_identification_attempts", "state", CheckChange, "AttemptState"),
+        ("library", "library_publish_blob_refs", "owner_kind", CheckChange, "BlobOwner"),
+        ("library", "library_scan_inventory", "processing_state", CheckChange, "InventoryState"),
+        ("library", "library_scan_run_scopes", "reconciliation_state", Unclassified, "nothing reads or writes it past its default"),
+        ("library", "local_album_aliases", "kind", NoEnum, "set in SQL text only"),
+        ("library", "local_album_artwork", "source", CheckChange, "ArtworkSource"),
+        ("library", "local_artist_aliases", "kind", NoEnum, "set in SQL text only"),
+        ("library", "local_artist_merge_candidates", "state", NoEnum, "set in SQL text only"),
+        ("library", "local_artists", "kind", NoEnum, "set in SQL text only"),
+        ("library", "local_track_genres", "source", NoEnum, "set in SQL text only"),
+        ("library", "local_tracks", "availability", NoEnum, "read as text across the library"),
         // media
         ("media", "library_play_history", "source", Unclassified, ""),
         ("media", "media_navidrome_folder_preferences", "mode", NoEnum, ""),

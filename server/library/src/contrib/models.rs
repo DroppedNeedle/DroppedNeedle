@@ -77,6 +77,32 @@ droppedneedle_kernel::spelled!(ContributionState {
     Cancelled => "cancelled",
 });
 
+/// How a verification attempt behind a contribution ended, in
+/// `library_identification_attempts.state`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AttemptState {
+    Identified,
+    NeedsReview,
+}
+
+droppedneedle_kernel::spelled!(AttemptState {
+    Identified => "identified",
+    NeedsReview => "needs_review",
+});
+
+/// How a contribution's resulting release reached us: MusicBrainz's seed
+/// callback, or a curator naming it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResultSource {
+    Callback,
+    Manual,
+}
+
+droppedneedle_kernel::spelled!(ResultSource {
+    Callback => "callback",
+    Manual => "manual",
+});
+
 /// Follow-up actions the UI may offer. The strings match v2's.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]

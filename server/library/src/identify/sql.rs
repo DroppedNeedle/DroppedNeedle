@@ -5,6 +5,7 @@
 
 use droppedneedle_kernel::db::time::Millis;
 
+use super::artist_links::ProofSubject;
 use super::models::{IdentifyKind, JobState, MatchFlagState, ReviewState};
 use crate::identity::DecisionSource;
 use crate::identity::sql::PERSONS;
@@ -493,7 +494,7 @@ droppedneedle_kernel::sql! {
         row_revision: i64,
     }
     pub(super) row StoredProof for [STORED_PROOFS] {
-        subject_kind: String,
+        subject_kind: ProofSubject,
         subject_id: String,
         credit_position: i64,
         evidence_hash: String,

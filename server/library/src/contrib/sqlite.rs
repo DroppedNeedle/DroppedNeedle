@@ -377,7 +377,7 @@ fn insert_attempt(
     conn: &Connection,
     attempt: &ContributionVerificationAttempt,
     input_revision: &str,
-    state: &str,
+    state: AttemptState,
     reason: Option<&str>,
     selected_key: Option<&str>,
 ) -> rusqlite::Result<()> {

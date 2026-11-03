@@ -10,13 +10,14 @@ use droppedneedle_kernel::db::time::Millis;
 
 use crate::identity::sql::PERSONS;
 use crate::scan::models::{
-    Counter, EffectivePolicy, FailureCode, RequestedControl, ScanKind, ScanPhase, ScanTrigger,
-    Verdict,
+    ArtworkSource, Counter, EffectivePolicy, FailureCode, GroupingSource, Phase, RequestedControl,
+    ScanKind, ScanPhase, ScanTrigger, TagProvenance, Verdict,
 };
 use crate::scan::sqlite_store::sql::{
     MOVED_COLUMNS, MOVED_MATCH, SAME_PLACE, TRACK_GONE, TRACK_PRESENT, WALKED_PAST, awaits_admin,
     covers, fenced_by, held, held_back, holds, refused_scope, walked_past,
 };
+use crate::scan::store::RevisionKind;
 
 impl Choice for Counter {
     fn all() -> Vec<Self> {
@@ -1108,7 +1109,7 @@ droppedneedle_kernel::sql! {
         failure_code: FailureCode,
         recorded_at: Millis,
         failure_detail: String,
-        phase: ScanPhase,
+        phase: Phase,
     }
     pub(super) row FailurePageRow for [RUN_FAILURES_PAGE] {
         rowid: i64,
@@ -1117,7 +1118,7 @@ droppedneedle_kernel::sql! {
         failure_code: FailureCode,
         recorded_at: Millis,
         failure_detail: String,
-        phase: ScanPhase,
+        phase: Phase,
     }
     pub(super) row ArtistNames for [ARTIST_NAMES] {
         display_name: String,
@@ -1132,7 +1133,7 @@ droppedneedle_kernel::sql! {
     }
     pub(super) row ArtworkRow for [ALL_ARTWORK] {
         local_album_id: String,
-        source: String,
+        source: ArtworkSource,
         source_locator: Option<String>,
         content_hash: Option<String>,
     }
@@ -1144,7 +1145,7 @@ droppedneedle_kernel::sql! {
         relative_path: String,
         id: String,
         stat_revision: String,
-        stat_revision_kind: String,
+        stat_revision_kind: RevisionKind,
         file_size_bytes: i64,
         file_mtime_ns: i64,
         tags_read_at: Option<Millis>,
@@ -1166,7 +1167,7 @@ droppedneedle_kernel::sql! {
         duration_seconds: Option<f64>,
         embedded_recording_mbid: Option<String>,
         title_folded: String,
-        title_provenance: String,
+        title_provenance: TagProvenance,
         disc_number: i64,
         track_number: i64,
         sample_rate: Option<i64>,
@@ -1174,7 +1175,7 @@ droppedneedle_kernel::sql! {
         channels: Option<i64>,
     }
     pub(super) row TrackMembership for [TRACK_MEMBERSHIP] {
-        membership_source: String,
+        membership_source: GroupingSource,
         locked: bool,
     }
     pub(super) row TrackAndAlbum for [TRACK_AND_ALBUM_AT_PATH] {

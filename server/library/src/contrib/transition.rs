@@ -136,7 +136,7 @@ pub enum Effect {
     InsertAttempt {
         attempt: ContributionVerificationAttempt,
         input_revision: String,
-        state: &'static str,
+        state: AttemptState,
         reason: Option<String>,
         selected_key: Option<String>,
     },
@@ -277,7 +277,7 @@ pub fn transition(
                 ContributionState::Stale
             };
             next.result_release_mbid = Some(release_mbid);
-            next.result_source = Some("callback".into());
+            next.result_source = Some(ResultSource::Callback);
             next.result_received_at = Some(now);
             next.updated_at = now;
             next.row_revision += 1;
@@ -504,7 +504,7 @@ fn edit(
             effects.push(Effect::InsertAttempt {
                 attempt: attempt.clone(),
                 input_revision: row.input_revision.clone(),
-                state: "identified",
+                state: AttemptState::Identified,
                 reason: attempt.terminal_reason_code.clone(),
                 selected_key: attempt.selected_candidate_key.clone(),
             });
@@ -533,7 +533,7 @@ fn edit(
             row.album_row_revision = album_revision;
             row.current_album_row_revision = album_revision;
             row.result_release_mbid = Some(release_mbid);
-            row.result_source = Some("manual".into());
+            row.result_source = Some(ResultSource::Manual);
             row.result_received_at = Some(now);
             row.terminal_at = Some(now);
         }
@@ -628,7 +628,7 @@ fn edit(
                 ContributionState::Stale
             };
             row.result_release_mbid = Some(release_mbid);
-            row.result_source = Some("manual".into());
+            row.result_source = Some(ResultSource::Manual);
             row.result_received_at = Some(now);
             row.terminal_at = None;
             if verifying {
@@ -781,7 +781,11 @@ fn finish_verification(
     effects.push(Effect::InsertAttempt {
         attempt: attempt.clone(),
         input_revision: row.input_revision.clone(),
-        state: if linked { "identified" } else { "needs_review" },
+        state: if linked {
+            AttemptState::Identified
+        } else {
+            AttemptState::NeedsReview
+        },
         reason: failure
             .clone()
             .or_else(|| attempt.terminal_reason_code.clone()),

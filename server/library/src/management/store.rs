@@ -16,7 +16,7 @@ use super::after_apply::RefreshTarget;
 use super::models::{
     DesiredDocument, Eligibility, HistoryFilter, HistoryItem, ItemDiff, ItemFacts, ItemFilter,
     ItemPage, JobIntent, JobMode, Origin, PlannedItem, ResultItem, ResultPage, ResultState,
-    Revisions, Summary,
+    Revisions, Summary, TagScope,
 };
 use super::reasons::{self, ItemReason};
 use super::sql::{
@@ -970,7 +970,7 @@ pub fn save_tag_edit(
         return Ok(());
     }
     for field in &edit.fields {
-        let album = field.subject_kind == "album";
+        let album = field.subject_kind == TagScope::Album;
         let (subject_id, subject) = if album {
             (&edit.local_album_id, OverrideSubject::Album)
         } else {
@@ -1006,7 +1006,8 @@ pub fn save_tag_edit(
         let id = sha256_hex(
             format!(
                 "{job_id}\u{0}{}\u{0}{subject_id}\u{0}{}",
-                field.subject_kind, field.field_name
+                field.subject_kind.as_str(),
+                field.field_name
             )
             .as_bytes(),
         );
@@ -1062,7 +1063,7 @@ pub fn revert_tag_edit(
         return Ok(());
     }
     for field in &edit.fields {
-        let album = field.subject_kind == "album";
+        let album = field.subject_kind == TagScope::Album;
         let (subject_id, subject) = if album {
             (&edit.local_album_id, OverrideSubject::Album)
         } else {

@@ -168,26 +168,10 @@ pub enum OutputKind {
     Lyrics,
 }
 
-impl OutputKind {
-    /// The stored name, for the pages.
-    #[must_use]
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Artwork => "artwork",
-            Self::Lyrics => "lyrics",
-        }
-    }
-
-    /// Parse [`Self::as_str`].
-    #[must_use]
-    pub fn parse(text: &str) -> Option<Self> {
-        match text {
-            "artwork" => Some(Self::Artwork),
-            "lyrics" => Some(Self::Lyrics),
-            _ => None,
-        }
-    }
-}
+droppedneedle_kernel::spelled!(OutputKind {
+    Artwork => "artwork",
+    Lyrics => "lyrics",
+});
 
 /// A file a plan item replaces at its destination.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

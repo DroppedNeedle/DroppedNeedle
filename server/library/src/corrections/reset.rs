@@ -19,6 +19,7 @@ use super::membership::{
 };
 use super::models::{AlbumGroup, CorrectionError, MembershipOutcome, MembershipRequest};
 use super::reasons;
+use crate::scan::models::GroupingSource;
 use crate::scan::sqlite_store::automatic_album_for;
 
 pub(super) fn reset(
@@ -154,7 +155,7 @@ fn held_by_hand(
     album: &AlbumRow,
     track_ids: &[String],
 ) -> rusqlite::Result<bool> {
-    if album.grouping_source != "automatic" {
+    if album.grouping_source != GroupingSource::Automatic {
         return Ok(true);
     }
     let held: i64 = tx.query_row(

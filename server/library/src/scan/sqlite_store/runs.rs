@@ -1,6 +1,7 @@
 //! Scan runs: requests, claims, transitions, control, counters, recovery.
 
 use super::*;
+use crate::activity::store::EventStream;
 use crate::clock::LibraryClock as _;
 use crate::scan::models::transition;
 use crate::scan::sql;
@@ -240,7 +241,7 @@ impl SqliteScanStore {
         Ok((rows.into_iter().map(|(_, failure)| failure).collect(), next))
     }
 
-    pub fn stream_revision(&self, kind: &str) -> Result<u64, ScanStoreError> {
+    pub fn stream_revision(&self, kind: EventStream) -> Result<u64, ScanStoreError> {
         self.read("scan_stream_revision", |conn| {
             Ok(conn
                 .query_row(
@@ -326,7 +327,10 @@ impl SqliteScanStore {
                 return Ok(false);
             }
             let mut waits_used = usize::try_from(used).unwrap_or(0);
-            let Some(start) = END_PASSES.iter().position(|pass| pass.name == next) else {
+            let Some(start) = END_PASSES
+                .iter()
+                .position(|pass| pass.name.as_str() == next)
+            else {
                 tracing::warn!(
                     run_id,
                     pass = next,
@@ -342,8 +346,8 @@ impl SqliteScanStore {
                 if let Err(error) = &ran
                     && tried_again(error)
                 {
-                    tracing::warn!(run_id, pass = pass.name, %error, "a scan's end pass is tried again");
-                    Backoff::new().pause(stop, pass.name)?;
+                    tracing::warn!(run_id, pass = pass.name.as_str(), %error, "a scan's end pass is tried again");
+                    Backoff::new().pause(stop, pass.name.as_str())?;
                     ran = self.end_pass(stop, &run_id, ended_at, at, 1);
                 }
                 match ran {
@@ -357,7 +361,7 @@ impl SqliteScanStore {
                         let wait = PUT_OFF_WAITS_SECS[waits_used];
                         tracing::warn!(
                             run_id,
-                            pass = pass.name,
+                            pass = pass.name.as_str(),
                             %error,
                             wait_secs = wait,
                             "a scan's end pass is put off; no new scan starts until it settles"
@@ -375,7 +379,7 @@ impl SqliteScanStore {
                     Err(error) => {
                         tracing::error!(
                             run_id,
-                            pass = pass.name,
+                            pass = pass.name.as_str(),
                             %error,
                             "a scan's end pass failed and was passed over"
                         );
@@ -409,7 +413,7 @@ impl SqliteScanStore {
             return Ok(());
         };
         match &pass.work {
-            EndWork::Whole(run) => self.write(stop, Lane::Background, pass.name, |tx| {
+            EndWork::Whole(run) => self.write(stop, Lane::Background, pass.name.as_str(), |tx| {
                 let enqueued = run(tx, run_id, ended_at)?;
                 if enqueued > 0 {
                     tx.execute(
@@ -421,19 +425,25 @@ impl SqliteScanStore {
             }),
             EndWork::ByAlbum { each, tidy } => {
                 let kept = self
-                    .read_long(stop, pass.name, |conn| {
+                    .read_long(stop, pass.name.as_str(), |conn| {
                         Ok(super::commit::albums_left(conn, run_id)?)
                     })
                     .and_then(|left| {
-                        self.write_chunked_by(stop, pass.name, &left, albums, |chunk, tx| {
-                            for album_id in chunk {
-                                each(tx, run_id, album_id, ended_at)?;
-                            }
-                            Ok(chunk.len())
-                        })
+                        self.write_chunked_by(
+                            stop,
+                            pass.name.as_str(),
+                            &left,
+                            albums,
+                            |chunk, tx| {
+                                for album_id in chunk {
+                                    each(tx, run_id, album_id, ended_at)?;
+                                }
+                                Ok(chunk.len())
+                            },
+                        )
                     });
                 match kept {
-                    Ok(_) => self.write(stop, Lane::Background, pass.name, |tx| {
+                    Ok(_) => self.write(stop, Lane::Background, pass.name.as_str(), |tx| {
                         tidy(tx, run_id, ended_at)?;
                         advance(tx, run_id, at + 1)
                     }),
@@ -443,7 +453,7 @@ impl SqliteScanStore {
                         | ScanStoreError::LaneClosed),
                     ) => Err(error),
                     Err(error) => {
-                        let tidied = self.write(stop, Lane::Background, pass.name, |tx| {
+                        let tidied = self.write(stop, Lane::Background, pass.name.as_str(), |tx| {
                             Ok(tidy(tx, run_id, ended_at)?)
                         });
                         match tidied {
@@ -460,11 +470,11 @@ impl SqliteScanStore {
                                                 | ScanStoreError::LaneClosed
                                         )) =>
                             {
-                                tracing::error!(run_id, pass = pass.name, %error, "a scan's end pass failed and its tidy did not finish");
+                                tracing::error!(run_id, pass = pass.name.as_str(), %error, "a scan's end pass failed and its tidy did not finish");
                                 Err(tidy_error)
                             }
                             Err(tidy_error) => {
-                                tracing::error!(run_id, pass = pass.name, error = %tidy_error, "a scan's end pass could not tidy after a failure");
+                                tracing::error!(run_id, pass = pass.name.as_str(), error = %tidy_error, "a scan's end pass could not tidy after a failure");
                                 Err(error)
                             }
                         }

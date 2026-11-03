@@ -3,35 +3,12 @@
 
 use std::collections::BTreeMap;
 
-use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ToSql, ToSqlOutput, ValueRef};
 use serde::{Deserialize, Serialize};
 
 use crate::reidentify::models::ReidentificationCandidate;
 
-/// One SQL conversion for a closed set stored as text: the value is its
-/// `as_str`, and text outside the set fails decoding.
-macro_rules! sql_text {
-    ($type:ty) => {
-        impl ToSql for $type {
-            fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
-                Ok(ToSqlOutput::from(self.as_str()))
-            }
-        }
-
-        impl FromSql for $type {
-            fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
-                let text = value.as_str()?;
-                Self::parse(text).ok_or_else(|| {
-                    FromSqlError::Other(
-                        format!(concat!("not a ", stringify!($type), ": {}"), text).into(),
-                    )
-                })
-            }
-        }
-    };
-}
-
-/// A closed set of stored names: `as_str`, `parse` and the SQL conversion.
+/// A closed set of stored names, declared with its spelling through the
+/// kernel's `spelled!`.
 macro_rules! named {
     ($(#[$meta:meta])* $type:ident { $($(#[$vmeta:meta])* $variant:ident => $name:literal,)+ }) => {
         $(#[$meta])*
@@ -40,22 +17,7 @@ macro_rules! named {
             $($(#[$vmeta])* $variant,)+
         }
 
-        impl $type {
-            pub fn as_str(self) -> &'static str {
-                match self {
-                    $(Self::$variant => $name,)+
-                }
-            }
-
-            pub fn parse(raw: &str) -> Option<Self> {
-                match raw {
-                    $($name => Some(Self::$variant),)+
-                    _ => None,
-                }
-            }
-        }
-
-        sql_text!($type);
+        droppedneedle_kernel::spelled!($type { $($variant => $name,)+ });
     };
 }
 

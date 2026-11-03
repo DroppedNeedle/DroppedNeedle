@@ -23,6 +23,26 @@ use rusqlite::{Connection, OptionalExtension, Transaction};
 
 use super::{PublishError, sql};
 
+/// What holds a stored blob, in `library_publish_blob_refs.owner_kind`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BlobOwner {
+    /// A publish, for its undo.
+    Operation,
+    /// A management preview's planned files.
+    Preview,
+    /// A track's original-file baseline.
+    Baseline,
+    /// A v2 baseline's snapshot, which the upgrade carries.
+    V2Baseline,
+}
+
+droppedneedle_kernel::spelled!(BlobOwner {
+    Operation => "operation",
+    Preview => "preview",
+    Baseline => "baseline",
+    V2Baseline => "v2_baseline",
+});
+
 /// SHA-256 hex of one byte string.
 pub fn sha256_hex(bytes: &[u8]) -> String {
     droppedneedle_kernel::db::undo_dir::sha256_hex(bytes)
@@ -272,7 +292,7 @@ impl<'a> SnapshotStore<'a> {
                 expires_day * crate::clock::DAY_MS
             ],
         )?;
-        self.add_ref(blob_sha256, "operation", bundle_id)?;
+        self.add_ref(blob_sha256, BlobOwner::Operation, bundle_id)?;
         Ok(())
     }
 
@@ -281,7 +301,7 @@ impl<'a> SnapshotStore<'a> {
     pub fn add_ref(
         &self,
         sha256: &str,
-        owner_kind: &str,
+        owner_kind: BlobOwner,
         owner_id: &str,
     ) -> Result<(), PublishError> {
         self.conn.execute(

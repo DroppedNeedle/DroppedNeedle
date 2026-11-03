@@ -99,6 +99,18 @@ droppedneedle_kernel::spelled!(CreditState {
     Projected => "projected",
 });
 
+/// What a credit proof is for: an album credit or a track credit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ProofSubject {
+    Album,
+    Track,
+}
+
+droppedneedle_kernel::spelled!(ProofSubject {
+    Album => "album",
+    Track => "track",
+});
+
 /// Have the next sweep work album `album` through again: which rows its
 /// credits point at, the names they are credited as or an artist id they
 /// hold changed in a way the stamp does not see.
@@ -321,17 +333,17 @@ struct Proof {
 }
 
 impl Proof {
-    fn kind(&self) -> &'static str {
+    fn kind(&self) -> ProofSubject {
         if self.track.is_some() {
-            "track"
+            ProofSubject::Track
         } else {
-            "album"
+            ProofSubject::Album
         }
     }
 
     fn hash(&self, album: &str) -> String {
         let parts = [
-            self.kind(),
+            self.kind().as_str(),
             &self.subject,
             album,
             &self.position.to_string(),
@@ -609,7 +621,7 @@ fn store_proofs(
     proofs: &[Proof],
     now_ms: i64,
 ) -> rusqlite::Result<(BTreeSet<String>, Vec<MovedProof>)> {
-    type Key = (String, String, i64);
+    type Key = (ProofSubject, String, i64);
     let existing: Vec<StoredProof> = tx
         .prepare_cached(crate::identify::sql::STORED_PROOFS.text())?
         .query_map(params![album], StoredProof::read)?
@@ -618,11 +630,7 @@ fn store_proofs(
         .iter()
         .map(|proof| {
             (
-                (
-                    proof.kind().to_owned(),
-                    proof.subject.clone(),
-                    proof.position,
-                ),
+                (proof.kind(), proof.subject.clone(), proof.position),
                 (proof, proof.hash(album)),
             )
         })

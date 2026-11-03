@@ -526,7 +526,9 @@ impl SqliteScanStore {
                 let same_size = entry.size_bytes == input.1;
                 let unchanged = match entry.revision_kind {
                     RevisionKind::Exact => entry.revision == input.4,
-                    RevisionKind::LegacyFloat => {
+                    RevisionKind::LegacyFloat
+                    | RevisionKind::LegacyReview
+                    | RevisionKind::Unclassified => {
                         let current_mtime = input.3;
                         let saved_mtime = entry.mtime_ns as f64 / 1_000_000_000.0;
                         let band = legacy_mtime_eps_seconds(current_mtime);
@@ -648,11 +650,7 @@ fn load_catalog_map(
                 revision: row.stat_revision,
                 size_bytes: row.file_size_bytes as u64,
                 mtime_ns: row.file_mtime_ns,
-                revision_kind: if row.stat_revision_kind == "exact" {
-                    RevisionKind::Exact
-                } else {
-                    RevisionKind::LegacyFloat
-                },
+                revision_kind: row.stat_revision_kind,
                 tags_read_at: row.tags_read_at.map(crate::clock::at_secs),
             },
         ))

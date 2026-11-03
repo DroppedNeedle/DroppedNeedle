@@ -3,7 +3,7 @@
 
 use droppedneedle_kernel::db::time::Millis;
 
-use super::models::{Eligibility, OverrideMode};
+use super::models::{Eligibility, OverrideMode, TagScope};
 use super::takeover::Cause;
 use crate::jobs::{ManagementPhase, OperationState, WorkState};
 use crate::publish::sql::HAS_BYTES_RECORD;
@@ -576,7 +576,7 @@ droppedneedle_kernel::sql! {
         album_revision: i64,
     }
     pub(super) row SavedOverride for [SAVED_OVERRIDES] {
-        subject_kind: String,
+        subject_kind: TagScope,
         field_name: String,
         id: String,
         mode: OverrideMode,

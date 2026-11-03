@@ -2,7 +2,7 @@
 
 use droppedneedle_kernel::db::time::Millis;
 
-use super::models::ContributionState;
+use super::models::{ContributionState, ResultSource};
 use crate::identity::sql::PERSONS;
 
 droppedneedle_kernel::sql! {
@@ -138,7 +138,7 @@ droppedneedle_kernel::sql! {
         duplicate_checked_at: Option<Millis>,
         duplicate_input_revision: Option<String>,
         result_release_mbid: Option<String>,
-        result_source: Option<String>,
+        result_source: Option<ResultSource>,
         result_received_at: Option<Millis>,
         seed_snapshot_json: Option<String>,
         seed_hash: Option<String>,

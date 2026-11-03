@@ -21,9 +21,9 @@ use droppedneedle_kernel::jobs::CancellationToken;
 use droppedneedle_kernel::page::TimeKey;
 
 use super::models::{
-    Counter, Counters, Disposition, Event, FailureCode, Outcome, Phase, RunState,
-    ScanFailureRecord, ScanInventoryItem, ScanKind, ScanPhase, ScanRequest, ScanRequestResult,
-    ScanRun, ScanScope, ScanState, ScopeDiscoveryState, Verdict,
+    Counter, Counters, Disposition, Event, FailureCode, InventoryState, Outcome, Phase, RunState,
+    ScanFailureRecord, ScanInventoryItem, ScanKind, ScanRequest, ScanRequestResult, ScanRun,
+    ScanScope, ScanState, ScopeDiscoveryState, Verdict,
 };
 use super::pool::BlockingPool;
 use super::roots::{PolicyResolver, RootRegistry, scope_covers, yielded_by, yielded_home};
@@ -35,6 +35,7 @@ use super::store::{
 };
 use super::walk::InventoryScanner;
 use super::watcher::WorkWakeups;
+use crate::activity::store::EventStream;
 use crate::clock::LibraryClock as _;
 
 /// Return freed scan heap to the OS after a terminal run. A 100k scan
@@ -353,7 +354,7 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
 
     fn publish(&self, run: &ScanRun, event: &str, counter: bool) {
         if let Some(events) = &self.events {
-            match self.store.stream_revision("scan") {
+            match self.store.stream_revision(EventStream::Scan) {
                 Ok(revision) => {
                     events.publish(run, revision, event, counter);
                 }
@@ -1285,14 +1286,18 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
                         // The deferred marker re-offers the file next run.
                         self.store
                             .mark_deferred(&item.root_id, &item.relative_path, true);
-                        window
-                            .failed
-                            .push((row.0.clone(), row.1.clone(), "deferred"));
+                        window.failed.push((
+                            row.0.clone(),
+                            row.1.clone(),
+                            InventoryState::Deferred,
+                        ));
                         window.counters.push((row, Counter::Errored, 1));
                         counts.errored += 1;
                     }
                     Err(TagReadError::Fatal) => {
-                        window.failed.push((row.0.clone(), row.1.clone(), "failed"));
+                        window
+                            .failed
+                            .push((row.0.clone(), row.1.clone(), InventoryState::Failed));
                         window.counters.push((row, Counter::Errored, 1));
                         counts.errored += 1;
                     }
@@ -1502,7 +1507,7 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
                     scope,
                     paths.len(),
                     indexed,
-                    ScanPhase::Reconciling,
+                    Phase::Reconciling,
                     stop,
                 )?;
                 continue;
@@ -1605,7 +1610,7 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
             let missing =
                 missing.saturating_sub(self.found_at_a_twin(run_id, scope, &scopes, stop)?);
             if mass_missing(missing, total) {
-                self.hold_back_scope(run_id, scope, missing, total, ScanPhase::Discovering, stop)?;
+                self.hold_back_scope(run_id, scope, missing, total, Phase::Discovering, stop)?;
                 continue;
             }
             let (id, root, rel) = (
@@ -1659,7 +1664,7 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
                     run_id,
                     &scope.root_id,
                     &folder,
-                    ScanPhase::Discovering,
+                    Phase::Discovering,
                     format!(
                         "None of the {indexed} indexed files on the drive or share \
                          mounted at this folder were found. Check that it is mounted; \
@@ -1709,7 +1714,7 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
         scope: &ScanScope,
         missing: usize,
         indexed: usize,
-        phase: ScanPhase,
+        phase: Phase,
         stop: &RunStop,
     ) -> Result<(), ScanStoreError> {
         tracing::warn!(
@@ -1739,7 +1744,7 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
         run_id: &str,
         root_id: &str,
         folder: &str,
-        phase: ScanPhase,
+        phase: Phase,
         failure_detail: String,
         stop: &RunStop,
     ) -> Result<(), ScanStoreError> {
@@ -1780,7 +1785,7 @@ fn window_failures(window: &IndexWindow, now: f64) -> Vec<ScanFailureRecord> {
         .failed
         .iter()
         .map(|(root_id, relative_path, state)| {
-            let (code, detail) = if *state == "deferred" {
+            let (code, detail) = if *state == InventoryState::Deferred {
                 (
                     FailureCode::TagReadDeferred,
                     "The tag-read capacity was exhausted; the read is deferred for this run.",
@@ -1797,7 +1802,7 @@ fn window_failures(window: &IndexWindow, now: f64) -> Vec<ScanFailureRecord> {
                 failure_code: code,
                 recorded_at: now,
                 failure_detail: detail.to_owned(),
-                phase: ScanPhase::Indexing,
+                phase: Phase::Indexing,
             }
         })
         .collect()

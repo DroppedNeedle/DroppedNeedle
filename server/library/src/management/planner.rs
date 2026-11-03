@@ -15,7 +15,7 @@ use rusqlite::{Connection, OptionalExtension as _, params};
 use super::models::{
     ArtworkChoice, DesiredDocument, DesiredField, EditionPin, Eligibility, FieldMutation, ItemDiff,
     ItemFacts, ManagementError, PinnedProfile, PlannedItem, SidecarMove, TagEditField,
-    TagEditIntent, TagEditMode,
+    TagEditIntent, TagEditMode, TagScope,
 };
 use super::profile::{self, CompiledScripts, NamingFacts};
 use super::reasons::{self, ItemReason};
@@ -187,7 +187,7 @@ pub fn with_tag_edit(saved: Overrides, edit: &TagEditIntent, track_id: &str) -> 
     let active: Vec<&TagEditField> = edit
         .fields
         .iter()
-        .filter(|field| field.subject_kind == "album" || edit.local_track_id == track_id)
+        .filter(|field| field.subject_kind == TagScope::Album || edit.local_track_id == track_id)
         .collect();
     if active.is_empty() {
         return saved;
@@ -879,7 +879,7 @@ fn keep_bytes(
     name: &'static str,
     bytes: &[u8],
 ) -> Result<String, ManagementError> {
-    use crate::publish::snapshots::SnapshotStore;
+    use crate::publish::snapshots::{BlobOwner, SnapshotStore};
     ctx.parts
         .core
         .blobs
@@ -890,7 +890,7 @@ fn keep_bytes(
             &[bytes],
             |tx, shas| {
                 let sha = shas[0].clone();
-                SnapshotStore::new(tx).add_ref(&sha, "preview", ctx.job_id)?;
+                SnapshotStore::new(tx).add_ref(&sha, BlobOwner::Preview, ctx.job_id)?;
                 Ok(sha)
             },
         )

@@ -31,7 +31,7 @@ use super::planner::{
     AlbumJoin, CapabilityGate, CollisionGate, CommitSeal, DiskPreflight, JoinedTrack, PlanBundle,
     SealError, SealRecheck, SealedPreview, SpaceProbe,
 };
-use super::snapshots::{BlobStore, SnapshotStore, sha256_hex};
+use super::snapshots::{BlobOwner, BlobStore, SnapshotStore, sha256_hex};
 use super::step::{AdoptionFrom, Advanced, Hooks, Run};
 use super::tags_seam::TagDocument;
 use super::{PublishError, paths};
@@ -1678,7 +1678,7 @@ impl<P: SpaceProbe> Publisher<P> {
                 // only Snapshot error capture raises is already-exists.
                 if baselines.get(&item.track_id)?.is_none() {
                     for sha256 in pictures.keys() {
-                        snapshots.add_ref(sha256, "baseline", &item.track_id)?;
+                        snapshots.add_ref(sha256, BlobOwner::Baseline, &item.track_id)?;
                     }
                     match baselines.capture(
                         &item.track_id,
@@ -1692,7 +1692,7 @@ impl<P: SpaceProbe> Publisher<P> {
                     }
                 }
                 for sha256 in pictures.keys() {
-                    snapshots.add_ref(sha256, "operation", &bundle.id)?;
+                    snapshots.add_ref(sha256, BlobOwner::Operation, &bundle.id)?;
                 }
                 snapshots.record(
                     &format!("{}-{}", bundle.id, item.track_id),
@@ -1880,7 +1880,7 @@ impl<P: SpaceProbe> Publisher<P> {
                     PublishError::Snapshot("the replaced file was not kept".into())
                 })?;
                 let snapshots = SnapshotStore::new(tx);
-                snapshots.add_ref(sha256, "operation", &bundle.id)?;
+                snapshots.add_ref(sha256, BlobOwner::Operation, &bundle.id)?;
                 if !super::operations::generated_before(tx, track_id, sha256)?
                     && super::snapshots::BaselineStore::new(tx).capture_cover(
                         track_id,
@@ -1890,7 +1890,7 @@ impl<P: SpaceProbe> Publisher<P> {
                         now_ms,
                     )?
                 {
-                    snapshots.add_ref(sha256, "baseline", track_id)?;
+                    snapshots.add_ref(sha256, BlobOwner::Baseline, track_id)?;
                 }
                 Ok(())
             },

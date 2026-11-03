@@ -14,15 +14,11 @@ pub enum Control {
     Stop,
 }
 
-impl Control {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Pause => "pause",
-            Self::Resume => "resume",
-            Self::Stop => "stop",
-        }
-    }
-}
+droppedneedle_kernel::spelled!(Control {
+    Pause => "pause",
+    Resume => "resume",
+    Stop => "stop",
+});
 
 /// One work item's outcome, as the job detail lists it.
 #[derive(Debug, Clone, PartialEq)]

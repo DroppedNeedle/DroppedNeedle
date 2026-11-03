@@ -22,7 +22,7 @@ use unicode_normalization::UnicodeNormalization;
 use super::fs::is_management_artifact;
 use super::models::{
     EffectivePolicy, Event, FailureCode, Phase, RunState, ScanFailureRecord, ScanInventoryItem,
-    ScanPhase, ScanRun, ScanScope, ScopeDiscoveryState, Verdict,
+    ScanRun, ScanScope, ScopeDiscoveryState, Verdict,
 };
 use super::pool::BlockingPool;
 use super::revision::{exact_stat_revision, mtime_ns_from_metadata};
@@ -396,7 +396,7 @@ impl InventoryScanner {
                 failure_code,
                 recorded_at: self.clock.now_secs(),
                 failure_detail,
-                phase: ScanPhase::Discovering,
+                phase: Phase::Discovering,
             }],
         )
     }

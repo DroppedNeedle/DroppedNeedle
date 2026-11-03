@@ -46,6 +46,7 @@ use sha2::{Digest as _, Sha256};
 
 use super::{Lane, RunStop, ScanStoreError, SqliteScanStore};
 use crate::clock::LibraryClock as _;
+use crate::scan::models::ArtworkSource;
 use crate::tags::TagsError;
 use droppedneedle_kernel::beneath::{RootLinks, open_file_beneath};
 use droppedneedle_providers::coverart::sniff_image_content_type;
@@ -89,14 +90,14 @@ pub(super) struct TrackFile {
 
 /// The art row an album has now.
 struct CurrentArt {
-    source: String,
+    source: ArtworkSource,
     locator: Option<String>,
     content_hash: Option<String>,
 }
 
 /// Local art found for an album.
 struct FoundArt {
-    source: &'static str,
+    source: ArtworkSource,
     locator: String,
     content_hash: String,
     folder_image: Option<PathBuf>,
@@ -163,12 +164,12 @@ impl SqliteScanStore {
                 break;
             }
             let current = snapshot.current.get(album_id);
-            if current.is_some_and(|art| art.source == "manual") {
+            if current.is_some_and(|art| art.source == ArtworkSource::Manual) {
                 continue;
             }
             let dirs = album_dirs(tracks);
             let current_folder = current
-                .filter(|art| art.source == "folder")
+                .filter(|art| art.source == ArtworkSource::Folder)
                 .and_then(|art| art.locator.as_deref())
                 .map(Path::new);
             let signature = album_signature(tracks, &dirs, current_folder.as_slice());
@@ -406,7 +407,7 @@ fn find_art(tracks: &[TrackFile], dirs: &[PathBuf]) -> ArtSearch {
     if let Some((path, bytes)) = folder_image(dirs, &mut unread) {
         return ArtSearch {
             found: Some(FoundArt {
-                source: "folder",
+                source: ArtworkSource::Folder,
                 locator: path.to_string_lossy().into_owned(),
                 content_hash: content_hash(&bytes),
                 folder_image: Some(path),
@@ -422,7 +423,7 @@ fn find_art(tracks: &[TrackFile], dirs: &[PathBuf]) -> ArtSearch {
             {
                 return ArtSearch {
                     found: Some(FoundArt {
-                        source: "embedded",
+                        source: ArtworkSource::Embedded,
                         locator: track.id.clone(),
                         content_hash: content_hash(&bytes),
                         folder_image: None,

@@ -1220,7 +1220,7 @@ impl ContributionService {
             duplicate_result: row.duplicate_result.clone(),
             duplicate_checked_at: row.duplicate_checked_at,
             result_release_mbid: row.result_release_mbid.clone(),
-            result_source: row.result_source.clone(),
+            result_source: row.result_source.map(|source| source.as_str().to_owned()),
             result_received_at: row.result_received_at,
             seeded_at: row.seeded_at,
             terminal_at: row.terminal_at,
