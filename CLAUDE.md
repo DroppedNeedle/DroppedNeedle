@@ -198,6 +198,8 @@ Run from the repo root. `make help` lists every target.
 - A locked-out admin recovers from the host: stop the server, run
   `droppedneedle-tool recovery-code <user>`, start it again. No route is the
   only way back in.
+- While a v2 backup is kept and no account exists, first-admin setup needs
+  the code from the server log.
 
 **Database**
 - One SQLite file, WAL mode, local filesystem, opened only in

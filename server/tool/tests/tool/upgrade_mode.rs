@@ -21,8 +21,9 @@ use tokio::{
     net::{TcpListener, TcpStream},
     sync::oneshot,
 };
+use tracing::instrument::WithSubscriber as _;
 
-use crate::common::{PATIENCE, closed_outbound};
+use crate::common::{PATIENCE, closed_outbound, logs};
 use crate::tooling_cli::{
     backup_trees, clean_v2, data_trees, scratch_dir, tool, upgrade_with_fault,
 };
@@ -314,14 +315,32 @@ async fn an_interrupted_upgrade_opens_the_page_and_undo_puts_v2_back() {
     .await;
 }
 
+/// The code a log line beginning with `what` gives, from the last such
+/// line.
+fn logged_code(text: &[u8], what: &str) -> String {
+    String::from_utf8_lossy(text)
+        .lines()
+        .rev()
+        .filter(|line| line.contains(what))
+        .find_map(|line| line.split("code=").nth(1))
+        .and_then(|code| code.split_whitespace().next())
+        .unwrap_or_else(|| panic!("no {what} is logged"))
+        .to_owned()
+}
+
 /// Start fresh moves v2's files into the backup and imports nothing;
-/// Continue then opens an empty app that asks for its first admin.
+/// Continue then opens an empty app that asks for its first admin. Nothing
+/// came across, so setup asks for the code upgrade mode logged, the one
+/// the app logs again: without it, or with a wrong one, it is refused
+/// alike, and with it the first admin is made.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn start_fresh_then_continue_opens_an_empty_app() {
     let scratch = scratch_dir("upgrade-page-fresh");
     let root = scratch.join("data");
     clean_v2(&root);
     let before = data_trees(&root);
+    let (dispatch, logged) = logs::warnings();
+    let read = logged.clone();
     with_server(AppConfig::with_root(0, &root), |server| async move {
         let cookie = server.sign_in().await;
         let (status, _, body) = server
@@ -345,7 +364,56 @@ async fn start_fresh_then_continue_opens_an_empty_app() {
             .call("GET", "/api/v3/auth/setup/status", None, None)
             .await;
         assert_eq!(status, 200, "{body}");
-        assert_eq!(body["setup_required"], true, "{body}");
+        assert_eq!(
+            body,
+            json!({"setup_required": true, "code_required": true}),
+            "{body}"
+        );
+
+        let code = logged_code(&read.lock().unwrap(), "upgrade sign-in code");
+        assert_eq!(
+            logged_code(&read.lock().unwrap(), "first-admin setup code"),
+            code,
+            "the app logs the code upgrade mode logged"
+        );
+        let wrong = format!(
+            "{}{}",
+            &code[..code.len() - 1],
+            if code.ends_with('X') { 'Y' } else { 'X' }
+        );
+        let setup = |code: Option<&str>| {
+            let mut body = json!({
+                "username": "owner",
+                "password": "a long fresh password",
+                "display_name": "Owner",
+            });
+            if let Some(code) = code {
+                body["code"] = json!(code);
+            }
+            body
+        };
+        let (status, _, missing) = server
+            .call("POST", "/api/v3/auth/setup", None, Some(setup(None)))
+            .await;
+        assert_eq!(status, 401, "{missing}");
+        let (status, _, refused) = server
+            .call(
+                "POST",
+                "/api/v3/auth/setup",
+                None,
+                Some(setup(Some(&wrong))),
+            )
+            .await;
+        assert_eq!(status, 401, "{refused}");
+        assert_eq!(
+            missing["error"], refused["error"],
+            "a missing code and a wrong one are refused alike"
+        );
+        let (status, _, body) = server
+            .call("POST", "/api/v3/auth/setup", None, Some(setup(Some(&code))))
+            .await;
+        assert_eq!(status, 201, "{body}");
     })
+    .with_subscriber(dispatch)
     .await;
 }

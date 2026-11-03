@@ -46,7 +46,7 @@ pub struct LoginBody {
 }
 
 /// First-admin setup body. Runs only against an empty user table.
-#[derive(Debug, Clone, Deserialize, ToSchema)]
+#[derive(Clone, Deserialize, ToSchema)]
 pub struct SetupBody {
     /// Login username, 3-32 chars.
     pub username: String,
@@ -56,6 +56,8 @@ pub struct SetupBody {
     pub display_name: Option<String>,
     /// Optional email.
     pub email: Option<String>,
+    /// The code from the server log, when the setup status asks for one.
+    pub code: Option<String>,
     /// Credential handoff; defaults to cookie.
     #[serde(default)]
     pub transport: TransportDto,
@@ -66,6 +68,9 @@ pub struct SetupBody {
 pub struct SetupStatusBody {
     /// True when no users exist yet and setup must run.
     pub setup_required: bool,
+    /// True when setup also needs the code from the server log: the server
+    /// was started fresh from v2 and no account exists yet.
+    pub code_required: bool,
 }
 
 /// Authenticated user, federated view. Stored provider rows never surface;

@@ -164,6 +164,7 @@ impl E2e {
                 ),
             ),
             droppedneedle::bootstrap::sign_in_links(p),
+            None,
         )
     }
 
@@ -563,7 +564,10 @@ async fn journey_a_setup_login_sessions_logoutall_relogin() {
 
     let (status, body, _) = call(e2e.router(), "GET", "/api/v3/auth/setup/status", &[], None).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body, json!({"setup_required": true}));
+    assert_eq!(
+        body,
+        json!({"setup_required": true, "code_required": false})
+    );
 
     let (_admin, setup_cookie) =
         setup_admin(e2e.router(), "e2e-admin", "e2e-admin-password-1", "cookie").await;
@@ -571,7 +575,10 @@ async fn journey_a_setup_login_sessions_logoutall_relogin() {
 
     let (status, body, _) = call(e2e.router(), "GET", "/api/v3/auth/setup/status", &[], None).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body, json!({"setup_required": false}));
+    assert_eq!(
+        body,
+        json!({"setup_required": false, "code_required": false})
+    );
 
     // Cookie login: session in the cookie, nothing sensitive in the body.
     let (status, body, headers) =
@@ -1835,7 +1842,10 @@ async fn setup_edges() {
     // Empty database: setup required.
     let (status, body, _) = call(e2e.router(), "GET", "/api/v3/auth/setup/status", &[], None).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body, json!({"setup_required": true}));
+    assert_eq!(
+        body,
+        json!({"setup_required": true, "code_required": false})
+    );
 
     // Login before setup: no users, so the uniform invalid-credentials 401
     // (v2 behavior; the dummy-hash verify runs behind it).
@@ -1859,7 +1869,10 @@ async fn setup_edges() {
     assert_eq!(status, StatusCode::CREATED);
     let (status, body, _) = call(e2e.router(), "GET", "/api/v3/auth/setup/status", &[], None).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body, json!({"setup_required": false}));
+    assert_eq!(
+        body,
+        json!({"setup_required": false, "code_required": false})
+    );
 
     // ...and a second setup is refused with the v2 conflict.
     let (status, body, _) = call(
@@ -2145,7 +2158,11 @@ async fn busy_setup_leaves_no_admin_and_a_retry_runs_it() {
     assert_eq!(body["error"]["code"], "SERVER_BUSY", "{body}");
     assert!(headers.contains_key("retry-after"));
     let (_, body, _) = call(e2e.router(), "GET", "/api/v3/auth/setup/status", &[], None).await;
-    assert_eq!(body, json!({"setup_required": true}), "no admin was left");
+    assert_eq!(
+        body,
+        json!({"setup_required": true, "code_required": false}),
+        "no admin was left"
+    );
 
     crate::common::break_schema(e2e.db(), "DROP TRIGGER slow_session;").await;
     let (status, body, _) =

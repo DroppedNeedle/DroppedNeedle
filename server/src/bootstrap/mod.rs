@@ -16,6 +16,7 @@ pub mod key_check;
 mod outbound;
 pub mod platform;
 mod serve;
+mod setup_code;
 pub(crate) mod sql;
 pub mod upgrade_progress;
 
@@ -52,6 +53,7 @@ use droppedneedle_acquire::{
 use droppedneedle_auth::{
     federated::{MediaLinks, settings::InstallIds},
     prod::ProdAuth,
+    session::one_time_code::OneTimeCode,
     wiring::AuthSetup,
 };
 use droppedneedle_catalog::{
@@ -258,8 +260,8 @@ pub async fn run(
 ) -> Result<Stopped, BootError> {
     // One signal for both servers, so a stop between them is not lost.
     let signal = signal.boxed().shared();
-    let (listener, lock) = match claim(&config).await? {
-        Claimed::App(lock) => (listener, lock),
+    let (listener, lock, code) = match claim(&config).await? {
+        Claimed::App(lock) => (listener, lock, None),
         Claimed::Upgrade { lock, interrupted } => {
             match crate::upgrade_mode::serve(
                 listener,
@@ -272,11 +274,15 @@ pub async fn run(
             .await?
             {
                 Ended::Stopped(stopped) => return Ok(stopped),
-                Ended::Continued { listener, lock } => (listener, lock),
+                Ended::Continued {
+                    listener,
+                    lock,
+                    code,
+                } => (listener, lock, Some(code)),
             }
         }
     };
-    let built = build_on(config, outbound, lock).await?;
+    let built = build_on(config, outbound, lock, code).await?;
     Ok(serve(listener, built.router, built.background, signal).await)
 }
 
@@ -302,14 +308,17 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
             interrupted: true, ..
         } => return Err(BootRefusal::Interrupted.into()),
     };
-    build_on(config, outbound, lock).await
+    build_on(config, outbound, lock, None).await
 }
 
-/// [`build_with`] under `data_lock`, both of a server's locks.
+/// [`build_with`] under `data_lock`, both of a server's locks. `setup_seed`
+/// is upgrade mode's unused sign-in code, which first-admin setup asks for
+/// when it needs a code at all.
 pub(crate) async fn build_on(
     config: AppConfig,
     outbound: Outbound,
     data_lock: DataLock,
+    setup_seed: Option<OneTimeCode>,
 ) -> Result<Built, BootError> {
     // The key, the database, the supervisor, the settings and the one
     // event hub: every bundle below publishes into it from the moment it
@@ -355,9 +364,11 @@ pub(crate) async fn build_on(
     // same limiters, so production holds one limiter set. The answer cache
     // stays shared with the admin stats and clear routes.
     let providers = Arc::new(Providers::build(p, outbound.providers(), cache_db.clone()));
+    let prod_auth = ProdAuth::new(p);
+    let setup_code = setup_code::setup_code(config, &prod_auth.users, setup_seed).await?;
     let auth = AuthSetup::build(
         p,
-        ProdAuth::new(p),
+        prod_auth,
         &providers,
         Arc::new(ConfiguredPlexServer::new(
             http.shared().clone(),
@@ -365,6 +376,7 @@ pub(crate) async fn build_on(
             InstallIds::new(config_store.clone()),
         )),
         sign_in_links(p),
+        setup_code,
     );
 
     // The one listening store: discovery, wrapped, the Weekly Mix,

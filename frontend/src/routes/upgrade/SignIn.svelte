@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { ApiError } from '$lib/api/errors';
+	import ServerLogHint from '$lib/components/ServerLogHint.svelte';
 	import { createUpgradeSignInMutation } from '$lib/queries/upgrade/UpgradeQueries.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
@@ -45,10 +46,7 @@
 		}}
 	>
 		{#if useCode}
-			<p class="text-sm text-base-content/70">
-				The server prints a code in its log:
-				<code class="font-mono text-xs">docker compose logs droppedneedle</code>
-			</p>
+			<ServerLogHint />
 			<TextField label="Code" bind:value={code} mono required autocomplete="one-time-code" />
 		{:else}
 			<p class="text-sm text-base-content/70">Use a v2 admin account.</p>

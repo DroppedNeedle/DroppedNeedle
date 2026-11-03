@@ -153,7 +153,71 @@ async fn production_graph_boots_on_an_empty_dir_and_answers() {
         .await
         .unwrap();
     let status: serde_json::Value = serde_json::from_str(&status).unwrap();
-    assert_eq!(status["setup_required"], true, "{status}");
+    assert_eq!(
+        status,
+        serde_json::json!({"setup_required": true, "code_required": false}),
+        "a new install's setup needs no code"
+    );
+    running.shut_down().await;
+}
+
+/// A server started fresh from v2 keeps v2's files in `v2-backup` and has
+/// no account. Its first-admin setup asks for the code logged at this
+/// start, so a restart never locks the owner out, and whoever reaches the
+/// page first without the code cannot take the server.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn after_a_fresh_start_setup_asks_for_the_code_logged_at_boot() {
+    use tracing::instrument::WithSubscriber as _;
+
+    let dir = scratch("setup-code");
+    let config = config_in(&dir);
+    std::fs::create_dir_all(config.config_dir().join("v2-backup")).unwrap();
+    let (dispatch, logged) = crate::common::logs::warnings();
+    let (router, background) = build(config).with_subscriber(dispatch).await.unwrap();
+    let code = String::from_utf8_lossy(&logged.lock().unwrap())
+        .lines()
+        .filter(|line| line.contains("first-admin setup code"))
+        .find_map(|line| line.split("code=").nth(1))
+        .and_then(|code| code.split_whitespace().next())
+        .expect("the setup code is logged")
+        .to_owned();
+    let running = start(router, background).await;
+    let client = reqwest::Client::new();
+    let address = running.address;
+    let status = || async {
+        let text = client
+            .get(format!("http://{address}/api/v3/auth/setup/status"))
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap();
+        serde_json::from_str::<serde_json::Value>(&text).unwrap()
+    };
+    let setup = |code: Option<&str>| {
+        let mut body =
+            serde_json::json!({"username": "owner", "password": "a long fresh password"});
+        if let Some(code) = code {
+            body["code"] = serde_json::json!(code);
+        }
+        client
+            .post(format!("http://{address}/api/v3/auth/setup"))
+            .header("content-type", "application/json")
+            .body(body.to_string())
+            .send()
+    };
+    assert_eq!(
+        status().await,
+        serde_json::json!({"setup_required": true, "code_required": true})
+    );
+    assert_eq!(setup(None).await.unwrap().status(), 401);
+    let made = setup(Some(&code.to_lowercase())).await.unwrap();
+    assert_eq!(made.status(), 201, "the code logged at this start works");
+    assert_eq!(
+        status().await,
+        serde_json::json!({"setup_required": false, "code_required": false})
+    );
     running.shut_down().await;
 }
 

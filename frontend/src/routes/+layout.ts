@@ -64,7 +64,7 @@ export const load: LayoutLoad = async ({ url }) => {
 				api.v3.GET(v3('/api/v3/auth/setup/status'), { timeoutMs: BOOTSTRAP_TIMEOUT_MS })
 			);
 			setupRequired = status.setup_required;
-			authStore.setSetupRequired(setupRequired);
+			authStore.setSetupRequired(setupRequired, status.code_required);
 		} catch (cause) {
 			throw startupError(cause);
 		}

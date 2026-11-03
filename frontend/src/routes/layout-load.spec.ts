@@ -142,7 +142,7 @@ describe('+layout load session bootstrap', () => {
 	it('keeps the session intact and reports an unreachable server when /api/v3/me times out', async () => {
 		state.user = user;
 		state.apiGet
-			.mockResolvedValueOnce({ setup_required: false })
+			.mockResolvedValueOnce({ setup_required: false, code_required: false })
 			.mockRejectedValueOnce(new TransportError('TRANSPORT_TIMEOUT', 'GET', '/api/v3/me'));
 
 		await expect(loadPage()).rejects.toMatchObject({
@@ -170,7 +170,7 @@ describe('+layout load session bootstrap', () => {
 			throw new Error('IndexedDB unavailable');
 		});
 		state.apiGet
-			.mockResolvedValueOnce({ setup_required: false })
+			.mockResolvedValueOnce({ setup_required: false, code_required: false })
 			.mockRejectedValueOnce(new ApiError(401, 'Unauthorized'));
 
 		await expect(loadPage()).rejects.toMatchObject({ status: 302, location: '/login' });
@@ -232,7 +232,9 @@ describe('+layout load session bootstrap', () => {
 	});
 
 	it('runs setup and session hydration only once across in-app navigation', async () => {
-		state.apiGet.mockResolvedValueOnce({ setup_required: false }).mockResolvedValueOnce(user);
+		state.apiGet
+			.mockResolvedValueOnce({ setup_required: false, code_required: false })
+			.mockResolvedValueOnce(user);
 
 		await expect(loadPage()).resolves.toEqual({ primarySource: 'listenbrainz', user });
 		await expect(loadPage()).resolves.toEqual({ primarySource: 'listenbrainz', user });
@@ -249,7 +251,7 @@ describe('+layout load session bootstrap', () => {
 
 	it('retains setup state across navigation without repeating bootstrap requests', async () => {
 		state.apiGet
-			.mockResolvedValueOnce({ setup_required: true })
+			.mockResolvedValueOnce({ setup_required: true, code_required: false })
 			.mockRejectedValueOnce(new ApiError(401, 'Unauthorized'));
 
 		await expect(loadPage('/login')).resolves.toEqual({

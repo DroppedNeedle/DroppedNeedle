@@ -1310,7 +1310,9 @@ export interface paths {
         put?: never;
         /**
          * First-admin setup. Creates the admin and logs them in (201 + session,
-         *     v2 parity) iff no users exist; otherwise 409. The account and its
+         *     v2 parity) iff no users exist; otherwise 409. On a server that logged a
+         *     setup code it also needs that code, checked before anything else is: a
+         *     missing or wrong one answers the same 401. The account and its
          *     session are one write: a busy or failed setup leaves nothing, so a retry
          *     can still run it. The emptiness check runs inside that transaction, so
          *     concurrent setups, or a setup racing a first federated login (whose role
@@ -21876,6 +21878,8 @@ export interface components {
         };
         /** @description First-admin setup body. Runs only against an empty user table. */
         SetupBody: {
+            /** @description The code from the server log, when the setup status asks for one. */
+            code?: string | null;
             /** @description Display name; defaults to the username casing. */
             display_name?: string | null;
             /** @description Optional email. */
@@ -21889,6 +21893,11 @@ export interface components {
         };
         /** @description Setup-required probe for the SPA first-run gate. */
         SetupStatusBody: {
+            /**
+             * @description True when setup also needs the code from the server log: the server
+             *     was started fresh from v2 and no account exists yet.
+             */
+            code_required: boolean;
             /** @description True when no users exist yet and setup must run. */
             setup_required: boolean;
         };
@@ -26520,6 +26529,15 @@ export interface operations {
             };
             /** @description Invalid username, password, or email */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The code from the server log is missing or wrong */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };

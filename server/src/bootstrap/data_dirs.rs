@@ -77,6 +77,21 @@ impl DataDirs {
         self.cache_dir.join(BACKUP_DIR_NAME)
     }
 
+    /// Whether either folder keeps v2's files: an upgrade or a fresh start
+    /// ran here, and its backup has not been removed. A folder that can't
+    /// be looked at counts as kept, so the setup code fails closed.
+    #[must_use]
+    pub fn holds_backup(&self) -> bool {
+        [self.config_backup(), self.cache_backup()]
+            .iter()
+            .any(|folder| {
+                std::fs::symlink_metadata(folder).map_or_else(
+                    |error| error.kind() != std::io::ErrorKind::NotFound,
+                    |_| true,
+                )
+            })
+    }
+
     /// Where a finished upgrade saves its import report.
     #[must_use]
     pub fn report_file(&self) -> PathBuf {

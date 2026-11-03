@@ -113,6 +113,7 @@ impl AuthRig {
                 ),
             ),
             droppedneedle::bootstrap::sign_in_links(&platform),
+            None,
         );
         Self {
             deps: setup.users,

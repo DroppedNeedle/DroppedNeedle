@@ -46,6 +46,7 @@ use utoipa::ToSchema;
 use droppedneedle_auth::session::{
     extract::Transport,
     middleware::effective_origin,
+    one_time_code::OneTimeCode,
     origin::{OriginDecision, check_origin},
     rate_limit::{RateLimiter, rate_limit},
     tokens,
@@ -136,6 +137,9 @@ pub enum Ended {
         listener: TcpListener,
         /// The server lock and the shared lock.
         lock: DataLock,
+        /// The sign-in code not yet used. After a fresh start the app's
+        /// first-admin setup asks for it, so the log keeps one code.
+        code: OneTimeCode,
     },
 }
 
@@ -409,14 +413,10 @@ impl UpgradeMode {
     /// Record how a run ended and look at the folders again.
     async fn finish(&self, ending: Ending) {
         let dirs = self.0.dirs.clone();
-        let (layout, backup) = tokio::task::spawn_blocking(move || {
-            let backup = [dirs.config_backup(), dirs.cache_backup()]
-                .iter()
-                .any(|folder| std::fs::symlink_metadata(folder).is_ok());
-            (detect(&dirs), backup)
-        })
-        .await
-        .unwrap_or((Layout::Interrupted, true));
+        let (layout, backup) =
+            tokio::task::spawn_blocking(move || (detect(&dirs), dirs.holds_backup()))
+                .await
+                .unwrap_or((Layout::Interrupted, true));
         let mut runs = lock(&self.0.runs);
         runs.busy = false;
         runs.preflight = None;
@@ -652,6 +652,7 @@ pub async fn serve(
             Ok(Ended::Continued {
                 listener: TcpListener::from_std(spare).map_err(stage)?,
                 lock: lock.joined(shared),
+                code: mode.sign_in().current_code(),
             })
         }
         (_, _, outcome) => Ok(Ended::Stopped(Stopped {

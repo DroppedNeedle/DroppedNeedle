@@ -6,6 +6,7 @@
 	import { ApiError } from '$lib/api/errors';
 	import { createSetupMutation } from '$lib/queries/auth/AuthMutations.svelte';
 	import { toAuthUser } from '$lib/queries/auth/types';
+	import ServerLogHint from '$lib/components/ServerLogHint.svelte';
 	import { Music, Eye, EyeOff, ShieldCheck } from 'lucide-svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
@@ -19,6 +20,7 @@
 	let email = $state('');
 	let password = $state('');
 	let confirmPassword = $state('');
+	let code = $state('');
 	let showPassword = $state(false);
 	let error = $state<string | null>(null);
 
@@ -39,7 +41,8 @@
 				display_name: displayName,
 				username,
 				email: email || undefined,
-				password
+				password,
+				code: authStore.codeRequired ? code : undefined
 			});
 			authStore.setUser(toAuthUser(data.user));
 			authStore.setSetupRequired(false);
@@ -83,6 +86,24 @@
 					}}
 					class="flex flex-col gap-4"
 				>
+					{#if authStore.codeRequired}
+						<ServerLogHint />
+						<Field label="Code from the server log">
+							{#snippet children(control)}
+								<Input
+									{...control}
+									label="Code from the server log"
+									class="w-full"
+									mono
+									required
+									autocomplete="one-time-code"
+									spellcheck={false}
+									bind:value={code}
+								/>
+							{/snippet}
+						</Field>
+					{/if}
+
 					<TextField
 						label="Display Name"
 						placeholder="Your name"

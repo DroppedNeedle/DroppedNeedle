@@ -109,6 +109,18 @@ into the same `v2-backup` folders the upgrade uses, so going back to v2 still
 works. Your music files are not touched. When you press Continue, v3 asks for
 its first admin account and scans your music folder from scratch.
 
+Creating that account needs a code from the server log, so nobody who
+reaches the page before you can take the server. It is on the line that
+starts `first-admin setup code`:
+
+```sh
+docker compose logs droppedneedle
+```
+
+The code is the one the upgrade page printed last. The server prints a new
+one each time it starts, until the first account exists, so a restart never
+locks you out.
+
 ### Where your v2 files go
 
 The upgrade moves your v2 files into a `v2-backup` folder inside each of the
@@ -199,8 +211,10 @@ fixed first and 3 while the upgrade would stop on callback addresses.
 
 `droppedneedle-tool upgrade --fresh --yes` moves your v2 files into the
 `v2-backup` folders as the upgrade does, and imports nothing. v3 then starts
-empty and asks for its first admin account. `upgrade --undo --yes` goes back
-to v2 from there too.
+empty and asks for its first admin account, with the code from the line
+that starts `first-admin setup code` in the server log (printed again at each
+start until the first account exists). `upgrade --undo --yes` goes back to
+v2 from there too.
 
 For scripted installs, add `--progress json` to the upgrade or to any of
 these. Each command then writes one JSON object a line to stdout: `step` and

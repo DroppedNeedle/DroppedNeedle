@@ -9,6 +9,7 @@ use crate::session::extract;
 use crate::session::login::{
     INVALID_CREDENTIALS, LoginContext, LoginError, LoginRequest, LoginService,
 };
+use crate::session::one_time_code::OneTimeCode;
 use crate::session::rate_limit::{LOGIN_USERNAME_CLASS, RateLimiter, rate_limited};
 use crate::session::stated::StatedAddresses;
 use crate::session::tokens;
@@ -37,6 +38,9 @@ use utoipa::ToSchema;
 
 /// Repeat-setup refusal, v2 message verbatim (v2 answers 409, not 403/404).
 pub const SETUP_ALREADY_COMPLETED: &str = "Setup has already been completed";
+
+/// Setup's refusal of a missing or wrong code: one message for both.
+pub const SETUP_CODE_REFUSED: &str = "That code did not work";
 
 /// Login/setup success body: the authenticated user, plus the raw session
 /// token only in Bearer mode (cookie mode carries it in `Set-Cookie`).
@@ -69,6 +73,11 @@ pub struct NativeAuthState {
     pub stated: StatedAddresses,
     /// Request limiter; login also takes a per-username token from it.
     pub limits: Arc<RateLimiter>,
+    /// The code first-admin setup asks for, logged at boot. Set while a v2
+    /// backup is kept and no account exists: after a fresh start from v2
+    /// nothing came across, federated sign-ins cannot be on, and setup is
+    /// the only way in, so whoever reached it first would own the server.
+    pub setup_code: Option<OneTimeCode>,
 }
 
 impl NativeAuthState {
@@ -79,6 +88,7 @@ impl NativeAuthState {
         passwords: crate::passwords::Passwords,
         users: UsersDeps,
         base_path: &str,
+        setup_code: Option<OneTimeCode>,
     ) -> Self {
         Self {
             login: LoginService::new(sessions, passwords, users.users.clone()),
@@ -87,6 +97,7 @@ impl NativeAuthState {
             trusted_proxies: TrustedProxies::default(),
             stated: StatedAddresses::default(),
             limits: Arc::new(RateLimiter::new()),
+            setup_code,
         }
     }
 
@@ -215,7 +226,9 @@ pub async fn logout_handler(
 }
 
 /// First-admin setup. Creates the admin and logs them in (201 + session,
-/// v2 parity) iff no users exist; otherwise 409. The account and its
+/// v2 parity) iff no users exist; otherwise 409. On a server that logged a
+/// setup code it also needs that code, checked before anything else is: a
+/// missing or wrong one answers the same 401. The account and its
 /// session are one write: a busy or failed setup leaves nothing, so a retry
 /// can still run it. The emptiness check runs inside that transaction, so
 /// concurrent setups, or a setup racing a first federated login (whose role
@@ -229,6 +242,7 @@ pub async fn logout_handler(
     responses(
         (status = 201, description = "First admin created and logged in", body = inline(AuthSessionBody)),
         (status = 400, description = "Invalid username, password, or email"),
+        (status = 401, description = "The code from the server log is missing or wrong"),
         (status = 409, description = "Setup has already been completed")
     )
 )]
@@ -244,6 +258,14 @@ pub async fn setup_handler(
             message: SETUP_ALREADY_COMPLETED.to_owned(),
         }
         .into());
+    }
+    if let Some(code) = &state.setup_code
+        && !body
+            .code
+            .as_deref()
+            .is_some_and(|typed| code.matches(typed))
+    {
+        return Err(AuthRouteError::auth_failed(SETUP_CODE_REFUSED).into());
     }
     let raw_token = tokens::mint_token().map_err(|error| AuthRouteError::internal(&error))?;
     let user = services::create_first_admin(
@@ -287,8 +309,10 @@ pub async fn setup_handler(
 pub async fn setup_status_handler(
     State(state): State<NativeAuthState>,
 ) -> Result<Json<SetupStatusBody>, ApiError> {
+    let setup_required = !users_exist(&state.users).await?;
     Ok(Json(SetupStatusBody {
-        setup_required: !users_exist(&state.users).await?,
+        setup_required,
+        code_required: setup_required && state.setup_code.is_some(),
     }))
 }
 

@@ -3836,7 +3836,7 @@
         "tags": [
           "auth"
         ],
-        "summary": "First-admin setup. Creates the admin and logs them in (201 + session,\nv2 parity) iff no users exist; otherwise 409. The account and its\nsession are one write: a busy or failed setup leaves nothing, so a retry\ncan still run it. The emptiness check runs inside that transaction, so\nconcurrent setups, or a setup racing a first federated login (whose role\nis also decided in its insert), leave exactly one admin. The early probe\nonly skips the password hash.",
+        "summary": "First-admin setup. Creates the admin and logs them in (201 + session,\nv2 parity) iff no users exist; otherwise 409. On a server that logged a\nsetup code it also needs that code, checked before anything else is: a\nmissing or wrong one answers the same 401. The account and its\nsession are one write: a busy or failed setup leaves nothing, so a retry\ncan still run it. The emptiness check runs inside that transaction, so\nconcurrent setups, or a setup racing a first federated login (whose role\nis also decided in its insert), leave exactly one admin. The early probe\nonly skips the password hash.",
         "operationId": "setup_handler",
         "requestBody": {
           "content": {
@@ -3878,6 +3878,16 @@
           },
           "400": {
             "description": "Invalid username, password, or email",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The code from the server log is missing or wrong",
             "content": {
               "application/json": {
                 "schema": {
@@ -62613,6 +62623,13 @@
           "password"
         ],
         "properties": {
+          "code": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The code from the server log, when the setup status asks for one."
+          },
           "display_name": {
             "type": [
               "string",
@@ -62645,9 +62662,14 @@
         "type": "object",
         "description": "Setup-required probe for the SPA first-run gate.",
         "required": [
-          "setup_required"
+          "setup_required",
+          "code_required"
         ],
         "properties": {
+          "code_required": {
+            "type": "boolean",
+            "description": "True when setup also needs the code from the server log: the server\nwas started fresh from v2 and no account exists yet."
+          },
           "setup_required": {
             "type": "boolean",
             "description": "True when no users exist yet and setup must run."

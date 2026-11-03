@@ -36,7 +36,8 @@
 	<div class="flex flex-col gap-5 text-sm">
 		{#if result?.outcome === 'started_fresh'}
 			<p class="text-base-content/70">
-				Nothing came across from v2. Continue to create the first admin account.
+				Nothing came across from v2. Continue to create the first admin account, with the code from
+				the server log.
 			</p>
 		{:else if !result || result.outcome !== 'upgraded'}
 			<p class="text-base-content/70">The data folders hold v3 data.</p>

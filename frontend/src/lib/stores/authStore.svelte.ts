@@ -27,6 +27,7 @@ function createAuthStore() {
 	let user = $state<AuthUser | null>(null);
 	let initialized = $state(false);
 	let setupRequired = $state(false);
+	let codeRequired = $state(false);
 
 	return {
 		get user() {
@@ -37,6 +38,10 @@ function createAuthStore() {
 		},
 		get setupRequired() {
 			return setupRequired;
+		},
+		/** Setup also needs the code from the server log. */
+		get codeRequired() {
+			return codeRequired;
 		},
 		get isAuthenticated() {
 			return user !== null;
@@ -67,8 +72,9 @@ function createAuthStore() {
 			initialized = true;
 		},
 
-		setSetupRequired(required: boolean) {
+		setSetupRequired(required: boolean, needsCode = false) {
 			setupRequired = required;
+			codeRequired = required && needsCode;
 		}
 	};
 }

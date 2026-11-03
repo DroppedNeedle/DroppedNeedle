@@ -23,10 +23,12 @@ use std::{
     time::Duration,
 };
 
-use base64::{Engine as _, engine::general_purpose::URL_SAFE};
 use tokio::{sync::Semaphore, time::Instant};
 
-use droppedneedle_auth::session::tokens::{self, secret_eq};
+use droppedneedle_auth::session::{
+    one_time_code::OneTimeCode,
+    tokens::{self, secret_eq},
+};
 
 use super::sql::{V2_ADMIN_PASSWORDS, V2AdminPassword};
 use crate::bootstrap::data_dirs::{DataDirs, open_read_only};
@@ -45,13 +47,6 @@ const VERIFY_WAIT: Duration = Duration::from_secs(5);
 /// Password checks run at once. bcrypt is CPU work; two is enough for the
 /// few admins of one server and keeps a burst of guesses off the cores.
 const VERIFY_TURNS: usize = 2;
-
-/// Random bytes in a one-time code: 160 bits, 32 characters to type.
-const CODE_BYTES: usize = 20;
-
-/// The code's alphabet: Crockford's base32, which leaves out I, L, O and U
-/// so a code read off a log is typed back right.
-const CODE_ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
 /// The cost of the dummy hash when no admin's hash says one.
 const DEFAULT_BCRYPT_COST: u32 = 12;
@@ -84,7 +79,7 @@ pub struct SignIn {
     /// dummy, so which name it gave cannot be told from the time it took.
     dummies: BTreeMap<u32, String>,
     turns: Arc<Semaphore>,
-    code: Mutex<String>,
+    code: Mutex<OneTimeCode>,
     sessions: Mutex<HashMap<String, Instant>>,
 }
 
@@ -125,9 +120,9 @@ impl SignIn {
 
     /// Log the current code, with what it is for.
     pub fn log_code(&self) {
-        let code = lock(&self.code).clone();
+        let code = lock(&self.code).spaced();
         tracing::warn!(
-            code = %spaced(&code),
+            code = %code,
             "upgrade sign-in code: it signs in to the upgrade page once, for when no admin can \
              sign in with a v2 password"
         );
@@ -171,12 +166,17 @@ impl SignIn {
         Ok(matched)
     }
 
+    /// The code not yet used, which Continue hands to the app: on a server
+    /// started fresh its first-admin setup asks for the same code.
+    pub fn current_code(&self) -> OneTimeCode {
+        lock(&self.code).clone()
+    }
+
     /// Whether `typed` is the current code. A code that matches is used
     /// up: a new one is minted and logged.
     pub fn code(&self, typed: &str) -> Result<bool, CheckError> {
-        let typed = normalised_code(typed);
         let mut code = lock(&self.code);
-        if !secret_eq(&typed, &code) {
+        if !code.matches(typed) {
             return Ok(false);
         }
         *code = mint_code()?;
@@ -311,45 +311,9 @@ fn bcrypt_cost(hash: &str) -> Option<u32> {
         .then_some(cost)
 }
 
-/// A fresh code: [`CODE_BYTES`] random bytes in [`CODE_ALPHABET`].
-fn mint_code() -> Result<String, CheckError> {
-    let token = tokens::mint_token().map_err(|_| CheckError::Random)?;
-    let random = URL_SAFE.decode(token).map_err(|_| CheckError::Random)?;
-    let bytes = random.get(..CODE_BYTES).ok_or(CheckError::Random)?;
-    let mut code = String::with_capacity(CODE_BYTES * 8 / 5);
-    let (mut bits, mut held) = (0u32, 0u32);
-    for byte in bytes {
-        bits = (bits << 8) | u32::from(*byte);
-        held += 8;
-        while held >= 5 {
-            held -= 5;
-            code.push(char::from(CODE_ALPHABET[((bits >> held) & 31) as usize]));
-        }
-    }
-    Ok(code)
-}
-
-/// A typed code as stored: spaces and dashes dropped, upper case, and the
-/// letters Crockford's base32 reads as digits turned into them.
-fn normalised_code(typed: &str) -> String {
-    typed
-        .chars()
-        .filter(|ch| !ch.is_whitespace() && *ch != '-')
-        .map(|ch| match ch.to_ascii_uppercase() {
-            'O' => '0',
-            'I' | 'L' => '1',
-            other => other,
-        })
-        .collect()
-}
-
-/// The code in groups of four, as logged.
-fn spaced(code: &str) -> String {
-    code.as_bytes()
-        .chunks(4)
-        .map(|group| String::from_utf8_lossy(group).into_owned())
-        .collect::<Vec<_>>()
-        .join("-")
+/// A fresh code.
+fn mint_code() -> Result<OneTimeCode, CheckError> {
+    OneTimeCode::mint().map_err(|_| CheckError::Random)
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {

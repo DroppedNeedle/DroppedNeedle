@@ -62,6 +62,7 @@ pub mod event_stream;
 pub mod extract;
 pub mod login;
 pub mod middleware;
+pub mod one_time_code;
 pub mod origin;
 pub mod rate_limit;
 pub mod stated;

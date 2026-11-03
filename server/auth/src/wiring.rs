@@ -21,6 +21,7 @@ use super::prod::ProdAuth;
 use super::routes::federated::{JellyfinRouteState, OidcRouteState, PlexRouteState};
 use super::routes::native::NativeAuthState;
 use super::session::middleware::SessionAuth;
+use super::session::one_time_code::OneTimeCode;
 use super::session::rate_limit::RateLimiter;
 use super::session::stated::StatedAddresses;
 use super::users::UsersDeps;
@@ -84,12 +85,14 @@ impl AuthSetup {
     /// and user import); `plex_server` reads
     /// the configured Plex server's machine id for the membership gate;
     /// `links` saves the media link a Plex or Jellyfin sign-in hands back.
+    /// `setup_code`, when set, is the code first-admin setup asks for.
     pub fn build(
         platform: &Platform,
         auth: ProdAuth,
         providers: &Providers,
         plex_server: Arc<dyn PlexServerIdentity>,
         links: MediaLinks,
+        setup_code: Option<OneTimeCode>,
     ) -> Self {
         use super::users::hibp::{HibpScreen, PwnedPasswordsHttp};
 
@@ -131,6 +134,7 @@ impl AuthSetup {
             auth.passwords.clone(),
             users.clone(),
             base_path,
+            setup_code,
         )
         .with_limits(limits.clone())
         .with_stated_addresses(stated.clone());
