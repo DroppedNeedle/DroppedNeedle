@@ -14,6 +14,7 @@ pub mod key_check;
 mod outbound;
 pub mod platform;
 mod serve;
+pub mod upgrade_progress;
 
 use std::{fmt::Display, future::Future, sync::Arc, time::Duration};
 

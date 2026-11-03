@@ -36,18 +36,25 @@
 //! entries back, so a rollback that is itself interrupted can never delete
 //! a v2 file it already restored.
 //!
+//! [`check`] runs every check of steps 1 and 2, and the export and its
+//! validation, changing nothing. [`start_fresh`] moves the v2 entries into
+//! the backup as step 4 does and imports nothing, so v3 starts empty and
+//! [`undo`] still goes back to v2.
+//!
 //! [`run_offline_import`] is the import both this upgrade and the tool's
 //! `import` and `dry-run` commands run.
 
+use std::collections::{BTreeMap, HashSet};
 use std::ffi::{OsStr, OsString};
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use rusqlite::{Connection, OpenFlags, TransactionBehavior};
+use serde_json::Value;
 use thiserror::Error;
 
-use crate::export::callbacks::{CallbackCheck, check_callbacks};
+use crate::export::callbacks::{self, AddressChange, CallbackCheck, check_callbacks};
 use crate::export::v2dir::{self, V2Dirs};
 use crate::export::{ExportError, ExportRequest, export_v2_to_file};
 use crate::import::{
@@ -57,6 +64,9 @@ use crate::import::{
 use droppedneedle::bootstrap::data_dirs::{
     BACKUP_DIR_NAME, BootRefusal, DataDirs, Layout, MARKER_FILE_NAME, UnknownLayout, detect,
     key_refusal, refuse_lost_key,
+};
+use droppedneedle::bootstrap::upgrade_progress::{
+    Address, Blocker, CallbackFeature, CheckResult, Code, FoundLayout, Warning,
 };
 use droppedneedle_kernel::db::backup::{WalState, wal_path, wal_state};
 use droppedneedle_kernel::db::datalock::{DataLock, DataLockError, lock_path, server_lock_path};
@@ -168,6 +178,10 @@ pub enum Fault {
     DiesWhileRollingBack,
 }
 
+/// How many data folders the steps that move entries go through, one
+/// after the other: the config folder, then the cache folder.
+pub const DATA_FOLDERS: u64 = 2;
+
 /// Progress, for the tool to print as the run moves along.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Step<'a> {
@@ -186,8 +200,15 @@ pub enum Step<'a> {
     DryRun,
     /// The import is running.
     Importing,
+    /// The v2 files are being deleted, as `keep_backup: false` asked.
+    RemovingBackup,
     /// This run failed; the v2 entries are going back.
     RollingBack,
+    /// The v3 data is being deleted and the v2 entries are going back.
+    Undoing,
+    /// This many of the [`DATA_FOLDERS`] are done in the current step that
+    /// moves entries: recovering, moving aside, rolling back or undoing.
+    FolderDone(u64),
 }
 
 /// How an upgrade run ended.
@@ -209,6 +230,16 @@ pub struct Summary {
     pub orphans_removed: usize,
     /// False when the v2 files were deleted after the import.
     pub backup_kept: bool,
+}
+
+/// How a fresh start ended.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FreshStart {
+    /// The folders held nothing to move aside: an empty or v3 layout.
+    NothingToDo(Layout),
+    /// The v2 files are in the backup folders and the data folders are
+    /// empty.
+    Done,
 }
 
 /// Every way the upgrade, its undo, or the backup removal can fail.
@@ -372,16 +403,86 @@ fn failed(action: &'static str, path: &Path, error: impl std::fmt::Display) -> U
     }
 }
 
+/// How many issues or failed records a message lists before it says how
+/// many more there are, so a message stays short.
+pub const LISTED: usize = 10;
+
 fn issue_list(issues: &[ValidationIssue]) -> String {
-    issues
+    let mut list = issues
         .iter()
+        .take(LISTED)
         .map(|issue| format!("{} at {}: {}", issue.code, issue.path, issue.message))
         .collect::<Vec<_>>()
-        .join("; ")
+        .join("; ");
+    if issues.len() > LISTED {
+        list.push_str(&format!(", and {} more", issues.len() - LISTED));
+    }
+    list
 }
 
 fn import_kind(dry_run: bool) -> &'static str {
     if dry_run { "dry run" } else { "import" }
+}
+
+impl UpgradeError {
+    /// The code the tool reports this failure under.
+    #[must_use]
+    pub fn code(&self) -> Code {
+        match self {
+            Self::Locked(_) => Code::Locked,
+            Self::ToolRunning => Code::ToolRunning,
+            Self::UnknownLayout(_) => Code::UnknownLayout,
+            Self::UnsupportedPaths { .. } => Code::UnsupportedPaths,
+            Self::CallbacksToChange { check, .. } if check.unreachable_admins().is_some() => {
+                Code::NoAdminCanSignIn
+            }
+            Self::CallbacksToChange { .. } => Code::CallbacksToChange,
+            Self::BackupExists(_) => Code::BackupExists,
+            Self::WalPresent { .. } | Self::WalUnreadable { .. } => Code::V2WalPresent,
+            Self::Export(error) => export_code(error),
+            Self::NotEnoughDisk { .. } => Code::NotEnoughDisk,
+            Self::Io { .. } => Code::FileError,
+            Self::Occupied(_) => Code::Occupied,
+            Self::RandomFailed => Code::RandomFailed,
+            Self::Invalid(_) => Code::ValidationFailed,
+            Self::OrphanRepair(_) => Code::OrphanRepairFailed,
+            Self::ImportSetup(_) => Code::ImportSetupFailed,
+            Self::ImportFailed { .. } => Code::ImportFailed,
+            Self::NoBackup { .. } => Code::NoBackup,
+            Self::AlreadyV2 => Code::AlreadyV2,
+            Self::NotAFolder(_) => Code::NotAFolder,
+            Self::BackupStillNeeded => Code::BackupStillNeeded,
+            Self::RollbackFailed { .. } => Code::RollbackFailed,
+            Self::BackupNotRemoved(_) => Code::BackupNotRemoved,
+            Self::InjectedCrash => Code::Internal,
+        }
+    }
+}
+
+/// The code an export failure is reported under. Everything but
+/// [`Code::ExportFailed`] is something about the v2 data the operator can
+/// put right.
+fn export_code(error: &ExportError) -> Code {
+    match error {
+        ExportError::V2KeyNotFound { .. } => Code::V2KeyNotFound,
+        ExportError::V2KeyInvalid => Code::V2KeyInvalid,
+        ExportError::V2KeyMismatch { .. } => Code::V2KeyMismatch,
+        ExportError::V2WalPresent { .. } | ExportError::V2WalUnreadable { .. } => {
+            Code::V2WalPresent
+        }
+        ExportError::V2ConfigUnreadable { .. } => Code::V2ConfigUnreadable,
+        ExportError::V2ConfigInvalid => Code::V2ConfigInvalid,
+        ExportError::InstanceIdMissing => Code::MissingInstanceId,
+        ExportError::V2Database { .. } => Code::V2DatabaseError,
+        ExportError::UnsupportedFormat
+        | ExportError::UnsupportedFormatVersion
+        | ExportError::MissingRequiredKey { .. }
+        | ExportError::InvalidEnvelope { .. }
+        | ExportError::Seal(_)
+        | ExportError::ExportWrite { .. }
+        | ExportError::Timestamp
+        | ExportError::Bundle { .. } => Code::ExportFailed,
+    }
 }
 
 /// Upgrade a v2 layout in place. An empty or v3 layout is left alone.
@@ -399,26 +500,16 @@ pub async fn run(
         layout @ (Layout::Empty | Layout::V3) => return Ok(Upgraded::NothingToDo(layout)),
         Layout::Unknown(reason) => return Err(UpgradeError::UnknownLayout(reason)),
         Layout::V2 => {
-            preflight(dirs)?;
+            preflight(dirs, true)?;
             callbacks = Some(confirm_callbacks(request)?);
         }
         Layout::Interrupted => {}
     }
     let lock = lock_exclusive(dirs)?;
-    // Look again under the lock: another run may have finished meanwhile.
-    if detect(dirs) == Layout::Interrupted {
-        progress(Step::Recovering);
-        roll_back(dirs, None)?;
+    if let Some(layout) = recover(dirs, progress)? {
+        return Ok(Upgraded::NothingToDo(layout));
     }
-    match detect(dirs) {
-        Layout::V2 => {}
-        layout @ (Layout::Empty | Layout::V3) => return Ok(Upgraded::NothingToDo(layout)),
-        Layout::Unknown(reason) => return Err(UpgradeError::UnknownLayout(reason)),
-        Layout::Interrupted => {
-            return Err(failed("clear", &dirs.marker(), "the marker is still there"));
-        }
-    }
-    preflight(dirs)?;
+    preflight(dirs, true)?;
     let callbacks = match callbacks {
         Some(check) => check,
         None => confirm_callbacks(request)?,
@@ -427,7 +518,7 @@ pub async fn run(
         progress(Step::CallbacksAcknowledged(&callbacks));
     }
     progress(Step::MovingAside);
-    let converted = match move_aside(dirs, request.fault) {
+    let converted = match move_aside(dirs, request.fault, progress) {
         Ok(()) => convert(request, &lock, &callbacks, progress).await,
         Err(error) => Err(error),
     };
@@ -437,7 +528,7 @@ pub async fn run(
         Err(UpgradeError::InjectedCrash) => return Err(UpgradeError::InjectedCrash),
         Err(cause) => {
             progress(Step::RollingBack);
-            return Err(match roll_back(dirs, request.fault) {
+            return Err(match roll_back(dirs, request.fault, progress) {
                 Ok(()) => cause,
                 Err(UpgradeError::InjectedCrash) => UpgradeError::InjectedCrash,
                 Err(rollback) => UpgradeError::RollbackFailed {
@@ -448,6 +539,7 @@ pub async fn run(
         }
     };
     if !request.keep_backup {
+        progress(Step::RemovingBackup);
         // The marker's removal has to be on disk first. A marker that came
         // back after a power cut, beside a half-deleted backup, would make
         // the next run delete the v3 data.
@@ -462,9 +554,63 @@ pub async fn run(
     })))
 }
 
+/// Under the lock: roll back an interrupted run, then make sure the
+/// folders hold v2 data to work on. `Some` is a layout with nothing to do.
+fn recover(
+    dirs: &DataDirs,
+    progress: &mut dyn FnMut(Step<'_>),
+) -> Result<Option<Layout>, UpgradeError> {
+    // Look again under the lock: another run may have finished meanwhile.
+    if detect(dirs) == Layout::Interrupted {
+        progress(Step::Recovering);
+        roll_back(dirs, None, progress)?;
+    }
+    match detect(dirs) {
+        Layout::V2 => Ok(None),
+        layout @ (Layout::Empty | Layout::V3) => Ok(Some(layout)),
+        Layout::Unknown(reason) => Err(UpgradeError::UnknownLayout(reason)),
+        Layout::Interrupted => Err(failed("clear", &dirs.marker(), "the marker is still there")),
+    }
+}
+
+/// Start v3 empty: move the v2 entries into the backup folders the way the
+/// upgrade does, after the same layout, backup, `-wal` and disk checks,
+/// and import nothing. The next server start finds empty folders. An
+/// interrupted upgrade is rolled back first, and [`undo`] goes back to v2
+/// afterwards as it does after an upgrade. The backup is always kept.
+pub fn start_fresh(
+    dirs: &DataDirs,
+    progress: &mut dyn FnMut(Step<'_>),
+) -> Result<FreshStart, UpgradeError> {
+    match detect(dirs) {
+        layout @ (Layout::Empty | Layout::V3) => return Ok(FreshStart::NothingToDo(layout)),
+        Layout::Unknown(reason) => return Err(UpgradeError::UnknownLayout(reason)),
+        Layout::V2 => preflight(dirs, false)?,
+        Layout::Interrupted => {}
+    }
+    let _lock = lock_exclusive(dirs)?;
+    if let Some(layout) = recover(dirs, progress)? {
+        return Ok(FreshStart::NothingToDo(layout));
+    }
+    preflight(dirs, false)?;
+    progress(Step::MovingAside);
+    let moved = move_aside(dirs, None, progress).and_then(|()| remove_marker(dirs));
+    if let Err(cause) = moved {
+        progress(Step::RollingBack);
+        return Err(match roll_back(dirs, None, progress) {
+            Ok(()) => cause,
+            Err(rollback) => UpgradeError::RollbackFailed {
+                cause: Box::new(cause),
+                rollback: Box::new(rollback),
+            },
+        });
+    }
+    Ok(FreshStart::Done)
+}
+
 /// Go back to v2: delete the v3 data and put the v2 entries back from the
 /// backup folders. Also finishes the rollback of an interrupted upgrade.
-pub fn undo(dirs: &DataDirs) -> Result<(), UpgradeError> {
+pub fn undo(dirs: &DataDirs, progress: &mut dyn FnMut(Step<'_>)) -> Result<(), UpgradeError> {
     // No lock file is created unless there is something to undo.
     match detect(dirs) {
         Layout::Interrupted => {}
@@ -473,11 +619,15 @@ pub fn undo(dirs: &DataDirs) -> Result<(), UpgradeError> {
     }
     let _lock = lock_exclusive(dirs)?;
     match detect(dirs) {
-        Layout::Interrupted => roll_back(dirs, None),
+        Layout::Interrupted => {
+            progress(Step::Undoing);
+            roll_back(dirs, None, progress)
+        }
         Layout::Empty | Layout::V3 => {
             require_backup(dirs)?;
+            progress(Step::Undoing);
             write_marker(dirs, Phase::Upgrading)?;
-            roll_back(dirs, None)
+            roll_back(dirs, None, progress)
         }
         Layout::V2 => Err(UpgradeError::AlreadyV2),
         Layout::Unknown(reason) => Err(UpgradeError::UnknownLayout(reason)),
@@ -551,10 +701,22 @@ fn lock_exclusive(dirs: &DataDirs) -> Result<DataLock, UpgradeError> {
     })
 }
 
-/// Refuse, before anything moves, what the run could not finish.
-fn preflight(dirs: &DataDirs) -> Result<(), UpgradeError> {
+/// Refuse, before anything moves, what the run could not finish: the
+/// first of [`refusals`].
+fn preflight(dirs: &DataDirs, export_inputs: bool) -> Result<(), UpgradeError> {
+    refusals(dirs, export_inputs)
+        .into_iter()
+        .next()
+        .map_or(Ok(()), Err)
+}
+
+/// Everything that refuses the run before anything moves, in the order the
+/// run meets them. `export_inputs` adds the two files every export needs;
+/// a fresh start exports nothing.
+fn refusals(dirs: &DataDirs, export_inputs: bool) -> Vec<UpgradeError> {
+    let mut found = Vec::new();
     if dirs.db_path.parent() != Some(dirs.cache_dir.as_path()) {
-        return Err(UpgradeError::UnsupportedPaths {
+        found.push(UpgradeError::UnsupportedPaths {
             reason: "the database is not directly inside the cache folder",
         });
     }
@@ -563,42 +725,52 @@ fn preflight(dirs: &DataDirs) -> Result<(), UpgradeError> {
         std::fs::canonicalize(&dirs.cache_dir),
     ) && (config.starts_with(&cache) || cache.starts_with(&config))
     {
-        return Err(UpgradeError::UnsupportedPaths {
+        found.push(UpgradeError::UnsupportedPaths {
             reason: "the config and cache folders are inside one another",
         });
     }
     for backup in [dirs.config_backup(), dirs.cache_backup()] {
         if std::fs::symlink_metadata(&backup).is_ok() {
-            return Err(UpgradeError::BackupExists(backup));
+            found.push(UpgradeError::BackupExists(backup));
         }
     }
     // The export reads the database file alone, so writes still sitting in
     // the -wal file would be left out.
     match wal_state(&dirs.db_path) {
         WalState::Absent | WalState::Empty => {}
-        WalState::HoldsData(_) => {
-            return Err(UpgradeError::WalPresent {
-                path: wal_path(&dirs.db_path),
-            });
-        }
-        WalState::Unreadable(error) => {
-            return Err(UpgradeError::WalUnreadable {
-                path: wal_path(&dirs.db_path),
-                reason: error.to_string(),
-            });
-        }
+        WalState::HoldsData(_) => found.push(UpgradeError::WalPresent {
+            path: wal_path(&dirs.db_path),
+        }),
+        WalState::Unreadable(error) => found.push(UpgradeError::WalUnreadable {
+            path: wal_path(&dirs.db_path),
+            reason: error.to_string(),
+        }),
     }
     // The two files every export needs. Checked here so a missing one is
     // reported at its real path, with nothing moved.
-    v2dir::read_data_enc_key(&dirs.config_dir)?;
-    v2dir::read_config(&dirs.config_dir)?;
-    check_free_disk(dirs)
+    if export_inputs {
+        if let Err(error) = v2dir::read_data_enc_key(&dirs.config_dir) {
+            found.push(error.into());
+        }
+        if let Err(error) = v2dir::read_config(&dirs.config_dir) {
+            found.push(error.into());
+        }
+    }
+    if let Err(error) = check_free_disk(dirs) {
+        found.push(error);
+    }
+    found
 }
 
 /// The export bundle and the new database both land in the cache folder
 /// while the v2 files are still there. Each is at most the size of the v2
 /// database plus the files the bundle carries.
 fn check_free_disk(dirs: &DataDirs) -> Result<(), UpgradeError> {
+    check_free_disk_in(dirs, &dirs.cache_dir)
+}
+
+/// The same estimate, against the free space in `dir`.
+fn check_free_disk_in(dirs: &DataDirs, dir: &Path) -> Result<(), UpgradeError> {
     let database = std::fs::metadata(&dirs.db_path).map_or(0, |meta| meta.len());
     let carried: u64 = CARRIED_FILE_DIRS
         .iter()
@@ -608,13 +780,13 @@ fn check_free_disk(dirs: &DataDirs) -> Result<(), UpgradeError> {
         .saturating_add(carried)
         .saturating_mul(2)
         .saturating_add(DISK_HEADROOM_BYTES);
-    let free = droppedneedle_library::adapters::free_bytes_for(&dirs.cache_dir)
-        .map_err(|error| failed("measure free space in", &dirs.cache_dir, error))?;
+    let free = droppedneedle_library::adapters::free_bytes_for(dir)
+        .map_err(|error| failed("measure free space in", dir, error))?;
     if free >= needed {
         return Ok(());
     }
     Err(UpgradeError::NotEnoughDisk {
-        dir: dirs.cache_dir.clone(),
+        dir: dir.to_owned(),
         needed_mib: needed.div_ceil(MIB),
         free_mib: free / MIB,
     })
@@ -641,8 +813,13 @@ fn dir_bytes(dir: &Path) -> u64 {
 }
 
 /// Rename every v2 entry into its folder's backup.
-fn move_aside(dirs: &DataDirs, fault: Option<Fault>) -> Result<(), UpgradeError> {
+fn move_aside(
+    dirs: &DataDirs,
+    fault: Option<Fault>,
+    progress: &mut dyn FnMut(Step<'_>),
+) -> Result<(), UpgradeError> {
     write_marker(dirs, Phase::Moving)?;
+    let mut done = 0;
     for (index, folder) in folders(dirs).iter().enumerate() {
         if index > 0 && fault == Some(Fault::DiesWhileMoving) {
             return Err(UpgradeError::InjectedCrash);
@@ -667,6 +844,8 @@ fn move_aside(dirs: &DataDirs, fault: Option<Fault>) -> Result<(), UpgradeError>
         }
         sync_dir(&folder.backup)?;
         sync_dir(&folder.dir)?;
+        done += 1;
+        progress(Step::FolderDone(done));
     }
     write_marker(dirs, Phase::Upgrading)
 }
@@ -752,9 +931,26 @@ enum Checked {
     Refused(Vec<ValidationIssue>),
 }
 
+/// Export to `export_path` and validate the result.
+fn export_checked(request: &ExportRequest, export_path: &Path) -> Result<Checked, UpgradeError> {
+    let exported = export_validated(request, export_path)?;
+    Ok(if exported.errors.is_empty() {
+        Checked::Valid(exported.bytes)
+    } else {
+        Checked::Refused(exported.errors)
+    })
+}
+
+/// An export file, parsed, and what validation found in it.
+struct Exported {
+    bytes: Vec<u8>,
+    root: Value,
+    errors: Vec<ValidationIssue>,
+}
+
 /// Export to `export_path`, then run the checks the `validate` command
 /// runs: the validator, then the bundle against the hash the export names.
-fn export_checked(request: &ExportRequest, export_path: &Path) -> Result<Checked, UpgradeError> {
+fn export_validated(request: &ExportRequest, export_path: &Path) -> Result<Exported, UpgradeError> {
     export_v2_to_file(request, export_path)?;
     let bytes = std::fs::read(export_path).map_err(|error| failed("read", export_path, error))?;
     let parsed = ExportFile::parse(&bytes).map_err(|error| failed("read", export_path, error))?;
@@ -765,11 +961,420 @@ fn export_checked(request: &ExportRequest, export_path: &Path) -> Result<Checked
             .errors
             .extend(check_attachments(&parsed.root, folder));
     }
-    Ok(if report.valid() {
-        Checked::Valid(bytes)
-    } else {
-        Checked::Refused(report.errors)
+    Ok(Exported {
+        bytes,
+        root: parsed.root,
+        errors: report.errors,
     })
+}
+
+/// Said of a blocker the operator cannot put right in the v2 data.
+const REPORT_IT: &str = "If the check finds it again, report it with this message.";
+
+/// The start of the name of each scratch folder the check exports into.
+const CHECK_SCRATCH_PREFIX: &str = "droppedneedle-upgrade-check-";
+
+/// What the upgrade would find, changing nothing: the layout, every check
+/// it runs before it moves anything, the callback addresses that change,
+/// and an export of the v2 data with its validation, which also counts
+/// what would move. The export is written to a private folder in
+/// `temp_dir`, never into the data folders, and removed again. An
+/// interrupted layout is reported as it is: the upgrade rolls it back
+/// before it checks anything, and so can the check only after that.
+pub fn check(request: &UpgradeRequest, temp_dir: &Path) -> CheckResult {
+    let dirs = &request.dirs;
+    let mut result = CheckResult {
+        layout: FoundLayout::V2,
+        counts: None,
+        orphans: 0,
+        blockers: Vec::new(),
+        warnings: Vec::new(),
+    };
+    match detect(dirs) {
+        Layout::V2 => {}
+        Layout::Interrupted => result.layout = FoundLayout::Interrupted,
+        Layout::V3 => result.layout = FoundLayout::V3,
+        Layout::Empty => result.layout = FoundLayout::Empty,
+        Layout::Unknown(reason) => {
+            result.layout = FoundLayout::Unknown;
+            add_blocker(&mut result.blockers, &UpgradeError::UnknownLayout(reason));
+        }
+    }
+    if result.layout != FoundLayout::V2 {
+        return result;
+    }
+    for refusal in refusals(dirs, true) {
+        add_blocker(&mut result.blockers, &refusal);
+    }
+    let mut exportable = result.blockers.is_empty();
+    match check_callbacks(&dirs.config_dir, &dirs.db_path, &request.base_path) {
+        Ok(callbacks) => {
+            result.warnings = warnings(&callbacks);
+            if let Some(names) = callbacks.unreachable_admins() {
+                result.blockers.push(admin_blocker(names));
+            }
+        }
+        Err(error) => {
+            exportable = false;
+            add_blocker(&mut result.blockers, &error.into());
+        }
+    }
+    if exportable {
+        check_export(request, temp_dir, &mut result);
+    }
+    result
+}
+
+/// Export the v2 data and validate it as the upgrade does, and count what
+/// it carries. Anything that stops the export is a blocker, as are
+/// validation errors other than the orphan rows the upgrade removes by
+/// itself.
+fn check_export(request: &UpgradeRequest, temp_dir: &Path, result: &mut CheckResult) {
+    remove_stale_scratch(temp_dir);
+    if let Err(short) = check_free_disk_in(&request.dirs, temp_dir) {
+        add_blocker(&mut result.blockers, &short);
+        return;
+    }
+    let exported = match scratch_export(request, temp_dir) {
+        Ok(exported) => exported,
+        Err(error) => {
+            add_blocker(&mut result.blockers, &error);
+            return;
+        }
+    };
+    // The records the upgrade's orphan repair removes: follows and
+    // approvals of a user the export does not hold.
+    let mut orphans = HashSet::new();
+    let mut invalid = Vec::new();
+    for issue in exported.errors {
+        let record = issue.path.split('.').next().unwrap_or_default().to_owned();
+        let repaired = record.starts_with("follows[") || record.starts_with("approvals[");
+        if issue.code == DANGLING_USER_REF && repaired {
+            orphans.insert(record);
+        } else {
+            invalid.push(issue);
+        }
+    }
+    if !invalid.is_empty() {
+        add_blocker(&mut result.blockers, &UpgradeError::Invalid(invalid));
+    }
+    result.counts = Some(export_counts(&exported.root, &orphans));
+    result.orphans = count(orphans.len());
+}
+
+/// Export into a private scratch folder of its own in `temp_dir` and
+/// validate the result, then remove the folder.
+fn scratch_export(request: &UpgradeRequest, temp_dir: &Path) -> Result<Exported, UpgradeError> {
+    let dirs = &request.dirs;
+    let passphrase = fresh_passphrase()?;
+    let mut name = [0u8; 8];
+    getrandom::fill(&mut name).map_err(|_| UpgradeError::RandomFailed)?;
+    let hex: String = name.iter().map(|byte| format!("{byte:02x}")).collect();
+    let scratch = temp_dir.join(format!("{CHECK_SCRATCH_PREFIX}{hex}"));
+    create_private_dir(&scratch)?;
+    let export = ExportRequest {
+        v2: V2Dirs {
+            config_dir: dirs.config_dir.clone(),
+            cache_dir: dirs.cache_dir.clone(),
+            plugins_dir: dirs.plugins_dir.clone(),
+        },
+        db_path: Some(dirs.db_path.clone()),
+        passphrase,
+        exported_at: None,
+        v2_commit: request.v2_commit.clone(),
+    };
+    let exported = export_validated(&export, &scratch.join(EXPORT_FILE_NAME));
+    let removed = remove_entry(&scratch);
+    let exported = exported?;
+    removed?;
+    Ok(exported)
+}
+
+/// Remove the scratch folders of checks that were killed before they could:
+/// they hold password hashes and listening history.
+fn remove_stale_scratch(temp_dir: &Path) {
+    let Ok(entries) = std::fs::read_dir(temp_dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let stale = entry
+            .file_name()
+            .to_string_lossy()
+            .starts_with(CHECK_SCRATCH_PREFIX);
+        if stale && let Err(error) = remove_entry(&entry.path()) {
+            tracing::warn!(%error, "cannot remove an earlier upgrade check's scratch folder");
+        }
+    }
+}
+
+/// What an export holds, by the names the import report counts under.
+/// `orphans` are the follows and approvals the upgrade removes first.
+fn export_counts(root: &Value, orphans: &HashSet<String>) -> BTreeMap<String, u64> {
+    let list = |name: &str| root.get(name).and_then(Value::as_array);
+    let length = |name: &str| list(name).map_or(0, |records| count(records.len()));
+    let removed = |name: &str| {
+        let prefix = format!("{name}[");
+        count(
+            orphans
+                .iter()
+                .filter(|record| record.starts_with(&prefix))
+                .count(),
+        )
+    };
+    let per_user = |field: &str| {
+        list("users").map_or(0, |users| {
+            users
+                .iter()
+                .filter_map(|user| user.get(field).and_then(Value::as_array))
+                .map(|records| count(records.len()))
+                .sum()
+        })
+    };
+    let mut counts = BTreeMap::from([
+        ("user".to_owned(), length("users")),
+        ("provider".to_owned(), per_user("providers")),
+        ("app_password".to_owned(), per_user("app_passwords")),
+        (
+            "follow".to_owned(),
+            length("follows").saturating_sub(removed("follows")),
+        ),
+        (
+            "approval".to_owned(),
+            length("approvals").saturating_sub(removed("approvals")),
+        ),
+        ("event_city".to_owned(), length("event_cities")),
+        ("event_seen".to_owned(), length("event_seen")),
+        ("connection".to_owned(), length("user_connections")),
+    ]);
+    let sections = list("attachments")
+        .into_iter()
+        .flatten()
+        .filter_map(|attachment| attachment.get("sections").and_then(Value::as_object))
+        .flatten();
+    for (name, rows) in sections {
+        *counts.entry(name.clone()).or_default() += rows.as_u64().unwrap_or(0);
+    }
+    counts
+}
+
+fn count(length: usize) -> u64 {
+    u64::try_from(length).unwrap_or(u64::MAX)
+}
+
+/// Add the blocker `error` reports, unless the same one is listed: a
+/// `-wal` file or an unreadable config refuses both the checks and the
+/// callback read in the same words.
+fn add_blocker(blockers: &mut Vec<Blocker>, error: &UpgradeError) {
+    let found = blocker(error);
+    if !blockers.contains(&found) {
+        blockers.push(found);
+    }
+}
+
+/// What is wrong and what to do about it, for one refusal.
+fn blocker(error: &UpgradeError) -> Blocker {
+    let key_fix = "Put back the key file v2 ran with, which holds DATA_ENC_KEY.";
+    let (message, fix) = match error {
+        UpgradeError::UnknownLayout(reason) => (
+            format!("Cannot tell what this data directory holds: {reason}."),
+            "Compare the config and cache folders with docs/upgrading-from-v2.md.",
+        ),
+        UpgradeError::UnsupportedPaths { reason } => (
+            format!("The in-place upgrade does not handle this layout: {reason}."),
+            "Use the export and import commands instead.",
+        ),
+        UpgradeError::BackupExists(path) => (
+            format!("{} already exists.", path.display()),
+            "Move it away or delete it.",
+        ),
+        UpgradeError::WalPresent { path }
+        | UpgradeError::Export(ExportError::V2WalPresent { path }) => (
+            format!("v2's database has unmerged writes in {}.", path.display()),
+            "If v2 is still running, stop it. Otherwise start v2 and stop it cleanly.",
+        ),
+        UpgradeError::WalUnreadable { path, reason }
+        | UpgradeError::Export(ExportError::V2WalUnreadable { path, reason }) => (
+            format!("Cannot read {}: {reason}.", path.display()),
+            "Check its permissions.",
+        ),
+        UpgradeError::NotEnoughDisk {
+            dir,
+            needed_mib,
+            free_mib,
+        } => (
+            format!(
+                "The upgrade needs about {needed_mib} MiB free in {} and only {free_mib} MiB \
+                 is free.",
+                dir.display()
+            ),
+            "Free some space there.",
+        ),
+        UpgradeError::Export(ExportError::V2KeyNotFound { path }) => (
+            format!("v2's key file {} is missing.", path.display()),
+            key_fix,
+        ),
+        UpgradeError::Export(ExportError::V2KeyInvalid) => (
+            "v2's key file holds no usable DATA_ENC_KEY.".to_owned(),
+            key_fix,
+        ),
+        UpgradeError::Export(ExportError::V2KeyMismatch { .. }) => (
+            "v2's stored passwords and API keys do not open with the DATA_ENC_KEY in its key \
+             file."
+                .to_owned(),
+            key_fix,
+        ),
+        UpgradeError::Export(
+            error @ (ExportError::V2ConfigUnreadable { .. }
+            | ExportError::V2ConfigInvalid
+            | ExportError::InstanceIdMissing),
+        ) => (sentence(error), "Put back the config.json v2 ran with."),
+        UpgradeError::Export(error @ ExportError::V2Database { .. }) => (
+            sentence(error),
+            "Check that the cache folder holds the library.db v2 ran on, and that it can be \
+             read.",
+        ),
+        UpgradeError::Invalid(issues) => (
+            format!(
+                "The export from v2 did not pass validation: {}.",
+                issue_list(issues)
+            ),
+            REPORT_IT,
+        ),
+        other => (sentence(other), REPORT_IT),
+    };
+    Blocker {
+        code: error.code(),
+        message,
+        fix: fix.to_owned(),
+    }
+}
+
+/// An error's text as a sentence: a capital first and a full stop last.
+fn sentence(error: &dyn std::fmt::Display) -> String {
+    let text = error.to_string();
+    let mut chars = text.chars();
+    let mut sentence: String = chars
+        .next()
+        .map(|first| first.to_uppercase().chain(chars).collect())
+        .unwrap_or_default();
+    if !sentence.ends_with('.') {
+        sentence.push('.');
+    }
+    sentence
+}
+
+/// The stop no acknowledgement lifts: single sign-on is on and no admin
+/// could get back in without it.
+fn admin_blocker(names: &[String]) -> Blocker {
+    let one = names.len() == 1;
+    Blocker {
+        code: Code::NoAdminCanSignIn,
+        message: format!(
+            "No admin could get back in if single sign-on failed: {} {} no password and no \
+             username.",
+            names.join(", "),
+            if one { "has" } else { "have" },
+        ),
+        fix: format!(
+            "Set a username for {} in v2 (Profile).",
+            if one { "it" } else { "one of them" }
+        ),
+    }
+}
+
+/// The addresses that change, one warning each, then the open MusicBrainz
+/// edits.
+fn warnings(check: &CallbackCheck) -> Vec<Warning> {
+    let mut found: Vec<Warning> = check
+        .changes
+        .iter()
+        .map(|change| Warning {
+            feature: feature(change.feature),
+            message: change_message(check, change),
+            old_address: Some(address(&change.old)),
+            new_address: Some(address(&change.new)),
+        })
+        .collect();
+    let edits = check.open_contributions;
+    if edits > 0 {
+        let (noun, them) = if edits == 1 {
+            ("edit", "it")
+        } else {
+            ("edits", "them")
+        };
+        found.push(Warning {
+            feature: CallbackFeature::MusicbrainzContributions,
+            message: format!(
+                "{edits} {noun} open in MusicBrainz's release editor will not come back. Finish \
+                 {them} in v2 first, or start {them} again from v3."
+            ),
+            old_address: None,
+            new_address: None,
+        });
+    }
+    found
+}
+
+fn feature(feature: callbacks::CallbackFeature) -> CallbackFeature {
+    match feature {
+        callbacks::CallbackFeature::SingleSignOn => CallbackFeature::SingleSignOn,
+        callbacks::CallbackFeature::Spotify => CallbackFeature::Spotify,
+        callbacks::CallbackFeature::MusicbrainzContributions => {
+            CallbackFeature::MusicbrainzContributions
+        }
+    }
+}
+
+fn address(address: &callbacks::Address) -> Address {
+    match address {
+        callbacks::Address::Full(text) => Address::Full(text.clone()),
+        callbacks::Address::Path(path) => Address::Path(path.clone()),
+    }
+}
+
+/// Where to change one address, and for single sign-on how an admin gets
+/// back in if it fails after the upgrade.
+fn change_message(check: &CallbackCheck, change: &AddressChange) -> String {
+    let mut lines = vec![
+        match change.feature {
+            callbacks::CallbackFeature::SingleSignOn => {
+                "Change the redirect address at your single sign-on provider."
+            }
+            callbacks::CallbackFeature::Spotify => {
+                "Change the redirect URI in the Spotify developer dashboard."
+            }
+            callbacks::CallbackFeature::MusicbrainzContributions => "",
+        }
+        .to_owned(),
+    ];
+    if change.feature == callbacks::CallbackFeature::SingleSignOn {
+        if matches!(change.new, callbacks::Address::Path(_)) {
+            lines.push(
+                "The upgrade keeps v2's address in v3's settings: enter the new one under \
+                 Settings > Security too."
+                    .to_owned(),
+            );
+        }
+        if let Some(admins) = check
+            .admins
+            .as_ref()
+            .filter(|_| check.unreachable_admins().is_none())
+        {
+            if let (false, Some(username)) = (admins.any_password, admins.usernames.first()) {
+                lines.push(format!(
+                    "No admin has a password. If single sign-on fails after the upgrade, stop \
+                     the server and run droppedneedle-tool recovery-code {username}."
+                ));
+            }
+            for name in &admins.unnamed {
+                lines.push(format!(
+                    "Admin {name} has no username, so recovery-code cannot reach it. Set one \
+                     in v2 (Profile)."
+                ));
+            }
+        }
+    }
+    lines.join(" ")
 }
 
 fn require_success(report: ImportReport) -> Result<ImportReport, UpgradeError> {
@@ -793,10 +1398,15 @@ fn fresh_passphrase() -> Result<Secret, UpgradeError> {
 /// Undo whatever the marker says is under way, then remove the marker.
 /// Without a marker there is nothing that is safe to assume, so nothing is
 /// touched.
-fn roll_back(dirs: &DataDirs, fault: Option<Fault>) -> Result<(), UpgradeError> {
+fn roll_back(
+    dirs: &DataDirs,
+    fault: Option<Fault>,
+    progress: &mut dyn FnMut(Step<'_>),
+) -> Result<(), UpgradeError> {
     let Some(phase) = read_marker(dirs) else {
         return Ok(());
     };
+    let mut done = 0;
     let folders = folders(dirs);
     if phase == Phase::Upgrading {
         // What is about to be deleted may be the only other copy.
@@ -831,6 +1441,8 @@ fn roll_back(dirs: &DataDirs, fault: Option<Fault>) -> Result<(), UpgradeError> 
         if folder.dir.is_dir() {
             sync_dir(&folder.dir)?;
         }
+        done += 1;
+        progress(Step::FolderDone(done));
     }
     remove_marker(dirs)
 }

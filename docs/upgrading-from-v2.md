@@ -45,8 +45,8 @@ with the same ids, and v3 checks it against your files on its first scan.
    upgrade, not before. When v2's single sign-on address ends in v2's path,
    the upgrade changes it under Settings > Security for you; otherwise
    enter the new one there after the upgrade. The flag skips no other
-   check, and
-   `upgrade-report.json` lists what you acknowledged under `acknowledged`.
+   check, and `upgrade-report.json` lists what you acknowledged under
+   `acknowledged`.
    With single sign-on, the upgrade stops even with the flag when no admin
    has a password or a username, since nobody could get back in if single
    sign-on failed: set a username for an admin in v2 (Profile) first.
@@ -114,6 +114,26 @@ refuses to start until it has.
 
 The upgrade refuses to run while a server is using the data directory, and
 it does nothing on a data directory that is already on v3.
+
+### Checking first, starting fresh, scripted installs
+
+`droppedneedle-tool upgrade --check` runs every check the upgrade runs
+before it moves anything, counts what the export would carry, and changes
+nothing in your data folders. It writes that export to the temporary folder
+(`TMPDIR`) and deletes it again, so that folder needs the same free space
+the upgrade asks of the cache folder. It exits 1 while something must be
+fixed first and 3 while the upgrade would stop on callback addresses.
+
+`droppedneedle-tool upgrade --fresh --yes` moves your v2 files into the
+`v2-backup` folders as the upgrade does, and imports nothing. v3 then starts
+empty and asks for its first admin account. `upgrade --undo --yes` goes back
+to v2 from there too.
+
+For scripted installs, add `--progress json` to the upgrade or to any of
+these. Each command then writes one JSON object a line to stdout: `step` and
+`progress` lines, then one `result` or `failed` line. `--check` writes one
+`check` line, or a `failed` line when it is called wrongly or cannot start.
+The usual text goes to stderr.
 
 ### Follows of deleted users
 

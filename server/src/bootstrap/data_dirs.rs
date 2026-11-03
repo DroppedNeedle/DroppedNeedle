@@ -132,7 +132,9 @@ pub enum UnknownLayout {
     },
 }
 
-/// Classify the folders. Read-only: nothing is created, locked or changed.
+/// Classify the folders. Read-only: nothing is locked or changed, and
+/// nothing is created except SQLite's `-shm` index beside a database whose
+/// `-wal` file holds writes, which has to be read through it.
 ///
 /// The database decides first. Every v3 migration stamps `user_version`
 /// and v2 never did, so a stamped database is v3 and an unstamped one with
@@ -404,10 +406,11 @@ fn read_stamp(db_path: &Path) -> Result<(i64, i64), String> {
     Ok((stamp, tables))
 }
 
-/// A read-only connection that creates nothing beside the database: a
-/// cleanly closed one is opened immutable, one with writes still in its
-/// `-wal` file is read through it. One whose `-wal` file cannot be read
-/// is refused, since an immutable open would miss what it holds.
+/// A read-only connection. A cleanly closed database is opened immutable,
+/// which creates nothing beside it. One with writes still in its `-wal`
+/// file is read through that file, so SQLite creates its `-shm` index
+/// beside it. One whose `-wal` file cannot be read is refused, since an
+/// immutable open would miss what it holds.
 fn open_read_only(db_path: &Path) -> Result<Connection, String> {
     let opened = match wal_state(db_path) {
         WalState::Unreadable(error) => {

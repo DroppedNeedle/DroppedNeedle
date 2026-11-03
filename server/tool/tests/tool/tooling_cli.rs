@@ -10,6 +10,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use droppedneedle::bootstrap::data_dirs;
+use droppedneedle::bootstrap::upgrade_progress::{
+    Code, Event, Finished, FoundLayout, Line, Outcome, StepId, V2Files,
+};
 use droppedneedle_tool::tooling::upgrade;
 
 use crate::common;
@@ -555,6 +558,18 @@ fn stderr_of(output: &std::process::Output) -> String {
     String::from_utf8_lossy(&output.stderr).into_owned()
 }
 
+/// Every stdout line of a `--progress json` run, each parsed as the line
+/// type the server reads.
+fn json_lines(output: &std::process::Output) -> Vec<Line> {
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(|line| {
+            serde_json::from_str(line)
+                .unwrap_or_else(|error| panic!("{line:?} is not a progress line: {error}"))
+        })
+        .collect()
+}
+
 /// A v2 data directory without orphan rows. Upgrading it never changes
 /// the v2 database, so its files can be compared byte for byte.
 fn clean_v2(root: &Path) {
@@ -650,7 +665,11 @@ async fn upgrade_with_fault(
 
 /// One command turns a v2 data directory into a v3 one where it stands:
 /// the v2 files end up in the two backup folders, the import matches an
-/// export and import done by hand, and nothing temporary is left.
+/// export and import done by hand, and nothing temporary is left. The
+/// check before it changes nothing and counts what then moves, and with
+/// `--progress json` stdout holds only lines the server can read: the
+/// steps in order, progress within each step's total, and one result
+/// matching the saved report.
 #[test]
 fn upgrade_turns_a_v2_directory_into_v3_in_place() {
     let scratch = scratch_dir("upgrade");
@@ -664,7 +683,31 @@ fn upgrade_turns_a_v2_directory_into_v3_in_place() {
     config["contact_email"] = "ops@example.org".into();
     std::fs::write(&config_path, config.to_string()).expect("config writes");
 
-    let run = tool_in(&root, &["upgrade"]);
+    let unchecked = data_trees(&root);
+    let checked = tool_in(&root, &["upgrade", "--check", "--progress", "json"]);
+    assert!(checked.status.success(), "stderr: {}", stderr_of(&checked));
+    let lines = json_lines(&checked);
+    let [
+        Line {
+            event: Event::Check(check),
+            ..
+        },
+    ] = lines.as_slice()
+    else {
+        panic!("one check line: {lines:?}");
+    };
+    assert_eq!(check.layout, FoundLayout::V2);
+    assert_eq!(check.blockers, []);
+    assert_eq!(check.warnings, []);
+    assert_eq!(
+        check.orphans, 2,
+        "the follow and approval of a deleted user"
+    );
+    let counts = check.counts.clone().expect("the check exported");
+    assert_eq!(data_trees(&root), unchecked);
+    assert!(!root.join("cache").join("library.db.lock").exists());
+
+    let run = tool_in(&root, &["upgrade", "--progress", "json"]);
     assert!(run.status.success(), "stderr: {}", stderr_of(&run));
     assert!(is_v3(&root));
     let settings = settings_in(&root.join("cache").join("library.db"));
@@ -686,21 +729,21 @@ fn upgrade_turns_a_v2_directory_into_v3_in_place() {
     assert_eq!(schema_stamp(&cache_backup.join("library.db")), 0);
 
     // The fixture's follow and approval of a deleted user are removed from
-    // the v2 database, and the summary says so.
-    let stdout = String::from_utf8_lossy(&run.stdout);
+    // the v2 database, and the summary says so, on stderr beside the lines.
+    let text = stderr_of(&run);
     assert!(
-        stdout.contains("Removed 2 follows and approvals"),
-        "stdout: {stdout}"
+        text.contains("Removed 2 follows and approvals that belonged to deleted users"),
+        "stderr: {text}"
     );
     // The contact address cannot move to settings, so the summary says what
     // to do, and names the key among what stayed behind.
     assert!(
-        stdout.contains("Set CONTACT_EMAIL=ops@example.org in your environment"),
-        "stdout: {stdout}"
+        text.contains("Set CONTACT_EMAIL=ops@example.org in your environment"),
+        "stderr: {text}"
     );
     assert!(
-        stdout.contains("\n  contact_email (v3 reads"),
-        "stdout: {stdout}"
+        text.contains("\n  contact_email (v3 reads"),
+        "stderr: {text}"
     );
     let orphans: i64 = rusqlite::Connection::open(cache_backup.join("library.db"))
         .expect("v2 database opens")
@@ -741,6 +784,70 @@ fn upgrade_turns_a_v2_directory_into_v3_in_place() {
     .expect("report parses");
     assert_eq!(report["entities"], manual["entities"]);
     assert_eq!(report["entities"]["user"]["imported"], 2);
+
+    let lines = json_lines(&run);
+    let (last, before_last) = lines.split_last().expect("the run wrote lines");
+    let mut steps = Vec::new();
+    let mut current = None;
+    for line in before_last {
+        match &line.event {
+            Event::Step(step) => {
+                steps.push(step.step);
+                current = Some((step.step, step.total));
+            }
+            Event::Progress(progress) => {
+                let (step, total) = current.expect("a step started first");
+                assert_eq!(progress.step, step);
+                assert!(progress.done <= total.expect("a step with progress has a total"));
+            }
+            other => panic!("only the last line ends the run: {other:?}"),
+        }
+    }
+    assert_eq!(
+        steps,
+        [
+            StepId::MoveAside,
+            StepId::Export,
+            StepId::ExportAgain,
+            StepId::DryRun,
+            StepId::Import,
+        ]
+    );
+    assert!(before_last.iter().any(|line| matches!(
+        &line.event,
+        Event::Progress(progress)
+            if progress.step == StepId::MoveAside && progress.done == upgrade::DATA_FOLDERS
+    )));
+    let Event::Result(finished) = &last.event else {
+        panic!("the run ends with a result: {last:?}");
+    };
+    assert_eq!(finished.outcome, Outcome::Upgraded);
+    let summary = finished.summary.as_ref().expect("an upgrade has a summary");
+    let imported: BTreeMap<String, u64> = report["entities"]
+        .as_object()
+        .expect("entities are an object")
+        .iter()
+        .filter_map(|(name, counts)| Some((name.clone(), counts["imported"].as_u64()?)))
+        .filter(|(_, imported)| *imported > 0)
+        .collect();
+    assert_eq!(summary.moved, imported);
+    assert_eq!(
+        summary.report,
+        root.join("cache")
+            .join("upgrade-report.json")
+            .display()
+            .to_string()
+    );
+    // The check counts what the export carries, which the import moves
+    // unless its report lists a record it left out.
+    assert_eq!(counts.get("user"), Some(&2));
+    for (name, imported) in &imported {
+        let carried = counts.get(name).copied().unwrap_or_default();
+        assert!(
+            carried >= *imported,
+            "{name}: {carried} carried, {imported} moved"
+        );
+    }
 
     // A second run finds v3 and changes nothing.
     let before = data_trees(&root);
@@ -1167,7 +1274,8 @@ async fn recovery_code_from_the_host_gives_a_locked_out_admin_a_password() {
 }
 
 /// A run that cannot finish leaves the v2 data directory as it found it,
-/// byte for byte, whether it stops before or after the files moved.
+/// byte for byte, whether it stops before or after the files moved. The
+/// check names what would stop it, and changes nothing either.
 #[tokio::test]
 async fn a_failed_upgrade_leaves_the_v2_directory_as_it_was() {
     let scratch = scratch_dir("upgrade-fails");
@@ -1176,6 +1284,49 @@ async fn a_failed_upgrade_leaves_the_v2_directory_as_it_was() {
     let key_file = root.join("config").join(".env");
     let key = std::fs::read(&key_file).expect("key reads");
     let original = data_trees(&root);
+
+    // A v2 that did not stop cleanly: the check names its -wal file and
+    // what to do, and changes nothing. Telling v2 from v3 reads the
+    // database through that file, which makes SQLite add its -shm index
+    // beside it, as the server's own start does; nothing else appears.
+    let wal = root.join("cache").join("library.db-wal");
+    std::fs::write(&wal, b"unmerged").expect("wal writes");
+    let unclean = data_trees(&root);
+    let checked = tool_in(&root, &["upgrade", "--check", "--progress", "json"]);
+    assert_eq!(
+        checked.status.code(),
+        Some(1),
+        "stderr: {}",
+        stderr_of(&checked)
+    );
+    let lines = json_lines(&checked);
+    let [
+        Line {
+            event: Event::Check(check),
+            ..
+        },
+    ] = lines.as_slice()
+    else {
+        panic!("one check line: {lines:?}");
+    };
+    let blocker = check
+        .blockers
+        .iter()
+        .find(|blocker| blocker.code == Code::V2WalPresent)
+        .unwrap_or_else(|| panic!("V2_WAL_PRESENT listed: {check:?}"));
+    assert!(
+        blocker.fix.contains("stop it cleanly"),
+        "fix: {}",
+        blocker.fix
+    );
+    assert_eq!(check.counts, None);
+    let shm = root.join("cache").join("library.db-shm");
+    let (config, mut cache) = data_trees(&root);
+    cache.remove(Path::new("library.db-shm"));
+    assert_eq!((config, cache), unclean);
+    for file in [&wal, &shm] {
+        std::fs::remove_file(file).expect("side file removed");
+    }
 
     // A running server holds the data lock: refused.
     {
@@ -1262,6 +1413,28 @@ async fn an_interrupted_upgrade_is_rolled_back_first() {
         data_dirs::check_bootable(&dirs),
         Err(data_dirs::BootRefusal::Interrupted)
     );
+    // A run refused by a running server moves nothing itself, and still
+    // says the v2 files are in the backup.
+    {
+        let _server = droppedneedle_kernel::db::datalock::DataLock::shared(
+            &root.join("cache").join("library.db"),
+        )
+        .expect("server lock");
+        let refused = tool_in(&root, &["upgrade", "--progress", "json"]);
+        assert_eq!(refused.status.code(), Some(1));
+        let lines = json_lines(&refused);
+        let [
+            Line {
+                event: Event::Failed(failed),
+                ..
+            },
+        ] = lines.as_slice()
+        else {
+            panic!("one failed line: {lines:?}");
+        };
+        assert_eq!(failed.code, Code::Locked);
+        assert_eq!(failed.v2_files, V2Files::InBackup);
+    }
     let undone = tool_in(&root, &["upgrade", "--undo", "--yes"]);
     assert!(undone.status.success(), "stderr: {}", stderr_of(&undone));
     assert_eq!(data_trees(&root), original);
@@ -1311,7 +1484,8 @@ async fn an_interrupted_upgrade_is_rolled_back_first() {
 }
 
 /// `--undo --yes` deletes the v3 data and puts the v2 files back as they
-/// were. `--no-backup` keeps no v2 files, so there is nothing to undo.
+/// were, after an upgrade or a fresh start. `--no-backup` keeps no v2
+/// files, so there is nothing to undo.
 #[test]
 fn undo_returns_the_v2_files_and_no_backup_keeps_none() {
     let scratch = scratch_dir("upgrade-undo");
@@ -1375,6 +1549,49 @@ fn undo_returns_the_v2_files_and_no_backup_keeps_none() {
         "stderr: {}",
         stderr_of(&already_v2)
     );
+    assert_eq!(data_trees(&root), original);
+
+    // A fresh start never deletes the v2 files, so --no-backup is refused.
+    // It keeps them byte for byte in the backup and leaves no v3 database,
+    // so the server starts empty, and undo brings the folders back.
+    let refused = tool_in(&root, &["upgrade", "--fresh", "--yes", "--no-backup"]);
+    assert_eq!(
+        refused.status.code(),
+        Some(2),
+        "stderr: {}",
+        stderr_of(&refused)
+    );
+    assert_eq!(data_trees(&root), original);
+    let fresh = tool_in(
+        &root,
+        &["upgrade", "--fresh", "--yes", "--progress", "json"],
+    );
+    assert!(fresh.status.success(), "stderr: {}", stderr_of(&fresh));
+    assert!(matches!(
+        json_lines(&fresh).last(),
+        Some(Line {
+            event: Event::Result(Finished {
+                outcome: Outcome::StartedFresh,
+                ..
+            }),
+            ..
+        })
+    ));
+    assert_eq!(backup_trees(&root), original);
+    assert!(!root.join("cache").join("library.db").exists());
+    assert_eq!(data_dirs::check_bootable(&upgrade_dirs(&root)), Ok(()));
+    let undone = tool_in(&root, &["upgrade", "--undo", "--yes", "--progress", "json"]);
+    assert!(undone.status.success(), "stderr: {}", stderr_of(&undone));
+    assert!(matches!(
+        json_lines(&undone).last(),
+        Some(Line {
+            event: Event::Result(Finished {
+                outcome: Outcome::Undone,
+                ..
+            }),
+            ..
+        })
+    ));
     assert_eq!(data_trees(&root), original);
 
     let run = tool_in(&root, &["upgrade", "--no-backup"]);
