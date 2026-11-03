@@ -503,7 +503,10 @@ Then check:
   240 bytes rather than 252. A template with a folder made only of a value
   that can be missing, such as `{year}/`, now stops an import for an album
   without that value instead of leaving the folder out: the upgrade
-  report names any such folder. See
+  report names any such folder. A name ending in a dot keeps that dot when
+  the template left out `.{ext}`, and a file name that is only dots stops
+  the import. A template that can't be carried exactly
+  falls back to the default script, and the report names it. See
   [Import naming script](downloads.md#import-naming-script).
 - If you import Spotify playlists: your Spotify app keeps working with no
   change in the Spotify dashboard. v3 goes on sending the redirect address

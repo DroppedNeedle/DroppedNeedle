@@ -97,16 +97,15 @@ impl LibraryManagementService {
     /// normalized on every read, persisted when either changed anything.
     fn load(&self) -> Result<LibraryManagement, SettingsError> {
         let stored: LibraryManagement = self.store.get().map_err(|error| self.config(error))?;
-        let template = self.library()?.naming_script;
-        let settings = migrated(&stored, &template)?;
+        let settings = migrated(&stored)?;
         if settings != stored {
-            match self.commit(&settings_revision(&settings), settings.clone(), &template) {
+            match self.commit(&settings_revision(&settings), settings.clone()) {
                 Ok(()) => {}
                 // Another change landed first; read what it stored.
                 Err(SettingsError::StaleRevision { .. }) => {
                     let stored: LibraryManagement =
                         self.store.get().map_err(|error| self.config(error))?;
-                    return migrated(&stored, &template);
+                    return migrated(&stored);
                 }
                 Err(other) => return Err(other),
             }
@@ -118,17 +117,12 @@ impl LibraryManagementService {
     /// migrates them, still have revision `base`; otherwise answer a stale
     /// revision. The check and the write are one transaction, and the
     /// check touches no file.
-    fn commit(
-        &self,
-        base: &str,
-        candidate: LibraryManagement,
-        template: &str,
-    ) -> Result<(), SettingsError> {
+    fn commit(&self, base: &str, candidate: LibraryManagement) -> Result<(), SettingsError> {
         self.store
             .update_blocking::<LibraryManagement, SettingsError, _>(
                 DurableLane::Foreground,
                 |stored| {
-                    if settings_revision(&migrated(&stored, template)?) != base {
+                    if settings_revision(&migrated(&stored)?) != base {
                         return Err(SettingsError::StaleRevision {
                             message: STALE_SETTINGS.to_owned(),
                         });
@@ -196,13 +190,10 @@ impl LibraryManagementService {
             .and_then(|days| days.as_i64())
             .filter(|days| (1..=3650).contains(days))
             .unwrap_or(defaults.recycle_retention_days);
-        migrated(
-            &LibraryManagement {
-                recycle_retention_days,
-                ..defaults
-            },
-            &self.library()?.naming_script,
-        )
+        migrated(&LibraryManagement {
+            recycle_retention_days,
+            ..defaults
+        })
     }
 
     /// Normalize a candidate against the current settings: recompute
@@ -355,8 +346,7 @@ impl LibraryManagementService {
         candidate: LibraryManagement,
     ) -> Result<LibraryManagementSettingsResponse, SettingsError> {
         self.check_candidate(current, current_revision, &candidate)?;
-        let library = self.library()?;
-        self.commit(current_revision, candidate.clone(), &library.naming_script)?;
+        self.commit(current_revision, candidate.clone())?;
         Ok(Self::response(candidate))
     }
 
@@ -591,19 +581,15 @@ impl LibraryManagementService {
 const MISSING_PROFILE: &str = "The Library Management profile does not exist.";
 
 /// The stored settings as every read sees them: the presets seeded when
-/// there are none (from the library's naming template), else
-/// preset-migrated, then normalized. Touches no file.
-fn migrated(
-    stored: &LibraryManagement,
-    naming_template: &str,
-) -> Result<LibraryManagement, SettingsError> {
+/// there are none, else preset-migrated, then normalized. Touches no file.
+fn migrated(stored: &LibraryManagement) -> Result<LibraryManagement, SettingsError> {
     let mut settings = if stored.profiles.is_empty() {
         // Seeding keeps a recycle bin and retention moved in before the
         // first read.
         LibraryManagement {
             recycle_bin_path: stored.recycle_bin_path.clone(),
             recycle_retention_days: stored.recycle_retention_days,
-            ..initial_settings(naming_template)
+            ..initial_settings()
         }
     } else {
         let mut migrated = stored.clone();

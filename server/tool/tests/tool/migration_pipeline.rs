@@ -298,11 +298,46 @@ async fn compat_clients_reauth_on_surviving_secrets() {
 
 #[tokio::test]
 async fn settings_land_with_schedule_carry_and_no_plaintext() {
+    const SCRIPT: &str = "{albumartist}/{album}{conditional(is_empty(slice(default(original_date, \
+                          date), 0, 4)), \"\", concat(\" (\", slice(default(original_date, date), \
+                          0, 4), \")\"))}/{track:02d} {title}.{ext}";
     let root = scratch_dir("settings");
-    let (fixture, text) = repaired_export(&root);
+    let (fixture, _) = repaired_export(&root);
+    let template = "{albumartist}/{album} ({year})/{track:02d} {title}";
+    let text = export_with_naming_template(&root, template);
     let (v3_root, pool) = seeded_target(&root).await;
-    run_pipeline(&text, PASSPHRASE, &v3_root, &pool, false).await;
+    let dry = run_pipeline(&text, PASSPHRASE, &v3_root, &pool, true).await;
+    let report = run_pipeline(&text, PASSPHRASE, &v3_root, &pool, false).await;
     assert_settings_landed(&v3_root, &fixture);
+
+    let library = &v3_settings(&v3_root)["library_settings"];
+    assert_eq!(library["naming_script"], SCRIPT);
+    assert!(library.get("naming_template").is_none());
+    for (year, golden) in [
+        (
+            Some("1994-08-22"),
+            "Portishead/Dummy (1994)/03 Sour Times.flac",
+        ),
+        (None, "Portishead/Dummy/03 Sour Times.flac"),
+    ] {
+        assert_eq!(render_import_path(SCRIPT, year), golden);
+    }
+
+    let rows_before = settings_revisions(&pool).await;
+    let again = run_pipeline(&text, PASSPHRASE, &v3_root, &pool, false).await;
+    assert_eq!(settings_revisions(&pool).await, rows_before);
+    let line =
+        format!("the v2 naming template {template} is now the import naming script {SCRIPT}");
+    for report in [&dry, &report, &again] {
+        assert!(
+            report
+                .items
+                .iter()
+                .any(|item| item.key == "library_settings.naming_script" && item.detail == line),
+            "{}",
+            report.to_json()
+        );
+    }
 
     let stored = database_bytes(&v3_root);
     for secret in [
@@ -320,6 +355,39 @@ async fn settings_land_with_schedule_carry_and_no_plaintext() {
             "the v3 database leaks a plaintext secret"
         );
     }
+}
+
+/// A template the script language can't place a file with lands as the
+/// default script, with a line naming it, and the import goes on.
+#[tokio::test]
+async fn a_naming_template_that_cant_be_carried_falls_back_to_the_default() {
+    use droppedneedle_kernel::runtime_config::secret_sections::DEFAULT_NAMING_SCRIPT;
+
+    let root = scratch_dir("naming-fallback");
+    let _ = repaired_export(&root);
+    let text = export_with_naming_template(&root, "{album}/.{ext}");
+    let (v3_root, pool) = seeded_target(&root).await;
+    let report = run_pipeline(&text, PASSPHRASE, &v3_root, &pool, false).await;
+    let library = &v3_settings(&v3_root)["library_settings"];
+    assert_eq!(library["naming_script"], DEFAULT_NAMING_SCRIPT);
+    assert!(library.get("naming_template").is_none());
+    assert!(
+        report.items.iter().any(|item| {
+            item.key == "library_settings.naming_template"
+                && item.outcome == "dropped_setting"
+                && item.detail.contains("{album}/.{ext}")
+        }),
+        "{}",
+        report.to_json()
+    );
+    assert!(
+        report
+            .notes
+            .iter()
+            .any(|note| note.contains("{album}/.{ext}")),
+        "{:?}",
+        report.notes
+    );
 }
 
 /// A top-level Jellyfin address and contact address reach the person: the
@@ -805,6 +873,62 @@ fn database_bytes(v3_root: &Path) -> String {
     let mut bytes = std::fs::read(&db).expect("v3 database reads");
     bytes.extend(std::fs::read(v3_root.join("cache").join("library.db-wal")).unwrap_or_default());
     String::from_utf8_lossy(&bytes).into_owned()
+}
+
+/// Export the v2 fixture again with `template` as its library naming template.
+fn export_with_naming_template(root: &Path, template: &str) -> String {
+    let config_path = root.join("v2").join("config").join("config.json");
+    let mut config: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&config_path).expect("config reads"))
+            .expect("config parses");
+    config["library_settings"]["naming_template"] = template.into();
+    std::fs::write(&config_path, config.to_string()).expect("config writes");
+    let export_path = root.join("edited.json");
+    droppedneedle_tool::export::export_v2_to_file(
+        &export_request(&root.join("v2"), PASSPHRASE),
+        &export_path,
+    )
+    .expect("export writes");
+    std::fs::read_to_string(&export_path).expect("export reads back")
+}
+
+/// The path import placement gives Portishead's "Sour Times" under `script`.
+fn render_import_path(script: &str, date: Option<&str>) -> String {
+    use droppedneedle_library::import::naming;
+    use droppedneedle_library::matching::model::{CreditedArtist, ReleaseMedium};
+    use droppedneedle_library::matching::{Release, ReleaseTrack};
+    use droppedneedle_library::tags::read::HeaderInfo;
+
+    let track = ReleaseTrack {
+        title: "Sour Times".to_owned(),
+        disc: 1,
+        position: 3,
+        ..ReleaseTrack::default()
+    };
+    let release = Release {
+        release_group_id: "rg-id".to_owned(),
+        title: "Dummy".to_owned(),
+        artists: vec![CreditedArtist {
+            id: "aa-id".to_owned(),
+            name: "Portishead".to_owned(),
+            sort_name: None,
+            join: String::new(),
+        }],
+        date: date.map(str::to_owned),
+        original_date: date.map(str::to_owned),
+        media: vec![ReleaseMedium {
+            position: 1,
+            track_count: 11,
+            ..ReleaseMedium::default()
+        }],
+        ..Release::default()
+    };
+    naming::render(
+        script,
+        &naming::variables(&release, &track, "flac", &HeaderInfo::default()),
+        "/music",
+    )
+    .expect("the script places the file")
 }
 
 /// Every settings row's key, revision and change time.

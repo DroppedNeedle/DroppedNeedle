@@ -252,7 +252,7 @@
 			</details>
 			{#if selectedScript.preset_origin === 'legacy_naming_template'}
 				<p class="mt-3 rounded-lg border border-info/20 bg-info/5 p-2 text-xs text-base-content/60">
-					Imported from the legacy naming template and kept unchanged for compatibility.
+					Carried over from v2. Imports use the script in Settings &gt; Library.
 				</p>
 			{/if}
 		</div>

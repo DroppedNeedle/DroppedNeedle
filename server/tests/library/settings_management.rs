@@ -297,7 +297,7 @@ fn stored_unknown_field_is_dropped_on_read() {
     };
     use std::sync::Arc;
 
-    let mut management = serde_json::to_value(initial_settings("")).expect("serializes");
+    let mut management = serde_json::to_value(initial_settings()).expect("serializes");
     let profile = management["profiles"]
         .as_array_mut()
         .expect("profiles")
@@ -415,7 +415,7 @@ fn a_section_from_before_removed_options_keeps_its_activation() {
         profile["notification"]["refresh_droppedneedle"] = json!(true);
     }
 
-    let mut settings = initial_settings("");
+    let mut settings = initial_settings();
     let picard = settings
         .profiles
         .iter_mut()
@@ -625,7 +625,7 @@ fn scripts_validate_with_the_running_compiler() {
         serde_json::from_value(serde_json::json!({"id": id, "name": name, "source": source}))
             .expect("script")
     };
-    let mut management = initial_settings("");
+    let mut management = initial_settings();
     management.naming_scripts.push(naming(
         "66666666-6666-4666-8666-666666666666",
         "Shouting",
@@ -745,7 +745,7 @@ async fn profile_export_preview_import_round_trip() {
     // First read seeds the presets.
     let (status, seeded) = call("GET", base.to_owned(), None).await;
     assert_eq!(status, StatusCode::OK, "{seeded}");
-    assert_eq!(seeded["profiles"].as_array().map(Vec::len), Some(3));
+    assert_eq!(seeded["profiles"].as_array().map(Vec::len), Some(2));
     let revision = seeded["settings_revision"]
         .as_str()
         .expect("revision")
@@ -920,7 +920,7 @@ mod fields {
     /// Fresh settings whose Picard profile has these fields, stored as
     /// the version 4 preset left them.
     fn stored(fields: Vec<ManagedField>, preserve: &[&str]) -> LibraryManagement {
-        let mut settings = lm::initial_settings("");
+        let mut settings = lm::initial_settings();
         let picard = settings
             .profiles
             .iter_mut()
@@ -1114,7 +1114,7 @@ mod fields {
             field.clear_when_canonical_missing |= field.field == "comment";
         }
         lm::normalize(&mut settings).expect("valid");
-        let mut expected = modes(&lm::initial_settings(""));
+        let mut expected = modes(&lm::initial_settings());
         for name in [
             "title_sort",
             "album_sort",
@@ -1178,7 +1178,7 @@ mod fields {
     #[test]
     fn a_complete_profile_preserves_only_what_it_names() {
         let named = vec!["album".to_owned(), "date".to_owned()];
-        let mut settings = lm::initial_settings("");
+        let mut settings = lm::initial_settings();
         for profile in &mut settings.profiles {
             profile.metadata.preserve_fields.clone_from(&named);
         }
@@ -1272,7 +1272,7 @@ mod fields {
     /// roles" fields: every other field has its own entry, and Other is
     /// ticked or not.
     fn without_other_role_fields(other: bool) -> LibraryManagement {
-        let mut settings = lm::initial_settings("");
+        let mut settings = lm::initial_settings();
         let picard = settings
             .profiles
             .iter_mut()

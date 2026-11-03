@@ -1123,6 +1123,7 @@ pub fn json_value(values: &[String]) -> serde_json::Value {
 pub struct NamingFacts<'a> {
     pub extension: &'a str,
     pub codec: &'a str,
+    /// Kilobits a second, as the catalog stores it.
     pub bit_rate: Option<i64>,
     pub sample_rate: Option<i64>,
     pub bit_depth: Option<i64>,
@@ -1181,7 +1182,7 @@ pub fn naming_variables(
     };
     let date = first(fields, "date");
     let genre = first(fields, "genre");
-    let kbps = facts.bit_rate.map(|bits| (bits + 500) / 1000).unwrap_or(0);
+    let kbps = facts.bit_rate.unwrap_or(0);
     let pairs = [
         ("artist", Value::Text(artist.clone())),
         ("artist_display", Value::Text(artist)),
@@ -1324,7 +1325,7 @@ mod tests {
         clear: bool,
         adjust: impl Fn(&mut droppedneedle_kernel::runtime_config::sections::RelationshipCreditSettings),
     ) -> PinnedProfile {
-        let mut settings = settings::initial_settings("");
+        let mut settings = settings::initial_settings();
         for profile in &mut settings.profiles {
             for field in &mut profile.metadata.fields {
                 if super::super::enrich::CREDIT_FIELDS
@@ -1735,7 +1736,7 @@ mod tests {
             .into_iter()
             .collect(),
         });
-        let mut settings = settings::initial_settings("");
+        let mut settings = settings::initial_settings();
         for profile in &mut settings.profiles {
             profile.genres.enabled = false;
             for field in &mut profile.metadata.fields {
@@ -1803,7 +1804,7 @@ mod tests {
         let (mut release, _) = classical();
         release.original_date = Some("2015-01-12".to_owned());
         release.date = Some("2016-03".to_owned());
-        let settings = settings::initial_settings("");
+        let settings = settings::initial_settings();
         let pinned = pin(&settings, settings::PICARD_ORGANIZER_PROFILE_ID, None).expect("pinned");
         let empty: TagDocument = serde_json::from_value(serde_json::json!({
             "managed": {},
@@ -2008,7 +2009,7 @@ mod tests {
         named.graft_names(&names);
 
         let profile = |standardization: ArtistStandardization| {
-            let mut settings = settings::initial_settings("");
+            let mut settings = settings::initial_settings();
             for profile in &mut settings.profiles {
                 for field in &mut profile.metadata.fields {
                     if super::super::enrich::ARTIST_FIELDS.contains(&field.field.as_str()) {

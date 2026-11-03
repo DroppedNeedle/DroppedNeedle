@@ -8,7 +8,6 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use super::revision::{naming_script_revision, profile_revision};
-use droppedneedle_kernel::runtime_config::secret_sections::DEFAULT_NAMING_SCRIPT;
 use droppedneedle_kernel::runtime_config::sections::{
     DEFAULT_NAMING_TEMPLATE, FieldMode, GenreSource, LibraryManagement, LibraryManagementProfile,
     ManagedField, MetadataManagementSettings, NamingScript, OrganizationManagementSettings,
@@ -25,10 +24,6 @@ pub const PICARD_ORGANIZER_PRESET_VERSION: i64 = 6;
 pub const PICARD_ORGANIZER_PROFILE_ID: &str = "c2741223-da7c-5231-bcf5-7cead27b07d9";
 /// Complete organizer profile id.
 pub const COMPLETE_LIBRARY_ORGANIZER_PROFILE_ID: &str = "4c012b0e-509b-5f23-a759-65552c84db85";
-/// Legacy naming profile id.
-pub const LEGACY_NAMING_PROFILE_ID: &str = "b9b1f9b4-752d-54ff-bc67-24f75cb67847";
-/// Legacy naming script id.
-pub const LEGACY_NAMING_SCRIPT_ID: &str = "ec7b9d83-00f7-5a78-93c7-20d117bef008";
 /// Picard single-disc naming script id.
 pub const PICARD_NAMING_SCRIPT_ID: &str = "69202666-cb88-52b0-bac2-0afc62b1e909";
 /// Picard multi-disc naming script id.
@@ -482,73 +477,21 @@ pub fn current_picard_preset_scripts(settings: &LibraryManagement) -> (NamingScr
     (scripts.remove(0), scripts.remove(0))
 }
 
-/// Fresh-tenant initial settings:
-/// the Picard-style (default) and complete organizer presets with their
-/// two naming scripts, plus a path-only profile seeded from the library's
-/// import naming script. Nothing is assigned to a root, so seeding never
-/// starts work.
-pub fn initial_settings(import_naming_script: &str) -> LibraryManagement {
+/// Fresh-tenant initial settings: the Picard-style (default) and complete
+/// organizer presets with their two naming scripts. Nothing is assigned to a
+/// root, so seeding never starts work.
+pub fn initial_settings() -> LibraryManagement {
     let mut settings = LibraryManagement {
         schema_version: MANAGEMENT_SCHEMA_VERSION,
         preset_catalog_version: PRESET_CATALOG_VERSION,
         ..LibraryManagement::default()
     };
     let (standard, multi_disc) = current_picard_preset_scripts(&settings);
-    let legacy_source = if import_naming_script.trim().is_empty() {
-        DEFAULT_NAMING_SCRIPT
-    } else {
-        import_naming_script
-    };
-    let mut legacy_script = NamingScript {
-        id: LEGACY_NAMING_SCRIPT_ID.to_owned(),
-        name: "Existing DroppedNeedle naming".to_owned(),
-        source: legacy_source.to_owned(),
-        revision: String::new(),
-        preset_origin: Some("legacy_naming_template".to_owned()),
-        preset_version: Some(1),
-    };
-    legacy_script.revision = naming_script_revision(&legacy_script);
-    settings.naming_scripts = vec![standard, multi_disc, legacy_script];
+    settings.naming_scripts = vec![standard, multi_disc];
     let picard = picard_style_organizer_profile();
     settings.default_profile_id = picard.id.clone();
-    settings.profiles = vec![
-        picard,
-        complete_library_organizer_profile(),
-        legacy_naming_profile(),
-    ];
+    settings.profiles = vec![picard, complete_library_organizer_profile()];
     settings
-}
-
-/// The path-only profile seeded from the pre-Library-Management naming
-/// template: tags, genres and artwork off, sources kept in place.
-fn legacy_naming_profile() -> LibraryManagementProfile {
-    let mut profile = LibraryManagementProfile {
-        id: LEGACY_NAMING_PROFILE_ID.to_owned(),
-        name: "Existing naming template".to_owned(),
-        description: "Path-only seed copied from the naming template that was configured \
-                      before Library Management."
-            .to_owned(),
-        preset_origin: Some("legacy_naming_template".to_owned()),
-        preset_version: Some(1),
-        ..LibraryManagementProfile::default()
-    };
-    profile.metadata.enabled = false;
-    profile.metadata.fields = MANAGED_FIELDS
-        .iter()
-        .map(|field| ManagedField {
-            field: field.name.to_owned(),
-            mode: FieldMode::Disabled,
-            clear_when_canonical_missing: false,
-        })
-        .collect();
-    profile.genres.enabled = false;
-    profile.artwork.embedded_enabled = false;
-    profile.artwork.external_enabled = false;
-    profile.organization.naming_script_id = LEGACY_NAMING_SCRIPT_ID.to_owned();
-    profile.organization.move_sidecars = false;
-    profile.organization.sidecar_patterns = Vec::new();
-    profile.revision = profile_revision(&profile);
-    profile
 }
 
 /// Sidecar-pattern history: legacy (`cover`+cue/log/lrc/m3u/pls),
@@ -783,8 +726,7 @@ fn pieces_source(pieces: &[Piece]) -> String {
     out
 }
 
-/// Rewrite a naming template from before naming scripts (v2's, and the
-/// first v3 `naming_template`) as a naming script that places an imported
+/// Rewrite a v2 naming template as a naming script that places an imported
 /// file where the template did. A blank template is v2's default.
 ///
 /// The template's rules carry over: `{name}` and `{track:02d}` holes
@@ -895,20 +837,28 @@ pub fn legacy_template_to_script(template: &str) -> LegacyConversion {
         }
     }
     for pieces in &components {
+        // Spaces and dots are trimmed off a name, and `{ext}` alone is no
+        // name, so `{year}.{ext}` is empty without a year too.
         let may_vanish = pieces.iter().all(|piece| match piece {
-            Piece::Text(text) => text.trim().is_empty(),
-            Piece::Hole { often_empty, .. } => *often_empty,
+            Piece::Text(text) => text.trim_matches([' ', '.']).is_empty(),
+            Piece::Hole {
+                ext, often_empty, ..
+            } => *ext || *often_empty,
         });
-        if may_vanish {
-            let names: Vec<&str> = pieces
-                .iter()
-                .filter_map(|piece| match piece {
-                    Piece::Hole { label, .. } => Some(label.as_str()),
-                    Piece::Text(_) => None,
-                })
-                .collect();
+        let names: Vec<&str> = pieces
+            .iter()
+            .filter_map(|piece| match piece {
+                Piece::Hole {
+                    label,
+                    often_empty: true,
+                    ..
+                } => Some(label.as_str()),
+                _ => None,
+            })
+            .collect();
+        if may_vanish && !names.is_empty() {
             warnings.push(format!(
-                "A folder made only of {} is empty for a release without it, and such an import stops with an error.",
+                "A folder or file name made only of {} is empty for a release without it, and such an import stops with an error.",
                 names.join(" and ")
             ));
         }
@@ -1080,6 +1030,8 @@ mod tests {
     use crate::management::settings::validate_naming_language;
     use crate::matching::model::{CreditedArtist, ReleaseMedium};
     use crate::matching::{Release, ReleaseTrack};
+    use crate::tags::read::HeaderInfo;
+    use droppedneedle_kernel::runtime_config::secret_sections::DEFAULT_NAMING_SCRIPT;
 
     fn credit(id: &str, name: &str) -> CreditedArtist {
         CreditedArtist {
@@ -1127,6 +1079,7 @@ mod tests {
             "con" => release.title = "CON".to_owned(),
             "dots" => release.title = "..".to_owned(),
             "long228" => track.title = "é".repeat(114),
+            "long260" => track.title = "x".repeat(260),
             "disc2" => {
                 track.disc = 2;
                 track.position = 12;
@@ -1168,6 +1121,22 @@ mod tests {
                 Some("The Beatles/Dummy (1994)/0103 Sour Times.flac"),
                 Some("Portishead/Dummy (1994)/0103 Sour Times.mp3"),
                 Some("Portishead/Dummy (1994)/0103 Etc..flac"),
+            ],
+        ),
+        (
+            "{albumartist}/{album} ({year})/{track:02d} {title}",
+            [
+                Some("Portishead/Dummy (1994)/03 Sour Times.flac"),
+                Some("Portishead/Dummy/03 Sour Times.flac"),
+                Some("Portishead/Dummy (1991)/03 Sour Times.flac"),
+                Some("Portishead/Dummy (1994)/03 AC_DC_ Live_.flac"),
+                Some("Portishead/CON (1994)/03 Sour Times.flac"),
+                Some("Portishead/(1994)/03 Sour Times.flac"),
+                Some("Portishead/Dummy (1994)/03 {LONG}.flac"),
+                Some("Portishead/Dummy (1994)/12 Sour Times.flac"),
+                Some("The Beatles/Dummy (1994)/03 Sour Times.flac"),
+                Some("Portishead/Dummy (1994)/03 Sour Times.mp3"),
+                Some("Portishead/Dummy (1994)/03 Etc..flac"), // D2
             ],
         ),
         (
@@ -1342,13 +1311,50 @@ mod tests {
                 let (release, track, format) = input(label);
                 let rendered = naming::render(
                     &converted.script,
-                    &naming::variables(&release, &track, format),
+                    &naming::variables(&release, &track, format, &HeaderInfo::default()),
                     "/music",
                 )
                 .ok();
                 let expected = expected.map(|path| path.replace("{LONG}", &long));
                 assert_eq!(rendered, expected, "{template} with {label}");
             }
+        }
+    }
+
+    /// A 260-byte title: the x's the template engine kept, 12 more than the
+    /// script's 240-byte cut keeps.
+    #[test]
+    fn a_long_title_is_cut_twelve_bytes_shorter_than_the_template_cut_it() {
+        const CUTS: &[(&str, &str, usize)] = &[
+            (
+                "{albumartist}/{album} ({year})/{track:02d} {title}",
+                "Portishead/Dummy (1994)/03 ",
+                244,
+            ),
+            (
+                "{albumartist}/{album} ({year})/{disc:02d}{track:02d} {title}.{ext}",
+                "Portishead/Dummy (1994)/0103 ",
+                242,
+            ),
+            (
+                "{initial}/{albumartist}/[{year}] {album}/{disc:02d}-{track:02d} {title}.{ext}",
+                "P/Portishead/[1994] Dummy/01-03 ",
+                241,
+            ),
+            (
+                "{genre}/{albumartist}/{album}/{title}.{ext}",
+                "Portishead/Dummy/",
+                247,
+            ),
+        ];
+        let (release, track, format) = input("long260");
+        let variables = naming::variables(&release, &track, format, &HeaderInfo::default());
+        for (template, folders, template_kept) in CUTS {
+            let script = legacy_template_to_script(template).script;
+            assert_eq!(
+                naming::render(&script, &variables, "/music").expect(template),
+                format!("{folders}{}.flac", "x".repeat(template_kept - 12)),
+            );
         }
     }
 
@@ -1369,6 +1375,8 @@ mod tests {
         let warnings = |template: &str| legacy_template_to_script(template).warnings;
         assert_eq!(warnings("{year}/{title}").len(), 1);
         assert_eq!(warnings("{albumartist}/[{year}]/{title}").len(), 1);
+        assert_eq!(warnings("{album}/{year}.{ext}").len(), 1);
+        assert!(warnings("{album}/{title}.{ext}").is_empty());
         assert!(warnings("{albumartist}/{album} ({year})/{title}").is_empty());
         assert_eq!(
             warnings("{genre}/{title}"),

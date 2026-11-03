@@ -6536,7 +6536,7 @@ async fn a_library_folder_reached_through_a_symlink_takes_writes() {
     crate::common::library::operations(&library)
         .confirm_match(&album, shown_revision(&library, &album), "admin")
         .expect("match confirmed");
-    let mut settings = lm::initial_settings("");
+    let mut settings = lm::initial_settings();
     for profile in &mut settings.profiles {
         for field in &mut profile.metadata.fields {
             if droppedneedle_library::management::enrich::CREDIT_FIELDS
@@ -8615,7 +8615,7 @@ async fn a_busy_database_leaves_a_management_job_runnable() {
     let settings = library
         .settings
         .store()
-        .save_blocking(lm::initial_settings(""))
+        .save_blocking(lm::initial_settings())
         .expect("settings saved");
     let management = Management::new(&library);
     let handle = management
@@ -8704,7 +8704,7 @@ async fn a_management_job_whose_worker_died_is_finished_by_its_own_worker() {
     let settings = library
         .settings
         .store()
-        .save_blocking(lm::initial_settings(""))
+        .save_blocking(lm::initial_settings())
         .expect("settings saved");
     let management = Management::new(&library);
     let handle = management
@@ -8794,7 +8794,7 @@ async fn the_management_loop_recovers_at_start_and_wakes_on_enqueue() {
     let settings = library
         .settings
         .store()
-        .save_blocking(lm::initial_settings(""))
+        .save_blocking(lm::initial_settings())
         .expect("settings saved");
     let management = Management::new(&library);
     let preview = |key: &str| {
@@ -9048,7 +9048,7 @@ async fn library_management_preview_apply_undo() {
         .expect("admin row");
     // A second profile names files after their title in place, so the
     // first file's rename only changes letter case.
-    let mut settings = lm::initial_settings("");
+    let mut settings = lm::initial_settings();
     settings.naming_scripts.push(NamingScript {
         id: "in-place".to_owned(),
         name: "In place".to_owned(),
@@ -9767,7 +9767,7 @@ async fn library_management_tools_journey() {
         .confirm_match(&album, shown_revision(&library, &album), "admin")
         .expect("match confirmed");
     // No MusicBrainz credits are scripted here, so the profile writes none.
-    let mut settings = lm::initial_settings("");
+    let mut settings = lm::initial_settings();
     for profile in &mut settings.profiles {
         for field in &mut profile.metadata.fields {
             if droppedneedle_library::management::enrich::CREDIT_FIELDS
@@ -10624,7 +10624,7 @@ async fn library_management_custom_edition_journey() {
     library
         .settings
         .store()
-        .save_blocking(lm::initial_settings(""))
+        .save_blocking(lm::initial_settings())
         .expect("settings saved");
     lm::service::LibraryManagementService::new(Arc::new(library.settings.store().clone()))
         .get_settings()
@@ -10809,7 +10809,7 @@ async fn library_management_artwork_journey() {
     crate::common::library::operations(&library)
         .confirm_match(&album, shown_revision(&library, &album), "admin")
         .expect("match confirmed");
-    let mut settings = lm::initial_settings("");
+    let mut settings = lm::initial_settings();
     for profile in settings
         .profiles
         .iter_mut()
@@ -11053,7 +11053,7 @@ impl ManagedLibrary {
                  VALUES ('admin', 'Admin', 'admin', 0)",
             )
             .expect("admin row");
-        let mut settings = lm::initial_settings("");
+        let mut settings = lm::initial_settings();
         for profile in settings
             .profiles
             .iter_mut()
@@ -14298,7 +14298,8 @@ async fn an_import_that_cannot_read_the_albums_match_leaves_it_alone() {
 /// An imported file and a management preview with the same naming script
 /// give the file the same path, so Library Management never moves what an
 /// import placed: for the default import script, Picard's single-disc
-/// script and an `{initial}` one, with a title long enough to be cut.
+/// script, an `{initial}` one and one naming the file's stream values, with a
+/// title long enough to be cut.
 #[tokio::test]
 async fn import_and_management_name_a_file_alike() {
     use droppedneedle_kernel::runtime_config::secret_sections::{
@@ -14318,6 +14319,8 @@ async fn import_and_management_name_a_file_alike() {
             "{initial}/{albumartist}/[{year}] {album}/{disc:02d}-{track:02d} {title}.{ext}",
         )
         .script,
+        "{albumartist}/{album} {bit_depth}-{sample_rate} {bitrate} {quality} {codec}/{title}.{ext}"
+            .to_owned(),
     ];
     let (scratch, library, music) = bare_library("lib-import-naming-alike").await;
     std::fs::create_dir_all(&music).expect("music folder");
@@ -14330,7 +14333,7 @@ async fn import_and_management_name_a_file_alike() {
              VALUES ('admin', 'Admin', 'admin', 0)",
         )
         .expect("admin row");
-    let mut settings = lm::initial_settings("");
+    let mut settings = lm::initial_settings();
     let picard = settings
         .profiles
         .iter()

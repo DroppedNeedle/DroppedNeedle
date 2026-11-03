@@ -20,6 +20,7 @@ use serde_json::Value;
 
 use super::apply::ImportError;
 use super::envelope::is_sealed;
+use super::naming_carry;
 use super::quality_carry;
 use super::report::{DROPPED_SETTING, ReportBuilder};
 use super::schedule_carry::carry_frequency;
@@ -189,6 +190,9 @@ pub(super) fn stage_settings(
                 }
                 if section == "library_management" {
                     carry_v2_management_fields(&mut filtered);
+                }
+                if section == "library_settings" {
+                    naming_carry::convert_template(&mut filtered, report);
                 }
                 let applied = rekey_section(
                     &filtered,

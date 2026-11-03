@@ -188,13 +188,34 @@ pub fn read_scan_metadata(
         }
     })?;
     let tag = audio_tag_from_file(path, &tagged, format);
+    let mut header = header_of(&tagged, format);
+    header.duration_measured = format != AudioFormat::Mp3
+        || super::mpeg_length::length_measured(path).map_err(|source| TagsError::Io {
+            path: path.display().to_string(),
+            source,
+        })?;
+    Ok((tag, header))
+}
+
+/// [`HeaderInfo`] from a file the caller has open (say, one opened without
+/// following a link), read as the container `path`'s extension names, from
+/// its start. The shared file position moves, and the duration counts as
+/// not measured.
+pub fn read_header_from(file: &File, path: &Path) -> Result<HeaderInfo, TagsError> {
+    let format = format_for_path(path)?;
+    Ok(header_of(&tagged_from(file, path)?, format))
+}
+
+/// The stream properties lofty read, with the duration not yet counted as
+/// measured.
+fn header_of(tagged: &TaggedFile, format: AudioFormat) -> HeaderInfo {
     let properties = tagged.properties();
     let duration = properties.duration();
     let lossless = matches!(
         format,
         AudioFormat::Flac | AudioFormat::Wav | AudioFormat::M4a
     );
-    let header = HeaderInfo {
+    HeaderInfo {
         duration_seconds: (!duration.is_zero()).then_some(duration.as_secs_f64()),
         bitrate_kbps: properties
             .audio_bitrate()
@@ -210,13 +231,8 @@ pub fn read_scan_metadata(
         } else {
             None
         },
-        duration_measured: format != AudioFormat::Mp3
-            || super::mpeg_length::length_measured(path).map_err(|source| TagsError::Io {
-                path: path.display().to_string(),
-                source,
-            })?,
-    };
-    Ok((tag, header))
+        duration_measured: false,
+    }
 }
 
 /// The file as the catalog reads it. lofty's default mode comes first,
@@ -374,6 +390,16 @@ pub fn read_cover_art(path: &Path) -> Result<Option<Vec<u8>>, TagsError> {
 /// names, from its start. The shared file position moves.
 pub fn read_cover_art_from(file: &File, path: &Path) -> Result<Option<Vec<u8>>, TagsError> {
     format_for_path(path)?;
+    let tagged = tagged_from(file, path)?;
+    Ok(tagged
+        .tags()
+        .iter()
+        .find_map(|tag| tag.pictures().first())
+        .map(|picture| picture.data().to_vec()))
+}
+
+/// The open file as lofty reads it, from its start.
+fn tagged_from(file: &File, path: &Path) -> Result<TaggedFile, TagsError> {
     let failed = |reason: String| TagsError::TagRead {
         path: path.display().to_string(),
         reason,
@@ -389,7 +415,7 @@ pub fn read_cover_art_from(file: &File, path: &Path) -> Result<Option<Vec<u8>>, 
         }
     };
     // The same two passes as `read_lenient`.
-    let tagged = match read(None) {
+    match read(None) {
         Err(error) if io_source(&error).is_none() && !is_read_failure(&error) => {
             read(Some(ParseOptions::new().parsing_mode(ParsingMode::Relaxed)))
         }
@@ -407,12 +433,7 @@ pub fn read_cover_art_from(file: &File, path: &Path) -> Result<Option<Vec<u8>>, 
             },
             _ => failed(error.to_string()),
         },
-    })?;
-    Ok(tagged
-        .tags()
-        .iter()
-        .find_map(|tag| tag.pictures().first())
-        .map(|picture| picture.data().to_vec()))
+    })
 }
 
 // ---------------------------------------------------------------------------

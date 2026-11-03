@@ -1111,7 +1111,7 @@ async fn v2_management_fields_carry_over_as_they_were() {
     };
     use std::sync::Arc;
 
-    let mut management = serde_json::to_value(initial_settings("")).unwrap();
+    let mut management = serde_json::to_value(initial_settings()).unwrap();
     let fields: Vec<Value> = V2_MANAGED_FIELDS
         .iter()
         .filter(|name| **name != "artist_sort")
@@ -1206,7 +1206,7 @@ async fn v2_profile_that_ticked_other_gets_the_role_fields() {
     };
     use std::sync::Arc;
 
-    let mut management = serde_json::to_value(initial_settings("")).unwrap();
+    let mut management = serde_json::to_value(initial_settings()).unwrap();
     let fields: Vec<Value> = V2_MANAGED_FIELDS
         .iter()
         .map(

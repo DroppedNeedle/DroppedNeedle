@@ -93,7 +93,8 @@ use super::publish::{PublishError, TagUpdates};
 use super::scan::models::EffectivePolicy;
 use super::scan::roots::{LibraryRoot, RootRegistry};
 use super::settings::LibrarySettings;
-use super::tags::AudioFormat;
+use super::tags::read::{HeaderInfo, read_header_from};
+use super::tags::{AudioFormat, TagsError};
 use super::wiring::LibraryCore;
 
 /// Revisions the seal pins while profiles and naming have no store (the
@@ -214,6 +215,25 @@ pub enum ImportError {
     Busy(String),
 }
 
+/// What a source's stream headers say, read through the opener its copy uses.
+/// A file that doesn't read has none: a script that names a stream value gets
+/// it empty, and the copy or the tag write reports any real fault.
+fn stream_header(
+    path: &Path,
+    open_source: &dyn Fn(&Path) -> std::io::Result<std::fs::File>,
+) -> HeaderInfo {
+    let header = open_source(path)
+        .map_err(|source| TagsError::Io {
+            path: path.display().to_string(),
+            source,
+        })
+        .and_then(|file| read_header_from(&file, path));
+    header.unwrap_or_else(|error| {
+        tracing::warn!(%error, "an import could not read a file's stream headers");
+        HeaderInfo::default()
+    })
+}
+
 /// A database that refused the call waits as [`ImportError::Busy`]; any
 /// other store failure is a local fault.
 fn store_fault(error: PublishError) -> ImportError {
@@ -233,6 +253,8 @@ struct Placement {
     staged_rel: String,
     dest_rel: String,
     format: AudioFormat,
+    /// What the file's stream headers say, which a naming script can read.
+    header: HeaderInfo,
     tags: TagUpdates,
     /// The policy covering the final destination, set under the publish
     /// lock once a joined file's folder is known.
@@ -339,9 +361,14 @@ impl Imports {
                     .map_err(|error| fault(format!("unsupported file: {error}")))?,
             );
         }
+        let headers: Vec<HeaderInfo> = sources
+            .iter()
+            .map(|(path, _, _)| stream_header(path, open_source))
+            .collect();
         let name = |root: &LibraryRoot,
                     track: &super::matching::ReleaseTrack,
-                    format: AudioFormat|
+                    format: AudioFormat,
+                    header: &HeaderInfo|
          -> Result<String, ImportError> {
             let named = super::matching::ReleaseTrack {
                 disc: track.disc.max(1),
@@ -349,7 +376,7 @@ impl Imports {
             };
             naming::render(
                 &script,
-                &naming::variables(&import.release, &named, format.as_str()),
+                &naming::variables(&import.release, &named, format.as_str(), header),
                 &root.path.to_string_lossy(),
             )
             .map_err(|error| ImportError::NamingScript(error.to_string()))
@@ -357,8 +384,8 @@ impl Imports {
         let render = |root: &LibraryRoot| -> Result<Vec<String>, ImportError> {
             sources
                 .iter()
-                .zip(&formats)
-                .map(|((_, track, _), format)| name(root, track, *format))
+                .zip(formats.iter().zip(&headers))
+                .map(|((_, track, _), (format, header))| name(root, track, *format, header))
                 .collect()
         };
         // A folder the naming script gives no path in is skipped, and the
@@ -495,10 +522,10 @@ impl Imports {
         };
         let mut root = root.clone();
         let mut placements = Vec::with_capacity(sources.len());
-        for (ordinal, ((((path, track, _), replaces), format), dest_rel)) in sources
+        for (ordinal, ((((path, track, _), replaces), (format, header)), dest_rel)) in sources
             .into_iter()
             .zip(old_copies)
-            .zip(formats)
+            .zip(formats.into_iter().zip(headers))
             .zip(dests)
             .enumerate()
         {
@@ -521,6 +548,7 @@ impl Imports {
                 staged_rel: format!("{task_dir}/{ordinal:03}.{}", format.as_str()),
                 dest_rel,
                 format,
+                header,
                 tags,
                 policy: root.policy,
                 track_id: String::new(),
@@ -635,7 +663,9 @@ impl Imports {
                         .iter()
                         .zip(&folders)
                         .map(|(placement, folder)| {
-                            let rendered = name(other, &placement.track, placement.format).ok()?;
+                            let rendered =
+                                name(other, &placement.track, placement.format, &placement.header)
+                                    .ok()?;
                             Some(beside(other, &rendered, folder).unwrap_or(rendered))
                         })
                         .collect::<Option<Vec<String>>>()?;

@@ -13,10 +13,16 @@ use crate::management::settings::validate_naming_language;
 use crate::matching::model::{CreditedArtist, ReleaseMedium};
 use crate::matching::{Release, ReleaseTrack};
 use crate::tags::picard::release_tags;
+use crate::tags::read::HeaderInfo;
 
 /// The variables an imported file's name is made from. `format` is the
-/// file's lowercase extension.
-pub fn variables(release: &Release, track: &ReleaseTrack, format: &str) -> Variables {
+/// file's lowercase extension and `header` what its stream headers say.
+pub fn variables(
+    release: &Release,
+    track: &ReleaseTrack,
+    format: &str,
+    header: &HeaderInfo,
+) -> Variables {
     let fields = release_tags(release, track);
     let medium = release
         .media
@@ -25,9 +31,9 @@ pub fn variables(release: &Release, track: &ReleaseTrack, format: &str) -> Varia
     let facts = NamingFacts {
         extension: format,
         codec: format,
-        bit_rate: None,
-        sample_rate: None,
-        bit_depth: None,
+        bit_rate: header.bitrate_kbps.map(i64::from),
+        sample_rate: header.sample_rate.map(i64::from),
+        bit_depth: header.bit_depth.map(i64::from),
         medium_format: medium
             .and_then(|medium| medium.format.clone())
             .unwrap_or_default(),
@@ -97,7 +103,17 @@ pub fn example(script: &str) -> Result<String, ScriptFault> {
         tracks: vec![track.clone()],
         ..Release::default()
     };
-    render(script, &variables(&release, &track, "flac"), "/music")
+    let header = HeaderInfo {
+        bitrate_kbps: Some(1000),
+        sample_rate: Some(44_100),
+        bit_depth: Some(16),
+        ..HeaderInfo::default()
+    };
+    render(
+        script,
+        &variables(&release, &track, "flac", &header),
+        "/music",
+    )
 }
 
 /// Check a naming script a person saves: it passes the checks every
