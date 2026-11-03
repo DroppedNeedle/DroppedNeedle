@@ -1,0 +1,83 @@
+name: Perf budgets
+
+# The timing tests the default suite skips, on a release build. Weekly and by
+# hand only: they need an optimized build and say nothing about one commit.
+on:
+  schedule:
+    - cron: '0 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  budgets:
+    name: Budgets
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    defaults:
+      run:
+        working-directory: ./server
+        # Named so a pipe into tee keeps the test's exit code (pipefail).
+        shell: bash
+    env:
+      # One at a time, so no timing test runs beside another.
+      RUST_TEST_THREADS: 1
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      # The version and components come from rust-toolchain.toml.
+      - name: Install Rust toolchain
+        run: rustup toolchain install
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: server
+
+      - name: Build the tests
+        id: build
+        run: |
+          cargo test --release -p droppedneedle-catalog --lib --no-run
+          cargo test --release --test server --test library --no-run
+
+      # Each measurement runs even when an earlier one misses its budget, so
+      # a run reports every figure. A miss still fails the job.
+      - name: Catalog read budgets
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          cargo test --release -p droppedneedle-catalog --lib perf_100k -- --ignored --nocapture 2>&1 \
+            | tee "$RUNNER_TEMP/catalog.log"
+
+      - name: Login budget
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          cargo test --release --test server login_p95 -- --ignored --nocapture 2>&1 \
+            | tee "$RUNNER_TEMP/login.log"
+
+      - name: Scan throughput at 100,000 files
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        env:
+          DN_SCAN_FILES: 100000
+        run: |
+          cargo test --release --test library full_scan_throughput -- --ignored --nocapture 2>&1 \
+            | tee "$RUNNER_TEMP/scan.log"
+
+      - name: Add the figures to the job summary
+        if: ${{ !cancelled() }}
+        run: |
+          for name in catalog login scan; do
+            log="$RUNNER_TEMP/$name.log"
+            [ -f "$log" ] || continue
+            {
+              echo "### $name"
+              echo '```text'
+              cat "$log"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          done

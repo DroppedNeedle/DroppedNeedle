@@ -3241,12 +3241,12 @@ fn percentile(sorted: &mut [f64], pct: f64) -> f64 {
 /// Acceptance: every standard read holds the 10 ms p95 budget on a seeded
 /// 100k catalog, 50 samples after 3 warmup per endpoint. Ignored by
 /// default: timing is machine-dependent, so CI guards the mechanisms
-/// (fixture pages, totals, and plan tests above) while this runs explicitly
-/// with --release on reference hardware, matching the HTTP bench
-/// shape (checkpointed store, optimized build). Debug runs only report
-/// timings: an unoptimized build adds milliseconds per call there.
+/// (fixture pages, totals, and plan tests above) while the weekly perf job
+/// runs this with --release, matching the HTTP bench shape (checkpointed
+/// store, optimized build). Debug runs only report timings: an unoptimized
+/// build adds milliseconds per call there.
 #[tokio::test]
-#[ignore = "100k acceptance timing; run explicitly with --release on reference hardware"]
+#[ignore = "100k acceptance timing; run explicitly with --release: cargo test --release -p droppedneedle-catalog --lib perf_100k_endpoints -- --ignored --nocapture"]
 async fn perf_100k_endpoints_hold_p95() {
     let fixture = seed_small().await;
     seed_100k(&fixture).await;
@@ -3529,7 +3529,7 @@ async fn read_endpoint(catalog: &LocalCatalog, name: &str, deep: &(After, After,
 /// albums) hold the same 10 ms p95 budget on the seeded 100k catalog, and
 /// the common-word search page and the 1000-row search3 page 100 ms.
 #[tokio::test]
-#[ignore = "100k acceptance timing; run explicitly with --release on reference hardware"]
+#[ignore = "100k acceptance timing; run explicitly with --release: cargo test --release -p droppedneedle-catalog --lib perf_100k_player -- --ignored --nocapture"]
 async fn perf_100k_player_pages_hold_p95() {
     use local::player::{AlbumOrder, AlbumQuery, OrderKey, TrackOrder, TrackQuery};
 

@@ -2415,7 +2415,7 @@ fn percentile(sorted: &[Duration], pct: f64) -> Duration {
 }
 
 #[tokio::test]
-#[ignore = "login timing budget; run explicitly with --release: cargo test --release --test it login_p95 -- --ignored"]
+#[ignore = "login timing budget; run explicitly with --release: cargo test --release --test server login_p95 -- --ignored --nocapture"]
 async fn login_p95_within_login_budget() {
     const N: usize = 50;
     const BUDGET: Duration = Duration::from_millis(600);
@@ -2461,6 +2461,7 @@ async fn login_p95_within_login_budget() {
     let p50 = percentile(&samples, 50.0);
     let p95 = percentile(&samples, 95.0);
     let max = samples[samples.len() - 1];
+    println!("login over {N} logins: p50 {p50:?}, p95 {p95:?}, max {max:?}");
     assert!(
         p95 <= BUDGET,
         "FINDING: login p95 {p95:?} exceeds the 600ms login budget \
