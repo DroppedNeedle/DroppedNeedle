@@ -556,27 +556,43 @@ droppedneedle_kernel::sql! {
         + (musicbrainz!("ae")) + " AND " + (owned_album!("b"))
         + " ORDER BY b.year IS NULL, b.year DESC, b.title_folded";
     /// The indexed tracks one artist MBID (lowercase) is credited on, on
-    /// identified owned albums: title, recording MBID, the album's release
-    /// group, disc, track and whether the artist leads the album. Copies in
-    /// the order a lookup by release group picks them, so the first track of
-    /// a group is the one it plays.
-    /// Tracks are reached from the artist's credits by key, as in
-    /// [`ARTIST_APPEARS`].
-    pub(crate) ARTIST_SONGS = "SELECT t.title, " + (recording_mbid!("ti", "t"))
-        + ", e.release_group_mbid, t.disc_number, t.track_number, \
-        b.album_artist_id = ae.local_artist_id \
+    /// albums that own a release group by [`owns_group!`], so a lookup by
+    /// that group opens the album: title, recording MBID, the lowercase group,
+    /// album title, disc, track and whether the artist leads the album. An
+    /// album owns its matched group, or the group its tags name. The artist's
+    /// own albums come first, then the oldest. Tracks are reached from the
+    /// artist's credits by key, as in [`ARTIST_APPEARS`].
+    pub(crate) ARTIST_SONGS = "SELECT title, recording_mbid, release_group_mbid, album_title, \
+        disc_number, track_number, own_album FROM (SELECT t.title AS title, "
+        + (recording_mbid!("ti", "t")) + " AS recording_mbid, \
+        CASE WHEN EXISTS (SELECT 1 FROM (" + (owns_group!("= lower(e.release_group_mbid)"))
+        + ") owner WHERE owner.album_id = b.id) THEN lower(e.release_group_mbid) \
+        WHEN EXISTS (SELECT 1 FROM (" + (owns_group!("= lower(t.embedded_release_group_mbid)"))
+        + ") owner WHERE owner.album_id = b.id) THEN lower(t.embedded_release_group_mbid) \
+        END AS release_group_mbid, b.title AS album_title, t.disc_number AS disc_number, \
+        t.track_number AS track_number, b.album_artist_id IS ae.local_artist_id AS own_album, \
+        b.year AS year, b.id AS album_id \
         FROM local_artist_external_identities ae \
         JOIN local_track_artists credit ON credit.local_artist_id = ae.local_artist_id \
         JOIN local_tracks t INDEXED BY sqlite_autoindex_local_tracks_1 \
         ON t.id = credit.local_track_id \
         JOIN local_albums b ON b.id = t.local_album_id \
-        JOIN local_album_external_identities e ON e.local_album_id = b.id AND "
+        LEFT JOIN local_album_external_identities e ON e.local_album_id = b.id AND "
         + (musicbrainz!("e")) + " LEFT JOIN local_track_external_identities ti \
         ON ti.local_track_id = t.id AND " + (musicbrainz!("ti"))
         + " WHERE lower(ae.provider_artist_id) = ? AND " + (musicbrainz!("ae"))
-        + " AND " + (owned_album!("b")) + " AND t.availability = 'indexed' \
-        ORDER BY b.has_indexed_track DESC, e.decision_source <> 'manual', \
-        b.created_at, b.id, t.disc_number, t.track_number";
+        + " AND " + (owned_album!("b")) + " AND t.availability = 'indexed') \
+        WHERE release_group_mbid IS NOT NULL \
+        ORDER BY own_album DESC, year IS NULL, year, album_id, disc_number, track_number";
+    pub(crate) row ArtistSongColumns for [ARTIST_SONGS] {
+        title: String,
+        recording_mbid: Option<String>,
+        release_group_mbid: String,
+        album_title: String,
+        disc_number: i64,
+        track_number: i64,
+        own_album: bool,
+    }
     /// The live copy of one release group (lowercase), with or without
     /// files, for the catalog pages: its id, title, tagged album artist,
     /// year, album artist MBID and whether it has files.

@@ -183,13 +183,7 @@ pub async fn top_songs(
     let count = count(query.count, 10, 50)?;
     answer(
         deps.catalog
-            .top_songs(
-                user.user_id(),
-                &mbid,
-                count,
-                query.source,
-                RequestPriority::UserInitiated,
-            )
+            .artist_page_top_songs(user.user_id(), &mbid, count, query.source)
             .await,
     )
 }

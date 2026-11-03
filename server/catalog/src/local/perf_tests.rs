@@ -3389,6 +3389,54 @@ async fn perf_100k_owned_reads_hold_p95() {
     eprintln!("100k ownership reads:\n{}", report.join("\n"));
 }
 
+/// Acceptance: an artist page's owned songs on the 100k catalog, for an
+/// artist leading 20 albums (200 tracks, half matched, half known by their
+/// tags), hold the 100 ms page budget. Ignored by default, as the other
+/// timings are.
+#[tokio::test]
+#[ignore = "100k acceptance timing; run explicitly with --release: cargo test --release -p droppedneedle-catalog --lib perf_100k_artist_songs -- --ignored --nocapture"]
+async fn perf_100k_artist_songs_hold_the_page_budget() {
+    const ARTIST: &str = "0a0b0c0d-1111-4000-8000-000000000000";
+    let fixture = seed_small().await;
+    seed_100k(&fixture).await;
+    write_batch(
+        &fixture,
+        "perf artist link",
+        format!(
+            "INSERT INTO local_artist_external_identities (local_artist_id, provider, \
+             provider_artist_id, decision_source, selected_at) \
+             VALUES ('p-a0250', 'musicbrainz', '{ARTIST}', 'manual', 1000000);"
+        ),
+    )
+    .await;
+    let db = fixture.db().clone();
+    db.write(Lane::Foreground, "analyze", |tx| {
+        tx.execute_batch("ANALYZE")?;
+        Ok::<_, DbError>(())
+    })
+    .await
+    .expect("analyze runs");
+    let mut samples = Vec::new();
+    for round in 0..53 {
+        let tick = std::time::Instant::now();
+        let found = fetch(&db, sql::ARTIST_SONGS.text(), vec![text(ARTIST)], |row| {
+            sql::ArtistSongColumns::read(row)
+        })
+        .await;
+        let ms = tick.elapsed().as_secs_f64() * 1000.0;
+        if round >= 3 {
+            samples.push(ms);
+        }
+        assert_eq!(found.len(), 200, "every track of the artist's albums");
+    }
+    let p95 = percentile(&mut samples, 95.0);
+    let p50 = percentile(&mut samples, 50.0);
+    eprintln!("100k artist songs: p50 {p50:.2} ms, p95 {p95:.2} ms");
+    if !cfg!(debug_assertions) {
+        assert!(p95 < 100.0, "artist songs p95 {p95:.2} ms exceeds 100 ms");
+    }
+}
+
 /// Plays over the 100k catalog: `p-u1` has played every 50th track one to
 /// three times (2,000 tracks), and twenty other listeners have a thousand
 /// plays each, so the history table is shared as a real one is. `p-u1`

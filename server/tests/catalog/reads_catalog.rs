@@ -655,9 +655,9 @@ async fn discography_filters_flags_and_pages() {
     );
 }
 
-/// A popular song the library holds points at the user's own copy, at
-/// its place on that album, so the row plays the file; a song not held
-/// stays as the listening service names it.
+/// A popular song the library holds on the artist's own album points at
+/// that copy, at its place there, so the row plays the file. A song of the
+/// same title on another artist's album is not the user's copy of it.
 #[tokio::test]
 async fn a_popular_song_in_the_library_points_at_its_own_copy() {
     let fixtures = Fixtures::start().await;
@@ -677,26 +677,48 @@ async fn a_popular_song_in_the_library_points_at_its_own_copy() {
             "INSERT INTO local_track_artists (local_track_id, position, local_artist_id, role) \
              VALUES ('track-surprises', 0, 'artist-radiohead', 'primary')"
                 .to_owned(),
+            "INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
+             path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
+             artist_name, artist_name_folded, album_title, album_title_folded, disc_number, \
+             track_number, duration_seconds, file_format, ingest_source, imported_at, \
+             membership_source) VALUES ('track-host-creep', 'album-host', 'root-1', \
+             '/music/host-creep.flac', 'host-creep.flac', 'hash-4', 1000, 0, 'stat-4', \
+             'Creep', 'creep', 'Host Band', 'host band', 'Guest Spot', 'guest spot', 1, 2, \
+             200.0, 'flac', 'scan', 0, 'manual')"
+                .to_owned(),
+            "INSERT INTO local_track_artists (local_track_id, position, local_artist_id, role) \
+             VALUES ('track-host-creep', 0, 'artist-radiohead', 'guest')"
+                .to_owned(),
+            "INSERT INTO local_album_external_identities (local_album_id, provider, \
+             release_group_mbid, decision_source, selected_at) VALUES ('album-host', \
+             'musicbrainz', 'f00d0000-0000-4000-8000-000000000001', 'manual', 0)"
+                .to_owned(),
         ],
     )
     .await;
 
     let songs = get(&app, &format!("/api/v3/artists/{ARTIST}/top-songs")).await;
     assert_eq!(titles(&songs["songs"]), ["Creep", "No Surprises"]);
+    assert_eq!(
+        songs["songs"][0]["track_number"],
+        Value::Null,
+        "a cover on another artist's album is not the user's copy"
+    );
     let held = &songs["songs"][1];
     assert_eq!(
         (
             &held["release_group_mbid"],
+            &held["release_name"],
             &held["disc_number"],
             &held["track_number"]
         ),
-        (&json!(OK_COMPUTER), &json!(1), &json!(10)),
+        (
+            &json!(OK_COMPUTER),
+            &json!("OK Computer"),
+            &json!(1),
+            &json!(10)
+        ),
         "the owned song points at its place on the user's album"
-    );
-    assert_eq!(
-        songs["songs"][0]["track_number"],
-        Value::Null,
-        "a song not held stays as listed"
     );
 }
 
@@ -1787,6 +1809,103 @@ async fn audiodb_art_is_kept_per_api_key() {
     let premium = catalog.artist_extended(ARTIST).await.unwrap();
     assert_eq!(fixtures.hits("/audiodb/premium-key/artist-mb.php"), 1);
     assert_eq!(premium.images.thumb_url, None);
+}
+
+/// A popular song MusicBrainz cannot place is remembered for a day: the
+/// artist page does not search for it again before then, and does after.
+#[tokio::test]
+async fn a_song_nothing_places_is_asked_again_after_a_day() {
+    use droppedneedle_kernel::clock::ManualClock;
+    use droppedneedle_kernel::runtime_config::sections::ListenSource;
+    use droppedneedle_providers::executor::ScriptedWire;
+    use droppedneedle_providers::{ProviderEndpoints, Source, listenbrainz};
+    use std::time::Duration;
+
+    const HOUR: i64 = 3_600_000;
+    let mb = "http://127.0.0.1:9/ws/2";
+    let wire = Arc::new(ScriptedWire::new());
+    wire.answer(
+        &format!(
+            "{}/1/popularity/top-recordings-for-artist/{ARTIST}",
+            listenbrainz::DEFAULT_BASE_URL
+        ),
+        200,
+        &[],
+        json!([{"recording_name": "Creep", "artist_name": "Radiohead",
+                "total_listen_count": 90}])
+        .to_string(),
+    );
+    wire.answer(
+        &format!("{mb}/recording"),
+        200,
+        &[],
+        json!({"count": 0, "offset": 0, "recordings": []}).to_string(),
+    );
+    let clock = Arc::new(ManualClock::at(1_790_000_000_000));
+    let providers = Arc::new(Providers::over_wire(
+        wire.clone(),
+        clock.clone(),
+        ProviderEndpoints {
+            listenbrainz: listenbrainz::DEFAULT_BASE_URL.to_owned(),
+            ..ProviderEndpoints::closed()
+        },
+    ));
+    let cache = providers.cache.clone();
+    let dir = crate::common::ScratchDir::new("reads-catalog-song-miss");
+    crate::common::migrated_db(&dir.join("app.db"));
+    let rig = AuthRig::new("reads-catalog-song-miss").await;
+    let catalog = Catalog::new(
+        Upstream::new(
+            providers,
+            Arc::new(TestSettings {
+                mb_url: mb.to_owned(),
+            }),
+            rig.deps.clone(),
+        ),
+        local_catalog(&dir),
+    );
+    let searches = || {
+        wire.sent()
+            .iter()
+            .filter(|sent| sent.url.path().ends_with("/ws/2/recording"))
+            .count()
+    };
+    let page = || catalog.artist_page_top_songs(USER, ARTIST, 5, Some(ListenSource::Listenbrainz));
+    // Waits until `want` searches went out and an answer is stored.
+    let searched = |want: usize| {
+        let cache = cache.clone();
+        async move {
+            for _ in 0..1000 {
+                cache.forget(&[]).await;
+                let stored = cache
+                    .stats()
+                    .await
+                    .iter()
+                    .any(|stats| stats.source == Source::MusicBrainz && stats.rows > 0);
+                if searches() >= want && stored {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            panic!("{want} searches never landed");
+        }
+    };
+
+    let first = page().await.unwrap();
+    assert_eq!(first.songs[0].release_group_mbid, None);
+    searched(1).await;
+
+    clock.advance(23 * HOUR);
+    page().await.unwrap();
+    // A settle for an absence: a search the page started would be out by now.
+    cache.forget(&[]).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(searches(), 1, "a stored miss holds for a day");
+
+    clock.advance(2 * HOUR);
+    page().await.unwrap();
+    searched(2).await;
+    assert_eq!(searches(), 2, "a miss older than a day is asked again");
 }
 
 /// Now, by the system clock the cache under test runs on.

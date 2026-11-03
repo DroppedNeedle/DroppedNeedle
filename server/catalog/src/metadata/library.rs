@@ -94,10 +94,12 @@ pub struct LocalArtistAlbum {
 pub struct LocalArtistSong {
     /// Title.
     pub title: String,
-    /// Recording MBID, when identified.
+    /// Recording MBID, when known.
     pub recording_mbid: Option<String>,
-    /// Release group of the album holding it.
+    /// The release group the album holding it owns, lowercase.
     pub release_group_mbid: String,
+    /// Title of the album holding it.
+    pub album_title: String,
     /// Disc number.
     pub disc_number: u32,
     /// Track number.
@@ -254,19 +256,21 @@ impl LocalCatalog {
         .await
     }
 
-    /// The tracks one artist MBID is credited on, on identified owned
-    /// albums, in the order a lookup by release group picks the copies.
+    /// The tracks one artist MBID is credited on, on albums that own a
+    /// release group, the artist's own albums first.
     pub async fn artist_songs(&self, mbid: &str) -> Result<Vec<LocalArtistSong>, StoreError> {
         let values = vec![Value::Text(mbid.to_ascii_lowercase())];
         self.read("catalog.library.artist_songs", move |conn| {
             rows(conn, sql::ARTIST_SONGS.text(), &values, |row| {
+                let song = sql::ArtistSongColumns::read(row)?;
                 Ok(LocalArtistSong {
-                    title: row.get(0)?,
-                    recording_mbid: row.get(1)?,
-                    release_group_mbid: row.get(2)?,
-                    disc_number: u32::try_from(row.get::<_, i64>(3)?.max(1)).unwrap_or(1),
-                    track_number: u32::try_from(row.get::<_, i64>(4)?.max(0)).unwrap_or(0),
-                    own_album: row.get::<_, Option<bool>>(5)?.unwrap_or(false),
+                    title: song.title,
+                    recording_mbid: song.recording_mbid,
+                    release_group_mbid: song.release_group_mbid,
+                    album_title: song.album_title,
+                    disc_number: u32::try_from(song.disc_number.max(1)).unwrap_or(1),
+                    track_number: u32::try_from(song.track_number.max(0)).unwrap_or(0),
+                    own_album: song.own_album,
                 })
             })
         })

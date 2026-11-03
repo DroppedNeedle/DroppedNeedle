@@ -223,6 +223,13 @@ impl Policy {
         fresh: Duration::from_secs(7 * 24 * HOUR),
         miss: MB_MISS,
     };
+    /// The album a popular song is shown with, found by a recording lookup
+    /// and a search: a week, and a day for a song nothing places, so a page
+    /// visit does not ask again.
+    pub const SONG_TO_GROUP: Self = Self {
+        fresh: Duration::from_secs(7 * 24 * HOUR),
+        miss: Duration::from_secs(24 * HOUR),
+    };
     /// Where a merged MusicBrainz id now points: merges are rare and
     /// final.
     pub const MERGED_ID: Self = Self::RELEASE_TO_GROUP;
@@ -738,6 +745,15 @@ impl ProviderCacheStore {
                     .and_then(decode)
             })
             .collect()
+    }
+
+    /// Whether a row under `key`, found or "nothing there", is inside its
+    /// fresh time, so a fetch would not ask again. Never dials out.
+    pub async fn fresh(&self, key: &CacheKey) -> bool {
+        let now = self.clock.now_ms();
+        self.kept(key)
+            .await
+            .is_some_and(|row| row.fresh_until > now)
     }
 
     /// The bytes of a fresh found row.

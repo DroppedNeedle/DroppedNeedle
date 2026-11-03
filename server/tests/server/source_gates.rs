@@ -608,8 +608,9 @@ const TAG_GROUP_READS: IdentityRead = IdentityRead {
         ),
         (
             "catalog/src/local/sql.rs",
-            1,
-            "player_album_ids sends an unidentified album's tag ids to player apps",
+            3,
+            "player_album_ids sends an unidentified album's tag ids to player apps; \
+             ARTIST_SONGS keys owns_group! by a track's tag group to find the copy it plays",
         ),
         (
             "acquire/src/landing/sql.rs",
@@ -758,7 +759,7 @@ const SPAWN_SITES: &[(&str, usize, &str)] = &[
     ("auth/src/sqlite/sessions.rs", 1, SESSION_TOUCH),
     ("auth/src/users/hibp.rs", 1, REQUEST),
     ("catalog/src/metadata/artist.rs", 1, CATALOG_WARM),
-    ("catalog/src/metadata/discovery.rs", 2, CATALOG_WARM),
+    ("catalog/src/metadata/discovery.rs", 1, CATALOG_WARM),
     ("catalog/src/discover/content.rs", 1, DISCOVER_BUILD),
     ("catalog/src/discover/home/mod.rs", 1, DISCOVER_BUILD),
     ("catalog/src/discover/page/mod.rs", 2, DISCOVER_BUILD),

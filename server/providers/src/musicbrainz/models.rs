@@ -639,6 +639,10 @@ pub struct ReleaseSearchHit {
 /// search for `recording:"Tuesday Morning" AND artist:"Paul Kossoff"` with
 /// `limit=3` (BrainzMash mirror). Each release lists only the medium that
 /// holds the recording; its own `track-count` is the release's total.
+/// The hit's `title` and each release's `status` and `date` were checked
+/// against the same search on musicbrainz.org/ws/2/recording on
+/// 2026-11-03: every hit and release carried them, and the release-group
+/// facet carried no `first-release-date`.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct RecordingSearchHit {
     /// Recording MBID: required identity.
@@ -665,8 +669,7 @@ pub struct RecordingSearchRelease {
     /// Release status (`Official`, `Bootleg`, ...).
     #[serde(default)]
     pub status: Option<String>,
-    /// Release date. The release-group facet here carries no first
-    /// release date, so this is the only date a hit has.
+    /// Release date: the only date a hit has.
     #[serde(default)]
     pub date: Option<String>,
     /// Release-group facet.

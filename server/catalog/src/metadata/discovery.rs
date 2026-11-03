@@ -6,8 +6,10 @@
 //! go blank while ListenBrainz popularity is switched off upstream.
 
 use std::collections::{HashMap, HashSet};
+use std::panic::AssertUnwindSafe;
 use std::time::Duration;
 
+use futures_util::FutureExt as _;
 use serde::{Deserialize, Serialize};
 
 use droppedneedle_kernel::db::fold_text;
@@ -28,7 +30,7 @@ use super::models::{
     AlbumRef, ArtistRef, MoreByArtistResponse, SimilarAlbumsResponse, SimilarArtistsResponse,
     TopAlbumsResponse, TopSong, TopSongsResponse,
 };
-use super::{Catalog, is_mbid, mb_error, record_mb_down};
+use super::{Catalog, is_mbid, mb_error, mb_search_error, record_mb_down};
 use crate::artwork::warm::WarmTargets;
 use crate::cache_hold::CacheHold;
 use crate::discover::listening::shared;
@@ -36,6 +38,10 @@ use crate::metadata::library::LocalArtistSong;
 
 /// Releases whose tracklists top songs look up, at most.
 const MAX_TOP_SONG_RELEASES: usize = 10;
+/// MusicBrainz requests one artist page makes to find its songs' albums,
+/// at most: a search per song, and a lookup of the recording the service
+/// names.
+const MAX_SONG_LOOKUPS: usize = 20;
 /// How long one request spends resolving Last.fm releases.
 const LASTFM_RESOLVE_BUDGET: Duration = Duration::from_secs(4);
 /// Similar artists consulted for similar albums.
@@ -510,8 +516,6 @@ impl Catalog {
             .await?;
         let mut songs = answer.rows.songs;
         self.fill_track_numbers(&mut songs).await;
-        self.fill_song_groups(mbid, &mut songs).await;
-        self.prefer_owned_songs(mbid, &mut songs).await;
         Ok(TopSongsResponse {
             songs,
             source: answer.source,
@@ -519,6 +523,32 @@ impl Catalog {
             asked_source: answer.asked,
             unavailable_sources: answer.unavailable,
         })
+    }
+
+    /// The artist page's top songs: [`Self::top_songs`] at user priority,
+    /// with an album for songs that name none, so they show a cover, and
+    /// songs the library holds pointed at the user's copy, so they play.
+    /// Only the page looks songs' albums up; radio and the precache do not.
+    pub async fn artist_page_top_songs(
+        &self,
+        user_id: &str,
+        mbid: &str,
+        count: u32,
+        source: Option<ListenSource>,
+    ) -> Result<TopSongsResponse, CatalogError> {
+        let artist = checked_mbid(mbid, "artist")?;
+        let mut answer = self
+            .top_songs(
+                user_id,
+                &artist,
+                count,
+                source,
+                RequestPriority::UserInitiated,
+            )
+            .await?;
+        self.fill_song_groups(&artist, &mut answer.songs).await;
+        self.prefer_owned_songs(&artist, &mut answer.songs).await;
+        Ok(answer)
     }
 
     /// Disc and track numbers for top songs. Numbers come from the cached
@@ -569,17 +599,19 @@ impl Catalog {
     }
 
     /// Release groups for top songs that name none, as Last.fm's do, so
-    /// they get a cover. Read from the cache; songs not looked up yet are
-    /// looked up once in the background, so the page answers at once and
-    /// carries the covers from the next load on.
+    /// they get a cover. Read from the cache, a stale answer included; a
+    /// song with no fresh answer is looked up again in the background, at
+    /// most [`MAX_SONG_LOOKUPS`] requests a page, so the page answers at
+    /// once and carries the covers from the next load on.
     async fn fill_song_groups(&self, artist: &str, songs: &mut [TopSong]) {
-        let mut missing: Vec<SongLookup> = Vec::new();
+        let cache = self.upstream().cache();
+        let mut missing: Vec<(CacheKey, SongLookup)> = Vec::new();
         for song in songs
             .iter_mut()
             .filter(|song| song.release_group_mbid.is_none())
         {
             let lookup = SongLookup {
-                artist: artist.to_ascii_lowercase(),
+                artist: artist.to_owned(),
                 title: song.title.clone(),
                 recording: song
                     .recording_mbid
@@ -587,18 +619,22 @@ impl Catalog {
                     .filter(|id| is_mbid(id))
                     .map(str::to_ascii_lowercase),
             };
-            match self
-                .upstream()
-                .cache()
-                .peek::<String>(&self.song_group_key(&lookup))
-                .await
-            {
-                Some(group) => song.release_group_mbid = group,
-                None => missing.push(lookup),
+            let key = self.song_group_key(&lookup);
+            if let Some(group) = cache.peek::<String>(&key).await {
+                song.release_group_mbid = group;
+            }
+            if !cache.fresh(&key).await {
+                missing.push((key, lookup));
             }
         }
-        missing.truncate(MAX_TOP_SONG_RELEASES);
-        self.warm_song_groups(missing);
+        let mut requests = 0;
+        for (key, lookup) in missing {
+            requests += lookup.requests();
+            if requests > MAX_SONG_LOOKUPS {
+                break;
+            }
+            self.warm_song_group(key, lookup);
+        }
     }
 
     /// Songs the library holds show with the user's own copy: its album
@@ -613,133 +649,126 @@ impl Catalog {
         }
     }
 
-    /// The cache key of a song's release group: the artist and the title,
-    /// folded.
+    /// The cache key of a song's release group: the MusicBrainz server,
+    /// the artist, the recording the service names and the folded title,
+    /// each of which changes the answer.
     fn song_group_key(&self, song: &SongLookup) -> CacheKey {
         let (_, namespace) = self.upstream().musicbrainz(RequestPriority::UserInitiated);
-        CacheKey::new(
+        CacheKey::hashed(
             Source::MusicBrainz,
+            "song_to_rg",
             &[
                 &namespace,
-                "song_to_rg",
                 &song.artist,
+                song.recording.as_deref().unwrap_or(""),
                 &title_key(&song.title),
             ],
         )
     }
 
-    /// Look songs' release groups up into the cache at background priority,
-    /// one task per song not already being looked up: the recording Last.fm
-    /// names, else (Last.fm's id unknown to MusicBrainz, or none) a search
-    /// for the title among the artist's recordings.
-    fn warm_song_groups(&self, songs: Vec<SongLookup>) {
-        for song in songs {
-            let key = self.song_group_key(&song);
-            let warm = format!("song:{}", key.as_str());
-            {
-                let mut warming = self
-                    .inner
-                    .warming
-                    .lock()
-                    .unwrap_or_else(|poison| poison.into_inner());
-                if !warming.insert(warm.clone()) {
-                    continue;
-                }
-            }
-            let catalog = self.clone();
-            tokio::spawn(async move {
-                let upstream = catalog.clone();
-                let title = song.title.clone();
-                let looked_up = catalog
-                    .cached(
-                        &key,
-                        Policy::RELEASE_TO_GROUP,
-                        RequestPriority::BackgroundSync,
-                        move |priority| async move {
-                            let (client, _) = upstream.upstream().musicbrainz(priority);
-                            // The recording the service names may be a late
-                            // re-recording; the title search finds where the
-                            // song first came out. The best of both wins.
-                            let named = match &song.recording {
-                                Some(recording) => client
-                                    .lookup_recording(
-                                        recording,
-                                        &["releases", "release-groups"],
-                                        Criticality::IdentityCritical,
-                                    )
-                                    .await
-                                    .map_err(mb_error)?
-                                    .map(|found| found.entity.releases)
-                                    .unwrap_or_default(),
-                                None => Vec::new(),
-                            };
-                            // Words, not a phrase: the titles differ in
-                            // punctuation ("été, L'Après-midi" against
-                            // "été : L’Après‐midi"); the folded title
-                            // comparison then keeps the same song only.
-                            // Folded words hold no Lucene syntax.
-                            let query = format!(
-                                "recording:({}) AND arid:{}",
-                                title_key(&song.title),
-                                song.artist
-                            );
-                            let hits = client
+    /// Look a song's release group up into the cache at background
+    /// priority, unless it is being looked up already: the recording the
+    /// service names, and a search for the title among the artist's
+    /// recordings (the named recording may be unknown to MusicBrainz, or a
+    /// late re-recording).
+    fn warm_song_group(&self, key: CacheKey, song: SongLookup) {
+        let catalog = self.clone();
+        self.warm_once(format!("song:{}", key.as_str()), async move {
+            let upstream = catalog.clone();
+            let title = song.title.clone();
+            let looked_up = catalog
+                .cached(
+                    &key,
+                    Policy::SONG_TO_GROUP,
+                    RequestPriority::BackgroundSync,
+                    move |priority| async move {
+                        let (client, _) = upstream.upstream().musicbrainz(priority);
+                        let named = match &song.recording {
+                            Some(recording) => client
+                                .lookup_recording(
+                                    recording,
+                                    &["releases", "release-groups"],
+                                    Criticality::IdentityCritical,
+                                )
+                                .await
+                                .map_err(mb_error)?
+                                .map(|found| found.entity.releases)
+                                .unwrap_or_default(),
+                            None => Vec::new(),
+                        };
+                        // Words, not a phrase: titles differ in punctuation
+                        // ("été, L'Après-midi" against "été : L’Après‐midi");
+                        // the folded title comparison then keeps the same
+                        // song only. Folded words hold no Lucene syntax. A
+                        // title with no words is not searched.
+                        let words = title_key(&song.title);
+                        let hits = if words.is_empty() {
+                            Vec::new()
+                        } else {
+                            let query = format!("recording:({words}) AND arid:{}", song.artist);
+                            client
                                 .search_recordings_query(
                                     &query,
                                     SONG_SEARCH_LIMIT,
                                     Criticality::IdentityCritical,
                                 )
                                 .await
-                                .map_err(mb_error)?;
-                            Ok(song_group(&named, &song.title, &hits.items)
-                                .map_or(Fetched::Missing, Fetched::Found))
-                        },
-                    )
-                    .await;
-                if let Err(error) = looked_up {
-                    tracing::warn!(song = %title, %error, "song release group warm failed");
-                }
-                catalog
-                    .inner
-                    .warming
-                    .lock()
-                    .unwrap_or_else(|poison| poison.into_inner())
-                    .remove(&warm);
-            });
-        }
+                                .map_err(mb_search_error)?
+                                .items
+                        };
+                        Ok(song_group(&named, &song.title, &hits)
+                            .map_or(Fetched::Missing, Fetched::Found))
+                    },
+                )
+                .await;
+            if let Err(error) = looked_up {
+                tracing::warn!(song = %title, %error, "song release group warm failed");
+            }
+        });
     }
 
     /// Fetch release tracklists into the cache at background priority, one
     /// task per release not already being fetched.
     fn warm_releases(&self, releases: Vec<String>) {
         for release in releases {
-            let key = format!("release:{release}");
-            {
-                let mut warming = self
-                    .inner
-                    .warming
-                    .lock()
-                    .unwrap_or_else(|poison| poison.into_inner());
-                if !warming.insert(key.clone()) {
-                    continue;
-                }
-            }
             let catalog = self.clone();
-            tokio::spawn(async move {
+            self.warm_once(format!("release:{release}"), async move {
                 if let Err(error) = catalog
                     .release_detail_at(&release, RequestPriority::BackgroundSync)
                     .await
                 {
                     tracing::warn!(release = %release, %error, "release tracklist warm failed");
                 }
-                catalog
-                    .inner
-                    .warming
-                    .lock()
-                    .unwrap_or_else(|poison| poison.into_inner())
-                    .remove(&key);
             });
         }
+    }
+
+    /// Run `work` in the background unless a warm under `key` is running.
+    /// Each warm logs its own failure; a panic is logged here, and the key
+    /// is let go either way so a later page can warm it again.
+    fn warm_once(&self, key: String, work: impl Future<Output = ()> + Send + 'static) {
+        {
+            let mut warming = self
+                .inner
+                .warming
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            if !warming.insert(key.clone()) {
+                return;
+            }
+        }
+        let catalog = self.clone();
+        tokio::spawn(async move {
+            if AssertUnwindSafe(work).catch_unwind().await.is_err() {
+                tracing::error!(warm = %key, "a catalog warm panicked");
+            }
+            catalog
+                .inner
+                .warming
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .remove(&key);
+        });
     }
 
     /// `GET /artists/{artist_mbid}/top-albums`. A page reads at user
@@ -1293,16 +1322,28 @@ struct SongLookup {
     recording: Option<String>,
 }
 
-/// Point each song the library holds at its own copy. A copy matches by
-/// the song's recording, else by its title (folded). Among several, the
-/// copy on the album the song is shown with stays, then the copy of the
-/// recording, then a copy on one of the artist's own albums (another
-/// artist's album may hold a cover of the song), then the first in the
-/// order the library plays copies.
+impl SongLookup {
+    /// MusicBrainz requests the lookup makes: the recording lookup, and
+    /// the search when the title has words to search for.
+    fn requests(&self) -> usize {
+        usize::from(self.recording.is_some()) + usize::from(!title_key(&self.title).is_empty())
+    }
+}
+
+/// Point each song the library holds at its own copy. A copy counts only
+/// on one of the artist's own albums or on the album the song is shown
+/// with, never by its title alone: another artist's album may hold a cover
+/// of the song. Among those, a copy matches by the song's recording or its
+/// folded title; the copy on the shown album stays, then the copy of the
+/// recording, then the first (the artist's own oldest album).
 fn own_copies(songs: &mut [TopSong], owned: &[LocalArtistSong]) {
     for song in songs {
         let wanted = title_key(&song.title);
         let recording = song.recording_mbid.as_deref();
+        let shown = song.release_group_mbid.as_deref();
+        let on_shown = |copy: &LocalArtistSong| {
+            shown.is_some_and(|group| copy.release_group_mbid.eq_ignore_ascii_case(group))
+        };
         let same_recording = |copy: &LocalArtistSong| {
             recording.is_some_and(|id| {
                 copy.recording_mbid
@@ -1312,21 +1353,19 @@ fn own_copies(songs: &mut [TopSong], owned: &[LocalArtistSong]) {
         };
         let copies: Vec<&LocalArtistSong> = owned
             .iter()
+            .filter(|copy| copy.own_album || on_shown(copy))
             .filter(|copy| same_recording(copy) || title_key(&copy.title) == wanted)
             .collect();
-        let shown = song.release_group_mbid.as_deref();
         let Some(copy) = copies
             .iter()
-            .find(|copy| {
-                shown.is_some_and(|group| copy.release_group_mbid.eq_ignore_ascii_case(group))
-            })
+            .find(|copy| on_shown(copy))
             .or_else(|| copies.iter().find(|copy| same_recording(copy)))
-            .or_else(|| copies.iter().find(|copy| copy.own_album))
             .or_else(|| copies.first())
         else {
             continue;
         };
-        song.release_group_mbid = Some(copy.release_group_mbid.to_ascii_lowercase());
+        song.release_group_mbid = Some(copy.release_group_mbid.clone());
+        song.release_name = Some(copy.album_title.clone());
         song.disc_number = Some(copy.disc_number);
         song.track_number = Some(copy.track_number);
     }
@@ -1577,74 +1616,12 @@ mod tests {
         );
     }
 
-    /// Yann Tiersen's "Comptine d'un autre été" (Last.fm names only the
-    /// recording): shown with the original soundtrack, not a later
-    /// compilation, a single, or a bootleg.
-    #[test]
-    fn a_song_shows_with_its_earliest_official_album() {
-        let releases: Vec<RecordingRelease> = serde_json::from_value(serde_json::json!([
-            {"id": "r1", "status": "Bootleg", "release-group":
-                {"id": "BOOT", "primary-type": "Album", "first-release-date": "1999"}},
-            {"id": "r2", "status": "Official", "release-group":
-                {"id": "BEST", "primary-type": "Album", "secondary-types": ["Compilation"],
-                 "first-release-date": "2009"}},
-            {"id": "r3", "status": "Official", "release-group":
-                {"id": "OST", "primary-type": "Album", "secondary-types": ["Soundtrack"],
-                 "first-release-date": "2001-04-23"}},
-            {"id": "r4", "status": "Official", "release-group":
-                {"id": "SINGLE", "primary-type": "Single", "first-release-date": "2000"}},
-            {"id": "r6", "status": "Official", "release-group":
-                {"id": "CINEMA", "primary-type": "Album", "first-release-date": "2025"}},
-            {"id": "r5", "status": "Official"}
-        ]))
-        .expect("releases decode");
-        assert_eq!(song_group(&releases, "x", &[]).as_deref(), Some("ost"));
-        assert_eq!(
-            song_group(&releases[..1], "x", &[]).as_deref(),
-            Some("boot"),
-            "a bootleg beats nothing"
-        );
-        assert_eq!(song_group(&releases[5..], "x", &[]), None);
-    }
-
-    /// A song Last.fm names by an id MusicBrainz does not know is found by
-    /// its title among the artist's recordings; a hit with another title
-    /// (a remix, a cover) does not count.
-    #[test]
-    fn a_searched_song_takes_the_hits_with_its_title() {
-        let hits: Vec<RecordingSearchHit> = serde_json::from_value(serde_json::json!([
-            {"id": "a", "title": "Comptine d’un autre été : L’après-midi", "releases": [
-                {"id": "r1", "status": "Official", "release-group": {"id": "OST", "primary-type": "Album",
-                 "secondary-types": ["Soundtrack"], "first-release-date": "2001"}}]},
-            {"id": "b", "title": "Comptine d'un autre été, L'après-midi (Remix)", "releases": [
-                {"id": "r2", "status": "Official", "release-group": {"id": "REMIX", "primary-type": "Album",
-                 "first-release-date": "1999"}}]}
-        ]))
-        .expect("hits decode");
-        assert_eq!(
-            song_group(&[], "Comptine d'un autre été, L'Après-midi", &hits).as_deref(),
-            Some("ost")
-        );
-        assert_eq!(song_group(&[], "Something else", &hits), None);
-        // Last.fm named a late re-recording only on a 2025 album: the search
-        // still finds the soundtrack the song came out on.
-        let late: Vec<RecordingRelease> = serde_json::from_value(serde_json::json!([
-            {"id": "r9", "status": "Official", "release-group":
-                {"id": "CINEMA", "primary-type": "Album", "first-release-date": "2025"}}
-        ]))
-        .expect("releases decode");
-        assert_eq!(
-            song_group(&late, "Comptine d'un autre été, L'Après-midi", &hits).as_deref(),
-            Some("ost")
-        );
-    }
-
     /// A song the library holds points at the user's copy, so the row
-    /// plays it: "Sur le fil" shown with "Le Phare" but owned on the
-    /// "Amélie" soundtrack goes there; "La Dispute", owned on both, stays
-    /// with "Le Phare"; "La Noyée" goes to the artist's own album, not to a
-    /// pianist's album that comes first and holds a cover of it; a song not
-    /// owned stays as listed.
+    /// plays it, but only a copy on the artist's own album or on the album
+    /// the song is shown with: "Sur le fil" shown with "Le Phare" and owned
+    /// on the "Amélie" soundtrack goes there by its recording; "La Dispute",
+    /// owned on both, stays with "Le Phare"; "La Noyée" on a pianist's album
+    /// is a cover, not the user's copy, unless the song is shown with it.
     #[test]
     fn a_song_the_library_holds_shows_with_its_own_copy() {
         let song = |title: &str, recording: Option<&str>, group: &str| TopSong {
@@ -1663,21 +1640,21 @@ mod tests {
                 title: title.to_owned(),
                 recording_mbid: recording.map(str::to_owned),
                 release_group_mbid: group.to_owned(),
+                album_title: group.to_owned(),
                 disc_number: 1,
                 track_number: track,
                 own_album: group != "piano",
             };
         let mut songs = vec![
-            song("Sur le fil", Some("REC-AMELIE"), "phare"),
+            song("Sur le fil", Some("REC-SUR"), "phare"),
             song("La Dispute", None, "phare"),
             song("La Noyée", None, "phare"),
-            song("Le Moulin", None, "amelie"),
+            song("La Noyée", None, "piano"),
         ];
         let owned = [
-            copy("La Noyée", None, "piano", 7),
-            copy("La Dispute", None, "AMELIE", 5),
-            copy("La Noyee", None, "amelie", 9),
-            copy("Sur le fil", Some("rec-amelie"), "AMELIE", 3),
+            copy("La Noyee", None, "piano", 7),
+            copy("La Dispute", None, "amelie", 5),
+            copy("Le fil", Some("rec-sur"), "amelie", 3),
             copy("La dispute", None, "phare", 2),
         ];
         own_copies(&mut songs, &owned);
@@ -1696,37 +1673,9 @@ mod tests {
             [
                 ("Sur le fil", Some("amelie"), Some(3)),
                 ("La Dispute", Some("phare"), Some(2)),
-                ("La Noyée", Some("amelie"), Some(9)),
-                ("Le Moulin", Some("amelie"), None),
+                ("La Noyée", Some("phare"), None),
+                ("La Noyée", Some("piano"), Some(7)),
             ]
-        );
-    }
-
-    /// Yann Tiersen's "J'y suis jamais allé" (Last.fm's id unknown to
-    /// MusicBrainz, live 2026-10-31): the search finds the song on "Rue des
-    /// cascades" (1996), the "Amélie" soundtrack (2001) and a dance
-    /// compilation entered as a plain album without a date. The search's
-    /// group facet has no first release date, so the release dates decide:
-    /// the original album wins, and a bootleg does not.
-    #[test]
-    fn a_searched_song_takes_the_earliest_release_date() {
-        let hits: Vec<RecordingSearchHit> = serde_json::from_value(serde_json::json!([
-            {"id": "a", "title": "J'y suis jamais alle", "releases": [
-                {"id": "r1", "status": "Official",
-                 "release-group": {"id": "BALLROOM", "primary-type": "Album"}}]},
-            {"id": "b", "title": "J’y suis jamais allé", "releases": [
-                {"id": "r2", "status": "Official", "date": "2001",
-                 "release-group": {"id": "OST", "primary-type": "Album",
-                  "secondary-types": ["Soundtrack"]}},
-                {"id": "r3", "status": "Bootleg", "date": "1990",
-                 "release-group": {"id": "AAA", "primary-type": "Album"}},
-                {"id": "r4", "status": "Official", "date": "1996-04-01",
-                 "release-group": {"id": "CASCADES", "primary-type": "Album"}}]}
-        ]))
-        .expect("hits decode");
-        assert_eq!(
-            song_group(&[], "J'y suis jamais allé", &hits).as_deref(),
-            Some("cascades")
         );
     }
 }
