@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { Check } from 'lucide-svelte';
 	import ArtistImage from '$lib/components/ArtistImage.svelte';
-	import ArtistCardDownloadButton from '$lib/components/ArtistCardDownloadButton.svelte';
+	import ArtistCardDownloadButton from '$lib/features/artist/components/ArtistCardDownloadButton.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import type { ArtistRef } from '$lib/queries/discover/types';
 

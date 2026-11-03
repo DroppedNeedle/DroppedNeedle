@@ -1,0 +1,9 @@
+{
+	"album": [
+		"components/LibraryBadge.svelte",
+		"queries/GetItQueries.svelte.ts",
+		"queries/albumMatch.svelte.ts",
+		"queries/catalogAdapters.ts"
+	],
+	"artist": ["queries/ArtistQueryKeyFactory.ts"]
+}

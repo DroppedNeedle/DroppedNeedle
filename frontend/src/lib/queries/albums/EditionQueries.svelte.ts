@@ -30,7 +30,7 @@ import { LibraryQueryKeyFactory } from '$lib/queries/library/LibraryQueryKeyFact
 import { queryClient } from '$lib/queries/QueryClient';
 import { PROVIDER } from '$lib/queries/persistedCache';
 import { authStore } from '$lib/stores/authStore.svelte';
-import { AlbumQueryKeyFactory } from '$lib/queries/catalog/AlbumQueryKeyFactory';
+import { AlbumQueryKeyFactory } from '$lib/features/album/queries/AlbumQueryKeyFactory';
 
 // Choosing an edition is for curators; the list of a group's editions is
 // open to any authenticated user.

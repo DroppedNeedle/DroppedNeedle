@@ -22,7 +22,7 @@
 	import { EAGER_IMAGE_COUNT } from '$lib/utils/lazyImage';
 	import ArtistImage from './ArtistImage.svelte';
 	import AlbumImage from './AlbumImage.svelte';
-	import AlbumCardOverlay from './AlbumCardOverlay.svelte';
+	import AlbumCardOverlay from '$lib/features/album/components/AlbumCardOverlay.svelte';
 	import AlbumRequestButton from './AlbumRequestButton.svelte';
 	import HorizontalCarousel from './HorizontalCarousel.svelte';
 	import SourceBadge from './SourceBadge.svelte';

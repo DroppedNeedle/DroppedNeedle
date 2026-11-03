@@ -8,7 +8,7 @@ import {
 import { fakeApi } from '$lib/test/api';
 import { renderWithQuery } from '$lib/test/render';
 
-import AlbumCard from './AlbumCard.svelte';
+import AlbumCard from '$lib/features/album/components/AlbumCard.svelte';
 import SearchArtistCard from './SearchArtistCard.svelte';
 
 // The lazy loader sets an image's src once its card scrolls into view. With it

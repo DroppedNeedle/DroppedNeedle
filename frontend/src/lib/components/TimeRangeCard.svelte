@@ -4,7 +4,7 @@
 	import { formatListenCount } from '$lib/utils/formatting';
 	import AlbumImage from './AlbumImage.svelte';
 	import ArtistImage from './ArtistImage.svelte';
-	import AlbumCardOverlay from './AlbumCardOverlay.svelte';
+	import AlbumCardOverlay from '$lib/features/album/components/AlbumCardOverlay.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import CardTitle from '$lib/ui/CardTitle.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';

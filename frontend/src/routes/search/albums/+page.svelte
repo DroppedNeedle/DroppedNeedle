@@ -3,8 +3,8 @@
 	import { browser } from '$app/environment';
 	import { goto } from '$app/navigation';
 	import { withBasePath } from '$lib/utils/basePath';
-	import AlbumCard from '$lib/components/AlbumCard.svelte';
-	import AlbumCardSkeleton from '$lib/components/AlbumCardSkeleton.svelte';
+	import AlbumCard from '$lib/features/album/components/AlbumCard.svelte';
+	import AlbumCardSkeleton from '$lib/features/album/components/AlbumCardSkeleton.svelte';
 	import SearchTopResult from '$lib/components/SearchTopResult.svelte';
 	import type { Album, EnrichmentSource, SearchRemoteStatus } from '$lib/types';
 	import { applyAlbumEnrichment } from '$lib/utils/enrichment';

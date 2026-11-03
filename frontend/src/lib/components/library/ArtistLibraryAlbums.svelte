@@ -4,7 +4,7 @@
 	import CarouselSkeleton from '$lib/components/CarouselSkeleton.svelte';
 	import LibraryAlbumCard from './LibraryAlbumCard.svelte';
 	import { getLibraryArtistAlbumsQuery } from '$lib/queries/library/LibraryQueries.svelte';
-	import { getArtistOwnedReleasesQuery } from '$lib/queries/artist/ArtistQueries.svelte';
+	import { getArtistOwnedReleasesQuery } from '$lib/features/artist/queries/ArtistQueries.svelte';
 	import { fileOwnedAlbums, type FiledAlbum } from './artistLibrarySections';
 
 	interface Props {

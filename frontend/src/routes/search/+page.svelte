@@ -2,13 +2,13 @@
 	import { onDestroy } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { withBasePath } from '$lib/utils/basePath';
-	import AlbumCard from '$lib/components/AlbumCard.svelte';
+	import AlbumCard from '$lib/features/album/components/AlbumCard.svelte';
 	import SearchArtistCard from '$lib/components/SearchArtistCard.svelte';
 	import SearchSongRow from '$lib/components/SearchSongRow.svelte';
 	import ViewMoreAlbumCard from '$lib/components/ViewMoreAlbumCard.svelte';
 	import ViewMoreArtistCard from '$lib/components/ViewMoreArtistCard.svelte';
-	import ArtistCardSkeleton from '$lib/components/ArtistCardSkeleton.svelte';
-	import AlbumCardSkeleton from '$lib/components/AlbumCardSkeleton.svelte';
+	import ArtistCardSkeleton from '$lib/features/artist/components/ArtistCardSkeleton.svelte';
+	import AlbumCardSkeleton from '$lib/features/album/components/AlbumCardSkeleton.svelte';
 	import type { EnrichmentSource, SearchRemoteStatus } from '$lib/types';
 	import { applyArtistEnrichment, applyAlbumEnrichment } from '$lib/utils/enrichment';
 	import { getSearchStatusNotice } from '$lib/utils/searchStatus';

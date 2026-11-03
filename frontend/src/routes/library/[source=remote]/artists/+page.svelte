@@ -5,7 +5,7 @@
 	import { getRemoteArtistsQuery } from '$lib/queries/remotes/RemoteQueries.svelte';
 	import { defaultSortOrder } from '$lib/queries/remotes/remoteSources';
 	import SourceArtistCard from '$lib/components/SourceArtistCard.svelte';
-	import ArtistCardSkeleton from '$lib/components/ArtistCardSkeleton.svelte';
+	import ArtistCardSkeleton from '$lib/features/artist/components/ArtistCardSkeleton.svelte';
 	import LibraryFilterBar from '$lib/components/LibraryFilterBar.svelte';
 	import { artistHrefOrNull } from '$lib/utils/entityRoutes';
 	import { reveal } from '$lib/actions/reveal';

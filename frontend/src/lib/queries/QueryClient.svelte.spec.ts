@@ -18,7 +18,7 @@ import {
 import { setDownloadScope } from './downloads/downloadScope.svelte';
 import { DownloadQueryKeyFactory } from './downloads/DownloadQueryKeyFactory';
 import { authStore, type AuthUser } from '$lib/stores/authStore.svelte';
-import { ArtistQueryKeyFactory } from './artist/ArtistQueryKeyFactory';
+import { ArtistQueryKeyFactory } from '$lib/features/artist/queries/ArtistQueryKeyFactory';
 import { LibraryQueryKeyFactory } from './library/LibraryQueryKeyFactory';
 import {
 	resetMusicBrainzSourceScope,

@@ -6,7 +6,7 @@
 	import { getListenTitle } from '$lib/utils/enrichment';
 	import { Music2 } from 'lucide-svelte';
 	import ArtistImage from './ArtistImage.svelte';
-	import ArtistCardDownloadButton from './ArtistCardDownloadButton.svelte';
+	import ArtistCardDownloadButton from '$lib/features/artist/components/ArtistCardDownloadButton.svelte';
 	import Card from '$lib/ui/Card.svelte';
 
 	interface Props {

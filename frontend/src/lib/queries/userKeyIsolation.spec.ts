@@ -6,7 +6,15 @@ import { ADMIN, SHARED, SIGNED_OUT } from './keys';
 // editing this spec: a file of its own in a large feature, an export of the
 // one file of a small feature.
 const modules = import.meta.glob<Record<string, unknown>>(
-	['./**/*QueryKeyFactory.ts', './**/*Keys.ts', './*.svelte.ts', '!./IndexedDbPersister.svelte.ts'],
+	[
+		'./**/*QueryKeyFactory.ts',
+		'./**/*Keys.ts',
+		'./*.svelte.ts',
+		'!./IndexedDbPersister.svelte.ts',
+		'../features/*/queries/**/*QueryKeyFactory.ts',
+		'../features/*/queries/**/*Keys.ts',
+		'../features/*/queries/*.svelte.ts'
+	],
 	{
 		eager: true
 	}

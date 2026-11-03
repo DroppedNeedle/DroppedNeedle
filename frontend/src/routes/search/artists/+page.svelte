@@ -4,7 +4,7 @@
 	import { goto } from '$app/navigation';
 	import { withBasePath } from '$lib/utils/basePath';
 	import SearchArtistCard from '$lib/components/SearchArtistCard.svelte';
-	import ArtistCardSkeleton from '$lib/components/ArtistCardSkeleton.svelte';
+	import ArtistCardSkeleton from '$lib/features/artist/components/ArtistCardSkeleton.svelte';
 	import SearchTopResult from '$lib/components/SearchTopResult.svelte';
 	import type { Artist, EnrichmentSource, SearchRemoteStatus } from '$lib/types';
 	import { applyArtistEnrichment } from '$lib/utils/enrichment';

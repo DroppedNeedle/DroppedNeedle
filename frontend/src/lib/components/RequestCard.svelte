@@ -2,7 +2,7 @@
 	import { albumHref, artistHref } from '$lib/utils/entityRoutes';
 	import { withBasePath } from '$lib/utils/basePath';
 	import AlbumImage from './AlbumImage.svelte';
-	import DeleteAlbumModal from './DeleteAlbumModal.svelte';
+	import DeleteAlbumModal from '$lib/features/album/components/DeleteAlbumModal.svelte';
 	import type { RequestItem, RequestKind } from '$lib/queries/requests/types';
 	import { liveRequestStatus } from '$lib/queries/requests/liveStatus';
 	import { createReimportDownloadMutation } from '$lib/queries/downloads/DownloadMutations.svelte';

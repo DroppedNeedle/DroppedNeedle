@@ -12,7 +12,7 @@
 	} from 'lucide-svelte';
 	import { goto } from '$app/navigation';
 	import { TOAST_DURATION } from '$lib/constants';
-	import { getAlbumYouTubeTrackLinksQuery } from '$lib/queries/catalog/AlbumQueries.svelte';
+	import { getAlbumYouTubeTrackLinksQuery } from '$lib/features/album/queries/AlbumQueries.svelte';
 	import { createDeleteYouTubeLinkMutation } from '$lib/queries/youtube.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import { playerStore } from '$lib/stores/player.svelte';

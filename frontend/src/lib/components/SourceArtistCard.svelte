@@ -1,7 +1,7 @@
 <script lang="ts">
 	import AlbumImage from './AlbumImage.svelte';
 	import ArtistImage from './ArtistImage.svelte';
-	import ArtistCardDownloadButton from './ArtistCardDownloadButton.svelte';
+	import ArtistCardDownloadButton from '$lib/features/artist/components/ArtistCardDownloadButton.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import CardTitle from '$lib/ui/CardTitle.svelte';
 	import CoverPlaceholder from '$lib/ui/CoverPlaceholder.svelte';

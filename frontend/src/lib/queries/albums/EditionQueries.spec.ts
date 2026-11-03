@@ -38,7 +38,7 @@ import {
 	createMatchEditionFileMutation,
 	createUnmatchEditionFileMutation
 } from './EditionQueries.svelte';
-import { AlbumQueryKeyFactory } from '$lib/queries/catalog/AlbumQueryKeyFactory';
+import { AlbumQueryKeyFactory } from '$lib/features/album/queries/AlbumQueryKeyFactory';
 
 type EditionQueryOptions = {
 	queryKey: readonly unknown[];

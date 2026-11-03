@@ -8,8 +8,8 @@
 		getLibraryAlbumStatusQuery
 	} from '$lib/queries/library/LibraryQueries.svelte';
 	import { albumHref } from '$lib/utils/entityRoutes';
-	import LocalAlbumPage from './LocalAlbumPage.svelte';
-	import ProviderAlbumPage from './ProviderAlbumPage.svelte';
+	import LocalAlbumPage from '$lib/features/album/components/LocalAlbumPage.svelte';
+	import ProviderAlbumPage from '$lib/features/album/components/ProviderAlbumPage.svelte';
 
 	interface Props {
 		data: { albumId: string };

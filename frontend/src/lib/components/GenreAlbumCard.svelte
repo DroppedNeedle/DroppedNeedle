@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { Check } from 'lucide-svelte';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
-	import AlbumCardOverlay from '$lib/components/AlbumCardOverlay.svelte';
+	import AlbumCardOverlay from '$lib/features/album/components/AlbumCardOverlay.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import type { AlbumRef } from '$lib/queries/discover/types';
 

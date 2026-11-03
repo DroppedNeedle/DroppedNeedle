@@ -9,7 +9,7 @@ import {
 
 import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 import { everyScope, key, userScope } from '$lib/queries/keys';
-import { ArtistQueryKeyFactory } from '$lib/queries/artist/ArtistQueryKeyFactory';
+import { ArtistQueryKeyFactory } from '$lib/features/artist/queries/ArtistQueryKeyFactory';
 import { ArtistLinkQueryKeyFactory } from '$lib/queries/featureKeys';
 import { DiscoverQueryKeyFactory } from '$lib/queries/discover/DiscoverQueryKeyFactory';
 import { DownloadQueryKeyFactory } from '$lib/queries/downloads/DownloadQueryKeyFactory';
@@ -25,7 +25,7 @@ import { RequestQueryKeyFactory } from '$lib/queries/requests/RequestQueryKeyFac
 import { SearchQueryKeyFactory } from '$lib/queries/search/SearchQueryKeyFactory';
 import { WantedQueryKeyFactory } from '$lib/queries/featureKeys';
 import { AlbumMatchKeyFactory } from '$lib/queries/featureKeys';
-import { AlbumQueryKeyFactory } from '$lib/queries/catalog/AlbumQueryKeyFactory';
+import { AlbumQueryKeyFactory } from '$lib/features/album/queries/AlbumQueryKeyFactory';
 import { AuthQueryKeyFactory } from '$lib/queries/auth/AuthQueryKeyFactory';
 import { ConnectAppsQueryKeyFactory } from '$lib/queries/featureKeys';
 import { ConnectionsQueryKeyFactory } from '$lib/queries/connections/ConnectionsQueryKeyFactory';

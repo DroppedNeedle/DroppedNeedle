@@ -19,7 +19,7 @@
 		isRedactedPlaylistV3
 	} from '$lib/queries/playlists/PlaylistV3Queries.svelte';
 	import type { components } from '$lib/api/v3/openapi';
-	import { fetchAlbumTracks } from '$lib/queries/catalog/albumTracks';
+	import { fetchAlbumTracks } from '$lib/features/album/queries/albumTracks';
 	import { ApiError } from '$lib/api/errors';
 	import { formatDuration } from '$lib/utils/formatting';
 	import type { Track } from '$lib/types';
