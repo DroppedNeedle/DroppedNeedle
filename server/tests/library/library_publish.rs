@@ -2959,69 +2959,54 @@ fn removal_with_sidecars(
 }
 
 /// A removal that stops after its track's file is journaled, before its
-/// sidecars are, unwinds: the track's file and every sidecar stay home.
+/// sidecars are, unwinds on restart. One whose commit finds a track listed
+/// under a folder whose sidecars go because no music was left there is
+/// refused and unwound. Either way the track's file and every sidecar stay
+/// home.
 #[test]
-fn a_crash_before_a_removals_sidecars_are_staged_unwinds_them_too() {
-    let fix = fixture("remove-sidecar-crash");
-    write_fixture_source(&fix, "music", "staging/a.flac", "management_full.flac");
-    write_source(&fix, "music", "staging/a.lrc", b"[00:01.00]words");
-    write_source(&fix, "music", "staging/cover.jpg", b"jpeg");
-    let bundle = removal_with_sidecars(
-        &fix,
-        &[("track-a", "staging/a.flac")],
-        &[("staging/a.lrc", None), ("staging/cover.jpg", None)],
-    );
-    let (sealed, live) = seal(&bundle);
-    let mut publisher = open_publisher(&fix);
-    publisher.set_crash_point(Some(CrashPoint::AfterFirstFileStaged));
-    assert!(matches!(
-        publisher.publish(&sealed, &live, &BTreeMap::new()),
-        Err(PublishError::InjectedCrash(_))
-    ));
-    drop(publisher);
-
-    reconcile(&restart(&fix), &fix.sandbox).unwrap();
-    for rel in ["staging/a.flac", "staging/a.lrc", "staging/cover.jpg"] {
-        assert!(
-            fix.sandbox.resolve("music", rel).unwrap().is_file(),
-            "{rel} is home"
+fn a_removal_that_stops_or_is_refused_leaves_its_sidecars_home() {
+    for (name, emptied, crash) in [
+        (
+            "remove-sidecar-crash",
+            None,
+            Some(CrashPoint::AfterFirstFileStaged),
+        ),
+        ("remove-sidecar-listed", Some("staging"), None),
+    ] {
+        let fix = fixture(name);
+        write_fixture_source(&fix, "music", "staging/a.flac", "management_full.flac");
+        write_source(&fix, "music", "staging/a.lrc", b"[00:01.00]words");
+        write_source(&fix, "music", "staging/cover.jpg", b"jpeg");
+        let bundle = removal_with_sidecars(
+            &fix,
+            &[("track-a", "staging/a.flac")],
+            &[("staging/a.lrc", None), ("staging/cover.jpg", emptied)],
         );
+        let (sealed, live) = seal(&bundle);
+        let mut publisher = open_publisher(&fix);
+        publisher.set_crash_point(crash);
+        let published = publisher.publish(&sealed, &live, &BTreeMap::new());
+        drop(publisher);
+        if crash.is_some() {
+            assert!(
+                matches!(published, Err(PublishError::InjectedCrash(_))),
+                "{name}"
+            );
+            reconcile(&restart(&fix), &fix.sandbox).unwrap();
+        } else {
+            assert!(matches!(published, Err(PublishError::Catalog(_))), "{name}");
+        }
+
+        for rel in ["staging/a.flac", "staging/a.lrc", "staging/cover.jpg"] {
+            assert!(
+                fix.sandbox.resolve("music", rel).unwrap().is_file(),
+                "{name}: {rel} is home"
+            );
+        }
+        assert_eq!(track_row(&open_db(&fix), "track-a").1, "indexed", "{name}");
+        assert!(files_under(&fix.dir.join("bin")).is_empty(), "{name}");
+        assert!(hidden_leftovers(&fix.dir).is_empty(), "{name}");
     }
-    assert_eq!(track_row(&open_db(&fix), "track-a").1, "indexed");
-    assert!(files_under(&fix.dir.join("bin")).is_empty());
-    assert!(hidden_leftovers(&fix.dir).is_empty());
-}
-
-/// A folder's sidecars go only while no track is listed under it: one
-/// listed there by the time the removal commits refuses the removal, and
-/// its unwind puts every file back.
-#[test]
-fn a_track_listed_in_a_folder_whose_sidecars_go_refuses_the_removal() {
-    let fix = fixture("remove-sidecar-listed");
-    write_fixture_source(&fix, "music", "staging/a.flac", "management_full.flac");
-    write_source(&fix, "music", "staging/cover.jpg", b"jpeg");
-    let bundle = removal_with_sidecars(
-        &fix,
-        &[("track-a", "staging/a.flac")],
-        &[("staging/cover.jpg", Some("staging"))],
-    );
-    let (sealed, live) = seal(&bundle);
-    let mut publisher = open_publisher(&fix);
-
-    assert!(matches!(
-        publisher.publish(&sealed, &live, &BTreeMap::new()),
-        Err(PublishError::Catalog(_))
-    ));
-
-    for rel in ["staging/a.flac", "staging/cover.jpg"] {
-        assert!(
-            fix.sandbox.resolve("music", rel).unwrap().is_file(),
-            "{rel} is home"
-        );
-    }
-    assert_eq!(track_row(&open_db(&fix), "track-a").1, "indexed");
-    assert!(files_under(&fix.dir.join("bin")).is_empty());
-    assert!(hidden_leftovers(&fix.dir).is_empty());
 }
 
 /// A file that went after its removal was planned fails the removal with

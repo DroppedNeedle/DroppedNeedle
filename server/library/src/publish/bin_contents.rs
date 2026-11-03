@@ -297,16 +297,16 @@ pub fn summary(
     as_of_ms: i64,
 ) -> Result<BinSummary, PublishError> {
     let cutoff = as_of_ms as f64 / 1000.0;
-    let held = super::expiry::held_tracks(db)?;
+    let held = super::expiry::held_copies(db)?;
     let (count, due) = db.read_long("publish.bin_summary", &CancelFlag::never(), |conn| {
         let count: u32 = conn
             .prepare_cached(sql::BIN_COUNT.text())?
             .query_row(params![JournalState::NeedsAttention], |row| row.get(0))?;
-        let due: Vec<(String, Option<String>)> = conn
+        let due: Vec<(String, String, Option<String>)> = conn
             .prepare_cached(sql::BIN_DUE.text())?
             .query_map(params![as_of_ms, JournalState::Cleaned], |row| {
                 let row = sql::BinDueRow::read(row)?;
-                Ok((row.recycle_to, row.replaced_track_id))
+                Ok((row.journal_id, row.recycle_to, row.replaced_track_id))
             })?
             .collect::<Result<_, _>>()?;
         Ok::<_, PublishError>((count, due))
@@ -317,8 +317,8 @@ pub fn summary(
         staying: 0,
         older_folders: 0,
     };
-    for (copy, track) in &due {
-        if held.contains(track) {
+    for (journal_id, copy, track) in &due {
+        if held.holds(journal_id, track.as_deref()) {
             continue;
         }
         if let Look::Found(size) = look(sandbox, Path::new(copy)) {

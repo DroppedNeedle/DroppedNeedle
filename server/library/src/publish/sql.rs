@@ -84,10 +84,10 @@ droppedneedle_kernel::sql! {
              AND j.state = ?5 \
              AND (r.recycled_at > ?2 OR (r.recycled_at = ?2 AND r.journal_id > ?3)) \
              ORDER BY r.recycled_at, r.journal_id LIMIT ?4";
-    /// The tracks a put-back not yet settled holds, and NULL when it puts
-    /// back a file with no track (a sidecar): `?1` to `?6` are the
-    /// unsettled states, `?7` the put-back kind.
-    pub(super) EXPIRY_HELD_TRACKS = "SELECT DISTINCT track_id FROM library_publish_journal \
+    /// The put-back rows not yet settled, with their bundles and tracks:
+    /// `?1` to `?6` are the unsettled states, `?7` the put-back kind.
+    pub(super) EXPIRY_HELD_PUT_BACKS = "SELECT id, bundle_id, track_id \
+             FROM library_publish_journal \
              WHERE state IN (?1, ?2, ?3, ?4, ?5, ?6) AND kind = ?7";
     /// Record that row `?1`'s copy left the bin at `?2` (unix
     /// milliseconds): expired, found gone, or put back.
@@ -228,9 +228,9 @@ droppedneedle_kernel::sql! {
     pub(crate) BIN_COUNT = "SELECT COUNT(*) FROM library_publish_replacements r \
              JOIN library_publish_journal j ON j.id = r.journal_id WHERE " + (in_bin!("?1"));
     /// The copies an empty at `?1` (unix milliseconds) would try: the expiry's
-    /// due rows with no retention, each with its track. `?2` is the state of
-    /// a row that is done.
-    pub(super) BIN_DUE = "SELECT r.recycle_to, r.replaced_track_id \
+    /// due rows with no retention, each with its row and track. `?2` is the
+    /// state of a row that is done.
+    pub(super) BIN_DUE = "SELECT r.journal_id, r.recycle_to, r.replaced_track_id \
              FROM library_publish_replacements r \
              JOIN library_publish_journal j ON j.id = r.journal_id \
              WHERE r.expired_at IS NULL AND r.recycled_at IS NOT NULL AND r.recycled_at < ?1 \
@@ -293,6 +293,11 @@ droppedneedle_kernel::sql! {
     /// read as [`TRACK_LISTED_BELOW`] reads them.
     pub(super) TRACKS_LISTED_BELOW = "SELECT COUNT(*) FROM local_tracks \
              WHERE root_id = ?1 AND relative_path >= ?2 || '/' AND relative_path < ?2 || '0' \
+             AND availability = 'indexed'";
+    /// The paths of the tracks listed in library folder `?1` from `?2` up
+    /// to, not including, `?3`.
+    pub(super) TRACKS_LISTED_FROM = "SELECT relative_path FROM local_tracks \
+             WHERE root_id = ?1 AND relative_path >= ?2 AND relative_path < ?3 \
              AND availability = 'indexed'";
     /// The track at root `?1`, path `?2`, with its availability.
     pub(super) TRACK_AT = "SELECT id, availability FROM local_tracks \
@@ -550,6 +555,11 @@ droppedneedle_kernel::sql! {
         replaced_track_id: Option<String>,
         binned_stat_json: Option<String>,
     }
+    pub(super) row ExpiryHeldRow for [EXPIRY_HELD_PUT_BACKS] {
+        id: String,
+        bundle_id: String,
+        track_id: Option<String>,
+    }
     pub(super) row BinEntry for [EXPIRY_ENTRIES] {
         recycle_to: String,
         left_bin: bool,
@@ -592,6 +602,7 @@ droppedneedle_kernel::sql! {
         cover_available: bool,
     }
     pub(super) row BinDueRow for [BIN_DUE] {
+        journal_id: String,
         recycle_to: String,
         replaced_track_id: Option<String>,
     }

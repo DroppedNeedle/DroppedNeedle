@@ -4517,22 +4517,26 @@ async fn an_album_removal_takes_its_sidecars_and_leaves_no_folder_behind() {
     assert_eq!(open, 0, "every copy of the removal left the bin");
 }
 
-/// A track takes only its own sidecars while music stays in its folder.
-/// The folder's other sidecars go with the last music file, and a file no
+/// In a folder three albums share, a removal takes only its tracks' own
+/// sidecars while music stays: none named like a file another album keeps
+/// (`b.lrc` stays with `b.flac` when `b.mp3` goes), and not the folder's
+/// art. The last music to go takes the folder's sidecars, and a file no
 /// sidecar pattern names stays, with its folder.
 #[tokio::test]
-async fn a_track_removal_takes_its_own_sidecars_and_the_last_takes_the_folders() {
+async fn a_shared_folder_keeps_its_sidecars_for_the_music_still_there() {
     use droppedneedle_library::removal::Mutations;
 
-    let (_scratch, library, music) = bare_library("lib-remove-track-sidecars").await;
-    plant(&music, "Band/LP/01.flac", "flac_no_tags.flac");
-    plant(&music, "Band/LP/02.flac", "flac_no_tags.flac");
-    for rel in ["Band/LP/01.lrc", "Band/LP/02.lrc", "Band/LP/cover.jpg"] {
+    let (scratch, library, music) = bare_library("lib-remove-shared-folder").await;
+    plant(&music, "Mixed/a.flac", "flac_full_01.flac");
+    plant(&music, "Mixed/b.flac", "flac_no_tags.flac");
+    plant(&music, "Mixed/b.mp3", "mp3_full_01.mp3");
+    for rel in ["Mixed/a.lrc", "Mixed/b.lrc", "Mixed/cover.jpg"] {
         std::fs::write(music.join(rel), rel.as_bytes()).expect("sidecar written");
     }
-    std::fs::write(music.join("Band/LP/notes.txt"), b"mine").expect("note written");
+    std::fs::write(music.join("Mixed/notes.txt"), b"mine").expect("note written");
     add_music_root(&library, &music).await;
     add_admin(&library);
+    let conn = scratch_db(&scratch);
     let track_at = |rel: &str| -> String {
         library
             .scan_store
@@ -4540,74 +4544,52 @@ async fn a_track_removal_takes_its_own_sidecars_and_the_last_takes_the_folders()
             .unwrap()
             .expect("track indexed")
     };
-    let (first, second) = (track_at("Band/LP/01.flac"), track_at("Band/LP/02.flac"));
-    let mutations = Mutations::new(&library);
-
-    let removed = mutations
-        .remove_track_now(&first, seen_track(&library, &first), true, "admin")
-        .expect("first track removed");
-    assert_eq!(removed.recycled.len(), 2, "{:?}", removed.recycled);
-    assert!(!music.join("Band/LP/01.lrc").exists(), "its lyrics went");
-    for rel in ["Band/LP/02.lrc", "Band/LP/cover.jpg"] {
-        assert!(music.join(rel).is_file(), "{rel} stays with the music");
-    }
-
-    let removed = mutations
-        .remove_track_now(&second, seen_track(&library, &second), true, "admin")
-        .expect("last track removed");
-    assert_eq!(removed.recycled.len(), 3, "{:?}", removed.recycled);
-    for rel in ["Band/LP/02.lrc", "Band/LP/cover.jpg"] {
-        assert!(!music.join(rel).exists(), "{rel} went with the last track");
-    }
-    assert_eq!(
-        std::fs::read_dir(music.join("Band/LP"))
-            .expect("folder stays")
-            .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
-            .collect::<Vec<_>>(),
-        ["notes.txt"],
-        "a file no pattern names keeps its folder"
-    );
-}
-
-/// In a folder two albums share, removing one album takes its tracks' own
-/// lyrics but leaves the folder's art to the album still there.
-#[tokio::test]
-async fn a_shared_folder_keeps_its_art_for_the_album_still_there() {
-    use droppedneedle_library::removal::Mutations;
-
-    let (scratch, library, music) = bare_library("lib-remove-shared-folder").await;
-    plant(&music, "Mixed/a.flac", "flac_full_01.flac");
-    plant(&music, "Mixed/b.flac", "flac_no_tags.flac");
-    for rel in ["Mixed/a.lrc", "Mixed/b.lrc", "Mixed/cover.jpg"] {
-        std::fs::write(music.join(rel), rel.as_bytes()).expect("sidecar written");
-    }
-    add_music_root(&library, &music).await;
-    add_admin(&library);
-    let conn = scratch_db(&scratch);
     let album_at = |rel: &str| -> String {
-        let track = library
-            .scan_store
-            .track_at("music", rel)
-            .unwrap()
-            .expect("track indexed");
         conn.query_row(
             "SELECT local_album_id FROM local_tracks WHERE id = ?1",
-            [&track],
+            [&track_at(rel)],
             |row| row.get(0),
         )
         .expect("album id")
     };
-    let (album, other) = (album_at("Mixed/a.flac"), album_at("Mixed/b.flac"));
-    assert_ne!(album, other, "the folder holds two albums");
+    let [tagged, untagged, mp3] = ["Mixed/a.flac", "Mixed/b.flac", "Mixed/b.mp3"].map(album_at);
+    assert!(
+        tagged != untagged && untagged != mp3 && tagged != mp3,
+        "the folder holds three albums"
+    );
+    let mutations = Mutations::new(&library);
 
-    let removed = Mutations::new(&library)
-        .remove_album(&album, true, true, "admin")
+    let removed = mutations
+        .remove_album(&mp3, true, true, "admin")
+        .expect("the mp3's album removed");
+    assert_eq!(removed.recycled.len(), 1, "{:?}", removed.recycled);
+    assert!(
+        music.join("Mixed/b.lrc").is_file(),
+        "b.lrc stays with b.flac"
+    );
+
+    let removed = mutations
+        .remove_album(&tagged, true, true, "admin")
         .expect("album removed");
     assert_eq!(removed.recycled.len(), 2, "{:?}", removed.recycled);
-    assert!(!music.join("Mixed/a.lrc").exists());
+    assert!(!music.join("Mixed/a.lrc").exists(), "its lyrics went");
     for rel in ["Mixed/b.flac", "Mixed/b.lrc", "Mixed/cover.jpg"] {
         assert!(music.join(rel).is_file(), "{rel} stays");
     }
+
+    let last = track_at("Mixed/b.flac");
+    let removed = mutations
+        .remove_track_now(&last, seen_track(&library, &last), true, "admin")
+        .expect("last track removed");
+    assert_eq!(removed.recycled.len(), 3, "{:?}", removed.recycled);
+    assert_eq!(
+        std::fs::read_dir(music.join("Mixed"))
+            .expect("folder stays")
+            .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
+            .collect::<Vec<_>>(),
+        ["notes.txt"],
+        "the last track took the folder's sidecars, and a file no pattern names keeps its folder"
+    );
 }
 
 /// A removed album's download and wanted clean-up is written with the
@@ -5502,10 +5484,11 @@ async fn expiry_waits_on_a_retention_that_does_not_read() {
 /// Emptying the bin deletes, however young, every copy that reached it
 /// before the moment its count was read and still holds the removed
 /// bytes, and marks its row. A copy changed in the bin is kept and named,
-/// one a put-back is using stays, and a removal made after that moment is
-/// untouched.
+/// the copies a put-back not done is using stay (its sidecar's holding no
+/// other removal's), and a removal made after that moment is untouched.
 #[tokio::test]
 async fn emptying_the_bin_deletes_unchanged_copies_and_keeps_the_rest() {
+    use droppedneedle_library::publish::CrashPoint;
     use droppedneedle_library::publish::expiry::KeptWhy;
     use droppedneedle_library::removal::Mutations;
 
@@ -5513,11 +5496,15 @@ async fn emptying_the_bin_deletes_unchanged_copies_and_keeps_the_rest() {
     for folder in ["A", "B", "C", "D"] {
         plant(&music, &format!("{folder}/01.flac"), "flac_no_tags.flac");
     }
+    for folder in ["A", "C"] {
+        std::fs::write(music.join(format!("{folder}/cover.jpg")), b"jpeg bytes")
+            .expect("cover written");
+    }
     add_music_root(&library, &music).await;
     add_admin(&library);
     let conn = scratch_db(&scratch);
     let mutations = Mutations::new(&library);
-    let remove = |folder: &str| -> String {
+    let remove = |folder: &str| -> (String, String, String) {
         let track = library
             .scan_store
             .track_at("music", &format!("{folder}/01.flac"))
@@ -5530,31 +5517,41 @@ async fn emptying_the_bin_deletes_unchanged_copies_and_keeps_the_rest() {
                 |row| row.get(0),
             )
             .expect("album");
-        mutations
+        let removed = mutations
             .remove_album(&album, true, true, "admin")
             .expect("album removed");
-        track
+        (track, album, removed.removal_id.expect("removal id"))
     };
-    let [a, b, c] = ["A", "B", "C"].map(&remove);
+    let cover_of = |folder: &str| -> (PathBuf, String) {
+        conn.query_row(
+            "SELECT r.recycle_to, r.journal_id FROM library_publish_replacements r \
+             JOIN library_publish_journal j ON j.id = r.journal_id WHERE j.dest_rel = ?1",
+            [format!("{folder}/cover.jpg")],
+            |row| Ok((PathBuf::from(row.get::<_, String>(0)?), row.get(1)?)),
+        )
+        .expect("a cover in the bin")
+    };
+    let [(a, ..), (b, ..), (c, c_album, c_removal)] = ["A", "B", "C"].map(&remove);
     let (a_copy, a_row) = copy_of(&conn, &a);
+    let (a_cover, a_cover_row) = cover_of("A");
     let (b_copy, b_row) = copy_of(&conn, &b);
     let (c_copy, c_row) = copy_of(&conn, &c);
+    let (c_cover, c_cover_row) = cover_of("C");
     let a_size = std::fs::metadata(&a_copy).expect("copy").len();
     std::fs::write(&b_copy, b"changed in the bin").expect("copy changes");
-    conn.execute(
-        "INSERT INTO library_publish_journal (id, bundle_id, kind, dest_root, dest_rel, \
-         staged, staged_sha256, track_id, state) VALUES ('pb-000', 'pb', 'put_back', \
-         'music', 'C/01.flac', '.dn-pb', 'x', ?1, 'staged')",
-        [&c],
-    )
-    .expect("a put-back holds C");
+    library
+        .publishing
+        .arm_publish_crash(Some(CrashPoint::AfterStage));
+    let stopped = mutations.put_back(&c_album, &c_removal, "admin");
+    library.publishing.arm_publish_crash(None);
+    assert!(stopped.is_err(), "C's put-back stops with its files staged");
     conn.execute(
         "UPDATE library_publish_replacements SET recycled_at = recycled_at - 10000",
         [],
     )
     .expect("the copies reached the bin a little earlier");
     let before = library.clock.now_ms();
-    let d = remove("D");
+    let (d, ..) = remove("D");
     let (d_copy, d_row) = copy_of(&conn, &d);
 
     let report = library
@@ -5565,7 +5562,12 @@ async fn emptying_the_bin_deletes_unchanged_copies_and_keeps_the_rest() {
     assert!(report.finished);
     assert!(!a_copy.exists(), "an unchanged copy goes");
     assert!(left_bin(&conn, &a_row));
-    assert_eq!((report.deleted, report.deleted_bytes), (1, a_size));
+    assert!(!a_cover.exists(), "a sidecar no put-back uses goes");
+    assert!(left_bin(&conn, &a_cover_row));
+    assert_eq!(
+        (report.deleted, report.deleted_bytes),
+        (2, a_size + b"jpeg bytes".len() as u64)
+    );
     assert_eq!(std::fs::read(&b_copy).expect("kept"), b"changed in the bin");
     assert!(!left_bin(&conn, &b_row));
     assert_eq!(
@@ -5576,9 +5578,11 @@ async fn emptying_the_bin_deletes_unchanged_copies_and_keeps_the_rest() {
             .collect::<Vec<_>>(),
         [(b_copy, KeptWhy::Changed)]
     );
-    assert!(c_copy.is_file(), "a copy a put-back uses stays");
-    assert!(!left_bin(&conn, &c_row));
-    assert_eq!(report.waited, 1);
+    for (copy, row) in [(&c_copy, &c_row), (&c_cover, &c_cover_row)] {
+        assert!(copy.is_file(), "a copy a put-back uses stays");
+        assert!(!left_bin(&conn, row));
+    }
+    assert_eq!(report.waited, 2);
     assert!(d_copy.is_file(), "a removal made after the count stays");
     assert!(!left_bin(&conn, &d_row));
 }

@@ -3,7 +3,7 @@
 //! the bin from its page is the same pass with no retention.
 //!
 //! A pass reads every row whose copy reached the bin before the cutoff
-//! and whose own write is done; a row whose track a put-back holds waits.
+//! and whose own write is done; a row whose copy a put-back uses waits.
 //! Each copy is checked outside the publish lock: it must be the
 //! `<bin>/<entry>/<name>` its row names, under a bin set now, with no link
 //! at or below the bin's folder, a regular file that is still exactly the
@@ -220,7 +220,7 @@ enum Found {
 /// lock. The lock is taken a chunk of rows at a time: first every copy
 /// found gone is decided and marked, then the due copies are deleted, then
 /// old entries no row names are emptied under a hold of their own. A row
-/// whose track a put-back holds waits, before and under the lock. `go_on`
+/// whose copy a put-back uses waits, before and under the lock. `go_on`
 /// is asked between rows; false ends the pass unfinished.
 pub fn expire<G>(
     db: &Db,
@@ -238,7 +238,7 @@ pub fn expire<G>(
     let mut empty_bins: HashSet<String> = HashSet::new();
     let mut due: Vec<(DueRow, FileStat)> = Vec::new();
     let mut gone: Vec<DueRow> = Vec::new();
-    let held = held_tracks(db)?;
+    let held = held_copies(db)?;
     for row in due_rows(db, cutoff, pass.page.max(1))? {
         if !go_on() {
             return Ok(report);
@@ -266,7 +266,7 @@ pub fn expire<G>(
         let Some(sandbox) = bins() else {
             return Ok(report);
         };
-        let held = held_tracks(db)?;
+        let held = held_copies(db)?;
         let mut marked = Vec::new();
         for row in chunk {
             if is_held(&held, row) {
@@ -300,7 +300,7 @@ pub fn expire<G>(
         let Some(sandbox) = bins() else {
             return Ok(report);
         };
-        let held = held_tracks(db)?;
+        let held = held_copies(db)?;
         let mut marked = Vec::new();
         let mut deleted = Vec::new();
         for (row, stat) in chunk {
@@ -399,14 +399,43 @@ fn sync_dirs(dirs: &HashSet<PathBuf>) {
     }
 }
 
-/// The tracks a put-back still holds: their copies stay in the bin until
-/// it is done. `None` stands for the files with no track (sidecars),
-/// which all stay while a put-back of one is not done. Few rows: only
-/// put-backs not settled yet.
-pub(super) fn held_tracks(db: &Db) -> Result<HashSet<Option<String>>, PublishError> {
+/// The bin copies a put-back not done yet uses: each stays in the bin
+/// until that put-back settles.
+#[derive(Debug, Default)]
+pub(super) struct HeldCopies {
+    /// Removal rows a put-back's plan names.
+    rows: HashSet<String>,
+    /// Tracks of put-back rows whose plan can't name a removal row (one
+    /// recorded before plans named them, or that does not read): every
+    /// copy of the track stays.
+    tracks: HashSet<String>,
+    /// A put-back row with no track whose plan can't name a removal row:
+    /// every copy with no track stays.
+    trackless: bool,
+}
+
+impl HeldCopies {
+    /// Whether removal row `journal_id`, of `track_id`, is held.
+    pub(super) fn holds(&self, journal_id: &str, track_id: Option<&str>) -> bool {
+        self.rows.contains(journal_id)
+            || match track_id {
+                Some(track) => self.tracks.contains(track),
+                None => self.trackless,
+            }
+    }
+}
+
+/// What the put-backs not settled yet hold. Each unsettled put-back row
+/// holds just the removal row its planned file comes from, a sidecar's as
+/// much as a track's. A row whose plan can't tell (none recorded, one that
+/// does not read, or one recorded before plans named removal rows) holds
+/// every copy it might use: its track's, or with no track every copy with
+/// none. The rest of the bin keeps expiring. Few rows: only put-backs not
+/// settled yet.
+pub(super) fn held_copies(db: &Db) -> Result<HeldCopies, PublishError> {
     db.read_long("publish.expiry_held", &CancelFlag::never(), |conn| {
-        let mut statement = conn.prepare_cached(sql::EXPIRY_HELD_TRACKS.text())?;
-        let tracks = statement
+        let rows = conn
+            .prepare_cached(sql::EXPIRY_HELD_PUT_BACKS.text())?
             .query_map(
                 params![
                     JournalState::Prepared,
@@ -417,15 +446,53 @@ pub(super) fn held_tracks(db: &Db) -> Result<HashSet<Option<String>>, PublishErr
                     JournalState::NeedsAttention,
                     JournalKind::PutBack,
                 ],
-                |row| row.get::<_, Option<String>>(0),
+                |row| {
+                    let row = sql::ExpiryHeldRow::read(row)?;
+                    Ok((row.id, row.bundle_id, row.track_id))
+                },
             )?
-            .collect::<Result<HashSet<_>, _>>()?;
-        Ok::<_, PublishError>(tracks)
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut bundles: HashMap<String, Option<super::planner::PlanBundle>> = HashMap::new();
+        let mut held = HeldCopies::default();
+        for (id, bundle_id, track_id) in rows {
+            let bundle = match bundles.entry(bundle_id.clone()) {
+                std::collections::hash_map::Entry::Occupied(known) => known.into_mut(),
+                std::collections::hash_map::Entry::Vacant(slot) => {
+                    let json = super::operations::operation_json(conn, &bundle_id)?;
+                    slot.insert(json.and_then(|json| {
+                        serde_json::from_str::<super::planner::PlanBundle>(&json)
+                            .inspect_err(|error| {
+                                tracing::warn!(bundle_id = %bundle_id, %error, "a put-back's plan does not read; the bin keeps every copy it might use");
+                            })
+                            .ok()
+                    }))
+                }
+            };
+            let removal_row = bundle
+                .as_ref()
+                .and_then(|bundle| bundle.put_back.as_ref())
+                .and_then(|put_back| super::put_back::item_by_id(put_back, &bundle_id, &id))
+                .map(|item| item.removal_row.as_str())
+                .filter(|row| !row.is_empty());
+            match (removal_row, track_id) {
+                (Some(row), _) => {
+                    held.rows.insert(row.to_owned());
+                }
+                (None, Some(track)) => {
+                    held.tracks.insert(track);
+                }
+                (None, None) => {
+                    tracing::warn!(journal_id = %id, "a put-back names no removal row; the bin keeps every copy with no track");
+                    held.trackless = true;
+                }
+            }
+        }
+        Ok::<_, PublishError>(held)
     })
 }
 
-fn is_held(held: &HashSet<Option<String>>, row: &DueRow) -> bool {
-    held.contains(&row.track_id)
+fn is_held(held: &HeldCopies, row: &DueRow) -> bool {
+    held.holds(&row.journal_id, row.track_id.as_deref())
 }
 
 /// Every row due at `cutoff`, read `page` at a time in the order they

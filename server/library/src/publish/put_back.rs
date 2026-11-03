@@ -771,11 +771,20 @@ pub(super) fn journal_ids(bundle_id: &str, put_back: &PutBack) -> Vec<String> {
 
 /// The planned item a `put_back` row places.
 pub(super) fn item_of<'a>(put_back: &'a PutBack, journal: &FileJournal) -> Option<&'a PutBackItem> {
+    item_by_id(put_back, &journal.bundle_id, &journal.id)
+}
+
+/// The planned item the `put_back` row `id` of bundle `bundle_id` places.
+pub(super) fn item_by_id<'a>(
+    put_back: &'a PutBack,
+    bundle_id: &str,
+    id: &str,
+) -> Option<&'a PutBackItem> {
     put_back
         .items
         .iter()
         .enumerate()
-        .find(|(index, _)| journal_id(&journal.bundle_id, *index) == journal.id)
+        .find(|(index, _)| journal_id(bundle_id, *index) == id)
         .map(|(_, item)| item)
 }
 

@@ -1036,12 +1036,22 @@ impl Mutations {
                     })
                     .map_or(true, |listed| listed > removed_below)
             };
+            let listed_named = |folder: &str, stem: &str| {
+                self.db
+                    .read_blocking("mutations.sidecar_stem", |conn| {
+                        Ok::<_, MutationError>(remove::tracks_named(conn, root_id, folder, stem)?)
+                    })
+                    .map_or(true, |listed| {
+                        listed.iter().any(|path| !removed.contains(&path.as_str()))
+                    })
+            };
             found.extend(remove::sidecars(&remove::SidecarScope {
                 root_id,
                 root: &root.path,
                 removed: &removed,
                 patterns: &patterns,
                 listed_below: &listed_below,
+                listed_named: &listed_named,
             }));
         }
         found

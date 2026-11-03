@@ -164,6 +164,9 @@ pub struct SidecarScope<'a> {
     /// Whether a track that is not being removed is listed below a folder
     /// (relative to the library folder).
     pub listed_below: &'a dyn Fn(&str) -> bool,
+    /// Whether a track that is not being removed is listed in a folder
+    /// (relative to the library folder) under a file of this stem.
+    pub listed_named: &'a dyn Fn(&str, &str) -> bool,
 }
 
 /// Most entries read below one folder while looking for music left in it.
@@ -173,7 +176,9 @@ const MAX_FOLDER_ENTRIES: usize = 10_000;
 /// publish lock. A file matching the folder's sidecar patterns goes:
 ///
 /// - with its track, when it is named like the track's file (its lyrics,
-///   its cue sheet), whatever else stays in the folder;
+///   its cue sheet) and no other music file of that name stays: none is
+///   on disk in the folder and no track not being removed is listed there
+///   under it (removing `01.mp3` while `01.flac` stays keeps `01.lrc`);
 /// - with the folder, once no music is left there: no other track is
 ///   listed below it and no other music file is on disk below it. The
 ///   folders above go the same way, up to the first that still holds
@@ -192,22 +197,38 @@ pub fn sidecars(scope: &SidecarScope<'_>) -> Vec<SidecarTarget> {
         let Some(stem) = rel_path.file_stem().and_then(|stem| stem.to_str()) else {
             continue;
         };
-        for name in names_in(&scope.root.join(&folder)) {
-            let named_like = Path::new(&name)
+        let named_like = |name: &str| {
+            Path::new(name)
                 .file_stem()
                 .and_then(|other| other.to_str())
-                .is_some_and(|other| other == stem);
-            let sidecar = join_rel(&folder, &name);
-            if named_like
-                && !removed.contains(sidecar.as_str())
-                && crate::tags::format_for_path(Path::new(&name)).is_err()
-                && crate::management::planner::sidecar_match(
-                    scope.patterns,
-                    &caseless::default_case_fold_str(&name),
-                )
-            {
-                found.insert(sidecar, None);
-            }
+                .is_some_and(|other| other == stem)
+        };
+        let is_music = |name: &str| crate::tags::format_for_path(Path::new(name)).is_ok();
+        // A folder not read in full takes nothing named like the track.
+        let entries = entries_in(&scope.root.join(&folder)).unwrap_or_default();
+        let own: Vec<String> = entries
+            .iter()
+            .filter(|(name, is_file)| {
+                *is_file
+                    && named_like(name)
+                    && !is_music(name)
+                    && crate::management::planner::sidecar_match(
+                        scope.patterns,
+                        &caseless::default_case_fold_str(name),
+                    )
+            })
+            .map(|(name, _)| join_rel(&folder, name))
+            .filter(|sidecar| !removed.contains(sidecar.as_str()))
+            .collect();
+        let music_stays = || {
+            entries.iter().any(|(name, _)| {
+                named_like(name)
+                    && is_music(name)
+                    && !removed.contains(join_rel(&folder, name).as_str())
+            }) || (scope.listed_named)(&folder, stem)
+        };
+        if !own.is_empty() && !music_stays() {
+            found.extend(own.into_iter().map(|sidecar| (sidecar, None)));
         }
         if !folder.is_empty() {
             folders.insert(folder);
@@ -284,16 +305,18 @@ fn join_rel(folder: &str, name: &str) -> String {
     }
 }
 
-/// The names of the regular files directly in `dir`.
-fn names_in(dir: &Path) -> Vec<String> {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return Vec::new();
-    };
-    entries
-        .filter_map(Result::ok)
-        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
-        .filter_map(|entry| entry.file_name().to_str().map(str::to_owned))
-        .collect()
+/// The entries directly in `dir`, each with whether it is a regular file.
+/// `None` when the folder can't be read in full.
+fn entries_in(dir: &Path) -> Option<Vec<(String, bool)>> {
+    let mut found = Vec::new();
+    for entry in std::fs::read_dir(dir).ok()? {
+        let entry = entry.ok()?;
+        let is_file = entry.file_type().ok()?.is_file();
+        if let Some(name) = entry.file_name().to_str() {
+            found.push((name.to_owned(), is_file));
+        }
+    }
+    Some(found)
 }
 
 /// Whether a music file other than `removed` is on disk below `dir`
@@ -762,6 +785,31 @@ pub fn tracks_listed_below(
 ) -> rusqlite::Result<u64> {
     conn.prepare_cached(sql::TRACKS_LISTED_BELOW.text())?
         .query_row(rusqlite::params![root_id, folder], |row| row.get(0))
+}
+
+/// The paths of the tracks listed in library folder `root_id`, in `folder`
+/// (relative to it), under a file named `stem` with any extension.
+pub fn tracks_named(
+    conn: &Connection,
+    root_id: &str,
+    folder: &str,
+    stem: &str,
+) -> rusqlite::Result<Vec<String>> {
+    // Every path that starts `<folder>/<stem>.` sorts from there up to
+    // `<folder>/<stem>/`, `/` being the character after `.`.
+    let from = join_rel(folder, &format!("{stem}."));
+    let to = join_rel(folder, &format!("{stem}/"));
+    let paths = conn
+        .prepare_cached(sql::TRACKS_LISTED_FROM.text())?
+        .query_map(rusqlite::params![root_id, from, to], |row| row.get(0))?
+        .collect::<rusqlite::Result<Vec<String>>>()?;
+    Ok(paths
+        .into_iter()
+        .filter(|path| {
+            parent_rel(path) == folder
+                && Path::new(path).file_stem().and_then(|other| other.to_str()) == Some(stem)
+        })
+        .collect())
 }
 
 /// Whether a removal moves any file, a track's or a sidecar.

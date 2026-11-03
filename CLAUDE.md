@@ -462,6 +462,17 @@ Run from the repo root. `make help` lists every target.
 - A configured recycle bin that cannot be reached makes removals and
   upgrades wait; files never fall back to a library folder's `.recycle`
   while it is down.
+- A removal sends the sidecars matching the folder's Library Management
+  patterns (the default list while none is set up) to the recycle bin
+  with the music, and Put back brings them home. One named like a removed
+  file goes only while no other music file of that name stays in the
+  folder, on disk or in the catalog; the folder's others go only once no
+  music is left below it. Folders a removal leaves empty are removed up
+  to the library folder, each only while empty, never through a link,
+  never one holding other music and never under a library folder that is
+  not there; Put back makes them again. A put-back that is not done holds
+  only the bin copies of the removal rows it puts back, or, where its
+  plan can't tell, the copies it might use.
 - "Never overwrite" is enforced by the operating system call that places the
   file, not by a check made before it. A library on a filesystem that offers
   no such call still works and shows a warning.
@@ -491,7 +502,9 @@ Run from the repo root. `make help` lists every target.
 - A publish records each folder it makes, durably, right after making it and
   before anything is written into it. An unwind, forward or after a crash,
   removes exactly those folders, deepest first and only while empty, and
-  never a folder that existed before.
+  never a folder that existed before. A completed removal is not an
+  unwind: it does remove the empty folders it leaves, ones that existed
+  before included.
 - An empty Vorbis comment (`NAME=`) is not kept: it reads as absent and a
   write drops it. It is the one exception to "unrelated tags survive".
 - Publisher phases keep their crash-injection tests. Archive extraction
