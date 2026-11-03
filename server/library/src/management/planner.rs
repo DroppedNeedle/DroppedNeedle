@@ -821,6 +821,7 @@ fn generated_output(
         sha256,
         size: bytes.len() as u64,
         kind,
+        replaces: None,
     })
 }
 

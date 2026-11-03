@@ -245,50 +245,25 @@ impl Management {
             let Some(track_id) = item.track_id.as_deref() else {
                 continue;
             };
-            let name = Path::new(&first.relative_path)
-                .file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            // While no bin is known the job waits; a folder with no usable
-            // bin refuses only its own album, and the job moves on.
-            let recycle_to = match mutations.recycle_entry(&first.root_id, &name) {
-                Ok(entry) => entry,
-                Err(MutationError::Conflict(reason)) if reason.code == NO_RECYCLE_BIN.code => {
-                    return Err(Refused::Reason(ItemReason {
-                        code: "RECYCLE_FAILED".to_owned(),
-                        message: format!(
-                            "{}'s library folder has no usable recycle bin, so it cannot be replaced.",
-                            first.relative_path
-                        ),
-                        action: "Make the folder's .recycle a plain folder, or keep both files."
-                            .to_owned(),
-                    }));
-                }
-                Err(MutationError::Conflict(reason)) if reason.code == RECYCLE_BIN_UNKNOWN => {
-                    return Err(Refused::Busy(ManagementError::BinsUnknown(reason)));
-                }
-                Err(MutationError::Conflict(reason)) => {
-                    return Err(Refused::Busy(ManagementError::Busy(
-                        reason.message.to_owned(),
-                    )));
-                }
-                Err(error) => return Err(Refused::Busy(ManagementError::Busy(error.to_string()))),
-            }
-            .ok_or_else(|| ItemReason {
-                    code: "RECYCLE_FAILED".to_owned(),
-                    message: format!(
-                        "No recycle bin is available for {}, so it cannot be replaced.",
-                        first.relative_path
-                    ),
-                    action: "Set a recycle bin in Library Management, or keep both files."
-                        .to_owned(),
-                })?;
+            let recycle_to = bin_entry(mutations, &first.root_id, &first.relative_path)?;
             for plan in plans.iter_mut().filter(|plan| plan.track_id == track_id) {
                 plan.replaces = Some(crate::publish::Replacement {
                     sha256: first.sha256.clone(),
                     track_id: first.local_track_id.clone(),
                     recycle_to: recycle_to.display().to_string(),
                 });
+            }
+        }
+        // A cover the archive's replaces (planner `cover_file`) gets its
+        // bin entry the same way; it carries no track.
+        for plan in plans.iter_mut() {
+            for output in &mut plan.outputs {
+                let Some(replaced) = output.replaces.as_mut() else {
+                    continue;
+                };
+                replaced.recycle_to = bin_entry(mutations, &output.dest_root, &output.dest_rel)?
+                    .display()
+                    .to_string();
             }
         }
         Ok(())
@@ -545,4 +520,46 @@ impl Management {
         }
         Ok(Some(summary))
     }
+}
+
+/// A fresh recycle-bin entry for the file at `rel` in library folder
+/// `root_id`. While no bin is known the job waits; a folder with no usable
+/// bin refuses only its own album, and the job moves on.
+fn bin_entry(
+    mutations: &crate::removal::Mutations,
+    root_id: &str,
+    rel: &str,
+) -> Result<std::path::PathBuf, Refused> {
+    let name = Path::new(rel)
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    match mutations.recycle_entry(root_id, &name) {
+        Ok(entry) => entry,
+        Err(MutationError::Conflict(reason)) if reason.code == NO_RECYCLE_BIN.code => {
+            return Err(Refused::Reason(ItemReason {
+                code: "RECYCLE_FAILED".to_owned(),
+                message: format!(
+                    "{rel}'s library folder has no usable recycle bin, so it cannot be replaced."
+                ),
+                action: "Make the folder's .recycle a plain folder, or keep both files.".to_owned(),
+            }));
+        }
+        Err(MutationError::Conflict(reason)) if reason.code == RECYCLE_BIN_UNKNOWN => {
+            return Err(Refused::Busy(ManagementError::BinsUnknown(reason)));
+        }
+        Err(MutationError::Conflict(reason)) => {
+            return Err(Refused::Busy(ManagementError::Busy(
+                reason.message.to_owned(),
+            )));
+        }
+        Err(error) => return Err(Refused::Busy(ManagementError::Busy(error.to_string()))),
+    }
+    .ok_or_else(|| {
+        Refused::Reason(ItemReason {
+            code: "RECYCLE_FAILED".to_owned(),
+            message: format!("No recycle bin is available for {rel}, so it cannot be replaced."),
+            action: "Set a recycle bin in Library Management, or keep both files.".to_owned(),
+        })
+    })
 }

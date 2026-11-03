@@ -119,7 +119,8 @@ pub struct PlanItem {
     pub replaces: Option<Replacement>,
     /// Files this item writes that come from no source file: a cover
     /// image or a lyrics file. Their bytes wait in the blob store; each
-    /// one only ever lands on an empty path.
+    /// one lands on an empty path, or on the one file it names in
+    /// [`GeneratedOutput::replaces`].
     #[serde(default)]
     pub outputs: Vec<GeneratedOutput>,
     /// Files an earlier run generated that undo takes away: each is set
@@ -142,6 +143,13 @@ pub struct GeneratedOutput {
     pub sha256: String,
     pub size: u64,
     pub kind: OutputKind,
+    /// The file at the destination this one replaces (a cover that came
+    /// with imported files, which the archive's cover replaces): set aside
+    /// under the journal, recycled after the commit, put back if the
+    /// publish unwinds. No track goes with it. The bin entry is chosen at
+    /// apply; a plan that still names none is refused.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replaces: Option<Replacement>,
 }
 
 /// What a generated file is.
@@ -882,7 +890,7 @@ impl CollisionGate {
                     output.kind.as_str(),
                     &output.dest_root,
                     &output.dest_rel,
-                    SamePathSelf::absent(),
+                    SamePathSelf::replacing(output.replaces.as_ref()),
                 )?;
             }
         }
@@ -1074,6 +1082,15 @@ impl SamePathSelf {
             sha256: None,
             move_source: None,
             replaces_sha256: None,
+        }
+    }
+
+    /// A generated file's view: its destination is free, or holds the one
+    /// file it replaces, still with the bytes the plan saw.
+    fn replacing(replaced: Option<&Replacement>) -> Self {
+        Self {
+            replaces_sha256: replaced.map(|replaced| replaced.sha256.clone()),
+            ..Self::absent()
         }
     }
 

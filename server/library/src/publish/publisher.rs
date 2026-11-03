@@ -1797,6 +1797,30 @@ impl<P: SpaceProbe> Publisher<P> {
                 parent,
             )?;
         }
+        // The file it replaces must still be the one planned against, and
+        // have a bin entry to go to; it lends the new file its permissions.
+        let mut mode = None;
+        if let Some(replaced) = &output.replaces {
+            if replaced.recycle_to.is_empty() {
+                return Err(PublishError::Validation(
+                    format!("the file {} replaces has no bin entry", output.dest_rel).into(),
+                ));
+            }
+            let holds = paths::hash_regular_file(&dest)
+                .ok()
+                .filter(|hashed| hashed.sha256 == replaced.sha256);
+            let Some(holds) = holds else {
+                return Err(PublishError::Validation(
+                    format!(
+                        "the file {} replaces changed after planning",
+                        output.dest_rel
+                    )
+                    .into(),
+                ));
+            };
+            self.known.record(holds.stat, &holds.sha256);
+            mode = Some(paths::permission_bits(&dest)?);
+        }
         let temp = self.sandbox.temp_path_for(&dest, &journal_id)?;
         self.sandbox.ensure_under_roots(&temp)?;
         self.journal_insert(&FileJournal {
@@ -1814,9 +1838,14 @@ impl<P: SpaceProbe> Publisher<P> {
             commit_as: None,
             state: JournalState::Prepared,
             seq: 0,
-            replaces: None,
+            replaces: output.replaces.as_ref().map(|replaced| JournalReplacement {
+                rel: output.dest_rel.clone(),
+                sha256: replaced.sha256.clone(),
+                track_id: None,
+                recycle_to: replaced.recycle_to.clone(),
+            }),
         })?;
-        write_staged_temp(&temp, &bytes, None)?;
+        write_staged_temp(&temp, &bytes, mode)?;
         self.journal_staged(&journal_id)
     }
 
