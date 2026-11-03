@@ -26,12 +26,12 @@ const STREAMS: [&str; 3] = ["scan", "identification", "operation"];
 
 /// What the identification pause switch says.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum QueueSwitch {
+pub enum QueueSwitch {
     Running,
     Paused,
 }
 
-crate::scan::models::spelled!(QueueSwitch {
+droppedneedle_kernel::spelled!(QueueSwitch {
     Running => "running",
     Paused => "paused",
 });

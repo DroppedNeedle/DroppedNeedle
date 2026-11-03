@@ -11,49 +11,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-/// Give a fieldless enum its stored spelling: `as_str`, a `parse` that
-/// answers `None` for any other text, and the codec that binds and reads it,
-/// where any other text is a decode error.
-macro_rules! spelled {
-    ($name:ident { $($variant:ident => $text:literal),+ $(,)? }) => {
-        impl $name {
-            /// The stored spelling.
-            pub const fn as_str(self) -> &'static str {
-                match self {
-                    $($name::$variant => $text),+
-                }
-            }
-
-            /// The value `text` spells, if any.
-            pub fn parse(text: &str) -> Option<Self> {
-                match text {
-                    $($text => Some($name::$variant),)+
-                    _ => None,
-                }
-            }
-        }
-
-        impl rusqlite::types::ToSql for $name {
-            fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
-                Ok(rusqlite::types::ToSqlOutput::from(self.as_str()))
-            }
-        }
-
-        impl rusqlite::types::FromSql for $name {
-            fn column_result(
-                value: rusqlite::types::ValueRef<'_>,
-            ) -> rusqlite::types::FromSqlResult<Self> {
-                let text = value.as_str()?;
-                Self::parse(text).ok_or_else(|| {
-                    rusqlite::types::FromSqlError::Other(
-                        format!("{} has no value {text:?}", stringify!($name)).into(),
-                    )
-                })
-            }
-        }
-    };
-}
-pub(crate) use spelled;
+use droppedneedle_kernel::spelled;
 
 /// A run's counters, one per column of the runs table.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
@@ -113,21 +71,6 @@ spelled!(Counter {
 });
 
 impl Counter {
-    /// Every counter.
-    pub const ALL: [Counter; 11] = [
-        Counter::Total,
-        Counter::Discovered,
-        Counter::Inspected,
-        Counter::New,
-        Counter::Changed,
-        Counter::Indexed,
-        Counter::Unchanged,
-        Counter::Excluded,
-        Counter::Missing,
-        Counter::Errored,
-        Counter::IdentificationEnqueued,
-    ];
-
     /// The runs-table column that holds it, which is also its name.
     pub const fn column(self) -> &'static str {
         self.as_str()

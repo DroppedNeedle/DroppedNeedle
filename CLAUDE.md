@@ -278,8 +278,9 @@ Run from the repo root. `make help` lists every target.
   with its owning area's prefix; every table is `STRICT`; a foreign key
   cascades for owned data, sets null for "who did this" and restricts for
   what must outlive its parent, and is indexed (`every_foreign_key_is_indexed`
-  checks it); a state column is backed by a Rust enum with a CHECK listing
-  its values.
+  checks it); a state column is backed by a Rust enum declared through the
+  kernel's `spelled!`, with a CHECK listing exactly its values
+  (`every_state_column_lists_exactly_its_enums_values`).
 - Every table has one owning area, listed in `server/table-owners.txt` and
   checked by a test. Only the owner writes and migrates it.
 - A read model derived from other tables (a summary table or a column) is

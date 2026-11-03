@@ -124,7 +124,7 @@ pub enum ActivityState {
     Failed,
 }
 
-crate::scan::models::spelled!(ActivityState {
+droppedneedle_kernel::spelled!(ActivityState {
     Queued => "queued",
     Discovering => "discovering",
     Indexing => "indexing",

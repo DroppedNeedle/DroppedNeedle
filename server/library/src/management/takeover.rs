@@ -63,21 +63,12 @@ pub enum Cause {
     ReplacedHandsOff,
 }
 
-crate::scan::models::spelled!(Cause {
+droppedneedle_kernel::spelled!(Cause {
     FilesChanged => "files_changed",
     RetagFollowed => "retag_followed",
     RunUndone => "run_undone",
     ReplacedHandsOff => "replaced_hands_off",
 });
-
-impl Cause {
-    pub const ALL: [Self; 4] = [
-        Self::FilesChanged,
-        Self::RetagFollowed,
-        Self::RunUndone,
-        Self::ReplacedHandsOff,
-    ];
-}
 
 /// Whether the app has a record of this track's file.
 pub fn has_record(conn: &Connection, track_id: &str) -> rusqlite::Result<bool> {

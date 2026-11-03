@@ -156,7 +156,7 @@ pub enum TagScope {
     Track,
 }
 
-crate::scan::models::spelled!(TagScope {
+droppedneedle_kernel::spelled!(TagScope {
     Album => "album",
     Track => "track",
 });
@@ -182,7 +182,7 @@ pub enum OverrideMode {
     Clear,
 }
 
-crate::scan::models::spelled!(OverrideMode {
+droppedneedle_kernel::spelled!(OverrideMode {
     Replace => "replace",
     Preserve => "preserve",
     Clear => "clear",
@@ -292,7 +292,7 @@ pub enum Eligibility {
     Stale,
 }
 
-crate::scan::models::spelled!(Eligibility {
+droppedneedle_kernel::spelled!(Eligibility {
     Eligible => "eligible",
     Warning => "warning",
     Blocked => "blocked",

@@ -14,7 +14,7 @@ use rusqlite::{Connection, OptionalExtension};
 use super::paths::FileStat;
 use super::sql::JournalRow;
 use super::{PublishError, sql};
-use crate::scan::models::spelled;
+use droppedneedle_kernel::spelled;
 
 /// Monotonic journal states. Terminal states are `Cleaned`,
 /// `Compensated`, and `NeedsAttention`; recovery never moves a

@@ -895,45 +895,6 @@ async fn retag_pairs_arrive_empty_and_go_with_their_albums() {
     assert_eq!(count("SELECT COUNT(*) FROM local_albums").await, 1);
 }
 
-/// The reasons and states a retag pair may carry in the database are
-/// exactly the ones the code names, in both directions.
-#[tokio::test]
-async fn retag_pair_checks_list_exactly_the_code_values() {
-    use droppedneedle_library::scan::sqlite_store::retag_pairs::{RetagPairReason, RetagPairState};
-
-    let pool = migrated_pool().await;
-    let sql: String =
-        sqlx::query_scalar("SELECT sql FROM sqlite_master WHERE name = 'library_retag_pairs'")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-    let listed = |column: &str| -> Vec<String> {
-        let marker = format!("CHECK({column} IN (");
-        let values = &sql[sql.find(&marker).expect("the column has a CHECK") + marker.len()..];
-        values[..values.find(')').expect("the list ends")]
-            .split(',')
-            .map(|value| value.trim().trim_matches('\'').to_owned())
-            .collect()
-    };
-
-    assert_eq!(
-        listed("reason"),
-        RetagPairReason::ALL.map(|reason| reason.as_str().to_owned())
-    );
-    assert_eq!(
-        listed("state"),
-        RetagPairState::ALL.map(|state| state.as_str().to_owned())
-    );
-    for reason in RetagPairReason::ALL {
-        assert_eq!(RetagPairReason::parse(reason.as_str()), Some(reason));
-    }
-    for state in RetagPairState::ALL {
-        assert_eq!(RetagPairState::parse(state.as_str()), Some(state));
-    }
-    assert_eq!(RetagPairReason::parse("open"), None);
-    assert_eq!(RetagPairState::parse("store_error"), None);
-}
-
 /// Migration 0044 adds the table of albums the app stepped back from and
 /// two columns. A database from before it keeps its rows, gains the table
 /// empty and the columns NULL, so an upgrade marks nothing by itself. A
@@ -1531,31 +1492,6 @@ async fn publish_operations_take_the_start_of_their_day() {
     );
 }
 
-/// The causes a takeover may carry in the database are exactly the ones
-/// the code names, in both directions.
-#[tokio::test]
-async fn takeover_check_lists_exactly_the_code_values() {
-    use droppedneedle_library::management::takeover::Cause;
-
-    let pool = migrated_pool().await;
-    let sql: String =
-        sqlx::query_scalar("SELECT sql FROM sqlite_master WHERE name = 'library_album_takeovers'")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-    let marker = "CHECK(cause IN (";
-    let values = &sql[sql.find(marker).expect("the column has a CHECK") + marker.len()..];
-    let listed: Vec<String> = values[..values.find(')').expect("the list ends")]
-        .split(',')
-        .map(|value| value.trim().trim_matches('\'').to_owned())
-        .collect();
-    assert_eq!(listed, Cause::ALL.map(|cause| cause.as_str().to_owned()));
-    for cause in Cause::ALL {
-        assert_eq!(Cause::parse(cause.as_str()), Some(cause));
-    }
-    assert_eq!(Cause::parse("your_choice"), None);
-}
-
 /// Migration 0046 rebuilds the edition remap queue to take a third origin.
 /// A database from before it keeps every row with its origin; the new
 /// origin is accepted after it, and one nobody named is still refused.
@@ -1895,35 +1831,6 @@ async fn held_scopes_arrive_with_the_holds_that_stand() {
         sql.contains("PRIMARY KEY (root_id, relative_path)"),
         "{sql}"
     );
-}
-
-/// The origins a remap may carry in the database are exactly the ones the
-/// code names, in both directions.
-#[tokio::test]
-async fn remap_origin_check_lists_exactly_the_code_values() {
-    use droppedneedle_library::edition::choice::RemapOrigin;
-
-    let pool = migrated_pool().await;
-    let sql: String = sqlx::query_scalar(
-        "SELECT sql FROM sqlite_master WHERE name = 'library_edition_remap_queue'",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    let marker = "CHECK(origin IN (";
-    let values = &sql[sql.find(marker).expect("the column has a CHECK") + marker.len()..];
-    let listed: Vec<String> = values[..values.find(')').expect("the list ends")]
-        .split(',')
-        .map(|value| value.trim().trim_matches('\'').to_owned())
-        .collect();
-    assert_eq!(
-        listed,
-        RemapOrigin::ALL.map(|origin| origin.as_str().to_owned())
-    );
-    for origin in RemapOrigin::ALL {
-        assert_eq!(RemapOrigin::parse(origin.as_str()), Some(origin));
-    }
-    assert_eq!(RemapOrigin::parse("x"), None);
 }
 
 /// Migration 0054 makes the artist proof and album state tables again,
@@ -3617,16 +3524,14 @@ async fn settings_tables_arrive_empty() {
     }
 }
 
-/// Every table in the migrated schema is listed once in
-/// `server/table-owners.txt` under a known area, and the list names no
-/// table the schema lacks.
-#[tokio::test]
-async fn every_table_has_one_owner() {
+/// Each table in `server/table-owners.txt` with the area listed above it.
+/// A table listed twice or an area nobody knows fails here.
+fn table_owners() -> BTreeMap<&'static str, &'static str> {
     const AREAS: [&str; 10] = [
         "kernel", "auth", "plugins", "app", "compat", "media", "tool", "acquire", "catalog",
         "library",
     ];
-    let mut owners = std::collections::BTreeMap::new();
+    let mut owners = BTreeMap::new();
     let mut area = None;
     for line in include_str!("../../table-owners.txt")
         .lines()
@@ -3649,6 +3554,15 @@ async fn every_table_has_one_owner() {
             "{line} is listed twice"
         );
     }
+    owners
+}
+
+/// Every table in the migrated schema is listed once in
+/// `server/table-owners.txt` under a known area, and the list names no
+/// table the schema lacks.
+#[tokio::test]
+async fn every_table_has_one_owner() {
+    let owners = table_owners();
 
     // The search index keeps internal tables of its own under its name.
     let pool = migrated_pool().await;
@@ -3742,6 +3656,354 @@ async fn every_foreign_key_is_indexed() {
         "foreign keys with no index:\n{}",
         unindexed.join("\n")
     );
+}
+
+/// A state column and the values its CHECK must list, read from the enum
+/// that reads and writes it.
+struct StateColumn {
+    table: &'static str,
+    column: &'static str,
+    values: Vec<&'static str>,
+}
+
+fn state<T: Copy>(
+    table: &'static str,
+    column: &'static str,
+    all: &[T],
+    text: fn(T) -> &'static str,
+) -> StateColumn {
+    StateColumn {
+        table,
+        column,
+        values: all.iter().map(|value| text(*value)).collect(),
+    }
+}
+
+/// Every state column held to its enum.
+#[rustfmt::skip]
+fn state_columns() -> Vec<StateColumn> {
+    use droppedneedle_acquire::dispatch::DispatchOrigin;
+    use droppedneedle_acquire::downloads::state::TaskStatus;
+    use droppedneedle_acquire::reason::Reason;
+    use droppedneedle_acquire::requests::ledger::{ApprovalState, RequestStatus, WatchState};
+    use droppedneedle_auth::federated::password_import::HashScheme;
+    use droppedneedle_auth::session::store::SessionKind;
+    use droppedneedle_auth::users::roles::Role;
+    use droppedneedle_library::activity::store::QueueSwitch;
+    use droppedneedle_library::contrib::models::ContributionState;
+    use droppedneedle_library::identify::artist_links::CreditState;
+    use droppedneedle_library::identify::merged_ids::CheckState;
+    use droppedneedle_library::identify::models::{
+        IdentifyKind, JobState, MatchFlagState, ReviewState,
+    };
+    use droppedneedle_library::identity::DecisionSource;
+    use droppedneedle_library::identity::remap::RemapOrigin;
+    use droppedneedle_library::management::models::{Eligibility, OverrideMode};
+    use droppedneedle_library::management::takeover::Cause;
+    use droppedneedle_library::publish::journal::{JournalKind, JournalState, MgmtState};
+    use droppedneedle_library::scan::models::{
+        EffectivePolicy, RequestedControl, ScanKind, ScanPhase, ScanState, ScanTrigger,
+        ScopeDiscoveryState, Verdict,
+    };
+    use droppedneedle_library::scan::sqlite_store::retag_pairs::{RetagPairReason, RetagPairState};
+
+    vec![
+        // acquire
+        state("acquire_held_files", "reason", &Reason::ALL, Reason::code),
+        state("auto_download_approvals", "state", &ApprovalState::ALL, ApprovalState::as_str),
+        state("download_tasks", "status", &TaskStatus::ALL, TaskStatus::as_str),
+        state("personal_mix_approvals", "state", &ApprovalState::ALL, ApprovalState::as_str),
+        state("request_history", "origin", &DispatchOrigin::ALL, DispatchOrigin::as_str),
+        state("request_history", "status", &RequestStatus::ALL, RequestStatus::as_str),
+        state("wanted_watches", "state", &WatchState::ALL, WatchState::as_str),
+        // auth
+        state("auth_providers", "hash_scheme", &HashScheme::ALL, |scheme| scheme.as_tag()),
+        state("auth_tokens", "session_kind", &SessionKind::ALL, SessionKind::as_str),
+        state("auth_users", "role", &Role::ALL, Role::as_str),
+        // library
+        state("library_album_match_state", "state", &MatchFlagState::ALL, MatchFlagState::as_str),
+        state("library_album_takeovers", "cause", &Cause::ALL, Cause::as_str),
+        state("library_artist_reconciliation_state", "state", &CreditState::ALL, CreditState::as_str),
+        state("library_contribution_drafts", "state", &ContributionState::ALL, ContributionState::as_str),
+        state("library_edition_remap_queue", "origin", &RemapOrigin::ALL, RemapOrigin::as_str),
+        state("library_identify_artist_id_checks", "state", &CheckState::ALL, CheckState::as_str),
+        state("library_identify_jobs", "kind", &IdentifyKind::ALL, IdentifyKind::as_str),
+        state("library_identify_jobs", "state", &JobState::ALL, JobState::as_str),
+        state("library_identify_reviews", "state", &ReviewState::ALL, ReviewState::as_str),
+        state("library_management_overrides", "mode", &OverrideMode::ALL, OverrideMode::as_str),
+        state("library_management_plan_items", "eligibility", &Eligibility::ALL, Eligibility::as_str),
+        state("library_publish_journal", "commit_as", &MgmtState::ALL, MgmtState::as_str),
+        state("library_publish_journal", "kind", &JournalKind::ALL, JournalKind::as_str),
+        state("library_publish_journal", "state", &JournalState::ALL, JournalState::as_str),
+        state("library_retag_pairs", "reason", &RetagPairReason::ALL, RetagPairReason::as_str),
+        state("library_retag_pairs", "state", &RetagPairState::ALL, RetagPairState::as_str),
+        state("library_scan_inventory", "comparison_result", &Verdict::ALL, Verdict::as_str),
+        state("library_scan_inventory", "effective_policy", &EffectivePolicy::ALL, EffectivePolicy::as_str),
+        state("library_scan_run_scopes", "discovery_state", &ScopeDiscoveryState::ALL, ScopeDiscoveryState::as_str),
+        state("library_scan_run_scopes", "effective_policy", &EffectivePolicy::ALL, EffectivePolicy::as_str),
+        state("library_scan_runs", "kind", &ScanKind::ALL, ScanKind::as_str),
+        state("library_scan_runs", "phase", &ScanPhase::ALL, ScanPhase::as_str),
+        state("library_scan_runs", "requested_control", &RequestedControl::ALL, RequestedControl::as_str),
+        state("library_scan_runs", "resume_phase", &ScanPhase::ALL, ScanPhase::as_str),
+        state("library_scan_runs", "state", &ScanState::ALL, ScanState::as_str),
+        state("library_scan_runs", "trigger", &ScanTrigger::ALL, ScanTrigger::as_str),
+        state("library_work_control", "state", &QueueSwitch::ALL, QueueSwitch::as_str),
+        state("local_album_external_identities", "decision_source", &DecisionSource::ALL, DecisionSource::as_str),
+        state("local_artist_external_identities", "decision_source", &DecisionSource::ALL, DecisionSource::as_str),
+        state("local_track_external_identities", "decision_source", &DecisionSource::ALL, DecisionSource::as_str),
+        state("local_tracks", "applied_policy", &EffectivePolicy::ALL, EffectivePolicy::as_str),
+    ]
+}
+
+/// TEXT columns whose name says state but that hold something else.
+const NOT_STATE: &[(&str, &str, &str)] = &[
+    ("auth_oidc_states", "state", "a random sign-in token"),
+    ("spotify_auth_requests", "state", "a random sign-in token"),
+];
+
+/// Why a column is not held to an enum yet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Pending {
+    /// Its enum exists but cannot list its values: give it `ALL`, best by
+    /// declaring it through the kernel's `spelled!`.
+    NoAll,
+    /// It has a CHECK but no enum reads or writes it.
+    NoEnum,
+    /// Its name says state and it has no CHECK: either an enum backs it
+    /// (then it needs its CHECK) or it holds outside values (then it is
+    /// exempt).
+    Unclassified,
+}
+
+/// Columns not held to an enum yet, by owning area, with the enum when
+/// one is known. The list is emptied before the migrations are folded
+/// into one baseline: the fold would freeze each of these as it is.
+#[rustfmt::skip]
+const PENDING: &[(&str, &str, &str, Pending, &str)] = {
+    use Pending::{NoAll, NoEnum, Unclassified};
+    &[
+        // acquire
+        ("acquire", "acquire_discovery_batch_items", "outcome", NoAll, "BatchOutcome"),
+        ("acquire", "acquire_held_entries", "origin", NoAll, "EntryOrigin"),
+        ("acquire", "acquire_held_entries", "state", NoAll, "EntryState"),
+        ("acquire", "acquire_held_files", "root", NoAll, "HeldRoot"),
+        ("acquire", "acquire_held_files", "source", Unclassified, ""),
+        ("acquire", "acquire_held_files", "state", NoAll, "FileState"),
+        ("acquire", "auto_download_approvals", "source", Unclassified, ""),
+        ("acquire", "download_attempts", "disposition", NoEnum, ""),
+        ("acquire", "download_attempts", "source", NoAll, "SourceTag"),
+        ("acquire", "download_attempts", "state", NoAll, "AttemptState"),
+        ("acquire", "download_import_decisions", "outcome", NoEnum, ""),
+        ("acquire", "download_quarantine", "reason", NoAll, "QuarantineReason"),
+        ("acquire", "download_quarantine", "source", Unclassified, ""),
+        ("acquire", "download_tasks", "origin", Unclassified, "DispatchOrigin?"),
+        ("acquire", "download_tasks", "source", Unclassified, ""),
+        ("acquire", "drop_import_items", "status", NoAll, "DropItemStatus"),
+        ("acquire", "drop_import_jobs", "status", NoAll, "DropJobStatus"),
+        ("acquire", "request_history", "request_kind", NoAll, "RequestKind"),
+        ("acquire", "search_jobs", "status", NoEnum, ""),
+        ("acquire", "wanted_watches", "kind", NoAll, "WatchKind"),
+        ("acquire", "wanted_seen_candidates", "source", Unclassified, ""),
+        // catalog
+        ("catalog", "catalog_artist_event_checks", "last_status", NoEnum, ""),
+        ("catalog", "catalog_artist_tm_attractions", "match_basis", NoAll, "TmBasis"),
+        ("catalog", "catalog_cached_pages", "page", NoAll, "PageKind"),
+        ("catalog", "catalog_cached_pages", "source", Unclassified, ""),
+        ("catalog", "catalog_discover_activity", "feature", NoAll, "Feature"),
+        ("catalog", "catalog_discover_activity", "source", Unclassified, ""),
+        ("catalog", "catalog_live_event_feed", "match_confidence", NoAll, "Confidence"),
+        ("catalog", "catalog_live_event_feed", "source", NoAll, "EventSource"),
+        ("catalog", "catalog_live_event_feed", "status", NoAll, "ConcertStatus"),
+        ("catalog", "catalog_user_favorite_names", "item_kind", Unclassified, ""),
+        ("catalog", "catalog_user_favorites", "item_kind", NoEnum, ""),
+        ("catalog", "catalog_user_ratings", "item_kind", NoAll, "RatedKind"),
+        // compat
+        ("compat", "compat_jellyfin_ids", "kind", NoAll, "IdKind"),
+        // kernel
+        ("kernel", "config_ingests", "outcome", NoAll, "IngestOutcome"),
+        ("kernel", "durable_jobs", "kind", Unclassified, "job kinds each area names"),
+        ("kernel", "durable_jobs", "state", NoAll, "jobs::queue::State"),
+        ("kernel", "durable_loops", "state", NoAll, "db::durable::JobState"),
+        // library
+        ("library", "library_artist_credit_proofs", "subject_kind", NoEnum, ""),
+        ("library", "library_audio_fingerprint_outcomes", "state", NoEnum, ""),
+        ("library", "library_catalog_actions", "action_kind", Unclassified, ""),
+        ("library", "library_contribution_drafts", "result_source", NoEnum, ""),
+        ("library", "library_event_stream_revisions", "stream_kind", NoEnum, ""),
+        ("library", "library_identification_attempts", "state", Unclassified, ""),
+        ("library", "library_identity_repair_findings", "state", NoAll, "FindingState"),
+        ("library", "library_management_baselines", "restore_status", NoEnum, ""),
+        ("library", "library_management_blobs", "kind", NoEnum, ""),
+        ("library", "library_management_job_snapshots", "mode", NoAll, "JobMode"),
+        ("library", "library_management_job_snapshots", "origin", NoAll, "Origin"),
+        ("library", "library_management_job_snapshots", "phase", NoAll, "ManagementPhase"),
+        ("library", "library_management_metadata_snapshots", "entity_kind", Unclassified, ""),
+        ("library", "library_management_overrides", "subject_kind", NoEnum, ""),
+        ("library", "library_operation_control_idempotency", "control", NoAll, "Control"),
+        ("library", "library_operation_jobs", "control_request", NoAll, "ControlRequest"),
+        ("library", "library_operation_jobs", "kind", NoAll, "OperationKind"),
+        ("library", "library_operation_jobs", "state", NoAll, "OperationState"),
+        ("library", "library_operation_work", "state", NoAll, "WorkState"),
+        ("library", "library_publish_blob_refs", "owner_kind", Unclassified, ""),
+        ("library", "library_publish_outputs", "kind", NoAll, "OutputKind"),
+        ("library", "library_repair_snapshots", "phase", NoAll, "repairs::models"),
+        ("library", "library_repair_snapshots", "purpose", NoAll, "Purpose"),
+        ("library", "library_scan_failures", "phase", NoAll, "scan::models::Phase"),
+        ("library", "library_scan_inventory", "processing_state", Unclassified, ""),
+        ("library", "library_scan_run_scopes", "reconciliation_state", Unclassified, ""),
+        ("library", "library_scan_runs", "next_end_pass", NoEnum, ""),
+        ("library", "library_work_control", "queue_kind", Unclassified, ""),
+        ("library", "local_album_aliases", "kind", NoEnum, ""),
+        ("library", "local_album_artists", "role", Unclassified, ""),
+        ("library", "local_album_artwork", "source", NoEnum, ""),
+        ("library", "local_album_external_identities", "provider_source_mode", Unclassified, ""),
+        ("library", "local_albums", "grouping_source", NoEnum, ""),
+        ("library", "local_artist_aliases", "kind", NoEnum, ""),
+        ("library", "local_artist_external_identities", "provider_source_mode", Unclassified, ""),
+        ("library", "local_artist_merge_candidates", "state", NoEnum, ""),
+        ("library", "local_artists", "kind", NoEnum, ""),
+        ("library", "local_entity_source_links", "decision_source", Unclassified, ""),
+        ("library", "local_track_artists", "role", Unclassified, ""),
+        ("library", "local_track_external_identities", "provider_source_mode", Unclassified, ""),
+        ("library", "local_track_genres", "source", NoEnum, ""),
+        ("library", "local_track_lyrics", "source", NoAll, "LyricsSource"),
+        ("library", "local_tracks", "album_artist_provenance", NoEnum, ""),
+        ("library", "local_tracks", "album_title_provenance", NoEnum, ""),
+        ("library", "local_tracks", "availability", NoEnum, ""),
+        ("library", "local_tracks", "ingest_source", Unclassified, ""),
+        ("library", "local_tracks", "membership_source", NoEnum, ""),
+        ("library", "local_tracks", "stat_revision_kind", NoEnum, ""),
+        ("library", "local_tracks", "title_provenance", NoEnum, ""),
+        // media
+        ("media", "library_play_history", "source", Unclassified, ""),
+        ("media", "media_navidrome_folder_preferences", "mode", NoEnum, ""),
+        ("media", "user_listening_prefs", "now_playing_visibility", NoEnum, ""),
+        ("media", "user_listening_prefs", "primary_music_source", NoAll, "ListenSource"),
+        // tool
+        ("tool", "import_pending_links", "mode", NoAll, "LinkMode"),
+        ("tool", "import_pending_links", "ref_kind", NoEnum, ""),
+        ("tool", "import_runs", "exit_code", NoAll, "ExitCode"),
+    ]
+};
+
+/// Every state column's CHECK lists exactly its enum's values. A column
+/// counts as state when it has a `CHECK (column IN (...))` list or is TEXT
+/// with a name ending in a state word; each is registered with its enum,
+/// exempt with a reason, or pending with its owner.
+#[tokio::test]
+async fn every_state_column_lists_exactly_its_enums_values() {
+    let named_state =
+        Regex::new(r"(^|_)(state|status|phase|role|kind|mode|source|origin|disposition)$").unwrap();
+    // `column NOT IN (...)` matches with `NOT` as the column, and is skipped.
+    let listed_values =
+        Regex::new(r#"(?i)\b"?(\w+)"?\s+IN\s*\(\s*('[^']*'(?:\s*,\s*'[^']*')*)\s*\)"#).unwrap();
+    let pool = migrated_pool().await;
+    let tables: Vec<(String, String)> = sqlx::query_as(
+        "SELECT name, sql FROM sqlite_master WHERE type = 'table' AND sql NOT LIKE 'CREATE VIRTUAL%' \
+         AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'local_tracks_fts_%' \
+         AND name <> '_sqlx_migrations' ORDER BY name",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+
+    let mut checked: BTreeMap<(String, String), std::collections::BTreeSet<String>> =
+        BTreeMap::new();
+    let mut columns = std::collections::BTreeSet::new();
+    let mut state_like = std::collections::BTreeSet::new();
+    for (table, sql) in &tables {
+        for found in listed_values.captures_iter(sql) {
+            if found[1].eq_ignore_ascii_case("not") {
+                continue;
+            }
+            let values = found[2]
+                .split(',')
+                .map(|value| value.trim().trim_matches('\'').to_owned());
+            checked
+                .entry((table.clone(), found[1].to_owned()))
+                .or_default()
+                .extend(values);
+        }
+        let info: Vec<(String, String)> =
+            sqlx::query_as("SELECT name, upper(type) FROM pragma_table_info(?)")
+                .bind(table)
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        for (column, kind) in info {
+            if kind == "TEXT" && named_state.is_match(&column) {
+                state_like.insert((table.clone(), column.clone()));
+            }
+            columns.insert((table.clone(), column));
+        }
+    }
+
+    let owners = table_owners();
+    let mut problems = Vec::new();
+    let registered = state_columns();
+    let mut entries: Vec<(&str, &str, &str)> = registered
+        .iter()
+        .map(|row| (row.table, row.column, "registered"))
+        .collect();
+    entries.extend(
+        NOT_STATE
+            .iter()
+            .map(|(table, column, _)| (*table, *column, "not state")),
+    );
+    for (area, table, column, _, _) in PENDING {
+        entries.push((table, column, "pending"));
+        if owners.get(table) != Some(area) {
+            problems.push(format!(
+                "{table}.{column} is pending under {area}, but table-owners.txt says {:?}",
+                owners.get(table)
+            ));
+        }
+    }
+    let mut accounted = BTreeMap::new();
+    for (table, column, list) in entries {
+        let key = (table.to_owned(), column.to_owned());
+        if !columns.contains(&key) {
+            problems.push(format!("{table}.{column} ({list}) is not in the schema"));
+        }
+        if let Some(earlier) = accounted.insert(key, list) {
+            problems.push(format!(
+                "{table}.{column} is listed as {earlier} and as {list}"
+            ));
+        }
+    }
+
+    for row in &registered {
+        let wanted: std::collections::BTreeSet<String> =
+            row.values.iter().map(|value| (*value).to_owned()).collect();
+        if wanted.len() != row.values.len() {
+            problems.push(format!(
+                "{}.{}: its enum spells two values the same",
+                row.table, row.column
+            ));
+        }
+        match checked.get(&(row.table.to_owned(), row.column.to_owned())) {
+            None => problems.push(format!("{}.{} has no CHECK list", row.table, row.column)),
+            Some(listed) if *listed != wanted => problems.push(format!(
+                "{}.{}: only the CHECK lists {:?}, only the enum has {:?}",
+                row.table,
+                row.column,
+                listed.difference(&wanted).collect::<Vec<_>>(),
+                wanted.difference(listed).collect::<Vec<_>>(),
+            )),
+            Some(_) => {}
+        }
+    }
+    for key in checked.keys().chain(state_like.iter()) {
+        if !accounted.contains_key(key) {
+            problems.push(format!(
+                "{}.{} holds a state: register its enum here, or say why it is not one",
+                key.0, key.1
+            ));
+        }
+    }
+    problems.sort();
+    problems.dedup();
+    assert!(problems.is_empty(), "{}", problems.join("\n"));
 }
 
 /// Migration 0067 adds the foreign key indexes to a database at 66 and
@@ -5836,73 +6098,6 @@ impl ExpectedRequest for RequestRow {
         self.9 = Some(seconds);
         self
     }
-}
-
-/// The request status, watch state, approval state and request origin the
-/// database accepts are exactly the ones the code names, and each enum's
-/// text reads back to itself.
-#[tokio::test]
-async fn request_state_checks_list_exactly_the_code_values() {
-    use droppedneedle_acquire::dispatch::DispatchOrigin;
-    use droppedneedle_acquire::requests::ledger::{ApprovalState, RequestStatus, WatchState};
-
-    let pool = migrated_pool().await;
-    let mut schemas = BTreeMap::new();
-    for table in [
-        "request_history",
-        "wanted_watches",
-        "auto_download_approvals",
-        "personal_mix_approvals",
-    ] {
-        let sql: String = sqlx::query_scalar("SELECT sql FROM sqlite_master WHERE name = ?")
-            .bind(table)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        schemas.insert(table, sql);
-    }
-    let listed = |table: &str, column: &str| -> Vec<String> {
-        let sql = &schemas[table];
-        let marker = format!("CHECK({column} IN (");
-        let values = &sql[sql.find(&marker).expect("the column has a CHECK") + marker.len()..];
-        values[..values.find(')').expect("the list ends")]
-            .split(',')
-            .map(|value| value.trim().trim_matches('\'').to_owned())
-            .collect()
-    };
-    assert_eq!(
-        listed("request_history", "status"),
-        RequestStatus::ALL.map(|status| status.as_str().to_owned())
-    );
-    assert_eq!(
-        listed("request_history", "origin"),
-        DispatchOrigin::ALL.map(|origin| origin.as_str().to_owned())
-    );
-    assert_eq!(
-        listed("wanted_watches", "state"),
-        WatchState::ALL.map(|state| state.as_str().to_owned())
-    );
-    assert_eq!(
-        listed("auto_download_approvals", "state"),
-        ApprovalState::ALL.map(|state| state.as_str().to_owned())
-    );
-    assert_eq!(
-        listed("personal_mix_approvals", "state"),
-        ApprovalState::ALL.map(|state| state.as_str().to_owned())
-    );
-    for status in RequestStatus::ALL {
-        assert_eq!(RequestStatus::parse(status.as_str()), Some(status));
-    }
-    for state in WatchState::ALL {
-        assert_eq!(WatchState::parse(state.as_str()), Some(state));
-    }
-    for state in ApprovalState::ALL {
-        assert_eq!(ApprovalState::parse(state.as_str()), Some(state));
-    }
-    for origin in DispatchOrigin::ALL {
-        assert_eq!(DispatchOrigin::parse(origin.as_str()), Some(origin));
-    }
-    assert_eq!(WatchState::parse("dormant"), None);
 }
 
 /// Migration 0083 types the acquire reasons. A task's outcome code comes

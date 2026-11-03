@@ -93,15 +93,7 @@ pub enum CreditState {
     Projected,
 }
 
-impl CreditState {
-    pub const ALL: [Self; 3] = [
-        Self::WaitingForIdentity,
-        Self::AmbiguousCreditStructure,
-        Self::Projected,
-    ];
-}
-
-crate::scan::models::spelled!(CreditState {
+droppedneedle_kernel::spelled!(CreditState {
     WaitingForIdentity => "waiting_for_identity",
     AmbiguousCreditStructure => "ambiguous_credit_structure",
     Projected => "projected",

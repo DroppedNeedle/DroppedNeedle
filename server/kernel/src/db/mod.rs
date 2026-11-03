@@ -72,7 +72,8 @@
 //! inside, [`datalock`] is the file lock the server holds and the offline
 //! tool takes exclusively, `scratch` is the self-removing directory tests
 //! write under, [`statement`] declares the SQL every area keeps in its
-//! `sql.rs`, `sql` is this module's own, [`error`] holds the typed
+//! `sql.rs`, `sql` is this module's own, `spelled` is the one codec for a
+//! closed set stored as text ([`spelled!`](crate::spelled)), [`error`] holds the typed
 //! errors, and [`cache`] is the provider cache's own throwaway file, with
 //! its own writer and readers, and [`undo_dir`] is the folder of undo
 //! copies beside the database, which backups carry with it.
@@ -95,6 +96,7 @@ mod savepoint;
 mod scope;
 #[cfg(any(test, feature = "test-support"))]
 pub mod scratch;
+mod spelled;
 pub(crate) mod sql;
 pub mod statement;
 pub mod time;

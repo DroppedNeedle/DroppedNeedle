@@ -66,7 +66,7 @@ pub enum ContributionState {
     Cancelled,
 }
 
-crate::scan::models::spelled!(ContributionState {
+droppedneedle_kernel::spelled!(ContributionState {
     Draft => "draft",
     Ready => "ready",
     Seeded => "seeded",

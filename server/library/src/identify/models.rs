@@ -192,7 +192,7 @@ pub enum IdentifyKind {
     Historical,
 }
 
-crate::scan::models::spelled!(IdentifyKind {
+droppedneedle_kernel::spelled!(IdentifyKind {
     Automatic => "automatic",
     Manual => "manual",
     Historical => "historical",
@@ -210,7 +210,7 @@ pub enum JobState {
     Attention,
 }
 
-crate::scan::models::spelled!(JobState {
+droppedneedle_kernel::spelled!(JobState {
     Queued => "queued",
     Running => "running",
     Deferred => "deferred",
@@ -243,7 +243,7 @@ pub enum ReviewState {
     Excluded,
 }
 
-crate::scan::models::spelled!(ReviewState {
+droppedneedle_kernel::spelled!(ReviewState {
     Pending => "pending",
     Approved => "approved",
     Rejected => "rejected",
@@ -350,7 +350,7 @@ pub enum MatchFlagState {
     Unmatched,
 }
 
-crate::scan::models::spelled!(MatchFlagState {
+droppedneedle_kernel::spelled!(MatchFlagState {
     Unconfirmed => "unconfirmed",
     Unmatched => "unmatched",
 });

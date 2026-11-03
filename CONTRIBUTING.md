@@ -107,6 +107,8 @@ pub(super) fn feed_page(for_user: bool, newest_first: bool) -> String { ... }
 
 `raw_sql_stays_in_sql_files` fails on SQL text anywhere else, and on `PRAGMA` or transaction control outside `server/kernel/src/db/`. Test files are exempt. Areas that have not moved their SQL yet are listed in `server/sql-outside-registry.txt`; moving an area deletes its line.
 
+A column that stores an enum as text declares the enum's spellings with `droppedneedle_kernel::spelled!` and carries a `CHECK (column IN (...))` listing exactly those spellings; `every_state_column_lists_exactly_its_enums_values` in `persist_schema.rs` registers each such column with its enum and fails when the two differ.
+
 ## Pull requests
 
 1. Fork the repo and create a branch from the default branch.
