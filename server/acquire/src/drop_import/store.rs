@@ -434,7 +434,9 @@ impl DropStore {
                                 .ok()?
                                 .to_string_lossy()
                                 .into_owned();
-                            Some(NewFile::upload(&rel, waits))
+                            // A code an older build stored may name a
+                            // reason no held file carries.
+                            Some(NewFile::upload(&rel, waits.held()))
                         })
                         .collect();
                     if files.is_empty() {

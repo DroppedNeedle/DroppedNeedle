@@ -58102,7 +58102,8 @@
           "tracks_missing",
           "already_owned",
           "cancelled",
-          "moved_on"
+          "moved_on",
+          "no_better_copy"
         ]
       },
       "ReasonCount": {

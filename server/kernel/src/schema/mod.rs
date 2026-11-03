@@ -22,7 +22,10 @@ macro_rules! migration {
 }
 
 /// Every migration, the baseline first.
-pub static MIGRATIONS: &[Migration<'static>] = &[migration!(135, "0135_baseline.sql")];
+pub static MIGRATIONS: &[Migration<'static>] = &[
+    migration!(135, "0135_baseline.sql"),
+    migration!(136, "0136_acquire_held_reasons.sql"),
+];
 
 /// The stamp of a database made by the migration chain the baseline
 /// replaced, at that chain's last number. The runner's bridge moves such a

@@ -1,6 +1,7 @@
-// lucide-free so the lucide-free nav store can import it. "searching"/"awaiting_review" are derived (backend exposes no search_jobs.status):
+// lucide-free so the lucide-free nav store can import it. "searching"/"awaiting_review" are derived:
+//   held for review                       -> awaiting_review
 //   queued + no search_job_id             -> searching
-//   queued + search_job_id + no candidate -> awaiting_review (parked manual tier)
+//   queued + search_job_id + no candidate -> awaiting_review (parked on its search for the owner's pick)
 //   otherwise                             -> raw status
 import type { DownloadStatus, DownloadTask } from '$lib/types';
 

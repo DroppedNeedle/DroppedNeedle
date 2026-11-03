@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use std::time::Instant;
 
 use droppedneedle_kernel::db::statement::{Declared, Schema, StatementFile};
-use droppedneedle_kernel::db::{SchemaError, migrate, migrate_file};
+use droppedneedle_kernel::db::{Chain, SchemaError, migrate, migrate_file};
 use droppedneedle_kernel::schema::{BRIDGE_FROM, CHAIN, MIGRATIONS, latest_version};
 use regex::Regex;
 use rusqlite::Connection;
@@ -303,10 +303,16 @@ fn sqlite_is_built_without_memory_counters() {
 /// The SHA-256 of every file in `server/migrations/`. A file on `v3` is
 /// never edited, renumbered or removed: a schema change is a new file, and
 /// a new file adds its line here.
-const SHIPPED: &[(&str, &str)] = &[(
-    "0135_baseline.sql",
-    "f6ce70cd4b72a35a9a63cd4703e7eee02223b1e698c90e486d70ede20bbe5e23",
-)];
+const SHIPPED: &[(&str, &str)] = &[
+    (
+        "0135_baseline.sql",
+        "f6ce70cd4b72a35a9a63cd4703e7eee02223b1e698c90e486d70ede20bbe5e23",
+    ),
+    (
+        "0136_acquire_held_reasons.sql",
+        "52c71063cc661dc3c72195099a8c4ba31cfb430e3d25030a0ad12824483c30f0",
+    ),
+];
 
 /// The files in `server/migrations/`, by name.
 fn migration_files() -> Vec<(String, Vec<u8>)> {
@@ -463,6 +469,96 @@ fn the_runner_takes_each_stamp_it_can_meet() {
         std::fs::read(&fresh).unwrap(),
         before,
         "a second run is a no-op"
+    );
+}
+
+/// 0136 narrows the held-files reason list. A held row keeps its id and
+/// every column, the rest of the schema is unchanged, and the narrowed list
+/// refuses a download-only reason. A row holding a reason outside the list
+/// is kept and reads as held by an earlier version.
+#[test]
+fn held_reasons_narrow_and_every_held_row_is_kept() {
+    let dir = ScratchDir::new("held-reasons");
+    let baseline = Chain::new(&MIGRATIONS[..1], None);
+    let held_at_135 = |name: &str, reason: &str| {
+        let path = dir.join(name);
+        let connection = migrate(Connection::open(&path).unwrap(), &baseline).unwrap();
+        connection
+            .execute_batch(
+                "INSERT INTO auth_users (id, display_name, created_at) VALUES ('u1', 'U', 1);
+                 INSERT INTO acquire_held_entries (id, user_id, origin, group_key, state,
+                     created_at, expires_at) VALUES (7, 'u1', 'download', 'album:rg', 'held',
+                     1, 2);",
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO acquire_held_files (id, entry_id, root, path, original_name,
+                     track_title, source, source_task_id, reason, reason_detail, state,
+                     created_at) VALUES (42, 7, 'held', 'a/01.flac', '01.flac', 'One',
+                     'soulseek', 't1', ?1, 'why', 'held', 1000)",
+                [reason],
+            )
+            .unwrap();
+        drop(connection);
+        path
+    };
+    let row = |connection: &Connection| -> Vec<String> {
+        connection
+            .query_row(
+                "SELECT id, entry_id, root, path, original_name, track_title, source,
+                     source_task_id, reason, reason_detail, state, created_at
+                 FROM acquire_held_files",
+                [],
+                |row| {
+                    (0..12)
+                        .map(|at| Ok(format!("{:?}", row.get_ref(at)?)))
+                        .collect()
+                },
+            )
+            .unwrap()
+    };
+    let others = |connection: &Connection| {
+        let mut rows = schema_rows(connection);
+        rows.retain(|(kind, name, _, _)| !(kind == "table" && name == "acquire_held_files"));
+        rows
+    };
+
+    let kept = held_at_135("kept.db", "weak_match");
+    let connection = Connection::open(&kept).unwrap();
+    let (before_row, before_schema) = (row(&connection), others(&connection));
+    drop(connection);
+    migrate_file(&kept, &CHAIN).unwrap();
+    let connection = Connection::open(&kept).unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 136);
+    assert_eq!(
+        row(&connection),
+        before_row,
+        "the held row is kept as it was"
+    );
+    assert_eq!(
+        others(&connection),
+        before_schema,
+        "indexes and triggers come back"
+    );
+    let refused = connection.execute(
+        "UPDATE acquire_held_files SET reason = 'no_better_copy' WHERE id = 42",
+        [],
+    );
+    assert!(refused.is_err(), "a download-only reason is no held reason");
+    drop(connection);
+
+    let outside = held_at_135("outside.db", "corrupt");
+    migrate_file(&outside, &CHAIN).unwrap();
+    let connection = Connection::open(&outside).unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 136);
+    assert_eq!(
+        texts(
+            &connection,
+            "SELECT reason || ':' || path FROM acquire_held_files",
+            []
+        ),
+        ["held_by_earlier_version:a/01.flac"]
     );
 }
 
@@ -1017,7 +1113,7 @@ fn state_columns() -> Vec<StateColumn> {
         state("acquire_discovery_batch_items", "outcome", &BatchOutcome::ALL, BatchOutcome::as_str),
         state("acquire_held_entries", "origin", &EntryOrigin::ALL, EntryOrigin::as_str),
         state("acquire_held_entries", "state", &EntryState::ALL, EntryState::as_str),
-        state("acquire_held_files", "reason", &Reason::ALL, Reason::code),
+        state("acquire_held_files", "reason", &Reason::HELD, Reason::code),
         state("acquire_held_files", "root", &HeldRoot::ALL, HeldRoot::as_str),
         state("acquire_held_files", "state", &FileState::ALL, FileState::as_str),
         state("auto_download_approvals", "state", &ApprovalState::ALL, ApprovalState::as_str),

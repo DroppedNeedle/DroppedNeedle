@@ -7,7 +7,7 @@
 
 use super::landing_rows::ImportOutcome;
 use super::state::TaskStatus;
-use crate::reason::Reason;
+use crate::reason::{Reason, ReasonKind};
 
 /// What a task that was moved on to its next source by hand logs as its
 /// last outcome.
@@ -22,7 +22,8 @@ pub struct DecisionReason {
 
 /// The one reason to show for a task, if it needs one. Live tasks have
 /// none (their progress speaks), except a task moved on by hand and one
-/// whose queued copy gave way to the next.
+/// whose queued copy gave way to the next. A cancelled task shows a
+/// settled reason it was stopped for, else plain cancelled.
 pub fn task_reason(
     status: TaskStatus,
     outcome: Option<Reason>,
@@ -33,7 +34,10 @@ pub fn task_reason(
         return None;
     }
     if status == TaskStatus::Cancelled {
-        return Some(Reason::Cancelled);
+        // A task the worker stopped on its own keeps the settled reason it
+        // stopped for; one a person stopped reads as cancelled.
+        let settled = outcome.filter(|reason| reason.kind() == ReasonKind::Settled);
+        return Some(settled.unwrap_or(Reason::Cancelled));
     }
     let settled = status.is_terminal();
     if let Some(decision) = decision
@@ -68,6 +72,21 @@ mod tests {
         assert!(task_reason(TaskStatus::Downloading, Some(Reason::Stalled), false, None).is_none());
         let moved = task_reason(TaskStatus::Queued, Some(Reason::MovedOn), false, None);
         assert_eq!(moved, Some(Reason::MovedOn));
+    }
+
+    #[test]
+    fn a_cancelled_task_shows_the_settled_reason_it_stopped_for() {
+        let settled = task_reason(
+            TaskStatus::Cancelled,
+            Some(Reason::NoBetterCopy),
+            false,
+            None,
+        );
+        assert_eq!(settled, Some(Reason::NoBetterCopy));
+        let stopped = task_reason(TaskStatus::Cancelled, Some(Reason::MovedOn), false, None);
+        assert_eq!(stopped, Some(Reason::Cancelled));
+        let stalled = task_reason(TaskStatus::Cancelled, Some(Reason::Stalled), false, None);
+        assert_eq!(stalled, Some(Reason::Cancelled));
     }
 
     #[test]

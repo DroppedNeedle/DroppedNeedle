@@ -172,8 +172,9 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 	const downloadsQuery = getAlbumDownloadsQuery(albumIdGetter, () => downloadClientConfigured);
 	const albumDownloadTasks = $derived(downloadsQuery.data?.items ?? []);
 	// what the header strip shows: any in-flight task (prefer a live downloading/processing one),
-	// else the most recent attempt only if it's actionable (failed/partial -> retry). completed and
-	// cancelled show nothing - the In-Library badge takes over and we don't nag on old cancellations.
+	// else the most recent attempt only if it's actionable (failed/partial -> retry). completed,
+	// cancelled and settled (an upgrade that found nothing better) show nothing - the In-Library
+	// badge takes over and we don't nag on old cancellations.
 	const headerDownloadTask = $derived.by<DownloadTask | null>(() => {
 		if (albumDownloadTasks.length === 0) return null;
 		const inflight = albumDownloadTasks.filter((t) => isActiveDownloadStatus(t.status));
@@ -185,6 +186,7 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 		const latest = albumDownloadTasks.reduce((best, t) =>
 			t.created_at > best.created_at ? t : best
 		);
+		if (latest.reason?.kind === 'settled') return null;
 		return latest.status === 'failed' || latest.status === 'partial' ? latest : null;
 	});
 	// per-recording active task for the track rows (most recent active wins)

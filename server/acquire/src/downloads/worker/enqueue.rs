@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use super::poll::PollMemory;
 use super::{Attempt, DownloadWorker, Pass, failover_exhausted, handled_count, live_attempt};
+use crate::dispatch::DispatchOrigin;
 use crate::downloads::sources::{DownloadSource, SourceError, SourceHandle};
 use crate::downloads::state::{AttemptDisposition, AttemptState, TaskStatus};
 use crate::downloads::store::{AttemptRow, StoreError, TaskOutcome, TaskRow};
@@ -82,8 +83,14 @@ impl DownloadWorker {
     /// Enqueue one queued task. Answers whether a fetch started.
     async fn enqueue_one(self: &Arc<Self>, pass: &Pass, task: &TaskRow) -> bool {
         let now = pass.now;
-        if self.landing_in_flight(&task.id) || Self::parked(task) {
-            // A parked task waits for its owner's pick from its search.
+        if self.landing_in_flight(&task.id) {
+            return false;
+        }
+        if Self::parked(task) {
+            if task.origin == DispatchOrigin::Upgrade.as_str() {
+                self.settle_upgrade(task, now).await;
+            }
+            // Any other parked task waits for its owner's pick.
             return false;
         }
         if task.artist_name.trim().is_empty() && task.album_title.trim().is_empty() {
@@ -221,6 +228,44 @@ impl DownloadWorker {
         }
         self.backoff(&task.id, now);
         false
+    }
+
+    /// Settle a parked upgrade: it never waits for a pick. Doing nothing
+    /// keeps the library copy, so it ends as stopped with "no better copy",
+    /// and the album rests under the upgrade back-off before the sweep
+    /// looks again. A person's request that joined the upgrade keeps it
+    /// waiting for their pick, as any request does.
+    async fn settle_upgrade(&self, task: &TaskRow, now: f64) {
+        let task_id = task.id.clone();
+        self.step("downloads.settle_upgrade", move |store| {
+            // A person's pick since the pass read the queue stands.
+            let still_parked = store.get_task(&task_id)?.is_some_and(|task| {
+                task.status == TaskStatus::Queued && task.candidate_index.is_none()
+            });
+            if !still_parked {
+                return Ok(());
+            }
+            let serves_request: bool = store.conn().query_row(
+                crate::downloads::sql::TASK_SERVES_REQUEST.text(),
+                [&task_id],
+                |row| row.get(0),
+            )?;
+            if serves_request {
+                return Ok(());
+            }
+            store.finalize_task_and_attempt(
+                &task_id,
+                TaskStatus::Cancelled,
+                now,
+                Some(TaskOutcome::new(
+                    Reason::NoBetterCopy,
+                    "no copy looked better than the library's",
+                )),
+                None,
+                true,
+            )
+        })
+        .await;
     }
 
     /// Settle a task no source can serve any more, keeping its last

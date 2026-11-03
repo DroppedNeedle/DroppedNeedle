@@ -11,10 +11,13 @@
 	const reason = $derived(task.reason ?? null);
 	// A queued task waiting for a download source is not a failure: it starts by itself.
 	const waiting = $derived(reason?.code === 'no_download_source');
+	// A settled reason (nothing better found, stopped) is a final word, not a fault.
 	const tone = $derived(
-		waiting || task.held_for_review || task.status === 'partial'
-			? 'text-warning/85'
-			: 'text-error/80'
+		reason?.kind === 'settled'
+			? 'text-base-content/70'
+			: waiting || task.held_for_review || task.status === 'partial'
+				? 'text-warning/85'
+				: 'text-error/80'
 	);
 
 	// "7 of 12 imported, 2 held" when the import got part of the way.

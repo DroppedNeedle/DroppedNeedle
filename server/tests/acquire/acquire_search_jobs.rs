@@ -14,13 +14,15 @@ use droppedneedle_acquire::downloads::journal::Journal;
 use droppedneedle_acquire::downloads::sources::SourceHandle;
 use droppedneedle_acquire::downloads::store::{NewTask, TaskDetails};
 use droppedneedle_acquire::downloads::worker::{DownloadWorker, WorkerConfig};
+use droppedneedle_acquire::flows::stores::UpgradeWorklist;
+use droppedneedle_acquire::reason::Reason;
 use droppedneedle_acquire::requests::quota::QuotaLedger;
 use droppedneedle_acquire::search_jobs::candidates::{
     CandidateNoteCode, CandidateRefusal, CandidateTier,
 };
 use droppedneedle_acquire::search_jobs::review::ReviewMode;
 use droppedneedle_acquire::search_jobs::store::{
-    JobPayload, JobStatus, JobStore, NewJob, PickRefusal, PickedTask,
+    JobPayload, JobStatus, JobStore, NewJob, PickRefusal, PickedTask, ReviewOutcome,
 };
 use droppedneedle_acquire::search_jobs::{AlbumSearch, SearchJobError, SearchJobs, StartOutcome};
 use droppedneedle_acquire::slskd::{
@@ -375,6 +377,154 @@ async fn automatic_download_waits_for_a_pick_when_unsure() {
     assert_eq!(handles.len(), 1, "one enqueue: {handles:?}");
     let handle: SourceHandle = serde_json::from_str(&handles[0]).expect("handle decodes");
     assert_eq!(handle.username, "halfway");
+    drop(rig.staging);
+}
+
+async fn seed_album_task(journal: &Journal, task_id: &'static str, origin: &'static str) {
+    journal
+        .run("test.seed", move |store| {
+            store.insert_task(
+                &NewTask {
+                    id: task_id.to_owned(),
+                    user_id: "u1".to_owned(),
+                    artist_name: "Massive Attack".to_owned(),
+                    album_title: "Blue Lines".to_owned(),
+                    release_group_mbid: GROUP.to_owned(),
+                    origin: origin.to_owned(),
+                    retry_count: 0,
+                },
+                1_000.0,
+            )?;
+            store.set_task_details(
+                task_id,
+                &TaskDetails {
+                    release_mbid: Some(RELEASE.to_owned()),
+                    year: Some(1991),
+                    ..TaskDetails::default()
+                },
+                1_000.0,
+            )
+        })
+        .await
+        .expect("task seeds");
+}
+
+/// Park `task_id` on a recorded search `job_id` with nothing picked.
+async fn park_on_search(journal: &Journal, task_id: &'static str, job_id: &str) {
+    let recorded = JobStore::new(journal.db().clone())
+        .record_review(
+            NewJob {
+                id: job_id.to_owned(),
+                user_id: "u1".to_owned(),
+                artist_name: "Massive Attack".to_owned(),
+                album_title: "Blue Lines".to_owned(),
+                year: Some(1991),
+                release_group_mbid: Some(GROUP.to_owned()),
+                release_mbid: Some(RELEASE.to_owned()),
+            },
+            JobPayload {
+                release_mbid: Some(RELEASE.to_owned()),
+                tracks_total: Some(4),
+                candidates: Vec::new(),
+            },
+            task_id,
+            ReviewOutcome::Park,
+        )
+        .await
+        .expect("review records");
+    assert!(recorded, "{task_id} is parked on its search");
+}
+
+/// An upgrade never waits for a pick: when its look finds no recommended
+/// copy it stops with "no better copy", nothing is fetched, and the album
+/// rests under the upgrade back-off. One parked before this rule settles
+/// the same way on the next pass, unless a person's request joined it: that
+/// one waits for their pick, as any request does.
+#[tokio::test]
+async fn an_upgrade_with_no_recommended_copy_settles_instead_of_waiting() {
+    let mock = MockSlskd::start().await.expect("mock starts");
+    mock.script_responses(vec![peer(
+        "halfway",
+        "@@music\\Massive Attack\\Blue Lines",
+        &[0, 1],
+    )]);
+    let rig = rig(&mock, true).await;
+    let looked = "0123456789abcdef0123456789abcdea";
+    seed_album_task(&rig.journal, looked, "upgrade").await;
+    let parked = "0123456789abcdef0123456789abcdeb";
+    let joined = "0123456789abcdef0123456789abcdec";
+    for (task_id, job_id) in [
+        (parked, "fedcba9876543210fedcba9876543210"),
+        (joined, "fedcba9876543210fedcba9876543211"),
+    ] {
+        seed_album_task(&rig.journal, task_id, "upgrade").await;
+        park_on_search(&rig.journal, task_id, job_id).await;
+    }
+    rig.journal
+        .db()
+        .write("test.request", |tx| {
+            tx.execute(
+                "INSERT INTO request_history (musicbrainz_id_lower, musicbrainz_id, artist_name, \
+                 album_title, requested_at, status, user_id, download_task_id, request_kind) \
+                 VALUES (?1, ?1, 'Massive Attack', 'Blue Lines', 1, 'downloading', 'u1', ?2, \
+                 'album')",
+                [GROUP, joined],
+            )?;
+            Ok(())
+        })
+        .await
+        .expect("a request joins the upgrade");
+
+    rig.worker.run_once(1).await;
+    for _ in 0..200 {
+        if !rig.worker.reviews_running() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert!(!rig.worker.reviews_running(), "the look finished");
+    rig.worker.run_once(2).await;
+
+    let waiting = rig
+        .journal
+        .read_task(joined)
+        .await
+        .expect("task reads")
+        .expect("task exists");
+    assert_eq!(
+        waiting.status.as_str(),
+        "queued",
+        "a person's request waits"
+    );
+    let mut finished_at = 0.0_f64;
+    for task_id in [looked, parked] {
+        let task = rig
+            .journal
+            .read_task(task_id)
+            .await
+            .expect("task reads")
+            .expect("task exists");
+        assert_eq!(task.status.as_str(), "cancelled", "{task_id}");
+        assert_eq!(task.outcome_code, Some(Reason::NoBetterCopy), "{task_id}");
+        assert!(
+            rig.journal
+                .read_source_handles(
+                    task_id,
+                    &droppedneedle_acquire::downloads::SourceTag::Soulseek
+                )
+                .await
+                .expect("handles read")
+                .is_empty(),
+            "nothing fetched for {task_id}"
+        );
+        finished_at = finished_at.max(task.completed_at.expect("settled"));
+    }
+    let now = finished_at as i64 + 60;
+    let resting = UpgradeWorklist::new(rig.journal.db().clone())
+        .list_resting(now)
+        .await
+        .expect("worklist reads");
+    assert!(resting.contains(GROUP), "the album rests after the settle");
     drop(rig.staging);
 }
 

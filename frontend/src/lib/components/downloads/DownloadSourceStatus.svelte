@@ -2,7 +2,6 @@
 	import { Clock3, ListOrdered, SkipForward } from 'lucide-svelte';
 
 	import { NO_FALLBACK_COPY } from '$lib/utils/acquisitionLabels';
-	import { withBasePath } from '$lib/utils/basePath';
 
 	import { createTryNextSourceMutation } from '$lib/queries/downloads/DownloadMutations.svelte';
 	import type { DownloadSourceUpdate } from '$lib/queries/downloads/DownloadSSE.svelte';
@@ -80,12 +79,6 @@
 	});
 
 	const fallbackLine = $derived(isQueued && !hasNext ? NO_FALLBACK_COPY : null);
-	const awaitingReview = $derived(
-		task.status === 'queued' &&
-			Boolean(task.search_job_id) &&
-			task.candidate_index === null &&
-			!task.held_for_review
-	);
 	const evidenceChips = $derived.by(() => {
 		const chips: string[] = [];
 		if (task.quality_bitrate) chips.push(`${task.quality_bitrate} kbps`);
@@ -119,21 +112,6 @@
 	});
 </script>
 
-<!-- Awaiting review is a display-only derivation: queued + search job + no picked
-		candidate means only unknown-resolution copies were found (Acquisition plan). -->
-{#if awaitingReview}
-	<div
-		class="mt-2 rounded-box border border-base-content/15 bg-base-200 px-3 py-2 text-xs"
-		role="status"
-	>
-		<p class="font-semibold text-warning">
-			Waiting: only unknown-resolution copies were found - review required
-		</p>
-		<a href={withBasePath('/downloads')} class="link link-hover font-semibold text-primary">
-			Review candidates
-		</a>
-	</div>
-{/if}
 <!-- Plugin sources (source "plugin:<name>") intentionally take the generic path:
 	no remote-queue hints below - only soulseek peers report queue telemetry. -->
 {#if source === 'soulseek' && task.status === 'downloading' && !task.held_for_review}

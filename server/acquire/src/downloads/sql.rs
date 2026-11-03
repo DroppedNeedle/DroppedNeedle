@@ -178,6 +178,10 @@ droppedneedle_kernel::sql! {
     pub(super) CLEANUP_DEBT = "SELECT COUNT(*) FROM download_attempts \
              WHERE source = ?1 AND task_id = ?2 AND job_name = ?3 \
                AND state != 'complete'";
+    /// Whether a request still waiting on task `?1` follows it: a
+    /// person's request can join an upgrade already fetching its album.
+    pub(super) TASK_SERVES_REQUEST = "SELECT EXISTS (SELECT 1 FROM request_history \
+             WHERE download_task_id = ?1 AND status IN ('pending', 'queued', 'downloading'))";
     /// Cancel a live task.
     pub(super) CANCEL_TASK = "UPDATE download_tasks \
              SET status = 'cancelled', last_polled_at = ?1, completed_at = ?1, \
