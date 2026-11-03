@@ -28,6 +28,7 @@ use super::schedule::Schedule;
 use super::sql;
 use super::supervisor::{AlreadyRunning, FnTick, Next, Supervisor, TickCtx, TickError};
 use crate::clock::Clock;
+use crate::db::time::Millis;
 use crate::db::{Db, DbError, writer::Lane};
 
 /// Name prefix for tick loops: `plugin-tick:{name}`.
@@ -272,7 +273,7 @@ impl SqliteTickStore {
                 return Err(TickStoreError::UnknownPlugin(plugin));
             }
             let refused_plugin = plugin.clone();
-            let now = store.clock.now_ms() as f64 / 1000.0;
+            let now = Millis(store.clock.now_ms());
             let stored = store
                 .db
                 .write(Lane::Background, "tick-state-write", move |tx| {

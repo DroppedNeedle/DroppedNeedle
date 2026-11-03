@@ -12675,3 +12675,388 @@ async fn compat_and_media_tables_reach_the_conventions_on_upgrade() {
         0
     );
 }
+
+/// Migration 0127: plugin tick state, section preferences, the importer's
+/// records, the planner's record and the concerts tables reach their final
+/// tables. Through the production runner, from the database before it: every
+/// row is carried with its converted times, one holding a bad value takes 0 or
+/// the safe default, a preference of a deleted user is not copied, an orphaned
+/// seen mark stays an orphan, the planner's record is cleared, and nothing else
+/// in the schema moves.
+#[tokio::test]
+async fn plugin_app_tool_and_concert_tables_reach_the_conventions_on_upgrade() {
+    const OLD: &[&str] = &[
+        "plugin_tick_state",
+        "user_section_prefs",
+        "import_pending_links",
+        "import_progress",
+        "import_runs",
+        "db_planner_stats",
+        "artist_event_check",
+        "artist_skiddle_ids",
+        "artist_skiddle_resolution",
+        "artist_tm_attraction",
+        "live_event_feed",
+        "user_event_cities",
+        "user_event_seen",
+    ];
+    const NEW: &[&str] = &[
+        "plugin_tick_state",
+        "app_section_prefs",
+        "import_pending_links",
+        "import_progress",
+        "import_runs",
+        "db_planner_stats",
+        "catalog_artist_event_checks",
+        "catalog_artist_skiddle_ids",
+        "catalog_artist_skiddle_resolutions",
+        "catalog_artist_tm_attractions",
+        "catalog_live_event_feed",
+        "catalog_event_cities",
+        "catalog_event_seen_marks",
+    ];
+    type SchemaRow = (String, String, String, Option<String>);
+    async fn other_schema(pool: &SqlitePool) -> Vec<SchemaRow> {
+        let names = OLD
+            .iter()
+            .chain(NEW)
+            .map(|name| format!("'{name}'"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        sqlx::query_as(&format!(
+            "SELECT type, name, tbl_name, sql FROM sqlite_schema \
+             WHERE name NOT LIKE 'sqlite_%' AND tbl_name NOT IN ({names}) \
+             ORDER BY type, name"
+        ))
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    }
+    async fn number(pool: &SqlitePool, sql: &str) -> i64 {
+        sqlx::query_scalar(sql).fetch_one(pool).await.unwrap()
+    }
+    async fn orphans(pool: &SqlitePool) -> Vec<(String, i64, String)> {
+        sqlx::query_as(
+            "SELECT \"table\", rowid, parent FROM pragma_foreign_key_check ORDER BY 1, 2, 3",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    }
+
+    let dir = droppedneedle_kernel::db::scratch::ScratchDir::new("conventions-0127").unwrap();
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(
+            sqlx::sqlite::SqliteConnectOptions::new()
+                .filename(dir.join("library.db"))
+                .create_if_missing(true)
+                .foreign_keys(true)
+                .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal),
+        )
+        .await
+        .unwrap();
+    run_migrations(&pool, &migrator_through(126)).await.unwrap();
+    sqlx::raw_sql(
+        "INSERT INTO auth_users (id, display_name, role, created_at) \
+             VALUES ('u1', 'U', 'user', 1), ('u2', 'V', 'user', 1); \
+         INSERT INTO plugin_tick_state (rowid, plugin, key, value, updated_at) VALUES \
+             (3, 'p', 'k', X'01', 1700000000.25), (4, 'p', 't', 'text', 'never'); \
+         INSERT INTO user_section_prefs (rowid, user_id, page, section_key, enabled, \
+             updated_at) VALUES \
+             (5, 'u1', 'home', 'a', 0, '2024-01-01T00:00:00.500Z'), \
+             (6, 'u2', 'home', 'b', 7, 'unreadable'), \
+             (7, 'gone', 'home', 'c', 0, '2024-01-01T00:00:00Z'); \
+         INSERT INTO import_pending_links (rowid, target_table, target_key, ref_column, \
+             ref_kind, v2_id, mode) VALUES (8, 't', '[1]', 'c', 'track', 'v2', 'as_written'); \
+         INSERT INTO import_progress (rowid, instance_id, section, export_digest, rows_written, \
+             applied_at) VALUES (9, 'i', 's', 'd', 4, '2024-01-01T00:00:01+00:00'); \
+         INSERT INTO import_runs (rowid, id, instance_id, exported_at, exit_code, \
+             entity_counts, applied_at) VALUES \
+             (10, 'r1', 'i', '2024-01-01T00:00:00Z', 'OK_WITH_DROPS', '{}', \
+                 '2024-01-01T00:00:02Z'), \
+             (11, 'r2', 'i', 'never', 'WEIRD', '{}', 'never'); \
+         INSERT INTO db_planner_stats (singleton, analyzed_at, indexed_tracks) \
+             VALUES (1, 1700000000, 500); \
+         INSERT INTO artist_event_check (rowid, artist_mbid_lower, last_checked_at, \
+             last_status, last_error) VALUES \
+             (12, 'a', 1700000000.5, 'ok', NULL), (13, 'b', 'junk', 'other', 'e'); \
+         INSERT INTO artist_skiddle_ids (rowid, artist_mbid_lower, skiddle_artistid) \
+             VALUES (14, 'a', 's1'); \
+         INSERT INTO artist_skiddle_resolution (rowid, artist_mbid_lower, resolved_at) \
+             VALUES (15, 'a', 1700000000.0), (16, 'b', 'never'); \
+         INSERT INTO artist_tm_attraction (rowid, artist_mbid_lower, attraction_id, \
+             match_basis, resolved_at) VALUES (17, 'a', NULL, 'none', 1700000001.125); \
+         INSERT INTO live_event_feed (rowid, source, source_event_id, artist_mbid_lower, \
+             artist_name, event_name, latitude, longitude, starts_at, local_date, status, \
+             match_confidence, discovered_at, updated_at) VALUES \
+             (18, 'skiddle', 'e1', 'a', 'A', 'E', 'north', 2, '2026-05-01T19:00:00', \
+                 '2026-05-01', 'cancelled', 'name', 1700000000.0, 1700000002.5); \
+         INSERT INTO user_event_cities (rowid, user_id, city_name, country_code, latitude, \
+             longitude, radius_km, position) VALUES \
+             (19, 'u1', 'C', 'GB', 51.5, 0, 50, 0), (20, 'u1', 'Bad', NULL, 52, 1, 'wide', 1); \
+         INSERT INTO user_event_seen (rowid, user_id, seen_at) VALUES (21, 'u1', 1700000000.75); \
+         PRAGMA foreign_keys = OFF; \
+         INSERT INTO user_event_seen (rowid, user_id, seen_at) VALUES (22, 'ghost', 1); \
+         PRAGMA foreign_keys = ON;",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let schema_before = other_schema(&pool).await;
+
+    run_migrations(&pool, &migrator_through(127)).await.unwrap();
+
+    assert_eq!(other_schema(&pool).await, schema_before);
+    assert_eq!(
+        number(&pool, "SELECT foreign_keys FROM pragma_foreign_keys").await,
+        1
+    );
+    for table in NEW {
+        let sql = format!("SELECT strict FROM pragma_table_list WHERE name = '{table}'");
+        assert_eq!(number(&pool, &sql).await, 1, "{table} is STRICT");
+    }
+    for table in OLD.iter().filter(|table| !NEW.contains(table)) {
+        let sql = format!("SELECT COUNT(*) FROM sqlite_schema WHERE name = '{table}'");
+        assert_eq!(number(&pool, &sql).await, 0, "{table} is gone");
+    }
+    assert_eq!(
+        number(
+            &pool,
+            "SELECT COUNT(*) FROM sqlite_schema WHERE name IN ('plugin_tick_state_new', \
+             'import_pending_links_new', 'import_progress_new', 'import_runs_new', \
+             'db_planner_stats_new')"
+        )
+        .await,
+        0
+    );
+    for table in [
+        "app_section_prefs",
+        "catalog_event_cities",
+        "catalog_event_seen_marks",
+    ] {
+        let sql = format!("SELECT \"table\", on_delete FROM pragma_foreign_key_list('{table}')");
+        let keys: Vec<(String, String)> = sqlx::query_as(&sql).fetch_all(&pool).await.unwrap();
+        assert_eq!(
+            keys,
+            [("auth_users".to_owned(), "CASCADE".to_owned())],
+            "{table} has this one key"
+        );
+    }
+    let indexes: Vec<String> = sqlx::query_scalar(
+        "SELECT name FROM sqlite_schema WHERE type = 'index' AND sql IS NOT NULL \
+         AND tbl_name IN ('plugin_tick_state', 'import_pending_links', 'import_runs', \
+         'catalog_live_event_feed') ORDER BY name",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        indexes,
+        [
+            "idx_catalog_live_event_feed_artist",
+            "idx_catalog_live_event_feed_date",
+            "idx_import_pending_links_v2",
+            "idx_import_runs_instance",
+            "idx_plugin_tick_state_plugin",
+        ]
+    );
+
+    // The orphan is the same row, under the renamed table's new name.
+    assert_eq!(
+        orphans(&pool).await,
+        [(
+            "catalog_event_seen_marks".to_owned(),
+            22,
+            "auth_users".to_owned()
+        )]
+    );
+
+    let ticks: Vec<(i64, String, Vec<u8>, i64)> = sqlx::query_as(
+        "SELECT rowid, key, value, updated_at FROM plugin_tick_state ORDER BY rowid",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        ticks,
+        [
+            (3, "k".to_owned(), vec![1], 1_700_000_000_250),
+            (4, "t".to_owned(), b"text".to_vec(), 0),
+        ]
+    );
+    let prefs: Vec<(i64, String, i64, i64)> = sqlx::query_as(
+        "SELECT rowid, user_id, enabled, updated_at FROM app_section_prefs ORDER BY rowid",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        prefs,
+        [
+            (5, "u1".to_owned(), 0, 1_704_067_200_500),
+            (6, "u2".to_owned(), 1, 0),
+        ]
+    );
+    let links: Vec<(i64, String, String)> =
+        sqlx::query_as("SELECT rowid, ref_kind, mode FROM import_pending_links")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(links, [(8, "track".to_owned(), "as_written".to_owned())]);
+    let progress: (i64, i64, i64) =
+        sqlx::query_as("SELECT rowid, rows_written, applied_at FROM import_progress")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(progress, (9, 4, 1_704_067_201_000));
+    let runs: Vec<(i64, i64, String, i64)> = sqlx::query_as(
+        "SELECT rowid, exported_at, exit_code, applied_at FROM import_runs ORDER BY rowid",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        runs,
+        [
+            (
+                10,
+                1_704_067_200_000,
+                "OK_WITH_DROPS".to_owned(),
+                1_704_067_202_000
+            ),
+            (11, 0, "FAILED_INTERNAL".to_owned(), 0),
+        ]
+    );
+    assert_eq!(
+        number(&pool, "SELECT COUNT(*) FROM db_planner_stats").await,
+        0
+    );
+    type CheckRow = (i64, Option<i64>, Option<String>, Option<String>);
+    let checks: Vec<CheckRow> = sqlx::query_as(
+        "SELECT rowid, last_checked_at, last_status, last_error \
+         FROM catalog_artist_event_checks ORDER BY rowid",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        checks,
+        [
+            (12, Some(1_700_000_000_500), Some("ok".to_owned()), None),
+            (13, None, Some("error".to_owned()), Some("e".to_owned())),
+        ]
+    );
+    let skiddle_ids: Vec<(i64, String)> =
+        sqlx::query_as("SELECT rowid, skiddle_artistid FROM catalog_artist_skiddle_ids")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(skiddle_ids, [(14, "s1".to_owned())]);
+    let skiddle: Vec<(i64, i64)> = sqlx::query_as(
+        "SELECT rowid, resolved_at FROM catalog_artist_skiddle_resolutions ORDER BY rowid",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(skiddle, [(15, 1_700_000_000_000), (16, 0)]);
+    let tm: (i64, Option<String>, String, i64) = sqlx::query_as(
+        "SELECT rowid, attraction_id, match_basis, resolved_at \
+         FROM catalog_artist_tm_attractions",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(tm, (17, None, "none".to_owned(), 1_700_000_001_125));
+    #[allow(clippy::type_complexity)]
+    let feed: (
+        i64,
+        Option<f64>,
+        Option<f64>,
+        Option<String>,
+        String,
+        i64,
+        i64,
+    ) = sqlx::query_as(
+        "SELECT rowid, latitude, longitude, starts_at, status, discovered_at, updated_at \
+             FROM catalog_live_event_feed",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        feed,
+        (
+            18,
+            None,
+            Some(2.0),
+            Some("2026-05-01T19:00:00".to_owned()),
+            "cancelled".to_owned(),
+            1_700_000_000_000,
+            1_700_000_002_500
+        )
+    );
+    #[allow(clippy::type_complexity)]
+    let cities: Vec<(i64, String, Option<String>, f64, f64, f64, i64)> = sqlx::query_as(
+        "SELECT rowid, city_name, country_code, latitude, longitude, radius_km, position \
+         FROM catalog_event_cities ORDER BY rowid",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        cities,
+        [(
+            19,
+            "C".to_owned(),
+            Some("GB".to_owned()),
+            51.5,
+            0.0,
+            50.0,
+            0
+        )]
+    );
+    let seen: Vec<(i64, String, i64)> = sqlx::query_as(
+        "SELECT rowid, user_id, seen_at FROM catalog_event_seen_marks ORDER BY rowid",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        seen,
+        [
+            (21, "u1".to_owned(), 1_700_000_000_750),
+            (22, "ghost".to_owned(), 1_000),
+        ]
+    );
+
+    // The checks hold from now on.
+    for refused in [
+        "UPDATE app_section_prefs SET enabled = 2 WHERE user_id = 'u2'",
+        "UPDATE import_runs SET exit_code = 'MAYBE' WHERE id = 'r1'",
+        "UPDATE catalog_artist_event_checks SET last_status = 'later' \
+         WHERE artist_mbid_lower = 'a'",
+        "UPDATE catalog_event_seen_marks SET seen_at = 1.5 WHERE user_id = 'u1'",
+        "UPDATE plugin_tick_state SET updated_at = 'now' WHERE key = 'k'",
+    ] {
+        assert!(
+            sqlx::query(refused).execute(&pool).await.is_err(),
+            "{refused}"
+        );
+    }
+
+    // A user's preferences, cities and seen mark go with the user, and only
+    // theirs.
+    sqlx::query("DELETE FROM auth_users WHERE id = 'u1'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    for (table, left) in [
+        ("app_section_prefs", 1),
+        ("catalog_event_cities", 0),
+        ("catalog_event_seen_marks", 1),
+    ] {
+        let sql = format!("SELECT COUNT(*) FROM {table}");
+        assert_eq!(number(&pool, &sql).await, left, "{table}");
+    }
+}

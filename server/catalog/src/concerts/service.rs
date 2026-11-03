@@ -16,7 +16,7 @@ use super::models::{
 };
 use super::sources::Sources;
 use super::store::{ConcertsStore, StoreError};
-use super::{ActiveSources, now_unix, today};
+use super::{ActiveSources, today};
 use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::secret_sections::{EventsSettings, EventsSweepScope};
@@ -83,11 +83,11 @@ impl ConcertsService {
     }
 
     /// Candidate rows for the user, optionally only those first seen after
-    /// `discovered_after`.
+    /// `discovered_after` (unix milliseconds).
     async fn candidates(
         &self,
         user_id: &str,
-        discovered_after: Option<f64>,
+        discovered_after: Option<i64>,
     ) -> Result<Vec<super::matching::StoredConcert>, ConcertsError> {
         let min_date = today(self.clock.as_ref()).to_string();
         let library_scope = ActiveSources::scope(&self.settings) == EventsSweepScope::Library;
@@ -130,10 +130,7 @@ impl ConcertsService {
 
     /// Stamp the user's seen marker.
     pub async fn mark_seen(&self, user_id: &str) -> Result<(), ConcertsError> {
-        Ok(self
-            .store
-            .mark_seen(user_id, now_unix(self.clock.as_ref()))
-            .await?)
+        Ok(self.store.mark_seen(user_id, self.clock.now_ms()).await?)
     }
 
     /// The user's cities in picker order.

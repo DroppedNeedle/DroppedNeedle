@@ -572,7 +572,7 @@ async fn user_data_carries_resumes_and_repeats_as_noop() {
         ("download_quarantine", 1),
         ("user_listening_prefs", 1),
         ("personal_mix_approvals", 1),
-        ("user_section_prefs", 1),
+        ("app_section_prefs", 1),
         ("media_navidrome_folder_preferences", 1),
         ("catalog_new_release_seen_marks", 1),
         ("compat_play_queues", 1),

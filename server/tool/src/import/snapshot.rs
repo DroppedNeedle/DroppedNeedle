@@ -30,7 +30,8 @@ pub(super) struct DatabaseSnapshot {
     pub(super) follows: HashMap<(String, String), FollowRow>,
     pub(super) approvals: HashMap<(String, String), ApprovalRow>,
     pub(super) event_cities: HashMap<CityKey, EventCityRow>,
-    pub(super) event_seen: HashMap<String, f64>,
+    /// When each user last looked at their concerts, unix milliseconds.
+    pub(super) event_seen: HashMap<String, i64>,
 }
 
 impl DatabaseSnapshot {
@@ -55,7 +56,7 @@ impl DatabaseSnapshot {
             event_cities: HashMap::new(),
             event_seen: event_seen
                 .into_iter()
-                .map(|seen| (seen.user_id, seen.seen_at))
+                .map(|seen| (seen.user_id, seen.seen_at.0))
                 .collect(),
         };
         for city in event_cities {

@@ -59,6 +59,20 @@ pub enum ExitCode {
     FailedInternal,
 }
 
+impl ExitCode {
+    /// The code's spelling, as the report and the audit row write it.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Ok => "OK",
+            Self::OkWithDrops => "OK_WITH_DROPS",
+            Self::FailedValidation => "FAILED_VALIDATION",
+            Self::EnvelopeAuthFailed => "ENVELOPE_AUTH_FAILED",
+            Self::FailedInternal => "FAILED_INTERNAL",
+        }
+    }
+}
+
 /// Per-entity outcome counters.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct EntityCounts {
@@ -443,6 +457,15 @@ pub(crate) fn now_secs() -> f64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0.0, |span| span.as_secs_f64())
+}
+
+/// The current time in unix milliseconds, for the importer's own records.
+pub(crate) fn now_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |span| {
+            i64::try_from(span.as_millis()).unwrap_or(i64::MAX)
+        })
 }
 
 /// Current UTC time as ISO-8601. Falls back to the epoch on clock

@@ -150,11 +150,6 @@ fn read_settings(settings: &LiveSettings<EventsSettings>) -> Option<Arc<Plain<Ev
         .ok()
 }
 
-/// `clock`'s time as unix seconds, the feed's timestamp unit.
-pub(crate) fn now_unix(clock: &dyn Clock) -> f64 {
-    clock.now_ms() as f64 / 1000.0
-}
-
 /// `clock`'s UTC date.
 pub(crate) fn today(clock: &dyn Clock) -> time::Date {
     time::OffsetDateTime::from_unix_timestamp(clock.now_unix())

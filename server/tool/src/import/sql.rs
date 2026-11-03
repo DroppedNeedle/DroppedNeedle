@@ -2,6 +2,7 @@
 //! the import writes goes through the owning area's repository.
 
 use droppedneedle_kernel::db::statement::Statement;
+use droppedneedle_kernel::db::time::Millis;
 use rusqlite::{Connection, Row};
 
 droppedneedle_kernel::sql! {
@@ -23,9 +24,9 @@ droppedneedle_kernel::sql! {
              FROM auto_download_approvals";
     /// Every saved concert city in the target.
     pub(super) EVENT_CITIES = "SELECT user_id, city_name, country_code, latitude, longitude, radius_km, \
-             position FROM user_event_cities";
+             position FROM catalog_event_cities";
     /// When each user in the target last looked at their concerts.
-    pub(super) EVENT_SEEN = "SELECT user_id, seen_at FROM user_event_seen";
+    pub(super) EVENT_SEEN = "SELECT user_id, seen_at FROM catalog_event_seen_marks";
 
     /// An account in the target.
     #[derive(Debug, Clone)]
@@ -98,7 +99,7 @@ droppedneedle_kernel::sql! {
     /// When a user in the target last looked at their concerts.
     pub(super) row EventSeenRow for [EVENT_SEEN] {
         user_id: String,
-        seen_at: f64,
+        seen_at: Millis,
     }
 
     /// Add the audit row of an import run.

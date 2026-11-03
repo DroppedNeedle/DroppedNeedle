@@ -87,9 +87,9 @@ droppedneedle_kernel::sql! {
     /// Fixed text other statements are built from.
     fragment FEED_COLUMNS = "f.source, f.source_event_id, f.city";
     /// One user's cities.
-    pub(super) CITIES = "SELECT city_name FROM user_event_cities WHERE user_id = ?";
+    pub(super) CITIES = "SELECT city_name FROM catalog_event_cities WHERE user_id = ?";
     /// A statement joined from constant parts at compile time.
-    pub(super) FEED = "SELECT " + FEED_COLUMNS + " FROM live_event_feed f";
+    pub(super) FEED = "SELECT " + FEED_COLUMNS + " FROM catalog_live_event_feed f";
     /// One statement per combination of the builder's choices.
     family FEED_PAGE = feed_page;
 }

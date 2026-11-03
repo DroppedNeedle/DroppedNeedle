@@ -1712,7 +1712,7 @@ async fn event_cities_import_inside_the_city_limits() {
     assert_eq!(report.exit.code, ExitCode::Ok);
 
     let stored: Vec<(String, f64, i64)> = sqlx::query_as(
-        "SELECT city_name, radius_km, position FROM user_event_cities \
+        "SELECT city_name, radius_km, position FROM catalog_event_cities \
          WHERE user_id = 'u1' ORDER BY position",
     )
     .fetch_all(&pool)
@@ -1801,7 +1801,7 @@ async fn values_an_area_would_refuse_are_converted_or_left_behind_with_a_line() 
             .await
             .unwrap();
     assert_eq!((role.as_str(), created, login), ("user", 0, None));
-    let radius: f64 = sqlx::query_scalar("SELECT radius_km FROM user_event_cities")
+    let radius: f64 = sqlx::query_scalar("SELECT radius_km FROM catalog_event_cities")
         .fetch_one(&pool)
         .await
         .unwrap();

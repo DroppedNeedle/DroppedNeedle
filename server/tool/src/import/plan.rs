@@ -49,8 +49,8 @@ struct CitySlots {
     next_position: i64,
 }
 
-/// An approval time from the export (REAL epoch seconds) as the table
-/// stores it: integer milliseconds.
+/// A time from the export (REAL epoch seconds) as the tables store it:
+/// integer milliseconds.
 pub(super) fn approval_ms(seconds: f64) -> i64 {
     (seconds * 1000.0).round() as i64
 }
@@ -107,7 +107,8 @@ pub(super) enum Planned {
     },
     SetEventSeen {
         user_id: String,
-        seen_at: f64,
+        /// Unix milliseconds.
+        seen_at: i64,
     },
 }
 
@@ -646,7 +647,7 @@ impl Plan {
             );
             return;
         }
-        let imported = seen.seen_at;
+        let imported = approval_ms(seen.seen_at);
         match snapshot.event_seen.get(&user_id) {
             None => {
                 report.record("event_seen", user_id.clone(), "imported", String::new());

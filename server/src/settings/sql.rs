@@ -6,15 +6,15 @@ droppedneedle_kernel::sql! {
     pub(super) LISTENBRAINZ_LINKED = "SELECT 1 FROM user_connections \
         WHERE user_id = ?1 AND service = 'listenbrainz' AND enabled = 1 LIMIT 1";
     /// The section keys user `?1` turned off on page `?2`.
-    pub(super) DISABLED_SECTIONS = "SELECT section_key FROM user_section_prefs \
+    pub(super) DISABLED_SECTIONS = "SELECT section_key FROM app_section_prefs \
         WHERE user_id = ?1 AND page = ?2 AND enabled = 0";
     /// Forget user `?1`'s choices on page `?2`.
-    pub(super) CLEAR_SECTION_PREFS = "DELETE FROM user_section_prefs \
+    pub(super) CLEAR_SECTION_PREFS = "DELETE FROM app_section_prefs \
         WHERE user_id = ?1 AND page = ?2";
-    /// Turn one section off for one user page.
-    pub(super) DISABLE_SECTION = "INSERT INTO user_section_prefs \
+    /// Turn one section off for one user page, at `?4`.
+    pub(super) DISABLE_SECTION = "INSERT INTO app_section_prefs \
         (user_id, page, section_key, enabled, updated_at) \
-        VALUES (?1, ?2, ?3, 0, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))";
+        VALUES (?1, ?2, ?3, 0, ?4)";
 
     /// The scopes asked about, from a JSON array of
     /// `[root_id, key, prefix, pattern]` in `?1`.

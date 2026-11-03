@@ -369,7 +369,7 @@ droppedneedle_kernel::sql! {
     // -- settings and status ----------------------------------------------------
 
     /// The sections of a page a user switched off.
-    pub(super) SECTIONS_SWITCHED_OFF = "SELECT section_key FROM user_section_prefs \
+    pub(super) SECTIONS_SWITCHED_OFF = "SELECT section_key FROM app_section_prefs \
          WHERE user_id = ?1 AND page = ?2 AND enabled = 0";
     /// Whether local files back playback.
     pub(super) HAS_LOCAL_FILES = "SELECT EXISTS(SELECT 1 FROM local_tracks \

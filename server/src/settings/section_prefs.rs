@@ -3,7 +3,7 @@
 //! The home and discover entries come from the catalog's section list,
 //! the sidebar's from the list here; only the per-user disabled sets
 //! persist, in
-//! `user_section_prefs`. Reads overlay the disabled set on the catalog and
+//! `app_section_prefs`. Reads overlay the disabled set on the catalog and
 //! compute `available` from service requirements plus per-user link state
 //! (ListenBrainz row, Last.fm session behind the master switch; the
 //! native library is always present). Writes replace one page's disabled
@@ -11,6 +11,7 @@
 //! catalog drifted instead of silently dropping toggles.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::Arc;
 
 use rusqlite::OptionalExtension as _;
 
@@ -18,6 +19,8 @@ use super::models::{SectionPrefItem, SectionPrefsResponse, SectionPrefsUpdate};
 use super::sql;
 use droppedneedle_auth::sqlite::LastFmLinks;
 use droppedneedle_catalog::discover::sections::{self, Page};
+use droppedneedle_kernel::clock::Clock;
+use droppedneedle_kernel::db::time::Millis;
 use droppedneedle_kernel::db::{Db, DbError, Lane};
 use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
 
@@ -90,18 +93,20 @@ pub fn valid_keys(page: &str) -> HashSet<String> {
     catalog(page).into_iter().map(|entry| entry.key).collect()
 }
 
-/// Per-user section prefs over `user_section_prefs`, and the link state
+/// Per-user section prefs over `app_section_prefs`, and the link state
 /// behind section availability: ListenBrainz rows from `user_connections`,
 /// Last.fm sessions from the auth-owned link store.
 pub struct SectionPrefs {
     db: Db,
+    clock: Arc<dyn Clock>,
     lastfm: LastFmLinks,
 }
 
 impl SectionPrefs {
-    /// The prefs over the database and the Last.fm link store.
-    pub fn new(db: Db, lastfm: LastFmLinks) -> Self {
-        Self { db, lastfm }
+    /// The prefs over the database and the Last.fm link store; `clock`
+    /// stamps each change.
+    pub fn new(db: Db, clock: Arc<dyn Clock>, lastfm: LastFmLinks) -> Self {
+        Self { db, clock, lastfm }
     }
 
     /// The disabled keys for one user page.
@@ -127,6 +132,7 @@ impl SectionPrefs {
         let (user_id, page) = (user_id.to_owned(), page.to_owned());
         let mut disabled: Vec<String> = disabled.iter().cloned().collect();
         disabled.sort();
+        let now = Millis(self.clock.now_ms());
         self.db
             .write(
                 Lane::Foreground,
@@ -139,7 +145,7 @@ impl SectionPrefs {
                     for key in &disabled {
                         tx.execute(
                             sql::DISABLE_SECTION.text(),
-                            rusqlite::params![user_id, page, key],
+                            rusqlite::params![user_id, page, key, now],
                         )?;
                     }
                     Ok(())

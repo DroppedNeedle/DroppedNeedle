@@ -42,7 +42,8 @@ use thiserror::Error;
 use crate::export::envelope::ExportDoc;
 use crate::export::sections::contributions::CALLBACK_TOKENS;
 use crate::export::sections::{ALL, Column, TableSection, Target};
-use crate::import::report::{EntityCounts, ReportBuilder, utc_now_iso};
+use crate::import::report::{EntityCounts, ReportBuilder, now_ms};
+use droppedneedle_kernel::db::time::Millis;
 use droppedneedle_kernel::runtime_config::Crypto;
 use droppedneedle_library::scan::naming::UNKNOWN_ARTIST;
 
@@ -286,7 +287,7 @@ fn apply_with_marker(
                 unit.name(),
                 marker.digest,
                 i64::try_from(result.written).unwrap_or(i64::MAX),
-                utc_now_iso(),
+                Millis(now_ms()),
             ],
         )?;
     }

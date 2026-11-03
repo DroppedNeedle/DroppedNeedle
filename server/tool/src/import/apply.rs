@@ -15,9 +15,11 @@ use std::path::PathBuf;
 use droppedneedle_acquire::follows::rows;
 use droppedneedle_auth::federated::users::ProviderBinding;
 use droppedneedle_auth::sqlite::{AppPasswords, Users, WriteError};
+use droppedneedle_auth::times::parse_iso_ms;
 use droppedneedle_auth::users::models::AppPasswordRecord;
 use droppedneedle_catalog::concerts::store::{insert_city_in, set_seen_in};
 use droppedneedle_kernel::db::open_connection;
+use droppedneedle_kernel::db::time::Millis;
 use droppedneedle_kernel::runtime_config::{Crypto, LegacyConfig};
 
 use rusqlite::{Connection, Transaction, TransactionBehavior, params};
@@ -27,7 +29,7 @@ use thiserror::Error;
 use super::carry::bundle::{Bundle, BundleRejection};
 use super::envelope::{ExportFile, Opener, collect_sealed, unseal_value};
 use super::plan::{Plan, Planned, sha_hex};
-use super::report::{ExitCode, ExportProvenance, ImportReport, ReportBuilder, utc_now_iso};
+use super::report::{ExitCode, ExportProvenance, ImportReport, ReportBuilder, now_ms};
 use super::settings::{configs_equivalent, current_settings, stage_settings, write_settings};
 use super::snapshot::DatabaseSnapshot;
 use super::sql;
@@ -480,7 +482,7 @@ fn run_guarded(
     // were carried sections (a resume) records its own row.
     let exit = match &carried {
         Ok(_) => completed_exit(report),
-        Err(_) => "FAILED_INTERNAL",
+        Err(_) => ExitCode::FailedInternal,
     };
     let audited = match run_id {
         Some(id) => update_import_run(conn, &id, exit, report),
@@ -604,11 +606,11 @@ impl Plan {
 }
 
 /// Exit code of a run that completed.
-fn completed_exit(report: &ReportBuilder) -> &'static str {
+fn completed_exit(report: &ReportBuilder) -> ExitCode {
     if report.has_drops() {
-        "OK_WITH_DROPS"
+        ExitCode::OkWithDrops
     } else {
-        "OK"
+        ExitCode::Ok
     }
 }
 
@@ -616,21 +618,21 @@ fn record_import_run(
     tx: &Connection,
     doc: &ExportDoc,
     report: &ReportBuilder,
-    exit: &str,
+    exit: ExitCode,
 ) -> Result<String, ImportError> {
     // The row only persists when the commit succeeds; failures roll this
     // row back too. The carry and a post-commit config failure correct it
-    // afterwards.
+    // afterwards. The export's stamp passed validation, so it parses.
     let id = uuid::Uuid::new_v4().to_string();
     tx.execute(
         sql::INSERT_IMPORT_RUN.text(),
         params![
             id,
             doc.instance_id,
-            doc.exported_at,
-            exit,
+            Millis(parse_iso_ms(&doc.exported_at).unwrap_or(0)),
+            exit.as_str(),
             report.counts_json(),
-            utc_now_iso(),
+            Millis(now_ms()),
         ],
     )?;
     Ok(id)
@@ -640,7 +642,7 @@ fn record_import_run(
 fn insert_import_run(
     conn: &mut Connection,
     doc: &ExportDoc,
-    exit: &str,
+    exit: ExitCode,
     report: &ReportBuilder,
 ) -> Result<(), ImportError> {
     let tx = conn.transaction()?;
@@ -654,12 +656,12 @@ fn insert_import_run(
 fn update_import_run(
     conn: &Connection,
     run_id: &str,
-    exit: &str,
+    exit: ExitCode,
     report: &ReportBuilder,
 ) -> Result<(), ImportError> {
     conn.execute(
         sql::UPDATE_IMPORT_RUN.text(),
-        params![exit, report.counts_json(), run_id],
+        params![exit.as_str(), report.counts_json(), run_id],
     )?;
     Ok(())
 }

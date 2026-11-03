@@ -79,7 +79,11 @@ impl SettingsSetup {
             service,
             lifecycle: Arc::new(MusicBrainzLifecycle::new(store, effects, outbound.clone())),
             management,
-            prefs: Arc::new(SectionPrefs::new(platform.db.clone(), lastfm)),
+            prefs: Arc::new(SectionPrefs::new(
+                platform.db.clone(),
+                platform.clock.clone(),
+                lastfm,
+            )),
             bins,
             scans: Arc::new(LocalCatalog::new(platform.db.clone())),
         }

@@ -30,6 +30,7 @@ use super::error::DbError;
 use super::handle::Db;
 use super::sql;
 use super::statement::quoted_identifier;
+use super::time::Millis;
 use super::writer::Lane;
 
 /// Statistics older than this are refreshed.
@@ -65,12 +66,12 @@ impl std::fmt::Debug for AnalyzeService {
 /// What the last run recorded.
 #[derive(Debug, Clone, Copy)]
 struct LastRun {
-    at_unix: i64,
+    at_ms: i64,
     indexed_tracks: i64,
 }
 
 /// Whether statistics recorded at `last` are stale now.
-fn stale(last: Option<LastRun>, stats_present: bool, indexed_tracks: i64, now_unix: i64) -> bool {
+fn stale(last: Option<LastRun>, stats_present: bool, indexed_tracks: i64, now_ms: i64) -> bool {
     if indexed_tracks < MIN_TRACKS {
         return false;
     }
@@ -80,7 +81,7 @@ fn stale(last: Option<LastRun>, stats_present: bool, indexed_tracks: i64, now_un
     if !stats_present {
         return true;
     }
-    if now_unix.saturating_sub(last.at_unix) >= MAX_AGE.as_secs() as i64 {
+    if now_ms.saturating_sub(last.at_ms) >= MAX_AGE.as_millis() as i64 {
         return true;
     }
     let moved = (indexed_tracks - last.indexed_tracks).abs();
@@ -135,13 +136,13 @@ impl AnalyzeService {
             .await?;
         let indexed_tracks = self.indexed_tracks().await?;
         Ok(stale(
-            last.map(|(at_unix, indexed_tracks)| LastRun {
-                at_unix,
+            last.map(|(at_ms, indexed_tracks)| LastRun {
+                at_ms,
                 indexed_tracks,
             }),
             stats_present,
             indexed_tracks,
-            self.clock.now_unix(),
+            self.clock.now_ms(),
         ))
     }
 
@@ -172,7 +173,7 @@ impl AnalyzeService {
                 .await?;
         }
         let indexed_tracks = self.indexed_tracks().await?;
-        let at = self.clock.now_unix();
+        let at = Millis(self.clock.now_ms());
         self.db
             .write(Lane::Background, "db.analyze.record", move |tx| {
                 tx.execute(
@@ -202,9 +203,9 @@ mod tests {
 
     #[test]
     fn staleness_rules() {
-        let day = MAX_AGE.as_secs() as i64;
+        let day = MAX_AGE.as_millis() as i64;
         let last = Some(LastRun {
-            at_unix: 1_000,
+            at_ms: 1_000,
             indexed_tracks: 10_000,
         });
         assert!(stale(None, true, MIN_TRACKS, 1_000), "never ran");
@@ -213,7 +214,7 @@ mod tests {
         assert!(stale(last, true, 10_000, 1_000 + day), "a day old");
         assert!(stale(last, true, 11_000, 1_000), "a scan added a tenth");
         let small = Some(LastRun {
-            at_unix: 1_000,
+            at_ms: 1_000,
             indexed_tracks: 10,
         });
         assert!(!stale(small, true, 109, 1_000), "small moves are noise");

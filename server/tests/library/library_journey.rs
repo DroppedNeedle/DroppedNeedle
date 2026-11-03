@@ -21841,7 +21841,7 @@ fn carried_from_v2(db: &rusqlite::Connection) {
     db.execute(
         "INSERT INTO import_runs (id, instance_id, exported_at, exit_code, \
          entity_counts, applied_at) VALUES ('import-1', 'v2-instance', \
-         '2026-01-01T00:00:00Z', 'OK', '{}', '2026-01-01T00:00:01Z')",
+         1767225600000, 'OK', '{}', 1767225601000)",
         [],
     )
     .expect("import recorded");
