@@ -12,7 +12,7 @@ const { emptyComponent } = vi.hoisted(() => ({
 	}
 }));
 
-vi.mock('$lib/queries/downloads/DownloadMutations.svelte', () => ({
+vi.mock('$lib/features/downloads/queries/DownloadMutations.svelte', () => ({
 	createRequestAlbumMutation: () => ({ mutateAsync: vi.fn(), isPending: false })
 }));
 vi.mock('$lib/components/AlbumImage.svelte', emptyComponent);

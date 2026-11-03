@@ -2,7 +2,7 @@
 	import type { Album, EnrichmentSource } from '$lib/types';
 	import { albumHref } from '$lib/utils/entityRoutes';
 	import { libraryStore } from '$lib/stores/library';
-	import { createRequestAlbumMutation } from '$lib/queries/downloads/DownloadMutations.svelte';
+	import { createRequestAlbumMutation } from '$lib/features/downloads/queries/DownloadMutations.svelte';
 	import { formatListenCount } from '$lib/utils/formatting';
 	import { getListenTitle } from '$lib/utils/enrichment';
 	import { Download, Music2 } from 'lucide-svelte';

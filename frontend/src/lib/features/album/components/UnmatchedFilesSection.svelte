@@ -3,8 +3,8 @@
 
 	import { streamUrlFor } from '$lib/player/streamUrl';
 	import { isStaleRevision } from '$lib/api/errors';
-	import { createRemoveLibraryTrackMutation } from '$lib/queries/library/LibraryMutations.svelte';
-	import { formatCountdown } from '$lib/queries/downloads/downloadStatus';
+	import { createRemoveLibraryTrackMutation } from '$lib/features/library/queries/LibraryMutations.svelte';
+	import { formatCountdown } from '$lib/features/downloads/queries/downloadStatus';
 	import { toastStore } from '$lib/stores/toast';
 	import type { UnmatchedFile } from './albumEdition';
 	import Button from '$lib/ui/Button.svelte';

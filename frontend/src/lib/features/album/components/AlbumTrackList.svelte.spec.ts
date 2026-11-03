@@ -4,12 +4,12 @@ import { render } from 'vitest-browser-svelte';
 
 // keep the Request button real; stub only its mutation hook so it renders without a QueryClient
 const downloadMutations = vi.hoisted(() => ({ requestMutate: vi.fn() }));
-vi.mock('$lib/queries/downloads/DownloadMutations.svelte', () => ({
+vi.mock('$lib/features/downloads/queries/DownloadMutations.svelte', () => ({
 	createRequestTrackMutation: () => ({ mutate: downloadMutations.requestMutate, isPending: false })
 }));
 
 // the per-track upgrade affordance's mutation hook (QueryClient-dependent)
-vi.mock('$lib/queries/downloads/UpgradeQueries.svelte', () => ({
+vi.mock('$lib/features/downloads/queries/UpgradeQueries.svelte', () => ({
 	createRequestUpgradeTrackMutation: () => ({ mutateAsync: vi.fn(), isPending: false })
 }));
 
@@ -54,7 +54,7 @@ vi.mock('$lib/components/JellyfinIcon.svelte', emptyComponent);
 vi.mock('$lib/components/LocalFilesIcon.svelte', emptyComponent);
 vi.mock('$lib/components/NavidromeIcon.svelte', emptyComponent);
 vi.mock('$lib/components/PlexIcon.svelte', emptyComponent);
-vi.mock('$lib/components/library/LibraryTrackRow.svelte', emptyComponent);
+vi.mock('$lib/features/library/components/LibraryTrackRow.svelte', emptyComponent);
 
 const blob = vi.hoisted(() => ({ download: vi.fn() }));
 vi.mock('$lib/utils/blobDownload', () => ({ downloadBlob: blob.download }));

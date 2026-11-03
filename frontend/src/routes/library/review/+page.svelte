@@ -2,12 +2,12 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import PageHeader from '$lib/components/PageHeader.svelte';
-	import ReviewQueue from '$lib/components/library/ReviewQueue.svelte';
+	import ReviewQueue from '$lib/features/library/components/ReviewQueue.svelte';
 	import UnconfirmedAlbums, {
 		type WaitingView
-	} from '$lib/components/library/UnconfirmedAlbums.svelte';
-	import { ReviewFilters } from '$lib/components/library/review/reviewFilters.svelte';
-	import { getLibraryStatsQuery } from '$lib/queries/library/LibraryQueries.svelte';
+	} from '$lib/features/library/components/UnconfirmedAlbums.svelte';
+	import { ReviewFilters } from '$lib/features/library/components/review/reviewFilters.svelte';
+	import { getLibraryStatsQuery } from '$lib/features/library/queries/LibraryQueries.svelte';
 	import Tabs from '$lib/ui/Tabs.svelte';
 
 	type Tab = WaitingView | 'reviews';

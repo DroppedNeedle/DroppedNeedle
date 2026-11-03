@@ -3,7 +3,7 @@
 	import {
 		discographyDownloadStore,
 		type DiscographyRelease
-	} from '$lib/stores/discographyDownload.svelte';
+	} from '$lib/features/downloads/state/discographyDownload.svelte';
 	import { fetchArtistDiscography } from '$lib/features/artist/queries/ArtistQueries.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import IconButton from '$lib/ui/IconButton.svelte';

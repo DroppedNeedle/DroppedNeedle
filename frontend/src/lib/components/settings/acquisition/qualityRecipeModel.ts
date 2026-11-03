@@ -1,5 +1,5 @@
 import type { components } from '$lib/api/v3/openapi';
-import type { DownloadPolicySettings } from '$lib/queries/downloads/DownloadClientsQueries.svelte';
+import type { DownloadPolicySettings } from '$lib/features/downloads/queries/DownloadClientsQueries.svelte';
 
 export type QualityRecipeFormat = components['schemas']['RecipeFormat'];
 

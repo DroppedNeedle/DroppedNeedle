@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 
 import { ApiError } from '$lib/api/errors';
-import type { DownloadPolicySettings } from '$lib/queries/downloads/DownloadClientsQueries.svelte';
+import type { DownloadPolicySettings } from '$lib/features/downloads/queries/DownloadClientsQueries.svelte';
 
 import type { QualityRecipeEntry } from './acquisition/qualityRecipeModel';
 
@@ -58,7 +58,7 @@ const h = vi.hoisted(() => ({
 	mutateAsync: vi.fn()
 }));
 
-vi.mock('$lib/queries/downloads/DownloadClientsQueries.svelte', () => ({
+vi.mock('$lib/features/downloads/queries/DownloadClientsQueries.svelte', () => ({
 	getDownloadPolicyQuery: () => ({
 		get data() {
 			return h.policy;

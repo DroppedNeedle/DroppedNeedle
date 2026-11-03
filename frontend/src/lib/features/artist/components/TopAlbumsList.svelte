@@ -5,7 +5,7 @@
 	import CoverPlaceholder from '$lib/ui/CoverPlaceholder.svelte';
 	import type { AlbumRef } from '$lib/queries/discover/types';
 	import { libraryStore } from '$lib/stores/library';
-	import { createRequestAlbumMutation } from '$lib/queries/downloads/DownloadMutations.svelte';
+	import { createRequestAlbumMutation } from '$lib/features/downloads/queries/DownloadMutations.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';

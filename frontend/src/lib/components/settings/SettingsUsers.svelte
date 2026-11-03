@@ -34,7 +34,7 @@
 	import {
 		getDownloadPolicyQuery,
 		createSaveDownloadPolicyMutation
-	} from '$lib/queries/downloads/DownloadClientsQueries.svelte';
+	} from '$lib/features/downloads/queries/DownloadClientsQueries.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import { SvelteSet } from 'svelte/reactivity';
 	import { createPasswordRecoveryCodeMutation } from '$lib/queries/auth/AuthMutations.svelte';

@@ -3,10 +3,10 @@
 	import { Disc3, Plus, Check, ArrowLeft } from 'lucide-svelte';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import EmptyState from '$lib/components/EmptyState.svelte';
-	import { getRecentReleasesQuery } from '$lib/queries/following/FollowQueries.svelte';
-	import { createMarkNewReleasesSeenMutation } from '$lib/queries/following/FollowMutations.svelte';
-	import { createRequestAlbumMutation } from '$lib/queries/downloads/DownloadMutations.svelte';
-	import type { NewRelease } from '$lib/queries/following/types';
+	import { getRecentReleasesQuery } from '$lib/features/following/queries/FollowQueries.svelte';
+	import { createMarkNewReleasesSeenMutation } from '$lib/features/following/queries/FollowMutations.svelte';
+	import { createRequestAlbumMutation } from '$lib/features/downloads/queries/DownloadMutations.svelte';
+	import type { NewRelease } from '$lib/features/following/queries/types';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { SvelteSet } from 'svelte/reactivity';
 	import Button from '$lib/ui/Button.svelte';

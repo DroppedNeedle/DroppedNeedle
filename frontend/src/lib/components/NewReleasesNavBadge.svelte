@@ -1,7 +1,7 @@
 <script lang="ts">
 	// separate component, not layout-script state: createQuery needs the
 	// QueryProvider context, which the layout itself renders
-	import { getUnseenNewReleasesCountQuery } from '$lib/queries/following/FollowQueries.svelte';
+	import { getUnseenNewReleasesCountQuery } from '$lib/features/following/queries/FollowQueries.svelte';
 
 	const query = getUnseenNewReleasesCountQuery();
 	const count = $derived(query.data?.count ?? 0);

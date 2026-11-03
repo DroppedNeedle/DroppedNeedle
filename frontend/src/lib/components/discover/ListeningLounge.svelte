@@ -4,7 +4,7 @@
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import { deckSampler, type SampleEntry } from '$lib/stores/deckSampler.svelte';
 	import { libraryStore } from '$lib/stores/library';
-	import { createRequestAlbumMutation } from '$lib/queries/downloads/DownloadMutations.svelte';
+	import { createRequestAlbumMutation } from '$lib/features/downloads/queries/DownloadMutations.svelte';
 	import { albumHrefOrNull } from '$lib/utils/entityRoutes';
 	import type { AlbumRef, ChartSection, TopPicksSection } from '$lib/queries/discover/types';
 	import { albumRows } from '$lib/utils/sectionRows';

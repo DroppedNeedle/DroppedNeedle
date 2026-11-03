@@ -1,0 +1,93 @@
+// The private apply token of a sealed preview. It lives in session storage
+// from the moment the preview was made; after a browser restart it is gone,
+// so a ready preview asks the server to reissue it once per job. A token the
+// server no longer accepts (one from before an upgrade or a key reset) is
+// replaced the same way when apply refuses it.
+import { createReissueLibraryManagementPreviewMutation } from '$lib/features/library-management/queries/LibraryManagementMutations.svelte';
+import {
+	readLibraryManagementPreviewToken,
+	rememberLibraryManagementPreviewToken
+} from '$lib/features/library-management/queries/LibraryManagementPreviewTokens';
+import type { LibraryManagementPreviewDetailResponse } from '$lib/features/library-management/queries/types';
+
+export interface PreviewToken {
+	readonly value: string | null;
+	/** Reissue was refused; `retry` asks again. */
+	readonly failed: boolean;
+	/** A reissue for this job is running or has finished. */
+	readonly resuming: boolean;
+	retry(): void;
+	/** Replaces a token the server refused; the new one, or null when reissue failed. */
+	replace(): Promise<string | null>;
+}
+
+/** Call during component setup: it registers an effect. */
+export function createPreviewToken(
+	getJobId: () => string,
+	getPreview: () => LibraryManagementPreviewDetailResponse | null,
+	isActivation: () => boolean
+): PreviewToken {
+	const reissue = createReissueLibraryManagementPreviewMutation();
+	let reissuedToken = $state<string | null>(null);
+	let attemptedJobId = $state<string | null>(null);
+	let failed = $state(false);
+	const value = $derived(reissuedToken ?? readLibraryManagementPreviewToken(getJobId()));
+
+	$effect(() => {
+		const jobId = getJobId();
+		if (attemptedJobId !== null && attemptedJobId !== jobId) {
+			reissuedToken = null;
+			failed = false;
+			attemptedJobId = null;
+			return;
+		}
+		const detail = getPreview();
+		if (
+			detail === null ||
+			attemptedJobId === jobId ||
+			isActivation() ||
+			detail.state !== 'ready' ||
+			detail.expired ||
+			detail.stale ||
+			(reissuedToken ?? readLibraryManagementPreviewToken(jobId)) !== null
+		)
+			return;
+		attemptedJobId = jobId;
+		void resume(jobId);
+	});
+
+	async function resume(jobId: string): Promise<string | null> {
+		try {
+			const handle = await reissue.mutateAsync({ jobId });
+			rememberLibraryManagementPreviewToken(handle.job_id, handle.preview_token);
+			if (handle.job_id !== getJobId()) return null;
+			reissuedToken = handle.preview_token;
+			return handle.preview_token;
+		} catch {
+			if (jobId === getJobId()) failed = true;
+			return null;
+		}
+	}
+
+	return {
+		get value() {
+			return value;
+		},
+		get failed() {
+			return failed;
+		},
+		get resuming() {
+			return attemptedJobId === getJobId();
+		},
+		retry() {
+			if (!getPreview()?.ready_for_confirmation) return;
+			failed = false;
+			attemptedJobId = null;
+		},
+		replace() {
+			const jobId = getJobId();
+			attemptedJobId = jobId;
+			return resume(jobId);
+		}
+	};
+}

@@ -4,7 +4,7 @@
 	Nothing is urgent here, so it is drawn in the neutral colour.
 -->
 <script lang="ts">
-	import { getLibraryStatsQuery } from '$lib/queries/library/LibraryQueries.svelte';
+	import { getLibraryStatsQuery } from '$lib/features/library/queries/LibraryQueries.svelte';
 
 	const stats = getLibraryStatsQuery();
 	const count = $derived(stats.data?.check_count ?? 0);

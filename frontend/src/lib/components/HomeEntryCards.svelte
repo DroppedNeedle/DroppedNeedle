@@ -1,13 +1,13 @@
 <script lang="ts">
 	import { Headphones, ArrowRight, Sparkles, TriangleAlert } from 'lucide-svelte';
 	import type { ComponentType } from 'svelte';
-	import DropImportZone from '$lib/components/import/DropImportZone.svelte';
+	import DropImportZone from '$lib/features/downloads/components/DropImportZone.svelte';
 	import { useIntegrationStatus } from '$lib/queries/home.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
-	import { getLocalStatsV3Query } from '$lib/queries/local/LocalV3Queries.svelte';
+	import { getLocalStatsV3Query } from '$lib/features/library/queries/LocalV3Queries.svelte';
 	import { formatBytes } from '$lib/utils/formatting';
-	import { getLibraryActivityQuery } from '$lib/queries/library/LibraryActivityQueries.svelte';
-	import { getLibraryStatsQuery } from '$lib/queries/library/LibraryQueries.svelte';
+	import { getLibraryActivityQuery } from '$lib/features/library-management/queries/LibraryActivityQueries.svelte';
+	import { getLibraryStatsQuery } from '$lib/features/library/queries/LibraryQueries.svelte';
 	import { formatLastUpdated } from '$lib/utils/formatting';
 	import { withBasePath } from '$lib/utils/basePath';
 

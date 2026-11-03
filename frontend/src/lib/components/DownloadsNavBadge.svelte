@@ -1,10 +1,10 @@
 <script lang="ts">
-	import { getDownloadActivitySummaryQuery } from '$lib/queries/downloads/DownloadQueries.svelte';
+	import { getDownloadActivitySummaryQuery } from '$lib/features/downloads/queries/DownloadQueries.svelte';
 	import {
 		createDownloadActivityObservation,
 		reconcileDownloadActivity,
 		refreshAfterDownloadActivity
-	} from '$lib/queries/downloads/downloadActivitySync';
+	} from '$lib/features/downloads/queries/downloadActivitySync';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { libraryStore } from '$lib/stores/library';
 

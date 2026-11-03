@@ -10,7 +10,7 @@ const testMutate = vi.fn().mockResolvedValue({
 	indexer_count: 2
 });
 
-vi.mock('$lib/queries/downloads/ProwlarrQueries.svelte', () => ({
+vi.mock('$lib/features/downloads/queries/ProwlarrQueries.svelte', () => ({
 	getProwlarrConfigQuery: () => ({
 		data: { enabled: false, url: 'http://prowlarr:9696', api_key: '********' },
 		isLoading: false,

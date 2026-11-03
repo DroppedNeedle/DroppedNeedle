@@ -5,7 +5,7 @@
 		getProwlarrConfigQuery,
 		createSaveProwlarrConfigMutation,
 		createTestProwlarrMutation
-	} from '$lib/queries/downloads/ProwlarrQueries.svelte';
+	} from '$lib/features/downloads/queries/ProwlarrQueries.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
 	import SaveBar from '$lib/ui/SaveBar.svelte';

@@ -17,8 +17,8 @@ import {
 	wantedChanged,
 	type Effect
 } from '$lib/queries/effects';
-import { LibraryQueryKeyFactory } from '$lib/queries/library/LibraryQueryKeyFactory';
-import type { LibraryActivityResponse } from '$lib/queries/library/LibraryOperationsTypes';
+import { LibraryQueryKeyFactory } from '$lib/features/library/queries/LibraryQueryKeyFactory';
+import type { LibraryActivityResponse } from '$lib/features/library-management/queries/LibraryOperationsTypes';
 import { toastStore } from '$lib/stores/toast';
 import { muxEventStream, type MuxEventStream, type MuxUnsubscribe } from './MuxEventStream';
 

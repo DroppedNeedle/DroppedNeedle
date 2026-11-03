@@ -2,25 +2,29 @@
 	import { goto } from '$app/navigation';
 	import { ChevronLeft, Disc3, ExternalLink, FileSearch, FileUp, MicVocal } from 'lucide-svelte';
 	import ArtistImage from '$lib/components/ArtistImage.svelte';
-	import LibraryAlbumCard from '$lib/components/library/LibraryAlbumCard.svelte';
-	import ArtistAppearancesSection from '$lib/components/library/ArtistAppearancesSection.svelte';
-	import ArtistMergeDialog from '$lib/components/library/ArtistMergeDialog.svelte';
-	import ArtistMusicBrainzLink from '$lib/components/library/ArtistMusicBrainzLink.svelte';
-	import LocalIdentityBadge from '$lib/components/library/LocalIdentityBadge.svelte';
+	import LibraryAlbumCard from '$lib/features/library/components/LibraryAlbumCard.svelte';
+	import ArtistAppearancesSection from '$lib/features/library/components/ArtistAppearancesSection.svelte';
+	import ArtistMergeDialog from '$lib/features/library/components/ArtistMergeDialog.svelte';
+	import ArtistMusicBrainzLink from '$lib/features/library/components/ArtistMusicBrainzLink.svelte';
+	import LocalIdentityBadge from '$lib/features/library/components/LocalIdentityBadge.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import type { AlbumView } from '$lib/types';
 	import {
 		getLibraryArtistAlbumsQuery,
 		getLibraryArtistDetailQuery
-	} from '$lib/queries/library/LibraryQueries.svelte';
-	import { createLibraryContributionMutation } from '$lib/queries/libraryContributions/LibraryContributionMutations.svelte';
+	} from '$lib/features/library/queries/LibraryQueries.svelte';
+	import { createLibraryContributionMutation } from '$lib/features/library/queries/LibraryContributionMutations.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import RatingStars from '$lib/ui/RatingStars.svelte';
-	import { getRatingsQuery, ratingOf, createSetRatingMutation } from '$lib/queries/ratings.svelte';
-	import FavoriteHeart from '$lib/components/FavoriteHeart.svelte';
-	import { createSetFavoriteMutation } from '$lib/queries/library/FavoriteMutations.svelte';
+	import {
+		getRatingsQuery,
+		ratingOf,
+		createSetRatingMutation
+	} from '$lib/features/library/queries/ratings.svelte';
+	import FavoriteHeart from '$lib/features/library/components/FavoriteHeart.svelte';
+	import { createSetFavoriteMutation } from '$lib/features/library/queries/FavoriteMutations.svelte';
 
 	interface Props {
 		artistId: string;

@@ -8,8 +8,8 @@
 		getConcertsQuery,
 		getFollowedArtistsQuery,
 		getRecentReleasesQuery
-	} from '$lib/queries/following/FollowQueries.svelte';
-	import type { Concert } from '$lib/queries/following/types';
+	} from '$lib/features/following/queries/FollowQueries.svelte';
+	import type { Concert } from '$lib/features/following/queries/types';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { KM_PER_MILE } from '$lib/constants';
 	import { withBasePath } from '$lib/utils/basePath';

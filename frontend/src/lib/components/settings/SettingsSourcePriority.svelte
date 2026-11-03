@@ -11,7 +11,7 @@
 	import {
 		getSourcePriorityQuery,
 		createSaveSourcePriorityMutation
-	} from '$lib/queries/downloads/DownloadClientsQueries.svelte';
+	} from '$lib/features/downloads/queries/DownloadClientsQueries.svelte';
 	import { getPluginSourcesQuery } from '$lib/queries/plugins/PluginSourceQueries.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import Card from '$lib/ui/Card.svelte';

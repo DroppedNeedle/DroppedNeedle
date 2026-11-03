@@ -4,7 +4,7 @@
 	import CoverPlaceholder from '$lib/ui/CoverPlaceholder.svelte';
 	import { albumHrefOrNull, artistHrefOrNull } from '$lib/utils/entityRoutes';
 	import { libraryStore } from '$lib/stores/library';
-	import AlbumRequestButton from './AlbumRequestButton.svelte';
+	import AlbumRequestButton from '$lib/features/requests/components/AlbumRequestButton.svelte';
 	import SampleButton from './discover/SampleButton.svelte';
 	import AlbumImage from './AlbumImage.svelte';
 	import Card from '$lib/ui/Card.svelte';

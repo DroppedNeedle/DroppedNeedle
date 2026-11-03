@@ -6,8 +6,8 @@
 		getDownloadClientStatusQuery,
 		createSaveDownloadClientConfigMutation,
 		createTestDownloadClientMutation
-	} from '$lib/queries/downloads/DownloadClientQueries.svelte';
-	import type { DownloadClientConfig } from '$lib/queries/downloads/DownloadClientQueries.svelte';
+	} from '$lib/features/downloads/queries/DownloadClientQueries.svelte';
+	import type { DownloadClientConfig } from '$lib/features/downloads/queries/DownloadClientQueries.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';

@@ -23,21 +23,21 @@
 	import LocalFilesIcon from '$lib/components/LocalFilesIcon.svelte';
 	import NavidromeIcon from '$lib/components/NavidromeIcon.svelte';
 	import PlexIcon from '$lib/components/PlexIcon.svelte';
-	import LibraryFormatBadge from '$lib/components/library/LibraryFormatBadge.svelte';
-	import LibraryTrackRow from '$lib/components/library/LibraryTrackRow.svelte';
+	import LibraryFormatBadge from '$lib/features/library/components/LibraryFormatBadge.svelte';
+	import LibraryTrackRow from '$lib/features/library/components/LibraryTrackRow.svelte';
 	import { ChevronDown, ChevronUp, TriangleAlert, TrendingUp, Check } from 'lucide-svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import RatingStars from '$lib/ui/RatingStars.svelte';
-	import FavoriteHeart from '$lib/components/FavoriteHeart.svelte';
+	import FavoriteHeart from '$lib/features/library/components/FavoriteHeart.svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 	import type { LibraryStatusTrack, DownloadTask, HeldFileInEntry } from '$lib/types';
-	import TrackRequestButton from '$lib/components/downloads/TrackRequestButton.svelte';
-	import TrackDownloadStatus from '$lib/components/downloads/TrackDownloadStatus.svelte';
-	import HeldFileRow from '$lib/components/downloads/HeldFileRow.svelte';
+	import TrackRequestButton from '$lib/features/downloads/components/TrackRequestButton.svelte';
+	import TrackDownloadStatus from '$lib/features/downloads/components/TrackDownloadStatus.svelte';
+	import HeldFileRow from '$lib/features/downloads/components/HeldFileRow.svelte';
 	import { useIntegrationStatus } from '$lib/queries/home.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
-	import { createRequestUpgradeTrackMutation } from '$lib/queries/downloads/UpgradeQueries.svelte';
+	import { createRequestUpgradeTrackMutation } from '$lib/features/downloads/queries/UpgradeQueries.svelte';
 	import { toastStore } from '$lib/stores/toast';
 
 	const integrations = useIntegrationStatus();

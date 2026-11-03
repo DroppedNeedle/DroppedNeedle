@@ -6,12 +6,12 @@
 	import {
 		getLibraryAlbumFormatsQuery,
 		getLibraryAlbumsInfiniteQuery
-	} from '$lib/queries/library/LibraryQueries.svelte';
+	} from '$lib/features/library/queries/LibraryQueries.svelte';
 	import LibraryFilterMenu, {
 		type FormatMode
-	} from '$lib/components/library/LibraryFilterMenu.svelte';
-	import type { LibraryV3AlbumsParams } from '$lib/queries/library/LibraryQueryKeyFactory';
-	import LibraryAlbumCard from '$lib/components/library/LibraryAlbumCard.svelte';
+	} from '$lib/features/library/components/LibraryFilterMenu.svelte';
+	import type { LibraryV3AlbumsParams } from '$lib/features/library/queries/LibraryQueryKeyFactory';
+	import LibraryAlbumCard from '$lib/features/library/components/LibraryAlbumCard.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import Input from '$lib/ui/Input.svelte';

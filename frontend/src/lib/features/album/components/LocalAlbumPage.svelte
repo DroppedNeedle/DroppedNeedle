@@ -2,28 +2,32 @@
 	import { goto } from '$app/navigation';
 	import { ChevronLeft, Disc3, FileUp, ListMusic, Play, Shuffle } from 'lucide-svelte';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
-	import LibraryFormatBadge from '$lib/components/library/LibraryFormatBadge.svelte';
-	import NoFilesBadge from '$lib/components/library/NoFilesBadge.svelte';
-	import LocalIdentityBadge from '$lib/components/library/LocalIdentityBadge.svelte';
-	import ManagementHoldSection from '$lib/components/library/ManagementHoldSection.svelte';
-	import RecycledRemovals from '$lib/components/library/RecycledRemovals.svelte';
-	import AlbumHistory from '$lib/components/library/AlbumHistory.svelte';
-	import AlbumRetagPairs from '$lib/components/library/AlbumRetagPairs.svelte';
-	import EditionPlate from '$lib/components/library/edition/EditionPlate.svelte';
-	import AlbumOrganizationDialog from '$lib/components/library/AlbumOrganizationDialog.svelte';
-	import LocalAlbumTrackList from '$lib/components/library/LocalAlbumTrackList.svelte';
+	import LibraryFormatBadge from '$lib/features/library/components/LibraryFormatBadge.svelte';
+	import NoFilesBadge from '$lib/features/library/components/NoFilesBadge.svelte';
+	import LocalIdentityBadge from '$lib/features/library/components/LocalIdentityBadge.svelte';
+	import ManagementHoldSection from '$lib/features/library-management/components/ManagementHoldSection.svelte';
+	import RecycledRemovals from '$lib/features/library-management/components/RecycledRemovals.svelte';
+	import AlbumHistory from '$lib/features/library/components/AlbumHistory.svelte';
+	import AlbumRetagPairs from '$lib/features/library-management/components/AlbumRetagPairs.svelte';
+	import EditionPlate from '$lib/features/library/components/edition/EditionPlate.svelte';
+	import AlbumOrganizationDialog from '$lib/features/library-management/components/AlbumOrganizationDialog.svelte';
+	import LocalAlbumTrackList from '$lib/features/library/components/LocalAlbumTrackList.svelte';
 	import AlbumDownloadButton from './AlbumDownloadButton.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import RatingStars from '$lib/ui/RatingStars.svelte';
-	import { getRatingsQuery, ratingOf, createSetRatingMutation } from '$lib/queries/ratings.svelte';
-	import FavoriteHeart from '$lib/components/FavoriteHeart.svelte';
-	import { createSetFavoriteMutation } from '$lib/queries/library/FavoriteMutations.svelte';
+	import {
+		getRatingsQuery,
+		ratingOf,
+		createSetRatingMutation
+	} from '$lib/features/library/queries/ratings.svelte';
+	import FavoriteHeart from '$lib/features/library/components/FavoriteHeart.svelte';
+	import { createSetFavoriteMutation } from '$lib/features/library/queries/FavoriteMutations.svelte';
 	import { getDownloadAccessQuery } from '$lib/features/album/queries/DownloadAccessQuery.svelte';
 	import {
 		getAlbumEditionStatusQuery,
 		getEditionPlanQuery
-	} from '$lib/queries/albums/EditionQueries.svelte';
+	} from '$lib/features/library/queries/EditionQueries.svelte';
 	import { notesByFile } from './albumEdition';
 	import AddToPlaylistModal from '$lib/components/AddToPlaylistModal.svelte';
 	import type { MenuItem } from '$lib/components/ContextMenu.svelte';
@@ -35,9 +39,9 @@
 	import {
 		getLibraryAlbumDetailQuery,
 		getLibraryAlbumTracksQuery
-	} from '$lib/queries/library/LibraryQueries.svelte';
+	} from '$lib/features/library/queries/LibraryQueries.svelte';
 	import type { AlbumBasicInfo, LocalTrackInfo, TrackView } from '$lib/types';
-	import { createLibraryContributionMutation } from '$lib/queries/libraryContributions/LibraryContributionMutations.svelte';
+	import { createLibraryContributionMutation } from '$lib/features/library/queries/LibraryContributionMutations.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { artistHref } from '$lib/utils/entityRoutes';
 

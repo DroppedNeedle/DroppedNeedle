@@ -1,31 +1,31 @@
 <script lang="ts">
 	import { SECRET_MASK } from '$lib/ui/secretMask';
-	import '$lib/components/library/library-management.css';
+	import '$lib/features/library-management/components/library-management.css';
 	import { TriangleAlert, ArrowRight, CircleCheckBig, FolderCog, ScanSearch } from 'lucide-svelte';
 	import { ApiError } from '$lib/api/errors';
 	import {
 		getLibraryRestorableRootsQuery,
 		getTargetLibrarySettingsQuery
-	} from '$lib/queries/library/LibraryPolicyQueries.svelte';
+	} from '$lib/features/library-management/queries/LibraryPolicyQueries.svelte';
 	import {
 		createPreviewLibraryPolicyApplyMutation,
 		createPreviewLibraryPolicyImpactMutation,
 		createRestoreLibraryRootsMutation,
 		createSaveTargetLibrarySettingsMutation
-	} from '$lib/queries/library/LibraryPolicyMutations.svelte';
-	import { createRequestLibraryRunMutation } from '$lib/queries/library/LibraryOperationMutations.svelte';
+	} from '$lib/features/library-management/queries/LibraryPolicyMutations.svelte';
+	import { createRequestLibraryRunMutation } from '$lib/features/library-management/queries/LibraryOperationMutations.svelte';
 	import {
 		createSaveLibraryWatcherSettingsMutation,
 		getLibraryWatcherSettingsQuery
 	} from '$lib/queries/settings/SectionSettingsQueries.svelte';
-	import { getLibraryStatsQuery } from '$lib/queries/library/LibraryQueries.svelte';
+	import { getLibraryStatsQuery } from '$lib/features/library/queries/LibraryQueries.svelte';
 	import {
 		getDownloadPolicyQuery,
 		createSaveDownloadPolicyMutation
-	} from '$lib/queries/downloads/DownloadClientsQueries.svelte';
-	import LibraryRootPolicyEditor from '$lib/components/library/LibraryRootPolicyEditor.svelte';
-	import LibraryNamingExample from '$lib/components/library/LibraryNamingExample.svelte';
-	import LibraryScanScheduleControl from '$lib/components/library/LibraryScanScheduleControl.svelte';
+	} from '$lib/features/downloads/queries/DownloadClientsQueries.svelte';
+	import LibraryRootPolicyEditor from '$lib/features/library-management/components/LibraryRootPolicyEditor.svelte';
+	import LibraryNamingExample from '$lib/features/library-management/components/LibraryNamingExample.svelte';
+	import LibraryScanScheduleControl from '$lib/features/library-management/components/LibraryScanScheduleControl.svelte';
 	import SettingsLyrics from './SettingsLyrics.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
@@ -44,7 +44,7 @@
 	import type {
 		TargetLibrarySettingsResponse,
 		TypedLibrarySettings
-	} from '$lib/queries/library/LibraryOperationsTypes';
+	} from '$lib/features/library-management/queries/LibraryOperationsTypes';
 
 	const settingsQuery = getTargetLibrarySettingsQuery(() => authStore.isAdmin);
 	const restorableQuery = getLibraryRestorableRootsQuery(() => authStore.isAdmin);

@@ -2,9 +2,9 @@
 	import { Heart, X, ArrowLeft } from 'lucide-svelte';
 	import ArtistImage from '$lib/components/ArtistImage.svelte';
 	import EmptyState from '$lib/components/EmptyState.svelte';
-	import { getFollowedArtistsQuery } from '$lib/queries/following/FollowQueries.svelte';
-	import { createUnfollowMutation } from '$lib/queries/following/FollowMutations.svelte';
-	import type { FollowedArtist } from '$lib/queries/following/types';
+	import { getFollowedArtistsQuery } from '$lib/features/following/queries/FollowQueries.svelte';
+	import { createUnfollowMutation } from '$lib/features/following/queries/FollowMutations.svelte';
+	import type { FollowedArtist } from '$lib/features/following/queries/types';
 	import { withBasePath } from '$lib/utils/basePath';
 	import IconButton from '$lib/ui/IconButton.svelte';
 

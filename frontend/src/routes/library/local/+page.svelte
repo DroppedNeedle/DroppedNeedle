@@ -11,14 +11,14 @@
 	import type { CrateTrack } from '$lib/types';
 	import type { QueueItem } from '$lib/player/types';
 	import { slide } from '$lib/ui/motion';
-	import Turntable from '$lib/components/local/Turntable.svelte';
-	import Crate from '$lib/components/local/Crate.svelte';
+	import Turntable from '$lib/features/library/components/local/Turntable.svelte';
+	import Crate from '$lib/features/library/components/local/Crate.svelte';
 	import QueueDrawer from '$lib/components/QueueDrawer.svelte';
-	import SearchCard from '$lib/components/local/SearchCard.svelte';
-	import DeckVisualiser from '$lib/components/local/DeckVisualiser.svelte';
+	import SearchCard from '$lib/features/library/components/local/SearchCard.svelte';
+	import DeckVisualiser from '$lib/features/library/components/local/DeckVisualiser.svelte';
 	import HorizontalCarousel from '$lib/components/HorizontalCarousel.svelte';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
-	import NoFilesBadge from '$lib/components/library/NoFilesBadge.svelte';
+	import NoFilesBadge from '$lib/features/library/components/NoFilesBadge.svelte';
 	import {
 		getLocalRecentV3Query,
 		getLocalAlbumsV3Query,
@@ -28,14 +28,14 @@
 		fetchLocalAlbumTracksV3,
 		fetchLocalSuggestionBatchV3,
 		type AlbumCardV3
-	} from '$lib/queries/local/LocalV3Queries.svelte';
+	} from '$lib/features/library/queries/LocalV3Queries.svelte';
 	import {
 		albumCoverUrl,
 		crateCoverUrl,
 		matchTrackToQueueItem,
 		suggestionToCrateTrack,
 		type SpinAlbum
-	} from '$lib/queries/local/LocalV3Adapters';
+	} from '$lib/features/library/queries/LocalV3Adapters';
 	import { ChevronDown, Headphones, Play, Shuffle, Clock } from 'lucide-svelte';
 
 	const MBID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

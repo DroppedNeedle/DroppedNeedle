@@ -60,7 +60,7 @@ vi.mock('$lib/stores/authStore.svelte', () => ({
 	LAST_USER_ID_KEY: 'msr:last_user_id'
 }));
 vi.mock('$lib/stores/toast', () => ({ toastStore: { show: h.toast } }));
-vi.mock('$lib/queries/library/LibraryPolicyQueries.svelte', () => ({
+vi.mock('$lib/features/library-management/queries/LibraryPolicyQueries.svelte', () => ({
 	getTargetLibrarySettingsQuery: () => h.settings,
 	getLibraryRestorableRootsQuery: () => h.restorable,
 	getLibraryPolicyTreeQuery: () => ({
@@ -80,7 +80,7 @@ vi.mock('$lib/queries/library/LibraryPolicyQueries.svelte', () => ({
 		}
 	})
 }));
-vi.mock('$lib/queries/library/LibraryPolicyMutations.svelte', () => ({
+vi.mock('$lib/features/library-management/queries/LibraryPolicyMutations.svelte', () => ({
 	createPreviewLibraryPolicyImpactMutation: () => ({
 		mutateAsync: h.impact,
 		get data() {
@@ -108,10 +108,10 @@ vi.mock('$lib/queries/library/LibraryPolicyMutations.svelte', () => ({
 		isPending: false
 	})
 }));
-vi.mock('$lib/queries/library/LibraryOperationMutations.svelte', () => ({
+vi.mock('$lib/features/library-management/queries/LibraryOperationMutations.svelte', () => ({
 	createRequestLibraryRunMutation: () => ({ mutateAsync: h.requestRun, isPending: false })
 }));
-vi.mock('$lib/queries/library/LibraryQueries.svelte', () => ({
+vi.mock('$lib/features/library/queries/LibraryQueries.svelte', () => ({
 	getLibraryStatsQuery: () => ({ data: { total_size_bytes: 0 } }),
 	getLibraryScanScheduleQuery: () => ({
 		data: { scan_frequency: 'manual', daily_scan_time: '03:00' },
@@ -119,10 +119,10 @@ vi.mock('$lib/queries/library/LibraryQueries.svelte', () => ({
 		isError: false
 	})
 }));
-vi.mock('$lib/queries/library/LibraryMutations.svelte', () => ({
+vi.mock('$lib/features/library/queries/LibraryMutations.svelte', () => ({
 	createSaveLibraryScanScheduleMutation: () => ({ mutateAsync: vi.fn(), isPending: false })
 }));
-vi.mock('$lib/queries/downloads/DownloadClientsQueries.svelte', () => ({
+vi.mock('$lib/features/downloads/queries/DownloadClientsQueries.svelte', () => ({
 	getDownloadPolicyQuery: () => ({ data: { max_library_size_gb: 0 } }),
 	createSaveDownloadPolicyMutation: () => ({ mutateAsync: vi.fn(), isPending: false })
 }));

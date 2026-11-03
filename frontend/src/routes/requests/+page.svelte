@@ -5,16 +5,16 @@
 	import {
 		getActiveRequestCountQuery,
 		getActiveRequestsQuery
-	} from '$lib/queries/requests/RequestQueries.svelte';
-	import { liveRequestStatus } from '$lib/queries/requests/liveStatus';
+	} from '$lib/features/requests/queries/RequestQueries.svelte';
+	import { liveRequestStatus } from '$lib/features/requests/queries/liveStatus';
 	import { authStore } from '$lib/stores/authStore.svelte';
-	import ActiveTab from './ActiveTab.svelte';
-	import ApprovalsTab from './ApprovalsTab.svelte';
-	import AutoDownloadTab from './AutoDownloadTab.svelte';
-	import HistoryTab from './HistoryTab.svelte';
-	import UpgradesTab from './UpgradesTab.svelte';
-	import WantedTab from './WantedTab.svelte';
-	import type { RequestsTab } from './requestItems';
+	import ActiveTab from '$lib/features/requests/components/ActiveTab.svelte';
+	import ApprovalsTab from '$lib/features/requests/components/ApprovalsTab.svelte';
+	import AutoDownloadTab from '$lib/features/requests/components/AutoDownloadTab.svelte';
+	import HistoryTab from '$lib/features/requests/components/HistoryTab.svelte';
+	import UpgradesTab from '$lib/features/requests/components/UpgradesTab.svelte';
+	import WantedTab from '$lib/features/requests/components/WantedTab.svelte';
+	import type { RequestsTab } from '$lib/features/requests/components/requestItems';
 
 	function tabFromUrl(param: string | null): RequestsTab {
 		switch (param) {

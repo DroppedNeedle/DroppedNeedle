@@ -21,8 +21,8 @@ import {
 	musicBrainzSourceStamp,
 	subscribeMusicBrainzSourceScope
 } from './musicbrainz/sourceScope.svelte';
-import { subscribeDownloadRoleChange } from './downloads/downloadScope.svelte';
-import { DownloadQueryKeyFactory } from './downloads/DownloadQueryKeyFactory';
+import { subscribeDownloadRoleChange } from '$lib/features/downloads/queries/downloadScope.svelte';
+import { DownloadQueryKeyFactory } from '$lib/features/downloads/queries/DownloadQueryKeyFactory';
 import { STALE_DEFAULT } from './staleTime';
 import { recordServiceStatus } from '$lib/stores/serviceStatus';
 

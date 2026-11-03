@@ -25,8 +25,8 @@
 		type PlaylistModalHandle
 	} from '$lib/stores/playlistModal.svelte';
 	import { loadDiscographyModal, loadPlaylistModal } from '$lib/components/lazyComponentLoaders';
-	import { discographyDownloadStore } from '$lib/stores/discographyDownload.svelte';
-	import { batchDownloadStore } from '$lib/stores/batchDownloadStatus.svelte';
+	import { discographyDownloadStore } from '$lib/features/downloads/state/discographyDownload.svelte';
+	import { batchDownloadStore } from '$lib/features/downloads/state/batchDownloadStatus.svelte';
 	import BatchDownloadIndicator from '$lib/components/BatchDownloadIndicator.svelte';
 	import { syncStatus } from '$lib/stores/syncStatus.svelte';
 	import DegradedBanner from '$lib/components/DegradedBanner.svelte';
@@ -41,7 +41,7 @@
 	import type { Component, Snippet } from 'svelte';
 	import { serverEvents } from '$lib/queries/events/dispatcher';
 	import { muxEventStream } from '$lib/queries/events/MuxEventStream';
-	import LibraryActivityStrip from '$lib/components/library/LibraryActivityStrip.svelte';
+	import LibraryActivityStrip from '$lib/features/library-management/components/LibraryActivityStrip.svelte';
 	import TopBar from '$lib/components/shell/TopBar.svelte';
 	import SidebarNav from '$lib/components/shell/SidebarNav.svelte';
 	import BottomNav from '$lib/components/shell/BottomNav.svelte';

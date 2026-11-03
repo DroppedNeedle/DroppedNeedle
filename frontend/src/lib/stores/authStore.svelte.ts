@@ -1,4 +1,4 @@
-import { setDownloadScope } from '$lib/queries/downloads/downloadScope.svelte';
+import { setDownloadScope } from '$lib/features/downloads/queries/downloadScope.svelte';
 import { resetMusicBrainzSourceScope } from '$lib/queries/musicbrainz/sourceScope.svelte';
 import type { MusicBrainzSourceMode } from '$lib/queries/musicbrainz/types';
 

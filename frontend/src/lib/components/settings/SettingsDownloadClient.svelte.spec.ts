@@ -10,7 +10,7 @@ const testMutate = vi.fn().mockResolvedValue({
 	message: 'slskd 0.25.1.0'
 });
 
-vi.mock('$lib/queries/downloads/DownloadClientQueries.svelte', () => ({
+vi.mock('$lib/features/downloads/queries/DownloadClientQueries.svelte', () => ({
 	getDownloadClientConfigQuery: () => ({
 		data: {
 			enabled: false,

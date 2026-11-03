@@ -5,7 +5,7 @@ vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 
 import { PAGE_SOURCE_KEYS } from '$lib/constants';
 import { queryClient } from '$lib/queries/QueryClient';
-import { LibraryQueryKeyFactory } from '$lib/queries/library/LibraryQueryKeyFactory';
+import { LibraryQueryKeyFactory } from '$lib/features/library/queries/LibraryQueryKeyFactory';
 import { PERSIST } from '$lib/queries/persistedCache';
 import {
 	getMusicBrainzSourceScope,

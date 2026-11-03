@@ -13,12 +13,12 @@
 	import { SvelteURL } from 'svelte/reactivity';
 
 	import PageHeader from '$lib/components/PageHeader.svelte';
-	import LibraryScanningPanel from '$lib/components/library/LibraryScanningPanel.svelte';
-	import LibraryManagementControlRoom from '$lib/components/library/LibraryManagementControlRoom.svelte';
-	import LibraryOverviewPanel from '$lib/components/library/LibraryOverviewPanel.svelte';
-	import SettingsLibraryManagement from '$lib/components/settings/SettingsLibraryManagement.svelte';
-	import { getLibraryActivityQuery } from '$lib/queries/library/LibraryActivityQueries.svelte';
-	import { getTargetLibrarySettingsQuery } from '$lib/queries/library/LibraryPolicyQueries.svelte';
+	import LibraryScanningPanel from '$lib/features/library-management/components/LibraryScanningPanel.svelte';
+	import LibraryManagementControlRoom from '$lib/features/library-management/components/LibraryManagementControlRoom.svelte';
+	import LibraryOverviewPanel from '$lib/features/library-management/components/LibraryOverviewPanel.svelte';
+	import SettingsLibraryManagement from '$lib/features/library-management/components/SettingsLibraryManagement.svelte';
+	import { getLibraryActivityQuery } from '$lib/features/library-management/queries/LibraryActivityQueries.svelte';
+	import { getTargetLibrarySettingsQuery } from '$lib/features/library-management/queries/LibraryPolicyQueries.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import { withBasePath } from '$lib/utils/basePath';

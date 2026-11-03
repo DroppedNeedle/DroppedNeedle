@@ -7,7 +7,7 @@ import type { AuthUser } from '$lib/stores/authStore.svelte';
 
 // The dashboard pulls in queries / SSE / stores; stub it so this test covers the
 // route shell (header + action buttons) in isolation.
-vi.mock('$lib/components/library/LibraryDashboard.svelte', () => {
+vi.mock('$lib/features/library/components/LibraryDashboard.svelte', () => {
 	const Comp = function () {};
 	Comp.prototype = {};
 	return { default: Comp };

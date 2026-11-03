@@ -21,7 +21,7 @@
 	import { withBasePath } from '$lib/utils/basePath';
 	import { playerStore } from '$lib/stores/player.svelte';
 	import { libraryStore } from '$lib/stores/library';
-	import { createRequestAlbumMutation } from '$lib/queries/downloads/DownloadMutations.svelte';
+	import { createRequestAlbumMutation } from '$lib/features/downloads/queries/DownloadMutations.svelte';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import HeroBackdrop from '$lib/components/HeroBackdrop.svelte';
 	import YouTubeIcon from '$lib/components/YouTubeIcon.svelte';

@@ -1,12 +1,12 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import { editionSheet } from '$lib/components/library/edition/editionSheetState.svelte';
+	import { editionSheet } from '$lib/features/library/components/edition/editionSheetState.svelte';
 	import {
 		cacheCanonicalLibraryAlbumDetail,
 		getLibraryAlbumDetailQuery,
 		getLibraryAlbumStatusQuery
-	} from '$lib/queries/library/LibraryQueries.svelte';
+	} from '$lib/features/library/queries/LibraryQueries.svelte';
 	import { albumHref } from '$lib/utils/entityRoutes';
 	import LocalAlbumPage from '$lib/features/album/components/LocalAlbumPage.svelte';
 	import ProviderAlbumPage from '$lib/features/album/components/ProviderAlbumPage.svelte';

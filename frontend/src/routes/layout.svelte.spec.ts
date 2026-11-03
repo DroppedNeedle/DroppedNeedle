@@ -130,7 +130,7 @@ vi.mock('$lib/utils/lazyImage', () => ({
 	lazyImage: vi.fn(() => ({ destroy: vi.fn(), update: vi.fn() })),
 	resetLazyImage: vi.fn()
 }));
-vi.mock('$lib/queries/downloads/DownloadMutations.svelte', () => ({
+vi.mock('$lib/features/downloads/queries/DownloadMutations.svelte', () => ({
 	createRequestBatchMutation: () => ({ mutateAsync: batchRequestMock })
 }));
 vi.mock('$lib/utils/navigationProgress', () => ({
@@ -186,7 +186,8 @@ vi.mock('$lib/components/lazyComponentLoaders', () => ({
 			shellModuleState.discographyFailures -= 1;
 			throw new Error('discography chunk unavailable');
 		}
-		return (await import('$lib/components/DiscographyDownloadModal.svelte')).default;
+		return (await import('$lib/features/downloads/components/DiscographyDownloadModal.svelte'))
+			.default;
 	}
 }));
 
@@ -194,8 +195,8 @@ import Layout from './+layout.svelte';
 import { nowPlayingStore } from '$lib/stores/nowPlayingSessions.svelte';
 import { nowPlayingReporter } from '$lib/stores/nowPlayingReporter.svelte';
 import { authStore, type AuthUser } from '$lib/stores/authStore.svelte';
-import { discographyDownloadStore } from '$lib/stores/discographyDownload.svelte';
-import { batchDownloadStore } from '$lib/stores/batchDownloadStatus.svelte';
+import { discographyDownloadStore } from '$lib/features/downloads/state/discographyDownload.svelte';
+import { batchDownloadStore } from '$lib/features/downloads/state/batchDownloadStatus.svelte';
 import { resetPlaylistModal } from '$lib/stores/playlistModal.svelte';
 
 type IntegrationState = {

@@ -3,7 +3,7 @@ import { normalizeDiscNumber } from '$lib/player/queueHelpers';
 import type { QueueItem } from '$lib/player/types';
 import type { Album, Artist, SuggestResult } from '$lib/types';
 import { getApiUrl } from '$lib/api/api-utils';
-import { libraryCoverPath } from '$lib/queries/local/LocalV3Adapters';
+import { libraryCoverPath } from '$lib/features/library/queries/LocalV3Adapters';
 
 export type SearchResultItemV3 = components['schemas']['SearchResultItem'];
 export type SearchTrackDetailV3 = components['schemas']['SearchTrackDetail'];

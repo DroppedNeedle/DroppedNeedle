@@ -4,15 +4,15 @@
 	import {
 		getDownloadClientConfigQuery,
 		getDownloadClientStatusQuery
-	} from '$lib/queries/downloads/DownloadClientQueries.svelte';
-	import { getSabnzbdConfigQuery } from '$lib/queries/downloads/DownloadClientsQueries.svelte';
+	} from '$lib/features/downloads/queries/DownloadClientQueries.svelte';
+	import { getSabnzbdConfigQuery } from '$lib/features/downloads/queries/DownloadClientsQueries.svelte';
 	import {
 		getIndexersQuery,
 		getSearchBackendQuery
-	} from '$lib/queries/downloads/IndexerQueries.svelte';
-	import { getProwlarrConfigQuery } from '$lib/queries/downloads/ProwlarrQueries.svelte';
-	import { getLibraryRunHistoryQuery } from '$lib/queries/library/LibraryOperationQueries.svelte';
-	import { getTargetLibrarySettingsQuery } from '$lib/queries/library/LibraryPolicyQueries.svelte';
+	} from '$lib/features/downloads/queries/IndexerQueries.svelte';
+	import { getProwlarrConfigQuery } from '$lib/features/downloads/queries/ProwlarrQueries.svelte';
+	import { getLibraryRunHistoryQuery } from '$lib/features/library-management/queries/LibraryOperationQueries.svelte';
+	import { getTargetLibrarySettingsQuery } from '$lib/features/library-management/queries/LibraryPolicyQueries.svelte';
 	import Card from '$lib/ui/Card.svelte';
 
 	const libQuery = getTargetLibrarySettingsQuery();

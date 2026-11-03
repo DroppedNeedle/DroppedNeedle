@@ -1,5 +1,5 @@
 <script lang="ts">
-	import ArtistIdentityDesk from '$lib/components/library/ArtistIdentityDesk.svelte';
+	import ArtistIdentityDesk from '$lib/features/library-management/components/ArtistIdentityDesk.svelte';
 </script>
 
 <svelte:head><title>Artist Identity · DroppedNeedle</title></svelte:head>

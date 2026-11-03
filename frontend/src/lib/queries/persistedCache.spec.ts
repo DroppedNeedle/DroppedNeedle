@@ -9,8 +9,8 @@ import {
 	type StoredQuery
 } from './persistedCache';
 import { HomeQueryKeyFactory } from '$lib/queries/featureKeys';
-import { LibraryQueryKeyFactory } from './library/LibraryQueryKeyFactory';
-import { RequestQueryKeyFactory } from './requests/RequestQueryKeyFactory';
+import { LibraryQueryKeyFactory } from '$lib/features/library/queries/LibraryQueryKeyFactory';
+import { RequestQueryKeyFactory } from '$lib/features/requests/queries/RequestQueryKeyFactory';
 
 function memoryStorage() {
 	const rows = new Map<string, StoredQuery>();

@@ -1,4 +1,4 @@
-import { getLibraryArtistDetailQueryOptions } from '$lib/queries/library/LibraryQueries.svelte';
+import { getLibraryArtistDetailQueryOptions } from '$lib/features/library/queries/LibraryQueries.svelte';
 import { queryClient } from '$lib/queries/QueryClient';
 import { authStore } from '$lib/stores/authStore.svelte';
 import type { PageLoad } from './$types';

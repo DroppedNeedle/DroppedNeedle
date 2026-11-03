@@ -1,0 +1,132 @@
+import { page } from 'vitest/browser';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { renderWithQuery } from '$lib/test/render';
+import type { ScanRun } from '$lib/features/library-management/queries/LibraryOperationsTypes';
+
+function run(overrides: Partial<ScanRun> = {}): ScanRun {
+	return {
+		id: 'run-safe-1',
+		kind: 'incremental',
+		trigger: 'automatic',
+		state: 'completed',
+		phase: 'reconciling',
+		requested_by_user_id: null,
+		aggregate_scope: 'selected',
+		queued_at: 100,
+		started_at: 110,
+		updated_at: 145,
+		terminal_at: 145,
+		resume_phase: null,
+		requested_control: 'none',
+		terminal_code: null,
+		coalesced_request_count: 0,
+		row_revision: 2,
+		event_revision: 3,
+		counters: {
+			changed_count: 7,
+			discovered_count: 40,
+			errored_count: 1,
+			excluded_count: 0,
+			identification_enqueued_count: 0,
+			indexed_count: 0,
+			inspected_count: 0,
+			missing_count: 0,
+			new_count: 0,
+			total_count: 0,
+			unchanged_count: 7
+		},
+		phase_timings: { discovering: 10.5, indexing: 24.5 },
+		...overrides
+	};
+}
+
+const h = vi.hoisted(() => ({
+	history: {
+		data: { pages: [{ items: [] }] },
+		isLoading: false,
+		isError: false,
+		hasNextPage: false,
+		isFetchingNextPage: false,
+		fetchNextPage: vi.fn()
+	} as Record<string, unknown>,
+	failures: {
+		data: { pages: [{ items: [], next_cursor: null }] },
+		isLoading: false,
+		isError: false,
+		hasNextPage: false,
+		isFetchingNextPage: false,
+		fetchNextPage: vi.fn()
+	} as Record<string, unknown>,
+	raw: vi.fn(),
+	toast: vi.fn(),
+	anchorClick: vi.fn()
+}));
+
+vi.mock('$lib/features/library-management/queries/LibraryOperationQueries.svelte', () => ({
+	getLibraryRunHistoryQuery: () => h.history,
+	getLibraryRunFailuresQuery: () => h.failures
+}));
+vi.mock('$lib/api/client', () => ({ api: { raw: h.raw } }));
+vi.mock('$lib/stores/toast', () => ({ toastStore: { show: h.toast } }));
+
+import LibraryRunHistory from './LibraryRunHistory.svelte';
+
+beforeEach(() => {
+	vi.clearAllMocks();
+	h.history = {
+		data: { pages: [{ items: [run()] }] },
+		isLoading: false,
+		isError: false,
+		hasNextPage: false,
+		isFetchingNextPage: false,
+		fetchNextPage: vi.fn()
+	};
+	h.failures = {
+		data: { pages: [{ items: [], next_cursor: null }] },
+		isLoading: false,
+		isError: false,
+		hasNextPage: false,
+		isFetchingNextPage: false,
+		fetchNextPage: vi.fn()
+	};
+	vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:diagnostic');
+	vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+	vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(h.anchorClick);
+});
+
+describe('LibraryRunHistory', () => {
+	it('confirms redaction and honors the streamed safe filename', async () => {
+		h.raw.mockResolvedValue(
+			new Response('{"safe":true}', {
+				status: 200,
+				headers: {
+					'content-type': 'application/json',
+					'content-disposition': 'attachment; filename="droppedneedle-library-run-opaque.json"'
+				}
+			})
+		);
+		await renderWithQuery(LibraryRunHistory, {});
+		await page.getByText('Details').first().click();
+		await page.getByRole('button', { name: /Export diagnostics for run run-safe-1/ }).click();
+		await expect
+			.element(page.getByText(/excludes credentials, raw provider responses/))
+			.toBeVisible();
+		await page.getByRole('button', { name: 'Export report' }).click();
+		expect(h.raw).toHaveBeenCalledWith('/api/v3/library/scan/runs/run-safe-1/diagnostics');
+		expect(h.anchorClick).toHaveBeenCalledOnce();
+		expect(h.toast).toHaveBeenCalledWith({ message: 'Diagnostic report ready', type: 'success' });
+	});
+
+	it('uses fixed user-safe copy when an export fails', async () => {
+		h.raw.mockRejectedValue(new Error('/secret/path/provider-token'));
+		await renderWithQuery(LibraryRunHistory, {});
+		await page.getByText('Details').first().click();
+		await page.getByRole('button', { name: /Export diagnostics/ }).click();
+		await page.getByRole('button', { name: 'Export report' }).click();
+		expect(h.toast).toHaveBeenCalledWith({
+			message: 'Could not prepare the diagnostic report',
+			type: 'error'
+		});
+		expect(document.body.textContent).not.toContain('/secret/path');
+	});
+});

@@ -2,8 +2,8 @@
 	import {
 		getDownloadPolicyQuery,
 		createSaveDownloadPolicyMutation
-	} from '$lib/queries/downloads/DownloadClientsQueries.svelte';
-	import type { DownloadPolicySettings as DownloadPolicyView } from '$lib/queries/downloads/DownloadClientsQueries.svelte';
+	} from '$lib/features/downloads/queries/DownloadClientsQueries.svelte';
+	import type { DownloadPolicySettings as DownloadPolicyView } from '$lib/features/downloads/queries/DownloadClientsQueries.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import NumberField from '$lib/ui/NumberField.svelte';
 	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';

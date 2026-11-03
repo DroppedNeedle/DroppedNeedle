@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { getPendingApprovalCountQuery } from '$lib/queries/following/AdminApprovalsQueries.svelte';
+	import { getPendingApprovalCountQuery } from '$lib/features/following/queries/AdminApprovalsQueries.svelte';
 
 	const query = getPendingApprovalCountQuery(() => true);
 	const count = $derived(query.data?.count ?? 0);

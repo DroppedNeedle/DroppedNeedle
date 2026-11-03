@@ -4,17 +4,17 @@
 	import { withBasePath } from '$lib/utils/basePath';
 	import ArtistCardSkeleton from '$lib/features/artist/components/ArtistCardSkeleton.svelte';
 	import ArtistImage from '$lib/components/ArtistImage.svelte';
-	import LocalIdentityBadge from '$lib/components/library/LocalIdentityBadge.svelte';
+	import LocalIdentityBadge from '$lib/features/library/components/LocalIdentityBadge.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import Input from '$lib/ui/Input.svelte';
 	import Tabs, { type TabItem } from '$lib/ui/Tabs.svelte';
-	import { getLibraryArtistsInfiniteQuery } from '$lib/queries/library/LibraryQueries.svelte';
+	import { getLibraryArtistsInfiniteQuery } from '$lib/features/library/queries/LibraryQueries.svelte';
 	import type { ArtistSort, LibraryArtistScope, ArtistView } from '$lib/types';
 	import { artistHref } from '$lib/utils/entityRoutes';
 	import { ChevronLeft, Disc3, Heart, Mic, Search, UsersRound, X } from 'lucide-svelte';
-	import LibraryFilterMenu from '$lib/components/library/LibraryFilterMenu.svelte';
+	import LibraryFilterMenu from '$lib/features/library/components/LibraryFilterMenu.svelte';
 
 	const SEARCH_DEBOUNCE_MS = 300;
 

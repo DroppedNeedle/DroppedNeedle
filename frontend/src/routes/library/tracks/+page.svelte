@@ -1,9 +1,12 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { withBasePath } from '$lib/utils/basePath';
-	import { getLibraryTracksInfiniteQuery } from '$lib/queries/library/LibraryQueries.svelte';
-	import { libraryTrackParams, type LibraryTrackSort } from '$lib/queries/library/libraryTracks';
-	import { createLibraryTrackQueue } from '$lib/queries/library/libraryTrackQueue.svelte';
+	import { getLibraryTracksInfiniteQuery } from '$lib/features/library/queries/LibraryQueries.svelte';
+	import {
+		libraryTrackParams,
+		type LibraryTrackSort
+	} from '$lib/features/library/queries/libraryTracks';
+	import { createLibraryTrackQueue } from '$lib/features/library/queries/libraryTrackQueue.svelte';
 	import { buildDiscoveryQueueFromLocal } from '$lib/player/queueHelpers';
 	import { playerStore } from '$lib/stores/player.svelte';
 	import { toastStore } from '$lib/stores/toast';

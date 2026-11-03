@@ -6,7 +6,7 @@
 	import Button from '$lib/ui/Button.svelte';
 	import SampleButton from '$lib/components/discover/SampleButton.svelte';
 	import LibraryBadge from '$lib/features/album/components/LibraryBadge.svelte';
-	import { getLibraryMembershipQuery } from '$lib/queries/library/LibraryQueries.svelte';
+	import { getLibraryMembershipQuery } from '$lib/features/library/queries/LibraryQueries.svelte';
 	import { trackCountLabel } from '$lib/utils/trackCount';
 
 	interface Release {

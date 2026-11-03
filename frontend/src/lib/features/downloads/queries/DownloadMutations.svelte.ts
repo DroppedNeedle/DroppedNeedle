@@ -1,0 +1,378 @@
+import { v3 } from '$lib/api/v3/endpoint';
+import { api } from '$lib/api/client';
+import type { components } from '$lib/api/v3/openapi';
+import type { IntakeResponse, TrackIntakeResponse } from '$lib/features/requests/queries/types';
+import { authStore } from '$lib/stores/authStore.svelte';
+import { readIntegrationStatus } from '$lib/queries/home.svelte';
+import { libraryStore } from '$lib/stores/library';
+import { toastStore } from '$lib/stores/toast';
+// Request-surface copy lives beside the other acquisition label mappings.
+import {
+	WAITING_FOR_SOURCE_COPY,
+	batchRequestCopy,
+	requestStatusCopy
+} from '$lib/features/downloads/components/acquisitionLabels';
+import { albumRequestOutcome } from '$lib/features/downloads/queries/requestOutcome';
+import {
+	albumStatusChanged,
+	anyDownloadChanged,
+	anyRequestChanged,
+	applyEffects,
+	createAppMutation,
+	downloadsChanged
+} from '$lib/queries/effects';
+
+interface AlbumRequestInput {
+	release_group_mbid: string;
+	artist_name?: string | null;
+	album_title?: string | null;
+	year?: number | null;
+	artist_mbid?: string | null;
+	/** The edition to fetch; omitted, the library's chosen edition is fetched. */
+	release_mbid?: string | null;
+	monitor_artist?: boolean;
+	auto_download_artist?: boolean;
+}
+
+interface TrackRequestInput {
+	recording_mbid: string;
+	artist_name: string;
+	track_title: string;
+	album_title?: string | null;
+	duration_seconds?: number | null;
+	release_group_mbid?: string | null;
+	artist_mbid?: string | null;
+	release_id?: string | null;
+}
+
+const tasks = () => [downloadsChanged(authStore.user?.id)];
+
+// A request accepted while no download source is set up waits for one; the
+// toast says so instead of claiming a search began.
+function noSourceReady(): boolean {
+	const status = readIntegrationStatus();
+	return status !== undefined && !status.download_client;
+}
+
+function errorMessage(err: unknown, fallback: string): string {
+	return err instanceof Error && err.message ? err.message : fallback;
+}
+
+// An accepted, dispatched or duplicate album answer may have created tasks or
+// history rows, in the caller's views and the admin's.
+const requestSurface = () => [anyDownloadChanged(), anyRequestChanged()];
+
+// One click, one toast, one cache path (Acquisition "Request surfaces"). The
+// response status is mapped to the spec's four copy lines by albumRequestOutcome;
+// the summary sentence comes from the response when the backend carries one.
+export function createRequestAlbumMutation() {
+	return createAppMutation(() => ({
+		mutationFn: async (input: AlbumRequestInput): Promise<IntakeResponse> => {
+			const initiatingUserId = authStore.user?.id;
+			let data: IntakeResponse;
+			try {
+				data = await api.v3.POST(v3('/api/v3/requests/albums'), {
+					musicbrainz_id: input.release_group_mbid,
+					artist: input.artist_name ?? null,
+					album: input.album_title ?? null,
+					year: input.year ?? null,
+					artist_mbid: input.artist_mbid ?? null,
+					release_mbid: input.release_mbid ?? null,
+					...(input.monitor_artist || input.auto_download_artist
+						? {
+								monitor_artist: input.monitor_artist === true,
+								auto_download_artist: input.auto_download_artist === true
+							}
+						: {})
+				});
+			} catch (err) {
+				toastStore.show({ message: errorMessage(err, 'Request failed'), type: 'error' });
+				throw err;
+			}
+			// Session switched while the POST was in flight: touch nothing cached and
+			// report a plain failure so no badge or toast fires for the previous user.
+			if (!initiatingUserId || authStore.user?.id !== initiatingUserId) {
+				return { ...data, success: false };
+			}
+
+			if (data.success) {
+				libraryStore.addRequested(input.release_group_mbid);
+			}
+			if (!data.success) {
+				toastStore.show({ message: data.message || 'Request failed', type: 'error' });
+				return data;
+			}
+			if (data.status === 'cancelling') {
+				toastStore.show({
+					message: data.message || 'Request is being cancelled',
+					type: 'info'
+				});
+				return data;
+			}
+			const outcome = albumRequestOutcome(data) ?? 'dispatched';
+			toastStore.show({
+				message:
+					outcome === 'dispatched' && noSourceReady()
+						? WAITING_FOR_SOURCE_COPY
+						: requestStatusCopy(outcome),
+				type: outcome === 'duplicate_active' || outcome === 'in_library' ? 'info' : 'success'
+			});
+			return data;
+		},
+		effects: requestSurface
+	}));
+}
+
+export type BatchAlbumItem = components['schemas']['BatchItem'];
+
+export interface BatchRequestResult {
+	success: boolean;
+	requested: number;
+	skipped: number;
+	overflow: number;
+	error?: string;
+}
+
+// Discography/discovery bulk requests. Counts are rendered verbatim by
+// batchRequestCopy - skipped and over-limit albums are never claimed as queued.
+export function createRequestBatchMutation() {
+	return createAppMutation(() => ({
+		mutationFn: async (input: {
+			items: BatchAlbumItem[];
+			monitorArtist?: boolean;
+			autoDownloadArtist?: boolean;
+		}): Promise<BatchRequestResult> => {
+			const initiatingUserId = authStore.user?.id;
+			try {
+				const response = await api.v3.POST(v3('/api/v3/requests/batches'), {
+					items: input.items,
+					monitor_artist: input.monitorArtist === true,
+					auto_download_artist: input.autoDownloadArtist === true
+				});
+				if (!initiatingUserId || authStore.user?.id !== initiatingUserId) {
+					return {
+						success: false,
+						requested: response.requested,
+						skipped: response.skipped,
+						overflow: response.overflow
+					};
+				}
+				if (response.success) {
+					for (const item of input.items) {
+						libraryStore.addRequested(item.musicbrainz_id);
+					}
+				}
+				toastStore.show({
+					message: batchRequestCopy(response.requested, response.skipped, response.overflow),
+					type: 'info'
+				});
+				return {
+					success: response.success,
+					requested: response.requested,
+					skipped: response.skipped,
+					overflow: response.overflow
+				};
+			} catch (err) {
+				const detail = err instanceof Error && err.message ? err.message : 'Network error occurred';
+				toastStore.show({ message: detail, type: 'error' });
+				return { success: false, requested: 0, skipped: 0, overflow: 0, error: detail };
+			}
+		},
+		effects: (result) => (result.error === undefined ? requestSurface() : [])
+	}));
+}
+
+export function createRequestTrackMutation() {
+	return createAppMutation(() => ({
+		effects: tasks,
+		mutationFn: (input: TrackRequestInput) =>
+			api.v3.POST(v3('/api/v3/requests/tracks'), {
+				recording_mbid: input.recording_mbid,
+				artist_name: input.artist_name,
+				track_title: input.track_title,
+				album_title: input.album_title ?? null,
+				duration_seconds: input.duration_seconds ?? null,
+				release_group_mbid: input.release_group_mbid ?? null,
+				artist_mbid: input.artist_mbid ?? null,
+				release_mbid: input.release_id ?? null
+			}),
+		onSuccess: (data: TrackIntakeResponse) => {
+			toastStore.show({
+				message:
+					data.status === 'awaiting_approval'
+						? 'Track request submitted for admin approval'
+						: noSourceReady()
+							? WAITING_FOR_SOURCE_COPY
+							: 'Track requested - searching for downloads',
+				type: 'success'
+			});
+		},
+		onError: (err: unknown) =>
+			toastStore.show({ message: errorMessage(err, 'Track request failed'), type: 'error' })
+	}));
+}
+
+export function createCancelDownloadMutation() {
+	return createAppMutation(() => ({
+		effects: tasks,
+		mutationFn: (id: string) =>
+			api.v3.POST(v3('/api/v3/downloads/tasks/{task_id}/cancel', { path: { task_id: id } })),
+		onSuccess: () => {
+			toastStore.show({ message: 'Download cancelled', type: 'info' });
+		},
+		onError: (err: unknown) =>
+			toastStore.show({ message: errorMessage(err, 'Failed to cancel download'), type: 'error' })
+	}));
+}
+
+interface NextSourceInput {
+	id: string;
+	candidateIndex: number;
+}
+
+export function createTryNextSourceMutation() {
+	return createAppMutation(() => ({
+		effects: tasks,
+		mutationFn: (input: NextSourceInput) =>
+			api.v3.POST(
+				v3('/api/v3/downloads/tasks/{task_id}/next-source', { path: { task_id: input.id } }),
+				{
+					expected_candidate_index: input.candidateIndex
+				}
+			),
+		onSuccess: () => {
+			toastStore.show({ message: 'Trying the next source', type: 'info' });
+		},
+		onError: (err: unknown) => {
+			void applyEffects(...tasks());
+			toastStore.show({
+				message: errorMessage(err, 'Could not switch sources'),
+				type: 'error'
+			});
+		}
+	}));
+}
+
+// Stop a scheduled auto-retry. Cancelling the failed/partial task drops it out of the
+// retry sweep (status -> cancelled); a manual Retry is still available afterwards.
+export function createStopAutoRetryMutation() {
+	return createAppMutation(() => ({
+		effects: tasks,
+		mutationFn: (id: string) =>
+			api.v3.POST(v3('/api/v3/downloads/tasks/{task_id}/cancel', { path: { task_id: id } })),
+		onSuccess: () => {
+			toastStore.show({ message: 'Stopped retrying', type: 'info' });
+		},
+		onError: (err: unknown) =>
+			toastStore.show({ message: errorMessage(err, 'Failed to stop retrying'), type: 'error' })
+	}));
+}
+
+export function createRetryDownloadMutation() {
+	return createAppMutation(() => ({
+		effects: tasks,
+		mutationFn: (id: string) =>
+			api.v3.POST(v3('/api/v3/downloads/tasks/{task_id}/retry', { path: { task_id: id } })),
+		onSuccess: () => {
+			toastStore.show({ message: 'Download retry initiated', type: 'info' });
+		},
+		onError: (err: unknown) =>
+			toastStore.show({ message: errorMessage(err, 'Failed to retry download'), type: 'error' })
+	}));
+}
+
+// Bulk queue actions for the dashboard. Each reports how many rows it touched so the
+// toast is honest ("Cleared 12 downloads", "Nothing to clear").
+function pluralDownloads(n: number): string {
+	return `${n} download${n === 1 ? '' : 's'}`;
+}
+
+export function createClearFinishedMutation() {
+	return createAppMutation(() => ({
+		effects: tasks,
+		mutationFn: () => api.v3.POST(v3('/api/v3/downloads/clear')),
+		onSuccess: (data: { cleared: number }) => {
+			toastStore.show({
+				message: data.cleared > 0 ? `Cleared ${pluralDownloads(data.cleared)}` : 'Nothing to clear',
+				type: 'info'
+			});
+		},
+		onError: (err: unknown) =>
+			toastStore.show({ message: errorMessage(err, 'Failed to clear downloads'), type: 'error' })
+	}));
+}
+
+export function createStopAllRetriesMutation() {
+	return createAppMutation(() => ({
+		effects: tasks,
+		mutationFn: () => api.v3.POST(v3('/api/v3/downloads/stop-all-retries')),
+		onSuccess: (data: { stopped: number }) => {
+			toastStore.show({
+				message:
+					data.stopped > 0
+						? `Stopped retrying ${pluralDownloads(data.stopped)}`
+						: 'No retries to stop',
+				type: 'info'
+			});
+		},
+		onError: (err: unknown) =>
+			toastStore.show({ message: errorMessage(err, 'Failed to stop retries'), type: 'error' })
+	}));
+}
+
+export function createRetryAllFailedMutation() {
+	return createAppMutation(() => ({
+		effects: tasks,
+		mutationFn: () => api.v3.POST(v3('/api/v3/downloads/retry-all-failed')),
+		onSuccess: (data: { retried: number }) => {
+			toastStore.show({
+				message:
+					data.retried > 0 ? `Retrying ${pluralDownloads(data.retried)}` : 'Nothing to retry',
+				type: 'info'
+			});
+		},
+		onError: (err: unknown) =>
+			toastStore.show({ message: errorMessage(err, 'Failed to retry downloads'), type: 'error' })
+	}));
+}
+
+interface ReimportInput {
+	id: string;
+	release_group_mbid?: string | null;
+}
+
+// Admin reimport: the task goes back in line with its picked candidate
+// kept, so the worker checks the downloads mount again without
+// re-searching.
+export function createReimportDownloadMutation() {
+	return createAppMutation(() => ({
+		mutationFn: (input: ReimportInput) =>
+			api.v3.POST(
+				v3('/api/v3/downloads/tasks/{task_id}/reimport', { path: { task_id: input.id } })
+			),
+		onSuccess: (data) => {
+			if (data.status === 'completed') {
+				toastStore.show({ message: 'Import complete', type: 'success' });
+			} else if (data.status === 'partial') {
+				toastStore.show({
+					message: 'Imported what was found, some files still missing',
+					type: 'info'
+				});
+			} else {
+				toastStore.show({
+					message: data.reason?.text ?? "Couldn't find the files on the downloads mount yet",
+					type: 'error'
+				});
+			}
+		},
+		effects: (_data, input: ReimportInput) => [
+			...tasks(),
+			anyRequestChanged(),
+			...(input.release_group_mbid
+				? [albumStatusChanged(authStore.user?.id, input.release_group_mbid)]
+				: [])
+		],
+		onError: (err: unknown) =>
+			toastStore.show({ message: errorMessage(err, 'Failed to reimport download'), type: 'error' })
+	}));
+}

@@ -1,13 +1,13 @@
 <script lang="ts">
-	import { getLibraryManagementSettingsQuery } from '$lib/queries/library-management/LibraryManagementQueries.svelte';
+	import { getLibraryManagementSettingsQuery } from '$lib/features/library-management/queries/LibraryManagementQueries.svelte';
 	import { isStaleRevision } from '$lib/api/errors';
 	import { useQueryClient } from '@tanstack/svelte-query';
 	import {
 		getLibraryAlbumDetailQuery,
 		getLibraryAlbumDetailQueryOptions,
 		getLibraryAlbumStatusQuery
-	} from '$lib/queries/library/LibraryQueries.svelte';
-	import { createRemoveLibraryAlbumMutation } from '$lib/queries/library/LibraryMutations.svelte';
+	} from '$lib/features/library/queries/LibraryQueries.svelte';
+	import { createRemoveLibraryAlbumMutation } from '$lib/features/library/queries/LibraryMutations.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import ConfirmDialog from '$lib/ui/ConfirmDialog.svelte';
 

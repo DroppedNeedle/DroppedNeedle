@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { DownloadPolicySettings } from '$lib/queries/downloads/DownloadClientsQueries.svelte';
+import type { DownloadPolicySettings } from '$lib/features/downloads/queries/DownloadClientsQueries.svelte';
 
 import {
 	FLAC_OPTIONS,

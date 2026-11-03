@@ -6,7 +6,7 @@ import type { UnmatchedFile } from './albumEdition';
 
 const h = vi.hoisted(() => ({ removeMut: vi.fn() }));
 
-vi.mock('$lib/queries/library/LibraryMutations.svelte', () => ({
+vi.mock('$lib/features/library/queries/LibraryMutations.svelte', () => ({
 	createRemoveLibraryTrackMutation: () => ({ mutate: h.removeMut, isPending: false })
 }));
 

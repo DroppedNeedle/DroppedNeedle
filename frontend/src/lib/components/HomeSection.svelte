@@ -23,7 +23,7 @@
 	import ArtistImage from './ArtistImage.svelte';
 	import AlbumImage from './AlbumImage.svelte';
 	import AlbumCardOverlay from '$lib/features/album/components/AlbumCardOverlay.svelte';
-	import AlbumRequestButton from './AlbumRequestButton.svelte';
+	import AlbumRequestButton from '$lib/features/requests/components/AlbumRequestButton.svelte';
 	import HorizontalCarousel from './HorizontalCarousel.svelte';
 	import SourceBadge from './SourceBadge.svelte';
 	import SampleButton from './discover/SampleButton.svelte';

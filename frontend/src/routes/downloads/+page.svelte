@@ -3,10 +3,10 @@
 
 	import { Download, PackageOpen } from 'lucide-svelte';
 
-	import DownloadQueue from '$lib/components/downloads/DownloadQueue.svelte';
+	import DownloadQueue from '$lib/features/downloads/components/DownloadQueue.svelte';
 	import DiscoveryBatchList from '$lib/components/discover/DiscoveryBatchList.svelte';
-	import DropImportJobList from '$lib/components/import/DropImportJobList.svelte';
-	import DropImportZone from '$lib/components/import/DropImportZone.svelte';
+	import DropImportJobList from '$lib/features/downloads/components/DropImportJobList.svelte';
+	import DropImportZone from '$lib/features/downloads/components/DropImportZone.svelte';
 	import EmptyState from '$lib/components/EmptyState.svelte';
 	import { getIntegrationStatusQuery } from '$lib/queries/home.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';

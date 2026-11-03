@@ -20,9 +20,9 @@ vi.mock('$lib/stores/toast', () => ({ toastStore: { show: h.toast } }));
 
 import type { MuxEventListener, MuxEventStream } from './MuxEventStream';
 import { createEventDispatcher, EVENT_TABLE } from './dispatcher';
-import { LibraryQueryKeyFactory } from '$lib/queries/library/LibraryQueryKeyFactory';
-import { DownloadQueryKeyFactory } from '$lib/queries/downloads/DownloadQueryKeyFactory';
-import { RequestQueryKeyFactory } from '$lib/queries/requests/RequestQueryKeyFactory';
+import { LibraryQueryKeyFactory } from '$lib/features/library/queries/LibraryQueryKeyFactory';
+import { DownloadQueryKeyFactory } from '$lib/features/downloads/queries/DownloadQueryKeyFactory';
+import { RequestQueryKeyFactory } from '$lib/features/requests/queries/RequestQueryKeyFactory';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const contract = JSON.parse(

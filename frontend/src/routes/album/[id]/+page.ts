@@ -1,7 +1,7 @@
 import {
 	getLibraryAlbumDetailQueryOptions,
 	getLibraryAlbumStatusQueryOptions
-} from '$lib/queries/library/LibraryQueries.svelte';
+} from '$lib/features/library/queries/LibraryQueries.svelte';
 import { queryClient } from '$lib/queries/QueryClient';
 import { authStore } from '$lib/stores/authStore.svelte';
 import type { PageLoad } from './$types';

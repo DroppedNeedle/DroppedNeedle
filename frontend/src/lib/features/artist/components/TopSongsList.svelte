@@ -1,7 +1,7 @@
 <script lang="ts">
 	import type { TopSong, ResolvedTrack } from '$lib/types';
 	import type { QueueItem, SourceType } from '$lib/player/types';
-	import { getResolvedTracksQuery } from '$lib/queries/library/LibraryQueries.svelte';
+	import { getResolvedTracksQuery } from '$lib/features/library/queries/LibraryQueries.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';

@@ -18,7 +18,7 @@ const h = vi.hoisted(() => ({
 vi.mock('$app/state', () => ({ page: { url: new URL('http://localhost/album/x') } }));
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 
-vi.mock('$lib/queries/albums/EditionQueries.svelte', () => ({
+vi.mock('$lib/features/library/queries/EditionQueries.svelte', () => ({
 	getAlbumEditionsQuery: () => ({
 		get data() {
 			return h.editions;
@@ -53,7 +53,7 @@ vi.mock('$lib/queries/albums/EditionQueries.svelte', () => ({
 	getWaitingAlbumsQuery: () => ({ data: undefined, isLoading: false, isError: false })
 }));
 
-vi.mock('$lib/queries/library/LibraryMutations.svelte', () => ({
+vi.mock('$lib/features/library/queries/LibraryMutations.svelte', () => ({
 	createRescanAlbumMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
 	createRemoveLibraryAlbumMutation: () => ({
 		mutateAsync: vi.fn(),
@@ -92,7 +92,7 @@ const localAlbum: AlbumDetailView = {
 	pending_review_id: null
 };
 
-vi.mock('$lib/queries/library/LibraryQueries.svelte', () => ({
+vi.mock('$lib/features/library/queries/LibraryQueries.svelte', () => ({
 	getLibraryAlbumDetailQuery: () => ({
 		data: localAlbum,
 		isLoading: false,
@@ -115,7 +115,7 @@ vi.mock('$lib/queries/library/LibraryQueries.svelte', () => ({
 	getAlbumSearchQuery: () => ({ data: undefined, isLoading: false, isError: false })
 }));
 
-vi.mock('$lib/queries/library/LibraryOperationQueries.svelte', () => ({
+vi.mock('$lib/features/library-management/queries/LibraryOperationQueries.svelte', () => ({
 	getCurrentLibraryRunsQuery: () => ({ data: undefined, isLoading: false, isError: false }),
 	getLibraryRunQuery: () => ({ data: undefined, isLoading: false, isError: false }),
 	getLibraryRunHistoryQuery: () => ({ data: undefined, isLoading: false, isError: false }),
@@ -123,11 +123,11 @@ vi.mock('$lib/queries/library/LibraryOperationQueries.svelte', () => ({
 	getLibraryRunEstimateQuery: () => ({ data: undefined, isLoading: false, isError: false })
 }));
 
-vi.mock('$lib/queries/downloads/HeldQueries.svelte', () => ({
+vi.mock('$lib/features/downloads/queries/HeldQueries.svelte', () => ({
 	createImportHeldMutation: () => ({ mutate: vi.fn(), isPending: false })
 }));
 
-vi.mock('$lib/queries/library/LibraryEditionQueries.svelte', () => ({
+vi.mock('$lib/features/library/queries/LibraryEditionQueries.svelte', () => ({
 	getReleaseEditionSearchQuery: () => ({
 		data: undefined,
 		isLoading: false,
@@ -137,7 +137,7 @@ vi.mock('$lib/queries/library/LibraryEditionQueries.svelte', () => ({
 	})
 }));
 
-vi.mock('$lib/queries/library/LibraryCatalogMutations.svelte', () => ({
+vi.mock('$lib/features/library/queries/LibraryCatalogMutations.svelte', () => ({
 	createReenableAlbumManagementMutation: () => ({
 		mutateAsync: vi.fn(),
 		isPending: false,
@@ -145,7 +145,7 @@ vi.mock('$lib/queries/library/LibraryCatalogMutations.svelte', () => ({
 	})
 }));
 
-vi.mock('$lib/queries/library/LibraryOperationMutations.svelte', () => ({
+vi.mock('$lib/features/library-management/queries/LibraryOperationMutations.svelte', () => ({
 	createControlLibraryOperationMutation: () => ({ mutateAsync: vi.fn() }),
 	createControlLibraryRunMutation: () => ({
 		mutateAsync: vi.fn(),
@@ -159,7 +159,7 @@ vi.mock('$lib/queries/library/LibraryOperationMutations.svelte', () => ({
 	})
 }));
 
-vi.mock('$lib/queries/library-management/LibraryManagementMutations.svelte', () => ({
+vi.mock('$lib/features/library-management/queries/LibraryManagementMutations.svelte', () => ({
 	createHandBackLibraryAlbumMutation: () => ({
 		mutateAsync: vi.fn(),
 		isPending: false,
@@ -168,7 +168,7 @@ vi.mock('$lib/queries/library-management/LibraryManagementMutations.svelte', () 
 	handBackRefusalMessage: () => null
 }));
 
-vi.mock('$lib/queries/downloads/UpgradeQueries.svelte', () => ({
+vi.mock('$lib/features/downloads/queries/UpgradeQueries.svelte', () => ({
 	createRequestUpgradeAlbumMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
 	getCutoffUnmetQuery: () => ({ data: undefined, isLoading: false, isError: false })
 }));
@@ -195,7 +195,7 @@ const { emptyComponent } = vi.hoisted(() => ({
 }));
 vi.mock('$lib/components/AlbumImage.svelte', emptyComponent);
 vi.mock('$lib/components/HeroBackdrop.svelte', emptyComponent);
-vi.mock('$lib/components/downloads/AlbumDownloadStatus.svelte', emptyComponent);
+vi.mock('$lib/features/downloads/components/AlbumDownloadStatus.svelte', emptyComponent);
 
 const blob = vi.hoisted(() => ({ download: vi.fn() }));
 vi.mock('$lib/utils/blobDownload', () => ({ downloadBlob: blob.download }));

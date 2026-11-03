@@ -17,19 +17,19 @@ vi.mock('$lib/stores/authStore.svelte', () => ({
 	authStore: { isAdmin: true, isTrusted: true, user: { id: 'user-1' } },
 	LAST_USER_ID_KEY: 'msr:last_user_id'
 }));
-vi.mock('$lib/queries/requests/RequestQueries.svelte', () => ({
+vi.mock('$lib/features/requests/queries/RequestQueries.svelte', () => ({
 	getActiveRequestCountQuery: () => ({ data: { count: 0 } }),
 	getActiveRequestsQuery: () => ({ data: { items: [], count: 0 }, isFetching: false })
 }));
-vi.mock('$lib/queries/downloads/UpgradeQueries.svelte', () => ({
+vi.mock('$lib/features/downloads/queries/UpgradeQueries.svelte', () => ({
 	getCutoffUnmetQuery: () => ({ data: undefined, isPending: false, isError: false }),
 	createRequestUpgradeAlbumMutation: () => ({ mutateAsync: vi.fn(), isPending: false })
 }));
-vi.mock('./ActiveTab.svelte', emptyComponent);
-vi.mock('./HistoryTab.svelte', emptyComponent);
-vi.mock('./WantedTab.svelte', emptyComponent);
-vi.mock('./ApprovalsTab.svelte', emptyComponent);
-vi.mock('./AutoDownloadTab.svelte', emptyComponent);
+vi.mock('$lib/features/requests/components/ActiveTab.svelte', emptyComponent);
+vi.mock('$lib/features/requests/components/HistoryTab.svelte', emptyComponent);
+vi.mock('$lib/features/requests/components/WantedTab.svelte', emptyComponent);
+vi.mock('$lib/features/requests/components/ApprovalsTab.svelte', emptyComponent);
+vi.mock('$lib/features/requests/components/AutoDownloadTab.svelte', emptyComponent);
 
 import RequestsPage from './+page.svelte';
 

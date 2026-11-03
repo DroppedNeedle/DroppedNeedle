@@ -19,15 +19,15 @@
 		createSaveIndexerMutation,
 		createSaveSearchBackendMutation,
 		createTestIndexerMutation
-	} from '$lib/queries/downloads/IndexerQueries.svelte';
-	import { getProwlarrConfigQuery } from '$lib/queries/downloads/ProwlarrQueries.svelte';
+	} from '$lib/features/downloads/queries/IndexerQueries.svelte';
+	import { getProwlarrConfigQuery } from '$lib/features/downloads/queries/ProwlarrQueries.svelte';
 	import { getPluginSourcesQuery } from '$lib/queries/plugins/PluginSourceQueries.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import type {
 		IndexerSettings,
 		IndexerTestResult,
 		UsenetSearchBackendName
-	} from '$lib/queries/downloads/IndexerQueries.svelte';
+	} from '$lib/features/downloads/queries/IndexerQueries.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';

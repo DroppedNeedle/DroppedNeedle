@@ -3,7 +3,7 @@
 	// QueryProvider context, which the layout itself renders. Sits as the
 	// right-hand circle of the overlapping badge pair on the Following link
 	// (left = new releases, right = concerts).
-	import { getUnseenConcertsCountQuery } from '$lib/queries/following/FollowQueries.svelte';
+	import { getUnseenConcertsCountQuery } from '$lib/features/following/queries/FollowQueries.svelte';
 
 	const query = getUnseenConcertsCountQuery();
 	const count = $derived(query.data?.count ?? 0);

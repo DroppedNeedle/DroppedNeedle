@@ -12,13 +12,13 @@
 	import TopSongsList from '$lib/features/artist/components/TopSongsList.svelte';
 	import TopAlbumsList from '$lib/features/artist/components/TopAlbumsList.svelte';
 	import LastFmEnrichment from '$lib/components/LastFmEnrichment.svelte';
-	import ArtistLibraryAlbums from '$lib/components/library/ArtistLibraryAlbums.svelte';
-	import ArtistAppearancesSection from '$lib/components/library/ArtistAppearancesSection.svelte';
-	import ArtistMusicBrainzLink from '$lib/components/library/ArtistMusicBrainzLink.svelte';
+	import ArtistLibraryAlbums from '$lib/features/library/components/ArtistLibraryAlbums.svelte';
+	import ArtistAppearancesSection from '$lib/features/library/components/ArtistAppearancesSection.svelte';
+	import ArtistMusicBrainzLink from '$lib/features/library/components/ArtistMusicBrainzLink.svelte';
 	import LocalArtistPage from './LocalArtistPage.svelte';
 	import type { ArtistView } from '$lib/types';
 	import PageSectionToc from '$lib/components/PageSectionToc.svelte';
-	import { createRequestAlbumMutation } from '$lib/queries/downloads/DownloadMutations.svelte';
+	import { createRequestAlbumMutation } from '$lib/features/downloads/queries/DownloadMutations.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { libraryStore } from '$lib/stores/library';
 	import { type MusicSource, isMusicSource } from '$lib/stores/musicSource';
@@ -41,14 +41,18 @@
 	import {
 		discographyDownloadStore,
 		type DiscographyRelease
-	} from '$lib/stores/discographyDownload.svelte';
+	} from '$lib/features/downloads/state/discographyDownload.svelte';
 	import { CircleAlert, Download } from 'lucide-svelte';
 	import { listeningSourceNotice } from '$lib/features/artist/components/listeningSourceNotice';
 	import ArtistReleasePagination from '$lib/features/artist/components/ArtistReleasePagination.svelte';
 	import { mergeArtistReleasePages } from '$lib/features/artist/queries/artistReleasePages';
 	import { mergeArtistImages } from '$lib/features/album/queries/catalogAdapters';
-	import { getRatingsQuery, ratingOf, createSetRatingMutation } from '$lib/queries/ratings.svelte';
-	import { createSetFavoriteMutation } from '$lib/queries/library/FavoriteMutations.svelte';
+	import {
+		getRatingsQuery,
+		ratingOf,
+		createSetRatingMutation
+	} from '$lib/features/library/queries/ratings.svelte';
+	import { createSetFavoriteMutation } from '$lib/features/library/queries/FavoriteMutations.svelte';
 
 	interface Props {
 		data: { artistId: string; primarySource: MusicSource };

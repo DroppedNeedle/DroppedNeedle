@@ -5,7 +5,7 @@
 	import type { TopPickItem, TopPicksSection } from '$lib/queries/discover/types';
 	import { SvelteSet } from 'svelte/reactivity';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
-	import AlbumRequestButton from '$lib/components/AlbumRequestButton.svelte';
+	import AlbumRequestButton from '$lib/features/requests/components/AlbumRequestButton.svelte';
 	import RadioPlayButton from '$lib/components/discover/RadioPlayButton.svelte';
 	import SampleButton from '$lib/components/discover/SampleButton.svelte';
 	import SourceBadge from '$lib/components/SourceBadge.svelte';

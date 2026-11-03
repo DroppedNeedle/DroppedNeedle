@@ -1,9 +1,80 @@
 {
 	"album": [
+		"components/DeleteAlbumModal.svelte",
 		"components/LibraryBadge.svelte",
+		"queries/AlbumQueryKeyFactory.ts",
 		"queries/GetItQueries.svelte.ts",
 		"queries/albumMatch.svelte.ts",
 		"queries/catalogAdapters.ts"
 	],
-	"artist": ["queries/ArtistQueryKeyFactory.ts"]
+	"artist": ["queries/ArtistQueries.svelte.ts", "queries/ArtistQueryKeyFactory.ts"],
+	"downloads": [
+		"components/AlbumDownloadStatus.svelte",
+		"components/HeldFileRow.svelte",
+		"components/TrackDownloadStatus.svelte",
+		"components/TrackRequestButton.svelte",
+		"queries/DownloadMutations.svelte.ts",
+		"queries/DownloadQueries.svelte.ts",
+		"queries/DownloadQueryKeyFactory.ts",
+		"queries/HeldQueries.svelte.ts",
+		"queries/UpgradeQueries.svelte.ts",
+		"queries/downloadStatus.ts",
+		"state/discographyDownload.svelte.ts"
+	],
+	"following": [
+		"components/FollowControl.svelte",
+		"queries/AdminApprovalsMutations.svelte.ts",
+		"queries/AdminApprovalsQueries.svelte.ts"
+	],
+	"library": [
+		"components/AlbumHistory.svelte",
+		"components/ArtistAppearancesSection.svelte",
+		"components/ArtistLibraryAlbums.svelte",
+		"components/ArtistMergeDialog.svelte",
+		"components/ArtistMusicBrainzLink.svelte",
+		"components/FavoriteHeart.svelte",
+		"components/LibraryAlbumCard.svelte",
+		"components/LibraryFormatBadge.svelte",
+		"components/LibraryTrackRow.svelte",
+		"components/LocalAlbumTrackList.svelte",
+		"components/LocalIdentityBadge.svelte",
+		"components/NoFilesBadge.svelte",
+		"components/edition/EditionPlate.svelte",
+		"components/edition/editionCopy.ts",
+		"components/edition/editionSheetState.svelte.ts",
+		"queries/EditionQueries.svelte.ts",
+		"queries/FavoriteMutations.svelte.ts",
+		"queries/LibraryAlbumHistoryQueries.svelte.ts",
+		"queries/LibraryCatalogMutations.svelte.ts",
+		"queries/LibraryContributionMutations.svelte.ts",
+		"queries/LibraryIdentityPreparationMutations.svelte.ts",
+		"queries/LibraryIdentityPreparationQueries.svelte.ts",
+		"queries/LibraryMutations.svelte.ts",
+		"queries/LibraryQueries.svelte.ts",
+		"queries/LibraryQueryKeyFactory.ts",
+		"queries/LibraryReviewMutations.svelte.ts",
+		"queries/LibraryReviewQueries.svelte.ts",
+		"queries/LocalV3Keys.ts",
+		"queries/artist-reconciliation.svelte.ts",
+		"queries/ratings.svelte.ts"
+	],
+	"library-management": [
+		"components/AlbumOrganizationDialog.svelte",
+		"components/AlbumRetagPairs.svelte",
+		"components/ManagementHoldSection.svelte",
+		"components/OperationJobStrip.svelte",
+		"components/RecycledRemovals.svelte",
+		"queries/LibraryManagementMutations.svelte.ts",
+		"queries/LibraryManagementPreviewTokens.ts",
+		"queries/LibraryManagementQueries.svelte.ts",
+		"queries/LibraryOperationsTypes.ts",
+		"queries/LibraryPolicyQueries.svelte.ts",
+		"queries/RemovalQueries.svelte.ts",
+		"queries/types.ts"
+	],
+	"requests": [
+		"queries/RequestMutations.svelte.ts",
+		"queries/RequestQueries.svelte.ts",
+		"queries/types.ts"
+	]
 }

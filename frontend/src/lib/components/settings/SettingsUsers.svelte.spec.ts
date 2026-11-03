@@ -36,7 +36,7 @@ vi.mock('$lib/queries/auth/UserImportMutations.svelte', () => ({
 	createImportUsersMutation: () => ({ mutateAsync: vi.fn(), isPending: false })
 }));
 
-vi.mock('$lib/queries/downloads/DownloadClientsQueries.svelte', () => ({
+vi.mock('$lib/features/downloads/queries/DownloadClientsQueries.svelte', () => ({
 	getDownloadPolicyQuery: () => ({
 		data: {
 			default_request_quota_count: 0,

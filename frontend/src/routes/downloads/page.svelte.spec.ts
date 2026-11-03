@@ -41,12 +41,12 @@ vi.mock('$lib/stores/authStore.svelte', () => ({
 	LAST_USER_ID_KEY: 'msr:last_user_id'
 }));
 
-vi.mock('$lib/queries/import.svelte', () => ({
+vi.mock('$lib/features/downloads/queries/import.svelte', () => ({
 	getDropImportJobsQuery: () => ({ data: { jobs: [] }, isLoading: false }),
 	createUploadDropMutation: () => ({ mutate: vi.fn(), isPending: false })
 }));
 
-vi.mock('$lib/queries/downloads/HeldQueries.svelte', async (importOriginal) => ({
+vi.mock('$lib/features/downloads/queries/HeldQueries.svelte', async (importOriginal) => ({
 	...(await importOriginal<object>()),
 	getHeldEntriesQuery: () => ({ data: { entries: [] }, isSuccess: true })
 }));

@@ -19,19 +19,23 @@
 	import WhereToBuy from './WhereToBuy.svelte';
 	import AlbumPluginDetails from './AlbumPluginDetails.svelte';
 	import { albumHref } from '$lib/utils/entityRoutes';
-	import LibraryAlbumCard from '$lib/components/library/LibraryAlbumCard.svelte';
-	import ManagementHoldSection from '$lib/components/library/ManagementHoldSection.svelte';
-	import RecycledRemovals from '$lib/components/library/RecycledRemovals.svelte';
-	import AlbumHistory from '$lib/components/library/AlbumHistory.svelte';
-	import AlbumRetagPairs from '$lib/components/library/AlbumRetagPairs.svelte';
+	import LibraryAlbumCard from '$lib/features/library/components/LibraryAlbumCard.svelte';
+	import ManagementHoldSection from '$lib/features/library-management/components/ManagementHoldSection.svelte';
+	import RecycledRemovals from '$lib/features/library-management/components/RecycledRemovals.svelte';
+	import AlbumHistory from '$lib/features/library/components/AlbumHistory.svelte';
+	import AlbumRetagPairs from '$lib/features/library-management/components/AlbumRetagPairs.svelte';
 	import {
 		getLibraryAlbumCopiesQuery,
 		getLibraryAlbumDetailQuery,
 		getLibraryAlbumStatusQuery
-	} from '$lib/queries/library/LibraryQueries.svelte';
+	} from '$lib/features/library/queries/LibraryQueries.svelte';
 	import LocalAlbumPage from './LocalAlbumPage.svelte';
-	import { getRatingsQuery, ratingOf, createSetRatingMutation } from '$lib/queries/ratings.svelte';
-	import { createSetFavoriteMutation } from '$lib/queries/library/FavoriteMutations.svelte';
+	import {
+		getRatingsQuery,
+		ratingOf,
+		createSetRatingMutation
+	} from '$lib/features/library/queries/ratings.svelte';
+	import { createSetFavoriteMutation } from '$lib/features/library/queries/FavoriteMutations.svelte';
 
 	const integrations = useIntegrationStatus();
 

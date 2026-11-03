@@ -107,7 +107,7 @@ const contribution: LibraryContribution = {
 	review_reason: null
 };
 
-vi.mock('$lib/queries/libraryContributions/LibraryContributionQueries.svelte', () => ({
+vi.mock('$lib/features/library/queries/LibraryContributionQueries.svelte', () => ({
 	getLibraryContributionQuery: () => ({
 		data: contribution,
 		isLoading: false,
@@ -116,7 +116,7 @@ vi.mock('$lib/queries/libraryContributions/LibraryContributionQueries.svelte', (
 	})
 }));
 
-vi.mock('$lib/queries/libraryContributions/LibraryContributionMutations.svelte', () => ({
+vi.mock('$lib/features/library/queries/LibraryContributionMutations.svelte', () => ({
 	createUpdateLibraryContributionMutation: () => ({ isPending: false, mutate: h.mutateSave }),
 	createRebuildLibraryContributionMutation: () => ({ isPending: false, mutate: h.mutateRebuild }),
 	createCancelLibraryContributionMutation: () => ({ isPending: false, mutate: h.mutateCancel }),

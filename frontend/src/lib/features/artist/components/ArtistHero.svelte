@@ -6,12 +6,12 @@
 	import { extractDominantColor, DEFAULT_GRADIENT } from '$lib/utils/colors';
 	import ArtistImage from '$lib/components/ArtistImage.svelte';
 	import ArtistLinks from './ArtistLinks.svelte';
-	import FollowControl from '$lib/components/FollowControl.svelte';
+	import FollowControl from '$lib/features/following/components/FollowControl.svelte';
 	import BackButton from '$lib/components/BackButton.svelte';
 	import HeroBackdrop from '$lib/components/HeroBackdrop.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import RatingStars from '$lib/ui/RatingStars.svelte';
-	import FavoriteHeart from '$lib/components/FavoriteHeart.svelte';
+	import FavoriteHeart from '$lib/features/library/components/FavoriteHeart.svelte';
 	import { outsideLink } from '$lib/components/outsideLink';
 	import { getArtistImageCreditQuery } from '$lib/features/artist/queries/ArtistImageCreditQuery.svelte';
 

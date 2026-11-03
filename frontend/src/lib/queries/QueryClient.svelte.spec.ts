@@ -15,11 +15,11 @@ import {
 	PERSISTED_CACHE_BUSTER,
 	type StoredQuery
 } from './persistedCache';
-import { setDownloadScope } from './downloads/downloadScope.svelte';
-import { DownloadQueryKeyFactory } from './downloads/DownloadQueryKeyFactory';
+import { setDownloadScope } from '$lib/features/downloads/queries/downloadScope.svelte';
+import { DownloadQueryKeyFactory } from '$lib/features/downloads/queries/DownloadQueryKeyFactory';
 import { authStore, type AuthUser } from '$lib/stores/authStore.svelte';
 import { ArtistQueryKeyFactory } from '$lib/features/artist/queries/ArtistQueryKeyFactory';
-import { LibraryQueryKeyFactory } from './library/LibraryQueryKeyFactory';
+import { LibraryQueryKeyFactory } from '$lib/features/library/queries/LibraryQueryKeyFactory';
 import {
 	resetMusicBrainzSourceScope,
 	setMusicBrainzSourceScope

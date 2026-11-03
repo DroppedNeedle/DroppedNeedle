@@ -30,26 +30,26 @@ import {
 	buildLocalAlbumDownloadCallback,
 	buildSourceCallbacks
 } from '../components/albumPlaybackHandlers';
-import { getLibraryAlbumStatusQuery } from '$lib/queries/library/LibraryQueries.svelte';
+import { getLibraryAlbumStatusQuery } from '$lib/features/library/queries/LibraryQueries.svelte';
 import {
 	editionFetchLive,
 	getAlbumEditionStatusQuery,
 	getEditionFetchQuery,
 	getEditionPlanQuery,
 	type EditionFetchTrackState
-} from '$lib/queries/albums/EditionQueries.svelte';
+} from '$lib/features/library/queries/EditionQueries.svelte';
 import { editionTrackRows, unmatchedFiles, type EditionTrackRow } from '../components/albumEdition';
-import { getAlbumDownloadsQuery } from '$lib/queries/downloads/DownloadQueries.svelte';
-import { getHeldEntriesQuery } from '$lib/queries/downloads/HeldQueries.svelte';
-import { isActiveDownloadStatus } from '$lib/queries/downloads/downloadStatus';
+import { getAlbumDownloadsQuery } from '$lib/features/downloads/queries/DownloadQueries.svelte';
+import { getHeldEntriesQuery } from '$lib/features/downloads/queries/HeldQueries.svelte';
+import { isActiveDownloadStatus } from '$lib/features/downloads/queries/downloadStatus';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { getDownloadAccessQuery } from '$lib/features/album/queries/DownloadAccessQuery.svelte';
-import { createRemoveLibraryTrackMutation } from '$lib/queries/library/LibraryMutations.svelte';
+import { createRemoveLibraryTrackMutation } from '$lib/features/library/queries/LibraryMutations.svelte';
 import { toastStore } from '$lib/stores/toast';
 import { isStaleRevision } from '$lib/api/errors';
-import { getActiveRequestsQuery } from '$lib/queries/requests/RequestQueries.svelte';
-import { createSwitchRequestedEditionMutation } from '$lib/queries/albums/EditionQueries.svelte';
-import type { EditionRequestPick } from '$lib/components/library/edition/editionSheetState.svelte';
+import { getActiveRequestsQuery } from '$lib/features/requests/queries/RequestQueries.svelte';
+import { createSwitchRequestedEditionMutation } from '$lib/features/library/queries/EditionQueries.svelte';
+import type { EditionRequestPick } from '$lib/features/library/components/edition/editionSheetState.svelte';
 import {
 	getAlbumBasicQuery,
 	getAlbumLastFmQuery,

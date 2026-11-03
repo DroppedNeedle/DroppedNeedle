@@ -9,7 +9,7 @@
 	} from '$lib/types';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import HeroBackdrop from '$lib/components/HeroBackdrop.svelte';
-	import AlbumDownloadStatus from '$lib/components/downloads/AlbumDownloadStatus.svelte';
+	import AlbumDownloadStatus from '$lib/features/downloads/components/AlbumDownloadStatus.svelte';
 	import { formatTotalDuration } from '$lib/utils/formatting';
 	import {
 		Check,
@@ -22,22 +22,22 @@
 		TrendingUp,
 		TriangleAlert
 	} from 'lucide-svelte';
-	import { createRescanAlbumMutation } from '$lib/queries/library/LibraryMutations.svelte';
-	import { createRequestUpgradeAlbumMutation } from '$lib/queries/downloads/UpgradeQueries.svelte';
+	import { createRescanAlbumMutation } from '$lib/features/library/queries/LibraryMutations.svelte';
+	import { createRequestUpgradeAlbumMutation } from '$lib/features/downloads/queries/UpgradeQueries.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import { deckSampler } from '$lib/stores/deckSampler.svelte';
-	import EditionPlate from '$lib/components/library/edition/EditionPlate.svelte';
-	import NoFilesBadge from '$lib/components/library/NoFilesBadge.svelte';
+	import EditionPlate from '$lib/features/library/components/edition/EditionPlate.svelte';
+	import NoFilesBadge from '$lib/features/library/components/NoFilesBadge.svelte';
 	import {
 		editionSheet,
 		type EditionRequestPick
-	} from '$lib/components/library/edition/editionSheetState.svelte';
+	} from '$lib/features/library/components/edition/editionSheetState.svelte';
 	import AlbumDownloadButton from './AlbumDownloadButton.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import RatingStars from '$lib/ui/RatingStars.svelte';
-	import FavoriteHeart from '$lib/components/FavoriteHeart.svelte';
+	import FavoriteHeart from '$lib/features/library/components/FavoriteHeart.svelte';
 
 	interface Props {
 		album: AlbumBasicInfo;

@@ -10,7 +10,7 @@
 		Check,
 		ExternalLink
 	} from 'lucide-svelte';
-	import AlbumRequestButton from '$lib/components/AlbumRequestButton.svelte';
+	import AlbumRequestButton from '$lib/features/requests/components/AlbumRequestButton.svelte';
 	import GenreAlbumCard from '$lib/components/GenreAlbumCard.svelte';
 	import SampleButton from '$lib/components/discover/SampleButton.svelte';
 	import { getDiscoverPlaylistSuggestionsV3Query } from '$lib/queries/discover/DiscoverV3Queries.svelte';
