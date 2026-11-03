@@ -32,6 +32,8 @@ vi.mock('$lib/queries/albums/EditionQueries.svelte', () => ({
 	createChooseAlbumEditionMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
 	createHandBackAlbumEditionMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
 	createConfirmAlbumEditionMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	createMarkLooksWrongMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	createClearLooksWrongMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
 	createUndoAlbumEditionMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
 	createSealCustomEditionMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
 	createLeaveAlbumUnmanagedMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
@@ -119,6 +121,10 @@ vi.mock('$lib/queries/library/LibraryOperationQueries.svelte', () => ({
 	getLibraryRunHistoryQuery: () => ({ data: undefined, isLoading: false, isError: false }),
 	getLibraryRunFailuresQuery: () => ({ data: undefined, isLoading: false, isError: false }),
 	getLibraryRunEstimateQuery: () => ({ data: undefined, isLoading: false, isError: false })
+}));
+
+vi.mock('$lib/queries/downloads/HeldQueries.svelte', () => ({
+	createImportHeldMutation: () => ({ mutate: vi.fn(), isPending: false })
 }));
 
 vi.mock('$lib/queries/library/LibraryEditionQueries.svelte', () => ({
