@@ -336,9 +336,7 @@ async fn import_serializes_with_a_concurrent_writer() {
         .connect_with(options)
         .await
         .unwrap();
-    droppedneedle_kernel::schema::apply_migrations(&pool)
-        .await
-        .unwrap();
+    droppedneedle_kernel::db::migrate_file(&db, &droppedneedle_kernel::schema::CHAIN).unwrap();
 
     let writer = rusqlite::Connection::open(&db).unwrap();
     writer

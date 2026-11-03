@@ -43,13 +43,13 @@
 # else:
 #   library_play_history          media     track, album and artist set
 #
-# Kept by triggers (from migration 0065), not by code: no code writes
+# Kept by triggers (trg_user_album_plays_*), not by code: no code writes
 # library_user_album_plays. The database rewrites its rows inside the
 # transaction of every write to library_play_history,
 # catalog_user_play_marks and local_tracks, whichever area makes it.
 # local_albums.has_indexed_track is kept the same way, from local_tracks.
 #
-# Kept by triggers (from migration 0080), not by code: no code writes
+# Kept by triggers (trg_artist_*), not by code: no code writes
 # library_artist_album_credits or library_artist_counts. The database
 # rewrites their rows inside the transaction of every write to
 # local_track_artists, local_tracks, local_albums, local_album_artists and

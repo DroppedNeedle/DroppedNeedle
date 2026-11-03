@@ -221,43 +221,90 @@ async fn after_a_fresh_start_setup_asks_for_the_code_logged_at_boot() {
     running.shut_down().await;
 }
 
+/// A database the replaced migration chain left at its last number is
+/// backed up before the bridge moves it onto the baseline: one backup at
+/// that stamp, still holding sqlx's table, and the live file at the
+/// baseline. A database older than that is refused before anything is
+/// written, the backups folder included.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn database_one_version_behind_is_backed_up_before_migrating() {
+    use droppedneedle_kernel::schema::{BRIDGE_FROM, latest_version};
+
     let dir = scratch("upgrade");
     let db_path = dir.join("cache").join("library.db");
+    let backups_dir = dir.join("cache").join("backups");
     std::fs::create_dir_all(db_path.parent().unwrap()).unwrap();
-    let all = &droppedneedle_kernel::schema::MIGRATOR;
-    let keep = all.migrations.len() - 1;
-    // Migration numbers can skip, so the stamp one behind is the version of
-    // the last migration kept, not latest minus one.
-    let behind = all.migrations[keep - 1].version;
-    let older = sqlx::migrate::Migrator {
-        migrations: std::borrow::Cow::Owned(all.migrations[..keep].to_vec()),
-        ..sqlx::migrate::Migrator::DEFAULT
+    crate::common::migrated_db(&db_path);
+    let restamp = |stamp: i64| {
+        let connection = rusqlite::Connection::open(&db_path).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE IF NOT EXISTS _sqlx_migrations (version BIGINT PRIMARY KEY, \
+                 description TEXT NOT NULL, installed_on TIMESTAMP NOT NULL DEFAULT \
+                 CURRENT_TIMESTAMP, success BOOLEAN NOT NULL, checksum BLOB NOT NULL, \
+                 execution_time BIGINT NOT NULL)",
+            )
+            .unwrap();
+        connection
+            .pragma_update(None, "user_version", stamp)
+            .unwrap();
     };
-    let options = sqlx::sqlite::SqliteConnectOptions::new()
-        .filename(&db_path)
-        .create_if_missing(true)
-        .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal);
-    let pool = sqlx::SqlitePool::connect_with(options).await.unwrap();
-    droppedneedle_kernel::schema::run_migrations(&pool, &older)
-        .await
-        .unwrap();
-    pool.close().await;
+    let read = |path: &Path| {
+        let connection = rusqlite::Connection::open(path).unwrap();
+        let stamp: i64 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        let sqlx: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE name = '_sqlx_migrations'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        (stamp, sqlx)
+    };
+    let backups = || -> Vec<PathBuf> {
+        let mut found: Vec<PathBuf> = std::fs::read_dir(&backups_dir)
+            .map(|entries| {
+                entries
+                    .map(|entry| entry.unwrap().path())
+                    .filter(|path| path.extension().is_some_and(|ext| ext == "db"))
+                    .collect()
+            })
+            .unwrap_or_default();
+        found.sort();
+        found
+    };
 
+    restamp(BRIDGE_FROM);
     let runtime = open_runtime(&DbConfig::new(&db_path)).await.unwrap();
-    let backups: Vec<PathBuf> = std::fs::read_dir(dir.join("cache").join("backups"))
-        .expect("the backup sits next to the database")
-        .map(|entry| entry.unwrap().path())
-        .filter(|path| path.extension().is_some_and(|ext| ext == "db"))
-        .collect();
-    assert_eq!(backups.len(), 1, "{backups:?}");
-    let stamp: i64 = rusqlite::Connection::open(&backups[0])
-        .unwrap()
-        .query_row("PRAGMA user_version", [], |row| row.get(0))
-        .unwrap();
-    assert_eq!(stamp, behind, "the backup holds the pre-upgrade schema");
     runtime.shutdown().await;
+    let taken = backups();
+    assert_eq!(taken.len(), 1, "{taken:?}");
+    assert_eq!(
+        read(&taken[0]),
+        (BRIDGE_FROM, 1),
+        "the backup holds the database as the bridge found it"
+    );
+    assert_eq!(read(&db_path), (latest_version(), 0));
+
+    restamp(BRIDGE_FROM - 1);
+    let refused = open_runtime(&DbConfig::new(&db_path)).await.unwrap_err();
+    assert!(
+        matches!(
+            refused,
+            droppedneedle_kernel::db::DbError::Schema(
+                droppedneedle_kernel::db::SchemaError::TooOld { .. }
+            )
+        ),
+        "{refused:?}"
+    );
+    assert_eq!(backups(), taken, "a refused stamp takes no backup");
+    assert_eq!(
+        read(&db_path),
+        (BRIDGE_FROM - 1, 1),
+        "the file is as it was"
+    );
 }
 
 /// A running offline import holds the data lock exclusively: the server

@@ -20,7 +20,7 @@
 //!   what the first does. Their totals come from the maintained counts or
 //!   are remembered per catalog revision.
 //! - List methods page ids first, then aggregate over the page only; the
-//!   0005 read models (trigram FTS index, maintained format totals) keep
+//!   read models (trigram FTS index, maintained format totals) keep
 //!   text search and stats off full scans.
 //! - Track text search runs through the trigram FTS index: every word of 3
 //!   or more characters must appear in the title, artist or album (any
@@ -879,7 +879,7 @@ impl LocalCatalog {
             && filter.genre.is_none()
             && favorites_of.is_none();
         // Unfiltered, the maintained exact count of indexed tracks
-        // (migration 0005) answers.
+        // (`catalog_track_format_stats`) answers.
         let total = if unfiltered {
             let total: i64 = self
                 .read("library.tracks.count", |conn| {
@@ -936,7 +936,7 @@ impl LocalCatalog {
     /// Library totals.
     pub async fn stats(&self) -> Result<StatsRecord, StoreError> {
         // Track totals come from the maintained per-format rows
-        // (migration 0005); the zero-count rows they keep stay out of
+        // (`catalog_track_format_stats`); the zero-count rows they keep stay out of
         // the breakdown, matching GROUP BY exactly.
         let (albums, artists, tracks, total_size_bytes): (i64, i64, i64, i64) = self
             .read("library.stats", |conn| {

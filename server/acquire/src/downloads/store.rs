@@ -3,7 +3,8 @@
 //! The durable store plus the lifecycle bits the orchestrator leans on: task
 //! transitions, the attempt journal with revision-CAS and leases, idempotency
 //! keys, quarantine rows, held-import retry, the newest-per-target retryable
-//! sweep, and the stale-task query. Table shapes mirror migrations 0001/0002.
+//! sweep, and the stale-task query. Table shapes mirror the `download_*`
+//! tables of the schema baseline.
 //!
 //! [`DownloadStore`] runs over whatever connection it is given: a writer
 //! transaction for writes, a read-pool connection for reads (see

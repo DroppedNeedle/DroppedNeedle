@@ -1,8 +1,8 @@
 //! Task and attempt states.
 //!
-//! The persisted vocabulary mirrors the `download_tasks.status` CHECK in
-//! migration 0001 exactly; `retrying` and `awaiting_review` stay SSE-only
-//! signals and are never written. Terminal states have no outgoing edges:
+//! The persisted vocabulary mirrors the `download_tasks.status` CHECK
+//! exactly; `retrying` and `awaiting_review` stay SSE-only signals and are
+//! never written. Terminal states have no outgoing edges:
 //! a retry always spawns a fresh task carrying `retry_count + 1` while the
 //! original stays terminal for audit.
 

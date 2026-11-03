@@ -30,10 +30,13 @@ crate::sql! {
     pub(super) RECORD_ANALYZE = "INSERT INTO db_planner_stats (singleton, analyzed_at, indexed_tracks) \
                      VALUES (1, ?1, ?2) ON CONFLICT(singleton) DO UPDATE SET \
                      analyzed_at = excluded.analyzed_at, indexed_tracks = excluded.indexed_tracks";
-    /// The user table count of a database file, beside its stamp.
-    pub(super) USER_TABLE_COUNT = "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'";
-    /// How many of the two undo-copy tables a database file has (2 since
-    /// migration 0012).
+    /// The table count the schema runner reads beside a file's stamp:
+    /// SQLite's own tables and sqlx's old `_sqlx_migrations` do not count.
+    pub(super) USER_TABLE_COUNT = "SELECT count(*) FROM sqlite_master WHERE type = 'table' \
+             AND name NOT LIKE 'sqlite_%' AND name <> '_sqlx_migrations'";
+    /// sqlx's bookkeeping table, which the schema runner's stamp replaces.
+    pub(super) DROP_SQLX_MIGRATIONS = "DROP TABLE IF EXISTS _sqlx_migrations";
+    /// How many of the two undo-copy tables a database file has.
     pub(super) UNDO_TABLES_PRESENT = "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' \
              AND name IN ('library_publish_blob_refs', 'library_publish_blobs')";
     /// The undo copies a database names that its own table does not hold:

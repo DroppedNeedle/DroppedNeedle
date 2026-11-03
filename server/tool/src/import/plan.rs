@@ -852,7 +852,7 @@ fn users_identical(existing: &UserRow, imported: &UserRecord) -> bool {
 }
 
 /// A v2 time that must have a value, in whole seconds: 0 when it does not
-/// read, migration 0101's rule.
+/// read.
 fn secs_or_zero(raw: &str) -> i64 {
     parse_iso(raw).unwrap_or(0)
 }

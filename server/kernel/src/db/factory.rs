@@ -1,11 +1,12 @@
 //! Runtime factory: one call from a path to a serving database.
 //!
 //! [`open_runtime`] runs the boot checks in order: create the parent
-//! directory, refuse symlinks and network filesystems, take a verified
-//! backup when the schema is behind, run the schema migrations and assert
-//! `user_version` on a boot pool, open the read-only reader pool with the
-//! full pragma set, then start the writer lane, open the read pools and
-//! wire the checkpoint, wakeup, and backup services.
+//! directory, refuse symlinks and network filesystems, work out the schema
+//! plan from the stamp (a stamp the runner refuses stops boot here, before
+//! any backup), take a verified backup when the plan changes the file, run
+//! the schema runner on one connection with the full pragma set, open the
+//! read-only reader pool, then start the writer lane, open the read pools
+//! and wire the checkpoint, wakeup, and backup services.
 //!
 //! Backups live in `backups/` next to the database file, so they share its
 //! volume and filesystem (the backup stages and renames in place).
@@ -18,9 +19,8 @@
 //! is what lets the lane enforce the no-await-inside-write-transaction rule
 //! structurally.
 //!
-//! Schema hooks used (from [`crate::schema`]):
-//! `crate::schema::apply_migrations(&SqlitePool) -> Result<(), SchemaError>`
-//! and `crate::schema::assert_migrated(&SqlitePool) -> Result<(), SchemaError>`.
+//! The schema comes from [`crate::schema::CHAIN`], applied by
+//! [`super::migrate`].
 
 use std::{
     path::{Path, PathBuf},
@@ -46,9 +46,9 @@ use super::{
     error::DbError,
     fs::{reject_remote_filesystem, reject_symlink},
     handle::Db,
+    migrate::{Stamp, migrate},
     read_pool::{ReadActivity, ReadPools},
-    sql,
-    writer::{CancelFlag, LaneLimits, LaneWatch, ReliefPass, Ticker, WriteLane},
+    writer::{CancelFlag, LaneLimits, LaneWatch, ReliefPass, Ticker, WriteLane, open_connection},
 };
 
 /// Reader connections in the sqlx pool, and request connections in the read
@@ -61,7 +61,7 @@ pub const MAX_READERS: u32 = 7;
 pub const MIN_CONNECTIONS: u32 = 1;
 /// Pool checkout horizon, shared with the busy timeout.
 pub const ACQUIRE_TIMEOUT: Duration = Duration::from_secs(5);
-/// How long boot waits to open its migration connection, and how long a
+/// How long the boot migration waits on a busy database, and how long a
 /// boot step keeps trying while the database answers busy. Boot serves no
 /// request, so a slow or swapping disk is waited out, not refused.
 pub const BOOT_WAIT: Duration = Duration::from_secs(60);
@@ -199,17 +199,22 @@ pub async fn open_runtime(config: &DbConfig) -> Result<DbRuntime, DbError> {
     ));
     backup_before_upgrade(&path, &backups).await?;
 
-    // Migrations run on a writable pool of their own, closed before the
-    // reader pool opens, so every reader connection is read-only from the
-    // moment it opens. The boot pool connects eagerly with the same pragma
-    // set, so a database that refuses it still fails boot; the reader pool
-    // then opens its connections as reads need them. One connection: the
-    // migrator and the stamp check take turns on it rather than open a
-    // second one while the first is still on its way back to the pool.
-    let boot = open_pool(&path, 1, config.busy_timeout, BOOT_WAIT, false).await?;
-    let migrated = crate::schema::apply_migrations(&boot).await;
-    boot.close().await;
-    migrated?;
+    // The runner has a connection of its own, closed before the reader pool
+    // opens, so every reader connection is read-only from the moment it
+    // opens. Boot serves nothing yet, so it waits out a busy database for
+    // up to BOOT_WAIT.
+    let migrate_path = path.clone();
+    tokio::task::spawn_blocking(move || -> Result<(), DbError> {
+        let connection = open_connection(&migrate_path)?;
+        connection.busy_timeout(BOOT_WAIT)?;
+        migrate(connection, &crate::schema::CHAIN)?;
+        Ok(())
+    })
+    .await
+    .map_err(|_| DbError::WriteFailed {
+        operation: "schema migration".to_owned(),
+        cause: "migration task failed to join".to_owned(),
+    })??;
     let pool = open_pool(
         &path,
         config.readers,
@@ -275,43 +280,37 @@ pub async fn open_runtime(config: &DbConfig) -> Result<DbRuntime, DbError> {
     })
 }
 
-/// Take one verified backup when the stamp is behind the binary, before
-/// the runtime opens a connection or migrates. A missing or fresh database
-/// (stamp 0, no tables) has nothing to lose and skips; a stamp-0 file with
-/// tables is a real database and gets its backup. A failure stops the
-/// boot: migrating without a way back risks the catalog.
+/// Work out the schema plan from the stamp, read without writing, before
+/// the runtime opens a connection or migrates. A stamp the runner refuses
+/// stops boot here, before any backup: backups rotate, and a refusal
+/// repeated at every restart must not rotate out the backups it tells the
+/// user to restore. Otherwise one verified backup is taken whenever the
+/// plan changes the file. A missing or empty database has nothing to lose
+/// and skips. A failed backup stops the boot: migrating without a way back
+/// risks the catalog.
 async fn backup_before_upgrade(path: &Path, backups: &BackupService) -> Result<(), DbError> {
     if !path.exists() {
         return Ok(());
     }
     let probe = path.to_owned();
-    let (found, tables) = tokio::task::spawn_blocking(move || schema_stamp(&probe))
+    let stamp = tokio::task::spawn_blocking(move || Stamp::read_file(&probe))
         .await
         .map_err(|_| DbError::WriteFailed {
             operation: "pre-upgrade check".to_owned(),
             cause: "schema check task failed to join".to_owned(),
         })??;
-    let expected = crate::schema::latest_version();
-    if found >= expected || (found == 0 && tables == 0) {
+    let plan = crate::schema::CHAIN.plan(stamp)?;
+    if !plan.needs_backup() {
         return Ok(());
     }
     tracing::info!(
-        found,
-        expected,
+        found = stamp.version,
+        expected = crate::schema::latest_version(),
         "schema upgrade pending; taking a backup first"
     );
     let report = backups.backup(None, &CancelFlag::never()).await?;
     tracing::info!(backup = %report.path.display(), "pre-upgrade backup complete");
     Ok(())
-}
-
-/// `user_version` and the user table count, read without writing.
-fn schema_stamp(path: &Path) -> Result<(i64, i64), DbError> {
-    let connection =
-        rusqlite::Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
-    let found = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-    let tables = connection.query_row(sql::USER_TABLE_COUNT.text(), [], |row| row.get(0))?;
-    Ok((found, tables))
 }
 
 /// Percent-encode the characters a SQLite URI path cannot carry raw.

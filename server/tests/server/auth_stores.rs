@@ -847,6 +847,64 @@ async fn recovery_reset_checks_the_code_first_then_revokes_and_consumes() {
         count(&fx, "SELECT COUNT(*) FROM auth_password_recovery_codes").await,
         0
     );
+
+    // An account whose local row holds no password (a v2 account carried
+    // without one) gets its first password from a host recovery code in
+    // that row, which keeps its id.
+    deps.users
+        .insert(user_row("user-2", "cy", Role::User))
+        .await
+        .unwrap();
+    fx.runtime()
+        .db()
+        .write(Lane::Foreground, "test.seed", |tx| {
+            tx.execute(
+                "INSERT INTO auth_providers (id, user_id, provider, provider_uid, created_at) \
+                 VALUES ('cred-cy', 'user-2', 'local', 'cy', 1)",
+                params![],
+            )?;
+            tx.execute(
+                "INSERT INTO auth_password_recovery_codes (user_id, code_hash, created_at, \
+                 expires_at) VALUES ('user-2', 'code-cy', ?1, ?2)",
+                params![TEST_NOW * 1000, (TEST_NOW + 600) * 1000],
+            )?;
+            Ok::<_, droppedneedle_kernel::db::DbError>(())
+        })
+        .await
+        .unwrap();
+    assert!(
+        deps.users
+            .complete_recovery_first_password(
+                LocalCredential {
+                    id: "cred-cy-new".to_owned(),
+                    user_id: "user-2".to_owned(),
+                    scheme: "argon2id".to_owned(),
+                    hash: password_hash().to_owned(),
+                },
+                "code-cy",
+                TEST_NOW,
+            )
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        count(
+            &fx,
+            "SELECT COUNT(*) FROM auth_providers WHERE user_id = 'user-2' AND provider = 'local' \
+             AND id = 'cred-cy' AND password_hash IS NOT NULL"
+        )
+        .await,
+        1,
+        "the empty row takes the password in place"
+    );
+    assert_eq!(
+        count(
+            &fx,
+            "SELECT COUNT(*) FROM auth_providers WHERE user_id = 'user-2'"
+        )
+        .await,
+        1
+    );
 }
 
 #[tokio::test]

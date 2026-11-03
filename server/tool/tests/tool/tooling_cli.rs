@@ -481,8 +481,7 @@ async fn import_refuses_a_locked_database() {
         .connect(&format!("sqlite:{}?mode=rwc", db.display()))
         .await
         .expect("writable pool opens");
-    droppedneedle_kernel::schema::apply_migrations(&pool)
-        .await
+    droppedneedle_kernel::db::migrate_file(&db, &droppedneedle_kernel::schema::CHAIN)
         .expect("schema migrates");
     pool.close().await;
 
@@ -1629,8 +1628,7 @@ async fn merge_target(
         .connect(&format!("sqlite:{}?mode=rwc", db_path.display()))
         .await
         .expect("writable pool opens");
-    droppedneedle_kernel::schema::apply_migrations(&pool)
-        .await
+    droppedneedle_kernel::db::migrate_file(&db_path, &droppedneedle_kernel::schema::CHAIN)
         .expect("schema migrates");
     let config_dir = root.join("config");
     std::fs::create_dir_all(&config_dir).expect("config dir");
@@ -1798,8 +1796,7 @@ async fn restore_round_trips_and_refuses() {
         .connect(&format!("sqlite:{}?mode=rwc", live.display()))
         .await
         .expect("writable pool opens");
-    droppedneedle_kernel::schema::apply_migrations(&pool)
-        .await
+    droppedneedle_kernel::db::migrate_file(&live, &droppedneedle_kernel::schema::CHAIN)
         .expect("schema migrates");
     sqlx::query(
         "INSERT INTO auth_users (id, display_name, role, created_at)

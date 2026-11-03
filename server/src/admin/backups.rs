@@ -24,7 +24,7 @@ use super::{
     models::{BackupListResponse, BackupRunResponse, BackupView, RestoreCheck, RestoreReport},
 };
 use droppedneedle_kernel::db::{
-    BACKUP_KEEP, BackupManifest, BackupReport, BackupService, UndoDir,
+    BACKUP_KEEP, BackupManifest, BackupReport, BackupService, SchemaError, Stamp, UndoDir,
     backup::{MANIFEST_SUFFIX, named_undo_copies},
     undo_dir::UNDO_DIR_NAME,
 };
@@ -32,6 +32,11 @@ use droppedneedle_kernel::db::{
 /// The restore report's check on the backup's undo copies. A restore
 /// does not stop on it.
 pub const UNDO_COPIES_CHECK: &str = "undo-copies";
+
+/// The restore report's check that the schema runner would open the
+/// backup at all: not an older pre-release stamp, not tables with no stamp.
+/// Unlike `schema-version`, `--allow-downgrade` never overrides it.
+pub const SCHEMA_FLOOR_CHECK: &str = "schema-floor";
 
 /// List the backups on disk, oldest first. Blocking file IO. Files without a manifest sidecar
 /// still list with their on-disk size; only the manifest fields stay empty.
@@ -179,9 +184,12 @@ pub fn restore_report(backup_dir: &Path, name: &str) -> Result<RestoreReport, Ad
         },
     });
 
-    let version_ok = match read_user_version(&path) {
-        Ok(found) => {
+    // Two checks: newer than the binary (which `--allow-downgrade` may
+    // override) and the floor, a stamp the runner refuses at any binary.
+    let (version_ok, floor_ok) = match Stamp::read_file(&path) {
+        Ok(stamp) => {
             let expected = droppedneedle_kernel::schema::latest_version();
+            let found = stamp.version;
             let current = found <= expected;
             checks.push(RestoreCheck {
                 name: "schema-version".to_owned(),
@@ -195,15 +203,29 @@ pub fn restore_report(backup_dir: &Path, name: &str) -> Result<RestoreReport, Ad
                     )
                 },
             });
-            current
+            let floor = match droppedneedle_kernel::schema::CHAIN.plan(stamp) {
+                Ok(_) | Err(SchemaError::TooNew { .. }) => None,
+                Err(refused) => Some(refused),
+            };
+            checks.push(RestoreCheck {
+                name: SCHEMA_FLOOR_CHECK.to_owned(),
+                passed: floor.is_none(),
+                detail: match &floor {
+                    None => format!("Backup schema {found} is one this binary can open"),
+                    Some(refused) => refused.to_string(),
+                },
+            });
+            (current, floor.is_none())
         }
         Err(_) => {
-            checks.push(RestoreCheck {
-                name: "schema-version".to_owned(),
-                passed: false,
-                detail: "The backup stamp could not be read".to_owned(),
-            });
-            false
+            for name in ["schema-version", SCHEMA_FLOOR_CHECK] {
+                checks.push(RestoreCheck {
+                    name: name.to_owned(),
+                    passed: false,
+                    detail: "The backup stamp could not be read".to_owned(),
+                });
+            }
+            (false, false)
         }
     };
 
@@ -213,7 +235,7 @@ pub fn restore_report(backup_dir: &Path, name: &str) -> Result<RestoreReport, Ad
     Ok(RestoreReport {
         backup: safe.to_owned(),
         ok,
-        restorable: present && integrity && version_ok,
+        restorable: present && integrity && version_ok && floor_ok,
         checks,
     })
 }
@@ -318,13 +340,6 @@ fn integrity_clean(path: &Path) -> bool {
             row.get(0)
         });
     violations == Ok(0)
-}
-
-/// `user_version` stamped in a database file.
-fn read_user_version(path: &Path) -> Result<i64, droppedneedle_kernel::db::error::DbError> {
-    let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
-    let found: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-    Ok(found)
 }
 
 /// Map a run report onto the wire shape.

@@ -1,8 +1,8 @@
 //! SQLite stores behind the Spotify import.
 //!
-//! - [`SqliteSpotifyStates`]: authorize states in `spotify_auth_requests`
-//!   (migration 0023), each with the redirect URI the authorize step sent,
-//!   valid for ten minutes and pruned on every insert.
+//! - [`SqliteSpotifyStates`]: authorize states in `spotify_auth_requests`,
+//!   each with the redirect URI the authorize step sent, valid for ten
+//!   minutes and pruned on every insert.
 //! - [`SqliteSpotifyLinks`]: per-user links in `user_connections` under
 //!   service `spotify`. The document keeps the field names v2 links were
 //!   imported with and is sealed

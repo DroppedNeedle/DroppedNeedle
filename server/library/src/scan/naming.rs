@@ -242,9 +242,8 @@ pub const KEY_SEPARATOR: char = '\u{1f}';
 /// when the file carries one (`mbid:<lowercased>`), else the folded album
 /// artist and title when both came from tags. Names parsed from the path
 /// (or placeholders) only mean something next to that path, so those keys
-/// keep the grouping directory. The scan files tracks by this key,
-/// migration 0013 wrote it for albums indexed before it, and the v2
-/// export writes it for carried albums.
+/// keep the grouping directory. The scan files tracks by this key, and the
+/// v2 export writes it for carried albums.
 #[must_use]
 pub fn album_grouping_key(
     release_mbid: Option<&str>,

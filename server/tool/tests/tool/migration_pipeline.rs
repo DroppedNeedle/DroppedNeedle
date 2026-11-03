@@ -79,8 +79,7 @@ async fn seeded_target(root: &Path) -> (PathBuf, sqlx::SqlitePool) {
     std::fs::create_dir_all(v3_root.join("cache")).expect("v3 cache dir");
     let db_path = v3_root.join("cache").join("library.db");
     let pool = writable_pool(&db_path).await;
-    droppedneedle_kernel::schema::apply_migrations(&pool)
-        .await
+    droppedneedle_kernel::db::migrate_file(&db_path, &droppedneedle_kernel::schema::CHAIN)
         .expect("scratch schema migrates");
     seed_conflicts(&pool).await;
     (v3_root, pool)

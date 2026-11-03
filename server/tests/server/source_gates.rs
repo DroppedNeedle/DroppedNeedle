@@ -51,10 +51,6 @@ const TOOL: Place = place(
 const OPENS: &[Place] = &[
     DB,
     place(
-        "kernel/src/schema/template.rs",
-        "the migrated test template, built once per test process",
-    ),
-    place(
         "tool/src/tooling/",
         "the offline tool's upgrade, fixture and recovery steps",
     ),
@@ -717,7 +713,6 @@ const IMAGE_WORK: &str = "image work off the async workers, awaited by the reque
 const COVER_FLIGHT: &str =
     "a cover fetch that still lands in the cache when its request stops waiting";
 const COVER_INDEX_LOAD: &str = "the cover cache index load a library view starts once, so the view never waits on the disk; its file work logs its own failure";
-const TEST_TEMPLATE: &str = "the test template migrates on its own thread, once per test process";
 const LOOP_STEP: &str =
     "a blocking step awaited inside a supervised loop, its stop checked between steps";
 const JOB_STEP: &str = "blocking file and store work, awaited by the queued job that runs it, its stop checked between rows";
@@ -776,7 +771,6 @@ const SPAWN_SITES: &[(&str, usize, &str)] = &[
     ("compat/src/library.rs", 1, REQUEST),
     ("compat/src/subsonic/store.rs", 1, REQUEST),
     ("kernel/src/runtime_config/store.rs", 4, AWAITED),
-    ("kernel/src/schema/template.rs", 1, TEST_TEMPLATE),
     ("library/src/contrib/live.rs", 1, LOOP_STEP),
     ("library/src/http/mod.rs", 1, REQUEST),
     ("library/src/edition/service.rs", 9, LOOP_STEP),

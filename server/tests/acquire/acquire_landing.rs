@@ -4643,6 +4643,16 @@ async fn an_import_stopped_around_its_commit_keeps_its_match() {
             queued, 1,
             "queued for automatic management with the commit at {point:?}"
         );
+        let imported: i64 = rig
+            .scalar(&format!(
+                "SELECT COUNT(*) FROM library_track_management_state \
+                 WHERE local_track_id = '{track}' AND last_outcome = 'imported'"
+            ))
+            .await;
+        assert_eq!(
+            imported, 1,
+            "the commit records the landed file as imported at {point:?}"
+        );
     }
 }
 

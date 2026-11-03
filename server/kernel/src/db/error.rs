@@ -152,6 +152,11 @@ pub enum DbError {
         /// Newest migration this binary knows.
         expected: i64,
     },
+    /// The schema runner would refuse the backup at any binary: a v3
+    /// pre-release database older than the bridge, or tables with no stamp.
+    /// `--allow-downgrade` never overrides it.
+    #[error("backup refused: {0}")]
+    BackupRefused(super::migrate::SchemaError),
     /// Backup staging must sit on the same filesystem as the database so the
     /// final rename is atomic.
     #[error("backup staging is not on the database filesystem: {path:?}")]
@@ -176,9 +181,9 @@ pub enum DbError {
         /// Short cause without SQL text, hosts, or paths.
         cause: String,
     },
-    /// Schema migrate or boot assertion failed.
+    /// The schema runner refused the database's stamp or a migration failed.
     #[error(transparent)]
-    Schema(#[from] crate::schema::SchemaError),
+    Schema(#[from] super::migrate::SchemaError),
     /// A non-busy SQLite failure on the read path or at boot.
     #[error(transparent)]
     Sqlx(#[from] sqlx::Error),

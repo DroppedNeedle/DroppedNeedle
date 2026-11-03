@@ -822,8 +822,8 @@ droppedneedle_kernel::sql! {
     family PLAYER_ALBUM_PAGE = player_album_page;
     /// How many albums pass the player filters.
     family PLAYER_ALBUM_COUNT = player_album_count;
-    /// The listener's played albums, from the album play summary (migration
-    /// 0065).
+    /// The listener's played albums, from the album play summary
+    /// (`library_user_album_plays`).
     pub(crate) PLAYER_PLAYED_ALBUMS = "SELECT local_album_id FROM library_user_album_plays \
         WHERE user_id = ? AND played = 1";
     /// The albums with a play count above 0 for the listener.
@@ -1931,8 +1931,8 @@ pub(crate) fn player_tracks_in(ids: ListLen) -> String {
 /// again, from the same index, for those after the mark. A track marked
 /// played with no play at all comes from the marks by key.
 ///
-/// This rule for a track also lives in the refresh of migration 0065 (as
-/// migration 0130 last made it), which keeps the album values in
+/// This rule for a track also lives in the schema's refresh trigger
+/// `trg_user_album_plays_refresh`, which keeps the album values in
 /// `library_user_album_plays`. Changing it takes a migration that recreates
 /// that refresh and runs its backfill again.
 fn track_values(ids: Option<ListLen>) -> String {
@@ -2004,7 +2004,7 @@ impl History {
         }
     }
 
-    /// Albums, as `a`, from the album play summary (migration 0065): its
+    /// Albums, as `a`, from the album play summary (`library_user_album_plays`): its
     /// rows are the albums with a play count above 0, and its order indexes
     /// let a played page walk the listener's rows in order and stop at the
     /// page. `played_at` is the stored milliseconds, which order as the

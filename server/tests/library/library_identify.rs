@@ -964,60 +964,6 @@ fn job_landings_cover_done_fail_attention_defer() {
     assert!(terminally_deferred(job.attempts));
 }
 
-/// Migration 0011 adds the identify tables on a fresh database and on one
-/// migrated through 0010, keeping the catalog rows already there.
-#[tokio::test]
-async fn identify_state_migration_upgrades_in_place() {
-    use droppedneedle_kernel::schema::{MIGRATOR, apply_migrations};
-    use sqlx::sqlite::SqlitePoolOptions;
-
-    let pool = SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect("sqlite::memory:")
-        .await
-        .expect("pool opens");
-    let through_0010 = sqlx::migrate::Migrator {
-        migrations: std::borrow::Cow::Owned(
-            MIGRATOR
-                .migrations
-                .iter()
-                .filter(|migration| migration.version <= 10)
-                .cloned()
-                .collect(),
-        ),
-        ignore_missing: false,
-        locking: true,
-        no_tx: false,
-    };
-    through_0010.run(&pool).await.expect("0001-0010 apply");
-    sqlx::query(
-        "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) \
-         VALUES ('artist', 'Artist', 'artist', 'unknown', 0, 0); \
-         INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
-         album_artist_id, grouping_source, created_at, updated_at) \
-         VALUES ('album', 'r', 'k', 'Album', 'album', 'artist', 'automatic', 0, 0);",
-    )
-    .execute(&pool)
-    .await
-    .expect("catalog seeds");
-
-    apply_migrations(&pool).await.expect("0011 applies");
-    let albums: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM local_albums")
-        .fetch_one(&pool)
-        .await
-        .expect("albums count");
-    assert_eq!(albums, 1);
-    for table in ["library_identify_jobs", "library_identify_reviews"] {
-        let found: Option<String> =
-            sqlx::query_scalar("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?1")
-                .bind(table)
-                .fetch_optional(&pool)
-                .await
-                .expect("schema reads");
-        assert_eq!(found.as_deref(), Some(table));
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Artists linked to MusicBrainz from their album's accepted match.
 // ---------------------------------------------------------------------------

@@ -2,10 +2,9 @@
 //!
 //! v2 wrote its times as ISO-8601 with an explicit offset
 //! (`datetime.now(timezone.utc).isoformat()`). The auth tables store integer
-//! milliseconds; the v2 importer converts with [`parse_iso_ms`], the same
-//! rule migration 0101 applied to the rows it found. Reads accept the v2
-//! fractional form plus `Z` and numeric offsets. Years 0000-9999
-//! round-trip; anything else fails closed to `None`.
+//! milliseconds; the v2 importer converts with [`parse_iso_ms`]. Reads
+//! accept the v2 fractional form plus `Z` and numeric offsets. Years
+//! 0000-9999 round-trip; anything else fails closed to `None`.
 
 use time::format_description::BorrowedFormatItem;
 use time::macros::format_description;

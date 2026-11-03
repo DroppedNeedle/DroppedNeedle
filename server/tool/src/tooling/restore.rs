@@ -82,7 +82,9 @@ pub struct RestoreSummary {
 /// schema stamp), then the verified copy, which holds the target's
 /// exclusive data lock for its run: a server on that folder refuses to
 /// start, and a running one makes the restore refuse. Refuses occupied
-/// targets and, unless `allow_downgrade`, backups newer than this binary.
+/// targets, a backup the server would refuse to open (`allow_downgrade`
+/// does not change that) and, unless `allow_downgrade`, backups newer than
+/// this binary.
 pub fn restore_backup(
     backup_db: &Path,
     target_dir: &Path,
@@ -209,6 +211,7 @@ fn map_db_error(error: &droppedneedle_kernel::db::DbError, target_dir: &Path) ->
             RestoreError::Refused(format!("{error}; stop the server first"))
         }
         droppedneedle_kernel::db::DbError::Unreadable { .. }
+        | droppedneedle_kernel::db::DbError::BackupRefused(_)
         | droppedneedle_kernel::db::DbError::BackupWalPresent { .. }
         | droppedneedle_kernel::db::DbError::NonLocalFilesystem { .. } => {
             RestoreError::Refused(error.to_string())

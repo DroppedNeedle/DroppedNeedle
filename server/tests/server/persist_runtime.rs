@@ -264,10 +264,9 @@ async fn boot_refuses_version_mismatch() {
     drop(connection);
 
     match open_runtime(&DbConfig::new(&db)).await {
-        Err(DbError::Schema(droppedneedle_kernel::schema::SchemaError::VersionMismatch {
-            found,
-            expected,
-        })) => assert_eq!((found, expected), (999, latest_version())),
+        Err(DbError::Schema(droppedneedle_kernel::db::SchemaError::TooNew { found, latest })) => {
+            assert_eq!((found, latest), (999, latest_version()))
+        }
         other => panic!("wrong-version database must refuse, got {other:?}"),
     }
     std::fs::remove_dir_all(dir).ok();
@@ -558,7 +557,8 @@ async fn busy_path_returns_503_with_retry_after_and_no_spin() {
 }
 
 /// Backup verifies before rotating; restore lands in empty dirs and refuses
-/// occupied targets and version-newer backups.
+/// occupied targets, version-newer backups and backups older than the
+/// bridge.
 #[tokio::test]
 async fn backup_restore_round_trip_with_refusals() {
     let (runtime, dir) = open_scratch("backup").await;
@@ -651,6 +651,35 @@ async fn backup_restore_round_trip_with_refusals() {
         .restore(&newer, &allowed_dir, "library.db", true)
         .unwrap();
     assert_eq!(allowed.user_version, 9999);
+
+    // A backup older than the bridge is refused before anything is copied,
+    // whatever the downgrade switch says.
+    let older = dir.join("older.db");
+    std::fs::copy(&report.path, &older).unwrap();
+    rusqlite::Connection::open(&older)
+        .unwrap()
+        .pragma_update(
+            None,
+            "user_version",
+            droppedneedle_kernel::schema::BRIDGE_FROM - 1,
+        )
+        .unwrap();
+    for allow_downgrade in [false, true] {
+        let older_dir = scratch_dir("restore-older");
+        match runtime
+            .backups()
+            .restore(&older, &older_dir, "library.db", allow_downgrade)
+        {
+            Err(DbError::BackupRefused(droppedneedle_kernel::db::SchemaError::TooOld {
+                found,
+            })) => assert_eq!(found, droppedneedle_kernel::schema::BRIDGE_FROM - 1),
+            other => panic!("an older backup must refuse, got {other:?}"),
+        }
+        assert!(
+            !older_dir.exists() || std::fs::read_dir(&older_dir).unwrap().next().is_none(),
+            "nothing is copied"
+        );
+    }
 
     for _ in 0..(BACKUP_KEEP + 2) {
         runtime

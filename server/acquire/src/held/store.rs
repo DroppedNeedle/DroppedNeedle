@@ -951,21 +951,4 @@ mod tests {
             .collect();
         assert_eq!(listed, library);
     }
-
-    #[test]
-    fn the_reason_check_lists_every_spelling() {
-        let migration =
-            include_str!("../../../migrations/0126_looks_wrong_and_album_needs_check.sql");
-        let check = migration
-            .split("reason TEXT NOT NULL CHECK (reason IN (")
-            .nth(1)
-            .and_then(|rest| rest.split("))").next())
-            .unwrap_or_default();
-        let listed: Vec<&str> = check
-            .split(',')
-            .map(|code| code.trim().trim_matches('\''))
-            .collect();
-        let known: Vec<&str> = Reason::ALL.iter().map(|reason| reason.code()).collect();
-        assert_eq!(listed, known);
-    }
 }

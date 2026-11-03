@@ -13,8 +13,9 @@
 //! copy, atomic rename into place, then rotate older backups out.
 //! Verification always precedes rotation: a failed backup leaves the previous
 //! five untouched. Restore takes a backup back into an empty directory and
-//! refuses occupied targets and version-newer backups, mirroring the v2
-//! restore guard.
+//! refuses occupied targets, version-newer backups (unless downgrade is
+//! allowed) and, always, any backup the schema runner would refuse at
+//! boot, before anything is copied.
 //!
 //! Every file a backup or restore writes is synced before it is renamed or
 //! linked into place, and its folder after, so a power cut leaves either
@@ -52,6 +53,7 @@ use super::{
     error::DbError,
     factory::sqlite_uri_path,
     fs::{reject_remote_filesystem, same_filesystem},
+    migrate::{SchemaError, Stamp},
     sql,
     undo_dir::{
         self, Copied, Hold, Stored, UNDO_DIR_NAME, UndoDir, ensure_dir, shard_names, sync_dir,
@@ -356,7 +358,9 @@ impl BackupService {
     ///
     /// Refuses a backup with writes in its `-wal` file (the copy takes the
     /// main file only), occupied targets, targets on a network filesystem
-    /// and, unless `allow_downgrade`, backups newer than this binary. The
+    /// and, unless `allow_downgrade`, backups newer than this binary. A
+    /// backup the schema runner would refuse at any binary (an older
+    /// pre-release stamp, or tables with no stamp) is always refused. The
     /// target is empty when it holds nothing but the restore's locks
     /// (`<db_name>.lock`, `<db_name>.server.lock`); one holding only what
     /// an interrupted restore left (its marker, its temporary files,
@@ -389,10 +393,17 @@ impl BackupService {
             }
         }
         let source = Connection::open_with_flags(backup_db, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
-        let found = user_version(&source)?;
-        let expected = crate::schema::latest_version();
-        if found > expected && !allow_downgrade {
-            return Err(DbError::BackupTooNew { found, expected });
+        match crate::schema::CHAIN.plan(Stamp::read(&source)?) {
+            Ok(_) => {}
+            Err(SchemaError::TooNew { found, latest }) => {
+                if !allow_downgrade {
+                    return Err(DbError::BackupTooNew {
+                        found,
+                        expected: latest,
+                    });
+                }
+            }
+            Err(refused) => return Err(DbError::BackupRefused(refused)),
         }
         check_clean(&source)?;
         drop(source);

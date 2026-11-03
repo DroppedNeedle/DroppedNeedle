@@ -1,48 +1,31 @@
-//! Migration tests: the import-application migration.
-//!
-//! The stage plan reserved the 0002 slot for this; 0002 and 0003 landed
-//! first, so the import record is migration 0004. Tests cover a fresh
-//! migrate plus an upgrade over a database migrated through 0003.
+//! The import record on a fresh database, and an import into one.
 
-use sqlx::SqlitePool;
-use sqlx::sqlite::SqlitePoolOptions;
+use droppedneedle_kernel::db::migrate;
+use droppedneedle_kernel::schema::{CHAIN, latest_version};
 
-use droppedneedle_kernel::schema::{MIGRATOR, apply_migrations, latest_version};
-
-async fn scratch_pool() -> SqlitePool {
-    SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect("sqlite::memory:")
-        .await
-        .unwrap()
-}
-
-#[tokio::test]
-async fn fresh_migrate_creates_import_runs() {
-    let pool = scratch_pool().await;
-    apply_migrations(&pool).await.unwrap();
-
-    assert!(latest_version() >= 5);
-    let version: i64 = sqlx::query_scalar("PRAGMA user_version")
-        .fetch_one(&pool)
-        .await
+#[test]
+fn fresh_migrate_creates_import_runs() {
+    let connection = migrate(rusqlite::Connection::open_in_memory().unwrap(), &CHAIN).unwrap();
+    let texts = |sql: &str| -> Vec<String> {
+        connection
+            .prepare(sql)
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+    };
+    let version: i64 = connection
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
         .unwrap();
     assert_eq!(version, latest_version());
-    let table: Option<String> = sqlx::query_scalar(
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'import_runs'",
-    )
-    .fetch_optional(&pool)
-    .await
-    .unwrap();
-    assert_eq!(table.as_deref(), Some("import_runs"));
-    let columns: Vec<String> =
-        sqlx::query_scalar("SELECT name FROM pragma_table_info('import_runs') ORDER BY cid")
-            .fetch_all(&pool)
-            .await
-            .unwrap();
     assert_eq!(
-        columns,
-        vec![
+        texts("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'import_runs'"),
+        ["import_runs"]
+    );
+    assert_eq!(
+        texts("SELECT name FROM pragma_table_info('import_runs') ORDER BY cid"),
+        [
             "id",
             "instance_id",
             "exported_at",
@@ -51,66 +34,13 @@ async fn fresh_migrate_creates_import_runs() {
             "applied_at"
         ]
     );
-    let index: Option<String> = sqlx::query_scalar(
-        "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_import_runs_instance'",
-    )
-    .fetch_optional(&pool)
-    .await
-    .unwrap();
-    assert_eq!(index.as_deref(), Some("idx_import_runs_instance"));
-}
-
-async fn migrate_through(pool: &SqlitePool, version: i64) {
-    let selected: Vec<_> = MIGRATOR
-        .migrations
-        .iter()
-        .filter(|migration| migration.version <= version)
-        .cloned()
-        .collect();
-    let base = sqlx::migrate::Migrator {
-        migrations: std::borrow::Cow::Owned(selected),
-        ignore_missing: false,
-        locking: true,
-        no_tx: false,
-    };
-    base.run(pool).await.unwrap();
-    let stamped: i64 = sqlx::query_scalar("PRAGMA user_version")
-        .fetch_one(pool)
-        .await
-        .unwrap();
-    assert_eq!(stamped, version);
-}
-
-#[tokio::test]
-async fn upgrade_from_0001_keeps_data() {
-    let pool = scratch_pool().await;
-    migrate_through(&pool, 1).await;
-
-    sqlx::query(
-        "INSERT INTO auth_users (id, display_name, role, created_at) \
-         VALUES ('u1', 'U', 'user', '')",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
-
-    apply_migrations(&pool).await.unwrap();
-
-    let version: i64 = sqlx::query_scalar("PRAGMA user_version")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(version, latest_version());
-    let name: String = sqlx::query_scalar("SELECT display_name FROM auth_users WHERE id = 'u1'")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(name, "U");
-    let runs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM import_runs")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(runs, 0);
+    assert_eq!(
+        texts(
+            "SELECT name FROM sqlite_master WHERE type = 'index' \
+             AND name = 'idx_import_runs_instance'"
+        ),
+        ["idx_import_runs_instance"]
+    );
 }
 
 /// An album a v2 curator pinned to an edition and left unmanaged comes
@@ -208,17 +138,12 @@ async fn pinned_album_left_unmanaged_in_v2_stays_so_once_its_files_are_placed() 
     std::fs::create_dir_all(&config_dir).expect("v3 config dir");
     std::fs::create_dir_all(v3.join("cache")).expect("v3 cache dir");
     let db_path = v3.join("cache").join("library.db");
-    let pool = SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect(&format!("sqlite:{}?mode=rwc", db_path.display()))
-        .await
-        .expect("pool opens");
-    apply_migrations(&pool).await.expect("schema migrates");
+    droppedneedle_kernel::db::migrate_file(&db_path, &CHAIN).expect("schema migrates");
     let report =
         droppedneedle_tool::r#import::run_import(droppedneedle_tool::r#import::ImportRequest {
             export_bytes: std::fs::read(&export_path).expect("export reads"),
             passphrase: PASSPHRASE.to_owned(),
-            db_path: pool.connect_options().get_filename().to_owned(),
+            db_path: db_path.clone(),
             legacy: droppedneedle_kernel::runtime_config::LegacyConfig::at(&config_dir, false),
             crypto: Crypto::load_or_generate(&config_dir).expect("v3 key").0,
             v2_config_path: None,
@@ -239,8 +164,6 @@ async fn pinned_album_left_unmanaged_in_v2_stays_so_once_its_files_are_placed() 
         "{:?}",
         report.exit
     );
-    pool.close().await;
-
     let db = droppedneedle_kernel::db::open_connection(&db_path).expect("v3 db opens");
     let chosen = || -> (String, Option<String>, Option<String>, f64) {
         db.query_row(
@@ -362,36 +285,4 @@ async fn pinned_album_left_unmanaged_in_v2_stays_so_once_its_files_are_placed() 
         )
         .expect("exclusion reads");
     assert_eq!(excluded, 1, "still left unmanaged");
-}
-
-#[tokio::test]
-async fn upgrade_over_0003_keeps_data() {
-    let pool = scratch_pool().await;
-    migrate_through(&pool, 3).await;
-
-    sqlx::query(
-        "INSERT INTO auth_users (id, display_name, role, created_at) \
-         VALUES ('u1', 'U', 'user', '')",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
-
-    apply_migrations(&pool).await.unwrap();
-
-    let version: i64 = sqlx::query_scalar("PRAGMA user_version")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(version, latest_version());
-    let name: String = sqlx::query_scalar("SELECT display_name FROM auth_users WHERE id = 'u1'")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(name, "U");
-    let runs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM import_runs")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(runs, 0);
 }

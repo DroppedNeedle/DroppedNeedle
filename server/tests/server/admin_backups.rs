@@ -172,6 +172,7 @@ async fn backup_run_then_list_then_report() {
         "manifest-sha256",
         "integrity-check",
         "schema-version",
+        "schema-floor",
     ] {
         assert!(names.contains(&expected), "{names:?}");
     }

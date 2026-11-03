@@ -291,8 +291,7 @@ async fn managed_identified_album_keeps_ids_identity_and_original() {
         .connect(&format!("sqlite:{}?mode=rwc", db_path.display()))
         .await
         .expect("pool opens");
-    droppedneedle_kernel::schema::apply_migrations(&pool)
-        .await
+    droppedneedle_kernel::db::migrate_file(&db_path, &droppedneedle_kernel::schema::CHAIN)
         .expect("schema migrates");
     let report =
         droppedneedle_tool::r#import::run_import(droppedneedle_tool::r#import::ImportRequest {

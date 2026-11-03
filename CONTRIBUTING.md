@@ -42,6 +42,8 @@ make frontend-dev
 
 `server/` is a Cargo workspace. Each area is a crate in `server/<name>`, from the bottom: `kernel`, `providers`, `auth`, `library`, `plugins`, `media`, `catalog`, `acquire`, `compat`, then the server crate in `server/src` and the migration tool in `server/tool`. A crate uses only crates below it. Integration tests are split into one binary per area (`library`, `acquire`, `compat`, `catalog`, `media` and `server` for the rest) sharing `server/tests/common`, plus `tool` in `server/tool/tests`. Run one module with `cd server && cargo test --test <binary> <module>` (`cargo test -p droppedneedle-tool --test tool <module>` for the tool), and a crate's unit tests with `cargo test -p droppedneedle-<crate>`.
 
+Migrations live in `server/migrations/`, starting from the v3 baseline, and are listed in `server/kernel/src/schema/mod.rs`. A new one takes the next number, is never edited or renumbered once it is on `v3`, and ships its upgrade test. A local development database from before the baseline starts once on a build from before it (which brings it to the last number the baseline replaced), or starts from an empty data folder.
+
 ### Running tests and checks
 
 ```bash

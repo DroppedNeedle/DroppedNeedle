@@ -1214,7 +1214,7 @@ impl LocalCatalog {
                 .remembered("player.tracks.count", key, text, filters.values)
                 .await;
         }
-        // Maintained exact count of indexed tracks (migration 0005).
+        // Maintained exact count of indexed tracks (`catalog_track_format_stats`).
         let all = self
             .counted(
                 "player.tracks.count",
