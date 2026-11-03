@@ -56,8 +56,8 @@ pub struct SearchResultItem {
     pub artist: Option<String>,
     /// Release year, when known.
     pub year: Option<i32>,
-    /// MusicBrainz id: the hit's own for MusicBrainz hits, the accepted
-    /// identity for library rows. Absent means unidentified, never failure.
+    /// MusicBrainz id: the hit's own for MusicBrainz hits, the match row's
+    /// for library rows. Absent means unidentified, never failure.
     pub musicbrainz_id: Option<String>,
     /// True when the library holds this artist or album.
     pub in_library: bool,

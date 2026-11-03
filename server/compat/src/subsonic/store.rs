@@ -125,12 +125,12 @@ fn view_track(track: PlayerTrack, local_first: bool) -> ViewTrack {
     }
 }
 
-/// An album's `musicBrainzId`, as Navidrome sends it: the release. An
-/// accepted match with no known release sends its release group; tag ids
-/// count only as a release.
+/// An album's `musicBrainzId`, as Navidrome sends it: the release. A match
+/// row with no known release sends its release group; tag ids count only
+/// as a release.
 fn album_musicbrainz_id(ids: Option<&AlbumIds>) -> Option<String> {
     let ids = ids?;
-    if ids.accepted {
+    if ids.matched {
         ids.release_mbid
             .clone()
             .or_else(|| ids.release_group_mbid.clone())

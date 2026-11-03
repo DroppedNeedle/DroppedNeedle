@@ -548,7 +548,7 @@
 														>{release.name}<span class="block text-xs text-base-content/50"
 															>{release.identity_ready
 																? release.exact_track_mapping_ready
-																	? 'Exact release and tracks accepted'
+																	? 'Exact release and tracks matched'
 																	: 'Needs exact track mapping'
 																: 'Needs release identification'}</span
 														></span

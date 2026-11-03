@@ -13,7 +13,7 @@ use droppedneedle_library::corrections::continuation::CURRENT_TRACK;
 use rusqlite::types::Value;
 
 use super::definitions::{
-    live_album, live_track, musicbrainz, owned_album, owned_artist, recording_mbid, track_codec,
+    live_album, live_track, musicbrainz, owned_album, owned_artist, track_codec,
 };
 use super::player::{
     AlbumKey, AlbumSequence, AlbumShape, HistoryKey, ItemKind, KeyedBy, PlayedFilter, TextMatch,
@@ -21,7 +21,9 @@ use super::player::{
 };
 use super::stores::{AlbumSort, ArtistScope, ArtistSort, TrackSort};
 use droppedneedle_library::identity::asked_groups;
-use droppedneedle_library::{all_owners, copy_of_group, not_yet_identified, owns_group};
+use droppedneedle_library::{
+    all_owners, copy_of_group, named_group_guess, not_yet_identified, owns_group, recording_mbid,
+};
 
 droppedneedle_kernel::sql! {
     /// One album's aggregate columns over [`ALBUM_JOINS`].
@@ -781,9 +783,9 @@ droppedneedle_kernel::sql! {
     family PLAYER_PLAY_STATS = player_play_stats;
     /// Which of some ids of one kind exist for a player.
     family PLAYER_EXISTING = player_existing;
-    /// The accepted and tag ids of some albums.
+    /// The match and tag ids of some albums.
     family PLAYER_ALBUM_IDS = player_album_ids;
-    /// The accepted MusicBrainz ids of some artists.
+    /// The matched MusicBrainz ids of some artists.
     family PLAYER_ARTIST_IDS = player_artist_ids;
     /// The tag ids of some artists.
     family ARTIST_TAG_IDS = artist_tag_ids;
@@ -1502,11 +1504,11 @@ pub(crate) fn owners_by_release(ids: ListLen) -> String {
         "SELECT e.local_album_id, lower(e.release_mbid) \
          FROM local_album_external_identities e JOIN local_albums b ON b.id = e.local_album_id \
          WHERE e.release_mbid IS NOT NULL AND lower(e.release_mbid) IN ({}) AND {} AND {} \
-         AND NOT EXISTS (SELECT 1 FROM library_album_match_state s \
-         WHERE s.local_album_id = e.local_album_id AND s.reason_code = 'NAMED_GROUP_DIFFERS')",
+         AND NOT {}",
         marks(ids),
         musicbrainz!("e"),
-        owned_album!("b")
+        owned_album!("b"),
+        named_group_guess!("e.local_album_id")
     )
 }
 
@@ -2144,7 +2146,7 @@ pub(crate) fn player_album_ids(ids: ListLen) -> String {
     )
 }
 
-/// The accepted MusicBrainz ids of `ids` artists.
+/// The matched MusicBrainz ids of `ids` artists.
 pub(crate) fn player_artist_ids(ids: ListLen) -> String {
     format!(
         "SELECT e.local_artist_id, e.provider_artist_id \

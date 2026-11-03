@@ -4,8 +4,8 @@
 // is written in parentheses.
 #![allow(unused_parens, clippy::double_parens)]
 
-use droppedneedle_library::copy_of_group;
 use droppedneedle_library::corrections::continuation::CURRENT_TRACK;
+use droppedneedle_library::{copy_of_group, named_group_guess};
 
 droppedneedle_kernel::sql! {
     /// The track columns a `CatalogFile` is read from, in its mapper's order.
@@ -40,7 +40,6 @@ droppedneedle_kernel::sql! {
     /// The album a lowered release id names, never through a guess the
     /// files' tags contradict.
     pub(super) ALBUM_BY_RELEASE = ALBUM_IDENTITIES
-        + " WHERE lower(e.release_mbid) = ?1 AND NOT EXISTS (SELECT 1 \
-         FROM library_album_match_state s WHERE s.local_album_id = b.id \
-         AND s.reason_code = 'NAMED_GROUP_DIFFERS')" + LIVE_OLDEST;
+        + " WHERE lower(e.release_mbid) = ?1 AND NOT " + (named_group_guess!("b.id"))
+        + LIVE_OLDEST;
 }

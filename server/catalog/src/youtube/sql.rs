@@ -7,7 +7,8 @@
 // is written in parentheses.
 #![allow(unused_parens, clippy::double_parens)]
 
-use crate::local::definitions::{live_album, musicbrainz, recording_mbid};
+use crate::local::definitions::{live_album, musicbrainz};
+use droppedneedle_library::{match_flagged, recording_mbid};
 
 droppedneedle_kernel::sql! {
     /// Current time in integer milliseconds.
@@ -20,9 +21,12 @@ droppedneedle_kernel::sql! {
          COALESCE(l.is_manual, 0) AS is_manual, \
          (SELECT COUNT(*) FROM catalog_youtube_track_links t WHERE t.album_id = l.album_id) AS track_count \
          FROM catalog_youtube_links l";
-    /// The library's tracks of album `?1`: indexed, on a live album whose
-    /// accepted release group is the link's. An album with a match flag holds
-    /// a guess, not an accepted group. Read once per statement.
+    /// The library's tracks of album `?1`: indexed, on a live album with no
+    /// match flag whose row is on the link's release group and settled (a
+    /// person's or a tag-carried row, or an automatic one that names a
+    /// release). Its own rule, stricter than the row the pages read and
+    /// looser than an accepted match: a custom edition counts, and a
+    /// person's row needs no release. Read once per statement.
     fragment HELD_TRACKS = "WITH held (disc, number, title, recording) AS MATERIALIZED (\
          SELECT t.disc_number, t.track_number, lower(trim(t.title)), lower("
         + (recording_mbid!("ti", "t"))
@@ -35,8 +39,9 @@ droppedneedle_kernel::sql! {
         + " WHERE lower(e.release_group_mbid) = lower(?1) AND "
         + (musicbrainz!("e"))
         + " AND (e.decision_source IS NOT 'automatic' OR e.release_mbid IS NOT NULL) \
-         AND NOT EXISTS (SELECT 1 FROM library_album_match_state s \
-         WHERE s.local_album_id = a.id)) ";
+         AND NOT "
+        + (match_flagged!("a.id"))
+        + ") ";
     /// A track link. A link saved without a recording takes the one the
     /// library holds at its disc, number and title, when exactly one
     /// recording fits; editions that disagree give none. Nothing is written

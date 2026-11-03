@@ -6,7 +6,7 @@
 //! "artist id" and "track id"; real MusicBrainz ids ride the
 //! `musicbrainz_*` fields with `provider_identity_projected` set, so no
 //! local id is ever advertised as an MBID. Those ids come from
-//! [`CompatLibrary::player_ids`]: the accepted match's, else the files'
+//! [`CompatLibrary::player_ids`]: the match row's, else the files'
 //! tags'.
 
 use std::collections::{HashMap, HashSet};

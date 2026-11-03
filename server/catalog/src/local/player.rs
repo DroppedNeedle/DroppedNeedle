@@ -72,7 +72,7 @@ pub struct PlayerTrack {
     pub sort_name: Option<String>,
     /// Disc subtitle tag.
     pub disc_subtitle: Option<String>,
-    /// Recording MBID: accepted identity, else the embedded tag.
+    /// Recording MBID: the match row's, else the embedded tag.
     pub recording_mbid: Option<String>,
     /// Track artist MBID, when the artist is identified.
     pub artist_mbid: Option<String>,
@@ -265,9 +265,9 @@ pub struct PlayedValues {
 /// The MusicBrainz ids player apps are sent for one album.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AlbumIds {
-    /// True when these are the accepted match's ids, false when they are
-    /// the ones the album's files' tags agree on.
-    pub accepted: bool,
+    /// True when these are the album's match row's ids (a guess's
+    /// included), false when they are the ones its files' tags agree on.
+    pub matched: bool,
     /// Release.
     pub release_mbid: Option<String>,
     /// Release group.
@@ -1668,7 +1668,7 @@ impl LocalCatalog {
     }
 
     /// The MusicBrainz ids player apps are sent for some albums and
-    /// artists: the accepted match's, else the one their files' tags agree
+    /// artists: the match row's, else the one their files' tags agree
     /// on. An album's tags are its indexed tracks'; an artist's are the ids
     /// its track and album credits took from their files, which the scan
     /// keeps only where a file pairs artist names and ids one for one, so a
@@ -1714,7 +1714,7 @@ impl LocalCatalog {
                     out.albums.insert(
                         id,
                         AlbumIds {
-                            accepted: true,
+                            matched: true,
                             release_mbid: release,
                             release_group_mbid: group,
                         },
@@ -1730,7 +1730,7 @@ impl LocalCatalog {
                     out.albums.insert(
                         id.clone(),
                         AlbumIds {
-                            accepted: false,
+                            matched: false,
                             release_mbid: release,
                             release_group_mbid: group,
                         },
@@ -1740,7 +1740,7 @@ impl LocalCatalog {
         }
         for chunk in artist_ids.chunks(500) {
             let values = id_values(chunk);
-            let accepted: Vec<(String, String)> = self
+            let matched: Vec<(String, String)> = self
                 .read("player.player_ids", move |conn| {
                     rows(
                         conn,
@@ -1750,7 +1750,7 @@ impl LocalCatalog {
                     )
                 })
                 .await?;
-            out.artists.extend(accepted);
+            out.artists.extend(matched);
             let unmatched: Vec<String> = chunk
                 .iter()
                 .filter(|id| !out.artists.contains_key(*id))

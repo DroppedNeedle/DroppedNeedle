@@ -1,5 +1,8 @@
 //! The SQL of the repairs module.
 
+// `sql!` needs a macro call in parentheses to take it as one part.
+#![allow(unused_parens, clippy::double_parens)]
+
 use droppedneedle_kernel::db::statement::ListLen;
 use droppedneedle_kernel::db::time::Millis;
 
@@ -105,14 +108,14 @@ droppedneedle_kernel::sql! {
     pub(super) DROP_REPAIR_IDENTIFY_JOB = "DELETE FROM library_identify_jobs WHERE local_album_id = ?1 \
                  AND state = 'queued' AND kind = 'historical' \
                  AND requested_by_user_id IS NULL AND created_at = ?2";
-    pub(super) BY_RECORDING = "SELECT t.id, COALESCE(ti.recording_mbid, t.embedded_recording_mbid) = ?1 AS unchallenged \
+    pub(super) BY_RECORDING = "SELECT t.id, " + (crate::recording_mbid!("ti", "t")) + " = ?1 AS unchallenged \
          FROM local_tracks t \
          LEFT JOIN local_track_external_identities ti ON ti.local_track_id = t.id \
          WHERE t.id IN (SELECT local_track_id FROM local_track_external_identities \
                         WHERE recording_mbid = ?1 \
                         UNION SELECT id FROM local_tracks WHERE embedded_recording_mbid = ?1) \
          AND t.availability = 'indexed' ORDER BY t.id";
-    pub(super) NAME_FITS = "SELECT t.id, t.duration_seconds AS seconds, ti.recording_mbid AS accepted, \
+    pub(super) NAME_FITS = "SELECT t.id, t.duration_seconds AS seconds, ti.recording_mbid AS matched, \
          t.embedded_recording_mbid AS tag \
          FROM local_tracks t \
          LEFT JOIN local_track_external_identities ti ON ti.local_track_id = t.id \
@@ -561,7 +564,7 @@ droppedneedle_kernel::sql! {
     pub(super) row NameFit for [NAME_FITS] {
         id: String,
         seconds: Option<f64>,
-        accepted: Option<String>,
+        matched: Option<String>,
         tag: Option<String>,
     }
     pub(super) row UnfiledPlay for [STEP] {

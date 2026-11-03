@@ -12,7 +12,7 @@ use droppedneedle_kernel::db::time::Millis;
 use crate::artwork::local::art_tracks_column;
 use crate::local::definitions::{live_album, musicbrainz, owned_album, owned_artist, track_codec};
 use droppedneedle_library::identity::asked_groups;
-use droppedneedle_library::{not_yet_identified, owns_group};
+use droppedneedle_library::{named_group_guess, not_yet_identified, owns_group, recording_mbid};
 
 droppedneedle_kernel::sql! {
     // -- ownership -----------------------------------------------------------
@@ -64,9 +64,9 @@ droppedneedle_kernel::sql! {
         musicbrainz!("aie"),
         " WHERE ",
         owned_album!("a"),
-        " AND NOT EXISTS (SELECT 1 FROM library_album_match_state s \
-         WHERE s.local_album_id = a.id AND s.reason_code = 'NAMED_GROUP_DIFFERS') \
-         GROUP BY a.id ORDER BY a.updated_at DESC, a.id LIMIT ?1"
+        " AND NOT ",
+        named_group_guess!("a.id"),
+        " GROUP BY a.id ORDER BY a.updated_at DESC, a.id LIMIT ?1"
     ));
     pub(super) row IdentifiedAlbum for [IDENTIFIED_ALBUMS] {
         release_group_mbid: String,
@@ -322,8 +322,9 @@ droppedneedle_kernel::sql! {
          + (track_codec!("t"))
          + " AS file_format, \
          t.duration_seconds AS duration_seconds, t.disc_number AS disc_number, \
-         t.track_number AS track_number, \
-         COALESCE(te.recording_mbid, t.embedded_recording_mbid) AS recording_mbid, \
+         t.track_number AS track_number, "
+         + (recording_mbid!("te", "t"))
+         + " AS recording_mbid, \
          lower(COALESCE(tae.provider_artist_id, t.embedded_artist_mbid, '')) AS artist_mbid, \
          lower(COALESCE(aae.provider_artist_id, t.embedded_album_artist_mbid, '')) \
              AS album_artist_mbid, \

@@ -1,11 +1,15 @@
 //! The SQL of the identify module.
 
+// `sql!` needs a macro call in parentheses to take it as one part.
+#![allow(unused_parens, clippy::double_parens)]
+
 use droppedneedle_kernel::db::time::Millis;
 
 use super::models::{IdentifyKind, JobState, MatchFlagState, ReviewState};
 use crate::identity::DecisionSource;
 use crate::identity::sql::PERSONS;
 use crate::identity::sql::REVISABLE;
+use crate::identity::sql::accepted;
 
 droppedneedle_kernel::sql! {
     pub(super) MARK_STALE = "UPDATE library_artist_reconciliation_state SET input_revision = '' \
@@ -273,10 +277,7 @@ droppedneedle_kernel::sql! {
      WHERE proof_album.id = p.local_album_id AND proof_album.retired_into_album_id IS NULL \
      AND proof_identity.row_revision = p.album_identity_revision \
      AND lower(trim(COALESCE(proof_identity.release_mbid, ''))) = lower(trim(p.release_mbid)) \
-     AND NOT EXISTS (SELECT 1 FROM library_album_match_state s \
-       WHERE s.local_album_id = proof_album.id) \
-     AND NOT EXISTS (SELECT 1 FROM library_custom_edition_active c \
-       WHERE c.local_album_id = proof_album.id)) \
+     AND " + (accepted!("proof_identity")) + ") \
      AND CASE p.subject_kind \
      WHEN 'album' THEN EXISTS (SELECT 1 FROM local_album_artists c \
        WHERE c.local_album_id = p.local_album_id AND c.position = p.credit_position \

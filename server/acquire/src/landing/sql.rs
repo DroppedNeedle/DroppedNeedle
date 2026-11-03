@@ -6,7 +6,7 @@
 // is written in parentheses.
 #![allow(unused_parens, clippy::double_parens)]
 
-use droppedneedle_library::{names_another_group, not_yet_identified, owns_group};
+use droppedneedle_library::{names_another_group, not_yet_identified, owns_group, recording_mbid};
 
 droppedneedle_kernel::sql! {
     /// Indexed library tracks of the albums that own the group (`?1`,
@@ -31,7 +31,7 @@ droppedneedle_kernel::sql! {
     /// (sealed identity first, then the file's own tags) and quality facts.
     pub(super) GROUP_TRACKS = "SELECT \
          lower(COALESCE(ti.release_track_mbid, t.embedded_release_track_mbid, '')), \
-         lower(COALESCE(ti.recording_mbid, t.embedded_recording_mbid, '')), \
+         lower(COALESCE(" + (recording_mbid!("ti", "t")) + ", '')), \
          t.file_format, t.bit_rate, t.bit_depth " + OWNED_TRACKS_FROM + IN_ALBUM;
     /// Every indexed copy in a group, with the album it sits in, that
     /// album's release (sealed identity first, then the file's own tags)
@@ -44,7 +44,7 @@ droppedneedle_kernel::sql! {
          lower(COALESCE(ai.release_mbid, t.embedded_release_mbid, '')), \
          COALESCE(ai.release_mbid, ''), \
          lower(COALESCE(ti.release_track_mbid, t.embedded_release_track_mbid, '')), \
-         lower(COALESCE(ti.recording_mbid, t.embedded_recording_mbid, '')), \
+         lower(COALESCE(" + (recording_mbid!("ti", "t")) + ", '')), \
          t.file_format, t.bit_rate, t.bit_depth";
     /// Files naming group `?1` on an album identification has not reached
     /// whose other files name another group. Such an album owns nothing, and

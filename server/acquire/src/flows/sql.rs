@@ -6,7 +6,7 @@
 #![allow(unused_parens, clippy::double_parens)]
 
 use droppedneedle_kernel::db::statement::ListLen;
-use droppedneedle_library::{all_owners, copy_of_group};
+use droppedneedle_library::{all_owners, copy_of_group, match_flagged, recording_mbid};
 
 use crate::landing::sql::OWNED_TRACKS_FROM;
 
@@ -28,8 +28,8 @@ droppedneedle_kernel::sql! {
     /// automatic sweep leaves them to a person.
     pub(crate) FLAGGED_GROUPS = "SELECT DISTINCT o.group_mbid FROM ("
         + (all_owners!()) + ") o \
-         JOIN library_album_match_state s ON s.local_album_id = o.album_id \
-         WHERE o.album_id = (" + (copy_of_group!("= o.group_mbid")) + ")";
+         WHERE " + (match_flagged!("o.album_id")) + " \
+         AND o.album_id = (" + (copy_of_group!("= o.group_mbid")) + ")";
     /// The quality facts of the library's tracks of release group `?1`.
     pub(crate) GROUP_TRACK_QUALITY = "SELECT t.file_format, t.bit_rate, t.bit_depth "
         + OWNED_TRACKS_FROM;
@@ -45,7 +45,7 @@ droppedneedle_kernel::sql! {
                WHERE lower(recording_mbid) = ?1 \
              UNION ALL SELECT id FROM local_tracks \
                WHERE lower(COALESCE(embedded_recording_mbid, '')) = ?1) \
-           AND lower(COALESCE(ti.recording_mbid, t.embedded_recording_mbid, '')) = ?1";
+           AND lower(COALESCE(" + (recording_mbid!("ti", "t")) + ", '')) = ?1";
     /// The quality facts of several tracks: `(id, format, bitrate, depth)`.
     family TRACK_QUALITY_IN = track_quality_in;
     /// Release groups with an open held entry.

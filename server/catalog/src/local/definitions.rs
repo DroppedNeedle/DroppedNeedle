@@ -19,14 +19,14 @@
 //!   [`droppedneedle_library::owns_group`]. An artist is owned when it is
 //!   live and credited on an owned album. Being identified (`linked`) is not
 //!   ownership.
-//! - **Recording id.** A track's recording id in an answer is the accepted
-//!   identity's, else the one in the file's tags. It is shown and sent, and
-//!   Weekly Mix finds the library file for a recording it picked by it; it
-//!   is never stored as identity and never used to identify or own anything.
-//!   The
-//!   web player sends it with a play through another server or a YouTube
-//!   link, and such a play is filed by the id it carries
-//!   (`library/src/repairs/plays.rs`).
+//! - **Recording id.** A track's recording id in an answer is its match
+//!   row's, else the one in the file's tags: one definition,
+//!   [`droppedneedle_library::recording_mbid`], which media and acquire
+//!   read too. It is shown and sent, and Weekly Mix finds the library file
+//!   for a recording it picked by it; it is never stored as identity and
+//!   never used to identify or own anything. The web player sends it with a
+//!   play through another server or a YouTube link, and such a play is
+//!   filed by the id it carries (`library/src/repairs/plays.rs`).
 //! - Every join to an `*_external_identities` table names the provider.
 //!
 //! Each definition is a macro that expands to a string literal over the
@@ -76,20 +76,6 @@ macro_rules! musicbrainz {
     };
 }
 
-/// A track's recording id: the accepted identity's, else the file's own,
-/// over an identity alias and a track alias.
-macro_rules! recording_mbid {
-    ($identity:literal, $track:literal) => {
-        concat!(
-            "COALESCE(",
-            $identity,
-            ".recording_mbid, ",
-            $track,
-            ".embedded_recording_mbid)"
-        )
-    };
-}
-
 /// A track's format as a person or a browser needs it: an MP4 file is AAC or
 /// ALAC, and the scan reads a bit depth only from ALAC.
 macro_rules! track_codec {
@@ -122,6 +108,4 @@ macro_rules! owned_artist {
     };
 }
 
-pub(crate) use {
-    live_album, live_track, musicbrainz, owned_album, owned_artist, recording_mbid, track_codec,
-};
+pub(crate) use {live_album, live_track, musicbrainz, owned_album, owned_artist, track_codec};

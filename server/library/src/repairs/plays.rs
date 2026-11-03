@@ -22,7 +22,7 @@
 //! - A play through a connected server or a preview is filed by its
 //!   recording id alone and never by names: it was not a play of the
 //!   local file, so only the same recording, held by one track and not
-//!   overruled by that track's accepted recording, is a clear match.
+//!   overruled by that track's matched recording, is a clear match.
 //!
 //! What a row fits depends on what the catalog knows when it is looked at.
 //! A row filed by names before its track is identified would be refused
@@ -111,9 +111,9 @@ fn text(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|value| !value.is_empty())
 }
 
-/// The playable tracks that hold `recording`, as their accepted recording
+/// The playable tracks that hold `recording`, as their matched recording
 /// or in their tags. A fit is unchallenged when the recording is the track's
-/// accepted one, or its tag's with none accepted.
+/// matched one, or its tag's with none matched.
 fn by_recording(conn: &Connection, recording: &str) -> rusqlite::Result<Vec<RecordingFit>> {
     let mut stmt = conn.prepare_cached(crate::repairs::sql::BY_RECORDING.text())?;
     stmt.query_map(params![recording], RecordingFit::read)?
@@ -152,9 +152,9 @@ fn by_names(
         _ => return Ok(Matched::Left(SEVERAL_MATCHES)),
     };
     // Another recording only when the track has one and neither its
-    // accepted recording nor its tag is the row's.
+    // matched recording nor its tag is the row's.
     if let Some(wanted) = recording {
-        let mut held = [&fit.accepted, &fit.tag]
+        let mut held = [&fit.matched, &fit.tag]
             .into_iter()
             .filter_map(|id| text(id.as_deref()))
             .peekable();
@@ -186,7 +186,7 @@ pub fn match_play(conn: &Connection, keys: &PlayKeys) -> rusqlite::Result<Matche
         return Ok(Matched::Left(REMOTE_WITHOUT_RECORDING));
     };
     // The recording alone decides: one track holds it, and that track's
-    // accepted recording does not say otherwise.
+    // matched recording does not say otherwise.
     Ok(match by_recording(conn, &recording)?.as_slice() {
         [one] if one.unchallenged => Matched::Track {
             id: one.id.clone(),

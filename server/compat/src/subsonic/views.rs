@@ -186,8 +186,8 @@ pub struct ViewAlbum {
     pub genre: Option<String>,
     /// Compilation flag.
     pub is_compilation: Option<bool>,
-    /// Projected MusicBrainz id: the release, or the release group of an
-    /// accepted match with no known release.
+    /// Projected MusicBrainz id: the release, or the release group of a
+    /// match row with no known release.
     pub musicbrainz_album_id: Option<String>,
     /// Projected MusicBrainz artist id.
     pub musicbrainz_artist_id: Option<String>,

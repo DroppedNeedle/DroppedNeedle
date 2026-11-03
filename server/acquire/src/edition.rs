@@ -61,7 +61,8 @@ pub struct ChosenEdition {
 /// The chosen edition of the library's copy of one release group: the copy
 /// the album page shows ([`copy_for_group`]), so a download joins the copy a
 /// person sees. `None` when the library holds no copy, or that copy names no
-/// release (left unmanaged); another copy's release does not stand in.
+/// release (left unmanaged, or owned through its files' tags); another
+/// copy's release does not stand in.
 pub async fn chosen_edition(
     db: &Db,
     release_group_mbid: &str,
@@ -76,11 +77,11 @@ pub async fn chosen_edition(
 }
 
 /// The identity row's release, with who chose it.
-fn pick(identity: Option<&str>, source: DecisionSource) -> Option<ChosenEdition> {
+fn pick(identity: Option<&str>, source: Option<DecisionSource>) -> Option<ChosenEdition> {
     let release_mbid = identity
         .map(|mbid| mbid.trim().to_ascii_lowercase())
         .filter(|mbid| !mbid.is_empty())?;
-    let basis = if source.is_persons_choice() {
+    let basis = if source.is_some_and(DecisionSource::is_persons_choice) {
         EditionBasis::Manual
     } else {
         EditionBasis::BestFit
@@ -136,13 +137,13 @@ mod tests {
 
     #[test]
     fn identity_row_names_the_edition_and_who_chose_it() {
-        let manual = pick(Some("A"), DecisionSource::Manual).expect("chosen");
+        let manual = pick(Some("A"), Some(DecisionSource::Manual)).expect("chosen");
         assert_eq!(
             (manual.release_mbid.as_str(), manual.basis),
             ("a", EditionBasis::Manual)
         );
-        let fit = pick(Some("a"), DecisionSource::Automatic).map(|chosen| chosen.basis);
+        let fit = pick(Some("a"), Some(DecisionSource::Automatic)).map(|chosen| chosen.basis);
         assert_eq!(fit, Some(EditionBasis::BestFit));
-        assert_eq!(pick(None, DecisionSource::Manual), None);
+        assert_eq!(pick(None, Some(DecisionSource::Manual)), None);
     }
 }

@@ -6,10 +6,9 @@
 
 use droppedneedle_kernel::db::statement::ListLen;
 
-use crate::local::definitions::{
-    musicbrainz, owned_album, owned_artist, recording_mbid, track_codec,
-};
+use crate::local::definitions::{musicbrainz, owned_album, owned_artist, track_codec};
 use crate::local::sql::{TRACK_TEXT_MATCH, TRACK_WORD_LIKE};
+use droppedneedle_library::recording_mbid;
 
 droppedneedle_kernel::sql! {
     /// One page of artist hits: live rows whose folded name contains the

@@ -10,7 +10,7 @@ use droppedneedle_kernel::db::statement::ListLen;
 
 use super::sqlite::HistoryOrder;
 use droppedneedle_library::identity::asked_groups;
-use droppedneedle_library::owns_group;
+use droppedneedle_library::{owns_group, recording_mbid};
 
 droppedneedle_kernel::sql! {
     /// Settle the rows linked to one task (`?1`) as `?2`, stamping
@@ -548,19 +548,18 @@ pub(crate) fn history_page(order: HistoryOrder) -> String {
 
 /// Owned tracks of `groups` lowercased release groups:
 /// `(track id, group, recording, track number, disc number)`, the recording
-/// its identity's, else the file's own. The `+` keeps the planner off the
+/// its match row's, else the file's own. The `+` keeps the planner off the
 /// availability index, so tracks are reached by their album from its owners.
 pub(crate) fn mix_library_files(groups: ListLen) -> String {
     format!(
-        "{}SELECT t.id, o.group_mbid, \
-         lower(COALESCE(te.recording_mbid, t.embedded_recording_mbid)), \
+        "{}SELECT t.id, o.group_mbid, lower({recording}), \
          t.track_number, t.disc_number FROM ({}) o \
          JOIN local_tracks t ON t.local_album_id = o.album_id \
          LEFT JOIN local_track_external_identities te \
          ON te.local_track_id = t.id AND te.provider = 'musicbrainz' \
-         WHERE +t.availability = 'indexed' \
-         AND COALESCE(te.recording_mbid, t.embedded_recording_mbid) IS NOT NULL",
+         WHERE +t.availability = 'indexed' AND {recording} IS NOT NULL",
         asked_groups(groups),
-        owns_group!("IN (SELECT g FROM asked)")
+        owns_group!("IN (SELECT g FROM asked)"),
+        recording = recording_mbid!("te", "t"),
     )
 }

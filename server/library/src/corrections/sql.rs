@@ -7,6 +7,7 @@ use droppedneedle_kernel::db::statement::ListLen;
 use droppedneedle_kernel::db::time::Millis;
 
 use crate::identify::sql::CURRENT_PROOF;
+use crate::identity::sql::accepted;
 use crate::jobs::sql::live_job;
 use crate::publish::sql::HAS_BYTES_RECORD;
 use crate::scan::sqlite_store::sql::holds;
@@ -86,13 +87,9 @@ droppedneedle_kernel::sql! {
     pub(super) DROP_LIVE_TRACK_ALIASES = "DELETE FROM local_track_aliases WHERE EXISTS (SELECT 1 FROM local_tracks t \
          WHERE t.id = local_track_aliases.alias AND t.availability = 'indexed')";
     pub(super) TRACK_ALIAS_TARGET = "SELECT local_track_id, moves_overrides FROM local_track_aliases WHERE alias = ?1";
+    /// The album's (`?1`) release, lowered, while its match is accepted.
     pub(super) ACCEPTED_RELEASE = "SELECT lower(trim(e.release_mbid)) FROM local_album_external_identities e \
-         WHERE e.local_album_id = ?1 AND e.provider = 'musicbrainz' \
-         AND trim(COALESCE(e.release_mbid, '')) <> '' \
-         AND NOT EXISTS (SELECT 1 FROM library_album_match_state s \
-           WHERE s.local_album_id = e.local_album_id) \
-         AND NOT EXISTS (SELECT 1 FROM library_custom_edition_active c \
-           WHERE c.local_album_id = e.local_album_id)";
+         WHERE e.local_album_id = ?1 AND e.provider = 'musicbrainz' AND " + (accepted!("e"));
     pub(super) PAIRS_AMONG = "SELECT t.id, t.local_album_id, t.availability, lower(trim(i.release_track_mbid)), \
          lower(NULLIF(trim(i.release_mbid), '')), \
          (SELECT x.local_track_id FROM local_track_aliases x WHERE x.alias = t.id) \
@@ -480,7 +477,7 @@ droppedneedle_kernel::sql! {
     WHERE o.availability = 'missing' \
     AND o.missing_at >= (SELECT MIN(started_at) FROM library_scan_runs) \
     AND (?1 IS NULL OR a.id = ?1) AND (?2 IS NULL OR b.id = ?2) \
-    AND trim(COALESCE(ae.release_mbid, '')) <> '' \
+    AND " + (accepted!("ae")) + " AND " + (accepted!("be")) + " \
     AND EXISTS (SELECT 1 FROM local_track_external_identities oi \
       WHERE oi.local_track_id = o.id AND oi.provider = 'musicbrainz' \
       AND trim(COALESCE(oi.release_track_mbid, '')) <> '') \
@@ -488,10 +485,6 @@ droppedneedle_kernel::sql! {
       WHERE t.local_album_id = a.id AND t.availability = 'indexed') \
     AND EXISTS (SELECT 1 FROM local_tracks t \
       WHERE t.local_album_id = b.id AND t.availability = 'indexed') \
-    AND NOT EXISTS (SELECT 1 FROM library_album_match_state s \
-      WHERE s.local_album_id IN (a.id, b.id)) \
-    AND NOT EXISTS (SELECT 1 FROM library_custom_edition_active c \
-      WHERE c.local_album_id IN (a.id, b.id)) \
     ORDER BY a.id, b.id";
     /// Open pairs with a reason a person decides on, both albums live, the
     /// new album standing for the album it was merged into since, and with

@@ -509,7 +509,9 @@ Run from the repo root. `make help` lists every target.
   and no file names another group. A match taken off, withdrawn or undone,
   or a finished identification that found nothing, is never brought back
   by tags. A landing never clears a person's detach or a
-  `NAMED_GROUP_DIFFERS` flag.
+  `NAMED_GROUP_DIFFERS` flag. The accepted tier, the match flags and a
+  track's recording id (its row's, else its tags') are named once in
+  `library/src/identity/sql.rs`. `source_gates.rs` holds these reads.
 - Manual and imported identities survive rescans and moves. Automatic ones
   stay revisable and retract on contradiction.
 - Automatic artist reconciliation needs provider proof, never name similarity

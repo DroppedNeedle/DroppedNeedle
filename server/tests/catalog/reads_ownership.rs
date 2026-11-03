@@ -305,6 +305,22 @@ async fn a_tag_only_album_is_owned_and_opens_on_catalog_and_acquire_alike() {
     assert_eq!(answers(&world, &g).await, owned_by("al-tags"));
 }
 
+// A tag-only album with files and a matched copy without files share a
+// group: the page opens the tag-only album, so a download of the group is
+// pinned to no release, never to the other copy's.
+#[tokio::test]
+async fn a_download_pins_no_release_when_the_page_opens_a_tag_only_copy() {
+    let g = group(1);
+    let world = world(
+        album("al-tags", None, None, &[Some(&g), Some(&g)])
+            + &album("al-no-files", Some((&g, &release(1))), None, &[]),
+    )
+    .await;
+    let said = answers(&world, &g).await;
+    assert_eq!(said.page_opens.as_deref(), Some("al-tags"), "{said:?}");
+    assert_eq!(said.pinned, None, "{said:?}");
+}
+
 // One file naming another group leaves the album owning neither.
 #[tokio::test]
 async fn one_stray_tag_owns_nothing() {

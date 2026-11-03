@@ -61027,7 +61027,7 @@
               "string",
               "null"
             ],
-            "description": "MusicBrainz id: the hit's own for MusicBrainz hits, the accepted\nidentity for library rows. Absent means unidentified, never failure."
+            "description": "MusicBrainz id: the hit's own for MusicBrainz hits, the match row's\nfor library rows. Absent means unidentified, never failure."
           },
           "requested": {
             "type": "boolean",

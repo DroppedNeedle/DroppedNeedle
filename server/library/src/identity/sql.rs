@@ -49,6 +49,73 @@ macro_rules! persons_choice {
     };
 }
 
+/// A track's recording id as pages, players and lookups read it: its match
+/// row's, else the id in the file's own tags, over a track identity alias
+/// and a track alias. A row of any source counts, a guess's included, so
+/// the id is shown, sent and used to find a file, and never stored as
+/// identity or used to identify or own anything.
+#[macro_export]
+macro_rules! recording_mbid {
+    ($identity:literal, $track:literal) => {
+        concat!(
+            "COALESCE(",
+            $identity,
+            ".recording_mbid, ",
+            $track,
+            ".embedded_recording_mbid)"
+        )
+    };
+}
+
+/// The album, a column holding its id, carries a match flag of any state.
+#[macro_export]
+macro_rules! match_flagged {
+    ($album_id:literal) => {
+        concat!(
+            "EXISTS (SELECT 1 FROM library_album_match_state mfs WHERE mfs.local_album_id = ",
+            $album_id,
+            ")"
+        )
+    };
+}
+
+/// The album, a column holding its id, holds a guess its files' tags
+/// contradict (flagged `NAMED_GROUP_DIFFERS`): its row names no copy of the
+/// group it guessed.
+#[macro_export]
+macro_rules! named_group_guess {
+    ($album_id:literal) => {
+        concat!(
+            "EXISTS (SELECT 1 FROM library_album_match_state ngg WHERE ngg.local_album_id = ",
+            $album_id,
+            " AND ngg.reason_code = 'NAMED_GROUP_DIFFERS')"
+        )
+    };
+}
+
+/// An album's match is accepted, over an album identity alias: it names a
+/// release, the album carries no match flag, and no custom edition is
+/// active on it. Any decision source counts. Proof, merges and retag joins
+/// read this tier; pages, playback and compat need only a row.
+macro_rules! accepted {
+    ($identity:literal) => {
+        concat!(
+            "trim(COALESCE(",
+            $identity,
+            ".release_mbid, '')) <> '' \
+             AND NOT EXISTS (SELECT 1 FROM library_album_match_state acs \
+             WHERE acs.local_album_id = ",
+            $identity,
+            ".local_album_id) \
+             AND NOT EXISTS (SELECT 1 FROM library_custom_edition_active acc \
+             WHERE acc.local_album_id = ",
+            $identity,
+            ".local_album_id)"
+        )
+    };
+}
+pub(crate) use accepted;
+
 /// An album identification has not reached yet, over an album alias: no
 /// match row and no flag row of any state. Only then may a file's own tags
 /// stand in for the album's identity.
@@ -427,22 +494,17 @@ droppedneedle_kernel::sql! {
              consumed_at = NULL, consumed_action_id = NULL";
 
     /// The copy of one release group (`?1`, lowercase; provider `?2`) the
-    /// library shows and acquisition follows: a copy with files first, then
-    /// one a person chose, then the oldest, over live albums. Its release
-    /// may be NULL. A guess flagged `NAMED_GROUP_DIFFERS` is no copy of the
-    /// group it guessed. The unary plus keeps the planner off the
-    /// retired-album index, as the catalog's album reads do.
-    pub(super) COPY_SHOWN = "SELECT e.local_album_id, e.release_mbid, e.decision_source, \
+    /// library shows and acquisition follows, the one album
+    /// [`copy_of_group!`] opens, with its row on the group. An album owned
+    /// through its files' tags holds no such row: its release and source
+    /// read NULL, and no other copy's release stands in.
+    pub(super) COPY_SHOWN = "SELECT b.id AS local_album_id, e.release_mbid, e.decision_source, \
              (SELECT COUNT(*) FROM local_tracks t WHERE t.local_album_id = b.id \
               AND t.availability = 'indexed') AS file_count \
-             FROM local_album_external_identities e \
-             JOIN local_albums b ON b.id = e.local_album_id \
-             WHERE lower(e.release_group_mbid) = ?1 AND e.provider = ?2 \
-             AND +b.retired_into_album_id IS NULL \
-             AND NOT EXISTS (SELECT 1 FROM library_album_match_state s \
-               WHERE s.local_album_id = b.id AND s.reason_code = 'NAMED_GROUP_DIFFERS') \
-             ORDER BY b.has_indexed_track DESC, e.decision_source NOT IN " + PERSONS + ", \
-             b.created_at, b.id LIMIT 1";
+             FROM local_albums b LEFT JOIN local_album_external_identities e \
+             ON e.local_album_id = b.id AND e.provider = ?2 \
+             AND lower(e.release_group_mbid) = ?1 AND NOT " + (named_group_guess!("b.id")) + " \
+             WHERE b.id = (" + (copy_of_group!("= ?1")) + ")";
     /// Whether any album owns release group `?1` (lowered).
     pub(super) GROUP_OWNED = "SELECT EXISTS (" + (owns_group!("= ?1")) + ")";
     /// Whether the album (`?1`) carries a flag a landing must keep: a
@@ -1166,7 +1228,7 @@ droppedneedle_kernel::sql! {
     pub(super) row CopyRow for [COPY_SHOWN] {
         local_album_id: String,
         release_mbid: Option<String>,
-        decision_source: DecisionSource,
+        decision_source: Option<DecisionSource>,
         file_count: i64,
     }
     pub(super) row CustomAlbumFacts for [CUSTOM_ALBUM_FACTS] {

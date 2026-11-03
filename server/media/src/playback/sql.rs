@@ -1,19 +1,28 @@
 //! The playback store's statements.
 
+// `sql!` joins one token per part, so a part built by a definition macro
+// is written in parentheses.
+#![allow(unused_parens, clippy::double_parens)]
+
 use droppedneedle_library::corrections::continuation::CURRENT_TRACK;
+use droppedneedle_library::recording_mbid;
 
 droppedneedle_kernel::sql! {
     /// The track a local id names now, with its recording and the release
-    /// group its album was matched to. The recording is the accepted
-    /// identity's, else the file's own: the rule catalog's `recording_mbid!`
-    /// states, written out here because media sits below catalog.
-    pub(super) TRACK = "SELECT id, local_album_id, title, artist_name, album_title, duration_seconds, \
-         COALESCE((SELECT i.recording_mbid FROM local_track_external_identities i \
-                   WHERE i.local_track_id = local_tracks.id AND i.provider = 'musicbrainz'), \
-                  embedded_recording_mbid) AS recording_mbid, \
+    /// group its album was matched to. The recording is its match row's,
+    /// else the file's own. Identification writes a track's row only where
+    /// that track's own evidence supports it, so a scrobble sends it even
+    /// when the album's edition is a guess.
+    pub(super) TRACK = "SELECT t.id AS id, t.local_album_id AS local_album_id, t.title AS title, \
+         t.artist_name AS artist_name, t.album_title AS album_title, \
+         t.duration_seconds AS duration_seconds, "
+         + (recording_mbid!("i", "t"))
+         + " AS recording_mbid, \
          (SELECT e.release_group_mbid FROM local_album_external_identities e \
-          WHERE e.local_album_id = local_tracks.local_album_id) AS rg_mbid \
-         FROM local_tracks WHERE id = (" + CURRENT_TRACK + ")";
+          WHERE e.local_album_id = t.local_album_id) AS rg_mbid \
+         FROM local_tracks t LEFT JOIN local_track_external_identities i \
+         ON i.local_track_id = t.id AND i.provider = 'musicbrainz' \
+         WHERE t.id = (" + CURRENT_TRACK + ")";
     /// The track a local id names now, so a play is filed under the track
     /// an id continued or merged into by the time it is written.
     pub(super) CURRENT_TRACK_ID = "SELECT (" + CURRENT_TRACK + ")";

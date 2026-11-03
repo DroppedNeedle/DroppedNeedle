@@ -21254,8 +21254,8 @@ export interface components {
             /** @description Result bucket. */
             kind: components["schemas"]["SearchKind"];
             /**
-             * @description MusicBrainz id: the hit's own for MusicBrainz hits, the accepted
-             *     identity for library rows. Absent means unidentified, never failure.
+             * @description MusicBrainz id: the hit's own for MusicBrainz hits, the match row's
+             *     for library rows. Absent means unidentified, never failure.
              */
             musicbrainz_id?: string | null;
             /** @description True when an acquisition request is open for this album. */
