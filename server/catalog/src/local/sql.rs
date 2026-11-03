@@ -12,6 +12,7 @@ use droppedneedle_kernel::db::statement::ListLen;
 use droppedneedle_library::corrections::continuation::CURRENT_TRACK;
 use rusqlite::types::Value;
 
+use super::definitions::album_primary_format;
 use super::definitions::{
     live_album, live_track, musicbrainz, owned_album, owned_artist, track_codec,
 };
@@ -63,16 +64,29 @@ droppedneedle_kernel::sql! {
     ));
     /// The album list's filters, shared by its page and its count: live
     /// albums, with or without files. Binds: the pattern three times, the
-    /// artist twice, the decade three times, the format twice.
+    /// artist twice, the decade three times, the formats (`,flac,mp3,`)
+    /// twice and whether the album must have one of them (1) or none (0),
+    /// the minimum indexed tracks twice.
     pub(crate) fragment ALBUM_FILTER = (concat!(
         live_album!("a"),
         " AND (? IS NULL OR a.title_folded LIKE ? ESCAPE '\\' \
          OR a.album_artist_name_folded LIKE ? ESCAPE '\\') \
          AND (? IS NULL OR a.album_artist_id = ?) \
          AND (? IS NULL OR (a.year >= ? AND a.year < ? + 10)) \
-         AND (? IS NULL OR LOWER((SELECT t2.file_format FROM local_tracks t2 \
-         WHERE t2.local_album_id = a.id AND t2.availability = 'indexed' \
-         GROUP BY t2.file_format ORDER BY COUNT(*) DESC, t2.file_format LIMIT 1)) = ?)"
+         AND (? IS NULL OR (instr(?, ',' || COALESCE(",
+        album_primary_format!("a"),
+        ", '') || ',') > 0) = ?) \
+         AND (? IS NULL OR (SELECT COUNT(*) FROM local_tracks t3 \
+         WHERE t3.local_album_id = a.id AND t3.availability = 'indexed') >= ?)"
+    ));
+    /// How many live albums each primary format has, most first. An album
+    /// without indexed tracks has no format and is not counted.
+    pub(crate) ALBUM_FORMAT_COUNTS = (concat!(
+        "SELECT format, COUNT(*) FROM (SELECT ",
+        album_primary_format!("a"),
+        " AS format FROM local_albums a WHERE ",
+        live_album!("a"),
+        ") WHERE format IS NOT NULL GROUP BY format ORDER BY 2 DESC, 1"
     ));
     /// A shuffle seed's three numbers as one row `s` beside the rows a
     /// random list shuffles, from [`shuffle_values`].
@@ -348,7 +362,7 @@ droppedneedle_kernel::sql! {
     ));
     /// One page of artist keys in a scope, one statement per scope, sort
     /// and direction, from the start or after a cursor.
-    family ARTIST_PAGE = artist_page;
+    family ARTIST_PAGE = artist_page_shapes;
     /// One page of artist ids at an offset, for the player apps, which
     /// page by offset.
     family ARTIST_OFFSET_PAGE = artist_offset_page;
@@ -365,9 +379,23 @@ droppedneedle_kernel::sql! {
         COALESCE(SUM(CASE WHEN " + LED_PREDICATE + " THEN 1 ELSE 0 END), 0) AS led, \
         COALESCE(SUM(CASE WHEN NOT (" + LED_PREDICATE + ") AND (" + CREDITED_PREDICATE
         + ") THEN 1 ELSE 0 END), 0) AS contributors ";
-    /// Live artists matching the name filter (bound twice).
+    /// Live artists matching the name filter (bound twice) and holding at
+    /// least the minimum tracks (bound twice, see [`ARTIST_MIN_TRACKS`]).
     pub(crate) fragment ARTIST_NAME_FILTER = " WHERE r.retired_into_artist_id IS NULL \
-        AND (? IS NULL OR r.folded_name LIKE ? ESCAPE '\\')";
+        AND (? IS NULL OR r.folded_name LIKE ? ESCAPE '\\')" + ARTIST_MIN_TRACKS;
+    /// Artist `r` holds at least the bound number of indexed tracks (bound
+    /// twice): the tracks credited to it, plus the tracks on the albums it
+    /// leads that do not credit it. Both counts reach the tracks by key.
+    pub(crate) fragment ARTIST_MIN_TRACKS = " AND (? IS NULL OR ((SELECT COUNT(*) \
+        FROM local_track_artists mta \
+        JOIN local_tracks mt INDEXED BY sqlite_autoindex_local_tracks_1 \
+        ON mt.id = mta.local_track_id \
+        WHERE mta.local_artist_id = r.id AND +mt.availability = 'indexed') \
+        + (SELECT COUNT(*) FROM local_albums mla INDEXED BY idx_local_albums_artist_id \
+        JOIN local_tracks ml INDEXED BY idx_local_tracks_album_availability \
+        ON ml.local_album_id = mla.id AND ml.availability = 'indexed' \
+        WHERE mla.album_artist_id = r.id AND NOT EXISTS (SELECT 1 FROM local_track_artists mc \
+        WHERE mc.local_track_id = ml.id AND mc.local_artist_id = r.id))) >= ?)";
     /// The artist list's totals: credited, leading and contributing artists
     /// matching the name filter (bound twice).
     pub(crate) ARTIST_TOTALS = ARTIST_TOTAL_COLUMNS + ARTIST_JOINS + ARTIST_NAME_FILTER;
@@ -381,7 +409,7 @@ droppedneedle_kernel::sql! {
         + ARTIST_IDENTITY + ARTIST_NAME_FILTER;
     /// One page of a user's favourite artists in a scope, the user bound
     /// first.
-    family FAVORITE_ARTIST_PAGE = favorite_artist_page;
+    family FAVORITE_ARTIST_PAGE = favorite_artist_page_shapes;
     /// How many of a user's favourite artists one scope holds.
     family FAVORITE_ARTIST_SCOPE_COUNT = favorite_artist_scope_count;
     /// How many artists of one scope match the name filter.
@@ -1330,26 +1358,77 @@ fn counts_scope(
     }
 }
 
-/// One page of artist keys in a scope: the name filter (bound twice), the
-/// cursor, the limit.
+/// One page of artist keys in a scope: the name filter (bound twice), with
+/// `min_tracks` the minimum tracks (bound twice), the cursor, the limit.
+/// Without it a count sort walks the kept counts alone.
 pub(crate) fn artist_page(
     scope: ArtistScope,
     sort: ArtistSort,
     descending: bool,
     after_cursor: bool,
+    min_tracks: bool,
 ) -> String {
     let keys = artist_keys(scope, sort, descending);
     if counts_walk(scope, sort) {
         return format!(
             "SELECT {} FROM library_artist_counts s \
-             WHERE {} AND (? IS NULL OR s.folded_name LIKE ? ESCAPE '\\'){} ORDER BY {} LIMIT ?",
+             WHERE {} AND (? IS NULL OR s.folded_name LIKE ? ESCAPE '\\'){}{} ORDER BY {} LIMIT ?",
             key_columns(&keys),
             counts_scope(scope, sort, descending, after_cursor),
+            min_tracks_clause(min_tracks).replace("= r.id", "= s.local_artist_id"),
             after(&keys, after_cursor),
             order_by(&keys)
         );
     }
-    artist_list_page(scope, sort, descending, after_cursor, false)
+    artist_list_page(scope, sort, descending, after_cursor, false, min_tracks)
+}
+
+droppedneedle_kernel::sql_choice! {
+    /// Where an artist page starts and whether it filters by minimum
+    /// tracks: the last two choices of [`artist_page`], as one for the
+    /// family list.
+    pub(crate) struct ArtistPageShape {
+        pub(crate) after_cursor: bool,
+        pub(crate) min_tracks: bool,
+    }
+}
+
+/// [`artist_page`] over one [`ArtistPageShape`]: the family's builder.
+pub(crate) fn artist_page_shapes(
+    scope: ArtistScope,
+    sort: ArtistSort,
+    descending: bool,
+    shape: ArtistPageShape,
+) -> String {
+    artist_page(
+        scope,
+        sort,
+        descending,
+        shape.after_cursor,
+        shape.min_tracks,
+    )
+}
+
+/// [`favorite_artist_page`] over one [`ArtistPageShape`]: the family's
+/// builder.
+pub(crate) fn favorite_artist_page_shapes(
+    scope: ArtistScope,
+    sort: ArtistSort,
+    descending: bool,
+    shape: ArtistPageShape,
+) -> String {
+    favorite_artist_page(
+        scope,
+        sort,
+        descending,
+        shape.after_cursor,
+        shape.min_tracks,
+    )
+}
+
+/// [`ARTIST_MIN_TRACKS`] when a page filters by it, else nothing.
+fn min_tracks_clause(min_tracks: bool) -> &'static str {
+    if min_tracks { ARTIST_MIN_TRACKS } else { "" }
 }
 
 /// The order of a user's favourite artists: [`artist_keys`] off the kept
@@ -1359,15 +1438,16 @@ pub(crate) fn favorite_artist_keys(sort: ArtistSort, descending: bool) -> Vec<Or
 }
 
 /// One page of a user's favourite artists in a scope: the user, the name
-/// filter (bound twice), the cursor, the limit. Ordered by
-/// [`favorite_artist_keys`].
+/// filter (bound twice), with `min_tracks` the minimum tracks (bound
+/// twice), the cursor, the limit. Ordered by [`favorite_artist_keys`].
 pub(crate) fn favorite_artist_page(
     scope: ArtistScope,
     sort: ArtistSort,
     descending: bool,
     after_cursor: bool,
+    min_tracks: bool,
 ) -> String {
-    artist_list_page(scope, sort, descending, after_cursor, true)
+    artist_list_page(scope, sort, descending, after_cursor, true, min_tracks)
 }
 
 fn artist_list_page(
@@ -1376,6 +1456,7 @@ fn artist_list_page(
     descending: bool,
     after_cursor: bool,
     favorites: bool,
+    min_tracks: bool,
 ) -> String {
     let keys = if favorites {
         favorite_artist_keys(sort, descending)
@@ -1385,10 +1466,11 @@ fn artist_list_page(
     format!(
         "SELECT {} FROM {} \
          WHERE r.retired_into_artist_id IS NULL AND ({}) \
-         AND (? IS NULL OR r.folded_name LIKE ? ESCAPE '\\'){} ORDER BY {} LIMIT ?",
+         AND (? IS NULL OR r.folded_name LIKE ? ESCAPE '\\'){}{} ORDER BY {} LIMIT ?",
         key_columns(&keys),
         artist_from(sort, favorites),
         artist_scope_predicate(scope),
+        min_tracks_clause(min_tracks),
         after(&keys, after_cursor),
         order_by(&keys)
     )
@@ -1400,7 +1482,8 @@ pub(crate) fn artist_offset_page(scope: ArtistScope, sort: ArtistSort, descendin
     format!(
         "SELECT r.id FROM {} \
          WHERE r.retired_into_artist_id IS NULL AND ({}) \
-         AND (? IS NULL OR r.folded_name LIKE ? ESCAPE '\\') ORDER BY {} LIMIT ? OFFSET ?",
+         AND (? IS NULL OR r.folded_name LIKE ? ESCAPE '\\'){ARTIST_MIN_TRACKS} \
+         ORDER BY {} LIMIT ? OFFSET ?",
         artist_from(sort, false),
         artist_scope_predicate(scope),
         order_by(&artist_keys(ArtistScope::WithMusic, sort, descending))

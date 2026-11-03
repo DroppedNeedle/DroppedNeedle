@@ -390,7 +390,7 @@ async fn sqlite_format_filter_artist_sort_and_release_group_lookup() {
     let fixture = sqlite_fixture().await;
     for (format, total) in [("flac", 2), ("mp3", 1), ("FLAC", 2), ("ogg", 0)] {
         let filter = AlbumFilter {
-            format: Some(format.to_lowercase()),
+            formats: vec![format.to_lowercase()],
             ..Default::default()
         };
         let (albums, counted) = fixture
@@ -1129,6 +1129,70 @@ async fn one_album_set_everywhere() {
 }
 
 /// Run `sql` on the fixture's database as one write.
+/// The album list keeps albums in some formats, or hides them, and drops
+/// albums with fewer tracks than asked; the format filter's counts cover
+/// the whole list. The artist list drops artists with fewer tracks, in
+/// every scope and in the scope totals alike.
+#[tokio::test]
+async fn lists_filter_by_formats_and_minimum_tracks() {
+    let fixture = sqlite_fixture().await;
+    let app = || app(deps(fixture.runtime.db(), None), Some(ADA));
+    let ids = |page: &Value| sorted_ids(&page["items"], "id");
+
+    for (query, want) in [
+        ("min_tracks=2", vec!["al1"]),
+        ("formats=MP3", vec!["al2"]),
+        ("formats=flac,mp3", vec!["al1", "al2", "al3"]),
+        ("formats=flac&format_mode=without", vec!["al2", "al4"]),
+        ("formats=flac&min_tracks=2", vec!["al1"]),
+        ("format=mp3", vec!["al2"]),
+    ] {
+        let (status, page) = get(app(), &format!("/api/v3/library/albums?{query}")).await;
+        assert_eq!(status, StatusCode::OK, "{query}: {page}");
+        assert_eq!(ids(&page), want, "{query}");
+        assert_eq!(page["total"], serde_json::json!(want.len()), "{query}");
+    }
+    let (status, _) = get(app(), "/api/v3/library/albums?format_mode=except").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    let (status, formats) = get(app(), "/api/v3/library/albums/formats").await;
+    assert_eq!(status, StatusCode::OK, "{formats}");
+    assert_eq!(
+        formats["items"],
+        serde_json::json!([
+            {"format": "flac", "album_count": 2},
+            {"format": "mp3", "album_count": 1}
+        ])
+    );
+
+    // Aurora: Opener, Closer and Single (credited, on albums she leads);
+    // Boreal leads Lone Peak's one track, Guest is credited on it.
+    for (query, want, totals) in [
+        ("min_tracks=2", vec!["a1"], (1, 1, 0)),
+        ("min_tracks=2&scope=contributors", vec![], (0, 1, 0)),
+        ("min_tracks=3&scope=album_artists", vec!["a1"], (1, 1, 0)),
+        ("min_tracks=4", vec![], (0, 0, 0)),
+        (
+            "sort=album_count&order=desc&min_tracks=2&scope=album_artists",
+            vec!["a1"],
+            (1, 1, 0),
+        ),
+    ] {
+        let (status, page) = get(app(), &format!("/api/v3/library/artists?{query}")).await;
+        assert_eq!(status, StatusCode::OK, "{query}: {page}");
+        assert_eq!(ids(&page), want, "{query}");
+        assert_eq!(
+            (
+                page["total"].as_u64().unwrap(),
+                page["album_artist_total"].as_u64().unwrap(),
+                page["contributor_total"].as_u64().unwrap()
+            ),
+            totals,
+            "{query}"
+        );
+    }
+}
+
 /// An album shows how many tracks its edition has next to the ones the
 /// library holds: with no MusicBrainz release held, from its files' tags;
 /// an album no tag tells about has none. The list and the album agree.

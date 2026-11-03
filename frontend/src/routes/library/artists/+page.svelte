@@ -14,6 +14,7 @@
 	import type { ArtistSort, LibraryArtistScope, ArtistView } from '$lib/types';
 	import { artistHref } from '$lib/utils/entityRoutes';
 	import { ChevronLeft, Disc3, Heart, Mic, Search, UsersRound, X } from 'lucide-svelte';
+	import LibraryFilterMenu from '$lib/components/library/LibraryFilterMenu.svelte';
 
 	const SEARCH_DEBOUNCE_MS = 300;
 
@@ -38,6 +39,7 @@
 			favorites,
 			defaultSort,
 			q: page.url.searchParams.get('q') ?? '',
+			minTracks: Math.max(1, Number(page.url.searchParams.get('min_tracks')) || 1),
 			sortBy: rawSort && validSorts.includes(rawSort) ? rawSort : defaultSort,
 			sortOrder: page.url.searchParams.get('order') === 'desc' ? 'desc' : 'asc'
 		} as const;
@@ -48,6 +50,7 @@
 		sortOrder: browse.sortOrder,
 		q: browse.q,
 		scope: browse.scope,
+		minTracks: browse.minTracks,
 		favorites: browse.favorites
 	});
 	const artistsQuery = getLibraryArtistsInfiniteQuery(() => params);
@@ -196,6 +199,10 @@
 				<option value="date_added:desc">Newest first</option>
 				<option value="date_added:asc">Oldest first</option>
 			</select>
+			<LibraryFilterMenu
+				minTracks={browse.minTracks}
+				onMinTracks={(min) => setParams({ min_tracks: min > 1 ? String(min) : null })}
+			/>
 		</div>
 
 		{#if artistsQuery.isError}

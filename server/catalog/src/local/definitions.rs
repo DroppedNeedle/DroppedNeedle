@@ -109,3 +109,18 @@ macro_rules! owned_artist {
 }
 
 pub(crate) use {live_album, live_track, musicbrainz, owned_album, owned_artist, track_codec};
+
+/// Album `$album`'s primary format: its most common indexed track format,
+/// lowercased; NULL for an album without indexed tracks.
+macro_rules! album_primary_format {
+    ($album:literal) => {
+        concat!(
+            "LOWER((SELECT t2.file_format FROM local_tracks t2 WHERE t2.local_album_id = ",
+            $album,
+            ".id AND t2.availability = 'indexed' \
+             GROUP BY t2.file_format ORDER BY COUNT(*) DESC, t2.file_format LIMIT 1))"
+        )
+    };
+}
+
+pub(crate) use album_primary_format;

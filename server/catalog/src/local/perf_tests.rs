@@ -388,7 +388,9 @@ async fn album_pages_match_the_fixture() {
             q: q.map(str::to_owned),
             artist_id: artist.map(str::to_owned),
             decade,
-            format: format.map(str::to_owned),
+            formats: format.map(str::to_owned).into_iter().collect(),
+            without_formats: false,
+            min_tracks: None,
             favorites_of: None,
         };
     let filters: [(AlbumFilter, &[&str]); 7] = [
@@ -541,7 +543,7 @@ async fn walk_artists(
     loop {
         let (page, led, contributors) = fixture
             .catalog
-            .artist_list(scope, q, None, sort, descending, limit, &after)
+            .artist_list(scope, q, None, sort, descending, limit, &after, None)
             .await
             .expect("lists");
         ids.extend(page.items.iter().map(|artist| artist.id.clone()));
@@ -628,6 +630,7 @@ async fn artist_pages_match_the_fixture() {
                 false,
                 50,
                 &After::default(),
+                None,
             )
             .await
             .expect("lists");
@@ -647,6 +650,7 @@ async fn artist_pages_match_the_fixture() {
             false,
             50,
             &After::default(),
+            None,
         )
         .await
         .expect("lists");
@@ -1208,7 +1212,7 @@ async fn assert_hot_plans(db: &Db) {
                 ArtistScope::WithMusic,
             ] {
                 for sort in ARTIST_SORTS {
-                    lists.push(sql::artist_page(scope, sort, descending, after));
+                    lists.push(sql::artist_page(scope, sort, descending, after, false));
                 }
             }
         }
@@ -1311,9 +1315,11 @@ async fn assert_hot_plans(db: &Db) {
                     };
                     let bounded = matches!(sort, ArtistSort::AlbumCount)
                         && !matches!(scope, ArtistScope::All);
-                    let plan =
-                        explain_unbound(db, &sql::artist_page(scope, sort, descending, after))
-                            .await;
+                    let plan = explain_unbound(
+                        db,
+                        &sql::artist_page(scope, sort, descending, after, false),
+                    )
+                    .await;
                     let walk = if after || bounded {
                         "SEARCH s"
                     } else {
@@ -1388,7 +1394,7 @@ async fn assert_hot_plans(db: &Db) {
 
     let plan = explain_unbound(
         db,
-        &sql::artist_page(ArtistScope::All, ArtistSort::Name, false, false),
+        &sql::artist_page(ArtistScope::All, ArtistSort::Name, false, false, false),
     )
     .await;
     assert!(
@@ -1403,7 +1409,7 @@ async fn assert_hot_plans(db: &Db) {
     for (name, text, binds) in [
         (
             "artist page",
-            sql::artist_page(ArtistScope::All, ArtistSort::Name, false, false),
+            sql::artist_page(ArtistScope::All, ArtistSort::Name, false, false, false),
             vec![
                 ExplainBind::Text(None),
                 ExplainBind::Text(None),
@@ -1413,7 +1419,12 @@ async fn assert_hot_plans(db: &Db) {
         (
             "artist totals",
             sql::ARTIST_TOTALS.text().to_owned(),
-            vec![ExplainBind::Text(None), ExplainBind::Text(None)],
+            vec![
+                ExplainBind::Text(None),
+                ExplainBind::Text(None),
+                ExplainBind::Text(None),
+                ExplainBind::Text(None),
+            ],
         ),
         ("stats", sql::STATS.text().to_owned(), Vec::new()),
     ] {
@@ -3610,7 +3621,8 @@ async fn read_endpoint(catalog: &LocalCatalog, name: &str, deep: &(After, After,
         q: Some("zzz-no-such-thing-zzz".to_owned()),
         ..Default::default()
     };
-    let artists = |scope, sort| catalog.artist_list(scope, None, None, sort, true, 48, &first);
+    let artists =
+        |scope, sort| catalog.artist_list(scope, None, None, sort, true, 48, &first, None);
     match name {
         "library_albums" | "local_albums" => {
             catalog
@@ -3634,6 +3646,7 @@ async fn read_endpoint(catalog: &LocalCatalog, name: &str, deep: &(After, After,
                     false,
                     50,
                     &first,
+                    None,
                 )
                 .await
                 .expect("lists");

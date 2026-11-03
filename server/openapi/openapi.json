@@ -8725,10 +8725,39 @@
           {
             "name": "format",
             "in": "query",
-            "description": "Restrict to one primary track format, e.g. `flac`. Blank reads as\nabsent; matching is case-insensitive.",
+            "description": "Restrict to one primary track format, e.g. `flac`. Blank reads as\nabsent; matching is case-insensitive. `formats` wins when both are\ngiven.",
             "required": false,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "formats",
+            "in": "query",
+            "description": "Primary track formats, comma-separated, e.g. `flac,mp3`; matching is\ncase-insensitive. See `format_mode`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "format_mode",
+            "in": "query",
+            "description": "`with` (default): only albums in one of `formats`; `without`: only\nalbums in none of them.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "min_tracks",
+            "in": "query",
+            "description": "Only albums with at least this many indexed tracks, 1-10000.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
             }
           },
           {
@@ -8758,6 +8787,44 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
+    "/api/v3/library/albums/formats": {
+      "get": {
+        "tags": [
+          "library"
+        ],
+        "summary": "How many albums each primary format has, for the format filter.",
+        "operationId": "album_format_counts",
+        "responses": {
+          "200": {
+            "description": "Album counts per format",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AlbumFormatCounts"
                 }
               }
             }
@@ -12472,6 +12539,17 @@
             "required": false,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "min_tracks",
+            "in": "query",
+            "description": "Only artists with at least this many indexed tracks in the library,\n1-10000: the tracks credited to them and the tracks on the albums\nthey lead, each once. The scope totals count the same artists.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
             }
           },
           {
@@ -35431,6 +35509,42 @@
           "musicbrainz_id": {
             "type": "string",
             "description": "Provider release-group id."
+          }
+        }
+      },
+      "AlbumFormatCount": {
+        "type": "object",
+        "description": "How many albums one primary format has.",
+        "required": [
+          "format",
+          "album_count"
+        ],
+        "properties": {
+          "album_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Listed albums whose most common track format it is.",
+            "minimum": 0
+          },
+          "format": {
+            "type": "string",
+            "description": "Lowercased format, e.g. `flac`."
+          }
+        }
+      },
+      "AlbumFormatCounts": {
+        "type": "object",
+        "description": "Every primary format the album list has, for its format filter.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AlbumFormatCount"
+            },
+            "description": "Formats by descending album count, name tiebreak."
           }
         }
       },

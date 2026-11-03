@@ -122,8 +122,13 @@ pub struct AlbumFilter {
     pub artist_id: Option<String>,
     /// Restrict to one decade start year.
     pub decade: Option<i64>,
-    /// Restrict to one primary track format, already lowercased.
-    pub format: Option<String>,
+    /// Primary track formats, already lowercased: the albums in one of them,
+    /// or with `without_formats` the albums in none. Empty: every format.
+    pub formats: Vec<String>,
+    /// Hide the albums in `formats` instead of keeping only them.
+    pub without_formats: bool,
+    /// Only albums with at least this many indexed tracks.
+    pub min_tracks: Option<u32>,
     /// Restrict to this user's favourites.
     pub favorites_of: Option<String>,
 }

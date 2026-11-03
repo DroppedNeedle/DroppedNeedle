@@ -3,7 +3,13 @@
 	import { goto } from '$app/navigation';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { ChevronLeft, Disc3, Heart, Search, X } from 'lucide-svelte';
-	import { getLibraryAlbumsInfiniteQuery } from '$lib/queries/library/LibraryQueries.svelte';
+	import {
+		getLibraryAlbumFormatsQuery,
+		getLibraryAlbumsInfiniteQuery
+	} from '$lib/queries/library/LibraryQueries.svelte';
+	import LibraryFilterMenu, {
+		type FormatMode
+	} from '$lib/components/library/LibraryFilterMenu.svelte';
 	import type { LibraryV3AlbumsParams } from '$lib/queries/library/LibraryQueryKeyFactory';
 	import LibraryAlbumCard from '$lib/components/library/LibraryAlbumCard.svelte';
 	import Button from '$lib/ui/Button.svelte';
@@ -16,7 +22,6 @@
 	// `hearted` is the favourites' own order: the newest heart first.
 	type Sort = AlbumSort | 'hearted';
 	const VALID_SORTS: Sort[] = ['recent', 'title', 'artist'];
-	const FORMATS = ['flac', 'mp3', 'm4a', 'opus', 'ogg'];
 
 	// browse state lives in the url so it's shareable and back-button stable
 	const params = $derived.by(() => {
@@ -28,7 +33,13 @@
 		return {
 			sort: valid ? rawSort : favorites ? 'hearted' : 'recent',
 			q: sp.get('q') ?? '',
-			format: sp.get('format') ?? '',
+			// `format` is the one-format link of before the filter menu.
+			formats: (sp.get('formats') ?? sp.get('format') ?? '')
+				.split(',')
+				.map((format) => format.trim().toLowerCase())
+				.filter(Boolean),
+			formatMode: (sp.get('format_mode') === 'without' ? 'without' : 'with') as FormatMode,
+			minTracks: Math.max(1, Number(sp.get('min_tracks')) || 1),
 			favorites
 		};
 	});
@@ -46,9 +57,12 @@
 		limit: PAGE_SIZE,
 		...SORT_MAP[params.sort],
 		...(params.q ? { q: params.q } : {}),
-		...(params.format ? { format: params.format } : {}),
+		...(params.formats.length ? { formats: params.formats, formatMode: params.formatMode } : {}),
+		...(params.minTracks > 1 ? { minTracks: params.minTracks } : {}),
 		...(params.favorites ? { favorites: true } : {})
 	}));
+	const formatsQuery = getLibraryAlbumFormatsQuery();
+	const filtered = $derived(params.formats.length > 0 || params.minTracks > 1);
 	// An album can move between pages while they load (a scan renames it):
 	// keep its first appearance.
 	const albums = $derived.by(() => {
@@ -151,17 +165,19 @@
 			<option value="title">Title A-Z</option>
 			<option value="artist">Artist A-Z</option>
 		</select>
-		<select
-			class="select"
-			value={params.format}
-			onchange={(e) => setParams({ format: (e.target as HTMLSelectElement).value })}
-			aria-label="Filter by format"
-		>
-			<option value="">All formats</option>
-			{#each FORMATS as f (f)}
-				<option value={f}>{f.toUpperCase()}</option>
-			{/each}
-		</select>
+		<LibraryFilterMenu
+			minTracks={params.minTracks}
+			onMinTracks={(min) => setParams({ min_tracks: min > 1 ? String(min) : null })}
+			formatCounts={formatsQuery.data ?? []}
+			formats={params.formats}
+			formatMode={params.formatMode}
+			onFormats={(formats, mode) =>
+				setParams({
+					format: null,
+					formats: formats.length ? formats.join(',') : null,
+					format_mode: mode === 'without' ? 'without' : null
+				})}
+		/>
 	</div>
 
 	{#if albumsQuery.isError}
@@ -179,10 +195,10 @@
 		<div class="flex flex-col items-center justify-center min-h-100 text-center">
 			<Disc3 class="h-12 w-12 text-base-content/40 mb-4" strokeWidth={1.5} />
 			<h2 class="text-2xl font-semibold mb-2">
-				{params.favorites && !params.q && !params.format ? 'No favourites yet' : 'No albums found'}
+				{params.favorites && !params.q && !filtered ? 'No favourites yet' : 'No albums found'}
 			</h2>
 			<p class="text-base-content/70 mb-4">
-				{params.q || params.format
+				{params.q || filtered
 					? 'Try a different search or filter.'
 					: params.favorites
 						? 'Tap the heart on an album to add it here.'

@@ -7,12 +7,12 @@ use std::collections::{HashMap, HashSet};
 use super::LibraryDeps;
 use super::cursor::{Cursor, fresh_seed};
 use super::models::{
-    AlbumDetailView, AlbumPage, AlbumQuery, AlbumView, ArtistPage, ArtistQuery, ArtistView,
-    CursorQuery, DecadeShelf, DecadesResponse, LibraryAlbumStatus, LibraryMembershipRequest,
-    LibraryMembershipResponse, LibraryStatusTrack, LyricLine, LyricsView, ManagementHoldView,
-    PageQuery, RecentQuery, ResolveTracksRequest, ResolveTracksResponse, ResolvedTrack, StatsView,
-    SuggestionTrack, SuggestionsQuery, SuggestionsResponse, TrackListPage, TrackPage, TrackQuery,
-    TrackView,
+    AlbumDetailView, AlbumFormatCount, AlbumFormatCounts, AlbumPage, AlbumQuery, AlbumView,
+    ArtistPage, ArtistQuery, ArtistView, CursorQuery, DecadeShelf, DecadesResponse,
+    LibraryAlbumStatus, LibraryMembershipRequest, LibraryMembershipResponse, LibraryStatusTrack,
+    LyricLine, LyricsView, ManagementHoldView, PageQuery, RecentQuery, ResolveTracksRequest,
+    ResolveTracksResponse, ResolvedTrack, StatsView, SuggestionTrack, SuggestionsQuery,
+    SuggestionsResponse, TrackListPage, TrackPage, TrackQuery, TrackView,
 };
 use super::sql;
 use super::stores::{
@@ -330,11 +330,43 @@ fn clean_q(q: Option<&str>) -> Option<String> {
 
 /// Blank format reads as absent; the rest lowercases so `FLAC` and `flac`
 /// match the same rows.
-fn clean_format(format: Option<&str>) -> Option<String> {
-    format
+/// The formats an album list keeps or hides, lowercased: `formats`
+/// (comma-separated), else the one `format`. Blanks drop out.
+fn clean_formats(formats: Option<&str>, format: Option<&str>) -> Vec<String> {
+    let mut cleaned: Vec<String> = formats
+        .or(format)
+        .unwrap_or_default()
+        .split(',')
         .map(str::trim)
         .filter(|text| !text.is_empty())
-        .map(|text| text.to_lowercase())
+        .map(str::to_lowercase)
+        .collect();
+    cleaned.sort_unstable();
+    cleaned.dedup();
+    cleaned
+}
+
+/// Whether `format_mode` hides the formats: `with` (default) or `without`.
+fn without_formats(mode: Option<&str>) -> Result<bool, LibraryFailure> {
+    match mode.map(str::trim) {
+        None | Some("" | "with") => Ok(false),
+        Some("without") => Ok(true),
+        Some(other) => Err(LibraryFailure::InvalidInput(format!(
+            "unknown format_mode '{other}': want with or without"
+        ))),
+    }
+}
+
+/// A minimum track count is 1-10000; 1 keeps everything, so it reads as
+/// absent.
+fn check_min_tracks(min: Option<u32>) -> Result<Option<u32>, LibraryFailure> {
+    match min {
+        None | Some(1) => Ok(None),
+        Some(min @ 2..=10_000) => Ok(Some(min)),
+        Some(other) => Err(LibraryFailure::InvalidInput(format!(
+            "min_tracks {other} out of range: want 1-10000"
+        ))),
+    }
 }
 
 /// Decade start years are multiples of ten in a sane range.
@@ -476,7 +508,9 @@ pub async fn list_albums(
         q: clean_q(query.q.as_deref()),
         artist_id: query.artist_id.clone(),
         decade: check_decade(query.decade)?,
-        format: clean_format(query.format.as_deref()),
+        formats: clean_formats(query.formats.as_deref(), query.format.as_deref()),
+        without_formats: without_formats(query.format_mode.as_deref())?,
+        min_tracks: check_min_tracks(query.min_tracks)?,
         favorites_of: favorites_of(query.favorites, user_id),
     };
     let favorites = filter.favorites_of.is_some();
@@ -634,6 +668,7 @@ pub async fn list_artists(
             descending,
             limit,
             &after,
+            check_min_tracks(query.min_tracks)?,
         )
         .await?;
     let ids: Vec<String> = page.items.iter().map(|record| record.id.clone()).collect();
@@ -801,6 +836,20 @@ pub async fn recently_added(
         items: album_views(deps, user_id, records).await?,
         total,
         next: None,
+    })
+}
+
+/// How many albums each primary format has, over the whole album list.
+pub async fn album_format_counts(deps: &LibraryDeps) -> Result<AlbumFormatCounts, LibraryFailure> {
+    let counts = deps.catalog.album_format_counts().await?;
+    Ok(AlbumFormatCounts {
+        items: counts
+            .into_iter()
+            .map(|(format, album_count)| AlbumFormatCount {
+                format,
+                album_count,
+            })
+            .collect(),
     })
 }
 
@@ -1177,9 +1226,19 @@ mod tests {
 
     #[test]
     fn format_filter_cleans_and_lowercases() {
-        assert_eq!(clean_format(None), None);
-        assert_eq!(clean_format(Some("  ")), None);
-        assert_eq!(clean_format(Some("  FLAC ")), Some("flac".to_owned()));
+        assert_eq!(clean_formats(None, None), Vec::<String>::new());
+        assert_eq!(clean_formats(None, Some("  ")), Vec::<String>::new());
+        assert_eq!(clean_formats(None, Some("  FLAC ")), ["flac"]);
+        assert_eq!(
+            clean_formats(Some("mp3, FLAC,,mp3"), Some("ogg")),
+            ["flac", "mp3"],
+            "the list wins over the one format, deduplicated"
+        );
+        assert_eq!(without_formats(Some("without")).ok(), Some(true));
+        assert_eq!(without_formats(None).ok(), Some(false));
+        assert!(without_formats(Some("except")).is_err());
+        assert_eq!(check_min_tracks(Some(1)).ok(), Some(None));
+        assert!(check_min_tracks(Some(0)).is_err());
     }
 
     #[test]
