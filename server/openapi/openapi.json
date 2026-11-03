@@ -2594,6 +2594,65 @@
         ]
       }
     },
+    "/api/v3/artists/{artist_mbid}/owned-releases": {
+      "get": {
+        "tags": [
+          "catalog"
+        ],
+        "summary": "The release groups of the artist's discography that the library holds,\nwhatever their type.",
+        "operationId": "owned_releases",
+        "parameters": [
+          {
+            "name": "artist_mbid",
+            "in": "path",
+            "description": "Artist MBID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Held release groups",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OwnedReleases"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not a MusicBrainz id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/artists/{artist_mbid}/purchase-options": {
       "get": {
         "tags": [
@@ -52300,6 +52359,75 @@
               "*.m3u8",
               "*.pls"
             ]
+          }
+        }
+      },
+      "OwnedRelease": {
+        "type": "object",
+        "description": "One release group of an artist's discography that the library holds.",
+        "required": [
+          "id",
+          "secondary_types"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Release-group MBID."
+          },
+          "primary_type": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Primary type (`Album`, `EP`, `Single`, `Other`, ...)."
+          },
+          "secondary_types": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Secondary types (`Compilation`, `Live`, `Soundtrack`, ...)."
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Title."
+          },
+          "year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "First release year."
+          }
+        }
+      },
+      "OwnedReleases": {
+        "type": "object",
+        "description": "`GET /artists/{artist_mbid}/owned-releases`: every release group of the\nartist's discography that the library holds, whatever its type. The\nrelease-type preferences only shape the discography; the library part of\nan artist page shows everything the library holds.",
+        "required": [
+          "items",
+          "complete",
+          "service_status"
+        ],
+        "properties": {
+          "complete": {
+            "type": "boolean",
+            "description": "False while the rest of a large discography is still being fetched,\nor when MusicBrainz could not be asked: some held albums may be\nmissing from `items`."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OwnedRelease"
+            },
+            "description": "The held release groups, newest first."
+          },
+          "service_status": {
+            "$ref": "#/components/schemas/Option",
+            "description": "Sources that degraded while building the list."
           }
         }
       },

@@ -16,7 +16,7 @@ use super::mapping;
 use super::models::{
     ArtistExtendedInfo, ArtistImages, ArtistInfo, ArtistPurchaseOptionsResponse, ArtistReleases,
     CatalogSource, ExternalLink, LastFmArtistEnrichment, LastFmSimilarArtist, LastFmTag, LifeSpan,
-    PluginDetails, PurchaseLink, ReleaseItem,
+    OwnedRelease, OwnedReleases, PluginDetails, PurchaseLink, ReleaseItem,
 };
 use super::{
     Answer, BIOGRAPHY, Catalog, LASTFM_DETAILS, is_mbid, mb_error, mb_search_error, record_mb_down,
@@ -798,6 +798,43 @@ impl Catalog {
             list.complete,
             CatalogSource::Musicbrainz,
         ))
+    }
+
+    /// `GET /artists/{artist_mbid}/owned-releases`: the release groups of
+    /// the whole discography that the library holds, unfiltered by the
+    /// release-type preferences. Without MusicBrainz the list is empty and
+    /// not complete.
+    pub async fn owned_releases(&self, raw_mbid: &str) -> Result<OwnedReleases, CatalogError> {
+        let mbid = checked_mbid(raw_mbid, "artist")?;
+        let (listed, context) =
+            scoped(self.release_groups(&mbid, RequestPriority::UserInitiated)).await;
+        let Ok(list) = listed else {
+            return Ok(OwnedReleases {
+                items: Vec::new(),
+                complete: false,
+                service_status: mapping::service_status(&context),
+            });
+        };
+        let ids: Vec<String> = list.items.iter().map(|item| item.id.clone()).collect();
+        let (owned, _) = self.album_flags(&ids).await;
+        let mut items: Vec<OwnedRelease> = list
+            .items
+            .iter()
+            .filter(|item| owned.contains(&item.id.to_ascii_lowercase()))
+            .map(|item| OwnedRelease {
+                id: item.id.clone(),
+                title: item.title.clone(),
+                primary_type: item.primary_type.clone(),
+                secondary_types: item.secondary_types.clone(),
+                year: mapping::year_of(item.first_release_date.as_deref()),
+            })
+            .collect();
+        items.sort_by_key(|item| (item.year.is_none(), std::cmp::Reverse(item.year)));
+        Ok(OwnedReleases {
+            items,
+            complete: list.complete,
+            service_status: mapping::service_status(&context),
+        })
     }
 
     /// Split a release-group list into sections, filtered by the

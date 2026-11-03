@@ -12,7 +12,7 @@
 	import TopSongsList from '$lib/components/TopSongsList.svelte';
 	import TopAlbumsList from '$lib/components/TopAlbumsList.svelte';
 	import LastFmEnrichment from '$lib/components/LastFmEnrichment.svelte';
-	import LibraryAlbumsCarousel from '$lib/components/LibraryAlbumsCarousel.svelte';
+	import ArtistLibraryAlbums from '$lib/components/library/ArtistLibraryAlbums.svelte';
 	import ArtistAppearancesSection from '$lib/components/library/ArtistAppearancesSection.svelte';
 	import ArtistMusicBrainzLink from '$lib/components/library/ArtistMusicBrainzLink.svelte';
 	import LocalArtistPage from './LocalArtistPage.svelte';
@@ -320,6 +320,9 @@
 		}
 		return [
 			{ id: 'section-overview', label: 'Overview' },
+			...(localArtist && localArtist.album_count > 0
+				? [{ id: 'section-library-albums', label: 'In your library' }]
+				: []),
 			...(artist.appears_in_library
 				? [{ id: 'section-library-appearances', label: 'Local appearances' }]
 				: []),
@@ -437,6 +440,10 @@
 					<ArtistWhereToBuy artistMbid={data.artistId} artistName={artist.name} />
 				</section>
 
+				{#if localArtist && localArtist.album_count > 0}
+					<ArtistLibraryAlbums libraryArtistId={localArtist.id} artistMbid={data.artistId} />
+				{/if}
+
 				{#if artist.appears_in_library}
 					<ArtistAppearancesSection artistId={data.artistId} />
 				{/if}
@@ -473,12 +480,6 @@
 						</Button>
 					</div>
 				{/if}
-
-				<LibraryAlbumsCarousel
-					releases={[...releases.albums, ...releases.eps, ...releases.singles]}
-					artistName={artist.name}
-					loading={loadingBasic}
-				/>
 
 				{#if linkedSources.length === 2}
 					<div class="flex items-center justify-end mt-8 mb-4">

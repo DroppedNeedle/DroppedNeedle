@@ -40,6 +40,7 @@ const USER: &str = "user-ada";
 const ARTIST: &str = "a74b1b7f-71a5-4011-9441-d0b5e4122711";
 const OK_COMPUTER: &str = "b1392450-e666-3926-a536-22c65f834433";
 const KID_A: &str = "1c6d2e3b-0a5f-4d8e-9f3a-5d6e8b2c4a10";
+const LIVE: &str = "2d7e3f4c-1b6a-4e9f-8a4b-6e7f9c3d5b21";
 const RELEASE_CD: &str = "6b1c7d8a-5f0e-4cd3-8e8f-0c1d3a7b9f65";
 const UNKNOWN_ALBUM: &str = "00000000-1111-4222-8333-444444444444";
 const DUMMY_RELEASE: &str = "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f";
@@ -387,8 +388,20 @@ async fn seed_library(pool: &SqlitePool) {
 /// and is signed in with [`TOKEN`]. Hold the rig and the app while the
 /// router serves: the rig's database and the request wrapper go with them.
 async fn app_with(fixtures: &Fixtures, mb_url: String) -> (axum::Router, (AuthRig, TestApp)) {
+    app_seeded(fixtures, mb_url, &[]).await
+}
+
+/// As [`app_with`], with `extra` statements run after the shared seed.
+async fn app_seeded(
+    fixtures: &Fixtures,
+    mb_url: String,
+    extra: &[String],
+) -> (axum::Router, (AuthRig, TestApp)) {
     let (pool, dir) = crate::common::migrated_pool("reads-catalog").await;
     seed_library(&pool).await;
+    for statement in extra {
+        sqlx::query(statement).execute(&pool).await.unwrap();
+    }
     let rig = AuthRig::new("reads-catalog").await;
     rig.seed_user("ada", Role::User).await;
     rig.sign_in(USER, TOKEN).await;
@@ -639,6 +652,54 @@ async fn discography_filters_flags_and_pages() {
         fixtures.hits("/mb/ws/2/release-group"),
         1,
         "one browse serves all three"
+    );
+}
+
+#[tokio::test]
+async fn owned_releases_list_every_held_group_whatever_its_type() {
+    let fixtures = Fixtures::start().await;
+    // The bootleg turns out to be the live album: a group the release-type
+    // preferences keep out of the discography.
+    let (app, _auth) = app_seeded(
+        &fixtures,
+        format!("{}/mb/ws/2", fixtures.base),
+        &[format!(
+            "INSERT INTO local_album_external_identities \
+             (local_album_id, provider, release_group_mbid, decision_source, selected_at) \
+             VALUES ('album-bootleg', 'musicbrainz', '{LIVE}', 'automatic', 0)"
+        )],
+    )
+    .await;
+
+    let releases = get(&app, &format!("/api/v3/artists/{ARTIST}/releases")).await;
+    assert_eq!(titles(&releases["albums"]), ["Kid A", "OK Computer"]);
+
+    let owned = get(&app, &format!("/api/v3/artists/{ARTIST}/owned-releases")).await;
+    assert_eq!(
+        owned["items"],
+        json!([
+            {
+                "id": LIVE,
+                "title": "I Might Be Wrong: Live Recordings",
+                "primary_type": "Album",
+                "secondary_types": ["Live"],
+                "year": 2001
+            },
+            {
+                "id": OK_COMPUTER,
+                "title": "OK Computer",
+                "primary_type": "Album",
+                "secondary_types": [],
+                "year": 1997
+            }
+        ]),
+        "every held group, newest first, the filtered one included"
+    );
+    assert_eq!(owned["complete"], true);
+    assert_eq!(
+        fixtures.hits("/mb/ws/2/release-group"),
+        1,
+        "the discography browse serves both"
     );
 }
 
@@ -946,6 +1007,7 @@ async fn auth_matrix_rejects_anonymous_callers_and_bad_ids() {
         format!("/api/v3/artists/{ARTIST}"),
         format!("/api/v3/artists/{ARTIST}/extended"),
         format!("/api/v3/artists/{ARTIST}/releases"),
+        format!("/api/v3/artists/{ARTIST}/owned-releases"),
         format!("/api/v3/artists/{ARTIST}/similar"),
         format!("/api/v3/artists/{ARTIST}/top-songs"),
         format!("/api/v3/artists/{ARTIST}/top-albums"),

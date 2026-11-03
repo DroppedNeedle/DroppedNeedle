@@ -12,6 +12,7 @@ export const ArtistQueryKeyFactory = {
 	extended: (id: string) => key(SHARED, 'artist', id, 'extended'),
 	releases: (id: string) => key(SHARED, 'artist', id, 'releases'),
 	allReleases: (id: string) => key(SHARED, 'artist', id, 'releases', 'all'),
+	ownedReleases: (id: string) => key(SHARED, 'artist', id, 'owned-releases'),
 	lastFmEnrichment: (id: string, artistName?: string) =>
 		key(SHARED, 'artist', id, 'lastfm-enrichment', { artistName }),
 	imageCredit: (mbid: string) => key(SHARED, 'artist', 'image-credit', mbid),

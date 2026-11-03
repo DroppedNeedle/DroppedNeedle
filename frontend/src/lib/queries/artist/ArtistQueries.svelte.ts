@@ -137,6 +137,23 @@ export const getArtistLastFmEnrichmentQuery = (
 		};
 	});
 
+// Every release group of the discography the library holds, whatever its
+// type: the library part of the page files owned albums by it. Not
+// persisted, so a newly held album gets its type on the next visit.
+export const getArtistOwnedReleasesQuery = (getArtistId: Getter<string>) =>
+	createQuery(() => {
+		const artistId = getArtistId();
+		return {
+			enabled: !!artistId,
+			queryKey: ArtistQueryKeyFactory.ownedReleases(artistId),
+			queryFn: ({ signal }) =>
+				api.v3.GET(
+					v3('/api/v3/artists/{artist_mbid}/owned-releases', { path: { artist_mbid: artistId } }),
+					{ signal }
+				)
+		};
+	});
+
 const BATCH_SIZE = 50;
 
 // While the backend walker completes a large catalog, page 1 arrives partial
