@@ -445,7 +445,8 @@ Run from the repo root. `make help` lists every target.
   The catalog revision is a change counter, bumped by every commit that
   changes catalog rows and never compared (a plugin's added file or its
   take-back changes none, so it skips the bump). A write that changes catalog rows bumps it inside its own
-  transaction through `catalog_revision::bump_catalog`; event loops wait on
+  transaction through `catalog_revision::bump_catalog`; so does a bin
+  change that takes a file-less album off the lists. Event loops wait on
   the lane's commit counter (`Db::commits`), never a timer.
 - Automatic work needs an enabled root, the matching trigger, an accepted
   exact MusicBrainz release or a custom edition a curator chose for the
