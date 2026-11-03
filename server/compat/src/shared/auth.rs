@@ -73,15 +73,27 @@ pub fn record_auth_denial(limits: &mut CompatRateLimits, ip: &str, now: f64) -> 
     limits.record_auth_failure(ip, None, now)
 }
 
-/// [`record_auth_denial`] for a refused credential the caller can name:
-/// the parts of what was presented (a scheme tag first). A repeat of the
+/// [`record_auth_denial`] for a refused credential the caller can name, by
+/// its [`fingerprint`](CompatRateLimits::fingerprint). A repeat of the
 /// same credential from the same address counts once a minute; a different
-/// one, a new guess, always counts. Only a keyed hash of the parts is kept.
+/// one, a new guess, always counts.
 pub fn record_credential_denial(
     limits: &mut CompatRateLimits,
     ip: &str,
-    presented: &[&[u8]],
+    fingerprint: u64,
     now: f64,
 ) -> Option<u64> {
-    limits.record_auth_failure(ip, Some(presented), now)
+    limits.record_auth_failure(ip, Some(fingerprint), now)
+}
+
+/// Pre-auth gate for a repeat of a credential this address had refused:
+/// the lockout no longer stops it, so it takes a bucket of the address's
+/// own. `Some(retry_after)` means reject with 429 before checking it.
+pub fn repeat_limited(
+    limits: &mut CompatRateLimits,
+    ip: &str,
+    fingerprint: u64,
+    now: f64,
+) -> Option<u64> {
+    limits.repeat_retry_after(ip, fingerprint, now)
 }

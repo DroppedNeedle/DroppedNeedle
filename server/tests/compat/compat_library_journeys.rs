@@ -1186,10 +1186,13 @@ async fn transcode_address_carries_the_ceiling() {
         )
         .await;
     assert_eq!(status, StatusCode::OK, "{info}");
+    // Jellify plays the server address it signed in with plus this.
     let address = info["MediaSources"][0]["TranscodingUrl"]
         .as_str()
         .expect("transcoding url");
-    let (status, _, bytes) = app.raw("GET", address, &[], None).await;
+    let (status, _, bytes) = app
+        .raw("GET", &format!("/jellyfin{address}"), &[], None)
+        .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
         bytes,
@@ -1273,6 +1276,59 @@ async fn a_stale_subsonic_app_does_not_lock_out_its_address() {
         .call("GET", &rest("ping", &rig.subsonic_auth("probe")), &[], None)
         .await;
     assert_eq!(body["subsonic-response"]["status"], json!("ok"), "{body}");
+    rig.stop().await;
+}
+
+/// A device repeating one refused credential no longer locks out its
+/// address, so the repeats take a bucket of the address's own: past its
+/// burst they are told to wait before the credential is checked again. A
+/// good credential from the same address is not held up. Both protocols.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_repeated_refused_credential_is_slowed_not_locked_out() {
+    let rig = CompatApp::start("compat-repeat-bucket").await;
+    let app = &rig.app;
+    let ping = format!("/subsonic/rest/ping?u={PLAYER}&p=mistyped&v=1.16.1&c=stale&f=json");
+    let mut slowed = false;
+    for _ in 0..100 {
+        let (status, headers, bytes) = app.raw("GET", &ping, &[], None).await;
+        assert_eq!(status, StatusCode::OK);
+        let body: Value = serde_json::from_slice(&bytes).expect("json answer");
+        let code = body["subsonic-response"]["error"]["code"].clone();
+        if code == json!(0) {
+            assert!(!header_str(&headers, "retry-after").is_empty(), "{body}");
+            slowed = true;
+            break;
+        }
+        assert_eq!(code, json!(40), "{body}");
+    }
+    assert!(slowed, "the repeated password was never slowed");
+    let (_, body) = app
+        .call("GET", &rest("ping", &rig.subsonic_auth("probe")), &[], None)
+        .await;
+    assert_eq!(body["subsonic-response"]["status"], json!("ok"), "{body}");
+
+    let stale = [("X-Emby-Token", "0123456789abcdef0123456789abcdef")];
+    let mut slowed = false;
+    for _ in 0..100 {
+        let (status, headers, _) = app.raw("GET", "/jellyfin/Users/Me", &stale, None).await;
+        if status == StatusCode::TOO_MANY_REQUESTS {
+            assert!(!header_str(&headers, "retry-after").is_empty());
+            slowed = true;
+            break;
+        }
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+    assert!(slowed, "the repeated token was never slowed");
+    let auth = rig.jellyfin_auth();
+    let (status, _) = app
+        .call(
+            "GET",
+            "/jellyfin/Users/Me",
+            &[("X-Emby-Authorization", auth.as_str())],
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
     rig.stop().await;
 }
 

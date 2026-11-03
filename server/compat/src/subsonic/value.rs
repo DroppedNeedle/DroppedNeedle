@@ -5,7 +5,9 @@
 //! and JSONP wraps it. XML walks the same text: in an object, scalars
 //! become attributes in order, a `value` key becomes the element's text,
 //! objects become child elements and arrays become repeated children.
-//! Null keys are left out of both.
+//! Null keys are left out of both, and XML leaves out the empty
+//! OpenSubsonic values Navidrome leaves out (`XML_SKIPS_EMPTY_TEXT` and
+//! the lists beside it).
 //!
 //! Quirk (v2): XML booleans lowercase; C0 controls dropped from
 //! XML; JSONP callbacks allowlisted to a bare identifier path (unsafe or
@@ -326,10 +328,44 @@ struct Element {
     children: String,
 }
 
+/// OpenSubsonic keys JSON always sends but Navidrome 0.62.0 leaves out of
+/// XML when they hold nothing (its `omitempty` tags, and recording
+/// `navidrome-0.62.0-plays/getAlbum.xml`): these attributes when empty,
+/// these when 0, and these elements when they have nothing in them. An
+/// empty `<releaseDate/>` would read as a date with no year.
+const XML_SKIPS_EMPTY_TEXT: &[&str] = &[
+    "comment",
+    "sortName",
+    "mediaType",
+    "musicBrainzId",
+    "displayArtist",
+    "displayAlbumArtist",
+    "displayComposer",
+    "explicitStatus",
+    "version",
+];
+const XML_SKIPS_ZERO: &[&str] = &[
+    "bpm",
+    "userRating",
+    "channelCount",
+    "samplingRate",
+    "bitDepth",
+];
+const XML_SKIPS_EMPTY_ELEMENT: &[&str] = &["releaseDate", "originalReleaseDate", "replayGain"];
+
 impl Element {
+    fn is_empty(&self) -> bool {
+        self.attrs.is_empty() && self.text.is_empty() && self.children.is_empty()
+    }
+
     fn add(&mut self, key: &str, node: Node) {
         match node {
             Node::Null => {}
+            Node::Scalar(text)
+                if (text.is_empty() && XML_SKIPS_EMPTY_TEXT.contains(&key))
+                    || (text == "0" && XML_SKIPS_ZERO.contains(&key)) => {}
+            Node::Element(element)
+                if element.is_empty() && XML_SKIPS_EMPTY_ELEMENT.contains(&key) => {}
             node if key == "value" => {
                 self.text = match node {
                     Node::Scalar(text) => xml_text(&text),

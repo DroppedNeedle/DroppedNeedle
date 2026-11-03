@@ -161,8 +161,8 @@ async fn picture_of(
 /// bodies); only the playlist branch needs explicit headers.
 pub async fn cover_art(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
     let sid = ctx.p("id")?.unwrap_or_default();
-    // Unknown prefix -> 70 -> 404-as-text on the binary path. An album's
-    // cover version is dropped here, so any version opens today's picture.
+    // An unknown prefix is 70, enveloped. An album's cover version is
+    // dropped here, so any version opens today's picture.
     let (kind, internal) = decode(&sid)?;
     let bucket = cover_bucket(ctx.pint("size", None, Some(1), Some(2000))?);
     match kind {

@@ -552,9 +552,12 @@ pub(super) async fn playback_info(
     src.direct_stream_url = Some(direct_url);
     if let Some(out) = plan.out_format() {
         let codec = out.name();
-        // Root-relative yet inside the deployment prefix: players resolve
-        // against the advertised origin, so a bare path would escape the
-        // base path under non-empty BASE_PATH deployments.
+        // Relative to the server address the app signed in with, as
+        // Jellyfin 10.10.6 sends it (`/audio/{id}/stream.mp3?...`, recording
+        // `jellyfin-10.10.6-jellify`): Jellify appends it to that address
+        // (`${api.basePath}${TranscodingUrl}`, Jellify-Music/App d3fbc756),
+        // and Finamp does not read it. The mount prefix in it would come
+        // twice.
         // The ceiling rides along: the client follows this address alone, and
         // /universal reads MaxStreamingBitrate as its ceiling.
         let cap = match max_bps {
@@ -562,8 +565,8 @@ pub(super) async fn playback_info(
             _ => String::new(),
         };
         src.transcoding_url = Some(format!(
-            "{}/jellyfin/Audio/{item_id}/universal?AudioCodec={codec}&Container={codec}{cap}&PlaySessionId={psid}&api_key={}",
-            state.listener.base_path, authed.principal.token,
+            "/Audio/{item_id}/universal?AudioCodec={codec}&Container={codec}{cap}&PlaySessionId={psid}&api_key={}",
+            authed.principal.token,
         ));
         src.transcoding_container = Some(out.container().to_owned());
     }

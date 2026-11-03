@@ -1,0 +1,6 @@
+{
+  "differences": [
+    {"server": "jellyfin", "object": "body", "key": "ParentId", "kind": "missing", "rows": ["jellify/latest"], "reason": "Jellify asks /Items/Latest for the ParentId and Tags fields. The app does not read Fields yet, so a list item carries neither; Jellyfin sends them only when asked."},
+    {"server": "jellyfin", "object": "body", "key": "Tags", "kind": "missing", "rows": ["jellify/latest"], "reason": "As ParentId: Tags is sent by Jellyfin only when Fields asks for it, and the app does not read Fields yet. The app holds no tags to send."}
+  ]
+}

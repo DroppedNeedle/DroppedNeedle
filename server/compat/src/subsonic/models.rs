@@ -860,6 +860,12 @@ pub struct SDirectory {
     /// The album's track count.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub songCount: Option<usize>,
+    /// The caller's plays of the artist or album, left out before the first.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub playCount: Option<i64>,
+    /// Last-played timestamp ISO.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub played: Option<String>,
     /// Entries.
     pub child: Vec<SChild>,
 }

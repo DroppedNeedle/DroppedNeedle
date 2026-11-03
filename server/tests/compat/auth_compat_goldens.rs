@@ -187,7 +187,8 @@ fn dispatch_split_keeps_50_enveloped_and_sends_the_rest_to_text() {
     assert!(dispatch_uses_envelope(WRONG_CREDENTIALS, "stream"));
     assert!(dispatch_uses_envelope(NOT_AUTHORIZED, "stream"));
     assert!(dispatch_uses_envelope(NOT_FOUND, "stream"));
-    assert!(!dispatch_uses_envelope(NOT_FOUND, "download"));
+    assert!(dispatch_uses_envelope(NOT_FOUND, "download"));
+    assert!(!dispatch_uses_envelope(NOT_FOUND, "getavatar"));
     assert!(!dispatch_uses_envelope(GENERIC, "download"));
     assert!(dispatch_uses_envelope(NOT_FOUND, "getartists"));
     assert!(dispatch_uses_envelope(NOT_AUTHORIZED, "getartists"));

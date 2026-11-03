@@ -326,6 +326,64 @@ async fn envelopes_are_byte_exact() {
     rig.stop().await;
 }
 
+/// The OpenSubsonic values JSON sends empty are left out of XML, as
+/// Navidrome 0.62.0 leaves them out (recording
+/// `navidrome-0.62.0-plays/getAlbum.xml`): an empty date or replay gain, an
+/// empty string, a zero count, an empty list.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn xml_leaves_out_empty_values() {
+    let rig = CompatApp::start("compat-sub-xml-empty").await;
+    let client = Client::player(&rig);
+    let album = Ids::read(&client).await.album("Mezzanine");
+    let json = client.ok("getAlbum", &[("id", &album)]).await;
+    let (album_json, song_json) = (&json["album"], &json["album"]["song"][0]);
+    for (value, empty) in [
+        (&album_json["originalReleaseDate"], json!({})),
+        (&album_json["userRating"], json!(0)),
+        (&album_json["explicitStatus"], json!("")),
+        (&album_json["moods"], json!([])),
+        (&song_json["comment"], json!("")),
+        (&song_json["bpm"], json!(0)),
+    ] {
+        assert_eq!(*value, empty, "JSON sends every value: {json}");
+    }
+    let listed = client.ok("getAlbumList", &[("type", "newest")]).await;
+    assert_eq!(listed["albumList"]["album"][0]["replayGain"], json!({}));
+
+    for (endpoint, pairs) in [
+        ("getAlbum", vec![("id", album.as_str())]),
+        ("getAlbumList", vec![("type", "newest")]),
+    ] {
+        let answer = client.get(endpoint, &pairs).await;
+        assert_ok(&answer, endpoint);
+        let xml = answer.text();
+        for left_out in [
+            "<originalReleaseDate",
+            "<replayGain/>",
+            "<moods",
+            "<recordLabels",
+            " comment=\"\"",
+            " bpm=\"0\"",
+            " userRating=\"0\"",
+            " explicitStatus=\"\"",
+            " version=\"\"",
+            " bitDepth=\"0\"",
+        ] {
+            assert!(
+                !xml.contains(left_out),
+                "{endpoint} sends {left_out}: {xml}"
+            );
+        }
+        assert!(xml.contains(" duration=\""), "{endpoint}: {xml}");
+    }
+    let album_xml = client.get("getAlbum", &[("id", &album)]).await.text();
+    assert!(
+        album_xml.contains("<releaseDate year=\"1998\""),
+        "{album_xml}"
+    );
+    rig.stop().await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn error_codes() {
     /// Endpoint, query pairs and the expected Subsonic error code.
@@ -1140,7 +1198,7 @@ async fn cover_art_buckets_caching_and_misses() {
     assert_eq!(playlist.content_type(), "image/png");
     // A known album without art gets a WebP placeholder drawn from its id:
     // the same id always gets the same bytes, another album other colours.
-    // Unknown ids 404 text.
+    // An unknown id is code 70, enveloped, as Navidrome 0.62.0 answers it.
     let ids = Ids::read(&client).await;
     let mut drawn = Vec::new();
     for id in [
@@ -1165,11 +1223,7 @@ async fn cover_art_buckets_caching_and_misses() {
     assert_ne!(drawn[0], drawn[2], "two albums, two placeholders");
     for id in ["al-nope", "xx-1"] {
         let answer = client.get("getCoverArt", &[("id", id)]).await;
-        assert_eq!(
-            (answer.status, answer.content_type()),
-            (StatusCode::NOT_FOUND, "text/plain"),
-            "{id}"
-        );
+        assert_code(&answer, 70, id);
     }
     rig.stop().await;
 }
@@ -1329,14 +1383,19 @@ async fn binary_endpoints_render_errors_as_text() {
         "Avatar access is limited to the authenticated user"
     );
 
-    // Auth failures stay enveloped on binary endpoints. A stream miss is
-    // enveloped too; other not-found answers stay text.
+    // Auth failures stay enveloped on binary endpoints. A stream, download
+    // or cover miss is enveloped too; other not-found answers stay text.
     use droppedneedle_compat::subsonic::dispatch_uses_envelope;
     assert!(dispatch_uses_envelope(50, "stream"));
     assert!(dispatch_uses_envelope(40, "getavatar"));
     assert!(dispatch_uses_envelope(70, "stream"));
-    assert!(!dispatch_uses_envelope(70, "download"));
     assert!(dispatch_uses_envelope(70, "getsong"));
+    assert!(!dispatch_uses_envelope(70, "getavatar"));
+    assert_code(
+        &client.get("download", &[("id", "no-such-id")]).await,
+        70,
+        "download",
+    );
     rig.stop().await;
 }
 

@@ -23,7 +23,7 @@
 //! | getArtist/getAlbum/getSong | artist/album/song | yes | artist embeds albums, album embeds songs |
 //! | getAlbumList2/getAlbumList | albumList2/albumList | yes | `highest` = caller's rated, best first; byYear needs from+to |
 //! | getRandomSongs | randomSongs | yes | filters |
-//! | getMusicDirectory | directory | yes | 1 -> artists; artist -> albums; album -> songs |
+//! | getMusicDirectory | directory | yes | 1 -> artists (Navidrome 0.62.0: 70); artist -> albums; album -> songs |
 //! | search3/search2 | searchResult3/2 | yes | missing/empty/`""` query = match-all |
 //! | getCoverArt | bytes | yes | RG art/artist image/playlist file; miss -> WebP; size buckets |
 //! | stream/download | bytes | yes | decide() policy; ranges; 416; HEAD |
@@ -64,11 +64,11 @@
 //! - Feishin playlist cover art (#287): getCoverArt serves playlist art.
 //! - Navidrome 0.62.0: repeated-same musicFolderId accepted, any other
 //!   folder id is 70 (`browse::validate_music_folder`).
-//! - Navidrome 0.62.0 (recordings `error.unknown-method` and
-//!   `error.stream-unknown-id`): an unknown method is a plain 404 text in
-//!   every format; a `stream` failure with code 70 (an unknown id, or no
-//!   audio behind a known one) is the envelope over HTTP 200. `download`
-//!   and `getCoverArt` misses were not recorded, so they stay text 404s.
+//! - Navidrome 0.62.0 (recordings `error.unknown-method`,
+//!   `error.stream-unknown-id` and `navidrome-0.62.0-misses`): an unknown
+//!   method is a plain 404 text in every format; a `stream`, `download` or
+//!   `getCoverArt` failure with code 70 (an unknown id, or nothing behind
+//!   a known one) is the envelope over HTTP 200.
 //! - Navidrome 0.62.0 ratings (recording `navidrome-0.62.0-ratings`): a
 //!   song, album or ID3 artist carries the caller's `userRating` and the
 //!   mean of every user's as `averageRating` (whole means as integers).
@@ -80,7 +80,8 @@
 //!   code 50 anywhere in the dispatch path stays enveloped.
 //! - Binary-vs-envelope split: binary dispatch errors outside
 //!   {10,40,41,42,43,44,50} render `text/plain` (70 -> 404, else 404),
-//!   except a `stream` failure with code 70, which is enveloped.
+//!   except code 70 from `stream`, `download` and `getCoverArt`, which is
+//!   enveloped.
 //! - Transcode hints on song children only when transcoding is enabled
 //!   and ffmpeg is present.
 //! - getOpenSubsonicExtensions lists every served extension (all v1):
@@ -282,13 +283,14 @@ pub fn endpoint(name: &str) -> Option<&'static Endpoint> {
 }
 
 /// Dispatch rule: binary endpoints render codes outside [`AUTH_CODES`]
-/// as `text/plain`, except a `stream` failure with code 70, which stays
-/// enveloped as Navidrome 0.62.0 answers it. Other endpoints are always
-/// enveloped.
+/// as `text/plain`, except code 70 from `stream`, `download` and
+/// `getCoverArt`, which stays enveloped as Navidrome 0.62.0 answers it.
+/// Other endpoints are always enveloped.
 pub fn dispatch_uses_envelope(code: u8, normalized_endpoint: &str) -> bool {
     !endpoint(normalized_endpoint).is_some_and(|endpoint| endpoint.binary)
         || AUTH_CODES.contains(&code)
-        || (normalized_endpoint == "stream" && code == error::NOT_FOUND)
+        || (code == error::NOT_FOUND
+            && ["stream", "download", "getcoverart"].contains(&normalized_endpoint))
 }
 
 /// Server settings the Subsonic API reads (filled from preferences).

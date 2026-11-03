@@ -1,0 +1,6 @@
+{
+  "differences": [
+    {"server": "navidrome", "object": "subsonic-response", "key": "status", "kind": "value", "rows": ["plays/getMusicDirectory.root"], "reason": "getMusicDirectory with id 1, the folder getMusicFolders lists, answers its artists here. Navidrome 0.62.0 answers 70. Kept until the owner decides whether the listing goes."},
+    {"server": "navidrome", "object": "error", "key": "code", "kind": "value", "rows": ["plays/getMusicDirectory.root"], "reason": "The same request: the app answers the folder, so it sends no error code where Navidrome sends 70."}
+  ]
+}

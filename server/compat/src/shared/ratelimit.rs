@@ -7,7 +7,9 @@
 //! failures in 60s locks out for 10s, doubling to 5min). A repeat of one
 //! refused credential from one address counts once a minute, so a stale
 //! device sending the same wrong password does not lock its address out,
-//! while every new guess still counts. Media and artwork skip the buckets
+//! while every new guess still counts. Those repeats take a bucket of
+//! their own per address (5/s, burst 20) before they are checked again,
+//! so they stay cheap without the lockout. Media and artwork skip the buckets
 //! (a cover grid is dozens of requests at once); every 429 carries
 //! `Retry-After`. Buckets and the bounded TTL maps are the native
 //! limiter's ([`droppedneedle_auth::session::rate_limit`]).
@@ -68,6 +70,7 @@ const MUTATION_SPEC: BucketSpec = BucketSpec {
     rate: 5.0,
     capacity: 20,
 };
+const REPEAT_SPEC: BucketSpec = PUBLIC_SPEC;
 
 fn acquire(
     table: &mut BoundedMap<TokenBucket>,
@@ -97,6 +100,7 @@ pub struct CompatRateLimits {
     browse_by_principal: BoundedMap<TokenBucket>,
     mutation_by_principal: BoundedMap<TokenBucket>,
     auth_failures_by_ip: BoundedMap<AuthFailureState>,
+    repeats_by_ip: BoundedMap<TokenBucket>,
     /// Random per-process keys for the credential hashes, so a remembered
     /// credential is never held in clear and cannot be worked back.
     credential_keys: RandomState,
@@ -141,18 +145,43 @@ impl CompatRateLimits {
         }
     }
 
+    /// The keyed hash a presented credential is remembered by: its parts,
+    /// a scheme tag first, together. Taken when the request arrives, so no
+    /// clear copy is kept while it is answered.
+    pub fn fingerprint(&self, parts: &[&[u8]]) -> u64 {
+        self.credential_keys.hash_one(parts)
+    }
+
+    /// For a credential this address had refused and counted inside the
+    /// repeat window, the address's repeat bucket: `Some(retry_after)`
+    /// means reject with 429 before checking it again. Any other
+    /// credential answers `None` and takes nothing.
+    pub fn repeat_retry_after(&mut self, ip: &str, fingerprint: u64, now: f64) -> Option<u64> {
+        let state = self
+            .auth_failures_by_ip
+            .entry(ip, now, AuthFailureState::default);
+        let cutoff = now - AUTH_REPEAT_WINDOW_SECONDS;
+        let refused = state
+            .counted
+            .iter()
+            .any(|(seen, at)| *seen == fingerprint && *at > cutoff);
+        if !refused {
+            return None;
+        }
+        acquire(&mut self.repeats_by_ip, ip, REPEAT_SPEC, now)
+    }
+
     /// Record one auth failure; returns the fresh lockout length when
-    /// this failure trips it. `presented` is the
-    /// refused credential, as parts that together identify it; when the
-    /// same address had the same one counted inside the repeat window, this
-    /// failure is not counted. `None` always counts.
+    /// this failure trips it. `fingerprint` is the refused credential's
+    /// ([`fingerprint`](Self::fingerprint)); when the same address had the
+    /// same one counted inside the repeat window, this failure is not
+    /// counted. `None` always counts.
     pub fn record_auth_failure(
         &mut self,
         ip: &str,
-        presented: Option<&[&[u8]]>,
+        fingerprint: Option<u64>,
         now: f64,
     ) -> Option<u64> {
-        let fingerprint = presented.map(|parts| self.credential_keys.hash_one(parts));
         let state = self
             .auth_failures_by_ip
             .entry(ip, now, AuthFailureState::default);
@@ -190,6 +219,7 @@ impl CompatRateLimits {
         self.browse_by_principal.clear();
         self.mutation_by_principal.clear();
         self.auth_failures_by_ip.clear();
+        self.repeats_by_ip.clear();
     }
 }
 

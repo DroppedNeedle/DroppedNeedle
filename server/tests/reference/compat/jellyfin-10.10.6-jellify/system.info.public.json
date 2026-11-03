@@ -1,0 +1,17 @@
+{
+  "request": "GET /System/Info/Public",
+  "status": 200,
+  "headers": {
+    "content-type": "application/json; charset=utf-8",
+    "transfer-encoding": "chunked"
+  },
+  "body": {
+    "LocalAddress": "http://reference.invalid",
+    "ServerName": "dn-ref",
+    "Version": "10.10.6",
+    "ProductName": "Jellyfin Server",
+    "OperatingSystem": "",
+    "Id": "00000000000000000000000000000019",
+    "StartupWizardCompleted": true
+  }
+}

@@ -303,8 +303,12 @@ impl<'a> Comparison<'a> {
                 query.push(("u".to_owned(), PLAYER.to_owned()));
                 query.push(("p".to_owned(), password.to_owned()));
             }
+            // A row that sets one of these itself, `f=xml` say, sends only
+            // its own, as the recorder did.
             for (key, value) in [("v", "1.16.1"), ("c", "dn-ref"), ("f", "json")] {
-                query.push((key.to_owned(), value.to_owned()));
+                if !row.query.iter().any(|(own, _)| own == key) {
+                    query.push((key.to_owned(), value.to_owned()));
+                }
             }
             "/subsonic"
         } else {
@@ -467,7 +471,8 @@ impl<'a> Comparison<'a> {
                     }
                 }
                 // A text or empty answer is an error page: its status is
-                // what a client reads.
+                // what a client reads. An XML answer is held to its form
+                // by `compat_subsonic_library`.
                 _ => {}
             }
         }
@@ -643,6 +648,12 @@ async fn compat_answers_have_the_shape_navidrome_returns() {
     comparison
         .replay("navidrome-0.62.0-arpeggi", "arpeggi/")
         .await;
+    comparison
+        .replay("navidrome-0.62.0-misses", "misses/")
+        .await;
+    // Recorded on a fresh server after one scrobble. Here the scrobble
+    // adds to the earlier one, which changes counts, not shapes.
+    comparison.replay("navidrome-0.62.0-plays", "plays/").await;
     // The ratings were recorded on a fresh server, so a fresh app answers.
     let fresh = CompatApp::start("compat-reference-navidrome-ratings").await;
     comparison.rig = &fresh;
@@ -725,11 +736,15 @@ async fn compat_answers_have_the_shape_jellyfin_returns() {
     comparison
         .replay("jellyfin-10.10.6-played", "played/")
         .await;
-    // Paging reads only, so the first app answers it.
+    // Paging and Jellify's requests read only, so the first app answers
+    // them.
     comparison.rig = &rig;
     comparison.refs = jellyfin_refs(&rig).await;
     comparison
         .replay("jellyfin-10.10.6-paging", "paging/")
+        .await;
+    comparison
+        .replay("jellyfin-10.10.6-jellify", "jellify/")
         .await;
     comparison.settle();
     played.stop().await;
@@ -959,7 +974,7 @@ fn compat_reference_recordings_are_unchanged_and_hold_nothing_private() {
             }
         }
     }
-    assert_eq!(folders, 9, "the recorded folders");
+    assert_eq!(folders, 12, "the recorded folders");
     assert!(
         problems.is_empty(),
         "the reference recordings are read-only:\n{}",

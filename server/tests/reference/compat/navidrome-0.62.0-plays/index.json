@@ -1,0 +1,97 @@
+{
+  "requests": [
+    {
+      "name": "scrobble",
+      "file": "scrobble.json",
+      "write": true,
+      "method": "GET",
+      "path": "/rest/scrobble",
+      "query": [
+        [
+          "id",
+          "{track.airbag}"
+        ],
+        [
+          "submission",
+          "true"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "getAlbumList.newest",
+      "file": "getAlbumList.newest.json",
+      "method": "GET",
+      "path": "/rest/getAlbumList",
+      "query": [
+        [
+          "type",
+          "newest"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "search2.word",
+      "file": "search2.word.json",
+      "method": "GET",
+      "path": "/rest/search2",
+      "query": [
+        [
+          "query",
+          "radiohead"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "getMusicDirectory.artist",
+      "file": "getMusicDirectory.artist.json",
+      "method": "GET",
+      "path": "/rest/getMusicDirectory",
+      "query": [
+        [
+          "id",
+          "{artist.radiohead}"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "getMusicDirectory.root",
+      "file": "getMusicDirectory.root.json",
+      "method": "GET",
+      "path": "/rest/getMusicDirectory",
+      "query": [
+        [
+          "id",
+          "1"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "getAlbum.xml",
+      "file": "getAlbum.xml.json",
+      "method": "GET",
+      "path": "/rest/getAlbum",
+      "query": [
+        [
+          "id",
+          "{album.ok_computer}"
+        ],
+        [
+          "f",
+          "xml"
+        ]
+      ],
+      "auth": "default",
+      "answer": "xml"
+    }
+  ]
+}

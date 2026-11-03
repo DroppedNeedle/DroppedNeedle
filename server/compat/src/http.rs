@@ -279,8 +279,9 @@ pub fn server_error_response(
 /// [`auth::RevokedCredential`]: a device still sending a revoked app
 /// password is not guessing, and must not lock out others on its address.
 /// A refused token or sign-in body counts once a minute per address when
-/// repeated, so a stale device does not lock its address out either.
-/// Subsonic denials record in the adapter.
+/// repeated, so a stale device does not lock its address out either; a
+/// token repeated inside that minute takes the address's repeat bucket
+/// before it is looked up again. Subsonic denials record in the adapter.
 pub async fn limits_layer(
     State(state): State<CompatLimits>,
     mut request: Request,
@@ -309,44 +310,64 @@ pub async fn limits_layer(
         return reject(retry_after);
     }
     let is_jellyfin = path.to_lowercase().starts_with("/jellyfin");
-    // What a Jellyfin caller presented, to fold repeats of one refused
-    // credential: the sign-in body, or the token.
+    let anonymous = if is_jellyfin {
+        // The template axum matched, so the route table and the router
+        // never disagree on which route this is.
+        request
+            .extensions()
+            .get::<MatchedPath>()
+            .is_some_and(|matched| auth::jellyfin_is_anonymous(&method, matched.as_str()))
+    } else {
+        auth::subsonic_is_public(path.rsplit('/').next().unwrap_or(""))
+    };
+    if !exempt
+        && anonymous
+        && let Some(retry_after) = state.lock().public_retry_after(&ip, now)
+    {
+        return reject(retry_after);
+    }
+    // What a Jellyfin caller presented, as the keyed hash that folds
+    // repeats of one refused credential: the sign-in body, read only once
+    // the public bucket let it through, or the token.
     let presented = if !is_jellyfin {
         None
     } else if is_sign_in(&request) {
         let (parts, body) = request.into_parts();
         let body = sign_in_body(body).await;
-        request = Request::from_parts(parts, Body::from(body.clone()));
-        Some(("jellyfin:sign-in", body.to_vec()))
+        let fingerprint = state
+            .lock()
+            .fingerprint(&[b"jellyfin:sign-in".as_slice(), &body[..]]);
+        request = Request::from_parts(parts, Body::from(body));
+        Some(fingerprint)
     } else {
-        label_token(&request).map(|token| ("jellyfin:token", token.into_bytes()))
-    };
-    if !exempt {
-        let anonymous = if is_jellyfin {
-            // The template axum matched, so the route table and the router
-            // never disagree on which route this is.
-            request
-                .extensions()
-                .get::<MatchedPath>()
-                .is_some_and(|matched| auth::jellyfin_is_anonymous(&method, matched.as_str()))
-        } else {
-            auth::subsonic_is_public(path.rsplit('/').next().unwrap_or(""))
-        };
-        if anonymous {
-            if let Some(retry_after) = state.lock().public_retry_after(&ip, now) {
-                return reject(retry_after);
-            }
-        } else if is_jellyfin
-            && let Some(token) = label_token(&request)
-            && let Some(principal) = state.token_principal(&token, &ip).await
-        {
-            let mutation = ratelimit::is_mutation_request(&method, &path);
-            if let Some(retry_after) = state
+        label_token(&request).map(|token| {
+            state
                 .lock()
-                .principal_retry_after(&principal, mutation, now)
-            {
-                return reject(retry_after);
-            }
+                .fingerprint(&[b"jellyfin:token".as_slice(), token.as_bytes()])
+        })
+    };
+    // Media too: this stands in for the lockout, which media also takes.
+    let repeat = match presented {
+        Some(fingerprint) if !anonymous => {
+            auth::repeat_limited(&mut state.lock(), &ip, fingerprint, now)
+        }
+        _ => None,
+    };
+    if let Some(retry_after) = repeat {
+        return reject(retry_after);
+    }
+    if !exempt
+        && !anonymous
+        && is_jellyfin
+        && let Some(token) = label_token(&request)
+        && let Some(principal) = state.token_principal(&token, &ip).await
+    {
+        let mutation = ratelimit::is_mutation_request(&method, &path);
+        if let Some(retry_after) = state
+            .lock()
+            .principal_retry_after(&principal, mutation, now)
+        {
+            return reject(retry_after);
         }
     }
     let response = next.run(request).await;
@@ -358,13 +379,8 @@ pub async fn limits_layer(
             .is_none()
     {
         let mut limits = state.lock();
-        let _ = match &presented {
-            Some((scheme, credential)) => auth::record_credential_denial(
-                &mut limits,
-                &ip,
-                &[scheme.as_bytes(), credential],
-                now,
-            ),
+        let _ = match presented {
+            Some(fingerprint) => auth::record_credential_denial(&mut limits, &ip, fingerprint, now),
             None => auth::record_auth_denial(&mut limits, &ip, now),
         };
     }
@@ -493,6 +509,12 @@ impl SubsonicState {
 
     fn now(&self) -> f64 {
         self.started.elapsed().as_secs_f64()
+    }
+
+    fn lock_limits(&self) -> std::sync::MutexGuard<'_, ratelimit::CompatRateLimits> {
+        self.limits
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 }
 
@@ -666,15 +688,21 @@ async fn subsonic_dispatch(
     let method_entry = endpoint(&name);
     let ip = ratelimit::client_key(parts.extensions.get::<ClientIp>().map(|client| client.0));
     let now = state.now();
-    let record_denial = |credentials: Option<&Credentials>| {
-        let mut limits = state
-            .limits
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let _ = match credentials.and_then(subsonic_presented) {
-            Some(presented) => auth::record_credential_denial(&mut limits, &ip, &presented, now),
+    let record_denial = |fingerprint: Option<u64>| {
+        let mut limits = state.lock_limits();
+        let _ = match fingerprint {
+            Some(fingerprint) => auth::record_credential_denial(&mut limits, &ip, fingerprint, now),
             None => auth::record_auth_denial(&mut limits, &ip, now),
         };
+    };
+    let limited = |retry_after: u64| {
+        let mut response = envelope(0, "Rate limit exceeded");
+        if let Ok(value) = retry_after.to_string().parse() {
+            response
+                .headers_mut()
+                .insert(axum::http::header::RETRY_AFTER, value);
+        }
+        response
     };
     // Principal buckets + backoff run here (post-verify); the lockout
     // pre-check and, for the public endpoint, the public bucket ran in the
@@ -693,6 +721,17 @@ async fn subsonic_dispatch(
                 return fail(denied);
             }
         };
+        let fingerprint = subsonic_presented(&credentials)
+            .map(|presented| state.lock_limits().fingerprint(&presented));
+        // A repeat of a credential this address had refused takes the
+        // address's repeat bucket before it is checked again, media
+        // included: it stands in for the lockout, which media also takes.
+        let repeat = fingerprint.and_then(|fingerprint| {
+            auth::repeat_limited(&mut state.lock_limits(), &ip, fingerprint, now)
+        });
+        if let Some(retry_after) = repeat {
+            return limited(retry_after);
+        }
         match state.verifier.verify(&credentials).await {
             Ok(principal) => {
                 let label = auth::principal_label(Some(principal.user_id()), &ip);
@@ -704,19 +743,11 @@ async fn subsonic_dispatch(
                     None
                 } else {
                     state
-                        .limits
-                        .lock()
-                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .lock_limits()
                         .principal_retry_after(&label, mutation, now)
                 };
                 if let Some(retry_after) = retry_after {
-                    let mut response = envelope(0, "Rate limit exceeded");
-                    if let Ok(value) = retry_after.to_string().parse() {
-                        response
-                            .headers_mut()
-                            .insert(axum::http::header::RETRY_AFTER, value);
-                    }
-                    return response;
+                    return limited(retry_after);
                 }
                 Some(principal)
             }
@@ -728,7 +759,7 @@ async fn subsonic_dispatch(
                 if denied.code != droppedneedle_auth::compat_auth::subsonic::GENERIC
                     && !presents_revoked(&state.passwords, &credentials).await
                 {
-                    record_denial(Some(&credentials));
+                    record_denial(fingerprint);
                 }
                 return fail(denied);
             }

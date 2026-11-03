@@ -1,0 +1,46 @@
+{
+  "requests": [
+    {
+      "name": "error.download-unknown-id",
+      "file": "error.download-unknown-id.json",
+      "method": "GET",
+      "path": "/rest/download",
+      "query": [
+        [
+          "id",
+          "no-such-id"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "error.cover-art-unknown-id",
+      "file": "error.cover-art-unknown-id.json",
+      "method": "GET",
+      "path": "/rest/getCoverArt",
+      "query": [
+        [
+          "id",
+          "no-such-id"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "error.cover-art-unknown-album",
+      "file": "error.cover-art-unknown-album.json",
+      "method": "GET",
+      "path": "/rest/getCoverArt",
+      "query": [
+        [
+          "id",
+          "al-0000000000000000000000_0"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    }
+  ]
+}

@@ -1,0 +1,98 @@
+{
+  "requests": [
+    {
+      "name": "system.info.public",
+      "file": "system.info.public.json",
+      "method": "GET",
+      "path": "/System/Info/Public",
+      "query": [],
+      "auth": "none",
+      "answer": "json"
+    },
+    {
+      "name": "login",
+      "file": "login.json",
+      "method": "POST",
+      "path": "/Users/AuthenticateByName",
+      "query": [],
+      "body": {
+        "Username": "{user_name}",
+        "Pw": "{password}"
+      },
+      "auth": "client",
+      "answer": "json"
+    },
+    {
+      "name": "latest",
+      "file": "latest.json",
+      "method": "GET",
+      "path": "/Items/Latest",
+      "query": [
+        [
+          "parentId",
+          "{library}"
+        ],
+        [
+          "fields",
+          "ParentId"
+        ],
+        [
+          "fields",
+          "Tags"
+        ],
+        [
+          "includeItemTypes",
+          "MusicAlbum"
+        ],
+        [
+          "enableUserData",
+          "true"
+        ],
+        [
+          "limit",
+          "50"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "playback-info.low-quality",
+      "file": "playback-info.low-quality.json",
+      "method": "POST",
+      "path": "/Items/{track.airbag}/PlaybackInfo",
+      "query": [],
+      "body": {
+        "EnableDirectPlay": true,
+        "EnableDirectStream": false,
+        "EnableTranscoding": true,
+        "DeviceProfile": {
+          "Name": "Low Quality Audio Stream",
+          "MaxStaticBitrate": 192000,
+          "MaxStreamingBitrate": 192000,
+          "MusicStreamingTranscodingBitrate": 192000,
+          "MaxStaticMusicBitrate": 192000,
+          "DirectPlayProfiles": [
+            {
+              "Container": "mp3",
+              "Type": "Audio"
+            }
+          ],
+          "TranscodingProfiles": [
+            {
+              "AudioCodec": "mp3",
+              "Container": "mp3",
+              "Context": "Streaming",
+              "MaxAudioChannels": "6",
+              "Protocol": "http",
+              "Type": "Audio"
+            }
+          ]
+        },
+        "MaxStreamingBitrate": 192000
+      },
+      "auth": "default",
+      "answer": "json"
+    }
+  ]
+}

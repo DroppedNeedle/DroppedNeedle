@@ -17,17 +17,20 @@ run, and no file is ever edited by hand.
 | `navidrome-0.62.0-writes/` | The same server after one star, one playlist and one scrobble |
 | `navidrome-0.62.0-arpeggi/` | Navidrome 0.62.0 again, fresh, for Arpeggi's artist browsing: its library sync, the artist list and index, one artist, and music folder 0 |
 | `navidrome-0.62.0-ratings/` | Navidrome 0.62.0 again, fresh, after one rating each on a track, an album and an artist |
+| `navidrome-0.62.0-misses/` | Navidrome 0.62.0 again, fresh: `download` and `getCoverArt` with ids it does not hold |
+| `navidrome-0.62.0-plays/` | Navidrome 0.62.0 again, fresh, after one scrobble: the folder-style album lists, the root folder listing and the album in XML |
 | `jellyfin-10.10.6/` | Jellyfin 10.10.6, requests that only read |
 | `jellyfin-10.10.6-writes/` | The same server after one favourite, one playlist and one play report |
 | `jellyfin-10.10.6-lyrics/` | Jellyfin 10.10.6 again, fresh, with a `.lrc` file beside Airbag: the two OK Computer tracks, their album, PlaybackInfo and the lyrics address |
 | `jellyfin-10.10.6-played/` | Jellyfin 10.10.6 again, fresh, after marking a track, an album and two artists played, then the track and the album unplayed |
 | `jellyfin-10.10.6-paging/` | Jellyfin 10.10.6 again, fresh: album and track pages without `SortBy` that start off a multiple of `Limit`, with and without `EnableTotalRecordCount` |
+| `jellyfin-10.10.6-jellify/` | Jellyfin 10.10.6 again, fresh: Jellify's recently added albums at `/Items/Latest`, and its PlaybackInfo at low streaming quality, which answers a `TranscodingUrl` |
 
 Each folder has:
 
 - one file per request: the request line, the status, the framing headers
   and the body. Audio and image answers record their length, not their
-  bytes.
+  bytes. An XML answer is kept as its text.
 - `index.json`: the requests in the order they were sent, in a form that
   can be replayed against another server. `{track.airbag}`,
   `{album.ok_computer}` and `{artist.radiohead}` stand for that server's own
@@ -49,7 +52,9 @@ track's rating and read the track again.
 `fixtures/library/lyrics_airbag.lrc` as `Radiohead/OK Computer/01 Airbag.lrc`;
 its `capture.json` names that file under `extra_files`.
 `-played` is a fresh server: each mark is followed by the reads that show
-it, and its last request marks an unknown id.
+it, and its last request marks an unknown id. `-plays` is a fresh server
+whose first request is the scrobble; its last asks for the album with
+`f=xml` in place of `f=json`.
 
 ## What was removed
 
@@ -59,10 +64,10 @@ values that mean nothing outside that run:
 - The password is `***` and every token is `<token>`.
 - Server-made ids are replaced by a number of the same length, counted in
   order of first appearance, so `0000000000000000000008` is the same track
-  wherever it shows up. MusicBrainz ids come from the files' tags and are
-  kept.
-- In timestamps every digit is `0`.
-- Hosts are `http://reference.invalid`.
+  wherever it shows up, in its dashed form too. MusicBrainz ids come from
+  the files' tags and are kept.
+- In timestamps every digit is `0`, in XML attributes as in JSON.
+- Hosts are `http://reference.invalid`, except Subsonic's XML namespace.
 
 Titles, formats, counts and everything else are as the server sent them.
 
@@ -106,8 +111,9 @@ refuses to run in CI. The steps, one server at a time:
    scrubbing checks.
 5. Stop the container, then `clean <checkout>/dn-ref-tmp`.
 
-A request set of its own (`arpeggi`, `ratings` for Navidrome, `lyrics`,
-`played` and `paging` for Jellyfin) is recorded the same way on a fresh
+A request set of its own (`arpeggi`, `ratings`, `misses` and `plays` for
+Navidrome, `lyrics`, `played`, `paging` and `jellify` for Jellyfin) is
+recorded the same way on a fresh
 container, with
 `navidrome <this folder> --image-id <id> --set <set>` or
 `jellyfin <this folder> --image-id <id> --set <set>`. It writes only

@@ -1319,9 +1319,10 @@ async fn transcoding_answers_with_ffmpeg() {
     )
     .await;
     let source = &low["MediaSources"][0];
+    // Relative to the address the app signed in with, which apps prefix.
     let transcode_url = source["TranscodingUrl"].as_str().expect("transcoding url");
     assert!(
-        transcode_url.contains("/jellyfin/Audio/") && transcode_url.contains("AudioCodec=mp3"),
+        transcode_url.starts_with("/Audio/") && transcode_url.contains("AudioCodec=mp3"),
         "{transcode_url}"
     );
     assert_eq!(source["TranscodingSubProtocol"], "http");
@@ -1911,7 +1912,8 @@ async fn failed_sign_ins_lock_out_and_public_routes_do_not() {
 /// A device repeating one wrong password or token is refused every time but
 /// counted once a minute, so it does not lock out its address: another app
 /// behind it then signs in. The sign-ins stay under the public bucket's
-/// burst of 20.
+/// burst of 20; the token's repeats past their own bucket's burst are told
+/// to wait.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_repeated_wrong_credential_does_not_lock_out_its_address() {
     let rig = CompatApp::start("jf-repeat-lockout").await;
@@ -1926,7 +1928,11 @@ async fn a_repeated_wrong_credential_does_not_lock_out_its_address() {
     for _ in 0..50 {
         let me = "/jellyfin/Users/Me";
         let reply = raw(&rig, "GET", me, household.clone(), Some(&stale), None).await;
-        assert_eq!(reply.bare(), (401, 0));
+        assert!(
+            matches!(reply.bare(), (401, 0) | (429, 0)),
+            "{:?}",
+            reply.bare()
+        );
     }
 
     let body = json!({"Username": PLAYER, "Pw": rig.secret});

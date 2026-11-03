@@ -462,12 +462,20 @@ pub async fn music_directory(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
                 .map_err(Ctx::store_err)?
                 .ok_or_else(|| SubsonicError::new(NOT_FOUND, "Artist not found"))?;
             let children = albums.iter().map(super::views::to_album_child).collect();
+            let plays = ctx
+                .store
+                .artist_plays(&internal)
+                .await
+                .map_err(Ctx::store_err)?;
+            let (play_count, played) = plays.unzip();
             Outcome::keyed(
                 "directory",
                 SDirectory {
                     id: sid,
                     name: artist.name,
                     albumCount: Some(albums.len()),
+                    playCount: play_count,
+                    played: played.flatten(),
                     child: children,
                     ..SDirectory::default()
                 },
@@ -498,6 +506,8 @@ pub async fn music_directory(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
                     coverArt: Some(cover_id(&internal, album.cover_version.as_deref())),
                     albumCount: None,
                     songCount: Some(tracks.len()),
+                    playCount: album.play_count,
+                    played: super::views::played_iso(album.played_at.as_deref()),
                     child: children,
                 },
             )

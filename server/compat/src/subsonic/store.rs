@@ -453,6 +453,28 @@ impl SubsonicStore {
         Ok(Some((artist, self.albums_for_caller(albums).await?)))
     }
 
+    /// The caller's play count and last play of an artist's tracks, or
+    /// `None` before the first. Read for one artist's folder only: the
+    /// artist lists carry no plays.
+    pub async fn artist_plays(
+        &self,
+        artist_mbid: &str,
+    ) -> Result<Option<(i64, Option<String>)>, CompatError> {
+        let Some(user_id) = &self.caller else {
+            return Ok(None);
+        };
+        let plays = self
+            .library
+            .plays(user_id, "artist", &[artist_mbid.to_owned()])
+            .await?;
+        Ok(plays.get(artist_mbid).map(|(count, last)| {
+            (
+                *count as i64,
+                whole(*last).and_then(|at| iso_text(at.max(0) as u64)),
+            )
+        }))
+    }
+
     /// Album by release-group mbid, or None.
     pub async fn get_album(&self, rg_mbid: &str) -> Result<Option<ViewAlbum>, CompatError> {
         let Some(album) = self.library.album(rg_mbid).await? else {

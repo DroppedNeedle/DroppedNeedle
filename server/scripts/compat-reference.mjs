@@ -5,8 +5,8 @@
 // there says how to run this.
 //
 //   plant <reference dir> <tmp dir> [--set lyrics]   copy the fixture tracks into <tmp dir>/music
-//   navidrome <reference dir> --image-id <id> [--port 14533] [--set arpeggi|ratings]
-//   jellyfin <reference dir> --image-id <id> [--port 18096] [--set lyrics|played|paging]
+//   navidrome <reference dir> --image-id <id> [--port 14533] [--set arpeggi|ratings|misses|plays]
+//   jellyfin <reference dir> --image-id <id> [--port 18096] [--set lyrics|played|paging|jellify]
 //   check <reference dir>                verify the checksums and the scrubbing
 //   clean <tmp dir>                      remove the planted tracks
 //
@@ -26,7 +26,10 @@ const SERVERS = {
 	jellyfin: { image: 'jellyfin/jellyfin:10.10.6', version: '10.10.6', port: 18096 }
 };
 // Request sets recorded on their own, each into `<server>-<version>-<set>`.
-const SETS = { navidrome: ['arpeggi', 'ratings'], jellyfin: ['lyrics', 'played', 'paging'] };
+const SETS = {
+	navidrome: ['arpeggi', 'ratings', 'misses', 'plays'],
+	jellyfin: ['lyrics', 'played', 'paging', 'jellify']
+};
 // Files a set plants beside the tracks, from the fixtures folder.
 const EXTRA_FILES = {
 	lyrics: [{ fixture: 'lyrics_airbag.lrc', path: 'Radiohead/OK Computer/01 Airbag.lrc' }]
@@ -121,6 +124,8 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const OPAQUE = /[A-Za-z0-9]{16,}/g;
 const IPV4 = /(?<![\d.])\d{1,3}(?:\.\d{1,3}){3}(?![\d.])/g;
 const URL_HOST = /https?:\/\/[^/\s"\\?]+/g;
+// The host in Subsonic's XML namespace, which names no server.
+const SUBSONIC_NAMESPACE = 'http://subsonic.org';
 const TOKEN_KEY = /^(accesstoken|token|api_key|apikey|subsonictoken|subsonicsalt|pw|password)$/i;
 // Navidrome signs its image links with one.
 const JWT = /eyJ[A-Za-z0-9_-]{10,}(?:\.[A-Za-z0-9_-]+)*/g;
@@ -170,6 +175,10 @@ class Scrubber {
 				raw.replace(/[A-Za-z0-9]/g, () => digits[next++])
 			);
 		}
+		// Jellyfin writes an id in its dashed form inside some addresses.
+		if (/^[0-9a-f]{32}$/i.test(raw)) {
+			this.id(raw.replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/, '$1-$2-$3-$4-$5'));
+		}
 		return this.variants.get(raw);
 	}
 
@@ -214,6 +223,17 @@ class Scrubber {
 		return value;
 	}
 
+	// An XML answer carries ids and times as attributes, under the same
+	// rules as JSON keys.
+	xml(input) {
+		return input.replace(/ ([A-Za-z]+)="([^"]*)"/g, (whole, key, value) => {
+			if (TOKEN_KEY.test(key)) return ` ${key}="<token>"`;
+			if (isTimestampKey(key)) return ` ${key}="${value.replace(/\d/g, '0')}"`;
+			if (isIdKey(key)) return ` ${key}="${this.idString(key, value)}"`;
+			return whole;
+		});
+	}
+
 	// Applied to serialized text, so values are caught inside URLs too.
 	text(input) {
 		let out = input;
@@ -222,7 +242,7 @@ class Scrubber {
 		for (const [raw, placeholder] of ids) out = out.replaceAll(raw, placeholder);
 		return out
 			.replace(JWT, '<token>')
-			.replace(URL_HOST, 'http://reference.invalid')
+			.replace(URL_HOST, (url) => (url === SUBSONIC_NAMESPACE ? url : 'http://reference.invalid'))
 			.replace(IPV4, 'reference.invalid');
 	}
 
@@ -296,6 +316,7 @@ class Recorder {
 		if (/json/.test(type)) {
 			return { ...answer, kind: 'json', body: JSON.parse(bytes.toString('utf8')) };
 		}
+		if (/xml/.test(type)) return { ...answer, kind: 'xml', body: { text: bytes.toString('utf8') } };
 		if (row.read === 'bytes' && !/^text\//.test(type)) {
 			return { ...answer, kind: 'bytes', body: { bytes: bytes.length } };
 		}
@@ -359,7 +380,12 @@ class Recorder {
 			steps.map(({ row, answer }) => ({
 				row,
 				answer,
-				body: answer.kind === 'json' ? scrub.walk(answer.body) : answer.body
+				body:
+					answer.kind === 'json'
+						? scrub.walk(answer.body)
+						: answer.kind === 'xml'
+							? { text: scrub.xml(answer.body.text) }
+							: answer.body
 			}))
 		]);
 		const out = [];
@@ -484,12 +510,21 @@ function resolveTracks(recorder, library, found) {
 //   with name lookups blocked.
 // - All six tracks are accepted, short as they are. The two OK Computer
 //   tracks land in two albums, because only the first carries a release id.
+// - With --set misses, download and getCoverArt with an unknown id answer
+//   the failed envelope with code 70 over HTTP 200, not an error page.
+// - With --set plays, the scrobble shows at once: folder-style albums
+//   carry playCount and played. getMusicDirectory with id 1, the folder
+//   getMusicFolders lists, answers 70. With f=xml the answer is
+//   application/xml with no prolog, and the empty OpenSubsonic values
+//   JSON sends are left out.
 function navidromeAuth(row) {
 	const common = [
 		['v', '1.16.1'],
 		['c', CLIENT],
 		['f', 'json']
 	];
+	// A row that sets one of these itself, `f=xml` say, sends only its own.
+	const own = new Set((row.query ?? []).map(([key]) => key));
 	const auth = row.auth ?? 'default';
 	const who =
 		auth === 'none'
@@ -498,7 +533,8 @@ function navidromeAuth(row) {
 					['u', USER],
 					['p', auth === 'wrong_password' ? 'wrong-password' : '{password}']
 				];
-	return { ...row, query: [...who, ...common, ...(row.query ?? [])] };
+	const shared = common.filter(([key]) => !own.has(key));
+	return { ...row, query: [...who, ...shared, ...(row.query ?? [])] };
 }
 
 function rest(name, method, query = [], extra = {}) {
@@ -708,6 +744,47 @@ function navidromeRatings() {
 	];
 }
 
+// download and getCoverArt with ids the server does not hold: a bare one,
+// and for getCoverArt one in Navidrome's own album cover form.
+function navidromeMisses() {
+	const bytes = { read: 'bytes' };
+	const unknown = [['id', 'no-such-id']];
+	return [
+		rest('error.download-unknown-id', 'download', unknown, bytes),
+		rest('error.cover-art-unknown-id', 'getCoverArt', unknown, bytes),
+		rest(
+			'error.cover-art-unknown-album',
+			'getCoverArt',
+			[['id', 'al-0000000000000000000000_0']],
+			bytes
+		)
+	];
+}
+
+// One scrobble, then the folder-style lists that show albums, the root
+// folder listing, and the album in XML for the empty values.
+function navidromePlays() {
+	return [
+		rest(
+			'scrobble',
+			'scrobble',
+			[
+				['id', '{track.airbag}'],
+				['submission', 'true']
+			],
+			{ write: true }
+		),
+		rest('getAlbumList.newest', 'getAlbumList', [['type', 'newest']]),
+		rest('search2.word', 'search2', [['query', 'radiohead']]),
+		rest('getMusicDirectory.artist', 'getMusicDirectory', [['id', '{artist.radiohead}']]),
+		rest('getMusicDirectory.root', 'getMusicDirectory', [['id', '1']]),
+		rest('getAlbum.xml', 'getAlbum', [
+			['id', '{album.ok_computer}'],
+			['f', 'xml']
+		])
+	];
+}
+
 async function navidrome(refDir, args) {
 	const { pinned, library, folders, set, capture, recorder } = prepare('navidrome', refDir, args);
 	const { scrub, refs } = recorder;
@@ -767,6 +844,10 @@ async function navidrome(refDir, args) {
 		await recorder.recordAll(navidromeArpeggi());
 	} else if (set === 'ratings') {
 		await recorder.recordAll(navidromeRatings());
+	} else if (set === 'misses') {
+		await recorder.recordAll(navidromeMisses());
+	} else if (set === 'plays') {
+		await recorder.recordAll(navidromePlays());
 	} else {
 		await recorder.recordAll(navidromeReads());
 		recorder.into(folders[1]);
@@ -800,6 +881,10 @@ async function navidrome(refDir, args) {
 //   added, and LrcLib stays disabled. Airbag then has HasLyrics true and a
 //   second MediaStreams entry of Type Lyric, whose Path is the .lrc. A
 //   track without lyrics answers /Audio/{id}/Lyrics with 404.
+// - With --set jellify, /Items/Latest answers a bare array of albums, and
+//   PlaybackInfo for a FLAC track under a profile that plays only MP3
+//   answers a TranscodingUrl of /audio/{id, dashed}/stream.mp3?..., a path
+//   from the server's root with no host.
 function jellyfinAuth(row) {
 	const identity = `MediaBrowser Client="${CLIENT}", Device="${CLIENT}", DeviceId="${CLIENT}-device", Version="1.0"`;
 	const auth = row.auth ?? 'default';
@@ -1091,6 +1176,51 @@ function jellyfinPaging() {
 	];
 }
 
+// Jellify's requests as its SDK sends them (Jellify-Music/App d3fbc756,
+// @jellyfin/sdk 0.13.0, which repeats a key for each list item): the
+// recently added albums, and PlaybackInfo at its low streaming quality on
+// the web, where FLAC is not played directly.
+function jellyfinJellify() {
+	const bitrate = 192000;
+	return [
+		jf('latest', '/Items/Latest', [
+			['parentId', '{library}'],
+			['fields', 'ParentId'],
+			['fields', 'Tags'],
+			['includeItemTypes', 'MusicAlbum'],
+			['enableUserData', 'true'],
+			['limit', '50']
+		]),
+		jf('playback-info.low-quality', '/Items/{track.airbag}/PlaybackInfo', [], {
+			method: 'POST',
+			body: {
+				EnableDirectPlay: true,
+				EnableDirectStream: false,
+				EnableTranscoding: true,
+				DeviceProfile: {
+					Name: 'Low Quality Audio Stream',
+					MaxStaticBitrate: bitrate,
+					MaxStreamingBitrate: bitrate,
+					MusicStreamingTranscodingBitrate: bitrate,
+					MaxStaticMusicBitrate: bitrate,
+					DirectPlayProfiles: [{ Container: 'mp3', Type: 'Audio' }],
+					TranscodingProfiles: [
+						{
+							AudioCodec: 'mp3',
+							Container: 'mp3',
+							Context: 'Streaming',
+							MaxAudioChannels: '6',
+							Protocol: 'http',
+							Type: 'Audio'
+						}
+					]
+				},
+				MaxStreamingBitrate: bitrate
+			}
+		})
+	];
+}
+
 async function jellyfin(refDir, args) {
 	const { pinned, library, folders, set, capture, recorder } = prepare('jellyfin', refDir, args);
 	const { scrub, refs } = recorder;
@@ -1218,6 +1348,8 @@ async function jellyfin(refDir, args) {
 		await recorder.recordAll(jellyfinPlayed());
 	} else if (set === 'paging') {
 		await recorder.recordAll(jellyfinPaging());
+	} else if (set === 'jellify') {
+		await recorder.recordAll(jellyfinJellify());
 	} else {
 		await recorder.recordAll(jellyfinReads());
 		recorder.into(folders[1]);
