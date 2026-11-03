@@ -169,8 +169,17 @@ pub struct AlbumQuery {
     /// Restrict to one decade start year, e.g. 1990.
     pub decade: Option<i64>,
     /// Restrict to one primary track format, e.g. `flac`. Blank reads as
-    /// absent; matching is case-insensitive.
+    /// absent; matching is case-insensitive. `formats` wins when both are
+    /// given.
     pub format: Option<String>,
+    /// Primary track formats, comma-separated, e.g. `flac,mp3`; matching is
+    /// case-insensitive. See `format_mode`.
+    pub formats: Option<String>,
+    /// `with` (default): only albums in one of `formats`; `without`: only
+    /// albums in none of them.
+    pub format_mode: Option<String>,
+    /// Only albums with at least this many indexed tracks, 1-10000.
+    pub min_tracks: Option<u32>,
     /// Only the caller's favourites. Without `sort`, the newest favourite
     /// comes first, and `order=asc` puts the oldest first.
     pub favorites: Option<bool>,
@@ -282,6 +291,10 @@ pub struct ArtistQuery {
     pub q: Option<String>,
     /// `all`, `album_artists`, or `contributors`. Default `all`.
     pub scope: Option<String>,
+    /// Only artists with at least this many indexed tracks in the library,
+    /// 1-10000: the tracks credited to them and the tracks on the albums
+    /// they lead, each once. The scope totals count the same artists.
+    pub min_tracks: Option<u32>,
     /// Only the caller's favourites. Without `sort`, the newest favourite
     /// comes first, and `order=asc` puts the oldest first.
     pub favorites: Option<bool>,
@@ -486,6 +499,22 @@ pub struct GenreView {
     pub track_count: u64,
     /// Albums holding at least one such track.
     pub album_count: u64,
+}
+
+/// How many albums one primary format has.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct AlbumFormatCount {
+    /// Lowercased format, e.g. `flac`.
+    pub format: String,
+    /// Listed albums whose most common track format it is.
+    pub album_count: u64,
+}
+
+/// Every primary format the album list has, for its format filter.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct AlbumFormatCounts {
+    /// Formats by descending album count, name tiebreak.
+    pub items: Vec<AlbumFormatCount>,
 }
 
 /// One suggested track, tagged with why it was picked.

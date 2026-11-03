@@ -2838,6 +2838,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/library/albums/formats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** How many albums each primary format has, for the format filter. */
+        get: operations["album_format_counts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/library/albums/match/{mbid}": {
         parameters: {
             query?: never;
@@ -9789,6 +9806,21 @@ export interface components {
             artist_name?: string;
             /** @description Provider release-group id. */
             musicbrainz_id: string;
+        };
+        /** @description How many albums one primary format has. */
+        AlbumFormatCount: {
+            /**
+             * Format: int64
+             * @description Listed albums whose most common track format it is.
+             */
+            album_count: number;
+            /** @description Lowercased format, e.g. `flac`. */
+            format: string;
+        };
+        /** @description Every primary format the album list has, for its format filter. */
+        AlbumFormatCounts: {
+            /** @description Formats by descending album count, name tiebreak. */
+            items: components["schemas"]["AlbumFormatCount"][];
         };
         /**
          * @description Who asked for a join or an undo.
@@ -29691,9 +29723,22 @@ export interface operations {
                 decade?: number;
                 /**
                  * @description Restrict to one primary track format, e.g. `flac`. Blank reads as
-                 *     absent; matching is case-insensitive.
+                 *     absent; matching is case-insensitive. `formats` wins when both are
+                 *     given.
                  */
                 format?: string;
+                /**
+                 * @description Primary track formats, comma-separated, e.g. `flac,mp3`; matching is
+                 *     case-insensitive. See `format_mode`.
+                 */
+                formats?: string;
+                /**
+                 * @description `with` (default): only albums in one of `formats`; `without`: only
+                 *     albums in none of them.
+                 */
+                format_mode?: string;
+                /** @description Only albums with at least this many indexed tracks, 1-10000. */
+                min_tracks?: number;
                 /**
                  * @description Only the caller's favourites. Without `sort`, the newest favourite
                  *     comes first, and `order=asc` puts the oldest first.
@@ -29722,6 +29767,35 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    album_format_counts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Album counts per format */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlbumFormatCounts"];
                 };
             };
             /** @description Not authenticated */
@@ -32348,6 +32422,12 @@ export interface operations {
                 q?: string;
                 /** @description `all`, `album_artists`, or `contributors`. Default `all`. */
                 scope?: string;
+                /**
+                 * @description Only artists with at least this many indexed tracks in the library,
+                 *     1-10000: the tracks credited to them and the tracks on the albums
+                 *     they lead, each once. The scope totals count the same artists.
+                 */
+                min_tracks?: number;
                 /**
                  * @description Only the caller's favourites. Without `sort`, the newest favourite
                  *     comes first, and `order=asc` puts the oldest first.

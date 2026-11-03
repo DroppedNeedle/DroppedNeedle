@@ -97,6 +97,15 @@ export const getLibraryAlbumsQuery = (getParams: Getter<LibraryV3AlbumsParams>) 
 type AlbumPage = components['schemas']['AlbumPage'];
 type ArtistPage = components['schemas']['ArtistPage'];
 
+/** How many albums each primary format has, for the album list's format filter. */
+export const getLibraryAlbumFormatsQuery = () =>
+	createQuery(() => ({
+		meta: PERSIST,
+		queryKey: LibraryQueryKeyFactory.catalog.albumFormats(userId()),
+		queryFn: async ({ signal }) =>
+			(await api.v3.GET(v3('/api/v3/library/albums/formats'), { signal })).items
+	}));
+
 // The album list a page at a time: each page reads on from the last one's
 // cursor, so a deep page costs what the first does.
 export const getLibraryAlbumsInfiniteQuery = (getParams: Getter<LibraryV3AlbumsParams>) =>
@@ -124,6 +133,8 @@ export interface LibraryArtistsParams {
 	sortOrder: 'asc' | 'desc';
 	q: string;
 	scope: LibraryArtistScope;
+	/** Only artists with at least this many tracks in the library. */
+	minTracks?: number;
 	favorites?: boolean;
 }
 
@@ -135,6 +146,7 @@ function artistParams(params: LibraryArtistsParams): LibraryV3ArtistsParams {
 		...(params.sortBy === 'hearted' ? {} : { sort: params.sortBy, order: params.sortOrder }),
 		q: params.q || undefined,
 		scope: params.scope === 'contributors' ? 'contributors' : 'album_artists',
+		...(params.minTracks && params.minTracks > 1 ? { minTracks: params.minTracks } : {}),
 		...(params.favorites ? { favorites: true } : {})
 	};
 }

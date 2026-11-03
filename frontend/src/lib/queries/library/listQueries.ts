@@ -44,6 +44,11 @@ export function albumsQuery(params: LibraryV3AlbumsParams, after: string | null)
 		...(params.artistId ? { artist_id: params.artistId } : {}),
 		...(params.decade !== undefined ? { decade: params.decade } : {}),
 		...(params.format ? { format: params.format } : {}),
+		...(params.formats?.length ? { formats: params.formats.join(',') } : {}),
+		...(params.formats?.length && params.formatMode === 'without'
+			? { format_mode: 'without' as const }
+			: {}),
+		...(params.minTracks && params.minTracks > 1 ? { min_tracks: params.minTracks } : {}),
 		...(params.favorites ? { favorites: true } : {})
 	};
 }
@@ -56,6 +61,7 @@ export function artistsQuery(params: LibraryV3ArtistsParams, after: string | nul
 		...(params.order ? { order: params.order } : {}),
 		...(params.q ? { q: params.q } : {}),
 		...(params.scope ? { scope: params.scope } : {}),
+		...(params.minTracks && params.minTracks > 1 ? { min_tracks: params.minTracks } : {}),
 		...(params.favorites ? { favorites: true } : {})
 	};
 }

@@ -121,7 +121,12 @@ fn album_filter_values(filter: &AlbumFilter) -> Vec<Value> {
     let pattern = text(pattern.as_deref());
     let artist = text(filter.artist_id.as_deref());
     let decade = int(filter.decade);
-    let format = text(filter.format.as_deref());
+    let formats = if filter.formats.is_empty() {
+        Value::Null
+    } else {
+        Value::Text(format!(",{},", filter.formats.join(",")))
+    };
+    let min = int(filter.min_tracks.map(i64::from));
     vec![
         pattern.clone(),
         pattern.clone(),
@@ -131,8 +136,11 @@ fn album_filter_values(filter: &AlbumFilter) -> Vec<Value> {
         decade.clone(),
         decade.clone(),
         decade,
-        format.clone(),
-        format,
+        formats.clone(),
+        formats,
+        Value::Integer(i64::from(!filter.without_formats)),
+        min.clone(),
+        min,
     ]
 }
 
@@ -164,10 +172,12 @@ fn track_filter_values(
     values
 }
 
-/// The artist list's name filter, bound twice.
-fn name_filter(q: Option<&str>) -> Vec<Value> {
+/// The artist list's name filter, bound twice, then the minimum tracks,
+/// bound twice.
+fn name_filter(q: Option<&str>, min_tracks: Option<u32>) -> Vec<Value> {
     let pattern = text(q.map(like_pattern).as_deref());
-    vec![pattern.clone(), pattern]
+    let min = int(min_tracks.map(i64::from));
+    vec![pattern.clone(), pattern, min.clone(), min]
 }
 
 /// The last `width` columns of a page row: its sort key.
@@ -437,7 +447,7 @@ impl LocalCatalog {
         limit: u64,
         offset: u64,
     ) -> Result<ArtistListing, StoreError> {
-        let mut page_values = name_filter(q);
+        let mut page_values = name_filter(q, None);
         page_values.extend([count(limit), count(offset)]);
         // Page the ids first; counts aggregate over the page below.
         let ids: Vec<String> = self
@@ -451,14 +461,16 @@ impl LocalCatalog {
             })
             .await?;
         let artists = self.hydrate_artists(&ids).await?;
-        let (total, led, contributors) = self.artist_totals(scope, q, None).await?;
+        let (total, led, contributors) = self.artist_totals(scope, q, None, None).await?;
         Ok((artists, total, led, contributors))
     }
 
     /// One page of artists in scope from a cursor, plus the album-artist
-    /// and contributor totals. Totals honor `q` and, over everyone's
-    /// artists, are remembered per catalog revision. `favorites_of` narrows
-    /// the page and its totals to that user's favourites.
+    /// and contributor totals. Totals honor `q` and `min_tracks` and, over
+    /// everyone's artists, are remembered per catalog revision.
+    /// `favorites_of` narrows the page and its totals to that user's
+    /// favourites; `min_tracks` to artists holding at least that many
+    /// indexed tracks, credited or on albums they lead.
     #[allow(clippy::too_many_arguments)]
     pub async fn artist_list(
         &self,
@@ -469,6 +481,7 @@ impl LocalCatalog {
         descending: bool,
         limit: u64,
         after: &After,
+        min_tracks: Option<u32>,
     ) -> Result<ArtistKeyedListing, StoreError> {
         let keys = if favorites_of.is_some() {
             sql::favorite_artist_keys(sort, descending)
@@ -479,15 +492,25 @@ impl LocalCatalog {
         let mut values: Vec<Value> = favorites_value(favorites_of, sort == ArtistSort::Favorited)
             .into_iter()
             .collect();
-        values.extend(name_filter(q));
+        // The page names the minimum only when it filters by one.
+        let names = name_filter(q, min_tracks);
+        values.extend(
+            names
+                .into_iter()
+                .take(if min_tracks.is_some() { 4 } else { 2 }),
+        );
         if let Some(key) = &after.key {
             values.extend(sql::after_values(&keys, key));
         }
         values.push(count(limit.saturating_add(1)));
+        let shape = sql::ArtistPageShape {
+            after_cursor: after.key.is_some(),
+            min_tracks: min_tracks.is_some(),
+        };
         let text = if favorites_of.is_some() {
-            sql::favorite_artist_page(scope, sort, descending, after.key.is_some())
+            sql::favorite_artist_page_shapes(scope, sort, descending, shape)
         } else {
-            sql::artist_page(scope, sort, descending, after.key.is_some())
+            sql::artist_page_shapes(scope, sort, descending, shape)
         };
         // Page the ids first; counts aggregate over the page below.
         let keyed = self
@@ -501,7 +524,9 @@ impl LocalCatalog {
             .await?;
         let (ids, next) = split_page(keyed, limit);
         let items = self.hydrate_artists(&ids).await?;
-        let (total, led, contributors) = self.artist_totals(scope, q, favorites_of).await?;
+        let (total, led, contributors) = self
+            .artist_totals(scope, q, favorites_of, min_tracks)
+            .await?;
         Ok((KeyedPage { items, total, next }, led, contributors))
     }
 
@@ -513,16 +538,17 @@ impl LocalCatalog {
         scope: ArtistScope,
         q: Option<&str>,
         favorites_of: Option<&str>,
+        min_tracks: Option<u32>,
     ) -> Result<(u64, u64, u64), StoreError> {
         let mut names: Vec<Value> = favorites_of
             .map(|user| text(Some(user)))
             .into_iter()
             .collect();
-        names.extend(name_filter(q));
+        names.extend(name_filter(q, min_tracks));
         let favorites = favorites_of.is_some();
         let totals = self
             .list_totals(
-                format!("artists {scope:?} {q:?}"),
+                format!("artists {scope:?} {q:?} {min_tracks:?}"),
                 favorites,
                 "library.artists.count",
                 move |conn| {
@@ -937,6 +963,16 @@ impl LocalCatalog {
             .await?;
         let mut albums = self.albums_by_id(&ids).await?;
         Ok(ids.iter().filter_map(|id| albums.remove(id)).collect())
+    }
+
+    /// How many listed albums each primary format has, most first.
+    pub async fn album_format_counts(&self) -> Result<Vec<(String, u64)>, StoreError> {
+        self.read("library.albums.formats", |conn| {
+            rows(conn, sql::ALBUM_FORMAT_COUNTS.text(), &[], |row| {
+                Ok((row.get(0)?, unsigned(row.get(1)?)))
+            })
+        })
+        .await
     }
 
     /// Genres by descending track count, name tiebreak.

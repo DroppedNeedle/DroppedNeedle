@@ -13,10 +13,11 @@ use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 
 use super::LibraryDeps;
 use super::models::{
-    AlbumDetailView, AlbumPage, AlbumQuery, ArtistPage, ArtistQuery, ArtistView, CursorQuery,
-    DecadesResponse, LibraryAlbumStatus, LibraryMembershipRequest, LibraryMembershipResponse,
-    LyricsView, PageQuery, RecentQuery, ResolveTracksRequest, ResolveTracksResponse, StatsView,
-    SuggestionsQuery, SuggestionsResponse, TrackListPage, TrackPage, TrackQuery,
+    AlbumDetailView, AlbumFormatCounts, AlbumPage, AlbumQuery, ArtistPage, ArtistQuery, ArtistView,
+    CursorQuery, DecadesResponse, LibraryAlbumStatus, LibraryMembershipRequest,
+    LibraryMembershipResponse, LyricsView, PageQuery, RecentQuery, ResolveTracksRequest,
+    ResolveTracksResponse, StatsView, SuggestionsQuery, SuggestionsResponse, TrackListPage,
+    TrackPage, TrackQuery,
 };
 use super::services;
 
@@ -38,6 +39,26 @@ pub async fn list_albums(
     ValidQuery(query): ValidQuery<AlbumQuery>,
 ) -> Result<Json<AlbumPage>, ApiError> {
     services::list_albums(&deps, caller.user_id(), &query)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
+}
+
+/// How many albums each primary format has, for the format filter.
+#[utoipa::path(
+    get,
+    tag = "library",
+    path = "/api/v3/library/albums/formats",
+    responses(
+        (status = 200, description = "Album counts per format", body = AlbumFormatCounts),
+        (status = 401, description = "Not authenticated"),
+    )
+)]
+pub async fn album_format_counts(
+    State(deps): State<LibraryDeps>,
+    User(_caller): User,
+) -> Result<Json<AlbumFormatCounts>, ApiError> {
+    services::album_format_counts(&deps)
         .await
         .map(Json)
         .map_err(ApiError::from)
