@@ -261,11 +261,17 @@ Run from the repo root. `make help` lists every target.
 - SQLite is built with its memory counters off (`SQLITE_DEFAULT_MEMSTATUS=0`), in
   `.cargo/config.toml` and the Dockerfile: on every allocation they take one
   process-wide mutex. `persist_schema` holds it.
-- Migrations are numbered and forward-only. Never edit or renumber a shipped
-  one. Each new one ships an upgrade test. They land on `v3` in number
-  order: the runner skips any migration below the database's version, so a
-  later number landing first loses the earlier one on every database that
-  boots in between.
+- Migrations are numbered and forward-only, starting from the v3 baseline
+  in `server/migrations/`. One runner, keyed on `user_version`, applies each
+  listed file above the stamp in number order, each in one transaction with
+  its own stamp; a file whose first line is `-- no-transaction` runs as
+  written. A stamp the runner does not expect is refused before anything is
+  written, the pre-upgrade backup included. Never edit, renumber or remove a
+  migration once it is on `v3`, the baseline included (a test pins each
+  file's hash): a schema change is a new number. Each new one ships an
+  upgrade test. They land on `v3` in number order: the runner skips any
+  migration below the database's version, so a later number landing first
+  loses the earlier one on every database that boots in between.
 - A migration that rebuilds a table other tables reference starts with
   `-- no-transaction`, turns foreign keys off around one transaction, keeps
   `rowid`, indexes and triggers, refuses to commit when `foreign_key_check`
@@ -775,4 +781,4 @@ Run from the repo root. `make help` lists every target.
   create repos under the old names.
 - The two ignored advisories (RUSTSEC-2023-0071 in CI, RUSTSEC-2024-0436 in
   `deny.toml`) are reviewed. Re-check them when sqlx or lofty move.
-- Gaps in the migration numbering stay as they are.
+- Migrations start from the v3 baseline. Never reuse a lower number.
