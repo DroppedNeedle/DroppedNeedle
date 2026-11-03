@@ -995,9 +995,9 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Trade an app connect code and its PKCE verifier for an app password of
-         *     the user who allowed it. The code is gone after this call, whatever it
-         *     answers.
+         * The OAuth 2.0 token endpoint: trade an app connect code and its PKCE
+         *     verifier for an app password of the user who allowed it. The code is
+         *     gone after this call, whatever it answers.
          */
         post: operations["app_connect_token_handler"];
         delete?: never;
@@ -10260,37 +10260,47 @@ export interface components {
              */
             replaces_existing: boolean;
         };
-        /** @description A refused trade. */
+        /** @description A refused trade (400). */
         AppConnectTokenError: {
-            /**
-             * @description `invalid_grant` (the code is unknown, used or expired, or does not
-             *     fit the app, address or verifier) or `invalid_request` (the body is
-             *     not a trade).
-             */
-            error: string;
+            /** @description What was wrong. */
+            error: components["schemas"]["AppConnectTokenErrorCode"];
         };
-        /** @description The app's code trade. */
+        /**
+         * @description Why a trade was refused, as RFC 6749 section 5.2 names it.
+         * @enum {string}
+         */
+        AppConnectTokenErrorCode: "invalid_request" | "invalid_client" | "invalid_grant" | "unsupported_grant_type";
+        /** @description The app's code trade, sent form-encoded. */
         AppConnectTokenRequest: {
-            /** @description The app's id, as in the request. */
+            /** @description The app's id, as in the authorization request. */
             client_id: string;
             /** @description The one-time code the browser handed back. */
             code: string;
             /** @description The PKCE verifier the challenge was made from. */
             code_verifier: string;
-            /** @description The return address, as in the request. */
+            /** @description Must be `authorization_code`. */
+            grant_type: string;
+            /** @description The return address, exactly as in the authorization request. */
             redirect_uri: string;
         };
-        /** @description The app password the trade mints. */
+        /** @description The app password a trade mints. */
         AppConnectTokenResponse: {
-            /** @description The app password, shown this once. Subsonic takes it as `apiKey`. */
-            app_password: string;
-            /** @description Its id, as listed under the user's app passwords. */
-            id: string;
-            /** @description Its name, as listed. */
-            name: string;
-            /** @description The signed-in user's login name. */
+            /**
+             * @description The app password, shown this once. Subsonic takes it as `apiKey`,
+             *     or as the password next to `username`.
+             */
+            access_token: string;
+            /** @description Always `Bearer`. */
+            token_type: components["schemas"]["AppConnectTokenType"];
+            /** @description The login name of the user who allowed it. */
             username: string;
         };
+        /**
+         * @description The kind of token handed out. Libraries expect `Bearer`; the token is
+         *     an app password, used the way any app password is.
+         * @enum {string}
+         */
+        AppConnectTokenType: "Bearer";
         /** @description Create an app password. */
         AppPasswordCreate: {
             /** @description Name; defaults to `App password`. */
@@ -11915,6 +11925,11 @@ export interface components {
              * @default
              */
             redirect_uri: string;
+            /**
+             * @description Must be `code`.
+             * @default
+             */
+            response_type: string;
             /**
              * @description The app's own value, handed back unchanged; up to 512 bytes.
              * @default
@@ -26148,6 +26163,8 @@ export interface operations {
     app_connect_request_handler: {
         parameters: {
             query?: {
+                /** @description Must be `code`. */
+                response_type?: string;
                 /** @description The app's id, one listed in the `app_connect` settings. */
                 client_id?: string;
                 /**
@@ -26208,7 +26225,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["AppConnectTokenRequest"];
+                "application/x-www-form-urlencoded": components["schemas"]["AppConnectTokenRequest"];
             };
         };
         responses: {
@@ -26221,22 +26238,13 @@ export interface operations {
                     "application/json": components["schemas"]["AppConnectTokenResponse"];
                 };
             };
-            /** @description `invalid_grant` or `invalid_request` */
+            /** @description The trade is refused, as RFC 6749 section 5.2 names it */
             400: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["AppConnectTokenError"];
-                };
-            };
-            /** @description App connect is off: no app is listed */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
             /** @description Too many trades from this address; see `Retry-After` */

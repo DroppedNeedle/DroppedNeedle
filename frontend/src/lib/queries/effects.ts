@@ -186,6 +186,8 @@ export const EFFECTS = {
 	],
 	/** The connect-apps settings. */
 	connectAppsSettingsChanged: (): Sweep[] => [{ key: ConnectAppsQueryKeyFactory.settings() }],
+	/** The apps that may sign in through the browser. */
+	appConnectSettingsChanged: (): Sweep[] => [{ key: ConnectAppsQueryKeyFactory.appConnect() }],
 	/** The caller's own Connect Apps choices. */
 	myConnectAppsChanged: (userId: string): Sweep[] => [
 		{ key: ConnectAppsQueryKeyFactory.mine(userId) }
@@ -481,6 +483,7 @@ export const albumHeaderChanged = fact('albumHeaderChanged');
 export const appPasswordsChanged = fact('appPasswordsChanged');
 export const appPasswordRosterChanged = fact('appPasswordRosterChanged');
 export const connectAppsSettingsChanged = fact('connectAppsSettingsChanged');
+export const appConnectSettingsChanged = fact('appConnectSettingsChanged');
 export const myConnectAppsChanged = fact('myConnectAppsChanged');
 export const connectionsChanged = fact('connectionsChanged');
 export const sourcePlaylistsChanged = fact('sourcePlaylistsChanged');

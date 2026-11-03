@@ -157,6 +157,9 @@ Run from the repo root. `make help` lists every target.
 - Request bodies and query strings are read through `ValidJson` and
   `ValidQuery` from `server/kernel/src/extract.rs`, never an area's own
   copy.
+- The app connect token step (`POST /api/v3/auth/app-connect/token`) is
+  OAuth 2.0 (RFC 6749): a form body read by its own parser and the RFC's
+  `{"error"}` shape at 400; its 5xx still go through the boundary.
 - A paged list answers the kernel's `Page<T>` (`server/kernel/src/page.rs`):
   an opaque cursor read through `PageRequest` (one that does not decode
   is a 400), a limit clamped to the list's maximum, `next_cursor` null on

@@ -27,6 +27,7 @@ vi.mock('$lib/utils/appHandBack', async (importOriginal) => {
 import Connect from './+page.svelte';
 
 const QUERY = {
+	response_type: 'code',
 	client_id: 'my-player',
 	redirect_uri: 'com.example.player:/connect',
 	code_challenge: 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM',
@@ -121,7 +122,7 @@ describe('app connect page', () => {
 		await renderWithQuery(Connect, {});
 
 		await expect
-			.element(page.getByText('It replaces the app-password of that name you already have.'))
+			.element(page.getByText('It replaces your app-password of that name.'))
 			.toBeVisible();
 		await expect.element(page.getByRole('button', { name: 'Allow' })).toBeDisabled();
 	});
@@ -178,7 +179,7 @@ describe('app connect page', () => {
 		await renderWithQuery(Connect, {});
 
 		await expect
-			.element(page.getByText('Signing in apps from the browser is not turned on for this server.'))
+			.element(page.getByText('Signing in apps is not turned on for this server.'))
 			.toBeVisible();
 	});
 });

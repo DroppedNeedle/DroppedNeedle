@@ -315,7 +315,7 @@ Where things live in the UI:
 | Newznab indexers or Prowlarr | Settings > Indexers / Prowlarr |
 | Edition preferences, managing unconfirmed matches | Settings > Editions |
 | Lidarr import | Settings > Lidarr Import |
-| Subsonic and Jellyfin APIs, app passwords, transcoding | Settings > Connect Apps |
+| Subsonic and Jellyfin APIs, app passwords, transcoding, apps that sign in through the browser | Settings > Connect Apps |
 | Jellyfin | Settings > Jellyfin |
 | Navidrome | Settings > Navidrome |
 | Plex | Settings > Plex |
@@ -421,6 +421,7 @@ Either way the user's own media account is linked for playback, so plays count f
 - [Library Management](docs/library-management.md): profiles, tags, artwork, lyrics, previews and Apply, Undo, editions, hand edits and retags.
 - [Requests and downloads](docs/downloads.md): editions and single tracks, following artists, held files, upgrades, choosing a copy, drop imports.
 - [Discovery, apps and accounts](docs/discovery.md): Home, Discover, radio, Weekly Mix, covers, Last.fm, ListenBrainz, Spotify and music apps.
+- [Signing in apps from the browser](docs/app-connect.md): letting a music app sign in without a typed app-password, for admins and app authors.
 - [Reverse proxy and security](docs/reverse-proxy-and-security.md): proxy headers, base path, public address, HSTS, content-security policy, signing out everywhere, backups.
 - [Upgrading from v2](docs/upgrading-from-v2.md).
 - [MusicBrainz sources and self-hosted mirrors](docs/musicbrainz-mirror-selfhosting.md).

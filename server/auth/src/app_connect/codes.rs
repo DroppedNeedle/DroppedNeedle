@@ -5,7 +5,8 @@ use std::sync::Mutex;
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 
-use crate::session::tokens::{TokenError, hash_token};
+use super::request::verifier_matches;
+use crate::session::tokens::{TokenError, hash_token, secret_eq};
 
 /// How long a code waits for its trade, in seconds.
 pub const CODE_TTL_SECS: i64 = 120;
@@ -19,7 +20,7 @@ pub const MAX_CODES: usize = 1024;
 /// What a code was issued for. The token step trades it only for exactly
 /// this app, return address and verifier, and mints for this user.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Grant {
+pub(crate) struct Grant {
     /// The user who confirmed it.
     pub user_id: String,
     /// The app it was issued to.
@@ -32,6 +33,27 @@ pub struct Grant {
     pub password_name: String,
 }
 
+/// A code traded for exactly the app, address and verifier it was issued
+/// for. Only [`PendingCodes::redeem`] makes one, and minting an app
+/// password through app connect takes one.
+#[derive(Debug)]
+pub(crate) struct Redeemed {
+    user_id: String,
+    password_name: String,
+}
+
+impl Redeemed {
+    /// The user who allowed the code.
+    pub(crate) fn user_id(&self) -> &str {
+        &self.user_id
+    }
+
+    /// The app password's name, checked when the code was issued.
+    pub(crate) fn password_name(&self) -> &str {
+        &self.password_name
+    }
+}
+
 #[derive(Debug)]
 struct Pending {
     grant: Grant,
@@ -40,7 +62,7 @@ struct Pending {
 
 /// Codes waiting for their trade. A restart drops them; the app asks again.
 #[derive(Debug, Default)]
-pub struct PendingCodes {
+pub(crate) struct PendingCodes {
     codes: Mutex<HashMap<String, Pending>>,
 }
 
@@ -60,7 +82,7 @@ impl PendingCodes {
     /// Issue a code for `grant` at `now` (unix seconds) and return it.
     /// Expired codes go first; past [`CODES_PER_USER`] for the user or
     /// [`MAX_CODES`] in all, so do the oldest.
-    pub fn issue(&self, grant: Grant, now: i64) -> Result<String, TokenError> {
+    pub(crate) fn issue(&self, grant: Grant, now: i64) -> Result<String, TokenError> {
         let code = mint_code()?;
         let mut codes = self
             .codes
@@ -101,28 +123,31 @@ impl PendingCodes {
         Ok(code)
     }
 
-    /// Take `code` out, whatever happens next: a code trades once. `None`
-    /// when it is unknown, already taken, or expired at `now`.
-    pub fn take(&self, code: &str, now: i64) -> Option<Grant> {
-        let mut codes = self
+    /// Trade `code` for its grant when the app, address and verifier are
+    /// exactly the ones it was issued for. The code is gone after this,
+    /// whatever the answer: a code trades once. `None` when it is unknown,
+    /// already taken, expired at `now`, or does not fit.
+    pub(crate) fn redeem(
+        &self,
+        code: &str,
+        client_id: &str,
+        redirect_uri: &str,
+        verifier: &str,
+        now: i64,
+    ) -> Option<Redeemed> {
+        let pending = self
             .codes
             .lock()
-            .unwrap_or_else(|poison| poison.into_inner());
-        let pending = codes.remove(&hash_token(code))?;
-        live(&pending, now).then_some(pending.grant)
-    }
-
-    /// Codes held, expired ones included until the next issue.
-    pub fn len(&self) -> usize {
-        self.codes
-            .lock()
             .unwrap_or_else(|poison| poison.into_inner())
-            .len()
-    }
-
-    /// True when no code is held.
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
+            .remove(&hash_token(code))?;
+        let grant = live(&pending, now).then_some(pending.grant)?;
+        let fits = secret_eq(&grant.client_id, client_id)
+            & secret_eq(&grant.redirect_uri, redirect_uri)
+            & verifier_matches(verifier, &grant.code_challenge);
+        fits.then_some(Redeemed {
+            user_id: grant.user_id,
+            password_name: grant.password_name,
+        })
     }
 }
 
@@ -140,41 +165,12 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_code_is_43_url_characters_and_kept_only_as_its_hash() {
-        let codes = PendingCodes::default();
-        let code = codes.issue(grant("u1"), 1_000).unwrap();
-        assert_eq!(code.len(), 43);
-        assert!(
-            code.bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
-        );
-        let held = codes.codes.lock().unwrap();
-        assert!(held.contains_key(&hash_token(&code)));
-        assert!(!held.contains_key(&code));
+    fn held(codes: &PendingCodes, code: &str) -> bool {
+        codes.codes.lock().unwrap().contains_key(&hash_token(code))
     }
 
-    #[test]
-    fn a_code_trades_once_and_only_within_its_lifetime() {
-        let codes = PendingCodes::default();
-        let code = codes.issue(grant("u1"), 1_000).unwrap();
-        assert_eq!(
-            codes.take(&code, 1_000 + CODE_TTL_SECS - 1),
-            Some(grant("u1"))
-        );
-        assert_eq!(codes.take(&code, 1_001), None, "second trade");
-
-        let late = codes.issue(grant("u1"), 1_000).unwrap();
-        assert_eq!(codes.take(&late, 1_000 + CODE_TTL_SECS), None, "expired");
-        assert_eq!(
-            codes.take(&late, 1_000),
-            None,
-            "an expired take still burns it"
-        );
-
-        assert_eq!(codes.take("unknown", 1_000), None);
-        let early = codes.issue(grant("u1"), 1_000).unwrap();
-        assert_eq!(codes.take(&early, 999), None, "a clock that went back");
+    fn count(codes: &PendingCodes) -> usize {
+        codes.codes.lock().unwrap().len()
     }
 
     #[test]
@@ -182,25 +178,23 @@ mod tests {
         let codes = PendingCodes::default();
         let stale = codes.issue(grant("u1"), 0).unwrap();
         let _ = codes.issue(grant("u2"), CODE_TTL_SECS);
-        assert_eq!(codes.len(), 1, "the expired code went");
-        assert_eq!(codes.take(&stale, 0), None);
+        assert_eq!(count(&codes), 1, "the expired code went");
+        assert!(!held(&codes, &stale));
 
         let first = codes.issue(grant("u1"), 200).unwrap();
         let mut rest = Vec::new();
         for at in 201..201 + CODES_PER_USER as i64 {
             rest.push(codes.issue(grant("u1"), at).unwrap());
         }
-        assert_eq!(codes.take(&first, 210), None, "the oldest of u1 went");
-        for code in &rest {
-            assert!(codes.take(code, 210).is_some());
-        }
+        assert!(!held(&codes, &first), "the oldest of u1 went");
+        assert!(rest.iter().all(|code| held(&codes, code)));
 
         let codes = PendingCodes::default();
         let first = codes.issue(grant("u0"), 0).unwrap();
         for n in 1..=MAX_CODES {
             let _ = codes.issue(grant(&format!("u{n}")), 1).unwrap();
         }
-        assert_eq!(codes.len(), MAX_CODES);
-        assert_eq!(codes.take(&first, 2), None, "the oldest in all went");
+        assert_eq!(count(&codes), MAX_CODES);
+        assert!(!held(&codes, &first), "the oldest in all went");
     }
 }

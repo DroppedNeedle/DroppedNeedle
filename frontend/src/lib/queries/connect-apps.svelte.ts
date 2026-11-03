@@ -1,17 +1,23 @@
 import { ConnectAppsQueryKeyFactory } from '$lib/queries/featureKeys';
 
-import { v3 } from '$lib/api/v3/endpoint';
+import { v3, type V3QueryOf } from '$lib/api/v3/endpoint';
 import { createQuery, queryOptions } from '@tanstack/svelte-query';
 import { api } from '$lib/api/client';
 import { authStore } from '$lib/stores/authStore.svelte';
 import {
+	appConnectSettingsChanged,
 	appPasswordRosterChanged,
 	appPasswordsChanged,
 	connectAppsSettingsChanged,
 	createAppMutation,
 	myConnectAppsChanged
 } from '$lib/queries/effects';
-import type { ConnectAppsSettings, MyConnectApps } from '$lib/types';
+import type {
+	AppConnectSettings,
+	ConnectAppsSettings,
+	ConnectRequest,
+	MyConnectApps
+} from '$lib/types';
 
 /** The server refuses a new app-password once a user has this many active. */
 export const APP_PASSWORD_CAP = 25;
@@ -96,5 +102,54 @@ export function createAdminRevokeAppPasswordMutation() {
 			appPasswordRosterChanged(),
 			...(vars.userId === authStore.user?.id ? ownAppPasswords() : [])
 		]
+	}));
+}
+
+// The apps that may sign in through the browser (app connect).
+export const getAppConnectSettingsQuery = () =>
+	createQuery(() => ({
+		queryKey: ConnectAppsQueryKeyFactory.appConnect(),
+		queryFn: ({ signal }) => api.v3.GET(v3('/api/v3/settings/app-connect'), { signal })
+	}));
+
+export function createSaveAppConnectSettingsMutation() {
+	return createAppMutation(() => ({
+		mutationFn: (settings: AppConnectSettings) =>
+			api.v3.PUT(v3('/api/v3/settings/app-connect'), settings),
+		effects: () => [appConnectSettingsChanged()]
+	}));
+}
+
+/** What an app asks for at /connect, as its query. */
+export type AppConnectQuery = V3QueryOf<'/api/v3/auth/app-connect/request'>;
+
+/**
+ * What a native app asks of the caller at /connect, read once: never retried,
+ * refetched or kept, since a refusal is the answer and the request is good only
+ * for now. `null` reads nothing.
+ */
+export const getAppConnectRequestQuery = (query: () => AppConnectQuery | null) =>
+	createQuery(() => {
+		const asked = query();
+		return {
+			queryKey: ConnectAppsQueryKeyFactory.appConnectRequest(authStore.user?.id, asked),
+			enabled: asked !== null,
+			retry: false,
+			gcTime: 0,
+			staleTime: Infinity,
+			refetchOnWindowFocus: false,
+			queryFn: ({ signal }: { signal: AbortSignal }) =>
+				api.v3.GET(v3('/api/v3/auth/app-connect/request', { query: asked ?? undefined }), {
+					signal
+				})
+		};
+	});
+
+/** Allow the app: the answer is the address that hands the code back to it. */
+export function createAuthorizeAppConnectMutation() {
+	return createAppMutation(() => ({
+		mutationFn: (request: ConnectRequest) =>
+			api.v3.POST(v3('/api/v3/auth/app-connect/authorize'), request),
+		effects: () => []
 	}));
 }

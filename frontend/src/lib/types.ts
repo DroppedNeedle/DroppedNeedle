@@ -367,6 +367,10 @@ export type HeldRecheckAllResult = components['schemas']['HeldRecheckAllResponse
 
 // Connect Apps (inbound OpenSubsonic + Jellyfin compatibility)
 export type ConnectAppsSettings = components['schemas']['ConnectApps'];
+export type AppConnectSettings = components['schemas']['AppConnect'];
+export type AppConnectClient = components['schemas']['AppConnectClient'];
+export type ConnectRequest = components['schemas']['ConnectRequest'];
+export type AppConnectRequestView = components['schemas']['AppConnectRequestView'];
 export type MyConnectApps = components['schemas']['MyConnectApps'];
 
 export type AppPasswordView = components['schemas']['AppPasswordView'];

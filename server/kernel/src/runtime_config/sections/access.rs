@@ -400,6 +400,14 @@ impl AppConnect {
         })
     }
 
+    /// Whether an app is listed as `client_id`.
+    #[must_use]
+    pub fn has_client(&self, client_id: &str) -> bool {
+        self.clients
+            .iter()
+            .any(|client| client.client_id == client_id)
+    }
+
     /// Whether any app is listed.
     #[must_use]
     pub fn enabled(&self) -> bool {

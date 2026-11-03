@@ -9,13 +9,15 @@
 	import {
 		createAuthorizeAppConnectMutation,
 		getAppConnectRequestQuery,
-		type ConnectRequest
-	} from '$lib/queries/auth/AppConnectQueries.svelte';
-	import type { AppConnectQuery } from '$lib/queries/auth/AppConnectQueries.svelte';
+		type AppConnectQuery
+	} from '$lib/queries/connect-apps.svelte';
+	import type { ConnectRequest } from '$lib/types';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { appAddress, framed, handBack } from '$lib/utils/appHandBack';
 	import { KeyRound, TriangleAlert } from 'lucide-svelte';
 	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
+	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
 
 	// What the app asked for, as it put it in the address; the server checks
 	// every field.
@@ -23,6 +25,7 @@
 		const params = page.url.searchParams;
 		const field = (key: string) => params.get(key) ?? '';
 		return {
+			response_type: field('response_type'),
 			client_id: field('client_id'),
 			redirect_uri: field('redirect_uri'),
 			code_challenge: field('code_challenge'),
@@ -46,7 +49,6 @@
 	const requestQuery = getAppConnectRequestQuery(() => (inFrame ? null : asQuery(request)));
 	const authorize = createAuthorizeAppConnectMutation();
 	let refused = $state<unknown>(undefined);
-	let busy = $state(false);
 	let handedBack = $state<string | null>(null);
 
 	interface Problem {
@@ -56,10 +58,7 @@
 
 	function describe(cause: unknown): Problem {
 		if (cause instanceof ApiError && cause.status === 404) {
-			return {
-				error: 'Signing in apps from the browser is not turned on for this server.',
-				backToApp: null
-			};
+			return { error: 'Signing in apps is not turned on for this server.', backToApp: null };
 		}
 		if (cause instanceof ApiError && cause.status < 500) {
 			const details = cause.details as { redirect?: unknown } | null;
@@ -74,19 +73,11 @@
 		};
 	}
 
-	const problem = $derived.by((): Problem | null => {
-		if (inFrame) return { error: 'This page cannot be used inside another page.', backToApp: null };
-		const cause = refused ?? requestQuery.error ?? undefined;
-		return cause === undefined ? null : describe(cause);
-	});
-	const error = $derived(problem?.error ?? null);
-	const backToApp = $derived(problem?.backToApp ?? null);
-	const view = $derived(problem ? null : (requestQuery.data ?? null));
+	const refusal = $derived(refused === undefined ? null : describe(refused));
 
 	// Both buttons leave for the app within the click, which is what lets
 	// the browser hand an app address over.
 	async function allow() {
-		busy = true;
 		try {
 			const answer = await authorize.mutateAsync(request);
 			const target = appAddress(answer.redirect);
@@ -95,13 +86,11 @@
 			handBack(target);
 		} catch (cause) {
 			refused = cause;
-		} finally {
-			busy = false;
 		}
 	}
 
-	function cancel() {
-		const target = appAddress(view?.cancel_redirect);
+	function cancel(address: string) {
+		const target = appAddress(address);
 		if (!target) return;
 		handedBack = target;
 		handBack(target);
@@ -112,66 +101,83 @@
 	<title>Connect an app - DroppedNeedle</title>
 </svelte:head>
 
-<div class="min-h-screen bg-base-100 flex items-center justify-center p-4">
-	<div class="w-full max-w-md flex flex-col items-center gap-4 text-center">
-		<div class="bg-primary/10 rounded-full p-4">
-			<KeyRound class="h-10 w-10 text-primary" />
-		</div>
+{#snippet problem(found: Problem)}
+	<p class="text-sm text-base-content/70" role="alert">{found.error}</p>
+	{#if found.backToApp}
+		<Button href={found.backToApp} variant="outline" size="sm">Back to the app</Button>
+	{/if}
+{/snippet}
 
-		{#if handedBack}
-			<p class="text-base-content/70 text-sm">
-				Returning to the app. If nothing happens, open it from here.
-			</p>
-			<Button href={handedBack} variant="primary" size="sm">Open the app</Button>
-		{:else if error}
-			<div class="flex flex-col items-center gap-3">
-				<p class="text-base-content/70 text-sm" role="alert">{error}</p>
-				{#if backToApp}
-					<Button href={backToApp} variant="outline" size="sm">Back to the app</Button>
-				{/if}
+<div class="flex min-h-screen items-center justify-center bg-base-100 p-4">
+	<Card variant="raised" class="w-full max-w-md">
+		<div class="flex flex-col items-center gap-4 text-center">
+			<div class="rounded-full bg-primary/10 p-4">
+				<KeyRound class="h-10 w-10 text-primary" aria-hidden="true" />
 			</div>
-		{:else if view}
-			<h1 class="text-xl font-semibold">Connect {view.client_name}?</h1>
-			<p class="text-base-content/80 text-sm">
-				<strong>{view.client_name}</strong> wants to use DroppedNeedle as
-				<strong>{signedInAs}</strong>.
-			</p>
-			<dl class="w-full rounded-box bg-base-200 p-3 text-left text-sm">
-				{#if view.device_name}
-					<dt class="text-base-content/60">Device, as the app reports it</dt>
-					<dd class="mb-2 break-words">{view.device_name}</dd>
-				{/if}
-				<dt class="text-base-content/60">It gets the app-password</dt>
-				<dd class="break-words">{view.password_name}</dd>
-			</dl>
-			<p class="text-base-content/60 text-xs">
-				You can revoke it any time under Profile, Connect Apps.
-				{#if view.replaces_existing}
-					It replaces the app-password of that name you already have.
-				{/if}
-			</p>
-			<div class="alert alert-warning text-left text-sm" role="note">
-				<TriangleAlert class="h-4 w-4 shrink-0" />
-				<span>Only allow this if you just tapped "Sign in" in this app yourself.</span>
-			</div>
-			{#if view.at_limit}
-				<p class="text-error text-sm" role="alert">
-					You have the most app-passwords allowed. Revoke one under Profile, Connect Apps first.
-				</p>
+
+			{#if handedBack}
+				<p class="text-sm text-base-content/70">Returning to the app.</p>
+				<Button href={handedBack} variant="primary" size="sm">Open the app</Button>
+			{:else if inFrame}
+				{@render problem({
+					error: 'This page cannot be used inside another page.',
+					backToApp: null
+				})}
+			{:else if refusal}
+				{@render problem(refusal)}
+			{:else}
+				<QueryBoundary query={requestQuery} what="the app's request">
+					{#snippet failed(cause)}
+						{@render problem(describe(cause))}
+					{/snippet}
+					{#snippet children(view)}
+						<h1 class="text-xl font-semibold">Connect {view.client_name}?</h1>
+						<p class="text-sm text-base-content/80">
+							<strong>{view.client_name}</strong> wants to use DroppedNeedle as
+							<strong>{signedInAs}</strong>.
+						</p>
+						<dl class="w-full text-left text-sm">
+							{#if view.device_name}
+								<dt class="text-base-content/60">Device</dt>
+								<dd class="mb-2 break-words">{view.device_name}</dd>
+							{/if}
+							<dt class="text-base-content/60">App-password</dt>
+							<dd class="break-words">{view.password_name}</dd>
+						</dl>
+						<p class="text-xs text-base-content/60">
+							Revoke it any time under Profile, Connect Apps.
+							{#if view.replaces_existing}
+								It replaces your app-password of that name.
+							{/if}
+						</p>
+						<p class="flex items-start gap-2 text-left text-sm text-warning" role="note">
+							<TriangleAlert class="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+							<span>Only allow this if you just tapped "Sign in" in this app yourself.</span>
+						</p>
+						{#if view.at_limit}
+							<p class="text-sm text-error" role="alert">
+								You have the most app-passwords allowed. Revoke one under Profile, Connect Apps
+								first.
+							</p>
+						{/if}
+						<div class="flex w-full gap-2">
+							<Button
+								variant="outline"
+								class="flex-1"
+								onclick={() => cancel(view.cancel_redirect)}
+								disabled={authorize.isPending}>Cancel</Button
+							>
+							<Button
+								variant="primary"
+								class="flex-1"
+								onclick={allow}
+								loading={authorize.isPending}
+								disabled={authorize.isPending || view.at_limit}>Allow</Button
+							>
+						</div>
+					{/snippet}
+				</QueryBoundary>
 			{/if}
-			<div class="flex w-full gap-2">
-				<Button variant="outline" class="flex-1" onclick={cancel} disabled={busy}>Cancel</Button>
-				<Button
-					variant="primary"
-					class="flex-1"
-					onclick={allow}
-					loading={busy}
-					disabled={busy || view.at_limit}>Allow</Button
-				>
-			</div>
-		{:else}
-			<p class="text-base-content/60 text-sm">Checking the request…</p>
-			<span class="loading loading-spinner loading-md text-primary"></span>
-		{/if}
-	</div>
+		</div>
+	</Card>
 </div>

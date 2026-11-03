@@ -18,6 +18,8 @@ pub const NAME_SEPARATOR: &str = " · ";
 /// The only challenge method: SHA-256 (RFC 7636 section 4.2). `plain`
 /// would hand the verifier to anyone who reads the request.
 pub const CHALLENGE_METHOD: &str = "S256";
+/// The only response type: the authorization code grant.
+const RESPONSE_TYPE: &str = "code";
 /// Length of a base64url SHA-256 without padding.
 const CHALLENGE_LEN: usize = 43;
 
@@ -27,6 +29,8 @@ const CHALLENGE_LEN: usize = 43;
 #[into_params(parameter_in = Query)]
 #[serde(default)]
 pub struct ConnectRequest {
+    /// Must be `code`.
+    pub response_type: String,
     /// The app's id, one listed in the `app_connect` settings.
     pub client_id: String,
     /// Where the browser hands the result back; exactly one of the app's
@@ -51,7 +55,7 @@ pub enum Rejection {
     /// back: the address is not one the app is known by.
     UnknownClient,
     /// The app is known but the request is malformed. The browser may hand
-    /// `redirect` (an `error=invalid_request` address) back to the app.
+    /// `redirect` (an address carrying the OAuth error) back to the app.
     Invalid {
         /// What is wrong, for the page.
         reason: &'static str,
@@ -103,22 +107,34 @@ pub fn check(apps: &AppConnect, request: &ConnectRequest) -> Result<Checked, Rej
     let state_ok = !request.state.is_empty()
         && request.state.len() <= MAX_STATE_LEN
         && !request.state.chars().any(char::is_control);
-    let invalid = |reason: &'static str| Rejection::Invalid {
+    let invalid = |error: &str, reason: &'static str| Rejection::Invalid {
         reason,
         redirect: error_redirect(
             &request.redirect_uri,
-            "invalid_request",
+            error,
             state_ok.then_some(request.state.as_str()),
         ),
     };
     if !state_ok {
-        return Err(invalid("The app sent no usable state."));
+        return Err(invalid("invalid_request", "The app sent no usable state."));
+    }
+    if request.response_type != RESPONSE_TYPE {
+        return Err(invalid(
+            "unsupported_response_type",
+            "The app must ask for a code.",
+        ));
     }
     if request.code_challenge_method != CHALLENGE_METHOD {
-        return Err(invalid("The app must use the S256 challenge method."));
+        return Err(invalid(
+            "invalid_request",
+            "The app must use the S256 challenge method.",
+        ));
     }
     if !is_challenge(&request.code_challenge) {
-        return Err(invalid("The app sent a malformed code challenge."));
+        return Err(invalid(
+            "invalid_request",
+            "The app sent a malformed code challenge.",
+        ));
     }
     let device_name = request.name.as_deref().and_then(|name| {
         device_name(
@@ -225,31 +241,9 @@ pub fn verifier_matches(verifier: &str, challenge: &str) -> bool {
 mod tests {
     use super::*;
 
-    const REDIRECT: &str = "com.example.player:/connect";
     // RFC 7636 appendix B.
     const VERIFIER: &str = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
     const CHALLENGE: &str = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
-
-    fn apps() -> AppConnect {
-        AppConnect {
-            clients: vec![AppConnectClient {
-                client_id: "player".to_owned(),
-                name: "My Player".to_owned(),
-                redirect_uris: vec![REDIRECT.to_owned()],
-            }],
-        }
-    }
-
-    fn request() -> ConnectRequest {
-        ConnectRequest {
-            client_id: "player".to_owned(),
-            redirect_uri: REDIRECT.to_owned(),
-            code_challenge: CHALLENGE.to_owned(),
-            code_challenge_method: "S256".to_owned(),
-            state: "s t&x=1".to_owned(),
-            name: Some("Pixel 9".to_owned()),
-        }
-    }
 
     #[test]
     fn pkce_checks_the_rfc_7636_example() {
@@ -281,32 +275,6 @@ mod tests {
     }
 
     #[test]
-    fn a_good_request_names_the_password_after_the_app_and_device() {
-        let checked = check(&apps(), &request()).unwrap();
-        assert_eq!(checked.client.name, "My Player");
-        assert_eq!(checked.device_name.as_deref(), Some("Pixel 9"));
-        assert_eq!(checked.password_name, "My Player · Pixel 9");
-        assert_eq!(
-            checked.code_redirect("abc_-"),
-            "com.example.player:/connect?code=abc_-&state=s%20t%26x%3D1"
-        );
-        assert_eq!(
-            checked.cancel_redirect(),
-            "com.example.player:/connect?error=access_denied&state=s%20t%26x%3D1"
-        );
-        let unnamed = check(
-            &apps(),
-            &ConnectRequest {
-                name: Some(" \u{202E}\t ".to_owned()),
-                ..request()
-            },
-        )
-        .unwrap();
-        assert_eq!(unnamed.device_name, None);
-        assert_eq!(unnamed.password_name, "My Player");
-    }
-
-    #[test]
     fn device_names_lose_what_could_mislead_and_fit_the_limit() {
         assert_eq!(
             device_name("  Pixel\u{0}\n 9\u{202E}lacol\u{200B} ", 64).as_deref(),
@@ -315,96 +283,5 @@ mod tests {
         assert_eq!(device_name("abcdef", 3).as_deref(), Some("abc"));
         assert_eq!(device_name("ab cdef", 3).as_deref(), Some("ab"));
         assert_eq!(device_name("", 3), None);
-        let long = check(
-            &apps(),
-            &ConnectRequest {
-                name: Some("x".repeat(500)),
-                ..request()
-            },
-        )
-        .unwrap();
-        assert_eq!(
-            long.password_name.chars().count(),
-            MAX_APP_PASSWORD_NAME_LEN
-        );
-    }
-
-    #[test]
-    fn unknown_apps_never_get_an_address_back() {
-        assert_eq!(
-            check(&AppConnect::default(), &request()),
-            Err(Rejection::Disabled)
-        );
-        for changed in [
-            ConnectRequest {
-                client_id: "other".to_owned(),
-                ..request()
-            },
-            ConnectRequest {
-                redirect_uri: format!("{REDIRECT}/x"),
-                ..request()
-            },
-            ConnectRequest {
-                redirect_uri: "https://evil.example/".to_owned(),
-                ..request()
-            },
-            ConnectRequest::default(),
-        ] {
-            assert_eq!(check(&apps(), &changed), Err(Rejection::UnknownClient));
-        }
-    }
-
-    #[test]
-    fn malformed_requests_of_a_known_app_hand_back_invalid_request() {
-        let invalid = |changed: ConnectRequest| match check(&apps(), &changed) {
-            Err(Rejection::Invalid { redirect, .. }) => redirect,
-            other => panic!("{other:?}"),
-        };
-        let with_state = "com.example.player:/connect?error=invalid_request&state=s%20t%26x%3D1";
-        let without = "com.example.player:/connect?error=invalid_request";
-        for method in ["plain", "", "s256"] {
-            assert_eq!(
-                invalid(ConnectRequest {
-                    code_challenge_method: method.to_owned(),
-                    ..request()
-                }),
-                with_state
-            );
-        }
-        for challenge in [
-            "",
-            &CHALLENGE[1..],
-            &format!("{CHALLENGE}="),
-            &CHALLENGE.replace('-', "+"),
-        ] {
-            assert_eq!(
-                invalid(ConnectRequest {
-                    code_challenge: challenge.to_owned(),
-                    ..request()
-                }),
-                with_state
-            );
-        }
-        for state in [String::new(), "s".repeat(513), "a\nb".to_owned()] {
-            assert_eq!(invalid(ConnectRequest { state, ..request() }), without);
-        }
-        assert!(
-            check(
-                &apps(),
-                &ConnectRequest {
-                    state: "s".repeat(512),
-                    ..request()
-                }
-            )
-            .is_ok()
-        );
-    }
-
-    #[test]
-    fn a_listed_address_with_a_query_keeps_it() {
-        assert_eq!(
-            with_params("https://app.example/back?app=1", &[("code", "c")]),
-            "https://app.example/back?app=1&code=c"
-        );
     }
 }

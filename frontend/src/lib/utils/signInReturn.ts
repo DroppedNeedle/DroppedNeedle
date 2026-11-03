@@ -12,13 +12,18 @@ const MAX_AGE_MS = 15 * 60 * 1000;
 /**
  * `path` when it is a page inside this app (no base path) that sign-in may
  * return to: root-relative, never protocol-relative, no backslash or
- * control character a browser could read as another host, and not a
- * sign-in page itself. Otherwise null.
+ * control character a browser could read as another host, resolving to this
+ * origin, and not a sign-in page itself. Otherwise null.
  */
 export function returnPath(path: string): string | null {
 	if (!path.startsWith('/') || path.startsWith('//')) return null;
 	// eslint-disable-next-line no-control-regex
 	if (/[\\\u0000-\u001f\u007f]/.test(path)) return null;
+	try {
+		if (new URL(path, window.location.origin).origin !== window.location.origin) return null;
+	} catch {
+		return null;
+	}
 	const pathname = path.split(/[?#]/, 1)[0] ?? '';
 	if (pathname === '/' || AUTH_FREE_PATHS.some((free) => pathname.startsWith(free))) return null;
 	return path;

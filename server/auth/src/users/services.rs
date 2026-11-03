@@ -20,6 +20,7 @@ use super::models::{
 use super::roles::{Admin, Principal, Role};
 use super::stores::{LastFmError, LastFmKeys, RoleChange, StoreError, UserDeletion};
 use super::{UsersDeps, clock_now};
+use crate::app_connect::Redeemed;
 use crate::sqlite::{RecoveryCodes, Users};
 
 // ---------------------------------------------------------------------------
@@ -1423,41 +1424,37 @@ fn fresh_app_password(
     Ok((row, secret))
 }
 
-/// Mint an app password for `user_id` in place of the user's live ones
-/// named `name`, which are revoked in the same transaction: an app that
-/// signs in again on the same device replaces its old password instead of
-/// piling up new ones. Only app connect calls this, for a user who
-/// confirmed it with a standard session; `name` is already checked.
-pub async fn replace_app_password(
+/// Mint an app password for the user who allowed an app connect code, in
+/// place of the user's live ones of the same name, which are revoked in the
+/// same transaction: an app that signs in again on the same device replaces
+/// its old password instead of piling up new ones. Only a redeemed code
+/// mints here. `None` when the user holds the most app passwords allowed
+/// under other names.
+pub(crate) async fn replace_app_password(
     deps: &UsersDeps,
-    user_id: &str,
-    name: &str,
-) -> Result<AppPasswordCreatedResponse, UsersError> {
-    let (row, secret) = fresh_app_password(deps, user_id, name)?;
+    grant: &Redeemed,
+) -> Result<Option<AppPasswordCreatedResponse>, UsersError> {
+    let (row, secret) = fresh_app_password(deps, grant.user_id(), grant.password_name())?;
     let replaced = deps
         .app_passwords
         .replace_named(row.clone(), MAX_ACTIVE_APP_PASSWORDS)
         .await
         .map_err(store_internal)?;
     let Some(replaced) = replaced else {
-        return Err(UsersError::Conflict {
-            message: format!(
-                "App-password limit reached ({MAX_ACTIVE_APP_PASSWORDS}). Revoke one before creating another."
-            ),
-        });
+        return Ok(None);
     };
     tracing::info!(
-        user_id,
+        user_id = grant.user_id(),
         app_password_id = %row.id,
         replaced,
         "app password minted by app connect"
     );
-    Ok(AppPasswordCreatedResponse {
+    Ok(Some(AppPasswordCreatedResponse {
         id: row.id,
         name: row.name,
         secret,
         created_at: row.created_at,
-    })
+    }))
 }
 
 /// DELETE /me/app-passwords/{id}: revoke one own app password. Foreign or

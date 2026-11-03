@@ -57,6 +57,7 @@ const EXPECTED: Record<keyof typeof EFFECTS, Sweep[]> = {
 	appPasswordsChanged: [key(U, 'connect-apps', 'app-passwords')],
 	appPasswordRosterChanged: [key('admin', 'connect-apps', 'app-passwords')],
 	connectAppsSettingsChanged: [key('shared', 'connect-apps', 'settings')],
+	appConnectSettingsChanged: [key('admin', 'connect-apps', 'app-connect')],
 	myConnectAppsChanged: [key(U, 'connect-apps', 'mine')],
 	connectionsChanged: [key(U, 'me', 'connections')],
 	sourcePlaylistsChanged: [key(U, 'source-playlists', 'job')],

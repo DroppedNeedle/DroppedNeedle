@@ -3077,6 +3077,15 @@
         "operationId": "app_connect_request_handler",
         "parameters": [
           {
+            "name": "response_type",
+            "in": "query",
+            "description": "Must be `code`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "client_id",
             "in": "query",
             "description": "The app's id, one listed in the `app_connect` settings.",
@@ -3177,11 +3186,11 @@
         "tags": [
           "auth"
         ],
-        "summary": "Trade an app connect code and its PKCE verifier for an app password of\nthe user who allowed it. The code is gone after this call, whatever it\nanswers.",
+        "summary": "The OAuth 2.0 token endpoint: trade an app connect code and its PKCE\nverifier for an app password of the user who allowed it. The code is\ngone after this call, whatever it answers.",
         "operationId": "app_connect_token_handler",
         "requestBody": {
           "content": {
-            "application/json": {
+            "application/x-www-form-urlencoded": {
               "schema": {
                 "$ref": "#/components/schemas/AppConnectTokenRequest"
               }
@@ -3201,21 +3210,11 @@
             }
           },
           "400": {
-            "description": "`invalid_grant` or `invalid_request`",
+            "description": "The trade is refused, as RFC 6749 section 5.2 names it",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/AppConnectTokenError"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "App connect is off: no app is listed",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }
@@ -36202,30 +36201,41 @@
       },
       "AppConnectTokenError": {
         "type": "object",
-        "description": "A refused trade.",
+        "description": "A refused trade (400).",
         "required": [
           "error"
         ],
         "properties": {
           "error": {
-            "type": "string",
-            "description": "`invalid_grant` (the code is unknown, used or expired, or does not\nfit the app, address or verifier) or `invalid_request` (the body is\nnot a trade)."
+            "$ref": "#/components/schemas/AppConnectTokenErrorCode",
+            "description": "What was wrong."
           }
         }
       },
+      "AppConnectTokenErrorCode": {
+        "type": "string",
+        "description": "Why a trade was refused, as RFC 6749 section 5.2 names it.",
+        "enum": [
+          "invalid_request",
+          "invalid_client",
+          "invalid_grant",
+          "unsupported_grant_type"
+        ]
+      },
       "AppConnectTokenRequest": {
         "type": "object",
-        "description": "The app's code trade.",
+        "description": "The app's code trade, sent form-encoded.",
         "required": [
-          "client_id",
-          "redirect_uri",
+          "grant_type",
           "code",
+          "redirect_uri",
+          "client_id",
           "code_verifier"
         ],
         "properties": {
           "client_id": {
             "type": "string",
-            "description": "The app's id, as in the request."
+            "description": "The app's id, as in the authorization request."
           },
           "code": {
             "type": "string",
@@ -36235,39 +36245,45 @@
             "type": "string",
             "description": "The PKCE verifier the challenge was made from."
           },
+          "grant_type": {
+            "type": "string",
+            "description": "Must be `authorization_code`."
+          },
           "redirect_uri": {
             "type": "string",
-            "description": "The return address, as in the request."
+            "description": "The return address, exactly as in the authorization request."
           }
         }
       },
       "AppConnectTokenResponse": {
         "type": "object",
-        "description": "The app password the trade mints.",
+        "description": "The app password a trade mints.",
         "required": [
-          "app_password",
-          "id",
-          "name",
+          "access_token",
+          "token_type",
           "username"
         ],
         "properties": {
-          "app_password": {
+          "access_token": {
             "type": "string",
-            "description": "The app password, shown this once. Subsonic takes it as `apiKey`."
+            "description": "The app password, shown this once. Subsonic takes it as `apiKey`,\nor as the password next to `username`."
           },
-          "id": {
-            "type": "string",
-            "description": "Its id, as listed under the user's app passwords."
-          },
-          "name": {
-            "type": "string",
-            "description": "Its name, as listed."
+          "token_type": {
+            "$ref": "#/components/schemas/AppConnectTokenType",
+            "description": "Always `Bearer`."
           },
           "username": {
             "type": "string",
-            "description": "The signed-in user's login name."
+            "description": "The login name of the user who allowed it."
           }
         }
+      },
+      "AppConnectTokenType": {
+        "type": "string",
+        "description": "The kind of token handed out. Libraries expect `Bearer`; the token is\nan app password, used the way any app password is.",
+        "enum": [
+          "Bearer"
+        ]
       },
       "AppPasswordCreate": {
         "type": "object",
@@ -39853,6 +39869,11 @@
           "redirect_uri": {
             "type": "string",
             "description": "Where the browser hands the result back; exactly one of the app's\nlisted addresses.",
+            "default": ""
+          },
+          "response_type": {
+            "type": "string",
+            "description": "Must be `code`.",
             "default": ""
           },
           "state": {

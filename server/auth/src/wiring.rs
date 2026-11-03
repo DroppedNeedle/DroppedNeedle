@@ -10,7 +10,7 @@
 
 use std::sync::Arc;
 
-use super::app_connect::AppConnectState;
+use super::app_connect::AppConnectService;
 use super::federated::MediaLinks;
 use super::federated::jellyfin_http::JellyfinHttp;
 use super::federated::oidc::OidcLogin;
@@ -55,7 +55,7 @@ pub struct AuthSetup {
     /// Plex journey routes.
     pub plex: PlexRouteState,
     /// Native app sign-in routes.
-    pub app_connect: AppConnectState,
+    pub app_connect: AppConnectService,
     /// The sign-in sections, read by the provider list.
     pub sign_in: SignInSettings,
     /// The security section, read by the response security headers.
@@ -172,7 +172,7 @@ impl AuthSetup {
             base_path,
         )
         .with_stated_addresses(stated.clone());
-        let app_connect = AppConnectState::new(users.clone(), config_store.live());
+        let app_connect = AppConnectService::new(users.clone(), config_store.live());
         Self {
             users,
             session_auth: SessionAuth::new(auth.sessions.clone(), clock.clone(), base_path)
@@ -283,7 +283,7 @@ impl FromRef<AuthSetup> for PlexRouteState {
     }
 }
 
-impl FromRef<AuthSetup> for AppConnectState {
+impl FromRef<AuthSetup> for AppConnectService {
     fn from_ref(setup: &AuthSetup) -> Self {
         setup.app_connect.clone()
     }

@@ -110,7 +110,12 @@ export const ConnectAppsQueryKeyFactory = {
 	appPasswords: (userId: string) => key(userScope(userId), 'connect-apps', 'app-passwords'),
 	mine: (userId: string) => key(userScope(userId), 'connect-apps', 'mine'),
 	// The oversight roster is the same for every admin.
-	adminAppPasswords: () => key(ADMIN, 'connect-apps', 'app-passwords')
+	adminAppPasswords: () => key(ADMIN, 'connect-apps', 'app-passwords'),
+	// The apps that may sign in through the browser.
+	appConnect: () => key(ADMIN, 'connect-apps', 'app-connect'),
+	// What an app asks of the caller at /connect.
+	appConnectRequest: (userId: string | null | undefined, request: object | null) =>
+		key(userScope(userId), 'connect-apps', 'app-connect-request', request)
 };
 
 // The connection is the one admin setting. The candidates say which artists

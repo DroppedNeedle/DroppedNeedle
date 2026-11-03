@@ -29,16 +29,6 @@ export const ROUTE_REASONS: readonly { method: string; path: string; reason: str
 	},
 	{
 		method: 'GET',
-		path: '/api/v3/settings/app-connect',
-		reason: 'the apps that may connect are set through the settings API, no page yet'
-	},
-	{
-		method: 'PUT',
-		path: '/api/v3/settings/app-connect',
-		reason: 'the apps that may connect are set through the settings API, no page yet'
-	},
-	{
-		method: 'GET',
 		path: '/api/v3/auth/oidc/callback',
 		reason: 'the identity provider sends the browser back here'
 	},
