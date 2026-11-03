@@ -7,8 +7,14 @@
 //! - **Has files.** An album has files when `has_indexed_track = 1` (kept
 //!   by triggers): at least one of its tracks is indexed. Missing tracks
 //!   (gone from disk or in the recycle bin) and excluded ones do not count.
-//!   The web UI lists a live album without files, with no tracks; player
-//!   apps never see it.
+//!   Player apps never see a live album without files.
+//! - **Listed.** The web UI's album lists show a live album, with or
+//!   without files, until everything of a file-less album has been through
+//!   the recycle bin and left it
+//!   ([`droppedneedle_library::album_gone_through_bin`]): a removed album
+//!   is listed, marked "no files", while any of its files can still be put
+//!   back. One whose files vanished from disk stays listed. Every album
+//!   still opens by its id.
 //! - **Live track.** A track every read shows is indexed and sits on a
 //!   live album. Merges retire only emptied albums, so a track left on a
 //!   retired one is a leftover no read lists, counts or returns.
@@ -38,6 +44,22 @@
 macro_rules! live_album {
     ($album:literal) => {
         concat!("+", $album, ".retired_into_album_id IS NULL")
+    };
+}
+
+/// An album the web UI's lists show, over an album alias: live, and with
+/// files or with something of it not yet through the recycle bin.
+macro_rules! listed_album {
+    ($album:literal) => {
+        concat!(
+            "+",
+            $album,
+            ".retired_into_album_id IS NULL AND (+",
+            $album,
+            ".has_indexed_track = 1 OR NOT (",
+            droppedneedle_library::album_gone_through_bin!(concat!($album, ".id")),
+            "))"
+        )
     };
 }
 
@@ -108,7 +130,9 @@ macro_rules! owned_artist {
     };
 }
 
-pub(crate) use {live_album, live_track, musicbrainz, owned_album, owned_artist, track_codec};
+pub(crate) use {
+    listed_album, live_album, live_track, musicbrainz, owned_album, owned_artist, track_codec,
+};
 
 /// Album `$album`'s primary format: its most common indexed track format,
 /// lowercased; NULL for an album without indexed tracks.

@@ -6,15 +6,56 @@
 
 use super::journal::{JournalKind, JournalState, MgmtState};
 
-/// Where a file is in the recycle bin: its copy's row is not marked as gone,
-/// and its copy reached the bin or its row waits for an admin, the state
-/// `$needs_attention` binds.
-macro_rules! in_bin {
-    ($needs_attention:literal) => {
+/// Where a file is in the recycle bin, over a replacement alias and its
+/// journal row's alias: its copy's row is not marked as gone, and its copy
+/// reached the bin or its row waits for an admin, the state
+/// `$needs_attention` names (a bind, or the state quoted).
+#[macro_export]
+macro_rules! in_recycle_bin {
+    ($replacement:literal, $journal:literal, $needs_attention:literal) => {
         concat!(
-            "r.expired_at IS NULL AND (r.recycled_at IS NOT NULL OR j.state = ",
+            $replacement,
+            ".expired_at IS NULL AND (",
+            $replacement,
+            ".recycled_at IS NOT NULL OR ",
+            $journal,
+            ".state = ",
             $needs_attention,
             ")"
+        )
+    };
+}
+
+macro_rules! in_bin {
+    ($needs_attention:literal) => {
+        $crate::in_recycle_bin!("r", "j", $needs_attention)
+    };
+}
+
+/// Everything of an album, a column holding its id, went through the
+/// recycle bin and has left it: the album has tracks, each of them is
+/// missing because its file went to the bin (a copy reached the bin no
+/// earlier than the track went missing: a removal marks the track missing
+/// in its commit and its copy lands after), and none is there now (put
+/// back, expired or emptied). A track missing for another reason (its
+/// folder vanished, even after an earlier trip to the bin and back) or
+/// one excluded keeps the album out of this.
+#[macro_export]
+macro_rules! album_gone_through_bin {
+    ($album_id:expr) => {
+        concat!(
+            "EXISTS (SELECT 1 FROM local_tracks gbt WHERE gbt.local_album_id = ",
+            $album_id,
+            ") AND NOT EXISTS (SELECT 1 FROM local_tracks gbt WHERE gbt.local_album_id = ",
+            $album_id,
+            " AND (gbt.availability <> 'missing' OR gbt.missing_at IS NULL \
+             OR NOT EXISTS (SELECT 1 FROM library_publish_replacements gbr \
+             WHERE gbr.replaced_track_id = gbt.id AND gbr.recycled_at >= gbt.missing_at) \
+             OR EXISTS (SELECT 1 FROM library_publish_replacements gbr \
+             JOIN library_publish_journal gbj ON gbj.id = gbr.journal_id \
+             WHERE gbr.replaced_track_id = gbt.id AND ",
+            $crate::in_recycle_bin!("gbr", "gbj", "'needs_attention'"),
+            ")))"
         )
     };
 }
@@ -89,6 +130,12 @@ droppedneedle_kernel::sql! {
     pub(super) EXPIRY_HELD_PUT_BACKS = "SELECT id, bundle_id, track_id \
              FROM library_publish_journal \
              WHERE state IN (?1, ?2, ?3, ?4, ?5, ?6) AND kind = ?7";
+    /// Whether row `?1`'s copy was of a track on an album with no files.
+    pub(super) EXPIRY_OF_FILELESS_ALBUM = "SELECT EXISTS (SELECT 1 \
+             FROM library_publish_replacements r \
+             JOIN local_tracks t ON t.id = r.replaced_track_id \
+             JOIN local_albums a ON a.id = t.local_album_id \
+             WHERE r.journal_id = ?1 AND a.has_indexed_track = 0)";
     /// Record that row `?1`'s copy left the bin at `?2` (unix
     /// milliseconds): expired, found gone, or put back.
     pub(super) EXPIRY_MARK = "UPDATE library_publish_replacements SET expired_at = ?2 \
@@ -740,5 +787,17 @@ droppedneedle_kernel::sql! {
     pub(super) row WrittenState for [TRACK_WRITTEN_STATE] {
         written_sha256: Option<String>,
         v2_path_revision: Option<String>,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::JournalState;
+
+    /// [`album_gone_through_bin!`] writes the held state as text.
+    #[test]
+    fn the_bin_rule_names_the_held_state() {
+        let state = format!("gbj.state = '{}'", JournalState::NeedsAttention.as_str());
+        assert!(album_gone_through_bin!("a.id").contains(&state));
     }
 }

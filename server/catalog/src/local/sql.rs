@@ -14,7 +14,7 @@ use rusqlite::types::Value;
 
 use super::definitions::album_primary_format;
 use super::definitions::{
-    live_album, live_track, musicbrainz, owned_album, owned_artist, track_codec,
+    listed_album, live_album, live_track, musicbrainz, owned_album, owned_artist, track_codec,
 };
 use super::player::{
     AlbumKey, AlbumSequence, AlbumShape, HistoryKey, ItemKind, KeyedBy, PlayedFilter, TextMatch,
@@ -62,13 +62,13 @@ droppedneedle_kernel::sql! {
         " LEFT JOIN local_album_artwork w ON w.local_album_id = a.id \
          LEFT JOIN local_tracks t ON t.local_album_id = a.id AND t.availability = 'indexed'"
     ));
-    /// The album list's filters, shared by its page and its count: live
+    /// The album list's filters, shared by its page and its count: listed
     /// albums, with or without files. Binds: the pattern three times, the
     /// artist twice, the decade three times, the formats (`,flac,mp3,`)
     /// twice and whether the album must have one of them (1) or none (0),
     /// the minimum indexed tracks twice.
     pub(crate) fragment ALBUM_FILTER = (concat!(
-        live_album!("a"),
+        listed_album!("a"),
         " AND (? IS NULL OR a.title_folded LIKE ? ESCAPE '\\' \
          OR a.album_artist_name_folded LIKE ? ESCAPE '\\') \
          AND (? IS NULL OR a.album_artist_id = ?) \
@@ -133,18 +133,18 @@ droppedneedle_kernel::sql! {
     /// The album one release group (`?1`, any case) opens.
     pub(crate) ALBUM_BY_GROUP = "SELECT " + ALBUM_COLUMNS + " " + ALBUM_JOINS
         + " WHERE a.id = (" + (copy_of_group!("= lower(?1)")) + ") GROUP BY a.id";
-    /// Other live albums of an album's release group, oldest first.
+    /// Other listed albums of an album's release group, oldest first.
     pub(crate) ALBUM_COPIES = "SELECT " + ALBUM_COLUMNS + " " + ALBUM_JOINS
         + " WHERE ae.release_group_mbid = \
         (SELECT i.release_group_mbid FROM local_album_external_identities i \
          WHERE i.local_album_id = ? AND " + (musicbrainz!("i")) + ") \
-        AND a.id != ? AND " + (live_album!("a"))
+        AND a.id != ? AND " + (listed_album!("a"))
         + " GROUP BY a.id ORDER BY a.created_at ASC, a.id ASC";
-    /// A page of the live albums an artist leads, by title.
+    /// A page of the listed albums an artist leads, by title.
     family LED_ALBUM_PAGE = led_album_page;
-    /// How many live albums an artist leads.
+    /// How many listed albums an artist leads.
     pub(crate) LED_ALBUM_COUNT = "SELECT COUNT(*) FROM local_albums a \
-        WHERE a.album_artist_id = ? AND " + (live_album!("a"));
+        WHERE a.album_artist_id = ? AND " + (listed_album!("a"));
     /// Live albums an artist (bound twice) appears on without leading,
     /// reached from the artist's credits.
     pub(crate) fragment APPEARANCE_FILTER = (concat!(
@@ -1059,15 +1059,15 @@ pub(crate) fn title_keys() -> Vec<OrderKey> {
     vec![("a.title_folded", false), ("a.id", false)]
 }
 
-/// A page of the live albums an artist leads: the artist, the cursor, the
-/// limit.
+/// A page of the listed albums an artist leads: the artist, the cursor,
+/// the limit.
 pub(crate) fn led_album_page(after_cursor: bool) -> String {
     let keys = title_keys();
     format!(
         "SELECT {} FROM local_albums a WHERE a.album_artist_id = ? AND {}{} \
          ORDER BY {} LIMIT ?",
         key_columns(&keys),
-        live_album!("a"),
+        listed_album!("a"),
         after(&keys, after_cursor),
         order_by(&keys)
     )

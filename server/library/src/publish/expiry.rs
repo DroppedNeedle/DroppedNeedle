@@ -372,15 +372,25 @@ pub fn expire<G>(
     Ok(report)
 }
 
-/// Record that the copies of rows `ids` left the bin at `now_ms`.
+/// Record that the copies of rows `ids` left the bin at `now_ms`. A copy
+/// whose album has no files left can take that album off the web lists,
+/// so marking one moves the catalog revision the lists' totals are kept
+/// by.
 pub(super) fn mark<S: AsRef<str>>(db: &Db, ids: &[S], now_ms: i64) -> Result<(), PublishError> {
     if ids.is_empty() {
         return Ok(());
     }
     db.write_blocking(Lane::Background, "publish.expiry_mark", |tx| {
         let mut mark = tx.prepare_cached(sql::EXPIRY_MARK.text())?;
+        let mut listed = tx.prepare_cached(sql::EXPIRY_OF_FILELESS_ALBUM.text())?;
+        let mut moved = false;
         for id in ids {
-            mark.execute(params![id.as_ref(), now_ms])?;
+            if mark.execute(params![id.as_ref(), now_ms])? > 0 && !moved {
+                moved = listed.query_row(params![id.as_ref()], |row| row.get::<_, bool>(0))?;
+            }
+        }
+        if moved {
+            crate::catalog_revision::bump_catalog(tx)?;
         }
         Ok::<_, PublishError>(())
     })

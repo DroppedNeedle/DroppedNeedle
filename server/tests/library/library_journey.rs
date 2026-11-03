@@ -5721,6 +5721,197 @@ async fn expiry_and_an_empty_at_once_mark_every_copy() {
     );
 }
 
+/// A removed album stays in the album list and on its artist's page,
+/// marked as having no files, while its files are in the recycle bin.
+/// Once the bin is emptied it leaves both lists, and its link still
+/// opens it.
+#[tokio::test]
+async fn a_removed_album_is_listed_until_the_bin_lets_go_of_it() {
+    let rig = Rig::start("lib-removed-listed").await;
+    let app = &rig.app;
+    let auth = app.login_admin().await;
+    let headers = [("authorization", auth.as_str())];
+    let music = app.config.root_app_dir.join("music");
+    plant(&music, "One/LP/01.flac", "flac_full_01.flac");
+    plant(&music, "Two/LP/01.flac", "flac_full_01.flac");
+    app.add_library_folder("music", &music).await;
+    let album_at = |path: &str| -> String {
+        let track = rig
+            .scan_store
+            .track_at("music", path)
+            .unwrap()
+            .expect("track indexed");
+        app.db()
+            .query_row(
+                "SELECT local_album_id FROM local_tracks WHERE id = ?1",
+                [&track],
+                |row| row.get(0),
+            )
+            .expect("album id")
+    };
+    let (removed, kept) = (album_at("One/LP/01.flac"), album_at("Two/LP/01.flac"));
+    let get = |uri: String| {
+        let headers = &headers;
+        async move {
+            let (status, body) = app.call("GET", &uri, headers, None).await;
+            assert_eq!(status, StatusCode::OK, "{uri}: {body}");
+            body
+        }
+    };
+    let album = get(format!("/api/v3/library/albums/{removed}")).await;
+    let artist = album["artist_id"].as_str().expect("artist id").to_owned();
+    let lists = || {
+        let artist = artist.clone();
+        async move {
+            let mut listed = Vec::new();
+            for uri in [
+                "/api/v3/library/albums?limit=50".to_owned(),
+                format!("/api/v3/library/artists/{artist}/albums?limit=50"),
+            ] {
+                let page = get(uri).await;
+                let mut ids: Vec<(String, u64)> = page["items"]
+                    .as_array()
+                    .expect("items")
+                    .iter()
+                    .map(|item| {
+                        let id = item["id"].as_str().expect("id").to_owned();
+                        (id, item["track_count"].as_u64().expect("count"))
+                    })
+                    .collect();
+                ids.sort();
+                assert_eq!(page["total"], json!(ids.len()), "{page}");
+                listed.push(ids);
+            }
+            listed
+        }
+    };
+
+    let uri = format!(
+        "/api/v3/library/albums/{removed}?expected_revision={}&expected_track_count={}\
+         &delete_files=true",
+        album["row_revision"], album["track_count"]
+    );
+    let (status, body) = app.call("DELETE", &uri, &headers, None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let mut both = vec![(removed.clone(), 0), (kept.clone(), 1)];
+    both.sort();
+    assert_eq!(lists().await, [both.clone(), both], "in the bin: listed");
+
+    let summary = get("/api/v3/library/recycle-bin/summary".to_owned()).await;
+    assert_eq!(summary["files"], json!(1), "{summary}");
+    let before = summary["as_of"].as_i64().expect("as of") + 1000;
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/v3/library/recycle-bin/empty",
+            &headers,
+            Some(json!({ "before": before })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    // The empty runs on the job runner's blocking threads: the bound is
+    // wall time.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        let status = get("/api/v3/library/recycle-bin/status".to_owned()).await;
+        if status["state"] == "idle" && status["last_emptied"]["deleted"] == json!(1) {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the bin empties: {status}"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+
+    let only = vec![(kept.clone(), 1)];
+    assert_eq!(lists().await, [only.clone(), only], "out of the bin: gone");
+    let opened = get(format!("/api/v3/library/albums/{removed}")).await;
+    assert_eq!(opened["id"], json!(removed), "its link still opens it");
+    assert_eq!(opened["track_count"], json!(0));
+    rig.stop().await;
+}
+
+/// An album removed and put back whose folder then vanishes from disk
+/// stays listed: its files went missing after their trip to the bin, not
+/// because of it.
+#[tokio::test]
+async fn an_album_put_back_then_vanished_stays_listed() {
+    let rig = Rig::start("lib-put-back-vanished").await;
+    let app = &rig.app;
+    let auth = app.login_admin().await;
+    let headers = [("authorization", auth.as_str())];
+    let music = app.config.root_app_dir.join("music");
+    plant(&music, "One/LP/01.flac", "flac_full_01.flac");
+    plant(&music, "Two/LP/01.flac", "flac_full_01.flac");
+    app.add_library_folder("music", &music).await;
+    let track = rig
+        .scan_store
+        .track_at("music", "One/LP/01.flac")
+        .unwrap()
+        .expect("track indexed");
+    let album: String = app
+        .db()
+        .query_row(
+            "SELECT local_album_id FROM local_tracks WHERE id = ?1",
+            [&track],
+            |row| row.get(0),
+        )
+        .expect("album id");
+    let get = |uri: String| {
+        let headers = &headers;
+        async move {
+            let (status, body) = app.call("GET", &uri, headers, None).await;
+            assert_eq!(status, StatusCode::OK, "{uri}: {body}");
+            body
+        }
+    };
+    let shown = get(format!("/api/v3/library/albums/{album}")).await;
+    let uri = format!(
+        "/api/v3/library/albums/{album}?expected_revision={}&expected_track_count={}\
+         &delete_files=true",
+        shown["row_revision"], shown["track_count"]
+    );
+    let (status, body) = app.call("DELETE", &uri, &headers, None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let removals = get(format!("/api/v3/library/albums/{album}/removals")).await;
+    let removal = removals["items"][0]["id"]
+        .as_str()
+        .expect("removal id")
+        .to_owned();
+    let (status, body) = app
+        .call(
+            "POST",
+            &format!("/api/v3/library/albums/{album}/removals/{removal}/put-back"),
+            &headers,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["missing"], json!([]), "{body}");
+
+    std::fs::remove_dir_all(music.join("One")).expect("the folder vanishes");
+    app.scan_library().await;
+
+    let page = get("/api/v3/library/albums?limit=50".to_owned()).await;
+    let listed: Vec<(&str, u64)> = page["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .map(|item| {
+            (
+                item["id"].as_str().expect("id"),
+                item["track_count"].as_u64().expect("count"),
+            )
+        })
+        .collect();
+    assert!(
+        listed.contains(&(album.as_str(), 0)),
+        "a vanished album stays listed: {page}"
+    );
+    rig.stop().await;
+}
+
 /// The bin page lists a removal with its files and their size, offers
 /// Put back, and lists it no more once its files are back.
 #[tokio::test]
