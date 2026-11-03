@@ -4500,6 +4500,13 @@ async fn an_album_removal_takes_its_sidecars_and_leaves_no_folder_behind() {
         .remove_album(&album, true, true, "admin")
         .expect("album removed again");
     assert_eq!(removed.recycled.len(), 6);
+    // Emptying takes only copies that landed before now; this test empties
+    // in the same millisecond, so it moves the landings back.
+    conn.execute(
+        "UPDATE library_publish_replacements SET recycled_at = recycled_at - 10000",
+        [],
+    )
+    .expect("the copies reached the bin a little earlier");
     let report = library
         .publishing
         .empty_recycle_bin(library.clock.now_ms() + 1_000, &|| true)
