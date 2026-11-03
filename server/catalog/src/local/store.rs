@@ -33,6 +33,8 @@ pub struct LocalCatalog {
 struct Totals {
     revision: i64,
     counted: HashMap<String, Vec<u64>>,
+    /// The album counts per primary format, once counted at the revision.
+    formats: Option<Vec<(String, u64)>>,
 }
 
 /// Most totals remembered at one revision; past this they are dropped.
@@ -79,11 +81,62 @@ impl LocalCatalog {
             .totals
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if memo.revision != revision || memo.counted.len() >= TOTALS_CAP {
-            memo.revision = revision;
+        if memo.revision != revision {
+            *memo = Totals {
+                revision,
+                ..Totals::default()
+            };
+        } else if memo.counted.len() >= TOTALS_CAP {
             memo.counted.clear();
         }
         memo.counted.insert(key, counted.clone());
+        Ok(counted)
+    }
+
+    /// Drop every remembered total, as a catalog write does: the timings
+    /// read the counts cold this way.
+    #[cfg(test)]
+    pub(crate) fn forget_totals(&self) {
+        *self
+            .totals
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Totals::default();
+    }
+
+    /// The album counts per primary format at the catalog revision now:
+    /// remembered from an earlier ask, else counted by `count`.
+    pub(crate) async fn format_totals<F>(&self, count: F) -> Result<Vec<(String, u64)>, StoreError>
+    where
+        F: FnOnce(&Connection) -> rusqlite::Result<Vec<(String, u64)>> + Send + 'static,
+    {
+        let revision: i64 = self
+            .read("library.catalog.revision", |conn| {
+                scalar(conn, sql::CATALOG_REVISION.text(), &[])
+            })
+            .await?;
+        {
+            let memo = self
+                .totals
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if memo.revision == revision
+                && let Some(formats) = &memo.formats
+            {
+                return Ok(formats.clone());
+            }
+        }
+        let counted = self.read("library.albums.formats", count).await?;
+        let mut memo = self
+            .totals
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if memo.revision != revision {
+            *memo = Totals {
+                revision,
+                ..Totals::default()
+            };
+        }
+        memo.formats = Some(counted.clone());
         Ok(counted)
     }
 

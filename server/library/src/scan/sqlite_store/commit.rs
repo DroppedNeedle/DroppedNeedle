@@ -1300,7 +1300,7 @@ fn write_item(
             blank(&edition.release_country),
             edition.total_discs,
             edition.release_date,
-            edition.total_tracks,
+            track_total(edition),
         ])?;
     let rows_before = credit_rows(tx, CreditSide::Track, &track_id)?;
     tx.prepare_cached(crate::scan::sql::DROP_TRACK_CREDITS.text())?
@@ -2845,7 +2845,15 @@ pub(super) fn commit_window(
     }
 }
 
-/// Store the edition hints read from unchanged files whose rows held none.
+/// The track total an edition row stores: the file's, or 0 for a file read
+/// that names none, so a row from before totals were kept (NULL) is told
+/// apart and filled once.
+fn track_total(edition: &crate::tags::read::EditionTags) -> u32 {
+    edition.total_tracks.unwrap_or(0)
+}
+
+/// Store the edition hints read from unchanged files whose rows held none,
+/// or held no track total.
 /// Only those rows are written: the rest of a carried row stays as it is.
 /// Returns how many rows were stored, and the albums without a settled
 /// match that gained a hint, which identification looks at again.
@@ -2881,9 +2889,18 @@ fn fill_edition_tags(
                 release_country,
                 edition.total_discs,
                 edition.release_date,
-                edition.total_tracks,
+                track_total(edition),
             ])?;
         filled += stored;
+        if stored == 0 {
+            filled += tx
+                .prepare_cached(crate::scan::sql::FILL_TRACK_TOTAL.text())?
+                .execute(params![
+                    fill.track_id,
+                    fill.stat_revision,
+                    track_total(edition)
+                ])?;
+        }
         // Only what edition matching reads counts: it takes no release
         // date, and a disc total only when there is more than one disc.
         let hinted = !EditionHints::of_file(

@@ -57,14 +57,22 @@ describe('library query endpoints', () => {
 			(_, index) => `album-${index.toString().padStart(3, '0')}`
 		);
 		mockPost
-			.mockResolvedValueOnce({ owned_ids: ['album-000'], requested_ids: [] })
-			.mockResolvedValueOnce({ owned_ids: [], requested_ids: ['album-500'] });
+			.mockResolvedValueOnce({
+				owned_ids: ['album-000'],
+				requested_ids: [],
+				held_tracks: [{ id: 'album-000', held: 3, expected: 12 }]
+			})
+			.mockResolvedValueOnce({ owned_ids: [], requested_ids: ['album-500'], held_tracks: [] });
 
 		const result = await callQueryFn(getLibraryMembershipQueryOptions('user-a', ids));
 
 		expect(mockPost).toHaveBeenCalledTimes(2);
 		expect((mockPost.mock.calls[0][1] as { album_ids: string[] }).album_ids).toHaveLength(500);
 		expect((mockPost.mock.calls[1][1] as { album_ids: string[] }).album_ids).toEqual(['album-500']);
-		expect(result).toEqual({ owned_ids: ['album-000'], requested_ids: ['album-500'] });
+		expect(result).toEqual({
+			owned_ids: ['album-000'],
+			requested_ids: ['album-500'],
+			held_tracks: [{ id: 'album-000', held: 3, expected: 12 }]
+		});
 	});
 });

@@ -1,11 +1,11 @@
 import type { AlbumView } from '$lib/types';
+import type { components } from '$lib/api/v3/openapi';
 
 /** A release group's MusicBrainz types, as `/artists/{mbid}/owned-releases` gives them. */
-export interface ReleaseTypes {
-	id: string;
-	primary_type?: string | null;
-	secondary_types: string[];
-}
+export type ReleaseTypes = Pick<
+	components['schemas']['OwnedRelease'],
+	'id' | 'primary_type' | 'secondary_types'
+>;
 
 /** An owned album and the type shown on its card, when it is not a plain album. */
 export interface FiledAlbum {

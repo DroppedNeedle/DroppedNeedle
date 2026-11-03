@@ -102,6 +102,15 @@ impl LocalCatalog {
         Ok(found)
     }
 
+    /// `(album id, lowercase group)` for every album that owns one of
+    /// `groups`, by the one ownership rule.
+    pub async fn group_owners(
+        &self,
+        groups: &[String],
+    ) -> Result<Vec<(String, String)>, StoreError> {
+        self.owners(Owners::Group, &lowered(groups)).await
+    }
+
     /// The one live local album each identifier names. Identifiers that
     /// name nothing, or a MusicBrainz id held by more than one album, are
     /// left out rather than guessed.

@@ -6,9 +6,10 @@ use std::collections::{HashMap, HashSet};
 
 use super::LibraryDeps;
 use super::cursor::{Cursor, fresh_seed};
+use super::edition_tracks::{self, AlbumTracks, group_tracks};
 use super::models::{
     AlbumDetailView, AlbumFormatCount, AlbumFormatCounts, AlbumPage, AlbumQuery, AlbumView,
-    ArtistPage, ArtistQuery, ArtistView, CursorQuery, DecadeShelf, DecadesResponse,
+    ArtistPage, ArtistQuery, ArtistView, CursorQuery, DecadeShelf, DecadesResponse, HeldTracks,
     LibraryAlbumStatus, LibraryMembershipRequest, LibraryMembershipResponse, LibraryStatusTrack,
     LyricLine, LyricsView, ManagementHoldView, PageQuery, RecentQuery, ResolveTracksRequest,
     ResolveTracksResponse, ResolvedTrack, StatsView, SuggestionTrack, SuggestionsQuery,
@@ -390,61 +391,19 @@ async fn album_views(
     let ids: Vec<String> = records.iter().map(|record| record.id.clone()).collect();
     let favorites = favorites_for(deps, user_id, "album", &ids).await?;
     let missing = albums_missing_art(deps, &records).await?;
-    let expected = expected_track_counts(deps, &records).await;
+    let tracks = edition_tracks::album_tracks(&deps.catalog, deps.releases.as_ref(), &ids).await?;
     Ok(records
         .into_iter()
         .map(|record| {
             let favorite = favorites.contains(&record.id);
             let art_missing = missing.contains(&record.id);
-            let count = expected.get(&record.id).copied();
+            let expected = tracks.get(&record.id).and_then(|tracks| tracks.expected);
             AlbumView {
-                expected_track_count: count,
+                expected_track_count: expected,
                 ..AlbumView::from((record, favorite, art_missing))
             }
         })
         .collect())
-}
-
-/// How many tracks each album's edition has, as `releaseSongCount` counts
-/// for the apps: the matched release's tracklist while the catalog holds
-/// it, else the totals the files' tags give. Never asks MusicBrainz. An
-/// album neither tells is absent; a failed read counts none.
-async fn expected_track_counts(
-    deps: &LibraryDeps,
-    records: &[AlbumRecord],
-) -> HashMap<String, u64> {
-    let mut releases: Vec<String> = records
-        .iter()
-        .filter_map(|record| record.release_mbid.clone())
-        .collect();
-    releases.sort_unstable();
-    releases.dedup();
-    let held = match &deps.releases {
-        Some(catalog) if !releases.is_empty() => catalog.held_release_track_counts(&releases).await,
-        _ => HashMap::new(),
-    };
-    let mut counts: HashMap<String, u64> = HashMap::new();
-    let mut untold: Vec<String> = Vec::new();
-    for record in records {
-        match record.release_mbid.as_ref().and_then(|mbid| held.get(mbid)) {
-            Some(count) => {
-                counts.insert(record.id.clone(), u64::from(*count));
-            }
-            None => untold.push(record.id.clone()),
-        }
-    }
-    if !untold.is_empty() {
-        match deps.catalog.tagged_song_counts(&untold).await {
-            Ok(tagged) => counts.extend(
-                tagged
-                    .into_iter()
-                    .filter(|(_, count)| *count > 0)
-                    .map(|(id, count)| (id, u64::from(count))),
-            ),
-            Err(error) => tracing::warn!(%error, "tagged track totals failed; showing none"),
-        }
-    }
-    counts
 }
 
 /// Favorite flags for one page of ids. Empty pages skip the store call.
@@ -970,6 +929,7 @@ pub async fn membership(
         return Ok(LibraryMembershipResponse {
             owned_ids: Vec::new(),
             requested_ids: Vec::new(),
+            held_tracks: Vec::new(),
         });
     }
     let asked: HashSet<&str> = ids.iter().map(String::as_str).collect();
@@ -983,10 +943,45 @@ pub async fn membership(
     };
     let owned = deps.catalog.owned_albums(&ids).await?;
     let requested = deps.catalog.requested_albums(&ids).await?;
+    let held_tracks = held_tracks(deps, &ids).await?;
     Ok(LibraryMembershipResponse {
         owned_ids: keep(owned),
         requested_ids: keep(requested),
+        held_tracks,
     })
+}
+
+/// What the library holds of each of `groups` (lowercase release groups)
+/// it owns, over every album that owns it, as [`group_tracks`] adds them.
+async fn held_tracks(
+    deps: &LibraryDeps,
+    groups: &[String],
+) -> Result<Vec<HeldTracks>, LibraryFailure> {
+    let owners = deps.catalog.group_owners(groups).await?;
+    let mut albums: Vec<String> = owners.iter().map(|(album, _)| album.clone()).collect();
+    albums.sort_unstable();
+    albums.dedup();
+    let tracks =
+        edition_tracks::album_tracks(&deps.catalog, deps.releases.as_ref(), &albums).await?;
+    let mut by_group: HashMap<String, Vec<AlbumTracks>> = HashMap::new();
+    for (album, group) in owners {
+        if let Some(album) = tracks.get(&album) {
+            by_group.entry(group).or_default().push(*album);
+        }
+    }
+    let mut held: Vec<HeldTracks> = by_group
+        .into_iter()
+        .filter_map(|(id, owners)| {
+            let tracks = group_tracks(&owners)?;
+            Some(HeldTracks {
+                id,
+                held: tracks.held,
+                expected: tracks.expected,
+            })
+        })
+        .collect();
+    held.sort_by(|a, b| a.id.cmp(&b.id));
+    Ok(held)
 }
 
 /// Lossless containers by extension.

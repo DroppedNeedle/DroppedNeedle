@@ -306,7 +306,7 @@ impl SubsonicStore {
             .map(|album| album.record.id.clone())
             .collect::<Vec<_>>();
         let player_ids = self.library.player_ids(&ids, &[]).await?;
-        let counts = self.library.release_song_counts(&ids, &player_ids).await?;
+        let counts = self.library.release_song_counts(&ids).await?;
         let local_first = self.library.local_art_first();
         let mut views = albums
             .into_iter()

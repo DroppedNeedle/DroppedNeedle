@@ -21,6 +21,7 @@ use droppedneedle_catalog::collections::store::play_marks::MarkScope;
 use droppedneedle_catalog::collections::store::playlists::NewEntry;
 use droppedneedle_catalog::collections::store::ratings::{ItemRating, RatedKind};
 use droppedneedle_catalog::collections::{CollectionsState, error::CollectionsError};
+use droppedneedle_catalog::local::edition_tracks::album_tracks;
 use droppedneedle_catalog::local::player::{
     AlbumOrder, AlbumQuery, PlayStat, PlayedValues, PlayerAlbum, PlayerIds, PlayerTrack,
     ShuffleSeeds, TrackOrder, TrackQuery,
@@ -34,14 +35,6 @@ use droppedneedle_kernel::db::{Db, DbError};
 
 use crate::sql;
 use crate::user_settings::UserSettings;
-
-/// An album's `releaseSongCount`: the track count of the MusicBrainz
-/// release it is matched to, else the count its files' tags give, else
-/// none. Never zero.
-#[must_use]
-pub fn release_song_count(release: Option<u32>, tagged: Option<u32>) -> Option<i64> {
-    release.or(tagged).filter(|count| *count > 0).map(i64::from)
-}
 
 /// A compat read or write failed. Client faults keep their kind so each
 /// protocol answers its own code (Subsonic 70/50/10/0, Jellyfin
@@ -547,45 +540,17 @@ impl CompatLibrary {
         Ok(self.service().mark_played(user_id, scope, played).await?)
     }
 
-    /// The songs each of `album_ids` should have (`releaseSongCount`), as
-    /// [`release_song_count`] picks it. `ids` are the albums' player ids.
-    /// Never asks MusicBrainz: a release counts only while its detail is
-    /// held. An album with no count is absent.
+    /// The songs each of `album_ids` should have (`releaseSongCount`): its
+    /// edition's track count, as the web app's album cards read it. Never
+    /// asks MusicBrainz. An album with no count is absent.
     pub async fn release_song_counts(
         &self,
         album_ids: &[String],
-        ids: &PlayerIds,
     ) -> Result<HashMap<String, i64>, CompatError> {
-        let releases: HashMap<&str, &str> = album_ids
-            .iter()
-            .filter_map(|id| {
-                let album = ids.albums.get(id).filter(|album| album.matched)?;
-                Some((id.as_str(), album.release_mbid.as_deref()?))
-            })
-            .collect();
-        let held = match &self.releases {
-            Some(catalog) if !releases.is_empty() => {
-                let mut mbids: Vec<String> =
-                    releases.values().map(|mbid| (*mbid).to_owned()).collect();
-                mbids.sort_unstable();
-                mbids.dedup();
-                catalog.held_release_track_counts(&mbids).await
-            }
-            _ => HashMap::new(),
-        };
-        let held_of = |id: &str| releases.get(id).and_then(|mbid| held.get(*mbid)).copied();
-        let untold: Vec<String> = album_ids
-            .iter()
-            .filter(|id| held_of(id).is_none())
-            .cloned()
-            .collect();
-        let tagged = self.catalog.tagged_song_counts(&untold).await?;
-        Ok(album_ids
-            .iter()
-            .filter_map(|id| {
-                let count = release_song_count(held_of(id), tagged.get(id).copied())?;
-                Some((id.clone(), count))
-            })
+        let counts = album_tracks(&self.catalog, self.releases.as_ref(), album_ids).await?;
+        Ok(counts
+            .into_iter()
+            .filter_map(|(id, tracks)| Some((id, i64::try_from(tracks.expected?).ok()?)))
             .collect())
     }
 
@@ -951,21 +916,5 @@ impl CompatLibrary {
             })
             .await?;
         Ok(found)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::release_song_count;
-
-    /// The matched release's count wins over the tags', the tags' stands
-    /// in when no release is held, and with neither the field is left out.
-    #[test]
-    fn the_release_count_comes_from_musicbrainz_then_the_tags() {
-        assert_eq!(release_song_count(Some(12), Some(10)), Some(12));
-        assert_eq!(release_song_count(None, Some(10)), Some(10));
-        assert_eq!(release_song_count(Some(12), None), Some(12));
-        assert_eq!(release_song_count(None, None), None);
-        assert_eq!(release_song_count(Some(0), None), None);
     }
 }

@@ -57,6 +57,7 @@ export const getLibraryMembershipQueryOptions = (
 		queryFn: async ({ signal }) => {
 			let ownedIds: string[] = [];
 			let requestedIds: string[] = [];
+			let heldTracks: LibraryMembershipResponse['held_tracks'] = [];
 			for (let offset = 0; offset < albumIds.length; offset += 500) {
 				const membership: LibraryMembershipResponse = await api.v3.POST(
 					v3('/api/v3/library/membership'),
@@ -65,10 +66,12 @@ export const getLibraryMembershipQueryOptions = (
 				);
 				ownedIds = ownedIds.concat(membership.owned_ids ?? []);
 				requestedIds = requestedIds.concat(membership.requested_ids ?? []);
+				heldTracks = heldTracks.concat(membership.held_tracks ?? []);
 			}
 			return {
 				owned_ids: ownedIds.sort(),
-				requested_ids: requestedIds.sort()
+				requested_ids: requestedIds.sort(),
+				held_tracks: heldTracks.sort((a, b) => a.id.localeCompare(b.id))
 			};
 		}
 	});

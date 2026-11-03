@@ -72,7 +72,8 @@ pub struct IndexWindow {
     pub refused: Vec<(String, String, String)>,
     pub counters: Vec<RowCounter>,
     /// Unchanged files whose edition hints were never stored (files
-    /// carried over from v2): only those rows are written for them.
+    /// carried over from v2), or stored without a track total (read
+    /// before totals were kept): only those rows are written for them.
     pub edition_fills: Vec<EditionFill>,
     /// Unchanged files whose row does not say whether their length was
     /// measured (rows from before the scan recorded it): only that flag

@@ -17,6 +17,7 @@
 
 pub mod cursor;
 pub(crate) mod definitions;
+pub mod edition_tracks;
 pub mod error;
 pub mod file_lyrics;
 pub mod handlers;

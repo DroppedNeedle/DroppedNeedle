@@ -341,6 +341,27 @@ async fn albums_tell_how_many_songs_their_release_has() {
         "{untold}"
     );
 
+    // A guess its files' tags contradict never lends its release: the
+    // tags count again.
+    rig.app
+        .seed(
+            "INSERT INTO library_album_match_state (local_album_id, state, reason_code, \
+             candidates_json, updated_at) VALUES \
+             ('alb-1', 'unconfirmed', 'NAMED_GROUP_DIFFERS', '[]', 0)",
+        )
+        .await;
+    let body = subsonic(&rig, "getAlbumList2", &[("type", "alphabeticalByName")]).await;
+    let parsed: Value = serde_json::from_str(&body).expect("json answer");
+    assert_eq!(
+        release_song_counts(&parsed["subsonic-response"]["albumList2"]["album"]),
+        [
+            named("Dummy", Some(10)),
+            named("Roseland", None),
+            named("Third", Some(7)),
+        ]
+    );
+    crate::common::compat::assert_golden("subsonic_release_song_count.json", &parsed);
+
     assert_eq!(
         asked.load(std::sync::atomic::Ordering::SeqCst),
         1,

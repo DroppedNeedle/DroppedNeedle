@@ -7,7 +7,7 @@
 	import SampleButton from './discover/SampleButton.svelte';
 	import LibraryBadge from './LibraryBadge.svelte';
 	import { getLibraryMembershipQuery } from '$lib/queries/library/LibraryQueries.svelte';
-	import { trackCountLabel, type HeldTracks } from '$lib/utils/trackCount';
+	import { trackCountLabel } from '$lib/utils/trackCount';
 
 	interface Release {
 		id: string;
@@ -28,8 +28,6 @@
 		onToggleCollapse: () => void;
 		onRemoved?: (() => void) | undefined;
 		onDownloadAll?: (() => void) | undefined;
-		/** What the library holds per release group (lowercase id). */
-		libraryTracks?: Map<string, HeldTracks>;
 	}
 
 	let {
@@ -42,14 +40,17 @@
 		onRequest,
 		onToggleCollapse,
 		onRemoved = undefined,
-		onDownloadAll = undefined,
-		libraryTracks = undefined
+		onDownloadAll = undefined
 	}: Props = $props();
 
 	const membershipQuery = getLibraryMembershipQuery(() => releases.map((release) => release.id));
 	const membership = $derived(membershipQuery.data);
 	const ownedIds = $derived(new Set(membership?.owned_ids ?? []));
 	const requestedIds = $derived(new Set(membership?.requested_ids ?? []));
+	// What the library holds of each owned group, by lowercase id.
+	const heldTracks = $derived(
+		new Map((membership?.held_tracks ?? []).map((group) => [group.id, group]))
+	);
 	const isOwned = (release: Release) =>
 		ownedIds.has(release.id.toLowerCase()) ||
 		libraryStore.isInLibrary(release.id) ||
@@ -122,7 +123,7 @@
 		<div class="border border-base-300 border-t-0 rounded-b-box bg-base-200/30">
 			<div class="list" role="list">
 				{#each releases as rg (rg.id)}
-					{@const held = libraryTracks?.get(rg.id.toLowerCase())}
+					{@const held = heldTracks.get(rg.id.toLowerCase())}
 					<div class="list-row group hover:bg-base-200 transition-colors p-0" role="listitem">
 						<a
 							href={albumHref(rg.id)}

@@ -10160,7 +10160,8 @@ export interface components {
              * Format: int64
              * @description Tracks the album's edition has: the matched MusicBrainz release's
              *     tracklist while the catalog holds it, else the totals its files'
-             *     tags give. `None` when neither tells.
+             *     tags give; a guess the files' tags contradict counts by its tags.
+             *     `None` when neither tells.
              */
             expected_track_count?: number | null;
             /** @description True when the caller favorited this album. */
@@ -14580,6 +14581,26 @@ export interface components {
          * @enum {string}
          */
         HeldRecheckStatus: "imported" | "still_held" | "error";
+        /**
+         * @description How much of one release group the library holds, over every album that
+         *     owns it: their tracks add up, to the edition's count at most.
+         */
+        HeldTracks: {
+            /**
+             * Format: int64
+             * @description Tracks the edition has; `None` when neither the matched release nor
+             *     the files' tags tell. A guess the files' tags contradict counts by
+             *     its tags.
+             */
+            expected?: number | null;
+            /**
+             * Format: int64
+             * @description Tracks the library holds.
+             */
+            held: number;
+            /** @description Lowercase release-group id. */
+            id: string;
+        };
         /** @description One listening-history entry. */
         HistoryEntry: {
             /** @description Track album. */
@@ -15771,8 +15792,13 @@ export interface components {
             /** @description Release-group (or release) ids, at most 500 after de-duplication. */
             album_ids?: string[];
         };
-        /** @description Membership answer. Both lists are lowercase and sorted. */
+        /** @description Membership answer. Every list is lowercase and sorted by id. */
         LibraryMembershipResponse: {
+            /**
+             * @description For each asked release group the library owns, how many of its
+             *     tracks the library holds and how many its edition has.
+             */
+            held_tracks: components["schemas"]["HeldTracks"][];
             /** @description Asked ids the library holds with at least one streamable track. */
             owned_ids: string[];
             /** @description Asked ids with an open acquisition request. */

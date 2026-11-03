@@ -11,7 +11,7 @@ import { setQueryDataWithPersister } from '../QueryClient';
 import { applyEffects, artistChanged } from '../effects';
 import { readNow } from '../readNow';
 import { toArtistInfoBasic, toArtistReleases } from '../catalog/catalogAdapters';
-import { PERSIST, PERSIST_PROVIDER } from '$lib/queries/persistedCache';
+import { PERSIST, PERSIST_PROVIDER, PROVIDER } from '$lib/queries/persistedCache';
 
 const getBasicArtistQueryOptions = (artistId: string) =>
 	queryOptions({
@@ -144,6 +144,7 @@ export const getArtistOwnedReleasesQuery = (getArtistId: Getter<string>) =>
 	createQuery(() => {
 		const artistId = getArtistId();
 		return {
+			meta: PROVIDER,
 			enabled: !!artistId,
 			queryKey: ArtistQueryKeyFactory.ownedReleases(artistId),
 			queryFn: ({ signal }) =>

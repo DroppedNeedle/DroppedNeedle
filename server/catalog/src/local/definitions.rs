@@ -134,17 +134,87 @@ pub(crate) use {
     listed_album, live_album, live_track, musicbrainz, owned_album, owned_artist, track_codec,
 };
 
+/// A track an album's track count counts, over a track alias and the
+/// album's id column: an indexed track on that album, whoever is credited
+/// on it. The album's card, the minimum-tracks filters and an artist's
+/// led-album tracks all count this.
+macro_rules! album_track {
+    ($track:expr, $album_id:expr) => {
+        concat!(
+            $track,
+            ".local_album_id = ",
+            $album_id,
+            " AND ",
+            $track,
+            ".availability = 'indexed'"
+        )
+    };
+}
+
 /// Album `$album`'s primary format: its most common indexed track format,
 /// lowercased; NULL for an album without indexed tracks.
 macro_rules! album_primary_format {
     ($album:literal) => {
         concat!(
-            "LOWER((SELECT t2.file_format FROM local_tracks t2 WHERE t2.local_album_id = ",
-            $album,
-            ".id AND t2.availability = 'indexed' \
-             GROUP BY t2.file_format ORDER BY COUNT(*) DESC, t2.file_format LIMIT 1))"
+            "LOWER((SELECT t2.file_format FROM local_tracks t2 WHERE ",
+            $crate::local::definitions::album_track!("t2", concat!($album, ".id")),
+            " GROUP BY t2.file_format ORDER BY COUNT(*) DESC, t2.file_format LIMIT 1))"
         )
     };
 }
 
-pub(crate) use album_primary_format;
+/// The album list's minimum-tracks filter over an album alias: at least
+/// the bound number of [`album_track!`]s, or no minimum (NULL). It asks
+/// for the track at the minimum's place, so it reads that many at most.
+/// Binds the minimum, then the minimum less one.
+macro_rules! album_min_tracks {
+    ($album:literal) => {
+        concat!(
+            "(? IS NULL OR EXISTS (SELECT 1 FROM local_tracks mat WHERE ",
+            $crate::local::definitions::album_track!("mat", concat!($album, ".id")),
+            " LIMIT 1 OFFSET ?))"
+        )
+    };
+}
+
+/// The album-artist list's minimum-tracks filter over an artist id column:
+/// the [`album_track!`]s of the owned albums the artist leads, the count
+/// its card shows, reach the bound number, or no minimum (NULL). It asks
+/// for the track at the minimum's place, so it reads that many at most.
+/// Binds the minimum, then the minimum less one.
+macro_rules! artist_min_led_tracks {
+    ($artist_id:literal) => {
+        concat!(
+            "(? IS NULL OR EXISTS (SELECT 1 FROM local_albums mla \
+             INDEXED BY idx_local_albums_artist_id \
+             JOIN local_tracks ml INDEXED BY idx_local_tracks_album_availability ON ",
+            $crate::local::definitions::album_track!("ml", "mla.id"),
+            " WHERE mla.album_artist_id = ",
+            $artist_id,
+            " AND ",
+            $crate::local::definitions::owned_album!("mla"),
+            " LIMIT 1 OFFSET ?))"
+        )
+    };
+}
+
+/// The contributor list's minimum-tracks filter over an artist id column:
+/// the artist's appearances, its tracks on live albums someone else leads
+/// as the kept credit pairs count them and its card shows, reach the bound
+/// number, or no minimum (NULL). Binds the minimum, then the minimum less
+/// one.
+macro_rules! artist_min_appearances {
+    ($artist_id:literal) => {
+        concat!(
+            "(? IS NULL OR (SELECT COALESCE(SUM(map.indexed_tracks), 0) \
+             FROM library_artist_album_credits map WHERE map.local_artist_id = ",
+            $artist_id,
+            " AND map.live = 1 AND map.appearance = 1) > ?)"
+        )
+    };
+}
+
+pub(crate) use {
+    album_min_tracks, album_primary_format, album_track, artist_min_appearances,
+    artist_min_led_tracks,
+};

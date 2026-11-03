@@ -87,8 +87,9 @@ impl SqliteScanStore {
     }
 
     /// Of these catalog tracks, the ones whose edition hints were never
-    /// stored (files carried over from v2 that no scan has read since), and
-    /// the ones whose row does not say whether their length was measured.
+    /// stored (files carried over from v2 that no scan has read since) or
+    /// were stored without a track total, and the ones whose row does not
+    /// say whether their length was measured.
     pub fn unread(
         &self,
         stop: &RunStop,

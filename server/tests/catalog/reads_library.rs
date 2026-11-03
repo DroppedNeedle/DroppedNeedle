@@ -1165,32 +1165,74 @@ async fn lists_filter_by_formats_and_minimum_tracks() {
         ])
     );
 
-    // Aurora: Opener, Closer and Single (credited, on albums she leads);
-    // Boreal leads Lone Peak's one track, Guest is credited on it.
-    for (query, want, totals) in [
-        ("min_tracks=2", vec!["a1"], (1, 1, 0)),
-        ("min_tracks=2&scope=contributors", vec![], (0, 1, 0)),
-        ("min_tracks=3&scope=album_artists", vec!["a1"], (1, 1, 0)),
-        ("min_tracks=4", vec![], (0, 0, 0)),
-        (
-            "sort=album_count&order=desc&min_tracks=2&scope=album_artists",
-            vec!["a1"],
-            (1, 1, 0),
-        ),
-    ] {
-        let (status, page) = get(app(), &format!("/api/v3/library/artists?{query}")).await;
-        assert_eq!(status, StatusCode::OK, "{query}: {page}");
-        assert_eq!(ids(&page), want, "{query}");
-        assert_eq!(
+    // An artist passes the minimum when the count its card shows reaches
+    // it: an album artist's tracks on the albums it leads, a contributor's
+    // appearances. Each tab's total counts the same artists, in every
+    // order.
+    let reaching = |scope: &str, field: &str, min: u64| {
+        let app = app();
+        let scope = scope.to_owned();
+        let field = field.to_owned();
+        async move {
+            let (status, page) = get(app, &format!("/api/v3/library/artists?scope={scope}")).await;
+            assert_eq!(status, StatusCode::OK, "{page}");
+            let mut ids: Vec<String> = page["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|artist| artist[field.as_str()].as_u64().unwrap() >= min)
+                .map(|artist| artist["id"].as_str().unwrap().to_owned())
+                .collect();
+            ids.sort();
+            ids
+        }
+    };
+    let mut seen_filtered_out = false;
+    for min in 2..=4 {
+        let led = reaching("album_artists", "led_track_count", min).await;
+        let appearing = reaching("contributors", "appearance_track_count", min).await;
+        for (query, want) in [
+            (format!("scope=album_artists&min_tracks={min}"), &led),
             (
-                page["total"].as_u64().unwrap(),
-                page["album_artist_total"].as_u64().unwrap(),
-                page["contributor_total"].as_u64().unwrap()
+                format!("scope=album_artists&sort=album_count&order=desc&min_tracks={min}"),
+                &led,
             ),
-            totals,
-            "{query}"
-        );
+            (format!("scope=contributors&min_tracks={min}"), &appearing),
+        ] {
+            let (status, page) = get(app(), &format!("/api/v3/library/artists?{query}")).await;
+            assert_eq!(status, StatusCode::OK, "{query}: {page}");
+            assert_eq!(ids(&page), *want, "{query}");
+            assert_eq!(page["total"], serde_json::json!(want.len()), "{query}");
+            // The filtered page keeps the unfiltered page's order.
+            let in_order = |page: &Value| -> Vec<String> {
+                page["items"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|artist| artist["id"].as_str().unwrap().to_owned())
+                    .filter(|id| want.contains(id))
+                    .collect()
+            };
+            let unfiltered = query.replace(&format!("&min_tracks={min}"), "");
+            let (status, all) = get(app(), &format!("/api/v3/library/artists?{unfiltered}")).await;
+            assert_eq!(status, StatusCode::OK, "{unfiltered}: {all}");
+            assert_eq!(in_order(&page), in_order(&all), "{query}");
+            assert_eq!(
+                (
+                    page["album_artist_total"].as_u64().unwrap(),
+                    page["contributor_total"].as_u64().unwrap()
+                ),
+                (led.len() as u64, appearing.len() as u64),
+                "{query}"
+            );
+        }
+        let all = reaching("album_artists", "led_track_count", 1).await;
+        seen_filtered_out |= led.len() < all.len();
     }
+    assert!(
+        seen_filtered_out,
+        "the fixture has an artist the minimum drops"
+    );
 }
 
 /// An album shows how many tracks its edition has next to the ones the

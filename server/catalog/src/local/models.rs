@@ -40,7 +40,8 @@ pub struct AlbumView {
     pub track_count: u64,
     /// Tracks the album's edition has: the matched MusicBrainz release's
     /// tracklist while the catalog holds it, else the totals its files'
-    /// tags give. `None` when neither tells.
+    /// tags give; a guess the files' tags contradict counts by its tags.
+    /// `None` when neither tells.
     pub expected_track_count: Option<u64>,
     /// Summed streamable-track duration, seconds.
     pub total_duration_seconds: f64,
@@ -634,13 +635,30 @@ pub struct LibraryMembershipRequest {
     pub album_ids: Vec<String>,
 }
 
-/// Membership answer. Both lists are lowercase and sorted.
+/// Membership answer. Every list is lowercase and sorted by id.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct LibraryMembershipResponse {
     /// Asked ids the library holds with at least one streamable track.
     pub owned_ids: Vec<String>,
     /// Asked ids with an open acquisition request.
     pub requested_ids: Vec<String>,
+    /// For each asked release group the library owns, how many of its
+    /// tracks the library holds and how many its edition has.
+    pub held_tracks: Vec<HeldTracks>,
+}
+
+/// How much of one release group the library holds, over every album that
+/// owns it: their tracks add up, to the edition's count at most.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct HeldTracks {
+    /// Lowercase release-group id.
+    pub id: String,
+    /// Tracks the library holds.
+    pub held: u64,
+    /// Tracks the edition has; `None` when neither the matched release nor
+    /// the files' tags tell. A guess the files' tags contradict counts by
+    /// its tags.
+    pub expected: Option<u64>,
 }
 
 /// One artist value as the file carries it.

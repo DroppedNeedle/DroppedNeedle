@@ -484,38 +484,45 @@ async fn a_scan_records_whether_each_length_was_measured() {
 }
 
 /// A file read before track totals were kept has an edition row without
-/// one. An incremental scan does not read the unchanged file again, so the
-/// total stays unknown; a "rescan files" reads it, stores the total and
+/// one. The next scan reads the unchanged file's total into that row and
 /// moves the catalog revision, which tells player apps to read the
-/// library again.
+/// library again, with no "rescan files". A file whose tags name no total
+/// is recorded as read, so later scans leave it alone.
 #[tokio::test]
-async fn rescanning_files_stores_the_track_total_an_older_read_skipped() {
+async fn a_scan_fills_the_track_total_an_older_read_skipped() {
     let scratch = ScratchDir::new("scan-track-total");
-    plant(
-        &scratch.join("music"),
-        "Album/01.flac",
-        "management_full.flac",
-    );
+    let music = scratch.join("music");
+    plant(&music, "Album/01.flac", "management_full.flac");
+    plant(&music, "Other/01.flac", "flac_no_tags.flac");
     let library = bundle(&scratch).await;
     scan(&library).await;
-    let total = "SELECT COUNT(*) FROM local_track_edition_tags WHERE total_tracks = 9";
-    assert_eq!(query(&library, total), 1, "a new file's total is read");
+    let total = |value: i64| {
+        query(
+            &library,
+            &format!("SELECT COUNT(*) FROM local_track_edition_tags WHERE total_tracks = {value}"),
+        )
+    };
+    assert_eq!((total(9), total(0)), (1, 1), "a new file's total is read");
     let revision = "SELECT value FROM library_catalog_revision WHERE singleton = 1";
     library
         .scan_store
         .db()
         .run_sql("UPDATE local_track_edition_tags SET total_tracks = NULL")
         .expect("an older read");
-
-    let run = scan(&library).await;
-    assert_eq!(count(&run, Counter::Unchanged), 1);
-    assert_eq!(query(&library, total), 0, "an unchanged file is not read");
     let before = query(&library, revision);
 
-    let run = scan_as(&library, ScanKind::RescanFiles).await;
-    assert_eq!(run.state.scan_state(), ScanState::Completed);
-    assert_eq!(query(&library, total), 1, "a rescan reads it");
-    assert!(query(&library, revision) > before, "the revision moves");
+    let run = scan(&library).await;
+    assert_eq!(count(&run, Counter::Unchanged), 2);
+    assert_eq!((total(9), total(0)), (1, 1), "the scan fills both");
+    let filled = query(&library, revision);
+    assert!(filled > before, "the revision moves");
+
+    scan(&library).await;
+    assert_eq!(
+        query(&library, revision),
+        filled,
+        "a filled row is not read again"
+    );
 }
 
 /// A vanished file is marked missing, never deleted. A scope that loses

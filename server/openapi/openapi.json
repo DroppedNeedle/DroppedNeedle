@@ -36110,7 +36110,7 @@
               "null"
             ],
             "format": "int64",
-            "description": "Tracks the album's edition has: the matched MusicBrainz release's\ntracklist while the catalog holds it, else the totals its files'\ntags give. `None` when neither tells.",
+            "description": "Tracks the album's edition has: the matched MusicBrainz release's\ntracklist while the catalog holds it, else the totals its files'\ntags give; a guess the files' tags contradict counts by its tags.\n`None` when neither tells.",
             "minimum": 0
           },
           "favorite": {
@@ -46103,6 +46103,35 @@
           "error"
         ]
       },
+      "HeldTracks": {
+        "type": "object",
+        "description": "How much of one release group the library holds, over every album that\nowns it: their tracks add up, to the edition's count at most.",
+        "required": [
+          "id",
+          "held"
+        ],
+        "properties": {
+          "expected": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Tracks the edition has; `None` when neither the matched release nor\nthe files' tags tell. A guess the files' tags contradict counts by\nits tags.",
+            "minimum": 0
+          },
+          "held": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Tracks the library holds.",
+            "minimum": 0
+          },
+          "id": {
+            "type": "string",
+            "description": "Lowercase release-group id."
+          }
+        }
+      },
       "HistoryEntry": {
         "type": "object",
         "description": "One listening-history entry.",
@@ -48483,12 +48512,20 @@
       },
       "LibraryMembershipResponse": {
         "type": "object",
-        "description": "Membership answer. Both lists are lowercase and sorted.",
+        "description": "Membership answer. Every list is lowercase and sorted by id.",
         "required": [
           "owned_ids",
-          "requested_ids"
+          "requested_ids",
+          "held_tracks"
         ],
         "properties": {
+          "held_tracks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HeldTracks"
+            },
+            "description": "For each asked release group the library owns, how many of its\ntracks the library holds and how many its edition has."
+          },
           "owned_ids": {
             "type": "array",
             "items": {

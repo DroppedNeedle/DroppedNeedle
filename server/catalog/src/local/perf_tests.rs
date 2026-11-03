@@ -1217,8 +1217,13 @@ async fn assert_hot_plans(db: &Db) {
             }
         }
     }
+    // A minimum-tracks filter asks for one album's track at a place; the
+    // page itself never skips rows.
     for text in &lists {
-        assert!(!text.contains("OFFSET"), "a list pages by offset: {text}");
+        assert!(
+            !text.replace("LIMIT 1 OFFSET ?))", "").contains("OFFSET"),
+            "a list pages by offset: {text}"
+        );
     }
 
     // The first page and a deep page of each order an index holds walk that
@@ -1419,12 +1424,7 @@ async fn assert_hot_plans(db: &Db) {
         (
             "artist totals",
             sql::ARTIST_TOTALS.text().to_owned(),
-            vec![
-                ExplainBind::Text(None),
-                ExplainBind::Text(None),
-                ExplainBind::Text(None),
-                ExplainBind::Text(None),
-            ],
+            vec![ExplainBind::Text(None), ExplainBind::Text(None)],
         ),
         ("stats", sql::STATS.text().to_owned(), Vec::new()),
     ] {
@@ -1473,6 +1473,106 @@ async fn assert_hot_plans(db: &Db) {
             .all(|line| line.contains("(id=?")),
         "artist tag ids reach tracks and albums by id from the credits: {plan:?}"
     );
+
+    assert_filter_plans(db).await;
+}
+
+/// The album and artist lists' filters (formats, minimum tracks, an album
+/// out of the recycle bin) reach each album's tracks, an artist's credits
+/// and led albums, and a track's bin rows by key: a filtered page walks
+/// the same index its unfiltered page does, and only the format counts
+/// walk every album.
+async fn assert_filter_plans(db: &Db) {
+    let by_key = |plan: &[String], aliases: &[&str]| {
+        aliases.iter().all(|alias| {
+            plan.iter()
+                .filter(|line| {
+                    line.starts_with(&format!("SEARCH {alias} "))
+                        || line.starts_with(&format!("SCAN {alias} "))
+                        || line.as_str() == format!("SCAN {alias}")
+                })
+                .all(|line| line.starts_with("SEARCH ") && line.contains("=?"))
+        })
+    };
+    let album_aliases = ["t2", "mat", "gbt", "gbr", "gbj"];
+    for (name, text) in [
+        ("album page", sql::album_page(AlbumSort::Name, false, false)),
+        (
+            "album page, deep",
+            sql::album_page(AlbumSort::Name, false, true),
+        ),
+        ("album count", sql::ALBUM_COUNT.text().to_owned()),
+        ("led albums", sql::led_album_page(false)),
+        ("led album count", sql::LED_ALBUM_COUNT.text().to_owned()),
+    ] {
+        let plan = explain_unbound(db, &text).await;
+        assert!(
+            by_key(&plan, &album_aliases),
+            "{name} reaches each album's tracks and bin rows by key: {plan:?}"
+        );
+        assert!(
+            !plan.iter().any(|line| line.contains("SCAN local_tracks")),
+            "{name} never walks the tracks: {plan:?}"
+        );
+    }
+    let plan = explain_unbound(db, &sql::album_page(AlbumSort::Name, false, false)).await;
+    assert!(
+        plan.iter()
+            .any(|line| line.contains("idx_local_albums_search")),
+        "a filtered album page still walks the title index: {plan:?}"
+    );
+
+    let plan = explain(db, sql::ALBUM_FORMAT_COUNTS.text(), &[]).await;
+    assert!(
+        by_key(&plan, &["t2"]) && !plan.iter().any(|line| line.contains("SCAN local_tracks")),
+        "format counts probe each album's tracks by key: {plan:?}"
+    );
+
+    let artist_aliases = ["mla", "ml", "map"];
+    for scope in [
+        ArtistScope::All,
+        ArtistScope::AlbumArtists,
+        ArtistScope::Contributors,
+        ArtistScope::WithMusic,
+    ] {
+        for sort in ARTIST_SORTS {
+            for after in [false, true] {
+                let plan =
+                    explain_unbound(db, &sql::artist_page(scope, sort, true, after, true)).await;
+                assert!(
+                    by_key(&plan, &artist_aliases),
+                    "{scope:?} by {sort:?} filtered by tracks reaches them by key: {plan:?}"
+                );
+                let sorts = |plan: &[String]| {
+                    plan.iter()
+                        .filter(|line| line.contains("TEMP B-TREE FOR"))
+                        .count()
+                };
+                let unfiltered =
+                    explain_unbound(db, &sql::artist_page(scope, sort, true, after, false)).await;
+                // The minimum is tested on the walk's rows as they come, so
+                // a sorted walk stops once the page is full: the walk stays
+                // a co-routine of its own, never folded into the test, and
+                // the outer order is read as the walk gives it, not sorted
+                // again.
+                assert_eq!(
+                    sorts(&plan),
+                    sorts(&unfiltered),
+                    "{scope:?} by {sort:?} filtered by tracks sorts only as its walk does: {plan:?}"
+                );
+                assert!(
+                    plan.iter().any(|line| line.starts_with("CO-ROUTINE"))
+                        && plan.iter().any(|line| line.starts_with("SCAN (subquery")),
+                    "{scope:?} by {sort:?} filtered by tracks reads its walk in order: {plan:?}"
+                );
+            }
+        }
+        let plan = explain_unbound(db, &sql::artist_scope_count(scope, true)).await;
+        assert!(
+            by_key(&plan, &artist_aliases),
+            "{scope:?} counted by tracks reaches them by key: {plan:?}"
+        );
+    }
 }
 
 /// Plays on the small fixture: `u1` has ties in both the last play (t2 and
@@ -3522,6 +3622,13 @@ async fn perf_100k_endpoints_hold_p95() {
         "library_contributors_by_appearances",
         "library_artists_by_appearances",
         "library_artists_by_album_count",
+        "library_albums_formats",
+        "library_albums_in_a_format",
+        "library_albums_without_a_format",
+        "library_albums_min_tracks",
+        "library_artists_min_tracks",
+        "library_album_artists_min_tracks_by_album_count",
+        "library_contributors_min_tracks",
         "search_songs_hit",
         "search_songs_miss",
         "search_songs_short",
@@ -3534,10 +3641,14 @@ async fn perf_100k_endpoints_hold_p95() {
     // and a song search whose words are in every track ("perf", "artist")
     // reads the whole FTS index and ranks every track, as the player's
     // common-word search page does.
+    // A filter almost nothing passes walks the whole list for its page:
+    // every album's format, or every artist's tracks up to the minimum.
     let mut reported: Vec<(&str, Vec<f64>)> = [
         "library_tracks_random",
         "search_songs_common",
         "search_songs_deep_offset",
+        "library_albums_in_a_rare_format",
+        "library_artists_min_tracks_none_reach",
     ]
     .into_iter()
     .map(|name| (name, Vec::new()))
@@ -3554,21 +3665,48 @@ async fn perf_100k_endpoints_hold_p95() {
             samples.push(tick.elapsed().as_secs_f64() * 1000.0);
         }
     }
+    // Totals counted again on every read, as after a catalog write: timed
+    // after the warm reads, which they would otherwise leave cold.
+    let mut cold: Vec<(&str, Vec<f64>)> = [
+        "library_albums_formats_cold",
+        "library_albums_in_a_format_cold",
+        "library_albums_without_a_format_cold",
+        "library_albums_min_tracks_cold",
+        "library_artists_min_tracks_cold",
+        "library_album_artists_min_tracks_by_album_count_cold",
+        "library_contributors_min_tracks_cold",
+    ]
+    .into_iter()
+    .map(|name| (name, Vec::new()))
+    .collect();
+    for _ in 0..50 {
+        for (name, samples) in &mut cold {
+            let tick = std::time::Instant::now();
+            read_timed(&fixture.catalog, &search, name, &deep).await;
+            samples.push(tick.elapsed().as_secs_f64() * 1000.0);
+        }
+    }
     let mut report = Vec::new();
-    for (name, samples) in reported.iter_mut().chain(&mut endpoints) {
+    for (name, samples) in reported.iter_mut().chain(&mut endpoints).chain(&mut cold) {
         let p95 = percentile(samples, 95.0);
         let p50 = percentile(samples, 50.0);
         report.push(format!("{name}: p50 {p50:.2} ms, p95 {p95:.2} ms"));
     }
     eprintln!("100k catalog p95:\n{}", report.join("\n"));
-    for (name, samples) in &mut endpoints {
+    // A cold read is paid once per catalog revision, so it is held to the
+    // 100 ms budget of a whole page rather than the 10 ms of a warm read.
+    let budgets = endpoints
+        .iter_mut()
+        .map(|endpoint| (endpoint, 10.0))
+        .chain(cold.iter_mut().map(|endpoint| (endpoint, 100.0)));
+    for ((name, samples), budget) in budgets {
         let p95 = percentile(samples, 95.0);
         // The budget binds release runs; debug runs report only, since
         // an unoptimized build adds milliseconds per call there.
         if !cfg!(debug_assertions) {
             assert!(
-                p95 < 10.0,
-                "{name} p95 {p95:.2} ms exceeds the 10 ms budget:\n{}",
+                p95 < budget,
+                "{name} p95 {p95:.2} ms exceeds the {budget} ms budget:\n{}",
                 report.join("\n")
             );
         }
@@ -3606,6 +3744,15 @@ async fn read_timed(
 
 /// One read of a timed library endpoint.
 async fn read_endpoint(catalog: &LocalCatalog, name: &str, deep: &(After, After, After)) {
+    // A cold read counts its totals again, as the first read after a
+    // catalog write does.
+    let name = match name.strip_suffix("_cold") {
+        Some(warm) => {
+            catalog.forget_totals();
+            warm
+        }
+        None => name,
+    };
     let first = After::default();
     let random = After {
         seed: 42,
@@ -3701,6 +3848,90 @@ async fn read_endpoint(catalog: &LocalCatalog, name: &str, deep: &(After, After,
         }
         "library_recently_added" => {
             catalog.recently_added(20).await.expect("recent");
+        }
+        "library_albums_formats" => {
+            catalog.album_format_counts().await.expect("format counts");
+        }
+        "library_albums_in_a_format"
+        | "library_albums_without_a_format"
+        | "library_albums_in_a_rare_format"
+        | "library_albums_min_tracks" => {
+            // Every 100k album holds two tracks of each format and is
+            // filed under FLAC, the first by name; none is Opus.
+            let filter = match name {
+                "library_albums_in_a_format" => AlbumFilter {
+                    formats: vec!["flac".to_owned()],
+                    ..Default::default()
+                },
+                "library_albums_without_a_format" => AlbumFilter {
+                    formats: vec!["mp3".to_owned()],
+                    without_formats: true,
+                    ..Default::default()
+                },
+                "library_albums_in_a_rare_format" => AlbumFilter {
+                    formats: vec!["opus".to_owned()],
+                    ..Default::default()
+                },
+                _ => AlbumFilter {
+                    min_tracks: Some(5),
+                    ..Default::default()
+                },
+            };
+            catalog
+                .list_albums(&filter, AlbumSort::Name, false, 50, &first)
+                .await
+                .expect("lists");
+        }
+        "library_artists_min_tracks" | "library_artists_min_tracks_none_reach" => {
+            // A 100k artist holds 200 tracks.
+            let min = if name == "library_artists_min_tracks" {
+                5
+            } else {
+                201
+            };
+            catalog
+                .artist_list(
+                    ArtistScope::All,
+                    None,
+                    None,
+                    ArtistSort::Name,
+                    false,
+                    50,
+                    &first,
+                    Some(min),
+                )
+                .await
+                .expect("lists");
+        }
+        "library_album_artists_min_tracks_by_album_count" => {
+            catalog
+                .artist_list(
+                    ArtistScope::AlbumArtists,
+                    None,
+                    None,
+                    ArtistSort::AlbumCount,
+                    true,
+                    50,
+                    &first,
+                    Some(5),
+                )
+                .await
+                .expect("lists");
+        }
+        "library_contributors_min_tracks" => {
+            catalog
+                .artist_list(
+                    ArtistScope::Contributors,
+                    None,
+                    None,
+                    ArtistSort::Name,
+                    false,
+                    50,
+                    &first,
+                    Some(2),
+                )
+                .await
+                .expect("lists");
         }
         "local_search_miss" => {
             catalog

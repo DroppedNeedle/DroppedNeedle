@@ -178,7 +178,11 @@ async fn browse_gaps_journey() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(
         body,
-        json!({"owned_ids": ["rg1"], "requested_ids": ["rg-req"]})
+        json!({
+            "owned_ids": ["rg1"],
+            "requested_ids": ["rg-req"],
+            "held_tracks": [{"id": "rg1", "held": 2, "expected": null}]
+        })
     );
     let too_many: Vec<String> = (0..501).map(|n| format!("id-{n}")).collect();
     let (status, body) = fixture

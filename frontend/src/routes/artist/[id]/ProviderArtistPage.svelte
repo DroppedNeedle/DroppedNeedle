@@ -5,8 +5,6 @@
 	import AlbumGridSkeleton from '$lib/components/AlbumGridSkeleton.svelte';
 	import ArtistWhereToBuy from '$lib/components/ArtistWhereToBuy.svelte';
 	import ReleaseList from '$lib/components/ReleaseList.svelte';
-	import { heldTracksByGroup } from '$lib/utils/trackCount';
-	import { getLibraryArtistAlbumsQuery } from '$lib/queries/library/LibraryQueries.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import ArtistHero from '$lib/components/ArtistHero.svelte';
 	import ArtistDescription from '$lib/components/ArtistDescription.svelte';
@@ -57,11 +55,6 @@
 	}
 
 	let { data, localArtist }: Props = $props();
-
-	// The discography rows of albums the library holds say how many of
-	// their tracks it has.
-	const libraryAlbumsQuery = getLibraryArtistAlbumsQuery(() => localArtist?.id ?? '');
-	const libraryTracks = $derived(heldTracksByGroup(libraryAlbumsQuery.data?.items ?? []));
 
 	// Only an artist the library holds is rated, under its local id.
 	const ratingsQuery = getRatingsQuery(() =>
@@ -539,7 +532,6 @@
 						<ReleaseList
 							title="Albums"
 							releases={releases.albums}
-							{libraryTracks}
 							collapsed={albumsCollapsed}
 							requestingIds={requestedReleaseIds}
 							showLoadingIndicator={loadingMoreReleases}
@@ -557,7 +549,6 @@
 						<ReleaseList
 							title="EPs"
 							releases={releases.eps}
-							{libraryTracks}
 							collapsed={epsCollapsed}
 							requestingIds={requestedReleaseIds}
 							showLoadingIndicator={loadingMoreReleases}
@@ -575,7 +566,6 @@
 						<ReleaseList
 							title="Singles"
 							releases={releases.singles}
-							{libraryTracks}
 							collapsed={singlesCollapsed}
 							requestingIds={requestedReleaseIds}
 							showLoadingIndicator={loadingMoreReleases}

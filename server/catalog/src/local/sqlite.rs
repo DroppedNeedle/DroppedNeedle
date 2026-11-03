@@ -126,8 +126,7 @@ fn album_filter_values(filter: &AlbumFilter) -> Vec<Value> {
     } else {
         Value::Text(format!(",{},", filter.formats.join(",")))
     };
-    let min = int(filter.min_tracks.map(i64::from));
-    vec![
+    let mut values = vec![
         pattern.clone(),
         pattern.clone(),
         pattern,
@@ -139,9 +138,29 @@ fn album_filter_values(filter: &AlbumFilter) -> Vec<Value> {
         formats.clone(),
         formats,
         Value::Integer(i64::from(!filter.without_formats)),
-        min.clone(),
-        min,
-    ]
+    ];
+    values.extend(min_tracks_values(filter.min_tracks));
+    values
+}
+
+/// A minimum-tracks test's binds: the minimum or NULL, then the minimum
+/// less one, as `album_min_tracks!` and each artist test read them.
+fn min_tracks_values(min_tracks: Option<u32>) -> [Value; 2] {
+    let place = min_tracks.map_or(0, |min| i64::from(min.saturating_sub(1)));
+    [int(min_tracks.map(i64::from)), Value::Integer(place)]
+}
+
+/// An artist list's minimum-tracks binds for `scope`, as
+/// `sql::min_tracks_test` reads them: one test, or two for the scopes that
+/// take either count.
+fn artist_min_values(scope: ArtistScope, min_tracks: Option<u32>) -> Vec<Value> {
+    let tests = match scope {
+        ArtistScope::AlbumArtists | ArtistScope::Contributors => 1,
+        ArtistScope::All | ArtistScope::WithMusic => 2,
+    };
+    (0..tests)
+        .flat_map(|_| min_tracks_values(min_tracks))
+        .collect()
 }
 
 /// The track list's text and scope values: the search's binds, or the
@@ -172,12 +191,10 @@ fn track_filter_values(
     values
 }
 
-/// The artist list's name filter, bound twice, then the minimum tracks,
-/// bound twice.
-fn name_filter(q: Option<&str>, min_tracks: Option<u32>) -> Vec<Value> {
+/// The artist list's name filter, bound twice.
+fn name_filter(q: Option<&str>) -> Vec<Value> {
     let pattern = text(q.map(like_pattern).as_deref());
-    let min = int(min_tracks.map(i64::from));
-    vec![pattern.clone(), pattern, min.clone(), min]
+    vec![pattern.clone(), pattern]
 }
 
 /// The last `width` columns of a page row: its sort key.
@@ -447,7 +464,7 @@ impl LocalCatalog {
         limit: u64,
         offset: u64,
     ) -> Result<ArtistListing, StoreError> {
-        let mut page_values = name_filter(q, None);
+        let mut page_values = name_filter(q);
         page_values.extend([count(limit), count(offset)]);
         // Page the ids first; counts aggregate over the page below.
         let ids: Vec<String> = self
@@ -492,15 +509,14 @@ impl LocalCatalog {
         let mut values: Vec<Value> = favorites_value(favorites_of, sort == ArtistSort::Favorited)
             .into_iter()
             .collect();
-        // The page names the minimum only when it filters by one.
-        let names = name_filter(q, min_tracks);
-        values.extend(
-            names
-                .into_iter()
-                .take(if min_tracks.is_some() { 4 } else { 2 }),
-        );
+        values.extend(name_filter(q));
         if let Some(key) = &after.key {
             values.extend(sql::after_values(&keys, key));
+        }
+        // The page names the minimum only when it filters by one, after
+        // its walk.
+        if min_tracks.is_some() {
+            values.extend(artist_min_values(scope, min_tracks));
         }
         values.push(count(limit.saturating_add(1)));
         let shape = sql::ArtistPageShape {
@@ -544,7 +560,7 @@ impl LocalCatalog {
             .map(|user| text(Some(user)))
             .into_iter()
             .collect();
-        names.extend(name_filter(q, min_tracks));
+        names.extend(name_filter(q));
         let favorites = favorites_of.is_some();
         let totals = self
             .list_totals(
@@ -552,13 +568,31 @@ impl LocalCatalog {
                 favorites,
                 "library.artists.count",
                 move |conn| {
-                    let (totals, scope_count) = if favorites {
-                        (
-                            sql::FAVORITE_ARTIST_TOTALS,
-                            sql::favorite_artist_scope_count(scope),
-                        )
+                    let count_of = |scope: ArtistScope| {
+                        let text = if favorites {
+                            sql::favorite_artist_scope_count(scope, min_tracks.is_some())
+                        } else {
+                            sql::artist_scope_count(scope, min_tracks.is_some())
+                        };
+                        let mut values = names.clone();
+                        if min_tracks.is_some() {
+                            values.extend(artist_min_values(scope, min_tracks));
+                        }
+                        scalar(conn, &text, &values).map(unsigned)
+                    };
+                    // Each tab counts its artists by the number its cards
+                    // show, so with a minimum each is counted on its own.
+                    if min_tracks.is_some() {
+                        return Ok(vec![
+                            count_of(scope)?,
+                            count_of(ArtistScope::AlbumArtists)?,
+                            count_of(ArtistScope::Contributors)?,
+                        ]);
+                    }
+                    let totals = if favorites {
+                        sql::FAVORITE_ARTIST_TOTALS
                     } else {
-                        (sql::ARTIST_TOTALS, sql::artist_scope_count(scope))
+                        sql::ARTIST_TOTALS
                     };
                     let mut statement = conn.prepare_cached(totals.text())?;
                     let (all, led, contributors): (i64, i64, i64) = statement
@@ -566,11 +600,11 @@ impl LocalCatalog {
                             Ok((row.get(0)?, row.get(1)?, row.get(2)?))
                         })?;
                     let total = if matches!(scope, ArtistScope::All) {
-                        all
+                        unsigned(all)
                     } else {
-                        scalar(conn, &scope_count, &names)?
+                        count_of(scope)?
                     };
-                    Ok(vec![unsigned(total), unsigned(led), unsigned(contributors)])
+                    Ok(vec![total, unsigned(led), unsigned(contributors)])
                 },
             )
             .await?;
@@ -969,9 +1003,10 @@ impl LocalCatalog {
         Ok(ids.iter().filter_map(|id| albums.remove(id)).collect())
     }
 
-    /// How many listed albums each primary format has, most first.
+    /// How many albums with files each primary format has, most first,
+    /// remembered per catalog revision: counting them walks every album.
     pub async fn album_format_counts(&self) -> Result<Vec<(String, u64)>, StoreError> {
-        self.read("library.albums.formats", |conn| {
+        self.format_totals(|conn| {
             rows(conn, sql::ALBUM_FORMAT_COUNTS.text(), &[], |row| {
                 Ok((row.get(0)?, unsigned(row.get(1)?)))
             })

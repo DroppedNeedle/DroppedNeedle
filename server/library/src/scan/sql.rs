@@ -133,9 +133,11 @@ droppedneedle_kernel::sql! {
              AND s.root_id = library_scan_inventory.root_id \
              AND s.relative_path = library_scan_inventory.scope_relative_path \
              AND s.discovery_generation = library_scan_inventory.discovery_generation)";
-    /// Whether track `?1` has its edition hints stored.
+    /// Whether track `?1` has its edition hints stored, its track total
+    /// included: a row from before totals were kept holds NULL there, and
+    /// one read since holds the total or 0 for a file that names none.
     pub(super) HAS_EDITION_TAGS = "SELECT EXISTS(SELECT 1 FROM local_track_edition_tags \
-             WHERE local_track_id = ?1)";
+             WHERE local_track_id = ?1 AND total_tracks IS NOT NULL)";
     /// Whether track `?1`'s row does not say if its length was measured.
     pub(super) LENGTH_UNREAD = "SELECT EXISTS(SELECT 1 FROM local_tracks \
              WHERE id = ?1 AND duration_measured IS NULL)";
@@ -150,6 +152,12 @@ droppedneedle_kernel::sql! {
              SELECT id, ?3, ?4, ?5, ?6, ?7, ?8, ?9 FROM local_tracks \
              WHERE id = ?1 AND stat_revision = ?2 \
              ON CONFLICT (local_track_id) DO NOTHING";
+    /// Store the track total (`?3`, 0 when the file names none) of track
+    /// `?1` read at stat revision `?2` in an edition row stored before
+    /// totals were kept, unless the row moved on since.
+    pub(super) FILL_TRACK_TOTAL = "UPDATE local_track_edition_tags SET total_tracks = ?3 \
+             WHERE local_track_id = ?1 AND total_tracks IS NULL \
+             AND EXISTS (SELECT 1 FROM local_tracks WHERE id = ?1 AND stat_revision = ?2)";
     /// The album of track `?1` when its MusicBrainz match is not settled:
     /// none, or an automatic one without an edition or still unconfirmed.
     /// Only `automatic`: a match v2 took from the files' own ids already

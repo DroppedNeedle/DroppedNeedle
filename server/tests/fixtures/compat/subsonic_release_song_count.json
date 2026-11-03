@@ -1,0 +1,114 @@
+{
+  "subsonic-response": {
+    "albumList2": {
+      "album": [
+        {
+          "artist": "Portishead",
+          "artistId": "ar-art-1",
+          "artists": [
+            {
+              "id": "ar-art-1",
+              "name": "Portishead"
+            }
+          ],
+          "coverArt": "al-alb-1_6fcdbad7",
+          "created": "1970-01-01T00:00:00Z",
+          "discTitles": [],
+          "displayArtist": "Portishead",
+          "duration": 305,
+          "explicitStatus": "",
+          "genres": [],
+          "id": "al-alb-1",
+          "isCompilation": false,
+          "moods": [],
+          "musicBrainzId": "6b1c7d8a-5f0e-4cd3-8e8f-0c1d3a7b9f65",
+          "name": "Dummy",
+          "originalReleaseDate": {},
+          "recordLabels": [],
+          "releaseDate": {},
+          "releaseSongCount": 10,
+          "releaseTypes": [
+            "album"
+          ],
+          "songCount": 1,
+          "sortName": "Dummy",
+          "userRating": 0,
+          "version": "",
+          "year": 1994
+        },
+        {
+          "artist": "Portishead",
+          "artistId": "ar-art-1",
+          "artists": [
+            {
+              "id": "ar-art-1",
+              "name": "Portishead"
+            }
+          ],
+          "coverArt": "al-alb-3_bbbb77b2",
+          "created": "1970-01-01T00:00:00Z",
+          "discTitles": [],
+          "displayArtist": "Portishead",
+          "duration": 380,
+          "explicitStatus": "",
+          "genres": [],
+          "id": "al-alb-3",
+          "isCompilation": false,
+          "moods": [],
+          "musicBrainzId": "",
+          "name": "Roseland",
+          "originalReleaseDate": {},
+          "recordLabels": [],
+          "releaseDate": {},
+          "releaseTypes": [
+            "album"
+          ],
+          "songCount": 1,
+          "sortName": "Roseland",
+          "userRating": 0,
+          "version": "",
+          "year": 1998
+        },
+        {
+          "artist": "Portishead",
+          "artistId": "ar-art-1",
+          "artists": [
+            {
+              "id": "ar-art-1",
+              "name": "Portishead"
+            }
+          ],
+          "coverArt": "al-alb-2_bbbb77b2",
+          "created": "1970-01-01T00:00:00Z",
+          "discTitles": [],
+          "displayArtist": "Portishead",
+          "duration": 585,
+          "explicitStatus": "",
+          "genres": [],
+          "id": "al-alb-2",
+          "isCompilation": false,
+          "moods": [],
+          "musicBrainzId": "",
+          "name": "Third",
+          "originalReleaseDate": {},
+          "recordLabels": [],
+          "releaseDate": {},
+          "releaseSongCount": 7,
+          "releaseTypes": [
+            "album"
+          ],
+          "songCount": 2,
+          "sortName": "Third",
+          "userRating": 0,
+          "version": "",
+          "year": 2008
+        }
+      ]
+    },
+    "openSubsonic": true,
+    "serverVersion": "re:\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.]+)?",
+    "status": "ok",
+    "type": "DroppedNeedle",
+    "version": "1.16.1"
+  }
+}
