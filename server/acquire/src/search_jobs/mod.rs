@@ -31,10 +31,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use self::candidates::{Candidate, CandidateRefusal, Pin};
-use self::store::{
-    CANCELLED, COMPLETED, FAILED, JobPayload, JobRow, JobStore, MATCHED, NewJob, PickRefusal,
-    PickedTask, SEARCHING,
-};
+use self::store::{JobPayload, JobRow, JobStatus, JobStore, NewJob, PickRefusal, PickedTask};
 use super::dispatch::DispatchOrigin;
 use super::downloads::journal::Journal;
 use super::downloads::source_tag::SourceTag;
@@ -177,9 +174,9 @@ impl JobView {
         if let Some(code) = self.row.error_message.as_deref() {
             return SearchReason::from_code(code);
         }
-        match (&self.payload, self.row.status.as_str()) {
-            (None, COMPLETED) => Some(SearchReason::Expired),
-            (Some(payload), COMPLETED) if payload.candidates.is_empty() => {
+        match (&self.payload, self.row.status) {
+            (None, JobStatus::Completed) => Some(SearchReason::Expired),
+            (Some(payload), JobStatus::Completed) if payload.candidates.is_empty() => {
                 Some(SearchReason::NothingFound)
             }
             _ => None,
@@ -234,13 +231,13 @@ impl SearchJobs {
         }
     }
 
-    fn announce(&self, user_id: &str, job_id: &str, status: &str, candidate_count: usize) {
+    fn announce(&self, user_id: &str, job_id: &str, status: JobStatus, candidate_count: usize) {
         self.events.notify(
             user_id,
             UserNotice::SearchJobUpdated(SearchJobUpdated {
                 event_id: new_event_id(),
                 job_id: job_id.to_owned(),
-                status: status.to_owned(),
+                status: status.as_str().to_owned(),
                 candidate_count,
             }),
         );
@@ -303,7 +300,7 @@ impl SearchJobs {
             let handle = tokio::spawn(Arc::clone(self).run(job));
             running.insert(job_id.clone(), handle.abort_handle());
         }
-        self.announce(principal.user_id(), &job_id, SEARCHING, 0);
+        self.announce(principal.user_id(), &job_id, JobStatus::Searching, 0);
         Ok(StartOutcome::Searching(job_id))
     }
 
@@ -325,9 +322,9 @@ impl SearchJobs {
         let (candidates, failed) = search_sources(&sources, &target, &job.id).await;
         let count = candidates.len();
         let (status, reason) = if count == 0 && failed > 0 && failed == sources.len() {
-            (FAILED, Some(SearchReason::SourcesFailed.code()))
+            (JobStatus::Failed, Some(SearchReason::SourcesFailed.code()))
         } else {
-            (COMPLETED, None)
+            (JobStatus::Completed, None)
         };
         let payload = JobPayload {
             release_mbid: job.release_mbid.clone(),
@@ -372,16 +369,21 @@ impl SearchJobs {
         job_id: &str,
     ) -> Result<JobView, SearchJobError> {
         let mut row = self.owned(principal, job_id, false).await?;
-        if row.status == SEARCHING && !self.running().contains_key(job_id) {
+        if row.status == JobStatus::Searching && !self.running().contains_key(job_id) {
             // Nothing runs it any more: the server restarted mid-search.
             let reason = SearchReason::Interrupted.code();
             let moved = self
                 .store
-                .transition(job_id, FAILED, &[SEARCHING], Some(reason))
+                .transition(
+                    job_id,
+                    JobStatus::Failed,
+                    &[JobStatus::Searching],
+                    Some(reason),
+                )
                 .await
                 .map_err(SearchJobError::Internal)?;
             if moved {
-                row.status = FAILED.to_owned();
+                row.status = JobStatus::Failed;
                 row.error_message = Some(reason.to_owned());
             } else {
                 // The run stored its result and left between the read and
@@ -415,8 +417,8 @@ impl SearchJobs {
         confirm_policy_break: bool,
     ) -> Result<String, SearchJobError> {
         let row = self.owned(principal, job_id, false).await?;
-        if row.status != COMPLETED {
-            return Err(SearchJobError::Conflict(not_open(&row.status)));
+        if row.status != JobStatus::Completed {
+            return Err(SearchJobError::Conflict(not_open(Some(row.status))));
         }
         let payload = JobPayload::decode(&row.blob).ok_or_else(|| {
             let reason = SearchReason::Expired;
@@ -484,10 +486,10 @@ impl SearchJobs {
         {
             Ok(task_id) => {
                 self.worker.wake();
-                self.announce(&row.user_id, job_id, MATCHED, payload.candidates.len());
+                self.announce(&row.user_id, job_id, JobStatus::Matched, payload.candidates.len());
                 Ok(task_id)
             }
-            Err(PickRefusal::NotOpen(status)) => Err(SearchJobError::Conflict(not_open(&status))),
+            Err(PickRefusal::NotOpen(status)) => Err(SearchJobError::Conflict(not_open(status))),
             Err(PickRefusal::AlbumBusy) => Err(SearchJobError::Conflict(
                 "This album is already downloading. Cancel that download first if you want this source instead."
                     .to_owned(),
@@ -503,14 +505,14 @@ impl SearchJobs {
     }
 
     async fn close(&self, row: &JobRow) -> Result<(), SearchJobError> {
-        match row.status.as_str() {
-            MATCHED => {
+        match row.status {
+            JobStatus::Matched => {
                 return Err(SearchJobError::Conflict(
                     "A download already started from this search. Cancel the download instead."
                         .to_owned(),
                 ));
             }
-            CANCELLED => return Ok(()),
+            JobStatus::Cancelled => return Ok(()),
             _ => {}
         }
         if let Some(handle) = self.running().remove(&row.id) {
@@ -520,7 +522,7 @@ impl SearchJobs {
             .close(&row.id)
             .await
             .map_err(SearchJobError::Internal)?;
-        self.announce(&row.user_id, &row.id, CANCELLED, 0);
+        self.announce(&row.user_id, &row.id, JobStatus::Cancelled, 0);
         Ok(())
     }
 
@@ -648,11 +650,15 @@ pub async fn search_sources(
 }
 
 /// Why a job can no longer be picked from.
-fn not_open(status: &str) -> String {
+fn not_open(status: Option<JobStatus>) -> String {
     match status {
-        SEARCHING => "The search is still running. Wait for it to finish, then pick.".to_owned(),
-        MATCHED => "A download already started from this search.".to_owned(),
-        CANCELLED => "This search was closed. Start a new search to pick again.".to_owned(),
+        Some(JobStatus::Searching) => {
+            "The search is still running. Wait for it to finish, then pick.".to_owned()
+        }
+        Some(JobStatus::Matched) => "A download already started from this search.".to_owned(),
+        Some(JobStatus::Cancelled) => {
+            "This search was closed. Start a new search to pick again.".to_owned()
+        }
         _ => "This search did not finish. Start a new search.".to_owned(),
     }
 }

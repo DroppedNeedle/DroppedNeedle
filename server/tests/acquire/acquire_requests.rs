@@ -2107,7 +2107,8 @@ async fn land_edition(
 ) {
     let row = droppedneedle_acquire::downloads::landing_rows::ImportDecisionRow {
         task_id: task_id.to_owned(),
-        outcome: outcome.to_owned(),
+        outcome: droppedneedle_acquire::downloads::landing_rows::ImportOutcome::parse(outcome)
+            .unwrap(),
         files_total: 1,
         files_imported: 1,
         checks_json: "[]".to_owned(),

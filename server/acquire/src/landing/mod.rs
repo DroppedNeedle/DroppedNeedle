@@ -49,7 +49,7 @@ use self::ports::LandingLibrary;
 use self::probe::{LandedFile, Landing};
 use self::specs::{Check, Disposition, QualityPolicy, Rejection, Target, Verdict};
 use super::downloads::journal::Journal;
-use super::downloads::landing_rows::ImportDecisionRow;
+use super::downloads::landing_rows::{ImportDecisionRow, ImportOutcome};
 use super::downloads::plan::{PlannedAlbum, TaskPlan};
 use super::downloads::sources::SourceHandle;
 use super::downloads::store::{StoreError, TaskDetails, TaskRow};
@@ -683,9 +683,9 @@ impl LandingService {
         let Some(last) = last else {
             return Ok(None);
         };
-        let complete = match last.outcome.as_str() {
-            "imported" => true,
-            "partial" => false,
+        let complete = match last.outcome {
+            ImportOutcome::Imported => true,
+            ImportOutcome::Partial => false,
             _ => return Ok(None),
         };
         tracing::info!(task_id = %task.id, "landing already imported this attempt");
@@ -1083,19 +1083,21 @@ impl LandingService {
             Outcome::Reject(rejection) => LandingResult::Rejected(rejection.clone()),
         };
         let (outcome, reason_code, detail) = match &result {
-            LandingResult::Imported { complete: true } => ("imported", None, note),
+            LandingResult::Imported { complete: true } => (ImportOutcome::Imported, None, note),
             LandingResult::Imported { complete: false } => {
-                ("partial", Some(Reason::TracksMissing), None)
+                (ImportOutcome::Partial, Some(Reason::TracksMissing), None)
             }
-            LandingResult::Held { code, detail } => ("held", Some(*code), Some(detail.clone())),
+            LandingResult::Held { code, detail } => {
+                (ImportOutcome::Held, Some(*code), Some(detail.clone()))
+            }
             LandingResult::Rejected(rejection) => (
                 if matches!(
                     rejection.disposition,
                     Disposition::Temporary | Disposition::Outage
                 ) {
-                    "deferred"
+                    ImportOutcome::Deferred
                 } else {
-                    "rejected"
+                    ImportOutcome::Rejected
                 },
                 Some(rejection.code),
                 Some(rejection.detail.clone()),
@@ -1104,7 +1106,7 @@ impl LandingService {
         let row = ImportDecisionRow {
             task_id: task.id.clone(),
             attempt_id: attempt_id.map(str::to_owned),
-            outcome: outcome.to_owned(),
+            outcome,
             reason_code,
             detail,
             release_mbid: decision.release_mbid.clone(),
@@ -1154,7 +1156,7 @@ impl LandingService {
             .await;
         tracing::info!(
             task_id = %task.id,
-            outcome,
+            outcome = outcome.as_str(),
             imported,
             held,
             "download landing decided"

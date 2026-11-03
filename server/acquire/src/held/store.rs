@@ -44,22 +44,10 @@ pub enum EntryOrigin {
     Upload,
 }
 
-impl EntryOrigin {
-    fn code(self) -> &'static str {
-        match self {
-            Self::Download => "download",
-            Self::Upload => "upload",
-        }
-    }
-
-    fn parse(text: &str) -> Self {
-        if text == "upload" {
-            Self::Upload
-        } else {
-            Self::Download
-        }
-    }
-}
+droppedneedle_kernel::spelled!(EntryOrigin {
+    Download => "download",
+    Upload => "upload",
+});
 
 /// Where an entry is in its life.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
@@ -81,16 +69,14 @@ impl EntryState {
     pub fn is_open(self) -> bool {
         matches!(self, Self::Held | Self::Placing)
     }
-
-    fn parse(text: &str) -> Self {
-        match text {
-            "placing" => Self::Placing,
-            "resolved" => Self::Resolved,
-            "expired" => Self::Expired,
-            _ => Self::Held,
-        }
-    }
 }
+
+droppedneedle_kernel::spelled!(EntryState {
+    Held => "held",
+    Placing => "placing",
+    Resolved => "resolved",
+    Expired => "expired",
+});
 
 /// Which app-owned folder a held copy sits in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -101,40 +87,27 @@ pub enum HeldRoot {
     Drop,
 }
 
-impl HeldRoot {
-    fn code(self) -> &'static str {
-        match self {
-            Self::Held => "held",
-            Self::Drop => "drop",
-        }
-    }
+droppedneedle_kernel::spelled!(HeldRoot {
+    Held => "held",
+    Drop => "drop",
+});
 
-    fn parse(text: &str) -> Self {
-        if text == "drop" {
-            Self::Drop
-        } else {
-            Self::Held
-        }
-    }
-}
-
-/// How a held file was decided.
+/// Whether a held file waits, or how it was decided.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileState {
+    /// Waiting for a decision.
+    Held,
     Imported,
     AlreadyOwned,
     Discarded,
 }
 
-impl FileState {
-    fn code(self) -> &'static str {
-        match self {
-            Self::Imported => "imported",
-            Self::AlreadyOwned => "already_owned",
-            Self::Discarded => "discarded",
-        }
-    }
-}
+droppedneedle_kernel::spelled!(FileState {
+    Held => "held",
+    Imported => "imported",
+    AlreadyOwned => "already_owned",
+    Discarded => "discarded",
+});
 
 /// What an entry is about. Written once, by [`GroupKey::text`], when the
 /// entry is made: one open entry per user and key.
@@ -224,7 +197,7 @@ impl HeldFile {
         Ok(Self {
             id: row.get(0)?,
             entry_id: row.get(1)?,
-            root: HeldRoot::parse(&row.get::<_, String>(2)?),
+            root: row.get(2)?,
             path: row.get(3)?,
             original_name: row.get(4)?,
             pairing: Pairing {
@@ -289,14 +262,14 @@ impl Entry {
         Ok(Self {
             id: row.get(0)?,
             user_id: row.get(1)?,
-            origin: EntryOrigin::parse(&row.get::<_, String>(2)?),
+            origin: row.get(2)?,
             group_key: row.get(3)?,
             release_group_mbid: row.get(4)?,
             recording_mbid: row.get(5)?,
             drop_item_id: row.get(6)?,
             artist_name: row.get(7)?,
             album_title: row.get(8)?,
-            state: EntryState::parse(&row.get::<_, String>(9)?),
+            state: row.get(9)?,
             created_at: row.get(10)?,
             expires_at: row.get(11)?,
             retry_at: row.get(12)?,
@@ -429,7 +402,7 @@ impl<'c> HeldRows<'c> {
                     sql::INSERT_ENTRY.text(),
                     params![
                         entry.user_id,
-                        entry.origin.code(),
+                        entry.origin.as_str(),
                         key,
                         group,
                         entry.recording_mbid.as_deref().map(str::to_ascii_lowercase),
@@ -473,7 +446,7 @@ impl<'c> HeldRows<'c> {
                 sql::INSERT_FILE.text(),
                 params![
                     entry_id,
-                    file.root.code(),
+                    file.root.as_str(),
                     file.path,
                     file.original_name,
                     file.pairing.release_mbid,
@@ -624,7 +597,7 @@ impl<'c> HeldRows<'c> {
         for id in file_ids {
             moved += self
                 .conn
-                .execute(sql::RESOLVE_FILE.text(), params![id, state.code(), now])?;
+                .execute(sql::RESOLVE_FILE.text(), params![id, state.as_str(), now])?;
         }
         self.settle(entry_id, now)?;
         Ok(moved)
@@ -789,7 +762,7 @@ impl<'c> HeldRows<'c> {
     ) -> rusqlite::Result<usize> {
         self.conn.execute(
             sql::RESOLVE_FILE.text(),
-            params![file_id, state.code(), now],
+            params![file_id, state.as_str(), now],
         )
     }
 
@@ -870,7 +843,7 @@ impl<'c> HeldRows<'c> {
         for id in gone {
             self.conn.execute(
                 sql::RESOLVE_FILE.text(),
-                params![id, FileState::Discarded.code(), now],
+                params![id, FileState::Discarded.as_str(), now],
             )?;
         }
         self.conn.execute(sql::RELEASE.text(), params![entry_id])?;

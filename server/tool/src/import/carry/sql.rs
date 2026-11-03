@@ -14,7 +14,7 @@ use droppedneedle_kernel::db::statement::Choice;
 
 use crate::export::sections::requests::now_millis;
 use crate::export::sections::{
-    ALL, Column, LinkKind, LinkMode, SOURCE_RULE, TableSection, Target, V2Value,
+    ALL, Column, LinkKind, LinkMode, RefKind, SOURCE_RULE, TableSection, Target, V2Value,
 };
 use droppedneedle_library::edition::choice::RemapOrigin;
 
@@ -464,9 +464,9 @@ fn catalog_table(kind: &str) -> &'static str {
 /// SQL for the reference kind of `kind` on bundle row `b`.
 fn kind_sql(kind: LinkKind) -> String {
     match kind {
-        LinkKind::Track => "'track'".to_owned(),
-        LinkKind::Album => "'album'".to_owned(),
-        LinkKind::Artist => "'artist'".to_owned(),
+        LinkKind::Track => format!("'{}'", RefKind::Track.as_str()),
+        LinkKind::Album => format!("'{}'", RefKind::Album.as_str()),
+        LinkKind::Artist => format!("'{}'", RefKind::Artist.as_str()),
         LinkKind::ByColumn(column) => format!("b.{}", quote(column)),
     }
 }

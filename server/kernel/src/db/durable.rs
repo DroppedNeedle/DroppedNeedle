@@ -24,26 +24,11 @@ pub enum JobState {
     Failed,
 }
 
-impl JobState {
-    /// Row value in `durable_loops`.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            JobState::Running => "running",
-            JobState::Stopped => "stopped",
-            JobState::Failed => "failed",
-        }
-    }
-
-    /// Parse a row value back into a state.
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "running" => Some(JobState::Running),
-            "stopped" => Some(JobState::Stopped),
-            "failed" => Some(JobState::Failed),
-            _ => None,
-        }
-    }
-}
+crate::spelled!(JobState {
+    Running => "running",
+    Stopped => "stopped",
+    Failed => "failed",
+});
 
 /// One loop row.
 #[derive(Debug, Clone, PartialEq, Eq)]

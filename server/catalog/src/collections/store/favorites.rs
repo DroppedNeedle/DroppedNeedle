@@ -13,8 +13,22 @@ use rusqlite::{params, params_from_iter};
 use super::super::db::{CollectionsDb, StoreError};
 use super::super::sql;
 
-/// Kinds the table accepts (its CHECK constraint).
-pub const KINDS: [&str; 3] = ["album", "artist", "track"];
+/// What a favorite is of: the table's `item_kind` values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FavoriteKind {
+    /// A local artist.
+    Artist,
+    /// A local album.
+    Album,
+    /// A local track.
+    Track,
+}
+
+droppedneedle_kernel::spelled!(FavoriteKind {
+    Artist => "artist",
+    Album => "album",
+    Track => "track",
+});
 
 /// One favorite row.
 #[derive(Debug, Clone, PartialEq)]

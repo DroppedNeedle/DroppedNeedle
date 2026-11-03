@@ -18,8 +18,8 @@ use std::collections::{HashMap, HashSet};
 use rusqlite::types::Value;
 use rusqlite::{Connection, OptionalExtension as _, params};
 
-use super::matching::{Confidence, EventRow, StoredConcert, SweepArtist, TmBasis};
-use super::models::{ConcertStatus, EventCity, EventSource};
+use super::matching::{EventRow, StoredConcert, SweepArtist, TmBasis};
+use super::models::{EventCity, EventSource};
 use super::sql;
 use droppedneedle_kernel::db::time::Millis;
 use droppedneedle_kernel::db::{Db, DbError, Lane};
@@ -64,22 +64,17 @@ pub struct SkiddleResolution {
     pub resolved_at: i64,
 }
 
-fn stored_concert(row: sql::FeedColumns) -> Option<StoredConcert> {
-    let source = EventSource::parse(&row.source)?;
-    Some(StoredConcert {
+fn stored_concert(row: sql::FeedColumns) -> StoredConcert {
+    StoredConcert {
         event: EventRow {
-            source,
+            source: row.source,
             source_event_id: row.source_event_id,
             artist_mbid_lower: row.artist_mbid_lower,
             artist_name: row.artist_name,
             event_name: row.event_name,
             local_date: row.local_date,
-            status: ConcertStatus::parse(&row.status),
-            confidence: if row.match_confidence == "mbid" {
-                Confidence::Mbid
-            } else {
-                Confidence::Name
-            },
+            status: row.status,
+            confidence: row.match_confidence,
             venue_name: row.venue_name,
             city: row.city,
             region: row.region,
@@ -90,7 +85,7 @@ fn stored_concert(row: sql::FeedColumns) -> Option<StoredConcert> {
             ticket_url: row.ticket_url,
         },
         artist_mbid: row.link_mbid,
-    })
+    }
 }
 
 /// The concerts tables in the application database.
@@ -203,7 +198,7 @@ impl ConcertsStore {
             .await?;
         Ok(row.map(|row| TmResolution {
             attraction_id: row.attraction_id,
-            basis: TmBasis::parse(&row.match_basis),
+            basis: row.match_basis,
             resolved_at: row.resolved_at.0,
         }))
     }
@@ -309,7 +304,7 @@ impl ConcertsStore {
             .await?;
         Ok(rows
             .into_iter()
-            .filter_map(|row| Some((EventSource::parse(&row.source)?, row.source_event_id)))
+            .map(|row| (row.source, row.source_event_id))
             .collect())
     }
 
@@ -421,7 +416,7 @@ impl ConcertsStore {
                 Ok(rows)
             })
             .await?;
-        Ok(rows.into_iter().filter_map(stored_concert).collect())
+        Ok(rows.into_iter().map(stored_concert).collect())
     }
 
     // -- per user ------------------------------------------------------------
@@ -542,20 +537,18 @@ pub fn set_seen_in(
 }
 
 /// How an artist's last check ended, as its cursor row stores it.
-#[derive(Debug, Clone, Copy)]
-enum CheckOutcome {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CheckOutcome {
+    /// The sources answered.
     Ok,
+    /// The check failed; its error text sits beside it.
     Error,
 }
 
-impl CheckOutcome {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Ok => "ok",
-            Self::Error => "error",
-        }
-    }
-}
+droppedneedle_kernel::spelled!(CheckOutcome {
+    Ok => "ok",
+    Error => "error",
+});
 
 fn upsert_cursor(
     tx: &rusqlite::Transaction<'_>,

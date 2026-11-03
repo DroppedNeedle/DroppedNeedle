@@ -10,13 +10,36 @@ use super::store::{DownloadStore, StoreError};
 use crate::db::{ms_from_secs_f64 as ms, secs_f64_from_ms as secs};
 use crate::reason::Reason;
 
+/// What one landing did with the download.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ImportOutcome {
+    /// Every track landed.
+    Imported,
+    /// Landed short.
+    Partial,
+    /// Files wait in the held list.
+    Held,
+    /// Refused for good.
+    Rejected,
+    /// Refused for now; a later pass tries again.
+    #[default]
+    Deferred,
+}
+
+droppedneedle_kernel::spelled!(ImportOutcome {
+    Imported => "imported",
+    Partial => "partial",
+    Held => "held",
+    Rejected => "rejected",
+    Deferred => "deferred",
+});
+
 /// One landing's decision, as `download_import_decisions` stores it.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ImportDecisionRow {
     pub task_id: String,
     pub attempt_id: Option<String>,
-    /// `imported`, `partial`, `held`, `rejected`, or `deferred`.
-    pub outcome: String,
+    pub outcome: ImportOutcome,
     pub reason_code: Option<Reason>,
     pub detail: Option<String>,
     pub release_mbid: Option<String>,
@@ -73,7 +96,7 @@ impl DownloadStore<'_> {
                 })?;
         let held_reason = self
             .latest_import_decision(task_id)?
-            .filter(|row| row.outcome == "held")
+            .filter(|row| row.outcome == ImportOutcome::Held)
             .and_then(|row| row.reason_code);
         Ok(LandingHistory {
             files_imported,
@@ -87,7 +110,7 @@ impl DownloadStore<'_> {
         let Some(row) = self.latest_import_decision(task_id)? else {
             return Ok(Vec::new());
         };
-        if !matches!(row.outcome.as_str(), "partial" | "held") {
+        if !matches!(row.outcome, ImportOutcome::Partial | ImportOutcome::Held) {
             return Ok(Vec::new());
         }
         Ok(serde_json::from_str(&row.missing_positions).unwrap_or_default())

@@ -25,7 +25,7 @@ use droppedneedle_testkit::remotes::{
     serve_navidrome, serve_navidrome_with, serve_plex, serve_plex_with,
 };
 use remotes::connections::{ConnectionResolver, ResolveError, UserLink};
-use remotes::folders::{FolderPreference, SqliteFolderStore, resolve_scope};
+use remotes::folders::{FolderMode, FolderPreference, SqliteFolderStore, resolve_scope};
 use remotes::handlers::{self as remotes_handlers, RemotesDeps};
 use remotes::jellyfin::JellyfinAdapter;
 use remotes::models::SourceName;
@@ -776,7 +776,7 @@ async fn linked_connections_survive_a_restart() {
         .set(
             USER_ID,
             FolderPreference {
-                mode: "selected".to_owned(),
+                mode: FolderMode::Selected,
                 selected_folder_ids: vec!["folder-1".to_owned()],
                 server_identity: Some("server-a".to_owned()),
             },
@@ -952,7 +952,7 @@ fn available_folders() -> Vec<(String, String)> {
 async fn folders_fail_closed_on_server_change_or_outage() {
     let available = available_folders();
     let moved = FolderPreference {
-        mode: "selected".to_owned(),
+        mode: FolderMode::Selected,
         selected_folder_ids: vec!["folder-1".to_owned()],
         server_identity: Some("old-server".to_owned()),
     };

@@ -18,7 +18,7 @@ use rusqlite::{Connection, OptionalExtension, Row};
 use super::plan::TaskPlan;
 use super::source_tag::SourceTag;
 use super::sql;
-use super::state::{AttemptState, TaskStatus};
+use super::state::{AttemptDisposition, AttemptState, TaskStatus};
 use crate::db::{ms_from_secs_f64 as ms, secs_f64_from_ms as secs};
 use crate::reason::Reason;
 use crate::requests::settle::{Fulfilled, on_task_settled};
@@ -243,8 +243,8 @@ pub struct AttemptRow {
     pub job_name: String,
     /// Journal state.
     pub state: AttemptState,
-    /// Cleanup disposition: `undecided`, `discard`, or `preserve`.
-    pub disposition: String,
+    /// What cleanup does with the files.
+    pub disposition: AttemptDisposition,
     /// Consecutive cleanup failures.
     pub cleanup_failures: i64,
     /// Earliest next cleanup attempt (unix seconds).
@@ -882,7 +882,7 @@ impl<'conn> DownloadStore<'conn> {
         expected_revision: i64,
         state: AttemptState,
         now: f64,
-        disposition: Option<&str>,
+        disposition: Option<AttemptDisposition>,
         error_code: Option<&str>,
         clear_lease: bool,
     ) -> Result<Option<AttemptRow>, StoreError> {
@@ -1027,9 +1027,9 @@ impl<'conn> DownloadStore<'conn> {
                 state,
                 now,
                 Some(if preserve_attempt {
-                    "preserve"
+                    AttemptDisposition::Preserve
                 } else {
-                    "discard"
+                    AttemptDisposition::Discard
                 }),
                 None,
                 true,

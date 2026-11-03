@@ -184,9 +184,26 @@ impl PlayEvents for NoPlayEvents {
     fn play_accepted(&self, _user_id: &str, _report: &ReportTrack, _played_at: i64) {}
 }
 
+/// Who sees what a user plays: `user_listening_prefs.now_playing_visibility`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Visibility {
+    /// Full track detail for other listeners.
+    Full,
+    /// Identity and progress only; the song stays hidden.
+    TrackHidden,
+    /// Absent from the shared feed entirely.
+    Offline,
+}
+
+droppedneedle_kernel::spelled!(Visibility {
+    Full => "full",
+    TrackHidden => "track_hidden",
+    Offline => "offline",
+});
+
 /// Full track detail for other listeners.
-pub const VISIBILITY_FULL: &str = "full";
+pub const VISIBILITY_FULL: &str = Visibility::Full.as_str();
 /// Identity and progress only; the song stays hidden.
-pub const VISIBILITY_TRACK_HIDDEN: &str = "track_hidden";
+pub const VISIBILITY_TRACK_HIDDEN: &str = Visibility::TrackHidden.as_str();
 /// Absent from the shared feed entirely.
-pub const VISIBILITY_OFFLINE: &str = "offline";
+pub const VISIBILITY_OFFLINE: &str = Visibility::Offline.as_str();

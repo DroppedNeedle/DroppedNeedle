@@ -203,28 +203,12 @@ pub enum State {
     Failed,
 }
 
-impl State {
-    /// The stored value.
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Queued => "queued",
-            Self::Running => "running",
-            Self::Done => "done",
-            Self::Failed => "failed",
-        }
-    }
-
-    /// The state a stored value names.
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "queued" => Some(Self::Queued),
-            "running" => Some(Self::Running),
-            "done" => Some(Self::Done),
-            "failed" => Some(Self::Failed),
-            _ => None,
-        }
-    }
-}
+crate::spelled!(State {
+    Queued => "queued",
+    Running => "running",
+    Done => "done",
+    Failed => "failed",
+});
 
 /// What a job module call can fail with.
 #[derive(Debug, thiserror::Error)]

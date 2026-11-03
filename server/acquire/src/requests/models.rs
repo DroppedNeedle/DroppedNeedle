@@ -18,24 +18,10 @@ pub enum RequestKind {
     Track,
 }
 
-impl RequestKind {
-    /// Parse the `kind` query/body value. Unknown values fail closed to None.
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "album" => Some(Self::Album),
-            "track" => Some(Self::Track),
-            _ => None,
-        }
-    }
-
-    /// Wire form.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Album => "album",
-            Self::Track => "track",
-        }
-    }
-}
+droppedneedle_kernel::spelled!(RequestKind {
+    Album => "album",
+    Track => "track",
+});
 
 /// Album intake body. Names may be omitted only when they resolve; intake
 /// has no catalog lookup, so blank or literal-"Unknown" names are

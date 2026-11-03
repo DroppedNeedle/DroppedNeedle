@@ -32,7 +32,7 @@ use droppedneedle_acquire::held::store::{
 use droppedneedle_acquire::reason::Reason;
 use droppedneedle_acquire::requests::ledger::{RequestStatus, WantedWatch, WatchKind, WatchState};
 use droppedneedle_acquire::requests::models::RequestKind;
-use droppedneedle_acquire::search_jobs::store::{COMPLETED, JobPayload, JobStore, NewJob};
+use droppedneedle_acquire::search_jobs::store::{JobPayload, JobStatus, JobStore, NewJob};
 use serde_json::{Value, json};
 use utoipa::OpenApi as _;
 
@@ -1261,7 +1261,7 @@ async fn seed(app: &TestApp, kind: Owned, owner: &Who, n: u32) -> Ids {
             .await
             .expect("job seeds");
             assert!(
-                jobs.finish(&job_id, COMPLETED, JobPayload::default(), None)
+                jobs.finish(&job_id, JobStatus::Completed, JobPayload::default(), None)
                     .await
                     .expect("job finishes")
             );

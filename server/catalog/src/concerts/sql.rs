@@ -2,6 +2,9 @@
 
 use droppedneedle_kernel::db::time::Millis;
 
+use super::matching::{Confidence, TmBasis};
+use super::models::{ConcertStatus, EventSource};
+
 droppedneedle_kernel::sql! {
     /// Every distinct followed artist, keyed by lowercase MBID.
     pub(super) FOLLOWED_ARTISTS = "SELECT artist_mbid_lower, MIN(artist_mbid) AS artist_mbid, \
@@ -44,7 +47,7 @@ droppedneedle_kernel::sql! {
              WHERE artist_mbid_lower = ?";
     pub(super) row TmColumns for [TM_RESOLUTION] {
         attraction_id: Option<String>,
-        match_basis: String,
+        match_basis: TmBasis,
         resolved_at: Millis,
     }
     /// When the Skiddle resolution was cached.
@@ -70,7 +73,7 @@ droppedneedle_kernel::sql! {
     /// The (source, listing) keys stored for one artist.
     pub(super) EVENT_KEYS = "SELECT source, source_event_id FROM catalog_live_event_feed WHERE artist_mbid_lower = ?";
     pub(super) row EventKey for [EVENT_KEYS] {
-        source: String,
+        source: EventSource,
         source_event_id: String,
     }
     /// Delete one feed row.
@@ -139,7 +142,7 @@ droppedneedle_kernel::sql! {
     /// Feed rows on or after a day.
     family FEED = feed;
     pub(super) row FeedColumns for family [feed] {
-        source: String,
+        source: EventSource,
         source_event_id: String,
         artist_mbid_lower: String,
         artist_name: String,
@@ -152,9 +155,9 @@ droppedneedle_kernel::sql! {
         longitude: Option<f64>,
         starts_at: Option<String>,
         local_date: String,
-        status: String,
+        status: ConcertStatus,
         ticket_url: Option<String>,
-        match_confidence: String,
+        match_confidence: Confidence,
         link_mbid: String,
     }
 }

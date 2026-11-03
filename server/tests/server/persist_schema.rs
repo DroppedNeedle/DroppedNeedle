@@ -3683,12 +3683,30 @@ fn state<T: Copy>(
 #[rustfmt::skip]
 fn state_columns() -> Vec<StateColumn> {
     use droppedneedle_acquire::dispatch::DispatchOrigin;
-    use droppedneedle_acquire::downloads::state::TaskStatus;
+    use droppedneedle_acquire::downloads::landing_rows::ImportOutcome;
+    use droppedneedle_acquire::downloads::quarantine::QuarantineReason;
+    use droppedneedle_acquire::downloads::state::{AttemptDisposition, AttemptState, TaskStatus};
+    use droppedneedle_acquire::drop_import::store::{DropItemStatus, DropJobStatus};
+    use droppedneedle_acquire::held::store::{EntryOrigin, EntryState, FileState, HeldRoot};
     use droppedneedle_acquire::reason::Reason;
-    use droppedneedle_acquire::requests::ledger::{ApprovalState, RequestStatus, WatchState};
+    use droppedneedle_acquire::requests::batches::models::BatchOutcome;
+    use droppedneedle_acquire::requests::ledger::{ApprovalState, RequestStatus, WatchKind, WatchState};
+    use droppedneedle_acquire::requests::models::RequestKind;
+    use droppedneedle_acquire::search_jobs::store::JobStatus;
     use droppedneedle_auth::federated::password_import::HashScheme;
     use droppedneedle_auth::session::store::SessionKind;
     use droppedneedle_auth::users::roles::Role;
+    use droppedneedle_catalog::collections::store::favorites::FavoriteKind;
+    use droppedneedle_catalog::collections::store::ratings::RatedKind;
+    use droppedneedle_catalog::concerts::matching::{Confidence, TmBasis};
+    use droppedneedle_catalog::concerts::models::{ConcertStatus, EventSource};
+    use droppedneedle_catalog::concerts::store::CheckOutcome;
+    use droppedneedle_catalog::discover::cache::PageKind;
+    use droppedneedle_catalog::discover::scheduler::Feature;
+    use droppedneedle_compat::jellyfin::ids::IdKind;
+    use droppedneedle_kernel::jobs::queue::State as QueueState;
+    use droppedneedle_kernel::runtime_config::ingest::IngestOutcome;
+    use droppedneedle_kernel::runtime_config::sections::ListenSource;
     use droppedneedle_library::activity::store::{EventStream, QueueSwitch};
     use droppedneedle_library::contrib::models::{ContributionState, ResultSource};
     use droppedneedle_library::identify::artist_links::{CreditState, ProofSubject};
@@ -3716,16 +3734,57 @@ fn state_columns() -> Vec<StateColumn> {
     };
     use droppedneedle_library::scan::sqlite_store::retag_pairs::{RetagPairReason, RetagPairState};
     use droppedneedle_library::tags::lyrics::LyricsSource;
+    use droppedneedle_media::playback::ports::Visibility;
+    use droppedneedle_media::remotes::folders::FolderMode;
+    use droppedneedle_tool::export::sections::{LinkMode, RefKind};
+    use droppedneedle_tool::import::report::ExitCode;
 
     vec![
         // acquire
+        state("acquire_discovery_batch_items", "outcome", &BatchOutcome::ALL, BatchOutcome::as_str),
+        state("acquire_held_entries", "origin", &EntryOrigin::ALL, EntryOrigin::as_str),
+        state("acquire_held_entries", "state", &EntryState::ALL, EntryState::as_str),
         state("acquire_held_files", "reason", &Reason::ALL, Reason::code),
+        state("acquire_held_files", "root", &HeldRoot::ALL, HeldRoot::as_str),
+        state("acquire_held_files", "state", &FileState::ALL, FileState::as_str),
         state("auto_download_approvals", "state", &ApprovalState::ALL, ApprovalState::as_str),
+        state("download_attempts", "disposition", &AttemptDisposition::ALL, AttemptDisposition::as_str),
+        state("download_attempts", "state", &AttemptState::ALL, AttemptState::as_str),
+        state("download_import_decisions", "outcome", &ImportOutcome::ALL, ImportOutcome::as_str),
+        state("download_quarantine", "reason", &QuarantineReason::ALL, QuarantineReason::as_str),
         state("download_tasks", "status", &TaskStatus::ALL, TaskStatus::as_str),
+        state("drop_import_items", "status", &DropItemStatus::ALL, DropItemStatus::as_str),
+        state("drop_import_jobs", "status", &DropJobStatus::ALL, DropJobStatus::as_str),
         state("personal_mix_approvals", "state", &ApprovalState::ALL, ApprovalState::as_str),
         state("request_history", "origin", &DispatchOrigin::ALL, DispatchOrigin::as_str),
+        state("request_history", "request_kind", &RequestKind::ALL, RequestKind::as_str),
         state("request_history", "status", &RequestStatus::ALL, RequestStatus::as_str),
+        state("search_jobs", "status", &JobStatus::ALL, JobStatus::as_str),
+        state("wanted_watches", "kind", &WatchKind::ALL, WatchKind::as_str),
         state("wanted_watches", "state", &WatchState::ALL, WatchState::as_str),
+        // catalog
+        state("catalog_artist_event_checks", "last_status", &CheckOutcome::ALL, CheckOutcome::as_str),
+        state("catalog_artist_tm_attractions", "match_basis", &TmBasis::ALL, TmBasis::as_str),
+        state("catalog_cached_pages", "page", &PageKind::ALL, PageKind::as_str),
+        state("catalog_discover_activity", "feature", &Feature::ALL, Feature::as_str),
+        state("catalog_live_event_feed", "match_confidence", &Confidence::ALL, Confidence::as_str),
+        state("catalog_live_event_feed", "source", &EventSource::ALL, EventSource::as_str),
+        state("catalog_live_event_feed", "status", &ConcertStatus::ALL, ConcertStatus::as_str),
+        state("catalog_user_favorites", "item_kind", &FavoriteKind::ALL, FavoriteKind::as_str),
+        state("catalog_user_ratings", "item_kind", &RatedKind::ALL, RatedKind::as_str),
+        // compat
+        state("compat_jellyfin_ids", "kind", &IdKind::ALL, IdKind::as_str),
+        // kernel
+        state("config_ingests", "outcome", &IngestOutcome::ALL, IngestOutcome::as_str),
+        state("durable_jobs", "state", &QueueState::ALL, QueueState::as_str),
+        // media
+        state("media_navidrome_folder_preferences", "mode", &FolderMode::ALL, FolderMode::as_str),
+        state("user_listening_prefs", "now_playing_visibility", &Visibility::ALL, Visibility::as_str),
+        state("user_listening_prefs", "primary_music_source", &ListenSource::ALL, ListenSource::as_str),
+        // tool
+        state("import_pending_links", "mode", &LinkMode::ALL, LinkMode::as_str),
+        state("import_pending_links", "ref_kind", &RefKind::ALL, RefKind::as_str),
+        state("import_runs", "exit_code", &ExitCode::ALL, ExitCode::as_str),
         // auth
         state("auth_providers", "hash_scheme", &HashScheme::ALL, |scheme| scheme.as_tag()),
         state("auth_tokens", "session_kind", &SessionKind::ALL, SessionKind::as_str),
@@ -3790,10 +3849,24 @@ fn state_columns() -> Vec<StateColumn> {
     ]
 }
 
-/// TEXT columns whose name says state but that hold something else.
+/// Why a download source column holds no closed set.
+const DOWNLOAD_SOURCE: &str = "a download source; a plugin's is plugin:<name>";
+
+/// State-like TEXT columns not held to an enum, with the reason: they hold
+/// something else, or a set with no end.
 #[rustfmt::skip]
 const NOT_STATE: &[(&str, &str, &str)] = &[
+    ("acquire_held_files", "source", DOWNLOAD_SOURCE),
     ("auth_oidc_states", "state", "a random sign-in token"),
+    ("auto_download_approvals", "source", "a label for what filed the ask, carried from v2 as written"),
+    ("catalog_cached_pages", "source", "the MusicBrainz source's cache namespace"),
+    ("catalog_discover_activity", "source", "the MusicBrainz source's cache namespace"),
+    ("catalog_user_favorite_names", "item_kind", "its foreign key holds it to catalog_user_favorites"),
+    ("download_attempts", "source", DOWNLOAD_SOURCE),
+    ("download_quarantine", "source", DOWNLOAD_SOURCE),
+    ("download_tasks", "source", DOWNLOAD_SOURCE),
+    ("durable_jobs", "kind", "a job kind each area names"),
+    ("library_play_history", "source", "where a play was reported from, carried from v2 as written"),
     ("spotify_auth_requests", "state", "a random sign-in token"),
     ("library_management_baselines", "restore_status", "v2's, carried by the upgrade; nothing reads it"),
     ("library_management_blobs", "kind", "v2's, carried by the upgrade; nothing reads it"),
@@ -3806,14 +3879,12 @@ const NOT_STATE: &[(&str, &str, &str)] = &[
     ("local_track_artists", "role", "credits carried from v2 keep v2's role names"),
     ("local_track_external_identities", "provider_source_mode", "v2's, carried by the upgrade; nothing reads it"),
     ("local_tracks", "ingest_source", "how a file came in; v2's rows and provenance name their own"),
+    ("wanted_seen_candidates", "source", DOWNLOAD_SOURCE),
 ];
 
 /// Why a column is not held to an enum yet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Pending {
-    /// Its enum exists but cannot list its values: give it `ALL`, best by
-    /// declaring it through the kernel's `spelled!`.
-    NoAll,
     /// It has a CHECK but no enum reads or writes it.
     NoEnum,
     /// Its name says state and it has no CHECK: either an enum backs it
@@ -3830,50 +3901,12 @@ enum Pending {
 /// into one baseline: the fold would freeze each of these as it is.
 #[rustfmt::skip]
 const PENDING: &[(&str, &str, &str, Pending, &str)] = {
-    use Pending::{CheckChange, NoAll, NoEnum, Unclassified};
+    use Pending::{CheckChange, NoEnum, Unclassified};
     &[
         // acquire
-        ("acquire", "acquire_discovery_batch_items", "outcome", NoAll, "BatchOutcome"),
-        ("acquire", "acquire_held_entries", "origin", NoAll, "EntryOrigin"),
-        ("acquire", "acquire_held_entries", "state", NoAll, "EntryState"),
-        ("acquire", "acquire_held_files", "root", NoAll, "HeldRoot"),
-        ("acquire", "acquire_held_files", "source", Unclassified, ""),
-        ("acquire", "acquire_held_files", "state", NoAll, "FileState"),
-        ("acquire", "auto_download_approvals", "source", Unclassified, ""),
-        ("acquire", "download_attempts", "disposition", NoEnum, ""),
-        ("acquire", "download_attempts", "source", NoAll, "SourceTag"),
-        ("acquire", "download_attempts", "state", NoAll, "AttemptState"),
-        ("acquire", "download_import_decisions", "outcome", NoEnum, ""),
-        ("acquire", "download_quarantine", "reason", NoAll, "QuarantineReason"),
-        ("acquire", "download_quarantine", "source", Unclassified, ""),
-        ("acquire", "download_tasks", "origin", Unclassified, "DispatchOrigin?"),
-        ("acquire", "download_tasks", "source", Unclassified, ""),
-        ("acquire", "drop_import_items", "status", NoAll, "DropItemStatus"),
-        ("acquire", "drop_import_jobs", "status", NoAll, "DropJobStatus"),
-        ("acquire", "request_history", "request_kind", NoAll, "RequestKind"),
-        ("acquire", "search_jobs", "status", NoEnum, ""),
-        ("acquire", "wanted_watches", "kind", NoAll, "WatchKind"),
-        ("acquire", "wanted_seen_candidates", "source", Unclassified, ""),
-        // catalog
-        ("catalog", "catalog_artist_event_checks", "last_status", NoEnum, ""),
-        ("catalog", "catalog_artist_tm_attractions", "match_basis", NoAll, "TmBasis"),
-        ("catalog", "catalog_cached_pages", "page", NoAll, "PageKind"),
-        ("catalog", "catalog_cached_pages", "source", Unclassified, ""),
-        ("catalog", "catalog_discover_activity", "feature", NoAll, "Feature"),
-        ("catalog", "catalog_discover_activity", "source", Unclassified, ""),
-        ("catalog", "catalog_live_event_feed", "match_confidence", NoAll, "Confidence"),
-        ("catalog", "catalog_live_event_feed", "source", NoAll, "EventSource"),
-        ("catalog", "catalog_live_event_feed", "status", NoAll, "ConcertStatus"),
-        ("catalog", "catalog_user_favorite_names", "item_kind", Unclassified, ""),
-        ("catalog", "catalog_user_favorites", "item_kind", NoEnum, ""),
-        ("catalog", "catalog_user_ratings", "item_kind", NoAll, "RatedKind"),
-        // compat
-        ("compat", "compat_jellyfin_ids", "kind", NoAll, "IdKind"),
+        ("acquire", "download_tasks", "origin", CheckChange, "DispatchOrigin"),
         // kernel
-        ("kernel", "config_ingests", "outcome", NoAll, "IngestOutcome"),
-        ("kernel", "durable_jobs", "kind", Unclassified, "job kinds each area names"),
-        ("kernel", "durable_jobs", "state", NoAll, "jobs::queue::State"),
-        ("kernel", "durable_loops", "state", NoAll, "db::durable::JobState"),
+        ("kernel", "durable_loops", "state", CheckChange, "db::durable::JobState"),
         // library
         ("library", "library_audio_fingerprint_outcomes", "state", CheckChange, "FingerprintState"),
         ("library", "library_catalog_actions", "action_kind", Unclassified, "a closed set, written as text by every caller"),
@@ -3888,15 +3921,6 @@ const PENDING: &[(&str, &str, &str, Pending, &str)] = {
         ("library", "local_artists", "kind", NoEnum, "set in SQL text only"),
         ("library", "local_track_genres", "source", NoEnum, "set in SQL text only"),
         ("library", "local_tracks", "availability", NoEnum, "read as text across the library"),
-        // media
-        ("media", "library_play_history", "source", Unclassified, ""),
-        ("media", "media_navidrome_folder_preferences", "mode", NoEnum, ""),
-        ("media", "user_listening_prefs", "now_playing_visibility", NoEnum, ""),
-        ("media", "user_listening_prefs", "primary_music_source", NoAll, "ListenSource"),
-        // tool
-        ("tool", "import_pending_links", "mode", NoAll, "LinkMode"),
-        ("tool", "import_pending_links", "ref_kind", NoEnum, ""),
-        ("tool", "import_runs", "exit_code", NoAll, "ExitCode"),
     ]
 };
 

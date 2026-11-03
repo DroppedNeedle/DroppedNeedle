@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use super::{DownloadWorker, Pass};
 use crate::downloads::recovery::{FAILOVER_CLAIM_LIMIT, FAILOVER_LEASE_SECONDS};
 use crate::downloads::sources::SourceHandle;
-use crate::downloads::state::{AttemptState, TaskStatus};
+use crate::downloads::state::{AttemptDisposition, AttemptState, TaskStatus};
 use crate::downloads::store::{AttemptRow, StoreError};
 
 /// How long a failed download's files are kept for "Retry import" (90
@@ -119,7 +119,7 @@ impl DownloadWorker {
         };
         let cancelled = task.is_some_and(|task| task.status == TaskStatus::Cancelled);
         if cancelled
-            && attempt.disposition == "discard"
+            && attempt.disposition == AttemptDisposition::Discard
             && let Err(error) = source.abort(&handle).await
         {
             tracing::warn!(attempt_id = %attempt.id, %error, "cancelled transfer abort failed");
@@ -130,14 +130,14 @@ impl DownloadWorker {
             Ok(_) => {
                 let attempt_id = attempt.id.clone();
                 let revision = attempt.row_revision;
-                let disposition = attempt.disposition.clone();
+                let disposition = attempt.disposition;
                 self.step("downloads.cleanup_done", move |store| {
                     store.transition_attempt(
                         &attempt_id,
                         revision,
                         AttemptState::Complete,
                         now,
-                        Some(&disposition),
+                        Some(disposition),
                         None,
                         true,
                     )

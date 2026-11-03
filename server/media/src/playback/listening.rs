@@ -23,19 +23,14 @@ use droppedneedle_auth::users::stores::{LastFmKeys, LastFmSwitch};
 use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::db::{Db, DbError, Lane};
 use droppedneedle_kernel::runtime_config::crypto::{Crypto, CryptoError};
+use droppedneedle_kernel::runtime_config::sections::ListenSource;
 use rusqlite::{Connection, OptionalExtension};
 
-use super::ports::{ScrobbleTargets, VISIBILITY_FULL, VISIBILITY_OFFLINE, VISIBILITY_TRACK_HIDDEN};
+use super::ports::{ScrobbleTargets, Visibility};
 use super::sql;
 
 /// A boxed future, for the ports the routes take.
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
-
-/// Allowed `primary_music_source` values.
-pub const PRIMARY_SOURCES: &[&str] = &["listenbrainz", "lastfm"];
-/// Allowed `now_playing_visibility` values.
-pub const NOW_PLAYING_VISIBILITIES: &[&str] =
-    &[VISIBILITY_FULL, VISIBILITY_TRACK_HIDDEN, VISIBILITY_OFFLINE];
 
 /// Service tag of ListenBrainz rows in `user_connections`.
 const LISTENBRAINZ: &str = "listenbrainz";
@@ -52,10 +47,9 @@ pub struct ScrobblePrefs {
     /// Navidrome owns external scrobbles: skip our forwarding for
     /// Navidrome-sourced plays (history still records).
     pub navidrome_handles_external_scrobbles: bool,
-    /// Where discovery reads the user's listening: one of
-    /// [`PRIMARY_SOURCES`].
+    /// Where discovery reads the user's listening: a [`ListenSource`].
     pub primary_music_source: String,
-    /// Who sees what the user plays: one of [`NOW_PLAYING_VISIBILITIES`].
+    /// Who sees what the user plays: a [`Visibility`].
     pub now_playing_visibility: String,
     /// Standing intent to auto-request the personal mix.
     pub auto_request_personal_mix: bool,
@@ -68,8 +62,8 @@ impl Default for ScrobblePrefs {
             scrobble_to_lastfm: false,
             scrobble_to_listenbrainz: false,
             navidrome_handles_external_scrobbles: true,
-            primary_music_source: PRIMARY_SOURCES[0].to_owned(),
-            now_playing_visibility: VISIBILITY_FULL.to_owned(),
+            primary_music_source: ListenSource::default().as_str().to_owned(),
+            now_playing_visibility: Visibility::Full.as_str().to_owned(),
             auto_request_personal_mix: false,
         }
     }

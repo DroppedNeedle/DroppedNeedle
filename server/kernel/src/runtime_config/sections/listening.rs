@@ -48,15 +48,10 @@ pub enum ListenSource {
     Lastfm,
 }
 
-impl ListenSource {
-    /// Wire spelling.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Listenbrainz => "listenbrainz",
-            Self::Lastfm => "lastfm",
-        }
-    }
-}
+crate::spelled!(ListenSource {
+    Listenbrainz => "listenbrainz",
+    Lastfm => "lastfm",
+});
 
 // --- lyrics_settings (read-path lyrics provider) ---------------------------
 // The switch for the online LRCLIB lookup on the library read path, on by

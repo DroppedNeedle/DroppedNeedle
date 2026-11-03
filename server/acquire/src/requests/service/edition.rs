@@ -21,6 +21,7 @@ use super::RequestsService;
 use crate::dispatch::{
     DispatchError, DispatchOrigin, DispatchOutcome, DispatchRequest, DispatchTarget,
 };
+use crate::downloads::landing_rows::ImportOutcome;
 use crate::downloads::plan::{PlannedAlbum, ReplaceVersion};
 use crate::downloads::{DownloadStore, StoreError, TaskStatus};
 use crate::edition::{copy_is_held, local_names};
@@ -284,7 +285,7 @@ fn fetch_facts(
     };
     for task_id in &tasks {
         if let Some(import) = store.latest_import(task_id)? {
-            if import.outcome == "imported" {
+            if import.outcome == ImportOutcome::Imported {
                 all_landed = true;
             } else {
                 let missing: Vec<(u32, u32)> = serde_json::from_str(&import.missing_positions)

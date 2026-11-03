@@ -90,33 +90,14 @@ pub enum IdKind {
     Library,
 }
 
-impl IdKind {
-    /// The name stored and used by the routes.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Album => "album",
-            Self::Artist => "artist",
-            Self::Track => "track",
-            Self::Genre => "genre",
-            Self::Playlist => "playlist",
-            Self::Library => "library",
-        }
-    }
-
-    /// The kind called `name`.
-    pub fn named(name: &str) -> Option<Self> {
-        [
-            Self::Album,
-            Self::Artist,
-            Self::Track,
-            Self::Genre,
-            Self::Playlist,
-            Self::Library,
-        ]
-        .into_iter()
-        .find(|kind| kind.as_str() == name)
-    }
-}
+droppedneedle_kernel::spelled!(IdKind {
+    Album => "album",
+    Artist => "artist",
+    Track => "track",
+    Genre => "genre",
+    Playlist => "playlist",
+    Library => "library",
+});
 
 /// A read or write of the id table that did not complete.
 #[derive(Debug)]
@@ -235,7 +216,7 @@ impl JellyfinIds {
     /// The id handed out for an item: the stored one where it differs from
     /// the computed one, else the computed one. Reads nothing.
     pub fn handed_out(&self, kind: &str, internal: &str) -> String {
-        let stored = IdKind::named(kind).and_then(|named| {
+        let stored = IdKind::parse(kind).and_then(|named| {
             let progress = self.progress.borrow();
             progress
                 .exceptions
@@ -322,7 +303,7 @@ impl JellyfinIds {
                 if current_only && !current {
                     continue;
                 }
-                match IdKind::named(&kind) {
+                match IdKind::parse(&kind) {
                     Some(kind) => {
                         found.insert(jellyfin_id, (kind, internal));
                     }
@@ -598,7 +579,7 @@ impl Fill {
                     if ids.computed(&kind, &internal) == jellyfin_id {
                         continue;
                     }
-                    if let Some(kind) = IdKind::named(&kind) {
+                    if let Some(kind) = IdKind::parse(&kind) {
                         exceptions.insert((kind, internal), jellyfin_id);
                     }
                 }

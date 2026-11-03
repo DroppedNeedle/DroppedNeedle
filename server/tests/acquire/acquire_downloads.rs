@@ -30,7 +30,7 @@ fn mount_gone() -> TaskOutcome<'static> {
 }
 use downloads::quarantine::QuarantineReason;
 use downloads::recovery::{FAILOVER_CLAIM_LIMIT, FAILOVER_LEASE_SECONDS, StartupAction};
-use downloads::state::{AttemptState, can_transition};
+use downloads::state::{AttemptDisposition, AttemptState, can_transition};
 use downloads::store::{NewTask, ReimportStart, TaskOutcome};
 use downloads::{
     DownloadStore, OrphanDecision, OrphanEvidence, OrphanPolicy, PollSample, QuarantineDir,
@@ -895,7 +895,7 @@ fn kept_files_go_to_cleanup_without_racing_a_reimport() {
     assert_eq!(state("reimported"), AttemptState::Preserved);
     assert_eq!(state("old"), AttemptState::CleanupPending);
     let old = store.get_attempt("old-a0").unwrap().unwrap();
-    assert_eq!(old.disposition, "discard");
+    assert_eq!(old.disposition, AttemptDisposition::Discard);
 
     // Files cleanup has leased are not reimported.
     let claimed = store

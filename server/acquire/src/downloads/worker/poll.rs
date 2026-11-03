@@ -8,7 +8,7 @@ use super::{DownloadWorker, Pass, handled_count, live_attempt};
 use crate::downloads::quarantine::{QUARANTINE_TTL_SECONDS, QuarantineReason, failover_identities};
 use crate::downloads::source_tag::SourceTag;
 use crate::downloads::sources::{DownloadSource, SourceError, SourceHandle};
-use crate::downloads::state::{AttemptState, TaskStatus};
+use crate::downloads::state::{AttemptDisposition, AttemptState, TaskStatus};
 use crate::downloads::store::{AttemptRow, TaskOutcome, TaskRow};
 use crate::downloads::watchdog::PollSample;
 use crate::reason::Reason;
@@ -515,7 +515,7 @@ impl DownloadWorker {
                 revision,
                 settled_state,
                 now,
-                Some("discard"),
+                Some(AttemptDisposition::Discard),
                 None,
                 true,
             )?;

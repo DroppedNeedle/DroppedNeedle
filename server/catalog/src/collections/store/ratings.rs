@@ -26,16 +26,11 @@ pub enum RatedKind {
     Track,
 }
 
-impl RatedKind {
-    /// The column value.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Artist => "artist",
-            Self::Album => "album",
-            Self::Track => "track",
-        }
-    }
-}
+droppedneedle_kernel::spelled!(RatedKind {
+    Artist => "artist",
+    Album => "album",
+    Track => "track",
+});
 
 /// The highest rating; 0 clears one.
 pub const MAX_RATING: u8 = 5;

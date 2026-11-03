@@ -261,7 +261,7 @@ impl From<TaskView> for DownloadTaskResponse {
                 view
             }),
             decision: facts.decision.map(|decision| ImportDecisionView {
-                outcome: decision.outcome,
+                outcome: decision.outcome.as_str().to_owned(),
                 reason_code: decision.reason_code,
                 reason_text: decision
                     .reason_code
@@ -1124,7 +1124,7 @@ impl From<JobView> for SearchJobResponse {
             .collect();
         Self {
             job_id: view.row.id,
-            status: view.row.status,
+            status: view.row.status.as_str().to_owned(),
             artist_name: view.row.artist_name,
             album_title: view.row.album_title,
             year: view.row.year,

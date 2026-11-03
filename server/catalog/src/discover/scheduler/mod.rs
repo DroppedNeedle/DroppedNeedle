@@ -49,28 +49,12 @@ pub enum Feature {
     Artist,
 }
 
-impl Feature {
-    /// The stored name, one of the table's CHECK values.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Home => "home",
-            Self::Discover => "discover",
-            Self::Queue => "queue",
-            Self::Artist => "artist",
-        }
-    }
-
-    /// The feature a stored or requested name stands for.
-    pub fn parse(name: &str) -> Option<Self> {
-        match name {
-            "home" => Some(Self::Home),
-            "discover" => Some(Self::Discover),
-            "queue" => Some(Self::Queue),
-            "artist" => Some(Self::Artist),
-            _ => None,
-        }
-    }
-}
+droppedneedle_kernel::spelled!(Feature {
+    Home => "home",
+    Discover => "discover",
+    Queue => "queue",
+    Artist => "artist",
+});
 
 /// One feature the scheduler warms.
 pub trait Warm: Send + Sync {

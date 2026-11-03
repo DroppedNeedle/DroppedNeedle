@@ -12,7 +12,7 @@ use std::sync::Arc;
 use droppedneedle_acquire::db::AcquireDb;
 use droppedneedle_acquire::downloads::SourceTag;
 use droppedneedle_acquire::downloads::journal::Journal;
-use droppedneedle_acquire::downloads::landing_rows::ImportDecisionRow;
+use droppedneedle_acquire::downloads::landing_rows::{ImportDecisionRow, ImportOutcome};
 use droppedneedle_acquire::downloads::queue_rows::Viewer as HeldViewer;
 use droppedneedle_acquire::downloads::sources::SourceHandle;
 use droppedneedle_acquire::downloads::state::{AttemptState, TaskStatus};
@@ -2724,13 +2724,20 @@ async fn a_wait_after_an_import_does_not_hide_it() {
                 AttemptState::InUse,
                 1.0,
             )?;
-            for (outcome, at) in [("imported", 2.0), ("deferred", 3.0)] {
+            for (outcome, at) in [
+                (ImportOutcome::Imported, 2.0),
+                (ImportOutcome::Deferred, 3.0),
+            ] {
                 store.record_import_decision(&ImportDecisionRow {
                     task_id: "t-again".to_owned(),
                     attempt_id: Some("t-again-a0".to_owned()),
-                    outcome: outcome.to_owned(),
+                    outcome,
                     files_total: 2,
-                    files_imported: if outcome == "imported" { 2 } else { 0 },
+                    files_imported: if outcome == ImportOutcome::Imported {
+                        2
+                    } else {
+                        0
+                    },
                     checks_json: "[]".to_owned(),
                     missing_positions: "[]".to_owned(),
                     decided_at: at,

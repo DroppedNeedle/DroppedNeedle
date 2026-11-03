@@ -49,18 +49,15 @@ pub enum PageKind {
     TopPicks,
 }
 
-impl PageKind {
-    /// The stored name, one of the table's CHECK values.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Discover => "discover",
-            Self::Home => "home",
-            Self::Queue => "queue",
-            Self::DailyMixes => "daily_mixes",
-            Self::TopPicks => "top_picks",
-        }
-    }
+droppedneedle_kernel::spelled!(PageKind {
+    Discover => "discover",
+    Home => "home",
+    Queue => "queue",
+    DailyMixes => "daily_mixes",
+    TopPicks => "top_picks",
+});
 
+impl PageKind {
     /// Whether a page built for `saved` may be served to a user who now
     /// has `wanted`. Linking or unlinking a service starts the pages over.
     /// The discover page and home are served from the old MusicBrainz

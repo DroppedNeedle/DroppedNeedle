@@ -40,19 +40,14 @@ pub enum QuarantineReason {
     Manual,
 }
 
-impl QuarantineReason {
-    /// Wire string stored in `download_quarantine.reason`.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            QuarantineReason::VerifyFailed => "verify_failed",
-            QuarantineReason::Corrupt => "corrupt",
-            QuarantineReason::FingerprintMismatch => "fingerprint_mismatch",
-            QuarantineReason::DurationMismatch => "duration_mismatch",
-            QuarantineReason::DownloadFailed => "download_failed",
-            QuarantineReason::Manual => "manual",
-        }
-    }
-}
+droppedneedle_kernel::spelled!(QuarantineReason {
+    VerifyFailed => "verify_failed",
+    Corrupt => "corrupt",
+    FingerprintMismatch => "fingerprint_mismatch",
+    DurationMismatch => "duration_mismatch",
+    DownloadFailed => "download_failed",
+    Manual => "manual",
+});
 
 /// Canonicalize a soulseek identity for blocklist matching.
 ///

@@ -14,11 +14,25 @@ use rusqlite::OptionalExtension as _;
 use super::source::BoxFuture;
 use super::sql;
 
+/// Whether a user browses every folder or a chosen few.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FolderMode {
+    /// Every folder the server exposes.
+    All,
+    /// Only the selected folders.
+    Selected,
+}
+
+droppedneedle_kernel::spelled!(FolderMode {
+    All => "all",
+    Selected => "selected",
+});
+
 /// Stored folder preference for one user.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FolderPreference {
-    /// "all" or "selected".
-    pub mode: String,
+    /// Every folder or the selected ones.
+    pub mode: FolderMode,
     /// Selected folder ids. Empty unless mode is "selected".
     pub selected_folder_ids: Vec<String>,
     /// Server identity the selection was saved against, when selected.
@@ -28,7 +42,7 @@ pub struct FolderPreference {
 impl Default for FolderPreference {
     fn default() -> Self {
         Self {
-            mode: "all".to_owned(),
+            mode: FolderMode::All,
             selected_folder_ids: Vec::new(),
             server_identity: None,
         }
@@ -74,7 +88,7 @@ pub trait FolderStore: Send + Sync {
 
 /// One `media_navidrome_folder_preferences` row as stored.
 struct FolderPreferenceRow {
-    mode: String,
+    mode: FolderMode,
     selected_ids_json: String,
     server_identity: Option<String>,
 }
@@ -244,8 +258,8 @@ pub fn resolve_scope(
     let unavailable = || FolderResolution {
         preference: preference.clone(),
         scope: FolderScope {
-            mode: preference.mode.clone(),
-            folder_ids: if preference.mode == "selected" {
+            mode: preference.mode.as_str().to_owned(),
+            folder_ids: if preference.mode == FolderMode::Selected {
                 Some(preference.selected_folder_ids.clone())
             } else {
                 None
@@ -260,11 +274,11 @@ pub fn resolve_scope(
     };
     let available_ids: std::collections::HashSet<&str> =
         available.iter().map(|(id, _)| id.as_str()).collect();
-    if preference.mode == "all" {
+    if preference.mode == FolderMode::All {
         return FolderResolution {
             preference: preference.clone(),
             scope: FolderScope {
-                mode: "all".to_owned(),
+                mode: FolderMode::All.as_str().to_owned(),
                 folder_ids: None,
             },
             available_folders: available.to_vec(),
@@ -280,7 +294,7 @@ pub fn resolve_scope(
         return FolderResolution {
             preference: preference.clone(),
             scope: FolderScope {
-                mode: "selected".to_owned(),
+                mode: FolderMode::Selected.as_str().to_owned(),
                 folder_ids: Some(Vec::new()),
             },
             available_folders: available.to_vec(),
@@ -296,7 +310,7 @@ pub fn resolve_scope(
     FolderResolution {
         preference: preference.clone(),
         scope: FolderScope {
-            mode: "selected".to_owned(),
+            mode: FolderMode::Selected.as_str().to_owned(),
             folder_ids: Some(live),
         },
         available_folders: available.to_vec(),
@@ -313,14 +327,15 @@ pub fn checked_preference(
     available: &[(String, String)],
     server_identity: &str,
 ) -> Result<FolderPreference, FolderSaveError> {
-    if mode == "all" {
-        if !selected_folder_ids.is_empty() {
-            return Err(FolderSaveError::AllWithIds);
+    match FolderMode::parse(mode) {
+        Some(FolderMode::All) => {
+            if !selected_folder_ids.is_empty() {
+                return Err(FolderSaveError::AllWithIds);
+            }
+            return Ok(FolderPreference::default());
         }
-        return Ok(FolderPreference::default());
-    }
-    if mode != "selected" {
-        return Err(FolderSaveError::InvalidMode);
+        Some(FolderMode::Selected) => {}
+        None => return Err(FolderSaveError::InvalidMode),
     }
     if selected_folder_ids.is_empty() {
         return Err(FolderSaveError::EmptySelection);
@@ -339,7 +354,7 @@ pub fn checked_preference(
         return Err(FolderSaveError::UnknownIds);
     }
     Ok(FolderPreference {
-        mode: "selected".to_owned(),
+        mode: FolderMode::Selected,
         selected_folder_ids: selected_folder_ids.to_vec(),
         server_identity: Some(server_identity.to_owned()),
     })

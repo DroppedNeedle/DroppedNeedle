@@ -16,7 +16,6 @@ use super::sql;
 use crate::db::{AcquireDb, ms_from_secs_f64 as ms, secs_f64_from_ms as secs};
 use crate::held::store::{EntryOrigin, GroupKey, HeldRows, NewEntry, NewFile};
 use crate::reason::Reason;
-use crate::requests::ledger::sql_text;
 use serde::Serialize;
 use utoipa::ToSchema;
 
@@ -33,25 +32,11 @@ pub enum DropJobStatus {
     Failed,
 }
 
-impl DropJobStatus {
-    /// Stored and wire form.
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Processing => "processing",
-            Self::Completed => "completed",
-            Self::Failed => "failed",
-        }
-    }
-
-    /// Read back a stored status.
-    pub fn parse(value: &str) -> Option<Self> {
-        [Self::Processing, Self::Completed, Self::Failed]
-            .into_iter()
-            .find(|status| status.as_str() == value)
-    }
-}
-
-sql_text!(DropJobStatus);
+droppedneedle_kernel::spelled!(DropJobStatus {
+    Processing => "processing",
+    Completed => "completed",
+    Failed => "failed",
+});
 
 /// Item lifecycle. The `drop_import_items.status` CHECK lists exactly these
 /// values.
@@ -72,35 +57,14 @@ pub enum DropItemStatus {
     Discarded,
 }
 
-impl DropItemStatus {
-    /// Stored and wire form.
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Processing => "processing",
-            Self::Imported => "imported",
-            Self::Skipped => "skipped",
-            Self::NeedsReview => "needs_review",
-            Self::Failed => "failed",
-            Self::Discarded => "discarded",
-        }
-    }
-
-    /// Read back a stored status.
-    pub fn parse(value: &str) -> Option<Self> {
-        [
-            Self::Processing,
-            Self::Imported,
-            Self::Skipped,
-            Self::NeedsReview,
-            Self::Failed,
-            Self::Discarded,
-        ]
-        .into_iter()
-        .find(|status| status.as_str() == value)
-    }
-}
-
-sql_text!(DropItemStatus);
+droppedneedle_kernel::spelled!(DropItemStatus {
+    Processing => "processing",
+    Imported => "imported",
+    Skipped => "skipped",
+    NeedsReview => "needs_review",
+    Failed => "failed",
+    Discarded => "discarded",
+});
 
 /// One upload gesture.
 #[derive(Debug, Clone, PartialEq)]

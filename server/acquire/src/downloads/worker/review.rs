@@ -20,7 +20,7 @@ use crate::downloads::store::TaskRow;
 use crate::search_jobs::candidates::Pin;
 use crate::search_jobs::review::{ReviewMode, Verdict, verdict};
 use crate::search_jobs::search_sources;
-use crate::search_jobs::store::{COMPLETED, JobPayload, JobStore, MATCHED, NewJob, ReviewOutcome};
+use crate::search_jobs::store::{JobPayload, JobStatus, JobStore, NewJob, ReviewOutcome};
 use droppedneedle_kernel::events::{SearchJobUpdated, UserNotice, new_event_id};
 
 /// Looks running at once.
@@ -184,23 +184,29 @@ impl DownloadWorker {
         }
         match outcome {
             ReviewOutcome::Take(..) => {
-                self.announce_review(&task.user_id, &job_id, MATCHED, count);
+                self.announce_review(&task.user_id, &job_id, JobStatus::Matched, count);
             }
             ReviewOutcome::Park => {
                 tracing::info!(task_id = %task.id, job_id, candidates = count, "download waits for a pick");
-                self.announce_review(&task.user_id, &job_id, COMPLETED, count);
+                self.announce_review(&task.user_id, &job_id, JobStatus::Completed, count);
             }
         }
         Reviewed::Recorded
     }
 
-    fn announce_review(&self, user_id: &str, job_id: &str, status: &str, candidate_count: usize) {
+    fn announce_review(
+        &self,
+        user_id: &str,
+        job_id: &str,
+        status: JobStatus,
+        candidate_count: usize,
+    ) {
         self.events.notify(
             user_id,
             UserNotice::SearchJobUpdated(SearchJobUpdated {
                 event_id: new_event_id(),
                 job_id: job_id.to_owned(),
-                status: status.to_owned(),
+                status: status.as_str().to_owned(),
                 candidate_count,
             }),
         );

@@ -43,25 +43,11 @@ pub enum TmBasis {
     None,
 }
 
-impl TmBasis {
-    /// The stored spelling.
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Mbid => "mbid",
-            Self::ExactName => "exact_name",
-            Self::None => "none",
-        }
-    }
-
-    /// Parse the stored spelling; anything unknown reads as no presence.
-    pub fn parse(value: &str) -> Self {
-        match value {
-            "mbid" => Self::Mbid,
-            "exact_name" => Self::ExactName,
-            _ => Self::None,
-        }
-    }
-}
+droppedneedle_kernel::spelled!(TmBasis {
+    Mbid => "mbid",
+    ExactName => "exact_name",
+    None => "none",
+});
 
 /// How sure the feed is that a row belongs to the artist.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,15 +58,10 @@ pub enum Confidence {
     Name,
 }
 
-impl Confidence {
-    /// The stored spelling.
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Mbid => "mbid",
-            Self::Name => "name",
-        }
-    }
-}
+droppedneedle_kernel::spelled!(Confidence {
+    Mbid => "mbid",
+    Name => "name",
+});
 
 /// One feed row as a sweep produces it.
 #[derive(Debug, Clone, PartialEq)]

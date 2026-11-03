@@ -233,7 +233,7 @@ impl Journal {
         self.read("downloads.album_version_only", move |store| {
             let decided = store
                 .latest_import_decision(&task_id)?
-                .filter(|row| row.outcome == "held")
+                .filter(|row| row.outcome == crate::downloads::landing_rows::ImportOutcome::Held)
                 .and_then(|row| row.reason_code);
             if decided == Some(Reason::AlbumVersionOnly) {
                 return Ok(true);

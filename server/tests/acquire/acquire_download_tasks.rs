@@ -20,7 +20,7 @@ use droppedneedle_acquire::downloads::worker::{
 };
 use droppedneedle_acquire::downloads::{
     http::downloads_router,
-    state::{AttemptState, TaskStatus},
+    state::{AttemptDisposition, AttemptState, TaskStatus},
     store::{NewTask, TaskOutcome},
 };
 use droppedneedle_acquire::landing::LandingService;
@@ -314,7 +314,7 @@ async fn cancel_hands_the_transfer_to_cleanup() {
     assert_eq!(task.unwrap().status, TaskStatus::Cancelled);
     let attempt = attempt.unwrap();
     assert_eq!(attempt.state, AttemptState::CleanupPending);
-    assert_eq!(attempt.disposition, "discard");
+    assert_eq!(attempt.disposition, AttemptDisposition::Discard);
 }
 
 // An auto-retry whose successor insert fails is tried again on the next
@@ -390,7 +390,7 @@ fn get(uri: &str, who: Who) -> (Request<Body>, Who) {
 #[tokio::test]
 async fn queue_journey_scopes_explains_retries_and_clears() {
     use droppedneedle_acquire::downloads::QUARANTINE_TTL_SECONDS;
-    use droppedneedle_acquire::downloads::landing_rows::ImportDecisionRow;
+    use droppedneedle_acquire::downloads::landing_rows::{ImportDecisionRow, ImportOutcome};
 
     let db = AcquireDb::scratch().unwrap();
     db.add_user("u-ada", "Ada", "user").await.unwrap();
@@ -417,7 +417,7 @@ async fn queue_journey_scopes_explains_retries_and_clears() {
             store.transition_task("q-done", TaskStatus::Completed, now, None)?;
             store.record_import_decision(&ImportDecisionRow {
                 task_id: "q-failed".to_owned(),
-                outcome: "rejected".to_owned(),
+                outcome: ImportOutcome::Rejected,
                 reason_code: Some(Reason::WrongAlbum),
                 checks_json: "[]".to_owned(),
                 missing_positions: "[]".to_owned(),

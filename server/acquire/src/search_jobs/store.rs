@@ -11,16 +11,28 @@ use crate::db::{AcquireDb, ms_from_secs_f64 as ms};
 use crate::downloads::store::{DownloadStore, NewTask, StoreError, TaskDetails};
 use droppedneedle_kernel::db::{DbError, Lane};
 
-/// Job statuses.
-pub const SEARCHING: &str = "searching";
-/// The search finished; candidates can be picked.
-pub const COMPLETED: &str = "completed";
-/// A candidate was picked and a download started.
-pub const MATCHED: &str = "matched";
-/// The search could not run.
-pub const FAILED: &str = "failed";
-/// The person cancelled or dismissed it.
-pub const CANCELLED: &str = "cancelled";
+/// Where a search job is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JobStatus {
+    /// The search runs.
+    Searching,
+    /// A candidate was picked and a download started.
+    Matched,
+    /// The search finished; candidates can be picked.
+    Completed,
+    /// The search could not run.
+    Failed,
+    /// The person cancelled or dismissed it.
+    Cancelled,
+}
+
+droppedneedle_kernel::spelled!(JobStatus {
+    Searching => "searching",
+    Matched => "matched",
+    Completed => "completed",
+    Failed => "failed",
+    Cancelled => "cancelled",
+});
 
 /// What a job stores besides its columns.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -54,7 +66,7 @@ pub struct JobRow {
     pub album_title: String,
     pub year: Option<i32>,
     pub release_group_mbid: Option<String>,
-    pub status: String,
+    pub status: JobStatus,
     pub blob: String,
     /// Reason code when the job failed.
     pub error_message: Option<String>,
@@ -111,7 +123,7 @@ pub struct PickedTask {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PickRefusal {
     /// The job is no longer open for picks; carries its status.
-    NotOpen(String),
+    NotOpen(Option<JobStatus>),
     /// The album is already downloading.
     AlbumBusy,
 }
@@ -188,7 +200,7 @@ impl JobStore {
                         job.year,
                         job.release_group_mbid,
                         format!("{} - {}", job.artist_name, job.album_title),
-                        SEARCHING,
+                        JobStatus::Searching,
                         payload.encode()?,
                         ms(at),
                     ],
@@ -237,7 +249,7 @@ impl JobStore {
     pub async fn finish(
         &self,
         job_id: &str,
-        status: &'static str,
+        status: JobStatus,
         payload: JobPayload,
         reason: Option<&'static str>,
     ) -> Result<bool, String> {
@@ -248,7 +260,14 @@ impl JobStore {
                 let at = crate::db::unix_secs_f64(clock.as_ref());
                 let changed = tx.execute(
                     sql::FINISH_JOB.text(),
-                    params![job_id, status, payload.encode()?, reason, ms(at), SEARCHING],
+                    params![
+                        job_id,
+                        status,
+                        payload.encode()?,
+                        reason,
+                        ms(at),
+                        JobStatus::Searching
+                    ],
                 )?;
                 Ok(changed > 0)
             })
@@ -282,8 +301,8 @@ impl JobStore {
                     return Ok(false);
                 }
                 let status = match outcome {
-                    ReviewOutcome::Take(..) => MATCHED,
-                    ReviewOutcome::Park => COMPLETED,
+                    ReviewOutcome::Take(..) => JobStatus::Matched,
+                    ReviewOutcome::Park => JobStatus::Completed,
                 };
                 tx.execute(
                     sql::INSERT_REVIEWED_JOB.text(),
@@ -334,7 +353,14 @@ impl JobStore {
                 let at = crate::db::unix_secs_f64(clock.as_ref());
                 let moved = tx.execute(
                     sql::CLOSE_JOB.text(),
-                    params![job_id, CANCELLED, ms(at), SEARCHING, COMPLETED, FAILED],
+                    params![
+                        job_id,
+                        JobStatus::Cancelled,
+                        ms(at),
+                        JobStatus::Searching,
+                        JobStatus::Completed,
+                        JobStatus::Failed
+                    ],
                 )?;
                 let parked: Option<String> = tx
                     .query_row(sql::PARKED_TASK.text(), params![job_id], |row| row.get(0))
@@ -355,8 +381,8 @@ impl JobStore {
     pub async fn transition(
         &self,
         job_id: &str,
-        to: &'static str,
-        from: &'static [&'static str],
+        to: JobStatus,
+        from: &'static [JobStatus],
         reason: Option<&'static str>,
     ) -> Result<bool, String> {
         let job_id = job_id.to_owned();
@@ -389,9 +415,15 @@ impl JobStore {
             .write_background("search_jobs.prune", move |tx| {
                 let stale = tx.execute(
                     sql::PRUNE_STALE.text(),
-                    params![SEARCHING, COMPLETED, FAILED, CANCELLED, ms(cutoff)],
+                    params![
+                        JobStatus::Searching,
+                        JobStatus::Completed,
+                        JobStatus::Failed,
+                        JobStatus::Cancelled,
+                        ms(cutoff)
+                    ],
                 )?;
-                let picked = tx.execute(sql::PRUNE_PICKED.text(), params![MATCHED])?;
+                let picked = tx.execute(sql::PRUNE_PICKED.text(), params![JobStatus::Matched])?;
                 Ok(u64::try_from(stale + picked).unwrap_or(u64::MAX))
             })
             .await
@@ -417,11 +449,10 @@ impl JobStore {
             .db()
             .write(Lane::Foreground, "search_jobs.pick", move |tx| {
                 let at = crate::db::unix_secs_f64(clock.as_ref());
-                let status: Option<String> = tx
+                let status: Option<JobStatus> = tx
                     .query_row(sql::JOB_STATUS.text(), params![job_id], |row| row.get(0))
                     .optional()?;
-                let status = status.unwrap_or_default();
-                if status != COMPLETED {
+                if status != Some(JobStatus::Completed) {
                     return Err(PickError::Refused(PickRefusal::NotOpen(status)));
                 }
                 let parked: Option<String> = tx
@@ -450,7 +481,10 @@ impl JobStore {
                         )
                         .map_err(store_error)?;
                     waive(&task_id).map_err(store_error)?;
-                    tx.execute(sql::SET_JOB_STATUS.text(), params![job_id, MATCHED, ms(at)])?;
+                    tx.execute(
+                        sql::SET_JOB_STATUS.text(),
+                        params![job_id, JobStatus::Matched, ms(at)],
+                    )?;
                     return Ok(task_id);
                 }
                 if !picked.task.release_group_mbid.is_empty()
@@ -477,7 +511,10 @@ impl JobStore {
                     )
                     .map_err(store_error)?;
                 waive(&picked.task.id).map_err(store_error)?;
-                tx.execute(sql::SET_JOB_STATUS.text(), params![job_id, MATCHED, ms(at)])?;
+                tx.execute(
+                    sql::SET_JOB_STATUS.text(),
+                    params![job_id, JobStatus::Matched, ms(at)],
+                )?;
                 Ok(picked.task.id.clone())
             })
             .await;

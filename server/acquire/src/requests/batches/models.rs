@@ -50,28 +50,12 @@ pub enum BatchOutcome {
     NotRequested,
 }
 
-impl BatchOutcome {
-    /// The stored spelling.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Requested => "requested",
-            Self::SkippedInLibrary => "skipped_in_library",
-            Self::SkippedDuplicate => "skipped_duplicate",
-            Self::NotRequested => "not_requested",
-        }
-    }
-
-    /// Reads a stored spelling back.
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "requested" => Some(Self::Requested),
-            "skipped_in_library" => Some(Self::SkippedInLibrary),
-            "skipped_duplicate" => Some(Self::SkippedDuplicate),
-            "not_requested" => Some(Self::NotRequested),
-            _ => None,
-        }
-    }
-}
+droppedneedle_kernel::spelled!(BatchOutcome {
+    Requested => "requested",
+    SkippedInLibrary => "skipped_in_library",
+    SkippedDuplicate => "skipped_duplicate",
+    NotRequested => "not_requested",
+});
 
 /// Per-album outcome inside a batch.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

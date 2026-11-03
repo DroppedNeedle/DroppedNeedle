@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use super::CollectionsService;
 use crate::collections::error::CollectionsError;
 use crate::collections::models::FavoriteStatusResponse;
-use crate::collections::store::favorites::KINDS;
+use crate::collections::store::favorites::FavoriteKind;
 use crate::local::stores::StoreError as LibraryStoreError;
 
 fn library_error(error: LibraryStoreError) -> CollectionsError {
@@ -18,10 +18,8 @@ fn library_error(error: LibraryStoreError) -> CollectionsError {
 
 /// Validated kind or 400.
 fn clean_kind(raw: &str) -> Result<&'static str, CollectionsError> {
-    KINDS
-        .iter()
-        .find(|kind| **kind == raw)
-        .copied()
+    FavoriteKind::parse(raw)
+        .map(FavoriteKind::as_str)
         .ok_or_else(|| CollectionsError::invalid("Kind must be album, artist, or track"))
 }
 

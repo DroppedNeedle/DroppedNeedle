@@ -12,6 +12,7 @@
 use droppedneedle_kernel::db::statement::ListLen;
 use rusqlite::{OptionalExtension as _, Row, params};
 
+use super::landing_rows::ImportOutcome;
 use super::sql;
 use super::state::TaskStatus;
 use super::store::{DownloadStore, NewTask, StoreError, TaskRow};
@@ -336,7 +337,7 @@ pub struct TaskFacts {
 /// The newest import decision of a task.
 #[derive(Debug, Clone, Default)]
 pub struct DecisionFacts {
-    pub outcome: String,
+    pub outcome: ImportOutcome,
     pub reason_code: Option<Reason>,
     pub detail: Option<String>,
     pub files_total: i64,

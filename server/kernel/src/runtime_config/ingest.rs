@@ -88,16 +88,10 @@ pub enum IngestOutcome {
     SkippedNewKey,
 }
 
-impl IngestOutcome {
-    /// The stored value.
-    #[must_use]
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Ingested => "ingested",
-            Self::SkippedNewKey => "skipped_new_key",
-        }
-    }
-}
+crate::spelled!(IngestOutcome {
+    Ingested => "ingested",
+    SkippedNewKey => "skipped_new_key",
+});
 
 /// A `config.json` read and parsed, ready to copy in.
 #[derive(Debug, Clone)]

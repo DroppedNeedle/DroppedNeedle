@@ -342,7 +342,7 @@ impl DownloadQueue {
             .map(|row| {
                 let facts = facts.remove(&row.task.id).unwrap_or_default();
                 let decision = facts.decision.as_ref().map(|decision| DecisionReason {
-                    outcome: decision.outcome.as_str(),
+                    outcome: decision.outcome,
                     code: decision.reason_code,
                 });
                 let mut reason_text = None;

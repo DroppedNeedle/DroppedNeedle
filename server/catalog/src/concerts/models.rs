@@ -16,24 +16,10 @@ pub enum EventSource {
     Skiddle,
 }
 
-impl EventSource {
-    /// The stored spelling.
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Ticketmaster => "ticketmaster",
-            Self::Skiddle => "skiddle",
-        }
-    }
-
-    /// Parse the stored spelling.
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "ticketmaster" => Some(Self::Ticketmaster),
-            "skiddle" => Some(Self::Skiddle),
-            _ => None,
-        }
-    }
-}
+droppedneedle_kernel::spelled!(EventSource {
+    Ticketmaster => "ticketmaster",
+    Skiddle => "skiddle",
+});
 
 /// Whether the gig is still on. Ticketmaster's `postponed` reads as
 /// rescheduled: the gig is not happening on its listed date.
@@ -48,25 +34,11 @@ pub enum ConcertStatus {
     Rescheduled,
 }
 
-impl ConcertStatus {
-    /// The stored spelling.
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Scheduled => "scheduled",
-            Self::Cancelled => "cancelled",
-            Self::Rescheduled => "rescheduled",
-        }
-    }
-
-    /// Parse the stored spelling; anything unknown reads as scheduled.
-    pub fn parse(value: &str) -> Self {
-        match value {
-            "cancelled" => Self::Cancelled,
-            "rescheduled" => Self::Rescheduled,
-            _ => Self::Scheduled,
-        }
-    }
-}
+droppedneedle_kernel::spelled!(ConcertStatus {
+    Scheduled => "scheduled",
+    Cancelled => "cancelled",
+    Rescheduled => "rescheduled",
+});
 
 /// One upcoming gig in one of the caller's cities.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]

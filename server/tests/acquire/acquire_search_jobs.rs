@@ -19,7 +19,7 @@ use droppedneedle_acquire::search_jobs::candidates::{
 };
 use droppedneedle_acquire::search_jobs::review::ReviewMode;
 use droppedneedle_acquire::search_jobs::store::{
-    COMPLETED, JobPayload, JobStore, NewJob, PickRefusal, PickedTask,
+    JobPayload, JobStatus, JobStore, NewJob, PickRefusal, PickedTask,
 };
 use droppedneedle_acquire::search_jobs::{AlbumSearch, SearchJobError, SearchJobs, StartOutcome};
 use droppedneedle_acquire::slskd::{
@@ -190,7 +190,7 @@ async fn manual_search_ranks_folders_and_fetches_the_picked_one() {
     let view = tokio::time::timeout(crate::common::PATIENCE, async {
         loop {
             let view = jobs.get(&owner, &job_id).await.expect("job reads");
-            if view.row.status != "searching" {
+            if view.row.status != JobStatus::Searching {
                 break view;
             }
             updates.next().await.expect("the hub stays open");
@@ -198,7 +198,7 @@ async fn manual_search_ranks_folders_and_fetches_the_picked_one() {
     })
     .await
     .expect("the search settles");
-    assert_eq!(view.row.status, "completed");
+    assert_eq!(view.row.status, JobStatus::Completed);
     let payload = view.payload.expect("candidates decode");
     assert_eq!(payload.tracks_total, Some(4));
     let ranked: Vec<_> = payload
@@ -263,7 +263,7 @@ async fn manual_search_ranks_folders_and_fetches_the_picked_one() {
     assert_eq!(plan.expected_tracks.len(), 4);
 
     let view = jobs.get(&owner, &job_id).await.expect("job reads");
-    assert_eq!(view.row.status, "matched");
+    assert_eq!(view.row.status, JobStatus::Matched);
     assert_eq!(view.task_id.as_deref(), Some(task_id.as_str()));
     assert!(matches!(
         jobs.cancel(&owner, &job_id).await,
@@ -350,7 +350,7 @@ async fn automatic_download_waits_for_a_pick_when_unsure() {
 
     let owner = principal("u1");
     let view = rig.jobs.get(&owner, &job_id).await.expect("job reads");
-    assert_eq!(view.row.status, "completed");
+    assert_eq!(view.row.status, JobStatus::Completed);
     let payload = view.payload.expect("candidates decode");
     assert_eq!(payload.candidates.len(), 1);
     assert_eq!(payload.candidates[0].view.tier, CandidateTier::Possible);
@@ -407,7 +407,12 @@ async fn pick_is_refused_while_the_album_downloads() {
         .await
         .expect("job inserts");
     let finished = store
-        .finish("job-busy", COMPLETED, JobPayload::default(), None)
+        .finish(
+            "job-busy",
+            JobStatus::Completed,
+            JobPayload::default(),
+            None,
+        )
         .await
         .expect("job finishes");
     assert!(finished);
@@ -439,7 +444,7 @@ async fn pick_is_refused_while_the_album_downloads() {
         .await
         .expect("job reads")
         .expect("job exists");
-    assert_eq!(job.status, COMPLETED);
+    assert_eq!(job.status, JobStatus::Completed);
     assert_eq!(
         store.picked_task("job-busy").await.expect("task reads"),
         None
@@ -700,7 +705,7 @@ impl KeptRig {
         let view = tokio::time::timeout(crate::common::PATIENCE, async {
             loop {
                 let view = self.jobs.get(owner, &job_id).await.expect("job reads");
-                if view.row.status != "searching" {
+                if view.row.status != JobStatus::Searching {
                     break view;
                 }
                 updates.next().await.expect("the hub stays open");
@@ -820,7 +825,11 @@ async fn a_folder_outside_the_band_is_kept_once_its_pick_is_confirmed() {
     assert_eq!((answer.status().as_u16(), answer.code()), (409, "CONFLICT"));
     assert_eq!(rig.task_count().await, 0, "no download starts");
     let view = rig.jobs.get(&owner, &job_id).await.expect("job reads");
-    assert_eq!(view.row.status, COMPLETED, "the search stays open");
+    assert_eq!(
+        view.row.status,
+        JobStatus::Completed,
+        "the search stays open"
+    );
 
     let task_id = rig
         .jobs

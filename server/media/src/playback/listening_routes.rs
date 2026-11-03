@@ -18,16 +18,17 @@ use droppedneedle_kernel::db::DbError;
 use droppedneedle_kernel::error::{ApiError, Unavailable};
 use droppedneedle_kernel::extract::ValidJson;
 use droppedneedle_kernel::mount::{Routes, routes};
+use droppedneedle_kernel::runtime_config::sections::ListenSource;
 use droppedneedle_plugins::models::StatusMessage;
 use droppedneedle_providers::listenbrainz::ListenBrainzVerifier;
 
 use super::listening::{
-    BoxFuture, LinkSaveError, ListenBrainzLink, ListeningStore, NOW_PLAYING_VISIBILITIES,
-    PRIMARY_SOURCES, PrefsPatch, ScrobblePrefs,
+    BoxFuture, LinkSaveError, ListenBrainzLink, ListeningStore, PrefsPatch, ScrobblePrefs,
 };
 use super::models::{
     LinkStatus, ListenBrainzConnectRequest, ScrobblePreferences, ScrobblePreferencesUpdate,
 };
+use super::ports::Visibility;
 use super::presence::PresenceRegistry;
 
 /// The personal-mix standing grant, which the requests side keeps. A
@@ -126,19 +127,19 @@ pub async fn update_prefs(
     patch: &PrefsPatch,
 ) -> Result<ScrobblePrefs, PrefsError> {
     if let Some(source) = &patch.primary_music_source
-        && !PRIMARY_SOURCES.contains(&source.as_str())
+        && ListenSource::parse(source).is_none()
     {
         return Err(PrefsError::InvalidValue(format!(
             "primary_music_source must be one of {}",
-            PRIMARY_SOURCES.join(", ")
+            ListenSource::ALL.map(ListenSource::as_str).join(", ")
         )));
     }
     if let Some(visibility) = &patch.now_playing_visibility
-        && !NOW_PLAYING_VISIBILITIES.contains(&visibility.as_str())
+        && Visibility::parse(visibility).is_none()
     {
         return Err(PrefsError::InvalidValue(format!(
             "now_playing_visibility must be one of {}",
-            NOW_PLAYING_VISIBILITIES.join(", ")
+            Visibility::ALL.map(Visibility::as_str).join(", ")
         )));
     }
     let before = deps.store.prefs(user_id).await;

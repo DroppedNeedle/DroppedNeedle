@@ -59,19 +59,13 @@ pub enum ExitCode {
     FailedInternal,
 }
 
-impl ExitCode {
-    /// The code's spelling, as the report and the audit row write it.
-    #[must_use]
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Ok => "OK",
-            Self::OkWithDrops => "OK_WITH_DROPS",
-            Self::FailedValidation => "FAILED_VALIDATION",
-            Self::EnvelopeAuthFailed => "ENVELOPE_AUTH_FAILED",
-            Self::FailedInternal => "FAILED_INTERNAL",
-        }
-    }
-}
+droppedneedle_kernel::spelled!(ExitCode {
+    Ok => "OK",
+    OkWithDrops => "OK_WITH_DROPS",
+    FailedValidation => "FAILED_VALIDATION",
+    EnvelopeAuthFailed => "ENVELOPE_AUTH_FAILED",
+    FailedInternal => "FAILED_INTERNAL",
+});
 
 /// Per-entity outcome counters.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]

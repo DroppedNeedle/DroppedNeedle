@@ -56,17 +56,32 @@ pub enum LinkMode {
     LinkOnly,
 }
 
-impl LinkMode {
-    /// The `import_pending_links.mode` value.
-    #[must_use]
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::AsWritten => "as_written",
-            Self::UntilResolved => "until_resolved",
-            Self::LinkOnly => "link_only",
-        }
-    }
+droppedneedle_kernel::spelled!(LinkMode {
+    AsWritten => "as_written",
+    UntilResolved => "until_resolved",
+    LinkOnly => "link_only",
+});
+
+/// What a pending link's v2 id names, as `import_pending_links.ref_kind`
+/// stores it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RefKind {
+    /// A `local_tracks` id.
+    Track,
+    /// A `local_albums` id.
+    Album,
+    /// A `local_artists` id.
+    Artist,
+    /// A v2 tombstone, which nothing in v3 answers.
+    Tombstone,
 }
+
+droppedneedle_kernel::spelled!(RefKind {
+    Track => "track",
+    Album => "album",
+    Artist => "artist",
+    Tombstone => "tombstone",
+});
 
 /// One v2 library reference on a column.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

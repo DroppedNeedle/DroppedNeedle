@@ -90,34 +90,32 @@ pub enum AttemptState {
     NeedsAttention,
 }
 
-impl AttemptState {
-    /// Wire string stored in `download_attempts.state`.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            AttemptState::Acquiring => "acquiring",
-            AttemptState::InUse => "in_use",
-            AttemptState::CleanupPending => "cleanup_pending",
-            AttemptState::WorkspaceRemoved => "workspace_removed",
-            AttemptState::Complete => "complete",
-            AttemptState::Preserved => "preserved",
-            AttemptState::NeedsAttention => "needs_attention",
-        }
-    }
+droppedneedle_kernel::spelled!(AttemptState {
+    Acquiring => "acquiring",
+    InUse => "in_use",
+    CleanupPending => "cleanup_pending",
+    WorkspaceRemoved => "workspace_removed",
+    Complete => "complete",
+    Preserved => "preserved",
+    NeedsAttention => "needs_attention",
+});
 
-    /// Parse a state read back from SQLite.
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "acquiring" => Some(AttemptState::Acquiring),
-            "in_use" => Some(AttemptState::InUse),
-            "cleanup_pending" => Some(AttemptState::CleanupPending),
-            "workspace_removed" => Some(AttemptState::WorkspaceRemoved),
-            "complete" => Some(AttemptState::Complete),
-            "preserved" => Some(AttemptState::Preserved),
-            "needs_attention" => Some(AttemptState::NeedsAttention),
-            _ => None,
-        }
-    }
+/// What cleanup does with an attempt's files.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AttemptDisposition {
+    /// Not settled yet.
+    Undecided,
+    /// Removed from the download client.
+    Discard,
+    /// Kept on purpose.
+    Preserve,
 }
+
+droppedneedle_kernel::spelled!(AttemptDisposition {
+    Undecided => "undecided",
+    Discard => "discard",
+    Preserve => "preserve",
+});
 
 /// True for `completed`, `partial`, `failed`, `cancelled`.
 ///

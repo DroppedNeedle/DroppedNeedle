@@ -5,6 +5,7 @@
 //! stored as a typed code beside its log text, says it. The queue never
 //! shows internal error text.
 
+use super::landing_rows::ImportOutcome;
 use super::state::TaskStatus;
 use crate::reason::Reason;
 
@@ -14,8 +15,8 @@ pub const NEXT_SOURCE_NOTE: &str = "moved to the next source at your request";
 
 /// The newest import decision, as far as the reason needs it.
 #[derive(Debug, Clone, Default)]
-pub struct DecisionReason<'a> {
-    pub outcome: &'a str,
+pub struct DecisionReason {
+    pub outcome: ImportOutcome,
     pub code: Option<Reason>,
 }
 
@@ -26,7 +27,7 @@ pub fn task_reason(
     status: TaskStatus,
     outcome: Option<Reason>,
     held_for_review: bool,
-    decision: Option<&DecisionReason<'_>>,
+    decision: Option<&DecisionReason>,
 ) -> Option<Reason> {
     if status == TaskStatus::Completed {
         return None;
@@ -36,7 +37,7 @@ pub fn task_reason(
     }
     let settled = status.is_terminal();
     if let Some(decision) = decision
-        && (held_for_review || (settled && decision.outcome != "imported"))
+        && (held_for_review || (settled && decision.outcome != ImportOutcome::Imported))
         && let Some(code) = decision.code
     {
         return Some(code);
@@ -72,7 +73,7 @@ mod tests {
     #[test]
     fn the_import_decision_wins() {
         let decision = DecisionReason {
-            outcome: "held",
+            outcome: ImportOutcome::Held,
             code: Some(Reason::WeakMatch),
         };
         let reason = task_reason(
