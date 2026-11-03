@@ -19,9 +19,7 @@ use droppedneedle_kernel::runtime_config::secret_sections::{
     LidarrImportConnection, SpotifySettings,
 };
 use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
-use droppedneedle_kernel::runtime_config::{
-    ConfigError, ConfigStore, Listed, Live, Plain, Secret, UpdateError,
-};
+use droppedneedle_kernel::runtime_config::{ConfigError, ConfigStore, Listed, Live, Plain, Secret};
 
 use super::imports::error::ImportsError;
 
@@ -137,13 +135,6 @@ impl ConfigSpotifySettings {
 }
 
 impl ConfigSpotifySettings {
-    /// True when the app was registered against v2, so its dashboard lists
-    /// the v2 callback path. The v2 import sets it; saving a different
-    /// client id clears it.
-    pub fn legacy_callback(&self) -> Result<bool, ConfigError> {
-        Ok(open(&self.live)?.legacy_callback)
-    }
-
     /// Wakes after each saved change to the section.
     pub fn subscribe(&self) -> tokio::sync::watch::Receiver<i64> {
         self.live.subscribe()
@@ -169,28 +160,16 @@ impl ConfigSpotifySettings {
     /// Save; a masked secret keeps the stored one. A redirect origin that
     /// is not an absolute http(s) address is invalid input.
     pub async fn save(&self, settings: &ImportsSpotifySettings) -> Result<(), ImportsError> {
-        let submitted = settings.clone();
-        // The v2 marker belongs to the app it was stamped for: a different
-        // client id is a new app, registered with the v3 path. The check
-        // reads the stored row in the same write, and a stored section that
-        // does not read fails the save rather than dropping the marker.
+        let incoming = SpotifySettings {
+            client_id: settings.client_id.clone(),
+            client_secret: Secret::new(settings.client_secret.clone()),
+            enabled: settings.enabled,
+            spotify_redirect_origin: settings.spotify_redirect_origin.clone(),
+        };
         self.store
-            .update_secret::<SpotifySettings, ConfigError, _>(move |stored| {
-                let stored = stored.into_inner();
-                let same_app = stored.client_id.trim() == submitted.client_id.trim();
-                Ok(SpotifySettings {
-                    client_id: submitted.client_id,
-                    client_secret: Secret::new(submitted.client_secret),
-                    enabled: submitted.enabled,
-                    spotify_redirect_origin: submitted.spotify_redirect_origin,
-                    legacy_callback: stored.legacy_callback && same_app,
-                })
-            })
+            .save_secret(incoming)
             .await
             .map(|_| ())
-            .map_err(|error| match error {
-                UpdateError::Rejected(error) | UpdateError::Config(error) => error,
-            })
             .map_err(settings_failed)
     }
 }

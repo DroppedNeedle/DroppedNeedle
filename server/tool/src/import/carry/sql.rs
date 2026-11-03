@@ -58,6 +58,12 @@ droppedneedle_kernel::sql! {
     pub(super) UNKNOWN_ARTIST_DISMISSED = "SELECT EXISTS (SELECT 1 FROM bundle.\"artist_dismissal\" \
              WHERE (left_artist_id = ?1 AND right_artist_id = ?2) \
                 OR (left_artist_id = ?2 AND right_artist_id = ?1))";
+    /// Expire the MusicBrainz return links the bundle carried: MusicBrainz
+    /// sends them to v2's address, which v3 does not answer.
+    pub(super) EXPIRE_CARRIED_RETURN_LINKS = "UPDATE main.library_contribution_callback_tokens \
+             SET expires_at = min(expires_at, \
+             CAST(round((julianday('now') - 2440587.5) * 86400000.0) AS INTEGER)) \
+             WHERE token_hash IN (SELECT token_hash FROM bundle.\"contribution_callback_token\")";
     /// Whether the bundle has table ?1.
     pub(super) BUNDLE_HAS_TABLE = "SELECT EXISTS(SELECT 1 FROM bundle.sqlite_master \
              WHERE type = 'table' AND name = ?1)";

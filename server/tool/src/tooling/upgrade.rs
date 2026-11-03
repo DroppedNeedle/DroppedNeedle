@@ -234,9 +234,14 @@ pub enum UpgradeError {
     },
     /// Callback addresses change with the upgrade and the operator has not
     /// said they are done, or no admin could get back in if single sign-on
-    /// failed. Nothing was locked or moved.
-    #[error("{}", .0.stop_message("upgrade"))]
-    CallbacksToChange(Box<CallbackCheck>),
+    /// failed. The run stopped before moving anything.
+    #[error("{}", stop_message(.check, .acknowledged))]
+    CallbacksToChange {
+        /// What the check found.
+        check: Box<CallbackCheck>,
+        /// The run had `--callbacks-changed`.
+        acknowledged: bool,
+    },
     /// A backup folder is already there.
     #[error(
         "{} already exists. Move it away or delete it, then run the upgrade again",
@@ -526,9 +531,17 @@ fn confirm_callbacks(request: &UpgradeRequest) -> Result<CallbackCheck, UpgradeE
     let dirs = &request.dirs;
     let check = check_callbacks(&dirs.config_dir, &dirs.db_path, &request.base_path)?;
     if check.stops(request.callbacks_changed) {
-        return Err(UpgradeError::CallbacksToChange(Box::new(check)));
+        return Err(UpgradeError::CallbacksToChange {
+            check: Box::new(check),
+            acknowledged: request.callbacks_changed,
+        });
     }
     Ok(check)
+}
+
+/// [`UpgradeError::CallbacksToChange`]'s message.
+fn stop_message(check: &CallbackCheck, acknowledged: &bool) -> String {
+    check.stop_message("upgrade", *acknowledged)
 }
 
 fn lock_exclusive(dirs: &DataDirs) -> Result<DataLock, UpgradeError> {

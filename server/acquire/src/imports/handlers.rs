@@ -6,10 +6,9 @@
 //! bodies through [`ValidJson`] so malformed input stays inside the shared
 //! envelope. [`routes`] mounts every handler in the group of its caller
 //! extractor, so those routes 401 anonymously, and the Spotify OAuth
-//! callback in the public group (it is identified by its state token).
-//! The callback also answers on its v2 path for Spotify apps registered against
-//! v2; either way it exchanges the code with the redirect URI stored next to
-//! the state at authorize time.
+//! callback in the public group (it is identified by its state token). It
+//! exchanges the code with the redirect URI stored next to the state at
+//! authorize time.
 
 use std::sync::Arc;
 
@@ -21,7 +20,6 @@ use axum::{
     extract::{Path, Request, State},
     http::StatusCode,
     response::{IntoResponse, Redirect, Response},
-    routing::get,
 };
 use droppedneedle_auth::session::middleware::effective_origin;
 use droppedneedle_auth::{Admin, User};
@@ -50,10 +48,7 @@ use super::models::{
 use super::spotify::{ImportFailure, SpotifyImportService};
 use super::spotify_albums::AlbumResolver;
 use super::spotify_client::{SpotifyClient, SpotifyError, now_unix_secs};
-use super::spotify_oauth::{
-    PendingAuth, SPOTIFY_CALLBACK_PATH, SPOTIFY_LEGACY_CALLBACK_PATH, SpotifyConnection,
-    redirect_uri,
-};
+use super::spotify_oauth::{PendingAuth, SPOTIFY_CALLBACK_PATH, SpotifyConnection, redirect_uri};
 use super::spotify_store::{CollectionsPlaylistBridge, SqliteSpotifyLinks, SqliteSpotifyStates};
 use crate::follows::Follows;
 use crate::requests::error::RequestsError;
@@ -114,14 +109,10 @@ impl ImportsDeps {
     }
 }
 
-/// Every imports route plus the v2 OAuth callback in one router with no
-/// layers, for tests.
+/// Every imports route in one router with no layers, for tests.
 #[cfg(any(test, feature = "test-support"))]
 pub fn imports_router(deps: ImportsDeps) -> axum::Router {
-    routes()
-        .with_state(deps.clone())
-        .into_router()
-        .merge(imports_legacy_callback_router(deps))
+    routes().with_state(deps).into_router()
 }
 
 /// The imports, health and Spotify routes, in the group of each handler's
@@ -142,14 +133,6 @@ pub fn routes() -> Routes<ImportsDeps> {
         .user(routes!(disconnect_spotify))
         .user(routes!(get_slskd_status))
         .admin(routes!(get_sabnzbd_status))
-}
-
-/// The callback at its v2 path, at full path (not nested under `/api/v3`).
-/// Public and state-identified like the v3 one.
-pub fn imports_legacy_callback_router(deps: ImportsDeps) -> axum::Router {
-    axum::Router::new()
-        .route(SPOTIFY_LEGACY_CALLBACK_PATH, get(spotify_legacy_callback))
-        .with_state(deps)
 }
 
 /// Map a Lidarr service failure to the wire. Upstream detail reaches the
@@ -327,22 +310,11 @@ pub async fn get_spotify_redirect_uri(
 const NO_CALLBACK_ADDRESS: &str = "DroppedNeedle could not work out its own address for the \
      Spotify link. An admin needs to fill in Redirect Origin under Settings > Spotify.";
 
-/// The redirect URI this server sends Spotify: the v2 callback path for an
-/// app the v2 import carried (its dashboard lists that path), else the v3
-/// one. Without a configured origin it is built on the address the session
-/// origin check works out for this request, so forwarded headers count
-/// only from a trusted proxy. A request that names no address is refused
-/// instead of guessed at.
+/// The redirect URI this server sends Spotify. Without a configured origin
+/// it is built on the address the session origin check works out for this
+/// request, so forwarded headers count only from a trusted proxy. A request
+/// that names no address is refused instead of guessed at.
 fn callback_uri(deps: &ImportsDeps, request: &Request) -> Result<String, ImportsError> {
-    let legacy = deps
-        .spotify_settings
-        .legacy_callback()
-        .map_err(settings_failed)?;
-    let path = if legacy {
-        SPOTIFY_LEGACY_CALLBACK_PATH
-    } else {
-        SPOTIFY_CALLBACK_PATH
-    };
     let configured = deps
         .spotify_settings
         .get_raw()
@@ -357,7 +329,12 @@ fn callback_uri(deps: &ImportsDeps, request: &Request) -> Result<String, Imports
     } else {
         String::new()
     };
-    Ok(redirect_uri(path, &configured, &base, &deps.base_path))
+    Ok(redirect_uri(
+        SPOTIFY_CALLBACK_PATH,
+        &configured,
+        &base,
+        &deps.base_path,
+    ))
 }
 
 /// Authorize URL for the caller's Spotify link flow. Requires the admin
@@ -405,15 +382,6 @@ pub struct SpotifyCallbackQuery {
     params(SpotifyCallbackQuery),
     responses((status = 307, description = "Redirect to the profile page")))]
 pub async fn spotify_callback(
-    State(deps): State<ImportsDeps>,
-    ValidQuery(query): ValidQuery<SpotifyCallbackQuery>,
-) -> Response {
-    finish_spotify_link(&deps, query).await
-}
-
-/// The same callback on the v2 path, where Spotify returns users of an app
-/// registered against v2.
-pub async fn spotify_legacy_callback(
     State(deps): State<ImportsDeps>,
     ValidQuery(query): ValidQuery<SpotifyCallbackQuery>,
 ) -> Response {

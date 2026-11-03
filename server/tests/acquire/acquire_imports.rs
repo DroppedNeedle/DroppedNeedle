@@ -34,12 +34,12 @@ use droppedneedle_catalog::collections::db::CollectionsDb;
 use droppedneedle_catalog::collections::models::PlaylistTrack;
 use droppedneedle_catalog::collections::store::PlaylistStore;
 use droppedneedle_kernel::jobs::queue::{Handlers, JobQueue, State, start_runners};
+use droppedneedle_kernel::runtime_config::Secret;
 use droppedneedle_kernel::runtime_config::secret_sections::SpotifySettings as SpotifySection;
 use droppedneedle_kernel::runtime_config::secret_sections::{
     DownloadClients, LidarrImportConnection, SabnzbdConnection, SlskdConnection,
 };
 use droppedneedle_kernel::runtime_config::sections::{MbSourceMode, MusicBrainzSettings};
-use droppedneedle_kernel::runtime_config::{ConfigError, Secret};
 use droppedneedle_plugins::host::PluginHost;
 use droppedneedle_providers::images::check_spotify_cover_url;
 use droppedneedle_providers::spotify::TokenGrant;
@@ -58,10 +58,7 @@ use imports::models::{LidarrConnectionSettings, SpotifySettings};
 use imports::spotify::{ImportedTrack, SpotifyImportService};
 use imports::spotify_albums::AlbumResolver;
 use imports::spotify_client::SpotifyClient;
-use imports::spotify_oauth::{
-    PendingAuth, SPOTIFY_CALLBACK_PATH, SPOTIFY_LEGACY_CALLBACK_PATH, SpotifyConnection,
-    redirect_uri,
-};
+use imports::spotify_oauth::{PendingAuth, SPOTIFY_CALLBACK_PATH, SpotifyConnection, redirect_uri};
 use imports::spotify_store::{CollectionsPlaylistBridge, SqliteSpotifyLinks, SqliteSpotifyStates};
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
@@ -690,25 +687,9 @@ async fn authorize(bundle_deps: ImportsDeps, user_id: &str) -> (String, String) 
     (auth_url, state)
 }
 
-/// Link `user_id` through the real authorize + callback flow.
-async fn link_spotify(bundle_deps: ImportsDeps, recorder: &MockRecorder, user_id: &str) {
-    link_spotify_via(
-        bundle_deps,
-        recorder,
-        user_id,
-        "/api/v3/acquire/spotify/auth/callback",
-    )
-    .await;
-}
-
-/// [`link_spotify`] with the callback answered at `callback`. Authorize
+/// Link `user_id` through the real authorize + callback flow. Authorize
 /// must name the URI the mock app lists, as Spotify requires.
-async fn link_spotify_via(
-    bundle_deps: ImportsDeps,
-    recorder: &MockRecorder,
-    user_id: &str,
-    callback: &str,
-) {
+async fn link_spotify(bundle_deps: ImportsDeps, recorder: &MockRecorder, user_id: &str) {
     let (auth_url, state) = authorize(bundle_deps.clone(), user_id).await;
     let listed = recorder
         .registered_redirect_uri()
@@ -718,7 +699,7 @@ async fn link_spotify_via(
         auth_url.contains(&format!("redirect_uri={listed}&")),
         "authorize names an unlisted URI: {auth_url}"
     );
-    let callback = format!("{callback}?code=good-code&state={state}");
+    let callback = format!("{SPOTIFY_CALLBACK_PATH}?code=good-code&state={state}");
     let response = anon_app(bundle_deps)
         .oneshot(
             Request::get(callback)
@@ -1233,7 +1214,6 @@ async fn an_import_waits_for_unreadable_spotify_settings() {
             client_secret: Secret::new("test-secret".to_owned()),
             enabled: true,
             spotify_redirect_origin: String::new(),
-            legacy_callback: false,
         })
         .await
         .expect("settings save");
@@ -1477,16 +1457,13 @@ async fn spotify_expired_tokens_refresh_transparently() {
     );
 }
 
-/// The redirect URI must name a mounted route, and the v2 path that
-/// migrated Spotify apps registered must keep answering.
+/// The redirect URI must name a mounted route.
 #[tokio::test]
-async fn spotify_callback_paths_are_mounted_in_the_app() {
+async fn spotify_callback_path_is_mounted_in_the_app() {
     let app = common::TestApp::start("spotify-callbacks").await;
-    for path in [SPOTIFY_CALLBACK_PATH, SPOTIFY_LEGACY_CALLBACK_PATH] {
-        let uri = format!("{path}?error=access_denied");
-        let (status, _, _) = app.raw("GET", &uri, &[], None).await;
-        assert_eq!(status, StatusCode::TEMPORARY_REDIRECT, "{path}");
-    }
+    let uri = format!("{SPOTIFY_CALLBACK_PATH}?error=access_denied");
+    let (status, _, _) = app.raw("GET", &uri, &[], None).await;
+    assert_eq!(status, StatusCode::TEMPORARY_REDIRECT);
 }
 
 /// One user's stored link, which must exist.
@@ -1498,12 +1475,9 @@ async fn linked(links: &SqliteSpotifyLinks, user_id: &str) -> SpotifyConnection 
         .expect("link row")
 }
 
-/// An app the v2 import carried lists only the v2 callback. Without the
-/// import's marker the exchange fails the way Spotify fails it; with the
-/// marker, authorize and exchange both name the v2 URI and the link lands.
-/// Disconnect then removes it.
+/// A linked account disconnects, and its stored link goes.
 #[tokio::test]
-async fn spotify_v2_registered_app_links_and_disconnects() {
+async fn spotify_link_disconnects() {
     let (auth, admin_id, user_id) = seed_rig().await;
     let (api, accounts, covers, recorder) = serve_spotify().await.expect("mock serves");
     let bundle = rig_for(
@@ -1513,46 +1487,7 @@ async fn spotify_v2_registered_app_links_and_disconnects() {
         Some(&covers.base_url),
     );
     seed_spotify_app(bundle.deps.clone(), &admin_id).await;
-    recorder.register_redirect_uri(&format!("http://app.test{SPOTIFY_LEGACY_CALLBACK_PATH}"));
-
-    let (_, state) = authorize(bundle.deps.clone(), &user_id).await;
-    let response = anon_app(bundle.deps.clone())
-        .oneshot(
-            Request::get(format!(
-                "/api/v3/acquire/spotify/auth/callback?code=good-code&state={state}"
-            ))
-            .header("host", "app.test")
-            .body(Body::empty())
-            .expect("request builds"),
-        )
-        .await
-        .expect("router answers");
-    let location = response
-        .headers()
-        .get("location")
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or("")
-        .to_owned();
-    assert!(
-        location.ends_with("/profile?spotify=error&reason=token"),
-        "saw {location}"
-    );
-
-    auth.config
-        .update_secret::<SpotifySection, ConfigError, _>(|stored| {
-            let mut section = stored.into_inner();
-            section.legacy_callback = true;
-            Ok(section)
-        })
-        .await
-        .expect("marker saves");
-    link_spotify_via(
-        bundle.deps.clone(),
-        &recorder,
-        &user_id,
-        SPOTIFY_LEGACY_CALLBACK_PATH,
-    )
-    .await;
+    link_spotify(bundle.deps.clone(), &recorder, &user_id).await;
     linked(&bundle.spotify_links, &user_id).await;
 
     let response = authed_app(bundle.deps, &user_id, Role::User)

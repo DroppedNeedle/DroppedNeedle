@@ -3,19 +3,17 @@
 //! Thirteen session-gated routes under `/api/v3/library` drive the draft,
 //! the Discogs source, the duplicate check, the seeded release editor and
 //! verification. The release editor sends
-//! the curator's browser back to a public callback, served at the v3 path
-//! and at the v1 path a seed opened before the upgrade still points at.
+//! the curator's browser back to a public callback.
 //!
 //! Every failure answers with the shared envelope plus an action:
 //! `{"error": {"code", "message", "details": {"action"}}}`, so the page can
 //! say what went wrong and what to do about it.
 
 use axum::{
-    Json, Router,
+    Json,
     extract::{OriginalUri, Path, State},
     http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Redirect, Response},
-    routing::get,
 };
 use droppedneedle_kernel::error::{ApiError, Unavailable};
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
@@ -26,8 +24,7 @@ use utoipa::{IntoParams, ToSchema};
 
 use crate::contrib::error::ContribError;
 use crate::contrib::models::{
-    ContributionRecord, DiscogsReleaseCandidate, LEGACY_CALLBACK_PATH, MusicBrainzSeed,
-    ReleaseDraft,
+    ContributionRecord, DiscogsReleaseCandidate, MusicBrainzSeed, ReleaseDraft,
 };
 use crate::contrib::service::ContributionService;
 use crate::wiring::LibraryServices;
@@ -186,16 +183,6 @@ pub fn routes() -> Routes<LibraryServices> {
         .curator(routes!(record_result))
         .curator(routes!(retry_verification))
         .public(routes!(musicbrainz_callback))
-}
-
-impl LibraryServices {
-    /// The MusicBrainz callback at its v1 path, for a seed opened before the
-    /// upgrade. Mounted outside the session gate, like the v3 one.
-    pub fn legacy_contrib_callback_router(&self) -> Router {
-        Router::new()
-            .route(LEGACY_CALLBACK_PATH, get(musicbrainz_callback))
-            .with_state(self.contrib.clone())
-    }
 }
 
 /// Start (or reopen) the contribution for one local album.
@@ -514,11 +501,7 @@ pub async fn create_seed(
     Path(id): Path<String>,
     ValidJson(body): ValidJson<ContributionRevisionBody>,
 ) -> Answer<MusicBrainzSeed> {
-    let base_url = format!(
-        "{}{}",
-        public_origin(&headers),
-        base_path(original.path(), "/api/v3/")
-    );
+    let base_url = format!("{}{}", public_origin(&headers), base_path(original.path()));
     Ok(Json(
         contrib
             .create_seed(&id, body.expected_row_revision, caller.user_id(), &base_url)
@@ -605,13 +588,7 @@ pub async fn musicbrainz_callback(
     OriginalUri(original): OriginalUri,
     ValidQuery(query): ValidQuery<MusicBrainzCallbackQuery>,
 ) -> Response {
-    let path = original.path();
-    let api = if path.contains("/api/v1/") {
-        "/api/v1/"
-    } else {
-        "/api/v3/"
-    };
-    let base = base_path(path, api);
+    let base = base_path(original.path());
     let target = match contrib
         .consume_callback(query.token.as_deref(), query.release_mbid.as_deref())
         .await
@@ -631,11 +608,11 @@ pub async fn musicbrainz_callback(
     response
 }
 
-/// The deployment base path: everything before the API prefix in the path
-/// the browser asked for (`""` at the domain root, `/music` under a base).
-fn base_path<'a>(original_path: &'a str, api_prefix: &str) -> &'a str {
+/// The deployment base path: everything before `/api/v3/` in the path the
+/// browser asked for (`""` at the domain root, `/music` under a base).
+fn base_path(original_path: &str) -> &str {
     original_path
-        .find(api_prefix)
+        .find("/api/v3/")
         .map_or("", |index| &original_path[..index])
 }
 
@@ -671,12 +648,9 @@ mod tests {
 
     #[test]
     fn base_path_and_origin_follow_the_browser() {
-        assert_eq!(base_path("/api/v3/library/contributions/x", "/api/v3/"), "");
+        assert_eq!(base_path("/api/v3/library/contributions/x"), "");
         assert_eq!(
-            base_path(
-                "/music/api/v1/library/contributions/musicbrainz/callback",
-                "/api/v1/"
-            ),
+            base_path("/music/api/v3/library/contributions/musicbrainz/callback"),
             "/music"
         );
         let mut headers = HeaderMap::new();

@@ -41,6 +41,33 @@ async fn undocumented_methods_answer_405() {
     );
 }
 
+/// v3 serves its API under `/api/v3` only. Nothing is documented under
+/// `/api/v1`, and the addresses v2 was called back on there (single
+/// sign-on, Spotify, MusicBrainz contributions) answer 404. `route_gate`
+/// refuses any other way to register a route.
+#[tokio::test]
+async fn nothing_answers_under_api_v1() {
+    let doc = ApiDoc::openapi();
+    let v1: Vec<&String> = doc
+        .paths
+        .paths
+        .keys()
+        .filter(|path| path.starts_with("/api/v1"))
+        .collect();
+    assert!(v1.is_empty(), "documented under /api/v1: {v1:?}");
+    let app = TestApp::start("route-walk-v1").await;
+    for path in [
+        "/api/v1/auth/oidc/callback",
+        "/api/v1/me/connections/spotify/auth/callback",
+        "/api/v1/library/contributions/musicbrainz/callback",
+    ] {
+        let (status, _, _) = app
+            .raw("GET", &format!("{path}?code=c&state=s"), &[], None)
+            .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
+    }
+}
+
 fn fill_parameters(template: &str) -> String {
     let mut out = String::new();
     let mut rest = template;

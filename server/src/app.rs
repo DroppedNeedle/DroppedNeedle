@@ -49,10 +49,6 @@
 //!   with the shared rate limiter alone. Its `X-Wrapped-API-Key` extractor
 //!   is the only credential, and moving those routes to the public group
 //!   would wrongly make them public.
-//! - The callbacks at their old paths (the v1 Spotify and MusicBrainz
-//!   contribution ones, the v2 OIDC one) stay plain routers outside the
-//!   session gate, rate-limited like the public group, until they are
-//!   removed.
 //! - The compat shims register through the compat mount and merge outside
 //!   the session gate too: they carry their own app-password auth plus the
 //!   compat layers (CORS, limits), and never inherit `/api` session auth.
@@ -367,29 +363,7 @@ fn layered(state: &AppState, routes: Routes) -> Router {
 /// Every route and the 404 and 405 fallbacks, at base-relative paths.
 fn routes(state: &AppState, web: Option<WebUi>) -> Router {
     let mounted = layered(state, mount(Mount::serve(state)).routes);
-    // The v1 Spotify and MusicBrainz contribution callbacks: outside the
-    // session gate (token identified), rate-limited like the public group.
-    let legacy_callbacks = state
-        .acquire
-        .legacy_callback_router()
-        .merge(state.library_services.legacy_contrib_callback_router())
-        .layer(middleware::from_fn_with_state(
-            state.auth.limits.clone(),
-            rate_limit,
-        ));
-    // The OIDC callback at its v2 path, so a migrated identity provider
-    // keeps redirecting somewhere real. Public like the v3 one.
-    let oidc_legacy = state
-        .auth
-        .legacy_oidc_router()
-        .layer(middleware::from_fn_with_state(
-            state.auth.limits.clone(),
-            rate_limit,
-        ));
-    let app = mounted
-        .merge(legacy_callbacks)
-        .merge(oidc_legacy)
-        .merge(state.compat.router());
+    let app = mounted.merge(state.compat.router());
     // Dev-only tooling routes (covers-debug). The debug-build gate
     // compiles this mount out of release binaries entirely, so no
     // production process can serve tooling however it was configured.

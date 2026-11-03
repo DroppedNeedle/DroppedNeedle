@@ -1970,44 +1970,6 @@ async fn rate_limits_key_by_client_and_username() {
     );
 }
 
-/// The v1 callbacks kept for migrated apps are limited like their v3 twins:
-/// each reaches a write, and the OIDC one shares the sign-in class.
-#[tokio::test]
-async fn the_legacy_callbacks_meet_the_limiter() {
-    let e2e = E2e::open("legacy-burst").await;
-    let app = held_clock_router(&e2e);
-    let mut limited = 0;
-    for _ in 0..30 {
-        let (status, _, _) = call_raw(
-            app.clone(),
-            "GET",
-            "/api/v1/auth/oidc/callback?code=c&state=s",
-            &[],
-        )
-        .await;
-        if status == StatusCode::TOO_MANY_REQUESTS {
-            limited += 1;
-        }
-    }
-    assert_eq!(limited, 25, "the v1 OIDC callback");
-    let (status, _, _) = call(
-        app.clone(),
-        "POST",
-        "/api/v3/auth/oidc/authorize",
-        &[],
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "one bucket");
-    for uri in [
-        "/api/v1/me/connections/spotify/auth/callback",
-        "/api/v1/library/contributions/musicbrainz/callback",
-    ] {
-        let (_, headers, _) = call_raw(app.clone(), "GET", uri, &[]).await;
-        assert_eq!(headers["x-ratelimit-limit"], "60", "{uri}");
-    }
-}
-
 /// One unauthenticated client bursting at a sign-in route is limited on its
 /// own class before it can spend the provider row every client shares.
 #[tokio::test]

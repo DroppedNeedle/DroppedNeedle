@@ -122,7 +122,7 @@ Before a new version changes the database schema, DroppedNeedle writes a verifie
 
 Admins can also back up at any time, and check that a backup would restore, under Settings > Backups. The five newest backups are kept. Restoring is always the host command above. See [Backups](docs/reverse-proxy-and-security.md#backups).
 
-Coming from v2? Follow [docs/upgrading-from-v2.md](docs/upgrading-from-v2.md). Stop v2, switch the image tag to v3, and run `docker compose run --rm droppedneedle droppedneedle-tool upgrade` before you start it. It upgrades your data directory in place and keeps your v2 files in a `v2-backup` folder so you can go back. v3 refuses to start on a v2 data directory that has not been upgraded. The guide lists what comes across (accounts, settings, playlists, history, your library with its ids and matches, and the originals of files Library Management changed) and what stays behind.
+Coming from v2? Follow [docs/upgrading-from-v2.md](docs/upgrading-from-v2.md). Stop v2, switch the image tag to v3, and run `docker compose run --rm droppedneedle droppedneedle-tool upgrade` before you start it. It upgrades your data directory in place and keeps your v2 files in a `v2-backup` folder so you can go back. v3 refuses to start on a v2 data directory that has not been upgraded. The guide lists what comes across (accounts, settings, playlists, history, your library with its ids and matches, and the originals of files Library Management changed) and what stays behind. If v2 uses single sign-on, Spotify playlist import or MusicBrainz contributions, their v2 callback addresses stop working: the upgrade lists the new ones and stops until you have changed them. v2 plugins need porting before they run, and v2 profile share codes do not import.
 
 A `:dev` tag (`droppedneedle/droppedneedle:dev`) is built from `main` on every push that changes the code, and may break. Pin a commit with `:dev-<short-sha>`.
 
@@ -382,7 +382,7 @@ Things worth knowing:
 - DroppedNeedle checks the signature, audience, expiry and nonce of every login token against the keys your provider publishes, so the server needs to reach your provider directly, not only your browser.
 - A sign-in only joins an existing DroppedNeedle account when the provider says the email address is verified. Otherwise it creates a new account.
 - The first account on a fresh install becomes the admin, whichever way it signs in.
-- Coming from v2? The old callback, `/api/v1/auth/oidc/callback`, still works, so the provider needs no change after the upgrade.
+- Coming from v2? v3 does not answer v2's callback, `/api/v1/auth/oidc/callback`. Add the v3 address at your provider before you upgrade, or as you upgrade if it allows only one. The upgrade stops until you have, and changes the address under Settings > Security for you when it ends in v2's path; otherwise enter the new one there after the upgrade.
 
 </details>
 

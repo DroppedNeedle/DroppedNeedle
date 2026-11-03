@@ -40,6 +40,7 @@ use rusqlite::{Connection, OptionalExtension as _, params};
 use thiserror::Error;
 
 use crate::export::envelope::ExportDoc;
+use crate::export::sections::contributions::CALLBACK_TOKENS;
 use crate::export::sections::{ALL, Column, TableSection, Target};
 use crate::import::report::{EntityCounts, ReportBuilder, utc_now_iso};
 use droppedneedle_kernel::runtime_config::Crypto;
@@ -317,7 +318,13 @@ fn apply(conn: &Connection, run: &CarryRun<'_>, unit: Work) -> Result<SectionRes
         return Ok(SectionResult::default());
     }
     match section.target {
-        Target::Table(table) => apply_table(conn, section, table, &present, run.dry_run),
+        Target::Table(table) => {
+            let mut result = apply_table(conn, section, table, &present, run.dry_run)?;
+            if section.name == CALLBACK_TOKENS.name {
+                expire_return_links(conn, &mut result, run.dry_run)?;
+            }
+            Ok(result)
+        }
         Target::AvatarFiles => avatars::apply(conn, run.cache_dir, run.dry_run),
         Target::HeldFiles => held::apply(conn, &present, run.cache_dir, run.dry_run),
         // A later step reads these rows from the bundle and reports them.
@@ -411,6 +418,27 @@ fn apply_table(
         );
     }
     Ok(result)
+}
+
+/// MusicBrainz sends a carried return link to v2's address, which v3 does
+/// not answer, so each one lands expired and the summary says how many
+/// edits have to be started again.
+fn expire_return_links(
+    conn: &Connection,
+    result: &mut SectionResult,
+    dry_run: bool,
+) -> Result<(), CarryError> {
+    if !dry_run {
+        conn.execute(sql::EXPIRE_CARRIED_RETURN_LINKS.text(), [])?;
+    }
+    let count = result.counts.imported;
+    if count > 0 {
+        let edits = if count == 1 { "edit" } else { "edits" };
+        result.summary.push(format!(
+            "{count} MusicBrainz {edits} open in v2 must be started again from v3."
+        ));
+    }
+    Ok(())
 }
 
 /// Move one committed (or dry-run) section result into the report.

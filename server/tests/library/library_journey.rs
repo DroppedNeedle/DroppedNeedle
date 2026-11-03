@@ -3469,7 +3469,7 @@ async fn release_documents_answer_to_merged_ids() {
 
 /// Contribution journey through the real routes and the SQLite store:
 /// draft, duplicate check, seeded editor, the release editor coming back
-/// on the v1 callback path, verification, and the album linked.
+/// on the callback, verification, and the album linked.
 #[tokio::test]
 async fn library_contribution_seed_callback_verify_links_album() {
     use droppedneedle_library::contrib::models::{
@@ -3626,9 +3626,9 @@ async fn library_contribution_seed_callback_verify_links_album() {
         .expect("callback points at this server")
         .to_owned();
 
-    // The editor sends the browser back, here to the v1 path, signed out.
+    // The editor sends the browser back, signed out.
     let back = format!(
-        "/api/v1/library/contributions/musicbrainz/callback?token={token}&release_mbid={WRONG}"
+        "/api/v3/library/contributions/musicbrainz/callback?token={token}&release_mbid={WRONG}"
     );
     let (status, answer, _) = app.raw("GET", &back, &[], None).await;
     assert_eq!(status, StatusCode::SEE_OTHER);

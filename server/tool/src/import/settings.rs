@@ -26,6 +26,7 @@ use super::report::{DROPPED_SETTING, ReportBuilder};
 use super::schedule_carry::carry_frequency;
 use super::validate::strip_removed;
 use crate::allowlist::{is_replaced, removed_sections, replaced_sections};
+use crate::export::callbacks::{OIDC_CALLBACK_PATH, v3_oidc_redirect};
 use crate::export::envelope::ExportDoc;
 
 /// Transient `musicbrainz_settings` fields dropped at import.
@@ -194,6 +195,9 @@ pub(super) fn stage_settings(
                 if section == "library_settings" {
                     naming_carry::convert_template(&mut filtered, report);
                 }
+                if section == "oidc_settings" {
+                    carry_oidc_redirect(&mut filtered, report);
+                }
                 let applied = rekey_section(
                     &filtered,
                     &format!("settings.{section}"),
@@ -267,6 +271,27 @@ pub(super) fn stage_settings(
         );
     }
     Ok(staged)
+}
+
+/// v2 answered single sign-on at `/api/v1/auth/oidc/callback`, which v3
+/// does not serve: a redirect address ending there moves to v3's path. One
+/// that ends elsewhere (a proxy's own path) is kept, since only the
+/// operator knows what v3's should be, and the summary says to set it.
+fn carry_oidc_redirect(section: &mut Value, report: &mut ReportBuilder) {
+    let enabled = section.get("enabled").and_then(Value::as_bool) == Some(true);
+    let Some(redirect) = section.get_mut("redirect_uri") else {
+        return;
+    };
+    let text = redirect.as_str().map(str::trim).unwrap_or_default();
+    if let Some(moved) = v3_oidc_redirect(text) {
+        report.add_note(format!("Single sign-on now redirects to {moved}."));
+        *redirect = Value::String(moved);
+    } else if enabled && !text.is_empty() && !text.ends_with(OIDC_CALLBACK_PATH) {
+        report.add_note(format!(
+            "Single sign-on still redirects to {text}, v2's address. Enter v3's under \
+             Settings > Security."
+        ));
+    }
 }
 
 /// Note one v2 setting v3 removed: it is not imported.
@@ -410,8 +435,7 @@ fn carry_v2_management_fields(section: &mut Value) {
 /// lastfm keeps the switch and the instance app key pair (v2's legacy
 /// global session key and username go), the MusicBrainz transient trio
 /// goes, plugins keep `settings` and arrive switched off (a v2 plugin
-/// needs porting before v3 can run it). A configured Spotify app
-/// gains the `legacy_callback` marker.
+/// needs porting before v3 can run it).
 fn filter_section(name: &str, value: &Value) -> Value {
     match name {
         "lastfm_settings" => {
@@ -422,20 +446,6 @@ fn filter_section(name: &str, value: &Value) -> Value {
                 }
             }
             Value::Object(kept)
-        }
-        // A Spotify app configured on v2 is registered with v2's callback
-        // path. Mark it so v3 keeps sending that path and the app keeps
-        // working with no dashboard change.
-        "spotify_settings" => {
-            let mut stamped = value.clone();
-            let configured = value
-                .get("client_id")
-                .and_then(Value::as_str)
-                .is_some_and(|id| !id.trim().is_empty());
-            if configured && let Some(object) = stamped.as_object_mut() {
-                object.insert("legacy_callback".to_owned(), Value::Bool(true));
-            }
-            stamped
         }
         "musicbrainz_settings" => {
             let mut cleaned = value.clone();

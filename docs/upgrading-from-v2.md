@@ -30,17 +30,22 @@ with the same ids, and v3 checks it against your files on its first scan.
    differs.
 
    If v2 uses single sign-on, Spotify playlist import or MusicBrainz
-   contributions, the addresses those services call back on change in v3.
+   contributions, the addresses those services call back on change in v3,
+   and v2's stop working (see [Callback addresses](#before-you-upgrade)).
    The upgrade then lists each one, old and new, and where to change it,
-   and stops without changing anything. Change them, then run it again
-   with `--callbacks-changed`:
+   and stops before it moves anything. If an earlier run was interrupted,
+   it has put your v2 files back first. Change the addresses, then run it
+   again with `--callbacks-changed`:
 
    ```sh
    docker compose run --rm droppedneedle droppedneedle-tool upgrade --callbacks-changed
    ```
 
    If your provider allows only one address, change it as you run the
-   upgrade, not before. The flag skips no other check, and
+   upgrade, not before. When v2's single sign-on address ends in v2's path,
+   the upgrade changes it under Settings > Security for you; otherwise
+   enter the new one there after the upgrade. The flag skips no other
+   check, and
    `upgrade-report.json` lists what you acknowledged under `acknowledged`.
    With single sign-on, the upgrade stops even with the flag when no admin
    has a password or a username, since nobody could get back in if single
@@ -179,8 +184,11 @@ many. Nothing else in the v2 database is changed.
   a reason v3 does not use reads as held by an earlier version. Held
   files and uploads waiting for you are kept at least 90 days after the
   upgrade.
-- MusicBrainz contributions you had in progress, with their verification
-  and the return link MusicBrainz calls when you save the release.
+- MusicBrainz contributions you had in progress, with their verification.
+  An edit still open in MusicBrainz's release editor cannot come back to
+  v3, since its return link names v2's address. Start it again from the
+  album's contribution in v3; the upgrade's "Worth a look" list says how
+  many there are.
 - YouTube links you found or set for albums and tracks.
 - The releases each user hid from the discover queue.
 
@@ -251,20 +259,33 @@ you upgrade.
 ### Before you upgrade
 
 - **Callback addresses.** v2 was called back on three `/api/v1` addresses.
-  v3 still answers on all three, so nothing has to change with the
-  upgrade:
-  - Single sign-on (OIDC): the redirect URI `/api/v1/auth/oidc/callback`
-    keeps working. To move to `/api/v3/auth/oidc/callback`, change it in
-    your provider and under Settings > Security together.
-    Check before you upgrade that at least one admin can also sign in with
-    a username and password. If single sign-on breaks and nobody can sign
-    in, see [Locked out](#locked-out) below.
-  - Spotify playlist import: v3 goes on sending the redirect address v2
-    registered, so the Spotify dashboard needs no change (see
-    [After the upgrade](#after-the-upgrade)).
-  - MusicBrainz contributions: a release editor tab opened from v2 returns
-    to `/api/v1/library/contributions/musicbrainz/callback`, which v3 still
-    answers. Contributions started in v3 use the v3 address.
+  v3 answers none of them, so they stop working with the upgrade. The
+  upgrade lists each one your v2 uses, with its new address, and stops
+  until you say they are changed (see [Upgrade](#upgrade), step 3):
+  - Single sign-on (OIDC): add the v3 redirect URI, ending in
+    `/api/v3/auth/oidc/callback` instead of `/api/v1/auth/oidc/callback`,
+    to the client at your provider. When v2's address ends in
+    `/api/v1/auth/oidc/callback`, the upgrade changes it under Settings >
+    Security for you; when it ends in a path of your reverse proxy's, the
+    upgrade keeps it, so enter the new one there after the upgrade. Check
+    before you upgrade that at least
+    one admin can also sign in with a username and password. If single
+    sign-on breaks and nobody can sign in, see [Locked out](#locked-out)
+    below.
+  - Spotify playlist import: add the v3 redirect URI, ending in
+    `/api/v3/acquire/spotify/auth/callback`, to your app in the Spotify
+    developer dashboard. Spotify takes only https addresses, or a
+    loopback one such as `http://127.0.0.1`, so a plain-http address on
+    your local network cannot be added.
+  - MusicBrainz contributions: an edit open in MusicBrainz's release
+    editor returns to v2's address, so it cannot come back to v3. Finish
+    it in v2 first, or start it again from v3.
+
+  Spotify and single sign-on providers such as Authentik, Authelia, Pocket
+  ID, Google and Microsoft Entra ID let one client list more than one
+  redirect address. Add the v3 address before you upgrade, and remove v2's
+  once v3 signs in. If your provider allows only one, change it as you run
+  the upgrade, not before.
 
 ### Locked out
 
@@ -526,14 +547,12 @@ Then check:
   the import. A template that can't be carried exactly
   falls back to the default script, and the report names it. See
   [Import naming script](downloads.md#import-naming-script).
-- If you import Spotify playlists: your Spotify app keeps working with no
-  change in the Spotify dashboard. v3 goes on sending the redirect address
-  v2 registered (Settings > Spotify shows it). Linked Spotify accounts carry
-  over too, so nobody has to click Connect again.
-- If you had a MusicBrainz contribution open in the release editor during
-  the upgrade: saving it still brings you back, because v3 also answers on
-  the v2 return address, and v3 links it, since the contribution came
-  across with its return link.
+- If you import Spotify playlists: the redirect address under Settings >
+  Spotify is listed in your Spotify app in the developer dashboard. Linked
+  Spotify accounts carry over, so nobody has to click Connect again.
+- If you use single sign-on: you can sign in with it, and Settings >
+  Security shows the v3 redirect address. Once it works, remove v2's
+  address from your provider.
 
 ## Going back to v2
 
@@ -560,6 +579,10 @@ Those only happen if you turned Library Management on and applied changes.
 
 If you removed the backup, restore your own copy of the v2 config and cache
 folders instead.
+
+v2 answers only on its own callback addresses. If you changed them at your
+single sign-on provider or in the Spotify dashboard and removed v2's, put
+v2's back there.
 
 ## Advanced: export and import by hand
 
@@ -619,8 +642,8 @@ once you are done.
 Like the upgrade, the export first lists the callback addresses that
 change and stops with exit code 3 until you run it with
 `--callbacks-changed` (see [Upgrade](#upgrade), step 3). Pass
-`-e BASE_PATH=...` if v3 runs under a base path, so the Spotify address it
-prints is right.
+`-e BASE_PATH=...` if v3 runs under a base path, so the addresses it prints
+are right.
 
 If v2's key file (`config/.env`) is missing, or its key does not decrypt
 your stored secrets, the export refuses rather than writing a broken file.
@@ -792,8 +815,8 @@ import leaves their v2 version out.
 | Message | Meaning | What to do |
 |---|---|---|
 | `this is a DroppedNeedle v2 data directory` | v3 was started on v2 data | Stop the container and run the upgrade |
-| `Before upgrading, change these addresses` (exit code 3) | v2 uses single sign-on, Spotify playlist import or MusicBrainz contributions, whose callback addresses change | Nothing was changed. Change each address it lists, then run again with `--callbacks-changed` |
-| `No admin could get back in if single sign-on failed` (exit code 3) | Single sign-on is on and no admin has a password or a username | Nothing was changed. Set a username for the admin it names in v2 (Profile), then run again |
+| `Before upgrading, change these addresses` (exit code 3) | v2 uses single sign-on, Spotify playlist import or MusicBrainz contributions, whose callback addresses change | Your v2 files are in place. Change each address it lists, then run again with `--callbacks-changed` |
+| `No admin could get back in if single sign-on failed` (exit code 3) | Single sign-on is on and no admin has a password or a username | Your v2 files are in place. Set a username for the admin it names in v2 (Profile), then run again |
 | `an upgrade from v2 did not finish` | An upgrade was killed partway | Run the upgrade again, or `upgrade --undo --yes` to go back to v2 |
 | `Stop the server, then try again` | A server is using the data directory | Stop it and re-run |
 | `cannot tell what this data directory holds` | The folders are neither a v2 nor a v3 data directory, for example a v2 database beside a v3 key file | Nothing was changed. Check that the mounts point at the right folders |

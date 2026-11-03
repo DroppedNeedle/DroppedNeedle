@@ -243,7 +243,6 @@ pub const RATE_CLASSES: &[(PathMatch, RateClass)] = &[
         class("recovery-reset", 2.0, 5),
     ),
     (PathMatch::Prefix("/api/v3/auth/oidc"), OIDC_CLASS),
-    (PathMatch::Exact("/api/v1/auth/oidc/callback"), OIDC_CLASS),
     (
         PathMatch::Exact("/api/v3/auth/device-sessions"),
         class("device-sessions", 2.0, 5),
@@ -454,16 +453,15 @@ fn username_key(username: &str) -> String {
     format!("username:{}", kept.to_lowercase())
 }
 
-/// Axum middleware over `/api/v3/*` and the `/api/v1/*` callbacks kept for
-/// migrated apps, each of which reaches a write. Mounted inside the session
-/// gate so a signed-in caller is keyed by user; other paths pass through.
+/// Axum middleware over `/api/v3/*`. Mounted inside the session gate so a
+/// signed-in caller is keyed by user; other paths pass through.
 pub async fn rate_limit(
     State(limits): State<std::sync::Arc<RateLimiter>>,
     request: Request,
     next: Next,
 ) -> Response {
     let path = request.uri().path();
-    if !path.starts_with("/api/v3") && !path.starts_with("/api/v1/") {
+    if !path.starts_with("/api/v3") {
         return next.run(request).await;
     }
     let class = classify(path);

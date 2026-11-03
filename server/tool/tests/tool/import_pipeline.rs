@@ -552,8 +552,12 @@ async fn settings_replace_filters_and_preserves() {
     export["settings"]["indexers"] =
         json!([{"name": "first", "api_key": fixture.seal("idx-1")}, {"name": "second"}]);
     export["settings"]["advanced_settings"] = json!({"audiodb_api_key": fixture.seal("audio-key")});
-    export["settings"]["spotify_settings"] =
-        json!({"client_id": "v2-app", "client_secret": fixture.seal("sp-secret"), "enabled": true});
+    export["settings"]["oidc_settings"] = json!({
+        "enabled": true,
+        "issuer": "https://sso.example.com",
+        "client_id": "droppedneedle",
+        "redirect_uri": "https://music.example.com/api/v1/auth/oidc/callback",
+    });
 
     let (pool, _target) = migrated_pool().await;
     let (_dir, config_path, crypto) = scratch_config("settings");
@@ -605,8 +609,16 @@ async fn settings_replace_filters_and_preserves() {
     assert!(report.items.iter().any(|item| item.key == "plugins.demo"
         && item.outcome == "needs_porting"
         && item.detail == "demo needs porting before it can run"));
-    // A Spotify app configured on v2 keeps its registered v2 callback.
-    assert_eq!(stored["spotify_settings"]["legacy_callback"], json!(true));
+    // v3 does not answer v2's single sign-on callback, so the address moves.
+    let oidc_v3 = "https://music.example.com/api/v3/auth/oidc/callback";
+    assert_eq!(stored["oidc_settings"]["redirect_uri"], json!(oidc_v3));
+    assert!(
+        report
+            .notes
+            .contains(&format!("Single sign-on now redirects to {oidc_v3}.")),
+        "{:?}",
+        report.notes
+    );
     assert_eq!(stored["indexers"][0]["name"], json!("first"));
     assert_eq!(stored["indexers"][1]["name"], json!("second"));
     let cipher = stored["indexers"][0]["api_key"].as_str().unwrap();
@@ -615,6 +627,33 @@ async fn settings_replace_filters_and_preserves() {
     assert!(!text.contains("lastfm-key"));
     assert!(!text.contains("idx-1"));
     assert!(!text.contains("audio-key"));
+}
+
+/// A single sign-on address that does not end in v2's callback path (a
+/// proxy's own path) is kept as it is, and the summary says to set v3's.
+#[tokio::test]
+async fn single_sign_on_address_off_the_v2_path_is_kept() {
+    let fixture = Fixture::shared();
+    let mut export = fixture.shell();
+    let proxied = "https://music.example.com/sso/cb";
+    export["settings"]["oidc_settings"] = json!({
+        "enabled": true,
+        "issuer": "https://sso.example.com",
+        "client_id": "droppedneedle",
+        "redirect_uri": proxied,
+    });
+    let (pool, _target) = migrated_pool().await;
+    let (_dir, config_path, crypto) = scratch_config("oidc-kept");
+    let report = run_import(import_request(&export, pool.clone(), config_path, crypto)).await;
+
+    assert_eq!(report.exit.code, ExitCode::Ok);
+    let stored: Value = stored_settings(&pool).await;
+    assert_eq!(stored["oidc_settings"]["redirect_uri"], json!(proxied));
+    let note = format!(
+        "Single sign-on still redirects to {proxied}, v2's address. Enter v3's under \
+         Settings > Security."
+    );
+    assert!(report.notes.contains(&note), "{:?}", report.notes);
 }
 
 #[tokio::test]

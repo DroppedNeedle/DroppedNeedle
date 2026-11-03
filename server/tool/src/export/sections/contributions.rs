@@ -1,6 +1,5 @@
 //! Open MusicBrainz contributions: albums a curator was adding to
-//! MusicBrainz when v2 stopped, and the return links MusicBrainz will
-//! still call.
+//! MusicBrainz when v2 stopped, and their return links.
 //!
 //! v3 keeps contributions in the same tables v2 did, so rows travel
 //! verbatim. Only open contributions move: a linked one already left its
@@ -83,8 +82,9 @@ pub const DRAFTS: TableSection = TableSection {
                   contribution in v3 for one you still want to add",
 };
 
-/// Return links MusicBrainz calls when a curator saves the release. Only
-/// unused, unexpired ones still work; v3 answers v2's callback address.
+/// Return links MusicBrainz calls when a curator saves the release. The
+/// unused, unexpired ones move, and the import expires them: they name
+/// v2's callback address, which v3 does not answer.
 pub const CALLBACK_TOKENS: TableSection = TableSection {
     name: "contribution_callback_token",
     source: Source::Table {

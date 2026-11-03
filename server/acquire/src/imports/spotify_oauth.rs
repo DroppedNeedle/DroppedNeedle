@@ -9,10 +9,6 @@
 
 /// OAuth callback path, as the callback's route annotation names it.
 pub const SPOTIFY_CALLBACK_PATH: &str = "/api/v3/acquire/spotify/auth/callback";
-/// The v2 callback path. Spotify apps registered against v2 list it, so the
-/// server keeps answering there and sends it while the settings carry the
-/// import's legacy marker.
-pub const SPOTIFY_LEGACY_CALLBACK_PATH: &str = "/api/v1/me/connections/spotify/auth/callback";
 
 /// How long an authorize state stays valid.
 pub const STATE_TTL_SECS: i64 = 600;
@@ -23,8 +19,8 @@ pub const STATE_TTL_SECS: i64 = 600;
 /// here so the value matches the dashboard byte-for-byte. An
 /// admin-configured origin wins; empty keeps the request-derived base. The
 /// deployment base path lands between origin and callback exactly once.
-/// `callback_path` is [`SPOTIFY_CALLBACK_PATH`], or
-/// [`SPOTIFY_LEGACY_CALLBACK_PATH`] for an app registered against v2.
+/// `callback_path` is [`SPOTIFY_CALLBACK_PATH`]; the upgrade tool also
+/// builds v2's address with it.
 pub fn redirect_uri(
     callback_path: &str,
     configured_origin: &str,

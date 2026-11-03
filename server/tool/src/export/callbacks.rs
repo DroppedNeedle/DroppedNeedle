@@ -20,14 +20,19 @@ use crate::export::exporter::{open_v2_db, table_exists};
 use crate::export::sections::contributions::CALLBACK_TOKENS;
 use crate::export::sql::{ADMINS, AdminRow};
 use crate::export::v2dir::read_config;
-use droppedneedle_acquire::imports::spotify_oauth::{
-    SPOTIFY_CALLBACK_PATH, SPOTIFY_LEGACY_CALLBACK_PATH, redirect_uri,
-};
+use droppedneedle_acquire::imports::spotify_oauth::{SPOTIFY_CALLBACK_PATH, redirect_uri};
 
+/// v2's Spotify callback path.
+pub const SPOTIFY_V2_CALLBACK_PATH: &str = "/api/v1/me/connections/spotify/auth/callback";
 /// v2's single sign-on callback path.
 pub const OIDC_V2_CALLBACK_PATH: &str = "/api/v1/auth/oidc/callback";
 /// v3's single sign-on callback path.
 pub const OIDC_CALLBACK_PATH: &str = "/api/v3/auth/oidc/callback";
+
+/// Said of a single sign-on address that does not end in v2's path: the
+/// import cannot tell what v3's should be, so it keeps v2's.
+const OIDC_KEPT: &str = "The upgrade keeps v2's single sign-on address in v3's settings. \
+     After it, enter the new one under Settings > Security too.";
 
 /// The flag that lets the upgrade or the export go on past the list.
 pub const CALLBACKS_CHANGED_FLAG: &str = "--callbacks-changed";
@@ -54,13 +59,14 @@ pub enum CallbackFeature {
     MusicbrainzContributions,
 }
 
-/// An address, whole when v2's settings name the host, else a path to put
-/// after the address DroppedNeedle is opened at.
+/// An address, whole when v2's settings name the host, else a path (the
+/// base path included) to put after the scheme and host DroppedNeedle is
+/// opened at.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Address {
     /// A full address.
     Full(String),
-    /// A path after the DroppedNeedle address.
+    /// A path after DroppedNeedle's scheme and host.
     Path(String),
 }
 
@@ -84,7 +90,9 @@ impl Address {
     fn line(&self) -> String {
         match self {
             Self::Full(text) => text.clone(),
-            Self::Path(path) => format!("your DroppedNeedle address followed by {path}"),
+            Self::Path(path) => format!(
+                "your DroppedNeedle host, such as https://music.example.com, followed by {path}"
+            ),
         }
     }
 }
@@ -146,7 +154,7 @@ pub fn check_callbacks(
     base_path: &str,
 ) -> Result<CallbackCheck, ExportError> {
     let config = read_config(config_dir)?;
-    let single_sign_on = oidc_change(&config);
+    let single_sign_on = oidc_change(&config, base_path);
     let db = open_v2_db(db_path)?;
     let admins = match single_sign_on {
         Some(_) => Some(read_admins(&db)?),
@@ -172,8 +180,9 @@ fn text<'a>(section: Option<&'a Map<String, Value>>, field: &str) -> &'a str {
 }
 
 /// v2 signs in through single sign-on only when it is on and has an
-/// issuer, a client id and a redirect address.
-fn oidc_change(config: &Map<String, Value>) -> Option<AddressChange> {
+/// issuer, a client id and a redirect address. When that address does not
+/// end in v2's path, the new one is the base path and v3's path.
+fn oidc_change(config: &Map<String, Value>, base_path: &str) -> Option<AddressChange> {
     let section = config.get("oidc_settings").and_then(Value::as_object);
     let enabled = section
         .and_then(|section| section.get("enabled"))
@@ -188,7 +197,7 @@ fn oidc_change(config: &Map<String, Value>) -> Option<AddressChange> {
         return None;
     }
     let new = v3_oidc_redirect(redirect).map_or_else(
-        || Address::Path(OIDC_CALLBACK_PATH.to_owned()),
+        || Address::Path(format!("{base_path}{OIDC_CALLBACK_PATH}")),
         Address::Full,
     );
     Some(AddressChange {
@@ -210,7 +219,7 @@ fn spotify_change(config: &Map<String, Value>, base_path: &str) -> Option<Addres
     let address = |path: &str| Address::from_parts(redirect_uri(path, origin, "", base_path));
     Some(AddressChange {
         feature: CallbackFeature::Spotify,
-        old: address(SPOTIFY_LEGACY_CALLBACK_PATH),
+        old: address(SPOTIFY_V2_CALLBACK_PATH),
         new: address(SPOTIFY_CALLBACK_PATH),
     })
 }
@@ -287,9 +296,29 @@ impl CallbackCheck {
     }
 
     /// The message a stopped run prints. `command` is `upgrade` or
-    /// `export`, the command to run again.
+    /// `export`, the command to run again. A run that already has
+    /// `--callbacks-changed` stops only for an admin nobody could get back
+    /// in, so that is all it is told.
     #[must_use]
-    pub fn stop_message(&self, command: &str) -> String {
+    pub fn stop_message(&self, command: &str, acknowledged: bool) -> String {
+        let admins = self.unreachable_admins().map(|names| {
+            format!(
+                "No admin could get back in if single sign-on failed: {} {} no password and no \
+                 username. Set a username for {} in v2 (Profile).",
+                names.join(", "),
+                if names.len() == 1 { "has" } else { "have" },
+                if names.len() == 1 {
+                    "it"
+                } else {
+                    "one of them"
+                },
+            )
+        });
+        if acknowledged && let Some(admins) = admins {
+            return format!(
+                "{admins}\nThen run the {command} again with {CALLBACKS_CHANGED_FLAG}."
+            );
+        }
         let mut lines = vec!["Before upgrading, change these addresses.".to_owned()];
         lines.extend(self.blocks());
         lines.push(String::new());
@@ -298,19 +327,9 @@ impl CallbackCheck {
              before."
                 .to_owned(),
         );
-        if let Some(names) = self.unreachable_admins() {
+        if let Some(admins) = admins {
             lines.push(String::new());
-            lines.push(format!(
-                "No admin could get back in if single sign-on failed: {} {} no password and no \
-                 username. Set a username for {} in v2 (Profile), then run the {command} again.",
-                names.join(", "),
-                if names.len() == 1 { "has" } else { "have" },
-                if names.len() == 1 {
-                    "it"
-                } else {
-                    "one of them"
-                },
-            ));
+            lines.push(admins);
         }
         lines.push(format!(
             "When done, run the {command} again with {CALLBACKS_CHANGED_FLAG}."
@@ -349,6 +368,9 @@ impl CallbackCheck {
             lines.push(format!("  from  {}", change.old.line()));
             lines.push(format!("  to    {}", change.new.line()));
             if change.feature == CallbackFeature::SingleSignOn {
+                if matches!(change.new, Address::Path(_)) {
+                    lines.push(format!("  {OIDC_KEPT}"));
+                }
                 lines.extend(self.admin_lines());
             }
         }

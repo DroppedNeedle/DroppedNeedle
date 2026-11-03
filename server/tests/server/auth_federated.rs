@@ -445,16 +445,6 @@ async fn oidc_sign_in_verifies_the_id_token_and_creates_the_first_admin() {
     let (status, _) = land(&app, "/api/v3/auth/oidc/callback", &other, true).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 
-    // Providers set up for v2 redirect to its callback path; it still works.
-    let legacy = start_oidc(&app, &mock).await;
-    let (status, headers) = land(&app, "/api/v1/auth/oidc/callback", &legacy, true).await;
-    assert_eq!(status, StatusCode::FOUND);
-    assert!(
-        headers["location"]
-            .to_str()
-            .is_ok_and(|location| location.starts_with("/auth/callback?code="))
-    );
-
     // From a stated https address the state cookie is marked, so it goes
     // by the `__Secure-` name; the callback clears both names.
     e2e.store

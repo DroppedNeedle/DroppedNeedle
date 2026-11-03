@@ -29,7 +29,7 @@ use crate::flows::loops::{
 };
 use crate::flows::seams::{ReleasePoll, TickSink};
 use crate::held::{HeldFolders, HeldService};
-use crate::imports::handlers::{ImportsDeps, imports_legacy_callback_router};
+use crate::imports::handlers::ImportsDeps;
 use crate::imports::jobs::{SpotifyImportJobs, SpotifyImports};
 use crate::imports::lidarr::LidarrClient;
 use crate::imports::spotify::SpotifyImportService;
@@ -54,7 +54,6 @@ use crate::target::lookup::AlbumLookup;
 use crate::usenet::indexer::{Indexer, PluginIndexers};
 use crate::usenet::newznab::NewznabIndexer;
 use crate::usenet::prowlarr::ProwlarrIndexer;
-use axum::Router;
 use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_catalog::collections::store::Stores as CollectionsStores;
 use droppedneedle_kernel::db::DbError;
@@ -670,12 +669,6 @@ impl AcquireSetup {
                 self.dispatch.clone(),
             ),
         )
-    }
-
-    /// The Spotify OAuth callback at its v2 path, at full path: mount it at
-    /// the root, outside the session gate, like the OIDC legacy callback.
-    pub fn legacy_callback_router(&self) -> Router {
-        imports_legacy_callback_router(self.imports.clone())
     }
 
     /// Run startup recovery before serving traffic: drop imports a restart

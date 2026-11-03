@@ -32,21 +32,6 @@ const ALLOWED: &[Allowed] = &[
         why: "the covers debug tooling: mounted only under cfg(debug_assertions), never documented",
     },
     Allowed {
-        path: "auth/src/wiring.rs",
-        calls: 1,
-        why: "the OIDC callback at its v2 path: kept until the legacy callbacks are removed",
-    },
-    Allowed {
-        path: "acquire/src/imports/handlers.rs",
-        calls: 1,
-        why: "the Spotify callback at its v1 path: kept until the legacy callbacks are removed",
-    },
-    Allowed {
-        path: "library/src/http/contrib.rs",
-        calls: 1,
-        why: "the MusicBrainz contribution callback at its v1 path: kept until the legacy callbacks are removed",
-    },
-    Allowed {
         path: "media/src/stream/routes.rs",
         calls: 1,
         why: "test-support only: the stream route over a fake engine, for its slice tests",

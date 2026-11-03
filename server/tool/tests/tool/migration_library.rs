@@ -329,6 +329,23 @@ async fn managed_identified_album_keeps_ids_identity_and_original() {
     // the linked one stays behind.
     assert_eq!(count("contribution_draft"), 3);
     assert_eq!(count("contribution_callback_token"), 1);
+    // Its return link names v2's address, which v3 does not answer, so it
+    // lands expired and the summary says the edit starts again.
+    let link_expires_at: i64 = sqlx::query_scalar(
+        "SELECT expires_at FROM library_contribution_callback_tokens \
+         WHERE token_hash = 'token-open'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("return link carried");
+    assert!(link_expires_at < 4_000_000_000_000, "{link_expires_at}");
+    assert!(
+        report
+            .notes
+            .contains(&"1 MusicBrainz edit open in v2 must be started again from v3.".to_owned()),
+        "{:?}",
+        report.notes
+    );
     assert_eq!(count("youtube_link"), 1);
     assert_eq!(count("youtube_track_link"), 1);
     assert_eq!(count("ignored_release"), 1);

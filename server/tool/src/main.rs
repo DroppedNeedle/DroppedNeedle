@@ -365,7 +365,12 @@ fn run_export(args: &[String]) -> Result<(), Failure> {
     let db_path = flag_value(args, "--db")?.map(PathBuf::from);
     let out = required_flag(args, "--out")?;
     let base_path = AppConfig::load()
-        .map_err(|error| error.to_string())?
+        .map_err(|error| {
+            format!(
+                "{error}\nexport reads v3's deployment settings from the environment, for the \
+                 base path in the addresses it lists. Fix that variable or leave it unset."
+            )
+        })?
         .base_path;
     let callbacks = check_callbacks(
         &v2.config_dir,
@@ -373,8 +378,11 @@ fn run_export(args: &[String]) -> Result<(), Failure> {
         &base_path,
     )
     .map_err(|error| format!("{}: {error}", error.code()))?;
-    if callbacks.stops(has_flag(args, CALLBACKS_CHANGED_FLAG)) {
-        return Err(Failure::Stopped(callbacks.stop_message("export")));
+    let acknowledged = has_flag(args, CALLBACKS_CHANGED_FLAG);
+    if callbacks.stops(acknowledged) {
+        return Err(Failure::Stopped(
+            callbacks.stop_message("export", acknowledged),
+        ));
     }
     if !callbacks.is_empty() {
         eprintln!("{}\n", callbacks.acknowledged_message());
@@ -622,16 +630,11 @@ fn run_upgrade(args: &[String]) -> Result<(), Failure> {
     let undo = has_flag(args, "--undo");
     let v2_commit = flag_value(args, "--v2-commit")?;
     let callbacks_changed = has_flag(args, CALLBACKS_CHANGED_FLAG);
-    if undo && callbacks_changed {
+    let upgrade_flags = has_flag(args, "--no-backup") || v2_commit.is_some() || callbacks_changed;
+    if (undo && upgrade_flags) || (has_flag(args, "--yes") && !undo) {
         return Err(Failure::Usage(format!(
-            "--undo goes with --yes only\n{USAGE}"
+            "--undo takes only --yes, and --yes goes only with --undo\n{USAGE}"
         )));
-    }
-    if undo && (has_flag(args, "--no-backup") || v2_commit.is_some()) {
-        return Err(format!("--undo goes with --yes only\n{USAGE}").into());
-    }
-    if has_flag(args, "--yes") && !undo {
-        return Err(format!("--yes goes with --undo only\n{USAGE}").into());
     }
     let config = AppConfig::load().map_err(|error| error.to_string())?;
     let dirs = DataDirs::from_config(&config);
@@ -649,8 +652,8 @@ fn run_upgrade(args: &[String]) -> Result<(), Failure> {
     let outcome = new_runtime()?
         .block_on(upgrade::run(&request, &mut print_step))
         .map_err(|error| match error {
-            UpgradeError::CallbacksToChange(check) => {
-                Failure::Stopped(check.stop_message("upgrade"))
+            stopped @ UpgradeError::CallbacksToChange { .. } => {
+                Failure::Stopped(stopped.to_string())
             }
             other => Failure::Failed(upgrade_failure(&other)),
         })?;

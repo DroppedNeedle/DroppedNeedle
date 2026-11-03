@@ -206,22 +206,6 @@ impl AuthSetup {
         self.limits = limits;
         self
     }
-
-    /// The OIDC callback at its v2 path. v2 registered
-    /// `/api/v1/auth/oidc/callback` with identity providers and the import
-    /// keeps that redirect URI, so serving it here keeps a migrated SSO
-    /// login working without touching the provider. Mounted outside
-    /// `/api/v3`; like every OIDC step it needs no session.
-    pub fn legacy_oidc_router(&self) -> axum::Router {
-        use super::routes::federated::oidc_callback_handler;
-
-        axum::Router::new()
-            .route(
-                "/api/v1/auth/oidc/callback",
-                axum::routing::get(oidc_callback_handler),
-            )
-            .with_state(self.oidc.clone())
-    }
 }
 
 /// Every auth route under `/api/v3`, in the group its handler's extractor
