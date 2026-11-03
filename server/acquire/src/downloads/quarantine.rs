@@ -19,6 +19,7 @@ use std::path::{Path, PathBuf};
 
 use super::source_tag::SourceTag;
 use super::sources::SourceHandle;
+use crate::reason::Reason;
 
 /// Blocklist entry lifetime: 7 days.
 pub const QUARANTINE_TTL_SECONDS: f64 = 7.0 * 24.0 * 3600.0;
@@ -128,6 +129,69 @@ impl Blocklist {
     /// Whether a soulseek peer's file is blocked.
     pub fn blocks_file(&self, username: &str, filename: &str) -> bool {
         self.blocks(&soulseek_file_identity(username, filename))
+    }
+}
+
+/// Copies a landing turned down for one album, as not better than the
+/// library's or as the wrong track. Unlike the blocklist they belong to
+/// that album only and never expire: automatic picks for the album skip
+/// them, and a manual search still lists them, marked, for a person to
+/// judge.
+#[derive(Debug, Clone, Default)]
+pub struct RejectedCopies {
+    /// `(source, identity, why)`, identities in blocklist form.
+    copies: Vec<(String, String, Reason)>,
+}
+
+impl RejectedCopies {
+    /// The copies behind stored attempt handles and the reason each was
+    /// turned down. A handle that does not decode is logged and skipped.
+    pub fn from_handles(rows: impl IntoIterator<Item = (String, Reason)>) -> Self {
+        let mut copies = Vec::new();
+        for (json, why) in rows {
+            match serde_json::from_str::<SourceHandle>(&json) {
+                Ok(handle) => {
+                    let source = handle.source.to_string();
+                    copies.extend(
+                        failover_identities(&handle)
+                            .into_iter()
+                            .map(|identity| (source.clone(), identity, why)),
+                    );
+                }
+                Err(error) => {
+                    tracing::warn!(%error, "stored handle of a turned-down copy does not decode");
+                }
+            }
+        }
+        Self { copies }
+    }
+
+    /// The `(source, identity)` pairs, to add to a blocklist.
+    pub fn pairs(&self) -> impl Iterator<Item = (String, String)> + '_ {
+        self.copies
+            .iter()
+            .map(|(source, identity, _)| (source.clone(), identity.clone()))
+    }
+
+    /// Why a copy on `source` was turned down before: a Usenet or plugin
+    /// release by its identity, or a Soulseek peer's folder when any of its
+    /// files was.
+    pub fn reason(&self, source: &str, identities: &[String]) -> Option<Reason> {
+        self.copies
+            .iter()
+            .find(|(tag, identity, _)| tag == source && identities.contains(identity))
+            .map(|(_, _, why)| *why)
+    }
+
+    /// The blocklist form of a Soulseek peer's files.
+    pub fn soulseek_identities<'a>(
+        username: &str,
+        filenames: impl IntoIterator<Item = &'a str>,
+    ) -> Vec<String> {
+        filenames
+            .into_iter()
+            .map(|file| soulseek_file_identity(username, file))
+            .collect()
     }
 }
 

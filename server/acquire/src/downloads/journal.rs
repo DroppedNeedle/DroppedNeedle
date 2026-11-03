@@ -199,6 +199,28 @@ impl Journal {
         Ok(Blocklist::for_source(source, live))
     }
 
+    /// What an automatic pick for `task` skips on one source: the live
+    /// blocklist, plus the copies a landing turned down for the task's
+    /// album (as not better only when the task is an upgrade, the one
+    /// download that compares with the library's copy).
+    pub async fn read_automatic_blocklist(
+        &self,
+        task: &TaskRow,
+        source: &SourceTag,
+        now: f64,
+    ) -> Result<Blocklist, StoreError> {
+        let group = task.release_group_mbid.clone();
+        let not_better = task.origin == "upgrade";
+        let live = self
+            .read("downloads.automatic_blocklist", move |store| {
+                let mut live = store.load_quarantine_set(now, QUARANTINE_TTL_SECONDS)?;
+                live.extend(store.album_rejected_copies(&group, not_better)?.pairs());
+                Ok(live)
+            })
+            .await?;
+        Ok(Blocklist::for_source(source, live))
+    }
+
     /// Whether a client job still carries cleanup debt.
     pub async fn read_cleanup_debt(
         &self,

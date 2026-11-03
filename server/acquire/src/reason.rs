@@ -97,6 +97,11 @@ pub enum Reason {
     Cancelled,
     MovedOn,
     NoBetterCopy,
+    /// A failed download's retries stopped: another download fetches the
+    /// album.
+    AlreadyDownloading,
+    /// A failed download's retries stopped: the library holds the album.
+    AlreadyInLibrary,
 }
 
 /// Where a reason shows and what it offers.
@@ -117,7 +122,7 @@ pub enum ReasonKind {
 
 impl Reason {
     /// Every reason, in declaration order.
-    pub const ALL: [Reason; 72] = [
+    pub const ALL: [Reason; 74] = [
         Self::WeakMatch,
         Self::NoArtistEvidence,
         Self::MostlyUnmatched,
@@ -190,6 +195,8 @@ impl Reason {
         Self::Cancelled,
         Self::MovedOn,
         Self::NoBetterCopy,
+        Self::AlreadyDownloading,
+        Self::AlreadyInLibrary,
     ];
 
     /// The reasons a held file can carry, in declaration order: every hold
@@ -318,6 +325,8 @@ impl Reason {
             Self::Cancelled => "cancelled",
             Self::MovedOn => "moved_on",
             Self::NoBetterCopy => "no_better_copy",
+            Self::AlreadyDownloading => "already_downloading",
+            Self::AlreadyInLibrary => "already_in_library",
         }
     }
 
@@ -487,6 +496,8 @@ impl Reason {
             Self::Cancelled => "This download was stopped, so it will not be retried.",
             Self::MovedOn => "You moved this download on from a slow source.",
             Self::NoBetterCopy => "No better copy was found, so yours stays.",
+            Self::AlreadyDownloading => "Already downloading.",
+            Self::AlreadyInLibrary => "Already in your library.",
         }
     }
 
@@ -648,6 +659,8 @@ impl Reason {
             Self::AlreadyOwned => "Nothing to do.",
             Self::Cancelled => "Retry it to start again.",
             Self::MovedOn => "Nothing to do: it starts on the next source shortly.",
+            Self::AlreadyDownloading => "Nothing to do: the other download brings it.",
+            Self::AlreadyInLibrary => "Nothing to do.",
             Self::QueueGaveWay => "Nothing to do: the next copy is downloading.",
             Self::NoBetterCopy => "Nothing to do. To choose a copy yourself, use Pick a source.",
         }
@@ -725,7 +738,11 @@ impl Reason {
             | Self::HeldForReview
             | Self::TracksMissing
             | Self::MovedOn => ReasonKind::Wait,
-            Self::AlreadyOwned | Self::Cancelled | Self::NoBetterCopy => ReasonKind::Settled,
+            Self::AlreadyOwned
+            | Self::Cancelled
+            | Self::NoBetterCopy
+            | Self::AlreadyDownloading
+            | Self::AlreadyInLibrary => ReasonKind::Settled,
         }
     }
 
@@ -807,7 +824,9 @@ impl Reason {
             | Self::AlreadyOwned
             | Self::Cancelled
             | Self::MovedOn
-            | Self::NoBetterCopy => false,
+            | Self::NoBetterCopy
+            | Self::AlreadyDownloading
+            | Self::AlreadyInLibrary => false,
         }
     }
 }
@@ -998,6 +1017,9 @@ mod tests {
             // blocklisted.
             (Reason::TracksMissing, FailedOver { blocklisted: true }),
             (Reason::MovedOn, FailedOver { blocklisted: false }),
+            // New: a retry that stopped by itself says nothing against a source.
+            (Reason::AlreadyDownloading, NotProduced(false)),
+            (Reason::AlreadyInLibrary, NotProduced(false)),
             (Reason::QueueGaveWay, FailedOver { blocklisted: false }),
             (Reason::FilesUnlisted, Waited),
             (Reason::NoSource, Unserved),

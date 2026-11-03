@@ -1,9 +1,17 @@
 //! The retry pass: settled tasks whose backoff elapsed spawn successors.
 
 use super::{DownloadWorker, Pass};
+use crate::downloads::queue_rows::RetryStop;
 use crate::downloads::recovery::plan_retry;
 use crate::downloads::state::TaskStatus;
 use crate::downloads::store::{NewTask, TaskRow};
+
+/// What one retry step did.
+enum Retried {
+    Spawned,
+    Stopped(RetryStop),
+    Nothing,
+}
 
 /// The retry successor row for a settled task: same ask, one generation
 /// on. `None` for a task that is not settled yet.
@@ -74,30 +82,55 @@ impl DownloadWorker {
             };
             let successor = row.id.clone();
             let source = task.clone();
-            let spawned = self
+            // A library that cannot be read fails the step: the task waits
+            // for the next pass, never retried as if the album were absent.
+            let retried = self
                 .step("downloads.retry", move |store| {
                     // A cancel since the read stopped its retries.
                     let still_failed = store.get_task(&source.id)?.is_some_and(|task| {
                         matches!(task.status, TaskStatus::Failed | TaskStatus::Partial)
                     });
                     if !still_failed {
-                        return Ok(false);
+                        return Ok(Retried::Nothing);
                     }
                     // Held tracks gate their task: re-downloading a held
                     // track loops.
                     if crate::held::store::HeldRows::new(store.conn()).task_holds(&source.id)? {
-                        return Ok(false);
+                        return Ok(Retried::Nothing);
+                    }
+                    // One live download per album: another one already
+                    // fetching it, of any owner or origin, or the library
+                    // already holding it, ends the retries.
+                    let stop = match store.live_twin(&source.id)? {
+                        Some(live) => Some(RetryStop::Downloading(live)),
+                        None => store
+                            .retry_already_held(&source)?
+                            .then_some(RetryStop::InLibrary),
+                    };
+                    if let Some(stop) = stop {
+                        store.stop_retries(&source, &stop, now)?;
+                        return Ok(Retried::Stopped(stop));
                     }
                     // The request follows its download onto the retry.
-                    store.spawn_successor(&source, &row, now)
+                    Ok(if store.spawn_successor(&source, &row, now)? {
+                        Retried::Spawned
+                    } else {
+                        Retried::Nothing
+                    })
                 })
                 .await;
-            if spawned == Some(true) {
-                tracing::info!(
+            match retried {
+                Some(Retried::Spawned) => tracing::info!(
                     task_id = %task.id,
                     successor = %successor,
                     "download auto-retry spawned"
-                );
+                ),
+                Some(Retried::Stopped(stop)) => tracing::info!(
+                    task_id = %task.id,
+                    ?stop,
+                    "download auto-retry stopped: the album is already on its way or in"
+                ),
+                Some(Retried::Nothing) | None => {}
             }
         }
     }

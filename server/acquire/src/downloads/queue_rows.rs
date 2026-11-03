@@ -21,6 +21,15 @@ use crate::held::store::{FileState, HeldRows};
 use crate::reason::Reason;
 use crate::requests::settle::relink;
 
+/// Why a failed task's retries stopped by themselves.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RetryStop {
+    /// Another download, of any owner or origin, fetches the album: its id.
+    Downloading(String),
+    /// The library holds the album.
+    InLibrary,
+}
+
 /// Who is looking at the queue.
 #[derive(Debug, Clone)]
 pub struct Viewer {
@@ -193,6 +202,77 @@ impl DownloadStore<'_> {
             )?;
         }
         Ok(outcome)
+    }
+
+    /// A live task of any owner or origin fetching what `task` asks for
+    /// (its album, or its recording for a track), if one runs.
+    pub fn live_twin(&self, task_id: &str) -> Result<Option<String>, StoreError> {
+        Ok(self
+            .conn
+            .query_row(sql::LIVE_TWIN.text(), params![task_id], |row| row.get(0))
+            .optional()?)
+    }
+
+    /// Whether the library now holds the album a failed `task` was after,
+    /// so its retries would only fetch what the library has. Only a whole
+    /// album counts: a task asking for chosen tracks or for a library copy
+    /// it was fetched for, one that landed part, and one whose ask landed
+    /// part before (the library then holds that part) keep retrying.
+    pub fn retry_already_held(&self, task: &TaskRow) -> Result<bool, StoreError> {
+        if task.download_type != "album"
+            || task.status != TaskStatus::Failed
+            || task.release_group_mbid.trim().is_empty()
+        {
+            return Ok(false);
+        }
+        let plan = self.task_plan(&task.id)?;
+        if !plan.album_wanted.is_empty() || plan.planned_album.is_some() {
+            return Ok(false);
+        }
+        let landed_short: bool =
+            self.conn
+                .query_row(sql::ASK_LANDED_SHORT.text(), params![task.id], |row| {
+                    row.get(0)
+                })?;
+        if landed_short {
+            return Ok(false);
+        }
+        Ok(droppedneedle_library::identity::reads::group_owned(
+            self.conn,
+            task.release_group_mbid.trim(),
+        )?)
+    }
+
+    /// Stop the retries of a failed or short task by itself because
+    /// another download or the library already has its album. With a live
+    /// download, the requests that followed `task` follow that one, as a
+    /// new ask for the album would (a cancelled task's rows too: only a
+    /// person's retry asks for that). Answers whether the task stopped; a
+    /// task already cancelled stays as it is.
+    pub fn stop_retries(
+        &self,
+        task: &TaskRow,
+        why: &RetryStop,
+        now: f64,
+    ) -> Result<bool, StoreError> {
+        let (outcome, log) = match why {
+            RetryStop::Downloading(live) => {
+                relink(self.conn, &task.id, live)?;
+                (
+                    Reason::AlreadyDownloading,
+                    format!("retries stopped: download {live} already fetches this album"),
+                )
+            }
+            RetryStop::InLibrary => (
+                Reason::AlreadyInLibrary,
+                "retries stopped: the library holds this album".to_owned(),
+            ),
+        };
+        let changed = self.conn.execute(
+            sql::STOP_RETRIES_BECAUSE.text(),
+            params![task.id, ms(now), outcome.code(), log],
+        )?;
+        Ok(changed > 0)
     }
 
     /// Insert a retry successor of `source` unless it already exists. The

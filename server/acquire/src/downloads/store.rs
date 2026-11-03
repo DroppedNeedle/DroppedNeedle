@@ -17,6 +17,7 @@ use std::cell::RefCell;
 use rusqlite::{Connection, OptionalExtension, Row};
 
 use super::plan::TaskPlan;
+use super::quarantine::RejectedCopies;
 use super::source_tag::SourceTag;
 use super::sql;
 use super::state::{AttemptDisposition, AttemptState, TaskStatus};
@@ -1114,6 +1115,26 @@ impl<'conn> DownloadStore<'conn> {
             rusqlite::params![ms(now - ttl_seconds)],
             |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
         )
+    }
+
+    /// The copies a landing turned down for one album: as the wrong track,
+    /// and with `not_better` also as not better than the library's copy.
+    pub fn album_rejected_copies(
+        &self,
+        release_group_mbid: &str,
+        not_better: bool,
+    ) -> Result<RejectedCopies, StoreError> {
+        if release_group_mbid.trim().is_empty() {
+            return Ok(RejectedCopies::default());
+        }
+        let rows = self.rows(
+            sql::ALBUM_REJECTED_COPIES.text(),
+            rusqlite::params![release_group_mbid.trim(), not_better],
+            sql::RejectedCopyRow::read,
+        )?;
+        Ok(RejectedCopies::from_handles(rows.into_iter().map(|row| {
+            (row.handle_json, Reason::from_stored(&row.reason_code))
+        })))
     }
 
     /// Every quarantine row, newest first (for the review surface).

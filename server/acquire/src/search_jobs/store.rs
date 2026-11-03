@@ -5,7 +5,7 @@
 use rusqlite::{OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
-use super::candidates::Candidate;
+use super::candidates::{Candidate, mark_turned_down};
 use super::sql;
 use crate::db::{AcquireDb, ms_from_secs_f64 as ms};
 use crate::downloads::store::{DownloadStore, NewTask, StoreError, TaskDetails};
@@ -152,6 +152,23 @@ fn store_failed(operation: &str, error: StoreError) -> DbError {
     }
 }
 
+/// Mark the candidates a landing turned down for the job's album before
+/// (see [`mark_turned_down`]), in the write that stores them.
+fn mark_turned_down_copies(
+    conn: &rusqlite::Connection,
+    group: Option<&str>,
+    payload: &mut JobPayload,
+) -> Result<(), DbError> {
+    let Some(group) = group.filter(|group| !group.is_empty()) else {
+        return Ok(());
+    };
+    let turned_down = DownloadStore::new(conn)
+        .album_rejected_copies(group, true)
+        .map_err(|error| store_failed("search_jobs.turned_down", error))?;
+    mark_turned_down(&mut payload.candidates, &turned_down);
+    Ok(())
+}
+
 /// What the automatic downloader decided about its search.
 #[derive(Debug, Clone)]
 pub enum ReviewOutcome {
@@ -244,13 +261,14 @@ impl JobStore {
             .map_err(|error| error.to_string())
     }
 
-    /// Store the outcome of a search that is still running. Answers false
-    /// when the job moved meanwhile (cancelled), so nothing is overwritten.
+    /// Store the outcome of a search that is still running, its candidates
+    /// turned down before for the album marked. Answers false when the job
+    /// moved meanwhile (cancelled), so nothing is overwritten.
     pub async fn finish(
         &self,
         job_id: &str,
         status: JobStatus,
-        payload: JobPayload,
+        mut payload: JobPayload,
         reason: Option<&'static str>,
     ) -> Result<bool, String> {
         let job_id = job_id.to_owned();
@@ -258,6 +276,11 @@ impl JobStore {
         self.db
             .write_background("search_jobs.finish", move |tx| {
                 let at = crate::db::unix_secs_f64(clock.as_ref());
+                let group: Option<String> = tx
+                    .query_row(sql::JOB_GROUP.text(), params![job_id], |row| row.get(0))
+                    .optional()?
+                    .flatten();
+                mark_turned_down_copies(tx, group.as_deref(), &mut payload)?;
                 let changed = tx.execute(
                     sql::FINISH_JOB.text(),
                     params![
@@ -284,7 +307,7 @@ impl JobStore {
     pub async fn record_review(
         &self,
         job: NewJob,
-        payload: JobPayload,
+        mut payload: JobPayload,
         task_id: &str,
         outcome: ReviewOutcome,
     ) -> Result<bool, String> {
@@ -300,6 +323,7 @@ impl JobStore {
                 if !open {
                     return Ok(false);
                 }
+                mark_turned_down_copies(tx, job.release_group_mbid.as_deref(), &mut payload)?;
                 let status = match outcome {
                     ReviewOutcome::Take(..) => JobStatus::Matched,
                     ReviewOutcome::Park => JobStatus::Completed,

@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use super::retry::successor_row;
 use super::{DownloadWorker, Pass, handled_count, live_attempt};
-use crate::downloads::queue_rows::ProgressColumns;
+use crate::downloads::queue_rows::{ProgressColumns, RetryStop};
 use crate::downloads::reasons::NEXT_SOURCE_NOTE;
 use crate::downloads::source_tag::SourceTag;
 use crate::downloads::sources::TransferProgress;
@@ -122,7 +122,9 @@ impl DownloadWorker {
     /// album's blocklist first: an explicit "try again" reconsiders the
     /// releases the failed attempt quarantined (a track retry leaves the
     /// album's blocklist alone, and auto-retry never clears it). Answers
-    /// the successor's id.
+    /// the successor's id, or, when another download already fetches the
+    /// album, that download's: the task's retries stop and its requests
+    /// follow that one, as a new ask for the album would.
     pub async fn retry_now(&self, task: &TaskRow) -> Result<String, RetryError> {
         if !matches!(
             task.status,
@@ -150,6 +152,10 @@ impl DownloadWorker {
                     } else {
                         Some(existing.id)
                     });
+                }
+                if let Some(live) = store.live_twin(&source.id)? {
+                    store.stop_retries(&source, &RetryStop::Downloading(live.clone()), now)?;
+                    return Ok(Some(live));
                 }
                 if source.download_type == "album" && !source.release_group_mbid.is_empty() {
                     store.delete_quarantine_for_album(&source.release_group_mbid)?;

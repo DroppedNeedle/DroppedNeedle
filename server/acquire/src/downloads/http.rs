@@ -565,7 +565,8 @@ pub async fn next_source_handler(
 }
 
 /// Retry a failed, cancelled or partial download now. Answers the new
-/// task. An album retry clears the album's blocklist first.
+/// task, or the download already fetching the album. An album retry clears
+/// the album's blocklist first.
 /// `POST /api/v3/downloads/tasks/{task_id}/retry`.
 #[utoipa::path(
     post,
@@ -886,8 +887,11 @@ pub async fn upgrade_album_handler(
     let outcome = upgrades
         .request(UpgradeAsk {
             user_id: curator.user_id().to_owned(),
+            // Lowercase, as every other ask keys an album, so the live-task
+            // check finds a download of it whatever the body's case.
             target: DispatchTarget::Album {
-                release_group_mbid: required(&body.release_group_mbid, "release_group_mbid")?,
+                release_group_mbid: required(&body.release_group_mbid, "release_group_mbid")?
+                    .to_ascii_lowercase(),
             },
             artist: body.artist_name,
             title: body.album_title,

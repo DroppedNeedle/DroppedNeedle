@@ -15,6 +15,8 @@ droppedneedle_kernel::sql! {
     pub(super) JOB_BY_ID = "SELECT id, user_id, artist_name, album_title, year, \
              release_group_mbid, status, candidates_blob, error_message \
              FROM search_jobs WHERE id = ?1";
+    /// One job's (`?1`) album, when it names one.
+    pub(super) JOB_GROUP = "SELECT release_group_mbid FROM search_jobs WHERE id = ?1";
     /// One job's (`?1`) status.
     pub(super) JOB_STATUS = "SELECT status FROM search_jobs WHERE id = ?1";
     /// The newest download a pick started from a job (`?1`).

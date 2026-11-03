@@ -96,6 +96,20 @@ pub(super) async fn blocklist(
         .map_err(|error| SourceError::LocalFault(error.to_string()))
 }
 
+/// What an automatic pick for `task` skips on one source: the blocklist
+/// plus the copies a landing turned down for its album. A journal that
+/// cannot be read is a local fault.
+pub(super) async fn automatic_blocklist(
+    journal: &Journal,
+    task: &TaskRow,
+    source: &SourceTag,
+) -> Result<Blocklist, SourceError> {
+    journal
+        .read_automatic_blocklist(task, source, journal.db().now_unix_f64())
+        .await
+        .map_err(|error| SourceError::LocalFault(error.to_string()))
+}
+
 /// The releases a task's attempts on one source already fetched.
 pub(super) async fn tried_releases(
     journal: &Journal,
@@ -255,8 +269,14 @@ impl SlskdSource {
         // Blocklisted peer/file pairs never re-enqueue, and neither does a
         // peer this task already tried: a failover walks to the best
         // remaining folder, so the list shrinking under quarantine never
-        // skips a candidate.
-        let blocked = blocklist(&self.journal, &SourceTag::Soulseek).await?;
+        // skips a candidate. Nor does a copy a landing turned down for the
+        // album, unless a person picked it.
+        let blocked = automatic_blocklist(&self.journal, &task, &SourceTag::Soulseek).await?;
+        let pin_blocked = if task.picked_by_person {
+            blocklist(&self.journal, &SourceTag::Soulseek).await?
+        } else {
+            blocked.clone()
+        };
         let mut tried = Vec::new();
         for json in self
             .journal
@@ -313,7 +333,7 @@ impl SlskdSource {
                 username, files, ..
             }) => files
                 .into_iter()
-                .filter(|file| !blocked.blocks_file(&username, &file.filename))
+                .filter(|file| !pin_blocked.blocks_file(&username, &file.filename))
                 .map(|file| EnqueueFile {
                     username: username.clone(),
                     filename: file.filename,
@@ -725,7 +745,15 @@ impl SabnzbdSource {
         }
         let task = task_row(&self.journal, task_id).await?;
         let index = candidate_index.max(0) as usize;
-        let pin = pinned(&self.journal, &task, &SourceTag::Usenet, candidate_index).await;
+        // The automatic search review's pick of a copy a landing turned
+        // down for the album is dropped: the walk below finds another.
+        let automatic = automatic_blocklist(&self.journal, &task, &SourceTag::Usenet).await?;
+        let pin = pinned(&self.journal, &task, &SourceTag::Usenet, candidate_index)
+            .await
+            .filter(|pin| match pin {
+                Pin::Release { identity } => task.picked_by_person || !automatic.blocks(identity),
+                Pin::Soulseek { .. } => true,
+            });
         // Crash-retry dedup: the job name is deterministic per
         // (task, index), so a repeat enqueue after a crash between the
         // client add and the journal write re-attaches to the existing
@@ -781,7 +809,7 @@ impl SabnzbdSource {
                 })?,
             _ => {
                 let tried = tried_releases(&self.journal, task_id, &SourceTag::Usenet).await?;
-                self.pick(&task, &target, &blocked, &tried)
+                self.pick(&task, &target, &automatic, &tried)
                     .await
                     .map_err(|reason| {
                         SourceError::rejected(

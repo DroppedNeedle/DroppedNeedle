@@ -19,8 +19,10 @@
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+use crate::downloads::quarantine::RejectedCopies;
 use crate::downloads::source_tag::SourceTag;
 use crate::plugin_source::{Band, ScoredRelease, release_identity};
+use crate::reason::Reason;
 use crate::slskd::SearchResult;
 use crate::slskd::folders::FolderPick;
 use crate::target::SearchTarget;
@@ -94,6 +96,8 @@ pub enum CandidateNoteCode {
     Strong,
     /// The source rates it a weak match.
     Weak,
+    /// A download of this copy for the album was turned down before.
+    TurnedDownBefore,
 }
 
 /// Why a candidate sits where it does: one stable code and one sentence.
@@ -212,6 +216,36 @@ pub struct Candidate {
     pub view: SearchCandidateView,
     /// What the worker fetches.
     pub pin: Pin,
+}
+
+/// Mark each candidate a landing turned down for this album before: still
+/// listed for a person to judge, no longer recommended, with a note saying
+/// why. Automatic picks skip these copies at enqueue.
+pub fn mark_turned_down(candidates: &mut [Candidate], turned_down: &RejectedCopies) {
+    for candidate in candidates {
+        let identities = match &candidate.pin {
+            Pin::Soulseek {
+                username, files, ..
+            } => RejectedCopies::soulseek_identities(
+                username,
+                files.iter().map(|file| file.filename.as_str()),
+            ),
+            Pin::Release { identity } => vec![identity.clone()],
+        };
+        let Some(why) = turned_down.reason(&candidate.view.source, &identities) else {
+            continue;
+        };
+        let text = if why == Reason::WrongTrack {
+            "The wrong track last time."
+        } else {
+            "Not better than yours last time."
+        };
+        if candidate.view.tier == CandidateTier::Recommended {
+            candidate.view.tier = CandidateTier::Possible;
+        }
+        candidate.view.note =
+            CandidateNote::new(CandidateNoteCode::TurnedDownBefore, text.to_owned());
+    }
 }
 
 impl Candidate {

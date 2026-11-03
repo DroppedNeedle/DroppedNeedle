@@ -430,9 +430,13 @@ impl PluginDownloadSource {
             })?;
         let target = super::sources::resolve_target(self.targets.as_ref(), &task).await?;
         let blocked = super::sources::blocklist(&self.journal, &self.tag).await?;
+        let skipped = super::sources::automatic_blocklist(&self.journal, &task, &self.tag).await?;
         let index = candidate_index.max(0) as usize;
+        // The automatic search review's pick of a copy a landing turned
+        // down for the album is dropped: the walk below finds another.
         if let Some(Pin::Release { identity }) =
             pinned(&self.journal, &task, &self.tag, candidate_index).await
+            && (task.picked_by_person || !skipped.blocks(&identity))
         {
             // The release a person picked from a manual search, found
             // again by its identity (any band and outside the settings
@@ -460,7 +464,7 @@ impl PluginDownloadSource {
         // The releases an automatic pick may take, and whether the settings
         // refused any.
         let automatic = |results: Vec<PluginSearchResult>| -> (Vec<ScoredRelease>, bool) {
-            let scored = score_plugin_releases(results, &self.policy, &blocked);
+            let scored = score_plugin_releases(results, &self.policy, &skipped);
             let refused = scored.iter().any(|release| !release.refusal.is_empty());
             let taken = scored
                 .into_iter()

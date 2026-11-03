@@ -323,6 +323,175 @@ async fn a_usenet_pick_grabs_through_its_indexer() {
     );
 }
 
+/// A copy an upgrade's landing turned down as not better than the
+/// library's is not fetched again by the next automatic look for that
+/// album, which takes another; a manual search still lists it, marked.
+#[tokio::test]
+async fn a_copy_turned_down_as_not_better_is_not_picked_again() {
+    use droppedneedle_acquire::downloads::landing_rows::{ImportDecisionRow, ImportOutcome};
+    use droppedneedle_acquire::downloads::state::{AttemptState, TaskStatus};
+    use droppedneedle_acquire::reason::Reason;
+    use droppedneedle_acquire::search_jobs::candidates::CandidateNoteCode;
+    use droppedneedle_acquire::search_jobs::store::{JobPayload, JobStatus, JobStore, NewJob};
+    use droppedneedle_acquire::usenet::newznab::usenet_identity;
+
+    const SIZE: u64 = 314_572_800;
+    let mock = SabnzbdMock::new();
+    let (sab, _sab_server) = serve_loopback(mock.router()).await.expect("mock serves");
+    let item = |title: &str, guid: &str| {
+        format!(
+            r#"<item><title>{title}</title><guid>{guid}</guid>
+   <enclosure url="{sab}/nzb/good" length="{SIZE}" type="application/x-nzb"/>
+   <newznab:attr name="category" value="3040"/>
+   <newznab:attr name="size" value="{SIZE}"/>
+   <newznab:attr name="files" value="12"/></item>"#
+        )
+    };
+    let body = format!(
+        r#"<rss version="2.0" xmlns:newznab="http://www.newznab.com/DTD/2010/feeds/attributes/">
+ <channel>{}{}</channel>
+</rss>"#,
+        item("Portishead - Dummy (1994) [FLAC]", "seen"),
+        item("Portishead - Dummy (1994) [FLAC] [Remaster]", "fresh"),
+    );
+    let (indexer, _indexer_server) = serve_loopback(Router::new().route(
+        "/api",
+        get(move || {
+            let body = body.clone();
+            async move { body }
+        }),
+    ))
+    .await
+    .expect("feed serves");
+    let dir = ScratchDir::new("source-turned-down");
+    let policy = UsenetPolicy::v2_defaults();
+    let queue = SabnzbdQueue::new(
+        SabnzbdClient::new(
+            reqwest::Client::new(),
+            &sab,
+            "SABKEY",
+            3,
+            Duration::from_millis(1),
+        ),
+        &sab,
+        "SABKEY",
+        dir.join("complete"),
+        policy.clone(),
+    );
+    let seen = usenet_identity("Portishead - Dummy (1994) [FLAC]", SIZE);
+    let fresh = usenet_identity("Portishead - Dummy (1994) [FLAC] [Remaster]", SIZE);
+    let journal = journal_with_task("t-earlier", "Portishead", "Dummy").await;
+    let handle = serde_json::to_string(&SourceHandle {
+        release_identity: seen.clone(),
+        ..SourceHandle::new(SourceTag::Usenet)
+    })
+    .expect("handle encodes");
+    journal
+        .run("test.seed_turned_down", move |store| {
+            store.insert_task(
+                &NewTask {
+                    id: "t-next".to_owned(),
+                    user_id: "u1".to_owned(),
+                    artist_name: "Portishead".to_owned(),
+                    album_title: "Dummy".to_owned(),
+                    release_group_mbid: "rg-1".to_owned(),
+                    origin: "upgrade".to_owned(),
+                    retry_count: 0,
+                },
+                1_700_000_100.0,
+            )?;
+            store.insert_attempt(
+                "a-earlier",
+                "t-earlier",
+                "usenet",
+                0,
+                "droppedneedle-t-earlier-0",
+                &handle,
+                AttemptState::Complete,
+                1_700_000_000.0,
+            )?;
+            store.record_import_decision(&ImportDecisionRow {
+                task_id: "t-earlier".to_owned(),
+                attempt_id: Some("a-earlier".to_owned()),
+                outcome: ImportOutcome::Rejected,
+                reason_code: Some(Reason::NotAnUpgrade),
+                checks_json: "[]".to_owned(),
+                missing_positions: "[]".to_owned(),
+                decided_at: 1_700_000_050.0,
+                ..Default::default()
+            })?;
+            store.transition_task("t-earlier", TaskStatus::Failed, 1_700_000_050.0, None)
+        })
+        .await
+        .expect("seeds");
+    let client = newznab_indexers().client("dummy", "Dummy", &format!("{indexer}/api"), "NZKEY");
+    let source = SabnzbdSource::new(
+        Arc::new(queue),
+        vec![Arc::new(NewznabIndexer::new(
+            vec![NewznabIndexerEntry {
+                client,
+                id: "dummy".to_owned(),
+                name: "Dummy".to_owned(),
+                categories: vec![3040],
+                enabled: true,
+                priority: 1,
+                limit: 100,
+            }],
+            WAIT,
+            WAIT,
+        ))],
+        policy,
+        journal.clone(),
+        None,
+    );
+
+    let picked = source.enqueue("t-next", 0).await.expect("enqueues");
+    assert_eq!(
+        picked.release_identity, fresh,
+        "the next look takes another copy"
+    );
+
+    let listed = source
+        .search(&album("Portishead", "Dummy"))
+        .await
+        .expect("searches");
+    let jobs = JobStore::new(journal.db().clone());
+    jobs.insert(NewJob {
+        id: "job-1".to_owned(),
+        user_id: "u1".to_owned(),
+        artist_name: "Portishead".to_owned(),
+        album_title: "Dummy".to_owned(),
+        year: None,
+        release_group_mbid: Some("rg-1".to_owned()),
+        release_mbid: None,
+    })
+    .await
+    .expect("job inserts");
+    let payload = JobPayload {
+        candidates: listed,
+        ..JobPayload::default()
+    };
+    assert!(
+        jobs.finish("job-1", JobStatus::Completed, payload, None)
+            .await
+            .expect("job finishes")
+    );
+    let stored = jobs.get("job-1").await.expect("job reads").expect("job");
+    let candidates = JobPayload::decode(&stored.blob)
+        .expect("payload")
+        .candidates;
+    let offered = candidates
+        .iter()
+        .find(|candidate| candidate.view.title == "Portishead - Dummy (1994) [FLAC]")
+        .expect("a person is still offered the copy");
+    assert_eq!(
+        offered.view.note.code,
+        CandidateNoteCode::TurnedDownBefore,
+        "{:?}",
+        offered.view.note
+    );
+}
+
 /// The indexers are asked as a person's search would ask them.
 const USER: RequestPriority = RequestPriority::UserInitiated;
 

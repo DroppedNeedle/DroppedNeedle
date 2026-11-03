@@ -24,6 +24,41 @@ droppedneedle_kernel::sql! {
     pub(super) NEWEST_ACTIVE_FOR_ALBUM = TASK_ROW + " WHERE release_group_mbid = ?1 \
              AND download_type = 'album' AND status IN ('queued', 'downloading', 'processing') \
              ORDER BY created_at DESC, rowid DESC LIMIT 1";
+    /// A live task of any owner or origin fetching what task `?1` asks for:
+    /// the same album (release group, any case) for an album task, the
+    /// same recording for a track task.
+    pub(super) LIVE_TWIN = "SELECT n.id FROM download_tasks t JOIN download_tasks n \
+             ON n.id != t.id AND n.download_type = t.download_type \
+             AND ((t.download_type = 'album' AND t.release_group_mbid != '' \
+                   AND lower(n.release_group_mbid) = lower(t.release_group_mbid)) \
+               OR (t.download_type = 'track' AND COALESCE(t.recording_mbid, '') != '' \
+                   AND n.recording_mbid = t.recording_mbid)) \
+             WHERE t.id = ?1 AND n.status IN ('queued', 'downloading', 'processing') \
+             ORDER BY n.created_at DESC, n.rowid DESC LIMIT 1";
+    /// Whether an album task of the same ask as task `?1` (owner, album,
+    /// not an upgrade) landed short: the library then holds the album in
+    /// part, from this ask itself.
+    pub(super) ASK_LANDED_SHORT = "SELECT EXISTS (SELECT 1 FROM download_tasks t \
+             JOIN download_tasks n ON n.user_id = t.user_id AND n.download_type = 'album' \
+              AND lower(n.release_group_mbid) = lower(t.release_group_mbid) \
+              AND n.origin != 'upgrade' AND n.status = 'partial' \
+             WHERE t.id = ?1)";
+    /// Copies a landing turned down for album `?1` (any case): as the wrong
+    /// track, and with `?2` also as not better than the library's copy.
+    /// Each as the handle of the attempt that fetched it.
+    pub(super) ALBUM_REJECTED_COPIES = "SELECT DISTINCT a.handle_json, d.reason_code \
+             FROM download_tasks t \
+             JOIN download_import_decisions d ON d.task_id = t.id \
+             JOIN download_attempts a ON a.id = d.attempt_id \
+             WHERE t.release_group_mbid != '' AND lower(t.release_group_mbid) = lower(?1) \
+               AND d.outcome = 'rejected' AND a.handle_json != '' \
+               AND (d.reason_code = 'wrong_track' \
+                    OR (?2 AND d.reason_code = 'not_an_upgrade'))";
+    /// One copy `ALBUM_REJECTED_COPIES` reads.
+    pub(super) row RejectedCopyRow for [ALBUM_REJECTED_COPIES] {
+        handle_json: String,
+        reason_code: String,
+    }
     /// Any live task, album or track, in release group `?1` (lowercase).
     pub(super) LIVE_IN_GROUP = "SELECT id FROM download_tasks \
              WHERE lower(release_group_mbid) = ?1 \
@@ -356,6 +391,12 @@ droppedneedle_kernel::sql! {
     /// Stop retrying one failed or short task (`?1`).
     pub(super) STOP_RETRIES = "UPDATE download_tasks \
              SET status = 'cancelled', cancelled_at = ?2, remote_queued = 0, updated_at = ?2 \
+             WHERE id = ?1 AND status IN ('failed', 'partial')";
+    /// Stop retrying one failed or short task (`?1`) by itself, saying why
+    /// (`?3` the outcome code, `?4` the log text).
+    pub(super) STOP_RETRIES_BECAUSE = "UPDATE download_tasks \
+             SET status = 'cancelled', cancelled_at = ?2, remote_queued = 0, \
+                 outcome_code = ?3, error_message = ?4, updated_at = ?2 \
              WHERE id = ?1 AND status IN ('failed', 'partial')";
     /// Stop an owner's (`?2`) wanted watch on an album (`?1`).
     pub(super) STOP_WATCH = "UPDATE wanted_watches SET state = 'stopped' \

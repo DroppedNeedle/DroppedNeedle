@@ -364,6 +364,99 @@ async fn failed_retry_insert_retries_next_pass() {
     assert_eq!(task_count(&db), 2, "the next pass spawns the successor");
 }
 
+// One live download per album, retries included: a failed task whose
+// album another user's download already fetches, or the library already
+// holds, spawns no retry. It stops, and its row says why. A failed task
+// with neither still retries.
+#[tokio::test]
+async fn a_retry_stops_once_the_album_is_on_its_way_or_in() {
+    let db = AcquireDb::scratch().unwrap();
+    db.add_user("u-ada", "Ada", "user").await.unwrap();
+    db.add_user("u-bob", "Bob", "user").await.unwrap();
+    db.write("test.seed_library", |tx| {
+        tx.execute_batch(
+            "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at)
+               VALUES ('ar1', 'A', 'a', 'person', 0, 0);
+             INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded,
+               album_artist_id, album_artist_name, grouping_source, created_at, updated_at)
+               VALUES ('al1', 'r1', 'g', 'T', 't', 'ar1', 'A', 'automatic', 0, 0);
+             INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path,
+               path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded,
+               album_title, album_title_folded, file_format, bit_rate, ingest_source,
+               imported_at, membership_source, availability)
+               VALUES ('tr1', 'al1', 'r1', 'a.mp3', 'a.mp3', 'h', 1, 0, 's', 'T', 't', 'T', 't',
+                 'mp3', 320, 'scan', 0, 'automatic', 'indexed');
+             INSERT INTO local_album_external_identities
+               (local_album_id, release_group_mbid, decision_source, selected_at)
+               VALUES ('al1', 'rg-held', 'automatic', 0);",
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    let journal = Arc::new(Journal::new(db.clone(), quiet_ticks()));
+    journal
+        .run("test.seed", |store| {
+            for (id, group) in [
+                ("t-busy", "rg-busy"),
+                ("t-held", "rg-held"),
+                ("t-plain", "rg-plain"),
+            ] {
+                let row = NewTask {
+                    release_group_mbid: group.to_owned(),
+                    ..task(id)
+                };
+                store.insert_task(&row, 1_000.0)?;
+                store.transition_task(
+                    id,
+                    TaskStatus::Failed,
+                    1_000.0,
+                    Some(TaskOutcome::new(Reason::NoSource, "no peers")),
+                )?;
+            }
+            // Bob asked for the busy album since, in another case.
+            let live = NewTask {
+                user_id: "u-bob".to_owned(),
+                release_group_mbid: "RG-BUSY".to_owned(),
+                ..task("t-bob")
+            };
+            store.insert_task(&live, 2_000.0)
+        })
+        .await
+        .unwrap();
+    let worker = Arc::new(DownloadWorker::fixed(
+        journal.clone(),
+        Vec::new(),
+        WorkerConfig::default(),
+        droppedneedle_kernel::events::EventHub::new(),
+        Default::default(),
+    ));
+
+    worker.run_once(1).await;
+
+    assert_eq!(task_count(&db), 5, "only the plain failure retried");
+    let (_, body) = send(&journal, get("/api/v3/downloads/tasks", USER)).await;
+    let items = body["items"].as_array().cloned().unwrap_or_default();
+    let row = |id: &str| {
+        items
+            .iter()
+            .find(|item| item["id"] == id)
+            .cloned()
+            .unwrap_or_else(|| panic!("{id} listed: {body}"))
+    };
+    for (id, code, text) in [
+        ("t-busy", "already_downloading", "Already downloading."),
+        ("t-held", "already_in_library", "Already in your library."),
+    ] {
+        let row = row(id);
+        assert_eq!(row["status"], "cancelled", "{id}: {row}");
+        assert_eq!(row["reason"]["code"], code, "{id}: {row}");
+        assert_eq!(row["reason"]["text"], text, "{id}: {row}");
+        assert!(row["next_retry_at"].is_null(), "{id}: no retry is due");
+    }
+    assert_eq!(row("t-plain")["status"], "failed");
+}
+
 fn get(uri: &str, who: Who) -> (Request<Body>, Who) {
     let request = Request::builder()
         .method(Method::GET)
@@ -394,6 +487,9 @@ async fn queue_journey_scopes_explains_retries_and_clears() {
             store.insert_task(
                 &NewTask {
                     user_id: "u-bob".to_owned(),
+                    // Another album: a live download of Ada's would turn
+                    // her retry into that download.
+                    release_group_mbid: "rg-bob".to_owned(),
                     ..task("q-bob")
                 },
                 now,

@@ -6966,7 +6966,7 @@
         "tags": [
           "downloads"
         ],
-        "summary": "Retry a failed, cancelled or partial download now. Answers the new\ntask. An album retry clears the album's blocklist first.\n`POST /api/v3/downloads/tasks/{task_id}/retry`.",
+        "summary": "Retry a failed, cancelled or partial download now. Answers the new\ntask, or the download already fetching the album. An album retry clears\nthe album's blocklist first.\n`POST /api/v3/downloads/tasks/{task_id}/retry`.",
         "operationId": "retry_task_handler",
         "parameters": [
           {
@@ -39164,7 +39164,8 @@
           "names_album",
           "title_unclear",
           "strong",
-          "weak"
+          "weak",
+          "turned_down_before"
         ]
       },
       "CandidateRefusal": {
@@ -58103,7 +58104,9 @@
           "already_owned",
           "cancelled",
           "moved_on",
-          "no_better_copy"
+          "no_better_copy",
+          "already_downloading",
+          "already_in_library"
         ]
       },
       "ReasonCount": {
