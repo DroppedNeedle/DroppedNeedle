@@ -28,17 +28,11 @@ use droppedneedle_providers::ProviderCacheStore;
 /// images on disk and the size of the database and its write-ahead log.
 pub async fn cache_stats(
     cache: &ProviderCacheStore,
-    db: Option<&AdminDb>,
-    covers: Option<&ArtworkCache>,
+    db: &AdminDb,
+    covers: &ArtworkCache,
 ) -> CacheStatsResponse {
-    let (database_bytes, wal_bytes) = match db {
-        Some(db) => database_sizes(db.db.path()).await,
-        None => (0, 0),
-    };
-    let (cover_images, cover_bytes) = match covers {
-        Some(covers) => covers.usage().await,
-        None => (0, 0),
-    };
+    let (database_bytes, wal_bytes) = database_sizes(db.db.path()).await;
+    let (cover_images, cover_bytes) = covers.usage().await;
     let sources: Vec<ProviderSourceStats> = cache
         .stats()
         .await
@@ -79,16 +73,14 @@ async fn file_size(path: &Path) -> u64 {
 /// takes the built discover pages in `db` with it.
 pub async fn clear_cache(
     cache: &ProviderCacheStore,
-    db: Option<&AdminDb>,
-    covers: Option<&ArtworkCache>,
+    db: &AdminDb,
+    covers: &ArtworkCache,
     body: &CacheClearBody,
 ) -> Result<CacheClearResponse, AdminError> {
     let clear_rows = || async {
-        if let Some(db) = db {
-            discover_pages::clear_all(&db.db)
-                .await
-                .map_err(|error| AdminError::internal(&error))?;
-        }
+        discover_pages::clear_all(&db.db)
+            .await
+            .map_err(|error| AdminError::internal(&error))?;
         match cache.clear().await {
             Ok(cleared) => Ok(cleared),
             // An off cache holds nothing to clear.
@@ -96,12 +88,7 @@ pub async fn clear_cache(
             Err(error) => Err(AdminError::internal(&error)),
         }
     };
-    let clear_covers = || async {
-        match covers {
-            Some(covers) => covers.clear().await,
-            None => 0,
-        }
-    };
+    let clear_covers = || covers.clear();
     let (cleared, cleared_cover_images) = match body.scope {
         CacheClearScope::All => (clear_rows().await?, clear_covers().await),
         CacheClearScope::ProviderData => (clear_rows().await?, 0),

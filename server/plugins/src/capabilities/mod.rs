@@ -11,6 +11,7 @@ pub mod library_files;
 pub mod metadata;
 pub mod purchase;
 pub mod routes;
+pub(crate) mod sql;
 pub mod stream;
 
 use std::time::Duration;

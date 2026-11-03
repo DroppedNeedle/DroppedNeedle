@@ -17,31 +17,22 @@ use std::sync::Arc;
 
 use crate::bootstrap::Outbound;
 use crate::settings::effects::Effects;
+use crate::settings::library_catalog::SqliteLibraryPolicyCatalog;
 use crate::settings::library_policy_service::LibraryPolicyService;
 use crate::settings::models::LibraryScanScheduleResponse;
 use crate::settings::musicbrainz::MusicBrainzLifecycle;
-use crate::settings::section_prefs::{LinkStatus, SectionPrefsStore};
+use crate::settings::section_prefs::SectionPrefs;
 use crate::settings::services::SettingsService;
 use crate::settings::verify::{LiveProbes, VerifyProbes};
+use droppedneedle_auth::sqlite::LastFmLinks;
 use droppedneedle_catalog::metadata::library::LocalCatalog;
-use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::mount::{Routes, routes};
 use droppedneedle_kernel::platform::Platform;
-use droppedneedle_kernel::runtime_config::ConfigStore;
 use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
 use droppedneedle_library::management::settings::service::LibraryManagementService;
-use droppedneedle_library::policy::LibraryPolicyCatalog;
 use droppedneedle_library::publish::bin::BinSource;
 use droppedneedle_library::settings_models::LibraryManagementSettingsResponse;
 use droppedneedle_providers::Providers;
-
-/// Section-prefs backends: the toggle store plus per-user link state.
-pub struct SectionPrefsDeps {
-    /// Toggle store.
-    pub store: Arc<dyn SectionPrefsStore>,
-    /// Link state.
-    pub links: Arc<dyn LinkStatus>,
-}
 
 /// Everything the settings routers need, built once at boot.
 #[derive(Clone)]
@@ -49,169 +40,59 @@ pub struct SettingsSetup {
     service: Arc<SettingsService>,
     lifecycle: Arc<MusicBrainzLifecycle>,
     management: Arc<LibraryManagementService>,
-    prefs: Option<Arc<SectionPrefsDeps>>,
+    prefs: Arc<SectionPrefs>,
     policy: Arc<LibraryPolicyService>,
-    /// Checks the recycle bin path the Library Management settings show;
-    /// test bundles have none.
-    bins: Option<BinSource>,
-    /// The scan history the schedule shows its last scan from; test
-    /// bundles have none.
-    scans: Option<Arc<LocalCatalog>>,
-    /// Test bundles own their scratch config directory and remove it
-    /// when the last clone drops.
-    #[cfg(any(test, feature = "test-support"))]
-    _scratch: Option<Arc<ScratchDir>>,
+    /// Checks the recycle bin path the Library Management settings show.
+    bins: BinSource,
+    /// The scan history the schedule shows its last scan from.
+    scans: Arc<LocalCatalog>,
 }
 
 impl SettingsSetup {
-    /// Build over the platform's settings, ids, shared HTTP client and
-    /// deployment timezone, with the wired fan-out in `effects`. The
-    /// Library Management routes save through `management`, the library's
-    /// own service, so an activation dry run and a page save never save
-    /// over each other. The schedule reads its last scan from `scans`, the
-    /// Verify probes check keys through the clients in `providers`, and the
-    /// Library Management settings say through `bins` when the recycle bin
-    /// path is not used.
+    /// Build over the platform's settings, database, ids and deployment
+    /// timezone, with the wired fan-out in `effects`. The Library
+    /// Management routes save through `management`, the library's own
+    /// service, so an activation dry run and a page save never save over
+    /// each other. The Verify routes check keys through `probes`, the
+    /// section prefs read Last.fm links through `lastfm`, and the Library
+    /// Management settings say through `bins` when the recycle bin path is
+    /// not used.
     pub fn build(
         platform: &Platform,
         effects: Effects,
         outbound: &Outbound,
         management: Arc<LibraryManagementService>,
-        scans: Arc<LocalCatalog>,
-        providers: &Providers,
+        probes: Arc<dyn VerifyProbes>,
+        lastfm: LastFmLinks,
         bins: BinSource,
     ) -> Self {
-        let mut setup = Self::assemble(
-            platform.settings.clone(),
-            effects,
-            platform.ids.clone(),
-            Arc::new(
-                LiveProbes::new(platform.http.shared().clone(), providers).presenting(
-                    droppedneedle_auth::federated::settings::InstallIds::new(
-                        platform.settings.clone(),
-                    ),
-                ),
-            ),
-            platform.config.timezone.clone(),
-            outbound.clone(),
-            management,
-        );
-        setup.scans = Some(scans);
-        setup.bins = Some(bins);
-        setup
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn assemble(
-        store: Arc<ConfigStore>,
-        effects: Effects,
-        ids: Arc<dyn IdGenerator>,
-        probes: Arc<dyn VerifyProbes>,
-        timezone: Option<String>,
-        outbound: Outbound,
-        management: Arc<LibraryManagementService>,
-    ) -> Self {
+        let store = platform.settings.clone();
         let service = Arc::new(
-            SettingsService::new(store.clone(), effects.clone(), ids, probes)
-                .with_timezone(timezone),
+            SettingsService::new(store.clone(), effects.clone(), platform.ids.clone(), probes)
+                .with_timezone(platform.config.timezone.clone()),
         );
         Self {
-            policy: Arc::new(LibraryPolicyService::new(service.clone(), None)),
+            policy: Arc::new(LibraryPolicyService::new(
+                service.clone(),
+                Arc::new(SqliteLibraryPolicyCatalog::new(platform.db.clone())),
+            )),
             service,
-            lifecycle: Arc::new(MusicBrainzLifecycle::new(store, effects, outbound)),
+            lifecycle: Arc::new(MusicBrainzLifecycle::new(store, effects, outbound.clone())),
             management,
-            prefs: None,
-            bins: None,
-            scans: None,
-            #[cfg(any(test, feature = "test-support"))]
-            _scratch: None,
+            prefs: Arc::new(SectionPrefs::new(platform.db.clone(), lastfm)),
+            bins,
+            scans: Arc::new(LocalCatalog::new(platform.db.clone())),
         }
     }
 
-    /// Attach the section-prefs backends.
-    #[must_use]
-    pub fn with_section_prefs(
-        mut self,
-        store: Arc<dyn SectionPrefsStore>,
-        links: Arc<dyn LinkStatus>,
-    ) -> Self {
-        self.prefs = Some(Arc::new(SectionPrefsDeps { store, links }));
-        self
-    }
-
-    /// Attach the catalog reads behind the library policy routes.
-    #[must_use]
-    pub fn with_library_catalog(mut self, catalog: Arc<dyn LibraryPolicyCatalog>) -> Self {
-        self.policy = Arc::new(LibraryPolicyService::new(
-            self.service.clone(),
-            Some(catalog),
-        ));
-        self
-    }
-
-    /// Test bundle: scratch store, no save effects (the bundle shares no
-    /// cache, sweep or worker with anything), live probes, and memory
-    /// prefs. Tests that verify
-    /// connections use [`SettingsSetup::for_tests_with_probes`] with a
-    /// scripted fake instead, so no test touches live networks.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn for_tests(ids: Arc<dyn IdGenerator>) -> Result<Self, String> {
-        let providers = Providers::closed();
-        let factory = droppedneedle_kernel::http_client::HttpClientFactory::new()
-            .map_err(|error| error.to_string())?;
-        Self::for_tests_with_probes(
-            ids,
-            Arc::new(LiveProbes::new(factory.shared().clone(), &providers)),
+    /// The Verify probes production uses: keys are checked through the
+    /// clients in `providers` and the platform's shared HTTP client.
+    pub fn live_probes(platform: &Platform, providers: &Providers) -> Arc<dyn VerifyProbes> {
+        Arc::new(
+            LiveProbes::new(platform.http.shared().clone(), providers).presenting(
+                droppedneedle_auth::federated::settings::InstallIds::new(platform.settings.clone()),
+            ),
         )
-    }
-
-    /// Test bundle with scripted verify probes.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn for_tests_with_probes(
-        ids: Arc<dyn IdGenerator>,
-        probes: Arc<dyn VerifyProbes>,
-    ) -> Result<Self, String> {
-        use std::sync::atomic::{AtomicU64, Ordering};
-
-        use crate::settings::effects::LiveSaveEffects;
-        use crate::settings::section_prefs::{MemorySectionPrefsStore, StaticLinkStatus};
-        use droppedneedle_kernel::jobs::events_kick::NoopKick;
-        use droppedneedle_kernel::runtime_config::Crypto;
-
-        /// Scratch-dir sequence so parallel test states never share a store.
-        static SCRATCH_SEQ: AtomicU64 = AtomicU64::new(0);
-
-        let seq = SCRATCH_SEQ.fetch_add(1, Ordering::Relaxed);
-        let scratch = ScratchDir(std::env::temp_dir().join(format!(
-            "droppedneedle-settings-test-{}-{seq}",
-            std::process::id()
-        )));
-        let crypto = Crypto::from_key_bytes(&[7u8; 32]).map_err(|error| error.to_string())?;
-        let store = Arc::new(ConfigStore::scratch(&scratch.0, crypto)?);
-        // No runner: a save answers at once and its effects never run.
-        let (effects, _) = Effects::new(
-            store.clone(),
-            Arc::new(LiveSaveEffects::new(Arc::new(NoopKick))),
-        );
-        let management = Arc::new(LibraryManagementService::new(store.clone()));
-        let mut setup = Self::assemble(
-            store,
-            effects,
-            ids,
-            probes,
-            None,
-            Outbound::live(),
-            management,
-        );
-        setup.prefs = Some(Arc::new(SectionPrefsDeps {
-            store: Arc::new(MemorySectionPrefsStore::new()),
-            links: Arc::new(StaticLinkStatus {
-                listenbrainz: false,
-                lastfm: false,
-            }),
-        }));
-        setup._scratch = Some(Arc::new(scratch));
-        Ok(setup)
     }
 
     /// The wired section service.
@@ -225,9 +106,7 @@ impl SettingsSetup {
         &self,
         mut response: LibraryManagementSettingsResponse,
     ) -> LibraryManagementSettingsResponse {
-        let Some(bins) = self.bins.clone() else {
-            return response;
-        };
+        let bins = self.bins.clone();
         let configured = response.settings.recycle_bin_path.clone();
         match tokio::task::spawn_blocking(move || bins.refusal(&configured)).await {
             Ok(refusal) => {
@@ -272,20 +151,18 @@ impl SettingsSetup {
         &self,
         mut schedule: LibraryScanScheduleResponse,
     ) -> LibraryScanScheduleResponse {
-        if let Some(scans) = &self.scans {
-            match scans.stats_extras().await {
-                Ok(extras) => schedule.last_scan_at = extras.last_scan_at,
-                Err(error) => {
-                    tracing::warn!(%error, "could not read the last scan for the schedule");
-                }
+        match self.scans.stats_extras().await {
+            Ok(extras) => schedule.last_scan_at = extras.last_scan_at,
+            Err(error) => {
+                tracing::warn!(%error, "could not read the last scan for the schedule");
             }
         }
         schedule
     }
 
-    /// The section-prefs backends, when wired.
-    pub fn prefs(&self) -> Option<&Arc<SectionPrefsDeps>> {
-        self.prefs.as_ref()
+    /// The per-user section prefs.
+    pub fn prefs(&self) -> &SectionPrefs {
+        &self.prefs
     }
 }
 
@@ -342,19 +219,4 @@ pub fn routes() -> Routes<SettingsSetup> {
         .admin(routes!(h::preview_library_management_profile_import))
         .admin(routes!(h::import_library_management_profile))
         .user(routes!(h::get_section_prefs, h::put_section_prefs))
-}
-
-/// A scratch directory removed on drop (test bundles only).
-#[cfg(any(test, feature = "test-support"))]
-struct ScratchDir(std::path::PathBuf);
-
-#[cfg(any(test, feature = "test-support"))]
-impl Drop for ScratchDir {
-    fn drop(&mut self) {
-        if let Err(error) = std::fs::remove_dir_all(&self.0)
-            && error.kind() != std::io::ErrorKind::NotFound
-        {
-            tracing::warn!(%error, "settings test scratch dir was not removed");
-        }
-    }
 }

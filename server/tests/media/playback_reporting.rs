@@ -1022,7 +1022,7 @@ fn job_table(
 ) {
     let jobs = &app.state().jobs;
     (
-        jobs.queue().expect("the app has a jobs table").clone(),
+        jobs.queue().clone(),
         jobs.scripted().expect("test hooks are on").clone(),
     )
 }

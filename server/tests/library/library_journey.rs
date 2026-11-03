@@ -1136,7 +1136,7 @@ async fn a_management_run_asks_each_media_server_to_rescan_once() {
 
     let jobs = app.state().jobs.scripted().expect("test hooks are on");
     jobs.clock().advance(60 * 60 * 1000);
-    app.state().jobs.queue().expect("jobs table").wake();
+    app.state().jobs.queue().wake();
     let run = format!("/api/v3/library/management/previews/{job}");
     let shown = app
         .until("every server's rescan is done", || {

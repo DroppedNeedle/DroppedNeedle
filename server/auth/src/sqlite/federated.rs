@@ -3,15 +3,17 @@
 
 use std::sync::Arc;
 
-use sqlx::Row as _;
+use rusqlite::OptionalExtension as _;
 
-use super::{AuthDb, USER_COLUMNS, is_write_conflict, op_error, store_unavailable};
+use super::users::read_binding;
+use super::{AuthDb, is_write_conflict, op_error, sql, store_unavailable};
 use crate::federated::FederatedError;
 use crate::federated::users::{
     NewFederatedUser, ProviderBinding, ROLE_ADMIN, ROLE_USER, StoredUser,
 };
 use crate::times::secs_to_ms;
-use droppedneedle_kernel::db::{Lane, map_sqlx_busy};
+use droppedneedle_kernel::db::statement::Statement;
+use droppedneedle_kernel::db::{DbError, Lane};
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::runtime_config::crypto::Crypto;
 
@@ -51,43 +53,63 @@ impl FederatedUsers {
 /// Map one `auth_users` row into the federated view. Federated users always
 /// carry usernames (derived at import); a missing value degrades to empty
 /// rather than failing the login that just succeeded.
-fn map_federated_user(row: &sqlx::sqlite::SqliteRow) -> StoredUser {
-    let username: Option<String> = row.get("username");
-    let display: Option<String> = row.get("username_display");
-    StoredUser {
-        id: row.get("id"),
-        display_name: row.get("display_name"),
-        role: row.get("role"),
-        email: row.get("email"),
-        avatar_url: row.get("avatar_url"),
-        username: username.unwrap_or_default(),
-        username_display: display.unwrap_or_default(),
-    }
+fn map_federated_user(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredUser> {
+    let row = sql::UserRow::read(row)?;
+    Ok(StoredUser {
+        id: row.id,
+        display_name: row.display_name,
+        role: row.role,
+        email: row.email,
+        avatar_url: row.avatar_url,
+        username: row.username.unwrap_or_default(),
+        username_display: row.username_display.unwrap_or_default(),
+    })
 }
 
 impl FederatedUsers {
+    /// One read on the request read pool; a busy database stays busy.
+    async fn read<R, F>(&self, op: F) -> Result<R, FederatedError>
+    where
+        F: FnOnce(&rusqlite::Connection) -> rusqlite::Result<R> + Send + 'static,
+        R: Send + 'static,
+    {
+        self.db
+            .db
+            .read("auth.federated.get", move |conn| {
+                op(conn).map_err(DbError::from)
+            })
+            .await
+            .map_err(store_unavailable)
+    }
+
+    /// One user read by a statement taking one text value.
+    async fn one_user(
+        &self,
+        statement: Statement,
+        value: &str,
+    ) -> Result<Option<StoredUser>, FederatedError> {
+        let value = value.to_owned();
+        self.read(move |conn| {
+            conn.prepare_cached(statement.text())?
+                .query_row([value], map_federated_user)
+                .optional()
+        })
+        .await
+    }
+
     /// Look up a provider binding by `(provider, provider_uid)`.
     pub async fn get_provider(
         &self,
         provider: &str,
         provider_uid: &str,
     ) -> Result<Option<ProviderBinding>, FederatedError> {
-        let pool = self.db.pool();
-        let row = sqlx::query(
-            "SELECT id, user_id, provider, provider_uid FROM auth_providers \
-             WHERE provider = ? AND provider_uid = ?",
-        )
-        .bind(provider)
-        .bind(provider_uid)
-        .fetch_optional(pool)
+        let (provider, provider_uid) = (provider.to_owned(), provider_uid.to_owned());
+        self.read(move |conn| {
+            conn.prepare_cached(sql::PROVIDER_BINDING.text())?
+                .query_row([provider, provider_uid], read_binding)
+                .optional()
+        })
         .await
-        .map_err(|error| store_unavailable(map_sqlx_busy("auth.federated.get", error)))?;
-        Ok(row.map(|row| ProviderBinding {
-            id: row.get("id"),
-            user_id: row.get("user_id"),
-            provider: row.get("provider"),
-            provider_uid: row.get("provider_uid"),
-        }))
     }
 
     /// Look up a user by id.
@@ -95,15 +117,7 @@ impl FederatedUsers {
         &self,
         user_id: &str,
     ) -> Result<Option<StoredUser>, FederatedError> {
-        let pool = self.db.pool();
-        let row = sqlx::query(&format!(
-            "SELECT {USER_COLUMNS} FROM auth_users WHERE id = ?"
-        ))
-        .bind(user_id)
-        .fetch_optional(pool)
-        .await
-        .map_err(|error| store_unavailable(map_sqlx_busy("auth.federated.get", error)))?;
-        Ok(row.as_ref().map(map_federated_user))
+        self.one_user(sql::USER_BY_ID, user_id).await
     }
 
     /// Look up a user by lowercased email.
@@ -111,15 +125,7 @@ impl FederatedUsers {
         &self,
         email: &str,
     ) -> Result<Option<StoredUser>, FederatedError> {
-        let pool = self.db.pool();
-        let row = sqlx::query(&format!(
-            "SELECT {USER_COLUMNS} FROM auth_users WHERE email = ?"
-        ))
-        .bind(email)
-        .fetch_optional(pool)
-        .await
-        .map_err(|error| store_unavailable(map_sqlx_busy("auth.federated.get", error)))?;
-        Ok(row.as_ref().map(map_federated_user))
+        self.one_user(sql::USER_BY_EMAIL, email).await
     }
 
     /// Look up a user by lowercased username (drives derivation).
@@ -127,15 +133,7 @@ impl FederatedUsers {
         &self,
         username: &str,
     ) -> Result<Option<StoredUser>, FederatedError> {
-        let pool = self.db.pool();
-        let row = sqlx::query(&format!(
-            "SELECT {USER_COLUMNS} FROM auth_users WHERE username = ?"
-        ))
-        .bind(username)
-        .fetch_optional(pool)
-        .await
-        .map_err(|error| store_unavailable(map_sqlx_busy("auth.federated.get", error)))?;
-        Ok(row.as_ref().map(map_federated_user))
+        self.one_user(sql::USER_BY_USERNAME, username).await
     }
 
     /// Insert a user and its provider binding in one transaction, making
@@ -154,16 +152,14 @@ impl FederatedUsers {
         let row_id = id.clone();
         let outcome = lane
             .write(Lane::Foreground, "auth.federated.create", move |tx| {
-                let has_users: bool = tx
-                    .query_row("SELECT EXISTS (SELECT 1 FROM auth_users)", [], |found| {
-                        found.get(0)
-                    })
-                    .map_err(op_error)?;
+                let has_users = tx
+                    .query_row(sql::ANY_USER.text(), [], |_| Ok(()))
+                    .optional()
+                    .map_err(op_error)?
+                    .is_some();
                 let role = if has_users { ROLE_USER } else { ROLE_ADMIN };
                 tx.execute(
-                    "INSERT INTO auth_users (id, display_name, email, avatar_url, role, \
-                     created_at, username, username_display) \
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    sql::INSERT_USER.text(),
                     rusqlite::params![
                         row_id,
                         row.display_name,
@@ -171,14 +167,14 @@ impl FederatedUsers {
                         row.avatar_url,
                         role,
                         created,
+                        None::<i64>,
                         row.username,
                         row.username_display,
                     ],
                 )
                 .map_err(op_error)?;
                 tx.execute(
-                    "INSERT INTO auth_providers (id, user_id, provider, provider_uid, \
-                     provider_data, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                    sql::INSERT_PROVIDER.text(),
                     rusqlite::params![
                         binding_id,
                         row_id,
@@ -236,8 +232,7 @@ impl FederatedUsers {
         );
         lane.write(Lane::Foreground, "auth.federated.bind", move |tx| {
             tx.execute(
-                "INSERT INTO auth_providers (id, user_id, provider, provider_uid, \
-                 provider_data, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                sql::INSERT_PROVIDER.text(),
                 rusqlite::params![bid, buser, bprovider, buid, sealed, created],
             )
             .map_err(op_error)?;
@@ -266,7 +261,7 @@ impl FederatedUsers {
         let binding_id = binding_id.to_owned();
         lane.write(Lane::Foreground, "auth.federated.rotate", move |tx| {
             tx.execute(
-                "UPDATE auth_providers SET provider_data = ? WHERE id = ?",
+                sql::SET_PROVIDER_DATA.text(),
                 rusqlite::params![sealed, binding_id],
             )
             .map_err(op_error)?;

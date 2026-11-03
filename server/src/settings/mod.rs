@@ -12,5 +12,6 @@ pub mod musicbrainz;
 pub mod registry;
 pub mod section_prefs;
 pub mod services;
+pub(crate) mod sql;
 pub mod verify;
 pub mod wiring;

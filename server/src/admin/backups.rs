@@ -314,7 +314,7 @@ fn integrity_clean(path: &Path) -> bool {
         return false;
     }
     let violations: Result<i64, _> =
-        connection.query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+        connection.query_row(super::sql::FOREIGN_KEY_VIOLATIONS.text(), [], |row| {
             row.get(0)
         });
     violations == Ok(0)

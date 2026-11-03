@@ -8,6 +8,8 @@ use unicode_normalization::UnicodeNormalization;
 
 use super::BoxFuture;
 use super::playlist_sync::{PlaylistExporter, PlaylistSyncConfig, PlaylistSyncResult};
+use super::sql;
+use crate::db::{Db, DbError};
 
 /// File suffix Navidrome imports.
 pub const PLAYLIST_SUFFIX: &str = ".m3u8";
@@ -30,7 +32,7 @@ const WINDOWS_RESERVED: &[&str] = &[
 /// entries are relative paths, and nothing is remembered between runs.
 #[derive(Clone)]
 pub struct M3uPlaylistExporter {
-    pool: Option<sqlx::SqlitePool>,
+    db: Db,
     lock: Arc<tokio::sync::Mutex<()>>,
 }
 
@@ -61,20 +63,16 @@ impl PlaylistExporter for M3uPlaylistExporter {
 }
 
 impl M3uPlaylistExporter {
-    /// An exporter over the database; `None` answers "not available".
-    pub fn new(pool: Option<sqlx::SqlitePool>) -> Self {
+    /// An exporter over the database.
+    pub fn new(db: Db) -> Self {
         Self {
-            pool,
+            db,
             lock: Arc::new(tokio::sync::Mutex::new(())),
         }
     }
 
     async fn sync_locked(&self, config: PlaylistSyncConfig) -> PlaylistSyncResult {
         let mut result = PlaylistSyncResult::default();
-        let Some(pool) = &self.pool else {
-            result.message = "Playlists are not available in this build.".to_owned();
-            return result;
-        };
         let directory = PathBuf::from(config.target_dir.trim());
         if config.target_dir.trim().is_empty() {
             result.message = "Set a playlist folder before syncing.".to_owned();
@@ -84,7 +82,7 @@ impl M3uPlaylistExporter {
             result.message = "The playlist folder must be a full path starting with /.".to_owned();
             return result;
         }
-        let playlists = match read_playlists(pool, &config.scope).await {
+        let playlists = match read_playlists(&self.db, &config.scope).await {
             Ok(playlists) => playlists,
             Err(error) => {
                 tracing::error!(%error, "playlist export could not read playlists");
@@ -95,7 +93,7 @@ impl M3uPlaylistExporter {
         let mut rendered = Vec::new();
         let mut errors = 0_u64;
         for playlist in playlists {
-            match read_entries(pool, &playlist.id).await {
+            match read_entries(&self.db, &playlist.id).await {
                 Ok(entries) => rendered.push((playlist, entries)),
                 Err(error) => {
                     tracing::error!(%error, playlist = %playlist.id, "playlist export failed to read entries");
@@ -127,50 +125,48 @@ impl M3uPlaylistExporter {
     }
 }
 
-async fn read_playlists(
-    pool: &sqlx::SqlitePool,
-    scope: &str,
-) -> Result<Vec<ExportPlaylist>, sqlx::Error> {
+async fn read_playlists(db: &Db, scope: &str) -> Result<Vec<ExportPlaylist>, DbError> {
     // Default-deny: only an explicit "all" publishes private playlists.
-    let sql = if scope == "all" {
-        "SELECT id, name FROM catalog_playlists ORDER BY updated_at DESC, id"
+    let statement = if scope == "all" {
+        sql::ALL_PLAYLISTS
     } else {
-        "SELECT id, name FROM catalog_playlists WHERE is_public = 1 ORDER BY updated_at DESC, id"
+        sql::PUBLIC_PLAYLISTS
     };
-    let rows: Vec<(String, String)> = sqlx::query_as(sql).fetch_all(pool).await?;
-    Ok(rows
-        .into_iter()
-        .map(|(id, name)| ExportPlaylist { id, name })
-        .collect())
+    db.read("playlist-export.playlists", move |conn| {
+        conn.prepare_cached(statement.text())?
+            .query_map([], |row| {
+                let row = sql::PlaylistRow::read(row)?;
+                Ok(ExportPlaylist {
+                    id: row.id,
+                    name: row.name,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(DbError::from)
+    })
+    .await
 }
 
-async fn read_entries(
-    pool: &sqlx::SqlitePool,
-    playlist_id: &str,
-) -> Result<Vec<ExportEntry>, sqlx::Error> {
+async fn read_entries(db: &Db, playlist_id: &str) -> Result<Vec<ExportEntry>, DbError> {
     // Entries with no local file (remote or YouTube tracks) come back with
-    // no path so they can be counted, not silently dropped. Collections
-    // keeps the local track id in `library_file_id`. The M3U length is whole
-    // seconds, truncated (v2).
-    let rows: Vec<(String, String, Option<i64>, Option<String>)> = sqlx::query_as(
-        "SELECT pt.track_name, pt.artist_name, pt.duration_ms, t.file_path \
-         FROM catalog_playlist_tracks pt LEFT JOIN local_tracks t ON t.id = pt.library_file_id \
-         WHERE pt.playlist_id = ?1 ORDER BY pt.position",
-    )
-    .bind(playlist_id)
-    .fetch_all(pool)
-    .await?;
-    Ok(rows
-        .into_iter()
-        .map(
-            |(track_name, artist_name, duration_ms, file_path)| ExportEntry {
-                track_name,
-                artist_name,
-                duration: duration_ms.map(|ms| ms / 1000),
-                file_path,
-            },
-        )
-        .collect())
+    // no path so they can be counted, not silently dropped. The M3U length
+    // is whole seconds, truncated (v2).
+    let playlist_id = playlist_id.to_owned();
+    db.read("playlist-export.entries", move |conn| {
+        conn.prepare_cached(sql::PLAYLIST_ENTRIES.text())?
+            .query_map([playlist_id], |row| {
+                let row = sql::PlaylistEntryRow::read(row)?;
+                Ok(ExportEntry {
+                    track_name: row.track_name,
+                    artist_name: row.artist_name,
+                    duration: row.duration_ms.map(|ms| ms / 1000),
+                    file_path: row.file_path,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(DbError::from)
+    })
+    .await
 }
 
 /// Counters for one run; [`Written::finish`] builds the report.

@@ -3966,6 +3966,7 @@ const REGISTRIES: &[(&str, StatementFiles)] = &[
     ("catalog", droppedneedle_catalog::statement_files),
     ("acquire", droppedneedle_acquire::statement_files),
     ("library", droppedneedle_library::statement_files),
+    ("plugins", droppedneedle_plugins::statement_files),
     ("media", droppedneedle_media::statement_files),
     ("compat", droppedneedle_compat::statement_files),
     ("tool", droppedneedle_tool::statement_files),
@@ -4243,6 +4244,10 @@ fn every_registered_statement_prepares() {
 /// Discover's three: radio's two track reads, which filter on ids worked out
 /// per track over the whole library, and the check for any local file, which
 /// stops at the first row.
+/// The library policy settings' three: the save preview's totals, which count
+/// every track under the scopes asked about, the list of folders the catalog
+/// holds tracks for, and the check for any track, which stops at the first
+/// row. An admin opens these by hand.
 const TRACK_WALKS: &[&str] = &[
     "droppedneedle_library::scan::sql::ALBUM_TRACKS",
     "droppedneedle_library::corrections::sql::CANDIDATE_ALBUMS",
@@ -4271,6 +4276,9 @@ const TRACK_WALKS: &[&str] = &[
     "droppedneedle_catalog::discover::sql::RADIO_TRACKS_BY_ARTISTS",
     "droppedneedle_catalog::discover::sql::RADIO_TRACKS_OF_ALBUMS",
     "droppedneedle_catalog::discover::sql::HAS_LOCAL_FILES",
+    "droppedneedle::settings::sql::SCOPE_TOTALS",
+    "droppedneedle::settings::sql::CATALOG_ROOTS",
+    "droppedneedle::settings::sql::ANY_TRACK",
 ];
 
 /// Before the first ANALYZE (a fresh install) the planner has no
@@ -4515,6 +4523,33 @@ const ALLOWED_LITERALS: &[AllowedLiteral] = &[
         path: "compat/src/shared/ratelimit.rs",
         starts_with: "DELETE",
         why: "the HTTP method's name when classing a request as a mutation, not a statement",
+    },
+    AllowedLiteral {
+        path: "plugins/src/manifest.rs",
+        starts_with: "DELETE",
+        why: "the HTTP method's name in a plugin's route list, not a statement",
+    },
+    AllowedLiteral {
+        path: "plugins/src/capabilities/routes.rs",
+        starts_with: "DELETE",
+        why: "an HTTP method a plugin route may declare, not a statement",
+    },
+    AllowedLiteral {
+        path: "src/bootstrap/data_dirs.rs",
+        starts_with: "PRAGMA ",
+        why: "the stamp probe reads a file's version before the runtime opens it, and its \
+              tests put a probed file in WAL mode; a pragma prepares only in kernel/src/db/",
+    },
+    AllowedLiteral {
+        path: "src/bootstrap/data_dirs.rs",
+        starts_with: "CREATE TABLE ",
+        why: "the stamp probe's tests build a small file of each kind it tells apart",
+    },
+    AllowedLiteral {
+        path: "src/admin/backups.rs",
+        starts_with: "PRAGMA ",
+        why: "the backup checks read a backup file's integrity and version, a file the \
+              server never opens as its database",
     },
 ];
 

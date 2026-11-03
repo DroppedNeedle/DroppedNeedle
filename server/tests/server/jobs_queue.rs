@@ -33,11 +33,7 @@ async fn start(tag: &str) -> TestApp {
 fn parts(app: &TestApp) -> (JobQueue, Db, ScriptedJobs) {
     let state = app.state();
     (
-        state
-            .jobs
-            .queue()
-            .expect("the app has a jobs table")
-            .clone(),
+        state.jobs.queue().clone(),
         state.library.db.clone(),
         state.jobs.scripted().expect("test hooks are on").clone(),
     )

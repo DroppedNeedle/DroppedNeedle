@@ -37,6 +37,7 @@ use std::time::{Duration, Instant};
 use super::super::host::PluginHost;
 use super::super::manifest::Capability;
 use super::super::protocol::MAX_MESSAGE_BYTES;
+use super::sql;
 use droppedneedle_library::publish::session::PluginFileRefusal;
 use droppedneedle_library::publish::{PublishError, add};
 
@@ -99,22 +100,20 @@ fn fits(
     bytes: usize,
     now_ms: i64,
 ) -> Result<bool, PublishError> {
-    let rows: Vec<(String, i64)> = conn
-        .prepare_cached(
-            "SELECT bundle_id, bytes FROM plugin_library_writes \
-             WHERE plugin = ?1 AND written_at > ?2",
+    let rows: Vec<sql::PluginWrite> = conn
+        .prepare_cached(sql::PLUGIN_WRITES_SINCE.text())?
+        .query_map(
+            rusqlite::params![plugin, now_ms - QUOTA_WINDOW_MS],
+            sql::PluginWrite::read,
         )?
-        .query_map(rusqlite::params![plugin, now_ms - QUOTA_WINDOW_MS], |row| {
-            Ok((row.get(0)?, row.get(1)?))
-        })?
         .collect::<Result<_, _>>()?;
-    let ids: Vec<String> = rows.iter().map(|(id, _)| id.clone()).collect();
+    let ids: Vec<String> = rows.iter().map(|row| row.bundle_id.clone()).collect();
     let standing = add::standing(conn, &ids)?;
     let (mut files, mut used) = (0usize, 0usize);
-    for (id, written) in &rows {
-        if standing.contains(id) {
+    for row in &rows {
+        if standing.contains(&row.bundle_id) {
             files += 1;
-            used = used.saturating_add(usize::try_from(*written).unwrap_or(usize::MAX));
+            used = used.saturating_add(usize::try_from(row.bytes).unwrap_or(usize::MAX));
         }
     }
     Ok(files < QUOTA_FILES_PER_DAY && used.saturating_add(bytes) <= QUOTA_BYTES_PER_DAY)
@@ -130,21 +129,18 @@ fn reserve(
     bytes: usize,
     now_ms: i64,
 ) -> Result<bool, PublishError> {
-    conn.prepare_cached("DELETE FROM plugin_library_writes WHERE written_at <= ?1")?
+    conn.prepare_cached(sql::DELETE_WRITES_BEFORE.text())?
         .execute([now_ms - QUOTA_WINDOW_MS])?;
     if !fits(conn, plugin, bytes, now_ms)? {
         return Ok(false);
     }
-    conn.prepare_cached(
-        "INSERT INTO plugin_library_writes (bundle_id, plugin, bytes, written_at)
-         VALUES (?1, ?2, ?3, ?4)",
-    )?
-    .execute(rusqlite::params![
-        bundle_id,
-        plugin,
-        i64::try_from(bytes).unwrap_or(i64::MAX),
-        now_ms
-    ])?;
+    conn.prepare_cached(sql::INSERT_WRITE.text())?
+        .execute(rusqlite::params![
+            bundle_id,
+            plugin,
+            i64::try_from(bytes).unwrap_or(i64::MAX),
+            now_ms
+        ])?;
     Ok(true)
 }
 

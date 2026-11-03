@@ -24,7 +24,7 @@ use droppedneedle_providers::Providers;
 /// Loop rows, job queue depths and the latest checkpoint pass.
 pub async fn queue_stats(
     db: &AdminDb,
-    checkpoint: Option<&CheckpointService>,
+    checkpoint: &CheckpointService,
 ) -> Result<QueueStatsResponse, AdminError> {
     let jobs = list_loops(&db.db)
         .await
@@ -51,9 +51,7 @@ pub async fn queue_stats(
                 failed: counts.failed,
             })
             .collect(),
-        checkpoint: checkpoint
-            .and_then(CheckpointService::try_latest)
-            .map(checkpoint_view),
+        checkpoint: checkpoint.try_latest().map(checkpoint_view),
     })
 }
 

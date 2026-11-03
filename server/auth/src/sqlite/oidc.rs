@@ -2,7 +2,7 @@
 
 use rusqlite::OptionalExtension as _;
 
-use super::{AuthDb, op_error, store_unavailable};
+use super::{AuthDb, op_error, sql, store_unavailable};
 use crate::federated::FederatedError;
 use crate::federated::oidc::STATE_TTL_SECS;
 use crate::times::{ms_to_secs, secs_to_ms};
@@ -39,13 +39,12 @@ impl OidcStates {
             // Abandoned logins leave states behind; sweep the expired ones
             // in the same transaction so the table stays small.
             tx.execute(
-                "DELETE FROM auth_oidc_states WHERE expires_at <= ?",
+                sql::DELETE_EXPIRED_OIDC_STATES.text(),
                 rusqlite::params![secs_to_ms(now)],
             )
             .map_err(op_error)?;
             tx.execute(
-                "INSERT OR REPLACE INTO auth_oidc_states \
-                 (state, created_at, expires_at, code_verifier) VALUES (?, ?, ?, ?)",
+                sql::STORE_OIDC_STATE.text(),
                 rusqlite::params![
                     state,
                     secs_to_ms(now),
@@ -68,26 +67,23 @@ impl OidcStates {
         lane.write(Lane::Foreground, "auth.oidc.consume", move |tx| {
             // Read here: the write may have waited its turn on the lane.
             let now = db.now_unix();
-            let found: Option<(Option<String>, i64)> = tx
+            let found = tx
                 .query_row(
-                    "SELECT code_verifier, expires_at FROM auth_oidc_states WHERE state = ?",
+                    sql::OIDC_STATE.text(),
                     rusqlite::params![state],
-                    |row| Ok((row.get(0)?, row.get(1)?)),
+                    sql::OidcStateRow::read,
                 )
                 .optional()
                 .map_err(op_error)?;
-            tx.execute(
-                "DELETE FROM auth_oidc_states WHERE state = ?",
-                rusqlite::params![state],
-            )
-            .map_err(op_error)?;
-            let Some((verifier, expires_ms)) = found else {
+            tx.execute(sql::DELETE_OIDC_STATE.text(), rusqlite::params![state])
+                .map_err(op_error)?;
+            let Some(found) = found else {
                 return Ok(None);
             };
-            if ms_to_secs(expires_ms) <= now {
+            if ms_to_secs(found.expires_at.0) <= now {
                 return Ok(None);
             }
-            Ok(verifier)
+            Ok(found.code_verifier)
         })
         .await
         .map_err(store_unavailable)

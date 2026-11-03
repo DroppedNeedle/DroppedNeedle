@@ -302,3 +302,178 @@ pub fn media_at(
     .expect("media bundle builds");
     media
 }
+
+/// A library with nothing identified: a precache run over it walks no
+/// artist and no album and finishes at once.
+pub struct NothingToWarm;
+
+impl droppedneedle_kernel::jobs::precache_phases::PrecacheSources for NothingToWarm {
+    fn tuning(&self) -> droppedneedle_kernel::jobs::precache_phases::PrecacheTuning {
+        droppedneedle_kernel::jobs::precache_phases::PrecacheTuning::default()
+    }
+
+    fn library(
+        &self,
+    ) -> droppedneedle_kernel::jobs::BoxFuture<
+        '_,
+        Result<droppedneedle_kernel::jobs::precache_phases::PrecacheLibrary, String>,
+    > {
+        Box::pin(async { Ok(Default::default()) })
+    }
+
+    fn artist_cached<'a>(
+        &'a self,
+        _artist: &'a droppedneedle_kernel::jobs::precache_phases::LibraryArtist,
+    ) -> droppedneedle_kernel::jobs::BoxFuture<'a, bool> {
+        Box::pin(async { true })
+    }
+
+    fn warm_artist<'a>(
+        &'a self,
+        _artist: &'a droppedneedle_kernel::jobs::precache_phases::LibraryArtist,
+    ) -> droppedneedle_kernel::jobs::BoxFuture<'a, ()> {
+        Box::pin(async {})
+    }
+
+    fn discovery_cached<'a>(
+        &'a self,
+        _user_id: &'a str,
+        _artist_mbid: &'a str,
+    ) -> droppedneedle_kernel::jobs::BoxFuture<'a, bool> {
+        Box::pin(async { true })
+    }
+
+    fn warm_discovery<'a>(
+        &'a self,
+        _user_id: &'a str,
+        _artist_mbid: &'a str,
+    ) -> droppedneedle_kernel::jobs::BoxFuture<'a, ()> {
+        Box::pin(async {})
+    }
+
+    fn album_cached<'a>(
+        &'a self,
+        _album: &'a droppedneedle_kernel::jobs::precache_phases::LibraryAlbum,
+    ) -> droppedneedle_kernel::jobs::BoxFuture<'a, bool> {
+        Box::pin(async { true })
+    }
+
+    fn warm_album<'a>(
+        &'a self,
+        _album: &'a droppedneedle_kernel::jobs::precache_phases::LibraryAlbum,
+    ) -> droppedneedle_kernel::jobs::BoxFuture<'a, ()> {
+        Box::pin(async {})
+    }
+
+    fn audiodb_artist_cached<'a>(
+        &'a self,
+        _artist: &'a droppedneedle_kernel::jobs::precache_phases::LibraryArtist,
+    ) -> droppedneedle_kernel::jobs::BoxFuture<'a, bool> {
+        Box::pin(async { true })
+    }
+
+    fn warm_audiodb_artist<'a>(
+        &'a self,
+        _artist: &'a droppedneedle_kernel::jobs::precache_phases::LibraryArtist,
+    ) -> droppedneedle_kernel::jobs::BoxFuture<'a, ()> {
+        Box::pin(async {})
+    }
+
+    fn audiodb_album_cached<'a>(
+        &'a self,
+        _album: &'a droppedneedle_kernel::jobs::precache_phases::LibraryAlbum,
+    ) -> droppedneedle_kernel::jobs::BoxFuture<'a, bool> {
+        Box::pin(async { true })
+    }
+
+    fn warm_audiodb_album<'a>(
+        &'a self,
+        _album: &'a droppedneedle_kernel::jobs::precache_phases::LibraryAlbum,
+    ) -> droppedneedle_kernel::jobs::BoxFuture<'a, ()> {
+        Box::pin(async {})
+    }
+}
+
+/// The jobs bundle over `platform` as the app builds it, with `sources`
+/// behind library precache: the concerts sweep and the media feeds over
+/// closed addresses, a fresh jobs table, and no loop started.
+pub fn jobs_at(
+    platform: &Platform,
+    checkpoint: droppedneedle_kernel::db::CheckpointService,
+    sources: Arc<dyn droppedneedle_kernel::jobs::precache_phases::PrecacheSources>,
+    scans: droppedneedle::bootstrap::jobs::ScansEnded,
+) -> droppedneedle::bootstrap::jobs::JobsSetup {
+    let providers = Providers::build(
+        platform,
+        super::closed_outbound().providers(),
+        droppedneedle_kernel::db::cache::CacheDb::scratch(),
+    );
+    droppedneedle::bootstrap::jobs::JobsSetup::build(
+        platform,
+        checkpoint,
+        media_jobs(platform),
+        droppedneedle_catalog::concerts::ConcertsSetup::from_platform(platform, &providers).sweep(),
+        sources,
+        droppedneedle::bootstrap::jobs::QueueSetup::new(platform),
+        scans,
+    )
+}
+
+/// The cover and artist image cache under the platform's cache folder.
+pub fn covers_at(platform: &Platform) -> droppedneedle_catalog::artwork::cache::ArtworkCache {
+    droppedneedle_catalog::artwork::cache::ArtworkCache::new(
+        platform.config.cache_dir.join("covers"),
+        platform.config.cover_cache_max_bytes,
+        platform.clock.clone(),
+    )
+}
+
+/// The settings bundle over `platform` as the app builds it, with `probes`
+/// behind the Verify routes. Its save effects never run, the outside
+/// addresses are closed, and the recycle bin check sees no download
+/// folders.
+pub fn settings_at(
+    platform: &Platform,
+    probes: Arc<dyn droppedneedle::settings::verify::VerifyProbes>,
+) -> droppedneedle::settings::wiring::SettingsSetup {
+    use droppedneedle::settings::effects::{Effects, LiveSaveEffects};
+    let store = platform.settings.clone();
+    let (effects, _) = Effects::new(
+        store.clone(),
+        Arc::new(LiveSaveEffects::new(Arc::new(
+            droppedneedle_kernel::jobs::events_kick::NoopKick,
+        ))),
+    );
+    droppedneedle::settings::wiring::SettingsSetup::build(
+        platform,
+        effects,
+        &super::closed_outbound(),
+        Arc::new(
+            droppedneedle_library::management::settings::service::LibraryManagementService::new(
+                store.clone(),
+            ),
+        ),
+        probes,
+        droppedneedle_auth::sqlite::LastFmLinks::new(&droppedneedle_auth::sqlite::AuthDb::new(
+            &platform.db,
+            platform.clock.clone(),
+        )),
+        droppedneedle_library::publish::bin::BinSource::new(
+            store.live(),
+            store.live(),
+            Arc::new(|| Some(Vec::new())),
+        ),
+    )
+}
+
+/// [`settings_at`] with the live probes over closed providers, for rigs
+/// that verify nothing.
+pub fn settings_closed(platform: &Platform) -> droppedneedle::settings::wiring::SettingsSetup {
+    settings_at(
+        platform,
+        Arc::new(droppedneedle::settings::verify::LiveProbes::new(
+            platform.http.shared().clone(),
+            &Providers::closed(),
+        )),
+    )
+}

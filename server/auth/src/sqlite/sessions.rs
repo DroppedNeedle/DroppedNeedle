@@ -5,9 +5,10 @@ use std::collections::HashSet;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use rusqlite::OptionalExtension as _;
-use sqlx::Row as _;
 
-use super::{AuthDb, is_write_conflict, op_error, store_error, store_unavailable, stored_password};
+use super::{
+    AuthDb, is_write_conflict, op_error, sql, store_error, store_unavailable, stored_password,
+};
 use crate::federated::FederatedError;
 use crate::federated::password_import::HashScheme;
 use crate::passwords::StoredPassword;
@@ -19,7 +20,7 @@ use crate::times::{ms_to_secs, secs_to_ms};
 use crate::users::models::{ManagedSession, SessionOwner};
 use crate::users::roles::Role;
 use crate::users::stores::StoreError;
-use droppedneedle_kernel::db::{Lane, map_sqlx_busy};
+use droppedneedle_kernel::db::{DbError, Lane};
 use droppedneedle_kernel::ids::IdGenerator;
 
 /// How stale `last_seen_at` must be before a lookup rewrites it (5 minutes).
@@ -136,8 +137,7 @@ impl Sessions {
             .write(Lane::Foreground, "auth.session.login", move |tx| {
                 let current: Option<(Option<String>, Option<String>)> = tx
                     .query_row(
-                        "SELECT hash_scheme, password_hash FROM auth_providers \
-                         WHERE user_id = ? AND provider = 'local'",
+                        sql::LOCAL_PASSWORD.text(),
                         rusqlite::params![record.user_id],
                         |row| Ok((row.get(0)?, row.get(1)?)),
                     )
@@ -154,14 +154,13 @@ impl Sessions {
                 insert_token_row(tx, &record)?;
                 if let Some(new_hash) = rehash {
                     tx.execute(
-                        "UPDATE auth_providers SET hash_scheme = ?, password_hash = ? \
-                         WHERE user_id = ? AND provider = 'local'",
+                        sql::SET_LOCAL_PASSWORD.text(),
                         rusqlite::params![HashScheme::Argon2id.as_tag(), new_hash, record.user_id],
                     )
                     .map_err(op_error)?;
                 }
                 tx.execute(
-                    "UPDATE auth_users SET last_login_at = ? WHERE id = ?",
+                    sql::STAMP_LAST_LOGIN.text(),
                     rusqlite::params![secs_to_ms(record.issued_at), record.user_id],
                 )
                 .map_err(op_error)?;
@@ -202,62 +201,54 @@ impl Sessions {
     ) -> Result<Option<ValidSession>, SessionStoreError> {
         // The owner's row comes in the same read: a token whose user is
         // gone matches nothing, and the role is the one for this request.
-        let row = sqlx::query(
-            "SELECT t.id, t.user_id, t.token_hash, t.session_kind, t.label, t.user_agent, \
-             t.issued_at, t.expires_at, t.last_seen_at, t.revoked, u.username, \
-             COALESCE(u.username_display, u.username) AS username_display, u.role \
-             FROM auth_tokens t JOIN auth_users u ON u.id = t.user_id WHERE t.token_hash = ?",
-        )
-        .bind(token_hash)
-        .fetch_optional(self.db.pool())
-        .await
-        .map_err(|error| {
-            session_store_error(
-                "auth.session.lookup",
-                map_sqlx_busy("auth.session.lookup", error),
-            )
-        })?;
+        let hash = token_hash.to_owned();
+        let row = self
+            .db
+            .db
+            .read("auth.session.lookup", move |conn| {
+                conn.prepare_cached(sql::SESSION_BY_HASH.text())?
+                    .query_row([hash], sql::SessionLookupRow::read)
+                    .optional()
+                    .map_err(DbError::from)
+            })
+            .await
+            .map_err(|error: DbError| session_store_error("auth.session.lookup", error))?;
         let Some(row) = row else {
             return Ok(None);
         };
-        let stored: String = row.get("token_hash");
-        if !secret_eq(&stored, token_hash) {
+        if !secret_eq(&row.token_hash, token_hash) {
             return Ok(None);
         }
-        if row.get::<i64, _>("revoked") != 0 {
+        if row.revoked {
             return Ok(None);
         }
-        let expires_at = ms_to_secs(row.get("expires_at"));
+        let expires_at = ms_to_secs(row.expires_at.0);
         if expires_at <= now_unix {
             return Ok(None);
         }
-        let Some(kind) = SessionKind::parse(&row.get::<String, _>("session_kind")) else {
+        let Some(kind) = SessionKind::parse(&row.session_kind) else {
             return Ok(None);
         };
-        let last_seen_at = ms_to_secs(row.get("last_seen_at"));
-        let user_agent: Option<String> = row.get("user_agent");
-        let label: Option<String> = row.get("label");
-        let id: String = row.get("id");
+        let last_seen_at = ms_to_secs(row.last_seen_at.0);
         if now_unix - last_seen_at >= LAST_SEEN_TOUCH_SECS {
-            self.touch_later(id.clone(), now_unix);
+            self.touch_later(row.id.clone(), now_unix);
         }
-        let role: String = row.get("role");
         Ok(Some(ValidSession {
             record: SessionRecord {
-                id,
-                user_id: row.get("user_id"),
-                token_hash: stored,
+                id: row.id,
+                user_id: row.user_id,
+                token_hash: row.token_hash,
                 kind,
-                label,
-                issued_at: ms_to_secs(row.get("issued_at")),
+                label: row.label,
+                issued_at: ms_to_secs(row.issued_at.0),
                 expires_at,
                 last_seen_at,
                 revoked: false,
-                user_agent,
+                user_agent: row.user_agent,
             },
-            username: row.get("username"),
-            username_display: row.get("username_display"),
-            role: Role::from_stored(&role),
+            username: row.username,
+            username_display: row.username_display,
+            role: Role::from_stored(&row.role),
         }))
     }
 
@@ -274,10 +265,7 @@ impl Sessions {
             let outcome = db
                 .lane()
                 .write(Lane::Background, "auth.session.touch", move |tx| {
-                    tx.execute(
-                        "UPDATE auth_tokens SET last_seen_at = ? WHERE id = ?",
-                        rusqlite::params![touched, row],
-                    )?;
+                    tx.execute(sql::TOUCH_SESSION.text(), rusqlite::params![touched, row])?;
                     Ok(())
                 })
                 .await;
@@ -291,32 +279,31 @@ impl Sessions {
     /// Live sessions for one user (unrevoked, unexpired): newest first, id
     /// tiebreak. Rows carry no token hashes.
     pub async fn list_for_user(&self, user_id: &str) -> Result<Vec<ManagedSession>, StoreError> {
-        let rows = sqlx::query(
-            "SELECT id, user_id, session_kind, label, user_agent, issued_at, last_seen_at, \
-             expires_at FROM auth_tokens WHERE user_id = ? AND revoked = 0",
-        )
-        .bind(user_id)
-        .fetch_all(self.db.pool())
-        .await
-        .map_err(|error| store_error(map_sqlx_busy("auth.sessions.list", error)))?;
+        let user_id = user_id.to_owned();
+        let rows = self
+            .db
+            .read("auth.sessions.list", move |conn| {
+                conn.prepare_cached(sql::USER_SESSIONS.text())?
+                    .query_map([user_id], sql::SessionListRow::read)?
+                    .collect::<rusqlite::Result<Vec<_>>>()
+            })
+            .await?;
         let now = self.db.now_unix();
         let mut sessions: Vec<ManagedSession> = rows
             .into_iter()
             .filter_map(|row| {
-                let expires_at = ms_to_secs(row.get("expires_at"));
+                let expires_at = ms_to_secs(row.expires_at.0);
                 if expires_at <= now {
                     return None;
                 }
-                let kind = SessionKind::parse(&row.get::<String, _>("session_kind"))?;
-                let label: Option<String> = row.get("label");
-                let agent: Option<String> = row.get("user_agent");
+                let kind = SessionKind::parse(&row.session_kind)?;
                 Some(ManagedSession {
-                    id: row.get("id"),
-                    user_id: row.get("user_id"),
+                    id: row.id,
+                    user_id: row.user_id,
                     kind,
-                    label: label.or(agent).unwrap_or_default(),
-                    created_at: ms_to_secs(row.get("issued_at")),
-                    last_seen_at: ms_to_secs(row.get("last_seen_at")),
+                    label: row.label.or(row.user_agent).unwrap_or_default(),
+                    created_at: ms_to_secs(row.issued_at.0),
+                    last_seen_at: ms_to_secs(row.last_seen_at.0),
                     expires_at,
                 })
             })
@@ -334,8 +321,7 @@ impl Sessions {
             .lane()
             .write(Lane::Foreground, "auth.sessions.revoke", move |tx| {
                 Ok(tx.execute(
-                    "UPDATE auth_tokens SET revoked = 1 \
-                     WHERE id = ? AND user_id = ? AND revoked = 0",
+                    sql::REVOKE_SESSION.text(),
                     rusqlite::params![session_id, user_id],
                 )?)
             })
@@ -352,7 +338,7 @@ impl Sessions {
             .lane()
             .write(Lane::Foreground, "auth.sessions.revoke_all", move |tx| {
                 Ok(tx.execute(
-                    "UPDATE auth_tokens SET revoked = 1 WHERE user_id = ? AND revoked = 0",
+                    sql::REVOKE_LIVE_USER_SESSIONS.text(),
                     rusqlite::params![user_id],
                 )?)
             })
@@ -383,9 +369,7 @@ impl Sessions {
             .lane()
             .write(Lane::Foreground, "auth.sessions.replace", move |tx| {
                 tx.execute(
-                    "INSERT INTO auth_tokens (id, user_id, token_hash, issued_at, expires_at, \
-                     last_seen_at, revoked, session_kind, label) \
-                     VALUES (?, ?, ?, ?, ?, ?, 0, 'companion', ?)",
+                    sql::INSERT_COMPANION_TOKEN.text(),
                     rusqlite::params![
                         cid,
                         cuser,
@@ -399,9 +383,7 @@ impl Sessions {
                 .map_err(op_error)?;
                 // Same transaction: the replace is atomic.
                 tx.execute(
-                    "UPDATE auth_tokens SET revoked = 1 WHERE user_id = ? \
-                     AND label = ? AND session_kind = 'companion' \
-                     AND revoked = 0 AND id != ?",
+                    sql::REVOKE_OTHER_COMPANIONS.text(),
                     rusqlite::params![cuser, clabel, cid],
                 )
                 .map_err(op_error)?;
@@ -429,26 +411,27 @@ impl Sessions {
         &self,
         token_hash: &str,
     ) -> Result<Option<SessionOwner>, StoreError> {
-        let row = sqlx::query(
-            "SELECT id, user_id, session_kind, expires_at FROM auth_tokens \
-             WHERE token_hash = ? AND revoked = 0",
-        )
-        .bind(token_hash)
-        .fetch_optional(self.db.pool())
-        .await
-        .map_err(|error| store_error(map_sqlx_busy("auth.sessions.owner", error)))?;
+        let hash = token_hash.to_owned();
+        let row = self
+            .db
+            .read("auth.sessions.owner", move |conn| {
+                conn.prepare_cached(sql::SESSION_OWNER.text())?
+                    .query_row([hash], sql::SessionOwnerRow::read)
+                    .optional()
+            })
+            .await?;
         let Some(row) = row else {
             return Ok(None);
         };
-        if ms_to_secs(row.get("expires_at")) <= self.db.now_unix() {
+        if ms_to_secs(row.expires_at.0) <= self.db.now_unix() {
             return Ok(None);
         }
-        let Some(kind) = SessionKind::parse(&row.get::<String, _>("session_kind")) else {
+        let Some(kind) = SessionKind::parse(&row.session_kind) else {
             return Ok(None);
         };
         Ok(Some(SessionOwner {
-            session_id: row.get("id"),
-            user_id: row.get("user_id"),
+            session_id: row.id,
+            user_id: row.user_id,
             kind,
         }))
     }
@@ -479,7 +462,7 @@ impl Sessions {
             .lane()
             .write(Lane::Foreground, "auth.users.touch", move |tx| {
                 tx.execute(
-                    "UPDATE auth_users SET last_login_at = ? WHERE id = ?",
+                    sql::STAMP_LAST_LOGIN.text(),
                     rusqlite::params![secs_to_ms(now), user_id],
                 )
                 .map_err(op_error)?;
@@ -509,9 +492,7 @@ pub(super) fn insert_token_row(
         SessionKind::Standard => None,
     };
     tx.execute(
-        "INSERT INTO auth_tokens (id, user_id, token_hash, issued_at, expires_at, \
-             last_seen_at, revoked, user_agent, session_kind, label) \
-             VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?)",
+        sql::INSERT_TOKEN.text(),
         rusqlite::params![
             record.id,
             record.user_id,
@@ -567,8 +548,7 @@ const TOKEN_SWEEP_BATCH: i64 = 500;
 /// in the login's own transaction.
 fn sweep_dead_tokens(tx: &rusqlite::Transaction, now_unix: i64) -> Result<(), super::WriteError> {
     tx.execute(
-        "DELETE FROM auth_tokens WHERE id IN (SELECT id FROM auth_tokens \
-         WHERE revoked = 1 OR expires_at <= ? LIMIT ?)",
+        sql::SWEEP_DEAD_TOKENS.text(),
         rusqlite::params![secs_to_ms(now_unix), TOKEN_SWEEP_BATCH],
     )
     .map_err(op_error)?;

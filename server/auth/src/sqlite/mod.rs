@@ -15,8 +15,7 @@
 //! - [`connections`]: [`UserConnections`], every server write to a user's
 //!   links to outside services over `user_connections`.
 //!
-//! The account, credential, app-password, recovery and Last.fm statements
-//! are in [`sql`]; their reads run on the read pool.
+//! Every statement is in [`sql`]; reads run on the request read pool.
 //!
 //! Conventions shared by every adapter:
 //!
@@ -47,8 +46,6 @@ mod users;
 
 use std::sync::Arc;
 
-use sqlx::SqlitePool;
-
 use super::federated::FederatedError;
 use super::users::stores::StoreError;
 use droppedneedle_kernel::clock::Clock;
@@ -62,8 +59,6 @@ pub use oidc::OidcStates;
 pub use recovery::RecoveryCodes;
 pub use sessions::{LoginWrite, Sessions, session_expires_at};
 pub use users::Users;
-
-use sql::USER_COLUMNS;
 
 /// Every `sql.rs` of this crate, one line each, for the schema test.
 #[cfg(any(test, feature = "test-support"))]
@@ -124,11 +119,6 @@ impl AuthDb {
             db: db.clone(),
             clock,
         }
-    }
-
-    /// The sqlx reader pool.
-    fn pool(&self) -> &SqlitePool {
-        self.db.sqlx()
     }
 
     /// One read on the request read pool. A busy database stays busy.

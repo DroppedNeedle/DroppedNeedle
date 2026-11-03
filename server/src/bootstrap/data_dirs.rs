@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 use rusqlite::{Connection, OpenFlags};
 use thiserror::Error;
 
+use super::sql;
 use droppedneedle_kernel::config::AppConfig;
 use droppedneedle_kernel::db::backup::{RESTORE_MARKER, WalState, wal_path, wal_state};
 use droppedneedle_kernel::db::factory::sqlite_uri_path;
@@ -339,18 +340,16 @@ pub fn holds_data(db_path: &Path) -> bool {
     let Ok(db) = open_read_only(db_path) else {
         return true;
     };
-    ["config_sections", "auth_users"].iter().any(|table| {
-        db.query_row(
-            &format!("SELECT EXISTS(SELECT 1 FROM {table})"),
-            [],
-            |row| row.get::<_, bool>(0),
-        )
-        .unwrap_or_else(|error| {
-            // A table a schema this old does not have yet holds nothing.
-            !matches!(error, rusqlite::Error::SqliteFailure(_, Some(ref message))
+    [sql::ANY_SETTINGS, sql::ANY_ACCOUNT]
+        .iter()
+        .any(|statement| {
+            db.query_row(statement.text(), [], |row| row.get::<_, bool>(0))
+                .unwrap_or_else(|error| {
+                    // A table a schema this old does not have yet holds nothing.
+                    !matches!(error, rusqlite::Error::SqliteFailure(_, Some(ref message))
                 if message.starts_with("no such table"))
+                })
         })
-    })
 }
 
 /// What the database file is.
@@ -397,12 +396,7 @@ fn read_stamp(db_path: &Path) -> Result<(i64, i64), String> {
     // sqlx creates its bookkeeping table before the first migration runs,
     // so on its own that table is still an empty database.
     let tables = db
-        .query_row(
-            "SELECT count(*) FROM sqlite_master WHERE type = 'table' \
-         AND name NOT LIKE 'sqlite_%' AND name <> '_sqlx_migrations'",
-            [],
-            |row| row.get(0),
-        )
+        .query_row(sql::TABLE_COUNT.text(), [], |row| row.get(0))
         .map_err(|error| error.to_string())?;
     Ok((stamp, tables))
 }

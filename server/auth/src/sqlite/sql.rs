@@ -1,7 +1,8 @@
-//! The statements of the account, credential, app-password, recovery-code
-//! and Last.fm link repositories.
+//! The statements of every auth repository: accounts, credentials,
+//! sessions, OIDC states, app passwords, recovery codes and user links.
 
 use droppedneedle_kernel::db::statement::ListLen;
+use droppedneedle_kernel::db::time::Millis;
 
 droppedneedle_kernel::sql! {
     /// Columns read for every user row, in [`super::users`]' mapping order.
@@ -197,6 +198,118 @@ droppedneedle_kernel::sql! {
         SELECT 1 FROM json_tree(CASE WHEN json_valid(user_connections.connection_data) \
         THEN user_connections.connection_data ELSE '[]' END) AS tree \
         WHERE tree.type = 'text' AND tree.value LIKE 'v3:%')";
+
+    /// Stamp an account's last sign-in, in milliseconds.
+    pub(super) STAMP_LAST_LOGIN = "UPDATE auth_users SET last_login_at = ?1 WHERE id = ?2";
+    /// Replace one account's federated sealed token document.
+    pub(super) SET_PROVIDER_DATA = "UPDATE auth_providers SET provider_data = ?1 WHERE id = ?2";
+
+    /// Insert one session row.
+    pub(super) INSERT_TOKEN = "INSERT INTO auth_tokens (id, user_id, token_hash, issued_at, \
+        expires_at, last_seen_at, revoked, user_agent, session_kind, label) \
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, ?7, ?8, ?9)";
+    /// One session by token hash, with its owner's name and role read in
+    /// the same statement.
+    pub(super) SESSION_BY_HASH = "SELECT t.id, t.user_id, t.token_hash, t.session_kind, \
+        t.label, t.user_agent, t.issued_at, t.expires_at, t.last_seen_at, t.revoked, \
+        u.username, COALESCE(u.username_display, u.username) AS username_display, u.role \
+        FROM auth_tokens t JOIN auth_users u ON u.id = t.user_id WHERE t.token_hash = ?1";
+    /// Refresh one session's last use, in milliseconds.
+    pub(super) TOUCH_SESSION = "UPDATE auth_tokens SET last_seen_at = ?1 WHERE id = ?2";
+    /// One account's unrevoked sessions.
+    pub(super) USER_SESSIONS = "SELECT id, user_id, session_kind, label, user_agent, issued_at, \
+        last_seen_at, expires_at FROM auth_tokens WHERE user_id = ?1 AND revoked = 0";
+    /// Revoke one live session of one account.
+    pub(super) REVOKE_SESSION = "UPDATE auth_tokens SET revoked = 1 \
+        WHERE id = ?1 AND user_id = ?2 AND revoked = 0";
+    /// Revoke every live session of one account.
+    pub(super) REVOKE_LIVE_USER_SESSIONS = "UPDATE auth_tokens SET revoked = 1 \
+        WHERE user_id = ?1 AND revoked = 0";
+    /// Insert one companion session.
+    pub(super) INSERT_COMPANION_TOKEN = "INSERT INTO auth_tokens (id, user_id, token_hash, \
+        issued_at, expires_at, last_seen_at, revoked, session_kind, label) \
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, 'companion', ?7)";
+    /// Revoke an account's other live companion sessions under one label.
+    pub(super) REVOKE_OTHER_COMPANIONS = "UPDATE auth_tokens SET revoked = 1 \
+        WHERE user_id = ?1 AND label = ?2 AND session_kind = 'companion' \
+        AND revoked = 0 AND id != ?3";
+    /// The unrevoked session behind one token hash.
+    pub(super) SESSION_OWNER = "SELECT id, user_id, session_kind, expires_at FROM auth_tokens \
+        WHERE token_hash = ?1 AND revoked = 0";
+    /// Delete a batch of revoked or expired sessions: expiry `?1` in
+    /// milliseconds, batch size `?2`.
+    pub(super) SWEEP_DEAD_TOKENS = "DELETE FROM auth_tokens WHERE id IN (SELECT id \
+        FROM auth_tokens WHERE revoked = 1 OR expires_at <= ?1 LIMIT ?2)";
+
+    /// Drop OIDC states that expired by a time, in milliseconds.
+    pub(super) DELETE_EXPIRED_OIDC_STATES = "DELETE FROM auth_oidc_states WHERE expires_at <= ?1";
+    /// Store one OIDC state, replacing one of the same name.
+    pub(super) STORE_OIDC_STATE = "INSERT OR REPLACE INTO auth_oidc_states \
+        (state, created_at, expires_at, code_verifier) VALUES (?1, ?2, ?3, ?4)";
+    /// One OIDC state.
+    pub(super) OIDC_STATE = "SELECT code_verifier, expires_at FROM auth_oidc_states \
+        WHERE state = ?1";
+    /// Drop one OIDC state.
+    pub(super) DELETE_OIDC_STATE = "DELETE FROM auth_oidc_states WHERE state = ?1";
+
+    /// One account row, in [`USER_COLUMNS`] order.
+    pub(super) row UserRow for [USER_BY_ID, USER_BY_USERNAME, USER_BY_EMAIL, USER_PAGE] {
+        id: String,
+        display_name: String,
+        email: Option<String>,
+        avatar_url: Option<String>,
+        role: String,
+        created_at: Millis,
+        last_login_at: Option<Millis>,
+        username: Option<String>,
+        username_display: Option<String>,
+    }
+    /// One sign-in binding.
+    pub(super) row BindingRow for [PROVIDER_BINDING] {
+        id: String,
+        user_id: String,
+        provider: String,
+        provider_uid: String,
+    }
+    /// One session and its owner, for the session gate.
+    pub(super) row SessionLookupRow for [SESSION_BY_HASH] {
+        id: String,
+        user_id: String,
+        token_hash: String,
+        session_kind: String,
+        label: Option<String>,
+        user_agent: Option<String>,
+        issued_at: Millis,
+        expires_at: Millis,
+        last_seen_at: Millis,
+        revoked: bool,
+        username: Option<String>,
+        username_display: Option<String>,
+        role: String,
+    }
+    /// One session in an account's session list.
+    pub(super) row SessionListRow for [USER_SESSIONS] {
+        id: String,
+        user_id: String,
+        session_kind: String,
+        label: Option<String>,
+        user_agent: Option<String>,
+        issued_at: Millis,
+        last_seen_at: Millis,
+        expires_at: Millis,
+    }
+    /// The session behind a token hash.
+    pub(super) row SessionOwnerRow for [SESSION_OWNER] {
+        id: String,
+        user_id: String,
+        session_kind: String,
+        expires_at: Millis,
+    }
+    /// One stored OIDC state.
+    pub(super) row OidcStateRow for [OIDC_STATE] {
+        code_verifier: Option<String>,
+        expires_at: Millis,
+    }
 }
 
 /// [`USERS_BY_IDS`] for `len` ids.

@@ -38,7 +38,6 @@ use droppedneedle_kernel::runtime_config::secret_sections::{
 use droppedneedle_kernel::runtime_config::sections::{
     DownloadPolicy, LibraryScanSchedule, SecuritySettings,
 };
-use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
 use droppedneedle_library::management::settings::{ActivationHealth, ChangeImpact, PresetDiff};
 use droppedneedle_library::settings_models::{
     LibraryManagementProfileExportResponse, LibraryManagementProfileImportPreviewResponse,
@@ -286,8 +285,7 @@ pub async fn preview_library_policy_impact(
     responses(
         (status = 200, description = "Apply preview", body = LibraryPolicyApplyPreviewResponse),
         (status = 400, description = "A scope id no longer exists"),
-        (status = 409, description = "Expected revision is stale"),
-        (status = 503, description = "Catalog reads are unwired")
+        (status = 409, description = "Expected revision is stale")
     )
 )]
 pub async fn preview_library_policy_apply(
@@ -310,8 +308,7 @@ pub async fn preview_library_policy_apply(
     tag = "settings",
     path = "/api/v3/settings/library/restorable-roots",
     responses(
-        (status = 200, description = "Restorable roots", body = LibraryRestorableRootsResponse),
-        (status = 503, description = "Catalog reads are unwired")
+        (status = 200, description = "Restorable roots", body = LibraryRestorableRootsResponse)
     )
 )]
 pub async fn get_restorable_library_roots(
@@ -335,8 +332,7 @@ pub async fn get_restorable_library_roots(
     responses(
         (status = 200, description = "Saved library settings", body = LibrarySettingsResponse),
         (status = 400, description = "Nothing to restore, or a restored path is invalid"),
-        (status = 409, description = "Expected revision is stale"),
-        (status = 503, description = "Catalog reads are unwired")
+        (status = 409, description = "Expected revision is stale")
     )
 )]
 pub async fn restore_library_roots(
@@ -1225,23 +1221,15 @@ pub async fn get_section_prefs(
     State(settings): State<SettingsSetup>,
     User(caller): User,
 ) -> JsonResult<SectionPrefsResponse> {
-    let prefs = settings.prefs().ok_or_else(|| SettingsError::Unavailable {
-        cause: "Section prefs need the database.".to_owned(),
-    })?;
     let lastfm_master = settings
         .service()
         .get_masked::<LastFmSettings>()?
         .into_inner()
         .enabled;
-    super::section_prefs::full_response(
-        prefs.store.as_ref(),
-        prefs.links.as_ref(),
-        caller.user_id(),
-        lastfm_master,
-    )
-    .await
-    .map(Json)
-    .map_err(ApiError::from)
+    super::section_prefs::full_response(settings.prefs(), caller.user_id(), lastfm_master)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Replace one page of the caller's section prefs. Unknown pages and
@@ -1252,8 +1240,7 @@ pub async fn get_section_prefs(
     path = "/api/v3/me/section-prefs",
     request_body = SectionPrefsUpdate,
     responses(
-        (status = 200, description = "Updated page", body = SectionPrefsResponse),
-        (status = 503, description = "Section prefs are unwired")
+        (status = 200, description = "Updated page", body = SectionPrefsResponse)
     )
 )]
 pub async fn put_section_prefs(
@@ -1261,22 +1248,14 @@ pub async fn put_section_prefs(
     User(caller): User,
     ValidJson(body): ValidJson<SectionPrefsUpdate>,
 ) -> JsonResult<SectionPrefsResponse> {
-    let prefs = settings.prefs().ok_or_else(|| SettingsError::Unavailable {
-        cause: "Section prefs need the database.".to_owned(),
-    })?;
     let lastfm_master = settings
         .service()
         .get_masked::<LastFmSettings>()?
         .into_inner()
         .enabled;
-    let items = super::section_prefs::save_page(
-        prefs.store.as_ref(),
-        prefs.links.as_ref(),
-        caller.user_id(),
-        &body,
-        lastfm_master,
-    )
-    .await?;
+    let items =
+        super::section_prefs::save_page(settings.prefs(), caller.user_id(), &body, lastfm_master)
+            .await?;
     Ok(Json(SectionPrefsResponse {
         pages: BTreeMap::from([(body.page.clone(), items)]),
     }))

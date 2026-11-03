@@ -30,17 +30,28 @@ pub struct Users {
 
 /// Map one `auth_users` row read with [`sql::USER_COLUMNS`].
 fn map_user(row: &rusqlite::Row<'_>) -> rusqlite::Result<UserRecord> {
-    let role_raw: String = row.get(4)?;
+    let row = sql::UserRow::read(row)?;
     Ok(UserRecord {
-        id: row.get(0)?,
-        display_name: row.get(1)?,
-        email: row.get(2)?,
-        avatar_url: row.get(3)?,
-        role: Role::from_stored(&role_raw),
-        created_at: ms_to_secs(row.get(5)?),
-        last_login_at: row.get::<_, Option<i64>>(6)?.map(ms_to_secs),
-        username: row.get(7)?,
-        username_display: row.get(8)?,
+        role: Role::from_stored(&row.role),
+        id: row.id,
+        display_name: row.display_name,
+        email: row.email,
+        avatar_url: row.avatar_url,
+        created_at: ms_to_secs(row.created_at.0),
+        last_login_at: row.last_login_at.map(|at| ms_to_secs(at.0)),
+        username: row.username,
+        username_display: row.username_display,
+    })
+}
+
+/// Map one sign-in binding row.
+pub(super) fn read_binding(row: &rusqlite::Row<'_>) -> rusqlite::Result<ProviderBinding> {
+    let row = sql::BindingRow::read(row)?;
+    Ok(ProviderBinding {
+        id: row.id,
+        user_id: row.user_id,
+        provider: row.provider,
+        provider_uid: row.provider_uid,
     })
 }
 
@@ -588,14 +599,7 @@ impl Users {
         self.db
             .read("auth.users.binding", move |conn| {
                 conn.prepare_cached(sql::PROVIDER_BINDING.text())?
-                    .query_row([provider, provider_uid], |row| {
-                        Ok(ProviderBinding {
-                            id: row.get(0)?,
-                            user_id: row.get(1)?,
-                            provider: row.get(2)?,
-                            provider_uid: row.get(3)?,
-                        })
-                    })
+                    .query_row([provider, provider_uid], read_binding)
                     .optional()
             })
             .await

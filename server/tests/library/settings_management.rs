@@ -7,7 +7,6 @@ use crate::common;
 
 use std::path::PathBuf;
 
-use common::FixedIdGenerator;
 use droppedneedle_kernel::runtime_config::sections::{
     FieldMode, LibraryManagement, LibraryManagementProfile, ManagedField, NamingScript,
     TaggingScript,
@@ -705,16 +704,13 @@ async fn profile_export_preview_import_round_trip() {
     use crate::common::auth::{AuthRig, test_principal, with_test_principal};
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
-    use droppedneedle::settings::wiring::SettingsSetup;
     use droppedneedle_auth::users::roles::{Role, SessionKind};
     use serde_json::{Value, json};
-    use std::sync::Arc;
     use tower::ServiceExt as _;
 
     let rig = AuthRig::new("settings-profiles").await;
     let admin = rig.seed_user("brenda", Role::Admin).await;
-    let settings = SettingsSetup::for_tests(Arc::new(FixedIdGenerator::new(common::FIXED_ID)))
-        .expect("settings bundle builds");
+    let settings = crate::common::bundles::settings_closed(&rig.platform);
     let app = with_test_principal(
         droppedneedle::settings::wiring::routes()
             .with_state(settings)

@@ -21,8 +21,11 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use rusqlite::OptionalExtension as _;
+
 use super::BoxFuture;
 use super::schedule::Schedule;
+use super::sql;
 use super::supervisor::{AlreadyRunning, FnTick, Next, Supervisor, TickCtx, TickError};
 use crate::clock::Clock;
 use crate::db::{Db, DbError, writer::Lane};
@@ -218,17 +221,20 @@ impl SqliteTickStore {
             if !store.is_known(&plugin) {
                 return Err(TickStoreError::UnknownPlugin(plugin));
             }
-            let row: Option<Vec<u8>> = sqlx::query_scalar(
-                "SELECT value FROM plugin_tick_state WHERE plugin = ?1 AND key = ?2",
-            )
-            .bind(&plugin)
-            .bind(&key)
-            .fetch_optional(store.db.sqlx())
-            .await
-            .map_err(|error| {
-                tracing::warn!(%plugin, key = %key, %error, "tick state read failed");
-                TickStoreError::Unavailable(error.to_string())
-            })?;
+            let (read_plugin, read_key) = (plugin.clone(), key.clone());
+            let row: Option<Vec<u8>> = store
+                .db
+                .read("tick-state-read", move |conn| {
+                    conn.prepare_cached(sql::TICK_STATE.text())?
+                        .query_row([read_plugin, read_key], |row| row.get(0))
+                        .optional()
+                        .map_err(DbError::from)
+                })
+                .await
+                .map_err(|error: DbError| {
+                    tracing::warn!(%plugin, key = %key, %error, "tick state read failed");
+                    TickStoreError::Unavailable(error.to_string())
+                })?;
             match row {
                 Some(bytes) => {
                     if bytes.len() > STATE_MAX_BYTES {
@@ -272,23 +278,18 @@ impl SqliteTickStore {
                 .write(Lane::Background, "tick-state-write", move |tx| {
                     // Totals for the plugin's other keys, so a plugin cannot
                     // grow without bound through many small keys.
-                    let (count, total): (i64, i64) = tx.query_row(
-                        "SELECT COUNT(*), COALESCE(SUM(length(value)), 0)
-                         FROM plugin_tick_state WHERE plugin = ?1 AND key <> ?2",
+                    let held = tx.query_row(
+                        sql::TICK_STATE_TOTALS.text(),
                         rusqlite::params![plugin, key],
-                        |row| Ok((row.get(0)?, row.get(1)?)),
+                        sql::TickStateTotals::read,
                     )?;
-                    if count.max(0) as usize + 1 > STATE_MAX_KEYS
-                        || total.max(0) as usize + bytes.len() > STATE_MAX_TOTAL_BYTES
+                    if held.keys.max(0) as usize + 1 > STATE_MAX_KEYS
+                        || held.bytes.max(0) as usize + bytes.len() > STATE_MAX_TOTAL_BYTES
                     {
                         return Ok(false);
                     }
                     tx.execute(
-                        "INSERT INTO plugin_tick_state (plugin, key, value, updated_at)
-                     VALUES (?1, ?2, ?3, ?4)
-                     ON CONFLICT (plugin, key) DO UPDATE SET
-                         value = excluded.value,
-                         updated_at = excluded.updated_at",
+                        sql::UPSERT_TICK_STATE.text(),
                         rusqlite::params![plugin, key, bytes, now],
                     )?;
                     Ok(true)

@@ -17,6 +17,8 @@ use serde::{Deserialize, Serialize};
 use super::BoxFuture;
 use super::schedule::Schedule;
 use super::supervisor::{AlreadyRunning, FnTick, Next, Supervisor, TickError};
+use crate::runtime_config::Live;
+use crate::runtime_config::secret_sections::NavidromeConnection;
 
 /// Name of the sync loop.
 pub const JOB_NAME: &str = "navidrome-playlist-export";
@@ -41,11 +43,22 @@ pub struct PlaylistSyncConfig {
     pub remove_deleted: bool,
 }
 
-/// The saved Navidrome connection behind a seam, re-read every cycle and
-/// every route call. `None` (or disabled/empty) means skip quietly.
-pub trait PlaylistSyncSettings: Clone + Send + Sync + 'static {
-    /// Current sync config, or nothing when syncing is off.
-    fn sync_config(&self) -> BoxFuture<'_, Option<PlaylistSyncConfig>>;
+/// What the saved Navidrome connection asks the sync to do, read fresh
+/// every cycle and every route call. `None` (an unreadable section, sync
+/// turned off, or no target folder) means skip quietly.
+pub fn sync_config(connection: &Live<NavidromeConnection>) -> Option<PlaylistSyncConfig> {
+    let connection = connection.read()?;
+    if !connection.enabled
+        || !connection.playlist_sync_enabled
+        || connection.playlist_sync_path.trim().is_empty()
+    {
+        return None;
+    }
+    Some(PlaylistSyncConfig {
+        target_dir: connection.playlist_sync_path.clone(),
+        scope: connection.playlist_sync_scope.clone(),
+        remove_deleted: connection.playlist_sync_remove_deleted,
+    })
 }
 
 /// The exporter that writes playlist files behind a seam.
@@ -92,12 +105,11 @@ pub fn default_schedule() -> Schedule {
 /// (sync off) and clean syncs reset failures; only exporter-reported failure
 /// counts. Removal failures log loud but do not count: the files stay and the
 /// next cycle retries them.
-pub async fn run_once<T, E>(settings: &T, exporter: &E) -> Result<(), ()>
+pub async fn run_once<E>(connection: &Live<NavidromeConnection>, exporter: &E) -> Result<(), ()>
 where
-    T: PlaylistSyncSettings,
     E: PlaylistExporter,
 {
-    let Some(config) = settings.sync_config().await else {
+    let Some(config) = sync_config(connection) else {
         return Ok(());
     };
     let result = exporter.sync(config).await;
@@ -118,26 +130,25 @@ pub const FAILED: &str = "PLAYLIST_EXPORT_FAILED";
 
 /// Start the loop. The first cycle waits out one interval (v2 sleeps before
 /// its first sync too); failures back off and never end it.
-pub fn spawn_on<T, E>(
+pub fn spawn_on<E>(
     supervisor: &Supervisor,
-    settings: T,
+    connection: Live<NavidromeConnection>,
     exporter: E,
     schedule: Schedule,
 ) -> Result<(), AlreadyRunning>
 where
-    T: PlaylistSyncSettings,
     E: PlaylistExporter,
 {
-    let settings = Arc::new(settings);
+    let connection = Arc::new(connection);
     let exporter = Arc::new(exporter);
     supervisor.periodic(
         JOB_NAME,
         schedule,
         FnTick(move |_| {
-            let settings = Arc::clone(&settings);
+            let connection = Arc::clone(&connection);
             let exporter = Arc::clone(&exporter);
             async move {
-                run_once(settings.as_ref(), exporter.as_ref())
+                run_once(connection.as_ref(), exporter.as_ref())
                     .await
                     .map(|()| Next::Continue)
                     .map_err(|()| TickError::new(FAILED, "the playlist export reported no success"))

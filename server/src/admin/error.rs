@@ -19,11 +19,6 @@ pub enum AdminError {
         /// What is already going.
         message: String,
     },
-    /// A backend this route needs is unwired (503).
-    Unavailable {
-        /// Which backend is missing, for the log only.
-        message: String,
-    },
     /// Server fault.
     Internal {
         /// What went wrong, for the log only.

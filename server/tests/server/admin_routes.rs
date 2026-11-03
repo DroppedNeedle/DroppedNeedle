@@ -1,5 +1,5 @@
 //! Admin-route briefs: gating, cache stats/clear, queue and
-//! provider stats, quota admin, checkpoint health, and honest unwired 503s.
+//! provider stats, quota admin and checkpoint health.
 //!
 //! The router mounts directly with sessions injected; health rides the full
 //! app. Scratch runtimes only - no network, no production database.
@@ -10,7 +10,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use droppedneedle::admin::{AdminDb, AdminSetup};
+use droppedneedle::admin::AdminSetup;
 use droppedneedle_auth::users::roles::{Role, SessionKind};
 use droppedneedle_kernel::db::{DbRuntime, Lane};
 use droppedneedle_providers::{CacheKey, Source};
@@ -38,12 +38,12 @@ struct Rig {
 
 impl Rig {
     async fn open(tag: &str) -> Self {
-        Self::open_with(tag, None).await
+        Self::open_with(tag, Arc::new(crate::common::bundles::NothingToWarm)).await
     }
 
     async fn open_with(
         tag: &str,
-        precache: Option<Arc<dyn droppedneedle_kernel::jobs::precache_phases::PrecacheSources>>,
+        precache: Arc<dyn droppedneedle_kernel::jobs::precache_phases::PrecacheSources>,
     ) -> Self {
         let scratch = crate::common::ScratchDir::new(&format!("admin-routes-{tag}"));
         let dir = scratch.to_path_buf();
@@ -69,27 +69,26 @@ impl Rig {
         ));
         let cache = providers.cache.clone();
         let scans = droppedneedle::bootstrap::jobs::ScansEnded::default();
-        let mut jobs = droppedneedle::bootstrap::jobs::JobsSetup::build(
+        let jobs = crate::common::bundles::jobs_at(
             &platform,
             runtime.checkpoint().clone(),
-            crate::common::bundles::media_jobs(&platform),
-            None,
+            precache,
             scans.clone(),
         );
-        if let Some(sources) = precache {
-            jobs = jobs.with_precache_sources(sources);
-        }
-        let admin = AdminSetup::new(rig.deps.clone(), quota.clone(), cache.clone(), providers)
-            .with_db(AdminDb::new(runtime.db().clone()))
-            .with_backups(std::sync::Arc::new(
-                droppedneedle_kernel::db::BackupService::new(
-                    &dir.join("app.db"),
-                    &dir.join("backups"),
-                    std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
-                ),
-            ))
-            .with_checkpoint(runtime.checkpoint().clone())
-            .with_precache(jobs.precache_trigger());
+        let admin = AdminSetup::new(
+            rig.deps.clone(),
+            quota.clone(),
+            providers,
+            runtime.db().clone(),
+            std::sync::Arc::new(droppedneedle_kernel::db::BackupService::new(
+                &dir.join("app.db"),
+                &dir.join("backups"),
+                std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+            )),
+            runtime.checkpoint().clone(),
+            jobs.precache_trigger(),
+            crate::common::bundles::covers_at(&platform),
+        );
         Self {
             runtime,
             admin,
@@ -235,7 +234,7 @@ async fn queue_stats_reports_a_failed_checkpoint_as_a_code() {
         std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
     );
     assert!(failing.run_once().error.is_some());
-    rig.admin = rig.admin.clone().with_checkpoint(failing);
+    rig.admin.checkpoint = failing;
 
     let (status, payload) = call(rig.admin_app(), "GET", "/api/v3/admin/queue-stats", None).await;
     assert_eq!(status, StatusCode::OK, "{payload}");
@@ -515,7 +514,7 @@ async fn a_burst_of_scans_starts_one_image_refresh() {
         recorded: tokio::sync::Notify::new(),
         album_gate: tokio::sync::Semaphore::new(64),
     });
-    let rig = Rig::open_with("scan-burst", Some(library.clone())).await;
+    let rig = Rig::open_with("scan-burst", library.clone()).await;
     tokio::time::pause();
     let trigger = rig.jobs.precache_trigger();
     trigger.spawn_after_scan().expect("the wait loop starts");
@@ -557,7 +556,7 @@ async fn library_image_refresh_reports_progress_and_cancels() {
         recorded: tokio::sync::Notify::new(),
         album_gate: tokio::sync::Semaphore::new(0),
     });
-    let rig = Rig::open_with("image-refresh", Some(library.clone())).await;
+    let rig = Rig::open_with("image-refresh", library.clone()).await;
     let idle = wait_for_status(&rig, |_| true).await;
     assert_eq!(idle["is_syncing"], Value::Bool(false));
 
@@ -732,12 +731,41 @@ async fn quota_usage_counts_asks_and_bytes() {
         &[&rig.user_id],
     )
     .await;
+    lane_seed(
+        &rig,
+        "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at)
+         VALUES ('ar1', 'A', 'a', 'person', 0, 0)",
+        &[],
+    )
+    .await;
+    lane_seed(
+        &rig,
+        "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded,
+           album_artist_id, grouping_source, created_at, updated_at)
+         VALUES ('al1', 'r1', 'g', 'T', 't', 'ar1', 'automatic', 0, 0)",
+        &[],
+    )
+    .await;
+    lane_seed(
+        &rig,
+        "INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path,
+           path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded,
+           album_title, album_title_folded, file_format, ingest_source, imported_at,
+           membership_source, availability, download_task_id)
+         VALUES ('t1', 'al1', 'r1', '/music/A/one.flac', 'A/one.flac', 'h1', 4096, 0, 's',
+             'One', 'one', 'T', 't', 'flac', 'scan', 0, 'automatic', 'indexed', 'task-1'),
+                ('t2', 'al1', 'r1', '/music/A/two.flac', 'A/two.flac', 'h2', 2048, 0, 's',
+             'Two', 'two', 'T', 't', 'flac', 'scan', 0, 'automatic', 'missing', 'task-1')",
+        &[],
+    )
+    .await;
 
     let uri = format!("/api/v3/admin/users/{}/quota", rig.user_id);
     let (status, body) = call(rig.admin_app(), "GET", &uri, None).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["requests_in_window"], Value::from(3));
-    // Only the landed task counts toward storage.
+    // Storage is the figure the quota enforces: the user's downloaded files
+    // still in the library, not the size a download task recorded.
     assert_eq!(body["storage_bytes"], Value::from(4096));
 }
 
@@ -765,14 +793,10 @@ async fn quota_override_for_an_unmirrored_user_is_not_found() {
     let rig = Rig::open("quota-unmirrored").await;
     let elsewhere = AuthRig::new("quota-unmirrored-users").await;
     let user = elsewhere.seed_user("ursula", Role::User).await;
-    let providers = Arc::new(droppedneedle_providers::Providers::closed());
-    let admin = AdminSetup::new(
-        elsewhere.deps.clone(),
-        rig.quota.clone(),
-        providers.cache.clone(),
-        providers,
-    )
-    .with_db(AdminDb::new(rig.runtime.db().clone()));
+    let admin = AdminSetup {
+        users: elsewhere.deps.clone(),
+        ..rig.admin.clone()
+    };
     let app = with_test_principal(
         droppedneedle::admin::routes()
             .with_state(admin)
@@ -796,9 +820,7 @@ async fn quota_overrides_reload_into_the_ledger() {
         &[&rig.user_id],
     )
     .await;
-    let loaded = droppedneedle::admin::quota::reload_overrides(rig.runtime.db().sqlx(), &rig.quota)
-        .await
-        .expect("reload runs");
+    let loaded = rig.quota.reload_overrides().await.expect("reload runs");
     assert_eq!(loaded, 1);
     let effective = rig
         .quota

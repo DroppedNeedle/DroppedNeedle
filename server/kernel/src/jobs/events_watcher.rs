@@ -66,21 +66,6 @@ pub trait EventsWatcher: Send + Sync + 'static {
     ) -> BoxFuture<'_, Result<SweepEnd, String>>;
 }
 
-/// No sweep wired (states without a database): every sweep finishes at
-/// once without walking anything.
-impl<W: EventsWatcher> EventsWatcher for Option<W> {
-    fn run_sweep(
-        &self,
-        skip_recent_hours: Option<f64>,
-        stop: CancellationToken,
-    ) -> BoxFuture<'_, Result<SweepEnd, String>> {
-        match self {
-            Some(watcher) => watcher.run_sweep(skip_recent_hours, stop),
-            None => Box::pin(async { Ok(SweepEnd::Finished) }),
-        }
-    }
-}
-
 /// The admin's `poll_time` (`HH:MM`), re-read every tick.
 pub trait PollTimeSource: Send + Sync + 'static {
     /// Current configured poll time.

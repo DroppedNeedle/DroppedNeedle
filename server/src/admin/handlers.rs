@@ -27,9 +27,6 @@ impl From<AdminError> for ApiError {
             AdminError::NotFound => ApiError::not_found(),
             AdminError::InvalidInput { message } => ApiError::invalid_input(message),
             AdminError::Conflict { message } => ApiError::conflict(message),
-            AdminError::Unavailable { message } => {
-                ApiError::fault(StatusCode::SERVICE_UNAVAILABLE, message)
-            }
             AdminError::Internal { cause } => ApiError::internal(cause),
         }
     }
@@ -46,12 +43,7 @@ pub async fn list_backups(
     State(admin): State<AdminSetup>,
     _caller: Admin,
 ) -> Result<Json<BackupListResponse>, ApiError> {
-    let dir = admin
-        .backups
-        .as_ref()
-        .ok_or_else(unwired_backups)?
-        .backup_dir()
-        .to_owned();
+    let dir = admin.backups.backup_dir().to_owned();
     blocking(move || super::backups::list_backups(&dir))
         .await
         .map(Json)
@@ -68,8 +60,7 @@ pub async fn run_backup(
     State(admin): State<AdminSetup>,
     _caller: Admin,
 ) -> Result<(StatusCode, Json<BackupRunResponse>), ApiError> {
-    let backups = admin.backups.as_ref().ok_or_else(unwired_backups)?;
-    let report = super::backups::run_backup(backups).await?;
+    let report = super::backups::run_backup(&admin.backups).await?;
     Ok((StatusCode::CREATED, Json(report)))
 }
 
@@ -86,12 +77,7 @@ pub async fn restore_report(
     _caller: Admin,
     Path(name): Path<String>,
 ) -> Result<Json<RestoreReport>, ApiError> {
-    let dir = admin
-        .backups
-        .as_ref()
-        .ok_or_else(unwired_backups)?
-        .backup_dir()
-        .to_owned();
+    let dir = admin.backups.backup_dir().to_owned();
     blocking(move || super::backups::restore_report(&dir, &name))
         .await
         .map(Json)
@@ -108,7 +94,7 @@ pub async fn cache_stats(
     State(admin): State<AdminSetup>,
     _caller: Admin,
 ) -> Json<CacheStatsResponse> {
-    Json(super::cache::cache_stats(&admin.cache, admin.db.as_ref(), admin.covers.as_ref()).await)
+    Json(super::cache::cache_stats(&admin.cache, &admin.db, &admin.covers).await)
 }
 
 /// Clear provider data, the cached images, or both.
@@ -124,15 +110,10 @@ pub async fn clear_cache(
     _caller: Admin,
     ValidJson(body): ValidJson<CacheClearBody>,
 ) -> Result<Json<CacheClearResponse>, ApiError> {
-    super::cache::clear_cache(
-        &admin.cache,
-        admin.db.as_ref(),
-        admin.covers.as_ref(),
-        &body,
-    )
-    .await
-    .map(Json)
-    .map_err(ApiError::from)
+    super::cache::clear_cache(&admin.cache, &admin.db, &admin.covers, &body)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Queue demand, the job registry and the latest checkpoint pass.
@@ -146,9 +127,8 @@ pub async fn queue_stats(
     State(admin): State<AdminSetup>,
     _caller: Admin,
 ) -> Result<Json<QueueStatsResponse>, ApiError> {
-    let db = admin.db.as_ref().ok_or_else(unwired_db)?;
     Ok(Json(
-        super::queues::queue_stats(db, admin.checkpoint.as_ref()).await?,
+        super::queues::queue_stats(&admin.db, &admin.checkpoint).await?,
     ))
 }
 
@@ -180,8 +160,7 @@ pub async fn get_quota(
     _caller: Admin,
     Path(user_id): Path<String>,
 ) -> Result<Json<QuotaResponse>, ApiError> {
-    let db = admin.db.as_ref().ok_or_else(unwired_db)?;
-    super::quota::get_quota(&admin.users, db, &admin.quota, &user_id)
+    super::quota::get_quota(&admin.users, &admin.quota, &user_id)
         .await
         .map(Json)
         .map_err(ApiError::from)
@@ -202,8 +181,7 @@ pub async fn run_precache(
     State(admin): State<AdminSetup>,
     caller: Admin,
 ) -> Result<(StatusCode, Json<PrecacheRunResponse>), ApiError> {
-    let trigger = admin.precache.as_ref().ok_or_else(unwired_precache)?;
-    match trigger.run(Some(caller.user_id().to_owned())).await {
+    match admin.precache.run(Some(caller.user_id().to_owned())).await {
         Ok(_) => Ok((
             StatusCode::ACCEPTED,
             Json(PrecacheRunResponse {
@@ -230,13 +208,7 @@ pub async fn cache_sync_status(
     State(admin): State<AdminSetup>,
     _caller: User,
 ) -> Json<droppedneedle_kernel::events::CacheSyncProgress> {
-    Json(
-        admin
-            .precache
-            .as_ref()
-            .map(|trigger| trigger.status().snapshot())
-            .unwrap_or_default(),
-    )
+    Json(admin.precache.status().snapshot())
 }
 
 /// Stop the running library image precache. Images already fetched stay
@@ -252,9 +224,7 @@ pub async fn cancel_cache_sync(
     State(admin): State<AdminSetup>,
     _caller: Curator,
 ) -> Json<CacheSyncCancelResponse> {
-    if let Some(trigger) = &admin.precache {
-        trigger.cancel().await;
-    }
+    admin.precache.cancel().await;
     Json(CacheSyncCancelResponse {
         status: "cancelled".to_owned(),
     })
@@ -275,34 +245,13 @@ pub async fn set_quota(
     Path(user_id): Path<String>,
     ValidJson(body): ValidJson<QuotaOverrideBody>,
 ) -> Result<Json<QuotaResponse>, ApiError> {
-    let db = admin.db.as_ref().ok_or_else(unwired_db)?;
-    super::quota::set_quota(&admin.users, db, &admin.quota, &user_id, &body)
+    super::quota::set_quota(&admin.users, &admin.quota, &user_id, &body)
         .await
         .map(Json)
         .map_err(ApiError::from)
 }
 
 /// 503 for backup routes on states without a backup service.
-fn unwired_backups() -> AdminError {
-    AdminError::Unavailable {
-        message: "Backup service is not wired on this state".to_owned(),
-    }
-}
-
-/// 503 for the precache route on states without the trigger.
-fn unwired_precache() -> AdminError {
-    AdminError::Unavailable {
-        message: "Precache trigger is not wired on this state".to_owned(),
-    }
-}
-
-/// 503 for database routes on states without database handles.
-fn unwired_db() -> AdminError {
-    AdminError::Unavailable {
-        message: "Admin database handles are not wired on this state".to_owned(),
-    }
-}
-
 /// Run blocking backup-directory work on the blocking pool.
 async fn blocking<T: Send + 'static>(
     work: impl FnOnce() -> Result<T, AdminError> + Send + 'static,

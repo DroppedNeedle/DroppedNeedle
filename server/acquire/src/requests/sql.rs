@@ -422,6 +422,30 @@ droppedneedle_kernel::sql! {
          WHERE state = 'pending' AND user_id IN (SELECT id FROM auth_users \
            WHERE role IN ('admin', 'trusted'))";
 
+    /// Every stored quota override.
+    pub(crate) QUOTA_OVERRIDES = "SELECT user_id, request_quota_count, request_quota_days, \
+         storage_quota_gb FROM user_quotas";
+    /// One user's stored quota override.
+    pub(crate) QUOTA_OVERRIDE = "SELECT user_id, request_quota_count, request_quota_days, \
+         storage_quota_gb FROM user_quotas WHERE user_id = ?1";
+    /// One stored quota override.
+    pub(crate) row QuotaOverrideRow for [QUOTA_OVERRIDES, QUOTA_OVERRIDE] {
+        user_id: String,
+        request_quota_count: Option<i64>,
+        request_quota_days: Option<i64>,
+        storage_quota_gb: Option<i64>,
+    }
+    /// Drop one user's quota override.
+    pub(crate) DELETE_QUOTA_OVERRIDE = "DELETE FROM user_quotas WHERE user_id = ?1";
+    /// Store or replace one user's quota override.
+    pub(crate) UPSERT_QUOTA_OVERRIDE = "INSERT INTO user_quotas \
+         (user_id, request_quota_count, request_quota_days, storage_quota_gb) \
+         VALUES (?1, ?2, ?3, ?4) \
+         ON CONFLICT (user_id) DO UPDATE SET \
+         request_quota_count = excluded.request_quota_count, \
+         request_quota_days = excluded.request_quota_days, \
+         storage_quota_gb = excluded.storage_quota_gb";
+
     // What requests read from the library and the accounts.
 
     /// Indexed bytes in the whole library.

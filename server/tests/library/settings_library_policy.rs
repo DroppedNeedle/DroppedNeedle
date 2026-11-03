@@ -4,15 +4,11 @@
 //! is there, the save refuses to drop every root under a live catalog, and
 //! the previews count catalog rows the way v2 did.
 
-use crate::common::{FIXED_ID, FixedIdGenerator, ScratchDir};
+use crate::common::ScratchDir;
 
-use std::sync::Arc;
-
-use droppedneedle::settings::library_catalog::SqliteLibraryPolicyCatalog;
 use droppedneedle::settings::models::{
     LibraryPolicyApplyRequest, LibraryRestoreRootsRequest, LibrarySettingsSaveRequest,
 };
-use droppedneedle::settings::wiring::SettingsSetup;
 use droppedneedle_kernel::db::{DbError, Lane};
 use droppedneedle_kernel::runtime_config::secret_sections::IdentificationPolicy;
 use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
@@ -50,11 +46,10 @@ async fn removed_root_restores_and_previews_count_the_catalog() {
         .await
         .expect("catalog seeds");
 
-    let settings = SettingsSetup::for_tests(Arc::new(FixedIdGenerator::new(FIXED_ID)))
-        .expect("settings bundle builds")
-        .with_library_catalog(Arc::new(SqliteLibraryPolicyCatalog {
-            pool: runtime.db().sqlx().clone(),
-        }));
+    let platform = crate::common::TestPlatform::on(runtime.db(), &scratch)
+        .build()
+        .await;
+    let settings = crate::common::bundles::settings_closed(&platform);
     let policy = settings.library_policy();
 
     let offered = policy.restorable_roots().await.expect("restorable reads");
@@ -137,8 +132,12 @@ async fn removed_root_restores_and_previews_count_the_catalog() {
 /// leaves it alone.
 #[tokio::test]
 async fn an_import_naming_script_is_checked_only_when_changed() {
-    let settings = SettingsSetup::for_tests(Arc::new(FixedIdGenerator::new(FIXED_ID)))
-        .expect("settings bundle builds");
+    let scratch = ScratchDir::new("settings-library-policy-naming");
+    let runtime = crate::common::scratch_runtime(&scratch.join("app.db")).await;
+    let platform = crate::common::TestPlatform::on(runtime.db(), &scratch)
+        .build()
+        .await;
+    let settings = crate::common::bundles::settings_closed(&platform);
     let policy = settings.library_policy();
     let save = |revision: &str, script: &str, enabled: bool| -> LibrarySettingsSaveRequest {
         serde_json::from_value(json!({
@@ -229,11 +228,10 @@ async fn removed_root_with_every_row_missing_is_offered_while_its_folder_exists(
         .await
         .expect("catalog seeds");
 
-    let settings = SettingsSetup::for_tests(Arc::new(FixedIdGenerator::new(FIXED_ID)))
-        .expect("settings bundle builds")
-        .with_library_catalog(Arc::new(SqliteLibraryPolicyCatalog {
-            pool: runtime.db().sqlx().clone(),
-        }));
+    let platform = crate::common::TestPlatform::on(runtime.db(), &scratch)
+        .build()
+        .await;
+    let settings = crate::common::bundles::settings_closed(&platform);
     let offered = settings
         .library_policy()
         .restorable_roots()
@@ -251,8 +249,11 @@ async fn rules_that_fold_together_are_refused() {
     let scratch = ScratchDir::new("settings-library-policy-fold");
     let music = scratch.join("music");
     std::fs::create_dir_all(&music).expect("music dir builds");
-    let settings = SettingsSetup::for_tests(Arc::new(FixedIdGenerator::new(FIXED_ID)))
-        .expect("settings bundle builds");
+    let runtime = crate::common::scratch_runtime(&scratch.join("app.db")).await;
+    let platform = crate::common::TestPlatform::on(runtime.db(), &scratch)
+        .build()
+        .await;
+    let settings = crate::common::bundles::settings_closed(&platform);
     let policy = settings.library_policy();
     let revision = settings
         .service()

@@ -9,7 +9,7 @@ use std::sync::Arc;
 use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use droppedneedle::admin::{AdminDb, AdminSetup};
+use droppedneedle::admin::AdminSetup;
 use droppedneedle_auth::users::roles::{Role, SessionKind};
 use droppedneedle_kernel::db::undo_dir::{Stored, UNDO_DIR_NAME, UndoDir};
 use droppedneedle_kernel::db::{BACKUP_KEEP, BackupService, DbRuntime};
@@ -54,18 +54,27 @@ impl Rig {
             crate::common::closed_outbound().providers(),
             droppedneedle_kernel::db::cache::CacheDb::scratch(),
         ));
-        let cache = providers.cache.clone();
         let backup_dir = dir.join("backups");
-        let admin = AdminSetup::new(rig.deps.clone(), quota, cache, providers)
-            .with_db(AdminDb::new(runtime.db().clone()))
-            .with_backups(std::sync::Arc::new(
-                droppedneedle_kernel::db::BackupService::new(
-                    &dir.join("app.db"),
-                    &backup_dir,
-                    std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
-                ),
-            ))
-            .with_checkpoint(runtime.checkpoint().clone());
+        let jobs = crate::common::bundles::jobs_at(
+            &platform,
+            runtime.checkpoint().clone(),
+            Arc::new(crate::common::bundles::NothingToWarm),
+            droppedneedle::bootstrap::jobs::ScansEnded::default(),
+        );
+        let admin = AdminSetup::new(
+            rig.deps.clone(),
+            quota,
+            providers,
+            runtime.db().clone(),
+            std::sync::Arc::new(droppedneedle_kernel::db::BackupService::new(
+                &dir.join("app.db"),
+                &backup_dir,
+                std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+            )),
+            runtime.checkpoint().clone(),
+            jobs.precache_trigger(),
+            crate::common::bundles::covers_at(&platform),
+        );
         Self {
             runtime,
             admin,

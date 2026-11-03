@@ -7,9 +7,7 @@
 //! catalog through the [`LibraryPolicyCatalog`] port. Writes go through
 //! [`SettingsService::update_library`], which checks the revision and
 //! saves under the config store's write lock and runs the post-save
-//! fan-out. Without a wired catalog the
-//! tree and impact previews leave their counts empty and the routes that
-//! need catalog rows answer 503.
+//! fan-out.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -33,24 +31,13 @@ use droppedneedle_library::settings_models::{
 /// Library policy reads, previews, and the guarded saves.
 pub struct LibraryPolicyService {
     settings: Arc<SettingsService>,
-    catalog: Option<Arc<dyn LibraryPolicyCatalog>>,
+    catalog: Arc<dyn LibraryPolicyCatalog>,
 }
 
 impl LibraryPolicyService {
-    /// Build over the settings service and, when wired, the catalog.
-    pub fn new(
-        settings: Arc<SettingsService>,
-        catalog: Option<Arc<dyn LibraryPolicyCatalog>>,
-    ) -> Self {
+    /// Build over the settings service and the catalog.
+    pub fn new(settings: Arc<SettingsService>, catalog: Arc<dyn LibraryPolicyCatalog>) -> Self {
         Self { settings, catalog }
-    }
-
-    fn catalog(&self) -> Result<&dyn LibraryPolicyCatalog, SettingsError> {
-        self.catalog
-            .as_deref()
-            .ok_or_else(|| SettingsError::Unavailable {
-                cause: "Library policy previews need the catalog database.".to_owned(),
-            })
     }
 
     fn catalog_error(&self, cause: String) -> SettingsError {
@@ -81,13 +68,12 @@ impl LibraryPolicyService {
         let mut tree = self
             .with_saved(|saved| Ok(library_policy::policy_tree(&saved)))
             .await?;
-        if let Some(catalog) = self.catalog.as_deref() {
-            let counts = catalog
-                .scope_counts(&library_policy::tree_scopes(&tree))
-                .await
-                .map_err(|cause| self.catalog_error(cause))?;
-            library_policy::fill_tree_counts(&mut tree, &counts);
-        }
+        let counts = self
+            .catalog
+            .scope_counts(&library_policy::tree_scopes(&tree))
+            .await
+            .map_err(|cause| self.catalog_error(cause))?;
+        library_policy::fill_tree_counts(&mut tree, &counts);
         Ok(tree)
     }
 
@@ -107,14 +93,13 @@ impl LibraryPolicyService {
                 ))
             })
             .await?;
-        if let Some(catalog) = self.catalog.as_deref() {
-            let totals = catalog
-                .scope_totals(&scopes)
-                .await
-                .map_err(|cause| self.catalog_error(cause))?;
-            response.indexed_file_count = Some(totals.indexed);
-            response.on_disk_file_count = Some(totals.on_disk);
-        }
+        let totals = self
+            .catalog
+            .scope_totals(&scopes)
+            .await
+            .map_err(|cause| self.catalog_error(cause))?;
+        response.indexed_file_count = Some(totals.indexed);
+        response.on_disk_file_count = Some(totals.on_disk);
         Ok(response)
     }
 
@@ -124,7 +109,6 @@ impl LibraryPolicyService {
         &self,
         request: LibraryPolicyApplyRequest,
     ) -> Result<LibraryPolicyApplyPreviewResponse, SettingsError> {
-        let catalog = self.catalog()?;
         let scope_ids = request.scope_ids.clone();
         let (saved, scopes) = self
             .with_saved(move |saved| {
@@ -138,7 +122,8 @@ impl LibraryPolicyService {
                 Ok((saved, scopes))
             })
             .await?;
-        let totals = catalog
+        let totals = self
+            .catalog
             .scope_totals(&library_policy::scope_pairs(&scopes))
             .await
             .map_err(|cause| self.catalog_error(cause))?;
@@ -186,7 +171,7 @@ impl LibraryPolicyService {
     /// The folder is checked here, before any settings write.
     async fn offerable_roots(&self) -> Result<Vec<CatalogRoot>, SettingsError> {
         let roots = self
-            .catalog()?
+            .catalog
             .catalog_roots()
             .await
             .map_err(|cause| self.catalog_error(cause))?;
@@ -215,13 +200,9 @@ impl LibraryPolicyService {
         self.settings.save_library(request, has_tracks).await
     }
 
-    /// Whether the catalog holds tracks. False when the catalog is
-    /// unwired, which turns the last-root guard off.
+    /// Whether the catalog holds tracks.
     async fn catalog_has_tracks(&self) -> Result<bool, SettingsError> {
-        let Some(catalog) = self.catalog.as_deref() else {
-            return Ok(false);
-        };
-        catalog
+        self.catalog
             .has_tracks()
             .await
             .map_err(|cause| self.catalog_error(cause))

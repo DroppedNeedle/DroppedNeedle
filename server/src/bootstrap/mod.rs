@@ -16,6 +16,7 @@ pub mod key_check;
 mod outbound;
 pub mod platform;
 mod serve;
+pub(crate) mod sql;
 pub mod upgrade_progress;
 
 use std::{fmt::Display, future::Future, sync::Arc, time::Duration};
@@ -34,12 +35,10 @@ use jobs::JobsSetup;
 
 use crate::{
     AppState,
-    admin::{AdminDb, AdminSetup, quota::reload_overrides},
+    admin::AdminSetup,
     app::create_app_with_web,
     settings::{
         effects::{Effects, LiveSaveEffects},
-        library_catalog::SqliteLibraryPolicyCatalog,
-        section_prefs::{SqliteLinkStatus, SqliteSectionPrefsStore},
         wiring::SettingsSetup,
     },
     upgrade_mode::{Ended, ToolCommand},
@@ -356,7 +355,6 @@ pub(crate) async fn build_on(
     // same limiters, so production holds one limiter set. The answer cache
     // stays shared with the admin stats and clear routes.
     let providers = Arc::new(Providers::build(p, outbound.providers(), cache_db.clone()));
-    let provider_cache = providers.cache.clone();
     let auth = AuthSetup::build(
         p,
         ProdAuth::new(p),
@@ -409,6 +407,7 @@ pub(crate) async fn build_on(
     .with_details(Arc::new(PluginDetailsSource(plugin_host.clone())))
     .with_cover_warm(cover_warm.clone());
     let artwork = droppedneedle_catalog::wiring::artwork(p, &catalog_inputs, catalog.clone());
+    let covers = artwork.cache().clone();
     let collections_db = CollectionsDb::new(db.clone(), p.clock.clone());
     let collections = Stores::new(&collections_db);
     // Flow outcomes (fulfilled requests among them) go to plugins and the
@@ -526,21 +525,12 @@ pub(crate) async fn build_on(
         library.scans.clone(),
         &catalog_setup,
     ));
-    let admin = AdminSetup::new(
-        auth.users.clone(),
-        acquire.requests.quota.clone(),
-        provider_cache.clone(),
-        providers.clone(),
-    )
-    .with_db(AdminDb::new(db.clone()))
-    .with_backups(runtime.backups().clone())
-    .with_checkpoint(runtime.checkpoint().clone());
     // Durable quota overrides back into the live ledger. A failure warns
     // instead of stopping the boot; the admin can re-save.
     match wait_out_busy(
         "quota overrides",
         |error: &DbError| matches!(error, DbError::Busy { .. }),
-        || reload_overrides(db.sqlx(), &acquire.requests.quota),
+        || acquire.requests.quota.reload_overrides(),
     )
     .await
     {
@@ -548,14 +538,17 @@ pub(crate) async fn build_on(
         Err(error) => tracing::warn!(%error, "quota overrides failed to reload; defaults apply"),
     }
     let concerts = droppedneedle_catalog::concerts::ConcertsSetup::from_platform(p, &providers);
+    let precache_sources = jobs::catalog_precache(&catalog_setup, config_store, listening.clone())
+        .map_err(stage("jobs setup"))?;
     let jobs = JobsSetup::build(
         p,
         runtime.checkpoint().clone(),
         media.jobs(p),
-        Some(concerts.sweep()),
+        concerts.sweep(),
+        precache_sources,
+        queues,
         scans.clone(),
     )
-    .with_queue(queues)
     .with_jobs(media.scrobble_jobs())
     .with_media_refresh(p, &media)
     .with_job(
@@ -567,7 +560,6 @@ pub(crate) async fn build_on(
         droppedneedle_library::removal::recycle_bin::handler(&library.publishing),
     )
     .with_mixer(mix_hooks)
-    .with_precache_sources_from(&catalog_setup, config_store, listening.clone())
     .with_cover_warm_jobs(&catalog_setup)
     .with_job(
         droppedneedle_acquire::imports::jobs::SPEC,
@@ -579,11 +571,16 @@ pub(crate) async fn build_on(
             catalog_setup.discover.content.clone(),
         ),
     ));
-    let admin = match &catalog_setup.artwork {
-        Some(artwork) => admin.with_covers(artwork.cache().clone()),
-        None => admin,
-    }
-    .with_precache(jobs.precache_trigger());
+    let admin = AdminSetup::new(
+        auth.users.clone(),
+        acquire.requests.quota.clone(),
+        providers.clone(),
+        db.clone(),
+        runtime.backups().clone(),
+        runtime.checkpoint().clone(),
+        jobs.precache_trigger(),
+        covers,
+    );
     let download_worker = acquire.worker.clone();
     let roots_library = library.scans.clone();
     // Each section's declared effects run after every committed change to
@@ -605,26 +602,15 @@ pub(crate) async fn build_on(
     {
         tracing::warn!("the settings effects loop was already running");
     }
-    let scans = Arc::new(LocalCatalog::new(db.clone()));
     let settings = SettingsSetup::build(
         p,
         effects,
         &outbound,
         library.management_settings.clone(),
-        scans,
-        &providers,
+        SettingsSetup::live_probes(p, &providers),
+        auth.users.lastfm.clone(),
         library.bins.clone(),
-    )
-    .with_section_prefs(
-        Arc::new(SqliteSectionPrefsStore { db: db.clone() }),
-        Arc::new(SqliteLinkStatus {
-            pool: db.sqlx().clone(),
-            lastfm: auth.users.lastfm.clone(),
-        }),
-    )
-    .with_library_catalog(Arc::new(SqliteLibraryPolicyCatalog {
-        pool: db.sqlx().clone(),
-    }));
+    );
     let plugins = PluginsSetup::build(p, plugin_host, plugin_ticks, providers.github_repos.clone());
     plugins.sync_ticks().await;
 

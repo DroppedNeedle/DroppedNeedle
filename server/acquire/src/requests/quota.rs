@@ -28,9 +28,10 @@ use super::sqlite::RequestStore;
 use crate::db::{AcquireDb, to_u64};
 use crate::dispatch::DispatchOrigin;
 use droppedneedle_auth::Role;
-use droppedneedle_kernel::db::DbError;
+use droppedneedle_kernel::db::{DbError, Lane};
 use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::sections::DownloadPolicy;
+use rusqlite::OptionalExtension as _;
 
 /// Global download-policy quota knobs.
 #[derive(Debug, Clone)]
@@ -137,30 +138,9 @@ impl QuotaLedger {
             .ok_or_else(|| RequestsError::internal(&"download settings cannot be read"))
     }
 
-    /// Set one user's override row, within the bounds below.
+    /// Set one user's override in the ledger only, within the bounds.
     pub fn set_override(&self, user_id: &str, quota: QuotaOverride) -> Result<(), RequestsError> {
-        let bounds = [
-            (
-                "request_quota_count",
-                quota.request_count.map(u64::from),
-                0_u64,
-            ),
-            (
-                "request_quota_days",
-                quota.request_days.map(u64::from),
-                1_u64,
-            ),
-            ("storage_quota_gb", quota.storage_gb, 0_u64),
-        ];
-        for (name, value, low) in bounds {
-            if let Some(value) = value
-                && (value < low || value > 1_000_000)
-            {
-                return Err(RequestsError::InvalidInput {
-                    message: format!("{name} must be between {low} and 1000000"),
-                });
-            }
-        }
+        check_override(&quota)?;
         self.overrides
             .write()
             .map_err(|cause| {
@@ -168,6 +148,94 @@ impl QuotaLedger {
             })?
             .insert(user_id.to_owned(), quota);
         Ok(())
+    }
+
+    /// One user's saved override, or `None` when the user inherits fully.
+    pub async fn saved_override(
+        &self,
+        user_id: &str,
+    ) -> Result<Option<QuotaOverride>, RequestsError> {
+        let user_id = user_id.to_owned();
+        let row = self
+            .db
+            .db()
+            .read("quota.override", move |conn| {
+                conn.prepare_cached(sql::QUOTA_OVERRIDE.text())?
+                    .query_row([user_id], sql::QuotaOverrideRow::read)
+                    .optional()
+                    .map_err(DbError::from)
+            })
+            .await
+            .map_err(|error| quota_store_error("quota.override", error))?;
+        Ok(row.map(stored_override))
+    }
+
+    /// Save one user's override and apply it at once; all `None` deletes
+    /// the row back to pure inherit. Out-of-bounds values are refused
+    /// before anything is written, and the row is written before the
+    /// ledger moves, so a failed write leaves both as they were. An
+    /// unknown user is `NotFound`.
+    pub async fn save_override(
+        &self,
+        user_id: &str,
+        quota: QuotaOverride,
+    ) -> Result<(), RequestsError> {
+        check_override(&quota)?;
+        let (row_user, row) = (user_id.to_owned(), quota.clone());
+        self.db
+            .db()
+            .write(Lane::Foreground, "quota.override.save", move |tx| {
+                if row.request_count.is_none()
+                    && row.request_days.is_none()
+                    && row.storage_gb.is_none()
+                {
+                    tx.execute(sql::DELETE_QUOTA_OVERRIDE.text(), [&row_user])?;
+                    return Ok(());
+                }
+                tx.execute(
+                    sql::UPSERT_QUOTA_OVERRIDE.text(),
+                    rusqlite::params![
+                        row_user,
+                        row.request_count.map(i64::from),
+                        row.request_days.map(i64::from),
+                        row.storage_gb.and_then(|value| i64::try_from(value).ok()),
+                    ],
+                )?;
+                Ok(())
+            })
+            .await
+            .map_err(|error| match error {
+                OverrideWriteError::UnknownUser => RequestsError::NotFound,
+                OverrideWriteError::Db(error) => quota_store_error("quota.override.save", error),
+            })?;
+        self.set_override(user_id, quota)
+    }
+
+    /// Load every saved override into the ledger. Boot calls this so
+    /// saved overrides survive restarts. A row that no longer passes the
+    /// bounds (edited behind the API's back) is skipped with a warning:
+    /// one bad row must not stop the boot.
+    pub async fn reload_overrides(&self) -> Result<usize, DbError> {
+        let rows = self
+            .db
+            .db()
+            .read("quota.overrides", |conn| {
+                conn.prepare_cached(sql::QUOTA_OVERRIDES.text())?
+                    .query_map([], sql::QuotaOverrideRow::read)?
+                    .collect::<rusqlite::Result<Vec<_>>>()
+                    .map_err(DbError::from)
+            })
+            .await?;
+        let mut loaded = 0;
+        for row in rows {
+            let user_id = row.user_id.clone();
+            if self.set_override(&user_id, stored_override(row)).is_err() {
+                tracing::warn!(user_id, "stored quota override fails bounds; skipping");
+                continue;
+            }
+            loaded += 1;
+        }
+        Ok(loaded)
     }
 
     /// One user's effective limits: override where set, else policy default.
@@ -309,10 +377,10 @@ impl QuotaLedger {
         Ok(to_u64(total))
     }
 
-    /// Indexed bytes landed by one user's download tasks.
-    /// Scanned files have no task and count only
-    /// toward the global cap.
-    async fn user_bytes(&self, user_id: &str) -> Result<u64, RequestsError> {
+    /// Indexed bytes landed by one user's download tasks: the figure the
+    /// storage quota holds the user to. Scanned files have no task and
+    /// count only toward the global cap.
+    pub async fn user_bytes(&self, user_id: &str) -> Result<u64, RequestsError> {
         let user_id = user_id.to_owned();
         let total: i64 = self
             .db
@@ -324,6 +392,83 @@ impl QuotaLedger {
             .await
             .map_err(|error| RequestsError::internal(&format_args!("user bytes read: {error}")))?;
         Ok(to_u64(total))
+    }
+}
+
+/// The bounds on an override: count 0-1M, days 1-1M, storage 0-1M.
+fn check_override(quota: &QuotaOverride) -> Result<(), RequestsError> {
+    let bounds = [
+        (
+            "request_quota_count",
+            quota.request_count.map(u64::from),
+            0_u64,
+        ),
+        (
+            "request_quota_days",
+            quota.request_days.map(u64::from),
+            1_u64,
+        ),
+        ("storage_quota_gb", quota.storage_gb, 0_u64),
+    ];
+    for (name, value, low) in bounds {
+        if let Some(value) = value
+            && (value < low || value > 1_000_000)
+        {
+            return Err(RequestsError::InvalidInput {
+                message: format!("{name} must be between {low} and 1000000"),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// A stored override row as the ledger holds it. A value that does not
+/// fit is read as unset.
+fn stored_override(row: sql::QuotaOverrideRow) -> QuotaOverride {
+    QuotaOverride {
+        request_count: row
+            .request_quota_count
+            .and_then(|value| u32::try_from(value).ok()),
+        request_days: row
+            .request_quota_days
+            .and_then(|value| u32::try_from(value).ok()),
+        storage_gb: row
+            .storage_quota_gb
+            .and_then(|value| u64::try_from(value).ok()),
+    }
+}
+
+/// Why an override write failed.
+#[derive(Debug, thiserror::Error)]
+enum OverrideWriteError {
+    /// No account to hang the override on: the foreign key refused it.
+    #[error("no such user")]
+    UnknownUser,
+    /// Any other failure, the lane's own included.
+    #[error(transparent)]
+    Db(#[from] DbError),
+}
+
+impl From<rusqlite::Error> for OverrideWriteError {
+    fn from(error: rusqlite::Error) -> Self {
+        match &error {
+            rusqlite::Error::SqliteFailure(failure, _)
+                if failure.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_FOREIGNKEY =>
+            {
+                Self::UnknownUser
+            }
+            _ => Self::Db(error.into()),
+        }
+    }
+}
+
+/// A busy database stays busy; anything else is a server fault.
+fn quota_store_error(operation: &str, error: DbError) -> RequestsError {
+    match error {
+        DbError::Busy { .. } => RequestsError::Busy {
+            operation: operation.to_owned(),
+        },
+        other => RequestsError::internal(&format_args!("{operation}: {other}")),
     }
 }
 

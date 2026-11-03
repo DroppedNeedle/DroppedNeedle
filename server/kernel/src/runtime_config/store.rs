@@ -501,7 +501,31 @@ impl ConfigStore {
             "config.save_secret",
             S::KEY,
             |stored| {
-                let stored: S = decode_value(S::KEY, stored.as_ref())?;
+                // A row that does not decode would leave the work waiting
+                // on the section waiting for good, so a save replaces it.
+                // It holds no secret a mask could keep: a save that sends
+                // the mask is refused, so a secret is never wiped by a
+                // save that meant to keep it.
+                let stored: S = match decode_value(S::KEY, stored.as_ref()) {
+                    Ok(stored) => stored,
+                    Err(error) => {
+                        let keeps_a_secret = normalized.secret_fields().into_iter().any(|field| {
+                            resolve_on_save(field.value.expose(), field.strip)
+                                == SaveResolution::KeepStored
+                        });
+                        if keeps_a_secret {
+                            let ConfigError::SectionDecode { section, reason } = error else {
+                                return Err(error);
+                            };
+                            return Err(ConfigError::SectionDecode {
+                                section,
+                                reason: format!("{reason}; enter its secrets again to replace it"),
+                            });
+                        }
+                        tracing::warn!(%error, "a settings section that did not read is replaced by a save");
+                        S::default()
+                    }
+                };
                 let sealed = self.seal(normalized, stored)?;
                 Ok::<_, ConfigError>(Change::Write(encode_sealed::<S>(&sealed)?, sealed))
             },
@@ -1135,6 +1159,63 @@ mod tests {
         assert!(!String::from_utf8_lossy(&body).contains("opened-sentinel"));
         let live = store.live::<SlskdConnection>().get().unwrap();
         assert!(serde_json::to_value(&**live).is_err());
+    }
+
+    /// A secret section whose stored row no longer decodes is replaced by
+    /// a save, so the work that waits on it can resume.
+    #[test]
+    fn a_save_replaces_a_secret_section_that_does_not_decode() {
+        let dir = TestDir::new("store");
+        let store =
+            ConfigStore::scratch(dir.path(), Crypto::from_key_bytes(&[3u8; 32]).unwrap()).unwrap();
+        store
+            .change(
+                DurableLane::Foreground,
+                "test.damage",
+                SlskdConnection::KEY,
+                |_| Ok::<_, ConfigError>(Change::Write(serde_json::json!({"api_key": 7}), ())),
+            )
+            .unwrap();
+        assert!(store.live::<SlskdConnection>().get().is_err());
+        store
+            .save_secret_blocking(SlskdConnection {
+                api_key: "fresh".into(),
+                ..SlskdConnection::default()
+            })
+            .unwrap();
+        let live = store.live::<SlskdConnection>().get().unwrap();
+        assert_eq!(live.api_key.expose(), "fresh");
+    }
+
+    /// A save that sends the mask over a row that does not decode is
+    /// refused: it has no secret to keep, and the stored one is left as it
+    /// was rather than wiped.
+    #[test]
+    fn a_masked_save_over_a_section_that_does_not_decode_is_refused() {
+        let dir = TestDir::new("store");
+        let store =
+            ConfigStore::scratch(dir.path(), Crypto::from_key_bytes(&[3u8; 32]).unwrap()).unwrap();
+        let damaged = serde_json::json!({
+            "enabled": true,
+            "url": 7,
+            "api_key": store.inner.crypto.encrypt("kept").unwrap(),
+        });
+        let written = damaged.clone();
+        store
+            .change(
+                DurableLane::Foreground,
+                "test.damage",
+                SlskdConnection::KEY,
+                |_| Ok::<_, ConfigError>(Change::Write(written, ())),
+            )
+            .unwrap();
+        let refused = store.save_secret_blocking(SlskdConnection {
+            enabled: true,
+            api_key: crate::runtime_config::mask::SECRET_MASK.into(),
+            ..SlskdConnection::default()
+        });
+        assert!(matches!(refused, Err(ConfigError::SectionDecode { .. })));
+        assert_eq!(store.entry(SlskdConnection::KEY).unwrap().value, damaged);
     }
 
     #[test]

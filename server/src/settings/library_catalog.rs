@@ -9,14 +9,21 @@
 use std::collections::BTreeSet;
 
 use futures_util::future::BoxFuture;
-use sqlx::Row;
 
+use super::sql;
+use droppedneedle_kernel::db::{Db, DbError};
 use droppedneedle_library::policy::{CatalogRoot, LibraryPolicyCatalog, ScopeCounts, ScopeTotals};
 
 /// The production catalog reads.
 pub struct SqliteLibraryPolicyCatalog {
-    /// Reader pool.
-    pub pool: sqlx::SqlitePool,
+    db: Db,
+}
+
+impl SqliteLibraryPolicyCatalog {
+    /// The reads over the database.
+    pub fn new(db: Db) -> Self {
+        Self { db }
+    }
 }
 
 /// Escape `\`, `%` and `_` for a `LIKE ... ESCAPE '\'` pattern.
@@ -54,15 +61,6 @@ fn requested_json(scopes: &[(String, String)]) -> String {
     serde_json::Value::Array(rows).to_string()
 }
 
-const REQUESTED: &str = "WITH requested AS (SELECT \
-     json_extract(value, '$[0]') AS root_id, json_extract(value, '$[1]') AS scope_key, \
-     json_extract(value, '$[2]') AS prefix, json_extract(value, '$[3]') AS pattern \
-     FROM json_each(?1))";
-
-const UNDER_SCOPE: &str = "track.root_id = requested.root_id AND (requested.prefix = '.' \
-     OR track.relative_path = requested.prefix \
-     OR track.relative_path LIKE requested.pattern ESCAPE '\\')";
-
 impl LibraryPolicyCatalog for SqliteLibraryPolicyCatalog {
     fn scope_counts<'a>(
         &'a self,
@@ -72,27 +70,19 @@ impl LibraryPolicyCatalog for SqliteLibraryPolicyCatalog {
             if scopes.is_empty() {
                 return Ok(ScopeCounts::new());
             }
-            let query = format!(
-                "{REQUESTED} SELECT requested.root_id, requested.scope_key, \
-                 COALESCE(SUM(track.availability = 'indexed'), 0), \
-                 COALESCE(SUM(track.availability IN ('indexed', 'excluded')), 0) \
-                 FROM requested LEFT JOIN local_tracks track ON {UNDER_SCOPE} \
-                 GROUP BY requested.root_id, requested.scope_key"
-            );
-            let rows = sqlx::query(&query)
-                .bind(requested_json(scopes))
-                .fetch_all(&self.pool)
+            let requested = requested_json(scopes);
+            self.db
+                .read("settings.policy.scope_counts", move |conn| {
+                    let mut counts = ScopeCounts::new();
+                    let mut statement = conn.prepare_cached(sql::SCOPE_COUNTS.text())?;
+                    for row in statement.query_map([requested], sql::ScopeCountRow::read)? {
+                        let row = row?;
+                        counts.insert((row.root_id, row.scope_key), (row.indexed, row.on_disk));
+                    }
+                    Ok::<_, DbError>(counts)
+                })
                 .await
-                .map_err(|cause| cause.to_string())?;
-            let mut counts = ScopeCounts::new();
-            for row in rows {
-                let root_id: String = row.try_get(0).map_err(|cause| cause.to_string())?;
-                let key: String = row.try_get(1).map_err(|cause| cause.to_string())?;
-                let indexed: i64 = row.try_get(2).map_err(|cause| cause.to_string())?;
-                let on_disk: i64 = row.try_get(3).map_err(|cause| cause.to_string())?;
-                counts.insert((root_id, key), (indexed, on_disk));
-            }
-            Ok(counts)
+                .map_err(|cause| cause.to_string())
         })
     }
 
@@ -104,29 +94,32 @@ impl LibraryPolicyCatalog for SqliteLibraryPolicyCatalog {
             if scopes.is_empty() {
                 return Ok(ScopeTotals::default());
             }
-            let query = format!(
-                "{REQUESTED} SELECT COALESCE(SUM(track.availability = 'indexed'), 0), \
-                 COALESCE(SUM(track.availability IN ('indexed', 'excluded')), 0), COUNT(*) \
-                 FROM local_tracks track \
-                 WHERE EXISTS (SELECT 1 FROM requested WHERE {UNDER_SCOPE})"
-            );
-            let (indexed, on_disk, all): (i64, i64, i64) = sqlx::query_as(&query)
-                .bind(requested_json(scopes))
-                .fetch_one(&self.pool)
+            let requested = requested_json(scopes);
+            let totals = self
+                .db
+                .read("settings.policy.scope_totals", move |conn| {
+                    conn.prepare_cached(sql::SCOPE_TOTALS.text())?
+                        .query_row([requested], sql::ScopeTotalsRow::read)
+                        .map_err(DbError::from)
+                })
                 .await
                 .map_err(|cause| cause.to_string())?;
             Ok(ScopeTotals {
-                indexed,
-                on_disk,
-                all,
+                indexed: totals.indexed,
+                on_disk: totals.on_disk,
+                all: totals.all_files,
             })
         })
     }
 
     fn has_tracks<'a>(&'a self) -> BoxFuture<'a, Result<bool, String>> {
         Box::pin(async move {
-            sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM local_tracks)")
-                .fetch_one(&self.pool)
+            self.db
+                .read("settings.policy.has_tracks", |conn| {
+                    conn.prepare_cached(sql::ANY_TRACK.text())?
+                        .query_row([], |row| row.get(0))
+                        .map_err(DbError::from)
+                })
                 .await
                 .map_err(|cause| cause.to_string())
         })
@@ -134,36 +127,24 @@ impl LibraryPolicyCatalog for SqliteLibraryPolicyCatalog {
 
     fn catalog_roots<'a>(&'a self) -> BoxFuture<'a, Result<Vec<CatalogRoot>, String>> {
         Box::pin(async move {
-            // SQLite fills the bare `relative_path` from the row that holds
-            // MIN(file_path), so both sample paths come from one row.
-            let rows: Vec<(String, i64, String, String, bool)> = sqlx::query_as(
-                "SELECT root_id, COUNT(*), MIN(file_path), relative_path, \
-                 SUM(availability IN ('indexed', 'excluded')) > 0 \
-                 FROM local_tracks GROUP BY root_id ORDER BY root_id",
-            )
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|cause| cause.to_string())?;
-            Ok(rows
-                .into_iter()
-                .map(
-                    |(
-                        root_id,
-                        track_count,
-                        sample_file_path,
-                        sample_relative_path,
-                        any_on_disk,
-                    )| {
-                        CatalogRoot {
-                            root_id,
-                            sample_file_path,
-                            sample_relative_path,
-                            track_count,
-                            any_on_disk,
-                        }
-                    },
-                )
-                .collect())
+            self.db
+                .read("settings.policy.catalog_roots", |conn| {
+                    conn.prepare_cached(sql::CATALOG_ROOTS.text())?
+                        .query_map([], |row| {
+                            let row = sql::CatalogRootRow::read(row)?;
+                            Ok(CatalogRoot {
+                                root_id: row.root_id,
+                                sample_file_path: row.sample_file_path,
+                                sample_relative_path: row.sample_relative_path,
+                                track_count: row.track_count,
+                                any_on_disk: row.any_on_disk,
+                            })
+                        })?
+                        .collect::<rusqlite::Result<Vec<_>>>()
+                        .map_err(DbError::from)
+                })
+                .await
+                .map_err(|cause| cause.to_string())
         })
     }
 }

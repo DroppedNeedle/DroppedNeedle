@@ -5,39 +5,31 @@
 //! submit and dispatch); this module is the admin face that edits and
 //! inspects it:
 //!
-//! - Overrides persist in `user_quotas` (all-`None` deletes the row back to
-//!   pure inherit, the v2 `set` rule) and apply to the ledger at once, so
-//!   an edited quota bites on the next request. Boot reloads the table into
-//!   the ledger ([`reload_overrides`]).
+//! - Overrides are saved by the ledger, which owns `user_quotas`
+//!   (all-`None` deletes the row back to pure inherit, the v2 `set` rule),
+//!   and apply at once, so an edited quota bites on the next request. Boot
+//!   reloads them into the ledger.
 //! - Bounds mirror v2: count 0-1M, days 1-1M, storage 0-1M; 0 means
 //!   unlimited.
 //! - Usage reads the enforcement view: window counts from the ledger's
-//!   recorded asks, storage from landed download bytes by owner.
-//!   Scan-discovered files stay unowned (as in v2). Storage reads 0
-//!   until download tasks record their sizes (not recorded yet); the
-//!   query is live so the bars fill in with no admin change.
+//!   recorded asks, storage from the ledger's own figure, the indexed
+//!   bytes of the files the user's downloads landed. Scan-discovered files
+//!   stay unowned (as in v2).
 //! - `admin`/`trusted` are exempt from per-user quotas (as in v2).
 //!
 //! One clean-slate break: unknown users answer 404 on both routes, matching
 //! the user-admin routes. v2 answered 200-with-zeros on GET and
 //! blew up on the FK on PUT; neither helps an admin editor.
 
-use super::models::{QuotaOverrideView, QuotaResponse};
-use super::{AdminDb, error::AdminError, models::QuotaOverrideBody};
+use super::error::AdminError;
+use super::models::{QuotaOverrideBody, QuotaOverrideView, QuotaResponse};
+use droppedneedle_acquire::requests::error::RequestsError;
 use droppedneedle_acquire::requests::quota::{QuotaLedger, QuotaOverride};
 use droppedneedle_auth::users::UsersDeps;
-use droppedneedle_kernel::db::{DbError, writer::Lane};
-
-/// Top of every quota bound (the v2 1M ceiling).
-const QUOTA_MAX: u64 = 1_000_000;
-
-/// One raw override row: user, count, days, storage.
-type OverrideRow = (String, Option<i64>, Option<i64>, Option<i64>);
 
 /// One user's quota standing for the admin editor.
 pub async fn get_quota(
     users: &UsersDeps,
-    db: &AdminDb,
     ledger: &QuotaLedger,
     user_id: &str,
 ) -> Result<QuotaResponse, AdminError> {
@@ -47,7 +39,10 @@ pub async fn get_quota(
         .await
         .map_err(|error| AdminError::internal(&format_args!("quota user read failed: {error}")))?
         .ok_or(AdminError::NotFound)?;
-    let row = read_override(db, user_id).await?;
+    let row = ledger
+        .saved_override(user_id)
+        .await
+        .map_err(|error| ledger_error("quota override read", error))?;
     let effective = ledger.effective_quota(user_id).map_err(|error| {
         AdminError::internal(&format_args!("effective quota failed: {error:?}"))
     })?;
@@ -61,7 +56,10 @@ pub async fn get_quota(
         .map_err(|error| {
             AdminError::internal(&format_args!("quota window count failed: {error:?}"))
         })?;
-    let storage_bytes = user_storage_bytes(db, user_id).await?;
+    let storage_bytes = ledger
+        .user_bytes(user_id)
+        .await
+        .map_err(|error| ledger_error("quota storage read", error))?;
     Ok(QuotaResponse {
         user_id: user.id,
         quota_override: QuotaOverrideView {
@@ -79,12 +77,11 @@ pub async fn get_quota(
 }
 
 /// Set (or, with all-`None`, clear) one user's overrides, then return the
-/// fresh standing. The table persists first so a failed write never leaves
-/// the ledger ahead of the database; the ledger follows, and `check_bounds`
-/// already answered 400 above, so the ledger cannot refuse the input.
+/// fresh standing. The ledger refuses values out of bounds (a 400) before
+/// it writes anything, and writes the row before it applies it, so the two
+/// never diverge.
 pub async fn set_quota(
     users: &UsersDeps,
-    db: &AdminDb,
     ledger: &QuotaLedger,
     user_id: &str,
     body: &QuotaOverrideBody,
@@ -95,185 +92,24 @@ pub async fn set_quota(
         .await
         .map_err(|error| AdminError::internal(&format_args!("quota user read failed: {error}")))?
         .ok_or(AdminError::NotFound)?;
-    check_bounds(body)?;
     let row = QuotaOverride {
         request_count: body.request_quota_count,
         request_days: body.request_quota_days,
         storage_gb: body.storage_quota_gb,
     };
-    // Persist first: a failed table write answers before the ledger moves,
-    // so the two never diverge. The ledger cannot refuse below (bounds
-    // already passed) except an InvalidInput if the two bound sites ever
-    // drift apart, which stays 400.
-    write_override(db, &user.id, &row).await?;
-    if let Err(error) = ledger.set_override(&user.id, row.clone()) {
-        if let droppedneedle_acquire::requests::error::RequestsError::InvalidInput { message } =
-            error
-        {
-            return Err(AdminError::InvalidInput { message });
-        }
-        return Err(AdminError::internal(&format_args!(
-            "quota ledger write failed: {error:?}"
-        )));
-    }
-    get_quota(users, db, ledger, &user.id).await
-}
-
-/// Reload every stored override into the ledger. Boot calls this after
-/// migrations so durable edits survive restarts. Rows that no longer pass
-/// bounds (hand-edited behind the API's back) are skipped with a warning,
-/// never fatal: one bad row must not brick the boot.
-pub async fn reload_overrides(
-    pool: &sqlx::SqlitePool,
-    ledger: &QuotaLedger,
-) -> Result<usize, droppedneedle_kernel::db::error::DbError> {
-    let rows: Vec<OverrideRow> =
-        sqlx::query_as("SELECT user_id, request_quota_count, request_quota_days, storage_quota_gb FROM user_quotas")
-            .fetch_all(pool)
-            .await
-            .map_err(|error| droppedneedle_kernel::db::map_sqlx_busy("quota-overrides-reload", error))?;
-    let mut loaded = 0;
-    for (user_id, count, days, storage) in rows {
-        let row = QuotaOverride {
-            request_count: count.and_then(|value| u32::try_from(value).ok()),
-            request_days: days.and_then(|value| u32::try_from(value).ok()),
-            storage_gb: storage.and_then(|value| u64::try_from(value).ok()),
-        };
-        if ledger.set_override(&user_id, row).is_err() {
-            tracing::warn!(user_id, "stored quota override fails bounds; skipping");
-            continue;
-        }
-        loaded += 1;
-    }
-    Ok(loaded)
-}
-
-/// Stored override row for one user, or `None` when the user inherits fully.
-async fn read_override(db: &AdminDb, user_id: &str) -> Result<Option<QuotaOverride>, AdminError> {
-    let row: Option<(Option<i64>, Option<i64>, Option<i64>)> = sqlx::query_as(
-        "SELECT request_quota_count, request_quota_days, storage_quota_gb
-         FROM user_quotas WHERE user_id = ?1",
-    )
-    .bind(user_id)
-    .fetch_optional(db.db.sqlx())
-    .await
-    .map_err(|error| AdminError::internal(&format_args!("quota override read failed: {error}")))?;
-    Ok(row.map(|(count, days, storage)| QuotaOverride {
-        request_count: count.and_then(|value| u32::try_from(value).ok()),
-        request_days: days.and_then(|value| u32::try_from(value).ok()),
-        storage_gb: storage.and_then(|value| u64::try_from(value).ok()),
-    }))
-}
-
-/// Why an override write failed.
-#[derive(Debug, thiserror::Error)]
-enum OverrideWriteError {
-    /// No `auth_users` row to hang the override on: the foreign key refused
-    /// it. The user is known to the user store but not mirrored yet.
-    #[error("no such user")]
-    UnknownUser,
-    /// Any other failure, the lane's own included.
-    #[error(transparent)]
-    Db(#[from] DbError),
-}
-
-impl From<rusqlite::Error> for OverrideWriteError {
-    fn from(error: rusqlite::Error) -> Self {
-        match &error {
-            rusqlite::Error::SqliteFailure(failure, _)
-                if failure.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_FOREIGNKEY =>
-            {
-                Self::UnknownUser
-            }
-            _ => Self::Db(error.into()),
-        }
-    }
-}
-
-/// Persist one override row through the writer lane. All-`None` deletes the
-/// row back to pure inherit.
-async fn write_override(
-    db: &AdminDb,
-    user_id: &str,
-    row: &QuotaOverride,
-) -> Result<(), AdminError> {
-    let user_id = user_id.to_owned();
-    let row = row.clone();
-    db.db
-        .write(Lane::Foreground, "admin-quota-set", move |tx| {
-            if row.request_count.is_none() && row.request_days.is_none() && row.storage_gb.is_none()
-            {
-                tx.execute(
-                    "DELETE FROM user_quotas WHERE user_id = ?1",
-                    rusqlite::params![user_id],
-                )?;
-                return Ok(());
-            }
-            tx.execute(
-                "INSERT INTO user_quotas
-                     (user_id, request_quota_count, request_quota_days, storage_quota_gb)
-                 VALUES (?1, ?2, ?3, ?4)
-                 ON CONFLICT (user_id) DO UPDATE SET
-                     request_quota_count = excluded.request_quota_count,
-                     request_quota_days = excluded.request_quota_days,
-                     storage_quota_gb = excluded.storage_quota_gb",
-                rusqlite::params![
-                    user_id,
-                    row.request_count.map(i64::from),
-                    row.request_days.map(i64::from),
-                    row.storage_gb.and_then(|value| i64::try_from(value).ok()),
-                ],
-            )?;
-            Ok(())
-        })
+    ledger
+        .save_override(&user.id, row)
         .await
-        .map_err(|error| match error {
-            OverrideWriteError::UnknownUser => AdminError::NotFound,
-            OverrideWriteError::Db(other) => {
-                AdminError::internal(&format_args!("quota override write failed: {other}"))
-            }
-        })?;
-    Ok(())
+        .map_err(|error| ledger_error("quota override write", error))?;
+    get_quota(users, ledger, &user.id).await
 }
 
-/// Landed download bytes owned by one user. Completed tasks only; a failed
-/// or cancelled pull never lands bytes. `NULL` sizes (tasks recorded
-/// before sizes land) simply do not add up.
-async fn user_storage_bytes(db: &AdminDb, user_id: &str) -> Result<u64, AdminError> {
-    let total: Option<i64> = sqlx::query_scalar(
-        "SELECT COALESCE(SUM(total_size_bytes), 0) FROM download_tasks
-         WHERE user_id = ?1 AND status = 'completed'",
-    )
-    .bind(user_id)
-    .fetch_one(db.db.sqlx())
-    .await
-    .map_err(|error| AdminError::internal(&format_args!("quota storage read failed: {error}")))?;
-    Ok(total.unwrap_or(0).max(0) as u64)
-}
-
-/// v2 `set_override` bounds: count 0-1M, days 1-1M, storage 0-1M.
-fn check_bounds(body: &QuotaOverrideBody) -> Result<(), AdminError> {
-    let bounds = [
-        (
-            "request_quota_count",
-            body.request_quota_count.map(u64::from),
-            0_u64,
-        ),
-        (
-            "request_quota_days",
-            body.request_quota_days.map(u64::from),
-            1_u64,
-        ),
-        ("storage_quota_gb", body.storage_quota_gb, 0_u64),
-    ];
-    for (name, value, low) in bounds {
-        if let Some(value) = value
-            && (value < low || value > QUOTA_MAX)
-        {
-            return Err(AdminError::InvalidInput {
-                message: format!("{name} must be between {low} and {QUOTA_MAX}"),
-            });
-        }
+/// A ledger failure as the admin routes answer it: an unknown user is a
+/// 404, input the bounds refuse a 400, and the rest a server fault.
+fn ledger_error(operation: &str, error: RequestsError) -> AdminError {
+    match error {
+        RequestsError::NotFound => AdminError::NotFound,
+        RequestsError::InvalidInput { message } => AdminError::InvalidInput { message },
+        other => AdminError::internal(&format_args!("{operation} failed: {other:?}")),
     }
-    Ok(())
 }

@@ -22312,16 +22312,6 @@
                 }
               }
             }
-          },
-          "503": {
-            "description": "Section prefs are unwired",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
           }
         },
         "security": [
@@ -30909,16 +30899,6 @@
                 }
               }
             }
-          },
-          "503": {
-            "description": "Catalog reads are unwired",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
           }
         },
         "security": [
@@ -31023,16 +31003,6 @@
                 }
               }
             }
-          },
-          "503": {
-            "description": "Catalog reads are unwired",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
           }
         },
         "security": [
@@ -31084,16 +31054,6 @@
           },
           "409": {
             "description": "Expected revision is stale",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "Catalog reads are unwired",
             "content": {
               "application/json": {
                 "schema": {

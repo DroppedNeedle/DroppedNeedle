@@ -6,10 +6,6 @@
 //! the session gate read for this request. `/system/health` and the
 //! precache status take any signed-in user, as in v2; stopping a precache
 //! takes a curator.
-//!
-//! Optional backends ([`AdminDb`], backups, checkpoint, precache) are
-//! `None` on unwired test states; handlers answer 503 there instead of
-//! guessing. Production always wires them.
 
 pub mod backups;
 pub mod cache;
@@ -18,6 +14,7 @@ pub mod handlers;
 pub mod models;
 pub mod queues;
 pub mod quota;
+pub(crate) mod sql;
 pub mod system;
 
 use std::sync::Arc;
@@ -63,78 +60,43 @@ pub struct AdminSetup {
     pub cache: ProviderCacheStore,
     /// Provider limiters and slot lanes for provider stats.
     pub providers: Arc<Providers>,
-    /// Database handles. `None` on unwired test states.
-    pub db: Option<AdminDb>,
-    /// Backup service. `None` on unwired test states.
-    pub backups: Option<Arc<BackupService>>,
-    /// Checkpoint service for health observability. `None` until wired.
-    pub checkpoint: Option<CheckpointService>,
-    /// Precache trigger on the loop supervisor. `None` on unwired
-    /// test states.
-    pub precache: Option<crate::bootstrap::jobs::PrecacheTrigger>,
-    /// Cover and artist image cache, for its stats and clears. `None` on
-    /// states without one.
-    pub covers: Option<droppedneedle_catalog::artwork::cache::ArtworkCache>,
+    /// Database handles.
+    pub db: AdminDb,
+    /// Backup service: the runtime's, which boot also uses.
+    pub backups: Arc<BackupService>,
+    /// Checkpoint service for health observability.
+    pub checkpoint: CheckpointService,
+    /// Precache trigger on the loop supervisor.
+    pub precache: crate::bootstrap::jobs::PrecacheTrigger,
+    /// Cover and artist image cache, for its stats and clears.
+    pub covers: droppedneedle_catalog::artwork::cache::ArtworkCache,
 }
 
 impl AdminSetup {
-    /// Bundle the always-present handles. Optional backends arrive via the
-    /// `with_*` builders; production wires all three.
+    /// Bundle every handle the admin routes use. The provider answer
+    /// cache is the one `providers` holds.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         users: UsersDeps,
         quota: Arc<droppedneedle_acquire::requests::quota::QuotaLedger>,
-        cache: ProviderCacheStore,
         providers: Arc<Providers>,
+        db: Db,
+        backups: Arc<BackupService>,
+        checkpoint: CheckpointService,
+        precache: crate::bootstrap::jobs::PrecacheTrigger,
+        covers: droppedneedle_catalog::artwork::cache::ArtworkCache,
     ) -> Self {
         Self {
             users,
             quota,
-            cache,
+            cache: providers.cache.clone(),
             providers,
-            db: None,
-            backups: None,
-            checkpoint: None,
-            precache: None,
-            covers: None,
+            db: AdminDb::new(db),
+            backups,
+            checkpoint,
+            precache,
+            covers,
         }
-    }
-
-    /// Attach the database handles.
-    #[must_use]
-    pub fn with_db(mut self, db: AdminDb) -> Self {
-        self.db = Some(db);
-        self
-    }
-
-    /// Attach the backup service: the runtime's, which boot also uses.
-    #[must_use]
-    pub fn with_backups(mut self, backups: Arc<BackupService>) -> Self {
-        self.backups = Some(backups);
-        self
-    }
-
-    /// Attach the checkpoint service.
-    #[must_use]
-    pub fn with_checkpoint(mut self, checkpoint: CheckpointService) -> Self {
-        self.checkpoint = Some(checkpoint);
-        self
-    }
-
-    /// Attach the precache trigger.
-    #[must_use]
-    pub fn with_precache(mut self, precache: crate::bootstrap::jobs::PrecacheTrigger) -> Self {
-        self.precache = Some(precache);
-        self
-    }
-
-    /// Attach the cover and artist image cache.
-    #[must_use]
-    pub fn with_covers(
-        mut self,
-        covers: droppedneedle_catalog::artwork::cache::ArtworkCache,
-    ) -> Self {
-        self.covers = Some(covers);
-        self
     }
 }
 

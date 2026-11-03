@@ -430,11 +430,7 @@ impl Rig {
         } else {
             FakeProbes::failing()
         });
-        let settings = SettingsSetup::for_tests_with_probes(
-            Arc::new(FixedIdGenerator::new(FIXED_ID)),
-            probes.clone(),
-        )
-        .expect("settings bundle builds");
+        let settings = crate::common::bundles::settings_at(&rig.platform, probes.clone());
         Self {
             settings,
             auth: rig,
@@ -666,9 +662,7 @@ async fn verify_resolves_masks_and_maps_verdicts() {
         valid: false,
         rate_limited: true,
     });
-    let settings =
-        SettingsSetup::for_tests_with_probes(Arc::new(FixedIdGenerator::new(FIXED_ID)), probes)
-            .expect("settings bundle builds");
+    let settings = crate::common::bundles::settings_at(&rig.platform, probes);
     let app = with_test_principal(
         droppedneedle::settings::wiring::routes()
             .with_state(settings)

@@ -1,5 +1,5 @@
-//! Navidrome playlist sync: the trigger route is admin-only and reads
-//! settings fresh on every call.
+//! Navidrome playlist sync: the trigger route is admin-only and reads the
+//! saved settings fresh on every call.
 
 use std::sync::{
     Arc, Mutex,
@@ -13,41 +13,44 @@ use axum::{
 use droppedneedle_auth::users::roles::{Role, SessionKind};
 use droppedneedle_kernel::jobs::BoxFuture;
 use droppedneedle_kernel::jobs::playlist_sync::{
-    PlaylistExporter, PlaylistSyncConfig, PlaylistSyncResult, PlaylistSyncSettings,
+    PlaylistExporter, PlaylistSyncConfig, PlaylistSyncResult,
 };
+use droppedneedle_kernel::runtime_config::secret_sections::NavidromeConnection;
+use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto};
 use droppedneedle_media::remotes::playlist_sync::{self as playlist_route, PlaylistSyncState};
 use tower::ServiceExt as _;
 
+use crate::common::ScratchDir;
 use crate::common::auth::{test_principal, with_test_principal};
 
-/// Scripted settings: the config under test, flippable between calls.
-#[derive(Clone, Default)]
-struct FakeSettings {
-    config: Arc<Mutex<Option<PlaylistSyncConfig>>>,
-    reads: Arc<AtomicU64>,
+/// Saved settings in a scratch store, with playlist sync on or off.
+struct Settings {
+    store: Arc<ConfigStore>,
+    _dir: ScratchDir,
 }
 
-impl FakeSettings {
-    fn enabled() -> Self {
-        Self {
-            config: Arc::new(Mutex::new(Some(PlaylistSyncConfig {
-                target_dir: "/music/playlists".to_owned(),
-                scope: "public".to_owned(),
-                remove_deleted: true,
-            }))),
-            reads: Arc::new(AtomicU64::new(0)),
-        }
+impl Settings {
+    fn open() -> Self {
+        let dir = ScratchDir::new("playlist-sync");
+        let crypto = Crypto::from_key_bytes(&[7u8; 32]).expect("test crypto builds");
+        let store = Arc::new(ConfigStore::scratch(&dir, crypto).expect("store opens"));
+        let settings = Self { store, _dir: dir };
+        settings.sync(true);
+        settings
     }
-}
 
-impl PlaylistSyncSettings for FakeSettings {
-    fn sync_config(&self) -> BoxFuture<'_, Option<PlaylistSyncConfig>> {
-        let config = Arc::clone(&self.config);
-        let reads = Arc::clone(&self.reads);
-        Box::pin(async move {
-            reads.fetch_add(1, Ordering::SeqCst);
-            config.lock().unwrap().clone()
-        })
+    /// Save the Navidrome connection with playlist sync turned on or off.
+    fn sync(&self, on: bool) {
+        self.store
+            .save_secret_blocking(NavidromeConnection {
+                enabled: true,
+                playlist_sync_enabled: on,
+                playlist_sync_path: "/music/playlists".to_owned(),
+                playlist_sync_scope: "public".to_owned(),
+                playlist_sync_remove_deleted: true,
+                ..NavidromeConnection::default()
+            })
+            .expect("settings save");
     }
 }
 
@@ -93,16 +96,16 @@ impl PlaylistExporter for FakeExporter {
     }
 }
 
-fn route_state(
-    settings: FakeSettings,
-    exporter: FakeExporter,
-) -> PlaylistSyncState<FakeSettings, FakeExporter> {
-    PlaylistSyncState { settings, exporter }
+fn route_state(settings: &Settings, exporter: FakeExporter) -> PlaylistSyncState<FakeExporter> {
+    PlaylistSyncState {
+        connection: settings.store.live(),
+        exporter,
+    }
 }
 
 /// The route signed in as `role`, standing in for the session gate, or
 /// with no session at all.
-fn app_as(role: Option<Role>, settings: FakeSettings, exporter: FakeExporter) -> axum::Router {
+fn app_as(role: Option<Role>, settings: &Settings, exporter: FakeExporter) -> axum::Router {
     let app = playlist_route::router(route_state(settings, exporter));
     match role {
         Some(role) => with_test_principal(
@@ -134,16 +137,24 @@ async fn read_json(response: axum::response::Response) -> serde_json::Value {
 
 #[tokio::test]
 async fn route_reads_settings_fresh_each_call() {
-    let settings = FakeSettings::enabled();
+    let settings = Settings::open();
     let exporter = FakeExporter::answering(FakeExporter::ok());
-    let app = app_as(Some(Role::Admin), settings.clone(), exporter.clone());
+    let app = app_as(Some(Role::Admin), &settings, exporter.clone());
 
     let response = app.oneshot(post_sync()).await.expect("router answers");
     assert_eq!(read_json(response).await["success"], true);
+    assert_eq!(
+        exporter.seen.lock().unwrap()[0],
+        PlaylistSyncConfig {
+            target_dir: "/music/playlists".to_owned(),
+            scope: "public".to_owned(),
+            remove_deleted: true,
+        }
+    );
 
-    // Flip sync off between calls: the next call sees it at once.
-    *settings.config.lock().unwrap() = None;
-    let app = app_as(Some(Role::Admin), settings, exporter.clone());
+    // Turn sync off between calls: the next call sees it at once.
+    settings.sync(false);
+    let app = app_as(Some(Role::Admin), &settings, exporter.clone());
     let response = app.oneshot(post_sync()).await.expect("router answers");
     assert_eq!(read_json(response).await["success"], false);
     assert_eq!(exporter.calls.load(Ordering::SeqCst), 1);
@@ -151,9 +162,9 @@ async fn route_reads_settings_fresh_each_call() {
 
 #[tokio::test]
 async fn route_refuses_everyone_but_admins() {
-    let settings = FakeSettings::enabled();
+    let settings = Settings::open();
     let exporter = FakeExporter::answering(FakeExporter::ok());
-    let app = app_as(None, settings, exporter.clone());
+    let app = app_as(None, &settings, exporter.clone());
 
     // No session at all: 401 with the Bearer challenge.
     let response = app.oneshot(post_sync()).await.expect("router answers");
@@ -167,8 +178,7 @@ async fn route_refuses_everyone_but_admins() {
     );
 
     // A signed-in non-admin: 403, and the exporter never runs.
-    let settings = FakeSettings::enabled();
-    let app = app_as(Some(Role::Trusted), settings, exporter.clone());
+    let app = app_as(Some(Role::Trusted), &settings, exporter.clone());
     let response = app.oneshot(post_sync()).await.expect("router answers");
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
     let body = read_json(response).await;

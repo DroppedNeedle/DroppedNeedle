@@ -748,7 +748,7 @@ async fn native_playlists_export_to_m3u_with_their_files() {
 
     let out = ScratchDir::new("m3u-export");
     let folder = out.join("playlists");
-    let report = M3uPlaylistExporter::new(Some(rig.runtime.db().sqlx().clone()))
+    let report = M3uPlaylistExporter::new(rig.runtime.db().clone())
         .sync(PlaylistSyncConfig {
             target_dir: folder.display().to_string(),
             scope: "all".to_owned(),

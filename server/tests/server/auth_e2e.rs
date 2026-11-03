@@ -250,32 +250,37 @@ impl E2e {
             ),
         );
         let backup_dir = p.config.root_app_dir.join("backups");
+        // Concerts over the scratch database and the rig's providers, whose
+        // addresses are closed, so no row can reach a real provider.
+        let concerts = droppedneedle_catalog::concerts::ConcertsSetup::from_platform(p, &providers);
         let jobs = droppedneedle::bootstrap::jobs::JobsSetup::build(
             p,
             self.runtime.checkpoint().clone(),
             media.jobs(p),
-            None,
+            concerts.sweep(),
+            droppedneedle::bootstrap::jobs::catalog_precache(
+                &catalog_setup,
+                &p.settings,
+                crate::common::listening_store(p),
+            )
+            .expect("the catalog bundle has its pages and artwork"),
+            droppedneedle::bootstrap::jobs::QueueSetup::new(p),
             droppedneedle::bootstrap::jobs::ScansEnded::default(),
         );
-        // Concerts over the scratch database and the rig's providers, whose
-        // addresses are closed, so no row can reach a real provider.
-        let concerts = droppedneedle_catalog::concerts::ConcertsSetup::from_platform(p, &providers);
         let admin = droppedneedle::admin::AdminSetup::new(
             auth.users.clone(),
             acquire.requests.quota.clone(),
-            providers.cache.clone(),
             providers.clone(),
-        )
-        .with_db(droppedneedle::admin::AdminDb::new(p.db.clone()))
-        .with_backups(std::sync::Arc::new(
-            droppedneedle_kernel::db::BackupService::new(
+            p.db.clone(),
+            std::sync::Arc::new(droppedneedle_kernel::db::BackupService::new(
                 &self.db_path,
                 &backup_dir,
                 p.clock.clone(),
-            ),
-        ))
-        .with_checkpoint(self.runtime.checkpoint().clone())
-        .with_precache(jobs.precache_trigger());
+            )),
+            self.runtime.checkpoint().clone(),
+            jobs.precache_trigger(),
+            crate::common::bundles::covers_at(p),
+        );
         // The production plugins bundle over the scratch plugins folder,
         // launching nothing, reading GitHub through the rig's providers.
         let ticks = droppedneedle_plugins::wiring::tick_store(p);
@@ -292,14 +297,7 @@ impl E2e {
             ticks,
             providers.github_repos.clone(),
         );
-        let settings =
-            droppedneedle::settings::wiring::SettingsSetup::for_tests(Arc::clone(&p.ids))
-                .expect("test settings bundle builds")
-                .with_library_catalog(Arc::new(
-                    droppedneedle::settings::library_catalog::SqliteLibraryPolicyCatalog {
-                        pool: p.db.sqlx().clone(),
-                    },
-                ));
+        let settings = crate::common::bundles::settings_closed(p);
         AppState::new(
             Arc::clone(&p.ids),
             p.config.clone(),
@@ -1668,6 +1666,14 @@ async fn auth_on_every_endpoint() {
     credentialed_pass(&matrix, &operations, &mut user).await;
     credentialed_pass(&matrix, &operations, &mut trusted).await;
     credentialed_pass(&matrix, &operations, &mut admin).await;
+
+    // The admin pass saved the wrapped settings with its dummy body, as the
+    // route does in the app; put the key back before trying it.
+    e2e.store
+        .save_secret_blocking(WrappedSettings {
+            api_key: Secret::new(TEST_WRAPPED_KEY),
+        })
+        .expect("wrapped key saves");
 
     // The wrapped key admits where no session can.
     for op in operations

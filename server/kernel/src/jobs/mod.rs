@@ -49,6 +49,7 @@ pub mod precache_phases;
 pub mod presence;
 pub mod queue;
 pub mod schedule;
+pub(crate) mod sql;
 pub mod supervisor;
 
 pub use futures_util::future::BoxFuture;

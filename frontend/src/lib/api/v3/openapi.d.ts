@@ -39402,15 +39402,6 @@ export interface operations {
                     "application/json": components["schemas"]["SectionPrefsResponse"];
                 };
             };
-            /** @description Section prefs are unwired */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
         };
     };
     put_username: {
@@ -44890,15 +44881,6 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Catalog reads are unwired */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
         };
     };
     preview_library_policy_impact: {
@@ -44972,15 +44954,6 @@ export interface operations {
                     "application/json": components["schemas"]["LibraryRestorableRootsResponse"];
                 };
             };
-            /** @description Catalog reads are unwired */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
         };
     };
     restore_library_roots: {
@@ -45016,15 +44989,6 @@ export interface operations {
             };
             /** @description Expected revision is stale */
             409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description Catalog reads are unwired */
-            503: {
                 headers: {
                     [name: string]: unknown;
                 };

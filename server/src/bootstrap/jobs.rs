@@ -11,11 +11,10 @@
 //! [`JobQueue`] beside the supervisor, areas take it to enqueue, and each
 //! registered kind's handler gets a supervised runner at boot.
 //!
-//! Loop backends are real where they exist (checkpoint passes, the
-//! now-playing feed and its upstream session pollers, the media servers'
-//! MBID warmups, the Navidrome playlist export, events settings reads, the
-//! concerts sweep, the personal mix); a backend a state does not wire runs
-//! as a no-op.
+//! Every loop runs on its real backend: checkpoint passes, the now-playing
+//! feed and its upstream session pollers, the media servers' MBID warmups,
+//! the Navidrome playlist export, events settings reads, the concerts
+//! sweep, library precache and the personal mix.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -26,14 +25,14 @@ use droppedneedle_catalog::concerts::ConcertsSweep;
 use droppedneedle_kernel::db::CheckpointService;
 use droppedneedle_kernel::db::cache::CacheError;
 use droppedneedle_kernel::jobs::cache_sync::CacheSyncStatus;
-use droppedneedle_kernel::jobs::checkpoint::{self, CheckpointRunner};
+use droppedneedle_kernel::jobs::checkpoint;
 use droppedneedle_kernel::jobs::discovery_demand::{self, DemandTick, NoDemand};
 use droppedneedle_kernel::jobs::events_kick::{self, EventsKick, FnKick, KickOutcome};
 use droppedneedle_kernel::jobs::events_watcher::{self, PollTimeSource};
 use droppedneedle_kernel::jobs::personal_mix::{self, PersonalMixer};
 use droppedneedle_kernel::jobs::playlist_export::M3uPlaylistExporter;
 use droppedneedle_kernel::jobs::playlist_sync;
-use droppedneedle_kernel::jobs::precache::{self, PrecacheLimits, PrecacheWork};
+use droppedneedle_kernel::jobs::precache::{self, PrecacheLimits};
 use droppedneedle_kernel::jobs::precache_phases::{LibraryPrecache, PrecacheSources};
 use droppedneedle_kernel::jobs::presence;
 use droppedneedle_kernel::jobs::queue::{self, Handlers, JobHandler, JobQueue, KindSpec};
@@ -43,26 +42,13 @@ use droppedneedle_kernel::jobs::{
 };
 use droppedneedle_kernel::platform::Platform;
 use droppedneedle_kernel::runtime_config::secret_sections::EventsSettings;
+use droppedneedle_kernel::runtime_config::secret_sections::NavidromeConnection;
 use droppedneedle_kernel::runtime_config::{ConfigStore, Live};
 use droppedneedle_media::MediaSetup;
-use droppedneedle_media::remotes::playlist_sync::{
-    NavidromeSyncSettings, PlaylistSyncState, ProdPlaylistSync,
-};
+use droppedneedle_media::remotes::playlist_sync::{PlaylistSyncState, ProdPlaylistSync};
 use droppedneedle_media::remotes::presence_feed::{MediaJobs, RegistryFeed, RemoteSessionPollers};
 use droppedneedle_media::remotes::warmup::{self, Warmups};
 use droppedneedle_providers::ProviderCacheStore;
-
-/// Checkpoint passes over the runtime's service.
-#[derive(Clone, Debug)]
-pub struct CheckpointInput {
-    service: CheckpointService,
-}
-
-impl CheckpointRunner for CheckpointInput {
-    fn cycle(&self) -> BoxFuture<'_, Result<(), String>> {
-        self.service.cycle()
-    }
-}
 
 /// Personal-mix refresh without a mixer (a boot that wired none): cycles
 /// succeed without rebuilding anything.
@@ -72,19 +58,6 @@ pub struct UnwiredMixer;
 impl PersonalMixer for UnwiredMixer {
     fn run_for_all_users(&self) -> BoxFuture<'_, Result<(), String>> {
         Box::pin(async { Ok(()) })
-    }
-}
-
-/// Precache on states without the catalog and artwork behind it: every run
-/// lands failed with the reason.
-#[derive(Clone, Debug, Default)]
-pub struct UnwiredPrecacheWork;
-
-impl PrecacheWork for UnwiredPrecacheWork {
-    fn run(&self, _progress: precache::Progress) -> BoxFuture<'_, Result<(), String>> {
-        Box::pin(async {
-            Err("Library precache has no catalog to warm on this server.".to_owned())
-        })
     }
 }
 
@@ -133,7 +106,7 @@ const PRECACHE_MAX_TIMEOUT: Duration = Duration::from_secs(8 * 3600);
 pub struct PrecacheTrigger {
     supervisor: Supervisor,
     status: CacheSyncStatus,
-    sources: Option<Arc<dyn PrecacheSources>>,
+    sources: Arc<dyn PrecacheSources>,
     scans: ScansEnded,
 }
 
@@ -145,15 +118,7 @@ impl PrecacheTrigger {
         &self,
         user_id: Option<String>,
     ) -> Result<precache::PrecacheHandle, AlreadyRunning> {
-        let Some(sources) = self.sources.clone() else {
-            return precache::spawn_run(
-                &self.supervisor,
-                UnwiredPrecacheWork,
-                self.limits(),
-                |_| {},
-            );
-        };
-        let work = LibraryPrecache::new(sources, self.status.clone(), user_id);
+        let work = LibraryPrecache::new(self.sources.clone(), self.status.clone(), user_id);
         let settler = work.settler();
         precache::spawn_run(&self.supervisor, work, self.limits(), move |outcome| {
             settler.settle(outcome);
@@ -249,26 +214,45 @@ impl PollTimeSource for EventsPollTime {
     }
 }
 
+/// The lookups library precache warms: the catalog bundle's artist and
+/// album pages and its artwork service. A bundle without them is a boot
+/// error, never a precache that quietly does nothing.
+pub fn catalog_precache(
+    catalog_setup: &droppedneedle_catalog::wiring::CatalogSetup,
+    config: &Arc<ConfigStore>,
+    listening: droppedneedle_media::playback::listening::ListeningStore,
+) -> Result<Arc<dyn PrecacheSources>, String> {
+    match (&catalog_setup.metadata, &catalog_setup.artwork) {
+        (Some(catalog), Some(artwork)) => Ok(Arc::new(
+            droppedneedle_catalog::metadata::precache::CatalogPrecache::new(
+                catalog.catalog.clone(),
+                artwork.clone(),
+                config.live(),
+                listening,
+            ),
+        )),
+        _ => Err("the catalog bundle has no artist pages or artwork service".to_owned()),
+    }
+}
+
 /// Everything `create_app` and `serve` need for jobs: the supervisor, the
 /// playlist route state, and the boot-loop inputs.
 #[derive(Clone)]
 pub struct JobsSetup {
     supervisor: Supervisor,
-    checkpoint: CheckpointInput,
+    checkpoint: CheckpointService,
     playlist: ProdPlaylistSync,
     presence: (RegistryFeed, RemoteSessionPollers),
     warmups: Warmups,
     poll_time: EventsPollTime,
-    watcher: Option<ConcertsSweep>,
+    watcher: ConcertsSweep,
     mixer: Arc<dyn PersonalMixer>,
     demand: Arc<dyn DemandTick>,
     cache_sync: CacheSyncStatus,
-    precache_sources: Option<Arc<dyn PrecacheSources>>,
+    precache_sources: Arc<dyn PrecacheSources>,
     scans: ScansEnded,
-    queues: Option<QueueSetup>,
+    queues: QueueSetup,
     handlers: Handlers,
-    /// Kinds registered through [`JobsSetup::with_job`].
-    kinds: usize,
 }
 
 /// The jobs table handle the areas enqueue through, built once beside the
@@ -326,25 +310,25 @@ impl QueueSetup {
 impl JobsSetup {
     /// Bind the backends over the platform's supervisor, settings and
     /// event hub: live checkpoint passes, the media feeds (presence, MBID
-    /// warmups, playlist export), the concerts sweep (`None` only on states
-    /// without concerts) and the count of ended scans the after-scan refresh
-    /// waits on.
+    /// warmups, playlist export), the concerts sweep, the lookups library
+    /// precache warms, the jobs table whose registered kinds get runners at
+    /// boot, and the count of ended scans the after-scan refresh waits on.
     pub fn build(
         platform: &Platform,
         checkpoint: CheckpointService,
         media: MediaJobs,
-        watcher: Option<ConcertsSweep>,
+        watcher: ConcertsSweep,
+        precache_sources: Arc<dyn PrecacheSources>,
+        queues: QueueSetup,
         scans: ScansEnded,
     ) -> Self {
         let config = platform.settings.clone();
         Self {
             supervisor: platform.supervisor.clone(),
-            checkpoint: CheckpointInput {
-                service: checkpoint,
-            },
+            checkpoint,
             playlist: PlaylistSyncState {
-                settings: NavidromeSyncSettings::new(config.live()),
-                exporter: M3uPlaylistExporter::new(Some(platform.db.sqlx().clone())),
+                connection: config.live::<NavidromeConnection>(),
+                exporter: M3uPlaylistExporter::new(platform.db.clone()),
             },
             presence: (media.feed(), media.pollers()),
             warmups: media.warmups(),
@@ -355,25 +339,17 @@ impl JobsSetup {
             mixer: Arc::new(UnwiredMixer),
             demand: Arc::new(NoDemand),
             cache_sync: CacheSyncStatus::new(platform.events.clone(), platform.clock.clone()),
-            precache_sources: None,
+            precache_sources,
             scans,
-            queues: None,
+            queues,
             handlers: Handlers::default(),
-            kinds: 0,
         }
-    }
-
-    /// The jobs table whose registered kinds get runners at boot.
-    pub fn with_queue(mut self, queues: QueueSetup) -> Self {
-        self.queues = Some(queues);
-        self
     }
 
     /// Register one job kind's handler. Every kind that can be enqueued is
     /// registered, so none waits with nothing to run it.
     pub fn with_job(mut self, spec: KindSpec, handler: Arc<dyn JobHandler>) -> Self {
         self.handlers = self.handlers.with(spec, handler);
-        self.kinds += 1;
         self
     }
 
@@ -396,48 +372,15 @@ impl JobsSetup {
         )
     }
 
-    /// The jobs table, once [`JobsSetup::with_queue`] gave it one.
-    pub fn queue(&self) -> Option<&JobQueue> {
-        self.queues.as_ref().map(QueueSetup::queue)
+    /// The jobs table.
+    pub fn queue(&self) -> &JobQueue {
+        self.queues.queue()
     }
 
     /// The scripted test kind, when the app was built with test hooks.
     #[cfg(any(test, feature = "test-support"))]
     pub fn scripted(&self) -> Option<&scripted::ScriptedJobs> {
-        self.queues
-            .as_ref()
-            .and_then(|queues| queues.scripted.as_ref())
-    }
-    /// The catalog and artwork lookups library precache runs warm.
-    pub fn with_precache_sources(mut self, sources: Arc<dyn PrecacheSources>) -> Self {
-        self.precache_sources = Some(sources);
-        self
-    }
-
-    /// Library precache over the catalog bundle's pages and artwork service, when
-    /// both are wired; otherwise runs stay unwired and fail with a reason.
-    pub fn with_precache_sources_from(
-        self,
-        catalog_setup: &droppedneedle_catalog::wiring::CatalogSetup,
-        config: &Arc<ConfigStore>,
-        listening: droppedneedle_media::playback::listening::ListeningStore,
-    ) -> Self {
-        match (&catalog_setup.metadata, &catalog_setup.artwork) {
-            (Some(catalog), Some(artwork)) => self.with_precache_sources(Arc::new(
-                droppedneedle_catalog::metadata::precache::CatalogPrecache::new(
-                    catalog.catalog.clone(),
-                    artwork.clone(),
-                    config.live(),
-                    listening,
-                ),
-            )),
-            _ => {
-                tracing::warn!(
-                    "library precache has no catalog or artwork service; runs will fail"
-                );
-                self
-            }
-        }
+        self.queues.scripted.as_ref()
     }
 
     /// Run the page image warm jobs through the catalog bundle's artwork service.
@@ -484,7 +427,7 @@ impl JobsSetup {
         PrecacheTrigger {
             supervisor: self.supervisor.clone(),
             status: self.cache_sync.clone(),
-            sources: self.precache_sources.clone(),
+            sources: Arc::clone(&self.precache_sources),
             scans: self.scans.clone(),
         }
     }
@@ -510,15 +453,11 @@ impl JobsSetup {
     }
 
     /// Start the always-on loops ([`droppedneedle_kernel::jobs::BOOT_JOBS`]
-    /// and the media servers' MBID warmups), and the post-scan precache
-    /// wait when precache is wired. Boot is the only caller, so a name
-    /// collision fails the boot loudly instead of
-    /// running half the loops, and so do job kinds registered without a
-    /// jobs table, which would otherwise never run.
+    /// and the media servers' MBID warmups), the post-scan precache wait
+    /// and a runner for each registered job kind. Boot is the only caller,
+    /// so a name collision fails the boot loudly instead of running half
+    /// the loops.
     pub fn spawn_loops(&self) -> Result<(), String> {
-        if self.queues.is_none() && self.kinds > 0 {
-            return Err("job kinds are registered but no jobs table was given".to_owned());
-        }
         checkpoint::spawn_on(
             &self.supervisor,
             self.checkpoint.clone(),
@@ -540,7 +479,7 @@ impl JobsSetup {
         .map_err(already_running(personal_mix::JOB_NAME))?;
         playlist_sync::spawn_on(
             &self.supervisor,
-            self.playlist.settings.clone(),
+            self.playlist.connection.clone(),
             self.playlist.exporter.clone(),
             playlist_sync::default_schedule(),
         )
@@ -560,21 +499,17 @@ impl JobsSetup {
         .map_err(already_running(discovery_demand::JOB_NAME))?;
         warmup::start_all(&self.supervisor, &self.warmups)
             .map_err(|_| "a remotes warmup is already running".to_owned())?;
-        if self.precache_sources.is_some() {
-            self.precache_trigger()
-                .spawn_after_scan()
-                .map_err(already_running(precache::AFTER_SCAN_JOB))?;
+        self.precache_trigger()
+            .spawn_after_scan()
+            .map_err(already_running(precache::AFTER_SCAN_JOB))?;
+        #[cfg_attr(not(any(test, feature = "test-support")), allow(unused_mut))]
+        let mut handlers = self.handlers.clone();
+        #[cfg(any(test, feature = "test-support"))]
+        if let Some(kit) = &self.queues.scripted {
+            handlers = handlers.with(scripted::ScriptedJobs::spec(), Arc::new(kit.clone()));
         }
-        if let Some(queues) = &self.queues {
-            #[cfg_attr(not(any(test, feature = "test-support")), allow(unused_mut))]
-            let mut handlers = self.handlers.clone();
-            #[cfg(any(test, feature = "test-support"))]
-            if let Some(kit) = &queues.scripted {
-                handlers = handlers.with(scripted::ScriptedJobs::spec(), Arc::new(kit.clone()));
-            }
-            queue::start_runners(&queues.queue, &self.supervisor, handlers)
-                .map_err(|_| "a job runner is already running".to_owned())?;
-        }
+        queue::start_runners(&self.queues.queue, &self.supervisor, handlers)
+            .map_err(|_| "a job runner is already running".to_owned())?;
         Ok(())
     }
 }
