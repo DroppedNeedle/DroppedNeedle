@@ -1346,7 +1346,7 @@ impl Links {
                  VALUES ('admin', 'artist', '{artist}', 1); \
                  INSERT INTO library_play_history (id, user_id, local_artist_id, track_name, \
                  artist_name, played_at) VALUES ('play-{artist}', 'admin', '{artist}', 'Song', \
-                 'Artist', '2026-01-01T00:00:00Z');"
+                 'Artist', 1767225600000);"
             ))
             .expect("listening seeds");
     }
@@ -2387,7 +2387,7 @@ fn a_row_left_empty_follows_its_credits() {
                  UPDATE local_albums SET album_artist_id = 'ar-n' WHERE id = 'al'; \
                  INSERT INTO library_play_history (id, user_id, local_artist_id, \
                  local_track_id, track_name, artist_name, played_at) VALUES ('play', 'admin', \
-                 'ar-o', '{play_track}', 'Song', 'Alpha', '2026-01-01T00:00:00Z');"
+                 'ar-o', '{play_track}', 'Song', 'Alpha', 1767225600000);"
             ))
             .expect("credits move");
         before(&links);
@@ -2520,7 +2520,7 @@ fn a_continuation_backlog_moves_in_bounded_turns() {
                  VALUES ('gone-{n}', 't1', 0); \
                  INSERT INTO library_play_history (id, user_id, local_track_id, track_name, \
                  artist_name, played_at) VALUES ('play-{n}', 'listener', 'gone-{n}', 'T', 'A', \
-                 '2026-01-01T00:00:00Z');"
+                 1767225600000);"
             ))
             .expect("continued track seeds");
     }

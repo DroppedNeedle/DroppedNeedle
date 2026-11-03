@@ -2811,7 +2811,7 @@ fn listener_acts(album: &str) -> String {
     format!(
         "INSERT INTO library_play_history (id, user_id, local_track_id, local_album_id, \
          track_name, artist_name, played_at) SELECT 'play-1', 'listener', id, local_album_id, \
-         'Song', 'Artist', '2026-01-01T00:00:00Z' {moved}; \
+         'Song', 'Artist', 1767225600000 {moved}; \
          INSERT OR IGNORE INTO auth_users (id, display_name, role, created_at) VALUES ('listener', 'Person', 'user', 1); \
          INSERT INTO catalog_user_favorites (user_id, item_kind, item_id, created_at) \
          SELECT 'listener', 'album', local_album_id, 0 {moved}; \
@@ -4487,7 +4487,7 @@ async fn retag_across_a_cancelled_scan_is_joined_at_the_next() {
         let play = if played {
             "INSERT INTO library_play_history (id, user_id, local_track_id, local_album_id, \
              track_name, artist_name, played_at) SELECT 'play-1', 'listener', id, \
-             local_album_id, 'Song', 'Artist', '2026-01-01T00:00:00Z' FROM local_tracks \
+             local_album_id, 'Song', 'Artist', 1767225600000 FROM local_tracks \
              WHERE relative_path = 'a/t299.flac';"
         } else {
             ""
@@ -6307,7 +6307,7 @@ async fn continued_tracks_follow_their_files_back_and_forth() {
     assert_eq!(rig.stars_and_aliases(&new).0, 1, "what moved stays");
     rig.run(&format!(
         "INSERT INTO library_play_history (id, user_id, local_track_id, track_name, \
-         artist_name, played_at) VALUES ('back', 'listener', '{old}', 'T', 'A', '2026');"
+         artist_name, played_at) VALUES ('back', 'listener', '{old}', 'T', 'A', 0);"
     ));
     rig.lose(&first).await;
     assert_eq!(rig.aliases(), vec![(old.clone(), new.clone())]);
@@ -8220,7 +8220,7 @@ impl ArtistRig {
              VALUES ('{user}', 'artist', '{artist}', 1); \
              INSERT INTO library_play_history (id, user_id, local_artist_id, track_name, \
              artist_name, played_at) VALUES ('{user}-{artist}', '{user}', '{artist}', 'Song', \
-             'Artist', '2026-01-01T00:00:00Z');"
+             'Artist', 1767225600000);"
         ));
     }
 
@@ -10240,7 +10240,7 @@ async fn another_album_copied_over_an_old_one_comes_in_as_new_tracks() {
          VALUES ('listener', 'album', '{album}', 1); \
          INSERT INTO library_play_history (id, user_id, local_track_id, local_album_id, \
          track_name, artist_name, played_at) VALUES ('play-1', 'listener', '{}', '{album}', \
-         'Old Two', 'Artist', '2026-01-01T00:00:00Z'); \
+         'Old Two', 'Artist', 1767225600000); \
          INSERT INTO catalog_playlists (id, name, created_at, updated_at) VALUES ('list', 'List', 0, 0); \
          INSERT INTO catalog_playlist_tracks (id, playlist_id, position, track_name, artist_name, \
          album_name, album_id, track_source_id, source_type, created_at) VALUES ('entry', \

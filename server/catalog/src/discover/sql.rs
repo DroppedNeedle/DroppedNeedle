@@ -283,7 +283,7 @@ droppedneedle_kernel::sql! {
         album_name: Option<String>,
         recording_mbid: Option<String>,
         release_group_mbid: Option<String>,
-        played_at: String,
+        played_at: Millis,
     }
     /// The artwork revision of some folded genres.
     family GENRE_REVISIONS = genre_revisions;

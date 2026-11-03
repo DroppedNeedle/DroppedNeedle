@@ -2,9 +2,12 @@
 //!
 //! The library ids on a history row have foreign keys in v3, so they stay
 //! empty until the v3 catalog holds them; the names and MBIDs on the row
-//! keep stats and Wrapped working meanwhile.
+//! keep stats and Wrapped working meanwhile. v3 keeps a play's time as
+//! integer milliseconds where v2 had ISO text; one that does not read as a
+//! time becomes 0, and the play still counts.
 
-use super::{LinkKind, LinkMode, Source, TableSection, Target, col};
+use super::requests::{millis, whole};
+use super::{Column, LinkKind, LinkMode, Source, TableSection, Target, col};
 
 /// Listens.
 pub const PLAY_HISTORY: TableSection = TableSection {
@@ -26,9 +29,9 @@ pub const PLAY_HISTORY: TableSection = TableSection {
         col("album_name"),
         col("recording_mbid"),
         col("release_group_mbid"),
-        col("duration_ms"),
+        Column::new("duration_ms").from_sql(whole!("duration_ms")),
         col("source"),
-        col("played_at"),
+        Column::new("played_at").from_sql(concat!("COALESCE(", millis!("played_at"), ", 0)")),
     ],
     key: &["id"],
     unique: &[],

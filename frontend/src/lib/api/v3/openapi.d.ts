@@ -16283,8 +16283,7 @@ export interface components {
             looks_wrong: boolean;
         };
         /**
-         * @description Liveness of a loop row. The table's CHECK still allows `idle`, which
-         *     nothing writes since every loop runs on the supervisor.
+         * @description Liveness of a background loop.
          * @enum {string}
          */
         LoopState: "running" | "stopped" | "failed";

@@ -49558,7 +49558,7 @@
       },
       "LoopState": {
         "type": "string",
-        "description": "Liveness of a loop row. The table's CHECK still allows `idle`, which\nnothing writes since every loop runs on the supervisor.",
+        "description": "Liveness of a background loop.",
         "enum": [
           "running",
           "stopped",

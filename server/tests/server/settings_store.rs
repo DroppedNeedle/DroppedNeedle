@@ -531,7 +531,7 @@ async fn a_whole_sealed_link_lets_the_right_key_start() {
         .unwrap()
         .execute(
             "INSERT INTO user_connections (user_id, service, connection_data, created_at, \
-             updated_at) VALUES ('u1', 'plex', ?1, 'now', 'now')",
+             updated_at) VALUES ('u1', 'plex', ?1, 0, 0)",
             [crypto.encrypt(r#"{"token":"plex-token"}"#).unwrap()],
         )
         .unwrap();
@@ -561,7 +561,7 @@ async fn a_stale_value_beside_a_good_one_lets_the_right_key_start() {
     .unwrap();
     db.execute(
         "INSERT INTO user_connections (user_id, service, connection_data, created_at, \
-         updated_at) VALUES ('u1', 'jellyfin', ?1, 'now', 'now')",
+         updated_at) VALUES ('u1', 'jellyfin', ?1, 0, 0)",
         [crypto.encrypt(r#"{"token":"jellyfin-token"}"#).unwrap()],
     )
     .unwrap();

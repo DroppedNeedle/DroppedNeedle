@@ -94,8 +94,9 @@ pub struct EventRow {
     pub latitude: Option<f64>,
     /// Venue longitude.
     pub longitude: Option<f64>,
-    /// ISO start time.
-    pub starts_at: Option<String>,
+    /// The start as the source wrote it, relayed as given and never
+    /// compared: Ticketmaster's absolute time, Skiddle's venue-local one.
+    pub start_text: Option<String>,
     /// Ticket or listing link, only ever an http or https address.
     pub ticket_url: Option<String>,
 }
@@ -239,7 +240,7 @@ pub fn map_tm_event(
             .and_then(|country| country.country_code.clone()),
         latitude: parse_coord(location.and_then(|loc| loc.latitude.as_deref())),
         longitude: parse_coord(location.and_then(|loc| loc.longitude.as_deref())),
-        starts_at: start.and_then(|start| start.date_time.clone()),
+        start_text: start.and_then(|start| start.date_time.clone()),
         ticket_url: event
             .url
             .as_deref()
@@ -285,7 +286,7 @@ pub fn map_skiddle_event(event: &SkiddleEvent, artist: &SweepArtist) -> Option<E
         longitude: venue
             .and_then(|venue| venue.longitude)
             .filter(|v| v.is_finite()),
-        starts_at: event.startdate.clone(),
+        start_text: event.startdate.clone(),
         ticket_url,
     })
 }

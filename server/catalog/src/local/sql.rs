@@ -751,15 +751,11 @@ droppedneedle_kernel::sql! {
         "catalog_user_play_marks m INDEXED BY sqlite_autoindex_catalog_user_play_marks_1";
     /// The plays, as `h`, through the index over listener, track and time.
     pub(crate) fragment PLAYS = "library_play_history h INDEXED BY idx_play_history_user_track";
-    /// The time of the play `h` in whole seconds. `played_at` is ISO text
-    /// whose form varies (rows from v2), so it is read as seconds, never compared
-    /// as text; one SQLite cannot read gives NULL. `unixepoch` gives what
-    /// `CAST(strftime('%s', ...) AS INTEGER)` gives at a fraction of the
-    /// cost.
-    pub(crate) fragment PLAY_SECONDS = "unixepoch(h.played_at)";
+    /// The time of the play `h` in whole seconds, from its milliseconds.
+    pub(crate) fragment PLAY_SECONDS = "h.played_at / 1000";
     /// Whether the play `h` is later than the unplayed mark `m`, in whole
-    /// seconds. A time SQLite cannot read is never later.
-    pub(crate) fragment AFTER_MARK = "unixepoch(h.played_at) > m.marked_unplayed_at / 1000";
+    /// seconds.
+    pub(crate) fragment AFTER_MARK = "h.played_at / 1000 > m.marked_unplayed_at / 1000";
     /// One listener's plays per album, one row each: `id`, `plays` and
     /// `played_at`, the latest. Subsonic's recently and most played album
     /// lists read them here; marks do not weigh in. Binds: the listener
@@ -1935,9 +1931,10 @@ pub(crate) fn player_tracks_in(ids: ListLen) -> String {
 /// again, from the same index, for those after the mark. A track marked
 /// played with no play at all comes from the marks by key.
 ///
-/// This rule for a track also lives in the refresh of migration 0065, which
-/// keeps the album values in `library_user_album_plays`. Changing it takes a
-/// migration that recreates that refresh and runs its backfill again.
+/// This rule for a track also lives in the refresh of migration 0065 (as
+/// migration 0130 last made it), which keeps the album values in
+/// `library_user_album_plays`. Changing it takes a migration that recreates
+/// that refresh and runs its backfill again.
 fn track_values(ids: Option<ListLen>) -> String {
     let (plays, marked) = match ids {
         None => (
@@ -2314,7 +2311,7 @@ pub(crate) fn player_play_stats(kind: ItemKind, ids: ListLen) -> String {
     };
     format!(
         "SELECT id, COUNT(*) AS plays, \
-         CAST(strftime('%s', MAX(played_at)) AS REAL) AS last_played FROM ({plays}) GROUP BY id"
+         CAST(MAX(played_at) / 1000 AS REAL) AS last_played FROM ({plays}) GROUP BY id"
     )
 }
 

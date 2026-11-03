@@ -109,8 +109,8 @@ droppedneedle_kernel::sql! {
         service: String,
         connection_data: String,
         enabled: i64,
-        created_at: String,
-        updated_at: String,
+        created_at: i64,
+        updated_at: i64,
     }
     /// Add a per-user service link.
     pub(super) INSERT_CONNECTION = "INSERT INTO user_connections (user_id, service, connection_data, enabled, \

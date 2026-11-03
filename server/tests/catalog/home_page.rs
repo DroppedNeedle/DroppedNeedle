@@ -111,7 +111,7 @@ async fn home_and_genre_pages_build_from_library_and_listening() {
          version, updated_at) VALUES ('al1', 'folder', '{}', 'abc123', 3, 1); \
          INSERT INTO library_play_history (id, user_id, track_name, artist_name, album_name, \
          played_at) VALUES ('p1', 'user-1', 'Opener', 'Aurora', 'First Light', \
-         '2026-10-01T10:00:00Z');",
+         1790848800000);",
         cover.display(),
         track = dir.join("t1.flac").display()
     );

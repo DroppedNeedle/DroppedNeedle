@@ -294,7 +294,7 @@ impl Rig {
         self.sql()
             .execute(
                 "INSERT INTO user_connections (user_id, service, connection_data, enabled, \
-                 created_at, updated_at) VALUES (?1, ?2, ?3, 1, '', '')",
+                 created_at, updated_at) VALUES (?1, ?2, ?3, 1, 0, 0)",
                 [user_id, service, data],
             )
             .expect("link stored");
@@ -969,7 +969,7 @@ async fn listener(app: &TestApp, name: &str, token: &str) -> crate::common::Logi
         .expect("link seals");
     app.seed_with(
         "INSERT INTO user_connections (user_id, service, connection_data, enabled, created_at, \
-         updated_at) VALUES (?1, 'listenbrainz', ?2, 1, '', '')",
+         updated_at) VALUES (?1, 'listenbrainz', ?2, 1, 0, 0)",
         [&login.user_id, &sealed],
     )
     .await;
@@ -1129,7 +1129,7 @@ async fn an_unreadable_last_fm_section_holds_the_scrobble() {
     });
     app.seed_with(
         "INSERT INTO user_connections (user_id, service, connection_data, enabled, created_at, \
-         updated_at) VALUES (?1, 'lastfm', ?2, 1, '', '')",
+         updated_at) VALUES (?1, 'lastfm', ?2, 1, 0, 0)",
         [&user.user_id, &document.to_string()],
     )
     .await;
@@ -1235,7 +1235,7 @@ async fn a_last_fm_scrobble_is_a_signed_form_with_the_session_key() {
     });
     app.seed_with(
         "INSERT INTO user_connections (user_id, service, connection_data, enabled, created_at, \
-         updated_at) VALUES (?1, 'lastfm', ?2, 1, '', '')",
+         updated_at) VALUES (?1, 'lastfm', ?2, 1, 0, 0)",
         [&user.user_id, &document.to_string()],
     )
     .await;
@@ -2100,7 +2100,8 @@ struct OldPlay<'a> {
     group: Option<&'a str>,
     length_ms: Option<i64>,
     source: Option<&'a str>,
-    at: &'a str,
+    /// Unix milliseconds.
+    at: i64,
 }
 
 fn store_old_play(db: &rusqlite::Connection, play: &OldPlay<'_>) {
@@ -2200,7 +2201,7 @@ async fn older_plays_are_filed_and_count_in_player_apps() {
             artist: "U2",
             recording: Some(ONE),
             source: Some("local"),
-            at: "2026-01-01T10:00:00+00:00",
+            at: 1767261600000,
             ..OldPlay::default()
         },
         // Names and a length, no source.
@@ -2211,7 +2212,7 @@ async fn older_plays_are_filed_and_count_in_player_apps() {
             artist: "Radiohead",
             album: Some("OK Computer"),
             length_ms: Some(airbag_ms + 900),
-            at: "2026-01-02T10:00:00+00:00",
+            at: 1767348000000,
             ..OldPlay::default()
         },
         // The same names from a connected server: not a clear match.
@@ -2223,7 +2224,7 @@ async fn older_plays_are_filed_and_count_in_player_apps() {
             album: Some("OK Computer"),
             length_ms: Some(airbag_ms),
             source: Some("jellyfin"),
-            at: "2026-01-03T10:00:00+00:00",
+            at: 1767434400000,
             ..OldPlay::default()
         },
         // A connected server's play of a recording the library holds once.
@@ -2234,7 +2235,7 @@ async fn older_plays_are_filed_and_count_in_player_apps() {
             artist: "Massive Attack",
             recording: Some(TEARDROP),
             source: Some("plex"),
-            at: "2026-01-04T10:00:00+00:00",
+            at: 1767520800000,
             ..OldPlay::default()
         },
         // Another listener's play of a track the first also played.
@@ -2245,7 +2246,7 @@ async fn older_plays_are_filed_and_count_in_player_apps() {
             artist: "U2",
             album: Some("Achtung Baby"),
             recording: Some(ONE),
-            at: "2026-01-05T10:00:00+00:00",
+            at: 1767607200000,
             ..OldPlay::default()
         },
     ];
@@ -2538,7 +2539,7 @@ fn older_plays_are_filed_only_on_a_clear_match() {
         artist: "Artist",
         album,
         length_ms,
-        at: "2026-01-01T00:00:00+00:00",
+        at: 1767225600000,
         ..OldPlay::default()
     };
     let recorded = |id, recording| OldPlay {
@@ -2734,12 +2735,6 @@ fn older_plays_are_filed_only_on_a_clear_match() {
             "t1",
             "NAMES",
         ),
-        // A length an older version stored with a fraction.
-        (
-            named("p27", "Beta", Some("First"), Some(181_500)),
-            "t2",
-            "NAMES",
-        ),
         // A connected server's play is not filed by names,
         (
             OldPlay {
@@ -2805,15 +2800,10 @@ fn older_plays_are_filed_only_on_a_clear_match() {
     conn.execute(
         "INSERT INTO library_play_history (id, user_id, local_album_id, track_name, \
          artist_name, album_name, played_at) \
-         VALUES ('p00', 'u1', 'al2', 'Alpha', 'Artist', 'First', '2026-01-01T00:00:00+00:00')",
+         VALUES ('p00', 'u1', 'al2', 'Alpha', 'Artist', 'First', 1767225600000)",
         [],
     )
     .expect("the filed row is stored");
-    conn.execute(
-        "UPDATE library_play_history SET duration_ms = 181500.5 WHERE id = 'p27'",
-        [],
-    )
-    .expect("the length is stored with a fraction");
 
     let tx = conn.transaction().expect("transaction");
     assert!(plays::queue(&tx, "job-1", None, 1.0).expect("queues"));

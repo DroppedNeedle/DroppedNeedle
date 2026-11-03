@@ -3958,7 +3958,7 @@ impl JoinRig {
         self.sql(&format!(
             "INSERT INTO library_play_history (id, user_id, local_track_id, local_album_id, \
              track_name, artist_name, played_at) SELECT 'play-{track}', 'u-ada', id, \
-             local_album_id, title, 'Portishead', '2026-01-01T00:00:00Z' FROM local_tracks \
+             local_album_id, title, 'Portishead', 1767225600000 FROM local_tracks \
              WHERE id = '{track}'; \
              INSERT INTO catalog_user_favorites (user_id, item_kind, item_id, created_at) \
              VALUES ('u-ada', 'track', '{track}', 0);"

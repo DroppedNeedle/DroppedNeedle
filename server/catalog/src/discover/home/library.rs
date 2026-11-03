@@ -9,6 +9,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use droppedneedle_auth::times::{ms_to_secs, to_iso};
 use droppedneedle_kernel::db::Db;
 use droppedneedle_kernel::db::statement::ListLen;
 use rusqlite::types::Value;
@@ -183,7 +184,7 @@ impl HomeLibrary {
                 album_name: row.album_name,
                 recording_mbid: row.recording_mbid,
                 release_group_mbid: row.release_group_mbid,
-                played_at: row.played_at,
+                played_at: to_iso(ms_to_secs(row.played_at.0)),
             })
             .collect())
     }

@@ -1603,15 +1603,17 @@ async fn seed_small_plays(fixture: &Fixture) {
             sql.push_str(", ");
         }
         sql.push_str(&format!(
-            "('play-{index}', '{user}', {track}, '{album}', 'x', 'x', '{at}')"
+            "('play-{index}', '{user}', {track}, '{album}', 'x', 'x', {})",
+            play_at(at)
         ));
     }
     write_batch(fixture, "small plays", sql).await;
 }
 
-/// Played marks on the small fixture, with plays of their own in the forms
-/// v2 wrote. `u1` marked t1 unplayed in the second of its middle play (so
-/// only the last counts), t6 unplayed after all its plays, t7 played with
+/// Played marks on the small fixture, with plays of their own whose times
+/// came in the forms v2 wrote, converted as the upgrade converts them. `u1`
+/// marked t1 unplayed in the second of its middle play (so only the last
+/// counts), t6 unplayed after all its plays, t7 played with
 /// no play, and t2 played after an earlier unplayed mark. `u3` has plays
 /// with a space for the `T`, fractional seconds and `Z`, and an offset:
 /// t8 marked unplayed just before its play, and t9 in the second of its
@@ -1641,10 +1643,10 @@ async fn seed_small_marks(fixture: &Fixture) {
          ('u1', 'One', 'user', 0), ('u3', 'Three', 'user', 0); \
          INSERT INTO library_play_history (id, user_id, local_track_id, local_album_id, \
          track_name, artist_name, played_at) VALUES \
-         ('v2-1', 'u3', 't8', 'al5', 'x', 'x', '2026-01-05 12:00:00'), \
-         ('v2-2', 'u3', 't9', 'al5', 'x', 'x', '2026-01-06T10:00:00.500Z'), \
-         ('v2-3', 'u3', 't9', 'al5', 'x', 'x', '2026-01-04T10:00:00Z'), \
-         ('v2-4', 'u3', 't4', 'al2', 'x', 'x', '2026-01-03T09:00:00+01:00'); \
+         ('v2-1', 'u3', 't8', 'al5', 'x', 'x', CAST(round(unixepoch('2026-01-05 12:00:00', 'subsec') * 1000) AS INTEGER)), \
+         ('v2-2', 'u3', 't9', 'al5', 'x', 'x', CAST(round(unixepoch('2026-01-06T10:00:00.500Z', 'subsec') * 1000) AS INTEGER)), \
+         ('v2-3', 'u3', 't9', 'al5', 'x', 'x', CAST(round(unixepoch('2026-01-04T10:00:00Z', 'subsec') * 1000) AS INTEGER)), \
+         ('v2-4', 'u3', 't4', 'al2', 'x', 'x', CAST(round(unixepoch('2026-01-03T09:00:00+01:00', 'subsec') * 1000) AS INTEGER)); \
          INSERT INTO catalog_user_play_marks (user_id, local_track_id, marked_played_at, \
          marked_unplayed_at) VALUES ",
     );
@@ -1681,7 +1683,7 @@ async fn rule_values(
     .await;
     let plays: Vec<(Option<String>, Option<String>, Option<i64>)> = fetch(
         db,
-        "SELECT local_track_id, local_album_id, CAST(strftime('%s', played_at) AS INTEGER) \
+        "SELECT local_track_id, local_album_id, played_at / 1000 \
          FROM library_play_history WHERE user_id = ?",
         vec![text(user)],
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
@@ -2074,6 +2076,12 @@ const TRACK_INSERT: &str = "INSERT INTO local_tracks (id, local_album_id, root_i
      album_artist_name_folded, disc_number, track_number, year, duration_seconds, file_format, \
      availability, ingest_source, imported_at, membership_source) VALUES ";
 
+/// A play's stored time: the instant the ISO text `at` names, in
+/// milliseconds, as the upgrade converts one.
+fn play_at(at: &str) -> String {
+    format!("CAST(round(unixepoch('{at}', 'subsec') * 1000) AS INTEGER)")
+}
+
 /// A play recorded the way playback records one: the track's album and
 /// first credited artist looked up with it, all empty for an unknown track.
 fn recorded_play(id: &str, user: &str, track: &str, at: &str) -> String {
@@ -2084,9 +2092,10 @@ fn recorded_play(id: &str, user: &str, track: &str, at: &str) -> String {
          SELECT '{id}', '{user}', t.id, t.local_album_id, \
          COALESCE((SELECT x.local_artist_id FROM local_track_artists x \
                    WHERE x.local_track_id = t.id ORDER BY x.position LIMIT 1), a.album_artist_id), \
-         'x', 'x', NULL, NULL, NULL, NULL, NULL, '{at}' \
+         'x', 'x', NULL, NULL, NULL, NULL, NULL, {} \
          FROM (SELECT 1) LEFT JOIN local_tracks t ON t.id = '{track}' \
-         LEFT JOIN local_albums a ON a.id = t.local_album_id;"
+         LEFT JOIN local_albums a ON a.id = t.local_album_id;",
+        play_at(at)
     )
 }
 
@@ -2147,8 +2156,8 @@ async fn album_play_summary_follows_every_write() {
         &fixture,
         "summary loose plays",
         "INSERT INTO library_play_history (id, user_id, track_name, artist_name, played_at) \
-         VALUES ('loose-1', 'u2', 'x', 'x', '2026-02-02T00:00:00Z'), \
-         ('loose-2', 'u3', 'x', 'x', '2026-02-03 08:00:00'); \
+         VALUES ('loose-1', 'u2', 'x', 'x', CAST(round(unixepoch('2026-02-02T00:00:00Z', 'subsec') * 1000) AS INTEGER)), \
+         ('loose-2', 'u3', 'x', 'x', CAST(round(unixepoch('2026-02-03 08:00:00', 'subsec') * 1000) AS INTEGER)); \
          UPDATE library_play_history SET local_track_id = t.id, \
          local_album_id = t.local_album_id, \
          local_artist_id = COALESCE((SELECT x.local_artist_id FROM local_track_artists x \
@@ -3048,7 +3057,8 @@ async fn history_plans_read_the_listeners_plays_first() {
             }
             plays.push_str(&format!(
                 "('plan-{user}-{index}', 'u{user}', '{track}', '{album}', 'x', 'x', \
-                 '2026-01-01T00:00:{index:02}+00:00')"
+                 {})",
+                play_at(&format!("2026-01-01T00:00:{index:02}+00:00"))
             ));
         }
     }
@@ -3068,7 +3078,8 @@ async fn history_plans_read_the_listeners_plays_first() {
             let album = if index < 40 { "'al1'" } else { "NULL" };
             trackless.push_str(&format!(
                 "('plan-none-{user}-{index}', 'u{user}', {album}, 'x', 'x', \
-                 '2025-12-01T00:00:00+00:00')"
+                 {})",
+                play_at("2025-12-01T00:00:00+00:00")
             ));
         }
     }
@@ -3461,10 +3472,13 @@ async fn seed_100k_plays(fixture: &Fixture) {
             };
             sql.push_str(&format!(
                 "('p-n{chunk}-{index}', 'p-u1', {album}, 'x', 'x', \
-                 '2025-12-{:02}T{:02}:{:02}:00+00:00')",
-                chunk + 1,
-                index / 60 % 24,
-                index % 60,
+                 {})",
+                play_at(&format!(
+                    "2025-12-{:02}T{:02}:{:02}:00+00:00",
+                    chunk + 1,
+                    index / 60 % 24,
+                    index % 60,
+                )),
             ));
         }
         write_batch(fixture, "perf plays with no track", sql).await;
@@ -3496,11 +3510,14 @@ async fn seed_100k_plays(fixture: &Fixture) {
             }
             sql.push_str(&format!(
                 "('p-h{chunk_index}-{index}', '{user}', 'p-t{track:06}', 'p-al{:05}', 'x', 'x', \
-                 '2026-01-{:02}T{:02}:{:02}:00+00:00')",
+                 {})",
                 track / 10,
-                minute / 1440 + 1,
-                (minute / 60) % 24,
-                minute % 60,
+                play_at(&format!(
+                    "2026-01-{:02}T{:02}:{:02}:00+00:00",
+                    minute / 1440 + 1,
+                    (minute / 60) % 24,
+                    minute % 60,
+                )),
             ));
         }
         write_batch(fixture, "perf plays", sql).await;

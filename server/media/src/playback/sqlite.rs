@@ -21,7 +21,7 @@
 
 use std::sync::Arc;
 
-use droppedneedle_auth::times::{parse_iso, to_iso};
+use droppedneedle_auth::times::{ms_to_secs, secs_to_ms};
 use droppedneedle_auth::users::stores::{LastFmKeys, LastFmSwitch};
 use droppedneedle_kernel::db::{Db, DbError, Lane};
 use droppedneedle_kernel::ids::IdGenerator;
@@ -58,8 +58,8 @@ pub struct StoredPlay {
     pub recording_mbid: Option<String>,
     /// Track length in milliseconds (0 when unknown).
     pub duration_ms: i64,
-    /// Play time, unix seconds; `None` when the stored time does not read.
-    pub played_at: Option<i64>,
+    /// Play time, unix seconds.
+    pub played_at: i64,
 }
 
 impl PlaybackStore {
@@ -107,28 +107,19 @@ impl PlaybackStore {
             .read("playback-scrobble-play", move |conn| {
                 Ok(conn
                     .query_row(sql::PLAY.text(), [id], |row| {
-                        Ok((
-                            StoredPlay {
-                                user_id: row.get(0)?,
-                                track_name: row.get(1)?,
-                                artist_name: row.get(2)?,
-                                album_name: row.get(3)?,
-                                recording_mbid: row.get(4)?,
-                                duration_ms: row.get::<_, Option<i64>>(5)?.unwrap_or(0),
-                                played_at: None,
-                            },
-                            row.get::<_, String>(6)?,
-                        ))
+                        Ok(StoredPlay {
+                            user_id: row.get(0)?,
+                            track_name: row.get(1)?,
+                            artist_name: row.get(2)?,
+                            album_name: row.get(3)?,
+                            recording_mbid: row.get(4)?,
+                            duration_ms: row.get::<_, Option<i64>>(5)?.unwrap_or(0),
+                            played_at: ms_to_secs(row.get(6)?),
+                        })
                     })
                     .optional()?)
             })
             .await
-            .map(|found| {
-                found.map(|(play, played_at)| StoredPlay {
-                    played_at: parse_iso(&played_at),
-                    ..play
-                })
-            })
     }
 
     /// The user's ListenBrainz token, failure included: `None` is a link
@@ -324,7 +315,7 @@ impl PlaybackStore {
                         record.release_group_mbid,
                         record.duration_ms,
                         record.source,
-                        to_iso(record.played_at),
+                        secs_to_ms(record.played_at),
                     ],
                 )?;
                 let payload = ScrobblePayload {

@@ -6,7 +6,6 @@
 use std::sync::Arc;
 
 use super::sql;
-use crate::times::to_iso;
 use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::db::{Db, DbError, Lane};
 
@@ -98,7 +97,7 @@ impl UserConnections {
     ) -> Result<usize, DbError> {
         let (user_id, service, document) =
             (user_id.to_owned(), service.to_owned(), document.to_owned());
-        let now = to_iso(self.clock.now_unix());
+        let now = self.clock.now_ms();
         self.db
             .write(Lane::Foreground, name, move |tx| {
                 Ok::<_, DbError>(tx.execute(

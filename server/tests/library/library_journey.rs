@@ -831,7 +831,7 @@ async fn an_artist_renamed_by_a_managed_run_keeps_its_row() {
          VALUES ('{user}', 'artist', '{artist}', 1); \
          INSERT INTO library_play_history (id, user_id, local_artist_id, track_name, \
          artist_name, played_at) VALUES ('play-1', '{user}', '{artist}', 'Song 1', 'Alpha', \
-         '2026-01-01T00:00:00Z');"
+         1767225600000);"
     ))
     .await;
 
@@ -2306,7 +2306,7 @@ async fn moved_file_keeps_its_track() {
              VALUES ('listener', 'track', '{track}', 0); \
              INSERT INTO library_play_history (id, user_id, local_track_id, track_name, \
              artist_name, played_at) VALUES ('play-1', 'listener', '{track}', 'Song', \
-             'Artist', '2026-01-01T00:00:00Z');"
+             'Artist', 1767225600000);"
         ))
         .expect("favorite and play seed");
 
@@ -5186,7 +5186,7 @@ async fn a_removed_album_is_put_back_from_its_page() {
          VALUES ('admin', 'track', '{track}', 0), ('admin', 'album', '{album}', 0); \
          INSERT INTO library_play_history (id, user_id, local_track_id, track_name, \
          artist_name, played_at) VALUES ('play-1', 'admin', '{track}', 'Song', 'Artist', \
-         '2026-01-01T00:00:00Z');",
+         1767225600000);",
         track = tracks[0]
     ))
     .expect("favourites and a play");
@@ -8754,7 +8754,7 @@ async fn library_journey_catalog_corrections() {
          VALUES ('listener', 'album', '{album_b}', 'Album B'); \
          INSERT INTO library_play_history (id, user_id, local_album_id, track_name, \
          artist_name, played_at) VALUES ('play-1', 'listener', '{album_b}', 'Song', \
-         'Artist', '2026-01-01T00:00:00Z');"
+         'Artist', 1767225600000);"
     ))
     .await;
     let selection = json!({"track_ids": [b1], "target_album_id": album_a});
@@ -17966,8 +17966,8 @@ async fn a_retagged_and_renamed_album_keeps_what_people_made() {
     db.execute_batch(&format!(
         "INSERT INTO library_play_history (id, user_id, local_track_id, local_album_id, \
          track_name, artist_name, played_at) VALUES \
-         ('p1', 'curator', '{o4}', '{album}', 'Four', 'A', '2026-01-01T00:00:00Z'), \
-         ('p2', 'curator', '{o4}', '{album}', 'Four', 'A', '2026-01-02T00:00:00Z'); \
+         ('p1', 'curator', '{o4}', '{album}', 'Four', 'A', 1767225600000), \
+         ('p2', 'curator', '{o4}', '{album}', 'Four', 'A', 1767312000000); \
          INSERT OR IGNORE INTO auth_users (id, display_name, role, created_at) VALUES ('listener', 'Person', 'user', 1), ('curator', 'Person', 'user', 1); \
          INSERT INTO catalog_user_favorites (user_id, item_kind, item_id, created_at) VALUES \
          ('curator', 'track', '{o4}', 10000), ('listener', 'track', '{o4}', 11000); \
@@ -18713,7 +18713,7 @@ async fn an_automatic_album_retagged_without_its_ids_is_joined_at_the_seal() {
     db.execute_batch(&format!(
         "INSERT INTO library_play_history (id, user_id, local_track_id, local_album_id, \
          track_name, artist_name, played_at) VALUES ('p1', 'listener', '{o1}', '{album}', \
-         'T', 'A', '2026-01-01T00:00:00Z'); \
+         'T', 'A', 1767225600000); \
          INSERT OR IGNORE INTO auth_users (id, display_name, role, created_at) VALUES ('listener', 'Person', 'user', 1); \
          INSERT INTO catalog_user_favorites (user_id, item_kind, item_id, created_at) \
          VALUES ('listener', 'track', '{o1}', 1), ('listener', 'album', '{album}', 1); \
@@ -19996,7 +19996,7 @@ fn give_history(db: &rusqlite::Connection, album: &str, track: &str) {
     db.execute_batch(&format!(
         "INSERT INTO library_play_history (id, user_id, local_track_id, local_album_id, \
          track_name, artist_name, played_at) VALUES \
-         ('play-{track}', 'listener', '{track}', '{album}', 'Two', 'A', '2026-01-01T00:00:00Z'); \
+         ('play-{track}', 'listener', '{track}', '{album}', 'Two', 'A', 1767225600000); \
          INSERT OR IGNORE INTO auth_users (id, display_name, role, created_at) VALUES ('listener', 'Person', 'user', 1); \
          INSERT INTO catalog_user_favorites (user_id, item_kind, item_id, created_at) \
          VALUES ('listener', 'track', '{track}', 1); \
@@ -20963,7 +20963,7 @@ async fn retag_pairs_list_join_and_dismiss() {
                  VALUES ('curator', 'album', '{a}', 1); \
                  INSERT INTO library_play_history (id, user_id, local_album_id, track_name, \
                  artist_name, played_at) VALUES ('play-a', 'curator', '{a}', 'Song', 'Artist', \
-                 '2026-01-01T00:00:00Z'); \
+                 1767225600000); \
                  INSERT INTO catalog_playlists (id, name, created_at, updated_at) \
                  VALUES ('list', 'List', 0, 0); \
                  INSERT INTO catalog_playlist_tracks (id, playlist_id, position, track_name, \
@@ -24102,7 +24102,7 @@ async fn a_chosen_edition_retagged_with_its_ids_is_placed_and_left_to_the_person
     db.execute_batch(&format!(
         "INSERT INTO library_play_history (id, user_id, local_track_id, local_album_id, \
          track_name, artist_name, played_at) VALUES ('p1', 'admin', '{o1}', '{album}', \
-         'One', 'A', '2026-01-01T00:00:00Z'); \
+         'One', 'A', 1767225600000); \
          INSERT INTO catalog_user_favorites (user_id, item_kind, item_id, created_at) \
          VALUES ('admin', 'track', '{o1}', 1); \
          INSERT INTO catalog_playlists (id, name, created_at, updated_at) VALUES ('list', 'List', 0, 0); \
@@ -24709,7 +24709,7 @@ async fn a_run_that_adds_ids_and_translates_keeps_the_artist() {
          VALUES ('admin', 'artist', '{artist}', 1); \
          INSERT INTO library_play_history (id, user_id, local_artist_id, track_name, \
          artist_name, played_at) VALUES ('play-1', 'admin', '{artist}', 'Song', \
-         'Ryuichi Sakamoto', '2026-01-01T00:00:00Z');"
+         'Ryuichi Sakamoto', 1767225600000);"
     ))
     .expect("favorite and play seeded");
     *scripted.relations.lock().expect("script") =
@@ -24935,7 +24935,7 @@ async fn an_artist_whose_files_carry_a_merged_id_is_linked_and_kept() {
          VALUES ('{user}', 'artist', '{artist}', 1); \
          INSERT INTO library_play_history (id, user_id, local_artist_id, track_name, \
          artist_name, played_at) VALUES ('play-1', '{user}', '{artist}', 'First 1', \
-         'Artist X', '2026-01-01T00:00:00Z');"
+         'Artist X', 1767225600000);"
     ))
     .await;
 
@@ -25712,7 +25712,7 @@ async fn hand_match_album(rig: &Rig, folder: &str) -> HandMatchAlbum {
              VALUES ('{listener}', 'track', '{}', 0); \
              INSERT INTO library_play_history (id, user_id, local_track_id, track_name, \
              artist_name, played_at) VALUES ('play-3', '{listener}', '{}', 'Track 3', \
-             'Artist', '2026-01-01T00:00:00Z');",
+             'Artist', 1767225600000);",
         tracks[2], tracks[2]
     ))
     .await;

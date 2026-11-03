@@ -45,7 +45,7 @@ droppedneedle_kernel::sql! {
     family FINDING_COUNTS = finding_counts;
     pub(super) EXPORT_RUN = "SELECT * FROM library_scan_runs WHERE id = ?1";
     pub(super) EXPORT_RUN_SCOPES = "SELECT root_id, relative_path, effective_policy, policy_revision, estimated_count, \
-         discovered_count, discovery_state, reconciliation_state, phase_timings_json, error_code \
+         discovered_count, discovery_state, phase_timings_json, error_code \
          FROM library_scan_run_scopes WHERE run_id = ?1 ORDER BY scope_sequence";
     pub(super) EXPORT_RUN_INVENTORY = "SELECT root_id, relative_path, comparison_result, processing_state, failure_code, \
          file_size_bytes FROM library_scan_inventory WHERE run_id = ?1 \

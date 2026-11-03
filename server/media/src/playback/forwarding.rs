@@ -5,16 +5,15 @@
 //! `scrobble.listenbrainz`, keyed by the play's id, the id as payload), so
 //! a scrobble outlives a restart and an outage. [`ScrobbleJobs`] sends one:
 //! the request is built from the stored play, so every send of a play is
-//! the same request. A job fails for good when its play is gone or its
-//! stored time does not read, when the play is older than [`WINDOW_SECS`],
-//! when the user has turned that service off or unlinked it, when the
-//! service refuses the user's credential, and when it refuses the listen
-//! itself. Anything passing (no answer, 5xx, a rate limit, Last.fm's
-//! offline codes and daily limit, ListenBrainz's policy block, a service
-//! address that is not usable) is tried again, backing off to once an
-//! hour, after a longer wait the service named, while the play is inside
-//! the window. One user's failure goes back to wait its turn; other users'
-//! jobs go first.
+//! the same request. A job fails for good when its play is gone, when the
+//! play is older than [`WINDOW_SECS`], when the user has turned that
+//! service off or unlinked it, when the service refuses the user's
+//! credential, and when it refuses the listen itself. Anything passing (no
+//! answer, 5xx, a rate limit, Last.fm's offline codes and daily limit,
+//! ListenBrainz's policy block, a service address that is not usable) is
+//! tried again, backing off to once an hour, after a longer wait the
+//! service named, while the play is inside the window. One user's failure
+//! goes back to wait its turn; other users' jobs go first.
 //!
 //! The window is Last.fm's: a scrobble older than about two weeks comes
 //! back "ignored, timestamp too old" (ignored code 3,
@@ -93,9 +92,6 @@ pub const MAX_ATTEMPTS: u32 = 400;
 /// The play's row is not in the history any more. Nothing in the app
 /// removes one, so it was removed by hand.
 pub const PLAY_GONE: &str = "PLAY_GONE";
-/// The play's stored time does not read, so no service can be told when
-/// it was played.
-pub const PLAY_UNREADABLE: &str = "PLAY_UNREADABLE";
 /// The play is older than the window, or the service said it is too old.
 pub const WINDOW_PASSED: &str = "WINDOW_PASSED";
 /// The user turned forwarding to this service off.
@@ -249,13 +245,7 @@ impl Courier {
             Ok(None) => return fail(PLAY_GONE),
             Err(error) => return store_failed(&error),
         };
-        let Some(played_at) = play.played_at else {
-            tracing::warn!(
-                play_id = %payload.play_id,
-                "scrobble's play has a stored time that does not read"
-            );
-            return fail(PLAY_UNREADABLE);
-        };
+        let played_at = play.played_at;
         if played_at.saturating_add(WINDOW_SECS).saturating_mul(1000) < self.clock.now_ms() {
             return fail(WINDOW_PASSED);
         }

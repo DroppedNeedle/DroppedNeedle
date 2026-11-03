@@ -215,7 +215,7 @@ fn concert_view(matched: MatchedConcert) -> Concert {
         city: event.city,
         region: event.region,
         country_code: event.country_code,
-        starts_at: event.starts_at,
+        starts_at: event.start_text,
         ticket_url: event.ticket_url,
         distance_km,
     }

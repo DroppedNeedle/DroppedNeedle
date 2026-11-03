@@ -4,7 +4,7 @@ use rusqlite::OptionalExtension as _;
 
 use super::sql;
 use super::{AuthDb, op_error, store_error};
-use crate::times::to_iso;
+use crate::times::secs_to_ms;
 use crate::users::models::LastFmConnection;
 use crate::users::stores::StoreError;
 use droppedneedle_kernel::db::Lane;
@@ -89,7 +89,7 @@ impl LastFmLinks {
     /// Insert or replace one user's link.
     pub async fn upsert(&self, user_id: &str, link: LastFmConnection) -> Result<(), StoreError> {
         let user_id = user_id.to_owned();
-        let now = to_iso(self.db.now_unix());
+        let now = secs_to_ms(self.db.now_unix());
         self.db
             .lane()
             .write(Lane::Foreground, "auth.lastfm.upsert", move |tx| {

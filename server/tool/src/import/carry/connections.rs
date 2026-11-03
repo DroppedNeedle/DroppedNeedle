@@ -11,6 +11,8 @@
 //!
 //! A repeat import compares plaintexts, never ciphertext (every seal draws
 //! a fresh nonce), so an unchanged link is skipped with nothing written.
+//! v2's ISO times are stored as integer milliseconds, and one that does not
+//! read as a time as 0.
 
 use std::collections::HashMap;
 
@@ -20,6 +22,7 @@ use serde_json::{Value, json};
 use super::sql;
 use super::{CarryError, SectionResult};
 use crate::export::envelope::ConnectionRecord;
+use droppedneedle_auth::times::parse_iso_ms;
 use droppedneedle_kernel::runtime_config::Crypto;
 
 /// Report entity for this section.
@@ -31,8 +34,8 @@ const LASTFM: &str = "lastfm";
 struct Stored {
     data: String,
     enabled: bool,
-    created_at: String,
-    updated_at: String,
+    created_at: i64,
+    updated_at: i64,
 }
 
 /// The v3 stored form of one v2 link.
@@ -133,11 +136,13 @@ pub(crate) fn apply(
         let plaintext = unsealed
             .get(&format!("user_connections[{index}].data"))
             .ok_or(CarryError::Rekey)?;
+        let created_at = parse_iso_ms(&record.created_at).unwrap_or(0);
+        let updated_at = parse_iso_ms(&record.updated_at).unwrap_or(0);
         let existing = stored.get(&(record.user_id.clone(), record.service.clone()));
         if let Some(existing) = existing {
             let same = existing.enabled == record.enabled
-                && existing.created_at == record.created_at
-                && existing.updated_at == record.updated_at
+                && existing.created_at == created_at
+                && existing.updated_at == updated_at
                 && incoming_view(&record.service, plaintext).is_some()
                 && stored_view(&record.service, &existing.data, crypto)
                     == incoming_view(&record.service, plaintext);
@@ -174,8 +179,8 @@ pub(crate) fn apply(
                 record.service,
                 data,
                 i64::from(record.enabled),
-                record.created_at,
-                record.updated_at,
+                created_at,
+                updated_at,
             ],
         )?;
         result.written += 1;

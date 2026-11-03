@@ -82,7 +82,7 @@ droppedneedle_kernel::sql! {
     /// Insert or update one feed row, keeping when it was first seen.
     pub(super) UPSERT_EVENT = "INSERT INTO catalog_live_event_feed (source, source_event_id, \
                          artist_mbid_lower, artist_name, event_name, venue_name, city, region, \
-                         country_code, latitude, longitude, starts_at, local_date, status, \
+                         country_code, latitude, longitude, start_text, local_date, status, \
                          ticket_url, match_confidence, discovered_at, updated_at) \
                          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, \
                          ?15, ?16, ?17, ?17) \
@@ -91,7 +91,7 @@ droppedneedle_kernel::sql! {
                          venue_name = excluded.venue_name, city = excluded.city, \
                          region = excluded.region, country_code = excluded.country_code, \
                          latitude = excluded.latitude, longitude = excluded.longitude, \
-                         starts_at = excluded.starts_at, local_date = excluded.local_date, \
+                         start_text = excluded.start_text, local_date = excluded.local_date, \
                          status = excluded.status, ticket_url = excluded.ticket_url, \
                          match_confidence = excluded.match_confidence, \
                          updated_at = excluded.updated_at";
@@ -127,7 +127,7 @@ droppedneedle_kernel::sql! {
     /// The feed row columns.
     fragment FEED_COLUMNS = "f.source, f.source_event_id, f.artist_mbid_lower, f.artist_name, \
     f.event_name, f.venue_name, f.city, f.region, f.country_code, f.latitude, f.longitude, \
-    f.starts_at, f.local_date, f.status, f.ticket_url, f.match_confidence";
+    f.start_text, f.local_date, f.status, f.ticket_url, f.match_confidence";
     /// Feed rows for one user's follows, carrying the follow's MBID.
     fragment FOLLOWED_FEED = "SELECT " + FEED_COLUMNS + ", u.artist_mbid AS link_mbid FROM catalog_live_event_feed f \
                  JOIN acquire_followed_artists u ON u.artist_mbid_lower = f.artist_mbid_lower \
@@ -153,7 +153,7 @@ droppedneedle_kernel::sql! {
         country_code: Option<String>,
         latitude: Option<f64>,
         longitude: Option<f64>,
-        starts_at: Option<String>,
+        start_text: Option<String>,
         local_date: String,
         status: ConcertStatus,
         ticket_url: Option<String>,
