@@ -219,7 +219,9 @@ async fn only_admins_and_the_one_time_code_sign_in() {
         assert_eq!(state["signed_in"], true);
 
         let code = logged_code(&logged.lock().unwrap());
-        let wrong = format!("{}X", &code[..code.len() - 1]);
+        // Change the last character; a code that already ends in X gets Y.
+        let last = if code.ends_with('X') { 'Y' } else { 'X' };
+        let wrong = format!("{}{last}", &code[..code.len() - 1]);
         let (status, _, _) = sign_in(&router, json!({"method": "code", "code": wrong})).await;
         assert_eq!(status, StatusCode::UNAUTHORIZED);
         let (status, _, body) = sign_in(
