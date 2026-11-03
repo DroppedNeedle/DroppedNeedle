@@ -1,4 +1,13 @@
-export const AUTH_FREE_PATHS = ['/login', '/setup', '/auth/callback', '/recover-password'];
+// The page a server started on v2 data serves in place of the app.
+export const UPGRADE_PATH = '/upgrade';
+
+export const AUTH_FREE_PATHS = [
+	'/login',
+	'/setup',
+	'/auth/callback',
+	'/recover-password',
+	UPGRADE_PATH
+];
 
 // concert distances are stored in km but displayed in miles
 export const KM_PER_MILE = 1.609;

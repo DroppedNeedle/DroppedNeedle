@@ -3,7 +3,7 @@ import { browser } from '$app/environment';
 import { api } from '$lib/api/client';
 import { ApiError, TransportError } from '$lib/api/errors';
 import { collectPersistedGarbage, queryClient } from '$lib/queries/QueryClient';
-import { AUTH_FREE_PATHS } from '$lib/constants';
+import { AUTH_FREE_PATHS, UPGRADE_PATH } from '$lib/constants';
 import { toAuthUser } from '$lib/queries/auth/types';
 import { getScrobblePreferencesQueryOptions } from '$lib/queries/scrobble-preferences.svelte';
 import { DEFAULT_SOURCE, isMusicSource } from '$lib/stores/musicSource';
@@ -37,8 +37,13 @@ async function retryUnreached<T>(request: () => Promise<T>): Promise<T> {
 	return request();
 }
 
-// Busy only when the server said so; a request that never arrived is not.
+// Busy only when the server said so; a request that never arrived is not. A
+// server started on v2 data answers everything with UPGRADE_REQUIRED and
+// serves only the upgrade page.
 function startupError(cause: unknown): never {
+	if (cause instanceof ApiError && cause.code === 'UPGRADE_REQUIRED') {
+		redirect(302, withBasePath(UPGRADE_PATH));
+	}
 	if (cause instanceof TransportError) error(503, UNREACHABLE_ERROR);
 	if (cause instanceof ApiError && cause.status === 503 && cause.code === 'SERVER_BUSY') {
 		error(503, SERVER_BUSY_ERROR);
@@ -49,6 +54,8 @@ function startupError(cause: unknown): never {
 export const load: LayoutLoad = async ({ url }) => {
 	const path = withoutBasePath(url.pathname);
 	const isAuthFree = AUTH_FREE_PATHS.some((p) => path.startsWith(p));
+	// The upgrade page runs before there is an app to sign in to.
+	if (path.startsWith(UPGRADE_PATH)) return { primarySource: DEFAULT_SOURCE, user: null };
 
 	let setupRequired = authStore.setupRequired;
 	if (!authStore.initialized) {

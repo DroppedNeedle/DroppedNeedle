@@ -37,7 +37,8 @@ vi.mock('$app/environment', () => ({ browser: true }));
 vi.mock('$lib/stores/theme.svelte', () => ({}));
 vi.mock('$lib/api/client', () => ({ api: { v3: { GET: state.apiGet } } }));
 vi.mock('$lib/constants', () => ({
-	AUTH_FREE_PATHS: ['/login', '/setup']
+	AUTH_FREE_PATHS: ['/login', '/setup', '/upgrade'],
+	UPGRADE_PATH: '/upgrade'
 }));
 vi.mock('$lib/queries/QueryClient', () => ({
 	queryClient: {
@@ -278,5 +279,19 @@ describe('+layout load session bootstrap', () => {
 		await expect(loadPage('/setup')).rejects.toMatchObject({ status: 302, location: '/' });
 		expect(state.apiGet).not.toHaveBeenCalled();
 		expect(state.ensureQueryData).not.toHaveBeenCalled();
+	});
+
+	it('sends a server started on v2 data to the upgrade page, which loads without the bootstrap', async () => {
+		state.apiGet.mockRejectedValueOnce(
+			new ApiError(503, 'An upgrade is needed', 'UPGRADE_REQUIRED')
+		);
+
+		await expect(loadPage('/library')).rejects.toMatchObject({
+			status: 302,
+			location: '/upgrade'
+		});
+		state.apiGet.mockReset();
+		await expect(loadPage('/upgrade')).resolves.toMatchObject({ user: null });
+		expect(state.apiGet).not.toHaveBeenCalled();
 	});
 });

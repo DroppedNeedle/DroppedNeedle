@@ -1,5 +1,6 @@
 import { getApiUrl } from '$lib/api/api-utils';
-import { withBasePath } from '$lib/utils/basePath';
+import { UPGRADE_PATH } from '$lib/constants';
+import { withBasePath, withoutBasePath } from '$lib/utils/basePath';
 import { browser } from '$app/environment';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { providerUnavailableMessage } from '$lib/utils/serviceError';
@@ -46,6 +47,14 @@ async function handleResponse<T = void>(res: Response): Promise<T> {
 			}
 		} catch {
 			// preserve non-JSON error bodies
+		}
+		// The server restarted on v2 data: only the upgrade page answers now.
+		if (
+			code === 'UPGRADE_REQUIRED' &&
+			browser &&
+			!withoutBasePath(window.location.pathname).startsWith(UPGRADE_PATH)
+		) {
+			window.location.href = withBasePath(UPGRADE_PATH);
 		}
 		const error = new ApiError(res.status, message, code, details);
 		// Every toast that shows an error's message names the service that is down.

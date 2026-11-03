@@ -1,6 +1,6 @@
 # Upgrading from v2 to v3
 
-v3 is a rewrite with a new database. One command turns your v2 data into v3
+v3 is a rewrite with a new database. The upgrade turns your v2 data into v3
 data where it sits. You keep the same folders and the same compose mounts.
 
 Your music files are not touched. Your library comes across as v2 knew it,
@@ -20,51 +20,94 @@ with the same ids, and v3 checks it against your files on its first scan.
 2. Change the image tag in your compose file to v3. Leave the volumes as
    they are.
 
-3. Run the upgrade:
-
-   ```sh
-   docker compose run --rm droppedneedle droppedneedle-tool upgrade
-   ```
-
-   `droppedneedle` is the service name in your compose file. Use yours if it
-   differs.
-
-   If v2 uses single sign-on, Spotify playlist import or MusicBrainz
-   contributions, the addresses those services call back on change in v3,
-   and v2's stop working (see [Callback addresses](#before-you-upgrade)).
-   The upgrade then lists each one, old and new, and where to change it,
-   and stops before it moves anything. If an earlier run was interrupted,
-   it has put your v2 files back first. Change the addresses, then run it
-   again with `--callbacks-changed`:
-
-   ```sh
-   docker compose run --rm droppedneedle droppedneedle-tool upgrade --callbacks-changed
-   ```
-
-   If your provider allows only one address, change it as you run the
-   upgrade, not before. When v2's single sign-on address ends in v2's path,
-   the upgrade changes it under Settings > Security for you; otherwise
-   enter the new one there after the upgrade. The flag skips no other
-   check, and `upgrade-report.json` lists what you acknowledged under
-   `acknowledged`.
-   With single sign-on, the upgrade stops even with the flag when no admin
-   has a password or a username, since nobody could get back in if single
-   sign-on failed: set a username for an admin in v2 (Profile) first.
-
-4. Start v3:
+3. Start it:
 
    ```sh
    docker compose up -d
    ```
 
-The upgrade prints what it is doing, then a summary: how many of each kind
-of record moved, what stayed behind, anything worth a look (such as an
-artist kept under its v2 id), which settings are back at their defaults,
-and where your v2 files are now. The full report is saved as
-`upgrade-report.json` in your cache folder.
+   On v2 data, v3 serves only the upgrade page. Until the upgrade is done,
+   everything else answers that an upgrade is needed: the web app's API with
+   `503 UPGRADE_REQUIRED`, and Subsonic and Jellyfin apps with their own
+   error. Nothing in your data folders changes until you press Upgrade.
 
-Upgrade before anyone uses v3. If you start v3 on a v2 data directory by
-mistake, it refuses to start and names this command. Nothing is changed.
+4. Open DroppedNeedle's address in your browser. It shows the upgrade page.
+
+5. Sign in with the username and password of a v2 admin. See
+   [Signing in](#signing-in) if no admin has a password.
+
+6. Follow the page:
+   - The pre-flight runs every check the upgrade runs before it moves
+     anything, and changes nothing. It shows what it found, and anything to
+     fix first, each with what to do. Fix it, then press Check again.
+   - If v2 uses single sign-on, Spotify playlist import or MusicBrainz
+     contributions, the addresses those services call back on change in v3,
+     and v2's stop working (see [Callback addresses](#before-you-upgrade)).
+     The page lists each one, old and new. Change it at the service, then
+     tick it. Upgrade stays greyed out until every one is ticked.
+   - Press Upgrade. The page lists the steps and shows each one as it runs.
+     The upgrade carries on if you close the page; open it again to see where
+     it is.
+   - When it is done, the page shows a summary: how many of each kind of
+     record moved, what stayed behind, anything worth a look (such as an
+     artist kept under its v2 id), which settings are back at their defaults,
+     and where your v2 files are now. The full report is saved as
+     `upgrade-report.json` in your cache folder; the page shows its path.
+   - Press Continue. The app starts in the same container, with no restart,
+     and shows its sign-in. Sign in with your v2 password.
+
+If your provider allows only one callback address, change it as you run the
+upgrade, not before. When v2's single sign-on address ends in v2's path, the
+upgrade changes it under Settings > Security for you; otherwise enter the new
+one there after the upgrade. `upgrade-report.json` lists the addresses you
+ticked under `acknowledged`. With single sign-on, the pre-flight lists it as
+something to fix when no admin has a password or a username, since nobody
+could get back in if single sign-on failed: set a username for an admin in
+v2 (Profile) first.
+
+### Signing in
+
+The upgrade page has its own sign-in, separate from v3's. It takes the
+username and password of an admin in v2. An admin who has no v2 password
+(one who only ever signed in through single sign-on, Plex or Jellyfin) uses
+a one-time code instead. Choose "Use a code from the server log" on the
+page, and find the code in the server's log:
+
+```sh
+docker compose logs droppedneedle
+```
+
+It is on the line that starts `upgrade sign-in code`. `droppedneedle` is the
+service name in your compose file. Use yours if it differs. A code works once:
+after it is used, the server prints a new one.
+
+Attempts are limited per address and per username, as on v3's own sign-in.
+The sign-in lasts 12 hours, or until the upgrade page closes.
+
+### If the upgrade fails or is interrupted
+
+If anything fails, the upgrade deletes what it had created, moves your v2
+files back where they were, and the page says what went wrong. You are back
+on v2 data. Fix the cause and press Try again, which runs the pre-flight
+again. The table at the end of this page lists the messages.
+
+If the upgrade is killed partway (a power cut, the container stopped), start
+v3 again and open the page. It says "An upgrade didn't finish" and offers two
+buttons:
+
+- **Finish the upgrade** puts the v2 files back first, then upgrades again.
+  If addresses still need changing, it stops before it moves anything and
+  shows them in the pre-flight.
+- **Go back to v2** puts the v2 files back and stops there (see
+  [Going back to v2](#going-back-to-v2)).
+
+### Starting fresh
+
+"Start fresh instead", beside Upgrade, brings nothing across. It asks first:
+users, playlists, requests and history stay behind. It moves your v2 files
+into the same `v2-backup` folders the upgrade uses, so going back to v2 still
+works. Your music files are not touched. When you press Continue, v3 asks for
+its first admin account and scans your music folder from scratch.
 
 ### Where your v2 files go
 
@@ -84,7 +127,7 @@ anything you want to keep before you remove the backup.
 Moving the files into the backup takes no time and no extra disk space.
 The upgrade does need some free space in the cache folder while it runs,
 about twice the size of the v2 database plus the originals Library
-Management saved. It checks before it moves anything.
+Management saved. The pre-flight checks that.
 
 The backup sits on the same disk as your data. It lets you go back to v2,
 but it is not a second copy. If you want one, copy your config and cache
@@ -96,24 +139,54 @@ Once you are happy with v3, delete the backup:
 docker compose run --rm droppedneedle droppedneedle-tool remove-v2-backup
 ```
 
-This works while v3 is running. To keep no backup in the first place, run
-`droppedneedle-tool upgrade --no-backup`. The v2 files are then deleted as
-soon as the import has finished, along with any files of your own in the
-two folders, and there is no way back to v2 without a copy of your own.
+This works while v3 is running. To keep no backup in the first place, upgrade
+from the command line with `droppedneedle-tool upgrade --no-backup`. The v2
+files are then deleted as soon as the import has finished, along with any
+files of your own in the two folders, and there is no way back to v2 without
+a copy of your own.
 
-### If the upgrade fails or is interrupted
+### Follows of deleted users
 
-If anything fails, the upgrade deletes what it had created, moves your v2
-files back where they were, and tells you what went wrong. You are back on
-v2 data and can try again once the cause is fixed. The table at the end of
-this page lists the messages.
+v2 could keep follows and auto-download approvals that belonged to users
+who had since been deleted. The upgrade removes those rows and tells you how
+many. Nothing else in the v2 database is changed.
 
-If the upgrade is killed partway (a power cut, a closed terminal), run the
-same command again. It first puts the v2 files back, then starts over. v3
-refuses to start until it has.
+## Upgrading from the command line
 
-The upgrade refuses to run while a server is using the data directory, and
-it does nothing on a data directory that is already on v3.
+The page runs `droppedneedle-tool upgrade` for you. You can run it yourself
+instead, with the server stopped:
+
+1. Stop v2 and change the image tag, as in steps 1 and 2 above.
+
+2. Run the upgrade:
+
+   ```sh
+   docker compose run --rm droppedneedle droppedneedle-tool upgrade
+   ```
+
+   If callback addresses change, the upgrade lists each one, old and new,
+   and where to change it, and stops before it moves anything. If an earlier
+   run was interrupted, it has put your v2 files back first. Change the
+   addresses, then run it again with `--callbacks-changed`:
+
+   ```sh
+   docker compose run --rm droppedneedle droppedneedle-tool upgrade --callbacks-changed
+   ```
+
+   The flag skips no other check.
+
+3. Start v3:
+
+   ```sh
+   docker compose up -d
+   ```
+
+The upgrade prints what it is doing, then the same summary the page shows.
+If anything fails, it puts your v2 files back and says what went wrong. If it
+is killed partway, run the same command again: it first puts the v2 files
+back, then starts over. The upgrade refuses to run while a server is using
+the data directory, and it does nothing on a data directory that is already
+on v3.
 
 ### Checking first, starting fresh, scripted installs
 
@@ -134,12 +207,6 @@ these. Each command then writes one JSON object a line to stdout: `step` and
 `progress` lines, then one `result` or `failed` line. `--check` writes one
 `check` line, or a `failed` line when it is called wrongly or cannot start.
 The usual text goes to stderr.
-
-### Follows of deleted users
-
-v2 could keep follows and auto-download approvals that belonged to users
-who had since been deleted. The upgrade removes those rows and tells you how
-many. Nothing else in the v2 database is changed.
 
 ## What moves across
 
@@ -280,8 +347,8 @@ you upgrade.
 
 - **Callback addresses.** v2 was called back on three `/api/v1` addresses.
   v3 answers none of them, so they stop working with the upgrade. The
-  upgrade lists each one your v2 uses, with its new address, and stops
-  until you say they are changed (see [Upgrade](#upgrade), step 3):
+  upgrade lists each one your v2 uses, with its new address, and waits
+  until you say they are changed (see [Upgrade](#upgrade), step 6):
   - Single sign-on (OIDC): add the v3 redirect URI, ending in
     `/api/v3/auth/oidc/callback` instead of `/api/v1/auth/oidc/callback`,
     to the client at your provider. When v2's address ends in
@@ -576,7 +643,13 @@ Then check:
 
 ## Going back to v2
 
-As long as the `v2-backup` folders are there:
+As long as the `v2-backup` folders are there.
+
+Right after the upgrade, before you press Continue, the page's "Go back to
+v2" does it: it asks first, deletes the v3 data and puts the v2 files back.
+Then set the image tag back to your v2 version and start it again.
+
+Later, from the command line:
 
 1. Stop v3: `docker compose stop`.
 2. Run the undo:
@@ -661,7 +734,8 @@ once you are done.
 
 Like the upgrade, the export first lists the callback addresses that
 change and stops with exit code 3 until you run it with
-`--callbacks-changed` (see [Upgrade](#upgrade), step 3). Pass
+`--callbacks-changed` (see
+[Upgrading from the command line](#upgrading-from-the-command-line)). Pass
 `-e BASE_PATH=...` if v3 runs under a base path, so the addresses it prints
 are right.
 
@@ -834,10 +908,11 @@ import leaves their v2 version out.
 
 | Message | Meaning | What to do |
 |---|---|---|
-| `this is a DroppedNeedle v2 data directory` | v3 was started on v2 data | Stop the container and run the upgrade |
+| `DroppedNeedle needs its upgrade from v2` (`503 UPGRADE_REQUIRED`) | v3 was started on v2 data, and an app or script called it | Open DroppedNeedle's address in a browser and run the upgrade there |
+| `this is a DroppedNeedle v2 data directory` | A command that needs v3 data was run on v2 data | Upgrade first: start the server and open its page, or run the upgrade |
 | `Before upgrading, change these addresses` (exit code 3) | v2 uses single sign-on, Spotify playlist import or MusicBrainz contributions, whose callback addresses change | Your v2 files are in place. Change each address it lists, then run again with `--callbacks-changed` |
 | `No admin could get back in if single sign-on failed` (exit code 3) | Single sign-on is on and no admin has a password or a username | Your v2 files are in place. Set a username for the admin it names in v2 (Profile), then run again |
-| `an upgrade from v2 did not finish` | An upgrade was killed partway | Run the upgrade again, or `upgrade --undo --yes` to go back to v2 |
+| `an upgrade from v2 did not finish` | An upgrade was killed partway | On the page, Finish the upgrade or Go back to v2. From the command line, run the upgrade again, or `upgrade --undo --yes` |
 | `Stop the server, then try again` | A server is using the data directory | Stop it and re-run |
 | `cannot tell what this data directory holds` | The folders are neither a v2 nor a v3 data directory, for example a v2 database beside a v3 key file | Nothing was changed. Check that the mounts point at the right folders |
 | `already exists. Move it away or delete it` | A `v2-backup` folder is left from an earlier upgrade | Move or delete it, then run the upgrade again |
