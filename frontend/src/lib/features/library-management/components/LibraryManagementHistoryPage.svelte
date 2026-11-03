@@ -2,7 +2,7 @@
 	import '$lib/features/library-management/components/library-management.css';
 	import { ArrowRight, FolderCog, History, ShieldAlert } from 'lucide-svelte';
 
-	import BackButton from '$lib/components/BackButton.svelte';
+	import BackButton from '$lib/ui/BackButton.svelte';
 	import { getTargetLibrarySettingsQuery } from '$lib/features/library-management/queries/LibraryPolicyQueries.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import {

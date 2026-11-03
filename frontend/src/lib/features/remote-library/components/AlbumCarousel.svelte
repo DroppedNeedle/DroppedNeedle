@@ -1,5 +1,5 @@
 <script lang="ts">
-	import HorizontalCarousel from '$lib/components/HorizontalCarousel.svelte';
+	import HorizontalCarousel from '$lib/ui/HorizontalCarousel.svelte';
 	import SourceAlbumCardCompact from '$lib/features/remote-library/components/SourceAlbumCardCompact.svelte';
 	import type { RemoteAlbum } from '$lib/features/remote-library/queries/types';
 

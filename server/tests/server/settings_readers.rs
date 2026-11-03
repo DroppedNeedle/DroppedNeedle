@@ -60,9 +60,25 @@ const RUST_NOT_READERS: &[&str] = &[
 /// Web app source that shows, edits or types settings rather than acting
 /// on them, as path prefixes from `frontend/src/`.
 const WEB_NOT_READERS: &[&str] = &[
-    "lib/components/settings/",
+    "lib/features/settings/components/",
+    "lib/features/library-management/components/LibraryManagementActivation",
+    "lib/features/library-management/components/LibraryManagementEditor",
+    "lib/features/library-management/components/LibraryManagementProfile",
+    "lib/features/library-management/components/LibraryManagementPurge",
+    "lib/features/library-management/components/LibraryManagementRoot",
+    "lib/features/library-management/components/LibraryManagementScript",
+    "lib/features/library-management/components/SettingsLibraryManagement",
+    "lib/features/library-management/components/activationWizard",
+    "lib/features/library-management/components/libraryManagementTestFixtures",
+    "lib/features/library-management/components/managementProfileLists",
+    "lib/features/library-management/components/managementSettingsDraft",
     "routes/settings/",
-    "lib/queries/settings/",
+    "lib/features/settings/queries/AdminCacheQueries",
+    "lib/features/settings/queries/JellyfinSettingsQueries",
+    "lib/features/settings/queries/LyricsSettingsQueries",
+    "lib/features/settings/queries/PublicAddressQueries",
+    "lib/features/settings/queries/SectionSettingsQueries",
+    "lib/features/settings/queries/SettingsQueryKeyFactory",
     "lib/api/v3/",
     "lib/test/",
 ];

@@ -8,7 +8,7 @@
 -->
 <script lang="ts" generics="T">
 	import type { Snippet } from 'svelte';
-	import ServiceErrorState from '$lib/components/ServiceErrorState.svelte';
+	import ServiceErrorState from '$lib/ui/ServiceErrorState.svelte';
 
 	interface QueryLike {
 		data: T | undefined;

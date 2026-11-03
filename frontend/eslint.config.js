@@ -291,7 +291,7 @@ export default defineConfig(
 	{
 		// The one component allowed to render a string as markup: it sanitizes
 		// first. Everywhere else svelte/no-at-html-tags stays an error.
-		files: ['src/lib/components/SafeHtml.svelte'],
+		files: ['src/lib/ui/SafeHtml.svelte'],
 		rules: {
 			'svelte/no-at-html-tags': 'off'
 		}

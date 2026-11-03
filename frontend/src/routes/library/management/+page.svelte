@@ -12,7 +12,7 @@
 	import { page } from '$app/state';
 	import { SvelteURL } from 'svelte/reactivity';
 
-	import PageHeader from '$lib/components/PageHeader.svelte';
+	import PageHeader from '$lib/ui/PageHeader.svelte';
 	import LibraryScanningPanel from '$lib/features/library-management/components/LibraryScanningPanel.svelte';
 	import LibraryManagementControlRoom from '$lib/features/library-management/components/LibraryManagementControlRoom.svelte';
 	import LibraryOverviewPanel from '$lib/features/library-management/components/LibraryOverviewPanel.svelte';

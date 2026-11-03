@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { ExternalLink } from 'lucide-svelte';
 	import AlbumImage from '$lib/media/AlbumImage.svelte';
-	import SafeHtml from '$lib/components/SafeHtml.svelte';
-	import { outsideLink } from '$lib/components/outsideLink';
+	import SafeHtml from '$lib/ui/SafeHtml.svelte';
+	import { outsideLink } from '$lib/ui/outsideLink';
 	import Button from '$lib/ui/Button.svelte';
 	import Modal from '$lib/ui/Modal.svelte';
 

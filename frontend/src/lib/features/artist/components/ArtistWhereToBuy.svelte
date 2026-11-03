@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { Search, ShoppingBag } from 'lucide-svelte';
-	import { outsideLink } from '$lib/components/outsideLink';
+	import { outsideLink } from '$lib/ui/outsideLink';
 	import { getArtistPurchaseOptionsQuery } from '$lib/features/album/queries/GetItQueries.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';

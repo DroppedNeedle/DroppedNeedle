@@ -4,7 +4,7 @@ import { apiError, fakeApi, type RouteData } from '$lib/test/api';
 import { renderWithQuery } from '$lib/test/render';
 import ArtistAppearancesSection from './ArtistAppearancesSection.svelte';
 import { authStore } from '$lib/stores/authStore.svelte';
-import { toAuthUser } from '$lib/queries/auth/types';
+import { toAuthUser } from '$lib/features/auth/queries/types';
 
 const ARTIST_MBID = 'af591c1b-4dfe-4708-993e-f6ac6aa6d2ac';
 const LIBRARY_ID = '659cab1f-92ab-536b-9398-96a4ea0a4a90';

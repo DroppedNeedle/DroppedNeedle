@@ -9,9 +9,9 @@
 	import RadioPlayButton from '$lib/features/discover/components/RadioPlayButton.svelte';
 	import SampleButton from '$lib/features/discover/components/SampleButton.svelte';
 	import SourceBadge from '$lib/features/discover/components/SourceBadge.svelte';
-	import LiveUpdatingBadge from '$lib/components/LiveUpdatingBadge.svelte';
+	import LiveUpdatingBadge from '$lib/ui/LiveUpdatingBadge.svelte';
 	import HeroBackdrop from '$lib/media/HeroBackdrop.svelte';
-	import HorizontalCarousel from '$lib/components/HorizontalCarousel.svelte';
+	import HorizontalCarousel from '$lib/ui/HorizontalCarousel.svelte';
 	import { albumHrefOrNull, artistHrefOrNull } from '$lib/utils/entityRoutes';
 	import { libraryStore } from '$lib/stores/library';
 	import Button from '$lib/ui/Button.svelte';

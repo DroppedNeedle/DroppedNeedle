@@ -10,8 +10,8 @@
 	import { toastStore } from '$lib/stores/toast';
 	import { formatTotalDurationSec, formatRelativeTime } from '$lib/utils/formatting';
 	import PlaylistMosaic from '$lib/media/PlaylistMosaic.svelte';
-	import ContextMenu from '$lib/components/ContextMenu.svelte';
-	import type { MenuItem } from '$lib/components/ContextMenu.svelte';
+	import ContextMenu from '$lib/ui/ContextMenu.svelte';
+	import type { MenuItem } from '$lib/ui/ContextMenu.svelte';
 	import { Play, Shuffle, Pencil, Check, X, Tv, Sparkles, Globe, Lock } from 'lucide-svelte';
 	import NavidromeIcon from '$lib/media/icons/NavidromeIcon.svelte';
 	import PlexIcon from '$lib/media/icons/PlexIcon.svelte';

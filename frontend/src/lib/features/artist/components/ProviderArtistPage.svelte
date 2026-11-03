@@ -17,7 +17,7 @@
 	import ArtistMusicBrainzLink from '$lib/features/library/components/ArtistMusicBrainzLink.svelte';
 	import LocalArtistPage from './LocalArtistPage.svelte';
 	import type { ArtistView } from '$lib/types';
-	import PageSectionToc from '$lib/components/PageSectionToc.svelte';
+	import PageSectionToc from '$lib/ui/PageSectionToc.svelte';
 	import { createRequestAlbumMutation } from '$lib/features/downloads/queries/DownloadMutations.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { libraryStore } from '$lib/stores/library';
@@ -33,7 +33,7 @@
 		refreshArtist,
 		updateArtistReleaseInCache
 	} from '$lib/features/artist/queries/ArtistQueries.svelte';
-	import { getConnectionsQuery } from '$lib/queries/connections/ConnectionsQuery.svelte';
+	import { getConnectionsQuery } from '$lib/features/profile/queries/ConnectionsQuery.svelte';
 	import { PAGE_SOURCE_KEYS } from '$lib/constants';
 	import { PersistedState } from 'runed';
 	import SimpleSourceSwitcher from '$lib/features/discover/components/SimpleSourceSwitcher.svelte';

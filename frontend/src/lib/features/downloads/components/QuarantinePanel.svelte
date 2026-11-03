@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { TriangleAlert, ShieldCheck, Trash2 } from 'lucide-svelte';
 
-	import EmptyState from '$lib/components/EmptyState.svelte';
+	import EmptyState from '$lib/ui/EmptyState.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import {

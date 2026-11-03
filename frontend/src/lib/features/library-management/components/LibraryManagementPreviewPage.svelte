@@ -14,7 +14,7 @@
 		Tags
 	} from 'lucide-svelte';
 
-	import BackButton from '$lib/components/BackButton.svelte';
+	import BackButton from '$lib/ui/BackButton.svelte';
 	import LibraryManagementDiscardPreview from './LibraryManagementDiscardPreview.svelte';
 	import { getTargetLibrarySettingsQuery } from '$lib/features/library-management/queries/LibraryPolicyQueries.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import CarouselSkeleton from '$lib/components/CarouselSkeleton.svelte';
+	import CarouselSkeleton from '$lib/ui/CarouselSkeleton.svelte';
 	import { ChevronRight } from 'lucide-svelte';
 	import type { Snippet } from 'svelte';
 	import { withBasePath } from '$lib/utils/basePath';

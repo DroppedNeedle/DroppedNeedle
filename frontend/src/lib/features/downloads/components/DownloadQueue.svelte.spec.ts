@@ -1,7 +1,7 @@
 import { page } from 'vitest/browser';
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { toAuthUser } from '$lib/queries/auth/types';
+import { toAuthUser } from '$lib/features/auth/queries/types';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { fakeApi } from '$lib/test/api';
 import { renderWithQuery } from '$lib/test/render';

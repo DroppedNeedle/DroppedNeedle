@@ -2,7 +2,7 @@
 	import {
 		createSaveJellyfinSettingsMutation,
 		getJellyfinSettingsQuery
-	} from '$lib/queries/settings/JellyfinSettingsQueries.svelte';
+	} from '$lib/features/settings/queries/JellyfinSettingsQueries.svelte';
 	import QueryBoundary from './QueryBoundary.svelte';
 	import SaveBar from './SaveBar.svelte';
 	import SecretField from './SecretField.svelte';

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { coverSrc, type CoverKind } from '$lib/api/covers';
-	import { useDirectRemoteImages } from '$lib/queries/AdvancedSettingsReads.svelte';
+	import { useDirectRemoteImages } from '$lib/features/settings/queries/AdvancedSettingsReads.svelte';
 	import { onDestroy } from 'svelte';
 	import { lazyImage, resetLazyImage } from '$lib/media/lazyImage';
 	import { API_SIZES } from '$lib/constants';

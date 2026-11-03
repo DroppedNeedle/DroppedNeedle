@@ -14,6 +14,8 @@ const modules = import.meta.glob<Record<string, unknown>>(
 		'../features/*/queries/**/*QueryKeyFactory.ts',
 		'../features/*/queries/**/*Keys.ts',
 		'../features/*/queries/*.svelte.ts',
+		// the upgrade screens run before anyone can sign in, under fixed signed-out keys
+		'!../features/upgrade/**',
 		'../shell/version.svelte.ts'
 	],
 	{

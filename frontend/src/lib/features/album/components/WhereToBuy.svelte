@@ -10,7 +10,7 @@
 	} from 'lucide-svelte';
 	import { getPurchaseOptionsQuery } from '$lib/features/album/queries/GetItQueries.svelte';
 	import type { PurchaseLink } from '$lib/types';
-	import { outsideLink } from '$lib/components/outsideLink';
+	import { outsideLink } from '$lib/ui/outsideLink';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 

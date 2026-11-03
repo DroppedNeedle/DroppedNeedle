@@ -13,7 +13,7 @@ vi.mock('$lib/media/lazyImage', () => ({
 import SearchPage from './+page.svelte';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { playerStore } from '$lib/features/player/state/player.svelte';
-import { toAuthUser } from '$lib/queries/auth/types';
+import { toAuthUser } from '$lib/features/auth/queries/types';
 
 type SearchResponse = RouteData<'GET /api/v3/search'>;
 

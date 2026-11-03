@@ -26,7 +26,7 @@ import { authStore } from '$lib/stores/authStore.svelte';
 import { HomeQueryKeyFactory } from '$lib/queries/featureKeys';
 import { setQueryDataWithPersister } from '$lib/queries/QueryClient';
 import { libraryStore } from '$lib/stores/library';
-import { toAuthUser } from '$lib/queries/auth/types';
+import { toAuthUser } from '$lib/features/auth/queries/types';
 
 const albumId = '3f3a6d95-326e-4384-80b0-0744f20f24ff';
 const localAlbumId = 'local-album-1';

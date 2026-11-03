@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 
 import type { components } from '$lib/api/v3/openapi';
-import { toAuthUser } from '$lib/queries/auth/types';
+import { toAuthUser } from '$lib/features/auth/queries/types';
 import { clearPersistedQueryCache } from '$lib/queries/IndexedDbPersister.svelte';
 import { queryClient } from '$lib/queries/QueryClient';
 import { authStore } from '$lib/stores/authStore.svelte';

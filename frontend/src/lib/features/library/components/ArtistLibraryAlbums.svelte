@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { Library } from 'lucide-svelte';
-	import HorizontalCarousel from '$lib/components/HorizontalCarousel.svelte';
-	import CarouselSkeleton from '$lib/components/CarouselSkeleton.svelte';
+	import HorizontalCarousel from '$lib/ui/HorizontalCarousel.svelte';
+	import CarouselSkeleton from '$lib/ui/CarouselSkeleton.svelte';
 	import LibraryAlbumCard from './LibraryAlbumCard.svelte';
 	import { getLibraryArtistAlbumsQuery } from '$lib/features/library/queries/LibraryQueries.svelte';
 	import { getArtistOwnedReleasesQuery } from '$lib/features/artist/queries/ArtistQueries.svelte';

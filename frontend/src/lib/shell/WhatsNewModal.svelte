@@ -2,7 +2,7 @@
 	import '$lib/shell/release-notes.css';
 	import { goto } from '$app/navigation';
 	import { isWhatsNewDismissed, dismissWhatsNew } from '$lib/stores/version.svelte';
-	import SafeHtml from '$lib/components/SafeHtml.svelte';
+	import SafeHtml from '$lib/ui/SafeHtml.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import { withBasePath } from '$lib/utils/basePath';

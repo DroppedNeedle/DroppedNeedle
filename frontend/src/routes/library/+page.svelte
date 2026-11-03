@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import PageHeader from '$lib/components/PageHeader.svelte';
+	import PageHeader from '$lib/ui/PageHeader.svelte';
 	import LibraryDashboard from '$lib/features/library/components/LibraryDashboard.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { withBasePath } from '$lib/utils/basePath';

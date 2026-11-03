@@ -8,7 +8,7 @@ const h = vi.hoisted(() => ({
 	reset: vi.fn()
 }));
 
-vi.mock('$lib/queries/auth/AuthMutations.svelte', () => ({
+vi.mock('$lib/features/auth/queries/AuthMutations.svelte', () => ({
 	createPasswordRecoveryResetMutation: () => ({
 		mutateAsync: h.mutate,
 		reset: h.reset,

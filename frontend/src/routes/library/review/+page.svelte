@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import PageHeader from '$lib/components/PageHeader.svelte';
+	import PageHeader from '$lib/ui/PageHeader.svelte';
 	import ReviewQueue from '$lib/features/library/components/ReviewQueue.svelte';
 	import UnconfirmedAlbums, {
 		type WaitingView

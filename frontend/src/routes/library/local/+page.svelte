@@ -16,7 +16,7 @@
 	import QueueDrawer from '$lib/features/player/components/QueueDrawer.svelte';
 	import SearchCard from '$lib/features/library/components/local/SearchCard.svelte';
 	import DeckVisualiser from '$lib/features/library/components/local/DeckVisualiser.svelte';
-	import HorizontalCarousel from '$lib/components/HorizontalCarousel.svelte';
+	import HorizontalCarousel from '$lib/ui/HorizontalCarousel.svelte';
 	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import NoFilesBadge from '$lib/features/library/components/NoFilesBadge.svelte';
 	import {

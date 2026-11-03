@@ -27,14 +27,14 @@ vi.mock('$lib/stores/authStore.svelte', () => ({
 }));
 
 // Two providers so the tab bar renders (it only shows when >1 method is enabled).
-vi.mock('$lib/queries/auth/AuthProvidersQuery.svelte', () => ({
+vi.mock('$lib/features/auth/queries/AuthProvidersQuery.svelte', () => ({
 	getAuthProvidersQuery: () => ({
 		data: { local: true, plex: false, jellyfin: true, oidc: false },
 		isSuccess: true
 	})
 }));
 
-vi.mock('$lib/queries/auth/AuthMutations.svelte', () => ({
+vi.mock('$lib/features/auth/queries/AuthMutations.svelte', () => ({
 	createLocalLoginMutation: () => ({ mutateAsync: mockLocalMutate, isPending: false }),
 	createJellyfinLoginMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
 	createOidcAuthorizeMutation: () => ({ mutateAsync: vi.fn(), isPending: false })
@@ -42,7 +42,7 @@ vi.mock('$lib/queries/auth/AuthMutations.svelte', () => ({
 
 // The page mints Plex pins through the real flow module; these tests never
 // touch the Plex tab, so stub the mutation instead of mounting a QueryClient.
-vi.mock('$lib/queries/plex.svelte', () => ({
+vi.mock('$lib/features/settings/queries/plex.svelte', () => ({
 	createPlexStartMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
 	pollPlexFlow: vi.fn()
 }));

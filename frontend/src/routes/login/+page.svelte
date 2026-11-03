@@ -3,19 +3,23 @@
 	import { goto } from '$app/navigation';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { ApiError } from '$lib/api/errors';
-	import { getAuthProvidersQuery } from '$lib/queries/auth/AuthProvidersQuery.svelte';
+	import { getAuthProvidersQuery } from '$lib/features/auth/queries/AuthProvidersQuery.svelte';
 	import {
 		createJellyfinLoginMutation,
 		createLocalLoginMutation,
 		createOidcAuthorizeMutation
-	} from '$lib/queries/auth/AuthMutations.svelte';
+	} from '$lib/features/auth/queries/AuthMutations.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { providerUnavailableMessage } from '$lib/utils/serviceError';
 	import { takeSignInReturn } from '$lib/utils/signInReturn';
-	import { outsideLink } from '$lib/components/outsideLink';
-	import { createPlexStartMutation } from '$lib/queries/plex.svelte';
-	import { pollPlexFlow } from '$lib/queries/plex.svelte';
-	import { toAuthUser, type AuthProviders, type SessionUserLike } from '$lib/queries/auth/types';
+	import { outsideLink } from '$lib/ui/outsideLink';
+	import { createPlexStartMutation } from '$lib/features/settings/queries/plex.svelte';
+	import { pollPlexFlow } from '$lib/features/settings/queries/plex.svelte';
+	import {
+		toAuthUser,
+		type AuthProviders,
+		type SessionUserLike
+	} from '$lib/features/auth/queries/types';
 	import { onDestroy } from 'svelte';
 	import { Eye, EyeOff } from 'lucide-svelte';
 	import JellyfinIcon from '$lib/media/icons/JellyfinIcon.svelte';

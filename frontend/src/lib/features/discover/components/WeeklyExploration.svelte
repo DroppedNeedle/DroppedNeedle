@@ -1,10 +1,10 @@
 <script lang="ts">
 	import type { WeeklyExploration as SectionType } from '$lib/features/discover/queries/types';
 	import { Sparkles, ExternalLink } from 'lucide-svelte';
-	import HorizontalCarousel from '$lib/components/HorizontalCarousel.svelte';
+	import HorizontalCarousel from '$lib/ui/HorizontalCarousel.svelte';
 	import WeeklyExplorationCard from './WeeklyExplorationCard.svelte';
-	import LiveUpdatingBadge from '$lib/components/LiveUpdatingBadge.svelte';
-	import { outsideLink } from '$lib/components/outsideLink';
+	import LiveUpdatingBadge from '$lib/ui/LiveUpdatingBadge.svelte';
+	import { outsideLink } from '$lib/ui/outsideLink';
 
 	interface Props {
 		section: SectionType;

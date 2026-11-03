@@ -49,7 +49,7 @@ vi.mock('$lib/queries/QueryClient', () => ({
 	resetQueryCacheForUserSwitch: state.resetQueryCache,
 	collectPersistedGarbage: vi.fn()
 }));
-vi.mock('$lib/queries/scrobble-preferences.svelte', () => ({
+vi.mock('$lib/features/profile/queries/scrobble-preferences.svelte', () => ({
 	getScrobblePreferencesQueryOptions: (userId: string | undefined) => ({ userId })
 }));
 vi.mock('$lib/stores/musicSource', () => ({

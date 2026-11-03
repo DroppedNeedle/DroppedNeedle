@@ -84,7 +84,7 @@
 <script lang="ts">
 	import { Globe } from 'lucide-svelte';
 	import type { ExternalLink } from '$lib/types';
-	import { outsideLink } from '$lib/components/outsideLink';
+	import { outsideLink } from '$lib/ui/outsideLink';
 	import Button from '$lib/ui/Button.svelte';
 
 	interface Props {

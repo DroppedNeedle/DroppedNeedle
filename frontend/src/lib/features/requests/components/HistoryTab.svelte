@@ -2,7 +2,7 @@
 	import { SvelteMap } from 'svelte/reactivity';
 	import { fade } from '$lib/ui/motion';
 	import { Clock } from 'lucide-svelte';
-	import Pagination from '$lib/components/Pagination.svelte';
+	import Pagination from '$lib/ui/Pagination.svelte';
 	import RequestCard from '$lib/features/requests/components/RequestCard.svelte';
 	import { getRequestHistoryQuery } from '$lib/features/requests/queries/RequestQueries.svelte';
 	import {

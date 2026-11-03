@@ -19,7 +19,7 @@ vi.mock('$app/navigation', () => ({
 
 import ManagementPage from './+page.svelte';
 import { authStore } from '$lib/stores/authStore.svelte';
-import { toAuthUser } from '$lib/queries/auth/types';
+import { toAuthUser } from '$lib/features/auth/queries/types';
 
 const librarySwitchedOff: RouteData<'GET /api/v3/settings/library'> = {
 	acoustid_api_key: '',

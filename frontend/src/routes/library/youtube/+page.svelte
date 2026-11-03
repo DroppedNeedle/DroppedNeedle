@@ -6,8 +6,8 @@
 	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import YouTubeLinkModal from '$lib/features/youtube/components/YouTubeLinkModal.svelte';
 	import YouTubeDetailModal from '$lib/features/youtube/components/YouTubeDetailModal.svelte';
-	import ContextMenu from '$lib/components/ContextMenu.svelte';
-	import type { MenuItem } from '$lib/components/ContextMenu.svelte';
+	import ContextMenu from '$lib/ui/ContextMenu.svelte';
+	import type { MenuItem } from '$lib/ui/ContextMenu.svelte';
 	import type { YouTubeLink } from '$lib/types';
 	import { Plus, Info, Play, Shuffle, ListPlus, ListStart, ListMusic } from 'lucide-svelte';
 	import LibraryFilterBar from '$lib/features/remote-library/components/LibraryFilterBar.svelte';

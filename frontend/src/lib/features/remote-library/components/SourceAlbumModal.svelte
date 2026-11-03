@@ -8,8 +8,8 @@
 	import { goto } from '$app/navigation';
 	import { playerStore } from '$lib/features/player/state/player.svelte';
 	import { launchRemotePlayback } from '$lib/features/player/playback/launchRemotePlayback';
-	import ContextMenu from '$lib/components/ContextMenu.svelte';
-	import type { MenuItem } from '$lib/components/ContextMenu.svelte';
+	import ContextMenu from '$lib/ui/ContextMenu.svelte';
+	import type { MenuItem } from '$lib/ui/ContextMenu.svelte';
 	import AddToPlaylistModal from '$lib/features/playlists/components/AddToPlaylistModal.svelte';
 	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import MetadataPanel from '$lib/features/remote-library/components/MetadataPanel.svelte';

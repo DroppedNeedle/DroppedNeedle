@@ -7,7 +7,7 @@
 	import { goto } from '$app/navigation';
 	import { Link2, Pencil, Unlink } from 'lucide-svelte';
 	import { ApiError } from '$lib/api/errors';
-	import { outsideLink } from '$lib/components/outsideLink';
+	import { outsideLink } from '$lib/ui/outsideLink';
 	import {
 		type ArtistLink,
 		createClearArtistLinkMutation,

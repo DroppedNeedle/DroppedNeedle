@@ -1,6 +1,6 @@
 import { setDownloadScope } from '$lib/features/downloads/queries/downloadScope.svelte';
 import { resetMusicBrainzSourceScope } from '$lib/queries/musicbrainz/sourceScope.svelte';
-import type { MusicBrainzSourceMode } from '$lib/queries/musicbrainz/types';
+import type { MusicBrainzSourceMode } from '$lib/features/settings/queries/musicbrainz/types';
 
 /** localStorage key holding the last hydrated user id, so a page load as a
  * different user (shared browser) can clear the persisted query cache. */

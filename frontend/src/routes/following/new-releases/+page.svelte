@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { Disc3, Plus, Check, ArrowLeft } from 'lucide-svelte';
 	import AlbumImage from '$lib/media/AlbumImage.svelte';
-	import EmptyState from '$lib/components/EmptyState.svelte';
+	import EmptyState from '$lib/ui/EmptyState.svelte';
 	import { getRecentReleasesQuery } from '$lib/features/following/queries/FollowQueries.svelte';
 	import { createMarkNewReleasesSeenMutation } from '$lib/features/following/queries/FollowMutations.svelte';
 	import { createRequestAlbumMutation } from '$lib/features/downloads/queries/DownloadMutations.svelte';

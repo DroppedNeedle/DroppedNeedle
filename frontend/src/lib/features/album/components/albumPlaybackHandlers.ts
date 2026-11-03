@@ -15,7 +15,7 @@ import { getCoverUrl } from '$lib/utils/errorHandling';
 import { launchRemotePlayback } from '$lib/features/player/playback/launchRemotePlayback';
 import { launchLocalPlayback } from '$lib/features/player/playback/launchLocalPlayback';
 import { playerStore } from '$lib/features/player/state/player.svelte';
-import type { MenuItem } from '$lib/components/ContextMenu.svelte';
+import type { MenuItem } from '$lib/ui/ContextMenu.svelte';
 import { ListPlus, ListStart, ListMusic, Download, Trash2 } from 'lucide-svelte';
 import {
 	downloadAlbumArchive,

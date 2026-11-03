@@ -15,7 +15,7 @@
 import { SvelteSet } from 'svelte/reactivity';
 import { audioFocus } from '$lib/features/player/state/audioFocus.svelte';
 import { toastStore } from '$lib/stores/toast';
-import { outsideLink } from '$lib/components/outsideLink';
+import { outsideLink } from '$lib/ui/outsideLink';
 import type { PreviewTrackItem } from '$lib/features/discover/queries/types';
 import {
 	fetchAlbumPreview,

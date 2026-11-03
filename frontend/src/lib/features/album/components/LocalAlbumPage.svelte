@@ -30,7 +30,7 @@
 	} from '$lib/features/library/queries/EditionQueries.svelte';
 	import { notesByFile } from './albumEdition';
 	import AddToPlaylistModal from '$lib/features/playlists/components/AddToPlaylistModal.svelte';
-	import type { MenuItem } from '$lib/components/ContextMenu.svelte';
+	import type { MenuItem } from '$lib/ui/ContextMenu.svelte';
 	import { getTrackContextMenuItems } from './albumPlaybackHandlers';
 	import type { QueueItem } from '$lib/features/player/playback/types';
 	import { authStore } from '$lib/stores/authStore.svelte';

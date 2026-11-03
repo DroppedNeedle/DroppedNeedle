@@ -14,7 +14,7 @@
 		ShieldAlert
 	} from 'lucide-svelte';
 
-	import BackButton from '$lib/components/BackButton.svelte';
+	import BackButton from '$lib/ui/BackButton.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import {
 		createControlLibraryManagementOperationMutation,

@@ -7,7 +7,7 @@ vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 
 import TracksPage from './+page.svelte';
 import { authStore } from '$lib/stores/authStore.svelte';
-import { toAuthUser } from '$lib/queries/auth/types';
+import { toAuthUser } from '$lib/features/auth/queries/types';
 
 type TrackPage = RouteData<'GET /api/v3/library/tracks'>;
 

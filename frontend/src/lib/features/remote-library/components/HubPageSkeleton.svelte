@@ -1,5 +1,5 @@
 <script lang="ts">
-	import CarouselSkeleton from '$lib/components/CarouselSkeleton.svelte';
+	import CarouselSkeleton from '$lib/ui/CarouselSkeleton.svelte';
 	import Card from '$lib/ui/Card.svelte';
 </script>
 

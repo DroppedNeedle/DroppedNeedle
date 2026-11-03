@@ -2,7 +2,7 @@
 	import '../../auth.css';
 	import { ApiError } from '$lib/api/errors';
 	import { withBasePath } from '$lib/utils/basePath';
-	import { createPasswordRecoveryResetMutation } from '$lib/queries/auth/AuthMutations.svelte';
+	import { createPasswordRecoveryResetMutation } from '$lib/features/auth/queries/AuthMutations.svelte';
 	import {
 		ArrowLeft,
 		Check,

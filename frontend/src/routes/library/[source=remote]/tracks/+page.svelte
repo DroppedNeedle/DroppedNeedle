@@ -13,8 +13,8 @@
 	import { toastStore } from '$lib/stores/toast';
 	import { createLibraryTrackLoader } from '$lib/features/remote-library/state/libraryTrackLoader.svelte';
 	import NowPlayingIndicator from '$lib/features/player/components/NowPlayingIndicator.svelte';
-	import ContextMenu from '$lib/components/ContextMenu.svelte';
-	import type { MenuItem } from '$lib/components/ContextMenu.svelte';
+	import ContextMenu from '$lib/ui/ContextMenu.svelte';
+	import type { MenuItem } from '$lib/ui/ContextMenu.svelte';
 	import LibraryFilterBar from '$lib/features/remote-library/components/LibraryFilterBar.svelte';
 	import { formatDurationSec } from '$lib/utils/formatting';
 	import { reveal } from '$lib/actions/reveal';

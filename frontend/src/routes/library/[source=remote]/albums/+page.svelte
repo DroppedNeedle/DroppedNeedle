@@ -18,8 +18,8 @@
 	import { playerStore } from '$lib/features/player/state/player.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import AlbumImage from '$lib/media/AlbumImage.svelte';
-	import ContextMenu from '$lib/components/ContextMenu.svelte';
-	import type { MenuItem } from '$lib/components/ContextMenu.svelte';
+	import ContextMenu from '$lib/ui/ContextMenu.svelte';
+	import type { MenuItem } from '$lib/ui/ContextMenu.svelte';
 	import AddToPlaylistModal from '$lib/features/playlists/components/AddToPlaylistModal.svelte';
 	import SourceAlbumModal from '$lib/features/remote-library/components/SourceAlbumModal.svelte';
 	import LibraryFilterBar from '$lib/features/remote-library/components/LibraryFilterBar.svelte';

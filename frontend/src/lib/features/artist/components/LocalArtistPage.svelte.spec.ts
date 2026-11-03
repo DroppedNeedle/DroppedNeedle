@@ -7,7 +7,7 @@ vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 
 import LocalArtistPage from './LocalArtistPage.svelte';
 import { authStore } from '$lib/stores/authStore.svelte';
-import { toAuthUser } from '$lib/queries/auth/types';
+import { toAuthUser } from '$lib/features/auth/queries/types';
 
 const artist: RouteData<'GET /api/v3/library/artists/{id}'> = {
 	id: 'artist-guest',

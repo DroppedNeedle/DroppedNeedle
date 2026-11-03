@@ -18,8 +18,8 @@ vi.mock('$app/state', () => ({
 }));
 
 // The real hand-back leaves the page for the app; record it instead.
-vi.mock('$lib/utils/appHandBack', async (importOriginal) => {
-	const actual = await importOriginal<typeof import('$lib/utils/appHandBack')>();
+vi.mock('$lib/features/auth/state/appHandBack', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('$lib/features/auth/state/appHandBack')>();
 	// The test page itself runs in a frame.
 	return { ...actual, handBack: state.handBack, framed: () => false };
 });

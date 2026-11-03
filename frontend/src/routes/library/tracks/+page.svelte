@@ -12,8 +12,8 @@
 	import { toastStore } from '$lib/stores/toast';
 	import NowPlayingIndicator from '$lib/features/player/components/NowPlayingIndicator.svelte';
 	import AlbumImage from '$lib/media/AlbumImage.svelte';
-	import ContextMenu from '$lib/components/ContextMenu.svelte';
-	import type { MenuItem } from '$lib/components/ContextMenu.svelte';
+	import ContextMenu from '$lib/ui/ContextMenu.svelte';
+	import type { MenuItem } from '$lib/ui/ContextMenu.svelte';
 	import { formatDurationSec } from '$lib/utils/formatting';
 	import { reveal } from '$lib/actions/reveal';
 	import Button from '$lib/ui/Button.svelte';

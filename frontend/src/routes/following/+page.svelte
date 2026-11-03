@@ -2,8 +2,8 @@
 	import { Heart, ArrowRight, CalendarClock, Check, Disc3, ExternalLink } from 'lucide-svelte';
 	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import ArtistImage from '$lib/media/ArtistImage.svelte';
-	import EmptyState from '$lib/components/EmptyState.svelte';
-	import { outsideLink } from '$lib/components/outsideLink';
+	import EmptyState from '$lib/ui/EmptyState.svelte';
+	import { outsideLink } from '$lib/ui/outsideLink';
 	import {
 		getConcertsQuery,
 		getFollowedArtistsQuery,

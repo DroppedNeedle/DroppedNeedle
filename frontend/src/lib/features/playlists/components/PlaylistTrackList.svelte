@@ -16,8 +16,8 @@
 	import { formatDurationSec, isValidMbid } from '$lib/utils/formatting';
 	import { withBasePath } from '$lib/utils/basePath';
 	import AlbumImage from '$lib/media/AlbumImage.svelte';
-	import ContextMenu from '$lib/components/ContextMenu.svelte';
-	import type { MenuItem } from '$lib/components/ContextMenu.svelte';
+	import ContextMenu from '$lib/ui/ContextMenu.svelte';
+	import type { MenuItem } from '$lib/ui/ContextMenu.svelte';
 	import SourcePickerDropdown from '$lib/features/playlists/components/SourcePickerDropdown.svelte';
 	import NowPlayingIndicator from '$lib/features/player/components/NowPlayingIndicator.svelte';
 	import { Music, Trash2, ListPlus, ListStart, GripVertical, Play, X } from 'lucide-svelte';

@@ -15,4 +15,4 @@ server/kernel/src/runtime_config/mask.rs             @HabiRabbu
 server/compat/src/shared/auth.rs                     @HabiRabbu
 server/migrations/                                   @HabiRabbu
 frontend/src/lib/stores/authStore.svelte.ts          @HabiRabbu
-frontend/src/lib/components/settings/SettingsSecurity.svelte @HabiRabbu
+frontend/src/lib/features/settings/components/SettingsSecurity.svelte @HabiRabbu

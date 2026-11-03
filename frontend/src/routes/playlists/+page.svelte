@@ -7,7 +7,7 @@
 	} from '$lib/api/playlists';
 	import { toastStore } from '$lib/stores/toast';
 	import { authStore } from '$lib/stores/authStore.svelte';
-	import { getConnectionsQuery } from '$lib/queries/connections/ConnectionsQuery.svelte';
+	import { getConnectionsQuery } from '$lib/features/profile/queries/ConnectionsQuery.svelte';
 	import { getPlaylistListV3Query } from '$lib/features/playlists/queries/PlaylistV3Queries.svelte';
 	import { createPlaylistV3Mutation } from '$lib/features/playlists/queries/PlaylistV3Mutations.svelte';
 	import { toPageList } from '$lib/features/playlists/queries/playlistV3Adapter';

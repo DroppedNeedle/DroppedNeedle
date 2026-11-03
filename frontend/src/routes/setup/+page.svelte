@@ -4,9 +4,9 @@
 	import { withBasePath } from '$lib/utils/basePath';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { ApiError } from '$lib/api/errors';
-	import { createSetupMutation } from '$lib/queries/auth/AuthMutations.svelte';
-	import { toAuthUser } from '$lib/queries/auth/types';
-	import ServerLogHint from '$lib/components/ServerLogHint.svelte';
+	import { createSetupMutation } from '$lib/features/auth/queries/AuthMutations.svelte';
+	import { toAuthUser } from '$lib/features/auth/queries/types';
+	import ServerLogHint from '$lib/features/auth/components/ServerLogHint.svelte';
 	import { Music, Eye, EyeOff, ShieldCheck } from 'lucide-svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';

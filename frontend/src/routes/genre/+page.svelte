@@ -10,7 +10,7 @@
 		localArtistHref
 	} from '$lib/utils/entityRoutes';
 	import { getGenreGradient } from '$lib/features/genre/components/genreGradient';
-	import ServiceErrorState from '$lib/components/ServiceErrorState.svelte';
+	import ServiceErrorState from '$lib/ui/ServiceErrorState.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import {
 		getGenreAlbumPagesQuery,

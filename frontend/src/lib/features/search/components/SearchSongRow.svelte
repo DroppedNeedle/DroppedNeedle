@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { ListPlus, ListStart, Play } from 'lucide-svelte';
 	import AlbumImage from '$lib/media/AlbumImage.svelte';
-	import ContextMenu from '$lib/components/ContextMenu.svelte';
-	import type { MenuItem } from '$lib/components/ContextMenu.svelte';
+	import ContextMenu from '$lib/ui/ContextMenu.svelte';
+	import type { MenuItem } from '$lib/ui/ContextMenu.svelte';
 	import NowPlayingIndicator from '$lib/features/player/components/NowPlayingIndicator.svelte';
 	import {
 		searchSongQueueItem,

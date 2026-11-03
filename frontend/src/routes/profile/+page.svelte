@@ -3,32 +3,35 @@
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { logout } from '$lib/utils/logout';
-	import { getProfileQuery } from '$lib/queries/profile.svelte';
+	import { getProfileQuery } from '$lib/features/profile/queries/profile.svelte';
 	import {
 		getRemoteConnectionQuery,
 		getRemoteStatsQuery
 	} from '$lib/features/remote-library/queries/RemoteQueries.svelte';
 	import { getLibraryStatsQuery } from '$lib/features/library/queries/LibraryQueries.svelte';
 	import { formatBytes } from '$lib/utils/formatting';
-	import type { ProfileLibraryStats, ProfileServiceConnection } from '$lib/queries/profile.svelte';
-	import AccountCard from '$lib/components/profile/AccountCard.svelte';
-	import ConnectedServicesGrid from '$lib/components/profile/ConnectedServicesGrid.svelte';
-	import LibraryStatsList from '$lib/components/profile/LibraryStatsList.svelte';
-	import MediaServerAccountsCard from '$lib/components/profile/MediaServerAccountsCard.svelte';
-	import NavidromeMusicFoldersCard from '$lib/components/profile/NavidromeMusicFoldersCard.svelte';
-	import ProfileHeader from '$lib/components/profile/ProfileHeader.svelte';
-	import SessionsManager from '$lib/components/profile/SessionsManager.svelte';
-	import AppearanceCard from '$lib/components/profile/AppearanceCard.svelte';
-	import ScrobblingDiscoveryCard from '$lib/components/profile/ScrobblingDiscoveryCard.svelte';
-	import SpotifyConnectionCard from '$lib/components/profile/SpotifyConnectionCard.svelte';
-	import ProfileConnectApps from '$lib/components/profile/ProfileConnectApps.svelte';
-	import PageSectionToc from '$lib/components/PageSectionToc.svelte';
+	import type {
+		ProfileLibraryStats,
+		ProfileServiceConnection
+	} from '$lib/features/profile/queries/profile.svelte';
+	import AccountCard from '$lib/features/profile/components/AccountCard.svelte';
+	import ConnectedServicesGrid from '$lib/features/profile/components/ConnectedServicesGrid.svelte';
+	import LibraryStatsList from '$lib/features/profile/components/LibraryStatsList.svelte';
+	import MediaServerAccountsCard from '$lib/features/profile/components/MediaServerAccountsCard.svelte';
+	import NavidromeMusicFoldersCard from '$lib/features/profile/components/NavidromeMusicFoldersCard.svelte';
+	import ProfileHeader from '$lib/features/profile/components/ProfileHeader.svelte';
+	import SessionsManager from '$lib/features/profile/components/SessionsManager.svelte';
+	import AppearanceCard from '$lib/features/profile/components/AppearanceCard.svelte';
+	import ScrobblingDiscoveryCard from '$lib/features/profile/components/ScrobblingDiscoveryCard.svelte';
+	import SpotifyConnectionCard from '$lib/features/profile/components/SpotifyConnectionCard.svelte';
+	import ProfileConnectApps from '$lib/features/profile/components/ProfileConnectApps.svelte';
+	import PageSectionToc from '$lib/ui/PageSectionToc.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import { page } from '$app/state';
 	import { browser } from '$app/environment';
 	import { onMount } from 'svelte';
 	import { toastStore } from '$lib/stores/toast';
-	import { refreshConnections } from '$lib/queries/connections/ConnectionsMutations.svelte';
+	import { refreshConnections } from '$lib/features/profile/queries/ConnectionsMutations.svelte';
 
 	const userId = authStore.user?.id ?? '';
 	const profileQuery = getProfileQuery(() => authStore.user?.id ?? '');

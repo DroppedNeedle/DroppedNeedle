@@ -1,6 +1,6 @@
 <script lang="ts">
 	import ArtistImage from '$lib/media/ArtistImage.svelte';
-	import HorizontalCarousel from '$lib/components/HorizontalCarousel.svelte';
+	import HorizontalCarousel from '$lib/ui/HorizontalCarousel.svelte';
 	import HubShelf from '$lib/features/remote-library/components/HubShelf.svelte';
 	import { reveal } from '$lib/actions/reveal';
 	import { formatDurationSec } from '$lib/utils/formatting';

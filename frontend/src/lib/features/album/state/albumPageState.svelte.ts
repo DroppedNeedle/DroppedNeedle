@@ -21,7 +21,7 @@ import { compareDiscTrack, getDiscTrackKey } from '$lib/features/player/playback
 import type { QueueItem } from '$lib/features/player/playback/types';
 import { launchRemotePlayback } from '$lib/features/player/playback/launchRemotePlayback';
 import { launchLocalPlayback } from '$lib/features/player/playback/launchLocalPlayback';
-import type { MenuItem } from '$lib/components/ContextMenu.svelte';
+import type { MenuItem } from '$lib/ui/ContextMenu.svelte';
 import { buildRenderedTrackSections, buildSortedTrackMap } from '../components/albumTrackResolvers';
 import { createEventHandlers } from '../components/albumEventHandlers';
 import {

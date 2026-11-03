@@ -1,9 +1,9 @@
 <script lang="ts">
 	import { v3 } from '$lib/api/v3/endpoint';
 	import { Play, Shuffle, ListPlus, ListStart, ListMusic, Download } from 'lucide-svelte';
-	import ContextMenu from '$lib/components/ContextMenu.svelte';
+	import ContextMenu from '$lib/ui/ContextMenu.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
-	import type { MenuItem } from '$lib/components/ContextMenu.svelte';
+	import type { MenuItem } from '$lib/ui/ContextMenu.svelte';
 	import { useIntegrationStatus } from '$lib/features/home/queries/home.svelte';
 	import {
 		cardQuickPlay,

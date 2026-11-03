@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { Heart, X, ArrowLeft } from 'lucide-svelte';
 	import ArtistImage from '$lib/media/ArtistImage.svelte';
-	import EmptyState from '$lib/components/EmptyState.svelte';
+	import EmptyState from '$lib/ui/EmptyState.svelte';
 	import { getFollowedArtistsQuery } from '$lib/features/following/queries/FollowQueries.svelte';
 	import { createUnfollowMutation } from '$lib/features/following/queries/FollowMutations.svelte';
 	import type { FollowedArtist } from '$lib/features/following/queries/types';

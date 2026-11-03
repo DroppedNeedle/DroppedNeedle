@@ -7,19 +7,19 @@
 		getUpgradeProgressQuery,
 		getUpgradeStateQuery,
 		markUpgradeSignedOut
-	} from '$lib/queries/upgrade/UpgradeQueries.svelte';
+	} from '$lib/features/upgrade/queries/UpgradeQueries.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
-	import BackOnV2 from './BackOnV2.svelte';
-	import Done from './Done.svelte';
-	import Failed from './Failed.svelte';
-	import Interrupted from './Interrupted.svelte';
-	import Opening from './Opening.svelte';
-	import Preflight from './Preflight.svelte';
-	import Progress from './Progress.svelte';
-	import SignIn from './SignIn.svelte';
+	import BackOnV2 from '$lib/features/upgrade/components/BackOnV2.svelte';
+	import Done from '$lib/features/upgrade/components/Done.svelte';
+	import Failed from '$lib/features/upgrade/components/Failed.svelte';
+	import Interrupted from '$lib/features/upgrade/components/Interrupted.svelte';
+	import Opening from '$lib/features/upgrade/components/Opening.svelte';
+	import Preflight from '$lib/features/upgrade/components/Preflight.svelte';
+	import Progress from '$lib/features/upgrade/components/Progress.svelte';
+	import SignIn from '$lib/features/upgrade/components/SignIn.svelte';
 
 	const upgrade = getUpgradeStateQuery();
 	const signedIn = $derived(upgrade.data?.signed_in === true);

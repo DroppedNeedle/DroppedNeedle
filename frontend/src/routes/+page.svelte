@@ -9,12 +9,12 @@
 		SlidersHorizontal
 	} from 'lucide-svelte';
 	import HomeSection from '$lib/features/discover/components/HomeSection.svelte';
-	import ServiceErrorState from '$lib/components/ServiceErrorState.svelte';
+	import ServiceErrorState from '$lib/ui/ServiceErrorState.svelte';
 	import WeeklyExploration from '$lib/features/discover/components/WeeklyExploration.svelte';
 	import ServicePromptCard from '$lib/features/discover/components/ServicePromptCard.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import GenreGrid from '$lib/features/genre/components/GenreGrid.svelte';
-	import SectionDivider from '$lib/components/SectionDivider.svelte';
+	import SectionDivider from '$lib/ui/SectionDivider.svelte';
 	import type {
 		ChartSection as HomeSectionType,
 		SectionKey,
@@ -22,8 +22,8 @@
 		WeeklyExploration as WeeklyExplorationSectionType
 	} from '$lib/features/discover/queries/types';
 	import { shelfOf, zoneSections } from '$lib/features/discover/queries/sections';
-	import CarouselSkeleton from '$lib/components/CarouselSkeleton.svelte';
-	import PageHeader from '$lib/components/PageHeader.svelte';
+	import CarouselSkeleton from '$lib/ui/CarouselSkeleton.svelte';
+	import PageHeader from '$lib/ui/PageHeader.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { genreRows } from '$lib/features/discover/components/sectionRows';
 	import { getGreeting } from '$lib/utils/formatting';

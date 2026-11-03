@@ -4,7 +4,7 @@
 	import LibrarySearch from './LibrarySearch.svelte';
 	import LocalFilesBand from './LocalFilesBand.svelte';
 	import LibraryHubTiles from './LibraryHubTiles.svelte';
-	import EmptyState from '$lib/components/EmptyState.svelte';
+	import EmptyState from '$lib/ui/EmptyState.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';

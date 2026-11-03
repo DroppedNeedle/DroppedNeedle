@@ -1,18 +1,18 @@
 <script lang="ts">
 	import { coverSrc } from '$lib/api/covers';
-	import { useDirectRemoteImages } from '$lib/queries/AdvancedSettingsReads.svelte';
+	import { useDirectRemoteImages } from '$lib/features/settings/queries/AdvancedSettingsReads.svelte';
 	import { Check, MicVocal, RefreshCw } from 'lucide-svelte';
 	import type { ArtistInfo } from '$lib/types';
 	import { extractDominantColor, DEFAULT_GRADIENT } from '$lib/utils/colors';
 	import ArtistImage from '$lib/media/ArtistImage.svelte';
 	import ArtistLinks from './ArtistLinks.svelte';
 	import FollowControl from '$lib/features/following/components/FollowControl.svelte';
-	import BackButton from '$lib/components/BackButton.svelte';
+	import BackButton from '$lib/ui/BackButton.svelte';
 	import HeroBackdrop from '$lib/media/HeroBackdrop.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import RatingStars from '$lib/ui/RatingStars.svelte';
 	import FavoriteHeart from '$lib/features/library/components/FavoriteHeart.svelte';
-	import { outsideLink } from '$lib/components/outsideLink';
+	import { outsideLink } from '$lib/ui/outsideLink';
 	import { getArtistImageCreditQuery } from '$lib/features/artist/queries/ArtistImageCreditQuery.svelte';
 
 	const directRemoteImages = useDirectRemoteImages();

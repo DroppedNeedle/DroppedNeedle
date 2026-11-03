@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { ExternalLink, Puzzle } from 'lucide-svelte';
-	import { outsideLink } from '$lib/components/outsideLink';
+	import { outsideLink } from '$lib/ui/outsideLink';
 	import { getAlbumPluginDetailsQuery } from '$lib/features/album/queries/GetItQueries.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';

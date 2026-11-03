@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { fakeApi } from '$lib/test/api';
 import { renderWithQuery } from '$lib/test/render';
 import { authStore } from '$lib/stores/authStore.svelte';
-import { toAuthUser } from '$lib/queries/auth/types';
+import { toAuthUser } from '$lib/features/auth/queries/types';
 import type { RetagPair } from '$lib/features/library-management/queries/LibraryRetagPairQueries.svelte';
 
 import AlbumRetagPairs from './AlbumRetagPairs.svelte';

@@ -24,7 +24,7 @@
 	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import AlbumCardOverlay from '$lib/features/album/components/AlbumCardOverlay.svelte';
 	import AlbumRequestButton from '$lib/features/requests/components/AlbumRequestButton.svelte';
-	import HorizontalCarousel from '$lib/components/HorizontalCarousel.svelte';
+	import HorizontalCarousel from '$lib/ui/HorizontalCarousel.svelte';
 	import SourceBadge from './SourceBadge.svelte';
 	import SampleButton from './SampleButton.svelte';
 	import Button from '$lib/ui/Button.svelte';

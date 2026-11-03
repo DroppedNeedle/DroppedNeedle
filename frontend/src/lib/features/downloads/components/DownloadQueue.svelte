@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { ChevronDown, Download, RotateCcw, TimerOff, Trash2 } from 'lucide-svelte';
 
-	import EmptyState from '$lib/components/EmptyState.svelte';
+	import EmptyState from '$lib/ui/EmptyState.svelte';
 	import {
 		createClearFinishedMutation,
 		createRetryAllFailedMutation,

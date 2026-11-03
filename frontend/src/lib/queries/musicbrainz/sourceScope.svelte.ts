@@ -1,7 +1,10 @@
 import { browser } from '$app/environment';
 import { SvelteSet } from 'svelte/reactivity';
 import { authStore } from '$lib/stores/authStore.svelte';
-import type { MusicBrainzSettingsResponse, MusicBrainzSourceMode } from './types';
+import type {
+	MusicBrainzSettingsResponse,
+	MusicBrainzSourceMode
+} from '$lib/features/settings/queries/musicbrainz/types';
 
 const STORAGE_PREFIX = 'droppedneedle:musicbrainz-source:';
 

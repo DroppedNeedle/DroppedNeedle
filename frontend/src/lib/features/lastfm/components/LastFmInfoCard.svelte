@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { ChevronUp, ChevronDown, ExternalLink, Users, Headphones } from 'lucide-svelte';
 	import { withBasePath } from '$lib/utils/basePath';
-	import { outsideLink } from '$lib/components/outsideLink';
+	import { outsideLink } from '$lib/ui/outsideLink';
 	import { formatListenCount } from '$lib/utils/formatting';
 	import { onMount } from 'svelte';
 	import Button from '$lib/ui/Button.svelte';

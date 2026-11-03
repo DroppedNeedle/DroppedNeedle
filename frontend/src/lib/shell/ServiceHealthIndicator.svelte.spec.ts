@@ -2,7 +2,7 @@ import { page } from 'vitest/browser';
 import { createSubscriber } from 'svelte/reactivity';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
-import type { ServiceHealthItem } from '$lib/queries/system.svelte';
+import type { ServiceHealthItem } from '$lib/features/settings/queries/system.svelte';
 
 type QueryData = { degraded: ServiceHealthItem[] };
 
@@ -24,7 +24,7 @@ const queryState = vi.hoisted(() => {
 	};
 });
 
-vi.mock('$lib/queries/system.svelte', () => {
+vi.mock('$lib/features/settings/queries/system.svelte', () => {
 	const subscribe = createSubscriber((update) => {
 		queryState.setNotify(update);
 		return () => queryState.setNotify(undefined);

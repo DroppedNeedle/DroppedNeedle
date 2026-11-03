@@ -10,7 +10,7 @@
 	import { ApiError } from '$lib/api/errors';
 	import { coverPath } from '$lib/api/covers';
 	import AlbumImage from '$lib/media/AlbumImage.svelte';
-	import { outsideLink } from '$lib/components/outsideLink';
+	import { outsideLink } from '$lib/ui/outsideLink';
 	import AsyncButton from '$lib/ui/AsyncButton.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';

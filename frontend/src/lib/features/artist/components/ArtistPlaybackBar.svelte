@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { Play, Shuffle, ListPlus, CirclePlus } from 'lucide-svelte';
 	import { PersistedState } from 'runed';
-	import ContextMenu from '$lib/components/ContextMenu.svelte';
-	import type { MenuItem } from '$lib/components/ContextMenu.svelte';
+	import ContextMenu from '$lib/ui/ContextMenu.svelte';
+	import type { MenuItem } from '$lib/ui/ContextMenu.svelte';
 	import { openGlobalPlaylistModal } from '$lib/features/playlists/state/playlistModal.svelte';
 	import JellyfinIcon from '$lib/media/icons/JellyfinIcon.svelte';
 	import LocalFilesIcon from '$lib/media/icons/LocalFilesIcon.svelte';

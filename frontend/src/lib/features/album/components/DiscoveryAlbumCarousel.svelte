@@ -3,8 +3,8 @@
 	import type { Album } from '$lib/types';
 	import type { AlbumRef } from '$lib/features/discover/queries/types';
 	import { withBasePath } from '$lib/utils/basePath';
-	import HorizontalCarousel from '$lib/components/HorizontalCarousel.svelte';
-	import CarouselSkeleton from '$lib/components/CarouselSkeleton.svelte';
+	import HorizontalCarousel from '$lib/ui/HorizontalCarousel.svelte';
+	import CarouselSkeleton from '$lib/ui/CarouselSkeleton.svelte';
 	import AlbumCard from './AlbumCard.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';

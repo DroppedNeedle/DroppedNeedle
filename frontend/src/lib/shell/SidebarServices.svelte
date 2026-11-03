@@ -5,7 +5,7 @@
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { nowPlayingMerged } from '$lib/features/player/state/nowPlayingMerged.svelte';
 	import { playerStore } from '$lib/features/player/state/player.svelte';
-	import { getSectionPrefsQuery } from '$lib/queries/section-prefs.svelte';
+	import { getSectionPrefsQuery } from '$lib/features/settings/queries/section-prefs.svelte';
 	import YouTubeIcon from '$lib/media/icons/YouTubeIcon.svelte';
 	import JellyfinIcon from '$lib/media/icons/JellyfinIcon.svelte';
 	import NavidromeIcon from '$lib/media/icons/NavidromeIcon.svelte';

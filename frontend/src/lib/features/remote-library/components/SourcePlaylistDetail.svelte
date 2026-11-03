@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { ApiError } from '$lib/api/errors';
-	import BackButton from '$lib/components/BackButton.svelte';
+	import BackButton from '$lib/ui/BackButton.svelte';
 	import { createSourcePlaylistImportMutation } from '$lib/features/remote-library/queries/source-playlists.svelte';
 	import { getSourcePlaylistDetailQuery } from '$lib/features/remote-library/queries/source-playlists.svelte';
 	import { toastStore } from '$lib/stores/toast';

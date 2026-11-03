@@ -10,7 +10,7 @@
 		type CandidateRefusal,
 		type SearchCandidate
 	} from '$lib/features/downloads/queries/SearchQueries.svelte';
-	import { getPluginSourcesQuery } from '$lib/queries/plugins/PluginSourceQueries.svelte';
+	import { getPluginSourcesQuery } from '$lib/features/settings/queries/plugins/PluginSourceQueries.svelte';
 
 	import SearchResultCard, { REFUSAL_LABELS } from './SearchResultCard.svelte';
 	import Button from '$lib/ui/Button.svelte';

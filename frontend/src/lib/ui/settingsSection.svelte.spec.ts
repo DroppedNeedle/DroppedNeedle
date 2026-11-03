@@ -1,7 +1,7 @@
 import type { BeforeNavigate } from '@sveltejs/kit';
 import { page } from 'vitest/browser';
 import { describe, expect, it, vi } from 'vitest';
-import type { JellyfinSettings } from '$lib/queries/settings/JellyfinSettingsQueries.svelte';
+import type { JellyfinSettings } from '$lib/features/settings/queries/JellyfinSettingsQueries.svelte';
 import { apiError, fakeApi } from '$lib/test/api';
 import { renderWithQuery } from '$lib/test/render';
 import { SECRET_MASK } from './secretMask';

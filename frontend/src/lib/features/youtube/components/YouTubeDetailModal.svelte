@@ -31,9 +31,9 @@
 	import { openGlobalPlaylistModal } from '$lib/features/playlists/state/playlistModal.svelte';
 	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import YouTubeIcon from '$lib/media/icons/YouTubeIcon.svelte';
-	import ContextMenu from '$lib/components/ContextMenu.svelte';
+	import ContextMenu from '$lib/ui/ContextMenu.svelte';
 	import NowPlayingIndicator from '$lib/features/player/components/NowPlayingIndicator.svelte';
-	import type { MenuItem } from '$lib/components/ContextMenu.svelte';
+	import type { MenuItem } from '$lib/ui/ContextMenu.svelte';
 	import type { YouTubeLink, YouTubeTrackLink } from '$lib/types';
 	import Button from '$lib/ui/Button.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';

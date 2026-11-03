@@ -2,7 +2,7 @@
 	import { fade, fly } from '$lib/ui/motion';
 	import { Check, CircleCheck, TrendingUp, TriangleAlert } from 'lucide-svelte';
 	import AlbumImage from '$lib/media/AlbumImage.svelte';
-	import { QUALITY_TIERS } from '$lib/components/settings/qualityTiers';
+	import { QUALITY_TIERS } from '$lib/features/settings/components/qualityTiers';
 	import {
 		getCutoffUnmetQuery,
 		createRequestUpgradeAlbumMutation

@@ -72,7 +72,7 @@ vi.mock('$lib/features/home/queries/home.svelte', () => ({
 	getIntegrationStatusQuery: vi.fn(() => ({ data: integrationState })),
 	useIntegrationStatus: () => ({ current: integrationState })
 }));
-vi.mock('$lib/queries/AdvancedSettingsReads.svelte', () => ({
+vi.mock('$lib/features/settings/queries/AdvancedSettingsReads.svelte', () => ({
 	loadAdvancedSettings: vi.fn(() => ({ data: undefined })),
 	useDirectRemoteImages: () => ({ current: true })
 }));

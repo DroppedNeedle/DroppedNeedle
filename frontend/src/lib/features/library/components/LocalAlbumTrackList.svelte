@@ -8,7 +8,7 @@
 	import { formatBytes, formatDurationSec } from '$lib/utils/formatting';
 	import type { TrackView } from '$lib/types';
 	import { artistHref } from '$lib/utils/entityRoutes';
-	import ContextMenu, { type MenuItem } from '$lib/components/ContextMenu.svelte';
+	import ContextMenu, { type MenuItem } from '$lib/ui/ContextMenu.svelte';
 
 	interface Props {
 		tracks: TrackView[];

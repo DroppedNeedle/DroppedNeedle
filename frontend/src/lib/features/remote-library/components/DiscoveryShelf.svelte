@@ -1,5 +1,5 @@
 <script lang="ts">
-	import CarouselSkeleton from '$lib/components/CarouselSkeleton.svelte';
+	import CarouselSkeleton from '$lib/ui/CarouselSkeleton.svelte';
 	import { RefreshCw, Sparkles } from 'lucide-svelte';
 	import type { Snippet } from 'svelte';
 	import Button from '$lib/ui/Button.svelte';

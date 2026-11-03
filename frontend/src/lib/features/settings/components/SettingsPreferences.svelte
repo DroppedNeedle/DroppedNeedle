@@ -1,0 +1,214 @@
+<script lang="ts">
+	import {
+		createSaveReleasePreferencesMutation,
+		getReleasePreferencesQuery,
+		type ReleasePreferences
+	} from '$lib/features/settings/queries/SectionSettingsQueries.svelte';
+	import AsyncButton from '$lib/ui/AsyncButton.svelte';
+	import Card from '$lib/ui/Card.svelte';
+	import CardActions from '$lib/ui/CardActions.svelte';
+	import CardTitle from '$lib/ui/CardTitle.svelte';
+
+	interface ReleaseTypeOption {
+		id: string;
+		title: string;
+		description: string;
+	}
+
+	const DEFAULT_PREFERENCES: ReleasePreferences = {
+		primary_types: ['album', 'ep', 'single'],
+		secondary_types: ['studio']
+	};
+
+	const preferencesQuery = getReleasePreferencesQuery();
+	const saveMutation = createSaveReleasePreferencesMutation();
+
+	let preferences: ReleasePreferences = $state({
+		primary_types: [],
+		secondary_types: []
+	});
+	// The form starts from the saved choices, or the defaults when they can't be read.
+	// Seeded once from a real answer: a later refetch must not undo unsaved edits.
+	let seeded = false;
+	$effect(() => {
+		if (seeded || preferencesQuery.isPending) return;
+		const saved = preferencesQuery.data;
+		preferences = { ...DEFAULT_PREFERENCES, ...saved };
+		seeded = saved !== undefined;
+	});
+	let saving = $state(false);
+	let saveMessage = $state('');
+
+	const primaryTypes: ReleaseTypeOption[] = [
+		{ id: 'album', title: 'Album', description: 'Release groups MusicBrainz classifies as albums' },
+		{ id: 'ep', title: 'EP', description: 'Release groups MusicBrainz classifies as EPs' },
+		{
+			id: 'single',
+			title: 'Single',
+			description: 'Release groups MusicBrainz classifies as singles'
+		},
+		{
+			id: 'broadcast',
+			title: 'Broadcast',
+			description: 'Release groups MusicBrainz classifies as broadcasts'
+		},
+		{
+			id: 'other',
+			title: 'Other',
+			description: 'Release groups MusicBrainz classifies as Other'
+		}
+	];
+
+	const secondaryTypes: ReleaseTypeOption[] = [
+		{ id: 'studio', title: 'Studio', description: 'Release groups with no listed secondary type' },
+		{
+			id: 'compilation',
+			title: 'Compilation',
+			description: 'Release groups tagged by MusicBrainz as compilations'
+		},
+		{
+			id: 'soundtrack',
+			title: 'Soundtrack',
+			description: 'Release groups tagged by MusicBrainz as soundtracks'
+		},
+		{
+			id: 'spokenword',
+			title: 'Spoken Word',
+			description: 'Release groups tagged by MusicBrainz as spoken word'
+		},
+		{
+			id: 'interview',
+			title: 'Interview',
+			description: 'Release groups tagged by MusicBrainz as interviews'
+		},
+		{
+			id: 'audio drama',
+			title: 'Audio Drama',
+			description: 'Release groups tagged by MusicBrainz as audio dramas'
+		},
+		{ id: 'live', title: 'Live', description: 'Release groups tagged by MusicBrainz as live' },
+		{ id: 'remix', title: 'Remix', description: 'Release groups tagged by MusicBrainz as remixes' },
+		{
+			id: 'dj-mix',
+			title: 'DJ-mix',
+			description: 'Release groups tagged by MusicBrainz as DJ mixes'
+		},
+		{
+			id: 'mixtape/street',
+			title: 'Mixtape/Street',
+			description: 'Release groups tagged by MusicBrainz as mixtape or street'
+		},
+		{ id: 'demo', title: 'Demo', description: 'Release groups tagged by MusicBrainz as demos' }
+	];
+
+	function toggleType(category: 'primary_types' | 'secondary_types', id: string) {
+		const index = preferences[category].indexOf(id);
+		if (index > -1) {
+			preferences[category] = preferences[category].filter((t) => t !== id);
+		} else {
+			preferences[category] = [...preferences[category], id];
+		}
+	}
+
+	async function handleSave() {
+		saving = true;
+		saveMessage = '';
+
+		const success = await saveMutation
+			.mutateAsync(preferences)
+			.then(() => true)
+			.catch(() => false);
+
+		if (success) {
+			saveMessage = 'Saved. Artist pages and search results will refresh automatically.';
+
+			// these prefs change which releases show on search; the save itself
+			// refreshes artist pages
+			window.dispatchEvent(new CustomEvent('search-refresh'));
+
+			setTimeout(() => {
+				saveMessage = '';
+			}, 5000);
+		} else {
+			saveMessage = "Couldn't save your settings. Please try again.";
+		}
+
+		saving = false;
+	}
+</script>
+
+{#snippet typeTable(types: ReleaseTypeOption[], category: 'primary_types' | 'secondary_types')}
+	<div class="overflow-x-auto">
+		<table class="table">
+			<thead>
+				<tr>
+					<th class="w-12 text-center">
+						<span class="text-xs opacity-60">Show</span>
+					</th>
+					<th>Type</th>
+					<th class="hidden sm:table-cell">Description</th>
+				</tr>
+			</thead>
+			<tbody>
+				{#each types as type (type.id)}
+					{@const msEnabled = preferences[category].includes(type.id)}
+					<tr>
+						<td class="w-12 text-center">
+							<input
+								type="checkbox"
+								class="checkbox checkbox-sm"
+								aria-label="Show {type.title}"
+								checked={msEnabled}
+								onchange={() => toggleType(category, type.id)}
+							/>
+						</td>
+						<td class="font-medium">{type.title}</td>
+						<td class="text-base-content/70 hidden sm:table-cell">{type.description}</td>
+					</tr>
+				{/each}
+			</tbody>
+		</table>
+	</div>
+{/snippet}
+
+<Card>
+	{#snippet header()}
+		<CardTitle class="text-2xl mb-2">Release Types</CardTitle>
+	{/snippet}
+	<p class="text-base-content/70 mb-6">
+		Choose which release types appear on artist pages and in search. The same choices apply to
+		automatic downloads for followed artists. Saving a different selection starts a new baseline, so
+		releases already present are not queued.
+	</p>
+
+	<div class="mb-8">
+		<h3 class="text-xl font-semibold mb-1">Primary Types</h3>
+		<p class="text-base-content/60 mb-4 text-sm">
+			Choose the main MusicBrainz release formats to include.
+		</p>
+		{@render typeTable(primaryTypes, 'primary_types')}
+	</div>
+
+	<div class="mb-8">
+		<h3 class="text-xl font-semibold mb-1">Secondary Types</h3>
+		<p class="text-base-content/60 mb-4 text-sm">
+			Choose which additional release classifications to include.
+		</p>
+		{@render typeTable(secondaryTypes, 'secondary_types')}
+	</div>
+
+	<CardActions class="justify-end items-center gap-4">
+		{#if saveMessage}
+			<div
+				class="alert flex-1"
+				class:alert-success={saveMessage.startsWith('Saved')}
+				class:alert-error={!saveMessage.startsWith('Saved')}
+			>
+				<span>{saveMessage}</span>
+			</div>
+		{/if}
+		<AsyncButton variant="primary" onclick={handleSave} pending={saving} pendingLabel="Saving...">
+			Save Settings
+		</AsyncButton>
+	</CardActions>
+</Card>

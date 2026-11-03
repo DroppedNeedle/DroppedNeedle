@@ -7,7 +7,7 @@
 		LocalTrackInfo
 	} from '$lib/types';
 	import type { RemoteMatch, RemoteTrack } from '$lib/features/remote-library/queries/types';
-	import type { MenuItem } from '$lib/components/ContextMenu.svelte';
+	import type { MenuItem } from '$lib/ui/ContextMenu.svelte';
 	import type { RenderedTrackSection } from './albumTrackResolvers';
 	import type { FetchedEditionRow } from '../state/albumPageState.svelte';
 	import { resolveSourceTrack } from './albumTrackResolvers';
@@ -18,7 +18,7 @@
 	import TrackPlayButton from '$lib/features/album/components/TrackPlayButton.svelte';
 	import SampleButton from '$lib/features/discover/components/SampleButton.svelte';
 	import TrackSourceButton from '$lib/features/album/components/TrackSourceButton.svelte';
-	import ContextMenu from '$lib/components/ContextMenu.svelte';
+	import ContextMenu from '$lib/ui/ContextMenu.svelte';
 	import JellyfinIcon from '$lib/media/icons/JellyfinIcon.svelte';
 	import LocalFilesIcon from '$lib/media/icons/LocalFilesIcon.svelte';
 	import NavidromeIcon from '$lib/media/icons/NavidromeIcon.svelte';

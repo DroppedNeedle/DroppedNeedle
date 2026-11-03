@@ -13,7 +13,7 @@
 	import { ChevronLeft, ExternalLink } from 'lucide-svelte';
 	import { coverPath } from '$lib/api/covers';
 	import AlbumImage from '$lib/media/AlbumImage.svelte';
-	import { outsideLink } from '$lib/components/outsideLink';
+	import { outsideLink } from '$lib/ui/outsideLink';
 	import { formatDuration } from '$lib/utils/formatting';
 	import Modal from '$lib/ui/Modal.svelte';
 	import AsyncButton from '$lib/ui/AsyncButton.svelte';

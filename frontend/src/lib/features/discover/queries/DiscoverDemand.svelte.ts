@@ -5,7 +5,7 @@ import {
 	musicBrainzSourceStamp,
 	setMusicBrainzSourceScope
 } from '$lib/queries/musicbrainz/sourceScope.svelte';
-import type { MusicBrainzSourceMode } from '$lib/queries/musicbrainz/types';
+import type { MusicBrainzSourceMode } from '$lib/features/settings/queries/musicbrainz/types';
 import { authStore } from '$lib/stores/authStore.svelte';
 import type { DiscoverActivity } from '$lib/types';
 import { createAppMutation } from '$lib/queries/effects';

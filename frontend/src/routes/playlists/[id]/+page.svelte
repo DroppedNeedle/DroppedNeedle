@@ -30,7 +30,7 @@
 	import { Music, Download, Lock } from 'lucide-svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
-	import BackButton from '$lib/components/BackButton.svelte';
+	import BackButton from '$lib/ui/BackButton.svelte';
 	import HeroBackdrop from '$lib/media/HeroBackdrop.svelte';
 	import type { PageData } from './$types';
 	import PlaylistHeader from '$lib/features/playlists/components/PlaylistHeader.svelte';

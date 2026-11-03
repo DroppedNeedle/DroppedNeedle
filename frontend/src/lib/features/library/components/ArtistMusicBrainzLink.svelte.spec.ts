@@ -7,7 +7,7 @@ vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 
 import ArtistMusicBrainzLink from './ArtistMusicBrainzLink.svelte';
 import { authStore } from '$lib/stores/authStore.svelte';
-import { toAuthUser } from '$lib/queries/auth/types';
+import { toAuthUser } from '$lib/features/auth/queries/types';
 
 const ROUTE = '/api/v3/library/artists/{id}/musicbrainz-link';
 const OLD = 'aaaaaaaa-0000-4000-8000-00000000000a';

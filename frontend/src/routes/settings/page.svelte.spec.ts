@@ -19,7 +19,7 @@ vi.mock('$app/navigation', () => ({
 
 import SettingsPage from './+page.svelte';
 import { authStore } from '$lib/stores/authStore.svelte';
-import { toAuthUser } from '$lib/queries/auth/types';
+import { toAuthUser } from '$lib/features/auth/queries/types';
 
 const discoverPrefs: RouteData<'GET /api/v3/me/section-prefs'> = {
 	pages: {

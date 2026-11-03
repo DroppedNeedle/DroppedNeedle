@@ -7,7 +7,7 @@
 	import { watchMusicBrainzSourceScope } from '$lib/queries/musicbrainz/sourceScope.svelte';
 	import { libraryStore } from '$lib/stores/library';
 	import { getIntegrationStatusQuery } from '$lib/features/home/queries/home.svelte';
-	import { loadAdvancedSettings } from '$lib/queries/AdvancedSettingsReads.svelte';
+	import { loadAdvancedSettings } from '$lib/features/settings/queries/AdvancedSettingsReads.svelte';
 	import { playerStore } from '$lib/features/player/state/player.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import { scrobbleManager } from '$lib/features/player/state/scrobble.svelte';

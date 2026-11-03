@@ -13,7 +13,7 @@ vi.mock('$lib/features/player/state/player.svelte', () => ({
 
 import LocalAlbumPage from './LocalAlbumPage.svelte';
 import { authStore } from '$lib/stores/authStore.svelte';
-import { toAuthUser } from '$lib/queries/auth/types';
+import { toAuthUser } from '$lib/features/auth/queries/types';
 
 const album: RouteData<'GET /api/v3/library/albums/{id}'> = {
 	id: 'local-album-1',

@@ -11,7 +11,7 @@ import {
 	getMusicBrainzSourceScope,
 	setMusicBrainzSourceScope
 } from '$lib/queries/musicbrainz/sourceScope.svelte';
-import { getScrobblePreferencesQueryOptions } from '$lib/queries/scrobble-preferences.svelte';
+import { getScrobblePreferencesQueryOptions } from '$lib/features/profile/queries/scrobble-preferences.svelte';
 import { authStore, LAST_USER_ID_KEY, type AuthUser } from '$lib/stores/authStore.svelte';
 import '$lib/stores/musicSource';
 import { playerStore } from '$lib/features/player/state/player.svelte';

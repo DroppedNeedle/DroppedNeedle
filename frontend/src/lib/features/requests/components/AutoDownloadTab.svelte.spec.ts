@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { fakeApi } from '$lib/test/api';
 import { renderWithQuery } from '$lib/test/render';
 import { authStore } from '$lib/stores/authStore.svelte';
-import { toAuthUser } from '$lib/queries/auth/types';
+import { toAuthUser } from '$lib/features/auth/queries/types';
 import AutoDownloadTab from './AutoDownloadTab.svelte';
 
 const ARTIST = 'a74b1b7f-71a5-4011-9441-d0b5e4122711';

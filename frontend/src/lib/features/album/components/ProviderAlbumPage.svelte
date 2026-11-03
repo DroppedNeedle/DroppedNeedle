@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { useIntegrationStatus } from '$lib/features/home/queries/home.svelte';
-	import BackButton from '$lib/components/BackButton.svelte';
+	import BackButton from '$lib/ui/BackButton.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import LastFmAlbumEnrichmentComponent from '$lib/features/lastfm/components/LastFmAlbumEnrichment.svelte';

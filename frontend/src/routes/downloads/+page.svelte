@@ -7,7 +7,7 @@
 	import DiscoveryBatchList from '$lib/features/discover/components/DiscoveryBatchList.svelte';
 	import DropImportJobList from '$lib/features/downloads/components/DropImportJobList.svelte';
 	import DropImportZone from '$lib/features/downloads/components/DropImportZone.svelte';
-	import EmptyState from '$lib/components/EmptyState.svelte';
+	import EmptyState from '$lib/ui/EmptyState.svelte';
 	import { getIntegrationStatusQuery } from '$lib/features/home/queries/home.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 

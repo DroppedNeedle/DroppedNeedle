@@ -1,0 +1,178 @@
+<script lang="ts">
+	import { KeyRound, LogOut, Monitor, Smartphone, TriangleAlert } from 'lucide-svelte';
+	import { getSessionsQuery } from '$lib/features/profile/queries/sessions.svelte';
+	import {
+		createRevokeSessionMutation,
+		createSignOutEverywhereMutation
+	} from '$lib/features/profile/queries/sessions.svelte';
+	import type { SessionView } from '$lib/features/profile/queries/sessions.svelte';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
+	import ConfirmDialog from '$lib/ui/ConfirmDialog.svelte';
+
+	const sessionsQuery = getSessionsQuery();
+	const sessions = $derived(sessionsQuery.data?.sessions ?? []);
+	const revoke = createRevokeSessionMutation();
+	const signOutEverywhere = createSignOutEverywhereMutation();
+
+	let confirmingId = $state<string | null>(null);
+	let signOutAllOpen = $state(false);
+
+	function kindLabel(kind: string): string {
+		if (kind === 'companion') return 'App';
+		if (kind === 'standard') return 'Browser';
+		return kind;
+	}
+
+	function relativeTime(epochSeconds: number): string {
+		const diff = Date.now() / 1000 - epochSeconds;
+		if (diff < 60) return 'just now';
+		if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+		if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+		return `${Math.floor(diff / 86400)}d ago`;
+	}
+
+	function formatDate(epochSeconds: number): string {
+		return new Date(epochSeconds * 1000).toLocaleDateString(undefined, {
+			month: 'short',
+			day: 'numeric',
+			year: 'numeric'
+		});
+	}
+
+	async function confirmRevoke(session: SessionView) {
+		try {
+			await revoke.mutateAsync({ id: session.id, label: session.label });
+		} finally {
+			confirmingId = null;
+		}
+	}
+</script>
+
+<Card variant="bordered" padding="none" class="overflow-hidden">
+	<div>
+		<div class="flex items-center gap-3 px-5 py-4">
+			<div
+				class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-base-300/60 text-base-content/70"
+			>
+				<KeyRound class="h-4 w-4" />
+			</div>
+			<div class="min-w-0 flex-1">
+				<h2 class="text-sm font-semibold">Sessions</h2>
+				<p class="text-xs text-base-content/50">
+					{#if sessionsQuery.isPending}
+						Loading signed-in devices
+					{:else if sessions.length === 1}
+						1 signed-in session
+					{:else}
+						{sessions.length} signed-in sessions
+					{/if}
+				</p>
+			</div>
+		</div>
+
+		{#if sessionsQuery.isPending}
+			<div data-testid="sessions-skeleton" class="flex flex-col gap-3 px-5 pb-5">
+				{#each [0, 1] as i (`session-skeleton-${i}`)}
+					<div class="flex animate-pulse items-center gap-3">
+						<div class="h-9 w-9 shrink-0 rounded-lg bg-base-300"></div>
+						<div class="flex-1">
+							<div class="mb-1.5 h-4 w-40 rounded bg-base-300"></div>
+							<div class="h-3 w-28 rounded bg-base-300"></div>
+						</div>
+					</div>
+				{/each}
+			</div>
+		{:else if sessionsQuery.isError}
+			<div class="px-5 pb-5">
+				<div class="alert alert-warning">
+					<TriangleAlert class="h-5 w-5" />
+					<span>Could not load sessions. Check the connection and try again.</span>
+					<Button size="sm" onclick={() => sessionsQuery.refetch()}>Retry</Button>
+				</div>
+			</div>
+		{:else if sessions.length === 0}
+			<p class="px-5 pb-5 text-sm text-base-content/50">No active sessions found.</p>
+		{:else}
+			<ul class="divide-y divide-base-300/30 border-t border-base-300/30">
+				{#each sessions as session (session.id)}
+					<li class="flex items-start gap-3 px-5 py-4">
+						<div
+							class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-base-300/60 text-base-content/70"
+						>
+							{#if session.kind === 'companion'}
+								<Smartphone class="h-4 w-4" />
+							{:else}
+								<Monitor class="h-4 w-4" />
+							{/if}
+						</div>
+						<div class="min-w-0 flex-1">
+							<p class="truncate text-sm font-medium">{session.label}</p>
+							<p class="mt-0.5 text-xs text-base-content/50">
+								Last seen {relativeTime(session.last_seen_at)} · Signed in {formatDate(
+									session.created_at
+								)} · Expires {formatDate(session.expires_at)}
+							</p>
+							<div class="mt-1.5 flex flex-wrap items-center gap-1.5">
+								<span class="badge badge-ghost badge-sm">{kindLabel(session.kind)}</span>
+								{#if session.current}
+									<span class="badge badge-primary badge-sm">This session</span>
+								{/if}
+							</div>
+						</div>
+						{#if !session.current}
+							<div class="flex shrink-0 items-center gap-1.5">
+								{#if confirmingId === session.id}
+									<Button
+										variant="ghost"
+										size="xs"
+										onclick={() => (confirmingId = null)}
+										disabled={revoke.isPending}
+									>
+										Keep session
+									</Button>
+									<Button
+										variant="danger"
+										size="xs"
+										loading={revoke.isPending}
+										onclick={() => void confirmRevoke(session)}
+									>
+										Confirm revoke
+									</Button>
+								{:else}
+									<Button
+										variant="danger-ghost"
+										size="sm"
+										aria-label="Revoke {session.label}"
+										onclick={() => (confirmingId = session.id)}
+									>
+										Revoke
+									</Button>
+								{/if}
+							</div>
+						{/if}
+					</li>
+				{/each}
+			</ul>
+		{/if}
+		<div class="flex justify-end border-t border-base-300/30 px-5 py-3">
+			<Button
+				variant="danger-ghost"
+				size="sm"
+				icon={LogOut}
+				onclick={() => (signOutAllOpen = true)}
+			>
+				Sign out everywhere
+			</Button>
+		</div>
+	</div>
+</Card>
+
+<ConfirmDialog
+	bind:open={signOutAllOpen}
+	title="Sign out everywhere?"
+	message="Every browser and device is signed out, this one too. App passwords keep working."
+	confirmLabel="Sign out everywhere"
+	tone="danger"
+	onconfirm={() => signOutEverywhere.mutateAsync()}
+/>

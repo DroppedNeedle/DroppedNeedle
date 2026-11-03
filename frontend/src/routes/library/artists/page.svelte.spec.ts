@@ -15,7 +15,7 @@ vi.mock('$lib/media/lazyImage', () => ({
 
 import ArtistsPage from './+page.svelte';
 import { authStore } from '$lib/stores/authStore.svelte';
-import { toAuthUser } from '$lib/queries/auth/types';
+import { toAuthUser } from '$lib/features/auth/queries/types';
 
 const ARTIST_MBID = '6c5bfdbe-6325-4897-aaa5-f0ab06bdc799';
 

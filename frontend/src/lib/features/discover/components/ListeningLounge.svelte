@@ -12,7 +12,7 @@
 		TopPicksSection
 	} from '$lib/features/discover/queries/types';
 	import { albumRows } from '$lib/features/discover/components/sectionRows';
-	import LiveUpdatingBadge from '$lib/components/LiveUpdatingBadge.svelte';
+	import LiveUpdatingBadge from '$lib/ui/LiveUpdatingBadge.svelte';
 
 	interface Props {
 		section: ChartSection | null;

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import HomeSection from '$lib/features/discover/components/HomeSection.svelte';
-	import ServiceErrorState from '$lib/components/ServiceErrorState.svelte';
+	import ServiceErrorState from '$lib/ui/ServiceErrorState.svelte';
 	import DailyMixCard from '$lib/features/discover/components/DailyMixCard.svelte';
 	import RadioCard from '$lib/features/discover/components/RadioCard.svelte';
 	import TopPicksDeck from '$lib/features/discover/components/TopPicksDeck.svelte';
@@ -16,11 +16,11 @@
 	import ServicePromptCard from '$lib/features/discover/components/ServicePromptCard.svelte';
 	import DiscoverArtistHero from '$lib/features/discover/components/DiscoverArtistHero.svelte';
 	import DiscoverArtistMiniBand from '$lib/features/discover/components/DiscoverArtistMiniBand.svelte';
-	import SectionDivider from '$lib/components/SectionDivider.svelte';
-	import CarouselSkeleton from '$lib/components/CarouselSkeleton.svelte';
-	import EmptyState from '$lib/components/EmptyState.svelte';
-	import PageHeader from '$lib/components/PageHeader.svelte';
-	import LiveUpdatingBadge from '$lib/components/LiveUpdatingBadge.svelte';
+	import SectionDivider from '$lib/ui/SectionDivider.svelte';
+	import CarouselSkeleton from '$lib/ui/CarouselSkeleton.svelte';
+	import EmptyState from '$lib/ui/EmptyState.svelte';
+	import PageHeader from '$lib/ui/PageHeader.svelte';
+	import LiveUpdatingBadge from '$lib/ui/LiveUpdatingBadge.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import { isDismissed } from '$lib/features/discover/state/dismissedPrompts';
 	import { withBasePath } from '$lib/utils/basePath';
@@ -46,7 +46,7 @@
 	} from '$lib/features/discover/queries/DiscoverV3Mutations.svelte';
 	import { useDiscoverActivity } from '$lib/features/discover/queries/DiscoverDemand.svelte';
 	import type { SectionZone, TopPickItem } from '$lib/features/discover/queries/types';
-	import { getSectionPrefsQuery } from '$lib/queries/section-prefs.svelte';
+	import { getSectionPrefsQuery } from '$lib/features/settings/queries/section-prefs.svelte';
 	import {
 		becauseOf,
 		picksOf,

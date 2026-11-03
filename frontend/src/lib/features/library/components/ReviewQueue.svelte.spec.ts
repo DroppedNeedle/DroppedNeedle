@@ -12,7 +12,7 @@ vi.mock('$app/navigation', () => ({ goto: h.goto }));
 
 import ReviewQueue from './ReviewQueue.svelte';
 import { authStore } from '$lib/stores/authStore.svelte';
-import { toAuthUser } from '$lib/queries/auth/types';
+import { toAuthUser } from '$lib/features/auth/queries/types';
 
 type ReviewPage = RouteData<'GET /api/v3/library/reviews'>;
 type Review = ReviewPage['items'][number];

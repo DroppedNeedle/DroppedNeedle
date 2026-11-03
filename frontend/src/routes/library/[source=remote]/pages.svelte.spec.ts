@@ -1,7 +1,7 @@
 import { page } from 'vitest/browser';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { isHttpError } from '@sveltejs/kit';
-import { toAuthUser } from '$lib/queries/auth/types';
+import { toAuthUser } from '$lib/features/auth/queries/types';
 import type { RemoteSource } from '$lib/features/remote-library/queries/types';
 import { remoteSources } from '$lib/features/remote-library/queries/remoteSources';
 import { HomeQueryKeyFactory } from '$lib/queries/featureKeys';

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 	import { ApiError } from '$lib/api/errors';
-	import BackButton from '$lib/components/BackButton.svelte';
+	import BackButton from '$lib/ui/BackButton.svelte';
 	import SourcePlaylistCard from '$lib/features/remote-library/components/SourcePlaylistCard.svelte';
 	import { getSourcePlaylistsQuery } from '$lib/features/remote-library/queries/source-playlists.svelte';
 	import type { SourcePlaylistSource } from '$lib/types';

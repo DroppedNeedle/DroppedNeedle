@@ -2,8 +2,8 @@
 	import { onMount } from 'svelte';
 	import { ArrowLeft, CalendarClock, ExternalLink, Settings } from 'lucide-svelte';
 	import ArtistImage from '$lib/media/ArtistImage.svelte';
-	import EmptyState from '$lib/components/EmptyState.svelte';
-	import { outsideLink } from '$lib/components/outsideLink';
+	import EmptyState from '$lib/ui/EmptyState.svelte';
+	import { outsideLink } from '$lib/ui/outsideLink';
 	import CitySearchInput from '$lib/features/following/components/CitySearchInput.svelte';
 	import EventCityManager from '$lib/features/following/components/EventCityManager.svelte';
 	import {

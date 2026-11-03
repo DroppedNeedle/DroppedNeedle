@@ -16,6 +16,12 @@
 		"queries/ArtistQueries.svelte.ts",
 		"queries/ArtistQueryKeyFactory.ts"
 	],
+	"auth": [
+		"components/ServerLogHint.svelte",
+		"queries/AuthMutations.svelte.ts",
+		"queries/AuthQueryKeyFactory.ts",
+		"queries/types.ts"
+	],
 	"discover": [
 		"components/PlaylistDiscoveryModal.svelte",
 		"components/SampleButton.svelte",
@@ -30,10 +36,14 @@
 		"components/HeldFileRow.svelte",
 		"components/TrackDownloadStatus.svelte",
 		"components/TrackRequestButton.svelte",
+		"queries/DownloadClientQueries.svelte.ts",
+		"queries/DownloadClientsQueries.svelte.ts",
 		"queries/DownloadMutations.svelte.ts",
 		"queries/DownloadQueries.svelte.ts",
 		"queries/DownloadQueryKeyFactory.ts",
 		"queries/HeldQueries.svelte.ts",
+		"queries/IndexerQueries.svelte.ts",
+		"queries/ProwlarrQueries.svelte.ts",
 		"queries/UpgradeQueries.svelte.ts",
 		"queries/downloadStatus.ts",
 		"state/discographyDownload.svelte.ts"
@@ -83,6 +93,9 @@
 	"library-management": [
 		"components/AlbumOrganizationDialog.svelte",
 		"components/AlbumRetagPairs.svelte",
+		"components/LibraryNamingExample.svelte",
+		"components/LibraryRootPolicyEditor.svelte",
+		"components/LibraryScanScheduleControl.svelte",
 		"components/ManagementHoldSection.svelte",
 		"components/OperationJobStrip.svelte",
 		"components/RecycledRemovals.svelte",
@@ -90,7 +103,10 @@
 		"queries/LibraryManagementMutations.svelte.ts",
 		"queries/LibraryManagementPreviewTokens.ts",
 		"queries/LibraryManagementQueries.svelte.ts",
+		"queries/LibraryOperationMutations.svelte.ts",
+		"queries/LibraryOperationQueries.svelte.ts",
 		"queries/LibraryOperationsTypes.ts",
+		"queries/LibraryPolicyMutations.svelte.ts",
 		"queries/LibraryPolicyQueries.svelte.ts",
 		"queries/RemovalQueries.svelte.ts",
 		"queries/types.ts"
@@ -120,9 +136,19 @@
 	"playlists": [
 		"components/AddToPlaylistModal.svelte",
 		"queries/PlaylistV3Queries.svelte.ts",
+		"queries/spotify.svelte.ts",
 		"state/playlistModal.svelte.ts"
 	],
-	"remote-library": ["queries/RemoteQueries.svelte.ts", "queries/types.ts"],
+	"profile": [
+		"queries/ConnectionsQuery.svelte.ts",
+		"queries/connect-apps.svelte.ts",
+		"queries/scrobble-preferences.svelte.ts"
+	],
+	"remote-library": [
+		"queries/RemoteMutations.svelte.ts",
+		"queries/RemoteQueries.svelte.ts",
+		"queries/types.ts"
+	],
 	"requests": [
 		"components/AlbumRequestButton.svelte",
 		"queries/RequestMutations.svelte.ts",
@@ -136,5 +162,13 @@
 		"queries/enrichment.ts",
 		"queries/unifiedSearchQuery.ts"
 	],
+	"settings": [
+		"components/qualityTiers.ts",
+		"queries/AdvancedSettingsReads.svelte.ts",
+		"queries/musicbrainz/types.ts",
+		"queries/plex.svelte.ts",
+		"queries/plugins/PluginSourceQueries.svelte.ts"
+	],
+	"upgrade": [],
 	"youtube": ["components/AlbumYouTubeBar.svelte", "queries/youtube.svelte.ts"]
 }

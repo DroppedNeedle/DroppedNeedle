@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { type MusicSource } from '$lib/stores/musicSource';
-	import { getConnectionsQuery } from '$lib/queries/connections/ConnectionsQuery.svelte';
+	import { getConnectionsQuery } from '$lib/features/profile/queries/ConnectionsQuery.svelte';
 	import Button from '$lib/ui/Button.svelte';
 
 	interface Props {

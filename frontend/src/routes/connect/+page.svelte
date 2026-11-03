@@ -10,10 +10,10 @@
 		createAuthorizeAppConnectMutation,
 		getAppConnectRequestQuery,
 		type AppConnectQuery
-	} from '$lib/queries/connect-apps.svelte';
-	import type { ConnectRequest } from '$lib/queries/connect-apps.svelte';
+	} from '$lib/features/profile/queries/connect-apps.svelte';
+	import type { ConnectRequest } from '$lib/features/profile/queries/connect-apps.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
-	import { appAddress, framed, handBack } from '$lib/utils/appHandBack';
+	import { appAddress, framed, handBack } from '$lib/features/auth/state/appHandBack';
 	import { KeyRound, TriangleAlert } from 'lucide-svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';

@@ -2,7 +2,7 @@
 	import { page } from '$app/state';
 	import { replaceState } from '$app/navigation';
 	import { useIntegrationStatus } from '$lib/features/home/queries/home.svelte';
-	import SettingsTabContent from '$lib/components/settings/SettingsTabContent.svelte';
+	import SettingsTabContent from '$lib/features/settings/components/SettingsTabContent.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { getUpdateCheckQuery } from '$lib/shell/version.svelte';
 	import {

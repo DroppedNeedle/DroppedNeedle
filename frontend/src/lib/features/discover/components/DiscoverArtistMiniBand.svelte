@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { coverSrc } from '$lib/api/covers';
-	import { useDirectRemoteImages } from '$lib/queries/AdvancedSettingsReads.svelte';
+	import { useDirectRemoteImages } from '$lib/features/settings/queries/AdvancedSettingsReads.svelte';
 	import type { BecauseYouListenTo } from '$lib/features/discover/queries/types';
 	import HomeSection from './HomeSection.svelte';
 	import HeroBackdrop from '$lib/media/HeroBackdrop.svelte';

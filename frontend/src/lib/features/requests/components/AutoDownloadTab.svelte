@@ -13,12 +13,12 @@
 		createRejectAutoDownloadMutation,
 		createRevokeAutoDownloadMutation
 	} from '$lib/features/following/queries/AdminApprovalsMutations.svelte';
-	import { getPersonalMixApprovalsQuery } from '$lib/queries/scrobble-preferences.svelte';
+	import { getPersonalMixApprovalsQuery } from '$lib/features/profile/queries/scrobble-preferences.svelte';
 	import {
 		createApprovePersonalMixMutation,
 		createRejectPersonalMixMutation,
 		createRevokePersonalMixMutation
-	} from '$lib/queries/scrobble-preferences.svelte';
+	} from '$lib/features/profile/queries/scrobble-preferences.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
