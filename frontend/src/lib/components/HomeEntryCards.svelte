@@ -63,9 +63,8 @@
 	const localFormats = $derived(localStats ? topFormats(localStats.format_breakdown) : '');
 
 	const libUnmatched = $derived(libraryStats?.review_count ?? 0);
-	const libGuesses = $derived(
-		(libraryStats?.guess_count ?? 0) + (libraryStats?.looks_wrong_count ?? 0)
-	);
+	// Albums to check, each once, as the Check albums badge counts them.
+	const libGuesses = $derived(libraryStats?.check_count ?? 0);
 	const libLastScan = $derived(
 		libraryStats?.last_scan_at ? new Date(libraryStats.last_scan_at * 1000) : null
 	);
@@ -126,7 +125,7 @@
 			musicState === 'prompt'
 				? 'Open library'
 				: canReview
-					? 'Review queue'
+					? 'Check albums'
 					: localEnabled
 						? 'Enter the room'
 						: 'Manage library',

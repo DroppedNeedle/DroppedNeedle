@@ -6416,8 +6416,9 @@ async fn an_edition_choice_moves_nothing_onto_a_file_it_leaves_out() {
     .expect("candidate");
     let mut db = droppedneedle_kernel::db::open_connection(&rig.db()).expect("db opens");
     let tx = db.transaction().expect("transaction");
-    let choice = droppedneedle_library::edition::choice::choose(&tx, &album, &candidate, None, 1.0)
-        .expect("edition chosen");
+    let choice =
+        droppedneedle_library::edition::choice::choose(&tx, &album, &candidate, None, false, 1.0)
+            .expect("edition chosen");
     tx.commit().expect("committed");
     assert_eq!(choice.extra_track_ids, vec![extra.clone()]);
     assert_eq!(rig.stars_and_aliases(&old), (1, 0));

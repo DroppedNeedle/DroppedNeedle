@@ -38,10 +38,15 @@ export type ReviewAction = 'keep_tagged' | 'dismiss' | 'detach' | 'exclude' | 'r
 const ACTION_TOAST: Record<ReviewAction, string> = {
 	keep_tagged: 'Tags kept',
 	dismiss: 'Left for later',
-	detach: 'Match removed; the album keeps its tags. Undo it from the album page.',
+	detach: 'Match removed, tags kept',
 	exclude: 'Album taken out of the library',
 	restore: 'Album is back in the library',
 	reopen: 'Reopened'
+};
+
+// Said after the toast's sentence, for an action undone elsewhere.
+const ACTION_HINT: Partial<Record<ReviewAction, string>> = {
+	detach: ' Undo it from the album page.'
 };
 
 /** One review action, decided on the review's `row_revision` as it was read. */
@@ -98,9 +103,10 @@ export function createActOnLibraryReviewMutation() {
 			// that acted shows that toast with its own reopen.
 			if (input.action === 'keep_tagged' || input.action === 'dismiss') return;
 			toastStore.show({
-				message: input.title
-					? `${ACTION_TOAST[input.action]}: ${input.title}.`
-					: `${ACTION_TOAST[input.action]}.`,
+				message:
+					(input.title
+						? `${ACTION_TOAST[input.action]}: ${input.title}.`
+						: `${ACTION_TOAST[input.action]}.`) + (ACTION_HINT[input.action] ?? ''),
 				type: 'success'
 			});
 		},

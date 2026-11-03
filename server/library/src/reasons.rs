@@ -600,7 +600,7 @@ pub fn match_reason(code: &str) -> Reason {
         "CHOSEN_EDITION_FITS_NO_FILE" => reason(
             "CHOSEN_EDITION_FITS_NO_FILE",
             "The edition you chose doesn't match these files.",
-            "Pick another edition, or let DroppedNeedle choose.",
+            "Match its files to their tracks, pick another edition, or let DroppedNeedle choose.",
         ),
         "CHOSEN_EDITION_NOT_LISTED" => reason(
             "CHOSEN_EDITION_NOT_LISTED",

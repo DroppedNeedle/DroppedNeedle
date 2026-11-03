@@ -426,14 +426,16 @@ export function createChooseAlbumEditionMutation() {
 			localId,
 			rgMbid,
 			releaseMbid,
-			identityRevision
-		}: GuardedEditionTarget & { releaseMbid: string }) => {
+			identityRevision,
+			useAnyway = false
+		}: GuardedEditionTarget & { releaseMbid: string; useAnyway?: boolean }) => {
 			assertLocalAlbumId(localId, rgMbid);
 			return api.v3.PUT(
 				v3('/api/v3/library/albums/{album_id}/edition', { path: { album_id: localId } }),
 				{
 					release_mbid: releaseMbid,
-					expected_identity_revision: identityRevision
+					expected_identity_revision: identityRevision,
+					...(useAnyway ? { use_anyway: true } : {})
 				}
 			);
 		},

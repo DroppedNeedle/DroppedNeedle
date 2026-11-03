@@ -8795,7 +8795,7 @@
         "tags": [
           "library management"
         ],
-        "summary": "Choose the album's edition: any release, from this album's release\ngroup or another. Files the edition has no track for keep their\nrecording; nothing automatic changes the choice afterwards.",
+        "summary": "Choose the album's edition: any release, from this album's release\ngroup or another. Files the edition has no track for keep their\nrecording; nothing automatic changes the choice afterwards. With\n`use_anyway`, a release that fits none of the files is taken placing\nnone: the files lose any track they had, and the album waits for its\nfiles to be matched by hand.",
         "operationId": "choose_edition",
         "parameters": [
           {
@@ -8830,7 +8830,7 @@
             }
           },
           "400": {
-            "description": "Not a release id, or the release fits none of the files",
+            "description": "Not a release id, or the release fits none of the files and `use_anyway` is not set",
             "content": {
               "application/json": {
                 "schema": {
@@ -39056,6 +39056,10 @@
           "release_mbid": {
             "type": "string",
             "description": "Any MusicBrainz release, from this album's release group or another."
+          },
+          "use_anyway": {
+            "type": "boolean",
+            "description": "Take the release even when it fits none of the files (\"Use\nanyway\"): no file is placed, and each reaches a track only by a\nmatch by hand. A release that fits a file is chosen as without it."
           }
         }
       },
@@ -42815,6 +42819,17 @@
               }
             ]
           },
+          "suggested": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EditionSuggestionView",
+                "description": "The edition track no file holds that this file may be matched to\nby hand: the one its disc and track number name, or on a whole\nalbum its place in file order. Set only on a file the edition does\nnot place; nothing applies it by itself."
+              }
+            ]
+          },
           "title": {
             "type": "string"
           },
@@ -43187,6 +43202,30 @@
           "writing": {
             "type": "boolean",
             "description": "That write is still to happen."
+          }
+        }
+      },
+      "EditionSuggestionView": {
+        "type": "object",
+        "description": "An edition track suggested for a file.",
+        "required": [
+          "disc_number",
+          "position",
+          "release_track_mbid"
+        ],
+        "properties": {
+          "disc_number": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "position": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "release_track_mbid": {
+            "type": "string"
           }
         }
       },

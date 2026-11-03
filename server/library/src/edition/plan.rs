@@ -21,7 +21,7 @@ use std::collections::HashSet;
 use crate::edition::choice::place;
 use crate::identify::models::{LocalAlbumFacts, LocalTrackFacts};
 use crate::matching::model::{Release, credit_text};
-use crate::matching::score::{ConflictKind, Support};
+use crate::matching::score::{ConflictKind, LENGTH_GRACE_SECS, LENGTH_MAX_SECS, Support};
 use crate::matching::strings::fold;
 use crate::reasons::Reason;
 use crate::reasons::TRACK_ID_CORRECTED;
@@ -85,6 +85,18 @@ pub struct PlanFile {
     /// Why the file is where it is, when its tags need a word: a track id
     /// from another edition, set aside or in the way.
     pub note: Option<Reason>,
+    /// The free edition track a person may match the file to by hand
+    /// ([`suggest`]). Never applied by itself.
+    pub suggested: Option<Suggestion>,
+}
+
+/// An edition track no file holds, suggested for a file the edition did
+/// not place.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Suggestion {
+    pub disc: u32,
+    pub position: u32,
+    pub release_track_mbid: String,
 }
 
 /// What MusicBrainz says about the planned edition.
@@ -354,6 +366,7 @@ pub fn build(
                 fate,
                 edition_track,
                 note,
+                suggested: None,
             }
         })
         .collect();
@@ -379,6 +392,7 @@ pub fn build(
             }
         }
     }
+    suggest(facts, &tracks, &mut files);
     let artist_name = release
         .artists
         .iter()
@@ -403,6 +417,159 @@ pub fn build(
         files,
     };
     (plan, by_hand)
+}
+
+/// Suggest a free edition track for each file the edition has no track
+/// for. Nothing applies a suggestion; a person matches the file by hand.
+///
+/// 1. A file whose tagged disc and track number name a free track gets
+///    it. A file with no disc tag counts as disc 1 only on a one-medium
+///    edition, and two files naming the same track get neither.
+/// 2. Only on a whole album (as many files, second copies and other
+///    versions aside, as the edition has tracks),
+///    when every file rule 1 left has no usable number and they are as
+///    many as the free tracks it left, they pair in order: the files by
+///    tagged disc and number, then natural path order; the tracks by disc
+///    and position. A file that names a track, held, taken by another,
+///    out of reach or not on the edition, keeps order out.
+///
+/// A pair whose lengths, where both are known, differ beyond what the
+/// matcher allows is never suggested; in rule 2 one such pair drops every
+/// order suggestion.
+fn suggest(facts: &LocalAlbumFacts, tracks: &[PlanTrack], files: &mut [PlanFile]) {
+    let local = |id: &str| facts.tracks.iter().find(|file| file.local_track_id == id);
+    let one_medium = tracks.iter().all(|track| track.disc <= 1);
+    let free: Vec<usize> = (0..tracks.len())
+        .filter(|index| tracks[*index].local_track_id.is_none())
+        .collect();
+    // A second copy or another version already answers to a track: it is
+    // neither suggested nor counted toward a whole album.
+    let open: Vec<usize> = (0..files.len())
+        .filter(|index| files[*index].fate == FileFate::Extra)
+        .collect();
+    let counted = files
+        .iter()
+        .filter(|file| matches!(file.fate, FileFate::Keep | FileFate::Extra))
+        .count();
+    let fits = |file: &PlanFile, track: &PlanTrack| match (file.length_ms, track.length_ms) {
+        (Some(file), Some(track)) => {
+            file.abs_diff(track) as f64 <= (LENGTH_GRACE_SECS + LENGTH_MAX_SECS) * 1000.0
+        }
+        _ => true,
+    };
+    let mut numbered: Vec<usize> = Vec::new();
+    let mut claims: Vec<(usize, usize)> = Vec::new();
+    for &file in &open {
+        let Some(tagged) = local(&files[file].local_track_id) else {
+            continue;
+        };
+        let disc = match tagged.disc_number {
+            0 if one_medium => 1,
+            0 => continue,
+            disc => disc,
+        };
+        if tagged.track_number == 0 {
+            continue;
+        }
+        numbered.push(file);
+        if let Some(&track) = free.iter().find(|&&track| {
+            tracks[track].disc == disc && tracks[track].position == tagged.track_number
+        }) {
+            claims.push((file, track));
+        }
+    }
+    let mut taken: Vec<usize> = Vec::new();
+    for &(file, track) in &claims {
+        let shared = claims.iter().filter(|(_, other)| *other == track).count() > 1;
+        if !shared && fits(&files[file], &tracks[track]) {
+            files[file].suggested = Some(suggestion(&tracks[track]));
+            taken.push(track);
+        }
+    }
+    if counted != tracks.len() {
+        return;
+    }
+    let mut left: Vec<usize> = open
+        .into_iter()
+        .filter(|file| files[*file].suggested.is_none())
+        .collect();
+    if left.iter().any(|file| numbered.contains(file)) {
+        return;
+    }
+    let mut rest: Vec<usize> = free
+        .into_iter()
+        .filter(|track| !taken.contains(track))
+        .collect();
+    if left.is_empty() || left.len() != rest.len() {
+        return;
+    }
+    left.sort_by(|a, b| {
+        let (a, b) = (
+            local(&files[*a].local_track_id),
+            local(&files[*b].local_track_id),
+        );
+        let key = |file: Option<&LocalTrackFacts>| {
+            file.map_or((0, 0), |file| (file.disc_number, file.track_number))
+        };
+        key(a).cmp(&key(b)).then_with(|| {
+            natural_order(
+                a.map_or("", |file| file.relative_path.as_str()),
+                b.map_or("", |file| file.relative_path.as_str()),
+            )
+        })
+    });
+    rest.sort_by_key(|track| (tracks[*track].disc, tracks[*track].position));
+    if left
+        .iter()
+        .zip(&rest)
+        .any(|(file, track)| !fits(&files[*file], &tracks[*track]))
+    {
+        return;
+    }
+    for (file, track) in left.into_iter().zip(rest) {
+        files[file].suggested = Some(suggestion(&tracks[track]));
+    }
+}
+
+fn suggestion(track: &PlanTrack) -> Suggestion {
+    Suggestion {
+        disc: track.disc,
+        position: track.position,
+        release_track_mbid: track.release_track_mbid.clone(),
+    }
+}
+
+/// Compare two paths as a person reads them: runs of digits by their
+/// value, so "2.flac" comes before "10.flac".
+fn natural_order(a: &str, b: &str) -> std::cmp::Ordering {
+    fn runs(text: &str) -> Vec<(bool, &str)> {
+        let mut out = Vec::new();
+        let mut start = 0;
+        let bytes = text.as_bytes();
+        for index in 1..=bytes.len() {
+            if index == bytes.len()
+                || bytes[index].is_ascii_digit() != bytes[index - 1].is_ascii_digit()
+            {
+                out.push((bytes[start].is_ascii_digit(), &text[start..index]));
+                start = index;
+            }
+        }
+        out
+    }
+    let (left, right) = (runs(a), runs(b));
+    for (x, y) in left.iter().zip(&right) {
+        let order = match (x, y) {
+            ((true, x), (true, y)) => {
+                let (x, y) = (x.trim_start_matches('0'), y.trim_start_matches('0'));
+                x.len().cmp(&y.len()).then_with(|| x.cmp(y))
+            }
+            ((_, x), (_, y)) => x.cmp(y),
+        };
+        if order.is_ne() {
+            return order;
+        }
+    }
+    left.len().cmp(&right.len())
 }
 
 /// The note for a file whose track id belongs to another edition: set
@@ -471,5 +638,211 @@ fn length_ms(file: &LocalTrackFacts) -> Option<u64> {
         _ => file
             .duration_secs
             .map(|seconds| seconds.saturating_mul(1000)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A file: id, tagged disc and number, path, length in seconds.
+    type File = (&'static str, u32, u32, &'static str, Option<u64>);
+    /// An edition track: disc, position, length in seconds, held by a file.
+    type Track = (u32, u32, Option<u64>, bool);
+    /// One case: its name, the edition, the files and the suggestions.
+    type Case = (
+        &'static str,
+        Vec<Track>,
+        Vec<File>,
+        Vec<(&'static str, u32, u32)>,
+    );
+
+    /// The suggestions for `files` on an edition of `tracks`, as (file,
+    /// disc, position). A file named "holder" is the one on a held track.
+    fn suggested(tracks: &[Track], files: &[File]) -> Vec<(String, u32, u32)> {
+        let facts = LocalAlbumFacts {
+            tracks: files
+                .iter()
+                .map(|(id, disc, number, path, seconds)| LocalTrackFacts {
+                    local_track_id: (*id).to_owned(),
+                    disc_number: *disc,
+                    track_number: *number,
+                    relative_path: (*path).to_owned(),
+                    duration_secs: *seconds,
+                    ..LocalTrackFacts::default()
+                })
+                .collect(),
+            ..LocalAlbumFacts::default()
+        };
+        let tracks: Vec<PlanTrack> = tracks
+            .iter()
+            .map(|(disc, position, seconds, held)| PlanTrack {
+                disc: *disc,
+                position: *position,
+                title: String::new(),
+                recording_mbid: String::new(),
+                release_track_mbid: format!("{disc}-{position}"),
+                length_ms: seconds.map(|seconds| seconds * 1000),
+                local_track_id: held.then(|| "holder".to_owned()),
+            })
+            .collect();
+        let mut plan_files: Vec<PlanFile> = facts
+            .tracks
+            .iter()
+            .map(|file| PlanFile {
+                local_track_id: file.local_track_id.clone(),
+                title: String::new(),
+                disc: file.disc_number.max(1),
+                track: file.track_number,
+                length_ms: length_ms(file),
+                fate: match file.local_track_id.as_str() {
+                    "holder" => FileFate::Keep,
+                    "copy" => FileFate::Duplicate,
+                    _ => FileFate::Extra,
+                },
+                edition_track: None,
+                note: None,
+                suggested: None,
+            })
+            .collect();
+        suggest(&facts, &tracks, &mut plan_files);
+        plan_files
+            .into_iter()
+            .filter_map(|file| {
+                file.suggested
+                    .map(|track| (file.local_track_id, track.disc, track.position))
+            })
+            .collect()
+    }
+
+    fn free(count: u32) -> Vec<Track> {
+        (1..=count)
+            .map(|position| (1, position, Some(200), false))
+            .collect()
+    }
+
+    /// One case a row: a file's tagged number first; order only on a whole
+    /// album of files with no usable number and every pair's length in
+    /// reach; never a held track, never a track two files name.
+    #[test]
+    fn a_suggestion_follows_the_files_numbers_then_their_order() {
+        let cases: Vec<Case> = vec![
+            (
+                "numbers name their tracks",
+                free(3),
+                vec![
+                    ("a", 1, 3, "x.flac", Some(200)),
+                    ("b", 1, 1, "y.flac", Some(200)),
+                    ("c", 1, 2, "z.flac", Some(200)),
+                ],
+                vec![("a", 1, 3), ("b", 1, 1), ("c", 1, 2)],
+            ),
+            (
+                "a gap stays missing",
+                free(4),
+                vec![
+                    ("a", 1, 1, "1.flac", Some(200)),
+                    ("b", 1, 2, "2.flac", Some(200)),
+                    ("d", 1, 4, "4.flac", Some(200)),
+                ],
+                vec![("a", 1, 1), ("b", 1, 2), ("d", 1, 4)],
+            ),
+            (
+                "no numbers: natural path order on a whole album",
+                free(3),
+                vec![
+                    ("ten", 0, 0, "10 c.flac", None),
+                    ("two", 0, 0, "2 b.flac", None),
+                    ("one", 0, 0, "1 a.flac", None),
+                ],
+                vec![("one", 1, 1), ("two", 1, 2), ("ten", 1, 3)],
+            ),
+            (
+                "no numbers on a partial album",
+                free(3),
+                vec![("a", 0, 0, "1.flac", None), ("b", 0, 0, "2.flac", None)],
+                vec![],
+            ),
+            (
+                "a bonus file keeps order out",
+                free(3),
+                vec![
+                    ("a", 1, 1, "1.flac", None),
+                    ("bonus", 1, 9, "9.flac", None),
+                    ("b", 0, 0, "b.flac", None),
+                ],
+                vec![("a", 1, 1)],
+            ),
+            (
+                "two files naming one track get neither",
+                free(2),
+                vec![("a", 1, 1, "a.flac", None), ("b", 1, 1, "b.flac", None)],
+                vec![],
+            ),
+            (
+                "a held track is never suggested",
+                vec![(1, 1, None, true), (1, 2, None, false)],
+                vec![
+                    ("holder", 1, 1, "h.flac", None),
+                    ("b", 1, 1, "b.flac", None),
+                ],
+                vec![],
+            ),
+            (
+                "too long for its numbered track",
+                free(2),
+                vec![
+                    ("a", 1, 1, "a.flac", Some(400)),
+                    ("b", 1, 2, "b.flac", Some(200)),
+                ],
+                vec![("b", 1, 2)],
+            ),
+            (
+                "one pair out of reach drops every order suggestion",
+                free(2),
+                vec![
+                    ("a", 0, 0, "1.flac", Some(200)),
+                    ("b", 0, 0, "2.flac", Some(400)),
+                ],
+                vec![],
+            ),
+            (
+                "no disc tag is disc 1 on one medium",
+                free(2),
+                vec![("a", 0, 2, "a.flac", None), ("b", 0, 1, "b.flac", None)],
+                vec![("a", 1, 2), ("b", 1, 1)],
+            ),
+            (
+                "but not on two",
+                vec![
+                    (1, 1, None, false),
+                    (2, 1, None, false),
+                    (2, 2, None, false),
+                ],
+                vec![("a", 0, 1, "a.flac", None), ("b", 2, 1, "b.flac", None)],
+                vec![("b", 2, 1)],
+            ),
+            (
+                "a second copy is neither suggested nor counted",
+                vec![(1, 1, None, true), (1, 2, None, false), (1, 3, None, false)],
+                vec![
+                    ("holder", 1, 1, "1.flac", None),
+                    ("copy", 1, 2, "1 copy.flac", None),
+                    ("a", 0, 0, "x.flac", None),
+                    ("b", 0, 0, "y.flac", None),
+                ],
+                vec![("a", 1, 2), ("b", 1, 3)],
+            ),
+        ];
+        for (case, tracks, files, expected) in cases {
+            let mut expected: Vec<(String, u32, u32)> = expected
+                .into_iter()
+                .map(|(file, disc, position)| (file.to_owned(), disc, position))
+                .collect();
+            expected.sort();
+            let mut found = suggested(&tracks, &files);
+            found.sort();
+            assert_eq!(found, expected, "{case}");
+        }
     }
 }

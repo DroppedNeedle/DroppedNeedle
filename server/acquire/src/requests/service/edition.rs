@@ -728,6 +728,7 @@ mod tests {
                     fate: FileFate::Keep,
                     edition_track: None,
                     note: None,
+                    suggested: None,
                 })
                 .collect(),
         };

@@ -1667,6 +1667,7 @@ async fn an_edition_tag_write_planned_after_another_choice_writes_nothing() {
             other,
             shown_revision(&managed.library, &album),
             Some("admin"),
+            false,
         )
         .await
         .expect("another edition chosen");
@@ -1734,6 +1735,7 @@ async fn an_edition_choice_links_its_artists_before_it_answers() {
             REL_1,
             shown_revision(&library, &album),
             Some("admin"),
+            false,
         )
         .await
         .expect("edition chosen");
@@ -3075,6 +3077,7 @@ async fn choose_first_edition(library: &LibrarySetup, album: &str) {
             REL_1,
             shown_revision(library, album),
             Some("curator"),
+            false,
         )
         .await
         .expect("edition chosen");
@@ -11862,6 +11865,7 @@ async fn management_leaves_a_folder_that_keeps_its_own_tags() {
                 &other,
                 shown_revision(&managed.library, &album),
                 Some("admin"),
+                false,
             )
             .await
             .expect("edition chosen");
@@ -12152,6 +12156,7 @@ async fn unmanaged_changes_do_not_take_the_album_over() {
             other,
             shown_revision(&managed.library, &album),
             Some("admin"),
+            false,
         )
         .await
         .expect("edition chosen");
@@ -14049,6 +14054,7 @@ async fn a_persons_profile_run_takes_the_files_back() {
             other,
             shown_revision(&managed.library, &album),
             Some("admin"),
+            false,
         )
         .await
         .expect("edition chosen");
@@ -14117,6 +14123,7 @@ async fn an_unmanaged_change_stays_accepted_through_every_write() {
             &other,
             shown_revision(&managed.library, &album),
             Some("admin"),
+            false,
         )
         .await
         .expect("edition chosen");
@@ -15228,6 +15235,7 @@ async fn a_wide_preview_in_a_manual_folder_blocks_without_marking() {
             &edition,
             shown_revision(&managed.library, &album),
             Some("admin"),
+            false,
         )
         .await
         .expect("edition chosen");
@@ -15306,6 +15314,7 @@ async fn undone_profile_run_gives_the_hand_edit_back(name: &str) {
             &edition,
             shown_revision(&managed.library, &album),
             Some("admin"),
+            false,
         )
         .await
         .expect("edition chosen");
@@ -18072,6 +18081,7 @@ async fn a_persons_match_joins_an_album_retagged_without_its_ids() {
             REL_1,
             shown_revision(&library, &own_row),
             Some("curator"),
+            false,
         )
         .await
         .expect("edition chosen");
@@ -25929,6 +25939,464 @@ async fn a_match_by_hand_is_refused_with_nothing_changed() {
     assert_eq!(body["error"]["code"], json!("NO_HAND_MATCH"));
     assert_eq!(hand_match_world(&db, album), world, "nothing changed");
     assert!(hand_match_row(&db, &h.odd).is_none(), "the record ended");
+    rig.stop().await;
+}
+
+/// The release an album of junk-tagged files really is, and the release
+/// the app guessed for them.
+const JUNK_RIGHT: &str = "a1b2c3d4-0000-4000-8000-00000000a0a1";
+const JUNK_GUESS: &str = "a1b2c3d4-0000-4000-8000-00000000a0a2";
+
+/// A release of the junk album's three tracks, with the files' lengths:
+/// `titles` per track, ids ending in `tag`.
+fn junk_release(
+    facts: &LocalAlbumFacts,
+    tracks: &[String],
+    tag: char,
+    titles: [&str; 3],
+) -> Release {
+    Release {
+        id: format!("a1b2c3d4-0000-4000-8000-00000000a0a{tag}"),
+        release_group_id: format!("a1b2c3d4-0000-4000-8000-00000000b0b{tag}"),
+        title: facts.title.clone(),
+        artists: vec![CreditedArtist {
+            id: "a1b2c3d4-0000-4000-8000-00000000c0c0".to_owned(),
+            name: facts.album_artist_name.clone(),
+            sort_name: None,
+            join: String::new(),
+        }],
+        tracks: tracks
+            .iter()
+            .enumerate()
+            .map(|(index, track)| {
+                let file = facts
+                    .tracks
+                    .iter()
+                    .find(|file| file.local_track_id == *track)
+                    .expect("file facts");
+                ReleaseTrack {
+                    isrcs: Vec::new(),
+                    genres: Vec::new(),
+                    id: format!("a1b2c3d4-0000-4000-8000-0000000{tag}d00{index}"),
+                    recording_id: format!("a1b2c3d4-0000-4000-8000-0000000{tag}e00{index}"),
+                    title: titles[index].to_owned(),
+                    artists: Vec::new(),
+                    disc: 1,
+                    position: index as u32 + 1,
+                    absolute_position: index as u32 + 1,
+                    length_ms: file.duration_secs.map(|seconds| seconds * 1000),
+                }
+            })
+            .collect(),
+        ..Release::default()
+    }
+}
+
+/// MusicBrainz with nothing to say, for the landing's reads of the library.
+struct NoReleases;
+
+impl droppedneedle_library::identify::sources::ReleaseSource for NoReleases {
+    fn search<'a>(
+        &'a self,
+        _title: &'a str,
+        _artist: &'a str,
+    ) -> futures_util::future::BoxFuture<
+        'a,
+        Result<
+            Vec<droppedneedle_library::identify::sources::ReleaseHit>,
+            droppedneedle_library::identify::sources::SourceError,
+        >,
+    > {
+        Box::pin(async { Ok(Vec::new()) })
+    }
+
+    fn release<'a>(
+        &'a self,
+        _mbid: &'a str,
+    ) -> futures_util::future::BoxFuture<
+        'a,
+        Result<Option<Release>, droppedneedle_library::identify::sources::SourceError>,
+    > {
+        Box::pin(async { Ok(None) })
+    }
+
+    fn canonical_recording<'a>(
+        &'a self,
+        _mbid: &'a str,
+    ) -> futures_util::future::BoxFuture<
+        'a,
+        Result<Option<String>, droppedneedle_library::identify::sources::SourceError>,
+    > {
+        Box::pin(async { Ok(None) })
+    }
+}
+
+/// A curator takes an album whose files are tagged only "Track 01" to
+/// "Track 03", with no ids, to the release it really is, though no file
+/// fits it. The app had guessed a release that placed the files. The plan
+/// of the right release suggests each file's track by its number.
+/// Choosing it is refused as before; "Use anyway" makes it the person's
+/// edition with no file placed: every guessed track row goes, the album is
+/// flagged as fitting no file, its "Looks wrong" mark is settled, and
+/// "Looks right" has nothing to confirm. Each file then reaches its track
+/// only by a match by hand, and undoing the only match flags the album
+/// again. After a match an upgrade of the group finds no unmatched file to
+/// replace by its guessed recording, and "Undo last change" puts the guess
+/// back with its track rows and forgets the matches. Taken anyway again,
+/// with the unconfirmed matches managed and the folder managed
+/// automatically, the app writes nothing while a file is unmatched and
+/// takes the album once the last one is.
+#[tokio::test]
+async fn a_curator_uses_an_edition_no_junk_tagged_file_fits() {
+    use droppedneedle_acquire::landing::library::LibraryLanding;
+    use droppedneedle_acquire::landing::ports::LandingLibrary as _;
+    use droppedneedle_library::tags::TagField;
+    use droppedneedle_library::tags::save::{TagEdit, save_tags};
+
+    let rig = Rig::start("lib-junk-tagged").await;
+    let app = &rig.app;
+    let music = app.config.root_app_dir.join("music");
+    for (number, fixture) in [
+        (1, "flac_full_01.flac"),
+        (2, "flac_full_02.flac"),
+        (3, "flac_full_02.flac"),
+    ] {
+        let file = plant(&music, &format!("junk/{number:02}.flac"), fixture);
+        save_tags(
+            &file,
+            &[
+                TagEdit::verbatim(TagField::Title, vec![format!("Track {number:02}")]),
+                TagEdit::verbatim(TagField::TrackNumber, vec![number.to_string()]),
+                TagEdit::verbatim(TagField::MusicBrainzRecordingId, Vec::new()),
+                TagEdit::verbatim(TagField::MusicBrainzReleaseTrackId, Vec::new()),
+                TagEdit::verbatim(TagField::MusicBrainzReleaseId, Vec::new()),
+                TagEdit::verbatim(TagField::MusicBrainzReleaseGroupId, Vec::new()),
+                TagEdit::verbatim(TagField::MusicBrainzArtistId, Vec::new()),
+                TagEdit::verbatim(TagField::MusicBrainzAlbumArtistId, Vec::new()),
+            ],
+        )
+        .expect("junk tags saved");
+    }
+    let paused_at = rig.pause_identification().await;
+    app.add_library_folder("music", &music).await;
+    let tracks: Vec<String> = (1..=3)
+        .map(|number| {
+            rig.scan_store
+                .track_at("music", &format!("junk/{number:02}.flac"))
+                .unwrap()
+                .expect("track indexed")
+        })
+        .collect();
+    let album = rig
+        .scan_store
+        .album_for_track(&tracks[0])
+        .unwrap()
+        .expect("album");
+    let facts = rig
+        .identify_store
+        .album_facts(&album)
+        .unwrap()
+        .expect("album facts");
+    assert_eq!(facts.tracks.len(), 3, "one album of three files");
+    let right = junk_release(
+        &facts,
+        &tracks,
+        '1',
+        ["Glass Harbour", "Northern Wire", "Quiet Engine"],
+    );
+    let guess = junk_release(&facts, &tracks, '2', ["Track 01", "Track 02", "Track 03"]);
+    assert_eq!(
+        (right.id.as_str(), guess.id.as_str()),
+        (JUNK_RIGHT, JUNK_GUESS)
+    );
+    let pasted = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let (offered, listed, late) = (guess.clone(), right.clone(), pasted.clone());
+    rig.identify.recall_from(move |_| {
+        let mut releases = vec![offered.clone()];
+        if late.load(std::sync::atomic::Ordering::SeqCst) {
+            releases.push(listed.clone());
+        }
+        RecallResult {
+            releases,
+            ..RecallResult::default()
+        }
+    });
+    rig.resume_identification(paused_at).await;
+    rig.identified(&album, 1).await;
+    pasted.store(true, std::sync::atomic::Ordering::SeqCst);
+
+    let db = app.db();
+    let guessed: Vec<Option<TrackRow>> =
+        tracks.iter().map(|track| identity_of(&db, track)).collect();
+    for (row, track) in guessed.iter().zip(&guess.tracks) {
+        assert_eq!(
+            row.as_ref().map(|row| row.0.as_str()),
+            Some(track.recording_id.as_str()),
+            "the guess placed each file"
+        );
+    }
+    let guessed_album = album_choice(&db, &album);
+
+    let admin = app.login_admin().await;
+    let admin = [("authorization", admin.as_str())];
+    let curator = app.login_user("curator").await;
+    let (status, body) = app
+        .call(
+            "PUT",
+            &format!("/api/v3/admin/users/{}/role", curator.user_id),
+            &admin,
+            Some(json!({"role": "trusted"})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let headers = [("authorization", curator.authorization.as_str())];
+    let edition = format!("/api/v3/library/albums/{album}/edition");
+
+    let (status, plan) = app
+        .call(
+            "GET",
+            &format!("{edition}/plan?release_mbid={JUNK_RIGHT}"),
+            &headers,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{plan}");
+    assert_eq!(plan["kept_count"], json!(0), "{plan}");
+    for (track, release_track) in tracks.iter().zip(&right.tracks) {
+        assert_eq!(
+            plan_file(&plan, track)["suggested"]["release_track_mbid"],
+            json!(release_track.id),
+            "{plan}"
+        );
+    }
+
+    let revision = edition_revision(app, &headers, &album).await;
+    let (status, body) = app
+        .call(
+            "PUT",
+            &edition,
+            &headers,
+            Some(json!({"release_mbid": JUNK_RIGHT, "expected_identity_revision": revision})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error"]["code"], json!("EDITION_FITS_NO_FILE"));
+    assert_eq!(album_choice(&db, &album), guessed_album, "nothing changed");
+    let (status, body) = app
+        .call(
+            "PUT",
+            &format!("/api/v3/library/albums/{album}/looks-wrong"),
+            &headers,
+            Some(json!({"looks_wrong": true})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    let (status, body) = app
+        .call(
+            "PUT",
+            &edition,
+            &headers,
+            Some(json!({
+                "release_mbid": JUNK_RIGHT,
+                "expected_identity_revision": revision,
+                "use_anyway": true,
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["retag_files"], json!([]), "{body}");
+    assert_eq!(body["status"]["release_mbid"], json!(JUNK_RIGHT), "{body}");
+    assert_eq!(
+        body["status"]["reason"]["code"],
+        json!("CHOSEN_EDITION_FITS_NO_FILE"),
+        "{body}"
+    );
+    let (source, chooser, _) = album_choice(&db, &album);
+    assert_eq!(
+        (source.as_str(), chooser.as_deref()),
+        ("manual", Some(curator.user_id.as_str()))
+    );
+    for track in &tracks {
+        assert_eq!(identity_of(&db, track), None, "no guessed track survives");
+    }
+    assert_eq!(album_match_state(&db, &album).as_deref(), Some("unmatched"));
+    let forced: i64 = db
+        .query_row(
+            "SELECT COUNT(*) FROM library_catalog_actions WHERE local_album_id = ?1 \
+             AND action_kind = 'edition_choice' AND json_extract(after_json, '$.use_anyway') = 1",
+            [&album],
+            |row| row.get(0),
+        )
+        .expect("audit reads");
+    assert_eq!(forced, 1, "the audit says it was taken anyway");
+    let marks: i64 = db
+        .query_row(
+            "SELECT COUNT(*) FROM library_album_looks_wrong WHERE local_album_id = ?1",
+            [&album],
+            |row| row.get(0),
+        )
+        .expect("marks read");
+    assert_eq!(marks, 0, "taking the edition settles its Looks wrong marks");
+    let (status, body) = app
+        .call(
+            "POST",
+            &format!("{edition}/confirm"),
+            &headers,
+            Some(json!({"expected_identity_revision": body["status"]["identity_revision"]})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"]["code"], json!("NOTHING_TO_CONFIRM"));
+
+    // Each match answers the revision the next one sends.
+    let match_file = |index: usize, revision: &Value| {
+        let uri = format!("{edition}/files/{}", tracks[index]);
+        let body = json!({
+            "release_track_mbid": right.tracks[index].id,
+            "expected_identity_revision": revision,
+        });
+        async move { app.call("PUT", &uri, &headers, Some(body)).await }
+    };
+    let revision = json!(edition_revision(app, &headers, &album).await);
+    let (status, body) = match_file(0, &revision).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["reason"]["code"], json!("CHOSEN"), "{body}");
+    assert_eq!(
+        identity_of(&db, &tracks[0]).map(|row| (row.2, row.5)),
+        Some((Some(right.tracks[0].id.clone()), "manual".to_owned()))
+    );
+
+    // Undoing the only match flags the album again.
+    let (status, body) = app
+        .call(
+            "DELETE",
+            &format!(
+                "{edition}/files/{}?expected_identity_revision={}",
+                tracks[0], body["identity_revision"]
+            ),
+            &headers,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["reason"]["code"],
+        json!("CHOSEN_EDITION_FITS_NO_FILE"),
+        "{body}"
+    );
+    assert_eq!(identity_of(&db, &tracks[0]), None);
+    let (status, body) = match_file(0, &body["identity_revision"]).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    // An upgrade of the group: an unmatched file is no copy of the song
+    // its guess named.
+    let landing = LibraryLanding::new(
+        &app.state().library,
+        crate::common::library::every_priority(Arc::new(NoReleases)),
+    );
+    let group = right.release_group_id.as_str();
+    for index in 1..3 {
+        let copies = landing
+            .owned_copies(
+                group,
+                None,
+                JUNK_RIGHT,
+                &right.tracks[index].id,
+                &guess.tracks[index].recording_id,
+            )
+            .await
+            .expect("copies read");
+        assert!(
+            copies
+                .iter()
+                .all(|copy| !tracks[1..].contains(&copy.track_id)),
+            "{copies:?}"
+        );
+    }
+
+    // "Undo last change" after a match: the guess is back.
+    let (status, body) = app
+        .call(
+            "POST",
+            &format!("{edition}/undo"),
+            &headers,
+            Some(json!({"expected_identity_revision": body["identity_revision"]})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(album_choice(&db, &album).0, guessed_album.0);
+    let restored: Vec<Option<TrackRow>> =
+        tracks.iter().map(|track| identity_of(&db, track)).collect();
+    assert_eq!(restored, guessed, "the guess's track rows are back");
+    for track in &tracks {
+        assert!(
+            hand_match_row(&db, track).is_none(),
+            "the matches are forgotten"
+        );
+    }
+
+    // Taken anyway again, with the unconfirmed matches managed and the
+    // folder managed automatically: nothing is written until every file
+    // has its track.
+    let (status, body) = app
+        .call(
+            "PUT",
+            &edition,
+            &headers,
+            Some(json!({
+                "release_mbid": JUNK_RIGHT,
+                "expected_identity_revision": edition_revision(app, &headers, &album).await,
+                "use_anyway": true,
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let page = "/api/v3/settings/edition-preferences";
+    let (status, mut preferences) = app.call("GET", page, &admin, None).await;
+    assert_eq!(status, StatusCode::OK, "{preferences}");
+    preferences["manage_unconfirmed"] = json!(true);
+    let (status, body) = app.call("PUT", page, &admin, Some(preferences)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    activate_automatic_folder(app, &admin, false).await;
+    let bytes = || -> Vec<Vec<u8>> {
+        (1..=3)
+            .map(|number| {
+                std::fs::read(music.join(format!("junk/{number:02}.flac"))).expect("file reads")
+            })
+            .collect()
+    };
+    let before_bytes = bytes();
+    let runs = || -> i64 {
+        db.query_row(
+            "SELECT COUNT(*) FROM library_management_job_snapshots s \
+             WHERE EXISTS (SELECT 1 FROM json_each(s.selection_json, '$.ids') WHERE value = ?1)",
+            [&album],
+            |row| row.get(0),
+        )
+        .expect("runs read")
+    };
+    let runs_before = runs();
+    let mut revision = json!(edition_revision(app, &headers, &album).await);
+    for index in 0..2 {
+        let (status, body) = match_file(index, &revision).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(
+            body["files_by_itself"],
+            json!(false),
+            "a file is unmatched: {body}"
+        );
+        revision = body["identity_revision"].clone();
+    }
+    assert_eq!(runs(), runs_before, "nothing planned for the album");
+    assert!(before_bytes == bytes(), "nothing written");
+    let (status, body) = match_file(2, &revision).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["files_by_itself"],
+        json!(true),
+        "every file has its track: {body}"
+    );
     rig.stop().await;
 }
 

@@ -69,15 +69,17 @@ impl Operations {
     /// Choose the album's edition: any MusicBrainz release, from the
     /// album's release group or another one. MusicBrainz is asked for the
     /// release's tracklist, the files are placed on it where they fit, and
-    /// the release becomes the album's protected edition. A stale
-    /// `expected_identity_revision` is refused before MusicBrainz is asked
-    /// and again when the choice is written.
+    /// the release becomes the album's protected edition. A release that
+    /// fits none of the files is refused unless `use_anyway`, which takes
+    /// it placing none. A stale `expected_identity_revision` is refused
+    /// before MusicBrainz is asked and again when the choice is written.
     pub async fn choose_edition(
         &self,
         album_id: &str,
         raw_release: &str,
         expected_identity_revision: i64,
         actor: Option<&str>,
+        use_anyway: bool,
     ) -> Result<EditionChoice, OperationError> {
         let release = parse_release(raw_release)?;
         let album = album_id.to_owned();
@@ -105,6 +107,7 @@ impl Operations {
                             &album,
                             &candidate,
                             actor.as_deref(),
+                            use_anyway,
                             ops.clock.now_secs(),
                         )?;
                         looks_wrong::clear(tx, &album)?;

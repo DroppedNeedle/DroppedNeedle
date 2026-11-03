@@ -270,6 +270,11 @@ pub struct ChooseEditionBody {
     pub release_mbid: String,
     /// The `identity_revision` the edition status showed.
     pub expected_identity_revision: i64,
+    /// Take the release even when it fits none of the files ("Use
+    /// anyway"): no file is placed, and each reaches a track only by a
+    /// match by hand. A release that fits a file is chosen as without it.
+    #[serde(default)]
+    pub use_anyway: bool,
 }
 
 /// The edition revision a change was decided on.
@@ -363,6 +368,19 @@ pub struct EditionPlanFileView {
     /// hand, so "Undo match" is refused until that write is undone from
     /// History. False whenever `matched_by_hand` is false.
     pub match_written: bool,
+    /// The edition track no file holds that this file may be matched to
+    /// by hand: the one its disc and track number name, or on a whole
+    /// album its place in file order. Set only on a file the edition does
+    /// not place; nothing applies it by itself.
+    pub suggested: Option<EditionSuggestionView>,
+}
+
+/// An edition track suggested for a file.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct EditionSuggestionView {
+    pub disc_number: u32,
+    pub position: u32,
+    pub release_track_mbid: String,
 }
 
 /// What MusicBrainz says about the planned edition.
@@ -486,6 +504,11 @@ impl From<PlanReading> for EditionPlanView {
                     edition_disc_number: file.edition_track.map(|(disc, _)| disc),
                     edition_position: file.edition_track.map(|(_, position)| position),
                     note: file.note.map(ReasonView::from),
+                    suggested: file.suggested.map(|track| EditionSuggestionView {
+                        disc_number: track.disc,
+                        position: track.position,
+                        release_track_mbid: track.release_track_mbid,
+                    }),
                 })
                 .collect(),
         }
@@ -641,7 +664,10 @@ pub async fn get_edition(
 
 /// Choose the album's edition: any release, from this album's release
 /// group or another. Files the edition has no track for keep their
-/// recording; nothing automatic changes the choice afterwards.
+/// recording; nothing automatic changes the choice afterwards. With
+/// `use_anyway`, a release that fits none of the files is taken placing
+/// none: the files lose any track they had, and the album waits for its
+/// files to be matched by hand.
 #[utoipa::path(
     put,
     tag = "library management",
@@ -650,7 +676,7 @@ pub async fn get_edition(
     request_body = ChooseEditionBody,
     responses(
         (status = 200, description = "The choice and what it did", body = EditionChoiceView),
-        (status = 400, description = "Not a release id, or the release fits none of the files"),
+        (status = 400, description = "Not a release id, or the release fits none of the files and `use_anyway` is not set"),
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Curator role required"),
         (status = 404, description = "Unknown album, or MusicBrainz does not know the release"),
@@ -671,6 +697,7 @@ pub async fn choose_edition(
             &body.release_mbid,
             body.expected_identity_revision,
             Some(caller.user_id()),
+            body.use_anyway,
         )
         .await?;
     let status = status_of(&services, &album_id, caller.user_id()).await?;

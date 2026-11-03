@@ -1011,6 +1011,12 @@ droppedneedle_kernel::sql! {
              ON CONFLICT (local_album_id) DO UPDATE SET state = excluded.state, \
              reason_code = excluded.reason_code, release_mbid = excluded.release_mbid, \
              updated_at = excluded.updated_at";
+    /// Flag the album (`?1`) unmatched with reason `?2` on release `?3`, at
+    /// `?4`, unless it carries a flag already.
+    pub(super) FLAG_UNPLACEABLE = "INSERT INTO library_album_match_state (local_album_id, \
+             state, reason_code, release_mbid, candidates_json, updated_at) \
+             VALUES (?1, 'unmatched', ?2, ?3, '[]', ?4) \
+             ON CONFLICT (local_album_id) DO NOTHING";
     pub(super) QUEUE_REMAP = "INSERT INTO library_edition_remap_queue (local_album_id, \
              release_mbid, chosen_by_user_id, queued_at, origin) \
              VALUES (?1, lower(?2), (SELECT id FROM auth_users WHERE id = ?3), ?4, ?5) \

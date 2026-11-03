@@ -27,7 +27,13 @@
 		getWaitingAlbumsQuery,
 		type WaitingAlbum
 	} from '$lib/queries/albums/EditionQueries.svelte';
-	import { count, failureSentence, fitLine } from './edition/editionCopy';
+	import {
+		MATCH_FILES,
+		NEEDS_MATCHING,
+		count,
+		failureSentence,
+		fitLine
+	} from './edition/editionCopy';
 
 	interface Props {
 		view: WaitingView;
@@ -135,7 +141,13 @@
 		}
 	}
 
+	// An edition a curator took though no file fits it: its files wait to be
+	// matched by hand, not to be found.
+	const needsMatching = (item: WaitingAlbum) =>
+		item.state === 'unmatched' && item.reason.code === 'CHOSEN_EDITION_FITS_NO_FILE';
+
 	function stateLabel(item: WaitingAlbum): string {
+		if (needsMatching(item)) return NEEDS_MATCHING;
 		if (item.state === 'unmatched') return 'Not found';
 		if (item.state === 'unconfirmed') return 'Best guess';
 		if (item.state === 'chosen') return 'Chosen by a person';
@@ -207,11 +219,11 @@
 							<div class="min-w-0">
 								<p
 									class="flex items-center gap-1.5 text-xs font-semibold tracking-wide uppercase {item.state ===
-									'unmatched'
+										'unmatched' && !needsMatching(item)
 										? 'text-error'
 										: 'text-warning'}"
 								>
-									{#if item.state === 'unmatched'}
+									{#if item.state === 'unmatched' && !needsMatching(item)}
 										<CircleAlert class="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
 									{:else}
 										<CircleHelp class="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
@@ -258,7 +270,11 @@
 							{/if}
 							{#if authStore.isTrusted}
 								<Button variant="ghost" size="sm" href={compareHref(item)}
-									>{item.state === 'unmatched' ? 'Pick an edition' : 'Compare'}</Button
+									>{needsMatching(item)
+										? MATCH_FILES
+										: item.state === 'unmatched'
+											? 'Pick an edition'
+											: 'Compare'}</Button
 								>
 							{/if}
 						</div>

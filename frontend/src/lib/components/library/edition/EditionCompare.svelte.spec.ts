@@ -252,6 +252,112 @@ describe('matching a file by hand', () => {
 	});
 });
 
+// An edition taken anyway: no file is on it, and the server suggests a
+// track for each one.
+const junk = {
+	...plan,
+	identity_revision: 3,
+	kept_count: 0,
+	missing_count: 3,
+	duplicate_count: 0,
+	other_version_count: 0,
+	extra_count: 3,
+	tracks: [
+		track(1, 'Glass Harbour', 200_000, null),
+		track(2, 'Northern Wire', 200_000, null),
+		track(3, 'Quiet Engine', 200_000, null)
+	],
+	files: [1, 2, 3].map((at) => ({
+		...file(`junk-${at}`, `Track 0${at}`, 'extra'),
+		suggested: { disc_number: 1, position: at, release_track_mbid: `track-${at}` }
+	}))
+} as unknown as EditionPlan;
+
+describe('matching as suggested', () => {
+	it("names each file's suggested track and starts the picker on it", async () => {
+		await compare(false, junk);
+		await expect
+			.element(row('Track 02').getByText('Suggested: 1.2 Northern Wire (3:20)'))
+			.toBeVisible();
+		await row('Track 03').getByRole('button', { name: 'Match to a track' }).click();
+		await expect.element(page.getByLabelText('Track on this edition')).toHaveValue('track-3');
+	});
+
+	it('matches each file in turn, sending the revision the last match answered', async () => {
+		h.match.mockResolvedValueOnce(4).mockResolvedValueOnce(5).mockResolvedValueOnce(6);
+		await compare(false, junk);
+		await page.getByRole('button', { name: 'Match as suggested' }).click();
+		expect(h.match.mock.calls).toEqual([
+			['junk-1', 'track-1', 3],
+			['junk-2', 'track-2', 4],
+			['junk-3', 'track-3', 5]
+		]);
+	});
+
+	it('after one match, offers neither the recycle bin nor a fetch for the suggested files and tracks', async () => {
+		const oneMatched = {
+			...junk,
+			kept_count: 1,
+			missing_count: 2,
+			extra_count: 2,
+			tracks: junk.tracks.map((one, i) => (i === 0 ? { ...one, local_track_id: 'junk-1' } : one)),
+			files: junk.files.map((one, i) =>
+				i === 0
+					? { ...one, fate: 'keep', edition_position: 1, matched_by_hand: true, suggested: null }
+					: one
+			)
+		} as unknown as EditionPlan;
+		await render(EditionDetail, {
+			release: 'release-1',
+			query: {
+				data: oneMatched,
+				isPending: false,
+				isError: false,
+				error: null,
+				refetch: () => undefined
+			},
+			isCurrent: true,
+			hiddenByFilter: false,
+			albumHasGroup: true,
+			canEdit: true,
+			actionError: null,
+			putBackCount: null,
+			onremoveextras: vi.fn(),
+			onputback: vi.fn(),
+			sourceReady: true,
+			getMissing: true,
+			replaceVersions: true,
+			group: 'group-1',
+			tracks: null,
+			onacquire: vi.fn(),
+			editionKind: 'release',
+			appPicked: false,
+			onmatch: h.match,
+			onunmatch: h.unmatch
+		});
+		await expect.element(page.getByRole('button', { name: 'Match as suggested' })).toBeVisible();
+		await expect.element(page.getByText('Make your copy this edition')).not.toBeInTheDocument();
+		await expect
+			.element(page.getByRole('button', { name: /to the recycle bin/ }))
+			.not.toBeInTheDocument();
+	});
+
+	it('stops at a refusal and says how far it got', async () => {
+		h.match
+			.mockResolvedValueOnce(4)
+			.mockRejectedValueOnce(new Error('Another file is on that track now.'));
+		await compare(false, junk);
+		await page.getByRole('button', { name: 'Match as suggested' }).click();
+		await expect
+			.element(page.getByRole('alert').first())
+			.toHaveTextContent('Matched 1 of 3. Another file is on that track now.');
+		await expect
+			.element(row('Track 02').getByRole('alert'))
+			.toHaveTextContent('Another file is on that track now.');
+		expect(h.match).toHaveBeenCalledTimes(2);
+	});
+});
+
 describe('who may match', () => {
 	function detail(overrides: { isCurrent?: boolean; canEdit?: boolean; editionKind?: string }) {
 		return render(EditionDetail, {

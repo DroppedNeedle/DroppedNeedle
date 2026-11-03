@@ -144,6 +144,7 @@ pub(crate) fn offer_on(candidate: &ReidentificationCandidate, release_mbid: &str
             .iter()
             .map(|evidence| evidence.local_track_id.clone())
             .collect(),
+        use_anyway: false,
     }
 }
 
@@ -171,14 +172,20 @@ fn placed_files(tx: &Transaction<'_>, placed: &[String]) -> rusqlite::Result<Vec
 /// ([`identity::choose`]). Any release can be chosen, from the album's own
 /// release group or another one, and the files need not fit it one to one.
 /// The missing titles leave out the release tracks a match by hand holds.
+/// With `use_anyway`, a release that fits none of the files is taken
+/// anyway, placing none.
 pub fn choose(
     tx: &Transaction<'_>,
     album_id: &str,
     candidate: &ReidentificationCandidate,
     actor: Option<&str>,
+    use_anyway: bool,
     now: f64,
 ) -> Result<EditionChoice, OperationError> {
-    let offer = offer(candidate)?;
+    let offer = Offer {
+        use_anyway,
+        ..offer(candidate)?
+    };
     let chosen = identity::choose(
         tx,
         album_id,

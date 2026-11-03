@@ -1643,6 +1643,7 @@ impl droppedneedle_library::edition::port::EditionPlans for PlannedEdition {
             fate: FileFate::Keep,
             edition_track: None,
             note: None,
+            suggested: None,
         };
         let two = self.complete.then_some("t2");
         let mut files = vec![kept("t1"), kept("t3")];
@@ -2074,6 +2075,7 @@ impl droppedneedle_library::edition::port::EditionPlans for LibraryPlan {
                     fate: FileFate::Keep,
                     edition_track: None,
                     note: None,
+                    suggested: None,
                 })
                 .collect();
             Ok(Some(EditionPlan {

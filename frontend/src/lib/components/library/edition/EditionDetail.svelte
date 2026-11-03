@@ -24,6 +24,7 @@
 	import {
 		GET_MISSING_HELP,
 		MUSICBRAINZ_DOWN,
+		NONE_MATCHED_YET,
 		NO_SOURCE_SENTENCE,
 		REPLACE_NEEDS_MISSING_HELP,
 		REPLACE_VERSIONS_HELP,
@@ -31,6 +32,7 @@
 		editionYear,
 		extrasButton,
 		failureSentence,
+		fitsNoFile,
 		formatsLabel,
 		getMissingLabel,
 		otherAlbumSentence,
@@ -75,7 +77,11 @@
 		editionKind: string | null;
 		/** The app picked the album's edition (a best guess or confirmed). */
 		appPicked: boolean;
-		onmatch: (trackId: string, releaseTrackMbid: string, identityRevision: number) => Promise<void>;
+		onmatch: (
+			trackId: string,
+			releaseTrackMbid: string,
+			identityRevision: number
+		) => Promise<number>;
 		onunmatch: (trackId: string) => Promise<void>;
 	}
 
@@ -107,7 +113,17 @@
 
 	let confirmExtras = $state(false);
 
-	const extras = $derived(query.data?.files.filter((file) => file.fate !== 'keep') ?? []);
+	// On the album's own edition, a file the plan suggests a track for waits
+	// to be matched by hand, and that track is not truly missing: while any
+	// does, nothing is offered to the recycle bin or fetched.
+	const awaitingMatch = $derived(
+		isCurrent && (query.data?.files.some((file) => file.suggested) ?? false)
+	);
+	const extras = $derived(
+		query.data && !fitsNoFile(query.data) && !awaitingMatch
+			? query.data.files.filter((file) => file.fate !== 'keep')
+			: []
+	);
 	// Only the server's "MusicBrainz is not answering" (503) means that;
 	// any other failure is told as it is.
 	function musicBrainzDown(error: unknown): boolean {
@@ -192,7 +208,9 @@
 				</div>
 			</header>
 
-			<p class="text-sm">{summarySentence(plan)}</p>
+			<p class="text-sm">
+				{isCurrent && fitsNoFile(plan) ? NONE_MATCHED_YET : summarySentence(plan)}
+			</p>
 
 			<EditionCompare {plan} {canMatch} {appPicked} {onmatch} {onunmatch} />
 
@@ -202,7 +220,7 @@
 				</p>
 			{/if}
 
-			{#if canEdit && (missing > 0 || versions > 0) && (!isCurrent || group)}
+			{#if canEdit && !fitsNoFile(plan) && !awaitingMatch && (missing > 0 || versions > 0) && (!isCurrent || group)}
 				<Card
 					as="section"
 					variant="bordered"

@@ -2884,7 +2884,10 @@ export interface paths {
         /**
          * Choose the album's edition: any release, from this album's release
          *     group or another. Files the edition has no track for keep their
-         *     recording; nothing automatic changes the choice afterwards.
+         *     recording; nothing automatic changes the choice afterwards. With
+         *     `use_anyway`, a release that fits none of the files is taken placing
+         *     none: the files lose any track they had, and the album waits for its
+         *     files to be matched by hand.
          */
         put: operations["choose_edition"];
         post?: never;
@@ -11553,6 +11556,12 @@ export interface components {
             expected_identity_revision: number;
             /** @description Any MusicBrainz release, from this album's release group or another. */
             release_mbid: string;
+            /**
+             * @description Take the release even when it fits none of the files ("Use
+             *     anyway"): no file is placed, and each reaches a track only by a
+             *     match by hand. A release that fits a file is chosen as without it.
+             */
+            use_anyway?: boolean;
         };
         /** @description City suggestions. Empty means the geocoder knows no such place. */
         CitySearchResponse: {
@@ -13121,6 +13130,7 @@ export interface components {
              */
             matched_by_hand: boolean;
             note?: null | components["schemas"]["ReasonView"];
+            suggested?: null | components["schemas"]["EditionSuggestionView"];
             title: string;
             /** Format: int32 */
             track_number: number;
@@ -13311,6 +13321,14 @@ export interface components {
             undo_available: boolean;
             /** @description That write is still to happen. */
             writing: boolean;
+        };
+        /** @description An edition track suggested for a file. */
+        EditionSuggestionView: {
+            /** Format: int32 */
+            disc_number: number;
+            /** Format: int32 */
+            position: number;
+            release_track_mbid: string;
         };
         /**
          * @description One tag that changes. Several values are joined with "; "; absent
@@ -29892,7 +29910,7 @@ export interface operations {
                     "application/json": components["schemas"]["EditionChoiceView"];
                 };
             };
-            /** @description Not a release id, or the release fits none of the files */
+            /** @description Not a release id, or the release fits none of the files and `use_anyway` is not set */
             400: {
                 headers: {
                     [name: string]: unknown;

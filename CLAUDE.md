@@ -556,6 +556,18 @@ Run from the repo root. `make help` lists every target.
   unconfirmed guess.
 - An AcoustID answer that could not be had is never "heard nothing":
   identification and landings wait.
+- A curator may use an edition no file fits ("Use anyway"). It becomes
+  the album's edition as the person's choice and owns its group, but
+  places no file: the files lose any guessed track, and a file reaches a
+  track only by a person's match by hand or by its own MusicBrainz ids.
+  Disc and track numbers, then file order, only suggest a match; nothing
+  applies a suggestion by itself. The album stays flagged
+  `CHOSEN_EDITION_FITS_NO_FILE`, not accepted and replaced by no upgrade,
+  until its first match, and again when its only match is undone.
+  Automatic management waits until every file has its track. The
+  edition's undo takes the choice back with every match
+  made on it; files the app wrote meanwhile are undone through Library
+  management.
 - Album and track identities, match state and their undo rows are written
   only through `library/src/identity/`; a source gate holds it.
 

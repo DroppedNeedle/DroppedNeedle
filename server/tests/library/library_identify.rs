@@ -3972,6 +3972,7 @@ fn a_match_by_hand_ends_once_the_album_leaves_its_release() {
                 release_mbid: RELEASE_A1.to_owned(),
                 spots: vec![spot("t1", RECORDING_1, 1), spot("t2", RECORDING_2, 2)],
                 weighed: vec!["t1".to_owned(), "t2".to_owned()],
+                use_anyway: false,
             },
             2.0,
         )?)
@@ -4194,6 +4195,7 @@ fn a_rechosen_edition_makes_a_merge_preview_stale() {
             "album-2",
             &offering(RELEASE_A1, &["t2"], &[]),
             Some("curator-1"),
+            false,
             1.0,
         )
         .map(|_| ())
@@ -4785,6 +4787,7 @@ async fn person_commands_leave_what_their_rule_says() {
             "j",
             &offering(RELEASE_A1, &["j1"], &["j2"]),
             Some("curator-1"),
+            false,
             1.0,
         )
         .map(|choice| choice.extra_track_ids)
@@ -4818,7 +4821,7 @@ async fn person_commands_leave_what_their_rule_says() {
         let mut candidate = offering(release, supported, other);
         candidate.unmatched_expected_tracks = vec!["track k2".to_owned()];
         candidate.unmatched_expected_track_ids = vec!["rt-k2".to_owned()];
-        rig.change(|tx| choice::choose(tx, "k", &candidate, Some("curator-1"), 1.0))
+        rig.change(|tx| choice::choose(tx, "k", &candidate, Some("curator-1"), false, 1.0))
             .map(|chosen| chosen.missing_titles)
     };
     let by_hand = || -> Vec<String> {
@@ -4932,6 +4935,7 @@ async fn person_commands_leave_what_their_rule_says() {
                 release_mbid: RELEASE_A1.to_owned(),
                 spots: vec![spot("l1", RECORDING_1, 1), spot("l2", RECORDING_2, 2)],
                 weighed: vec!["l1".to_owned(), "l2".to_owned()],
+                use_anyway: false,
             },
             1.0,
         )?)

@@ -59,6 +59,9 @@
 	import {
 		LEFT_UNMANAGED_NOTE,
 		SHEET_DESCRIPTION,
+		USED_ANYWAY,
+		USE_ANYWAY,
+		USE_ANYWAY_NOTE,
 		count,
 		editionFactsLine,
 		editionName,
@@ -66,7 +69,6 @@
 		fitLine,
 		fitsNoFile,
 		planFit,
-		summarySentence,
 		trulyMissing,
 		type EditionFactsLike
 	} from './editionCopy';
@@ -493,6 +495,31 @@
 		(heading ?? document.getElementById('edition-selected'))?.focus();
 	}
 
+	// "Use anyway": an edition none of the files fit becomes the album's,
+	// with no file on it and nothing fetched. The sheet stays on it, where
+	// each file is matched to its track by hand.
+	async function useAnyway(): Promise<void> {
+		const release = selected;
+		if (!release) return;
+		actionError = null;
+		try {
+			const choice = await choose.mutateAsync({
+				userId: userId(),
+				localId: copyId,
+				rgMbid: group || undefined,
+				releaseMbid: release,
+				identityRevision: status?.identity_revision ?? 0,
+				useAnyway: true
+			});
+			if (groupMbid && choice.release_group_mbid !== groupMbid) {
+				movedTo = choice.release_group_mbid;
+			}
+			toastStore.show({ message: USED_ANYWAY, type: 'success' });
+		} catch (error) {
+			actionError = failureSentence(error, "This edition couldn't be chosen.");
+		}
+	}
+
 	async function useEdition(): Promise<void> {
 		const release = selected;
 		if (!release) return;
@@ -595,8 +622,14 @@
 		trackId: string,
 		releaseTrackMbid: string,
 		identityRevision: number
-	): Promise<void> {
-		await matchFile.mutateAsync({ localId: copyId, trackId, releaseTrackMbid, identityRevision });
+	): Promise<number> {
+		const answer = await matchFile.mutateAsync({
+			localId: copyId,
+			trackId,
+			releaseTrackMbid,
+			identityRevision
+		});
+		return answer.identity_revision;
 	}
 
 	async function unmatchTrack(trackId: string): Promise<void> {
@@ -1055,17 +1088,19 @@
 		>
 	{:else if primaryKind === 'use'}
 		{@const noneFit = selectedPlan ? fitsNoFile(selectedPlan) : false}
-		<AsyncButton
-			variant="primary"
-			size="sm"
-			pending={choose.isPending}
-			pendingLabel="Matching your files..."
-			disabled={!selectedPlan || noneFit}
-			onclick={useEdition}>Use this edition</AsyncButton
-		>
-		{#if noneFit && selectedPlan}
-			<span class="hidden text-sm text-base-content/65 md:inline"
-				>{summarySentence(selectedPlan)}</span
+		{#if noneFit}
+			<AsyncButton variant="outline" size="sm" pending={choose.isPending} onclick={useAnyway}
+				>{USE_ANYWAY}</AsyncButton
+			>
+			<span class="hidden text-sm text-base-content/65 md:inline">{USE_ANYWAY_NOTE}</span>
+		{:else}
+			<AsyncButton
+				variant="primary"
+				size="sm"
+				pending={choose.isPending}
+				pendingLabel="Matching your files..."
+				disabled={!selectedPlan}
+				onclick={useEdition}>Use this edition</AsyncButton
 			>
 		{/if}
 	{/if}

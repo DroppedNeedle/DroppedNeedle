@@ -4,7 +4,8 @@
 	the edition has no place for follow. Rows stack on a phone.
 	On the album's own edition a curator can match a file the edition did
 	not place to a track no file holds, and undo a match made that way until
-	DroppedNeedle writes the file.
+	DroppedNeedle writes the file. A track the server suggests for a file is
+	named on its row, and "Match as suggested" matches every such file.
 -->
 <script lang="ts">
 	import { tick } from 'svelte';
@@ -20,6 +21,7 @@
 	import {
 		ITS_THIS_TRACK,
 		MATCH,
+		MATCH_AS_SUGGESTED,
 		MATCHED_BY_HAND,
 		MATCH_FAILED,
 		MATCH_MAKES_IT_YOURS,
@@ -28,11 +30,13 @@
 		MATCH_TO_TRACK,
 		MATCH_WRITTEN,
 		MATCH_WRITTEN_PARTS,
+		SUGGESTED,
 		UNDO_MATCH,
 		UNMATCH_FAILED,
 		failureSentence,
 		forFile,
-		freeTrackLabel
+		freeTrackLabel,
+		matchedSome
 	} from './editionCopy';
 
 	interface Props {
@@ -41,12 +45,15 @@
 		canMatch?: boolean;
 		/** The app picked the edition, so a match makes it the person's. */
 		appPicked?: boolean;
-		/** Rejects with the server's refusal, shown on the row. */
+		/**
+		 * Resolves with the identity revision the match left, which the next
+		 * match sends; rejects with the server's refusal, shown on the row.
+		 */
 		onmatch?: (
 			trackId: string,
 			releaseTrackMbid: string,
 			identityRevision: number
-		) => Promise<void>;
+		) => Promise<number>;
 		onunmatch?: (trackId: string) => Promise<void>;
 	}
 
@@ -72,6 +79,8 @@
 		byHand: boolean;
 		/** DroppedNeedle wrote the file since it was matched by hand. */
 		written: boolean;
+		/** The free track the server suggests for the file. */
+		suggested: string | null;
 	}
 
 	const CHIPS: Record<Exclude<RowState, 'fits' | 'missing'>, string> = {
@@ -108,7 +117,8 @@
 					state: 'fits',
 					fileId: held.local_track_id,
 					byHand: held.matched_by_hand,
-					written: held.match_written
+					written: held.match_written,
+					suggested: null
 				};
 			}
 			const version = versionOf.get(at);
@@ -120,10 +130,19 @@
 					state: 'version',
 					fileId: version.local_track_id,
 					byHand: false,
-					written: false
+					written: false,
+					suggested: null
 				};
 			}
-			return { ...row, file: null, state: 'missing', fileId: null, byHand: false, written: false };
+			return {
+				...row,
+				file: null,
+				state: 'missing',
+				fileId: null,
+				byHand: false,
+				written: false,
+				suggested: null
+			};
 		});
 		for (const file of plan.files) {
 			if (file.fate !== 'extra' && file.fate !== 'duplicate') continue;
@@ -136,13 +155,21 @@
 				fileId: file.local_track_id,
 				releaseTrack: null,
 				byHand: false,
-				written: false
+				written: false,
+				suggested: file.suggested?.release_track_mbid ?? null
 			});
 		}
 		return out;
 	});
 
 	const freeTracks = $derived(plan.tracks.filter((track) => !track.local_track_id));
+	const freeTrack = (releaseTrack: string | null) =>
+		freeTracks.find((track) => track.release_track_mbid === releaseTrack);
+
+	// Rows whose suggested track is still free, in the table's order.
+	const suggestedRows = $derived(
+		rows.filter((row) => row.state === 'extra' && row.fileId && freeTrack(row.suggested))
+	);
 
 	// Free tracks a file is already another version of: a likely home for
 	// that file, not for the one being matched.
@@ -159,6 +186,7 @@
 	 * no other version sits beside, else the first free one.
 	 */
 	function suggest(row: CompareRow): string {
+		if (freeTrack(row.suggested)) return row.suggested ?? '';
 		const open = freeTracks.filter(
 			(track) => !versionSpots.has(spot(track.disc_number, track.position))
 		);
@@ -173,6 +201,8 @@
 	let picking = $state<string | null>(null);
 	let pick = $state('');
 	let errors = $state<Record<string, string>>({});
+	// What "Match as suggested" did, when it stopped part way.
+	let batch = $state<string | null>(null);
 	let select = $state<HTMLSelectElement | null>(null);
 	// Per row: its match button, its undo button, its chip and the row itself.
 	let entries = $state<Record<string, HTMLElement | null>>({});
@@ -189,6 +219,7 @@
 		void release;
 		picking = null;
 		errors = {};
+		batch = null;
 		focusAfter = null;
 	});
 
@@ -248,10 +279,36 @@
 			picking = null;
 			focusAfter = { fileId: row.fileId, placed: true };
 		} catch (error) {
-			errors[row.key] =
-				error instanceof ApiError && error.code === 'STALE_REVISION'
-					? MATCH_STALE
-					: failureSentence(error, MATCH_FAILED);
+			errors[row.key] = matchFailure(error);
+		}
+	}
+
+	function matchFailure(error: unknown): string {
+		return error instanceof ApiError && error.code === 'STALE_REVISION'
+			? MATCH_STALE
+			: failureSentence(error, MATCH_FAILED);
+	}
+
+	// One match after another, each sending the revision the one before
+	// answered. A refusal stops the run and says how far it got.
+	async function matchSuggested(): Promise<void> {
+		if (!onmatch) return;
+		const todo = suggestedRows.map((row) => ({ row, track: row.suggested ?? '' }));
+		batch = null;
+		errors = {};
+		picking = null;
+		let revision = plan.identity_revision;
+		let done = 0;
+		for (const { row, track } of todo) {
+			if (!row.fileId) continue;
+			try {
+				revision = await onmatch(row.fileId, track, revision);
+				done += 1;
+			} catch (error) {
+				errors[row.key] = matchFailure(error);
+				batch = `${matchedSome(done, todo.length)} ${errors[row.key]}`;
+				return;
+			}
 		}
 	}
 
@@ -283,6 +340,14 @@
 
 {#if showLine}
 	<p id={lineId} class="text-xs text-base-content/65">{MATCH_MAKES_IT_YOURS}</p>
+{/if}
+{#if canMatch && onmatch && suggestedRows.length > 0}
+	<div class="flex flex-wrap items-center gap-2">
+		<AsyncButton variant="outline" size="sm" onclick={matchSuggested}
+			>{MATCH_AS_SUGGESTED}</AsyncButton
+		>
+		{#if batch}<p class="text-sm text-error" role="alert">{batch}</p>{/if}
+	</div>
 {/if}
 <div
 	class="rounded-box border border-base-content/10"
@@ -325,6 +390,14 @@
 					<span class="ml-1 text-base-content/55 tabular-nums"
 						>{formatDuration(row.file.length)}</span
 					>
+					{#if canMatch}
+						{@const suggestion = freeTrack(row.suggested)}
+						{#if suggestion}
+							<span class="block text-xs text-base-content/65"
+								>{SUGGESTED}: {freeTrackLabel(suggestion)}</span
+							>
+						{/if}
+					{/if}
 				{:else}
 					<span class="font-medium">Missing</span>
 				{/if}

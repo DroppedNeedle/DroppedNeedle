@@ -38,6 +38,10 @@ pub struct Offer {
     pub spots: Vec<Placed>,
     /// Every file the offer weighed, supported or not.
     pub weighed: Vec<String>,
+    /// A person takes the release even when it fits none of the files
+    /// ("Use anyway"). It only lifts that refusal: an offer that fits a
+    /// file is chosen as any other.
+    pub use_anyway: bool,
 }
 
 /// Place each of `indexed` on its spot of the offer. Returns the
@@ -232,6 +236,11 @@ pub struct Chosen {
 /// management looks at the album again. `missing` lists the release
 /// tracks no file took, by id; the audit counts those a match by hand
 /// does not hold.
+///
+/// An offer a person takes anyway (`use_anyway`) when it fits none of the
+/// files places none: every file loses its track row, so no guessed
+/// recording outlives the guess, and the album keeps the
+/// `CHOSEN_EDITION_FITS_NO_FILE` flag until a file is matched to a track.
 pub fn choose(
     tx: &Transaction<'_>,
     album_id: &str,
@@ -241,7 +250,18 @@ pub fn choose(
     missing: &[String],
     now: f64,
 ) -> Result<Chosen, IdentityError> {
-    let fit = fit(tx, album_id, offer)?;
+    let (fit, anyway) = match fit(tx, album_id, offer) {
+        Err(IdentityError::Refused(Refusal::EditionFitsNoFile)) if offer.use_anyway => {
+            let extra = indexed_track_ids(tx, album_id)?;
+            let fit = Fit {
+                placed: Vec::new(),
+                extra,
+                by_hand: Vec::new(),
+            };
+            (fit, true)
+        }
+        other => (other?, false),
+    };
     let held_by_hand: Vec<String> = fit.by_hand.iter().map(|(_, track)| track.clone()).collect();
     let missing = missing
         .iter()
@@ -261,9 +281,26 @@ pub fn choose(
         actor,
         now,
     )?;
-    write_choice_tracks(tx, album_id, release, &fit, now)?;
+    if anyway {
+        tx.prepare_cached(sql::DELETE_ALBUM_TRACK_ROWS.text())?
+            .execute(params![album_id, PROVIDER])?;
+        forget_album_hand_matches(tx, album_id)?;
+    } else {
+        write_choice_tracks(tx, album_id, release, &fit, now)?;
+    }
     for statement in [sql::DROP_CUSTOM, sql::CLEAR_FLAG, sql::DROP_REMAP] {
         drop_satellite(tx, album_id, statement)?;
+    }
+    // Flagged before the join and the carry read the album, so it never
+    // reads as an accepted match while no file is on a track.
+    if anyway {
+        tx.prepare_cached(sql::KEEP_UNPLACEABLE.text())?
+            .execute(params![
+                album_id,
+                CHOSEN_FITS_NO_FILE,
+                release,
+                crate::clock::ms(now)
+            ])?;
     }
     let undo_action = uuid::Uuid::new_v4().to_string();
     keep_choice_undo(tx, album_id, &before, &undo_action, false, now)?;
@@ -288,6 +325,7 @@ pub fn choose(
                 "extra": fit.extra.len(),
                 "missing": missing,
                 "undo_action_id": undo_action,
+                "use_anyway": anyway,
             }),
             reason: "EDITION_CHOSEN",
         },
@@ -693,7 +731,8 @@ pub fn hand_match(tx: &Transaction<'_>, matched: &Matched<'_>) -> rusqlite::Resu
 /// the match (or goes, when it had none), and the match is forgotten.
 /// `current` is the row the match left, for the audit. The caller has
 /// checked the match still stands and the app has not written the file
-/// since. The album's edition stays the person's.
+/// since. The album's edition stays the person's; when no file sits on it
+/// any more, the album is flagged `CHOSEN_EDITION_FITS_NO_FILE` again.
 pub fn unmatch(
     tx: &Transaction<'_>,
     album_id: &str,
@@ -712,6 +751,26 @@ pub fn unmatch(
     }
     tx.prepare_cached(sql::FORGET_HAND_MATCH.text())?
         .execute(params![track_id])?;
+    let persons_release = album_identity_row(tx, album_id)?
+        .filter(|row| {
+            row.decision_source
+                .is_some_and(DecisionSource::is_persons_choice)
+        })
+        .and_then(|row| row.release_mbid)
+        .filter(|release| !release.trim().is_empty());
+    if let Some(release) = persons_release
+        && !tx
+            .prepare_cached(sql::HELD_ON_RELEASE.text())?
+            .exists(params![album_id, PROVIDER, release])?
+    {
+        tx.prepare_cached(sql::FLAG_UNPLACEABLE.text())?
+            .execute(params![
+                album_id,
+                CHOSEN_FITS_NO_FILE,
+                release,
+                crate::clock::ms(now)
+            ])?;
+    }
     record_action(
         tx,
         CatalogAction {
