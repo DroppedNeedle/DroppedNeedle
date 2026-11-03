@@ -641,6 +641,8 @@ async fn upgrade_with_fault(
         dirs: upgrade_dirs(root),
         keep_backup: true,
         v2_commit: None,
+        base_path: String::new(),
+        callbacks_changed: false,
         fault: Some(fault),
     };
     upgrade::run(&request, &mut |_| {}).await
@@ -752,6 +754,72 @@ fn upgrade_turns_a_v2_directory_into_v3_in_place() {
     assert!(removed.status.success(), "stderr: {}", stderr_of(&removed));
     assert!(!config_backup.exists() && !cache_backup.exists());
     assert!(is_v3(&root));
+}
+
+/// A v2 that signs in through single sign-on, imports Spotify playlists
+/// and has a MusicBrainz contribution open: the upgrade lists the
+/// addresses to change and stops with exit code 3 before it locks or moves
+/// anything, and the export stops the same way. With --callbacks-changed it
+/// upgrades, and the report names what the operator acknowledged.
+#[test]
+fn upgrade_stops_until_callback_addresses_are_changed() {
+    let scratch = scratch_dir("callbacks");
+    let root = scratch.join("data");
+    droppedneedle_tool::tooling::fixture::build_v2_fixture_with_callbacks(&root)
+        .expect("fixture builds");
+    let oidc_v3 = "https://music.example.com/api/v3/auth/oidc/callback";
+    let spotify_v3 = "https://music.example.com/api/v3/acquire/spotify/auth/callback";
+    let before = data_trees(&root);
+
+    let stopped = tool_in(&root, &["upgrade"]);
+    let message = stderr_of(&stopped);
+    assert_eq!(stopped.status.code(), Some(3), "stderr: {message}");
+    for line in [
+        format!(
+            "  from  {}",
+            droppedneedle_tool::tooling::fixture::CALLBACKS_OIDC_REDIRECT
+        ),
+        format!("  to    {oidc_v3}"),
+        format!("  to    {spotify_v3}"),
+        "MusicBrainz contributions: 1 edit open".to_owned(),
+        "run the upgrade again with --callbacks-changed".to_owned(),
+    ] {
+        assert!(message.contains(&line), "{line:?} in stderr: {message}");
+    }
+    assert_eq!(data_trees(&root), before);
+    assert!(!root.join("cache").join("library.db.lock").exists());
+
+    let export = scratch.join("export.json");
+    let root_arg = root.to_str().expect("utf-8 path");
+    let out_arg = export.to_str().expect("utf-8 path");
+    let refused = tool_in(&root, &["export", "--v2-root", root_arg, "--out", out_arg]);
+    assert_eq!(
+        refused.status.code(),
+        Some(3),
+        "stderr: {}",
+        stderr_of(&refused)
+    );
+    assert!(!export.exists());
+
+    let upgraded = tool_in(&root, &["upgrade", "--callbacks-changed"]);
+    assert!(
+        upgraded.status.success(),
+        "stderr: {}",
+        stderr_of(&upgraded)
+    );
+    assert!(is_v3(&root));
+    let report: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(root.join("cache").join("upgrade-report.json")).expect("report saved"),
+    )
+    .expect("report parses");
+    assert_eq!(
+        report["acknowledged"],
+        serde_json::json!([
+            {"feature": "single_sign_on", "new_address": oidc_v3},
+            {"feature": "spotify", "new_address": spotify_v3},
+            {"feature": "musicbrainz_contributions"},
+        ])
+    );
 }
 
 /// Every text value in every table of the database at `db` that is, or

@@ -8,6 +8,7 @@
 
 pub mod artist_keys;
 pub mod bundle;
+pub mod callbacks;
 pub mod envelope;
 pub mod error;
 pub mod exporter;

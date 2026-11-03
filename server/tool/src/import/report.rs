@@ -11,6 +11,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::Serialize;
 
 use crate::export::artist_keys::KEPT_RESERVED_NOTE;
+use crate::export::callbacks::Acknowledged;
 use crate::export::envelope::LeftBehind;
 use droppedneedle_auth::times::to_iso;
 
@@ -160,6 +161,10 @@ pub struct ImportReport {
     pub notes: Vec<String>,
     /// Itemized outcomes with semantic keys.
     pub items: Vec<ReportItem>,
+    /// What the upgrade listed as changing at outside services, and the
+    /// operator acknowledged with `--callbacks-changed`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub acknowledged: Vec<Acknowledged>,
 }
 
 impl ImportReport {
@@ -401,6 +406,7 @@ impl ReportBuilder {
             left_behind: self.left_behind,
             notes: self.notes,
             items: self.items,
+            acknowledged: Vec::new(),
         }
     }
 

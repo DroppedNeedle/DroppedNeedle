@@ -88,12 +88,7 @@ pub fn write_bundle(
             | OpenFlags::SQLITE_OPEN_URI,
     )
     .map_err(bundle_error)?;
-    let uri = format!(
-        "file:{}?immutable=1&mode=ro",
-        droppedneedle_kernel::db::factory::sqlite_uri_path(v2_db)
-    );
-    conn.execute("ATTACH DATABASE ?1 AS v2", params![uri])
-        .map_err(|error| db_error("database", error))?;
+    attach_v2(&conn, v2_db)?;
     conn.execute_batch("BEGIN").map_err(bundle_error)?;
     let mut outcome = BundleOutcome::default();
     for section in ALL {
@@ -149,6 +144,66 @@ pub fn write_bundle(
         .map_err(bundle_error)?;
     conn.close().map_err(|(_, error)| bundle_error(error))?;
     Ok(outcome)
+}
+
+/// Attach the stopped v2 database at `v2_db` as `v2`, read-only and
+/// immutable, so v2 is never written.
+fn attach_v2(conn: &Connection, v2_db: &Path) -> Result<(), ExportError> {
+    let uri = format!(
+        "file:{}?immutable=1&mode=ro",
+        droppedneedle_kernel::db::factory::sqlite_uri_path(v2_db)
+    );
+    conn.execute("ATTACH DATABASE ?1 AS v2", params![uri])
+        .map(|_| ())
+        .map_err(|error| db_error("database", error))
+}
+
+/// How many rows of the v2 database at `v2_db` a table section carries,
+/// chosen exactly as [`write_bundle`] chooses them. A section whose tables
+/// v2 does not have carries none.
+pub(crate) fn carried_rows(v2_db: &Path, section: &TableSection) -> Result<u64, ExportError> {
+    let source = match section.source {
+        Source::Table {
+            table,
+            filter,
+            requires,
+        } => TableSource {
+            table,
+            filter,
+            requires,
+        },
+        Source::TableWithFiles { table, filter, .. } => TableSource {
+            table,
+            filter,
+            requires: &[],
+        },
+        Source::Files(_) => {
+            return Err(bundle_error(format!(
+                "{} holds files, not rows",
+                section.name
+            )));
+        }
+    };
+    let conn = Connection::open_in_memory_with_flags(
+        OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_URI,
+    )
+    .map_err(bundle_error)?;
+    attach_v2(&conn, v2_db)?;
+    let Some(selection) = select_rows(&conn, section, &source)? else {
+        return Ok(0);
+    };
+    let count: i64 = conn
+        .query_row(
+            &format!(
+                "SELECT COUNT(*) FROM v2.\"{table}\" AS s {where_clause}",
+                table = source.table,
+                where_clause = selection.where_clause,
+            ),
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|error| db_error(source.table, error))?;
+    Ok(u64::try_from(count).unwrap_or(0))
 }
 
 /// Index a filled section on its key and its unique rule, so the
@@ -220,16 +275,30 @@ fn v2_sql(column: &Column, available: &HashSet<String>) -> Option<String> {
     }
 }
 
-/// Copy one v2 table into its bundle section. Columns v2 lacks are left
-/// out (v3's defaults fill them at import); a missing key column means the
-/// table cannot be carried at all. A section whose tables v2 does not have
-/// is empty.
-fn copy_table(
+/// The rows a table section reads from v2: the SQL of each column v2 has,
+/// and the clause choosing the rows.
+struct Selection {
+    present: Vec<(&'static str, String)>,
+    where_clause: String,
+}
+
+impl Selection {
+    fn value_of(&self, name: &str) -> Option<String> {
+        self.present
+            .iter()
+            .find(|(present, _)| *present == name)
+            .map(|(_, sql)| sql.clone())
+    }
+}
+
+/// What one table section reads from v2, `None` when v2 lacks its table
+/// or a table it requires. A missing key column means the table cannot be
+/// carried at all.
+fn select_rows(
     conn: &Connection,
     section: &TableSection,
     source: &TableSource,
-    left_behind: &mut Vec<LeftBehind>,
-) -> Result<u64, ExportError> {
+) -> Result<Option<Selection>, ExportError> {
     let table = source.table;
     let available = v2_columns(conn, table)?;
     let mut has_required = true;
@@ -237,11 +306,9 @@ fn copy_table(
         has_required &= !v2_columns(conn, required)?.is_empty();
     }
     if available.is_empty() || !has_required {
-        let all: Vec<&str> = section.columns.iter().map(|column| column.name).collect();
-        create_section_table(conn, section.name, &all)?;
-        return Ok(0);
+        return Ok(None);
     }
-    let present: Vec<(&str, String)> = section
+    let present: Vec<(&'static str, String)> = section
         .columns
         .iter()
         .filter_map(|column| v2_sql(column, &available).map(|sql| (column.name, sql)))
@@ -255,27 +322,50 @@ fn copy_table(
             });
         }
     }
-    let names: Vec<&str> = present.iter().map(|(name, _)| *name).collect();
-    create_section_table(conn, section.name, &names)?;
-    let value_of = |name: &str| {
-        present
-            .iter()
-            .find(|(present, _)| *present == name)
-            .map(|(_, sql)| sql.clone())
+    let mut selection = Selection {
+        present,
+        where_clause: String::new(),
     };
     let mut predicates = Vec::new();
     if !source.filter.is_empty() {
         predicates.push(format!("({})", source.filter));
     }
-    if let Some(user) = section.user_column.and_then(value_of) {
+    if let Some(user) = section
+        .user_column
+        .and_then(|user| selection.value_of(user))
+    {
         predicates.push(format!("({user} IS NULL OR {user} {LIVE_USER})"));
     }
-    let where_clause = if predicates.is_empty() {
-        String::new()
-    } else {
-        format!("WHERE {}", predicates.join(" AND "))
+    if !predicates.is_empty() {
+        selection.where_clause = format!("WHERE {}", predicates.join(" AND "));
+    }
+    Ok(Some(selection))
+}
+
+/// Copy one v2 table into its bundle section. Columns v2 lacks are left
+/// out (v3's defaults fill them at import). A section whose tables v2 does
+/// not have is empty.
+fn copy_table(
+    conn: &Connection,
+    section: &TableSection,
+    source: &TableSource,
+    left_behind: &mut Vec<LeftBehind>,
+) -> Result<u64, ExportError> {
+    let table = source.table;
+    let Some(selection) = select_rows(conn, section, source)? else {
+        let all: Vec<&str> = section.columns.iter().map(|column| column.name).collect();
+        create_section_table(conn, section.name, &all)?;
+        return Ok(0);
     };
-    let order: Vec<String> = section.key.iter().filter_map(|key| value_of(key)).collect();
+    let present = &selection.present;
+    let names: Vec<&str> = present.iter().map(|(name, _)| *name).collect();
+    create_section_table(conn, section.name, &names)?;
+    let where_clause = &selection.where_clause;
+    let order: Vec<String> = section
+        .key
+        .iter()
+        .filter_map(|key| selection.value_of(key))
+        .collect();
     let values: Vec<&str> = present.iter().map(|(_, sql)| sql.as_str()).collect();
     let copied = conn
         .execute(

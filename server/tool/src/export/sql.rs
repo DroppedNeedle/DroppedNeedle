@@ -49,4 +49,16 @@ droppedneedle_kernel::sql! {
              FROM user_event_cities ORDER BY user_id, position";
     /// When each user last looked at their concerts.
     pub(crate) EVENT_SEEN = "SELECT user_id, seen_at FROM user_event_seen ORDER BY user_id";
+    /// Every admin account, oldest first, with whether it has a password.
+    pub(crate) ADMINS = "SELECT u.display_name, u.username,
+                    EXISTS (SELECT 1 FROM auth_providers p
+                            WHERE p.user_id = u.id AND p.provider = 'local') AS has_password
+             FROM auth_users u WHERE u.role = 'admin' ORDER BY u.created_at, u.id";
+
+    /// One v2 admin account.
+    pub(crate) row AdminRow for [ADMINS] {
+        display_name: String,
+        username: Option<String>,
+        has_password: bool,
+    }
 }

@@ -29,6 +29,23 @@ with the same ids, and v3 checks it against your files on its first scan.
    `droppedneedle` is the service name in your compose file. Use yours if it
    differs.
 
+   If v2 uses single sign-on, Spotify playlist import or MusicBrainz
+   contributions, the addresses those services call back on change in v3.
+   The upgrade then lists each one, old and new, and where to change it,
+   and stops without changing anything. Change them, then run it again
+   with `--callbacks-changed`:
+
+   ```sh
+   docker compose run --rm droppedneedle droppedneedle-tool upgrade --callbacks-changed
+   ```
+
+   If your provider allows only one address, change it as you run the
+   upgrade, not before. The flag skips no other check, and
+   `upgrade-report.json` lists what you acknowledged under `acknowledged`.
+   With single sign-on, the upgrade stops even with the flag when no admin
+   has a password or a username, since nobody could get back in if single
+   sign-on failed: set a username for an admin in v2 (Profile) first.
+
 4. Start v3:
 
    ```sh
@@ -599,6 +616,12 @@ the accounts, settings and every secret, sealed. Keep the two together.
 Both are readable only by you, and both hold private data, so delete them
 once you are done.
 
+Like the upgrade, the export first lists the callback addresses that
+change and stops with exit code 3 until you run it with
+`--callbacks-changed` (see [Upgrade](#upgrade), step 3). Pass
+`-e BASE_PATH=...` if v3 runs under a base path, so the Spotify address it
+prints is right.
+
 If v2's key file (`config/.env`) is missing, or its key does not decrypt
 your stored secrets, the export refuses rather than writing a broken file.
 Restore `config/.env` from your backup and try again.
@@ -769,6 +792,8 @@ import leaves their v2 version out.
 | Message | Meaning | What to do |
 |---|---|---|
 | `this is a DroppedNeedle v2 data directory` | v3 was started on v2 data | Stop the container and run the upgrade |
+| `Before upgrading, change these addresses` (exit code 3) | v2 uses single sign-on, Spotify playlist import or MusicBrainz contributions, whose callback addresses change | Nothing was changed. Change each address it lists, then run again with `--callbacks-changed` |
+| `No admin could get back in if single sign-on failed` (exit code 3) | Single sign-on is on and no admin has a password or a username | Nothing was changed. Set a username for the admin it names in v2 (Profile), then run again |
 | `an upgrade from v2 did not finish` | An upgrade was killed partway | Run the upgrade again, or `upgrade --undo --yes` to go back to v2 |
 | `Stop the server, then try again` | A server is using the data directory | Stop it and re-run |
 | `cannot tell what this data directory holds` | The folders are neither a v2 nor a v3 data directory, for example a v2 database beside a v3 key file | Nothing was changed. Check that the mounts point at the right folders |

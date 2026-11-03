@@ -36,7 +36,8 @@ use droppedneedle_kernel::config::AppConfig;
 use droppedneedle_kernel::db::datalock::DataLock;
 use droppedneedle_kernel::runtime_config::Secret;
 use droppedneedle_kernel::runtime_config::sections::ContentSecurityPolicyMode;
-use droppedneedle_tool::export::v2dir::V2Dirs;
+use droppedneedle_tool::export::callbacks::{CALLBACKS_CHANGED_FLAG, check_callbacks};
+use droppedneedle_tool::export::v2dir::{V2Dirs, resolve_db_path};
 use droppedneedle_tool::export::{ExportRequest, LeftBehind, export_v2_to_file};
 use droppedneedle_tool::r#import::ExitCode;
 use droppedneedle_tool::tooling::host_settings;
@@ -52,11 +53,11 @@ const USAGE: &str = "\
 droppedneedle-tool: offline tooling for a DroppedNeedle data directory
 
 Usage:
-  droppedneedle-tool upgrade [--no-backup] [--v2-commit <tag>]
+  droppedneedle-tool upgrade [--no-backup] [--callbacks-changed] [--v2-commit <tag>]
   droppedneedle-tool upgrade --undo --yes
   droppedneedle-tool remove-v2-backup
   droppedneedle-tool export --v2-root <dir> --out <file> [--db <path>]
-      [--v2-commit <sha>] [--passphrase-file <file>]
+      [--v2-commit <sha>] [--passphrase-file <file>] [--callbacks-changed]
   droppedneedle-tool validate <file> [--v2-root <dir>] [--passphrase-file <file>]
   droppedneedle-tool import --file <export> --db <v3.db> --config-dir <dir>
       [--cache-dir <dir>] [--passphrase-file <file>] [--v2-config <config.json>]
@@ -77,6 +78,11 @@ folders the way the server does (/app/config and /app/cache unless the
 environment says otherwise). upgrade --undo --yes deletes everything in
 the two folders except the v2-backup folders, then puts the v2 files back.
 remove-v2-backup deletes the kept v2 files.
+
+When v2 uses single sign-on, Spotify playlist import or MusicBrainz
+contributions, the addresses those services call back on change. upgrade
+and export then list each one and stop with exit code 3, changing nothing.
+Change them, then run again with --callbacks-changed.
 
 restore copies a server backup into an empty folder under the database
 file name the server uses (library.db, or the name LIBRARY_DB_PATH gives),
@@ -206,7 +212,29 @@ Stop the server first. It finds the data the way upgrade does.
 ";
 
 /// Flags that take no value.
-const BARE_FLAGS: &[&str] = &["--allow-downgrade", "--no-backup", "--undo", "--yes"];
+const BARE_FLAGS: &[&str] = &[
+    "--allow-downgrade",
+    CALLBACKS_CHANGED_FLAG,
+    "--no-backup",
+    "--undo",
+    "--yes",
+];
+
+/// How a command failed, and the exit code that says so.
+enum Failure {
+    /// It failed: exit code 1.
+    Failed(String),
+    /// It was called wrongly: exit code 2.
+    Usage(String),
+    /// It stopped on purpose until the operator acts: exit code 3.
+    Stopped(String),
+}
+
+impl From<String> for Failure {
+    fn from(message: String) -> Self {
+        Self::Failed(message)
+    }
+}
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -216,16 +244,16 @@ fn main() {
     };
     let outcome = match command {
         "upgrade" => run_upgrade(&args[1..]),
-        "remove-v2-backup" => run_remove_backup(&args[1..]),
+        "remove-v2-backup" => run_remove_backup(&args[1..]).map_err(Failure::from),
         "export" => run_export(&args[1..]),
-        "validate" => run_validate(&args[1..]),
-        "import" => run_import_cmd(&args[1..], false),
-        "dry-run" => run_import_cmd(&args[1..], true),
-        "restore" => run_restore(&args[1..]),
-        "recovery-code" => run_recovery_code(&args[1..]),
-        "reset-key" => run_reset_key(&args[1..]),
-        "public-address" => run_public_address(&args[1..]),
-        "content-security-policy" => run_content_security_policy(&args[1..]),
+        "validate" => run_validate(&args[1..]).map_err(Failure::from),
+        "import" => run_import_cmd(&args[1..], false).map_err(Failure::from),
+        "dry-run" => run_import_cmd(&args[1..], true).map_err(Failure::from),
+        "restore" => run_restore(&args[1..]).map_err(Failure::from),
+        "recovery-code" => run_recovery_code(&args[1..]).map_err(Failure::from),
+        "reset-key" => run_reset_key(&args[1..]).map_err(Failure::from),
+        "public-address" => run_public_address(&args[1..]).map_err(Failure::from),
+        "content-security-policy" => run_content_security_policy(&args[1..]).map_err(Failure::from),
         "help" | "--help" | "-h" => {
             println!("{USAGE}");
             return;
@@ -235,10 +263,14 @@ fn main() {
             std::process::exit(2);
         }
     };
-    if let Err(message) = outcome {
-        eprintln!("{message}");
-        std::process::exit(1);
-    }
+    let (message, code) = match outcome {
+        Ok(()) => return,
+        Err(Failure::Failed(message)) => (message, 1),
+        Err(Failure::Usage(message)) => (message, 2),
+        Err(Failure::Stopped(message)) => (message, 3),
+    };
+    eprintln!("{message}");
+    std::process::exit(code);
 }
 
 /// One parsed `--flag value` pair walk. Returns the value for `flag`, or an
@@ -314,8 +346,9 @@ fn read_passphrase(args: &[String]) -> Result<Secret, String> {
     Ok(Secret::new(line.trim_end_matches(['\r', '\n']).to_owned()))
 }
 
-/// `export --v2-root <dir> --out <file> [...]`.
-fn run_export(args: &[String]) -> Result<(), String> {
+/// `export --v2-root <dir> --out <file> [...]`. Like the upgrade, it stops
+/// while callback addresses change and `--callbacks-changed` is absent.
+fn run_export(args: &[String]) -> Result<(), Failure> {
     check_flags(
         args,
         &[
@@ -324,17 +357,35 @@ fn run_export(args: &[String]) -> Result<(), String> {
             "--db",
             "--v2-commit",
             "--passphrase-file",
+            CALLBACKS_CHANGED_FLAG,
         ],
         false,
     )?;
+    let v2 = V2Dirs::under_root(std::path::Path::new(&required_flag(args, "--v2-root")?));
+    let db_path = flag_value(args, "--db")?.map(PathBuf::from);
+    let out = required_flag(args, "--out")?;
+    let base_path = AppConfig::load()
+        .map_err(|error| error.to_string())?
+        .base_path;
+    let callbacks = check_callbacks(
+        &v2.config_dir,
+        &resolve_db_path(&v2.cache_dir, db_path.as_deref()),
+        &base_path,
+    )
+    .map_err(|error| format!("{}: {error}", error.code()))?;
+    if callbacks.stops(has_flag(args, CALLBACKS_CHANGED_FLAG)) {
+        return Err(Failure::Stopped(callbacks.stop_message("export")));
+    }
+    if !callbacks.is_empty() {
+        eprintln!("{}\n", callbacks.acknowledged_message());
+    }
     let request = ExportRequest {
-        v2: V2Dirs::under_root(std::path::Path::new(&required_flag(args, "--v2-root")?)),
-        db_path: flag_value(args, "--db")?.map(PathBuf::from),
+        v2,
+        db_path,
         passphrase: read_passphrase(args)?,
         exported_at: None,
         v2_commit: flag_value(args, "--v2-commit")?,
     };
-    let out = required_flag(args, "--out")?;
     export_v2_to_file(&request, PathBuf::from(&out).as_path())
         .map_err(|error| format!("{}: {error}", error.code()))?;
     println!("wrote {out}");
@@ -554,34 +605,55 @@ fn data_dirs() -> Result<DataDirs, String> {
         .map_err(|error| error.to_string())
 }
 
-/// `upgrade [--no-backup] [--v2-commit <tag>]`, or `upgrade --undo --yes`.
-fn run_upgrade(args: &[String]) -> Result<(), String> {
+/// `upgrade [--no-backup] [--callbacks-changed] [--v2-commit <tag>]`, or
+/// `upgrade --undo --yes`.
+fn run_upgrade(args: &[String]) -> Result<(), Failure> {
     check_flags(
         args,
-        &["--no-backup", "--undo", "--yes", "--v2-commit"],
+        &[
+            "--no-backup",
+            "--undo",
+            "--yes",
+            "--v2-commit",
+            CALLBACKS_CHANGED_FLAG,
+        ],
         false,
     )?;
     let undo = has_flag(args, "--undo");
     let v2_commit = flag_value(args, "--v2-commit")?;
+    let callbacks_changed = has_flag(args, CALLBACKS_CHANGED_FLAG);
+    if undo && callbacks_changed {
+        return Err(Failure::Usage(format!(
+            "--undo goes with --yes only\n{USAGE}"
+        )));
+    }
     if undo && (has_flag(args, "--no-backup") || v2_commit.is_some()) {
-        return Err(format!("--undo goes with --yes only\n{USAGE}"));
+        return Err(format!("--undo goes with --yes only\n{USAGE}").into());
     }
     if has_flag(args, "--yes") && !undo {
-        return Err(format!("--yes goes with --undo only\n{USAGE}"));
+        return Err(format!("--yes goes with --undo only\n{USAGE}").into());
     }
-    let dirs = data_dirs()?;
+    let config = AppConfig::load().map_err(|error| error.to_string())?;
+    let dirs = DataDirs::from_config(&config);
     if undo {
-        return run_undo(&dirs, has_flag(args, "--yes"));
+        return Ok(run_undo(&dirs, has_flag(args, "--yes"))?);
     }
     let request = UpgradeRequest {
         dirs,
         keep_backup: !has_flag(args, "--no-backup"),
         v2_commit,
+        base_path: config.base_path,
+        callbacks_changed,
         fault: None,
     };
     let outcome = new_runtime()?
         .block_on(upgrade::run(&request, &mut print_step))
-        .map_err(|error| upgrade_failure(&error))?;
+        .map_err(|error| match error {
+            UpgradeError::CallbacksToChange(check) => {
+                Failure::Stopped(check.stop_message("upgrade"))
+            }
+            other => Failure::Failed(upgrade_failure(&other)),
+        })?;
     match outcome {
         Upgraded::NothingToDo(Layout::V3) => {
             println!("This data directory is already on v3. Nothing to do.");
@@ -597,11 +669,12 @@ fn run_upgrade(args: &[String]) -> Result<(), String> {
 }
 
 /// One progress line per step, on stderr so stdout stays the summary.
-fn print_step(step: Step) {
+fn print_step(step: Step<'_>) {
     match step {
         Step::Recovering => {
             eprintln!("An earlier upgrade did not finish. Putting the v2 files back first.");
         }
+        Step::CallbacksAcknowledged(check) => eprintln!("{}\n", check.acknowledged_message()),
         Step::MovingAside => eprintln!("Moving the v2 files into the v2-backup folders."),
         Step::Exporting => eprintln!("Exporting from v2."),
         Step::OrphansRemoved(count) => eprintln!(
@@ -817,7 +890,11 @@ fn run_list_admins() -> Result<(), String> {
         .block_on(recovery_code::admin_usernames(&data_dirs()?))
         .map_err(|error| error.to_string())?;
     if names.is_empty() {
-        return Err("No admin account has a username.".to_owned());
+        return Err(
+            "No admin account has a username, so no recovery code can be made for one. An admin \
+             who can still sign in sets one on their Profile page; then run this again."
+                .to_owned(),
+        );
     }
     for name in names {
         println!("{name}");

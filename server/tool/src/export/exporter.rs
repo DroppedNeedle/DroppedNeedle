@@ -378,7 +378,7 @@ fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 
 /// Open the stopped v2 database read-only and immutable, so the export
 /// works from a read-only mount (no WAL or shm files are touched).
-fn open_v2_db(path: &Path) -> Result<Connection, ExportError> {
+pub(crate) fn open_v2_db(path: &Path) -> Result<Connection, ExportError> {
     if !path.is_file() {
         return Err(ExportError::V2Database {
             table: "database".to_owned(),
@@ -417,7 +417,7 @@ fn open_v2_db(path: &Path) -> Result<Connection, ExportError> {
 
 /// True when the v2 database holds `table`. Older instances may lack the
 /// newer user tables; those sections are simply empty.
-fn table_exists(db: &Connection, table: &str) -> Result<bool, ExportError> {
+pub(crate) fn table_exists(db: &Connection, table: &str) -> Result<bool, ExportError> {
     db.query_row(TABLE_EXISTS.text(), [table], |row| row.get::<_, bool>(0))
         .map_err(|error| db_error(table, error))
 }

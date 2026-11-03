@@ -5,18 +5,22 @@
 //! pair into a v3 pair without the user moving anything:
 //!
 //! 1. [`detect`] classifies the folders. Only a v2 layout is upgraded.
-//! 2. The exclusive [`DataLock`] is taken (so a running server refuses the
-//!    run), a v2 database with unmerged writes is refused, and free disk
-//!    is checked.
-//! 3. A marker is written, then every v2 entry is renamed into a
+//! 2. What the run could not finish is refused (a v2 database with
+//!    unmerged writes, too little free disk), and the callback addresses
+//!    that change are listed ([`check_callbacks`]). Without
+//!    `callbacks_changed` the run stops there, before anything is locked
+//!    or moved.
+//! 3. The exclusive [`DataLock`] is taken (so a running server refuses the
+//!    run) and the same refusals run again.
+//! 4. A marker is written, then every v2 entry is renamed into a
 //!    `v2-backup/` folder inside its own mount. A rename stays on one
 //!    filesystem, so the move is instant and needs no extra disk.
-//! 4. The backup is exported into a work folder, sealed with a passphrase
+//! 5. The backup is exported into a work folder, sealed with a passphrase
 //!    that only ever exists in memory, then validated, dry-run and imported
 //!    into the now-empty folders.
-//! 5. The work folder and the marker are removed.
+//! 6. The work folder and the marker are removed.
 //!
-//! Any failure after step 3 rolls back: what the import created is deleted
+//! Any failure after step 4 rolls back: what the import created is deleted
 //! and the v2 entries are renamed back. A killed run leaves the marker, and
 //! the next run rolls back before it starts again. The server boots only
 //! on an empty or v3 layout
@@ -43,6 +47,7 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use rusqlite::{Connection, OpenFlags, TransactionBehavior};
 use thiserror::Error;
 
+use crate::export::callbacks::{CallbackCheck, check_callbacks};
 use crate::export::v2dir::{self, V2Dirs};
 use crate::export::{ExportError, ExportRequest, export_v2_to_file};
 use crate::import::{
@@ -137,6 +142,11 @@ pub struct UpgradeRequest {
     pub keep_backup: bool,
     /// Best-effort v2 provenance, carried into the export when known.
     pub v2_commit: Option<String>,
+    /// The deployment's base path, part of the callback addresses listed.
+    pub base_path: String,
+    /// The operator changed the callback addresses the run lists, so it
+    /// goes on past them.
+    pub callbacks_changed: bool,
     /// Test-only failure point. The tool never sets one.
     pub fault: Option<Fault>,
 }
@@ -160,9 +170,11 @@ pub enum Fault {
 
 /// Progress, for the tool to print as the run moves along.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Step {
+pub enum Step<'a> {
     /// An earlier run did not finish; its changes are being rolled back.
     Recovering,
+    /// The run goes on past these callback changes, as the operator said.
+    CallbacksAcknowledged(&'a CallbackCheck),
     /// The v2 entries are moving into the backup folders.
     MovingAside,
     /// The backup is being exported.
@@ -220,6 +232,11 @@ pub enum UpgradeError {
         /// What is unusual about the paths.
         reason: &'static str,
     },
+    /// Callback addresses change with the upgrade and the operator has not
+    /// said they are done, or no admin could get back in if single sign-on
+    /// failed. Nothing was locked or moved.
+    #[error("{}", .0.stop_message("upgrade"))]
+    CallbacksToChange(Box<CallbackCheck>),
     /// A backup folder is already there.
     #[error(
         "{} already exists. Move it away or delete it, then run the upgrade again",
@@ -365,15 +382,22 @@ fn import_kind(dry_run: bool) -> &'static str {
 /// Upgrade a v2 layout in place. An empty or v3 layout is left alone.
 pub async fn run(
     request: &UpgradeRequest,
-    progress: &mut dyn FnMut(Step),
+    progress: &mut dyn FnMut(Step<'_>),
 ) -> Result<Upgraded, UpgradeError> {
     let dirs = &request.dirs;
     // Look before locking: taking the lock creates files, and a layout
-    // that is not upgraded has to stay exactly as it was found.
+    // that is not upgraded, or a run that stops on its callbacks, has to
+    // leave the folders exactly as it found them. An interrupted layout
+    // is v2 again only after the rollback, so its check waits for that.
+    let mut callbacks = None;
     match detect(dirs) {
         layout @ (Layout::Empty | Layout::V3) => return Ok(Upgraded::NothingToDo(layout)),
         Layout::Unknown(reason) => return Err(UpgradeError::UnknownLayout(reason)),
-        Layout::V2 | Layout::Interrupted => {}
+        Layout::V2 => {
+            preflight(dirs)?;
+            callbacks = Some(confirm_callbacks(request)?);
+        }
+        Layout::Interrupted => {}
     }
     let lock = lock_exclusive(dirs)?;
     // Look again under the lock: another run may have finished meanwhile.
@@ -390,9 +414,16 @@ pub async fn run(
         }
     }
     preflight(dirs)?;
+    let callbacks = match callbacks {
+        Some(check) => check,
+        None => confirm_callbacks(request)?,
+    };
+    if !callbacks.is_empty() {
+        progress(Step::CallbacksAcknowledged(&callbacks));
+    }
     progress(Step::MovingAside);
     let converted = match move_aside(dirs, request.fault) {
-        Ok(()) => convert(request, &lock, progress).await,
+        Ok(()) => convert(request, &lock, &callbacks, progress).await,
         Err(error) => Err(error),
     };
     let (report, orphans_removed) = match converted {
@@ -486,6 +517,18 @@ pub fn delete_orphan_rows(db_path: &Path) -> rusqlite::Result<usize> {
     tx.commit()?;
     db.close().map_err(|(_, error)| error)?;
     Ok(removed)
+}
+
+/// List the callback addresses that change, and stop unless the operator
+/// has changed them. An admin nobody could get back in stops the run
+/// either way.
+fn confirm_callbacks(request: &UpgradeRequest) -> Result<CallbackCheck, UpgradeError> {
+    let dirs = &request.dirs;
+    let check = check_callbacks(&dirs.config_dir, &dirs.db_path, &request.base_path)?;
+    if check.stops(request.callbacks_changed) {
+        return Err(UpgradeError::CallbacksToChange(Box::new(check)));
+    }
+    Ok(check)
 }
 
 fn lock_exclusive(dirs: &DataDirs) -> Result<DataLock, UpgradeError> {
@@ -620,7 +663,8 @@ fn move_aside(dirs: &DataDirs, fault: Option<Fault>) -> Result<(), UpgradeError>
 async fn convert(
     request: &UpgradeRequest,
     lock: &DataLock,
-    progress: &mut dyn FnMut(Step),
+    callbacks: &CallbackCheck,
+    progress: &mut dyn FnMut(Step<'_>),
 ) -> Result<(ImportReport, usize), UpgradeError> {
     let dirs = &request.dirs;
     let backup = backup_side(dirs);
@@ -677,7 +721,8 @@ async fn convert(
     progress(Step::DryRun);
     require_success(run_offline_import(lock, job(true)).await?)?;
     progress(Step::Importing);
-    let report = require_success(run_offline_import(lock, job(false)).await?)?;
+    let mut report = require_success(run_offline_import(lock, job(false)).await?)?;
+    report.acknowledged = callbacks.acknowledged();
     if request.fault == Some(Fault::DiesAfterImport) {
         return Err(UpgradeError::InjectedCrash);
     }
