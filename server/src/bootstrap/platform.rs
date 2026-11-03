@@ -46,16 +46,16 @@ pub struct Opened {
     pub data_lock: DataLock,
 }
 
-/// Open the platform `config` describes.
-pub async fn open_platform(config: AppConfig) -> Result<Opened, BootError> {
+/// Open the platform `config` describes, under `data_lock`: both of a
+/// server's locks ([`DataLock::server`]), held until shutdown and taken
+/// before the database opens (so before the pre-upgrade backup and the
+/// migrations). The offline import and restore refuse to run while it is
+/// held, a running one keeps the server from starting, and the server lock
+/// refuses a second server.
+pub async fn open_platform(config: AppConfig, data_lock: DataLock) -> Result<Opened, BootError> {
     // First, so a bad HTTP setting stops the start before any backup or
     // migration runs.
     let http = HttpClientFactory::with_settings(&config.http)?;
-    // Held until shutdown, and taken before the database opens (so before
-    // the pre-upgrade backup and the migrations): the offline import and
-    // restore refuse to run while it is held, a running one keeps the
-    // server from starting, and the server lock refuses a second server.
-    let data_lock = DataLock::server(&config.library_db_path)?;
     refuse_foreign_data_dir(&config).await?;
     // The key comes before the database: a first start that stops early
     // never leaves a database without its key, and a database whose key is

@@ -1093,6 +1093,9 @@ enum Declared {
     Admin,
     /// `[{"wrapped_key": []}]`: the wrapped API key, never a session.
     WrappedKey,
+    /// `[{"upgrade_session": []}]`: the upgrade page's own sign-in, served
+    /// only in upgrade mode.
+    UpgradeSession,
 }
 
 /// One documented operation and the posture it declares.
@@ -1162,6 +1165,7 @@ fn declared(security: &Value) -> Option<Declared> {
         ("session", ["curator"]) => Some(Declared::Curator),
         ("session", ["admin"]) => Some(Declared::Admin),
         ("wrapped_key", []) => Some(Declared::WrappedKey),
+        ("upgrade_session", []) => Some(Declared::UpgradeSession),
         _ => None,
     }
 }
@@ -1186,6 +1190,9 @@ const PUBLIC_OPERATIONS: &[(&str, &str)] = &[
     // Token-identified callbacks from MusicBrainz and Spotify.
     ("GET", "/api/v3/library/contributions/musicbrainz/callback"),
     ("GET", "/api/v3/acquire/spotify/auth/callback"),
+    // Upgrade mode's state read and sign-in, served only there.
+    ("GET", "/api/v3/upgrade/state"),
+    ("POST", "/api/v3/upgrade/sign-in"),
 ];
 
 /// The operations that take the wrapped API key, pinned the same way.
@@ -1194,6 +1201,22 @@ const WRAPPED_KEY_OPERATIONS: &[(&str, &str)] = &[
     ("GET", "/api/v3/wrapped/user/{user_id}"),
     ("GET", "/api/v3/wrapped/server"),
 ];
+
+/// The operations that take the upgrade page's sign-in, pinned the same
+/// way. Upgrade mode alone serves them, so the app answers each with 404.
+const UPGRADE_SESSION_OPERATIONS: &[(&str, &str)] = &[
+    ("POST", "/api/v3/upgrade/preflight"),
+    ("POST", "/api/v3/upgrade/start"),
+    ("POST", "/api/v3/upgrade/fresh"),
+    ("GET", "/api/v3/upgrade/progress"),
+    ("POST", "/api/v3/upgrade/undo"),
+    ("POST", "/api/v3/upgrade/continue"),
+];
+
+/// Upgrade mode's operations, which the app does not serve.
+fn upgrade_mode_only(path: &str) -> bool {
+    path.starts_with("/api/v3/upgrade/")
+}
 
 /// What one operation needs beyond its declared posture.
 #[derive(Debug, Clone, Copy)]
@@ -1368,6 +1391,11 @@ fn public_and_own_credential_operations_are_pinned() {
         pinned(WRAPPED_KEY_OPERATIONS),
         "the wrapped-key operations changed; edit WRAPPED_KEY_OPERATIONS after review"
     );
+    assert_eq!(
+        with(Declared::UpgradeSession),
+        pinned(UPGRADE_SESSION_OPERATIONS),
+        "the upgrade-session operations changed; edit UPGRADE_SESSION_OPERATIONS after review"
+    );
     for (method, path, _, _) in EXCEPTIONS {
         assert!(
             operations
@@ -1405,6 +1433,7 @@ enum Expect {
 fn expect(role: CallerRole, posture: Declared) -> Expect {
     match (role, posture) {
         (_, Declared::WrappedKey) => Expect::NoSession,
+        (_, Declared::UpgradeSession) => unreachable!("upgrade mode's operations are 404 here"),
         (_, Declared::User) => Expect::Admitted,
         (CallerRole::Trusted | CallerRole::Admin, Declared::Curator) => Expect::Admitted,
         (CallerRole::Admin, Declared::Admin) => Expect::Admitted,
@@ -1443,6 +1472,16 @@ async fn credentialed_pass(matrix: &MatrixApp, operations: &[Operation], caller:
         };
         let auth = caller.auth.clone();
         let headers = [("authorization", auth.as_str())];
+        if upgrade_mode_only(&op.path) {
+            let body = request_body(method, exception);
+            let (status, body, _) = call(matrix.fresh(), method, &uri, &headers, body).await;
+            assert_eq!(
+                status,
+                StatusCode::NOT_FOUND,
+                "the app does not serve {method} {uri} to the {who} pass: {body}"
+            );
+            continue;
+        }
         let (status, body) = match exception {
             Some(Exception::StatusOnly) => (
                 call_status(matrix.fresh(), method, &uri, &headers).await,
@@ -1540,6 +1579,14 @@ async fn auth_on_every_endpoint() {
             StatusCode::TOO_MANY_REQUESTS,
             "{method} {uri}: the anonymous pass tripped the limiter"
         );
+        if upgrade_mode_only(&op.path) {
+            assert_eq!(
+                status,
+                StatusCode::NOT_FOUND,
+                "the app does not serve {method} {uri}: {response_body}"
+            );
+            continue;
+        }
         match op.posture {
             Declared::Public => assert_ne!(
                 status,
@@ -1558,6 +1605,7 @@ async fn auth_on_every_endpoint() {
                     "{method} {uri}: a shared-secret rejection must not send a Bearer challenge"
                 );
             }
+            Declared::UpgradeSession => unreachable!("upgrade mode's operations are 404 here"),
             Declared::User | Declared::Curator | Declared::Admin => {
                 assert_eq!(
                     status,

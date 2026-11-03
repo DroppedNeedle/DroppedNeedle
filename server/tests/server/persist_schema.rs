@@ -3969,6 +3969,7 @@ const REGISTRIES: &[(&str, StatementFiles)] = &[
     ("media", droppedneedle_media::statement_files),
     ("compat", droppedneedle_compat::statement_files),
     ("tool", droppedneedle_tool::statement_files),
+    (".", droppedneedle::statement_files),
 ];
 
 /// The crate name of a folder under `server/`.

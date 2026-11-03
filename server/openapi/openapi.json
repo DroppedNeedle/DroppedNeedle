@@ -32641,6 +32641,373 @@
         ]
       }
     },
+    "/api/v3/upgrade/continue": {
+      "post": {
+        "tags": [
+          "upgrade"
+        ],
+        "summary": "Open the app: the upgrade page stops and the normal app starts in its\nplace. The next request reaches the app, which shows its own sign-in.",
+        "operationId": "upgrade_continue",
+        "responses": {
+          "202": {
+            "description": "The app is starting"
+          },
+          "401": {
+            "description": "Not signed in to the upgrade page",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A run is under way, the folders do not hold v3 data, or another program is using them",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "upgrade_session": []
+          }
+        ]
+      }
+    },
+    "/api/v3/upgrade/fresh": {
+      "post": {
+        "tags": [
+          "upgrade"
+        ],
+        "summary": "Start fresh: v2's files move into the `v2-backup` folders, nothing is\nimported, and v3 starts empty. Going back to v2 still works.",
+        "operationId": "upgrade_fresh",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpgradeFreshBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "The fresh start began",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpgradeProgressBody"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not confirmed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in to the upgrade page",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A run is under way, or the folders already hold v3 data",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "upgrade_session": []
+          }
+        ]
+      }
+    },
+    "/api/v3/upgrade/preflight": {
+      "post": {
+        "tags": [
+          "upgrade"
+        ],
+        "summary": "Run every check the upgrade runs before it moves anything, changing\nnothing, and wait for it.",
+        "operationId": "upgrade_preflight",
+        "responses": {
+          "200": {
+            "description": "What the check found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpgradePreflightBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in to the upgrade page",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A run is under way, the folders already hold v3 data, or an upgrade did not finish",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "upgrade_session": []
+          }
+        ]
+      }
+    },
+    "/api/v3/upgrade/progress": {
+      "get": {
+        "tags": [
+          "upgrade"
+        ],
+        "summary": "The latest upgrade, fresh start or undo: its step, how far along, and\nits result or failure once it has ended.",
+        "operationId": "upgrade_progress",
+        "responses": {
+          "200": {
+            "description": "The latest run",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpgradeProgressBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in to the upgrade page",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "upgrade_session": []
+          }
+        ]
+      }
+    },
+    "/api/v3/upgrade/sign-in": {
+      "post": {
+        "tags": [
+          "upgrade"
+        ],
+        "summary": "Sign in to the upgrade page with a v2 admin's password or the one-time\ncode from the server's log. Attempts are limited per address, and\npasswords per username too.",
+        "operationId": "upgrade_sign_in",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpgradeSignInBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Signed in; the upgrade cookie is set",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpgradeStateBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The sign-in did not pass",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many attempts from this address or for this username",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {}
+        ]
+      }
+    },
+    "/api/v3/upgrade/start": {
+      "post": {
+        "tags": [
+          "upgrade"
+        ],
+        "summary": "Start the upgrade. On v2 data it needs a pre-flight with nothing to fix\nand every address change it listed acknowledged. An interrupted upgrade\nis finished: the tool puts the v2 files back first, then upgrades.",
+        "operationId": "upgrade_start",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpgradeStartBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "The upgrade started",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpgradeProgressBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in to the upgrade page",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "No pre-flight, something to fix, an address change not acknowledged, a run under way, or nothing to upgrade",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "upgrade_session": []
+          }
+        ]
+      }
+    },
+    "/api/v3/upgrade/state": {
+      "get": {
+        "tags": [
+          "upgrade"
+        ],
+        "summary": "Where the upgrade stands, and whether this caller is signed in to the\nupgrade page.",
+        "operationId": "upgrade_state",
+        "responses": {
+          "200": {
+            "description": "Where the upgrade stands",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpgradeStateBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {}
+        ]
+      }
+    },
+    "/api/v3/upgrade/undo": {
+      "post": {
+        "tags": [
+          "upgrade"
+        ],
+        "summary": "Go back to v2: the v3 data is deleted and v2's files come back from the\nbackup. Also finishes going back from an interrupted upgrade.",
+        "operationId": "upgrade_undo",
+        "responses": {
+          "202": {
+            "description": "Going back to v2 began",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpgradeProgressBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in to the upgrade page",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A run is under way, or the folders already hold v2 data",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "upgrade_session": []
+          }
+        ]
+      }
+    },
     "/api/v3/users/{id}/avatar": {
       "get": {
         "tags": [
@@ -33554,6 +33921,41 @@
   },
   "components": {
     "schemas": {
+      "AcknowledgedWarning": {
+        "type": "object",
+        "description": "An address change the caller has made at the outside service, as the\npre-flight listed it.",
+        "required": [
+          "feature"
+        ],
+        "properties": {
+          "feature": {
+            "$ref": "#/components/schemas/UpgradeCallbackFeature",
+            "description": "The feature the change concerns."
+          },
+          "new_address": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/UpgradeAddress",
+                "description": "The address v3 uses, as the pre-flight gave it."
+              }
+            ]
+          },
+          "old_address": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/UpgradeAddress",
+                "description": "The address v2 registered, as the pre-flight gave it."
+              }
+            ]
+          }
+        }
+      },
       "ActionResponse": {
         "type": "object",
         "description": "Mutation outcome for approve/reject/cancel/retry/clear.",
@@ -44257,7 +44659,7 @@
       },
       "HealthResponse": {
         "type": "object",
-        "description": "Health payload, in the v2 shape. The route is public, so it says\nnothing about the server's internals; admins read those from the\nadmin routes.",
+        "description": "Health payload. The route is public, so it says nothing about the\nserver's internals; admins read those from the admin routes.",
         "required": [
           "status",
           "message"
@@ -44268,10 +44670,18 @@
             "description": "Human-readable running message."
           },
           "status": {
-            "type": "string",
-            "description": "Service state, `ok` when serving."
+            "$ref": "#/components/schemas/HealthStatus",
+            "description": "What the server is doing."
           }
         }
+      },
+      "HealthStatus": {
+        "type": "string",
+        "description": "What the server is doing, as the health check reports it.",
+        "enum": [
+          "ok",
+          "upgrade"
+        ]
       },
       "HeldActionResponse": {
         "type": "object",
@@ -64035,6 +64445,51 @@
           }
         }
       },
+      "UpgradeAddress": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "A full address.",
+            "required": [
+              "value",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "full"
+                ]
+              },
+              "value": {
+                "type": "string",
+                "description": "A full address."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A path, the base path included.",
+            "required": [
+              "value",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "path"
+                ]
+              },
+              "value": {
+                "type": "string",
+                "description": "A path, the base path included."
+              }
+            }
+          }
+        ],
+        "description": "An address, whole when v2's settings name the host, else the path to\nput after the scheme and host DroppedNeedle is opened at."
+      },
       "UpgradeAlbumRequest": {
         "type": "object",
         "description": "Upgrade one album.",
@@ -64068,6 +64523,266 @@
           }
         }
       },
+      "UpgradeBackupFolders": {
+        "type": "object",
+        "description": "The two folders the v2 files are kept in.",
+        "required": [
+          "config",
+          "cache"
+        ],
+        "properties": {
+          "cache": {
+            "type": "string",
+            "description": "The cache folder's backup."
+          },
+          "config": {
+            "type": "string",
+            "description": "The config folder's backup."
+          }
+        }
+      },
+      "UpgradeBlocker": {
+        "type": "object",
+        "description": "Something that stops the upgrade until it is fixed.",
+        "required": [
+          "code",
+          "message",
+          "fix"
+        ],
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/UpgradeCode",
+            "description": "What it is."
+          },
+          "fix": {
+            "type": "string",
+            "description": "What to do about it, as a sentence."
+          },
+          "message": {
+            "type": "string",
+            "description": "What is wrong, as a sentence."
+          }
+        }
+      },
+      "UpgradeCallbackFeature": {
+        "type": "string",
+        "description": "A feature whose callback address changes with the upgrade.",
+        "enum": [
+          "single_sign_on",
+          "spotify",
+          "musicbrainz_contributions"
+        ]
+      },
+      "UpgradeCheck": {
+        "type": "object",
+        "description": "What `upgrade --check` found. It runs every check the upgrade runs\nbefore it moves anything, and changes nothing.",
+        "required": [
+          "layout",
+          "orphans",
+          "blockers",
+          "warnings"
+        ],
+        "properties": {
+          "blockers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UpgradeBlocker"
+            },
+            "description": "What stops the upgrade until it is fixed."
+          },
+          "counts": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "What the export carries, by the names `upgrade-report.json` counts\nunder: what the upgrade would move, at most. The import can still\nleave a record out, and its report then lists it. None when the\nexport could not be tried.",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "layout": {
+            "$ref": "#/components/schemas/UpgradeFoundLayout",
+            "description": "What the folders hold."
+          },
+          "orphans": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Follows and approvals of deleted users the upgrade would remove\nfrom the v2 database first. They are not in `counts`.",
+            "minimum": 0
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UpgradeWarning"
+            },
+            "description": "Addresses that change with the upgrade, which `--callbacks-changed`\nacknowledges."
+          }
+        }
+      },
+      "UpgradeCode": {
+        "type": "string",
+        "description": "Why the upgrade cannot start, or why a run failed.",
+        "enum": [
+          "UNKNOWN_LAYOUT",
+          "UNSUPPORTED_PATHS",
+          "BACKUP_EXISTS",
+          "V2_WAL_PRESENT",
+          "NOT_ENOUGH_DISK",
+          "V2_KEY_NOT_FOUND",
+          "V2_KEY_INVALID",
+          "V2_KEY_MISMATCH",
+          "V2_CONFIG_UNREADABLE",
+          "V2_CONFIG_INVALID",
+          "MISSING_INSTANCE_ID",
+          "V2_DATABASE_ERROR",
+          "EXPORT_FAILED",
+          "VALIDATION_FAILED",
+          "CALLBACKS_TO_CHANGE",
+          "NO_ADMIN_CAN_SIGN_IN",
+          "LOCKED",
+          "TOOL_RUNNING",
+          "FILE_ERROR",
+          "OCCUPIED",
+          "NOT_A_FOLDER",
+          "RANDOM_FAILED",
+          "ORPHAN_REPAIR_FAILED",
+          "IMPORT_SETUP_FAILED",
+          "IMPORT_FAILED",
+          "ROLLBACK_FAILED",
+          "BACKUP_NOT_REMOVED",
+          "NO_BACKUP",
+          "ALREADY_V2",
+          "BACKUP_STILL_NEEDED",
+          "CONFIRMATION_NEEDED",
+          "USAGE",
+          "ENVIRONMENT_INVALID",
+          "INTERNAL"
+        ]
+      },
+      "UpgradeFailure": {
+        "type": "object",
+        "description": "The run failed or stopped.",
+        "required": [
+          "code",
+          "message",
+          "v2_files"
+        ],
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/UpgradeCode",
+            "description": "What went wrong."
+          },
+          "message": {
+            "type": "string",
+            "description": "The error, as the tool prints it."
+          },
+          "v2_files": {
+            "$ref": "#/components/schemas/UpgradeV2Files",
+            "description": "Where the v2 files are now."
+          }
+        }
+      },
+      "UpgradeFoundLayout": {
+        "type": "string",
+        "description": "What the data folders hold, as the check found them.",
+        "enum": [
+          "v2",
+          "interrupted",
+          "v3",
+          "empty",
+          "unknown"
+        ]
+      },
+      "UpgradeFreshBody": {
+        "type": "object",
+        "description": "Start fresh's confirmation.",
+        "required": [
+          "confirm"
+        ],
+        "properties": {
+          "confirm": {
+            "type": "boolean",
+            "description": "Must be true: nothing comes across from v2."
+          }
+        }
+      },
+      "UpgradeLayout": {
+        "type": "string",
+        "description": "Where the upgrade stands.",
+        "enum": [
+          "needs_upgrade",
+          "interrupted",
+          "finished"
+        ]
+      },
+      "UpgradeOutcome": {
+        "type": "string",
+        "description": "How a run ended well.",
+        "enum": [
+          "upgraded",
+          "started_fresh",
+          "undone",
+          "already_v3",
+          "no_v2_data"
+        ]
+      },
+      "UpgradePreflightBody": {
+        "type": "object",
+        "description": "What the pre-flight found: the check, or why it could not run.",
+        "properties": {
+          "check": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/UpgradeCheck",
+                "description": "The check's findings: counts, blockers with their fixes, and the\naddress changes to acknowledge."
+              }
+            ]
+          },
+          "failure": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/UpgradeFailure",
+                "description": "Why the check could not run."
+              }
+            ]
+          }
+        }
+      },
+      "UpgradeProgressBody": {
+        "type": "object",
+        "description": "The latest run and where the upgrade stands.",
+        "required": [
+          "layout"
+        ],
+        "properties": {
+          "layout": {
+            "$ref": "#/components/schemas/UpgradeLayout",
+            "description": "Where the upgrade stands."
+          },
+          "run": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/UpgradeRun",
+                "description": "The latest upgrade, fresh start or undo; none yet."
+              }
+            ]
+          }
+        }
+      },
       "UpgradeRequestResponse": {
         "type": "object",
         "description": "What an upgrade ask did.",
@@ -64086,6 +64801,286 @@
             ]
           }
         }
+      },
+      "UpgradeResult": {
+        "type": "object",
+        "description": "The run finished.",
+        "required": [
+          "outcome"
+        ],
+        "properties": {
+          "backup": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/UpgradeBackupFolders",
+                "description": "Where the v2 files are kept; none when there are none to keep."
+              }
+            ]
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/UpgradeOutcome",
+            "description": "How it ended."
+          },
+          "summary": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/UpgradeSummary",
+                "description": "What an upgrade moved; only after an upgrade."
+              }
+            ]
+          }
+        }
+      },
+      "UpgradeRun": {
+        "type": "object",
+        "description": "The latest run of the upgrade, a fresh start or an undo.",
+        "required": [
+          "task",
+          "running"
+        ],
+        "properties": {
+          "done": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Parts of the step done, when it counts them.",
+            "minimum": 0
+          },
+          "failure": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/UpgradeFailure",
+                "description": "Why it failed, once it has."
+              }
+            ]
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The step's label."
+          },
+          "result": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/UpgradeResult",
+                "description": "How the run finished, once it has."
+              }
+            ]
+          },
+          "running": {
+            "type": "boolean",
+            "description": "True until it ends."
+          },
+          "step": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/UpgradeStep",
+                "description": "The step under way, or the last one."
+              }
+            ]
+          },
+          "task": {
+            "$ref": "#/components/schemas/UpgradeTask",
+            "description": "What the run does."
+          },
+          "total": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Parts the step has, when it knows.",
+            "minimum": 0
+          }
+        }
+      },
+      "UpgradeSignInBody": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "A v2 admin's username and password.",
+            "required": [
+              "username",
+              "password",
+              "method"
+            ],
+            "properties": {
+              "method": {
+                "type": "string",
+                "enum": [
+                  "password"
+                ]
+              },
+              "password": {
+                "type": "string",
+                "description": "The v2 password."
+              },
+              "username": {
+                "type": "string",
+                "description": "The v2 username."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The one-time code from the server's log.",
+            "required": [
+              "code",
+              "method"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "description": "The code, with or without its dashes."
+              },
+              "method": {
+                "type": "string",
+                "enum": [
+                  "code"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "How to sign in to the upgrade page."
+      },
+      "UpgradeStartBody": {
+        "type": "object",
+        "description": "What start needs.",
+        "properties": {
+          "acknowledged": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AcknowledgedWarning"
+            },
+            "description": "Every address change the latest pre-flight listed."
+          }
+        }
+      },
+      "UpgradeStateBody": {
+        "type": "object",
+        "description": "Where the upgrade stands, for anyone.",
+        "required": [
+          "layout",
+          "signed_in"
+        ],
+        "properties": {
+          "layout": {
+            "$ref": "#/components/schemas/UpgradeLayout",
+            "description": "Where the upgrade stands."
+          },
+          "signed_in": {
+            "type": "boolean",
+            "description": "Whether this caller's upgrade sign-in is valid."
+          }
+        }
+      },
+      "UpgradeStep": {
+        "type": "string",
+        "description": "The steps a run goes through, in the order they can come.",
+        "enum": [
+          "recover",
+          "move_aside",
+          "export",
+          "export_again",
+          "dry_run",
+          "import",
+          "remove_backup",
+          "roll_back",
+          "undo"
+        ]
+      },
+      "UpgradeSummary": {
+        "type": "object",
+        "description": "What the upgrade did, as its text summary says it.",
+        "required": [
+          "moved",
+          "needs_attention",
+          "orphans_removed",
+          "left_behind",
+          "notes",
+          "settings_defaulted",
+          "report"
+        ],
+        "properties": {
+          "left_behind": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What stayed behind in v2, one line each."
+          },
+          "moved": {
+            "type": "object",
+            "description": "Records moved to v3, by the names the report counts under; kinds\nwith none moved are left out.",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "needs_attention": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Records left out or changed on the way, each listed in the report.",
+            "minimum": 0
+          },
+          "notes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What is worth a look, one line each."
+          },
+          "orphans_removed": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Follows and approvals of deleted users removed from the v2 database.",
+            "minimum": 0
+          },
+          "report": {
+            "type": "string",
+            "description": "Where the full report, `upgrade-report.json`, was saved."
+          },
+          "settings_defaulted": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Settings v2 had nothing saved for, now at v3's defaults."
+          }
+        }
+      },
+      "UpgradeTask": {
+        "type": "string",
+        "description": "What a run in the progress read does.",
+        "enum": [
+          "upgrade",
+          "fresh",
+          "undo"
+        ]
       },
       "UpgradeTrackRequest": {
         "type": "object",
@@ -64129,6 +65124,55 @@
           },
           "track_title": {
             "type": "string"
+          }
+        }
+      },
+      "UpgradeV2Files": {
+        "type": "string",
+        "description": "Where the v2 files are after a failed run.",
+        "enum": [
+          "untouched",
+          "put_back",
+          "in_backup"
+        ]
+      },
+      "UpgradeWarning": {
+        "type": "object",
+        "description": "A change at an outside service to acknowledge before the upgrade.",
+        "required": [
+          "feature",
+          "message"
+        ],
+        "properties": {
+          "feature": {
+            "$ref": "#/components/schemas/UpgradeCallbackFeature",
+            "description": "The feature it concerns."
+          },
+          "message": {
+            "type": "string",
+            "description": "What to do, as sentences."
+          },
+          "new_address": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/UpgradeAddress",
+                "description": "The address v3 uses; none for MusicBrainz contributions."
+              }
+            ]
+          },
+          "old_address": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/UpgradeAddress",
+                "description": "The address v2 registered; none for MusicBrainz contributions."
+              }
+            ]
           }
         }
       },
@@ -65864,6 +66908,12 @@
         "type": "http",
         "scheme": "bearer",
         "description": "A session token. A browser sends the same session as the `droppedneedle_sid` or `__Secure-droppedneedle_sid` cookie. The scope names the posture, not a stored role: `user` is any signed-in account, `curator` is trusted or admin, `admin` is admin only."
+      },
+      "upgrade_session": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "droppedneedle_upgrade",
+        "description": "The upgrade page's own sign-in, served only by a server started on v2 data, as `droppedneedle_upgrade` or `__Secure-droppedneedle_upgrade`. No session satisfies it."
       },
       "wrapped_key": {
         "type": "apiKey",

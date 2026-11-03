@@ -15,7 +15,10 @@ use axum::{
     extract::ConnectInfo,
     http::{HeaderMap, Request, StatusCode},
 };
-use droppedneedle::{AppState, bootstrap, middleware::request_scope};
+use droppedneedle::{
+    AppState, bootstrap,
+    middleware::{Boundary, request_scope},
+};
 use droppedneedle_kernel::config::AppConfig;
 use droppedneedle_library::scan::models::FailureCode;
 use droppedneedle_testkit::{
@@ -253,8 +256,11 @@ impl TestApp {
     /// generator and the 5xx boundary, for a test that serves its own
     /// routes. Drop the router before [`TestApp::stop`].
     pub fn request_scope(&self, router: Router) -> Router {
-        let state = self.state.as_deref().cloned().expect("the app is running");
-        router.layer(axum::middleware::from_fn_with_state(state, request_scope))
+        let state = self.state.as_deref().expect("the app is running");
+        router.layer(axum::middleware::from_fn_with_state(
+            Boundary::from_state(state),
+            request_scope,
+        ))
     }
 
     /// Answer one request as a client on the same host would get it.

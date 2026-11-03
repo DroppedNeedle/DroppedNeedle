@@ -15,7 +15,7 @@ use utoipa::{
 
 use droppedneedle_kernel::{
     error::ErrorEnvelope,
-    mount::{SESSION_SCHEME, WRAPPED_KEY_SCHEME},
+    mount::{SESSION_SCHEME, UPGRADE_SESSION_SCHEME, WRAPPED_KEY_SCHEME},
 };
 
 /// The info block, and the schemas no operation references. Every other
@@ -41,13 +41,14 @@ use droppedneedle_kernel::{
 struct Unreferenced;
 
 /// Native API contract document: [`Unreferenced`] plus every mounted
-/// area's routes.
+/// area's routes and upgrade mode's.
 pub struct ApiDoc;
 
 impl OpenApi for ApiDoc {
     fn openapi() -> utoipa::openapi::OpenApi {
         let mut doc = Unreferenced::openapi();
         doc.merge(crate::app::document());
+        doc.merge(crate::upgrade_mode::routes::document());
         ErrorBodies.modify(&mut doc);
         SecuritySchemes.modify(&mut doc);
         doc
@@ -84,6 +85,15 @@ impl Modify for SecuritySchemes {
             SecurityScheme::ApiKey(ApiKey::Header(ApiKeyValue::with_description(
                 "X-Wrapped-API-Key",
                 "The shared secret of the wrapped API. No session satisfies it.",
+            ))),
+        );
+        schemes.insert(
+            UPGRADE_SESSION_SCHEME.to_owned(),
+            SecurityScheme::ApiKey(ApiKey::Cookie(ApiKeyValue::with_description(
+                "droppedneedle_upgrade",
+                "The upgrade page's own sign-in, served only by a server started on v2 data, \
+                 as `droppedneedle_upgrade` or `__Secure-droppedneedle_upgrade`. No session \
+                 satisfies it.",
             ))),
         );
     }

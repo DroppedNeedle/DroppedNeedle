@@ -28,7 +28,14 @@ pub mod middleware;
 pub mod security_headers;
 pub mod settings;
 pub mod state;
+pub mod upgrade_mode;
 pub mod web;
 
 pub use app::{create_app, create_app_with_web};
 pub use state::AppState;
+
+/// Every `sql.rs` of this crate, one line each, for the schema test.
+#[cfg(any(test, feature = "test-support"))]
+pub fn statement_files() -> Vec<droppedneedle_kernel::db::statement::StatementFile> {
+    vec![upgrade_mode::sql::registered()]
+}

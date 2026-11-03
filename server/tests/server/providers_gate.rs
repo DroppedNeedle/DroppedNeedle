@@ -110,6 +110,11 @@ const RATE: Rule = Rule {
             why: LOGIN_LIMITER,
         },
         Allow {
+            path: "src/upgrade_mode/mod.rs",
+            shapes: &["limiter"],
+            why: LOGIN_LIMITER,
+        },
+        Allow {
             path: "plugins/src/wiring.rs",
             shapes: &["limiter"],
             why: "the limiter on inbound plugin routes, not an outside service",
@@ -162,6 +167,11 @@ const RATE: Rule = Rule {
         },
         Allow {
             path: "auth/src/passwords.rs",
+            shapes: &["semaphore"],
+            why: LOCAL,
+        },
+        Allow {
+            path: "src/upgrade_mode/sign_in.rs",
             shapes: &["semaphore"],
             why: LOCAL,
         },

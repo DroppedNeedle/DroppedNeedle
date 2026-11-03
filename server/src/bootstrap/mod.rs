@@ -1,12 +1,14 @@
 //! Composition root: one call from deployment config to a router and the
 //! background work behind it.
 //!
-//! [`build`] opens the database (taking a verified backup first when the
-//! schema is about to change), stamps the web UI, wires every bundle,
-//! runs startup recovery, and starts the background loops. [`serve`]
-//! (in `serve.rs`) owns the listener and the shutdown order. `main` only
-//! parses arguments, tunes the allocator, starts the runtime and hands in
-//! the stop signal.
+//! [`run`] takes the data lock and looks at the data folders ([`claim`]):
+//! on v2 data it serves upgrade mode first (`crate::upgrade_mode`), then
+//! the app once the upgrade is done. [`build`] opens the database (taking
+//! a verified backup first when the schema is about to change), stamps the
+//! web UI, wires every bundle, runs startup recovery, and starts the
+//! background loops. [`serve`] (in `serve.rs`) owns the listener and the
+//! shutdown order. `main` only parses arguments, tunes the allocator,
+//! starts the runtime and hands in the stop signal.
 
 pub mod data_dirs;
 pub mod jobs;
@@ -19,13 +21,15 @@ pub mod upgrade_progress;
 use std::{fmt::Display, future::Future, sync::Arc, time::Duration};
 
 use axum::Router;
+use futures_util::FutureExt as _;
 use thiserror::Error;
+use tokio::net::TcpListener;
 
 pub use outbound::{Outbound, Port};
 pub use platform::{Opened, open_platform};
 pub use serve::{Background, ServeError, Stopped, bind, serve};
 
-use data_dirs::BootRefusal;
+use data_dirs::{BootRefusal, DataDirs, Layout};
 use jobs::JobsSetup;
 
 use crate::{
@@ -38,6 +42,7 @@ use crate::{
         section_prefs::{SqliteLinkStatus, SqliteSectionPrefsStore},
         wiring::SettingsSetup,
     },
+    upgrade_mode::{Ended, ToolCommand},
     web::{WebError, WebUi},
 };
 use droppedneedle_acquire::{
@@ -68,7 +73,11 @@ use droppedneedle_catalog::{
 use droppedneedle_compat::{CompatSetup, setup::CompatDeps};
 use droppedneedle_kernel::{
     config::AppConfig,
-    db::{BOOT_WAIT, datalock::DataLockError, error::DbError},
+    db::{
+        BOOT_WAIT,
+        datalock::{DataLock, DataLockError},
+        error::DbError,
+    },
     http_client::HttpClientError,
     platform::Platform,
     runtime_config::crypto::CryptoError,
@@ -193,8 +202,88 @@ pub struct Built {
     pub background: Background,
 }
 
+/// What the data folders let a server start as.
+pub enum Claimed {
+    /// An empty or v3 folder: the app, under both of a server's locks.
+    App(DataLock),
+    /// A v2 folder, or one an upgrade left halfway: upgrade mode, under the
+    /// server lock alone, so the upgrade it runs can take the folder.
+    Upgrade {
+        /// The server lock.
+        lock: DataLock,
+        /// An upgrade started here and did not finish.
+        interrupted: bool,
+    },
+}
+
+/// Take the data lock and look at the data folders, before anything else
+/// touches them: a v2 folder never gains a v3 key, database or settings
+/// file. The shared lock is held while they are looked at, so an upgrade or
+/// import running now stops the start rather than moving files under the
+/// look. A folder that is neither v2 nor v3, or one a restore left
+/// unfinished, is refused.
+pub async fn claim(config: &AppConfig) -> Result<Claimed, BootError> {
+    let server = DataLock::server_only(&config.library_db_path)?;
+    let shared = DataLock::shared(&config.library_db_path)?;
+    let dirs = DataDirs::from_config(config);
+    let layout = tokio::task::spawn_blocking(move || {
+        data_dirs::refuse_unfinished_restore(&dirs.db_path).map(|()| data_dirs::detect(&dirs))
+    })
+    .await
+    .map_err(|error| BootError::Stage {
+        stage: "data directory check",
+        message: error.to_string(),
+    })??;
+    match layout {
+        Layout::Empty | Layout::V3 => Ok(Claimed::App(server.joined(shared))),
+        Layout::V2 | Layout::Interrupted => {
+            drop(shared);
+            Ok(Claimed::Upgrade {
+                lock: server,
+                interrupted: layout == Layout::Interrupted,
+            })
+        }
+        Layout::Unknown(reason) => Err(BootRefusal::Unknown(reason).into()),
+    }
+}
+
+/// Serve `config`'s data folders on `listener` until `signal`: the app, or
+/// on v2 data the upgrade page first and then, once the upgrade is done and
+/// continued, the app in this same process on this same listener.
+pub async fn run(
+    listener: TcpListener,
+    config: AppConfig,
+    outbound: Outbound,
+    tool: ToolCommand,
+    signal: impl Future<Output = ()> + Send + 'static,
+) -> Result<Stopped, BootError> {
+    // One signal for both servers, so a stop between them is not lost.
+    let signal = signal.boxed().shared();
+    let (listener, lock) = match claim(&config).await? {
+        Claimed::App(lock) => (listener, lock),
+        Claimed::Upgrade { lock, interrupted } => {
+            match crate::upgrade_mode::serve(
+                listener,
+                &config,
+                lock,
+                interrupted,
+                tool,
+                signal.clone(),
+            )
+            .await?
+            {
+                Ended::Stopped(stopped) => return Ok(stopped),
+                Ended::Continued { listener, lock } => (listener, lock),
+            }
+        }
+    };
+    let built = build_on(config, outbound, lock).await?;
+    Ok(serve(listener, built.router, built.background, signal).await)
+}
+
 /// Build the production graph against the real outside services and start
-/// its background work.
+/// its background work. A v2 folder, or one an upgrade left halfway, is
+/// refused: only [`run`] serves upgrade mode.
 pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError> {
     let built = build_with(config, Outbound::live()).await?;
     Ok((built.router, built.background))
@@ -202,18 +291,37 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
 
 /// Build the production graph and start its background work, reaching
 /// every outside service with an address fixed in code at the one
-/// `outbound` gives.
+/// `outbound` gives. A v2 folder, or one an upgrade left halfway, is
+/// refused.
 pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, BootError> {
-    // The data lock, the key, the database, the supervisor, the settings
-    // and the one event hub: every bundle below publishes into it from the
-    // moment it is built, and the revision loops feed it after each commit.
+    let lock = match claim(&config).await? {
+        Claimed::App(lock) => lock,
+        Claimed::Upgrade {
+            interrupted: false, ..
+        } => return Err(BootRefusal::V2.into()),
+        Claimed::Upgrade {
+            interrupted: true, ..
+        } => return Err(BootRefusal::Interrupted.into()),
+    };
+    build_on(config, outbound, lock).await
+}
+
+/// [`build_with`] under `data_lock`, both of a server's locks.
+pub(crate) async fn build_on(
+    config: AppConfig,
+    outbound: Outbound,
+    data_lock: DataLock,
+) -> Result<Built, BootError> {
+    // The key, the database, the supervisor, the settings and the one
+    // event hub: every bundle below publishes into it from the moment it
+    // is built, and the revision loops feed it after each commit.
     let Opened {
         platform,
         runtime,
         cache_db,
         web,
         data_lock,
-    } = open_platform(config).await?;
+    } = open_platform(config, data_lock).await?;
     let p = &platform;
     let (db, config_store, config, http) = (&p.db, &p.settings, &p.config, &p.http);
     let (crypto, supervisor, events) = (&p.crypto, &p.supervisor, &p.events);

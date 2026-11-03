@@ -18,6 +18,10 @@ async fn undocumented_methods_answer_405() {
     let doc = ApiDoc::openapi();
     let mut wrong = Vec::new();
     for (path, item) in &doc.paths.paths {
+        // Upgrade mode alone serves these; `upgrade_mode` walks them there.
+        if path.starts_with("/api/v3/upgrade/") {
+            continue;
+        }
         let uri = fill_parameters(path);
         for (method, listed) in [
             ("GET", item.get.is_some()),

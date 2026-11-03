@@ -42,13 +42,13 @@ fn settings_in(db: &Path) -> serde_json::Map<String, serde_json::Value> {
         .collect()
 }
 
-fn scratch_dir(tag: &str) -> crate::common::ScratchDir {
+pub(crate) fn scratch_dir(tag: &str) -> crate::common::ScratchDir {
     crate::common::ScratchDir::new(tag)
 }
 
 /// The compiled tool binary under test: Cargo's per-test variable when
 /// present, else the binary beside the test executable's target dir.
-fn tool() -> PathBuf {
+pub(crate) fn tool() -> PathBuf {
     for var in [
         "CARGO_BIN_EXE_droppedneedle_tool",
         "CARGO_BIN_EXE_droppedneedle-tool",
@@ -572,7 +572,7 @@ fn json_lines(output: &std::process::Output) -> Vec<Line> {
 
 /// A v2 data directory without orphan rows. Upgrading it never changes
 /// the v2 database, so its files can be compared byte for byte.
-fn clean_v2(root: &Path) {
+pub(crate) fn clean_v2(root: &Path) {
     droppedneedle_tool::tooling::fixture::build_v2_fixture(root).expect("fixture builds");
     droppedneedle_tool::tooling::fixture::delete_orphan_rows(
         &root.join("cache").join("library.db"),
@@ -581,7 +581,7 @@ fn clean_v2(root: &Path) {
 }
 
 /// Folders (`None`) and files (their bytes) by relative path.
-type Tree = BTreeMap<PathBuf, Option<Vec<u8>>>;
+pub(crate) type Tree = BTreeMap<PathBuf, Option<Vec<u8>>>;
 
 /// Everything under `dir`. The data lock files are left out: taking a
 /// lock creates its file and nothing ever removes it.
@@ -613,12 +613,12 @@ fn tree(dir: &Path) -> Tree {
 }
 
 /// The config and cache folders of the data directory under `root`.
-fn data_trees(root: &Path) -> (Tree, Tree) {
+pub(crate) fn data_trees(root: &Path) -> (Tree, Tree) {
     (tree(&root.join("config")), tree(&root.join("cache")))
 }
 
 /// The same two folders as the upgrade keeps them, in its backup.
-fn backup_trees(root: &Path) -> (Tree, Tree) {
+pub(crate) fn backup_trees(root: &Path) -> (Tree, Tree) {
     (
         tree(&root.join("config").join("v2-backup")),
         tree(&root.join("cache").join("v2-backup")),
@@ -648,7 +648,7 @@ fn upgrade_dirs(root: &Path) -> data_dirs::DataDirs {
 
 /// The upgrade through the library, for the failure points the tool has
 /// no switch for.
-async fn upgrade_with_fault(
+pub(crate) async fn upgrade_with_fault(
     root: &Path,
     fault: upgrade::Fault,
 ) -> Result<upgrade::Upgraded, upgrade::UpgradeError> {

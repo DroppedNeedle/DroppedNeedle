@@ -248,44 +248,6 @@ async fn boot_refuses_a_second_server_on_the_same_data_folder() {
     start(router, background).await.shut_down().await;
 }
 
-/// A v2 data directory is refused before the database is opened, backed
-/// up or migrated: v3's migrations would otherwise run over the v2
-/// database. The refusal names the command that upgrades it.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn boot_refuses_a_v2_data_directory_and_leaves_it_alone() {
-    let dir = scratch("v2-dir");
-    droppedneedle_tool::tooling::fixture::build_v2_fixture(&dir).expect("fixture builds");
-    let db_path = dir.join("cache").join("library.db");
-    let config_path = dir.join("config").join("config.json");
-    let database = std::fs::read(&db_path).unwrap();
-    let settings = std::fs::read(&config_path).unwrap();
-
-    let Err(refused) = build(AppConfig::with_root(0, &dir)).await else {
-        panic!("boot must refuse a v2 data directory");
-    };
-    assert!(
-        matches!(
-            refused,
-            bootstrap::BootError::DataDir(droppedneedle::bootstrap::data_dirs::BootRefusal::V2)
-        ),
-        "{refused:?}"
-    );
-    assert!(
-        refused.to_string().contains("droppedneedle-tool upgrade"),
-        "{refused}"
-    );
-    assert_eq!(std::fs::read(&db_path).unwrap(), database);
-    assert_eq!(std::fs::read(&config_path).unwrap(), settings);
-    assert!(
-        !dir.join("cache").join("backups").exists(),
-        "a backup was taken"
-    );
-    assert!(
-        !dir.join("config").join("data_enc.key").exists(),
-        "a v3 key was written into the v2 config folder"
-    );
-}
-
 /// A restore that stopped after placing the undo folder and before the
 /// database leaves its marker: boot refuses the folder, naming it and the
 /// way back, and creates no empty database over the restored undo copies.

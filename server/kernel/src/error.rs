@@ -55,6 +55,9 @@ pub const UPSTREAM_UNREADABLE: &str = "UPSTREAM_UNREADABLE";
 /// An outside service (MusicBrainz, Last.fm, ...) is down, rate limiting
 /// or unreachable. `details.provider` names it.
 pub const PROVIDER_UNAVAILABLE: &str = "PROVIDER_UNAVAILABLE";
+/// The server was started on v2 data and serves only its upgrade page
+/// until the upgrade is done.
+pub const UPGRADE_REQUIRED: &str = "UPGRADE_REQUIRED";
 /// An outside service needs a key or account first, or refused the one
 /// saved (409). `details.provider` names it.
 pub const PROVIDER_NOT_CONFIGURED: &str = "PROVIDER_NOT_CONFIGURED";
@@ -115,6 +118,8 @@ pub enum Unavailable {
         /// Seconds until it takes requests again, when it said.
         retry_after: Option<u64>,
     },
+    /// The server was started on v2 data and waits for its upgrade.
+    UpgradeRequired,
 }
 
 /// What one [`Unavailable`] answers: everything the boundary writes.
@@ -190,6 +195,13 @@ impl Unavailable {
                 "An outside service is not answering. Try again later.",
                 retry_after,
                 true,
+            ),
+            Self::UpgradeRequired => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                UPGRADE_REQUIRED,
+                "DroppedNeedle needs its upgrade from v2. Open the web page to run it.",
+                None,
+                false,
             ),
         };
         UnavailableAnswer {

@@ -72,7 +72,7 @@ const OPENS: &[Place] = &[
     ),
     place(
         "src/bootstrap/data_dirs.rs",
-        "the read-only stamp probe of an existing database before the runtime opens it, and its tests",
+        "the read-only stamp probe of an existing database before the runtime opens it, upgrade mode's read of the v2 admins' passwords, and its tests",
     ),
 ];
 
@@ -730,6 +730,7 @@ const PROVIDER_FETCH: &str = "a provider fetch shared by its callers, which stor
 const BOOT_STEP: &str = "boot-time file work, awaited before serving";
 const HTTP_SERVER: &str = "the HTTP server, joined by serve at the shutdown deadline";
 const OFFLINE_TOOL: &str = "the offline tool's file and database work, awaited";
+const UPGRADE_RUN: &str = "an upgrade tool run a signed-in admin starts in upgrade mode; it records its own end, and the mode's stop kills its child";
 
 const SPAWN_SITES: &[(&str, usize, &str)] = &[
     ("acquire/src/drop_import/http.rs", 1, UPLOAD_CLEANUP),
@@ -802,13 +803,19 @@ const SPAWN_SITES: &[(&str, usize, &str)] = &[
     ("providers/src/youtube.rs", 1, REQUEST),
     ("src/admin/handlers.rs", 1, REQUEST),
     ("src/bootstrap/key_check.rs", 1, BOOT_STEP),
-    ("src/bootstrap/mod.rs", 1, BOOT_STEP),
+    ("src/bootstrap/mod.rs", 2, BOOT_STEP),
     ("src/bootstrap/platform.rs", 1, BOOT_STEP),
     ("src/bootstrap/serve.rs", 1, HTTP_SERVER),
     ("src/settings/effects.rs", 1, LOOP_STEP),
     ("src/settings/library_policy_service.rs", 1, REQUEST),
     ("src/settings/services.rs", 3, REQUEST),
     ("src/settings/wiring.rs", 2, REQUEST),
+    ("src/upgrade_mode/mod.rs", 2, BOOT_STEP),
+    ("src/upgrade_mode/mod.rs", 1, HTTP_SERVER),
+    ("src/upgrade_mode/mod.rs", 2, UPGRADE_RUN),
+    ("src/upgrade_mode/mod.rs", 1, REQUEST),
+    ("src/upgrade_mode/mod.rs", 2, AWAITED),
+    ("src/upgrade_mode/sign_in.rs", 1, REQUEST),
     ("tool/src/import/apply.rs", 1, OFFLINE_TOOL),
     ("tool/src/tooling/reset_key.rs", 1, OFFLINE_TOOL),
     ("tool/src/tooling/upgrade.rs", 1, OFFLINE_TOOL),

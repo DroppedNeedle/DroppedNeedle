@@ -42,5 +42,6 @@ mod settings_readers;
 mod settings_sections;
 mod settings_store;
 mod source_gates;
+mod upgrade_mode;
 mod web;
 mod wiring_gate;

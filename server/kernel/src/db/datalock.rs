@@ -6,9 +6,12 @@
 //! they touch the database and keep it for the whole run, so they refuse a
 //! live server (even an idle one) and a server refuses to start mid-run.
 //! The server also holds an exclusive lock on `<db>.server.lock`, so a
-//! second server on the same folder refuses to start. The locks are OS file
-//! locks: they go away with the process, so a crash never leaves a stale
-//! lock behind.
+//! second server on the same folder refuses to start. A server started on
+//! v2 data holds only that one while it waits for its upgrade, so the
+//! upgrade it runs as a child process can take the exclusive lock; it takes
+//! the shared lock once the upgrade is done, before the normal app opens
+//! the database. The locks are OS file locks: they go away with the
+//! process, so a crash never leaves a stale lock behind.
 
 use std::fs::{File, OpenOptions, TryLockError};
 use std::path::{Path, PathBuf};
@@ -57,13 +60,29 @@ impl DataLock {
     /// which refuses a second server, then the shared lock, which refuses
     /// the offline tool. Both are held until the value drops.
     pub fn server(db_path: &Path) -> Result<Self, DataLockError> {
-        let refusal = Self::take(server_lock_path(db_path), true)?;
-        let mut held = Self::take(lock_path(db_path), false)?;
-        held._files.extend(refusal._files);
-        Ok(held)
+        Self::server_only(db_path)?.with_shared(db_path)
     }
 
-    /// The shared lock file's path.
+    /// Take the exclusive server lock next to `db_path` alone. It refuses a
+    /// second server and leaves the offline tool free to run.
+    pub fn server_only(db_path: &Path) -> Result<Self, DataLockError> {
+        Self::take(server_lock_path(db_path), true)
+    }
+
+    /// These locks and the shared lock next to `db_path`. On a refusal the
+    /// locks already held are let go.
+    pub fn with_shared(self, db_path: &Path) -> Result<Self, DataLockError> {
+        Ok(self.joined(Self::shared(db_path)?))
+    }
+
+    /// These locks and `other`'s, held as one.
+    #[must_use]
+    pub fn joined(mut self, other: Self) -> Self {
+        self._files.extend(other._files);
+        self
+    }
+
+    /// The path of the first lock taken.
     #[must_use]
     pub fn path(&self) -> &Path {
         &self.path

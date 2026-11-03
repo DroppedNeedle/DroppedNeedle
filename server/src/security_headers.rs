@@ -186,16 +186,24 @@ fn shell_policy(script_hashes: &[String], framing: &[String]) -> String {
     policy
 }
 
-/// What the content-security layer needs: the live settings.
+/// What the content-security layer needs: the live settings, or none.
 #[derive(Debug, Clone)]
 pub struct ContentSecurity {
-    settings: Live<SecuritySettings>,
+    settings: Option<Live<SecuritySettings>>,
 }
 
 impl ContentSecurity {
     /// Follow the saved security settings.
     pub fn new(settings: Live<SecuritySettings>) -> Self {
-        Self { settings }
+        Self {
+            settings: Some(settings),
+        }
+    }
+
+    /// The default settings, for a server with no settings of its own (one
+    /// started on v2 data): the page's policy enforced, no framing.
+    pub fn fixed() -> Self {
+        Self { settings: None }
     }
 
     /// Follow the settings the rest of the server reads.
@@ -206,7 +214,10 @@ impl ContentSecurity {
     /// The saved settings. Unreadable ones give the default mode and no
     /// framing, never a missing policy.
     fn settings(&self) -> Arc<Plain<SecuritySettings>> {
-        self.settings.get().unwrap_or_else(|error| {
+        let Some(settings) = &self.settings else {
+            return Arc::default();
+        };
+        settings.get().unwrap_or_else(|error| {
             tracing::debug!(%error, "security settings unreadable; default content-security policy");
             Arc::default()
         })

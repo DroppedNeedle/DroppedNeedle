@@ -26,6 +26,7 @@ use droppedneedle_kernel::runtime_config::origin::Origin;
 pub const SESSION_COOKIE: CookieName = CookieName {
     plain: "droppedneedle_sid",
     secure: "__Secure-droppedneedle_sid",
+    same_site: SameSite::Lax,
 };
 
 /// The cookie binding a pending single sign-on login to the browser that
@@ -33,6 +34,15 @@ pub const SESSION_COOKIE: CookieName = CookieName {
 pub const OIDC_STATE_COOKIE: CookieName = CookieName {
     plain: "droppedneedle_oidc_state",
     secure: "__Secure-droppedneedle_oidc_state",
+    same_site: SameSite::Lax,
+};
+
+/// The upgrade page's sign-in, set by a server started on v2 data. It is
+/// `SameSite=Strict`: only the upgrade page itself ever sends it.
+pub const UPGRADE_COOKIE: CookieName = CookieName {
+    plain: "droppedneedle_upgrade",
+    secure: "__Secure-droppedneedle_upgrade",
+    same_site: SameSite::Strict,
 };
 
 /// One of our cookies under its two names. A cookie marked `Secure` is set
@@ -64,6 +74,7 @@ pub const OIDC_STATE_COOKIE: CookieName = CookieName {
 pub struct CookieName {
     plain: &'static str,
     secure: &'static str,
+    same_site: SameSite,
 }
 
 impl CookieName {
@@ -79,7 +90,7 @@ impl CookieName {
             .path(path)
             .max_age(Duration::seconds(max_age))
             .http_only(true)
-            .same_site(SameSite::Lax)
+            .same_site(self.same_site)
             .secure(mark.0);
         if max_age == 0 {
             built.expires(OffsetDateTime::UNIX_EPOCH).to_string()

@@ -8858,6 +8858,168 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/upgrade/continue": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Open the app: the upgrade page stops and the normal app starts in its
+         *     place. The next request reaches the app, which shows its own sign-in.
+         */
+        post: operations["upgrade_continue"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/upgrade/fresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start fresh: v2's files move into the `v2-backup` folders, nothing is
+         *     imported, and v3 starts empty. Going back to v2 still works.
+         */
+        post: operations["upgrade_fresh"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/upgrade/preflight": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run every check the upgrade runs before it moves anything, changing
+         *     nothing, and wait for it.
+         */
+        post: operations["upgrade_preflight"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/upgrade/progress": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The latest upgrade, fresh start or undo: its step, how far along, and
+         *     its result or failure once it has ended.
+         */
+        get: operations["upgrade_progress"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/upgrade/sign-in": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sign in to the upgrade page with a v2 admin's password or the one-time
+         *     code from the server's log. Attempts are limited per address, and
+         *     passwords per username too.
+         */
+        post: operations["upgrade_sign_in"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/upgrade/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start the upgrade. On v2 data it needs a pre-flight with nothing to fix
+         *     and every address change it listed acknowledged. An interrupted upgrade
+         *     is finished: the tool puts the v2 files back first, then upgrades.
+         */
+        post: operations["upgrade_start"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/upgrade/state": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Where the upgrade stands, and whether this caller is signed in to the
+         *     upgrade page.
+         */
+        get: operations["upgrade_state"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/upgrade/undo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Go back to v2: the v3 data is deleted and v2's files come back from the
+         *     backup. Also finishes going back from an interrupted upgrade.
+         */
+        post: operations["upgrade_undo"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/users/{id}/avatar": {
         parameters: {
             query?: never;
@@ -9142,6 +9304,16 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * @description An address change the caller has made at the outside service, as the
+         *     pre-flight listed it.
+         */
+        AcknowledgedWarning: {
+            /** @description The feature the change concerns. */
+            feature: components["schemas"]["UpgradeCallbackFeature"];
+            new_address?: null | components["schemas"]["UpgradeAddress"];
+            old_address?: null | components["schemas"]["UpgradeAddress"];
+        };
         /** @description Mutation outcome for approve/reject/cancel/retry/clear. */
         ActionResponse: {
             /** @description Human outcome. */
@@ -13868,16 +14040,20 @@ export interface components {
             handed_back: boolean;
         };
         /**
-         * @description Health payload, in the v2 shape. The route is public, so it says
-         *     nothing about the server's internals; admins read those from the
-         *     admin routes.
+         * @description Health payload. The route is public, so it says nothing about the
+         *     server's internals; admins read those from the admin routes.
          */
         HealthResponse: {
             /** @description Human-readable running message. */
             message: string;
-            /** @description Service state, `ok` when serving. */
-            status: string;
+            /** @description What the server is doing. */
+            status: components["schemas"]["HealthStatus"];
         };
+        /**
+         * @description What the server is doing, as the health check reports it.
+         * @enum {string}
+         */
+        HealthStatus: "ok" | "upgrade";
         /** @description What an action did. */
         HeldActionResponse: {
             /** @description Files the library already held, so nothing was added. */
@@ -22498,6 +22674,21 @@ export interface components {
             /** @description Preferred source type. */
             source_type?: string | null;
         };
+        /**
+         * @description An address, whole when v2's settings name the host, else the path to
+         *     put after the scheme and host DroppedNeedle is opened at.
+         */
+        UpgradeAddress: {
+            /** @enum {string} */
+            kind: "full";
+            /** @description A full address. */
+            value: string;
+        } | {
+            /** @enum {string} */
+            kind: "path";
+            /** @description A path, the base path included. */
+            value: string;
+        };
         /** @description Upgrade one album. */
         UpgradeAlbumRequest: {
             album_title: string;
@@ -22506,6 +22697,102 @@ export interface components {
             release_group_mbid: string;
             /** Format: int64 */
             year?: number | null;
+        };
+        /** @description The two folders the v2 files are kept in. */
+        UpgradeBackupFolders: {
+            /** @description The cache folder's backup. */
+            cache: string;
+            /** @description The config folder's backup. */
+            config: string;
+        };
+        /** @description Something that stops the upgrade until it is fixed. */
+        UpgradeBlocker: {
+            /** @description What it is. */
+            code: components["schemas"]["UpgradeCode"];
+            /** @description What to do about it, as a sentence. */
+            fix: string;
+            /** @description What is wrong, as a sentence. */
+            message: string;
+        };
+        /**
+         * @description A feature whose callback address changes with the upgrade.
+         * @enum {string}
+         */
+        UpgradeCallbackFeature: "single_sign_on" | "spotify" | "musicbrainz_contributions";
+        /**
+         * @description What `upgrade --check` found. It runs every check the upgrade runs
+         *     before it moves anything, and changes nothing.
+         */
+        UpgradeCheck: {
+            /** @description What stops the upgrade until it is fixed. */
+            blockers: components["schemas"]["UpgradeBlocker"][];
+            /**
+             * @description What the export carries, by the names `upgrade-report.json` counts
+             *     under: what the upgrade would move, at most. The import can still
+             *     leave a record out, and its report then lists it. None when the
+             *     export could not be tried.
+             */
+            counts?: {
+                [key: string]: number;
+            } | null;
+            /** @description What the folders hold. */
+            layout: components["schemas"]["UpgradeFoundLayout"];
+            /**
+             * Format: int64
+             * @description Follows and approvals of deleted users the upgrade would remove
+             *     from the v2 database first. They are not in `counts`.
+             */
+            orphans: number;
+            /**
+             * @description Addresses that change with the upgrade, which `--callbacks-changed`
+             *     acknowledges.
+             */
+            warnings: components["schemas"]["UpgradeWarning"][];
+        };
+        /**
+         * @description Why the upgrade cannot start, or why a run failed.
+         * @enum {string}
+         */
+        UpgradeCode: "UNKNOWN_LAYOUT" | "UNSUPPORTED_PATHS" | "BACKUP_EXISTS" | "V2_WAL_PRESENT" | "NOT_ENOUGH_DISK" | "V2_KEY_NOT_FOUND" | "V2_KEY_INVALID" | "V2_KEY_MISMATCH" | "V2_CONFIG_UNREADABLE" | "V2_CONFIG_INVALID" | "MISSING_INSTANCE_ID" | "V2_DATABASE_ERROR" | "EXPORT_FAILED" | "VALIDATION_FAILED" | "CALLBACKS_TO_CHANGE" | "NO_ADMIN_CAN_SIGN_IN" | "LOCKED" | "TOOL_RUNNING" | "FILE_ERROR" | "OCCUPIED" | "NOT_A_FOLDER" | "RANDOM_FAILED" | "ORPHAN_REPAIR_FAILED" | "IMPORT_SETUP_FAILED" | "IMPORT_FAILED" | "ROLLBACK_FAILED" | "BACKUP_NOT_REMOVED" | "NO_BACKUP" | "ALREADY_V2" | "BACKUP_STILL_NEEDED" | "CONFIRMATION_NEEDED" | "USAGE" | "ENVIRONMENT_INVALID" | "INTERNAL";
+        /** @description The run failed or stopped. */
+        UpgradeFailure: {
+            /** @description What went wrong. */
+            code: components["schemas"]["UpgradeCode"];
+            /** @description The error, as the tool prints it. */
+            message: string;
+            /** @description Where the v2 files are now. */
+            v2_files: components["schemas"]["UpgradeV2Files"];
+        };
+        /**
+         * @description What the data folders hold, as the check found them.
+         * @enum {string}
+         */
+        UpgradeFoundLayout: "v2" | "interrupted" | "v3" | "empty" | "unknown";
+        /** @description Start fresh's confirmation. */
+        UpgradeFreshBody: {
+            /** @description Must be true: nothing comes across from v2. */
+            confirm: boolean;
+        };
+        /**
+         * @description Where the upgrade stands.
+         * @enum {string}
+         */
+        UpgradeLayout: "needs_upgrade" | "interrupted" | "finished";
+        /**
+         * @description How a run ended well.
+         * @enum {string}
+         */
+        UpgradeOutcome: "upgraded" | "started_fresh" | "undone" | "already_v3" | "no_v2_data";
+        /** @description What the pre-flight found: the check, or why it could not run. */
+        UpgradePreflightBody: {
+            check?: null | components["schemas"]["UpgradeCheck"];
+            failure?: null | components["schemas"]["UpgradeFailure"];
+        };
+        /** @description The latest run and where the upgrade stands. */
+        UpgradeProgressBody: {
+            /** @description Where the upgrade stands. */
+            layout: components["schemas"]["UpgradeLayout"];
+            run?: null | components["schemas"]["UpgradeRun"];
         };
         /** @description What an upgrade ask did. */
         UpgradeRequestResponse: {
@@ -22516,6 +22803,99 @@ export interface components {
             status: string;
             task_id?: string | null;
         };
+        /** @description The run finished. */
+        UpgradeResult: {
+            backup?: null | components["schemas"]["UpgradeBackupFolders"];
+            /** @description How it ended. */
+            outcome: components["schemas"]["UpgradeOutcome"];
+            summary?: null | components["schemas"]["UpgradeSummary"];
+        };
+        /** @description The latest run of the upgrade, a fresh start or an undo. */
+        UpgradeRun: {
+            /**
+             * Format: int64
+             * @description Parts of the step done, when it counts them.
+             */
+            done?: number | null;
+            failure?: null | components["schemas"]["UpgradeFailure"];
+            /** @description The step's label. */
+            label?: string | null;
+            result?: null | components["schemas"]["UpgradeResult"];
+            /** @description True until it ends. */
+            running: boolean;
+            step?: null | components["schemas"]["UpgradeStep"];
+            /** @description What the run does. */
+            task: components["schemas"]["UpgradeTask"];
+            /**
+             * Format: int64
+             * @description Parts the step has, when it knows.
+             */
+            total?: number | null;
+        };
+        /** @description How to sign in to the upgrade page. */
+        UpgradeSignInBody: {
+            /** @enum {string} */
+            method: "password";
+            /** @description The v2 password. */
+            password: string;
+            /** @description The v2 username. */
+            username: string;
+        } | {
+            /** @description The code, with or without its dashes. */
+            code: string;
+            /** @enum {string} */
+            method: "code";
+        };
+        /** @description What start needs. */
+        UpgradeStartBody: {
+            /** @description Every address change the latest pre-flight listed. */
+            acknowledged?: components["schemas"]["AcknowledgedWarning"][];
+        };
+        /** @description Where the upgrade stands, for anyone. */
+        UpgradeStateBody: {
+            /** @description Where the upgrade stands. */
+            layout: components["schemas"]["UpgradeLayout"];
+            /** @description Whether this caller's upgrade sign-in is valid. */
+            signed_in: boolean;
+        };
+        /**
+         * @description The steps a run goes through, in the order they can come.
+         * @enum {string}
+         */
+        UpgradeStep: "recover" | "move_aside" | "export" | "export_again" | "dry_run" | "import" | "remove_backup" | "roll_back" | "undo";
+        /** @description What the upgrade did, as its text summary says it. */
+        UpgradeSummary: {
+            /** @description What stayed behind in v2, one line each. */
+            left_behind: string[];
+            /**
+             * @description Records moved to v3, by the names the report counts under; kinds
+             *     with none moved are left out.
+             */
+            moved: {
+                [key: string]: number;
+            };
+            /**
+             * Format: int64
+             * @description Records left out or changed on the way, each listed in the report.
+             */
+            needs_attention: number;
+            /** @description What is worth a look, one line each. */
+            notes: string[];
+            /**
+             * Format: int64
+             * @description Follows and approvals of deleted users removed from the v2 database.
+             */
+            orphans_removed: number;
+            /** @description Where the full report, `upgrade-report.json`, was saved. */
+            report: string;
+            /** @description Settings v2 had nothing saved for, now at v3's defaults. */
+            settings_defaulted: string[];
+        };
+        /**
+         * @description What a run in the progress read does.
+         * @enum {string}
+         */
+        UpgradeTask: "upgrade" | "fresh" | "undo";
         /** @description Upgrade one track. */
         UpgradeTrackRequest: {
             album_title?: string | null;
@@ -22526,6 +22906,20 @@ export interface components {
             recording_mbid: string;
             release_group_mbid?: string | null;
             track_title: string;
+        };
+        /**
+         * @description Where the v2 files are after a failed run.
+         * @enum {string}
+         */
+        UpgradeV2Files: "untouched" | "put_back" | "in_backup";
+        /** @description A change at an outside service to acknowledge before the upgrade. */
+        UpgradeWarning: {
+            /** @description The feature it concerns. */
+            feature: components["schemas"]["UpgradeCallbackFeature"];
+            /** @description What to do, as sentences. */
+            message: string;
+            new_address?: null | components["schemas"]["UpgradeAddress"];
+            old_address?: null | components["schemas"]["UpgradeAddress"];
         };
         /**
          * @description Which Usenet search side is active. Reads collapse unknown values to
@@ -45522,6 +45916,302 @@ export interface operations {
             };
             /** @description Not authenticated */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    upgrade_continue: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The app is starting */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not signed in to the upgrade page */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description A run is under way, the folders do not hold v3 data, or another program is using them */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    upgrade_fresh: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpgradeFreshBody"];
+            };
+        };
+        responses: {
+            /** @description The fresh start began */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UpgradeProgressBody"];
+                };
+            };
+            /** @description Not confirmed */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not signed in to the upgrade page */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description A run is under way, or the folders already hold v3 data */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    upgrade_preflight: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description What the check found */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UpgradePreflightBody"];
+                };
+            };
+            /** @description Not signed in to the upgrade page */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description A run is under way, the folders already hold v3 data, or an upgrade did not finish */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    upgrade_progress: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The latest run */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UpgradeProgressBody"];
+                };
+            };
+            /** @description Not signed in to the upgrade page */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    upgrade_sign_in: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpgradeSignInBody"];
+            };
+        };
+        responses: {
+            /** @description Signed in; the upgrade cookie is set */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UpgradeStateBody"];
+                };
+            };
+            /** @description The sign-in did not pass */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many attempts from this address or for this username */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    upgrade_start: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpgradeStartBody"];
+            };
+        };
+        responses: {
+            /** @description The upgrade started */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UpgradeProgressBody"];
+                };
+            };
+            /** @description Not signed in to the upgrade page */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description No pre-flight, something to fix, an address change not acknowledged, a run under way, or nothing to upgrade */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    upgrade_state: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Where the upgrade stands */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UpgradeStateBody"];
+                };
+            };
+        };
+    };
+    upgrade_undo: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Going back to v2 began */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UpgradeProgressBody"];
+                };
+            };
+            /** @description Not signed in to the upgrade page */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description A run is under way, or the folders already hold v2 data */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

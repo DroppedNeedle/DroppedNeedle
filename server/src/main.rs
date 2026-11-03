@@ -6,7 +6,7 @@
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use droppedneedle::{bootstrap, docs::ApiDoc};
+use droppedneedle::{bootstrap, docs::ApiDoc, upgrade_mode::ToolCommand};
 use droppedneedle_kernel::{config::AppConfig, observability::init_tracing};
 use utoipa::OpenApi as _;
 
@@ -130,18 +130,24 @@ fn print_openapi() {
 
 /// Bind, boot, and serve until SIGTERM or Ctrl-C. Binding comes first so
 /// a taken port fails before recovery runs or any loop starts; clients
-/// that connect during boot wait in the listen backlog.
+/// that connect during boot wait in the listen backlog. On v2 data the
+/// upgrade page is served first, then the app.
 async fn run(config: AppConfig) -> Result<bootstrap::Stopped, String> {
     let listener = bootstrap::bind(config.bind_host, config.port)
         .await
         .map_err(|error| error.to_string())?;
-    let (router, background) = bootstrap::build(config)
-        .await
-        .map_err(|error| format!("boot failed: {error}"))?;
     if let Ok(address) = listener.local_addr() {
         tracing::info!(%address, "listening");
     }
-    Ok(bootstrap::serve(listener, router, background, shutdown_signal()).await)
+    bootstrap::run(
+        listener,
+        config,
+        bootstrap::Outbound::live(),
+        ToolCommand::installed(),
+        shutdown_signal(),
+    )
+    .await
+    .map_err(|error| format!("boot failed: {error}"))
 }
 
 /// Resolve when the process should stop: SIGTERM or Ctrl-C.

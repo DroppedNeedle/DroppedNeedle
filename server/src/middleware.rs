@@ -14,7 +14,8 @@
 //! - Any other native 5xx gets the fixed internal error naming the request
 //!   id, and a panic becomes that same 500.
 //! - A compat (`/subsonic`, `/jellyfin`) 5xx or panic gets its protocol's
-//!   failure shape, from `CompatSetup::server_error`.
+//!   failure shape: the app's from `CompatSetup::server_error`, upgrade
+//!   mode's from the default Subsonic settings ([`Boundary`]).
 //!
 //! The cause an [`ApiError`](droppedneedle_kernel::error::ApiError) carried
 //! is logged here once, with the request id.
@@ -31,15 +32,58 @@ use futures_util::FutureExt as _;
 use std::panic::AssertUnwindSafe;
 use tracing::Instrument as _;
 
+use std::sync::Arc;
+
 use crate::state::AppState;
 use droppedneedle_kernel::{
     error::{ApiError, Fault},
-    ids::{REQUEST_ID_HEADER, RequestId},
+    ids::{IdGenerator, REQUEST_ID_HEADER, RequestId},
 };
+
+/// The protocol failure a compat path answers with: path, whether the
+/// request was a HEAD, its query, the status and `Retry-After`.
+type CompatFailure =
+    dyn Fn(&str, bool, Option<&str>, StatusCode, Option<HeaderValue>) -> Response + Send + Sync;
+
+/// What the request boundary needs: fresh request ids and the compat
+/// failure shape.
+#[derive(Clone)]
+pub struct Boundary {
+    ids: Arc<dyn IdGenerator>,
+    compat_failure: Arc<CompatFailure>,
+}
+
+impl Boundary {
+    /// Request ids from `ids`, compat failures from `compat_failure`.
+    pub fn new(
+        ids: Arc<dyn IdGenerator>,
+        compat_failure: impl Fn(&str, bool, Option<&str>, StatusCode, Option<HeaderValue>) -> Response
+        + Send
+        + Sync
+        + 'static,
+    ) -> Self {
+        Self {
+            ids,
+            compat_failure: Arc::new(compat_failure),
+        }
+    }
+
+    /// The app's boundary: its ids, and compat failures in the shape the
+    /// saved Subsonic settings give.
+    pub fn from_state(state: &AppState) -> Self {
+        let compat = state.compat.clone();
+        Self::new(
+            state.ids.clone(),
+            move |path, head, query, status, retry_after| {
+                compat.server_error(path, head, query, status, retry_after)
+            },
+        )
+    }
+}
 
 /// Enforce the request scope described in the module docs.
 pub async fn request_scope(
-    State(state): State<AppState>,
+    State(state): State<Boundary>,
     mut request: Request,
     next: Next,
 ) -> Response {
@@ -70,9 +114,7 @@ pub async fn request_scope(
             let fault = response.extensions_mut().remove::<Fault>();
             if is_compat_path(&path) {
                 log_fault(&request_id, status, fault.as_ref());
-                state
-                    .compat
-                    .server_error(&path, head, query.as_deref(), status, retry_after)
+                (state.compat_failure)(&path, head, query.as_deref(), status, retry_after)
             } else {
                 native_server_error(&request_id, status, retry_after, fault)
             }
@@ -80,7 +122,7 @@ pub async fn request_scope(
         Err(_) => {
             tracing::error!(%request_id, "request handler panicked");
             if is_compat_path(&path) {
-                state.compat.server_error(
+                (state.compat_failure)(
                     &path,
                     head,
                     query.as_deref(),

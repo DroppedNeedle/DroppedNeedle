@@ -1,20 +1,30 @@
 //! Thin Axum handlers. Each handler answers one route and returns typed
 //! errors; status mapping lives in `error::ApiError`.
 
-use axum::Json;
+use axum::{Json, extract::State};
 use serde::Serialize;
 use utoipa::{OpenApi as _, ToSchema};
 
 use crate::docs::ApiDoc;
 use droppedneedle_kernel::error::ApiError;
 
-/// Health payload, in the v2 shape. The route is public, so it says
-/// nothing about the server's internals; admins read those from the
-/// admin routes.
+/// What the server is doing, as the health check reports it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum HealthStatus {
+    /// Serving the app.
+    Ok,
+    /// Started on v2 data: serving only the upgrade page until the upgrade
+    /// is done.
+    Upgrade,
+}
+
+/// Health payload. The route is public, so it says nothing about the
+/// server's internals; admins read those from the admin routes.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct HealthResponse {
-    /// Service state, `ok` when serving.
-    pub status: String,
+    /// What the server is doing.
+    pub status: HealthStatus,
     /// Human-readable running message.
     pub message: String,
 }
@@ -26,10 +36,14 @@ pub struct HealthResponse {
     path = "/health",
     responses((status = 200, description = "Server is running", body = HealthResponse))
 )]
-pub async fn health() -> Json<HealthResponse> {
+pub async fn health(State(status): State<HealthStatus>) -> Json<HealthResponse> {
+    let message = match status {
+        HealthStatus::Ok => "DroppedNeedle backend running",
+        HealthStatus::Upgrade => "DroppedNeedle is waiting for its upgrade from v2",
+    };
     Json(HealthResponse {
-        status: "ok".to_owned(),
-        message: "DroppedNeedle backend running".to_owned(),
+        status,
+        message: message.to_owned(),
     })
 }
 
@@ -110,6 +124,7 @@ pub mod test_hooks {
                 provider: "listenbrainz",
                 retry_after: Some(30),
             },
+            "UPGRADE_REQUIRED" => Unavailable::UpgradeRequired,
             _ => return ApiError::not_found(),
         };
         ApiError::unavailable(variant, leaky_cause())

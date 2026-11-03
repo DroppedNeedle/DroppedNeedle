@@ -16,3 +16,4 @@ mod migration_jellyfin_ids;
 mod migration_library;
 mod migration_pipeline;
 mod tooling_cli;
+mod upgrade_mode;

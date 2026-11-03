@@ -58,5 +58,19 @@ export const ROUTE_REASONS: readonly { method: string; path: string; reason: str
 		method: 'GET',
 		path: '/api/v3/remotes/{source}/covers/playlists/{id}',
 		reason: 'the server hands the browser this URL'
-	}
+	},
+	...[
+		['GET', '/api/v3/upgrade/state'],
+		['POST', '/api/v3/upgrade/sign-in'],
+		['POST', '/api/v3/upgrade/preflight'],
+		['POST', '/api/v3/upgrade/start'],
+		['POST', '/api/v3/upgrade/fresh'],
+		['GET', '/api/v3/upgrade/progress'],
+		['POST', '/api/v3/upgrade/undo'],
+		['POST', '/api/v3/upgrade/continue']
+	].map(([method, path]) => ({
+		method,
+		path,
+		reason: 'the upgrade page, served by a server started on v2 data'
+	}))
 ];

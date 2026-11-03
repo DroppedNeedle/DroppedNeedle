@@ -150,9 +150,10 @@ Run from the repo root. `make help` lists every target.
   `server/src/middleware.rs` is the only place a 5xx body is written and
   logged. A 5xx answers the fixed internal error with the request id,
   except the closed list in `Unavailable` (server busy, media server down,
-  GitHub refusing, limiting or failing a plugin install), each with a
-  fixed sentence. A compat 5xx gets its protocol's failure shape. A message
-  a user must read needs an honest 4xx or a new `Unavailable` row.
+  GitHub refusing, limiting or failing a plugin install, the server waiting
+  for its upgrade from v2), each with a fixed sentence. A compat 5xx gets
+  its protocol's failure shape. A message a user must read needs an honest
+  4xx or a new `Unavailable` row.
 - Request bodies and query strings are read through `ValidJson` and
   `ValidQuery` from `server/kernel/src/extract.rs`, never an area's own
   copy.
@@ -210,7 +211,8 @@ Run from the repo root. `make help` lists every target.
   its row. One server process per data directory, always: the writer
   lane only orders writes within one process, so boot takes an exclusive
   lock (`DataLock::server`) and a second server on the folder refuses to
-  start.
+  start. A server started on v2 data holds only the server lock
+  (`DataLock::server_only`) until Continue takes the shared lock.
 - One exception: provider answers are cached in `metadata-cache.db` (in
   `CACHE_DIR`, or beside `library.db` when that folder is refused), a
   throwaway file opened in `kernel/src/db/cache/` under a lock of its own,

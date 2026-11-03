@@ -49,6 +49,11 @@ const EXTRACTORS: &[(&str, &str, &str)] = &[
         "Authed",
         "a Jellyfin app password, outside the session gate",
     ),
+    (
+        "src/upgrade_mode/routes.rs",
+        "UpgradeSession",
+        "the upgrade page's own sign-in, served only in upgrade mode; never a principal",
+    ),
 ];
 
 /// Reads of the user store's row outside auth and compat. Each reads

@@ -2,10 +2,11 @@
 //! v2 or half-upgraded one.
 //!
 //! [`detect`] tells an empty, v2, v3 or interrupted layout apart without
-//! changing anything, and [`check_bootable`] lets the server start only on
-//! an empty or v3 one. [`refuse_lost_key`] keeps it off a v3 database whose
-//! key file is gone. The offline upgrade in the tool reads the same layout
-//! before it moves anything.
+//! changing anything, and [`check_bootable`] lets the normal app start only
+//! on an empty or v3 one; a server started on a v2 or interrupted one opens
+//! upgrade mode instead (`crate::upgrade_mode`). [`refuse_lost_key`] keeps
+//! it off a v3 database whose key file is gone. The offline upgrade in the
+//! tool reads the same layout before it moves anything.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -174,15 +175,15 @@ pub fn detect(dirs: &DataDirs) -> Layout {
 pub enum BootRefusal {
     /// The folders hold a v2 instance.
     #[error(
-        "this is a DroppedNeedle v2 data directory. Stop the container and run \
-         `droppedneedle-tool upgrade`, then start it again. See docs/upgrading-from-v2.md"
+        "this is a DroppedNeedle v2 data directory. Upgrade it first: start the server and \
+         open its web page, or run `droppedneedle-tool upgrade`. See docs/upgrading-from-v2.md"
     )]
     V2,
     /// An upgrade stopped halfway.
     #[error(
-        "an upgrade from v2 did not finish in this data directory. Run \
-         `droppedneedle-tool upgrade` again to finish it, or \
-         `droppedneedle-tool upgrade --undo --yes` to go back to v2"
+        "an upgrade from v2 did not finish in this data directory. Start the server and open \
+         its web page to finish it or go back to v2, or run `droppedneedle-tool upgrade` \
+         again to finish it, or `droppedneedle-tool upgrade --undo --yes` to go back to v2"
     )]
     Interrupted,
     /// The folders hold something that is neither v2 nor v3.
@@ -411,7 +412,7 @@ fn read_stamp(db_path: &Path) -> Result<(i64, i64), String> {
 /// file is read through that file, so SQLite creates its `-shm` index
 /// beside it. One whose `-wal` file cannot be read is refused, since an
 /// immutable open would miss what it holds.
-fn open_read_only(db_path: &Path) -> Result<Connection, String> {
+pub fn open_read_only(db_path: &Path) -> Result<Connection, String> {
     let opened = match wal_state(db_path) {
         WalState::Unreadable(error) => {
             return Err(format!(

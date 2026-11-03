@@ -33,6 +33,9 @@ pub const SESSION_SCHEME: &str = "session";
 /// The document's security scheme for the wrapped API key.
 pub const WRAPPED_KEY_SCHEME: &str = "wrapped_key";
 
+/// The document's security scheme for the upgrade page's own sign-in.
+pub const UPGRADE_SESSION_SCHEME: &str = "upgrade_session";
+
 fn session(posture: &str) -> SecurityRequirement {
     SecurityRequirement::new(SESSION_SCHEME, [posture])
 }
@@ -41,6 +44,9 @@ fn session(posture: &str) -> SecurityRequirement {
 pub enum OwnCredential {
     /// The shared `X-Wrapped-API-Key` secret of the wrapped API.
     WrappedKey,
+    /// The upgrade page's sign-in cookie. Its routes are served only by a
+    /// server started on v2 data, never by the normal app.
+    UpgradeSession,
 }
 
 /// An area's routes, grouped by who may call them. Building one needs no
@@ -64,6 +70,8 @@ pub struct Postures<S = ()> {
     pub admin: OpenApiRouter<S>,
     /// Whoever holds the wrapped API key, no session.
     pub wrapped_key: OpenApiRouter<S>,
+    /// Whoever signed in to the upgrade page, no session.
+    pub upgrade_session: OpenApiRouter<S>,
 }
 
 impl<S: Clone + Send + Sync + 'static> Default for Routes<S> {
@@ -81,6 +89,7 @@ impl<S: Clone + Send + Sync + 'static> Routes<S> {
             curator: OpenApiRouter::default(),
             admin: OpenApiRouter::default(),
             wrapped_key: OpenApiRouter::default(),
+            upgrade_session: OpenApiRouter::default(),
         }))
     }
 
@@ -128,6 +137,10 @@ impl<S: Clone + Send + Sync + 'static> Routes<S> {
                 let group = std::mem::take(&mut self.0.wrapped_key);
                 self.0.wrapped_key = group.routes(routes);
             }
+            OwnCredential::UpgradeSession => {
+                let group = std::mem::take(&mut self.0.upgrade_session);
+                self.0.upgrade_session = group.routes(routes);
+            }
         }
         self
     }
@@ -141,6 +154,7 @@ impl<S: Clone + Send + Sync + 'static> Routes<S> {
             curator: mine.curator.merge(other.curator),
             admin: mine.admin.merge(other.admin),
             wrapped_key: mine.wrapped_key.merge(other.wrapped_key),
+            upgrade_session: mine.upgrade_session.merge(other.upgrade_session),
         }))
     }
 
@@ -158,6 +172,10 @@ impl<S: Clone + Send + Sync + 'static> Routes<S> {
             (
                 &groups.wrapped_key,
                 SecurityRequirement::new(WRAPPED_KEY_SCHEME, Vec::<String>::new()),
+            ),
+            (
+                &groups.upgrade_session,
+                SecurityRequirement::new(UPGRADE_SESSION_SCHEME, Vec::<String>::new()),
             ),
         ] {
             let mut part = group.get_openapi().clone();
@@ -191,7 +209,8 @@ impl<S: Clone + Send + Sync + 'static> Routes<S> {
             user: groups.user.with_state(state.clone()),
             curator: groups.curator.with_state(state.clone()),
             admin: groups.admin.with_state(state.clone()),
-            wrapped_key: groups.wrapped_key.with_state(state),
+            wrapped_key: groups.wrapped_key.with_state(state.clone()),
+            upgrade_session: groups.upgrade_session.with_state(state),
         }))
     }
 
@@ -212,12 +231,14 @@ impl Routes<()> {
             curator,
             admin,
             wrapped_key,
+            upgrade_session,
         } = self.into_postures();
         public
             .merge(user)
             .merge(curator)
             .merge(admin)
             .merge(wrapped_key)
+            .merge(upgrade_session)
             .into()
     }
 }

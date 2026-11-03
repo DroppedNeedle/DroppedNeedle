@@ -95,6 +95,11 @@ const CLOSED_LIST: &[(&str, u16, &str)] = &[
         503,
         "An outside service is not answering. Try again later.",
     ),
+    (
+        "UPGRADE_REQUIRED",
+        503,
+        "DroppedNeedle needs its upgrade from v2. Open the web page to run it.",
+    ),
 ];
 
 #[tokio::test]
@@ -112,6 +117,7 @@ async fn closed_list_answers_pass_the_boundary_with_their_sentence() {
             provider: "listenbrainz",
             retry_after: Some(30),
         },
+        Unavailable::UpgradeRequired,
     ];
     // Written out by hand, never read from the kit: a new variant fails to
     // compile here, and once listed above it needs its row in the table.
@@ -120,7 +126,8 @@ async fn closed_list_answers_pass_the_boundary_with_their_sentence() {
         Unavailable::MediaServer
         | Unavailable::UpstreamRefused
         | Unavailable::UpstreamError
-        | Unavailable::UpstreamUnreadable => None,
+        | Unavailable::UpstreamUnreadable
+        | Unavailable::UpgradeRequired => None,
         Unavailable::UpstreamRateLimited { .. } => Some("42"),
         Unavailable::Provider { .. } => Some("30"),
     };

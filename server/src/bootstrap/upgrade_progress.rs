@@ -6,11 +6,13 @@
 //! An upgrade, a fresh start or an undo writes a `step` line as each step
 //! starts and `progress` lines while a step with a total moves along, then
 //! ends with one `result` line or one `failed` line. `upgrade --check`
-//! writes a single `check` line.
+//! writes a single `check` line. The server's upgrade page answers with
+//! the same types, so they are in the API document too.
 
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 /// The version every line carries as `v`.
 pub const LINE_VERSION: u32 = 1;
@@ -73,7 +75,8 @@ pub enum Event {
 }
 
 /// The steps a run goes through, in the order they can come.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[schema(as = UpgradeStep)]
 #[serde(rename_all = "snake_case")]
 pub enum StepId {
     /// An earlier run did not finish; its changes are rolled back first.
@@ -138,7 +141,8 @@ pub struct ProgressLine {
 }
 
 /// What the data folders hold, as the check found them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[schema(as = UpgradeFoundLayout)]
 #[serde(rename_all = "snake_case")]
 pub enum FoundLayout {
     /// A v2 instance: the checks ran.
@@ -156,7 +160,8 @@ pub enum FoundLayout {
 
 /// What `upgrade --check` found. It runs every check the upgrade runs
 /// before it moves anything, and changes nothing.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[schema(as = UpgradeCheck)]
 pub struct CheckResult {
     /// What the folders hold.
     pub layout: FoundLayout,
@@ -176,7 +181,8 @@ pub struct CheckResult {
 }
 
 /// Something that stops the upgrade until it is fixed.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[schema(as = UpgradeBlocker)]
 pub struct Blocker {
     /// What it is.
     pub code: Code,
@@ -187,7 +193,8 @@ pub struct Blocker {
 }
 
 /// A feature whose callback address changes with the upgrade.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[schema(as = UpgradeCallbackFeature)]
 #[serde(rename_all = "snake_case")]
 pub enum CallbackFeature {
     /// Signing in through an OpenID Connect provider.
@@ -199,7 +206,8 @@ pub enum CallbackFeature {
 }
 
 /// A change at an outside service to acknowledge before the upgrade.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[schema(as = UpgradeWarning)]
 pub struct Warning {
     /// The feature it concerns.
     pub feature: CallbackFeature,
@@ -213,7 +221,8 @@ pub struct Warning {
 
 /// An address, whole when v2's settings name the host, else the path to
 /// put after the scheme and host DroppedNeedle is opened at.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[schema(as = UpgradeAddress)]
 #[serde(tag = "kind", content = "value", rename_all = "snake_case")]
 pub enum Address {
     /// A full address.
@@ -223,7 +232,8 @@ pub enum Address {
 }
 
 /// How a run ended well.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[schema(as = UpgradeOutcome)]
 #[serde(rename_all = "snake_case")]
 pub enum Outcome {
     /// The v2 data is now v3 data.
@@ -239,7 +249,8 @@ pub enum Outcome {
 }
 
 /// The run finished.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[schema(as = UpgradeResult)]
 pub struct Finished {
     /// How it ended.
     pub outcome: Outcome,
@@ -250,7 +261,8 @@ pub struct Finished {
 }
 
 /// The two folders the v2 files are kept in.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[schema(as = UpgradeBackupFolders)]
 pub struct BackupFolders {
     /// The config folder's backup.
     pub config: String,
@@ -259,7 +271,8 @@ pub struct BackupFolders {
 }
 
 /// What the upgrade did, as its text summary says it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[schema(as = UpgradeSummary)]
 pub struct Summary {
     /// Records moved to v3, by the names the report counts under; kinds
     /// with none moved are left out.
@@ -279,7 +292,8 @@ pub struct Summary {
 }
 
 /// The run failed or stopped.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[schema(as = UpgradeFailure)]
 pub struct FailedLine {
     /// What went wrong.
     pub code: Code,
@@ -290,7 +304,8 @@ pub struct FailedLine {
 }
 
 /// Where the v2 files are after a failed run.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[schema(as = UpgradeV2Files)]
 #[serde(rename_all = "snake_case")]
 pub enum V2Files {
     /// The run stopped before it moved any.
@@ -304,7 +319,8 @@ pub enum V2Files {
 }
 
 /// Why the upgrade cannot start, or why a run failed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[schema(as = UpgradeCode)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum Code {
     /// The folders hold something that is neither v2 nor v3.
