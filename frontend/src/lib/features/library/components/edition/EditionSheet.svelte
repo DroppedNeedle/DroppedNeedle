@@ -12,7 +12,7 @@
 	import { onDestroy, tick, untrack } from 'svelte';
 	import { ChevronLeft, ExternalLink } from 'lucide-svelte';
 	import { coverPath } from '$lib/api/covers';
-	import AlbumImage from '$lib/components/AlbumImage.svelte';
+	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import { outsideLink } from '$lib/components/outsideLink';
 	import { formatDuration } from '$lib/utils/formatting';
 	import Modal from '$lib/ui/Modal.svelte';
@@ -22,7 +22,7 @@
 	import SelectField from '$lib/ui/SelectField.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { toastStore } from '$lib/stores/toast';
-	import { useIntegrationStatus } from '$lib/queries/home.svelte';
+	import { useIntegrationStatus } from '$lib/features/home/queries/home.svelte';
 	import type { AlbumView } from '$lib/types';
 	import { getLibraryAlbumDetailQuery } from '$lib/features/library/queries/LibraryQueries.svelte';
 	import { getReleaseEditionSearchQuery } from '$lib/features/library/queries/LibraryEditionQueries.svelte';

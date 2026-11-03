@@ -182,7 +182,7 @@ vi.mock('$lib/stores/toast', () => ({
 	toastStore: { show: vi.fn() }
 }));
 
-vi.mock('$lib/stores/deckSampler.svelte', () => ({
+vi.mock('$lib/features/discover/state/deckSampler.svelte', () => ({
 	deckSampler: { activeKey: null, status: 'idle', start: vi.fn(), stop: vi.fn() }
 }));
 
@@ -193,8 +193,8 @@ const { emptyComponent } = vi.hoisted(() => ({
 		return { default: Comp };
 	}
 }));
-vi.mock('$lib/components/AlbumImage.svelte', emptyComponent);
-vi.mock('$lib/components/HeroBackdrop.svelte', emptyComponent);
+vi.mock('$lib/media/AlbumImage.svelte', emptyComponent);
+vi.mock('$lib/media/HeroBackdrop.svelte', emptyComponent);
 vi.mock('$lib/features/downloads/components/AlbumDownloadStatus.svelte', emptyComponent);
 
 const blob = vi.hoisted(() => ({ download: vi.fn() }));

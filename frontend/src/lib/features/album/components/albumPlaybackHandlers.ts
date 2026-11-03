@@ -1,8 +1,8 @@
 import { v3 } from '$lib/api/v3/endpoint';
 import type { AlbumBasicInfo, LocalAlbumMatch, LocalTrackInfo, Track } from '$lib/types';
-import type { RemoteMatch, RemoteTrack } from '$lib/queries/remotes/types';
-import type { QueueItem, PlaybackMeta } from '$lib/player/types';
-import type { TrackMeta, TrackSourceData } from '$lib/player/queueHelpers';
+import type { RemoteMatch, RemoteTrack } from '$lib/features/remote-library/queries/types';
+import type { QueueItem, PlaybackMeta } from '$lib/features/player/playback/types';
+import type { TrackMeta, TrackSourceData } from '$lib/features/player/playback/queueHelpers';
 import {
 	buildQueueItem,
 	buildRemoteQueueItems,
@@ -10,11 +10,11 @@ import {
 	compareDiscTrack,
 	getDiscTrackKey,
 	normalizeDiscNumber
-} from '$lib/player/queueHelpers';
+} from '$lib/features/player/playback/queueHelpers';
 import { getCoverUrl } from '$lib/utils/errorHandling';
-import { launchRemotePlayback } from '$lib/player/launchRemotePlayback';
-import { launchLocalPlayback } from '$lib/player/launchLocalPlayback';
-import { playerStore } from '$lib/stores/player.svelte';
+import { launchRemotePlayback } from '$lib/features/player/playback/launchRemotePlayback';
+import { launchLocalPlayback } from '$lib/features/player/playback/launchLocalPlayback';
+import { playerStore } from '$lib/features/player/state/player.svelte';
 import type { MenuItem } from '$lib/components/ContextMenu.svelte';
 import { ListPlus, ListStart, ListMusic, Download, Trash2 } from 'lucide-svelte';
 import {

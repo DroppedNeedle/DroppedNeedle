@@ -2,9 +2,9 @@
 	import { albumHref } from '$lib/utils/entityRoutes';
 	import { ChevronDown, Download } from 'lucide-svelte';
 	import { libraryStore } from '$lib/stores/library';
-	import AlbumImage from '$lib/components/AlbumImage.svelte';
+	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import Button from '$lib/ui/Button.svelte';
-	import SampleButton from '$lib/components/discover/SampleButton.svelte';
+	import SampleButton from '$lib/features/discover/components/SampleButton.svelte';
 	import LibraryBadge from '$lib/features/album/components/LibraryBadge.svelte';
 	import { getLibraryMembershipQuery } from '$lib/features/library/queries/LibraryQueries.svelte';
 	import { trackCountLabel } from '$lib/utils/trackCount';

@@ -2,11 +2,14 @@ import {
 	fetchLocalAlbumMatch,
 	fetchRemoteAlbumMatch
 } from '$lib/features/album/queries/albumMatch.svelte';
-import type { QueueItem } from '$lib/player/types';
-import type { SourceType } from '$lib/player/types';
+import type { QueueItem } from '$lib/features/player/playback/types';
+import type { SourceType } from '$lib/features/player/playback/types';
 import type { ReleaseGroup } from '$lib/types';
-import { buildQueueItemsFromLocal, buildRemoteQueueItems } from '$lib/player/queueHelpers';
-import type { TrackMeta } from '$lib/player/queueHelpers';
+import {
+	buildQueueItemsFromLocal,
+	buildRemoteQueueItems
+} from '$lib/features/player/playback/queueHelpers';
+import type { TrackMeta } from '$lib/features/player/playback/queueHelpers';
 import { getCoverUrl } from '$lib/utils/errorHandling';
 
 type PlaybackSourceType = Exclude<SourceType, 'youtube'>;

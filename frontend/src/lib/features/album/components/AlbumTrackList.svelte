@@ -6,23 +6,23 @@
 		LocalAlbumMatch,
 		LocalTrackInfo
 	} from '$lib/types';
-	import type { RemoteMatch, RemoteTrack } from '$lib/queries/remotes/types';
+	import type { RemoteMatch, RemoteTrack } from '$lib/features/remote-library/queries/types';
 	import type { MenuItem } from '$lib/components/ContextMenu.svelte';
 	import type { RenderedTrackSection } from './albumTrackResolvers';
 	import type { FetchedEditionRow } from '../state/albumPageState.svelte';
 	import { resolveSourceTrack } from './albumTrackResolvers';
-	import { normalizeDiscNumber, getDiscTrackKey } from '$lib/player/queueHelpers';
+	import { normalizeDiscNumber, getDiscTrackKey } from '$lib/features/player/playback/queueHelpers';
 	import { formatBytes, formatDuration } from '$lib/utils/formatting';
-	import { playerStore } from '$lib/stores/player.svelte';
-	import NowPlayingIndicator from '$lib/components/NowPlayingIndicator.svelte';
+	import { playerStore } from '$lib/features/player/state/player.svelte';
+	import NowPlayingIndicator from '$lib/features/player/components/NowPlayingIndicator.svelte';
 	import TrackPlayButton from '$lib/features/album/components/TrackPlayButton.svelte';
-	import SampleButton from '$lib/components/discover/SampleButton.svelte';
+	import SampleButton from '$lib/features/discover/components/SampleButton.svelte';
 	import TrackSourceButton from '$lib/features/album/components/TrackSourceButton.svelte';
 	import ContextMenu from '$lib/components/ContextMenu.svelte';
-	import JellyfinIcon from '$lib/components/JellyfinIcon.svelte';
-	import LocalFilesIcon from '$lib/components/LocalFilesIcon.svelte';
-	import NavidromeIcon from '$lib/components/NavidromeIcon.svelte';
-	import PlexIcon from '$lib/components/PlexIcon.svelte';
+	import JellyfinIcon from '$lib/media/icons/JellyfinIcon.svelte';
+	import LocalFilesIcon from '$lib/media/icons/LocalFilesIcon.svelte';
+	import NavidromeIcon from '$lib/media/icons/NavidromeIcon.svelte';
+	import PlexIcon from '$lib/media/icons/PlexIcon.svelte';
 	import LibraryFormatBadge from '$lib/features/library/components/LibraryFormatBadge.svelte';
 	import LibraryTrackRow from '$lib/features/library/components/LibraryTrackRow.svelte';
 	import { ChevronDown, ChevronUp, TriangleAlert, TrendingUp, Check } from 'lucide-svelte';
@@ -35,7 +35,7 @@
 	import TrackRequestButton from '$lib/features/downloads/components/TrackRequestButton.svelte';
 	import TrackDownloadStatus from '$lib/features/downloads/components/TrackDownloadStatus.svelte';
 	import HeldFileRow from '$lib/features/downloads/components/HeldFileRow.svelte';
-	import { useIntegrationStatus } from '$lib/queries/home.svelte';
+	import { useIntegrationStatus } from '$lib/features/home/queries/home.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { createRequestUpgradeTrackMutation } from '$lib/features/downloads/queries/UpgradeQueries.svelte';
 	import { toastStore } from '$lib/stores/toast';

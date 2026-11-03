@@ -147,7 +147,7 @@ vi.mock('$lib/features/library-management/queries/RemovalQueries.svelte', () => 
 vi.mock('$lib/features/library/queries/LibraryEditionQueries.svelte', () => ({
 	getReleaseEditionSearchQuery: () => ({ data: undefined, isError: false, isFetching: false })
 }));
-vi.mock('$lib/components/AlbumImage.svelte', () => {
+vi.mock('$lib/media/AlbumImage.svelte', () => {
 	const Comp = function () {};
 	Comp.prototype = {};
 	return { default: Comp };

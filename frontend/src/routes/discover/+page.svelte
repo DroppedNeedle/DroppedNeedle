@@ -1,28 +1,28 @@
 <script lang="ts">
-	import HomeSection from '$lib/components/HomeSection.svelte';
+	import HomeSection from '$lib/features/discover/components/HomeSection.svelte';
 	import ServiceErrorState from '$lib/components/ServiceErrorState.svelte';
-	import DailyMixCard from '$lib/components/DailyMixCard.svelte';
-	import RadioCard from '$lib/components/RadioCard.svelte';
-	import TopPicksDeck from '$lib/components/discover/TopPicksDeck.svelte';
-	import PlayableSection from '$lib/components/discover/PlayableSection.svelte';
-	import ListeningLounge from '$lib/components/discover/ListeningLounge.svelte';
-	import DiscoverZoneNav from '$lib/components/discover/DiscoverZoneNav.svelte';
-	import GenrePills from '$lib/components/GenrePills.svelte';
-	import GenreGrid from '$lib/components/GenreGrid.svelte';
-	import DiscoverQueueDeck from '$lib/components/discover/DiscoverQueueDeck.svelte';
-	import HiddenAlbumsModal from '$lib/components/discover/HiddenAlbumsModal.svelte';
-	import PlaylistDiscoveryModal from '$lib/components/PlaylistDiscoveryModal.svelte';
-	import WeeklyExploration from '$lib/components/WeeklyExploration.svelte';
-	import ServicePromptCard from '$lib/components/ServicePromptCard.svelte';
-	import DiscoverArtistHero from '$lib/components/DiscoverArtistHero.svelte';
-	import DiscoverArtistMiniBand from '$lib/components/DiscoverArtistMiniBand.svelte';
+	import DailyMixCard from '$lib/features/discover/components/DailyMixCard.svelte';
+	import RadioCard from '$lib/features/discover/components/RadioCard.svelte';
+	import TopPicksDeck from '$lib/features/discover/components/TopPicksDeck.svelte';
+	import PlayableSection from '$lib/features/discover/components/PlayableSection.svelte';
+	import ListeningLounge from '$lib/features/discover/components/ListeningLounge.svelte';
+	import DiscoverZoneNav from '$lib/features/discover/components/DiscoverZoneNav.svelte';
+	import GenrePills from '$lib/features/genre/components/GenrePills.svelte';
+	import GenreGrid from '$lib/features/genre/components/GenreGrid.svelte';
+	import DiscoverQueueDeck from '$lib/features/discover/components/DiscoverQueueDeck.svelte';
+	import HiddenAlbumsModal from '$lib/features/discover/components/HiddenAlbumsModal.svelte';
+	import PlaylistDiscoveryModal from '$lib/features/discover/components/PlaylistDiscoveryModal.svelte';
+	import WeeklyExploration from '$lib/features/discover/components/WeeklyExploration.svelte';
+	import ServicePromptCard from '$lib/features/discover/components/ServicePromptCard.svelte';
+	import DiscoverArtistHero from '$lib/features/discover/components/DiscoverArtistHero.svelte';
+	import DiscoverArtistMiniBand from '$lib/features/discover/components/DiscoverArtistMiniBand.svelte';
 	import SectionDivider from '$lib/components/SectionDivider.svelte';
 	import CarouselSkeleton from '$lib/components/CarouselSkeleton.svelte';
 	import EmptyState from '$lib/components/EmptyState.svelte';
 	import PageHeader from '$lib/components/PageHeader.svelte';
 	import LiveUpdatingBadge from '$lib/components/LiveUpdatingBadge.svelte';
 	import Button from '$lib/ui/Button.svelte';
-	import { isDismissed } from '$lib/utils/dismissedPrompts';
+	import { isDismissed } from '$lib/features/discover/state/dismissedPrompts';
 	import { withBasePath } from '$lib/utils/basePath';
 	import {
 		EyeOff,
@@ -39,13 +39,13 @@
 		Heart,
 		SlidersHorizontal
 	} from 'lucide-svelte';
-	import { getDiscoverHomeV3Query } from '$lib/queries/discover/DiscoverV3Queries.svelte';
+	import { getDiscoverHomeV3Query } from '$lib/features/discover/queries/DiscoverV3Queries.svelte';
 	import {
 		createIgnoreDiscoveryV3Mutation,
 		createRefreshDiscoverV3Mutation
-	} from '$lib/queries/discover/DiscoverV3Mutations.svelte';
-	import { useDiscoverActivity } from '$lib/queries/discover/DiscoverDemand.svelte';
-	import type { SectionZone, TopPickItem } from '$lib/queries/discover/types';
+	} from '$lib/features/discover/queries/DiscoverV3Mutations.svelte';
+	import { useDiscoverActivity } from '$lib/features/discover/queries/DiscoverDemand.svelte';
+	import type { SectionZone, TopPickItem } from '$lib/features/discover/queries/types';
 	import { getSectionPrefsQuery } from '$lib/queries/section-prefs.svelte';
 	import {
 		becauseOf,
@@ -54,8 +54,8 @@
 		shelvesOf,
 		weeklyOf,
 		zoneSections
-	} from '$lib/queries/discover/sections';
-	import { genreRows } from '$lib/utils/sectionRows';
+	} from '$lib/features/discover/queries/sections';
+	import { genreRows } from '$lib/features/discover/components/sectionRows';
 
 	useDiscoverActivity(() => ({ feature: 'discover' }));
 

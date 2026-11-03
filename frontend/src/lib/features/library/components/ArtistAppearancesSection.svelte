@@ -2,7 +2,7 @@
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import { Disc3, MicVocal } from 'lucide-svelte';
-	import AlbumImage from '$lib/components/AlbumImage.svelte';
+	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import LocalAlbumTrackList from '$lib/features/library/components/LocalAlbumTrackList.svelte';
 	import ArtistAppearancesSectionSkeleton from './ArtistAppearancesSectionSkeleton.svelte';
 	import { getLibraryArtistAppearancesQuery } from '$lib/features/library/queries/LibraryQueries.svelte';

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { FileDown, RotateCcw, TimerOff } from 'lucide-svelte';
 
-	import AlbumImage from '$lib/components/AlbumImage.svelte';
+	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import {
 		createReimportDownloadMutation,
 		createRetryDownloadMutation,

@@ -11,18 +11,18 @@
 		getRemoteMoodsQuery,
 		getRemoteRecentQuery,
 		getRemoteStatsQuery
-	} from '$lib/queries/remotes/RemoteQueries.svelte';
-	import { defaultSortOrder } from '$lib/queries/remotes/remoteSources';
-	import type { RemoteAlbum } from '$lib/queries/remotes/types';
-	import type { PlaybackMeta, QueueItem } from '$lib/player/types';
-	import { playerStore } from '$lib/stores/player.svelte';
+	} from '$lib/features/remote-library/queries/RemoteQueries.svelte';
+	import { defaultSortOrder } from '$lib/features/remote-library/queries/remoteSources';
+	import type { RemoteAlbum } from '$lib/features/remote-library/queries/types';
+	import type { PlaybackMeta, QueueItem } from '$lib/features/player/playback/types';
+	import { playerStore } from '$lib/features/player/state/player.svelte';
 	import { toastStore } from '$lib/stores/toast';
-	import AlbumImage from '$lib/components/AlbumImage.svelte';
+	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import ContextMenu from '$lib/components/ContextMenu.svelte';
 	import type { MenuItem } from '$lib/components/ContextMenu.svelte';
-	import AddToPlaylistModal from '$lib/components/AddToPlaylistModal.svelte';
-	import SourceAlbumModal from '$lib/components/SourceAlbumModal.svelte';
-	import LibraryFilterBar from '$lib/components/LibraryFilterBar.svelte';
+	import AddToPlaylistModal from '$lib/features/playlists/components/AddToPlaylistModal.svelte';
+	import SourceAlbumModal from '$lib/features/remote-library/components/SourceAlbumModal.svelte';
+	import LibraryFilterBar from '$lib/features/remote-library/components/LibraryFilterBar.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import CardTitle from '$lib/ui/CardTitle.svelte';

@@ -1,7 +1,7 @@
 import { AlbumMatchKeyFactory } from '$lib/queries/featureKeys';
 
 import type { RemoteMatchHints } from '$lib/queries/remotes/params';
-import type { RemoteMatch, RemoteSource } from '$lib/queries/remotes/types';
+import type { RemoteMatch, RemoteSource } from '$lib/features/remote-library/queries/types';
 import { remoteQuery } from '$lib/queries/remotes/params';
 import { createQuery } from '@tanstack/svelte-query';
 import type { Getter } from 'runed';

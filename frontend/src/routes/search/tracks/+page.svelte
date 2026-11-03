@@ -3,12 +3,12 @@
 	import { browser } from '$app/environment';
 	import { goto } from '$app/navigation';
 	import { withBasePath } from '$lib/utils/basePath';
-	import SearchSongRow from '$lib/components/SearchSongRow.svelte';
+	import SearchSongRow from '$lib/features/search/components/SearchSongRow.svelte';
 	import {
 		SEARCH_BUCKET_PAGE_SIZE,
 		getSearchBucketV3Query
-	} from '$lib/queries/search/SearchV3Queries.svelte';
-	import { toSearchSongs, type SearchSong } from '$lib/queries/search/SearchV3Adapters';
+	} from '$lib/features/search/queries/SearchV3Queries.svelte';
+	import { toSearchSongs, type SearchSong } from '$lib/features/search/queries/SearchV3Adapters';
 	import { SvelteMap } from 'svelte/reactivity';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';

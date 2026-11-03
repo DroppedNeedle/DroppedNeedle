@@ -6,7 +6,7 @@
 		createSaveSpotifySettingsMutation,
 		getSpotifySettingsQuery
 	} from '$lib/queries/settings/SectionSettingsQueries.svelte';
-	import { getSpotifyRedirectUriQuery } from '$lib/queries/spotify.svelte';
+	import { getSpotifyRedirectUriQuery } from '$lib/features/playlists/queries/spotify.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { Copy, ExternalLink } from 'lucide-svelte';
 	import Button from '$lib/ui/Button.svelte';

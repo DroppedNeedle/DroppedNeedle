@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { Disc3, Heart, Users, Music2, ArrowUpRight } from 'lucide-svelte';
-	import AlbumImage from '$lib/components/AlbumImage.svelte';
-	import ArtistImage from '$lib/components/ArtistImage.svelte';
+	import AlbumImage from '$lib/media/AlbumImage.svelte';
+	import ArtistImage from '$lib/media/ArtistImage.svelte';
 	import {
 		getLibraryArtistThumbsQuery,
 		getLibraryRecentlyAddedQuery

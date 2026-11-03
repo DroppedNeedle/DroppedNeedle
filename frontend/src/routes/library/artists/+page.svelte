@@ -3,7 +3,7 @@
 	import { goto } from '$app/navigation';
 	import { withBasePath } from '$lib/utils/basePath';
 	import ArtistCardSkeleton from '$lib/features/artist/components/ArtistCardSkeleton.svelte';
-	import ArtistImage from '$lib/components/ArtistImage.svelte';
+	import ArtistImage from '$lib/media/ArtistImage.svelte';
 	import LocalIdentityBadge from '$lib/features/library/components/LocalIdentityBadge.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';

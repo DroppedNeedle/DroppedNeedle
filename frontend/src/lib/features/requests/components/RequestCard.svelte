@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { albumHref, artistHref } from '$lib/utils/entityRoutes';
 	import { withBasePath } from '$lib/utils/basePath';
-	import AlbumImage from '$lib/components/AlbumImage.svelte';
+	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import DeleteAlbumModal from '$lib/features/album/components/DeleteAlbumModal.svelte';
 	import type { RequestItem, RequestKind } from '$lib/features/requests/queries/types';
 	import { liveRequestStatus } from '$lib/features/requests/queries/liveStatus';

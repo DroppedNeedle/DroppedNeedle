@@ -9,7 +9,7 @@
 	import { ExternalLink, EyeOff, Trash2, Undo2 } from 'lucide-svelte';
 	import { ApiError } from '$lib/api/errors';
 	import { coverPath } from '$lib/api/covers';
-	import AlbumImage from '$lib/components/AlbumImage.svelte';
+	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import { outsideLink } from '$lib/components/outsideLink';
 	import AsyncButton from '$lib/ui/AsyncButton.svelte';
 	import Button from '$lib/ui/Button.svelte';

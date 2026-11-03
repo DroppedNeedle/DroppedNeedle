@@ -1,8 +1,8 @@
 import { page } from 'vitest/browser';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render } from 'vitest-browser-svelte';
-import type { PlaylistDetailV3 } from '$lib/queries/playlists/PlaylistV3Queries.svelte';
-import { PlaylistQueryKeyFactory } from '$lib/queries/playlists/PlaylistQueryKeyFactory';
+import type { PlaylistDetailV3 } from '$lib/features/playlists/queries/PlaylistV3Queries.svelte';
+import { PlaylistQueryKeyFactory } from '$lib/features/playlists/queries/PlaylistQueryKeyFactory';
 
 const mockShareMutate = vi.fn();
 const mockDeleteMutate = vi.fn();
@@ -25,7 +25,7 @@ const detailQuery = {
 	refetch: vi.fn()
 };
 
-vi.mock('$lib/queries/playlists/PlaylistV3Queries.svelte', () => ({
+vi.mock('$lib/features/playlists/queries/PlaylistV3Queries.svelte', () => ({
 	getPlaylistDetailV3Query: () => detailQuery,
 	// PlaylistDiscoveryModal (inside the header) reads the playlist list.
 	getPlaylistListV3Query: () => ({
@@ -42,7 +42,7 @@ vi.mock('$lib/queries/playlists/PlaylistV3Queries.svelte', () => ({
 	})
 }));
 
-vi.mock('$lib/queries/playlists/PlaylistV3Mutations.svelte', () => ({
+vi.mock('$lib/features/playlists/queries/PlaylistV3Mutations.svelte', () => ({
 	createSetPlaylistVisibilityV3Mutation: () => ({ mutateAsync: mockShareMutate, isPending: false }),
 	createDeletePlaylistV3Mutation: () => ({ mutateAsync: mockDeleteMutate, isPending: false }),
 	createUpdatePlaylistV3Mutation: () => ({ mutateAsync: mockRenameMutate, isPending: false }),
@@ -70,7 +70,7 @@ vi.mock('$lib/queries/QueryClient', async () => {
 });
 
 // The discovery modal (inside the header) reads V3 suggestions.
-vi.mock('$lib/queries/discover/DiscoverV3Queries.svelte', () => ({
+vi.mock('$lib/features/discover/queries/DiscoverV3Queries.svelte', () => ({
 	getDiscoverPlaylistSuggestionsV3Query: () => ({
 		data: undefined,
 		isLoading: false,
@@ -88,7 +88,7 @@ vi.mock('$lib/stores/toast', () => ({
 const mockPlayQueue = vi.fn();
 const mockAddToQueue = vi.fn();
 const mockPlayNext = vi.fn();
-vi.mock('$lib/stores/player.svelte', () => ({
+vi.mock('$lib/features/player/state/player.svelte', () => ({
 	playerStore: {
 		playQueue: (...args: unknown[]) => mockPlayQueue(...args),
 		addToQueue: (...args: unknown[]) => mockAddToQueue(...args),

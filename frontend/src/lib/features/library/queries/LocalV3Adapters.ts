@@ -1,6 +1,6 @@
 import { getApiUrl } from '$lib/api/api-utils';
 import { albumArtworkPath, coverPath } from '$lib/api/covers';
-import type { QueueItem, SourceType } from '$lib/player/types';
+import type { QueueItem, SourceType } from '$lib/features/player/playback/types';
 import type { components } from '$lib/api/v3/openapi';
 import type { CrateReason, CrateTrack } from '$lib/types';
 import type { AlbumCardV3, LocalTrackV3, SuggestionTrackV3 } from './LocalV3Queries.svelte';

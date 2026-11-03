@@ -2,13 +2,17 @@ import {
 	fetchLocalAlbumMatch,
 	fetchRemoteAlbumMatch
 } from '$lib/features/album/queries/albumMatch.svelte';
-import { readIntegrationStatus } from '$lib/queries/home.svelte';
-import { playerStore } from '$lib/stores/player.svelte';
+import { readIntegrationStatus } from '$lib/features/home/queries/home.svelte';
+import { playerStore } from '$lib/features/player/state/player.svelte';
 import { toastStore } from '$lib/stores/toast';
-import { recordingFor, REMOTE_FORMAT, remoteStreamKey } from '$lib/player/queueHelpers';
+import {
+	recordingFor,
+	REMOTE_FORMAT,
+	remoteStreamKey
+} from '$lib/features/player/playback/queueHelpers';
 import { getCoverUrl } from '$lib/utils/errorHandling';
-import type { LocalTrackInfo, QueueItem } from '$lib/player/types';
-import type { RemoteSource, RemoteTrack } from '$lib/queries/remotes/types';
+import type { LocalTrackInfo, QueueItem } from '$lib/features/player/playback/types';
+import type { RemoteSource, RemoteTrack } from '$lib/features/remote-library/queries/types';
 
 export interface AlbumCardMeta {
 	mbid: string;

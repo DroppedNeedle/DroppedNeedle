@@ -5,18 +5,18 @@
 	import { withBasePath } from '$lib/utils/basePath';
 	import AlbumCard from '$lib/features/album/components/AlbumCard.svelte';
 	import AlbumCardSkeleton from '$lib/features/album/components/AlbumCardSkeleton.svelte';
-	import SearchTopResult from '$lib/components/SearchTopResult.svelte';
+	import SearchTopResult from '$lib/features/search/components/SearchTopResult.svelte';
 	import type { Album, EnrichmentSource, SearchRemoteStatus } from '$lib/types';
-	import { applyAlbumEnrichment } from '$lib/utils/enrichment';
-	import { getSearchStatusNotice } from '$lib/utils/searchStatus';
+	import { applyAlbumEnrichment } from '$lib/features/search/queries/enrichment';
+	import { getSearchStatusNotice } from '$lib/features/search/components/searchStatus';
 	import {
 		SEARCH_BUCKET_PAGE_SIZE,
 		getSearchBucketV3Query,
 		getSearchEnrichBatchV3Query,
 		type EnrichmentResponseV3
-	} from '$lib/queries/search/SearchV3Queries.svelte';
-	import { SearchEnrichCollector } from '$lib/queries/search/SearchV3Enrichment.svelte';
-	import { dedupeByMbid, toV1Album } from '$lib/queries/search/SearchV3Adapters';
+	} from '$lib/features/search/queries/SearchV3Queries.svelte';
+	import { SearchEnrichCollector } from '$lib/features/search/queries/SearchV3Enrichment.svelte';
+	import { dedupeByMbid, toV1Album } from '$lib/features/search/queries/SearchV3Adapters';
 	import { RefreshCw } from 'lucide-svelte';
 	import { SvelteMap } from 'svelte/reactivity';
 	import Button from '$lib/ui/Button.svelte';

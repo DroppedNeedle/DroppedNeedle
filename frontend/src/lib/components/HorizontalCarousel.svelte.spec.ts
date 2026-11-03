@@ -1,10 +1,10 @@
 import { page } from 'vitest/browser';
 import { describe, expect, it } from 'vitest';
-import type { ArtistRef } from '$lib/queries/discover/types';
+import type { ArtistRef } from '$lib/features/discover/queries/types';
 import { apiError, fakeApi } from '$lib/test/api';
 import { renderWithQuery } from '$lib/test/render';
 
-import HomeSection from './HomeSection.svelte';
+import HomeSection from '$lib/features/discover/components/HomeSection.svelte';
 // The strip's width and scrolling come from Tailwind, so the real styles load.
 import '../../app.css';
 

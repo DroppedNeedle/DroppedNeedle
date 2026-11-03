@@ -1,4 +1,4 @@
-import type { QueueItem } from '$lib/player/types';
+import type { QueueItem } from '$lib/features/player/playback/types';
 import type { TrackView } from '$lib/types';
 import type { LibraryV3TracksParams } from './LibraryQueryKeyFactory';
 import {

@@ -12,7 +12,7 @@
 		Tags
 	} from 'lucide-svelte';
 
-	import AlbumImage from '$lib/components/AlbumImage.svelte';
+	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import type { ManagementAuditDossier, ManagementAuditEntry } from './LibraryManagementAuditTypes';

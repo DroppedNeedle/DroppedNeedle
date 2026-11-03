@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { Coffee, ExternalLink, ShoppingBag } from 'lucide-svelte';
-	import GitHubIcon from '$lib/components/GitHubIcon.svelte';
+	import GitHubIcon from '$lib/media/icons/GitHubIcon.svelte';
 	import {
 		createSaveGetItSettingsMutation,
 		getGetItSettingsQuery

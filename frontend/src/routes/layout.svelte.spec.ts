@@ -68,7 +68,7 @@ vi.mock('$lib/stores/library', () => ({
 	}
 }));
 // The shell's session-wide reads answer from fixed state, with no network.
-vi.mock('$lib/queries/home.svelte', () => ({
+vi.mock('$lib/features/home/queries/home.svelte', () => ({
 	getIntegrationStatusQuery: vi.fn(() => ({ data: integrationState })),
 	useIntegrationStatus: () => ({ current: integrationState })
 }));
@@ -76,10 +76,10 @@ vi.mock('$lib/queries/AdvancedSettingsReads.svelte', () => ({
 	loadAdvancedSettings: vi.fn(() => ({ data: undefined })),
 	useDirectRemoteImages: () => ({ current: true })
 }));
-vi.mock('$lib/stores/nowPlayingSessions.svelte', () => ({
+vi.mock('$lib/features/player/state/nowPlayingSessions.svelte', () => ({
 	nowPlayingStore: { sessions: [], start: vi.fn(), stop: vi.fn() }
 }));
-vi.mock('$lib/stores/nowPlayingReporter.svelte', () => ({
+vi.mock('$lib/features/player/state/nowPlayingReporter.svelte', () => ({
 	nowPlayingReporter: { start: vi.fn(), stop: vi.fn() }
 }));
 const { serverEventsMock } = vi.hoisted(() => ({
@@ -106,7 +106,7 @@ const { syncStatusMock } = vi.hoisted(() => ({
 	syncStatusMock: { connect: vi.fn(), disconnect: vi.fn() }
 }));
 vi.mock('$lib/stores/syncStatus.svelte', () => ({ syncStatus: syncStatusMock }));
-vi.mock('$lib/stores/player.svelte', () => ({
+vi.mock('$lib/features/player/state/player.svelte', () => ({
 	playerStore: {
 		isPlayerVisible: false,
 		isPlaying: false,
@@ -121,11 +121,13 @@ vi.mock('$lib/stores/player.svelte', () => ({
 		restoreSession: vi.fn(() => null)
 	}
 }));
-vi.mock('$lib/player/launchYouTubePlayback', () => ({ launchYouTubePlayback: vi.fn() }));
-vi.mock('$lib/stores/scrobble.svelte', () => ({
+vi.mock('$lib/features/player/playback/launchYouTubePlayback', () => ({
+	launchYouTubePlayback: vi.fn()
+}));
+vi.mock('$lib/features/player/state/scrobble.svelte', () => ({
 	scrobbleManager: { init: vi.fn().mockResolvedValue(undefined) }
 }));
-vi.mock('$lib/utils/lazyImage', () => ({
+vi.mock('$lib/media/lazyImage', () => ({
 	cancelPendingImages: vi.fn(),
 	lazyImage: vi.fn(() => ({ destroy: vi.fn(), update: vi.fn() })),
 	resetLazyImage: vi.fn()
@@ -133,53 +135,53 @@ vi.mock('$lib/utils/lazyImage', () => ({
 vi.mock('$lib/features/downloads/queries/DownloadMutations.svelte', () => ({
 	createRequestBatchMutation: () => ({ mutateAsync: batchRequestMock })
 }));
-vi.mock('$lib/utils/navigationProgress', () => ({
+vi.mock('$lib/shell/navigationProgress', () => ({
 	createNavigationProgressController: vi.fn(() => ({
 		start: vi.fn(),
 		finish: vi.fn(),
 		cleanup: vi.fn()
 	}))
 }));
-vi.mock('$lib/components/Player.svelte', () => {
+vi.mock('$lib/features/player/components/Player.svelte', () => {
 	shellModuleState.playerImports += 1;
 	const Comp = function () {};
 	Comp.prototype = {};
 	return { default: Comp };
 });
-vi.mock('$lib/components/SearchSuggestions.svelte', () => {
+vi.mock('$lib/features/search/components/SearchSuggestions.svelte', () => {
 	const Comp = function () {};
 	Comp.prototype = {};
 	return { default: Comp };
 });
-vi.mock('$lib/components/YouTubeIcon.svelte', () => {
+vi.mock('$lib/media/icons/YouTubeIcon.svelte', () => {
 	const Comp = function () {};
 	Comp.prototype = {};
 	return { default: Comp };
 });
-vi.mock('$lib/components/DownloadsNavBadge.svelte', () => {
+vi.mock('$lib/shell/DownloadsNavBadge.svelte', () => {
 	const Comp = function () {};
 	Comp.prototype = {};
 	return { default: Comp };
 });
-vi.mock('$lib/components/PendingApprovalNavBadge.svelte', () => {
+vi.mock('$lib/shell/PendingApprovalNavBadge.svelte', () => {
 	const Comp = function () {};
 	Comp.prototype = {};
 	return { default: Comp };
 });
-vi.mock('$lib/components/lazyComponentLoaders', () => ({
+vi.mock('$lib/shell/lazyComponentLoaders', () => ({
 	loadAuthenticatedAppShell: async () => {
 		if (shellModuleState.shellFailures > 0) {
 			shellModuleState.shellFailures -= 1;
 			throw new Error('shell chunk unavailable');
 		}
-		return (await import('$lib/components/AuthenticatedAppShell.svelte')).default;
+		return (await import('$lib/shell/AuthenticatedAppShell.svelte')).default;
 	},
 	loadPlaylistModal: async () => {
 		if (shellModuleState.playlistFailures > 0) {
 			shellModuleState.playlistFailures -= 1;
 			throw new Error('playlist chunk unavailable');
 		}
-		return (await import('$lib/components/AddToPlaylistModal.svelte')).default;
+		return (await import('$lib/features/playlists/components/AddToPlaylistModal.svelte')).default;
 	},
 	loadDiscographyModal: async () => {
 		if (shellModuleState.discographyFailures > 0) {
@@ -192,12 +194,12 @@ vi.mock('$lib/components/lazyComponentLoaders', () => ({
 }));
 
 import Layout from './+layout.svelte';
-import { nowPlayingStore } from '$lib/stores/nowPlayingSessions.svelte';
-import { nowPlayingReporter } from '$lib/stores/nowPlayingReporter.svelte';
+import { nowPlayingStore } from '$lib/features/player/state/nowPlayingSessions.svelte';
+import { nowPlayingReporter } from '$lib/features/player/state/nowPlayingReporter.svelte';
 import { authStore, type AuthUser } from '$lib/stores/authStore.svelte';
 import { discographyDownloadStore } from '$lib/features/downloads/state/discographyDownload.svelte';
 import { batchDownloadStore } from '$lib/features/downloads/state/batchDownloadStatus.svelte';
-import { resetPlaylistModal } from '$lib/stores/playlistModal.svelte';
+import { resetPlaylistModal } from '$lib/features/playlists/state/playlistModal.svelte';
 
 type IntegrationState = {
 	download_client: boolean;

@@ -1,7 +1,7 @@
 <script lang="ts">
-	import NavidromeIcon from '$lib/components/NavidromeIcon.svelte';
-	import { getRemoteFoldersQuery } from '$lib/queries/remotes/RemoteQueries.svelte';
-	import { createSaveRemoteFoldersMutation } from '$lib/queries/remotes/RemoteMutations.svelte';
+	import NavidromeIcon from '$lib/media/icons/NavidromeIcon.svelte';
+	import { getRemoteFoldersQuery } from '$lib/features/remote-library/queries/RemoteQueries.svelte';
+	import { createSaveRemoteFoldersMutation } from '$lib/features/remote-library/queries/RemoteMutations.svelte';
 	import { CircleAlert, Folder, Save } from 'lucide-svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';

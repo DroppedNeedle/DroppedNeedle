@@ -20,7 +20,7 @@ import {
 	type LibraryV3TracksParams,
 	type LibraryV3UserId
 } from './LibraryQueryKeyFactory';
-import { toMusicBrainzAlbums } from '$lib/queries/search/SearchV3Adapters';
+import { toMusicBrainzAlbums } from '$lib/features/search/queries/SearchV3Adapters';
 import { fetchLibraryTracks, type LibraryTrackPage } from './libraryTracks';
 import type { components } from '$lib/api/v3/openapi';
 import type {

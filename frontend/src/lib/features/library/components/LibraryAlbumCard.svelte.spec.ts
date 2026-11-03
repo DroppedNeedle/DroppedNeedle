@@ -5,7 +5,7 @@ import LibraryAlbumCard from './LibraryAlbumCard.svelte';
 import type { AlbumView } from '$lib/types';
 
 // Keep the image on its first source: the test has no server to answer it.
-vi.mock('$lib/utils/lazyImage', () => ({
+vi.mock('$lib/media/lazyImage', () => ({
 	lazyImage: () => ({ destroy() {} }),
 	resetLazyImage: () => {}
 }));

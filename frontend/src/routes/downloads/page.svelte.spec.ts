@@ -9,7 +9,7 @@ const h = vi.hoisted(() => ({
 	isTrusted: false
 }));
 
-vi.mock('$lib/queries/home.svelte', () => ({
+vi.mock('$lib/features/home/queries/home.svelte', () => ({
 	getIntegrationStatusQuery: () => ({
 		get isLoading() {
 			return !h.loaded;

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import Button from '$lib/ui/Button.svelte';
 	import { Pencil } from 'lucide-svelte';
-	import AudioQualityBadge from '$lib/components/AudioQualityBadge.svelte';
+	import AudioQualityBadge from '$lib/features/player/components/AudioQualityBadge.svelte';
 	import TagEditor from './TagEditor.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { formatBytes, formatDurationSec } from '$lib/utils/formatting';

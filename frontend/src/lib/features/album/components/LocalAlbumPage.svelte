@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { ChevronLeft, Disc3, FileUp, ListMusic, Play, Shuffle } from 'lucide-svelte';
-	import AlbumImage from '$lib/components/AlbumImage.svelte';
+	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import LibraryFormatBadge from '$lib/features/library/components/LibraryFormatBadge.svelte';
 	import NoFilesBadge from '$lib/features/library/components/NoFilesBadge.svelte';
 	import LocalIdentityBadge from '$lib/features/library/components/LocalIdentityBadge.svelte';
@@ -29,13 +29,13 @@
 		getEditionPlanQuery
 	} from '$lib/features/library/queries/EditionQueries.svelte';
 	import { notesByFile } from './albumEdition';
-	import AddToPlaylistModal from '$lib/components/AddToPlaylistModal.svelte';
+	import AddToPlaylistModal from '$lib/features/playlists/components/AddToPlaylistModal.svelte';
 	import type { MenuItem } from '$lib/components/ContextMenu.svelte';
 	import { getTrackContextMenuItems } from './albumPlaybackHandlers';
-	import type { QueueItem } from '$lib/player/types';
+	import type { QueueItem } from '$lib/features/player/playback/types';
 	import { authStore } from '$lib/stores/authStore.svelte';
-	import { playerStore } from '$lib/stores/player.svelte';
-	import { buildDiscoveryQueueFromLocal } from '$lib/player/queueHelpers';
+	import { playerStore } from '$lib/features/player/state/player.svelte';
+	import { buildDiscoveryQueueFromLocal } from '$lib/features/player/playback/queueHelpers';
 	import {
 		getLibraryAlbumDetailQuery,
 		getLibraryAlbumTracksQuery

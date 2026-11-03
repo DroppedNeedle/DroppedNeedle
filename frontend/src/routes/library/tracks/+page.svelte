@@ -7,11 +7,11 @@
 		type LibraryTrackSort
 	} from '$lib/features/library/queries/libraryTracks';
 	import { createLibraryTrackQueue } from '$lib/features/library/queries/libraryTrackQueue.svelte';
-	import { buildDiscoveryQueueFromLocal } from '$lib/player/queueHelpers';
-	import { playerStore } from '$lib/stores/player.svelte';
+	import { buildDiscoveryQueueFromLocal } from '$lib/features/player/playback/queueHelpers';
+	import { playerStore } from '$lib/features/player/state/player.svelte';
 	import { toastStore } from '$lib/stores/toast';
-	import NowPlayingIndicator from '$lib/components/NowPlayingIndicator.svelte';
-	import AlbumImage from '$lib/components/AlbumImage.svelte';
+	import NowPlayingIndicator from '$lib/features/player/components/NowPlayingIndicator.svelte';
+	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import ContextMenu from '$lib/components/ContextMenu.svelte';
 	import type { MenuItem } from '$lib/components/ContextMenu.svelte';
 	import { formatDurationSec } from '$lib/utils/formatting';

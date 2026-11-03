@@ -1,7 +1,7 @@
 import {
 	SEARCH_BUCKET_PAGE_SIZE,
 	getSearchBucketV3QueryOptions
-} from '$lib/queries/search/SearchV3Queries.svelte';
+} from '$lib/features/search/queries/SearchV3Queries.svelte';
 import { queryClient } from '$lib/queries/QueryClient';
 import { authStore } from '$lib/stores/authStore.svelte';
 import type { PageLoad } from './$types';

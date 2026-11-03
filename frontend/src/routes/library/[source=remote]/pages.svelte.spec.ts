@@ -2,12 +2,12 @@ import { page } from 'vitest/browser';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { isHttpError } from '@sveltejs/kit';
 import { toAuthUser } from '$lib/queries/auth/types';
-import type { RemoteSource } from '$lib/queries/remotes/types';
-import { remoteSources } from '$lib/queries/remotes/remoteSources';
+import type { RemoteSource } from '$lib/features/remote-library/queries/types';
+import { remoteSources } from '$lib/features/remote-library/queries/remoteSources';
 import { HomeQueryKeyFactory } from '$lib/queries/featureKeys';
 import { setQueryDataWithPersister } from '$lib/queries/QueryClient';
 import { authStore } from '$lib/stores/authStore.svelte';
-import { playerStore } from '$lib/stores/player.svelte';
+import { playerStore } from '$lib/features/player/state/player.svelte';
 import { apiError, fakeApi, type FakeRoutes, type RouteData } from '$lib/test/api';
 import { renderWithQuery } from '$lib/test/render';
 

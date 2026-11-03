@@ -5,14 +5,14 @@ import { renderWithQuery } from '$lib/test/render';
 
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 // Keep the image on its first source: the test has no server to answer it.
-vi.mock('$lib/utils/lazyImage', () => ({
+vi.mock('$lib/media/lazyImage', () => ({
 	lazyImage: () => ({ destroy() {} }),
 	resetLazyImage: () => {}
 }));
 
 import SearchPage from './+page.svelte';
 import { authStore } from '$lib/stores/authStore.svelte';
-import { playerStore } from '$lib/stores/player.svelte';
+import { playerStore } from '$lib/features/player/state/player.svelte';
 import { toAuthUser } from '$lib/queries/auth/types';
 
 type SearchResponse = RouteData<'GET /api/v3/search'>;

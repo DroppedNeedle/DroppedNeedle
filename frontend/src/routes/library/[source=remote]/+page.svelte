@@ -6,33 +6,33 @@
 		getRemoteHubQuery,
 		refreshRemoteSource,
 		remoteErrorCode
-	} from '$lib/queries/remotes/RemoteQueries.svelte';
-	import type { RemoteAlbum } from '$lib/queries/remotes/types';
-	import { getSourcePlaylistsQuery } from '$lib/queries/source-playlists.svelte';
-	import AlbumGrid from '$lib/components/AlbumGrid.svelte';
-	import ArtistIndexSidebar from '$lib/components/ArtistIndexSidebar.svelte';
-	import BrowseHeroCards from '$lib/components/BrowseHeroCards.svelte';
-	import FeaturedAlbumHero from '$lib/components/FeaturedAlbumHero.svelte';
-	import HubPageSkeleton from '$lib/components/HubPageSkeleton.svelte';
-	import HubShelf from '$lib/components/HubShelf.svelte';
-	import MostPlayedSection from '$lib/components/MostPlayedSection.svelte';
-	import NowPlayingWidget from '$lib/components/NowPlayingWidget.svelte';
-	import PlaylistImportBanner from '$lib/components/PlaylistImportBanner.svelte';
-	import SourceAlbumModal from '$lib/components/SourceAlbumModal.svelte';
-	import SourceHubHeader from '$lib/components/SourceHubHeader.svelte';
+	} from '$lib/features/remote-library/queries/RemoteQueries.svelte';
+	import type { RemoteAlbum } from '$lib/features/remote-library/queries/types';
+	import { getSourcePlaylistsQuery } from '$lib/features/remote-library/queries/source-playlists.svelte';
+	import AlbumGrid from '$lib/features/remote-library/components/AlbumGrid.svelte';
+	import ArtistIndexSidebar from '$lib/features/remote-library/components/ArtistIndexSidebar.svelte';
+	import BrowseHeroCards from '$lib/features/remote-library/components/BrowseHeroCards.svelte';
+	import FeaturedAlbumHero from '$lib/features/remote-library/components/FeaturedAlbumHero.svelte';
+	import HubPageSkeleton from '$lib/features/remote-library/components/HubPageSkeleton.svelte';
+	import HubShelf from '$lib/features/remote-library/components/HubShelf.svelte';
+	import MostPlayedSection from '$lib/features/remote-library/components/MostPlayedSection.svelte';
+	import NowPlayingWidget from '$lib/features/player/components/NowPlayingWidget.svelte';
+	import PlaylistImportBanner from '$lib/features/remote-library/components/PlaylistImportBanner.svelte';
+	import SourceAlbumModal from '$lib/features/remote-library/components/SourceAlbumModal.svelte';
+	import SourceHubHeader from '$lib/features/remote-library/components/SourceHubHeader.svelte';
 	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
 	import { reveal } from '$lib/actions/reveal';
-	import { nowPlayingMerged } from '$lib/stores/nowPlayingMerged.svelte';
+	import { nowPlayingMerged } from '$lib/features/player/state/nowPlayingMerged.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import type { ArtistIndexEntry, BrowseHeroCard } from '$lib/types';
-	import AlbumCarousel from './AlbumCarousel.svelte';
-	import BrandLine from './BrandLine.svelte';
-	import HubArtistShelves from './HubArtistShelves.svelte';
-	import HubDiscovery from './HubDiscovery.svelte';
-	import HubFavorites from './HubFavorites.svelte';
-	import HubHistory from './HubHistory.svelte';
-	import HubSimilarAlbums from './HubSimilarAlbums.svelte';
-	import { useIntegrationStatus } from '$lib/queries/home.svelte';
+	import AlbumCarousel from '$lib/features/remote-library/components/AlbumCarousel.svelte';
+	import BrandLine from '$lib/features/remote-library/components/BrandLine.svelte';
+	import HubArtistShelves from '$lib/features/remote-library/components/HubArtistShelves.svelte';
+	import HubDiscovery from '$lib/features/remote-library/components/HubDiscovery.svelte';
+	import HubFavorites from '$lib/features/remote-library/components/HubFavorites.svelte';
+	import HubHistory from '$lib/features/remote-library/components/HubHistory.svelte';
+	import HubSimilarAlbums from '$lib/features/remote-library/components/HubSimilarAlbums.svelte';
+	import { useIntegrationStatus } from '$lib/features/home/queries/home.svelte';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();

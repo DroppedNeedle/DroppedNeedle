@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import AlbumImage from '$lib/components/AlbumImage.svelte';
+	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import { RotateCcw } from 'lucide-svelte';
 	import type { WantedRetryingItem } from '$lib/features/requests/queries/wanted.svelte';
 	import { nowSeconds, startSharedClock } from '$lib/stores/clock.svelte';

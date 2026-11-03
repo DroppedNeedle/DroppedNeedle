@@ -1,5 +1,5 @@
 <script lang="ts">
-	import '$lib/components/now-playing.css';
+	import '$lib/features/player/components/now-playing.css';
 	import '$lib/features/library/components/local/deck.css';
 	import type { CrateTrack, CrateReason } from '$lib/types';
 	import { flip, fly } from '$lib/ui/motion';
@@ -16,7 +16,7 @@
 		ArrowDownToLine
 	} from 'lucide-svelte';
 	import CoverPlaceholder from '$lib/ui/CoverPlaceholder.svelte';
-	import AlbumImage from '$lib/components/AlbumImage.svelte';
+	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 
 	interface Props {

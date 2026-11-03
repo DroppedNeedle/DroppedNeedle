@@ -3,20 +3,20 @@
 	import { browser } from '$app/environment';
 	import { goto } from '$app/navigation';
 	import { withBasePath } from '$lib/utils/basePath';
-	import SearchArtistCard from '$lib/components/SearchArtistCard.svelte';
+	import SearchArtistCard from '$lib/features/search/components/SearchArtistCard.svelte';
 	import ArtistCardSkeleton from '$lib/features/artist/components/ArtistCardSkeleton.svelte';
-	import SearchTopResult from '$lib/components/SearchTopResult.svelte';
+	import SearchTopResult from '$lib/features/search/components/SearchTopResult.svelte';
 	import type { Artist, EnrichmentSource, SearchRemoteStatus } from '$lib/types';
-	import { applyArtistEnrichment } from '$lib/utils/enrichment';
-	import { getSearchStatusNotice } from '$lib/utils/searchStatus';
+	import { applyArtistEnrichment } from '$lib/features/search/queries/enrichment';
+	import { getSearchStatusNotice } from '$lib/features/search/components/searchStatus';
 	import {
 		SEARCH_BUCKET_PAGE_SIZE,
 		getSearchBucketV3Query,
 		getSearchEnrichBatchV3Query,
 		type EnrichmentResponseV3
-	} from '$lib/queries/search/SearchV3Queries.svelte';
-	import { SearchEnrichCollector } from '$lib/queries/search/SearchV3Enrichment.svelte';
-	import { toV1Artist } from '$lib/queries/search/SearchV3Adapters';
+	} from '$lib/features/search/queries/SearchV3Queries.svelte';
+	import { SearchEnrichCollector } from '$lib/features/search/queries/SearchV3Enrichment.svelte';
+	import { toV1Artist } from '$lib/features/search/queries/SearchV3Adapters';
 	import { RefreshCw } from 'lucide-svelte';
 	import { SvelteMap } from 'svelte/reactivity';
 	import Button from '$lib/ui/Button.svelte';

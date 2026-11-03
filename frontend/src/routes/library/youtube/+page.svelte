@@ -1,16 +1,16 @@
 <script lang="ts">
-	import { getYouTubeLinksQuery } from '$lib/queries/youtube.svelte';
-	import { useIntegrationStatus } from '$lib/queries/home.svelte';
+	import { getYouTubeLinksQuery } from '$lib/features/youtube/queries/youtube.svelte';
+	import { useIntegrationStatus } from '$lib/features/home/queries/home.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
-	import YouTubeIcon from '$lib/components/YouTubeIcon.svelte';
-	import AlbumImage from '$lib/components/AlbumImage.svelte';
-	import YouTubeLinkModal from '$lib/components/YouTubeLinkModal.svelte';
-	import YouTubeDetailModal from '$lib/components/YouTubeDetailModal.svelte';
+	import YouTubeIcon from '$lib/media/icons/YouTubeIcon.svelte';
+	import AlbumImage from '$lib/media/AlbumImage.svelte';
+	import YouTubeLinkModal from '$lib/features/youtube/components/YouTubeLinkModal.svelte';
+	import YouTubeDetailModal from '$lib/features/youtube/components/YouTubeDetailModal.svelte';
 	import ContextMenu from '$lib/components/ContextMenu.svelte';
 	import type { MenuItem } from '$lib/components/ContextMenu.svelte';
 	import type { YouTubeLink } from '$lib/types';
 	import { Plus, Info, Play, Shuffle, ListPlus, ListStart, ListMusic } from 'lucide-svelte';
-	import LibraryFilterBar from '$lib/components/LibraryFilterBar.svelte';
+	import LibraryFilterBar from '$lib/features/remote-library/components/LibraryFilterBar.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import CardTitle from '$lib/ui/CardTitle.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
@@ -20,7 +20,7 @@
 		ytCardAddToQueue,
 		ytCardPlayNext,
 		ytCardAddToPlaylist
-	} from '$lib/utils/youtubeCardPlayback';
+	} from '$lib/features/youtube/components/youtubeCardPlayback';
 
 	const integrations = useIntegrationStatus();
 

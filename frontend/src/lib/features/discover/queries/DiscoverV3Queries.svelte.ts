@@ -1,0 +1,161 @@
+import { v3 } from '$lib/api/v3/endpoint';
+import { createQuery, queryOptions } from '@tanstack/svelte-query';
+import type { Getter } from 'runed';
+
+import { api } from '$lib/api/client';
+import type { components } from '$lib/api/v3/openapi';
+import { STALE_SLOW } from '$lib/queries/staleTime';
+import { authStore } from '$lib/stores/authStore.svelte';
+import { readNow } from '$lib/queries/readNow';
+import { applyEffects, discoverRadioChanged } from '$lib/queries/effects';
+import {
+	DiscoverQueryKeyFactory,
+	type DiscoverV3RadioParams,
+	type DiscoverV3UserId
+} from './DiscoverQueryKeyFactory';
+
+import type { ListenSource, RadioSeedKind } from './types';
+import { PERSIST_PROVIDER, PROVIDER } from '$lib/queries/persistedCache';
+
+export type DiscoverResponseV3 = components['schemas']['DiscoverResponse'];
+export type DiscoveryBatchDetailV3 = components['schemas']['DiscoveryBatchDetail'];
+export type DiscoveryBatchItemStatusV3 = components['schemas']['DiscoveryBatchItemStatus'];
+// Keep the persisted recommendations while the server finishes its SWR rebuild.
+async function fetchDiscoverHome(
+	userId: DiscoverV3UserId,
+	signal?: AbortSignal
+): Promise<DiscoverResponseV3> {
+	const fresh = await api.v3.GET(v3('/api/v3/discover'), {
+		signal,
+		timeoutMs: 15_000
+	});
+	if (fresh.sections.length === 0 && fresh.refreshing) {
+		// Keep the browser-only QueryClient out of the server test module graph.
+		const { queryClient } = await import('$lib/queries/QueryClient');
+		const prev = queryClient.getQueryData<DiscoverResponseV3>(
+			DiscoverQueryKeyFactory.v3.home(userId)
+		);
+		if (prev && prev.sections.length > 0) {
+			return {
+				...prev,
+				refreshing: true,
+				refresh_started_at: fresh.refresh_started_at
+			};
+		}
+	}
+	return fresh;
+}
+
+export const getDiscoverHomeV3QueryOptions = (userId: DiscoverV3UserId) =>
+	queryOptions({
+		enabled: Boolean(userId),
+		staleTime: STALE_SLOW,
+		refetchOnWindowFocus: false,
+		meta: PERSIST_PROVIDER,
+		queryKey: DiscoverQueryKeyFactory.v3.home(userId),
+		queryFn: ({ signal }) => fetchDiscoverHome(userId, signal),
+		refetchInterval: (query: { state: { data?: DiscoverResponseV3 | undefined } }) =>
+			query.state.data?.refreshing ? 10_000 : false
+	});
+
+export const getDiscoverHomeV3Query = () =>
+	createQuery(() => getDiscoverHomeV3QueryOptions(authStore.user?.id));
+
+export const getDiscoveryBatchesV3Query = (getEnabled: Getter<boolean> = () => true) =>
+	createQuery(() => ({
+		enabled: getEnabled() && Boolean(authStore.user?.id),
+		queryKey: DiscoverQueryKeyFactory.v3.batches(authStore.user?.id),
+		queryFn: ({ signal }) => api.v3.GET(v3('/api/v3/discover/batches'), { signal })
+	}));
+
+/** The caller's hidden albums, read while `getEnabled` holds. */
+export const getIgnoredReleasesV3Query = (getEnabled: Getter<boolean>) =>
+	createQuery(() => ({
+		enabled: getEnabled() && Boolean(authStore.user?.id),
+		queryKey: DiscoverQueryKeyFactory.v3.ignored(authStore.user?.id),
+		queryFn: ({ signal }) => api.v3.GET(v3('/api/v3/discover/queue/ignored'), { signal })
+	}));
+
+export interface DiscoverV3RadioInput {
+	seedType: RadioSeedKind;
+	seedId: string;
+	count?: number;
+	source?: ListenSource | null;
+	enabled?: boolean;
+}
+
+/** Reads one radio station again, every page of it. */
+export const refreshDiscoverRadio = (seedType: string, seedId: string) =>
+	applyEffects(discoverRadioChanged(authStore.user?.id, seedType, seedId));
+
+export const getDiscoverRadioV3Query = (getParams: Getter<DiscoverV3RadioInput>) =>
+	createQuery(() => {
+		const params = getParams();
+		const radioParams: DiscoverV3RadioParams = {};
+		if (params.count !== undefined) radioParams.count = params.count;
+		if (params.source !== undefined) radioParams.source = params.source;
+		return {
+			staleTime: STALE_SLOW,
+			meta: PROVIDER,
+			queryKey: DiscoverQueryKeyFactory.v3.radio(
+				authStore.user?.id,
+				params.seedType,
+				params.seedId,
+				radioParams
+			),
+			queryFn: ({ signal }: { signal?: AbortSignal }) =>
+				api.v3.POST(
+					v3('/api/v3/discover/radio'),
+					{
+						seed_type: params.seedType,
+						seed_id: params.seedId,
+						...(params.count !== undefined ? { count: params.count } : {}),
+						...(params.source !== undefined ? { source: params.source } : {})
+					},
+					{ signal }
+				),
+			enabled: (params.enabled ?? true) && !!params.seedId
+		};
+	});
+
+export interface DiscoverV3PlaylistSuggestionsInput {
+	playlistId: string;
+	count?: number;
+	source?: ListenSource | null;
+	enabled?: boolean;
+}
+
+export const getDiscoverPlaylistSuggestionsV3Query = (
+	getParams: Getter<DiscoverV3PlaylistSuggestionsInput>
+) =>
+	createQuery(() => {
+		const params = getParams();
+		return {
+			staleTime: STALE_SLOW,
+			meta: PROVIDER,
+			queryKey: DiscoverQueryKeyFactory.v3.playlistSuggestions(
+				authStore.user?.id,
+				params.playlistId,
+				params.count ?? 15
+			),
+			queryFn: ({ signal }: { signal?: AbortSignal }) =>
+				api.v3.POST(
+					v3('/api/v3/discover/playlist-suggestions'),
+					{
+						playlist_id: params.playlistId,
+						count: params.count ?? 15,
+						...(params.source !== undefined ? { source: params.source } : {})
+					},
+					{ signal }
+				),
+			enabled: (params.enabled ?? true) && !!params.playlistId
+		};
+	});
+
+/** One batch's albums and their progress, read when its row opens. */
+export const fetchDiscoveryBatchV3 = (batchId: string) =>
+	readNow(DiscoverQueryKeyFactory.v3.batch(authStore.user?.id, batchId), (signal) =>
+		api.v3.GET(v3('/api/v3/discover/batches/{batch_id}', { path: { batch_id: batchId } }), {
+			signal
+		})
+	);

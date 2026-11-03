@@ -11,7 +11,7 @@
 		X
 	} from 'lucide-svelte';
 
-	import AlbumImage from '$lib/components/AlbumImage.svelte';
+	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import {
 		createCancelDownloadMutation,
 		createReimportDownloadMutation,

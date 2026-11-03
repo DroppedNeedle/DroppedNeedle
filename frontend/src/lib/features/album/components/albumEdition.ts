@@ -1,7 +1,7 @@
 // What the album's current edition plan makes of its tracks and files, for
 // the album pages' track rows and their "Unmatched files" section.
 import type { EditionPlan } from '$lib/features/library/queries/EditionQueries.svelte';
-import { getDiscTrackKey } from '$lib/player/queueHelpers';
+import { getDiscTrackKey } from '$lib/features/player/playback/queueHelpers';
 import type { LibraryStatusTrack } from '$lib/types';
 
 type EditionPlanFile = EditionPlan['files'][number];

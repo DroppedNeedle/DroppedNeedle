@@ -3,14 +3,14 @@
 	import { onMount } from 'svelte';
 	import { Download } from 'lucide-svelte';
 	import CoverPlaceholder from '$lib/ui/CoverPlaceholder.svelte';
-	import type { AlbumRef } from '$lib/queries/discover/types';
+	import type { AlbumRef } from '$lib/features/discover/queries/types';
 	import { libraryStore } from '$lib/stores/library';
 	import { createRequestAlbumMutation } from '$lib/features/downloads/queries/DownloadMutations.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
-	import AlbumImage from '$lib/components/AlbumImage.svelte';
+	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import LibraryBadge from '$lib/features/album/components/LibraryBadge.svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 

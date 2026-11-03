@@ -2,22 +2,22 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { SvelteMap } from 'svelte/reactivity';
 	import { browser } from '$app/environment';
-	import { playerStore } from '$lib/stores/player.svelte';
+	import { playerStore } from '$lib/features/player/state/player.svelte';
 	import { toastStore } from '$lib/stores/toast';
-	import { setQueueMutationToastsSuppressed } from '$lib/stores/playerUtils';
-	import { deckFocus } from '$lib/stores/deckFocus.svelte';
+	import { setQueueMutationToastsSuppressed } from '$lib/features/player/state/playerUtils';
+	import { deckFocus } from '$lib/features/player/state/deckFocus.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { formatBytes } from '$lib/utils/formatting';
 	import type { CrateTrack } from '$lib/types';
-	import type { QueueItem } from '$lib/player/types';
+	import type { QueueItem } from '$lib/features/player/playback/types';
 	import { slide } from '$lib/ui/motion';
 	import Turntable from '$lib/features/library/components/local/Turntable.svelte';
 	import Crate from '$lib/features/library/components/local/Crate.svelte';
-	import QueueDrawer from '$lib/components/QueueDrawer.svelte';
+	import QueueDrawer from '$lib/features/player/components/QueueDrawer.svelte';
 	import SearchCard from '$lib/features/library/components/local/SearchCard.svelte';
 	import DeckVisualiser from '$lib/features/library/components/local/DeckVisualiser.svelte';
 	import HorizontalCarousel from '$lib/components/HorizontalCarousel.svelte';
-	import AlbumImage from '$lib/components/AlbumImage.svelte';
+	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import NoFilesBadge from '$lib/features/library/components/NoFilesBadge.svelte';
 	import {
 		getLocalRecentV3Query,

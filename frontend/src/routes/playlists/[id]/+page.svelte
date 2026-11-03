@@ -3,26 +3,26 @@
 	import { onDestroy, untrack } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 	import { requestMissingTracks, type PlaylistDetail } from '$lib/api/playlists';
-	import { playlistTrackToQueueItem } from '$lib/player/queueHelpers';
-	import { playerStore } from '$lib/stores/player.svelte';
+	import { playlistTrackToQueueItem } from '$lib/features/player/playback/queueHelpers';
+	import { playerStore } from '$lib/features/player/state/player.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import {
 		getPlaylistDetailV3Query,
 		getPlaylistSourcesV3QueryOptions,
 		type PlaylistDetailV3
-	} from '$lib/queries/playlists/PlaylistV3Queries.svelte';
+	} from '$lib/features/playlists/queries/PlaylistV3Queries.svelte';
 	import {
 		createDeletePlaylistV3Mutation,
 		forgetPlaylistSources,
 		refreshPlaylist,
 		createSetPlaylistVisibilityV3Mutation
-	} from '$lib/queries/playlists/PlaylistV3Mutations.svelte';
+	} from '$lib/features/playlists/queries/PlaylistV3Mutations.svelte';
 	import {
 		privatePlaylistLine,
 		privatePlaylistStub,
 		toPageDetail
-	} from '$lib/queries/playlists/playlistV3Adapter';
+	} from '$lib/features/playlists/queries/playlistV3Adapter';
 	import { queryClient } from '$lib/queries/QueryClient';
 	import { extractDominantColor, DEFAULT_GRADIENT } from '$lib/utils/colors';
 	import { getApiUrl } from '$lib/api/api-utils';
@@ -31,11 +31,11 @@
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import BackButton from '$lib/components/BackButton.svelte';
-	import HeroBackdrop from '$lib/components/HeroBackdrop.svelte';
+	import HeroBackdrop from '$lib/media/HeroBackdrop.svelte';
 	import type { PageData } from './$types';
-	import PlaylistHeader from './PlaylistHeader.svelte';
-	import PlaylistTrackList from './PlaylistTrackList.svelte';
-	import DeletePlaylistModal from './DeletePlaylistModal.svelte';
+	import PlaylistHeader from '$lib/features/playlists/components/PlaylistHeader.svelte';
+	import PlaylistTrackList from '$lib/features/playlists/components/PlaylistTrackList.svelte';
+	import DeletePlaylistModal from '$lib/features/playlists/components/DeletePlaylistModal.svelte';
 
 	let { data }: { data: PageData } = $props();
 

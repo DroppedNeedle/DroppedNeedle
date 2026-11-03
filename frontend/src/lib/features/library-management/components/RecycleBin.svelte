@@ -25,7 +25,7 @@
 	} from '$lib/features/library-management/queries/RecycleBinQueries.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import { albumHref } from '$lib/utils/entityRoutes';
-	import AlbumImage from '$lib/components/AlbumImage.svelte';
+	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import AsyncButton from '$lib/ui/AsyncButton.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';

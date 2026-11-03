@@ -1,11 +1,11 @@
 <script lang="ts">
 	import type { TopSong, ResolvedTrack } from '$lib/types';
-	import type { QueueItem, SourceType } from '$lib/player/types';
+	import type { QueueItem, SourceType } from '$lib/features/player/playback/types';
 	import { getResolvedTracksQuery } from '$lib/features/library/queries/LibraryQueries.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
-	import { playerStore } from '$lib/stores/player.svelte';
+	import { playerStore } from '$lib/features/player/state/player.svelte';
 	import TrackRow from './TrackRow.svelte';
 
 	interface Props {

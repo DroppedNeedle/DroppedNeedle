@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { Pause, Play, Trash2, TriangleAlert, X } from 'lucide-svelte';
 
-	import { streamUrlFor } from '$lib/player/streamUrl';
+	import { streamUrlFor } from '$lib/features/player/playback/streamUrl';
 	import { isStaleRevision } from '$lib/api/errors';
 	import { createRemoveLibraryTrackMutation } from '$lib/features/library/queries/LibraryMutations.svelte';
 	import { formatCountdown } from '$lib/features/downloads/queries/downloadStatus';

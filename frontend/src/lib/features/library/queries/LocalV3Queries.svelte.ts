@@ -1,4 +1,4 @@
-import { unifiedSearchQuery } from '$lib/queries/search/unifiedSearchQuery';
+import { unifiedSearchQuery } from '$lib/features/search/queries/unifiedSearchQuery';
 import { pageQuery } from '$lib/features/library/queries/listQueries';
 import { albumsQuery } from '$lib/features/library/queries/listQueries';
 import { v3 } from '$lib/api/v3/endpoint';
@@ -7,7 +7,7 @@ import type { Getter } from 'runed';
 
 import { api } from '$lib/api/client';
 import type { components } from '$lib/api/v3/openapi';
-import type { SearchV3Limits } from '$lib/queries/search/SearchQueryKeyFactory';
+import type { SearchV3Limits } from '$lib/features/search/queries/SearchQueryKeyFactory';
 import { LOCAL_KEYS, type LocalV3AlbumsParams } from './LocalV3Keys';
 import { readNow } from '$lib/queries/readNow';
 import { STALE_LIVE } from '$lib/queries/staleTime';

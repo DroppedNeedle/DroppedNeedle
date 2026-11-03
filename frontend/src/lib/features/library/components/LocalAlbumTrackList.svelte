@@ -3,8 +3,8 @@
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import RatingStars from '$lib/ui/RatingStars.svelte';
 	import FavoriteHeart from '$lib/features/library/components/FavoriteHeart.svelte';
-	import { playerStore } from '$lib/stores/player.svelte';
-	import { buildDiscoveryQueueFromLocal } from '$lib/player/queueHelpers';
+	import { playerStore } from '$lib/features/player/state/player.svelte';
+	import { buildDiscoveryQueueFromLocal } from '$lib/features/player/playback/queueHelpers';
 	import { formatBytes, formatDurationSec } from '$lib/utils/formatting';
 	import type { TrackView } from '$lib/types';
 	import { artistHref } from '$lib/utils/entityRoutes';

@@ -4,10 +4,10 @@
 	import {
 		getRemoteAnalyticsQuery,
 		getRemoteHistoryQuery
-	} from '$lib/queries/remotes/RemoteQueries.svelte';
+	} from '$lib/features/remote-library/queries/RemoteQueries.svelte';
 	import { ChevronLeft } from 'lucide-svelte';
 	import { withBasePath } from '$lib/utils/basePath';
-	import { formatViewedAt } from '../history';
+	import { formatViewedAt } from '$lib/features/remote-library/components/history';
 	import type { PageData } from './$types';
 
 	const PAGE_SIZE = 50;

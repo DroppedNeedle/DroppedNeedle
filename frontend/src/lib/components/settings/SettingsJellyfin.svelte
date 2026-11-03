@@ -1,5 +1,5 @@
 <script lang="ts">
-	import JellyfinIcon from '$lib/components/JellyfinIcon.svelte';
+	import JellyfinIcon from '$lib/media/icons/JellyfinIcon.svelte';
 	import {
 		createSaveJellyfinSettingsMutation,
 		createVerifyJellyfinMutation,

@@ -28,7 +28,7 @@ vi.mock('$lib/stores/authStore.svelte', () => ({
 }));
 
 const player = vi.hoisted(() => ({ addToQueue: vi.fn(), playNext: vi.fn() }));
-vi.mock('$lib/stores/player.svelte', () => ({
+vi.mock('$lib/features/player/state/player.svelte', () => ({
 	playerStore: {
 		isPlaying: false,
 		nowPlaying: null,
@@ -46,14 +46,14 @@ const { emptyComponent } = vi.hoisted(() => ({
 		return { default: Comp };
 	}
 }));
-vi.mock('$lib/components/NowPlayingIndicator.svelte', emptyComponent);
+vi.mock('$lib/features/player/components/NowPlayingIndicator.svelte', emptyComponent);
 vi.mock('$lib/features/album/components/TrackPlayButton.svelte', emptyComponent);
 vi.mock('$lib/components/TrackPreviewButton.svelte', emptyComponent);
 vi.mock('$lib/features/album/components/TrackSourceButton.svelte', emptyComponent);
-vi.mock('$lib/components/JellyfinIcon.svelte', emptyComponent);
-vi.mock('$lib/components/LocalFilesIcon.svelte', emptyComponent);
-vi.mock('$lib/components/NavidromeIcon.svelte', emptyComponent);
-vi.mock('$lib/components/PlexIcon.svelte', emptyComponent);
+vi.mock('$lib/media/icons/JellyfinIcon.svelte', emptyComponent);
+vi.mock('$lib/media/icons/LocalFilesIcon.svelte', emptyComponent);
+vi.mock('$lib/media/icons/NavidromeIcon.svelte', emptyComponent);
+vi.mock('$lib/media/icons/PlexIcon.svelte', emptyComponent);
 vi.mock('$lib/features/library/components/LibraryTrackRow.svelte', emptyComponent);
 
 const blob = vi.hoisted(() => ({ download: vi.fn() }));
@@ -72,7 +72,7 @@ import type {
 	LocalAlbumMatch,
 	LocalTrackInfo
 } from '$lib/types';
-import type { RemoteTrack } from '$lib/queries/remotes/types';
+import type { RemoteTrack } from '$lib/features/remote-library/queries/types';
 
 const TRACKS: AlbumTracksInfo['tracks'] = [
 	{ position: 1, disc_number: 1, title: 'Matched By MBID', length: 100000, recording_id: 'rec-1' },

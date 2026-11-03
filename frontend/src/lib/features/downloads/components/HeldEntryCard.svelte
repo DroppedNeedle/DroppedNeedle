@@ -2,7 +2,7 @@
 	import { Check, ChevronDown, Disc3, RefreshCw, RotateCcw, Search, Trash2 } from 'lucide-svelte';
 	import { SvelteMap } from 'svelte/reactivity';
 
-	import AlbumImage from '$lib/components/AlbumImage.svelte';
+	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import DropImportMatchModal from '$lib/features/downloads/components/DropImportMatchModal.svelte';
 	import {
 		createDiscardHeldMutation,

@@ -1,4 +1,4 @@
-import { getHomeQueryOptions } from '$lib/queries/home.svelte';
+import { getHomeQueryOptions } from '$lib/features/home/queries/home.svelte';
 import { queryClient } from '$lib/queries/QueryClient';
 import { authStore } from '$lib/stores/authStore.svelte';
 import type { PageLoad } from './$types';

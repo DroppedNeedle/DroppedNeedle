@@ -1,5 +1,5 @@
 <script lang="ts">
-	import SourcePlaylistList from '$lib/components/SourcePlaylistList.svelte';
+	import SourcePlaylistList from '$lib/features/remote-library/components/SourcePlaylistList.svelte';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();

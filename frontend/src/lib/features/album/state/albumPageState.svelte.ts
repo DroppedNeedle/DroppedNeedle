@@ -13,14 +13,14 @@ import type {
 	DownloadTask,
 	HeldFileInEntry
 } from '$lib/types';
-import type { RemoteTrack } from '$lib/queries/remotes/types';
+import type { RemoteTrack } from '$lib/features/remote-library/queries/types';
 import { libraryStore } from '$lib/stores/library';
-import { useIntegrationStatus } from '$lib/queries/home.svelte';
+import { useIntegrationStatus } from '$lib/features/home/queries/home.svelte';
 import { ApiError } from '$lib/api/errors';
-import { compareDiscTrack, getDiscTrackKey } from '$lib/player/queueHelpers';
-import type { QueueItem } from '$lib/player/types';
-import { launchRemotePlayback } from '$lib/player/launchRemotePlayback';
-import { launchLocalPlayback } from '$lib/player/launchLocalPlayback';
+import { compareDiscTrack, getDiscTrackKey } from '$lib/features/player/playback/queueHelpers';
+import type { QueueItem } from '$lib/features/player/playback/types';
+import { launchRemotePlayback } from '$lib/features/player/playback/launchRemotePlayback';
+import { launchLocalPlayback } from '$lib/features/player/playback/launchLocalPlayback';
 import type { MenuItem } from '$lib/components/ContextMenu.svelte';
 import { buildRenderedTrackSections, buildSortedTrackMap } from '../components/albumTrackResolvers';
 import { createEventHandlers } from '../components/albumEventHandlers';

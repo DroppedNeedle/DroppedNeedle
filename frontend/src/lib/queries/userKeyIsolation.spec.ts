@@ -13,7 +13,8 @@ const modules = import.meta.glob<Record<string, unknown>>(
 		'!./IndexedDbPersister.svelte.ts',
 		'../features/*/queries/**/*QueryKeyFactory.ts',
 		'../features/*/queries/**/*Keys.ts',
-		'../features/*/queries/*.svelte.ts'
+		'../features/*/queries/*.svelte.ts',
+		'../shell/version.svelte.ts'
 	],
 	{
 		eager: true

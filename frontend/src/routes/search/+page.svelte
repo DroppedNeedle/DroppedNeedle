@@ -3,25 +3,32 @@
 	import { goto } from '$app/navigation';
 	import { withBasePath } from '$lib/utils/basePath';
 	import AlbumCard from '$lib/features/album/components/AlbumCard.svelte';
-	import SearchArtistCard from '$lib/components/SearchArtistCard.svelte';
-	import SearchSongRow from '$lib/components/SearchSongRow.svelte';
-	import ViewMoreAlbumCard from '$lib/components/ViewMoreAlbumCard.svelte';
-	import ViewMoreArtistCard from '$lib/components/ViewMoreArtistCard.svelte';
+	import SearchArtistCard from '$lib/features/search/components/SearchArtistCard.svelte';
+	import SearchSongRow from '$lib/features/search/components/SearchSongRow.svelte';
+	import ViewMoreAlbumCard from '$lib/features/search/components/ViewMoreAlbumCard.svelte';
+	import ViewMoreArtistCard from '$lib/features/search/components/ViewMoreArtistCard.svelte';
 	import ArtistCardSkeleton from '$lib/features/artist/components/ArtistCardSkeleton.svelte';
 	import AlbumCardSkeleton from '$lib/features/album/components/AlbumCardSkeleton.svelte';
 	import type { EnrichmentSource, SearchRemoteStatus } from '$lib/types';
-	import { applyArtistEnrichment, applyAlbumEnrichment } from '$lib/utils/enrichment';
-	import { getSearchStatusNotice } from '$lib/utils/searchStatus';
+	import {
+		applyArtistEnrichment,
+		applyAlbumEnrichment
+	} from '$lib/features/search/queries/enrichment';
+	import { getSearchStatusNotice } from '$lib/features/search/components/searchStatus';
 	import {
 		COMBINED_SEARCH_LIMITS,
 		getSearchEnrichBatchV3Query,
 		getUnifiedSearchV3Query,
 		type EnrichmentResponseV3
-	} from '$lib/queries/search/SearchV3Queries.svelte';
-	import { SearchEnrichCollector } from '$lib/queries/search/SearchV3Enrichment.svelte';
-	import { toSearchSongs, toV1Album, toV1Artist } from '$lib/queries/search/SearchV3Adapters';
+	} from '$lib/features/search/queries/SearchV3Queries.svelte';
+	import { SearchEnrichCollector } from '$lib/features/search/queries/SearchV3Enrichment.svelte';
+	import {
+		toSearchSongs,
+		toV1Album,
+		toV1Artist
+	} from '$lib/features/search/queries/SearchV3Adapters';
 	import { ArrowRight, RefreshCw } from 'lucide-svelte';
-	import SearchTopResult from '$lib/components/SearchTopResult.svelte';
+	import SearchTopResult from '$lib/features/search/components/SearchTopResult.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 

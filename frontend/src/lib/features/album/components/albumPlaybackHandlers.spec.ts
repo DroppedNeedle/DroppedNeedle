@@ -7,10 +7,10 @@ const mocks = vi.hoisted(() => ({
 	playMultipleNext: vi.fn()
 }));
 
-vi.mock('$lib/player/launchLocalPlayback', () => ({
+vi.mock('$lib/features/player/playback/launchLocalPlayback', () => ({
 	launchLocalPlayback: mocks.launchLocalPlayback
 }));
-vi.mock('$lib/stores/player.svelte', () => ({
+vi.mock('$lib/features/player/state/player.svelte', () => ({
 	playerStore: {
 		addToQueue: vi.fn(),
 		playNext: vi.fn(),

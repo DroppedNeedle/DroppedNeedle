@@ -1,7 +1,7 @@
 import { goto } from '$app/navigation';
 import { artistHref } from '$lib/utils/entityRoutes';
 import type { AlbumBasicInfo, YouTubeTrackLink, YouTubeLink, YouTubeQuotaStatus } from '$lib/types';
-import { compareDiscTrack, getDiscTrackKey } from '$lib/player/queueHelpers';
+import { compareDiscTrack, getDiscTrackKey } from '$lib/features/player/playback/queueHelpers';
 import { createRequestAlbumMutation } from '$lib/features/downloads/queries/DownloadMutations.svelte';
 
 export interface EventHandlerDeps {

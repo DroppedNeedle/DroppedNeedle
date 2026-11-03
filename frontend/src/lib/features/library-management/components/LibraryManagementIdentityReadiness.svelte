@@ -1,7 +1,7 @@
 <script lang="ts">
 	import '$lib/features/library-management/components/library-management.css';
 	import { ArrowRight, BookOpenCheck, Database, ShieldCheck, Tags, Trash2 } from 'lucide-svelte';
-	import AlbumImage from '$lib/components/AlbumImage.svelte';
+	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import { createControlLibraryOperationMutation } from '$lib/features/library-management/queries/LibraryOperationMutations.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import Button from '$lib/ui/Button.svelte';

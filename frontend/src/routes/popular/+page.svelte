@@ -1,11 +1,11 @@
 <script lang="ts">
-	import TimeRangeView from '$lib/components/TimeRangeView.svelte';
+	import TimeRangeView from '$lib/features/discover/components/TimeRangeView.svelte';
 	import { type MusicSource, isMusicSource } from '$lib/stores/musicSource';
 	import { Disc3 } from 'lucide-svelte';
 	import type { PageProps } from './$types';
 	import { PersistedState } from 'runed';
 	import { PAGE_SOURCE_KEYS } from '$lib/constants';
-	import SimpleSourceSwitcher from '$lib/components/SimpleSourceSwitcher.svelte';
+	import SimpleSourceSwitcher from '$lib/features/discover/components/SimpleSourceSwitcher.svelte';
 
 	const { data }: PageProps = $props();
 

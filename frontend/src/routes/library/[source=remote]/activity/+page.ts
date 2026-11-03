@@ -1,5 +1,5 @@
 import { error } from '@sveltejs/kit';
-import { remoteSources } from '$lib/queries/remotes/remoteSources';
+import { remoteSources } from '$lib/features/remote-library/queries/remoteSources';
 import type { PageLoad } from './$types';
 
 export const load: PageLoad = ({ params }) => {

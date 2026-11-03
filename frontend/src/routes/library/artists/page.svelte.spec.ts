@@ -8,7 +8,7 @@ vi.mock('$app/state', () => ({
 }));
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 // Keep the image on its first source: the test has no server to answer it.
-vi.mock('$lib/utils/lazyImage', () => ({
+vi.mock('$lib/media/lazyImage', () => ({
 	lazyImage: () => ({ destroy() {} }),
 	resetLazyImage: () => {}
 }));

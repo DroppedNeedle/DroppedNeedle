@@ -2,8 +2,8 @@ import { page } from 'vitest/browser';
 import { afterEach, describe, expect, it } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 
-import MetadataPanel from './MetadataPanel.svelte';
-import WhatsNewModal from './WhatsNewModal.svelte';
+import MetadataPanel from '$lib/features/remote-library/components/MetadataPanel.svelte';
+import WhatsNewModal from '$lib/shell/WhatsNewModal.svelte';
 
 type Flagged = { __xss?: string };
 const flagged = window as unknown as Flagged;

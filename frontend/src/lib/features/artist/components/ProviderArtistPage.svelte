@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { ApiError } from '$lib/api/errors';
-	import { useDiscoverActivity } from '$lib/queries/discover/DiscoverDemand.svelte';
+	import { useDiscoverActivity } from '$lib/features/discover/queries/DiscoverDemand.svelte';
 	import ArtistHeaderSkeleton from '$lib/features/artist/components/ArtistHeaderSkeleton.svelte';
 	import AlbumGridSkeleton from '$lib/features/artist/components/AlbumGridSkeleton.svelte';
 	import ArtistWhereToBuy from '$lib/features/artist/components/ArtistWhereToBuy.svelte';
@@ -11,7 +11,7 @@
 	import SimilarArtistsCarousel from '$lib/features/artist/components/SimilarArtistsCarousel.svelte';
 	import TopSongsList from '$lib/features/artist/components/TopSongsList.svelte';
 	import TopAlbumsList from '$lib/features/artist/components/TopAlbumsList.svelte';
-	import LastFmEnrichment from '$lib/components/LastFmEnrichment.svelte';
+	import LastFmEnrichment from '$lib/features/lastfm/components/LastFmEnrichment.svelte';
 	import ArtistLibraryAlbums from '$lib/features/library/components/ArtistLibraryAlbums.svelte';
 	import ArtistAppearancesSection from '$lib/features/library/components/ArtistAppearancesSection.svelte';
 	import ArtistMusicBrainzLink from '$lib/features/library/components/ArtistMusicBrainzLink.svelte';
@@ -36,7 +36,7 @@
 	import { getConnectionsQuery } from '$lib/queries/connections/ConnectionsQuery.svelte';
 	import { PAGE_SOURCE_KEYS } from '$lib/constants';
 	import { PersistedState } from 'runed';
-	import SimpleSourceSwitcher from '$lib/components/SimpleSourceSwitcher.svelte';
+	import SimpleSourceSwitcher from '$lib/features/discover/components/SimpleSourceSwitcher.svelte';
 	import ArtistPlaybackBar from '$lib/features/artist/components/ArtistPlaybackBar.svelte';
 	import {
 		discographyDownloadStore,

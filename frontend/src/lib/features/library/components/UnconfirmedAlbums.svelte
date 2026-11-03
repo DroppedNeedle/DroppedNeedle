@@ -13,7 +13,7 @@
 	import { CircleAlert, CircleHelp, Flag } from 'lucide-svelte';
 	import { ApiError } from '$lib/api/errors';
 	import { coverPath } from '$lib/api/covers';
-	import AlbumImage from '$lib/components/AlbumImage.svelte';
+	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';

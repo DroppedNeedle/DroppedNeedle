@@ -2,7 +2,7 @@ import { page } from 'vitest/browser';
 import { afterEach, describe, expect, it } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 
-import MetadataPanel from './MetadataPanel.svelte';
+import MetadataPanel from '$lib/features/remote-library/components/MetadataPanel.svelte';
 import { outsideLink, PROSE_LINK_URL } from './outsideLink';
 
 type Flagged = { __xss?: string };

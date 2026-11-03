@@ -1,7 +1,7 @@
 <script lang="ts">
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
-	import SpotifyIcon from '$lib/components/SpotifyIcon.svelte';
+	import SpotifyIcon from '$lib/media/icons/SpotifyIcon.svelte';
 	import { getConnectionsQuery } from '$lib/queries/connections/ConnectionsQuery.svelte';
 	import {
 		createConnectSpotifyMutation,

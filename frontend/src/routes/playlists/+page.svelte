@@ -8,15 +8,15 @@
 	import { toastStore } from '$lib/stores/toast';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { getConnectionsQuery } from '$lib/queries/connections/ConnectionsQuery.svelte';
-	import { getPlaylistListV3Query } from '$lib/queries/playlists/PlaylistV3Queries.svelte';
-	import { createPlaylistV3Mutation } from '$lib/queries/playlists/PlaylistV3Mutations.svelte';
-	import { toPageList } from '$lib/queries/playlists/playlistV3Adapter';
+	import { getPlaylistListV3Query } from '$lib/features/playlists/queries/PlaylistV3Queries.svelte';
+	import { createPlaylistV3Mutation } from '$lib/features/playlists/queries/PlaylistV3Mutations.svelte';
+	import { toPageList } from '$lib/features/playlists/queries/playlistV3Adapter';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { ListMusic, Plus, Lock } from 'lucide-svelte';
-	import SpotifyIcon from '$lib/components/SpotifyIcon.svelte';
-	import PlaylistCard from '$lib/components/PlaylistCard.svelte';
-	import RedactedPlaylistCard from '$lib/components/RedactedPlaylistCard.svelte';
-	import PlaylistCardSkeleton from '$lib/components/PlaylistCardSkeleton.svelte';
+	import SpotifyIcon from '$lib/media/icons/SpotifyIcon.svelte';
+	import PlaylistCard from '$lib/features/playlists/components/PlaylistCard.svelte';
+	import RedactedPlaylistCard from '$lib/features/playlists/components/RedactedPlaylistCard.svelte';
+	import PlaylistCardSkeleton from '$lib/features/playlists/components/PlaylistCardSkeleton.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Input from '$lib/ui/Input.svelte';
 

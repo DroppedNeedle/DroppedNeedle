@@ -7,7 +7,7 @@ vi.mock('$app/state', () => ({
 	page: { params: { id: 'local-album-1' }, url: new URL('http://localhost/album/local-album-1') }
 }));
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
-vi.mock('$lib/stores/player.svelte', () => ({
+vi.mock('$lib/features/player/state/player.svelte', () => ({
 	playerStore: { playQueue: vi.fn(), addToQueue: vi.fn(), playNext: vi.fn() }
 }));
 

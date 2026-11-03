@@ -1,8 +1,8 @@
 import { v3 } from '$lib/api/v3/endpoint';
 import { api } from '$lib/api/client';
-import type { QueueItem } from '$lib/player/types';
+import type { QueueItem } from '$lib/features/player/playback/types';
 import type { components } from '$lib/api/v3/openapi';
-import { toPageDetail } from '$lib/queries/playlists/playlistV3Adapter';
+import { toPageDetail } from '$lib/features/playlists/queries/playlistV3Adapter';
 
 type Schemas = components['schemas'];
 

@@ -3,7 +3,7 @@ import { api } from '$lib/api/client';
 import type { components } from '$lib/api/v3/openapi';
 import type { IntakeResponse, TrackIntakeResponse } from '$lib/features/requests/queries/types';
 import { authStore } from '$lib/stores/authStore.svelte';
-import { readIntegrationStatus } from '$lib/queries/home.svelte';
+import { readIntegrationStatus } from '$lib/features/home/queries/home.svelte';
 import { libraryStore } from '$lib/stores/library';
 import { toastStore } from '$lib/stores/toast';
 // Request-surface copy lives beside the other acquisition label mappings.

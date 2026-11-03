@@ -8,31 +8,31 @@
 		Library,
 		SlidersHorizontal
 	} from 'lucide-svelte';
-	import HomeSection from '$lib/components/HomeSection.svelte';
+	import HomeSection from '$lib/features/discover/components/HomeSection.svelte';
 	import ServiceErrorState from '$lib/components/ServiceErrorState.svelte';
-	import WeeklyExploration from '$lib/components/WeeklyExploration.svelte';
-	import ServicePromptCard from '$lib/components/ServicePromptCard.svelte';
+	import WeeklyExploration from '$lib/features/discover/components/WeeklyExploration.svelte';
+	import ServicePromptCard from '$lib/features/discover/components/ServicePromptCard.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
-	import GenreGrid from '$lib/components/GenreGrid.svelte';
+	import GenreGrid from '$lib/features/genre/components/GenreGrid.svelte';
 	import SectionDivider from '$lib/components/SectionDivider.svelte';
 	import type {
 		ChartSection as HomeSectionType,
 		SectionKey,
 		SectionZone,
 		WeeklyExploration as WeeklyExplorationSectionType
-	} from '$lib/queries/discover/types';
-	import { shelfOf, zoneSections } from '$lib/queries/discover/sections';
+	} from '$lib/features/discover/queries/types';
+	import { shelfOf, zoneSections } from '$lib/features/discover/queries/sections';
 	import CarouselSkeleton from '$lib/components/CarouselSkeleton.svelte';
 	import PageHeader from '$lib/components/PageHeader.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
-	import { genreRows } from '$lib/utils/sectionRows';
+	import { genreRows } from '$lib/features/discover/components/sectionRows';
 	import { getGreeting } from '$lib/utils/formatting';
-	import { isDismissed } from '$lib/utils/dismissedPrompts';
-	import HomeSectionNowPlaying from '$lib/components/HomeSectionNowPlaying.svelte';
-	import HomeEntryCards from '$lib/components/HomeEntryCards.svelte';
-	import DiscoverTeaserBand from '$lib/components/discover/DiscoverTeaserBand.svelte';
-	import { getHomeQuery } from '$lib/queries/home.svelte';
-	import { useDiscoverActivity } from '$lib/queries/discover/DiscoverDemand.svelte';
+	import { isDismissed } from '$lib/features/discover/state/dismissedPrompts';
+	import HomeSectionNowPlaying from '$lib/features/home/components/HomeSectionNowPlaying.svelte';
+	import HomeEntryCards from '$lib/features/home/components/HomeEntryCards.svelte';
+	import DiscoverTeaserBand from '$lib/features/discover/components/DiscoverTeaserBand.svelte';
+	import { getHomeQuery } from '$lib/features/home/queries/home.svelte';
+	import { useDiscoverActivity } from '$lib/features/discover/queries/DiscoverDemand.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import CardTitle from '$lib/ui/CardTitle.svelte';

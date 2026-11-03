@@ -21,7 +21,7 @@
 <script lang="ts">
 	import TextField from '$lib/ui/TextField.svelte';
 	import { coverPath } from '$lib/api/covers';
-	import AlbumImage from '$lib/components/AlbumImage.svelte';
+	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import CoverPlaceholder from '$lib/ui/CoverPlaceholder.svelte';
 
 	interface Props {

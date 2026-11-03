@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { fade, fly } from '$lib/ui/motion';
 	import { Check, CircleCheck, TriangleAlert, X } from 'lucide-svelte';
-	import AlbumImage from '$lib/components/AlbumImage.svelte';
+	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import { getApprovalsQuery } from '$lib/features/requests/queries/RequestQueries.svelte';
 	import {
 		createApproveRequestMutation,

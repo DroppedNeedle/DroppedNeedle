@@ -1,22 +1,25 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import GenreArtistCard from '$lib/components/GenreArtistCard.svelte';
-	import GenreAlbumCard from '$lib/components/GenreAlbumCard.svelte';
-	import GenreArtwork from '$lib/components/GenreArtwork.svelte';
+	import GenreArtistCard from '$lib/features/genre/components/GenreArtistCard.svelte';
+	import GenreAlbumCard from '$lib/features/genre/components/GenreAlbumCard.svelte';
+	import GenreArtwork from '$lib/features/genre/components/GenreArtwork.svelte';
 	import {
 		albumHrefOrNull,
 		artistHrefOrNull,
 		localAlbumHref,
 		localArtistHref
 	} from '$lib/utils/entityRoutes';
-	import { getGenreGradient } from '$lib/utils/genreGradient';
+	import { getGenreGradient } from '$lib/features/genre/components/genreGradient';
 	import ServiceErrorState from '$lib/components/ServiceErrorState.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
-	import { getGenreAlbumPagesQuery, getGenreDetailQuery } from '$lib/queries/genre.svelte';
+	import {
+		getGenreAlbumPagesQuery,
+		getGenreDetailQuery
+	} from '$lib/features/genre/queries/genre.svelte';
 	import { ArrowLeft, BookOpen, Music2, CircleAlert, Mic, Disc3, ChevronDown } from 'lucide-svelte';
-	import RadioPlayButton from '$lib/components/discover/RadioPlayButton.svelte';
-	import type { RadioMode } from '$lib/player/launchRadio';
-	import type { SampleEntry } from '$lib/stores/deckSampler.svelte';
+	import RadioPlayButton from '$lib/features/discover/components/RadioPlayButton.svelte';
+	import type { RadioMode } from '$lib/features/player/playback/launchRadio';
+	import type { SampleEntry } from '$lib/features/discover/state/deckSampler.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 

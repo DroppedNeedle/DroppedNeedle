@@ -4,7 +4,7 @@
 	import ContextMenu from '$lib/components/ContextMenu.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import type { MenuItem } from '$lib/components/ContextMenu.svelte';
-	import { useIntegrationStatus } from '$lib/queries/home.svelte';
+	import { useIntegrationStatus } from '$lib/features/home/queries/home.svelte';
 	import {
 		cardQuickPlay,
 		cardQuickShuffle,
@@ -13,7 +13,7 @@
 		fetchAlbumQueueItems,
 		type AlbumCardMeta
 	} from '$lib/features/album/components/albumCardPlayback';
-	import { openGlobalPlaylistModal } from '$lib/stores/playlistModal.svelte';
+	import { openGlobalPlaylistModal } from '$lib/features/playlists/state/playlistModal.svelte';
 	import { downloadAlbumArchive } from '$lib/features/album/components/downloadActions';
 	import { getDownloadAccessQuery } from '$lib/features/album/queries/DownloadAccessQuery.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';

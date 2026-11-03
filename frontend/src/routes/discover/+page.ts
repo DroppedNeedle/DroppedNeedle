@@ -1,4 +1,4 @@
-import { getDiscoverHomeV3QueryOptions } from '$lib/queries/discover/DiscoverV3Queries.svelte';
+import { getDiscoverHomeV3QueryOptions } from '$lib/features/discover/queries/DiscoverV3Queries.svelte';
 import { queryClient } from '$lib/queries/QueryClient';
 import { authStore } from '$lib/stores/authStore.svelte';
 import type { PageLoad } from './$types';

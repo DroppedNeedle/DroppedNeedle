@@ -56,7 +56,7 @@ vi.mock('$lib/stores/musicSource', () => ({
 	DEFAULT_SOURCE: 'listenbrainz',
 	isMusicSource: (value: unknown) => value === 'listenbrainz' || value === 'lastfm'
 }));
-vi.mock('$lib/stores/scrobble.svelte', () => ({
+vi.mock('$lib/features/player/state/scrobble.svelte', () => ({
 	scrobbleManager: { reset: state.scrobbleReset }
 }));
 vi.mock('$lib/utils/userSessionCleanup', () => ({

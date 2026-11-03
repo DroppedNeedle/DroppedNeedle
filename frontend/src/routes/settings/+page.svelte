@@ -1,10 +1,10 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { replaceState } from '$app/navigation';
-	import { useIntegrationStatus } from '$lib/queries/home.svelte';
+	import { useIntegrationStatus } from '$lib/features/home/queries/home.svelte';
 	import SettingsTabContent from '$lib/components/settings/SettingsTabContent.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
-	import { getUpdateCheckQuery } from '$lib/queries/version.svelte';
+	import { getUpdateCheckQuery } from '$lib/shell/version.svelte';
 	import {
 		Settings2,
 		Music,
@@ -33,11 +33,11 @@
 		Disc3,
 		DatabaseBackup
 	} from 'lucide-svelte';
-	import JellyfinIcon from '$lib/components/JellyfinIcon.svelte';
-	import NavidromeIcon from '$lib/components/NavidromeIcon.svelte';
-	import PlexIcon from '$lib/components/PlexIcon.svelte';
-	import SpotifyIcon from '$lib/components/SpotifyIcon.svelte';
-	import YouTubeIcon from '$lib/components/YouTubeIcon.svelte';
+	import JellyfinIcon from '$lib/media/icons/JellyfinIcon.svelte';
+	import NavidromeIcon from '$lib/media/icons/NavidromeIcon.svelte';
+	import PlexIcon from '$lib/media/icons/PlexIcon.svelte';
+	import SpotifyIcon from '$lib/media/icons/SpotifyIcon.svelte';
+	import YouTubeIcon from '$lib/media/icons/YouTubeIcon.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import Input from '$lib/ui/Input.svelte';
 	import UnsavedChangesGuard from '$lib/ui/UnsavedChangesGuard.svelte';

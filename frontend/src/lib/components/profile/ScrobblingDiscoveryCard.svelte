@@ -27,7 +27,7 @@
 		ScrobblePreferencesUpdate
 	} from '$lib/queries/scrobble-preferences.svelte';
 	import type { MusicSource } from '$lib/stores/musicSource';
-	import { scrobbleManager } from '$lib/stores/scrobble.svelte';
+	import { scrobbleManager } from '$lib/features/player/state/scrobble.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import Input from '$lib/ui/Input.svelte';

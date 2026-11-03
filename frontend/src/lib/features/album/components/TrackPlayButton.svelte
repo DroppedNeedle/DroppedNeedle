@@ -1,11 +1,15 @@
 <script lang="ts">
 	import { Download, Play } from 'lucide-svelte';
 	import { TOAST_DURATION } from '$lib/constants';
-	import { createGenerateYouTubeTrackLinkMutation } from '$lib/queries/youtube.svelte';
+	import { createGenerateYouTubeTrackLinkMutation } from '$lib/features/youtube/queries/youtube.svelte';
 	import { toastStore } from '$lib/stores/toast';
-	import { launchTrackPlayback } from '$lib/player/launchTrackPlayback';
-	import { compareDiscTrack, getDiscTrackKey, normalizeDiscNumber } from '$lib/player/queueHelpers';
-	import YouTubeIcon from '$lib/components/YouTubeIcon.svelte';
+	import { launchTrackPlayback } from '$lib/features/player/playback/launchTrackPlayback';
+	import {
+		compareDiscTrack,
+		getDiscTrackKey,
+		normalizeDiscNumber
+	} from '$lib/features/player/playback/queueHelpers';
+	import YouTubeIcon from '$lib/media/icons/YouTubeIcon.svelte';
 	import { getCoverUrl } from '$lib/utils/errorHandling';
 	import type { YouTubeTrackLink, YouTubeQuotaStatus } from '$lib/types';
 	import Button from '$lib/ui/Button.svelte';

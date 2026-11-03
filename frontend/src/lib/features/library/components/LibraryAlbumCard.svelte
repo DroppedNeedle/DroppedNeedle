@@ -1,5 +1,5 @@
 <script lang="ts">
-	import AlbumImage from '$lib/components/AlbumImage.svelte';
+	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import CardTitle from '$lib/ui/CardTitle.svelte';
 	import LibraryFormatBadge from './LibraryFormatBadge.svelte';

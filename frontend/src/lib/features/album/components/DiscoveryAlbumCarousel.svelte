@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { EAGER_IMAGE_COUNT } from '$lib/utils/lazyImage';
+	import { EAGER_IMAGE_COUNT } from '$lib/media/lazyImage';
 	import type { Album } from '$lib/types';
-	import type { AlbumRef } from '$lib/queries/discover/types';
+	import type { AlbumRef } from '$lib/features/discover/queries/types';
 	import { withBasePath } from '$lib/utils/basePath';
 	import HorizontalCarousel from '$lib/components/HorizontalCarousel.svelte';
 	import CarouselSkeleton from '$lib/components/CarouselSkeleton.svelte';

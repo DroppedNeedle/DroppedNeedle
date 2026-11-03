@@ -1,5 +1,9 @@
 import type { AlbumTracksInfo } from '$lib/types';
-import { getDiscTrackKey, normalizeDiscNumber, compareDiscTrack } from '$lib/player/queueHelpers';
+import {
+	getDiscTrackKey,
+	normalizeDiscNumber,
+	compareDiscTrack
+} from '$lib/features/player/playback/queueHelpers';
 
 export type RenderedTrackSection = {
 	discNumber: number;

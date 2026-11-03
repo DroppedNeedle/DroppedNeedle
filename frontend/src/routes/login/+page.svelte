@@ -18,8 +18,8 @@
 	import { toAuthUser, type AuthProviders, type SessionUserLike } from '$lib/queries/auth/types';
 	import { onDestroy } from 'svelte';
 	import { Eye, EyeOff } from 'lucide-svelte';
-	import JellyfinIcon from '$lib/components/JellyfinIcon.svelte';
-	import PlexIcon from '$lib/components/PlexIcon.svelte';
+	import JellyfinIcon from '$lib/media/icons/JellyfinIcon.svelte';
+	import PlexIcon from '$lib/media/icons/PlexIcon.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import Field from '$lib/ui/Field.svelte';

@@ -16,7 +16,7 @@ import WantedTab from './WantedTab.svelte';
 
 // The lazy loader would fetch the cover, and a failed fetch removes the image.
 // With it off, the cover keeps the URL it would fetch in data-src.
-vi.mock('$lib/utils/lazyImage', async (importOriginal) => ({
+vi.mock('$lib/media/lazyImage', async (importOriginal) => ({
 	...(await importOriginal<Record<string, unknown>>()),
 	lazyImage: () => ({ destroy() {} })
 }));

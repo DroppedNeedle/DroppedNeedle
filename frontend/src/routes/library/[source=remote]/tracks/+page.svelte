@@ -6,21 +6,21 @@
 	import {
 		fetchRemoteTracksPage,
 		getRemoteTracksQuery
-	} from '$lib/queries/remotes/RemoteQueries.svelte';
-	import { defaultSortOrder } from '$lib/queries/remotes/remoteSources';
-	import type { RemoteTrack } from '$lib/queries/remotes/types';
-	import { playerStore } from '$lib/stores/player.svelte';
+	} from '$lib/features/remote-library/queries/RemoteQueries.svelte';
+	import { defaultSortOrder } from '$lib/features/remote-library/queries/remoteSources';
+	import type { RemoteTrack } from '$lib/features/remote-library/queries/types';
+	import { playerStore } from '$lib/features/player/state/player.svelte';
 	import { toastStore } from '$lib/stores/toast';
-	import { createLibraryTrackLoader } from '$lib/utils/libraryTrackLoader.svelte';
-	import NowPlayingIndicator from '$lib/components/NowPlayingIndicator.svelte';
+	import { createLibraryTrackLoader } from '$lib/features/remote-library/state/libraryTrackLoader.svelte';
+	import NowPlayingIndicator from '$lib/features/player/components/NowPlayingIndicator.svelte';
 	import ContextMenu from '$lib/components/ContextMenu.svelte';
 	import type { MenuItem } from '$lib/components/ContextMenu.svelte';
-	import LibraryFilterBar from '$lib/components/LibraryFilterBar.svelte';
+	import LibraryFilterBar from '$lib/features/remote-library/components/LibraryFilterBar.svelte';
 	import { formatDurationSec } from '$lib/utils/formatting';
 	import { reveal } from '$lib/actions/reveal';
 	import { Play, Shuffle, ListPlus, ListStart, LoaderCircle } from 'lucide-svelte';
-	import ListHeader from '../ListHeader.svelte';
-	import Pager from '../Pager.svelte';
+	import ListHeader from '$lib/features/remote-library/components/ListHeader.svelte';
+	import Pager from '$lib/features/remote-library/components/Pager.svelte';
 	import type { PageData } from './$types';
 
 	const PAGE_SIZE = 48;

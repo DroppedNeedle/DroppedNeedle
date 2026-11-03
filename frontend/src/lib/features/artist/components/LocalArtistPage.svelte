@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { ChevronLeft, Disc3, ExternalLink, FileSearch, FileUp, MicVocal } from 'lucide-svelte';
-	import ArtistImage from '$lib/components/ArtistImage.svelte';
+	import ArtistImage from '$lib/media/ArtistImage.svelte';
 	import LibraryAlbumCard from '$lib/features/library/components/LibraryAlbumCard.svelte';
 	import ArtistAppearancesSection from '$lib/features/library/components/ArtistAppearancesSection.svelte';
 	import ArtistMergeDialog from '$lib/features/library/components/ArtistMergeDialog.svelte';

@@ -29,7 +29,7 @@ const { approvalItems, mutations } = vi.hoisted(() => {
 	return { approvalItems, mutations: { approve: stub(), reject: stub() } };
 });
 
-vi.mock('$lib/components/AlbumImage.svelte', () => {
+vi.mock('$lib/media/AlbumImage.svelte', () => {
 	const C = function () {};
 	C.prototype = {};
 	return { default: C };

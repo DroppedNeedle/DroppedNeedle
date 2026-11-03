@@ -4,9 +4,9 @@
 	import { libraryStore } from '$lib/stores/library';
 	import { createRequestAlbumMutation } from '$lib/features/downloads/queries/DownloadMutations.svelte';
 	import { formatListenCount } from '$lib/utils/formatting';
-	import { getListenTitle } from '$lib/utils/enrichment';
+	import { getListenTitle } from '$lib/features/search/queries/enrichment';
 	import { Download, Music2 } from 'lucide-svelte';
-	import AlbumImage from '$lib/components/AlbumImage.svelte';
+	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import LibraryBadge from './LibraryBadge.svelte';
 	import AlbumCardOverlay from './AlbumCardOverlay.svelte';
 	import Card from '$lib/ui/Card.svelte';

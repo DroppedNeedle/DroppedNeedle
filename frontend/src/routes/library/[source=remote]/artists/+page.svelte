@@ -2,15 +2,15 @@
 	import { page } from '$app/state';
 	import { untrack } from 'svelte';
 	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
-	import { getRemoteArtistsQuery } from '$lib/queries/remotes/RemoteQueries.svelte';
-	import { defaultSortOrder } from '$lib/queries/remotes/remoteSources';
-	import SourceArtistCard from '$lib/components/SourceArtistCard.svelte';
+	import { getRemoteArtistsQuery } from '$lib/features/remote-library/queries/RemoteQueries.svelte';
+	import { defaultSortOrder } from '$lib/features/remote-library/queries/remoteSources';
+	import SourceArtistCard from '$lib/features/remote-library/components/SourceArtistCard.svelte';
 	import ArtistCardSkeleton from '$lib/features/artist/components/ArtistCardSkeleton.svelte';
-	import LibraryFilterBar from '$lib/components/LibraryFilterBar.svelte';
+	import LibraryFilterBar from '$lib/features/remote-library/components/LibraryFilterBar.svelte';
 	import { artistHrefOrNull } from '$lib/utils/entityRoutes';
 	import { reveal } from '$lib/actions/reveal';
-	import ListHeader from '../ListHeader.svelte';
-	import Pager from '../Pager.svelte';
+	import ListHeader from '$lib/features/remote-library/components/ListHeader.svelte';
+	import Pager from '$lib/features/remote-library/components/Pager.svelte';
 	import type { PageData } from './$types';
 
 	const PAGE_SIZE = 48;

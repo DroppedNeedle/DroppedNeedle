@@ -1,6 +1,6 @@
 <script lang="ts">
-	import JellyfinIcon from '$lib/components/JellyfinIcon.svelte';
-	import PlexIcon from '$lib/components/PlexIcon.svelte';
+	import JellyfinIcon from '$lib/media/icons/JellyfinIcon.svelte';
+	import PlexIcon from '$lib/media/icons/PlexIcon.svelte';
 	import { UserRound } from 'lucide-svelte';
 	import { getImportCandidatesQuery } from '$lib/queries/auth/ImportCandidatesQuery.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';

@@ -1,7 +1,7 @@
 import { page } from 'vitest/browser';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render } from 'vitest-browser-svelte';
-import type { PlaylistListItemV3 } from '$lib/queries/playlists/PlaylistV3Queries.svelte';
+import type { PlaylistListItemV3 } from '$lib/features/playlists/queries/PlaylistV3Queries.svelte';
 
 // The list page consumes the user-scoped TanStack query + create mutation; stub both so
 // the page renders without a QueryClientProvider and tests drive data directly.
@@ -14,10 +14,10 @@ const listQuery = {
 };
 const mockMutateAsync = vi.fn();
 
-vi.mock('$lib/queries/playlists/PlaylistV3Queries.svelte', () => ({
+vi.mock('$lib/features/playlists/queries/PlaylistV3Queries.svelte', () => ({
 	getPlaylistListV3Query: () => listQuery
 }));
-vi.mock('$lib/queries/playlists/PlaylistV3Mutations.svelte', () => ({
+vi.mock('$lib/features/playlists/queries/PlaylistV3Mutations.svelte', () => ({
 	createPlaylistV3Mutation: () => ({ mutateAsync: mockMutateAsync, isPending: false }),
 	createDeletePlaylistV3Mutation: () => ({ mutateAsync: vi.fn(), isPending: false })
 }));

@@ -1,14 +1,14 @@
 <script lang="ts">
-	import '$lib/components/release-notes.css';
+	import '$lib/shell/release-notes.css';
 	import {
 		getVersionQuery,
 		getUpdateCheckQuery,
 		getReleaseHistoryQuery
-	} from '$lib/queries/version.svelte';
+	} from '$lib/shell/version.svelte';
 	import SafeHtml from '$lib/components/SafeHtml.svelte';
 	import { outsideLink } from '$lib/components/outsideLink';
 	import { ExternalLink, RefreshCw, Info, Tag, Calendar, CircleArrowUp } from 'lucide-svelte';
-	import GitHubIcon from '$lib/components/GitHubIcon.svelte';
+	import GitHubIcon from '$lib/media/icons/GitHubIcon.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 

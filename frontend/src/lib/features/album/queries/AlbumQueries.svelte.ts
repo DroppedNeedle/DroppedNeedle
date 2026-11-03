@@ -4,7 +4,7 @@ import type { Getter } from 'runed';
 
 import { api } from '$lib/api/client';
 import { STALE_SLOW } from '$lib/queries/staleTime';
-import { compareDiscTrack } from '$lib/player/queueHelpers';
+import { compareDiscTrack } from '$lib/features/player/playback/queueHelpers';
 import type { AlbumBasicInfo, YouTubeLink, YouTubeTrackLink } from '$lib/types';
 import { AlbumQueryKeyFactory } from './AlbumQueryKeyFactory';
 import { fetchAlbumTracks } from './albumTracks';

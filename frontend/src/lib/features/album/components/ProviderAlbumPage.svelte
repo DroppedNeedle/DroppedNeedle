@@ -1,13 +1,13 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { useIntegrationStatus } from '$lib/queries/home.svelte';
+	import { useIntegrationStatus } from '$lib/features/home/queries/home.svelte';
 	import BackButton from '$lib/components/BackButton.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
-	import LastFmAlbumEnrichmentComponent from '$lib/components/LastFmAlbumEnrichment.svelte';
+	import LastFmAlbumEnrichmentComponent from '$lib/features/lastfm/components/LastFmAlbumEnrichment.svelte';
 	import DeleteAlbumModal from '$lib/features/album/components/DeleteAlbumModal.svelte';
 	import RemoveTrackFileDialog from './RemoveTrackFileDialog.svelte';
-	import AddToPlaylistModal from '$lib/components/AddToPlaylistModal.svelte';
+	import AddToPlaylistModal from '$lib/features/playlists/components/AddToPlaylistModal.svelte';
 	import { ApiError } from '$lib/api/errors';
 	import { createAlbumPageState } from '../state/albumPageState.svelte';
 	import AlbumHeader from './AlbumHeader.svelte';

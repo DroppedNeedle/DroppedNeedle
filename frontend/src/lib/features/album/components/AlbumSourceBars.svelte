@@ -7,15 +7,18 @@
 		YouTubeQuotaStatus,
 		LocalAlbumMatch
 	} from '$lib/types';
-	import type { RemoteMatch } from '$lib/queries/remotes/types';
+	import type { RemoteMatch } from '$lib/features/remote-library/queries/types';
 	import type { SourceCallbacks } from '../state/albumPageState.svelte';
-	import AlbumYouTubeBar from '$lib/components/AlbumYouTubeBar.svelte';
+	import AlbumYouTubeBar from '$lib/features/youtube/components/AlbumYouTubeBar.svelte';
 	import AlbumSourceBar from '$lib/features/album/components/AlbumSourceBar.svelte';
-	import JellyfinIcon from '$lib/components/JellyfinIcon.svelte';
-	import LocalFilesIcon from '$lib/components/LocalFilesIcon.svelte';
-	import NavidromeIcon from '$lib/components/NavidromeIcon.svelte';
-	import PlexIcon from '$lib/components/PlexIcon.svelte';
-	import { compareDiscTrack, normalizeDiscNumber } from '$lib/player/queueHelpers';
+	import JellyfinIcon from '$lib/media/icons/JellyfinIcon.svelte';
+	import LocalFilesIcon from '$lib/media/icons/LocalFilesIcon.svelte';
+	import NavidromeIcon from '$lib/media/icons/NavidromeIcon.svelte';
+	import PlexIcon from '$lib/media/icons/PlexIcon.svelte';
+	import {
+		compareDiscTrack,
+		normalizeDiscNumber
+	} from '$lib/features/player/playback/queueHelpers';
 	import {
 		buildRenderedTrackSections,
 		buildSortedTrackMap,

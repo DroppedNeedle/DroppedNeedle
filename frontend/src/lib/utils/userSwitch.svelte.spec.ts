@@ -14,8 +14,8 @@ import {
 import { getScrobblePreferencesQueryOptions } from '$lib/queries/scrobble-preferences.svelte';
 import { authStore, LAST_USER_ID_KEY, type AuthUser } from '$lib/stores/authStore.svelte';
 import '$lib/stores/musicSource';
-import { playerStore } from '$lib/stores/player.svelte';
-import '$lib/stores/scrobble.svelte';
+import { playerStore } from '$lib/features/player/state/player.svelte';
+import '$lib/features/player/state/scrobble.svelte';
 import { fakeApi } from '$lib/test/api';
 import { logout } from '$lib/utils/logout';
 import { clearUserSessionState } from '$lib/utils/userSessionCleanup';

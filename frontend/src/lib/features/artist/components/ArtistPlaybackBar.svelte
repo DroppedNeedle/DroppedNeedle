@@ -3,18 +3,18 @@
 	import { PersistedState } from 'runed';
 	import ContextMenu from '$lib/components/ContextMenu.svelte';
 	import type { MenuItem } from '$lib/components/ContextMenu.svelte';
-	import { openGlobalPlaylistModal } from '$lib/stores/playlistModal.svelte';
-	import JellyfinIcon from '$lib/components/JellyfinIcon.svelte';
-	import LocalFilesIcon from '$lib/components/LocalFilesIcon.svelte';
-	import NavidromeIcon from '$lib/components/NavidromeIcon.svelte';
-	import PlexIcon from '$lib/components/PlexIcon.svelte';
-	import { useIntegrationStatus } from '$lib/queries/home.svelte';
-	import { playerStore } from '$lib/stores/player.svelte';
+	import { openGlobalPlaylistModal } from '$lib/features/playlists/state/playlistModal.svelte';
+	import JellyfinIcon from '$lib/media/icons/JellyfinIcon.svelte';
+	import LocalFilesIcon from '$lib/media/icons/LocalFilesIcon.svelte';
+	import NavidromeIcon from '$lib/media/icons/NavidromeIcon.svelte';
+	import PlexIcon from '$lib/media/icons/PlexIcon.svelte';
+	import { useIntegrationStatus } from '$lib/features/home/queries/home.svelte';
+	import { playerStore } from '$lib/features/player/state/player.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import { getSourceColor, getSourceLabel } from '$lib/utils/sources';
 	import { createArtistTrackLoader } from '$lib/features/artist/state/artistTrackLoader.svelte';
 	import type { ReleaseGroup } from '$lib/types';
-	import type { SourceType } from '$lib/player/types';
+	import type { SourceType } from '$lib/features/player/playback/types';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 

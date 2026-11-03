@@ -15,7 +15,7 @@ const { emptyComponent } = vi.hoisted(() => ({
 vi.mock('$lib/features/downloads/queries/DownloadMutations.svelte', () => ({
 	createRequestAlbumMutation: () => ({ mutateAsync: vi.fn(), isPending: false })
 }));
-vi.mock('$lib/components/AlbumImage.svelte', emptyComponent);
+vi.mock('$lib/media/AlbumImage.svelte', emptyComponent);
 vi.mock('./AlbumCardOverlay.svelte', emptyComponent);
 
 import AlbumCard from './AlbumCard.svelte';

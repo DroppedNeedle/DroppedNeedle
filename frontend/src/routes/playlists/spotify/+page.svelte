@@ -1,15 +1,15 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { LoaderCircle, ArrowLeft, RefreshCw, CircleCheckBig, Download } from 'lucide-svelte';
-	import AlbumImage from '$lib/components/AlbumImage.svelte';
-	import SpotifyIcon from '$lib/components/SpotifyIcon.svelte';
+	import AlbumImage from '$lib/media/AlbumImage.svelte';
+	import SpotifyIcon from '$lib/media/icons/SpotifyIcon.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import {
 		getSpotifyPlaylistsQuery,
 		createImportSpotifyPlaylistMutation
-	} from '$lib/queries/spotify.svelte';
+	} from '$lib/features/playlists/queries/spotify.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { providerUnavailableMessage } from '$lib/utils/serviceError';
 

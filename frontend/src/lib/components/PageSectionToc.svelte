@@ -3,7 +3,7 @@
 	import { onDestroy } from 'svelte';
 	import { List } from 'lucide-svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
-	import { playerStore } from '$lib/stores/player.svelte';
+	import { playerStore } from '$lib/features/player/state/player.svelte';
 	import { SvelteMap } from 'svelte/reactivity';
 
 	type PageSection = {

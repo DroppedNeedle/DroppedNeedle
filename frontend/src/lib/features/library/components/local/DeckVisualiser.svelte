@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { playerStore } from '$lib/stores/player.svelte';
-	import { tryGetAudioEngine } from '$lib/player/audioElement';
+	import { playerStore } from '$lib/features/player/state/player.svelte';
+	import { tryGetAudioEngine } from '$lib/features/player/playback/audioElement';
 
 	interface Props {
 		reducedMotion?: boolean;

@@ -2,10 +2,10 @@
 	import { Search, X, Music2, Play, ArrowUpRight } from 'lucide-svelte';
 	import { fly, fade } from '$lib/ui/motion';
 	import { getLibrarySearchQuery } from '$lib/features/library/queries/LibraryQueries.svelte';
-	import AlbumImage from '$lib/components/AlbumImage.svelte';
-	import ArtistImage from '$lib/components/ArtistImage.svelte';
-	import { buildDiscoveryQueueFromLocal } from '$lib/player/queueHelpers';
-	import { playerStore } from '$lib/stores/player.svelte';
+	import AlbumImage from '$lib/media/AlbumImage.svelte';
+	import ArtistImage from '$lib/media/ArtistImage.svelte';
+	import { buildDiscoveryQueueFromLocal } from '$lib/features/player/playback/queueHelpers';
+	import { playerStore } from '$lib/features/player/state/player.svelte';
 	import type { TrackView } from '$lib/types';
 	import { albumHref, artistHref } from '$lib/utils/entityRoutes';
 	import { withBasePath } from '$lib/utils/basePath';

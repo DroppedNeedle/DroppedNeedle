@@ -5,15 +5,15 @@
 		getLocalStatsV3Query
 	} from '$lib/features/library/queries/LocalV3Queries.svelte';
 	import { formatBytes } from '$lib/utils/formatting';
-	import { buildDiscoveryQueueFromLocal } from '$lib/player/queueHelpers';
-	import { playerStore } from '$lib/stores/player.svelte';
+	import { buildDiscoveryQueueFromLocal } from '$lib/features/player/playback/queueHelpers';
+	import { playerStore } from '$lib/features/player/state/player.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import {
 		fetchLibraryTracks,
 		libraryTrackParams
 	} from '$lib/features/library/queries/libraryTracks';
 	import { createLibraryTrackQueue } from '$lib/features/library/queries/libraryTrackQueue.svelte';
-	import AlbumImage from '$lib/components/AlbumImage.svelte';
+	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import { NOISE_TEXTURE } from './noiseTexture';
 	import { withBasePath } from '$lib/utils/basePath';

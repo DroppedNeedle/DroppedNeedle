@@ -1,9 +1,9 @@
 <script lang="ts">
 	import { Check } from 'lucide-svelte';
-	import type { ArtistRef } from '$lib/queries/discover/types';
+	import type { ArtistRef } from '$lib/features/discover/queries/types';
 	import HorizontalCarousel from '$lib/components/HorizontalCarousel.svelte';
 	import CarouselSkeleton from '$lib/components/CarouselSkeleton.svelte';
-	import ArtistImage from '$lib/components/ArtistImage.svelte';
+	import ArtistImage from '$lib/media/ArtistImage.svelte';
 	import { artistHref } from '$lib/utils/entityRoutes';
 	import { withBasePath } from '$lib/utils/basePath';
 	import Button from '$lib/ui/Button.svelte';

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import { Search } from 'lucide-svelte';
-	import AlbumImage from '$lib/components/AlbumImage.svelte';
+	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import { createMatchHeldMutation } from '$lib/features/downloads/queries/HeldQueries.svelte';
 	import { getAlbumSearchQuery } from '$lib/features/library/queries/LibraryQueries.svelte';
 	import type { Album } from '$lib/types';

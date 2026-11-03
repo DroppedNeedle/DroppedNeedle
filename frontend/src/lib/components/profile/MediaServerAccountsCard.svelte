@@ -1,9 +1,9 @@
 <script lang="ts">
 	import { LoaderCircle, ServerCog } from 'lucide-svelte';
 	import { ApiError } from '$lib/api/errors';
-	import JellyfinIcon from '$lib/components/JellyfinIcon.svelte';
-	import NavidromeIcon from '$lib/components/NavidromeIcon.svelte';
-	import PlexIcon from '$lib/components/PlexIcon.svelte';
+	import JellyfinIcon from '$lib/media/icons/JellyfinIcon.svelte';
+	import NavidromeIcon from '$lib/media/icons/NavidromeIcon.svelte';
+	import PlexIcon from '$lib/media/icons/PlexIcon.svelte';
 	import { getConnectionsQuery } from '$lib/queries/connections/ConnectionsQuery.svelte';
 	import {
 		createConnectJellyfinMutation,

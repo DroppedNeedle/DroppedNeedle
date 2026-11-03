@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import SourcePlaylistDetail from '$lib/components/SourcePlaylistDetail.svelte';
+	import SourcePlaylistDetail from '$lib/features/remote-library/components/SourcePlaylistDetail.svelte';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();

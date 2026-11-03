@@ -8,7 +8,7 @@ const h = vi.hoisted(() => ({ goto: vi.fn() }));
 
 vi.mock('$app/state', () => ({ page: { url: new URL('http://localhost/album/x') } }));
 vi.mock('$app/navigation', () => ({ goto: (...args: unknown[]) => h.goto(...args) }));
-vi.mock('$lib/stores/player.svelte', () => ({
+vi.mock('$lib/features/player/state/player.svelte', () => ({
 	playerStore: {
 		isPlaying: false,
 		nowPlaying: null,

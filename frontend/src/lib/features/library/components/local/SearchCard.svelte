@@ -11,7 +11,7 @@
 	import { fly } from '$lib/ui/motion';
 	import { Search, X, Disc3, Music2, Play, ListPlus, GripVertical, Loader } from 'lucide-svelte';
 	import CoverPlaceholder from '$lib/ui/CoverPlaceholder.svelte';
-	import AlbumImage from '$lib/components/AlbumImage.svelte';
+	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import Input from '$lib/ui/Input.svelte';
 

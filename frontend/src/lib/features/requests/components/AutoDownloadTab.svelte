@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { fade, fly } from '$lib/ui/motion';
 	import { Check, CloudDownload, Heart, Sparkles, TriangleAlert, Undo2, X } from 'lucide-svelte';
-	import ArtistImage from '$lib/components/ArtistImage.svelte';
+	import ArtistImage from '$lib/media/ArtistImage.svelte';
 	import {
 		getAutoDownloadApprovalBatchesQuery,
 		getAutoDownloadApprovalsQuery

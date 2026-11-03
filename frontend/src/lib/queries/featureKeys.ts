@@ -1,7 +1,7 @@
-import type { SourceType } from '$lib/player/types';
+import type { SourceType } from '$lib/features/player/playback/types';
 import { ADMIN, key, SHARED, userScope } from '$lib/queries/keys';
 import type { RemoteMatchHints } from '$lib/queries/remotes/params';
-import type { RemoteSource } from '$lib/queries/remotes/types';
+import type { RemoteSource } from '$lib/features/remote-library/queries/types';
 import type { SourcePlaylistSource } from '$lib/types';
 
 // The keys of the small features that effects.ts sweeps. They live apart from

@@ -7,7 +7,7 @@
 	import {
 		getRemoteConnectionQuery,
 		getRemoteStatsQuery
-	} from '$lib/queries/remotes/RemoteQueries.svelte';
+	} from '$lib/features/remote-library/queries/RemoteQueries.svelte';
 	import { getLibraryStatsQuery } from '$lib/features/library/queries/LibraryQueries.svelte';
 	import { formatBytes } from '$lib/utils/formatting';
 	import type { ProfileLibraryStats, ProfileServiceConnection } from '$lib/queries/profile.svelte';

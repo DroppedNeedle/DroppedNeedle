@@ -3,8 +3,8 @@
 	import { Play } from 'lucide-svelte';
 	import CoverPlaceholder from '$lib/ui/CoverPlaceholder.svelte';
 	import type { TopSong, ResolvedTrack } from '$lib/types';
-	import AlbumImage from '$lib/components/AlbumImage.svelte';
-	import SampleButton from '$lib/components/discover/SampleButton.svelte';
+	import AlbumImage from '$lib/media/AlbumImage.svelte';
+	import SampleButton from '$lib/features/discover/components/SampleButton.svelte';
 
 	interface Props {
 		song: TopSong;

@@ -13,8 +13,8 @@
 		X
 	} from 'lucide-svelte';
 
-	import AlbumImage from '$lib/components/AlbumImage.svelte';
-	import ArtistImage from '$lib/components/ArtistImage.svelte';
+	import AlbumImage from '$lib/media/AlbumImage.svelte';
+	import ArtistImage from '$lib/media/ArtistImage.svelte';
 	import { getLibrarySearchQuery } from '$lib/features/library/queries/LibraryQueries.svelte';
 	import type { LibraryRootSettings } from '$lib/features/library-management/queries/LibraryOperationsTypes';
 	import {

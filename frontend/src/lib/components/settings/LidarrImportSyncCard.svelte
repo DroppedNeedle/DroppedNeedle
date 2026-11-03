@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { ArrowDownToLine, CircleCheck, Lock, RefreshCw } from 'lucide-svelte';
 
-	import ArtistImage from '$lib/components/ArtistImage.svelte';
+	import ArtistImage from '$lib/media/ArtistImage.svelte';
 	import { getLidarrImportCandidatesQuery } from '$lib/queries/lidarr-import.svelte';
 	import { createImportFromLidarrMutation } from '$lib/queries/lidarr-import.svelte';
 	import type { LidarrImportResult } from '$lib/queries/lidarr-import.svelte';

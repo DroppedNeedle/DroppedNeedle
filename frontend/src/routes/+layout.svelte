@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { SHELL_FREE_PATHS } from '$lib/constants';
-	import { loadAuthenticatedAppShell } from '$lib/components/lazyComponentLoaders';
+	import { loadAuthenticatedAppShell } from '$lib/shell/lazyComponentLoaders';
 	import QueryProvider from '$lib/queries/QueryProvider.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import { withoutBasePath } from '$lib/utils/basePath';

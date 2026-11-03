@@ -7,8 +7,8 @@
 		HeldFile,
 		AlbumView
 	} from '$lib/types';
-	import AlbumImage from '$lib/components/AlbumImage.svelte';
-	import HeroBackdrop from '$lib/components/HeroBackdrop.svelte';
+	import AlbumImage from '$lib/media/AlbumImage.svelte';
+	import HeroBackdrop from '$lib/media/HeroBackdrop.svelte';
 	import AlbumDownloadStatus from '$lib/features/downloads/components/AlbumDownloadStatus.svelte';
 	import { formatTotalDuration } from '$lib/utils/formatting';
 	import {
@@ -26,7 +26,7 @@
 	import { createRequestUpgradeAlbumMutation } from '$lib/features/downloads/queries/UpgradeQueries.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { toastStore } from '$lib/stores/toast';
-	import { deckSampler } from '$lib/stores/deckSampler.svelte';
+	import { deckSampler } from '$lib/features/discover/state/deckSampler.svelte';
 	import EditionPlate from '$lib/features/library/components/edition/EditionPlate.svelte';
 	import NoFilesBadge from '$lib/features/library/components/NoFilesBadge.svelte';
 	import {

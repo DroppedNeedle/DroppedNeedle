@@ -4,7 +4,7 @@
 	album's history.
 -->
 <script lang="ts">
-	import AlbumImage from '$lib/components/AlbumImage.svelte';
+	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import AlbumHistory from '$lib/features/library/components/AlbumHistory.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
