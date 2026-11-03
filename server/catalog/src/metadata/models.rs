@@ -204,6 +204,37 @@ pub struct ArtistReleases {
     pub service_status: ServiceStatus,
 }
 
+/// One release group of an artist's discography that the library holds.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct OwnedRelease {
+    /// Release-group MBID.
+    pub id: String,
+    /// Title.
+    pub title: Option<String>,
+    /// Primary type (`Album`, `EP`, `Single`, `Other`, ...).
+    pub primary_type: Option<String>,
+    /// Secondary types (`Compilation`, `Live`, `Soundtrack`, ...).
+    pub secondary_types: Vec<String>,
+    /// First release year.
+    pub year: Option<i32>,
+}
+
+/// `GET /artists/{artist_mbid}/owned-releases`: every release group of the
+/// artist's discography that the library holds, whatever its type. The
+/// release-type preferences only shape the discography; the library part of
+/// an artist page shows everything the library holds.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct OwnedReleases {
+    /// The held release groups, newest first.
+    pub items: Vec<OwnedRelease>,
+    /// False while the rest of a large discography is still being fetched,
+    /// or when MusicBrainz could not be asked: some held albums may be
+    /// missing from `items`.
+    pub complete: bool,
+    /// Sources that degraded while building the list.
+    pub service_status: ServiceStatus,
+}
+
 /// One album as a row in a list: discover shelves, charts and the
 /// catalog's discovery rows share it. Absent means unknown.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]

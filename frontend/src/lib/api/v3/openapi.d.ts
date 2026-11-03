@@ -862,6 +862,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/artists/{artist_mbid}/owned-releases": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The release groups of the artist's discography that the library holds,
+         *     whatever their type.
+         */
+        get: operations["owned_releases"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/artists/{artist_mbid}/purchase-options": {
         parameters: {
             query?: never;
@@ -17709,6 +17729,40 @@ export interface components {
              */
             sidecar_patterns: string[];
         };
+        /** @description One release group of an artist's discography that the library holds. */
+        OwnedRelease: {
+            /** @description Release-group MBID. */
+            id: string;
+            /** @description Primary type (`Album`, `EP`, `Single`, `Other`, ...). */
+            primary_type?: string | null;
+            /** @description Secondary types (`Compilation`, `Live`, `Soundtrack`, ...). */
+            secondary_types: string[];
+            /** @description Title. */
+            title?: string | null;
+            /**
+             * Format: int32
+             * @description First release year.
+             */
+            year?: number | null;
+        };
+        /**
+         * @description `GET /artists/{artist_mbid}/owned-releases`: every release group of the
+         *     artist's discography that the library holds, whatever its type. The
+         *     release-type preferences only shape the discography; the library part of
+         *     an artist page shows everything the library holds.
+         */
+        OwnedReleases: {
+            /**
+             * @description False while the rest of a large discography is still being fetched,
+             *     or when MusicBrainz could not be asked: some held albums may be
+             *     missing from `items`.
+             */
+            complete: boolean;
+            /** @description The held release groups, newest first. */
+            items: components["schemas"]["OwnedRelease"][];
+            /** @description Sources that degraded while building the list. */
+            service_status: components["schemas"]["Option"];
+        };
         /** @description One section of a page. */
         PageSection: {
             /** @description Its rows. */
@@ -25863,6 +25917,47 @@ export interface operations {
             };
             /** @description Last.fm is down (PROVIDER_UNAVAILABLE, with retry_after when known) */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    owned_releases: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Artist MBID */
+                artist_mbid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Held release groups */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OwnedReleases"];
+                };
+            };
+            /** @description Not a MusicBrainz id */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };

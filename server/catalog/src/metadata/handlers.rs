@@ -18,9 +18,9 @@ use super::models::{
     AlbumArtistQuery, AlbumBasicInfo, AlbumEditionsResponse, AlbumLastFmQuery, AlbumTracksInfo,
     ArtistExtendedInfo, ArtistInfo, ArtistLastFmQuery, ArtistPurchaseOptionsResponse,
     ArtistPurchaseQuery, ArtistReleases, DiscoveryQuery, LastFmAlbumEnrichment,
-    LastFmArtistEnrichment, MoreByArtistResponse, PluginDetails, PurchaseOptionsResponse,
-    ReleasesQuery, SimilarAlbumsResponse, SimilarArtistsResponse, TopAlbumsResponse,
-    TopSongsResponse,
+    LastFmArtistEnrichment, MoreByArtistResponse, OwnedReleases, PluginDetails,
+    PurchaseOptionsResponse, ReleasesQuery, SimilarAlbumsResponse, SimilarArtistsResponse,
+    TopAlbumsResponse, TopSongsResponse,
 };
 
 type Answer<T> = Result<Json<T>, ApiError>;
@@ -107,6 +107,27 @@ pub async fn artist_releases(
             .artist_releases(&mbid, query.offset.unwrap_or(0), limit)
             .await,
     )
+}
+
+/// The release groups of the artist's discography that the library holds,
+/// whatever their type.
+#[utoipa::path(
+    get,
+    tag = "catalog",
+    path = "/api/v3/artists/{artist_mbid}/owned-releases",
+    params(("artist_mbid" = String, Path, description = "Artist MBID")),
+    responses(
+        (status = 200, description = "Held release groups", body = OwnedReleases),
+        (status = 400, description = "Not a MusicBrainz id"),
+        (status = 401, description = "Not authenticated"),
+    )
+)]
+pub async fn owned_releases(
+    State(deps): State<CatalogDeps>,
+    _user: User,
+    Path(mbid): Path<String>,
+) -> Answer<OwnedReleases> {
+    answer(deps.catalog.owned_releases(&mbid).await)
 }
 
 /// Similar artists.

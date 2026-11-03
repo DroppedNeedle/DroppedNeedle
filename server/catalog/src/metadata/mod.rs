@@ -369,6 +369,7 @@ pub fn routes() -> Routes<CatalogDeps> {
         .user(routes!(artist))
         .user(routes!(artist_extended))
         .user(routes!(artist_releases))
+        .user(routes!(owned_releases))
         .user(routes!(similar_artists))
         .user(routes!(top_songs))
         .user(routes!(top_albums))

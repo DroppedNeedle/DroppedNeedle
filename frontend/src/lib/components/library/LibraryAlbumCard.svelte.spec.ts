@@ -44,6 +44,18 @@ describe('LibraryAlbumCard.svelte', () => {
 			.toHaveAttribute('data-src', `/api/v3/library/albums/${LOCAL_ALBUM_ID}/artwork?size=250`);
 	});
 
+	it('keeps year and artist on one line and puts the kind next to the count', async () => {
+		render(LibraryAlbumCard, {
+			props: { album: { ...album, artist_name: 'T.Raumschmiere', track_count: 4 }, kind: 'Single' }
+		});
+		const byline = page.getByText('T.Raumschmiere');
+		await expect.element(byline).toBeInTheDocument();
+		expect(byline.element().closest('p')?.classList.contains('truncate')).toBe(true);
+		const count = page.getByText('4 tracks');
+		const line = count.element().closest('p');
+		expect(line?.textContent?.replace(/\s+/g, '')).toBe('4tracks•Single');
+	});
+
 	it('falls back to the release-group cover when a linked album has no art of its own', async () => {
 		const releaseGroup = 'b1392450-e666-3926-a536-22c65f834433';
 		render(LibraryAlbumCard, {
