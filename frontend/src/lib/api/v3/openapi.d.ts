@@ -10703,7 +10703,8 @@ export interface components {
             identity_state: string;
             /**
              * Format: int64
-             * @description Streamable tracks credited to this artist on albums it leads.
+             * @description Streamable tracks on albums this artist leads, whoever is credited
+             *     on them.
              */
             led_track_count: number;
             /** @description Display name. */

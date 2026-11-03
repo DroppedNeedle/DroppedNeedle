@@ -37276,7 +37276,7 @@
           "led_track_count": {
             "type": "integer",
             "format": "int64",
-            "description": "Streamable tracks credited to this artist on albums it leads.",
+            "description": "Streamable tracks on albums this artist leads, whoever is credited\non them.",
             "minimum": 0
           },
           "name": {
