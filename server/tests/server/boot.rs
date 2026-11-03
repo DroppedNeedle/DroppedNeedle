@@ -223,7 +223,7 @@ async fn after_a_fresh_start_setup_asks_for_the_code_logged_at_boot() {
 
 /// A database the replaced migration chain left at its last number is
 /// backed up before the bridge moves it onto the baseline: one backup at
-/// that stamp, still holding sqlx's table, and the live file at the
+/// that stamp, still holding `_sqlx_migrations`, and the live file at the
 /// baseline. A database older than that is refused before anything is
 /// written, the backups folder included.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -254,14 +254,14 @@ async fn database_one_version_behind_is_backed_up_before_migrating() {
         let stamp: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        let sqlx: i64 = connection
+        let bookkeeping: i64 = connection
             .query_row(
                 "SELECT COUNT(*) FROM sqlite_master WHERE name = '_sqlx_migrations'",
                 [],
                 |row| row.get(0),
             )
             .unwrap();
-        (stamp, sqlx)
+        (stamp, bookkeeping)
     };
     let backups = || -> Vec<PathBuf> {
         let mut found: Vec<PathBuf> = std::fs::read_dir(&backups_dir)
@@ -277,7 +277,12 @@ async fn database_one_version_behind_is_backed_up_before_migrating() {
     };
 
     restamp(BRIDGE_FROM);
-    let runtime = open_runtime(&DbConfig::new(&db_path)).await.unwrap();
+    let runtime = open_runtime(&DbConfig::new(
+        &db_path,
+        std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+    ))
+    .await
+    .unwrap();
     runtime.shutdown().await;
     let taken = backups();
     assert_eq!(taken.len(), 1, "{taken:?}");
@@ -289,7 +294,12 @@ async fn database_one_version_behind_is_backed_up_before_migrating() {
     assert_eq!(read(&db_path), (latest_version(), 0));
 
     restamp(BRIDGE_FROM - 1);
-    let refused = open_runtime(&DbConfig::new(&db_path)).await.unwrap_err();
+    let refused = open_runtime(&DbConfig::new(
+        &db_path,
+        std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+    ))
+    .await
+    .unwrap_err();
     assert!(
         matches!(
             refused,
@@ -409,7 +419,11 @@ async fn acquire_recovery_waits_out_a_busy_reader_and_stops_on_a_real_failure() 
     let config = config_in(&dir);
     // One reader and a short checkout limit, so the busy answer comes
     // without the real five-second wait.
-    let mut db = DbConfig::new(&config.library_db_path).with_read_wait(Duration::from_millis(100));
+    let mut db = DbConfig::new(
+        &config.library_db_path,
+        std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+    )
+    .with_read_wait(Duration::from_millis(100));
     db.readers = 1;
     let runtime = open_runtime(&db).await.unwrap();
     let platform = crate::common::TestPlatform::on(runtime.db(), &dir)
@@ -427,8 +441,6 @@ async fn acquire_recovery_waits_out_a_busy_reader_and_stops_on_a_real_failure() 
     );
     // The test holds the only reader through the first run, as a swapping
     // host would, and gives it back once that run has answered.
-    // Both read pools: recovery reads through either.
-    let held = Mutex::new(Some(runtime.db().sqlx().acquire().await.unwrap()));
     let (started_tx, started_rx) = std::sync::mpsc::channel();
     let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
     let reader_db = runtime.db().clone();
@@ -448,11 +460,10 @@ async fn acquire_recovery_waits_out_a_busy_reader_and_stops_on_a_real_failure() 
     let release = Mutex::new(Some(release_tx));
     let runs = AtomicUsize::new(0);
     let step = || {
-        let (acquire, runs, held, release) = (&acquire, &runs, &held, &release);
+        let (acquire, runs, release) = (&acquire, &runs, &release);
         async move {
             let outcome = acquire.run_recovery().await;
             runs.fetch_add(1, Ordering::SeqCst);
-            held.lock().unwrap().take();
             release.lock().unwrap().take();
             outcome
         }

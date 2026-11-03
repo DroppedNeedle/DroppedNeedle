@@ -34,7 +34,12 @@ async fn open_scratch(name: &str) -> (DbRuntime, ScratchDir) {
     let dir = scratch_dir(name);
     let db = dir.join("library.db");
     copy_to(&db).unwrap();
-    let runtime = open_runtime(&DbConfig::new(&db)).await.unwrap();
+    let runtime = open_runtime(&DbConfig::new(
+        &db,
+        std::sync::Arc::new(crate::clock::SystemClock),
+    ))
+    .await
+    .unwrap();
     (runtime, dir)
 }
 
@@ -305,11 +310,12 @@ async fn foreground_wait_past_its_limit_is_refused() {
     let dir = scratch_dir("foreground-wait");
     let db = dir.join("library.db");
     copy_to(&db).unwrap();
-    let config = DbConfig::new(&db).with_lane_limits(LaneLimits {
-        foreground_wait: Duration::from_millis(50),
-        watch_tick: Duration::from_millis(10),
-        ..LaneLimits::default()
-    });
+    let config = DbConfig::new(&db, std::sync::Arc::new(crate::clock::SystemClock))
+        .with_lane_limits(LaneLimits {
+            foreground_wait: Duration::from_millis(50),
+            watch_tick: Duration::from_millis(10),
+            ..LaneLimits::default()
+        });
     // The lane comes from the production runtime, so the watch at work here
     // is the one that runtime starts. The pool's timeouts run on a runtime's
     // clock, so it is opened and closed on one whose clock is not paused.
@@ -1110,7 +1116,7 @@ async fn small_wal_runtime(name: &str) -> (DbRuntime, ScratchDir) {
     let dir = scratch_dir(name);
     let db = dir.join("library.db");
     copy_to(&db).unwrap();
-    let config = DbConfig::new(&db)
+    let config = DbConfig::new(&db, std::sync::Arc::new(crate::clock::SystemClock))
         .with_wal_water(64 * 1024, 16 * 1024)
         .with_lane_limits(LaneLimits {
             watch_tick: Duration::from_millis(20),

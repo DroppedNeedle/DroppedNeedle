@@ -2,6 +2,7 @@
 //! library from SQLite, and playlists and favorites are one set of rows
 //! shared with the native routes and the Navidrome m3u export.
 
+use crate::common::Probe;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -865,9 +866,12 @@ impl Rig {
         let dir = ScratchDir::new("compat-catalog");
         let path = dir.join("app.db");
         crate::common::migrated_db(&path);
-        let config = DbConfig::new(&path)
-            .with_lane_limits(LaneLimits::patient())
-            .with_read_wait(read_wait);
+        let config = DbConfig::new(
+            &path,
+            std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+        )
+        .with_lane_limits(LaneLimits::patient())
+        .with_read_wait(read_wait);
         let deadline = std::time::Instant::now() + crate::common::PATIENCE;
         let runtime = loop {
             match open_runtime(&config).await {
@@ -1156,16 +1160,13 @@ async fn stored_jellyfin_ids_survive_a_new_data_key() {
 }
 
 /// The fill loop's row as the supervisor last wrote it: heartbeat and
-/// failure code. Read through the sqlx pool, which a test can leave free
-/// while it holds every reader the fill uses.
+/// failure code. Read on a connection of its own, so a test can hold every
+/// pooled reader the fill uses.
 async fn fill_row(rig: &Rig) -> Option<(Option<i64>, Option<String>)> {
-    use sqlx::Row as _;
-    sqlx::query("SELECT last_heartbeat_at, last_error FROM durable_loops WHERE name = ?")
-        .bind(droppedneedle_compat::jellyfin::ids::JOB_NAME)
-        .fetch_optional(rig.runtime.db().sqlx())
-        .await
-        .expect("loop row reads")
-        .map(|row| (row.get(0), row.get(1)))
+    rig.runtime.db().maybe_row(
+        "SELECT last_heartbeat_at, last_error FROM durable_loops WHERE name = ?",
+        [droppedneedle_compat::jellyfin::ids::JOB_NAME],
+    )
 }
 
 /// Poll `check` until it holds, for at most the shared patience.

@@ -12,7 +12,7 @@ Use the [feature request template](https://github.com/DroppedNeedle/DroppedNeedl
 
 ## Development setup
 
-The server is Rust (Axum, tokio, SQLite through sqlx and rusqlite). The frontend is SvelteKit with Svelte 5, TanStack Query, Tailwind CSS and daisyUI. The toolchain version is pinned in `rust-toolchain.toml`; rustup picks it up automatically.
+The server is Rust (Axum, tokio, SQLite through rusqlite). The frontend is SvelteKit with Svelte 5, TanStack Query, Tailwind CSS and daisyUI. The toolchain version is pinned in `rust-toolchain.toml`; rustup picks it up automatically.
 
 ### Prerequisites
 
@@ -99,7 +99,7 @@ droppedneedle_kernel::sql! {
 pub(super) fn feed_page(for_user: bool, newest_first: bool) -> String { ... }
 ```
 
-- A statement is a `Statement` constant; pass `CITIES.text()` to rusqlite or sqlx. `+` joins literals, fragments and other `&str` constants at compile time.
+- A statement is a `Statement` constant; pass `CITIES.text()` to rusqlite. `+` joins literals, fragments and other `&str` constants at compile time.
 - A statement that varies by a closed set of choices (a sort order, which optional filters are present, how many values an `IN` list holds) is a family: a function in `sql.rs` whose parameters are all choice types (`bool`, `ListLen`, an enum or struct declared with `sql_choice!`, or a tuple of those) and which returns the text. Nothing from a request is ever joined into SQL. A family over more than 4,096 combinations is split.
 - A table name read from the database goes through `db::statement::quoted_identifier`.
 - The export tool's reads of a v2 database sit in a block that starts with `schema = V2;`, and the test prepares them against the v2 fixture database instead.

@@ -18,7 +18,15 @@ async fn open(name: &str) -> (DbRuntime, ScratchDir) {
     let dir = ScratchDir::new(&format!("jobs-{name}")).unwrap();
     let path = dir.join("library.db");
     copy_to(&path).unwrap();
-    (open_runtime(&DbConfig::new(&path)).await.unwrap(), dir)
+    (
+        open_runtime(&DbConfig::new(
+            &path,
+            std::sync::Arc::new(crate::clock::SystemClock),
+        ))
+        .await
+        .unwrap(),
+        dir,
+    )
 }
 
 #[tokio::test]

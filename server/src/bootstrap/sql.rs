@@ -6,8 +6,7 @@ droppedneedle_kernel::sql! {
     pub(super) ANY_SETTINGS = "SELECT EXISTS(SELECT 1 FROM config_sections)";
     /// Whether any account exists.
     pub(super) ANY_ACCOUNT = "SELECT EXISTS(SELECT 1 FROM auth_users)";
-    /// The tables a file holds, leaving out SQLite's own and the
-    /// bookkeeping table sqlx creates before the first migration runs.
+    /// The tables a file holds, leaving out SQLite's own.
     pub(super) TABLE_COUNT = "SELECT count(*) FROM sqlite_master WHERE type = 'table' \
-        AND name NOT LIKE 'sqlite_%' AND name <> '_sqlx_migrations'";
+        AND name NOT LIKE 'sqlite_%'";
 }

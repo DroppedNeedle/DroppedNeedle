@@ -82,9 +82,12 @@ pub async fn with_stopped_settings<T>(
     if !dirs.db_path.is_file() {
         return Err(HostSettingsError::NoInstance(dirs.config_dir.clone()));
     }
-    let runtime = open_runtime(&DbConfig::new(&dirs.db_path))
-        .await
-        .map_err(|error| failed(&error))?;
+    let runtime = open_runtime(&DbConfig::new(
+        &dirs.db_path,
+        std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+    ))
+    .await
+    .map_err(|error| failed(&error))?;
     let outcome = async {
         let store = ConfigStore::open(
             runtime.db().clone(),

@@ -3,6 +3,7 @@
 //! loopback fixture server (tests/fixtures/catalog). One test per page,
 //! the MusicBrainz outage fallback, and the auth matrix rows.
 
+use crate::common::Probe;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -27,7 +28,7 @@ use droppedneedle_kernel::runtime_config::sections::{
 };
 use droppedneedle_providers::Providers;
 use serde_json::{Value, json};
-use sqlx::SqlitePool;
+use std::path::Path;
 use tower::ServiceExt as _;
 
 use crate::common::TestApp;
@@ -307,7 +308,7 @@ fn local_catalog(dir: &crate::common::ScratchDir) -> LocalCatalog {
 /// The library: Radiohead with OK Computer (identified as the CD edition,
 /// one indexed track), an unidentified bootleg, and an open request for
 /// Kid A.
-async fn seed_library(pool: &SqlitePool) {
+fn seed_library(app_db: &Path) {
     let statements = [
         "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) \
          VALUES ('artist-radiohead', 'Radiohead', 'radiohead', 'group', 0, 0)"
@@ -379,7 +380,7 @@ async fn seed_library(pool: &SqlitePool) {
             .to_owned(),
     ];
     for statement in statements {
-        sqlx::query(&statement).execute(pool).await.unwrap();
+        app_db.exec(&statement, []);
     }
 }
 
@@ -397,10 +398,10 @@ async fn app_seeded(
     mb_url: String,
     extra: &[String],
 ) -> (axum::Router, (AuthRig, TestApp)) {
-    let (pool, dir) = crate::common::migrated_pool("reads-catalog").await;
-    seed_library(&pool).await;
+    let (app_db, dir) = crate::common::migrated_file("reads-catalog");
+    seed_library(&app_db);
     for statement in extra {
-        sqlx::query(statement).execute(&pool).await.unwrap();
+        app_db.exec(statement, []);
     }
     let rig = AuthRig::new("reads-catalog").await;
     rig.seed_user("ada", Role::User).await;
@@ -426,11 +427,8 @@ async fn app_seeded(
     );
     let catalog = Catalog::new(upstream, local_catalog(&dir));
     let search = SearchDeps::new(
-        SearchService::new(
-            droppedneedle_kernel::db::Db::open_for_tests(pool.connect_options().get_filename())
-                .unwrap(),
-        )
-        .with_remote(catalog.clone()),
+        SearchService::new(droppedneedle_kernel::db::Db::open_for_tests(&app_db).unwrap())
+            .with_remote(catalog.clone()),
         Arc::new(search::ports::UnconfiguredEnrichment),
     );
     let scope = TestApp::start("reads-catalog").await;
@@ -566,7 +564,7 @@ async fn artist_header_reads_musicbrainz_once_and_flags_the_library() {
 #[tokio::test]
 async fn a_cold_artist_header_never_asks_audiodb() {
     let fixtures = Fixtures::start().await;
-    let (_pool, dir) = crate::common::migrated_pool("reads-catalog-header").await;
+    let (_db, dir) = crate::common::migrated_file("reads-catalog-header");
     let rig = AuthRig::new("reads-catalog-header").await;
     let http = droppedneedle_kernel::http_client::HttpClientFactory::new().unwrap();
     let catalog = Catalog::new(
@@ -1139,7 +1137,7 @@ async fn a_failed_portrait_lookup_keeps_the_short_outage_marker() {
         }
     }
     let fixtures = Fixtures::start_with(routes).await;
-    let (pool, dir) = crate::common::migrated_pool("reads-catalog-portrait").await;
+    let (app_db, dir) = crate::common::migrated_file("reads-catalog-portrait");
     let rig = AuthRig::new("reads-catalog-portrait").await;
     let http = droppedneedle_kernel::http_client::HttpClientFactory::new().unwrap();
     let providers = Arc::new(fixtures.providers(&http));
@@ -1160,10 +1158,7 @@ async fn a_failed_portrait_lookup_keeps_the_short_outage_marker() {
             1024 * 1024,
             std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
         ),
-        LocalArtwork::new(
-            droppedneedle_kernel::db::Db::open_for_tests(pool.connect_options().get_filename())
-                .unwrap(),
-        ),
+        LocalArtwork::new(droppedneedle_kernel::db::Db::open_for_tests(&app_db).unwrap()),
         None,
         config.live(),
     )
@@ -1249,7 +1244,7 @@ async fn an_audiodb_picture_named_over_http_is_fetched_over_https() {
             ..ProviderEndpoints::closed()
         },
     ));
-    let (pool, dir) = crate::common::migrated_pool("reads-catalog-audiodb-http").await;
+    let (app_db, dir) = crate::common::migrated_file("reads-catalog-audiodb-http");
     let rig = AuthRig::new("reads-catalog-audiodb-http").await;
     let catalog = Catalog::new(
         Upstream::new(
@@ -1268,10 +1263,7 @@ async fn an_audiodb_picture_named_over_http_is_fetched_over_https() {
             1024 * 1024,
             std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
         ),
-        LocalArtwork::new(
-            droppedneedle_kernel::db::Db::open_for_tests(pool.connect_options().get_filename())
-                .unwrap(),
-        ),
+        LocalArtwork::new(droppedneedle_kernel::db::Db::open_for_tests(&app_db).unwrap()),
         None,
         config.live(),
     )
@@ -1443,7 +1435,7 @@ async fn a_commons_portrait_answers_its_credit_as_plain_text() {
             ..ProviderEndpoints::closed()
         },
     ));
-    let (pool, dir) = crate::common::migrated_pool("reads-catalog-credit").await;
+    let (app_db, dir) = crate::common::migrated_file("reads-catalog-credit");
     let rig = AuthRig::new("reads-catalog-credit").await;
     let catalog = Catalog::new(
         Upstream::new(
@@ -1462,10 +1454,7 @@ async fn a_commons_portrait_answers_its_credit_as_plain_text() {
             1024 * 1024,
             std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
         ),
-        LocalArtwork::new(
-            droppedneedle_kernel::db::Db::open_for_tests(pool.connect_options().get_filename())
-                .unwrap(),
-        ),
+        LocalArtwork::new(droppedneedle_kernel::db::Db::open_for_tests(&app_db).unwrap()),
         None,
         config.live(),
     )

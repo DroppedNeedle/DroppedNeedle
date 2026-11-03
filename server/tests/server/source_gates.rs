@@ -76,16 +76,8 @@ const TRANSACTIONS: &[Place] = &[DB, TOOL];
 
 const RULES: &[Rule] = &[
     Rule {
-        what: "opens a SQLite connection or pool, or begins a sqlx transaction",
-        patterns: &[
-            r"Connection::open",
-            r"\bopen_connection\b",
-            r"SqlitePoolOptions",
-            r"SqlitePool::connect",
-            r"SqliteConnection::connect",
-            r"SqliteConnectOptions[^;]*?\.connect\(",
-            r"\.begin\(\)|\.begin_with\(",
-        ],
+        what: "opens a SQLite connection",
+        patterns: &[r"Connection::open", r"\bopen_connection\b"],
         allowed: OPENS,
     },
     Rule {
@@ -209,6 +201,29 @@ fn the_database_is_reached_one_way() {
         "outside the one way to the database:\n{}",
         wrong.join("\n")
     );
+}
+
+/// The workspace reaches SQLite through rusqlite alone, so no package of
+/// the SQLx family is in the lock. Its MySQL driver is what brought in
+/// `rsa` and the advisory against it, which CI no longer ignores.
+#[test]
+fn the_lock_holds_one_sqlite_library() {
+    let lock = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.lock"),
+    )
+    .expect("the lock reads");
+    let lock: toml::Table = lock.parse().expect("the lock parses");
+    // The one line under `server/` that names the crate: the check that it
+    // is gone reads the tree with this line left out.
+    let family = "sqlx";
+    let found: Vec<&str> = lock["package"]
+        .as_array()
+        .expect("the lock lists packages")
+        .iter()
+        .filter_map(|package| package["name"].as_str())
+        .filter(|name| name.starts_with(family))
+        .collect();
+    assert!(found.is_empty(), "back in the lock: {found:?}");
 }
 
 /// Synchronous library code waits on a future only through

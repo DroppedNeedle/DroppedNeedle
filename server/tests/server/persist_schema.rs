@@ -129,7 +129,7 @@ fn migrate_rerun_is_clean() {
 }
 
 /// Dropped tables stay dropped: no lidarr marker, no rebuild leftovers, no
-/// legacy catalog tables, no transient swap tables, no sqlx bookkeeping.
+/// legacy catalog tables, no transient swap tables, no `_sqlx_migrations`.
 #[test]
 fn legacy_and_swap_tables_are_absent() {
     let tables = table_names(&migrated());
@@ -381,7 +381,7 @@ fn migrations_stamp_their_own_version_in_order() {
 
 /// Every stamp the runner can meet, on a copy of a fresh database restamped:
 /// an empty file takes the baseline; a database the old chain left at its
-/// last number crosses the bridge, loses sqlx's table and ends equal to a
+/// last number crosses the bridge, loses `_sqlx_migrations` and ends equal to a
 /// fresh one; an older stamp and one newer than the binary are refused with
 /// the file unchanged; and a second run changes nothing.
 #[test]
@@ -397,12 +397,13 @@ fn the_runner_takes_each_stamp_it_can_meet() {
     );
     let fresh_schema = schema_rows(&read(&fresh));
 
-    let restamped = |name: &str, stamp: i64, sqlx_table: bool| {
+    let restamped = |name: &str, stamp: i64, bookkeeping: bool| {
         let path = dir.join(name);
         std::fs::copy(&fresh, &path).unwrap();
         let connection = read(&path);
-        if sqlx_table {
-            // sqlx 0.8's own DDL for its SQLite bookkeeping table.
+        if bookkeeping {
+            // The old chain's bookkeeping table `_sqlx_migrations`, as its
+            // runner created it.
             connection
                 .execute_batch(
                     "CREATE TABLE IF NOT EXISTS _sqlx_migrations (
@@ -432,7 +433,7 @@ fn the_runner_takes_each_stamp_it_can_meet() {
     assert_eq!(
         schema_rows(&connection),
         fresh_schema,
-        "the bridge drops sqlx's table and leaves the schema of a fresh database"
+        "the bridge drops `_sqlx_migrations` and leaves the schema of a fresh database"
     );
     drop(connection);
 

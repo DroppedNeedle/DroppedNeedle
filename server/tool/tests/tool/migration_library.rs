@@ -8,6 +8,7 @@
 //! the original file, which "restore original" brings back exactly as v2
 //! first found it.
 
+use crate::common::Probe;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -286,18 +287,13 @@ async fn managed_identified_album_keeps_ids_identity_and_original() {
     std::fs::create_dir_all(&config_dir).expect("v3 config dir");
     std::fs::create_dir_all(v3.join("cache")).expect("v3 cache dir");
     let db_path = v3.join("cache").join("library.db");
-    let pool = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect(&format!("sqlite:{}?mode=rwc", db_path.display()))
-        .await
-        .expect("pool opens");
     droppedneedle_kernel::db::migrate_file(&db_path, &droppedneedle_kernel::schema::CHAIN)
         .expect("schema migrates");
     let report =
         droppedneedle_tool::r#import::run_import(droppedneedle_tool::r#import::ImportRequest {
             export_bytes: std::fs::read(&export_path).expect("export reads"),
             passphrase: PASSPHRASE.to_owned(),
-            db_path: pool.connect_options().get_filename().to_owned(),
+            db_path: db_path.clone(),
             legacy: droppedneedle_kernel::runtime_config::LegacyConfig::at(&config_dir, false),
             crypto: Crypto::load_or_generate(&config_dir).expect("v3 key").0,
             v2_config_path: None,
@@ -330,13 +326,11 @@ async fn managed_identified_album_keeps_ids_identity_and_original() {
     assert_eq!(count("contribution_callback_token"), 1);
     // Its return link names v2's address, which v3 does not answer, so it
     // lands expired and the summary says the edit starts again.
-    let link_expires_at: i64 = sqlx::query_scalar(
+    let link_expires_at: i64 = db_path.one(
         "SELECT expires_at FROM library_contribution_callback_tokens \
          WHERE token_hash = 'token-open'",
-    )
-    .fetch_one(&pool)
-    .await
-    .expect("return link carried");
+        [],
+    );
     assert!(link_expires_at < 4_000_000_000_000, "{link_expires_at}");
     assert!(
         report
@@ -348,17 +342,14 @@ async fn managed_identified_album_keeps_ids_identity_and_original() {
     assert_eq!(count("youtube_link"), 1);
     assert_eq!(count("youtube_track_link"), 1);
     assert_eq!(count("ignored_release"), 1);
-    let ignored_at: i64 = sqlx::query_scalar(
+    let ignored_at: i64 = db_path.one(
         "SELECT ignored_at FROM catalog_ignored_releases WHERE release_group_mbid = 'RG-HIDDEN'",
-    )
-    .fetch_one(&pool)
-    .await
-    .expect("hidden release carried");
+        [],
+    );
     assert_eq!(
         ignored_at, 1_700_000_800_000,
         "v2 seconds arrive as milliseconds"
     );
-    pool.close().await;
 
     // v3 starts on the imported state and scans the carried root.
     let handle = droppedneedle_kernel::db::Db::open_for_tests(&db_path).expect("database opens");

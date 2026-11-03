@@ -3,6 +3,7 @@
 //! paging, suggest, enrichment that degrades inside a 200, the auth row
 //! and the fixed 500 on a database fault.
 
+use crate::common::Probe;
 use droppedneedle_catalog::search;
 
 use crate::common::TestApp;
@@ -21,8 +22,7 @@ use search::SearchDeps;
 use search::models::{EnrichmentBatchRequest, EnrichmentResponse};
 use search::ports::{EnrichmentPort, EnrichmentPortError};
 use search::service::SearchService;
-use sqlx::SqlitePool;
-use sqlx::sqlite::SqlitePoolOptions;
+use std::path::{Path, PathBuf};
 use tower::ServiceExt as _;
 
 /// Bearer token the rig signs the test user in with.
@@ -50,30 +50,17 @@ impl EnrichmentPort for FailingEnrichment {
 /// Fixture catalog: two artists plus an album each plus one track.
 /// Queries in these tests avoid the `various artists` / `unknown artist`
 /// sentinel rows, so every hit below is a fixture row.
-async fn seed_catalog(pool: &SqlitePool) {
+fn seed_catalog(app_db: &Path) {
     for (id, name, folded) in [
         ("artist-beyonce", "Beyoncé", "beyonce"),
         ("artist-beirut", "Beirut", "beirut"),
     ] {
-        sqlx::query(
-            "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) \
-             VALUES (?, ?, ?, 'group', 0, 0)",
-        )
-        .bind(id)
-        .bind(name)
-        .bind(folded)
-        .execute(pool)
-        .await
-        .unwrap();
+        app_db.exec("INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) \
+             VALUES (?, ?, ?, 'group', 0, 0)", rusqlite::params![id, name, folded]);
     }
-    sqlx::query(
-        "INSERT INTO local_artist_external_identities \
+    app_db.exec("INSERT INTO local_artist_external_identities \
          (local_artist_id, provider, provider_artist_id, decision_source, selected_at) \
-         VALUES ('artist-beyonce', 'musicbrainz', '859d1e45-caf9-4e94-9e90-f17e67db2a6a', 'manual', 0)",
-    )
-    .execute(pool)
-    .await
-    .unwrap();
+         VALUES ('artist-beyonce', 'musicbrainz', '859d1e45-caf9-4e94-9e90-f17e67db2a6a', 'manual', 0)", []);
     for (id, artist_id, title, folded, artist_name, artist_folded, year) in [
         (
             "album-renaissance",
@@ -94,34 +81,29 @@ async fn seed_catalog(pool: &SqlitePool) {
             2006,
         ),
     ] {
-        sqlx::query(
+        app_db.exec(
             "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
              album_artist_name, album_artist_name_folded, album_artist_id, year, \
              grouping_source, created_at, updated_at) \
              VALUES (?, 'root-1', ?, ?, ?, ?, ?, ?, ?, 'manual', 0, 0)",
-        )
-        .bind(id)
-        .bind(format!("group-{id}"))
-        .bind(title)
-        .bind(folded)
-        .bind(artist_name)
-        .bind(artist_folded)
-        .bind(artist_id)
-        .bind(year)
-        .execute(pool)
-        .await
-        .unwrap();
-        sqlx::query(
+            rusqlite::params![
+                id,
+                format!("group-{id}"),
+                title,
+                folded,
+                artist_name,
+                artist_folded,
+                artist_id,
+                year
+            ],
+        );
+        app_db.exec(
             "INSERT INTO local_album_artists (local_album_id, position, local_artist_id, role) \
              VALUES (?, 0, ?, 'main')",
-        )
-        .bind(id)
-        .bind(artist_id)
-        .execute(pool)
-        .await
-        .unwrap();
+            rusqlite::params![id, artist_id],
+        );
     }
-    sqlx::query(
+    app_db.exec(
         "INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
          path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
          artist_name, artist_name_folded, album_title, album_title_folded, \
@@ -130,15 +112,12 @@ async fn seed_catalog(pool: &SqlitePool) {
          'alien.flac', 'hash-1', 1000, 0, 'stat-1', 'Alien Superstar', 'alien superstar', \
          'Beyoncé', 'beyonce', 'Renaissance', 'renaissance', \
          'flac', 'scan', 0, 'manual')",
-    )
-    .execute(pool)
-    .await
-    .unwrap();
+        [],
+    );
 }
 
-fn search_deps(pool: SqlitePool, enrichment: Arc<dyn EnrichmentPort>) -> SearchDeps {
-    let db = droppedneedle_kernel::db::Db::open_for_tests(pool.connect_options().get_filename())
-        .expect("search database opens");
+fn search_deps(app_db: PathBuf, enrichment: Arc<dyn EnrichmentPort>) -> SearchDeps {
+    let db = droppedneedle_kernel::db::Db::open_for_tests(&app_db).expect("search database opens");
     SearchDeps::new(SearchService::new(db), enrichment)
 }
 
@@ -150,7 +129,7 @@ type Held = (AuthRig, TestApp);
 /// inside, request scope outside, shared 404/405 fallbacks. Mirrors the
 /// production posture in `create_app` for these paths. A test user is
 /// signed in with [`TEST_TOKEN`].
-async fn app(pool: SqlitePool, enrichment: Arc<dyn EnrichmentPort>) -> (axum::Router, Held) {
+async fn app(app_db: PathBuf, enrichment: Arc<dyn EnrichmentPort>) -> (axum::Router, Held) {
     let rig = AuthRig::new("reads-search").await;
     let user = rig.seed_user("ada", Role::User).await;
     rig.sign_in(&user.id, TEST_TOKEN).await;
@@ -158,7 +137,7 @@ async fn app(pool: SqlitePool, enrichment: Arc<dyn EnrichmentPort>) -> (axum::Ro
     let app = scope
         .request_scope(
             search::routes()
-                .with_state(search_deps(pool, enrichment))
+                .with_state(search_deps(app_db, enrichment))
                 .into_router()
                 .layer(middleware::from_fn_with_state(
                     rig.session_gate(),
@@ -170,15 +149,15 @@ async fn app(pool: SqlitePool, enrichment: Arc<dyn EnrichmentPort>) -> (axum::Ro
     (app, (rig, scope))
 }
 
-async fn authed_app() -> (axum::Router, SqlitePool, Held) {
-    let (pool, _dir) = crate::common::migrated_pool("reads-search").await;
-    seed_catalog(&pool).await;
+async fn authed_app() -> (axum::Router, PathBuf, (Held, crate::common::ScratchDir)) {
+    let (app_db, dir) = crate::common::migrated_file("reads-search");
+    seed_catalog(&app_db);
     let (app, held) = app(
-        pool.clone(),
+        app_db.clone(),
         Arc::new(search::ports::UnconfiguredEnrichment),
     )
     .await;
-    (app, pool, held)
+    (app, app_db, (held, dir))
 }
 
 async fn call(
@@ -263,23 +242,20 @@ async fn unified_search_returns_ranked_buckets_with_tops() {
 /// cover; one with a folder image is not. A song inherits its album's mark.
 #[tokio::test]
 async fn album_hits_say_when_art_is_known_missing() {
-    let (app, pool, _held) = authed_app().await;
+    let (app, app_db, _held) = authed_app().await;
     seed_track(
-        &pool,
+        &app_db,
         "t-gulag",
         "album-gulag",
         "Brandenburg",
         "Gulag Orkestar",
         "indexed",
-    )
-    .await;
-    sqlx::query(
+    );
+    app_db.exec(
         "INSERT INTO local_album_artwork (local_album_id, source, source_locator, \
          version, updated_at) VALUES ('album-renaissance', 'folder', '/music/cover.jpg', 1, 1)",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
+        [],
+    );
 
     let mut marks = Vec::new();
     for query in ["renaissance", "gulag", "brandenburg"] {
@@ -308,35 +284,34 @@ async fn album_hits_say_when_art_is_known_missing() {
 }
 
 /// Insert one track; `availability` other than `indexed` must never match.
-async fn seed_track(
-    pool: &SqlitePool,
+fn seed_track(
+    app_db: &Path,
     id: &str,
     album_id: &str,
     title: &str,
     album_title: &str,
     availability: &str,
 ) {
-    sqlx::query(
+    app_db.exec(
         "INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
          path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
          artist_name, artist_name_folded, album_title, album_title_folded, duration_seconds, \
          file_format, availability, ingest_source, imported_at, membership_source) \
          VALUES (?, ?, 'root-1', ?, ?, ?, 1000, 0, 'stat-1', ?, lower(?), \
          'Someone', 'someone', ?, lower(?), 61.5, 'mp3', ?, 'scan', 0, 'manual')",
-    )
-    .bind(id)
-    .bind(album_id)
-    .bind(format!("/music/{id}.mp3"))
-    .bind(format!("{id}.mp3"))
-    .bind(format!("hash-{id}"))
-    .bind(title)
-    .bind(title)
-    .bind(album_title)
-    .bind(album_title)
-    .bind(availability)
-    .execute(pool)
-    .await
-    .unwrap();
+        rusqlite::params![
+            id,
+            album_id,
+            format!("/music/{id}.mp3"),
+            format!("{id}.mp3"),
+            format!("hash-{id}"),
+            title,
+            title,
+            album_title,
+            album_title,
+            availability
+        ],
+    );
 }
 
 /// A song title finds the song, ranked exact title, title prefix, title
@@ -346,61 +321,55 @@ async fn seed_track(
 /// characters matches title prefixes.
 #[tokio::test]
 async fn a_song_title_finds_the_song() {
-    let (app, pool, _held) = authed_app().await;
+    let (app, app_db, _held) = authed_app().await;
     seed_track(
-        &pool,
+        &app_db,
         "t-opening",
         "album-gulag",
         "Opening",
         "Intro Sessions",
         "indexed",
-    )
-    .await;
+    );
     seed_track(
-        &pool,
+        &app_db,
         "t-song",
         "album-gulag",
         "The Intro Song",
         "Gulag Orkestar",
         "indexed",
-    )
-    .await;
+    );
     seed_track(
-        &pool,
+        &app_db,
         "t-reprise",
         "album-gulag",
         "Intro (Reprise)",
         "Gulag Orkestar",
         "indexed",
-    )
-    .await;
+    );
     seed_track(
-        &pool,
+        &app_db,
         "t-intro-r",
         "album-renaissance",
         "Intro",
         "Renaissance",
         "indexed",
-    )
-    .await;
+    );
     seed_track(
-        &pool,
+        &app_db,
         "t-intro-g",
         "album-gulag",
         "Intro",
         "Gulag Orkestar",
         "indexed",
-    )
-    .await;
+    );
     seed_track(
-        &pool,
+        &app_db,
         "t-gone",
         "album-gulag",
         "Intro",
         "Gulag Orkestar",
         "missing",
-    )
-    .await;
+    );
 
     let (status, _, bytes) = call(
         app.clone(),
@@ -584,8 +553,8 @@ async fn bucket_drilldown_pages_with_top_only_on_first_page() {
 
 #[tokio::test]
 async fn enrich_failure_degrades_inside_a_200() {
-    let (pool, _dir) = crate::common::migrated_pool("reads-search").await;
-    let (app, _held) = app(pool, Arc::new(FailingEnrichment)).await;
+    let (app_db, _dir) = crate::common::migrated_file("reads-search");
+    let (app, _held) = app(app_db, Arc::new(FailingEnrichment)).await;
     let (status, _, bytes) = call(
         app,
         Method::POST,
@@ -660,16 +629,9 @@ async fn auth_matrix_row_401_without_bearer() {
 #[tokio::test]
 async fn leak_db_failure_renders_fixed_500_with_error_id() {
     let dir = crate::common::ScratchDir::new("reads-search-no-schema");
-    let pool = SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect_with(
-            sqlx::sqlite::SqliteConnectOptions::new()
-                .filename(dir.join("app.db"))
-                .create_if_missing(true),
-        )
-        .await
-        .unwrap();
-    let (app, _held) = app(pool, Arc::new(search::ports::UnconfiguredEnrichment)).await;
+    let app_db = dir.join("app.db");
+    drop(droppedneedle_kernel::db::open_connection(&app_db).expect("empty database opens"));
+    let (app, _held) = app(app_db, Arc::new(search::ports::UnconfiguredEnrichment)).await;
     let (status, headers, bytes) = call(
         app,
         Method::GET,
@@ -708,49 +670,36 @@ async fn track_hits(app: &axum::Router, query: &str) -> Vec<String> {
 /// Copies the track table into a new one and swaps it in, the way a table
 /// is reshaped. The copy numbers its rows afresh, so the gaps deleted
 /// tracks left close up.
-async fn rebuild_tracks(pool: &SqlitePool) {
-    let table: String = sqlx::query_scalar(
+async fn rebuild_tracks(app_db: &Path) {
+    let table: String = app_db.one(
         "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'local_tracks'",
-    )
-    .fetch_one(pool)
-    .await
-    .unwrap();
-    let dependents: Vec<String> = sqlx::query_scalar(
+        [],
+    );
+    let dependents: Vec<String> = app_db.column(
         "SELECT sql FROM sqlite_master WHERE tbl_name = 'local_tracks' \
          AND type IN ('index', 'trigger') AND sql IS NOT NULL",
-    )
-    .fetch_all(pool)
-    .await
-    .unwrap();
-    let columns: String = sqlx::query_scalar(
+        [],
+    );
+    let columns: String = app_db.one(
         "SELECT group_concat(name, ', ') FROM pragma_table_info('local_tracks')",
-    )
-    .fetch_one(pool)
-    .await
-    .unwrap();
+        [],
+    );
     let create = table.replacen(
         "CREATE TABLE \"local_tracks\"",
         "CREATE TABLE local_tracks_rebuilt",
         1,
     );
-    let mut conn = pool.acquire().await.unwrap();
-    sqlx::raw_sql("PRAGMA foreign_keys = OFF; PRAGMA legacy_alter_table = ON")
-        .execute(&mut *conn)
-        .await
-        .unwrap();
-    sqlx::raw_sql(&format!(
-        "BEGIN; {create}; \
-         INSERT INTO local_tracks_rebuilt ({columns}) SELECT {columns} FROM local_tracks; \
-         DROP TABLE local_tracks; \
-         ALTER TABLE local_tracks_rebuilt RENAME TO local_tracks; {}; COMMIT",
-        dependents.join("; ")
-    ))
-    .execute(&mut *conn)
-    .await
-    .unwrap();
-    sqlx::raw_sql("PRAGMA legacy_alter_table = OFF; PRAGMA foreign_keys = ON")
-        .execute(&mut *conn)
-        .await
+    app_db
+        .connect()
+        .execute_batch(&format!(
+            "PRAGMA foreign_keys = OFF; PRAGMA legacy_alter_table = ON; \
+             BEGIN; {create}; \
+             INSERT INTO local_tracks_rebuilt ({columns}) SELECT {columns} FROM local_tracks; \
+             DROP TABLE local_tracks; \
+             ALTER TABLE local_tracks_rebuilt RENAME TO local_tracks; {}; COMMIT; \
+             PRAGMA legacy_alter_table = OFF; PRAGMA foreign_keys = ON",
+            dependents.join("; ")
+        ))
         .unwrap();
 }
 
@@ -759,31 +708,28 @@ async fn rebuild_tracks(pool: &SqlitePool) {
 /// search index never names a track by a number a copy reassigns.
 #[tokio::test]
 async fn track_search_survives_vacuum_and_a_table_rebuild() {
-    let (pool, _dir) = crate::common::migrated_pool("reads-search-rebuild").await;
-    seed_catalog(&pool).await;
+    let (app_db, _dir) = crate::common::migrated_file("reads-search-rebuild");
+    seed_catalog(&app_db);
     let words = ["amber", "cobalt", "dune"];
     for step in 0..30 {
         let id = format!("t-needle-{step:02}");
         let title = format!("Needle {step:02} {}", words[step % 3]);
         seed_track(
-            &pool,
+            &app_db,
             &id,
             "album-gulag",
             &title,
             "Gulag Orkestar",
             "indexed",
-        )
-        .await;
+        );
     }
-    sqlx::query(
+    app_db.exec(
         "DELETE FROM local_tracks WHERE id IN ('t-needle-04', 't-needle-05', \
          't-needle-11', 't-needle-12', 't-needle-13', 't-needle-20')",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
+        [],
+    );
     let (app, _held) = app(
-        pool.clone(),
+        app_db.clone(),
         Arc::new(search::ports::UnconfiguredEnrichment),
     )
     .await;
@@ -808,7 +754,7 @@ async fn track_search_survives_vacuum_and_a_table_rebuild() {
     );
     assert_eq!(before[4].len(), 24);
 
-    sqlx::query("VACUUM").execute(&pool).await.unwrap();
+    app_db.exec("VACUUM", []);
     for (query, expected) in queries.iter().zip(&before) {
         assert_eq!(
             &track_hits(&app, query).await,
@@ -817,7 +763,7 @@ async fn track_search_survives_vacuum_and_a_table_rebuild() {
         );
     }
 
-    rebuild_tracks(&pool).await;
+    rebuild_tracks(&app_db).await;
     for (query, expected) in queries.iter().zip(&before) {
         assert_eq!(
             &track_hits(&app, query).await,

@@ -11,6 +11,7 @@
 //! The tests on `bare_library` are component tests: they step a worker or a
 //! store by hand, on a library bundle with no app around it.
 
+use crate::common::Probe;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -9178,8 +9179,11 @@ async fn a_busy_database_leaves_a_management_job_runnable() {
     crate::common::migrated_db(&scratch.join("app.db"));
     // One request reader and a short wait for it: while a read holds it,
     // the worker's reads answer busy at once.
-    let mut config = DbConfig::new(&scratch.join("app.db"))
-        .with_read_wait(std::time::Duration::from_millis(100));
+    let mut config = DbConfig::new(
+        &scratch.join("app.db"),
+        std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+    )
+    .with_read_wait(std::time::Duration::from_millis(100));
     config.readers = 1;
     let runtime = open_runtime(&config).await.expect("database opens");
     let settings_store = Arc::new(
@@ -9648,13 +9652,10 @@ async fn the_repairs_loop_recovers_at_start_and_wakes_on_enqueue() {
         async move {
             let wait = async {
                 loop {
-                    let state: String = sqlx::query_scalar(
+                    let state: String = db.one(
                         "SELECT state FROM library_operation_jobs WHERE id = ?1",
-                    )
-                    .bind(&job_id)
-                    .fetch_one(db.sqlx())
-                    .await
-                    .expect("job reads");
+                        rusqlite::params![&job_id],
+                    );
                     if state == "ready" {
                         return;
                     }

@@ -8,6 +8,7 @@
 //! mock), the follow poll reads MusicBrainz pages from a scripted wire,
 //! and flow notices go to a real event hub.
 
+use crate::common::Probe;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -179,11 +180,10 @@ async fn behind(db: &AcquireDb, id: &str, status: TaskStatus) {
 
 /// Every task in the journal, oldest first.
 async fn tasks(db: &AcquireDb) -> Vec<TaskRow> {
-    let ids: Vec<String> =
-        sqlx::query_scalar("SELECT id FROM download_tasks ORDER BY created_at, rowid")
-            .fetch_all(db.db().sqlx())
-            .await
-            .expect("task ids read");
+    let ids: Vec<String> = db.db().column(
+        "SELECT id FROM download_tasks ORDER BY created_at, rowid",
+        [],
+    );
     let journal = Journal::new(db.clone(), quiet_ticks());
     let mut rows = Vec::new();
     for id in ids {
@@ -614,12 +614,10 @@ async fn follow_poll_baselines_then_emits() {
     let cursor = follows.cursor("artist-1").await.unwrap().unwrap();
     assert_eq!(cursor.pending.len(), 1);
     assert_eq!(cursor.pending[0].rg_mbid, "rg-future");
-    let feed: Vec<String> = sqlx::query_scalar(
+    let feed: Vec<String> = db.db().column(
         "SELECT release_group_mbid FROM acquire_new_release_feed ORDER BY release_group_mbid",
-    )
-    .fetch_all(db.db().sqlx())
-    .await
-    .unwrap();
+        [],
+    );
     assert_eq!(feed, ["rg-future", "rg-new"]);
 }
 

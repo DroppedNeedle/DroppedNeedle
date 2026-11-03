@@ -991,9 +991,12 @@ async fn a_scan_moves_the_catalog_revision_as_it_goes() {
     }
     let path = scratch.join("scan.db");
     migrated_db(&path);
-    let runtime = open_runtime(&DbConfig::new(&path))
-        .await
-        .expect("database opens");
+    let runtime = open_runtime(&DbConfig::new(
+        &path,
+        std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+    ))
+    .await
+    .expect("database opens");
     let db = runtime.db().clone();
     let revision = |db: &Db| {
         db.query_i64("SELECT value FROM library_catalog_revision WHERE singleton = 1")
@@ -1081,9 +1084,12 @@ async fn a_scan_moves_the_catalog_revision_as_it_goes() {
     }
     supervisor.shutdown(Duration::from_secs(5)).await;
 
-    let runtime = open_runtime(&DbConfig::new(&path))
-        .await
-        .expect("database opens again");
+    let runtime = open_runtime(&DbConfig::new(
+        &path,
+        std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+    ))
+    .await
+    .expect("database opens again");
     assert_eq!(
         revision(runtime.db()),
         moved,

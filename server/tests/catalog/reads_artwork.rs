@@ -1,6 +1,7 @@
 //! Cover art over a scratch catalog: the scan's art sweep, the local-first
 //! order, and the disk cache in front of the Cover Art Archive.
 
+use crate::common::Probe;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -633,11 +634,11 @@ fn touch_dir(dir: &Path, secs: u64) {
         .unwrap();
 }
 
-async fn art_version(rig: &Rig) -> Option<i64> {
-    sqlx::query_scalar("SELECT version FROM local_album_artwork WHERE local_album_id = 'al1'")
-        .fetch_optional(rig.runtime.db().sqlx())
-        .await
-        .unwrap()
+fn art_version(rig: &Rig) -> Option<i64> {
+    rig.runtime.db().maybe(
+        "SELECT version FROM local_album_artwork WHERE local_album_id = 'al1'",
+        [],
+    )
 }
 
 #[tokio::test]
@@ -657,12 +658,12 @@ async fn art_that_comes_back_gets_a_new_version() {
     std::fs::write(files.join("cover.png"), PNG_BYTES).unwrap();
     touch_dir(&files, 1_000);
     assert!(store.refresh_album_artwork(&|| false).unwrap().complete);
-    assert_eq!(art_version(&rig).await, Some(1));
+    assert_eq!(art_version(&rig), Some(1));
 
     std::fs::remove_file(files.join("cover.png")).unwrap();
     touch_dir(&files, 2_000);
     store.refresh_album_artwork(&|| false).unwrap();
-    assert_eq!(art_version(&rig).await, None, "removed art is cleared");
+    assert_eq!(art_version(&rig), None, "removed art is cleared");
 
     let mut other = PNG_BYTES.to_vec();
     other.push(0);
@@ -670,7 +671,7 @@ async fn art_that_comes_back_gets_a_new_version() {
     touch_dir(&files, 3_000);
     store.refresh_album_artwork(&|| false).unwrap();
     assert_eq!(
-        art_version(&rig).await,
+        art_version(&rig),
         Some(2),
         "a cleared version is never reused"
     );

@@ -90,9 +90,12 @@ pub async fn reset(dirs: &DataDirs) -> Result<KeyReset, ResetKeyError> {
     if !dirs.db_path.is_file() {
         return Err(ResetKeyError::NoDatabase(dirs.db_path.clone()));
     }
-    let runtime = open_runtime(&DbConfig::new(&dirs.db_path))
-        .await
-        .map_err(|error| failed(&error))?;
+    let runtime = open_runtime(&DbConfig::new(
+        &dirs.db_path,
+        std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+    ))
+    .await
+    .map_err(|error| failed(&error))?;
     let (db, config_dir) = (runtime.db().clone(), dirs.config_dir.clone());
     let cleared = tokio::task::spawn_blocking(move || clear(&db, &config_dir))
         .await

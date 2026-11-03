@@ -1750,9 +1750,12 @@ pub async fn run_offline_import(
 
 /// Create and migrate the target through the factory, and close it again.
 async fn migrate_target(db_path: &Path) -> Result<(), OfflineImportError> {
-    let runtime = open_runtime(&DbConfig::new(db_path))
-        .await
-        .map_err(OfflineImportError::Open)?;
+    let runtime = open_runtime(&DbConfig::new(
+        db_path,
+        std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+    ))
+    .await
+    .map_err(OfflineImportError::Open)?;
     runtime.shutdown().await;
     Ok(())
 }
@@ -1769,9 +1772,12 @@ async fn prepare_target(
     record: bool,
 ) -> Result<(), OfflineImportError> {
     let failed = |error: &dyn std::fmt::Display| OfflineImportError::Settings(error.to_string());
-    let runtime = open_runtime(&DbConfig::new(db_path))
-        .await
-        .map_err(|error| failed(&error))?;
+    let runtime = open_runtime(&DbConfig::new(
+        db_path,
+        std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+    ))
+    .await
+    .map_err(|error| failed(&error))?;
     let outcome = async {
         if let Some(legacy) = legacy
             && config_dir.join(LEGACY_CONFIG_FILE_NAME).exists()

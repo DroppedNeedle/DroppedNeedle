@@ -6,6 +6,7 @@
 //! orphan/quarantine sweeps fail closed. Nothing here touches the real
 //! library.
 
+use crate::common::Probe;
 use droppedneedle_acquire::downloads;
 
 use std::sync::Arc;
@@ -1178,21 +1179,19 @@ async fn seed_held_on(
 }
 
 /// An entry's state, tries and next try.
-async fn retry_of(db: &AcquireDb, entry: i64) -> (String, i64, Option<i64>) {
-    sqlx::query_as("SELECT state, retry_tries, retry_at FROM acquire_held_entries WHERE id = ?1")
-        .bind(entry)
-        .fetch_one(db.db().sqlx())
-        .await
-        .expect("entry")
+fn retry_of(db: &AcquireDb, entry: i64) -> (String, i64, Option<i64>) {
+    db.db().row(
+        "SELECT state, retry_tries, retry_at FROM acquire_held_entries WHERE id = ?1",
+        rusqlite::params![entry],
+    )
 }
 
 /// A held file's state and reason, by its path.
-async fn held_file(db: &AcquireDb, path: &str) -> (String, String) {
-    sqlx::query_as("SELECT state, reason FROM acquire_held_files WHERE path = ?1")
-        .bind(path)
-        .fetch_one(db.db().sqlx())
-        .await
-        .expect("held file")
+fn held_file(db: &AcquireDb, path: &str) -> (String, String) {
+    db.db().row(
+        "SELECT state, reason FROM acquire_held_files WHERE path = ?1",
+        rusqlite::params![path],
+    )
 }
 
 /// A file held because its place in the library was taken is retried by
@@ -1313,19 +1312,19 @@ async fn held_files_the_library_could_not_take_are_retried_by_themselves() {
     let start = clock.now_ms();
     acquire.held.tend().await;
     assert_eq!(
-        held_file(db, "free.flac").await.0,
+        held_file(db, "free.flac").0,
         "imported",
         "a fresh hold whose place is free goes in at the first pass"
     );
     assert!(album.join("0102 Sour Times.flac").is_file());
-    assert_eq!(retry_of(db, fresh).await, ("resolved".to_owned(), 0, None));
+    assert_eq!(retry_of(db, fresh), ("resolved".to_owned(), 0, None));
     assert_eq!(
-        retry_of(db, waiting).await,
+        retry_of(db, waiting),
         ("held".to_owned(), 1, Some(start + 5 * MINUTE)),
         "a place still taken waits five minutes"
     );
     assert_eq!(
-        held_file(db, "taken.flac").await,
+        held_file(db, "taken.flac"),
         ("held".to_owned(), "target_occupied".to_owned())
     );
     assert_eq!(
@@ -1334,13 +1333,13 @@ async fn held_files_the_library_could_not_take_are_retried_by_themselves() {
         "the file in the way is never overwritten"
     );
     assert_eq!(
-        held_file(db, "weak.flac").await,
+        held_file(db, "weak.flac"),
         ("held".to_owned(), "weak_match".to_owned()),
         "a file a person decides on is not retried"
     );
     assert!(held_dir.join("weak.flac").is_file());
     assert_eq!(
-        retry_of(db, claimed).await,
+        retry_of(db, claimed),
         ("placing".to_owned(), 0, None),
         "an entry a person is acting on is skipped"
     );
@@ -1348,7 +1347,7 @@ async fn held_files_the_library_could_not_take_are_retried_by_themselves() {
 
     acquire.held.tend().await;
     assert_eq!(
-        retry_of(db, waiting).await,
+        retry_of(db, waiting),
         ("held".to_owned(), 1, Some(start + 5 * MINUTE)),
         "nothing is retried before its time"
     );
@@ -1356,7 +1355,7 @@ async fn held_files_the_library_could_not_take_are_retried_by_themselves() {
     clock.advance(5 * MINUTE);
     acquire.held.tend().await;
     assert_eq!(
-        retry_of(db, waiting).await,
+        retry_of(db, waiting),
         ("held".to_owned(), 2, Some(start + 20 * MINUTE)),
         "the next gap is fifteen minutes"
     );
@@ -1364,16 +1363,16 @@ async fn held_files_the_library_could_not_take_are_retried_by_themselves() {
     std::fs::remove_file(&taken).expect("place freed");
     clock.advance(15 * MINUTE);
     acquire.held.tend().await;
-    assert_eq!(held_file(db, "taken.flac").await.0, "imported");
+    assert_eq!(held_file(db, "taken.flac").0, "imported");
     assert!(taken.is_file(), "the held file took its place");
     assert!(!held_dir.join("taken.flac").exists());
     assert_eq!(
-        retry_of(db, waiting).await,
+        retry_of(db, waiting),
         ("held".to_owned(), 0, None),
         "with nothing left to retry the entry waits for its person"
     );
     assert_eq!(
-        held_file(db, "weak.flac").await,
+        held_file(db, "weak.flac"),
         ("held".to_owned(), "weak_match".to_owned())
     );
 }
@@ -1441,14 +1440,14 @@ async fn a_matched_download_is_retried_onto_its_match() {
         "never placed on the album the curator matched it away from"
     );
     assert_eq!(
-        held_file(&rig.db, "matched.flac").await,
+        held_file(&rig.db, "matched.flac"),
         ("held".to_owned(), "target_occupied".to_owned())
     );
 
     std::fs::remove_file(&taken).expect("place freed");
     rig.clock.advance(5 * MINUTE);
     rig.acquire.held.tend().await;
-    assert_eq!(held_file(&rig.db, "matched.flac").await.0, "imported");
+    assert_eq!(held_file(&rig.db, "matched.flac").0, "imported");
     assert!(taken.is_file(), "placed on the album it was matched to");
     assert!(!dummy_dir.join("0101 Mysterons.flac").exists());
 }
@@ -1497,7 +1496,7 @@ async fn a_retry_never_adds_a_second_copy_by_itself() {
     )
     .await;
     rig.acquire.held.tend().await;
-    assert_eq!(retry_of(&rig.db, entry).await.1, 1);
+    assert_eq!(retry_of(&rig.db, entry).1, 1);
 
     // The library gets the track on its Deluxe copy, and another track on
     // a Remaster copy.
@@ -1556,7 +1555,7 @@ async fn a_retry_never_adds_a_second_copy_by_itself() {
     rig.acquire.held.tend().await;
     assert!(!taken.exists(), "no second copy");
     assert_eq!(
-        held_file(&rig.db, "taken.flac").await,
+        held_file(&rig.db, "taken.flac"),
         ("held".to_owned(), "owned_elsewhere".to_owned()),
         "a person decides"
     );
@@ -1565,7 +1564,7 @@ async fn a_retry_never_adds_a_second_copy_by_itself() {
         "its copy is kept"
     );
     assert_eq!(
-        retry_of(&rig.db, entry).await,
+        retry_of(&rig.db, entry),
         ("held".to_owned(), 0, None),
         "no further retry"
     );
@@ -1620,13 +1619,13 @@ async fn a_retry_never_replaces_a_library_copy_by_itself() {
         "nothing went to the recycle bin"
     );
     assert_eq!(
-        held_file(&rig.db, "better.flac").await,
+        held_file(&rig.db, "better.flac"),
         ("held".to_owned(), "owned_on_album".to_owned()),
         "a person decides"
     );
     assert!(rig.held_dir.join("better.flac").is_file());
     assert_eq!(
-        retry_of(&rig.db, entry).await,
+        retry_of(&rig.db, entry),
         ("held".to_owned(), 0, None),
         "no further retry"
     );
@@ -1693,7 +1692,7 @@ async fn a_better_copy_on_a_flagged_album_waits_for_a_persons_import() {
         "the library's copy stays while the flag does"
     );
     assert_eq!(
-        held_file(&rig.db, "better.flac").await,
+        held_file(&rig.db, "better.flac"),
         ("held".to_owned(), "album_needs_check".to_owned()),
     );
 
@@ -1703,7 +1702,7 @@ async fn a_better_copy_on_a_flagged_album_waits_for_a_persons_import() {
     rig.acquire.held.tend().await;
     assert!(yours.is_file(), "nothing replaces your copy by itself");
     assert_eq!(
-        held_file(&rig.db, "better.flac").await,
+        held_file(&rig.db, "better.flac"),
         ("held".to_owned(), "album_needs_check".to_owned()),
     );
 
@@ -1722,7 +1721,7 @@ async fn a_better_copy_on_a_flagged_album_waits_for_a_persons_import() {
         "the better copy went in"
     );
     assert!(!yours.exists(), "yours went to the recycle bin");
-    assert_eq!(held_file(&rig.db, "better.flac").await.0, "imported");
+    assert_eq!(held_file(&rig.db, "better.flac").0, "imported");
 }
 
 /// A pass that finds the database busy, or no library set up yet, spends
@@ -1734,11 +1733,17 @@ async fn a_busy_database_or_no_library_spends_no_retry() {
     let dir = scratch_dir("held-retry-busy");
     let path = dir.join("app.db");
     crate::common::migrated_db(&path);
-    let runtime = open_runtime(&DbConfig::new(&path).with_lane_limits(LaneLimits {
-        foreground_wait: std::time::Duration::from_millis(200),
-        watch_tick: std::time::Duration::from_millis(10),
-        ..LaneLimits::default()
-    }))
+    let runtime = open_runtime(
+        &DbConfig::new(
+            &path,
+            std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+        )
+        .with_lane_limits(LaneLimits {
+            foreground_wait: std::time::Duration::from_millis(200),
+            watch_tick: std::time::Duration::from_millis(10),
+            ..LaneLimits::default()
+        }),
+    )
     .await
     .expect("runtime opens");
     let db = AcquireDb::new(
@@ -1784,7 +1789,7 @@ async fn a_busy_database_or_no_library_spends_no_retry() {
     drop(let_go);
     writer.join().expect("writer joins");
     assert_eq!(
-        retry_of(&db, entry).await,
+        retry_of(&db, entry),
         ("held".to_owned(), 0, None),
         "a busy database spends no try"
     );
@@ -1805,7 +1810,7 @@ async fn a_busy_database_or_no_library_spends_no_retry() {
     );
     no_library.tend().await;
     assert_eq!(
-        retry_of(&db, entry).await,
+        retry_of(&db, entry),
         ("held".to_owned(), 0, None),
         "no library set up spends no try"
     );

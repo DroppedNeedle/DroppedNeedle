@@ -73,9 +73,8 @@ pub async fn open_platform(config: AppConfig, data_lock: DataLock) -> Result<Ope
     // the supervisor's rows and every area take time from it.
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
     let runtime = open_runtime(
-        &DbConfig::new(&config.library_db_path)
-            .with_shutdown_grace(config.shutdown_grace)
-            .with_clock(Arc::clone(&clock)),
+        &DbConfig::new(&config.library_db_path, Arc::clone(&clock))
+            .with_shutdown_grace(config.shutdown_grace),
     )
     .await?;
     let db = runtime.db().clone();

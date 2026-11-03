@@ -54,7 +54,7 @@
 //! row. A family's row names its builders, `row Name for family [builder]`,
 //! and the test holds every statement they make to it.
 
-/// One named statement. Pass [`Statement::text`] to rusqlite or sqlx.
+/// One named statement. Pass [`Statement::text`] to rusqlite.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Statement {
     name: &'static str,

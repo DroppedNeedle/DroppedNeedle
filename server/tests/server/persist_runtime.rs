@@ -5,6 +5,7 @@
 //! databases under the system temp directory. No fixture files, no network.
 
 use crate::common;
+use crate::common::Probe;
 
 use std::{
     future::Future,
@@ -29,7 +30,7 @@ use droppedneedle_kernel::{
     db::{
         BACKUP_KEEP, CancelFlag, CheckpointMode, ChunkedError, Db, DbConfig, DbError, DbRuntime,
         FOREGROUND_QUEUE_CAPACITY, LONG_READERS, Lane, LaneLimits, block_on, filesystem_is_local,
-        map_sqlx_busy, open_runtime, sqlx_is_busy,
+        open_runtime, rusqlite_is_busy,
     },
     error::{ApiError, Unavailable},
     ids::REQUEST_ID_HEADER,
@@ -50,7 +51,12 @@ async fn open_scratch(name: &str) -> (DbRuntime, ScratchDir) {
     let dir = scratch_dir(name);
     let db = dir.join("library.db");
     crate::common::migrated_db(&db);
-    let runtime = open_runtime(&DbConfig::new(&db)).await.unwrap();
+    let runtime = open_runtime(&DbConfig::new(
+        &db,
+        std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+    ))
+    .await
+    .unwrap();
     (runtime, dir)
 }
 
@@ -159,73 +165,49 @@ fn file_len(path: &std::path::Path) -> Option<u64> {
     std::fs::metadata(path).map(|meta| meta.len()).ok()
 }
 
-/// Boot migrates to the binary version and applies the pragma set.
+/// Boot migrates to the binary version and applies the pragma set: the
+/// whole set on the writer, and on the pooled readers what a read uses.
 #[tokio::test]
 async fn boot_migrates_and_applies_pragmas() {
     let dir = scratch_dir("boot");
-    let runtime = open_runtime(&DbConfig::new(&dir.join("library.db")))
-        .await
-        .unwrap();
+    let runtime = open_runtime(&DbConfig::new(
+        &dir.join("library.db"),
+        std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+    ))
+    .await
+    .unwrap();
 
-    let version: i64 = sqlx::query_scalar("PRAGMA user_version")
-        .fetch_one(runtime.db().sqlx())
-        .await
-        .unwrap();
+    let version: i64 = runtime.db().one("PRAGMA user_version", []);
     assert_eq!(version, latest_version());
 
-    let pool = runtime.db().sqlx();
-    let mode: String = sqlx::query_scalar("PRAGMA journal_mode")
-        .fetch_one(pool)
+    // Journal mode, then foreign keys, synchronous, busy timeout, page
+    // cache (2 MiB), temp store (memory), mmap size and autocheckpoint.
+    fn pragmas(connection: &rusqlite::Connection) -> Result<(String, Vec<i64>), DbError> {
+        let mode = connection.query_row("PRAGMA journal_mode", [], |row| row.get(0))?;
+        let mut values = Vec::new();
+        for name in [
+            "foreign_keys",
+            "synchronous",
+            "busy_timeout",
+            "cache_size",
+            "temp_store",
+            "mmap_size",
+            "wal_autocheckpoint",
+        ] {
+            values.push(connection.query_row(&format!("PRAGMA {name}"), [], |row| row.get(0))?);
+        }
+        Ok((mode, values))
+    }
+    let (mode, writer) = runtime
+        .db()
+        .write(Lane::Foreground, "brief-pragmas", |tx| pragmas(tx))
         .await
         .unwrap();
     assert_eq!(mode.to_lowercase(), "wal");
-    let foreign_keys: i64 = sqlx::query_scalar("PRAGMA foreign_keys")
-        .fetch_one(pool)
-        .await
-        .unwrap();
-    assert_eq!(foreign_keys, 1);
-    let synchronous: i64 = sqlx::query_scalar("PRAGMA synchronous")
-        .fetch_one(pool)
-        .await
-        .unwrap();
-    assert_eq!(synchronous, 1, "NORMAL");
-    let busy_timeout: i64 = sqlx::query_scalar("PRAGMA busy_timeout")
-        .fetch_one(pool)
-        .await
-        .unwrap();
-    assert_eq!(busy_timeout, 5000);
-    let cache_size: i64 = sqlx::query_scalar("PRAGMA cache_size")
-        .fetch_one(pool)
-        .await
-        .unwrap();
-    // Page cache: 2 MiB per connection.
-    assert_eq!(cache_size, -2048);
-    let temp_store: i64 = sqlx::query_scalar("PRAGMA temp_store")
-        .fetch_one(pool)
-        .await
-        .unwrap();
-    assert_eq!(temp_store, 2, "MEMORY");
-    let mmap_size: i64 = sqlx::query_scalar("PRAGMA mmap_size")
-        .fetch_one(pool)
-        .await
-        .unwrap();
-    assert_eq!(mmap_size, 67_108_864);
-    let autocheckpoint: i64 = sqlx::query_scalar("PRAGMA wal_autocheckpoint")
-        .fetch_one(pool)
-        .await
-        .unwrap();
-    assert_eq!(autocheckpoint, 1000);
-    assert_eq!(
-        pool.options().get_max_connections(),
-        7,
-        "pool carries the reader lanes only"
-    );
-    let mut held = Vec::new();
-    for _ in 0..7 {
-        held.push(pool.acquire().await.unwrap());
-    }
-    assert_eq!(pool.size(), 7, "seven readers check out at once");
-    drop(held);
+    assert_eq!(writer, [1, 1, 5000, -2048, 2, 67_108_864, 1000]);
+    let (mode, reader) = runtime.db().read("brief-pragmas", pragmas).await.unwrap();
+    assert_eq!(mode.to_lowercase(), "wal");
+    assert_eq!(reader[2..6], [5000, -2048, 2, 67_108_864]);
 
     runtime.shutdown().await;
     std::fs::remove_dir_all(dir).ok();
@@ -235,16 +217,26 @@ async fn boot_migrates_and_applies_pragmas() {
 #[tokio::test]
 async fn pool_connections_reject_writes_after_boot() {
     let (runtime, dir) = open_scratch("readonly").await;
-    let failed = sqlx::query("CREATE TABLE scratch_nope (id INTEGER)")
-        .execute(runtime.db().sqlx())
+    let failed = runtime
+        .db()
+        .read("brief-write", |connection| {
+            connection
+                .execute("CREATE TABLE scratch_nope (id INTEGER)", [])
+                .map_err(DbError::from)
+        })
         .await;
     let error = failed.expect_err("pool writes must fail under query_only");
     assert!(
         error.to_string().to_lowercase().contains("readonly"),
         "must be a readonly refusal, got {error:?}"
     );
-    let one: i64 = sqlx::query_scalar("SELECT 1")
-        .fetch_one(runtime.db().sqlx())
+    let one: i64 = runtime
+        .db()
+        .read("brief-read", |connection| {
+            connection
+                .query_row("SELECT 1", [], |row| row.get(0))
+                .map_err(DbError::from)
+        })
         .await
         .unwrap();
     assert_eq!(one, 1);
@@ -263,7 +255,12 @@ async fn boot_refuses_version_mismatch() {
     connection.execute("PRAGMA user_version = 999", []).unwrap();
     drop(connection);
 
-    match open_runtime(&DbConfig::new(&db)).await {
+    match open_runtime(&DbConfig::new(
+        &db,
+        std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+    ))
+    .await
+    {
         Err(DbError::Schema(droppedneedle_kernel::db::SchemaError::TooNew { found, latest })) => {
             assert_eq!((found, latest), (999, latest_version()))
         }
@@ -283,7 +280,12 @@ async fn boot_refuses_symlink_and_remote_filesystem() {
     #[cfg(unix)]
     std::os::unix::fs::symlink(&target, &link).unwrap();
 
-    match open_runtime(&DbConfig::new(&link)).await {
+    match open_runtime(&DbConfig::new(
+        &link,
+        std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+    ))
+    .await
+    {
         Err(DbError::SymlinkRefused { path }) => assert_eq!(path, link),
         other => panic!("symlink database must refuse, got {other:?}"),
     }
@@ -489,24 +491,18 @@ async fn busy_path_returns_503_with_retry_after_and_no_spin() {
 
     let attempts = Arc::new(AtomicUsize::new(0));
     let started = Instant::now();
-    let contender = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect_with(
-            sqlx::sqlite::SqliteConnectOptions::new()
-                .filename(runtime.path())
-                .create_if_missing(false)
-                .busy_timeout(Duration::from_millis(0)),
-        )
-        .await
-        .unwrap();
+    let contender = rusqlite::Connection::open_with_flags(
+        runtime.path(),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE,
+    )
+    .unwrap();
+    contender.busy_timeout(Duration::from_millis(0)).unwrap();
     attempts.fetch_add(1, Ordering::Relaxed);
-    let failed = sqlx::query("INSERT INTO scratch_busy (id) VALUES (2)")
-        .execute(&contender)
-        .await;
-    contender.close().await;
+    let failed = contender.execute("INSERT INTO scratch_busy (id) VALUES (2)", []);
+    drop(contender);
     let error = failed.expect_err("fail-fast write must hit the held lock");
-    assert!(sqlx_is_busy(&error), "must detect as busy: {error:?}");
-    let mapped = map_sqlx_busy("brief-busy", error);
+    assert!(rusqlite_is_busy(&error), "must detect as busy: {error:?}");
+    let mapped = DbError::from(error);
     assert!(
         matches!(mapped, DbError::Busy { .. }),
         "busy must map to retryable, got {mapped:?}"
@@ -828,10 +824,7 @@ async fn chunked_write_commits_and_cancels() {
         .await
         .unwrap();
     assert_eq!(committed, 1200);
-    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM scratch_chunk")
-        .fetch_one(runtime.db().sqlx())
-        .await
-        .unwrap();
+    let count: i64 = runtime.db().one("SELECT COUNT(*) FROM scratch_chunk", []);
     assert_eq!(count, 1200);
 
     let stop = droppedneedle_kernel::db::CancelFlag::never();
@@ -869,10 +862,16 @@ async fn a_play_outlasting_the_request_wait_is_still_recorded() {
     let dir = scratch_dir("play-busy");
     let db = dir.join("library.db");
     common::migrated_db(&db);
-    let runtime = open_runtime(&DbConfig::new(&db).with_lane_limits(LaneLimits {
-        background: LaneLimits::patient().background,
-        ..LaneLimits::default()
-    }))
+    let runtime = open_runtime(
+        &DbConfig::new(
+            &db,
+            std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+        )
+        .with_lane_limits(LaneLimits {
+            background: LaneLimits::patient().background,
+            ..LaneLimits::default()
+        }),
+    )
     .await
     .unwrap();
     let history = PlaybackStore::new(
@@ -918,11 +917,9 @@ async fn a_play_outlasting_the_request_wait_is_still_recorded() {
         Default::default(),
     );
     holder.join().unwrap().unwrap();
-    let mut reader = common::hold_reader(runtime.db().sqlx()).await;
-    let plays: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM library_play_history")
-        .fetch_one(&mut *reader)
-        .await
-        .unwrap();
+    let plays: i64 = runtime
+        .db()
+        .one("SELECT COUNT(*) FROM library_play_history", []);
     assert_eq!(plays, 1);
 }
 
@@ -947,13 +944,16 @@ async fn read_runtime_with(
     let dir = scratch_dir(name);
     let db = dir.join("library.db");
     common::migrated_db(&db);
-    let mut config = DbConfig::new(&db)
-        .with_read_wait(read_wait)
-        .with_shutdown_grace(grace)
-        .with_lane_limits(LaneLimits {
-            watch_tick: Duration::from_millis(10),
-            ..LaneLimits::default()
-        });
+    let mut config = DbConfig::new(
+        &db,
+        std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+    )
+    .with_read_wait(read_wait)
+    .with_shutdown_grace(grace)
+    .with_lane_limits(LaneLimits {
+        watch_tick: Duration::from_millis(10),
+        ..LaneLimits::default()
+    });
     config.readers = readers;
     let runtime = open_runtime(&config).await.unwrap();
     runtime
@@ -1610,7 +1610,12 @@ async fn shutdown_gives_up_on_a_read_that_does_not_return() {
         open_handles(&path) == 0
     })
     .await;
-    let next = open_runtime(&DbConfig::new(&path)).await.unwrap();
+    let next = open_runtime(&DbConfig::new(
+        &path,
+        std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+    ))
+    .await
+    .unwrap();
     assert_eq!(next.db().read("brief-next", count_labels).await.unwrap(), 1);
     next.shutdown().await;
     assert_eq!(file_len(&sidecar(&path, "-wal")), None);

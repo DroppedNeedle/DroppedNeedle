@@ -4,6 +4,7 @@
 //! over HTTP, a saved visibility reaching the live feed, and the
 //! ListenBrainz client as the verifier against a scripted wire.
 
+use crate::common::Probe;
 use crate::common::ScratchDir;
 use crate::common::auth::{test_principal, with_test_principal};
 use std::future::Future;
@@ -359,9 +360,12 @@ async fn sqlite_prefs_partial_upsert_survives_reopen() {
     runtime.shutdown().await;
 
     // A second boot over the same file reads the merged row back.
-    let runtime = open_runtime(&DbConfig::new(&db_path))
-        .await
-        .expect("runtime reopens");
+    let runtime = open_runtime(&DbConfig::new(
+        &db_path,
+        std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+    ))
+    .await
+    .expect("runtime reopens");
     let store = store_over(&runtime);
     let prefs = store.prefs("user-1").await;
     assert!(prefs.scrobble_to_listenbrainz);
@@ -411,18 +415,20 @@ async fn sqlite_links_round_trip_sealed_and_survive_reopen() {
         Some("lb-token-1")
     );
     // The raw row holds ciphertext, never the token.
-    let raw: String =
-        sqlx::query_scalar("SELECT connection_data FROM user_connections WHERE user_id = 'user-1'")
-            .fetch_one(runtime.db().sqlx())
-            .await
-            .expect("raw row reads");
+    let raw: String = runtime.db().one(
+        "SELECT connection_data FROM user_connections WHERE user_id = 'user-1'",
+        [],
+    );
     assert!(!raw.contains("lb-token-1"), "{raw}");
     runtime.shutdown().await;
 
     // A second boot over the same file reads the link back.
-    let runtime = open_runtime(&DbConfig::new(&db_path))
-        .await
-        .expect("runtime reopens");
+    let runtime = open_runtime(&DbConfig::new(
+        &db_path,
+        std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+    ))
+    .await
+    .expect("runtime reopens");
     let store = store_over(&runtime);
     assert_eq!(
         store

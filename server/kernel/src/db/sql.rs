@@ -2,6 +2,8 @@
 //! statistics, and the checks run on a database file before it is opened or
 //! after it is copied.
 
+use super::time::Millis;
+
 crate::sql! {
     /// Forget every loop row: the supervisor rebuilds them at each start.
     pub(super) CLEAR_LOOPS = "DELETE FROM durable_loops";
@@ -26,6 +28,10 @@ crate::sql! {
     pub(super) ANALYZED_TABLES = "SELECT name FROM sqlite_schema WHERE type = 'table' \
              AND name NOT LIKE 'sqlite_%' AND sql NOT LIKE 'CREATE VIRTUAL TABLE%' \
              AND name NOT LIKE '%\\_fts\\_%' ESCAPE '\\' ORDER BY name";
+    /// Forget the last planner statistics run, so the next check takes
+    /// them again: a migration may have added indexes or rebuilt tables,
+    /// whose statistics SQLite then holds none of.
+    pub(super) FORGET_ANALYZE = "DELETE FROM db_planner_stats";
     /// Record a planner statistics run.
     pub(super) RECORD_ANALYZE = "INSERT INTO db_planner_stats (singleton, analyzed_at, indexed_tracks) \
                      VALUES (1, ?1, ?2) ON CONFLICT(singleton) DO UPDATE SET \
@@ -34,7 +40,8 @@ crate::sql! {
     /// SQLite's own tables and sqlx's old `_sqlx_migrations` do not count.
     pub(super) USER_TABLE_COUNT = "SELECT count(*) FROM sqlite_master WHERE type = 'table' \
              AND name NOT LIKE 'sqlite_%' AND name <> '_sqlx_migrations'";
-    /// sqlx's bookkeeping table, which the schema runner's stamp replaces.
+    /// The old bookkeeping table `_sqlx_migrations`, which the schema
+    /// runner's stamp replaces.
     pub(super) DROP_SQLX_MIGRATIONS = "DROP TABLE IF EXISTS _sqlx_migrations";
     /// How many of the two undo-copy tables a database file has.
     pub(super) UNDO_TABLES_PRESENT = "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' \
@@ -46,4 +53,9 @@ crate::sql! {
              ORDER BY r.sha256";
     /// Foreign-key violations in a database copy.
     pub(super) FOREIGN_KEY_VIOLATIONS = "SELECT COUNT(*) FROM pragma_foreign_key_check";
+    /// What the last planner statistics run recorded.
+    pub(super) row LastAnalyze for [LAST_ANALYZE] {
+        analyzed_at: Millis,
+        indexed_tracks: i64,
+    }
 }

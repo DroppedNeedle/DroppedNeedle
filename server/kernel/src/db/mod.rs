@@ -7,9 +7,8 @@
 //! is private to this module. There is no async API on the write path, so
 //! holding a write transaction across an await is unrepresentable.
 //!
-//! A `Db` carries the lane's writes, reads on two pools of read-only
-//! connections, and the sqlx reader pool until the last area has moved its
-//! reads off it. The [`DbRuntime`] that opened it outlives it, and whoever
+//! A `Db` carries the lane's writes and reads on two pools of read-only
+//! connections. The [`DbRuntime`] that opened it outlives it, and whoever
 //! opens a runtime shuts it down after the last use of its handles, or
 //! exits.
 //!
@@ -118,10 +117,10 @@ pub use checkpoint::{
     Observation, TRUNCATE_MIN_INTERVAL,
 };
 pub use durable::{JobState, LoopRecord, list_loops};
-pub use error::{ChunkedError, DbError, map_sqlx_busy, rusqlite_is_busy, sqlx_is_busy};
+pub use error::{ChunkedError, DbError, rusqlite_is_busy};
 pub use factory::{
-    ACQUIRE_TIMEOUT, BOOT_WAIT, BUSY_TIMEOUT, CACHE_SIZE_KIB, DbConfig, DbRuntime, IDLE_TIMEOUT,
-    MAX_READERS, MIN_CONNECTIONS, MMAP_SIZE, WAL_AUTOCHECKPOINT, open_runtime,
+    ACQUIRE_TIMEOUT, BOOT_WAIT, BUSY_TIMEOUT, CACHE_SIZE_KIB, DbConfig, DbRuntime, MAX_READERS,
+    MMAP_SIZE, WAL_AUTOCHECKPOINT, open_runtime,
 };
 pub use fold::fold_text;
 pub use fs::{filesystem_is_local, reject_remote_filesystem, reject_symlink, same_filesystem};

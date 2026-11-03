@@ -92,9 +92,12 @@ async fn open_stopped(dirs: &DataDirs) -> Result<(DataLock, DbRuntime), Recovery
     if !dirs.db_path.is_file() {
         return Err(RecoveryCodeError::NoDatabase(dirs.db_path.clone()));
     }
-    let runtime = open_runtime(&DbConfig::new(&dirs.db_path))
-        .await
-        .map_err(|error| RecoveryCodeError::Failed(error.to_string()))?;
+    let runtime = open_runtime(&DbConfig::new(
+        &dirs.db_path,
+        std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+    ))
+    .await
+    .map_err(|error| RecoveryCodeError::Failed(error.to_string()))?;
     Ok((lock, runtime))
 }
 

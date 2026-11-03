@@ -11,7 +11,12 @@ async fn the_job_table_keeps_the_lease_promises() {
     let dir = ScratchDir::new("library-jobs-lease").unwrap();
     let path = dir.join("library.db");
     copy_to(&path).unwrap();
-    let runtime = open_runtime(&DbConfig::new(&path)).await.unwrap();
+    let runtime = open_runtime(&DbConfig::new(
+        &path,
+        std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+    ))
+    .await
+    .unwrap();
     let kind = super::OperationKind::ExplicitReidentification.as_str();
     super::lease::check_conformance(runtime.db(), super::STATEMENTS, kind, move |tx| {
         tx.execute(

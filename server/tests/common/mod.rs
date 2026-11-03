@@ -15,10 +15,12 @@ pub mod library;
 pub mod logs;
 pub mod platform;
 pub mod plugin_fakes;
+pub mod probe;
 pub mod sources;
 
 pub use app::{Login, TestApp};
 pub use platform::TestPlatform;
+pub use probe::Probe;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -148,38 +150,19 @@ pub async fn break_schema(db: &droppedneedle_kernel::db::Db, sql: &'static str) 
     }
 }
 
-/// Take a reader from `pool` and hold it, for a test that starves a pool
-/// of one connection. A background read may have it for a moment, so a
-/// checkout that times out is tried again.
-pub async fn hold_reader(pool: &sqlx::SqlitePool) -> sqlx::pool::PoolConnection<sqlx::Sqlite> {
-    let deadline = Instant::now() + PATIENCE;
-    loop {
-        match pool.acquire().await {
-            Ok(reader) => return reader,
-            Err(sqlx::Error::PoolTimedOut) if Instant::now() < deadline => {}
-            Err(error) => panic!("reader held: {error}"),
-        }
-    }
-}
-
 /// Write a private copy of the migrated database to `path`, which must not
 /// exist yet. The migrations run once per test binary, not once per test.
 pub fn migrated_db(path: &Path) {
     droppedneedle_kernel::schema::template::copy_to(path).expect("migrated database copies");
 }
 
-/// A one-connection pool on a private migrated database. Hold the guard:
-/// dropping it removes the file.
-pub async fn migrated_pool(tag: &str) -> (sqlx::SqlitePool, ScratchDir) {
+/// A private migrated database file, to probe with [`Probe`]. Hold the
+/// guard: dropping it removes the file.
+pub fn migrated_file(tag: &str) -> (PathBuf, ScratchDir) {
     let dir = ScratchDir::new(tag);
     let path = dir.join("app.db");
     migrated_db(&path);
-    let pool = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect_with(sqlx::sqlite::SqliteConnectOptions::new().filename(&path))
-        .await
-        .expect("migrated pool opens");
-    (pool, dir)
+    (path, dir)
 }
 
 /// The production runtime on a fresh migrated database at `path`, with
@@ -190,9 +173,12 @@ pub async fn scratch_runtime(path: &Path) -> droppedneedle_kernel::db::DbRuntime
     use droppedneedle_kernel::db::{DbConfig, LaneLimits, TEST_PATIENCE, open_runtime};
 
     migrated_db(path);
-    let config = DbConfig::new(path)
-        .with_lane_limits(LaneLimits::patient())
-        .with_read_wait(TEST_PATIENCE);
+    let config = DbConfig::new(
+        path,
+        std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+    )
+    .with_lane_limits(LaneLimits::patient())
+    .with_read_wait(TEST_PATIENCE);
     let deadline = Instant::now() + PATIENCE;
     loop {
         match open_runtime(&config).await {
@@ -206,13 +192,12 @@ pub async fn scratch_runtime(path: &Path) -> droppedneedle_kernel::db::DbRuntime
 }
 
 /// Whether opening a database failed only because it was busy: a lock
-/// held or a pooled connection that did not free in time. Nothing was
-/// started yet, so opening again is safe.
+/// held. Nothing was started yet, so opening again is safe.
 pub fn busy_open(error: &droppedneedle_kernel::db::DbError) -> bool {
-    use droppedneedle_kernel::db::{DbError, sqlx_is_busy};
+    use droppedneedle_kernel::db::{DbError, rusqlite_is_busy};
     match error {
         DbError::Busy { .. } => true,
-        DbError::Sqlx(error) => sqlx_is_busy(error),
+        DbError::Rusqlite(error) => rusqlite_is_busy(error),
         _ => false,
     }
 }

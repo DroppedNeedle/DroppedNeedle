@@ -4,6 +4,7 @@
 //! The router mounts directly with sessions injected; health rides the full
 //! app. Scratch runtimes only - no network, no production database.
 
+use crate::common::Probe;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -228,7 +229,7 @@ async fn queue_stats_reports_a_failed_checkpoint_as_a_code() {
     let missing = dir.join("gone").join("app.db");
     let failing = droppedneedle_kernel::db::CheckpointService::new(
         &missing,
-        rig.runtime.db().sqlx().clone(),
+        rig.runtime.read_activity().clone(),
         Arc::default(),
         Arc::default(),
         std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
@@ -634,14 +635,11 @@ async fn quota_round_trip_set_and_clear() {
     assert_eq!(body["effective_request_quota_days"], Value::from(30));
     assert_eq!(body["effective_storage_quota_gb"], Value::from(9));
     // The row persists durably, not just in the ledger.
-    let stored: Option<(Option<i64>, Option<i64>, Option<i64>)> = sqlx::query_as(
+    let stored: Option<(Option<i64>, Option<i64>, Option<i64>)> = rig.runtime.db().maybe_row(
         "SELECT request_quota_count, request_quota_days, storage_quota_gb
          FROM user_quotas WHERE user_id = ?1",
-    )
-    .bind(&rig.user_id)
-    .fetch_optional(rig.runtime.db().sqlx())
-    .await
-    .expect("override row reads");
+        rusqlite::params![&rig.user_id],
+    );
     assert_eq!(stored, Some((Some(12), Some(30), Some(9))));
 
     // All-null clears back to pure inherit.
@@ -649,12 +647,10 @@ async fn quota_round_trip_set_and_clear() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["quota_override"]["request_quota_count"], Value::Null);
     assert_eq!(body["effective_request_quota_count"], Value::from(0));
-    let stored: Option<(String,)> =
-        sqlx::query_as("SELECT user_id FROM user_quotas WHERE user_id = ?1")
-            .bind(&rig.user_id)
-            .fetch_optional(rig.runtime.db().sqlx())
-            .await
-            .expect("cleared row reads");
+    let stored: Option<(String,)> = rig.runtime.db().maybe_row(
+        "SELECT user_id FROM user_quotas WHERE user_id = ?1",
+        rusqlite::params![&rig.user_id],
+    );
     assert_eq!(stored, None);
 }
 

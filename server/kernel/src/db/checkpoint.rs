@@ -33,7 +33,6 @@ use std::{
 use crate::clock::Clock;
 
 use serde::Serialize;
-use sqlx::SqlitePool;
 use tokio::sync::RwLock;
 
 use super::{
@@ -211,7 +210,6 @@ impl Default for BackpressurePolicy {
 #[derive(Clone)]
 pub struct CheckpointService {
     db_path: PathBuf,
-    pool: SqlitePool,
     clock: Arc<dyn Clock>,
     lane_idle: Arc<LaneIdle>,
     policy: Arc<Mutex<BackpressurePolicy>>,
@@ -220,7 +218,7 @@ pub struct CheckpointService {
     hold: Arc<WalHold>,
     /// The read pools' counts. Never the pools themselves or the handle
     /// that owns them: this service is cloned into the relief thread.
-    pooled_reads: Option<ReadActivity>,
+    reads: ReadActivity,
     analyze: Option<super::analyze::AnalyzeService>,
 }
 
@@ -233,36 +231,28 @@ impl std::fmt::Debug for CheckpointService {
 }
 
 impl CheckpointService {
-    /// Wire the service. The pool is read for reader-idle checks only; the
-    /// lane handle feeds the writer-idle half of the `TRUNCATE` gate, and
-    /// `hold` is the lane's hold on bulk writes, which every pass sets.
-    /// `clock` dates each pass.
+    /// Wire the service. `reads` feeds the reader-idle half of the
+    /// `TRUNCATE` gate and the lane handle its writer-idle half; `hold` is
+    /// the lane's hold on bulk writes, which every pass sets. `clock` dates
+    /// each pass.
     pub fn new(
         db_path: &Path,
-        pool: SqlitePool,
+        reads: ReadActivity,
         lane_idle: Arc<LaneIdle>,
         hold: Arc<WalHold>,
         clock: Arc<dyn Clock>,
     ) -> Self {
         Self {
             db_path: db_path.to_owned(),
-            pool,
             clock,
             lane_idle,
             policy: Arc::new(Mutex::new(BackpressurePolicy::new())),
             latest: Arc::new(RwLock::new(None)),
             last_truncate: Arc::new(Mutex::new(None)),
             hold,
-            pooled_reads: None,
+            reads,
             analyze: None,
         }
-    }
-
-    /// Count the read pools in the reader-idle half of the `TRUNCATE` gate.
-    #[must_use]
-    pub(crate) fn with_pooled_reads(mut self, reads: ReadActivity) -> Self {
-        self.pooled_reads = Some(reads);
-        self
     }
 
     /// Other water marks for the backpressure rule.
@@ -368,11 +358,9 @@ impl CheckpointService {
         outcome
     }
 
-    /// True when every pooled connection is back in its pool: the sqlx
-    /// pool's and the read pools'.
+    /// True when every connection of both read pools is back in its pool.
     fn readers_idle(&self) -> bool {
-        self.pool.num_idle() as u32 == self.pool.size()
-            && self.pooled_reads.as_ref().is_none_or(ReadActivity::is_idle)
+        self.reads.is_idle()
     }
 
     /// Run one pass in the given mode and record its outcome. A relief pass

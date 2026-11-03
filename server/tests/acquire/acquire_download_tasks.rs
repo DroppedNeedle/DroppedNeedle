@@ -3,6 +3,7 @@
 //! retry pass. Scratch journal only; the reimport landing itself is covered
 //! by the download import journey.
 
+use crate::common::Probe;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -238,11 +239,8 @@ fn staging_for(journal: &Journal) -> std::path::PathBuf {
         .join("staging")
 }
 
-async fn task_count(db: &AcquireDb) -> i64 {
-    sqlx::query_scalar("SELECT COUNT(*) FROM download_tasks")
-        .fetch_one(db.db().sqlx())
-        .await
-        .unwrap()
+fn task_count(db: &AcquireDb) -> i64 {
+    db.db().one("SELECT COUNT(*) FROM download_tasks", [])
 }
 
 // A dispatch whose task insert fails keeps no idempotency key, so the
@@ -354,11 +352,7 @@ async fn failed_retry_insert_retries_next_pass() {
     ));
 
     worker.run_once(1).await;
-    assert_eq!(
-        task_count(&db).await,
-        1,
-        "the injected failure blocks the insert"
-    );
+    assert_eq!(task_count(&db), 1, "the injected failure blocks the insert");
 
     db.write("test.untrigger", |tx| {
         tx.execute_batch("DROP TRIGGER fail_retry;")?;
@@ -367,11 +361,7 @@ async fn failed_retry_insert_retries_next_pass() {
     .await
     .unwrap();
     worker.run_once(2).await;
-    assert_eq!(
-        task_count(&db).await,
-        2,
-        "the next pass spawns the successor"
-    );
+    assert_eq!(task_count(&db), 2, "the next pass spawns the successor");
 }
 
 fn get(uri: &str, who: Who) -> (Request<Body>, Who) {
@@ -889,12 +879,15 @@ async fn a_busy_edition_read_defers_the_dispatch_until_the_edition_reads() {
     let dir = crate::common::ScratchDir::new("dispatch-busy-edition");
     let path = dir.join("journal.db");
     crate::common::migrated_db(&path);
-    let mut config = DbConfig::new(&path)
-        .with_read_wait(Duration::from_millis(200))
-        .with_lane_limits(LaneLimits {
-            watch_tick: Duration::from_millis(10),
-            ..LaneLimits::default()
-        });
+    let mut config = DbConfig::new(
+        &path,
+        std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+    )
+    .with_read_wait(Duration::from_millis(200))
+    .with_lane_limits(LaneLimits {
+        watch_tick: Duration::from_millis(10),
+        ..LaneLimits::default()
+    });
     config.readers = 1;
     let runtime = open_runtime(&config).await.expect("runtime opens");
     let db = AcquireDb::new(
@@ -961,7 +954,7 @@ async fn a_busy_edition_read_defers_the_dispatch_until_the_edition_reads() {
         matches!(busy, Err(DispatchError::Busy { .. })),
         "a busy edition read is put back, got {busy:?}"
     );
-    assert_eq!(task_count(&db).await, 0, "nothing is queued");
+    assert_eq!(task_count(&db), 0, "nothing is queued");
 
     let DispatchOutcome::Dispatched { task_id } = dispatch.dispatch(&request).await.unwrap() else {
         panic!("the next pass dispatches");

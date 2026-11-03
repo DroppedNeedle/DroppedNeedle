@@ -1874,14 +1874,20 @@ async fn a_busy_read_answers_503_with_retry_after_in_both_protocols() {
     let dir = crate::common::ScratchDir::new("busy-read");
     let path = dir.join("app.db");
     crate::common::migrated_db(&path);
-    let runtime = open_runtime(&DbConfig::new(&path))
-        .await
-        .expect("runtime opens");
+    let runtime = open_runtime(&DbConfig::new(
+        &path,
+        std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+    ))
+    .await
+    .expect("runtime opens");
     // The collections read through a runtime of one pooled reader and a
     // short wait for it; the test holds that reader.
-    let mut starved = DbConfig::new(&path)
-        .with_lane_limits(LaneLimits::patient())
-        .with_read_wait(Duration::from_millis(100));
+    let mut starved = DbConfig::new(
+        &path,
+        std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+    )
+    .with_lane_limits(LaneLimits::patient())
+    .with_read_wait(Duration::from_millis(100));
     starved.readers = 1;
     let starved = open_runtime(&starved).await.expect("starved runtime opens");
     let platform = crate::common::TestPlatform::on(runtime.db(), &dir)
@@ -2055,12 +2061,18 @@ async fn a_busy_playlist_create_writes_nothing_and_asking_again_makes_one() {
     let dir = crate::common::ScratchDir::new("busy-write");
     let path = dir.join("app.db");
     crate::common::migrated_db(&path);
-    let main = open_runtime(&DbConfig::new(&path))
-        .await
-        .expect("runtime opens");
-    let mut starved = DbConfig::new(&path)
-        .with_lane_limits(LaneLimits::patient())
-        .with_read_wait(Duration::from_millis(100));
+    let main = open_runtime(&DbConfig::new(
+        &path,
+        std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+    ))
+    .await
+    .expect("runtime opens");
+    let mut starved = DbConfig::new(
+        &path,
+        std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+    )
+    .with_lane_limits(LaneLimits::patient())
+    .with_read_wait(Duration::from_millis(100));
     starved.readers = 1;
     let starved = open_runtime(&starved).await.expect("starved runtime opens");
     let platform = crate::common::TestPlatform::on(main.db(), &dir)

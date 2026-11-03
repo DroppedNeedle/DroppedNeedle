@@ -1,7 +1,6 @@
 //! `Db`: the one handle an area needs to read and write the database.
 //!
-//! It carries the writer lane, the two read pools and, until the last area
-//! has moved its reads off it, the sqlx reader pool. The factory builds it
+//! It carries the writer lane and the two read pools. The factory builds it
 //! once; clones are cheap and share everything. Areas hold a `Db` and no
 //! other database handle.
 //!
@@ -13,7 +12,6 @@
 use std::{path::Path, sync::Arc};
 
 use rusqlite::{Connection, Transaction};
-use sqlx::SqlitePool;
 
 #[cfg(any(test, feature = "test-support"))]
 use super::writer::LaneLimits;
@@ -29,7 +27,6 @@ use super::{
 pub struct Db {
     lane: WriteLane,
     reads: Arc<ReadPools>,
-    sqlx: SqlitePool,
 }
 
 impl std::fmt::Debug for Db {
@@ -41,15 +38,15 @@ impl std::fmt::Debug for Db {
 }
 
 impl Db {
-    pub(in crate::db) fn new(lane: WriteLane, reads: Arc<ReadPools>, sqlx: SqlitePool) -> Self {
-        Self { lane, reads, sqlx }
+    pub(in crate::db) fn new(lane: WriteLane, reads: Arc<ReadPools>) -> Self {
+        Self { lane, reads }
     }
 
     /// A handle on an existing, migrated database file with no runtime
-    /// behind it: the writer lane, both read pools and a lazy sqlx reader
-    /// pool, opened on the calling thread. For tests only. It starts no
-    /// watch, so a waiting write or read gets no `Busy` answer and a stuck
-    /// write is not logged, and nothing holds bulk writes for the WAL.
+    /// behind it: the writer lane and both read pools, opened on the
+    /// calling thread. For tests only. It starts no watch, so a waiting
+    /// write or read gets no `Busy` answer and a stuck write is not logged,
+    /// and nothing holds bulk writes for the WAL.
     /// Writes run on [`LaneLimits::patient`], so a loaded host slows a
     /// test without aborting its writes.
     #[cfg(any(test, feature = "test-support"))]
@@ -64,7 +61,7 @@ impl Db {
         Self::on_test_lane(path, WriteLane::open_limited(path, limits)?)
     }
 
-    /// A test handle over `lane`: both read pools and a lazy sqlx pool.
+    /// A test handle over `lane` and both read pools.
     #[cfg(any(test, feature = "test-support"))]
     fn on_test_lane(path: &Path, lane: WriteLane) -> Result<Self, DbError> {
         let reads = ReadPools::open(
@@ -74,8 +71,7 @@ impl Db {
             super::BUSY_TIMEOUT,
             super::ACQUIRE_TIMEOUT,
         )?;
-        let sqlx = super::factory::lazy_reader_pool_for_tests(path);
-        Ok(Self::new(lane, reads, sqlx))
+        Ok(Self::new(lane, reads))
     }
 
     pub(in crate::db) fn lane(&self) -> &WriteLane {
@@ -234,11 +230,5 @@ impl Db {
     /// once the lane has shut down.
     pub fn commits(&self) -> tokio::sync::watch::Receiver<u64> {
         self.lane.commits()
-    }
-
-    /// The sqlx reader pool, for the areas that have not moved their reads
-    /// to [`Db::read`] yet.
-    pub fn sqlx(&self) -> &SqlitePool {
-        &self.sqlx
     }
 }

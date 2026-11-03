@@ -3,6 +3,7 @@
 //! shapes, auth mapping, folder and section scoping that fails closed,
 //! sealed credentials that never echo, and the per-source feature matrix.
 
+use crate::common::Probe;
 use droppedneedle_media::remotes;
 
 use crate::common::auth::{test_principal, with_test_principal};
@@ -783,12 +784,10 @@ async fn linked_connections_survive_a_restart() {
         )
         .await
         .expect("preference saves");
-    let stored: String = sqlx::query_scalar(
+    let stored: String = rig.runtime.db().one(
         "SELECT connection_data FROM user_connections WHERE user_id = 'user-ada'",
-    )
-    .fetch_one(rig.runtime.db().sqlx())
-    .await
-    .expect("row reads");
+        [],
+    );
     assert!(!stored.contains("s3cret"), "sealed at rest");
 
     let Rig {
@@ -801,9 +800,12 @@ async fn linked_connections_survive_a_restart() {
     runtime.shutdown().await;
     // Reopened with the patient limits the rig opened it with, so a loaded
     // host slows the reads below instead of answering busy.
-    let config = DbConfig::new(&dir.join("app.db"))
-        .with_lane_limits(LaneLimits::patient())
-        .with_read_wait(TEST_PATIENCE);
+    let config = DbConfig::new(
+        &dir.join("app.db"),
+        std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+    )
+    .with_lane_limits(LaneLimits::patient())
+    .with_read_wait(TEST_PATIENCE);
     let deadline = std::time::Instant::now() + crate::common::PATIENCE;
     let runtime = loop {
         match open_runtime(&config).await {

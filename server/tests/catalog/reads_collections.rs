@@ -4,6 +4,7 @@
 //! users, everything survives a restart, pins never write identity, and
 //! store faults stay hidden.
 
+use crate::common::Probe;
 use droppedneedle_acquire::db::AcquireDb;
 use droppedneedle_acquire::follows::{self, Follows};
 use droppedneedle_auth::Role;
@@ -105,9 +106,12 @@ impl Rig {
     /// a loaded host slows a read or write instead of answering busy, which
     /// the fault test would read as a wrong status.
     async fn boot(dir: &ScratchDir) -> DbRuntime {
-        let config = DbConfig::new(&dir.join("app.db"))
-            .with_lane_limits(LaneLimits::patient())
-            .with_read_wait(TEST_PATIENCE);
+        let config = DbConfig::new(
+            &dir.join("app.db"),
+            std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+        )
+        .with_lane_limits(LaneLimits::patient())
+        .with_read_wait(TEST_PATIENCE);
         let deadline = std::time::Instant::now() + crate::common::PATIENCE;
         loop {
             match open_runtime(&config).await {
@@ -469,11 +473,10 @@ async fn playlists_favorites_and_follows_survive_a_restart() {
     assert_eq!(headers.get("cache-control").unwrap(), "private");
     assert!(!bytes.is_empty());
 
-    let kept: Vec<String> =
-        sqlx::query_scalar("SELECT item_id FROM catalog_user_favorites WHERE user_id = 'u-ada'")
-            .fetch_all(rig.runtime.db().sqlx())
-            .await
-            .expect("favourites read");
+    let kept: Vec<String> = rig.runtime.db().column(
+        "SELECT item_id FROM catalog_user_favorites WHERE user_id = 'u-ada'",
+        [],
+    );
     assert_eq!(kept, ["alb-1"]);
     let (_, follow) = call(
         &app,
@@ -577,11 +580,10 @@ async fn favorites_stay_per_user() {
             (StatusCode::OK, Some(true))
         );
     }
-    let bobs: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM catalog_user_favorites WHERE user_id = 'u-bob'")
-            .fetch_one(rig.runtime.db().sqlx())
-            .await
-            .expect("favourites read");
+    let bobs: i64 = rig.runtime.db().one(
+        "SELECT COUNT(*) FROM catalog_user_favorites WHERE user_id = 'u-bob'",
+        [],
+    );
     assert_eq!(bobs, 0, "favorites never leak across users");
     let (status, _) = call(
         &app,

@@ -8,6 +8,7 @@
 //! the production stores over the rig's database and settings.
 
 use crate::common;
+use crate::common::Probe;
 use crate::common::auth::{AuthRig, test_principal, with_test_principal};
 use droppedneedle_acquire::imports;
 
@@ -1560,12 +1561,10 @@ async fn spotify_sqlite_stores_persist_and_expire() {
         links.get("u1").await.expect("store reads"),
         Some(link.clone())
     );
-    let stored: String = sqlx::query_scalar(
+    let stored: String = db.db().one(
         "SELECT connection_data FROM user_connections WHERE user_id = 'u1' AND service = 'spotify'",
-    )
-    .fetch_one(db.db().sqlx())
-    .await
-    .expect("row reads");
+        [],
+    );
     assert!(!stored.contains("SECRET"), "link is sealed at rest");
     assert!(links.remove("u1").await.expect("store writes"));
     assert!(
@@ -1612,12 +1611,10 @@ async fn spotify_sqlite_stores_persist_and_expire() {
             .await
             .expect("replaces");
     }
-    let rows: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM catalog_playlist_tracks WHERE playlist_id = ?1")
-            .bind(&id)
-            .fetch_one(db.db().sqlx())
-            .await
-            .expect("count reads");
+    let rows: i64 = db.db().one(
+        "SELECT COUNT(*) FROM catalog_playlist_tracks WHERE playlist_id = ?1",
+        rusqlite::params![&id],
+    );
     assert_eq!(rows, 2);
     assert_eq!(
         bridge.source_refs_for("u1").await.expect("reads"),

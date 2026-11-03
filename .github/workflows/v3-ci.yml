@@ -193,10 +193,7 @@ jobs:
           tool: cargo-audit
 
       - name: Run audit
-        # RUSTSEC-2023-0071 (rsa Marvin, no fixed upgrade) is lockfile-only
-        # via sqlx-mysql, which is not in the build graph (sqlite only);
-        # the code never compiles. Re-check if another sqlx driver lands.
-        run: cargo audit --ignore RUSTSEC-2023-0071
+        run: cargo audit
 
   licenses:
     name: Licenses

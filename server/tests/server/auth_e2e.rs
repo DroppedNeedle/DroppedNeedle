@@ -77,9 +77,12 @@ impl E2e {
         let scratch = crate::common::ScratchDir::new(&format!("auth-e2e-{tag}"));
         let dir = scratch.to_path_buf();
         crate::common::migrated_db(&dir.join("app.db"));
-        let runtime = open_runtime(&tune(DbConfig::new(&dir.join("app.db"))))
-            .await
-            .expect("scratch runtime opens");
+        let runtime = open_runtime(&tune(DbConfig::new(
+            &dir.join("app.db"),
+            std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+        )))
+        .await
+        .expect("scratch runtime opens");
         let mut config = AppConfig::new(DEFAULT_PORT);
         config.root_app_dir = dir.clone();
         let platform = crate::common::TestPlatform::on(runtime.db(), &dir)
@@ -128,11 +131,6 @@ impl E2e {
     /// The auth stores over the scratch database.
     pub(crate) fn bundle(&self) -> &ProdAuth {
         &self.bundle
-    }
-
-    /// The scratch database pool, for assertions on stored rows.
-    pub(crate) fn pool(&self) -> &sqlx::SqlitePool {
-        self.runtime.db().sqlx()
     }
 
     /// The data key the scratch deployment seals app passwords with.
@@ -2203,13 +2201,9 @@ async fn sign_in_waits_out_a_full_read_pool_as_busy_not_a_fault() {
     .await;
     let (_, token) = setup_admin(e2e.router(), "e2e-owner", "e2e-owner-password-1", "bearer").await;
     let auth = bearer(token.as_str().expect("setup token"));
-    // Every reader of both read pools checked out: the stand-in for a host
-    // too busy to hand one over before the checkout limit.
+    // Every request reader checked out: the stand-in for a host too busy
+    // to hand one over before the checkout limit.
     let readers = droppedneedle_kernel::db::MAX_READERS as usize;
-    let mut held = Vec::new();
-    for _ in 0..readers {
-        held.push(crate::common::hold_reader(e2e.pool()).await);
-    }
     // The held reads wait behind a gate that opens when it drops, so an
     // assertion that fails below lets them go and the test fails instead
     // of hanging.
@@ -2272,7 +2266,6 @@ async fn sign_in_waits_out_a_full_read_pool_as_busy_not_a_fault() {
         assert_eq!(body["error"]["code"], "SERVER_BUSY", "{body}");
         assert!(body["error"]["details"]["error_id"].is_string(), "{body}");
     }
-    drop(held);
     drop(gate);
     for holder in holders {
         tokio::time::timeout(crate::common::PATIENCE, holder)

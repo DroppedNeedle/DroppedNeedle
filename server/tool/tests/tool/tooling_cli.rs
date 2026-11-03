@@ -5,6 +5,7 @@
 //!
 //! Nothing here touches the network; every database is a scratch file.
 
+use crate::common::Probe;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -476,14 +477,8 @@ async fn import_refuses_a_locked_database() {
     let config_dir = root.join("config");
     std::fs::create_dir_all(&config_dir).expect("config dir");
 
-    let pool = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect(&format!("sqlite:{}?mode=rwc", db.display()))
-        .await
-        .expect("writable pool opens");
     droppedneedle_kernel::db::migrate_file(&db, &droppedneedle_kernel::schema::CHAIN)
         .expect("schema migrates");
-    pool.close().await;
 
     // Another writer holds the database for the duration of the CLI run.
     let held = rusqlite::Connection::open(&db).expect("lock connection opens");
@@ -1173,10 +1168,12 @@ async fn recovery_code_from_the_host_gives_a_locked_out_admin_a_password() {
     assert_eq!(count(ALICE_CODES), 1);
 
     // The services the web routes call, over the same database.
-    let runtime =
-        droppedneedle_kernel::db::open_runtime(&droppedneedle_kernel::db::DbConfig::new(&db_path))
-            .await
-            .expect("database opens");
+    let runtime = droppedneedle_kernel::db::open_runtime(&droppedneedle_kernel::db::DbConfig::new(
+        &db_path,
+        std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+    ))
+    .await
+    .expect("database opens");
     let auth_db = AuthDb::new(
         runtime.db(),
         std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
@@ -1261,11 +1258,10 @@ async fn recovery_code_from_the_host_gives_a_locked_out_admin_a_password() {
         "a used code is refused"
     );
     // Read before the sign-in below, which sweeps revoked sessions.
-    let revoked: i64 =
-        sqlx::query_scalar("SELECT revoked FROM auth_tokens WHERE id = 'sess-alice'")
-            .fetch_one(runtime.db().sqlx())
-            .await
-            .expect("session reads");
+    let revoked: i64 = runtime.db().one(
+        "SELECT revoked FROM auth_tokens WHERE id = 'sess-alice'",
+        [],
+    );
     assert_eq!(revoked, 1, "the reset ends the sessions from before it");
     assert_eq!(sign_in().await.expect("sign-in works").user_id, alice.id);
     runtime.shutdown().await;
@@ -1616,28 +1612,23 @@ async fn merge_target(
 ) -> (
     droppedneedle_tool::tooling::fixture::V2Fixture,
     PathBuf,
-    sqlx::SqlitePool,
+    PathBuf,
     PathBuf,
     crate::common::ScratchDir,
 ) {
     let root = scratch_dir(tag);
     let (fixture, export) = repaired_export(&root);
     let db_path = root.join("v3.db");
-    let pool = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect(&format!("sqlite:{}?mode=rwc", db_path.display()))
-        .await
-        .expect("writable pool opens");
     droppedneedle_kernel::db::migrate_file(&db_path, &droppedneedle_kernel::schema::CHAIN)
         .expect("schema migrates");
     let config_dir = root.join("config");
     std::fs::create_dir_all(&config_dir).expect("config dir");
-    (fixture, export, pool, config_dir, root)
+    (fixture, export, db_path, config_dir, root)
 }
 
 async fn run_merge(
     export: &std::path::Path,
-    pool: &sqlx::SqlitePool,
+    target_db: &Path,
     config_dir: &std::path::Path,
 ) -> droppedneedle_tool::r#import::ImportReport {
     let (crypto, _) = droppedneedle_kernel::runtime_config::Crypto::load_or_generate(config_dir)
@@ -1645,7 +1636,7 @@ async fn run_merge(
     droppedneedle_tool::r#import::run_import(droppedneedle_tool::r#import::ImportRequest {
         export_bytes: std::fs::read(export).expect("export reads"),
         passphrase: "operator-passphrase".to_owned(),
-        db_path: pool.connect_options().get_filename().to_owned(),
+        db_path: target_db.to_owned(),
         legacy: droppedneedle_kernel::runtime_config::LegacyConfig::at(config_dir, false),
         crypto,
         v2_config_path: None,
@@ -1662,18 +1653,15 @@ async fn run_merge(
 /// Same-id users keep the existing row, untouched.
 #[tokio::test]
 async fn same_id_user_conflict_keeps_existing_row() {
-    let (fixture, export, pool, config_dir, _root) = merge_target("merge-user").await;
-    sqlx::query(
+    let (fixture, export, target_db, config_dir, _root) = merge_target("merge-user").await;
+    target_db.exec(
         "INSERT INTO auth_users (id, display_name, email, role, created_at, username)
          VALUES (?, 'Old Alice', 'old@example.com', 'user',
                  1767225600000, 'alice')",
-    )
-    .bind(&fixture.alice_id)
-    .execute(&pool)
-    .await
-    .expect("stale alice seeds");
+        rusqlite::params![&fixture.alice_id],
+    );
 
-    let report = run_merge(&export, &pool, &config_dir).await;
+    let report = run_merge(&export, &target_db, &config_dir).await;
     assert_eq!(
         report.exit.code,
         droppedneedle_tool::r#import::ExitCode::OkWithDrops
@@ -1687,38 +1675,30 @@ async fn same_id_user_conflict_keeps_existing_row() {
         1
     );
 
-    let display: String = sqlx::query_scalar("SELECT display_name FROM auth_users WHERE id = ?")
-        .bind(&fixture.alice_id)
-        .fetch_one(&pool)
-        .await
-        .expect("user reads back");
+    let display: String = target_db.one(
+        "SELECT display_name FROM auth_users WHERE id = ?",
+        rusqlite::params![&fixture.alice_id],
+    );
     assert_eq!(display, "Old Alice");
 }
 
 /// Follows merge: auto_download OR, followed_at min, updated_at max.
 #[tokio::test]
 async fn follow_conflict_merges_or_min_max() {
-    let (fixture, export, pool, config_dir, _root) = merge_target("merge-follow").await;
-    sqlx::query(
-        "INSERT INTO auth_users (id, display_name, role, created_at) VALUES (?, 'Alice', 'user', 0)",
-    )
-    .bind(&fixture.alice_id)
-    .execute(&pool)
-    .await
-    .expect("alice seeds");
-    sqlx::query(
+    let (fixture, export, target_db, config_dir, _root) = merge_target("merge-follow").await;
+    target_db.exec("INSERT INTO auth_users (id, display_name, role, created_at) VALUES (?, 'Alice', 'user', 0)", rusqlite::params![&fixture.alice_id]);
+    target_db.exec(
         "INSERT INTO acquire_followed_artists (user_id, artist_mbid, artist_mbid_lower,
              artist_name, auto_download, followed_at, updated_at)
          VALUES (?, ?, ?, 'Fixture Artist One', 0, 9999999999000, 100000)",
-    )
-    .bind(&fixture.alice_id)
-    .bind(&fixture.artist_one_mbid)
-    .bind(fixture.artist_one_mbid.to_lowercase())
-    .execute(&pool)
-    .await
-    .expect("narrow follow seeds");
+        rusqlite::params![
+            &fixture.alice_id,
+            &fixture.artist_one_mbid,
+            fixture.artist_one_mbid.to_lowercase()
+        ],
+    );
 
-    let report = run_merge(&export, &pool, &config_dir).await;
+    let report = run_merge(&export, &target_db, &config_dir).await;
     assert_eq!(
         report
             .entities
@@ -1728,42 +1708,31 @@ async fn follow_conflict_merges_or_min_max() {
         1
     );
 
-    let merged: (i64, i64, i64) = sqlx::query_as(
+    let merged: (i64, i64, i64) = target_db.row(
         "SELECT auto_download, followed_at, updated_at FROM acquire_followed_artists
          WHERE user_id = ? AND artist_mbid_lower = ?",
-    )
-    .bind(&fixture.alice_id)
-    .bind(fixture.artist_one_mbid.to_lowercase())
-    .fetch_one(&pool)
-    .await
-    .expect("follow reads back");
+        rusqlite::params![&fixture.alice_id, fixture.artist_one_mbid.to_lowercase()],
+    );
     assert_eq!(merged, (1, 1_700_000_000_000, 1_760_000_000_000));
 }
 
 /// Approvals keep the most-permissive state with the earliest request.
 #[tokio::test]
 async fn approval_conflict_keeps_most_permissive() {
-    let (fixture, export, pool, config_dir, _root) = merge_target("merge-approval").await;
-    sqlx::query(
-        "INSERT INTO auth_users (id, display_name, role, created_at) VALUES (?, 'Alice', 'user', 0)",
-    )
-    .bind(&fixture.alice_id)
-    .execute(&pool)
-    .await
-    .expect("alice seeds");
-    sqlx::query(
+    let (fixture, export, target_db, config_dir, _root) = merge_target("merge-approval").await;
+    target_db.exec("INSERT INTO auth_users (id, display_name, role, created_at) VALUES (?, 'Alice', 'user', 0)", rusqlite::params![&fixture.alice_id]);
+    target_db.exec(
         "INSERT INTO auto_download_approvals (user_id, artist_mbid, artist_mbid_lower,
              artist_name, state, requested_at)
          VALUES (?, ?, ?, 'Fixture Artist One', 'approved', 9999999999000)",
-    )
-    .bind(&fixture.alice_id)
-    .bind(&fixture.artist_one_mbid)
-    .bind(fixture.artist_one_mbid.to_lowercase())
-    .execute(&pool)
-    .await
-    .expect("approved approval seeds");
+        rusqlite::params![
+            &fixture.alice_id,
+            &fixture.artist_one_mbid,
+            fixture.artist_one_mbid.to_lowercase()
+        ],
+    );
 
-    let report = run_merge(&export, &pool, &config_dir).await;
+    let report = run_merge(&export, &target_db, &config_dir).await;
     assert_eq!(
         report
             .entities
@@ -1773,15 +1742,11 @@ async fn approval_conflict_keeps_most_permissive() {
         1
     );
 
-    let approval: (String, i64) = sqlx::query_as(
+    let approval: (String, i64) = target_db.row(
         "SELECT state, requested_at FROM auto_download_approvals
          WHERE user_id = ? AND artist_mbid_lower = ?",
-    )
-    .bind(&fixture.alice_id)
-    .bind(fixture.artist_one_mbid.to_lowercase())
-    .fetch_one(&pool)
-    .await
-    .expect("approval reads back");
+        rusqlite::params![&fixture.alice_id, fixture.artist_one_mbid.to_lowercase()],
+    );
     assert_eq!(approval, ("approved".to_owned(), 1_740_000_000_000));
 }
 
@@ -1791,21 +1756,13 @@ async fn restore_round_trips_and_refuses() {
 
     let root = scratch_dir("restore");
     let live = root.join("live.db");
-    let pool = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect(&format!("sqlite:{}?mode=rwc", live.display()))
-        .await
-        .expect("writable pool opens");
     droppedneedle_kernel::db::migrate_file(&live, &droppedneedle_kernel::schema::CHAIN)
         .expect("schema migrates");
-    sqlx::query(
+    live.exec(
         "INSERT INTO auth_users (id, display_name, role, created_at)
          VALUES ('restore-alice', 'Alice', 'admin', 1767225600000)",
-    )
-    .execute(&pool)
-    .await
-    .expect("row seeds");
-    pool.close().await;
+        [],
+    );
 
     let backup_dir = root.join("backups");
     let service = BackupService::new(
@@ -1836,21 +1793,11 @@ async fn restore_round_trips_and_refuses() {
     let summary: serde_json::Value =
         serde_json::from_slice(&status.stdout).expect("restore prints one JSON object");
     assert!(summary.get("restored").is_some());
-    let check = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect(&format!(
-            "sqlite:{}?mode=ro",
-            target.join("library.db").display()
-        ))
-        .await
-        .expect("restored pool opens");
-    let name: String = sqlx::query_scalar("SELECT display_name FROM auth_users WHERE id = ?")
-        .bind("restore-alice")
-        .fetch_one(&check)
-        .await
-        .expect("restored row reads");
+    let name: String = target.join("library.db").one(
+        "SELECT display_name FROM auth_users WHERE id = ?",
+        rusqlite::params!["restore-alice"],
+    );
     assert_eq!(name, "Alice");
-    check.close().await;
 
     // Occupied targets refuse.
     let occupied = root.join("occupied");
@@ -1881,16 +1828,7 @@ async fn restore_round_trips_and_refuses() {
     // A backup newer than the binary refuses without --allow-downgrade.
     let future = root.join("future.db");
     std::fs::copy(&taken.path, &future).expect("backup copies");
-    let stamp = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect(&format!("sqlite:{}?mode=rwc", future.display()))
-        .await
-        .expect("future pool opens");
-    sqlx::query("PRAGMA user_version = 9999")
-        .execute(&stamp)
-        .await
-        .expect("stamp writes");
-    stamp.close().await;
+    future.exec("PRAGMA user_version = 9999", []);
     let too_new = droppedneedle_tool::tooling::restore::restore_backup(
         &future,
         &root.join("new1"),

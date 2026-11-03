@@ -8,8 +8,10 @@
 //! `analysis_limit` sample, skipping the FTS shadow tables), never
 //! `PRAGMA optimize`.
 //!
-//! It runs when statistics are missing (first boot, and after migrations on
-//! an upgraded database), when the streamable track count moved by a tenth
+//! It runs when statistics are missing (first boot, and after a boot that
+//! migrated a database holding data, which forgets the last run: a
+//! migration may add indexes or rebuild tables, and SQLite holds no
+//! statistics for those), when the streamable track count moved by a tenth
 //! since the last run (a scan landed), or when the last run is a day old.
 //! It never runs while the catalog holds fewer than [`MIN_TRACKS`]: stats
 //! taken from a nearly empty catalog would steer a whole first scan onto
@@ -23,6 +25,8 @@
 
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+
+use rusqlite::OptionalExtension;
 
 use crate::clock::Clock;
 
@@ -89,9 +93,9 @@ fn stale(last: Option<LastRun>, stats_present: bool, indexed_tracks: i64, now_ms
 }
 
 impl AnalyzeService {
-    /// Wire the service over the database: the sqlx reader pool for the
-    /// staleness checks, the writer lane for the `ANALYZE` steps; `clock`
-    /// dates each run.
+    /// Wire the service over the database: the read pool for the staleness
+    /// checks, the writer lane for the `ANALYZE` steps; `clock` dates each
+    /// run.
     pub fn new(db: Db, clock: Arc<dyn Clock>) -> Self {
         Self {
             db,
@@ -128,17 +132,28 @@ impl AnalyzeService {
     }
 
     async fn due(&self) -> Result<bool, DbError> {
-        let last: Option<(i64, i64)> = sqlx::query_as(sql::LAST_ANALYZE.text())
-            .fetch_optional(self.db.sqlx())
+        let last = self
+            .db
+            .read("db.analyze.last", |connection| {
+                connection
+                    .query_row(sql::LAST_ANALYZE.text(), [], sql::LastAnalyze::read)
+                    .optional()
+                    .map_err(DbError::from)
+            })
             .await?;
-        let stats_present: bool = sqlx::query_scalar(sql::STATS_PRESENT.text())
-            .fetch_one(self.db.sqlx())
+        let stats_present = self
+            .db
+            .read("db.analyze.stats_present", |connection| {
+                connection
+                    .query_row(sql::STATS_PRESENT.text(), [], |row| row.get::<_, bool>(0))
+                    .map_err(DbError::from)
+            })
             .await?;
         let indexed_tracks = self.indexed_tracks().await?;
         Ok(stale(
-            last.map(|(at_ms, indexed_tracks)| LastRun {
-                at_ms,
-                indexed_tracks,
+            last.map(|last| LastRun {
+                at_ms: last.analyzed_at.0,
+                indexed_tracks: last.indexed_tracks,
             }),
             stats_present,
             indexed_tracks,
@@ -147,17 +162,28 @@ impl AnalyzeService {
     }
 
     async fn indexed_tracks(&self) -> Result<i64, DbError> {
-        Ok(sqlx::query_scalar(sql::INDEXED_TRACKS.text())
-            .fetch_one(self.db.sqlx())
-            .await?)
+        self.db
+            .read("db.analyze.indexed_tracks", |connection| {
+                connection
+                    .query_row(sql::INDEXED_TRACKS.text(), [], |row| row.get(0))
+                    .map_err(DbError::from)
+            })
+            .await
     }
 
     /// `ANALYZE` every table, one writer-lane step per table, then record
     /// the run and make reader connections reload the statistics.
     pub async fn run(&self) -> Result<(), DbError> {
         let started = Instant::now();
-        let tables: Vec<String> = sqlx::query_scalar(sql::ANALYZED_TABLES.text())
-            .fetch_all(self.db.sqlx())
+        let tables = self
+            .db
+            .read("db.analyze.tables", |connection| {
+                let mut statement = connection.prepare(sql::ANALYZED_TABLES.text())?;
+                let names = statement
+                    .query_map([], |row| row.get::<_, String>(0))?
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok::<_, DbError>(names)
+            })
             .await?;
         for table in tables {
             // A bounded sample per index keeps each step short on a large

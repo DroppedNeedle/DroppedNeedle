@@ -3,6 +3,7 @@
 //! Also the pieces v2 import relies on: username derivation, dead sessions
 //! after import, and imported app passwords.
 
+use crate::common::Probe;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -1216,11 +1217,10 @@ async fn lastfm_links_with_the_instance_key_and_binds_tokens_to_the_user() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["username"], "jane_lfm");
 
-    let stored: Vec<String> =
-        sqlx::query_scalar("SELECT connection_data FROM user_connections WHERE service = 'lastfm'")
-            .fetch_all(e2e.pool())
-            .await
-            .expect("rows read");
+    let stored: Vec<String> = e2e.db().column(
+        "SELECT connection_data FROM user_connections WHERE service = 'lastfm'",
+        [],
+    );
     assert_eq!(stored.len(), 1);
     assert!(
         !stored[0].contains(LASTFM_SESSION_KEY),

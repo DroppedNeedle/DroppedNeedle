@@ -6,6 +6,7 @@
 //! journal on the same database; a test settles a task the way the worker
 //! would.
 
+use crate::common::Probe;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
@@ -125,21 +126,21 @@ struct Downloads {
 
 impl Downloads {
     /// Every task id, oldest first.
-    async fn ids(&self) -> Vec<String> {
-        sqlx::query_scalar("SELECT id FROM download_tasks ORDER BY created_at, rowid")
-            .fetch_all(self.dispatch.journal().db().db().sqlx())
-            .await
-            .expect("task ids read")
+    fn ids(&self) -> Vec<String> {
+        self.dispatch.journal().db().db().column(
+            "SELECT id FROM download_tasks ORDER BY created_at, rowid",
+            [],
+        )
     }
 
     /// The `n`th task dispatched (1-based).
-    async fn task(&self, n: usize) -> String {
-        self.ids().await[n - 1].clone()
+    fn task(&self, n: usize) -> String {
+        self.ids()[n - 1].clone()
     }
 
     /// The tasks dispatched since the last call, oldest first.
     async fn take_calls(&self) -> Vec<Dispatched> {
-        let ids = self.ids().await;
+        let ids = self.ids();
         let from = std::mem::replace(&mut *self.taken.lock().unwrap(), ids.len());
         let mut out = Vec::new();
         for id in &ids[from..] {
@@ -173,14 +174,12 @@ impl Downloads {
     }
 
     /// The tasks cancelled since the last call.
-    async fn take_cancels(&self) -> Vec<String> {
-        let cancelled: Vec<String> = sqlx::query_scalar(
+    fn take_cancels(&self) -> Vec<String> {
+        let cancelled: Vec<String> = self.dispatch.journal().db().db().column(
             "SELECT id FROM download_tasks WHERE status = 'cancelled' \
              ORDER BY updated_at, rowid",
-        )
-        .fetch_all(self.dispatch.journal().db().db().sqlx())
-        .await
-        .expect("cancelled tasks read");
+            [],
+        );
         let mut seen = self.cancels.lock().unwrap();
         cancelled
             .into_iter()
@@ -561,12 +560,12 @@ async fn cancel_matrix() {
     let (_, detached) = call(&state, Method::DELETE, &uri, Some(BOB), None).await;
     assert_eq!(detached["success"], true);
     assert!(
-        dispatch.take_cancels().await.is_empty(),
+        dispatch.take_cancels().is_empty(),
         "a listener never stops the task"
     );
     let (_, cancelled) = call(&state, Method::DELETE, &uri, Some(TRUSTED), None).await;
     assert_eq!(cancelled["success"], true, "{cancelled}");
-    assert_eq!(dispatch.take_cancels().await, vec![dispatch.task(1).await]);
+    assert_eq!(dispatch.take_cancels(), vec![dispatch.task(1)]);
     let (_, history) = call(
         &state,
         Method::GET,
@@ -583,7 +582,7 @@ async fn cancel_matrix() {
     let uri = format!("/api/v3/requests/active/{MBID_B}");
     let (_, stopped) = call(&state, Method::DELETE, &uri, Some(ADMIN), None).await;
     assert_eq!(stopped["success"], true, "{stopped}");
-    assert_eq!(dispatch.take_cancels().await, vec![dispatch.task(2).await]);
+    assert_eq!(dispatch.take_cancels(), vec![dispatch.task(2)]);
     let (_, history) = call(
         &state,
         Method::GET,
@@ -609,7 +608,7 @@ async fn cancel_matrix() {
 async fn a_cancel_outlasts_the_automatic_retry() {
     let (state, db, dispatch) = setup().await;
     ask(&state, TRUSTED, MBID_A).await;
-    let first = dispatch.task(1).await;
+    let first = dispatch.task(1);
     // The download fails as the cancel arrives, before the request follows.
     let failed = first.clone();
     db.write("test.fail_behind", move |tx| {
@@ -637,7 +636,7 @@ async fn a_cancel_outlasts_the_automatic_retry() {
     let row = state.store.get(RequestKind::Album, MBID_A).await.unwrap();
     assert_eq!(row.unwrap().status.as_str(), "cancelled");
     assert_eq!(
-        dispatch.ids().await,
+        dispatch.ids(),
         std::slice::from_ref(&first),
         "nothing starts again"
     );
@@ -783,7 +782,7 @@ async fn retry_keeps_approval_provenance() {
         None,
     )
     .await;
-    dispatch.fail(&dispatch.task(1).await).await;
+    dispatch.fail(&dispatch.task(1)).await;
     dispatch.take_calls().await;
 
     let (_, retried) = call(
@@ -842,7 +841,7 @@ async fn wanted_view_and_actions() {
     );
 
     ask(&state, TRUSTED, MBID_B).await;
-    dispatch.fail(&dispatch.task(1).await).await;
+    dispatch.fail(&dispatch.task(1)).await;
     let (_, wanted) = call(
         &state,
         Method::GET,
@@ -1288,8 +1287,8 @@ async fn history_filters_reimportable_for_admins() {
     for mbid in [MBID_A, MBID_B] {
         ask(&state, TRUSTED, mbid).await;
     }
-    let kept = dispatch.task(1).await;
-    let bare = dispatch.task(2).await;
+    let kept = dispatch.task(1);
+    let bare = dispatch.task(2);
     let attempt_task = kept.clone();
     dispatch
         .dispatch
@@ -1386,8 +1385,8 @@ async fn recovery_finishes_cancels_and_dispatches() {
 
     let report = RequestsService::new(&state).recover().await.unwrap();
     assert_eq!((report.cancelled, report.redispatched), (1, 1));
-    let first = dispatch.task(1).await;
-    assert_eq!(dispatch.take_cancels().await, vec![first.clone()]);
+    let first = dispatch.task(1);
+    assert_eq!(dispatch.take_cancels(), vec![first.clone()]);
     assert_eq!(
         dispatch
             .dispatch
@@ -1422,11 +1421,17 @@ async fn a_busy_database_leaves_an_ask_waiting_until_the_next_pass() {
     let dir = crate::common::ScratchDir::new("requests-busy-dispatch");
     let path = dir.join("journal.db");
     crate::common::migrated_db(&path);
-    let runtime = open_runtime(&DbConfig::new(&path).with_lane_limits(LaneLimits {
-        foreground_wait: std::time::Duration::from_millis(200),
-        watch_tick: std::time::Duration::from_millis(10),
-        ..LaneLimits::default()
-    }))
+    let runtime = open_runtime(
+        &DbConfig::new(
+            &path,
+            std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+        )
+        .with_lane_limits(LaneLimits {
+            foreground_wait: std::time::Duration::from_millis(200),
+            watch_tick: std::time::Duration::from_millis(10),
+            ..LaneLimits::default()
+        }),
+    )
     .await
     .expect("runtime opens");
     let held = AcquireDb::new(
@@ -1510,12 +1515,15 @@ async fn a_busy_edition_read_never_lets_the_asked_edition_stand_in() {
     let dir = crate::common::ScratchDir::new("requests-busy-edition");
     let path = dir.join("library.db");
     crate::common::migrated_db(&path);
-    let mut config = DbConfig::new(&path)
-        .with_read_wait(std::time::Duration::from_millis(200))
-        .with_lane_limits(LaneLimits {
-            watch_tick: std::time::Duration::from_millis(10),
-            ..LaneLimits::default()
-        });
+    let mut config = DbConfig::new(
+        &path,
+        std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+    )
+    .with_read_wait(std::time::Duration::from_millis(200))
+    .with_lane_limits(LaneLimits {
+        watch_tick: std::time::Duration::from_millis(10),
+        ..LaneLimits::default()
+    });
     config.readers = 1;
     let runtime = open_runtime(&config).await.expect("runtime opens");
     let library = AcquireDb::new(
@@ -2045,11 +2053,10 @@ impl droppedneedle_library::edition::port::EditionPlans for LibraryPlan {
         use droppedneedle_library::edition::plan::PlanFile;
         use droppedneedle_library::edition::plan::PlanTrack;
         Box::pin(async move {
-            let files: Vec<String> =
-                sqlx::query_scalar("SELECT id FROM local_tracks WHERE local_album_id = 'al1'")
-                    .fetch_all(self.db.db().sqlx())
-                    .await
-                    .expect("library files read");
+            let files: Vec<String> = self.db.db().column(
+                "SELECT id FROM local_tracks WHERE local_album_id = 'al1'",
+                [],
+            );
             let tracks = (1..=4)
                 .map(|position: u32| {
                     let file = format!("t{position}");
@@ -2252,7 +2259,7 @@ async fn an_edition_fetch_shows_its_tracks_and_retries_what_failed() {
 async fn active_count_issues_no_write() {
     let (state, db, dispatch) = setup().await;
     ask(&state, TRUSTED, MBID_A).await;
-    let task = dispatch.task(1).await;
+    let task = dispatch.task(1);
     db.write("test.complete", move |tx| {
         tx.execute(
             "UPDATE download_tasks SET status = 'completed' WHERE id = ?1",
@@ -2409,11 +2416,8 @@ async fn a_link_won_by_another_linker_of_the_same_task_stands() {
 
     let (status, body) = ask(&state, TRUSTED, MBID_A).await;
     assert!(status.is_success(), "{status} {body}");
-    let task = dispatch.task(1).await;
-    assert!(
-        dispatch.take_cancels().await.is_empty(),
-        "nothing is cancelled"
-    );
+    let task = dispatch.task(1);
+    assert!(dispatch.take_cancels().is_empty(), "nothing is cancelled");
     let row = state.store.get(RequestKind::Album, MBID_A).await.unwrap();
     assert_eq!(row.unwrap().task_id.as_deref(), Some(task.as_str()));
 }

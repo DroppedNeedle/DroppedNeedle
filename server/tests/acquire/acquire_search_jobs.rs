@@ -5,6 +5,7 @@
 //! the real search service, worker pass and slskd source against the
 //! loopback mock with a fixed MusicBrainz tracklist.
 
+use crate::common::Probe;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -767,18 +768,15 @@ impl KeptRig {
     }
 
     /// Each held file's reason and state.
-    async fn held_files(&self) -> Vec<(String, String)> {
-        sqlx::query_as("SELECT reason, state FROM acquire_held_files ORDER BY id")
-            .fetch_all(self.db.db().sqlx())
-            .await
-            .expect("held files")
+    fn held_files(&self) -> Vec<(String, String)> {
+        self.db.db().rows(
+            "SELECT reason, state FROM acquire_held_files ORDER BY id",
+            [],
+        )
     }
 
-    async fn task_count(&self) -> i64 {
-        sqlx::query_scalar("SELECT COUNT(*) FROM download_tasks")
-            .fetch_one(self.db.db().sqlx())
-            .await
-            .expect("task count")
+    fn task_count(&self) -> i64 {
+        self.db.db().one("SELECT COUNT(*) FROM download_tasks", [])
     }
 }
 
@@ -823,7 +821,7 @@ async fn a_folder_outside_the_band_is_kept_once_its_pick_is_confirmed() {
     ));
     let answer = droppedneedle_kernel::error::ApiError::from(refused);
     assert_eq!((answer.status().as_u16(), answer.code()), (409, "CONFLICT"));
-    assert_eq!(rig.task_count().await, 0, "no download starts");
+    assert_eq!(rig.task_count(), 0, "no download starts");
     let view = rig.jobs.get(&owner, &job_id).await.expect("job reads");
     assert_eq!(
         view.row.status,
@@ -910,14 +908,11 @@ async fn a_failover_after_a_confirmed_pick_is_held_to_the_recipe() {
         .map(|handle| (handle.username.as_str(), handle.pinned))
         .collect();
     assert_eq!(attempts, [("picked", true), ("fallback", false)]);
-    let reasons: Vec<Option<String>> = sqlx::query_scalar(
+    let reasons: Vec<Option<String>> = rig.db.db().column(
         "SELECT reason_code FROM download_import_decisions WHERE task_id = ?1 \
          ORDER BY decided_at",
-    )
-    .bind(&task_id)
-    .fetch_all(rig.db.db().sqlx())
-    .await
-    .expect("decisions");
+        rusqlite::params![&task_id],
+    );
     assert_eq!(
         reasons.last().cloned().flatten().as_deref(),
         Some("format_not_listed"),
@@ -974,10 +969,10 @@ async fn an_automatic_download_takes_no_format_the_recipe_does_not_list() {
         task.outcome_code.map(|reason| reason.code()),
         Some("nothing_allowed")
     );
-    let attempts: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM download_attempts")
-        .fetch_one(rig.db.db().sqlx())
-        .await
-        .expect("attempt count");
+    let attempts: i64 = rig
+        .db
+        .db()
+        .one("SELECT COUNT(*) FROM download_attempts", []);
     assert_eq!(attempts, 0, "nothing was fetched");
 }
 
@@ -1034,14 +1029,11 @@ async fn an_unlisted_landing_is_held_not_placed() {
         crate::acquire_landing::files_under(&rig.music, "mp3").is_empty(),
         "nothing is placed"
     );
-    assert_eq!(
-        rig.held_files().await,
-        [("format_not_listed", "held")].map(owned)
-    );
-    let blocked: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM download_quarantine")
-        .fetch_one(rig.db.db().sqlx())
-        .await
-        .expect("quarantine count");
+    assert_eq!(rig.held_files(), [("format_not_listed", "held")].map(owned));
+    let blocked: i64 = rig
+        .db
+        .db()
+        .one("SELECT COUNT(*) FROM download_quarantine", []);
     assert!(blocked > 0, "the release is not tried again");
 }
 
@@ -1079,13 +1071,11 @@ async fn an_album_holds_one_unlisted_set_until_a_complete_copy_lands() {
         task.error_message
     );
 
-    let decisions: Vec<(Option<String>, i64, Option<String>)> = sqlx::query_as(
+    let decisions: Vec<(Option<String>, i64, Option<String>)> = rig.db.db().rows(
         "SELECT reason_code, files_held, detail FROM download_import_decisions \
          ORDER BY decided_at",
-    )
-    .fetch_all(rig.db.db().sqlx())
-    .await
-    .expect("decisions");
+        [],
+    );
     let held: Vec<_> = decisions
         .iter()
         .map(|(code, held, _)| (code.as_deref(), *held))
@@ -1108,7 +1098,7 @@ async fn an_album_holds_one_unlisted_set_until_a_complete_copy_lands() {
         1
     );
     assert_eq!(
-        rig.held_files().await,
+        rig.held_files(),
         [("format_not_listed", "discarded")].map(owned)
     );
 }

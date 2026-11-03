@@ -12,7 +12,7 @@
 //!   A `_sqlx_migrations` table left by a pre-release build that stopped
 //!   before its first migration is no table, and the baseline's
 //!   transaction drops it;
-//! - stamp exactly the chain's bridge: one transaction that drops sqlx's
+//! - stamp exactly the chain's bridge: one transaction that drops the old
 //!   bookkeeping table `_sqlx_migrations` and stamps the baseline, then
 //!   every later file. It moves a database made by the migration chain the
 //!   baseline replaced, at that chain's last number, onto the baseline;
@@ -395,8 +395,9 @@ fn run_wrapped(
     transaction.commit().map_err(failed)
 }
 
-/// Move a database at the bridge's stamp onto the baseline: drop sqlx's
-/// bookkeeping and stamp the baseline, in one transaction.
+/// Move a database at the bridge's stamp onto the baseline: drop the old
+/// bookkeeping table `_sqlx_migrations` and stamp the baseline, in one
+/// transaction.
 fn bridge(connection: &mut Connection, baseline: i64) -> Result<(), SchemaError> {
     let failed = |source| SchemaError::Failed {
         version: baseline,

@@ -6,6 +6,7 @@
 //! both, unless the server turns the blend off. Unreadable settings hold
 //! every build, and a page built past a failed read is rebuilt soon.
 
+use crate::common::Probe;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
@@ -173,13 +174,11 @@ async fn page_builds_in_the_background_is_saved_and_records_activity() {
     assert_eq!(first["sections"], json!([]));
 
     let saved = || async {
-        sqlx::query_scalar::<_, i64>(
+        db.one::<i64>(
             "SELECT COUNT(*) FROM catalog_cached_pages \
              WHERE user_id = 'user-1' AND page = 'discover' AND listenbrainz = 1 AND lastfm = 0",
+            [],
         )
-        .fetch_one(db.sqlx())
-        .await
-        .expect("snapshot count")
     };
     after_commits(&db, "the built page was saved", || async {
         (saved().await == 1).then_some(())
@@ -231,13 +230,11 @@ async fn page_builds_in_the_background_is_saved_and_records_activity() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(cursor["source_id"], "source-1");
     assert_eq!(cursor["generation"], 3);
-    let recorded: i64 = sqlx::query_scalar(
+    let recorded: i64 = db.one(
         "SELECT COUNT(*) FROM catalog_discover_activity \
          WHERE user_id = 'user-1' AND feature = 'discover'",
-    )
-    .fetch_one(db.sqlx())
-    .await
-    .expect("activity count");
+        [],
+    );
     assert_eq!(recorded, 1);
     let (status, _) = call(
         &restarted,
@@ -315,10 +312,7 @@ async fn a_busy_save_keeps_the_built_page() {
     held.execute_batch("ROLLBACK").expect("lock released");
     drop(held);
     assert!(cache.load("user-1", &built_for()).await.is_some());
-    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM catalog_cached_pages")
-        .fetch_one(db.sqlx())
-        .await
-        .expect("rows counted");
+    let rows: i64 = db.one("SELECT COUNT(*) FROM catalog_cached_pages", []);
     assert_eq!(rows, 1, "the next visit writes the page");
 }
 
@@ -378,10 +372,7 @@ async fn a_page_in_an_old_shape_is_dropped() {
     let loaded = new.load("user-1", &built_for()).await;
     assert!(loaded.is_none(), "an old shape reads as missing");
     assert!(new.due("user-1", loaded.as_ref()), "and is rebuilt");
-    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM catalog_cached_pages")
-        .fetch_one(db.sqlx())
-        .await
-        .expect("rows counted");
+    let rows: i64 = db.one("SELECT COUNT(*) FROM catalog_cached_pages", []);
     assert_eq!(rows, 0, "the old row is gone");
 }
 

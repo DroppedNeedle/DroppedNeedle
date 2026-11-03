@@ -41,14 +41,13 @@ ring = "0.17"
 sha1 = "0.10"
 rubato = "0.16"
 percent-encoding = "2"
-rusqlite = { version = "0.32", features = ["bundled", "backup", "functions", "hooks"] }
+rusqlite = { version = "0.32", features = ["bundled", "backup", "hooks"] }
 rusty-chromaprint = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
 socket2 = "0.6"
 sha2 = "0.10"
 subtle = "2"
-sqlx = { version = "0.8", default-features = false, features = ["sqlite", "runtime-tokio", "macros", "migrate"] }
 symphonia = { version = "0.6", features = ["aac", "alac", "isomp4", "mp3"] }
 symphonia-adapter-libopus = "0.3"
 thiserror = "2"
@@ -122,7 +121,6 @@ serde.workspace = true
 serde_json.workspace = true
 socket2.workspace = true
 sha2.workspace = true
-sqlx.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tower.workspace = true

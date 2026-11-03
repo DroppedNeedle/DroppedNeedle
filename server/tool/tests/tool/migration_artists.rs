@@ -207,18 +207,13 @@ pub(crate) async fn import_with(
     std::fs::create_dir_all(&config_dir).expect("v3 config dir");
     std::fs::create_dir_all(v3.join("cache")).expect("v3 cache dir");
     let db_path = v3.join("cache").join("library.db");
-    let pool = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect(&format!("sqlite:{}?mode=rwc", db_path.display()))
-        .await
-        .expect("pool opens");
     droppedneedle_kernel::db::migrate_file(&db_path, &droppedneedle_kernel::schema::CHAIN)
         .expect("schema migrates");
     let report =
         droppedneedle_tool::r#import::run_import(droppedneedle_tool::r#import::ImportRequest {
             export_bytes: std::fs::read(export_path).expect("export reads"),
             passphrase: PASSPHRASE.to_owned(),
-            db_path: pool.connect_options().get_filename().to_owned(),
+            db_path: db_path.clone(),
             legacy: droppedneedle_kernel::runtime_config::LegacyConfig::at(&config_dir, false),
             crypto: Crypto::load_or_generate(&config_dir).expect("v3 key").0,
             v2_config_path: None,
@@ -230,7 +225,6 @@ pub(crate) async fn import_with(
             fault_after_sections,
         })
         .await;
-    pool.close().await;
     (report, db_path)
 }
 

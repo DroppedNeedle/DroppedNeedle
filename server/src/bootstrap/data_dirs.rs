@@ -408,8 +408,6 @@ fn read_stamp(db_path: &Path) -> Result<(i64, i64), String> {
     if stamp > 0 {
         return Ok((stamp, 0));
     }
-    // sqlx creates its bookkeeping table before the first migration runs,
-    // so on its own that table is still an empty database.
     let tables = db
         .query_row(sql::TABLE_COUNT.text(), [], |row| row.get(0))
         .map_err(|error| error.to_string())?;
@@ -534,17 +532,6 @@ mod tests {
         database(&keyless, 0, V2_TABLES);
         assert_eq!(detect(&keyless), Layout::V2);
 
-        // A v3 server that was stopped while it migrated a v2 database
-        // leaves sqlx's table behind; the data is still v2's.
-        let touched = case("v2-touched");
-        database(
-            &touched,
-            0,
-            "CREATE TABLE auth_users (id TEXT PRIMARY KEY);
-             CREATE TABLE _sqlx_migrations (version BIGINT PRIMARY KEY);",
-        );
-        assert_eq!(detect(&touched), Layout::V2);
-
         let mixed = case("v2-with-v3-key");
         database(&mixed, 0, V2_TABLES);
         v3_key(&mixed);
@@ -569,14 +556,6 @@ mod tests {
             detect(&orphan_key),
             Layout::Unknown(UnknownLayout::V2KeyWithoutDatabase { .. })
         ));
-
-        let blank = case("blank-database");
-        database(
-            &blank,
-            0,
-            "CREATE TABLE _sqlx_migrations (version BIGINT PRIMARY KEY);",
-        );
-        assert_eq!(detect(&blank), Layout::Empty);
 
         let garbage = case("garbage");
         std::fs::write(&garbage.db_path, "this is not a database, not even close").unwrap();

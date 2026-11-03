@@ -125,9 +125,12 @@ async fn full_scan_throughput() {
     let tree_bytes = generate(&music, files, one_artist);
 
     migrated_db(&scratch.join("app.db"));
-    let runtime = open_runtime(&DbConfig::new(&scratch.join("app.db")))
-        .await
-        .expect("database runtime opens");
+    let runtime = open_runtime(&DbConfig::new(
+        &scratch.join("app.db"),
+        std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+    ))
+    .await
+    .expect("database runtime opens");
     let supervisor = Supervisor::start(
         runtime.db().clone(),
         Arc::new(droppedneedle_kernel::clock::SystemClock),

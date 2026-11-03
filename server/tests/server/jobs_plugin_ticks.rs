@@ -164,9 +164,12 @@ async fn sqlite_tick_state_survives_a_full_restart() {
 
     // Second boot over the same file: fresh pool, fresh lane, fresh store.
     // Registration rebuilds (as boot's sync_ticks does); the bytes persist.
-    let runtime = open_runtime(&DbConfig::new(&db_path))
-        .await
-        .expect("runtime reopens");
+    let runtime = open_runtime(&DbConfig::new(
+        &db_path,
+        std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+    ))
+    .await
+    .expect("runtime reopens");
     let store = SqliteTickStore::new(
         runtime.db().clone(),
         Arc::new(droppedneedle_kernel::clock::SystemClock),
