@@ -39,7 +39,7 @@ type RemoveInput = {
 	mbid: string;
 	albumId: string;
 	expectedRevision: number;
-	expectedTrackCount: number;
+	expectedListingRevision: number;
 	stopWanted: boolean;
 };
 
@@ -57,7 +57,7 @@ describe('album removal mutation', () => {
 			mbid: 'release-1',
 			albumId: 'local-1',
 			expectedRevision: 4,
-			expectedTrackCount: 2,
+			expectedListingRevision: 6,
 			stopWanted: true
 		};
 		const data = await mutation.mutationFn(input);
@@ -68,7 +68,7 @@ describe('album removal mutation', () => {
 				path: { id: 'local-1' },
 				query: {
 					expected_revision: 4,
-					expected_track_count: 2,
+					expected_listing_revision: 6,
 					delete_files: true,
 					stop_wanted: true
 				}
@@ -100,7 +100,7 @@ describe('album removal mutation', () => {
 			mbid: 'rg-1',
 			albumId: 'local-1',
 			expectedRevision: 4,
-			expectedTrackCount: 2,
+			expectedListingRevision: 6,
 			stopWanted: false
 		};
 		const data = await mutation.mutationFn(input);

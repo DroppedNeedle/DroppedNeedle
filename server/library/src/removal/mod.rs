@@ -205,11 +205,6 @@ pub const STALE_ALBUM_REMOVAL: Reason = reason(
     "This album changed after you opened it, so nothing was removed.",
     "Check the album, then remove it again.",
 );
-pub const STALE_ALBUM_TRACKS: Reason = reason(
-    "STALE_REVISION",
-    "This album's tracks changed after you opened it, so nothing was removed.",
-    "Check the album, then remove it again.",
-);
 pub const STALE_TRACK_REMOVAL: Reason = reason(
     "STALE_REVISION",
     "This track changed after you opened it, so nothing was removed.",
@@ -479,19 +474,20 @@ impl Mutations {
         if expected.is_some() && canonical != album_id {
             return Err(MutationError::Conflict(STALE_ALBUM_REMOVAL));
         }
-        let (revision, tracks) = self.album_with_tracks(&canonical)?;
-        let revision = revision.ok_or(MutationError::NotFound(ALBUM_NOT_FOUND))?;
+        let (revisions, tracks) = self.album_with_tracks(&canonical)?;
+        let (revision, listing_revision) =
+            revisions.ok_or(MutationError::NotFound(ALBUM_NOT_FOUND))?;
         let seen = expected.map(|album| Seen::Album {
             id: &canonical,
             album,
         });
         self.check_seen(seen)?;
-        let mut track_ids: Vec<String> = tracks.iter().map(|track| track.id.clone()).collect();
-        track_ids.sort();
+        // The revisions read with the tracks, so the commit removes exactly
+        // these: any track joining or leaving since moves the listing one.
         let guard = Guard::Album {
             album_id: canonical.clone(),
-            revision: expected.map_or(revision, |album| album.revision),
-            track_ids,
+            revision,
+            listing_revision,
         };
         let reason_code = if delete_files {
             "ALBUM_FILES_RECYCLED"
@@ -1171,18 +1167,15 @@ impl Mutations {
         self.album_with_tracks(album_id).map(|(_, tracks)| tracks)
     }
 
-    /// The album's row revision, `None` when there is no such row, and its
-    /// listed tracks. One snapshot, so the revision belongs to these tracks.
+    /// The album's row and listing revisions, `None` when there is no such
+    /// row, and its listed tracks. One snapshot, so the revisions belong to
+    /// these tracks.
     fn album_with_tracks(
         &self,
         album_id: &str,
-    ) -> Result<(Option<i64>, Vec<TrackFile>), MutationError> {
+    ) -> Result<(Option<AlbumRevisions>, Vec<TrackFile>), MutationError> {
         self.db.read_blocking("mutations.album_tracks", |conn| {
-            let revision = conn
-                .query_row(crate::sql::ALBUM_ROW_REVISION.text(), [album_id], |row| {
-                    row.get(0)
-                })
-                .optional()?;
+            let revision = remove::album_revisions(conn, album_id)?;
             let mut statement = conn.prepare(crate::sql::ALBUM_TRACKS.text())?;
             let rows = statement.query_map([album_id], track_row)?;
             Ok::<_, MutationError>((revision, rows.collect::<rusqlite::Result<_>>()?))
@@ -1305,15 +1298,15 @@ struct Removal<'a> {
 
 impl Removal<'_> {
     /// Refuse a removal whose rows moved on from what it was asked against:
-    /// what the person saw, then the album's tracks and revision as read
-    /// when it was asked.
+    /// what the person saw, then the row's revision as read when it was
+    /// asked.
     fn still_asked(&self, conn: &rusqlite::Connection) -> Result<(), MutationError> {
         if let Some(seen) = self.seen {
             seen.check(conn)?;
         }
         match &self.guard {
             Some(guard) if !guard.holds(conn)? => Err(MutationError::Conflict(match self.seen {
-                Some(Seen::Album { .. }) => STALE_ALBUM_TRACKS,
+                Some(Seen::Album { .. }) => STALE_ALBUM_REMOVAL,
                 Some(Seen::Track { .. }) => STALE_TRACK_REMOVAL,
                 None => REMOVAL_CHANGED,
             })),
@@ -1322,12 +1315,16 @@ impl Removal<'_> {
     }
 }
 
-/// An album as a person saw it when they asked to remove it. Tracks can join
-/// an album without moving its revision, so the count is checked too.
+/// An album's row revision and listing revision.
+type AlbumRevisions = (i64, i64);
+
+/// An album as a person saw it when they asked to remove it. Its listing
+/// revision moves when it is renamed and when a track joins or leaves its
+/// list.
 #[derive(Debug, Clone, Copy)]
 pub struct SeenAlbum {
     pub revision: i64,
-    pub track_count: i64,
+    pub listing_revision: i64,
 }
 
 /// A catalog row as a person saw it.
@@ -1346,11 +1343,10 @@ impl Seen<'_> {
         };
         match self {
             Seen::Album { id, album } => {
-                if read(crate::sql::ALBUM_ROW_REVISION.text(), id)? != Some(album.revision) {
+                if remove::album_revisions(conn, id)?
+                    != Some((album.revision, album.listing_revision))
+                {
                     return Err(MutationError::Conflict(STALE_ALBUM_REMOVAL));
-                }
-                if read(crate::sql::ALBUM_INDEXED_TRACKS.text(), id)? != Some(album.track_count) {
-                    return Err(MutationError::Conflict(STALE_ALBUM_TRACKS));
                 }
             }
             Seen::Track { id, revision } => {

@@ -9810,6 +9810,12 @@ export interface components {
         };
         /** @description One catalog album with what its own page shows. */
         AlbumDetailView: components["schemas"]["AlbumView"] & {
+            /**
+             * Format: int64
+             * @description Moves when the album is renamed or a track joins or leaves it. A
+             *     removal sends it back beside `row_revision`.
+             */
+            listing_revision: number;
             /** @description Set when library management leaves this album's files alone. */
             management_hold?: null | components["schemas"]["ManagementHoldView"];
             /** @description The album's pending identification review, if any. */
@@ -32761,10 +32767,11 @@ export interface operations {
                  */
                 expected_revision: number;
                 /**
-                 * @description The album's `track_count` as the person saw it. Another count answers
-                 *     STALE_REVISION and nothing moves.
+                 * @description The album's `listing_revision` as the person saw it. It moves when
+                 *     the album is renamed or a track joins or leaves it; another revision
+                 *     answers STALE_REVISION and nothing moves.
                  */
-                expected_track_count: number;
+                expected_listing_revision: number;
                 /**
                  * @description Move the album's files into the recycle bin too. Off by default:
                  *     the album only leaves the catalog.

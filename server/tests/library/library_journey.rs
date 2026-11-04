@@ -2714,9 +2714,10 @@ fn seen_track(library: &LibrarySetup, track: &str) -> i64 {
 }
 
 /// What a person saw, then a scan changed it: a file rewritten moves its
-/// track's revision, and a file added changes its album's track count, so a
-/// removal sent from the old view moves nothing. A scan that finds nothing new
-/// moves nothing either, or every removal after a scan would be refused.
+/// track's revision, and a file added or a new album title moves its
+/// album's listing revision, so a removal sent from the old view moves
+/// nothing. A scan that finds nothing new moves nothing either, or every
+/// removal after a scan would be refused.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_removal_after_a_scan_changed_what_was_seen_moves_nothing() {
     use droppedneedle_library::tags::TagField;
@@ -2762,14 +2763,16 @@ async fn a_removal_after_a_scan_changed_what_was_seen_moves_nothing() {
         let (status, body) = app.call("GET", &album_uri, &headers, None).await;
         assert_eq!(status, StatusCode::OK, "{body}");
         format!(
-            "expected_revision={}&expected_track_count={}&delete_files=true",
-            body["row_revision"], body["track_count"]
+            "expected_revision={}&expected_listing_revision={}&delete_files=true",
+            body["row_revision"], body["listing_revision"]
         )
     };
 
     let seen = shown_track().await;
+    let seen_album = album_query().await;
     app.scan_library().await;
     assert_eq!(shown_track().await, seen, "nothing changed on disk");
+    assert_eq!(album_query().await, seen_album, "nothing changed on disk");
 
     save_tags(
         &second,
@@ -2811,6 +2814,39 @@ async fn a_removal_after_a_scan_changed_what_was_seen_moves_nothing() {
     assert!(
         first.exists() && second.exists() && third.exists(),
         "no file moved"
+    );
+
+    // A new album title keeps the album and its row revision, which other
+    // readers compare, and moves its listing revision.
+    let seen = album_query().await;
+    let (_, shown) = app.call("GET", &album_uri, &headers, None).await;
+    let renamed = shown["title"].as_str().expect("title").to_uppercase();
+    assert_ne!(
+        json!(renamed),
+        shown["title"],
+        "the fixture's title has lower case"
+    );
+    for file in [&first, &second, &third] {
+        save_tags(
+            file,
+            &[TagEdit::verbatim(TagField::Album, vec![renamed.clone()])],
+        )
+        .expect("album retitled");
+    }
+    app.scan_library().await;
+    let (status, now) = app.call("GET", &album_uri, &headers, None).await;
+    assert_eq!(status, StatusCode::OK, "{now}");
+    assert_eq!(now["title"], json!(renamed), "the same album, renamed");
+    assert_eq!(now["row_revision"], shown["row_revision"]);
+    assert_ne!(now["listing_revision"], shown["listing_revision"]);
+    let (status, body) = app
+        .call("DELETE", &format!("{album_uri}?{seen}"), &headers, None)
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"]["code"], json!("STALE_REVISION"));
+    assert!(
+        first.exists() && second.exists() && third.exists(),
+        "no file moved after the rename"
     );
 
     let current = album_query().await;
@@ -2860,8 +2896,8 @@ async fn an_album_removal_names_the_row_it_saw() {
             let (status, body) = app.call("GET", &uri, headers, None).await;
             assert_eq!(status, StatusCode::OK, "{body}");
             format!(
-                "expected_revision={}&expected_track_count={}&delete_files=true",
-                body["row_revision"], body["track_count"]
+                "expected_revision={}&expected_listing_revision={}&delete_files=true",
+                body["row_revision"], body["listing_revision"]
             )
         }
     };
@@ -5115,18 +5151,22 @@ async fn an_album_that_changes_before_its_removal_commits_keeps_its_files() {
     };
     let (album, other) = (album_of(&kept), album_of(&joining));
     assert_ne!(album, other);
-    let revision: i64 = conn
-        .query_row(
-            "SELECT row_revision FROM local_albums WHERE id = ?1",
+    let seen_now = || -> SeenAlbum {
+        conn.query_row(
+            "SELECT row_revision, listing_revision FROM local_albums WHERE id = ?1",
             [&album],
-            |row| row.get(0),
+            |row| {
+                Ok(SeenAlbum {
+                    revision: row.get(0)?,
+                    listing_revision: row.get(1)?,
+                })
+            },
         )
-        .expect("album revision");
+        .expect("album revisions")
+    };
+    let seen = seen_now();
 
-    let renamed = format!(
-        "UPDATE local_albums SET title = 'Renamed', row_revision = {} WHERE id = '{album}'",
-        revision + 1
-    );
+    let renamed = format!("UPDATE local_albums SET title = 'Renamed' WHERE id = '{album}'");
     let swapped = format!(
         "UPDATE local_tracks SET local_album_id = CASE id WHEN '{leaving}' THEN '{other}' \
          ELSE '{album}' END WHERE id IN ('{leaving}', '{joining}')"
@@ -5144,16 +5184,7 @@ async fn an_album_that_changes_before_its_removal_commits_keeps_its_files() {
         );
         let mutations = Mutations::new(&library);
         let answer = if person {
-            mutations.remove_album_now(
-                &album,
-                SeenAlbum {
-                    revision,
-                    track_count: 2,
-                },
-                true,
-                true,
-                "admin",
-            )
+            mutations.remove_album_now(&album, seen, true, true, "admin")
         } else {
             mutations.remove_album(&album, true, true, "admin")
         };
@@ -5176,6 +5207,22 @@ async fn an_album_that_changes_before_its_removal_commits_keeps_its_files() {
         }
         assert!(no_hidden_files(&music), "{case}");
     }
+
+    // One track in and one out before the person asked keeps the count and
+    // the row revision, but moves the listing revision they saw.
+    let shown = seen_now();
+    conn.execute_batch(&format!(
+        "UPDATE local_tracks SET local_album_id = CASE id WHEN '{joining}' THEN '{other}' \
+         ELSE '{album}' END WHERE id IN ('{leaving}', '{joining}')"
+    ))
+    .expect("tracks swapped");
+    assert_eq!(seen_now().revision, shown.revision);
+    let answer = Mutations::new(&library).remove_album_now(&album, shown, true, true, "admin");
+    assert!(
+        matches!(&answer, Err(MutationError::Conflict(reason)) if reason.code == "STALE_REVISION"),
+        "swapped before the request: {answer:?}"
+    );
+    assert!(files.iter().all(|file| file.exists()), "a file moved");
 }
 
 /// One album of two untagged files per folder `Case{index}`, every file
@@ -5953,9 +6000,8 @@ async fn a_removed_album_is_listed_until_the_bin_lets_go_of_it() {
     };
 
     let uri = format!(
-        "/api/v3/library/albums/{removed}?expected_revision={}&expected_track_count={}\
-         &delete_files=true",
-        album["row_revision"], album["track_count"]
+        "/api/v3/library/albums/{removed}?expected_revision={}&expected_listing_revision={}&delete_files=true",
+        album["row_revision"], album["listing_revision"]
     );
     let (status, body) = app.call("DELETE", &uri, &headers, None).await;
     assert_eq!(status, StatusCode::OK, "{body}");
@@ -6034,9 +6080,8 @@ async fn an_album_put_back_then_vanished_stays_listed() {
     };
     let shown = get(format!("/api/v3/library/albums/{album}")).await;
     let uri = format!(
-        "/api/v3/library/albums/{album}?expected_revision={}&expected_track_count={}\
-         &delete_files=true",
-        shown["row_revision"], shown["track_count"]
+        "/api/v3/library/albums/{album}?expected_revision={}&expected_listing_revision={}&delete_files=true",
+        shown["row_revision"], shown["listing_revision"]
     );
     let (status, body) = app.call("DELETE", &uri, &headers, None).await;
     assert_eq!(status, StatusCode::OK, "{body}");

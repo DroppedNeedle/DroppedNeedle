@@ -3547,6 +3547,54 @@ fn an_undone_automatic_edition_does_not_return_through_its_tags() {
     assert!(!library_holds(&rig, GROUP_A));
 }
 
+/// A track that lands on an album after its automatic edition leaves that
+/// edition's undo live: the album's track list is not its identity.
+#[test]
+fn an_automatic_edition_undo_outlives_a_later_track() {
+    use droppedneedle_library::edition::decisions;
+
+    let rig = rig_with_recall(RecallResult::default());
+    rig.run(
+        "INSERT INTO auth_users (id, display_name, role, created_at) \
+         VALUES ('curator-1', 'Curator', 'admin', 0);",
+    );
+    tagged_album(&rig, "album-1", "t1", GROUP_A);
+    let sealed = rig.store.seal_automatic(&AutomaticSeal {
+        local_album_id: "album-1".to_owned(),
+        release_group_mbid: GROUP_A.to_owned(),
+        release_mbid: Some(RELEASE_A1.to_owned()),
+        tracks: Vec::new(),
+        flag: None,
+    });
+    assert_eq!(sealed.ok(), Some(true));
+    rig.run(
+        "INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
+             path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
+             album_title, album_title_folded, file_format, ingest_source, imported_at, \
+             membership_source, availability) \
+         SELECT 't2', local_album_id, root_id, file_path || '2', relative_path || '2', \
+             path_hash || '2', file_size_bytes, file_mtime_ns, stat_revision, title, \
+             title_folded, album_title, album_title_folded, file_format, ingest_source, \
+             imported_at, membership_source, 'indexed' FROM local_tracks WHERE id = 't1';",
+    );
+    let (album_revision, identity_revision) =
+        decisions::live_automatic_edition_undo(&rig.db, "album-1")
+            .expect("reads")
+            .expect("the automatic undo is still live");
+    let undone = rig.change(|tx| {
+        decisions::undo_automatic_edition(
+            tx,
+            "album-1",
+            album_revision,
+            identity_revision,
+            "curator-1",
+            2.0,
+        )
+        .map(|undone| undone.outcome)
+    });
+    assert!(undone.is_ok(), "{undone:?}");
+}
+
 /// A download landing on an album a person detached, or on a guess the
 /// files' tags contradict, keeps the album's row and flag as they are: the
 /// landing adds its files and their recordings only.

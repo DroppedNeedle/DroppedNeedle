@@ -502,6 +502,7 @@ pub async fn get_album(
             handing_back: hold.handing_back,
         }),
         row_revision: state.row_revision,
+        listing_revision: state.listing_revision,
         pending_review_id: state.pending_review_id,
     })
 }

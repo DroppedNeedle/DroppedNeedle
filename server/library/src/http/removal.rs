@@ -140,9 +140,10 @@ pub struct RemoveAlbumQuery {
     /// The album's `row_revision` as the person saw it. Another revision
     /// answers STALE_REVISION and nothing moves.
     pub expected_revision: i64,
-    /// The album's `track_count` as the person saw it. Another count answers
-    /// STALE_REVISION and nothing moves.
-    pub expected_track_count: i64,
+    /// The album's `listing_revision` as the person saw it. It moves when
+    /// the album is renamed or a track joins or leaves it; another revision
+    /// answers STALE_REVISION and nothing moves.
+    pub expected_listing_revision: i64,
     /// Move the album's files into the recycle bin too. Off by default:
     /// the album only leaves the catalog.
     #[serde(default)]
@@ -264,7 +265,7 @@ pub async fn remove_album(
             &album_id,
             SeenAlbum {
                 revision: query.expected_revision,
-                track_count: query.expected_track_count,
+                listing_revision: query.expected_listing_revision,
             },
             query.delete_files,
             query.stop_wanted,

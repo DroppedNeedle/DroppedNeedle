@@ -26,7 +26,8 @@ const seen: Detail = {
 	art_missing: false,
 	favorite: false,
 	date_added: 1,
-	row_revision: 3
+	row_revision: 3,
+	listing_revision: 5
 } as Detail;
 
 let api: FakeApi;
@@ -83,7 +84,7 @@ describe('DeleteAlbumModal', () => {
 		const [call] = api.calls(removeRoute);
 		expect(call.params.id).toBe('local-1');
 		expect(call.query.get('expected_revision')).toBe('3');
-		expect(call.query.get('expected_track_count')).toBe('9');
+		expect(call.query.get('expected_listing_revision')).toBe('5');
 		expect(call.query.get('stop_wanted')).toBe('true');
 	});
 
@@ -100,11 +101,16 @@ describe('DeleteAlbumModal', () => {
 		expect(api.calls(removeRoute)[0].query.get('stop_wanted')).toBe('false');
 	});
 
-	it('a stale refusal says what changed, and the next try sends the new revision', async () => {
+	it('a stale refusal says what changed, and the next try sends the new revisions', async () => {
 		const { ondeleted } = await renderModal();
 		await vi.waitFor(() => expect(api.calls(detailRoute)).toHaveLength(1));
 		api.use({
-			[detailRoute]: { ...seen, title: 'Blue Lines (Remaster)', track_count: 10, row_revision: 4 },
+			[detailRoute]: {
+				...seen,
+				title: 'Blue Lines (Remaster)',
+				track_count: 10,
+				listing_revision: 6
+			},
 			[removeRoute]: apiError(409, 'STALE_REVISION', 'This album changed after you opened it.')
 		});
 
@@ -119,10 +125,9 @@ describe('DeleteAlbumModal', () => {
 		await remove();
 
 		await vi.waitFor(() => expect(ondeleted).toHaveBeenCalledOnce());
-		expect(api.calls(removeRoute).map((call) => call.query.get('expected_revision'))).toEqual([
-			'3',
-			'4'
-		]);
+		expect(
+			api.calls(removeRoute).map((call) => call.query.get('expected_listing_revision'))
+		).toEqual(['5', '6']);
 	});
 
 	it('names the copy that goes when several are held', async () => {

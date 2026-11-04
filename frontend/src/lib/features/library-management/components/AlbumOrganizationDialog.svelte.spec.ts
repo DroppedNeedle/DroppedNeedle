@@ -24,6 +24,7 @@ const album: AlbumDetailView = {
 	favorite: false,
 	date_added: 1,
 	row_revision: 5,
+	listing_revision: 1,
 	pending_review_id: null,
 	contribution_id: null,
 	contribution_state: null

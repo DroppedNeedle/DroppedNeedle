@@ -31,7 +31,8 @@ const album: RouteData<'GET /api/v3/library/albums/{id}'> = {
 	art_missing: false,
 	favorite: false,
 	date_added: 1,
-	row_revision: 3
+	row_revision: 3,
+	listing_revision: 1
 };
 
 const track: RouteData<'GET /api/v3/library/albums/{id}/tracks'>['items'][number] = {

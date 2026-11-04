@@ -78,7 +78,7 @@ fn fresh_migrate_marks_version_and_seeds() {
             &connection,
             "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'"
         ),
-        69
+        73
     );
 
     let catalog: (i64, i64) = connection
@@ -323,6 +323,10 @@ const SHIPPED: &[(&str, &str)] = &[
     (
         "0138_lookup_indexes.sql",
         "13b2851a45637374ae7110ac736df4af04c4df675c873ad71dbaad14b35bab5d",
+    ),
+    (
+        "0139_library_album_listing_revision.sql",
+        "69eb3c40823acb9fb3587426ccd6c5a5e488c80e1c92ee95d367e830ac24b085",
     ),
 ];
 
@@ -743,7 +747,7 @@ fn lookup_indexes_upgrade_and_keep_every_row() {
     );
     drop(connection);
 
-    migrate_file(&path, &CHAIN).unwrap();
+    migrate_file(&path, &Chain::new(&MIGRATIONS[..4], None)).unwrap();
     let connection = Connection::open(&path).unwrap();
     assert_eq!(scalar(&connection, "PRAGMA user_version"), 138);
     assert_eq!(rows(&connection), before_rows, "rows are untouched");
@@ -776,6 +780,160 @@ fn lookup_indexes_upgrade_and_keep_every_row() {
     assert!(
         index_columns("idx_catalog_user_favorites_user_kind").is_empty(),
         "the repeated index is gone"
+    );
+}
+
+/// 0139 adds an album's listing revision, at 0 on every carried row, and
+/// moves it whenever the album is renamed or gains or loses a listed track:
+/// a track added, deleted, moved to another album, or listed or unlisted.
+/// A write that changes no listing moves nothing, the row revision never
+/// moves, and the upgrade itself leaves every row as it was.
+#[test]
+fn album_listing_revision_upgrade_moves_on_listing_changes() {
+    let dir = ScratchDir::new("album-listing-revision");
+    let path = dir.join("app.db");
+    let connection = migrate(
+        Connection::open(&path).unwrap(),
+        &Chain::new(&MIGRATIONS[..4], None),
+    )
+    .unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 138);
+    connection
+        .execute_batch(
+            "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded,
+                 album_artist_id, grouping_source, created_at, updated_at, row_revision)
+             VALUES ('a', 'r', 'k1', 'A', 'a', '00000000-0000-4000-8000-000000000002',
+                 'automatic', 1, 1, 4),
+                ('b', 'r', 'k2', 'B', 'b', '00000000-0000-4000-8000-000000000002',
+                 'automatic', 1, 1, 7);",
+        )
+        .unwrap();
+    let track = |connection: &Connection, id: &str, album: &str, availability: &str| {
+        connection
+            .execute(
+                "INSERT INTO local_tracks (id, local_album_id, root_id, file_path,
+                     relative_path, path_hash, file_size_bytes, file_mtime_ns,
+                     stat_revision, title, title_folded, album_title, album_title_folded,
+                     file_format, ingest_source, imported_at, membership_source,
+                     availability)
+                 VALUES (?1, ?2, 'r', '/m/' || ?1, ?1, ?1, 1, 1, 's', 'T', 't', 'A', 'a',
+                     'flac', 'scan', 1, 'automatic', ?3)",
+                [id, album, availability],
+            )
+            .unwrap();
+    };
+    track(&connection, "t1", "a", "indexed");
+    let albums = |connection: &Connection| {
+        texts(
+            connection,
+            "SELECT id || ':' || row_revision || ':' || title FROM local_albums ORDER BY id",
+            [],
+        )
+    };
+    let tracks = |connection: &Connection| {
+        texts(
+            connection,
+            "SELECT id || ':' || local_album_id || ':' || availability || ':' || row_revision
+             FROM local_tracks ORDER BY id",
+            [],
+        )
+    };
+    let (before_albums, before_tracks) = (albums(&connection), tracks(&connection));
+    drop(connection);
+
+    migrate_file(&path, &Chain::new(&MIGRATIONS[..5], None)).unwrap();
+    let connection = Connection::open(&path).unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 139);
+    assert_eq!(albums(&connection), before_albums, "rows are untouched");
+    assert_eq!(tracks(&connection), before_tracks, "rows are untouched");
+    let revisions = |connection: &Connection| {
+        texts(
+            connection,
+            "SELECT id || ':' || row_revision || ':' || listing_revision
+             FROM local_albums ORDER BY id",
+            [],
+        )
+    };
+    assert_eq!(revisions(&connection), ["a:4:0", "b:7:0"], "added at 0");
+
+    let after = |connection: &Connection, case: &str, write: &str, expected: [&str; 2]| {
+        connection.execute_batch(write).unwrap();
+        assert_eq!(revisions(connection), expected, "{case}");
+    };
+    track(&connection, "t2", "a", "indexed");
+    assert_eq!(
+        revisions(&connection),
+        ["a:4:1", "b:7:0"],
+        "a listed track joins"
+    );
+    track(&connection, "t3", "b", "missing");
+    assert_eq!(
+        revisions(&connection),
+        ["a:4:1", "b:7:0"],
+        "an unlisted row lists nothing"
+    );
+    after(
+        &connection,
+        "the same values list nothing new",
+        "UPDATE local_tracks SET local_album_id = 'a', availability = 'indexed', title = 'U'
+         WHERE id = 't1';
+         UPDATE local_albums SET title = 'A', album_artist_name = NULL, year = 1999
+         WHERE id = 'a'",
+        ["a:4:1", "b:7:0"],
+    );
+    after(
+        &connection,
+        "renamed",
+        "UPDATE local_albums SET title = 'A2' WHERE id = 'a'",
+        ["a:4:2", "b:7:0"],
+    );
+    after(
+        &connection,
+        "a new album artist name",
+        "UPDATE local_albums SET album_artist_name = 'X' WHERE id = 'b'",
+        ["a:4:2", "b:7:1"],
+    );
+    after(
+        &connection,
+        "a listed track moves",
+        "UPDATE local_tracks SET local_album_id = 'b' WHERE id = 't2'",
+        ["a:4:3", "b:7:2"],
+    );
+    after(
+        &connection,
+        "an unlisted track moves",
+        "UPDATE local_tracks SET local_album_id = 'a' WHERE id = 't3'",
+        ["a:4:3", "b:7:2"],
+    );
+    after(
+        &connection,
+        "unlisted between two states",
+        "UPDATE local_tracks SET availability = 'excluded' WHERE id = 't3'",
+        ["a:4:3", "b:7:2"],
+    );
+    after(
+        &connection,
+        "listed again",
+        "UPDATE local_tracks SET availability = 'indexed' WHERE id = 't3'",
+        ["a:4:4", "b:7:2"],
+    );
+    after(
+        &connection,
+        "unlisted",
+        "UPDATE local_tracks SET availability = 'missing' WHERE id = 't1'",
+        ["a:4:5", "b:7:2"],
+    );
+    after(
+        &connection,
+        "an unlisted row deleted",
+        "DELETE FROM local_tracks WHERE id = 't1'",
+        ["a:4:5", "b:7:2"],
+    );
+    after(
+        &connection,
+        "a listed row deleted",
+        "DELETE FROM local_tracks WHERE id = 't2'",
+        ["a:4:5", "b:7:3"],
     );
 }
 

@@ -58,51 +58,53 @@ pub enum Probe {
     },
 }
 
-/// The catalog rows a removal was asked against, checked before the
-/// publish lock and again inside its commit, so a change in between (a
-/// rename, a track that joined or left the album) refuses it.
+/// The catalog row a removal was asked against, checked before the publish
+/// lock and again inside its commit, so a change in between refuses it.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Guard {
-    /// The album's row revision and the ids of its listed tracks, sorted.
+    /// The album's row revision and its listing revision, which moves when
+    /// it is renamed and when a track joins or leaves its list.
     Album {
         album_id: String,
         revision: i64,
-        track_ids: Vec<String>,
+        listing_revision: i64,
     },
     /// One track's row revision.
     Track { track_id: String, revision: i64 },
 }
 
 impl Guard {
-    /// True while the rows on `conn` are still as the guard names them.
+    /// True while the row on `conn` still has the guard's revisions.
     pub fn holds(&self, conn: &Connection) -> rusqlite::Result<bool> {
-        let revision = |statement: &str, id: &str| -> rusqlite::Result<Option<i64>> {
-            conn.prepare_cached(statement)?
-                .query_row([id], |row| row.get(0))
-                .optional()
-        };
         match self {
             Self::Album {
                 album_id,
-                revision: seen,
-                track_ids,
-            } => {
-                if revision(crate::sql::ALBUM_ROW_REVISION.text(), album_id)? != Some(*seen) {
-                    return Ok(false);
-                }
-                let mut listed = conn
-                    .prepare_cached(crate::sql::ALBUM_INDEXED_TRACK_IDS.text())?
-                    .query_map([album_id], |row| row.get::<_, String>(0))?
-                    .collect::<rusqlite::Result<Vec<_>>>()?;
-                listed.sort();
-                Ok(listed == *track_ids)
+                revision,
+                listing_revision,
+            } => Ok(album_revisions(conn, album_id)? == Some((*revision, *listing_revision))),
+            Self::Track { track_id, revision } => {
+                let now: Option<i64> = conn
+                    .prepare_cached(crate::sql::TRACK_ROW_REVISION.text())?
+                    .query_row([track_id], |row| row.get(0))
+                    .optional()?;
+                Ok(now == Some(*revision))
             }
-            Self::Track {
-                track_id,
-                revision: seen,
-            } => Ok(revision(crate::sql::TRACK_ROW_REVISION.text(), track_id)? == Some(*seen)),
         }
     }
+}
+
+/// An album's row revision and listing revision, `None` when there is no
+/// such row.
+pub(crate) fn album_revisions(
+    conn: &Connection,
+    album_id: &str,
+) -> rusqlite::Result<Option<(i64, i64)>> {
+    conn.prepare_cached(crate::sql::ALBUM_REVISIONS.text())?
+        .query_row([album_id], |row| {
+            let row = crate::sql::AlbumRevisions::read(row)?;
+            Ok((row.row_revision, row.listing_revision))
+        })
+        .optional()
 }
 
 /// Why a removal did not happen.

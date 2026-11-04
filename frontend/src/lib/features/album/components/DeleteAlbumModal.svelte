@@ -26,7 +26,7 @@
 	let stopWanted = $state(true);
 	const removal = createRemoveLibraryAlbumMutation();
 	// Callers may know an album only by its release group: the status names the
-	// local album, whose detail gives the revision the removal is checked
+	// local album, whose detail gives the revisions the removal is checked
 	// against and what this dialog shows.
 	const status = getLibraryAlbumStatusQuery(() => musicbrainzId);
 	const detail = getLibraryAlbumDetailQuery(() =>
@@ -55,7 +55,7 @@
 	});
 
 	// A refused removal reads the album again, so the next try sends the new
-	// revision, and says what it holds now.
+	// revisions, and says what it holds now.
 	async function whatChanged(refusal: string): Promise<string> {
 		const { data, error } = await detail.refetch();
 		if (error || !data) return refusal;
@@ -81,7 +81,7 @@
 				mbid: musicbrainzId,
 				albumId: album.id,
 				expectedRevision: album.row_revision,
-				expectedTrackCount: album.track_count,
+				expectedListingRevision: album.listing_revision,
 				stopWanted
 			});
 		} catch (e) {

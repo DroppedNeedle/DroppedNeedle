@@ -368,7 +368,7 @@ impl LocalCatalog {
         .await
     }
 
-    /// The album's revision and pending review. None is absence, never
+    /// The album's revisions and pending review. None is absence, never
     /// failure.
     pub async fn album_page_state(
         &self,
@@ -379,6 +379,7 @@ impl LocalCatalog {
             first(conn, sql::ALBUM_PAGE_STATE.text(), &values, |row| {
                 Ok(AlbumPageState {
                     row_revision: row.get("row_revision")?,
+                    listing_revision: row.get("listing_revision")?,
                     pending_review_id: row.get("pending_review_id")?,
                 })
             })

@@ -133,6 +133,9 @@ pub struct AlbumDetailView {
     /// The album row's revision, which a change to its grouping and its
     /// removal echo.
     pub row_revision: i64,
+    /// Moves when the album is renamed or a track joins or leaves it. A
+    /// removal sends it back beside `row_revision`.
+    pub listing_revision: i64,
     /// The album's pending identification review, if any.
     pub pending_review_id: Option<String>,
 }

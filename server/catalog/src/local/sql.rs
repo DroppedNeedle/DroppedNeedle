@@ -328,9 +328,10 @@ droppedneedle_kernel::sql! {
     /// One live album by id.
     pub(crate) ALBUM_BY_ID = "SELECT " + ALBUM_COLUMNS + " " + ALBUM_JOINS
         + " WHERE a.id = ? AND " + (live_album!("a")) + " GROUP BY a.id";
-    /// What only an album's own page shows: its revision and its newest
+    /// What only an album's own page shows: its revisions and its newest
     /// pending identification review.
     pub(crate) ALBUM_PAGE_STATE = "SELECT a.row_revision AS row_revision, \
+        a.listing_revision AS listing_revision, \
         (SELECT r.id FROM library_identify_reviews r \
          WHERE r.local_album_id = a.id AND r.state = 'pending' \
          ORDER BY r.created_at DESC, r.id LIMIT 1) AS pending_review_id \

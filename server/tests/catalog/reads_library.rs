@@ -719,6 +719,8 @@ async fn album_and_artist_pages_answer_the_seeded_catalog() {
     let (status, body) = get(app(deps.clone(), Some(ADA)), uri).await;
     assert_eq!(status, 200, "album page");
     assert_eq!(body["row_revision"], 1, "album page");
+    // Its seeded track joining moved it once.
+    assert_eq!(body["listing_revision"], 1, "album page");
     assert!(body["pending_review_id"].is_null(), "album page");
     seed(
         &fixture,

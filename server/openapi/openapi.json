@@ -11916,9 +11916,9 @@
             }
           },
           {
-            "name": "expected_track_count",
+            "name": "expected_listing_revision",
             "in": "query",
-            "description": "The album's `track_count` as the person saw it. Another count answers\nSTALE_REVISION and nothing moves.",
+            "description": "The album's `listing_revision` as the person saw it. It moves when\nthe album is renamed or a track joins or leaves it; another revision\nanswers STALE_REVISION and nothing moves.",
             "required": true,
             "schema": {
               "type": "integer",
@@ -35244,9 +35244,15 @@
           {
             "type": "object",
             "required": [
-              "row_revision"
+              "row_revision",
+              "listing_revision"
             ],
             "properties": {
+              "listing_revision": {
+                "type": "integer",
+                "format": "int64",
+                "description": "Moves when the album is renamed or a track joins or leaves it. A\nremoval sends it back beside `row_revision`."
+              },
               "management_hold": {
                 "oneOf": [
                   {

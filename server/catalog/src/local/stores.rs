@@ -198,6 +198,8 @@ pub struct AlbumRecord {
 pub struct AlbumPageState {
     /// The album row's revision, which a change to its grouping echoes.
     pub row_revision: i64,
+    /// Moves when the album is renamed or a track joins or leaves it.
+    pub listing_revision: i64,
     /// The newest pending identification review, if any.
     pub pending_review_id: Option<String>,
 }
