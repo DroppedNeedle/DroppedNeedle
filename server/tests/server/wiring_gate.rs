@@ -5,11 +5,13 @@
 //! unit test modules aside, and fails on the shapes a late binding takes: a
 //! `OnceLock` slot, a `*Slot` type, a handle behind a lock waiting to be
 //! filled, a `set_*` or `attach_*` method that takes a shared handle
-//! through `&self`, a static that holds state, and the warning a slot
-//! logs when it is filled twice.
+//! through `&self`, a static that holds state, the warning a slot logs
+//! when it is filled twice, and a port held as an `Option` a test bundle
+//! leaves empty.
 //!
-//! The few process-wide caches that stay are listed by file, each with its
-//! reason, and every listed file must still match its rule.
+//! The few process-wide caches and run-time handles that stay are listed
+//! by file, each with its reason, and every listed file must still match
+//! its rule.
 
 use regex::Regex;
 
@@ -102,6 +104,28 @@ const RULES: &[Rule] = &[
         what: "a slot's filled-twice warning",
         patterns: &[r"already (?:attached|set)\b|attached twice"],
         allowed: &[],
+    },
+    Rule {
+        what: "a port held as an Option a bundle may leave empty",
+        patterns: &[
+            r"\bOption<\s*(?:(?:std::)?sync::)?(?:Arc|Box)<\s*dyn\b",
+            r"\bOption<\s*(?:\w+::)*\w*Port\s*>",
+            r"\bOption<\s*(?:(?:std::)?sync::)?Arc<\s*(?:\w+::)*(?:PluginHost|LandingService|Targets|PersonalMixBuilder)\s*>",
+        ],
+        allowed: &[
+            (
+                "plugins/src/host.rs",
+                "a plugin's running connection, opened when it starts and dropped when it stops",
+            ),
+            (
+                "providers/src/cache.rs",
+                "the answer a single-flight lookup hands its waiters, not a port",
+            ),
+            (
+                "media/src/remotes/connections.rs",
+                "the Plex server-token lookup: the resolver that only stores sign-in links has none",
+            ),
+        ],
     },
 ];
 
