@@ -7,7 +7,8 @@
 		TrackRef
 	} from '$lib/features/discover/queries/types';
 	import type { Snippet } from 'svelte';
-	import { ArrowRight, X, Check, Music2, Tv, Sparkles, Search } from 'lucide-svelte';
+	import { X, Check, Music2, Tv, Sparkles, Search } from 'lucide-svelte';
+	import SectionHead from '$lib/ui/SectionHead.svelte';
 	import CoverPlaceholder from '$lib/ui/CoverPlaceholder.svelte';
 	import { goto } from '$app/navigation';
 	import { withBasePath } from '$lib/utils/basePath';
@@ -85,33 +86,15 @@
 
 <section class="mb-6 sm:mb-8">
 	{#if !hideHeader}
-		<div class="flex items-center justify-between mb-3 sm:mb-4">
-			<div class="flex items-center gap-2">
-				{#if headerLink}
-					<a
-						href={withBasePath(headerLink)}
-						class="section-title text-lg sm:text-xl font-bold hover:text-primary transition-colors"
-					>
-						{section.title}
-					</a>
-				{:else}
-					<h2 class="section-title text-lg sm:text-xl font-bold">{section.title}</h2>
-				{/if}
+		<SectionHead
+			title={section.title}
+			href={headerLink ? withBasePath(headerLink) : null}
+			actions={headerActions}
+		>
+			{#snippet chips()}
 				<SourceBadge source={section.source ?? undefined} />
-			</div>
-			{#if headerActions}
-				{@render headerActions()}
-			{/if}
-			{#if headerLink}
-				<a
-					href={withBasePath(headerLink)}
-					class="text-sm text-muted hover:text-primary transition-colors flex items-center gap-1"
-				>
-					See all
-					<ArrowRight class="w-3.5 h-3.5" />
-				</a>
-			{/if}
-		</div>
+			{/snippet}
+		</SectionHead>
 	{/if}
 
 	{#if section.items.length === 0 && section.fallback_message && showConnectCard}
@@ -233,6 +216,7 @@
 										artistName={item.artist_name || 'Unknown'}
 										coverUrl={item.cover_url || null}
 										size="sm"
+										playShown
 									/>
 								{/if}
 								{#if !item.musicbrainz_id && !item.local_id}
@@ -251,13 +235,14 @@
 							{/snippet}
 						</MediaTile>
 						{#if item.musicbrainz_id && ((!item.in_library && !isItemRequested) || showPreview)}
-							<div class="flex items-center gap-1 px-1 pb-1">
+							<div class="flex flex-col gap-1.5 px-1 pt-1 pb-1">
 								{#if !item.in_library && !isItemRequested}
 									<AlbumRequestButton
 										mbid={item.musicbrainz_id}
 										artistName={item.artist_name ?? ''}
 										albumName={item.title}
 										artistMbid={item.artist_id ?? undefined}
+										labelled
 									/>
 								{/if}
 								{#if showPreview && item.musicbrainz_id}
@@ -266,9 +251,9 @@
 										artist={item.artist_name ?? ''}
 										title={item.title}
 										kind="album"
-										size="sm"
 										artistMbid={item.artist_id}
 										coverUrl={item.cover_url}
+										labelled
 									/>
 								{/if}
 							</div>

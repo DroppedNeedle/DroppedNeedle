@@ -1,6 +1,8 @@
+<!-- Where a shelf's picks come from: an acid label for an outside source, a plain one for the library. -->
 <script lang="ts">
 	import { Radio, Headphones } from 'lucide-svelte';
 	import type { components } from '$lib/api/v3/openapi';
+	import StatusChip from '$lib/ui/StatusChip.svelte';
 
 	interface Props {
 		source?: components['schemas']['ShelfSource'];
@@ -10,17 +12,11 @@
 </script>
 
 {#snippet lastfm()}
-	<span class="badge badge-xs sm:badge-sm border-0 gap-1 bg-lastfm/15 text-lastfm">
-		<Radio class="w-2.5 h-2.5 sm:w-3 sm:h-3" />
-		Last.fm
-	</span>
+	<StatusChip tone="action" size="xs" icon={Radio}>Last.fm</StatusChip>
 {/snippet}
 
 {#snippet listenbrainz()}
-	<span class="badge badge-xs sm:badge-sm border-0 gap-1 bg-listenbrainz/15 text-listenbrainz">
-		<Headphones class="w-2.5 h-2.5 sm:w-3 sm:h-3" />
-		ListenBrainz
-	</span>
+	<StatusChip tone="action" size="xs" icon={Headphones}>ListenBrainz</StatusChip>
 {/snippet}
 
 {#if source === 'lastfm'}
@@ -32,6 +28,8 @@
 		{@render lastfm()}
 		{@render listenbrainz()}
 	</span>
+{:else if source === 'library' || source === 'local'}
+	<StatusChip size="xs">{source}</StatusChip>
 {:else if source}
-	<span class="badge badge-ghost badge-xs sm:badge-sm capitalize">{source}</span>
+	<StatusChip tone="action" size="xs">{source}</StatusChip>
 {/if}

@@ -1,10 +1,15 @@
+<!--
+	Home's way into Discover: one link band with the compass ring (or the
+	server's artist picks inside it), the Anton call and the queue's pitch.
+	A stacked card with a chevron on phones.
+-->
 <script lang="ts">
-	import { ArrowRight, Compass } from 'lucide-svelte';
+	import { ArrowRight, ChevronRight, Compass } from 'lucide-svelte';
 	import ArtistImage from '$lib/media/ArtistImage.svelte';
 	import { getDiscoverQueueStatusQuery } from '$lib/features/discover/queries/DiscoverQueueQueries';
 	import { withBasePath } from '$lib/utils/basePath';
 	import type { DiscoverPreview } from '$lib/features/discover/queries/types';
-	import Card from '$lib/ui/Card.svelte';
+	import FritEdge from '$lib/ui/FritEdge.svelte';
 
 	interface Props {
 		preview: DiscoverPreview | null;
@@ -28,55 +33,131 @@
 	);
 </script>
 
-<Card
-	variant="bordered"
-	padding="none"
-	href={withBasePath('/discover')}
-	class="group relative overflow-hidden bg-gradient-to-r from-primary/10 via-base-200/60 to-secondary/10"
->
-	<div class="flex flex-col items-center gap-4 px-5 py-6 sm:flex-row sm:gap-6 sm:px-7">
-		{#if teaserArtists.length > 0}
-			<div class="flex shrink-0 -space-x-4">
-				{#each teaserArtists as artist, i (artist.musicbrainz_id ?? `${artist.name}-${i}`)}
-					<div
-						class="h-14 w-14 overflow-hidden rounded-full border-2 border-base-100 shadow-md"
-						style="z-index: {teaserArtists.length - i};"
-					>
-						<ArtistImage
-							mbid={artist.musicbrainz_id ?? ''}
-							alt={artist.name}
-							size="full"
-							requestSize={250}
-							lazy={true}
-							className="block h-full w-full object-cover"
-						/>
-					</div>
-				{/each}
-			</div>
-		{:else}
-			<div
-				class="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-primary/15 shadow-[0_0_16px_oklch(from_var(--color-primary)_l_c_h_/_0.2)]"
-			>
-				<Compass class="h-7 w-7 text-primary" />
-			</div>
-		{/if}
+<a href={withBasePath('/discover')} class="band group">
+	<FritEdge place="top-left" class="band-frit" />
+	<FritEdge place="top-right" class="band-frit" />
 
-		<div class="min-w-0 flex-1 text-center sm:text-left">
-			<p class="font-mono text-[0.65rem] font-semibold uppercase tracking-widest text-primary/70">
-				Picked for you
-			</p>
-			<h3 class="mt-0.5 text-base font-bold sm:text-lg">{headline}</h3>
-			<p class="mt-0.5 text-xs text-muted">
-				Sample albums, spin a station, and grab what you love.
-			</p>
+	<div class="relative flex items-center gap-4 sm:gap-6">
+		<div class="ring" aria-hidden="true">
+			{#if teaserArtists.length > 0}
+				<div class="flex -space-x-3">
+					{#each teaserArtists as artist, i (artist.musicbrainz_id ?? `${artist.name}-${i}`)}
+						<div
+							class="size-8 overflow-hidden rounded-full border-2 border-base-100 sm:size-9"
+							style:z-index={teaserArtists.length - i}
+						>
+							<ArtistImage
+								mbid={artist.musicbrainz_id ?? ''}
+								alt=""
+								size="full"
+								requestSize={250}
+								lazy={true}
+								className="block h-full w-full object-cover"
+							/>
+						</div>
+					{/each}
+				</div>
+			{:else}
+				<Compass class="size-7 sm:size-8" />
+			{/if}
 		</div>
 
-		<span
-			class="flex shrink-0 items-center gap-1 text-sm font-semibold text-primary"
-			aria-hidden="true"
-		>
+		<div class="min-w-0 flex-1 md:flex md:items-center md:gap-6">
+			<h2 class="font-display text-3xl leading-none text-title md:shrink-0 lg:text-4xl">
+				Picked for you
+			</h2>
+			<div class="pitch mt-1.5 md:mt-0 md:pl-6">
+				<p class="text-sm font-semibold">{headline}</p>
+				<p class="mt-0.5 hidden text-xs text-muted sm:block">
+					Sample albums, spin a station, and grab what you love.
+				</p>
+			</div>
+		</div>
+
+		<span class="open" aria-hidden="true">
 			Open Discover
-			<ArrowRight class="h-4 w-4 transition-transform group-hover:translate-x-1" />
+			<ArrowRight
+				class="size-4 motion-safe:transition-transform motion-safe:group-hover:translate-x-0.5"
+			/>
 		</span>
+		<ChevronRight class="size-6 shrink-0 text-title sm:hidden" aria-hidden="true" />
 	</div>
-</Card>
+</a>
+
+<style>
+	.band {
+		position: relative;
+		display: block;
+		overflow: hidden;
+		border: 2px solid var(--dn-action-edge);
+		border-radius: var(--radius-box);
+		background: var(--color-base-100);
+		padding: 1rem 1.25rem;
+		transition: background-color 150ms;
+	}
+	.band:hover {
+		background: var(--color-base-200);
+	}
+	@media (min-width: 640px) {
+		.band {
+			padding: 1.25rem 2rem;
+		}
+	}
+
+	/* the frit sits in the band's two top corners, kept small and off the words */
+	.band :global(.dn-frit.band-frit) {
+		width: 4rem;
+		height: 100%;
+	}
+	@media (min-width: 640px) {
+		.band :global(.dn-frit.band-frit) {
+			width: 7rem;
+		}
+	}
+
+	.ring {
+		position: relative;
+		display: grid;
+		place-items: center;
+		width: 3.5rem;
+		height: 3.5rem;
+		flex-shrink: 0;
+		border: 2px solid var(--dn-title);
+		border-radius: 9999px;
+		background: var(--color-base-100);
+		color: var(--dn-title);
+	}
+	@media (min-width: 640px) {
+		.ring {
+			width: 4rem;
+			height: 4rem;
+		}
+	}
+
+	@media (min-width: 768px) {
+		.pitch {
+			border-left: 1px solid var(--dn-line);
+		}
+	}
+
+	.open {
+		display: none;
+		flex-shrink: 0;
+		align-items: center;
+		gap: 0.375rem;
+		border: 1px solid var(--dn-action-edge);
+		border-radius: var(--radius-field);
+		background: var(--dn-action);
+		color: var(--dn-action-content);
+		padding: 0.5rem 0.875rem;
+		font-size: 0.8125rem;
+		font-weight: 700;
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
+	}
+	@media (min-width: 640px) {
+		.open {
+			display: inline-flex;
+		}
+	}
+</style>

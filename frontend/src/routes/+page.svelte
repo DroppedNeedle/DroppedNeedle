@@ -1,20 +1,12 @@
 <script lang="ts">
-	import {
-		Download,
-		Music,
-		CircleAlert,
-		TrendingUp,
-		Sparkles,
-		Library,
-		SlidersHorizontal
-	} from 'lucide-svelte';
+	import { Download, Music, CircleAlert, Settings } from 'lucide-svelte';
 	import HomeSection from '$lib/features/discover/components/HomeSection.svelte';
 	import ServiceErrorState from '$lib/ui/ServiceErrorState.svelte';
 	import WeeklyExploration from '$lib/features/discover/components/WeeklyExploration.svelte';
 	import ServicePromptCard from '$lib/features/discover/components/ServicePromptCard.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import GenreGrid from '$lib/features/genre/components/GenreGrid.svelte';
-	import SectionDivider from '$lib/ui/SectionDivider.svelte';
+	import LiveUpdatingBadge from '$lib/ui/LiveUpdatingBadge.svelte';
 	import type {
 		ChartSection as HomeSectionType,
 		SectionKey,
@@ -23,10 +15,9 @@
 	} from '$lib/features/discover/queries/types';
 	import { shelfOf, zoneSections } from '$lib/features/discover/queries/sections';
 	import CarouselSkeleton from '$lib/ui/CarouselSkeleton.svelte';
-	import PageHeader from '$lib/ui/PageHeader.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { genreRows } from '$lib/features/discover/components/sectionRows';
-	import { getGreeting } from '$lib/utils/formatting';
+	import { formatLastUpdated, getGreeting } from '$lib/utils/formatting';
 	import { isDismissed } from '$lib/features/discover/state/dismissedPrompts';
 	import HomeSectionNowPlaying from '$lib/features/home/components/HomeSectionNowPlaying.svelte';
 	import HomeEntryCards from '$lib/features/home/components/HomeEntryCards.svelte';
@@ -107,31 +98,36 @@
 </svelte:head>
 
 <div class="min-h-[calc(100vh-200px)]">
-	<PageHeader
-		subtitle="Discover music, explore your library, and find new favorites."
-		{loading}
-		isUpdating={isUpdating || !!homeData?.refreshing}
-		{lastUpdated}
+	<header
+		class="flex flex-col gap-4 px-4 pt-8 pb-6 sm:px-6 sm:pt-10 sm:pb-8 md:flex-row md:items-start md:justify-between lg:px-8"
 	>
-		{#snippet title()}
-			<Music class="inline h-8 w-8 sm:h-10 sm:w-10 lg:h-12 lg:w-12 mr-2 align-text-bottom" />
-			{getGreeting()}
-		{/snippet}
-	</PageHeader>
+		<div class="min-w-0">
+			<h1 class="greeting font-display text-title">
+				<Music class="greeting-note" aria-hidden="true" />
+				{getGreeting()}
+			</h1>
+			<p class="mt-3 max-w-xl text-base text-muted">
+				Discover music, explore your library, and find new favorites.
+			</p>
+		</div>
+		<div class="flex shrink-0 items-center justify-between gap-4 md:flex-col md:items-end md:pt-2">
+			{#if isUpdating || homeData?.refreshing}
+				<LiveUpdatingBadge label="Refreshing" />
+			{:else if lastUpdated && !loading}
+				<span class="header-meta text-muted">Updated {formatLastUpdated(lastUpdated)}</span>
+			{/if}
+			<a
+				href={withBasePath('/settings?tab=home')}
+				class="header-meta customise ml-auto md:ml-0"
+				title="Choose which sections appear here"
+			>
+				<Settings class="size-4" aria-hidden="true" />
+				Customise
+			</a>
+		</div>
+	</header>
 
-	<div class="flex justify-end px-4 -mt-4 mb-4 sm:px-6 lg:px-8">
-		<Button
-			variant="ghost"
-			size="sm"
-			icon={SlidersHorizontal}
-			href={withBasePath('/settings?tab=home')}
-			title="Choose which sections appear here"
-		>
-			<span class="hidden sm:inline">Customise</span>
-		</Button>
-	</div>
-
-	<div class="mb-10 px-4 sm:mb-12 sm:px-6 lg:px-8">
+	<div class="mb-8 px-4 sm:mb-10 sm:px-6 lg:px-8">
 		<HomeEntryCards />
 	</div>
 
@@ -142,7 +138,7 @@
 		     of crashing the whole SPA (the #147 freeze) -->
 		<svelte:boundary>
 			<div
-				class="space-y-10 px-4 sm:space-y-12 sm:px-6 lg:px-8"
+				class="space-y-6 px-4 sm:space-y-8 sm:px-6 lg:px-8"
 				class:is-refreshing={homeData?.refreshing}
 			>
 				{#if !downloadClientConfigured && downloadClientPrompt}
@@ -191,26 +187,19 @@
 					</section>
 				{:else}
 					{#if whatsHotBlocks.length > 0}
-						<div>
-							<SectionDivider label="What's Hot">
-								{#snippet icon()}<TrendingUp class="w-3.5 h-3.5" />{/snippet}
-							</SectionDivider>
-							<div class="discover-section-enter space-y-2">
-								{#each whatsHotBlocks as block, i (block.key)}
-									<div>
-										{#if block.kind === 'section'}
-											<HomeSection
-												section={block.section}
-												headerLink={block.link}
-												showPreview={block.showPreview}
-												eager={i < 2}
-											/>
-										{:else}
-											<WeeklyExploration section={block.section} />
-										{/if}
-									</div>
-								{/each}
-							</div>
+						<div class="discover-section-enter">
+							{#each whatsHotBlocks as block, i (block.key)}
+								{#if block.kind === 'section'}
+									<HomeSection
+										section={block.section}
+										headerLink={block.link}
+										showPreview={block.showPreview}
+										eager={i < 2}
+									/>
+								{:else}
+									<WeeklyExploration section={block.section} />
+								{/if}
+							{/each}
 						</div>
 					{/if}
 
@@ -221,25 +210,18 @@
 					{/if}
 
 					{#if forYouBlocks.length > 0}
-						<div>
-							<SectionDivider label="For You">
-								{#snippet icon()}<Sparkles class="w-3.5 h-3.5" />{/snippet}
-							</SectionDivider>
-							<div class="discover-section-enter space-y-2">
-								{#each forYouBlocks as block (block.key)}
-									<div>
-										{#if block.kind === 'section'}
-											<HomeSection
-												section={block.section}
-												headerLink={block.link}
-												showPreview={block.showPreview}
-											/>
-										{:else}
-											<WeeklyExploration section={block.section} />
-										{/if}
-									</div>
-								{/each}
-							</div>
+						<div class="discover-section-enter">
+							{#each forYouBlocks as block (block.key)}
+								{#if block.kind === 'section'}
+									<HomeSection
+										section={block.section}
+										headerLink={block.link}
+										showPreview={block.showPreview}
+									/>
+								{:else}
+									<WeeklyExploration section={block.section} />
+								{/if}
+							{/each}
 						</div>
 					{/if}
 				{/if}
@@ -256,13 +238,7 @@
 						</div>
 					</section>
 				{:else if genreList}
-					<div class="mt-10 mb-10">
-						<GenreGrid
-							title={genreList.title}
-							genres={genreRows(genreList)}
-							genreArtwork={homeData?.genre_artwork}
-						/>
-					</div>
+					<GenreGrid title={genreList.title} genres={genreRows(genreList)} />
 				{/if}
 
 				{#if loading && !homeData}
@@ -273,19 +249,12 @@
 						</section>
 					{/each}
 				{:else if postGenreSections.length > 0}
-					<div>
-						<SectionDivider label="Your Library">
-							{#snippet icon()}<Library class="w-3.5 h-3.5" />{/snippet}
-						</SectionDivider>
-						<div class="discover-section-enter space-y-2">
-							{#each postGenreSections as block (block.key)}
-								{#if block.kind === 'section'}
-									<div>
-										<HomeSection section={block.section} headerLink={block.link} />
-									</div>
-								{/if}
-							{/each}
-						</div>
+					<div class="discover-section-enter">
+						{#each postGenreSections as block (block.key)}
+							{#if block.kind === 'section'}
+								<HomeSection section={block.section} headerLink={block.link} />
+							{/if}
+						{/each}
 					</div>
 				{/if}
 
@@ -328,3 +297,44 @@
 		</svelte:boundary>
 	{/if}
 </div>
+
+<style>
+	.greeting {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+		font-size: clamp(3.5rem, 18vw, 5.5rem);
+		line-height: 0.92;
+	}
+	.greeting :global(.greeting-note) {
+		display: none;
+		width: 0.6em;
+		height: 0.6em;
+		flex-shrink: 0;
+	}
+	@media (min-width: 768px) {
+		.greeting :global(.greeting-note) {
+			display: block;
+		}
+	}
+
+	.header-meta {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.375rem;
+		font-family: var(--font-mono);
+		font-size: 0.75rem;
+		font-weight: 600;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+	}
+	.customise {
+		min-height: 2rem;
+		border-radius: 0.25rem;
+		color: var(--dn-title);
+	}
+	.customise:hover {
+		text-decoration: underline;
+		text-underline-offset: 3px;
+	}
+</style>

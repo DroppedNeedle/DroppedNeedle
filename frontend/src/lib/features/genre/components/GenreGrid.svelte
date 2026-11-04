@@ -1,16 +1,26 @@
+<!--
+	Home's genres as printed tiles: the first nine and a "More" tile that
+	opens the rest in place. Fills alternate paper and acid in a checker, so
+	no two neighbours match at any column count.
+-->
 <script lang="ts">
-	import GenreArtwork from '$lib/features/genre/components/GenreArtwork.svelte';
-	import { withBasePath } from '$lib/utils/basePath';
-	import type { GenreArtwork as GenreArtworkModel } from '$lib/features/discover/queries/types';
-	import { getGenreGradient } from '$lib/features/genre/components/genreGradient';
+	import { ArrowRight, ArrowUp } from 'lucide-svelte';
+	import SectionHead from '$lib/ui/SectionHead.svelte';
+	import GenreTile from './GenreTile.svelte';
 
 	interface Props {
 		title: string;
-		genres: { name: string; listen_count?: number | null; artist_count?: number | null }[];
-		genreArtwork?: Record<string, GenreArtworkModel> | undefined;
+		genres: { name: string; listen_count?: number | null }[];
 	}
 
-	let { title, genres, genreArtwork = undefined }: Props = $props();
+	let { title, genres }: Props = $props();
+
+	const FIRST = 9;
+	const all = $derived(genres.slice(0, 20));
+	// a "More" that would open one tile is not worth the tap
+	const folds = $derived(all.length > FIRST + 1);
+	let open = $state(false);
+	const shown = $derived(folds && !open ? all.slice(0, FIRST) : all);
 
 	function formatCount(n: number): string {
 		if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -20,51 +30,68 @@
 </script>
 
 <section>
-	<div class="mb-4 flex items-center justify-between">
-		<h2 class="text-lg font-bold sm:text-xl">{title}</h2>
-	</div>
-	<div class="grid grid-cols-2 gap-2.5 sm:grid-cols-3 sm:gap-3 md:grid-cols-4 lg:grid-cols-5">
-		{#each genres.slice(0, 20) as genre (genre.name)}
-			<a
-				href={withBasePath(`/genre?name=${encodeURIComponent(genre.name)}`)}
-				class="genre-tile group relative isolate overflow-hidden rounded-xl text-white shadow-md transition-all duration-300 hover:shadow-xl hover:ring-2 hover:ring-white/20 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
-			>
-				<div class="aspect-16/10"></div>
-
-				<div class="pointer-events-none absolute inset-0 z-[1]">
-					<GenreArtwork
-						artwork={genreArtwork?.[genre.name]}
-						gradientClass={getGenreGradient(genre.name)}
-					/>
-				</div>
-
-				<div
-					class="absolute inset-0 z-[6] bg-linear-to-t from-black/70 via-black/20 to-transparent"
-				></div>
-
-				<div class="absolute inset-x-0 bottom-0 z-10 flex flex-col justify-end p-3 sm:p-4">
-					{#if genre.listen_count}
-						<span class="mb-1 text-[10px] font-medium tracking-wide text-white/70 sm:text-xs">
-							{formatCount(genre.listen_count)} plays
-						</span>
-					{/if}
-					<h3 class="line-clamp-2 text-sm font-bold leading-tight drop-shadow-md sm:text-base">
-						{genre.name}
-					</h3>
-				</div>
-
-				<div
-					class="pointer-events-none absolute inset-0 z-[15] rounded-xl ring-1 ring-inset ring-white/10 transition-all duration-300 group-hover:ring-white/25"
-				></div>
-			</a>
+	<SectionHead {title} />
+	<div class="genre-grid grid grid-cols-2 gap-2.5 sm:grid-cols-3 sm:gap-3 lg:grid-cols-5">
+		{#each shown as genre (genre.name)}
+			<GenreTile
+				name={genre.name}
+				plays={genre.listen_count ? formatCount(genre.listen_count) : null}
+			/>
 		{/each}
+		{#if folds}
+			<button type="button" class="genre-more" aria-expanded={open} onclick={() => (open = !open)}>
+				{#if open}
+					Fewer<span class="sr-only"> genres</span>
+					<ArrowUp class="size-5" aria-hidden="true" />
+				{:else}
+					More<span class="sr-only"> genres</span>
+					<ArrowRight class="size-5" aria-hidden="true" />
+				{/if}
+			</button>
+		{/if}
 	</div>
 </section>
 
 <style>
-	@media (prefers-reduced-motion: reduce) {
-		.genre-tile {
-			transform: none !important;
+	/* acid tiles in a checker: 2 columns on phones, odd counts above */
+	@media (max-width: 639px) {
+		.genre-grid > :global(.genre-tile:nth-child(4n + 2)),
+		.genre-grid > :global(.genre-tile:nth-child(4n + 3)) {
+			--tile-bg: var(--dn-action);
+			--tile-ink: var(--dn-action-content);
+			--tile-edge: var(--dn-action-edge);
 		}
+	}
+	@media (min-width: 640px) {
+		.genre-grid > :global(.genre-tile:nth-child(even)) {
+			--tile-bg: var(--dn-action);
+			--tile-ink: var(--dn-action-content);
+			--tile-edge: var(--dn-action-edge);
+		}
+	}
+
+	.genre-more {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 0.5rem;
+		min-height: 4rem;
+		border: 2px solid var(--dn-edge);
+		border-radius: 0.375rem;
+		background: var(--color-base-100);
+		color: var(--dn-title);
+		font-family: var(--font-display);
+		font-size: 1.5rem;
+		line-height: 1;
+		letter-spacing: 0.01em;
+		text-transform: uppercase;
+		font-synthesis: none;
+		transition:
+			border-color 150ms,
+			background-color 150ms;
+	}
+	.genre-more:hover {
+		border-color: var(--dn-title);
+		background: var(--color-base-200);
 	}
 </style>

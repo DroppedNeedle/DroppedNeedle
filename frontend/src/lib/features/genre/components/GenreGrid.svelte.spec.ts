@@ -1,52 +1,26 @@
 import { page } from 'vitest/browser';
-import { describe, expect, it, vi } from 'vitest';
-import { fakeApi } from '$lib/test/api';
-import { renderWithQuery } from '$lib/test/render';
-import type { GenreArtwork } from '$lib/features/discover/queries/types';
+import { describe, expect, it } from 'vitest';
+import { render } from 'vitest-browser-svelte';
 
 import GenreGrid from './GenreGrid.svelte';
 
-// With the lazy loader off, each tile keeps the URL it would fetch in data-src.
-vi.mock('$lib/media/lazyImage', async (importOriginal) => ({
-	...(await importOriginal<Record<string, unknown>>()),
-	lazyImage: () => ({ destroy() {} })
-}));
-
-function albumId(genre: number, index: number): string {
-	return `00000000-0000-4000-8000-${String(genre * 10 + index).padStart(12, '0')}`;
-}
-
-function collage(genre: number, count: number): GenreArtwork {
-	return {
-		kind: 'collage',
-		version: '1',
-		albums: Array.from({ length: count }, (_, index) => ({
-			album_id: albumId(genre, index),
-			album_title: `Album ${index}`,
-			album_artist_name: null,
-			cover_version: 3
-		}))
-	};
-}
-
 describe('genre grid', () => {
-	it('asks for small renditions of library art, never the original files', async () => {
-		fakeApi({});
-		const genres = Array.from({ length: 20 }, (_, i) => ({ name: `Genre ${i}` }));
-		const artwork: Record<string, GenreArtwork> = {};
-		genres.forEach((genre, i) => {
-			artwork[genre.name] = collage(i, i === 0 ? 1 : 4);
-		});
+	it('shows nine genres and opens the rest in place, so every genre stays reachable', async () => {
+		const genres = Array.from({ length: 20 }, (_, i) => ({ name: `Genre ${i}`, listen_count: i }));
+		render(GenreGrid, { title: 'Browse by Genre', genres });
 
-		await renderWithQuery(GenreGrid, { title: 'Genres', genres, genreArtwork: artwork });
+		const links = page.getByRole('link');
+		await expect.element(links.nth(8)).toBeInTheDocument();
+		expect(links.elements()).toHaveLength(9);
 
-		const images = page.getByTestId('genre-artwork-image');
-		await expect.element(images.first()).toBeInTheDocument();
-		const urls = images
-			.elements()
-			.map((img) => img.getAttribute('data-src') ?? img.getAttribute('src') ?? '');
-		expect(urls).toHaveLength(1 + 19 * 4);
-		expect(urls[0]).toContain('size=500');
-		for (const url of urls.slice(1)) expect(url).toContain('size=250');
+		const more = page.getByRole('button', { name: 'More genres' });
+		await expect.element(more).toHaveAttribute('aria-expanded', 'false');
+		await more.click();
+
+		await expect.element(page.getByRole('link', { name: /Genre 19/ })).toBeInTheDocument();
+		expect(links.elements()).toHaveLength(20);
+		await expect
+			.element(page.getByRole('button', { name: 'Fewer genres' }))
+			.toHaveAttribute('aria-expanded', 'true');
 	});
 });

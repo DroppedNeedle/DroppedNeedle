@@ -268,7 +268,7 @@
 		class="drawer-content flex min-w-0 flex-col isolate"
 		class:droppedneedle-pane-mode={isSettingsPane}
 	>
-		<TopBar />
+		<TopBar onsearch={() => (searchOpen = true)} />
 		<LibraryActivityStrip />
 
 		<div

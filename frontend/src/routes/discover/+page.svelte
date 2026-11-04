@@ -485,11 +485,7 @@
 
 									{#if genreList}
 										<div class="mt-4 mb-4">
-											<GenreGrid
-												title={genreList.title}
-												genres={genreRows(genreList)}
-												genreArtwork={discoverData.genre_artwork}
-											/>
+											<GenreGrid title={genreList.title} genres={genreRows(genreList)} />
 										</div>
 									{/if}
 								</div>

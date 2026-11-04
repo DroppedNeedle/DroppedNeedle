@@ -1,13 +1,16 @@
 <script lang="ts">
-	import { PackageOpen, LoaderCircle } from 'lucide-svelte';
+	import type { Snippet } from 'svelte';
+	import { Download, LoaderCircle } from 'lucide-svelte';
 	import { createUploadDropMutation } from '$lib/features/downloads/queries/import.svelte';
 	import { toastStore } from '$lib/stores/toast';
 
 	interface Props {
 		compact?: boolean;
 		className?: string;
+		/** A link shown inside the box, under the picker. */
+		footer?: Snippet;
 	}
-	let { compact = false, className = '' }: Props = $props();
+	let { compact = false, className = '', footer }: Props = $props();
 
 	// mirror the backend's accepted extensions (route-level validation)
 	const ACCEPTED = [
@@ -73,13 +76,15 @@
 	}
 
 	const box = $derived(
-		`flex w-full flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed text-center ${compact ? 'p-5' : 'p-8 sm:p-10'}`
+		`flex w-full flex-1 flex-col items-center justify-center gap-3 rounded-2xl text-center ${compact ? 'p-5' : 'p-6 sm:p-8'}`
 	);
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
-	class="relative {className}"
+	class="relative flex flex-col rounded-2xl border-2 border-dashed transition-colors {dragOver
+		? 'border-primary bg-primary/10'
+		: 'border-primary/60 hover:border-primary'} {className}"
 	ondragover={(e) => {
 		e.preventDefault();
 		dragOver = true;
@@ -88,7 +93,7 @@
 	{ondrop}
 >
 	{#if upload.isPending}
-		<div class="{box} h-full border-primary/50 bg-base-200/40" role="status">
+		<div class={box} role="status">
 			<LoaderCircle class="h-8 w-8 animate-spin motion-keep text-primary" aria-hidden="true" />
 			<p class="text-sm font-medium">{sentAll ? 'Finishing upload…' : 'Uploading…'}</p>
 			<progress
@@ -104,24 +109,31 @@
 	{:else}
 		<button
 			type="button"
-			class="group {box} transition-colors {dragOver
-				? 'border-primary bg-primary/10'
-				: 'border-base-content/20 bg-base-200/40 hover:border-primary/50 hover:bg-base-200'}"
+			class="group {box} {footer ? 'pb-2 sm:pb-2' : ''}"
 			onclick={() => inputEl?.click()}
 			aria-label="Import your purchased music"
 		>
 			<div
-				class="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/15 ring-1 ring-primary/30 transition-transform duration-300 group-hover:-rotate-6 group-hover:scale-110"
+				class="flex size-12 items-center justify-center rounded-full border-2 border-primary text-primary transition-transform duration-150 motion-safe:group-hover:-translate-y-0.5"
 			>
-				<PackageOpen class="h-6 w-6 text-primary" aria-hidden="true" />
+				<Download class="size-6" aria-hidden="true" />
 			</div>
 			<div>
-				<p class="font-semibold {compact ? 'text-base' : 'text-lg'}">Drop your purchases here</p>
-				<p class="mt-0.5 text-xs text-muted">
+				<p
+					class="font-display leading-none text-base-content uppercase {compact
+						? 'text-xl'
+						: 'text-2xl'}"
+				>
+					Drop your purchases here
+				</p>
+				<p class="mt-2 text-sm text-muted">
 					Zips or audio files from Bandcamp, Qobuz, or anywhere else. Click to browse.
 				</p>
 			</div>
 		</button>
+	{/if}
+	{#if footer}
+		<div class="flex justify-center px-4 pb-3 sm:justify-end">{@render footer()}</div>
 	{/if}
 	<input
 		bind:this={inputEl}

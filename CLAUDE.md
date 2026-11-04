@@ -704,13 +704,12 @@ Run from the repo root. `make help` lists every target.
   Build on `src/lib/ui` (`Button`, `IconButton`, `Card`, `Input`, `Modal`,
   `CardTitle`, `CardActions`, `ConfirmDialog`, `Field`, `TextField`,
   `NumberField`, `SecretField`, `PasswordField`, `SelectField`, `TextAreaField`,
-  `ToggleRow`, `RadioCards`, `StatusChip`,
-  `SaveBar`,
-  `AsyncButton`, `QueryBoundary`, `RatingStars` (`quiet` in list rows), `PageShell`, `Toaster`,
-  `CoverPlaceholder`, `UnsavedChangesGuard`, `Logo`, `PaperPanel` (the
-  light island), and the decoration
-  `FritFrame` (the page's dot frame, mounted once by the shell), `FritEdge`,
-  `VinylSleeve`, `BarcodeOrnament`; in `src/lib/media` the one
+  `ToggleRow`, `RadioCards`, `StatusChip`, `SectionHead` (a shelf's title
+  row), `SaveBar`, `AsyncButton`, `QueryBoundary`, `RatingStars` (`quiet`
+  in list rows), `PageShell`, `Toaster`, `CoverPlaceholder`,
+  `UnsavedChangesGuard`, `Logo`, `PaperPanel` (the light island), and the
+  decoration `FritFrame` (the page's dot frame, mounted once by the shell),
+  `FritEdge`, `VinylSleeve`, `BarcodeOrnament`; in `src/lib/media` the one
   album and artist tile, `MediaTile` and `MediaTileSkeleton`):
   do not hand-write a button, a card, a text input, a modal, a confirm, a
   form row, a `<dialog>` or a query's loading, error and empty branches

@@ -27,9 +27,19 @@
 		coverUrl: string | null;
 		artistId?: string;
 		size?: 'sm' | 'md';
+		/** Keep Play on the cover's corner, not only on hover. */
+		playShown?: boolean;
 	}
 
-	let { mbid, albumName, artistName, coverUrl, artistId, size = 'md' }: Props = $props();
+	let {
+		mbid,
+		albumName,
+		artistName,
+		coverUrl,
+		artistId,
+		size = 'md',
+		playShown = false
+	}: Props = $props();
 
 	let isPlaying = $state(false);
 	let isShuffling = $state(false);
@@ -128,7 +138,9 @@
 	</div>
 
 	<div
-		class="absolute bottom-2 right-2 z-20 flex items-center gap-1.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity"
+		class="absolute bottom-2 right-2 z-20 flex items-center gap-1.5 {playShown
+			? ''
+			: 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity'}"
 	>
 		{#if size === 'md'}
 			<IconButton

@@ -159,6 +159,14 @@
 	:where(.card) {
 		border-radius: var(--radius-box);
 	}
+	/* the paper card keeps its own ink: muted text and titles read on cream */
+	.dn-card-paper {
+		--dn-muted: color-mix(in oklab, var(--dn-paper-content) 74%, var(--dn-paper));
+		--dn-title: var(--dn-paper-content);
+	}
+	[data-theme='light'] .dn-card-paper {
+		box-shadow: 0 10px 24px -18px color-mix(in oklab, var(--dn-paper-content) 45%, transparent);
+	}
 	:where(.modal-box) {
 		background-color: var(--color-base-200);
 		border: 1px solid var(--dn-line);
