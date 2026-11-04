@@ -731,10 +731,26 @@ async fn queued_past_the_wait(
     mock.fail_removals(discards_fail);
     let worker = soulseek_worker(&journal, &mock).await;
     worker.run_once(1).await;
-    clock.advance(16 * 60 * 1000);
+    // Inside the wait the first copy keeps its place.
+    clock.advance(14 * 60 * 1000);
     worker.run_once(2).await;
-    clock.advance(60 * 1000);
+    let waiting = journal
+        .read("test.read", |store| store.list_attempts("t-slow"))
+        .await
+        .unwrap();
+    let waiting: Vec<_> = waiting
+        .into_iter()
+        .map(|attempt| (attempt.candidate_index, attempt.state.as_str().to_owned()))
+        .collect();
+    assert_eq!(
+        waiting,
+        vec![(0, "acquiring".to_owned())],
+        "a copy inside the wait keeps its place"
+    );
+    clock.advance(2 * 60 * 1000);
     worker.run_once(3).await;
+    clock.advance(60 * 1000);
+    worker.run_once(4).await;
     let (attempts, quarantined) = journal
         .read("test.read", |store| {
             Ok((

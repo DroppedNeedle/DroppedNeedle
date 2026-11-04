@@ -355,6 +355,33 @@ async fn wanted_watch_lifecycle() {
     assert!(tasks(&db).await.is_empty(), "nothing is downloaded");
 }
 
+// A failed request for an album out 10 days ago is checked again in 2
+// days, the fast end of the cadence, not the 14 an old album waits.
+#[tokio::test]
+async fn a_new_album_is_rechecked_in_two_days() {
+    let db = AcquireDb::scratch().unwrap();
+    let mut rig = wanted(&db).await;
+    // NOW is 2023-11-14 (UTC); the album came out 10 days before.
+    let albums = FixedAlbums {
+        first_release_dates: [("rg-blue".to_owned(), "2023-11-04".to_owned())].into(),
+        ..FixedAlbums::default()
+    };
+    rig.deps.targets = Arc::new(Targets::new(
+        Arc::new(Journal::new(db.clone(), quiet_ticks())),
+        Arc::new(albums),
+    ));
+    seed_request(&rig.deps.ledger, "rg-blue", "failed", None).await;
+
+    assert_eq!(wanted_tick(NOW, &rig.deps).await.enrolled, 1);
+    let watch = rig.deps.watches.get("rg-blue").await.unwrap().unwrap();
+    assert_eq!(watch.first_release_date.as_deref(), Some("2023-11-04"));
+    assert_eq!(
+        watch.next_check_at as i64 - NOW,
+        2 * 86_400,
+        "a new album is checked again in 2 days"
+    );
+}
+
 // The watcher asks only the sources that are turned on. With slskd set up
 // but turned off there is no source to ask: the watch waits, still due,
 // neither rescheduled nor counted quiet, and nothing starts.

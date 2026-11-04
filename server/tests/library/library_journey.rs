@@ -16351,9 +16351,10 @@ async fn library_journey_review_exclude_restore_dismiss() {
     rig.stop().await;
 }
 
-/// A bulk keep over 30 reviews is one review job, not 30 changes in one
-/// request: a pause holds it between reviews, a resume finishes it, and
-/// every review ends kept as tagged. A retry scoped to one sub-folder
+/// A bulk keep over the 30 reviews of one reason is one review job, not 30
+/// changes in one request: a pause holds it between reviews, a resume
+/// finishes it, and each of them ends kept as tagged while the reviews of
+/// another reason stay open. A retry scoped to one sub-folder
 /// rule is one job over that folder's albums only. The operations loop is
 /// stopped so the journey takes each step itself.
 #[tokio::test]
@@ -16420,8 +16421,22 @@ async fn bulk_review_changes_and_folder_retries_run_as_one_pausable_job() {
     for n in 0..30 {
         file(format!("keep-{n:02}"), inside.clone()).await;
     }
+    // Two reviews of another reason, which a bulk change of one reason
+    // leaves alone.
+    for n in 0..2 {
+        app.seed_with(
+            "INSERT INTO library_identify_reviews (id, local_album_id, reason_code, \
+             candidates_json, state, created_at, updated_at) \
+             VALUES (?1, ?2, 'EDITION_CLEARED_CONFLICT', '[]', 'pending', 1, 1)",
+            [format!("other-{n}"), outside.clone()],
+        )
+        .await;
+    }
 
-    let selection = json!({"action": "keep_tagged", "filter": {}});
+    let selection = json!({
+        "action": "keep_tagged",
+        "filter": {"reason_code": "AUTOMATIC_EDITION_CLEARED_TO_REVIEW"}
+    });
     let (status, preview) = app
         .call(
             "POST",
@@ -16447,7 +16462,7 @@ async fn bulk_review_changes_and_folder_retries_run_as_one_pausable_job() {
     assert_eq!(body["job"]["kind"], json!("bulk_review_apply"));
     assert_eq!(body["job"]["state"], json!("queued"));
     let job_id = body["job"]["id"].as_str().expect("job id").to_owned();
-    assert_eq!(states(), vec![("pending".to_owned(), 30)], "nothing yet");
+    assert_eq!(states(), vec![("pending".to_owned(), 32)], "nothing yet");
 
     for _ in 0..10 {
         assert!(matches!(step().await, ReviewStep::Worked(_)));
@@ -16472,7 +16487,7 @@ async fn bulk_review_changes_and_folder_retries_run_as_one_pausable_job() {
     );
     assert_eq!(
         states(),
-        vec![("pending".to_owned(), 20), ("rejected".to_owned(), 10)]
+        vec![("pending".to_owned(), 22), ("rejected".to_owned(), 10)]
     );
     let (status, body) = app
         .call("GET", "/api/v3/library/reviews/jobs", &headers, None)
@@ -16504,7 +16519,11 @@ async fn bulk_review_changes_and_folder_retries_run_as_one_pausable_job() {
         (finished.completed_count, finished.succeeded_count),
         (30, 30)
     );
-    assert_eq!(states(), vec![("rejected".to_owned(), 30)]);
+    assert_eq!(
+        states(),
+        vec![("pending".to_owned(), 2), ("rejected".to_owned(), 30)],
+        "only the chosen reason's reviews are kept as tagged"
+    );
 
     // A retry of one sub-folder rule picks only the albums inside it.
     let (status, mut settings) = app
