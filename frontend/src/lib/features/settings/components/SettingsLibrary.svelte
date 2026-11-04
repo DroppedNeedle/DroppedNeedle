@@ -29,6 +29,7 @@
 	import SettingsLyrics from './SettingsLyrics.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
+	import ConfirmDialog from '$lib/ui/ConfirmDialog.svelte';
 	import Field from '$lib/ui/Field.svelte';
 	import Input from '$lib/ui/Input.svelte';
 	import NumberField from '$lib/ui/NumberField.svelte';
@@ -63,15 +64,12 @@
 	);
 
 	let savedSettings = $state<TargetLibrarySettingsResponse | null>(null);
-	let impactDialog: HTMLDialogElement;
-	let applyDialog: HTMLDialogElement;
-	let restoreDialog: HTMLDialogElement;
-	let impactHeading: HTMLHeadingElement;
-	let applyHeading: HTMLHeadingElement;
-	let restoreHeading: HTMLHeadingElement;
+	let impactOpen = $state(false);
+	// The save button is busy while the preview loads, so focus is gone by the
+	// time the dialog opens.
 	let impactOpener: HTMLElement | null = null;
-	let applyOpener: HTMLElement | null = null;
-	let restoreOpener: HTMLElement | null = null;
+	let applyOpen = $state(false);
+	let restoreOpen = $state(false);
 	let restorePaths = $state<Record<string, string>>({});
 
 	function toForm(data: TargetLibrarySettingsResponse): TypedLibrarySettings {
@@ -190,50 +188,41 @@
 			});
 			return;
 		}
-		impactDialog.showModal();
-		impactHeading.focus();
+		impactOpen = true;
 	}
 
 	async function confirmSave(): Promise<void> {
 		if (!impact.data?.current_policy_revision) return;
 		await section.save();
-		if (!save.error) impactDialog.close();
+		if (save.error) throw save.error;
 	}
 
-	function openRestore(event: MouseEvent): void {
-		restoreOpener = event.currentTarget as HTMLElement;
+	function openRestore(): void {
 		restorePaths = Object.fromEntries(restorableRoots.map((entry) => [entry.root_id, entry.path]));
-		restoreDialog.showModal();
-		restoreHeading.focus();
+		restoreOpen = true;
 	}
 
 	async function confirmRestore(): Promise<void> {
 		const revision = restorableQuery.data?.policy_revision;
 		const draft = section.draft;
 		if (!revision || !draft) return;
-		try {
-			const result = await restore.mutateAsync({
-				expected_policy_revision: revision,
-				paths: restorePaths
-			});
-			const draftIds = new Set(draft.library_roots.map((root) => root.id));
-			draft.library_roots = [
-				...draft.library_roots,
-				...result.library_roots
-					.filter((root) => !draftIds.has(root.id))
-					.map((root) => ({
-						...root,
-						rules: root.rules.map((rule) => ({ ...rule }))
-					}))
-			];
-			restoreDialog.close();
-		} catch {
-			return;
-		}
+		const result = await restore.mutateAsync({
+			expected_policy_revision: revision,
+			paths: restorePaths
+		});
+		const draftIds = new Set(draft.library_roots.map((root) => root.id));
+		draft.library_roots = [
+			...draft.library_roots,
+			...result.library_roots
+				.filter((root) => !draftIds.has(root.id))
+				.map((root) => ({
+					...root,
+					rules: root.rules.map((rule) => ({ ...rule }))
+				}))
+		];
 	}
 
-	async function previewApply(event: MouseEvent): Promise<void> {
-		applyOpener = event.currentTarget as HTMLElement;
+	async function previewApply(): Promise<void> {
 		const settings = currentSettings;
 		if (!settings?.pending_policy_revision) return;
 		try {
@@ -244,8 +233,7 @@
 		} catch {
 			return;
 		}
-		applyDialog.showModal();
-		applyHeading.focus();
+		applyOpen = true;
 	}
 
 	async function confirmApply(): Promise<void> {
@@ -256,7 +244,6 @@
 			scope_ids: preview.scope_ids,
 			expected_policy_revision: preview.policy_revision
 		});
-		applyDialog.close();
 	}
 
 	async function scanForChanges(): Promise<void> {
@@ -320,7 +307,7 @@
 				variant="warning"
 				size="sm"
 				loading={applyPreview.isPending}
-				onclick={(event: MouseEvent) => void previewApply(event)}>Apply changes...</Button
+				onclick={() => void previewApply()}>Apply changes...</Button
 			>
 		</div>
 	{/if}
@@ -341,11 +328,8 @@
 					{restorableRoots.length === 1 ? 'it' : 'them'} to keep your library working without a rescan.
 				</p>
 			</div>
-			<Button
-				variant="warning"
-				size="sm"
-				loading={restore.isPending}
-				onclick={(event: MouseEvent) => openRestore(event)}>Restore roots...</Button
+			<Button variant="warning" size="sm" loading={restore.isPending} onclick={openRestore}
+				>Restore roots...</Button
 			>
 		</div>
 	{/if}
@@ -528,134 +512,91 @@
 	{/if}
 </div>
 
-<dialog
-	bind:this={impactDialog}
-	class="modal"
-	aria-labelledby="policy-impact-title"
+<ConfirmDialog
+	bind:open={impactOpen}
+	title="Save library policy changes?"
+	confirmLabel="Save policies"
+	focusTitle
+	pending={save.isPending}
+	onconfirm={confirmSave}
 	onclose={() => impactOpener?.focus()}
 >
-	<div class="modal-box max-w-lg">
-		<h2 bind:this={impactHeading} id="policy-impact-title" tabindex="-1" class="text-lg font-bold">
-			Save library policy changes?
-		</h2>
-		{#if impact.data}<div class="mt-4 space-y-3 text-sm">
-				<p>
-					<strong
-						>{impact.data.indexed_file_count?.toLocaleString() ?? 'An unknown number of'} indexed files</strong
-					>
-					and {impact.data.on_disk_file_count?.toLocaleString() ?? 'an unknown number of'} files on disk
-					are in the affected scopes.
-				</p>
-				{#if impact.data.content_will_become_unavailable}<div class="alert alert-warning">
-						<TriangleAlert class="h-4 w-4" /> Some music will become unavailable after you explicitly
-						apply reconciliation.
-					</div>{/if}{#if impact.data.queued_work_will_be_cancelled}<p class="text-warning">
-						Queued work in these scopes will be cancelled when the policy is saved.
-					</p>{/if}{#each impact.data.warnings as warning, index (`${index}:${warning}`)}<p
-						class="text-base-content/60"
-					>
-						{warning}
-					</p>{/each}
-				<p class="flex items-center gap-2 text-success">
-					<CircleCheckBig class="h-4 w-4" /> Saving does not start a scan.
-				</p>
-			</div>{/if}
-		{#if save.error}
-			<p class="mt-3 text-sm text-error">{save.error.message}</p>
-		{/if}
-		<div class="modal-action">
-			<Button variant="ghost" onclick={() => impactDialog.close()}>Cancel</Button><Button
-				variant="primary"
-				loading={save.isPending}
-				onclick={() => void confirmSave()}>Save policies</Button
-			>
-		</div>
-	</div>
-	<form method="dialog" class="modal-backdrop">
-		<button aria-label="Close policy impact dialog">close</button>
-	</form>
-</dialog>
-
-<dialog
-	bind:this={applyDialog}
-	class="modal"
-	aria-labelledby="policy-apply-title"
-	onclose={() => applyOpener?.focus()}
->
-	<div class="modal-box max-w-lg">
-		<h2 bind:this={applyHeading} id="policy-apply-title" tabindex="-1" class="text-lg font-bold">
-			Apply policy changes?
-		</h2>
-		{#if applyPreview.data}<p class="mt-3 text-sm text-base-content/70">
-				About {applyPreview.data.estimated_file_count.toLocaleString()} files will be reconciled. Existing
-				committed catalog changes remain safe if the job is paused or stopped.
-			</p>
-			{#if applyPreview.data.content_will_become_unavailable}<div class="alert alert-warning mt-3">
-					<TriangleAlert class="h-4 w-4" /> Music under Excluded scopes will become unavailable to DroppedNeedle
-					and connected clients.
-				</div>{/if}{/if}
-		<div class="modal-action">
-			<Button variant="ghost" onclick={() => applyDialog.close()}>Cancel</Button><Button
-				variant="warning"
-				loading={requestRun.isPending}
-				onclick={() => void confirmApply()}>Apply policy changes</Button
-			>
-		</div>
-	</div>
-	<form method="dialog" class="modal-backdrop">
-		<button aria-label="Close apply policy dialog">close</button>
-	</form>
-</dialog>
-
-<dialog
-	bind:this={restoreDialog}
-	class="modal"
-	aria-labelledby="restore-roots-title"
-	onclose={() => restoreOpener?.focus()}
->
-	<div class="modal-box max-w-xl">
-		<h2 bind:this={restoreHeading} id="restore-roots-title" tabindex="-1" class="text-lg font-bold">
-			Restore removed library roots
-		</h2>
-		<p class="mt-2 text-sm text-base-content/60">
-			These roots still have files in the catalog but were dropped from the configuration. Restoring
-			keeps their original identities, so nothing is scanned twice.
-		</p>
-		<div class="mt-4 space-y-4">
-			{#each restorableRoots as entry (entry.root_id)}
-				<Field
-					label={`Root ${entry.root_id.slice(0, 8)}…`}
-					help={`${
-						entry.indexed_file_count > 0
-							? `Recovered from ${entry.indexed_file_count.toLocaleString()} catalog ${entry.indexed_file_count === 1 ? 'file' : 'files'}.`
-							: 'Check this is the original root path.'
-					} A wrong path duplicates your library on the next scan.`}
+	{#if impact.data}<div class="space-y-3 text-sm">
+			<p>
+				<strong
+					>{impact.data.indexed_file_count?.toLocaleString() ?? 'An unknown number of'} indexed files</strong
 				>
-					{#snippet children(control)}
-						<Input
-							{...control}
-							label={`Path for ${entry.root_id}`}
-							mono
-							class="w-full"
-							bind:value={restorePaths[entry.root_id]}
-						/>
-					{/snippet}
-				</Field>
-			{/each}
-		</div>
-		<div class="modal-action">
-			<Button variant="ghost" onclick={() => restoreDialog.close()}>Cancel</Button><Button
-				variant="warning"
-				loading={restore.isPending}
-				onclick={() => void confirmRestore()}
-				>Restore {restorableRoots.length === 1 ? 'root' : 'roots'}</Button
+				and {impact.data.on_disk_file_count?.toLocaleString() ?? 'an unknown number of'} files on disk
+				are in the affected scopes.
+			</p>
+			{#if impact.data.content_will_become_unavailable}<div class="alert alert-warning">
+					<TriangleAlert class="h-4 w-4" /> Some music will become unavailable after you explicitly apply
+					reconciliation.
+				</div>{/if}{#if impact.data.queued_work_will_be_cancelled}<p class="text-warning">
+					Queued work in these scopes will be cancelled when the policy is saved.
+				</p>{/if}{#each impact.data.warnings as warning, index (`${index}:${warning}`)}<p
+					class="text-base-content/60"
+				>
+					{warning}
+				</p>{/each}
+			<p class="flex items-center gap-2 text-success">
+				<CircleCheckBig class="h-4 w-4" /> Saving does not start a scan.
+			</p>
+		</div>{/if}
+</ConfirmDialog>
+
+<ConfirmDialog
+	bind:open={applyOpen}
+	title="Apply policy changes?"
+	confirmLabel="Apply policy changes"
+	tone="warning"
+	focusTitle
+	pending={requestRun.isPending}
+	onconfirm={confirmApply}
+>
+	{#if applyPreview.data}<p class="text-sm text-base-content/70">
+			About {applyPreview.data.estimated_file_count.toLocaleString()} files will be reconciled. Existing
+			committed catalog changes remain safe if the job is paused or stopped.
+		</p>
+		{#if applyPreview.data.content_will_become_unavailable}<div class="alert alert-warning mt-3">
+				<TriangleAlert class="h-4 w-4" /> Music under Excluded scopes will become unavailable to DroppedNeedle
+				and connected clients.
+			</div>{/if}{/if}
+</ConfirmDialog>
+
+<ConfirmDialog
+	bind:open={restoreOpen}
+	title="Restore removed library roots"
+	message="These roots still have files in the catalog but were dropped from the configuration. Restoring keeps their original identities, so nothing is scanned twice."
+	confirmLabel="Restore {restorableRoots.length === 1 ? 'root' : 'roots'}"
+	tone="warning"
+	focusTitle
+	pending={restore.isPending}
+	onconfirm={confirmRestore}
+>
+	<div class="mt-4 space-y-4">
+		{#each restorableRoots as entry (entry.root_id)}
+			<Field
+				label={`Root ${entry.root_id.slice(0, 8)}…`}
+				help={`${
+					entry.indexed_file_count > 0
+						? `Recovered from ${entry.indexed_file_count.toLocaleString()} catalog ${entry.indexed_file_count === 1 ? 'file' : 'files'}.`
+						: 'Check this is the original root path.'
+				} A wrong path duplicates your library on the next scan.`}
 			>
-		</div>
+				{#snippet children(control)}
+					<Input
+						{...control}
+						label={`Path for ${entry.root_id}`}
+						mono
+						class="w-full"
+						bind:value={restorePaths[entry.root_id]}
+					/>
+				{/snippet}
+			</Field>
+		{/each}
 	</div>
-	<form method="dialog" class="modal-backdrop">
-		<button aria-label="Close restore roots dialog">close</button>
-	</form>
-</dialog>
+</ConfirmDialog>
 
 <style>
 	.library-scanning-header {
