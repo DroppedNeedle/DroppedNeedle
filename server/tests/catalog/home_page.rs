@@ -6,7 +6,6 @@
 //! collage whose art file is gone falls back to a gradient.
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 
 use droppedneedle_catalog::discover::genre::GenrePages;
 use droppedneedle_catalog::discover::genre::artwork::GenreArt;
@@ -22,7 +21,7 @@ use droppedneedle_catalog::discover::page::shelves::shelf_of;
 use droppedneedle_kernel::clock::ManualClock;
 use droppedneedle_kernel::db::{DbError, Lane};
 
-use crate::discover_queue::Script;
+use crate::discover_queue::{Script, after_commits};
 
 const OWNED_RG: &str = "0a1b2c3d-0000-4000-8000-000000000001";
 const OTHER_RG: &str = "0a1b2c3d-0000-4000-8000-000000000002";
@@ -160,15 +159,14 @@ async fn home_and_genre_pages_build_from_library_and_listening() {
     assert!(shelf_of(&first.sections, SectionKey::RecentlyPlayed).is_some());
     assert!(shelf_of(&first.sections, SectionKey::TrendingArtists).is_none());
 
-    // Each check hands the runtime to the build until it is kept.
-    let deadline = Instant::now() + Duration::from_secs(30);
-    let mut page = first;
-    while page.refreshing {
-        assert!(Instant::now() < deadline, "the build never finished");
-        tokio::task::yield_now().await;
-        page = home.page("user-1").await;
-    }
-    assert!(shelf_of(&page.sections, SectionKey::TrendingArtists).is_some());
+    // The build ends by saving its shelves, a commit.
+    let page = after_commits(&db, "the home build kept its shelves", || async {
+        let page = home.page("user-1").await;
+        shelf_of(&page.sections, SectionKey::TrendingArtists)
+            .is_some()
+            .then_some(page)
+    })
+    .await;
     assert!(shelf_of(&page.sections, SectionKey::FavoriteArtists).is_some());
     let Some(SectionItem::Album(popular)) =
         shelf_of(&page.sections, SectionKey::PopularAlbums).and_then(|shelf| shelf.items.first())

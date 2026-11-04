@@ -56,8 +56,34 @@ fn found_or_missing<T>(rows: Vec<T>) -> Fetched<Vec<T>> {
     }
 }
 
+/// Up to `limit` artists similar to one artist, straight from ListenBrainz.
+/// LB Radio counts the seed among the artists it is asked for and the
+/// client drops it, so one more is asked for (the recorded answer,
+/// `tests/fixtures/listenbrainz/lb_radio_artist.json`, was asked for three
+/// and holds the seed and two others).
+///
+/// # Errors
+///
+/// The typed failure of the call.
+pub(super) async fn similar_from(
+    client: &ListenBrainzClient,
+    artist_mbid: &str,
+    limit: usize,
+    creds: &ListenBrainzCredentials,
+    priority: RequestPriority,
+) -> Result<Vec<ScoredArtist>, ProviderError> {
+    if limit == 0 {
+        return Ok(Vec::new());
+    }
+    let mut rows = client
+        .similar_artists(artist_mbid, limit + 1, creds, priority)
+        .await?;
+    rows.truncate(limit);
+    Ok(scored_artists(rows))
+}
+
 /// ListenBrainz's similar artists as kept rows.
-pub(super) fn scored_artists(rows: Vec<SimilarArtist>) -> Vec<ScoredArtist> {
+fn scored_artists(rows: Vec<SimilarArtist>) -> Vec<ScoredArtist> {
     rows.into_iter()
         .map(|row| ScoredArtist {
             score: row.listen_count as f64,
@@ -146,10 +172,15 @@ pub async fn similar_artists(
             Policy::LISTENBRAINZ_ARTIST,
             priority,
             move |priority| async move {
-                let rows = client
-                    .similar_artists(&mbid, read, &ListenBrainzCredentials::default(), priority)
-                    .await?;
-                Ok(found_or_missing(scored_artists(rows)))
+                let rows = similar_from(
+                    &client,
+                    &mbid,
+                    read,
+                    &ListenBrainzCredentials::default(),
+                    priority,
+                )
+                .await?;
+                Ok(found_or_missing(rows))
             },
         )
         .await?;

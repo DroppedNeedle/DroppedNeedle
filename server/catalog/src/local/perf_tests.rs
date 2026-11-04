@@ -3451,6 +3451,10 @@ async fn perf_100k_artist_songs_hold_the_page_budget() {
     }
 }
 
+/// Plays written per transaction: a play's triggers keep the history read
+/// models, so a larger batch can outlast the writer's time limit under load.
+const PLAY_ROWS: usize = 1000;
+
 /// Plays over the 100k catalog: `p-u1` has played every 50th track one to
 /// three times (2,000 tracks), and twenty other listeners have a thousand
 /// plays each, so the history table is shared as a real one is. `p-u1`
@@ -3458,33 +3462,35 @@ async fn perf_100k_artist_songs_hold_the_page_budget() {
 /// under an album: what an upgrade leaves when plays fit no single song.
 async fn seed_100k_plays(fixture: &Fixture) {
     for chunk in 0..8 {
-        let mut sql = String::from(
-            "INSERT INTO library_play_history (id, user_id, local_album_id, track_name, \
+        for start in (0..5000).step_by(PLAY_ROWS) {
+            let mut sql = String::from(
+                "INSERT INTO library_play_history (id, user_id, local_album_id, track_name, \
              artist_name, played_at) VALUES ",
-        );
-        for index in 0..5000 {
-            if index > 0 {
-                sql.push_str(", ");
-            }
-            let album = if index % 8 == 0 {
-                // An album the listener has played a track of, so the
-                // number of played albums stays what the pages expect.
-                format!("'p-al{:05}'", (index % 2000) * 5)
-            } else {
-                "NULL".to_owned()
-            };
-            sql.push_str(&format!(
-                "('p-n{chunk}-{index}', 'p-u1', {album}, 'x', 'x', \
+            );
+            for index in start..start + PLAY_ROWS {
+                if index > start {
+                    sql.push_str(", ");
+                }
+                let album = if index % 8 == 0 {
+                    // An album the listener has played a track of, so the
+                    // number of played albums stays what the pages expect.
+                    format!("'p-al{:05}'", (index % 2000) * 5)
+                } else {
+                    "NULL".to_owned()
+                };
+                sql.push_str(&format!(
+                    "('p-n{chunk}-{index}', 'p-u1', {album}, 'x', 'x', \
                  {})",
-                play_at(&format!(
-                    "2025-12-{:02}T{:02}:{:02}:00+00:00",
-                    chunk + 1,
-                    index / 60 % 24,
-                    index % 60,
-                )),
-            ));
+                    play_at(&format!(
+                        "2025-12-{:02}T{:02}:{:02}:00+00:00",
+                        chunk + 1,
+                        index / 60 % 24,
+                        index % 60,
+                    )),
+                ));
+            }
+            write_batch(fixture, "perf plays with no track", sql).await;
         }
-        write_batch(fixture, "perf plays with no track", sql).await;
     }
     let mut rows = Vec::new();
     for step in 0..2000 {
@@ -3502,7 +3508,7 @@ async fn seed_100k_plays(fixture: &Fixture) {
             ));
         }
     }
-    for (chunk_index, chunk) in rows.chunks(5000).enumerate() {
+    for (chunk_index, chunk) in rows.chunks(PLAY_ROWS).enumerate() {
         let mut sql = String::from(
             "INSERT INTO library_play_history (id, user_id, local_track_id, local_album_id, \
              track_name, artist_name, played_at) VALUES ",

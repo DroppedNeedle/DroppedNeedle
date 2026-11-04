@@ -1322,6 +1322,22 @@ mod tests {
         );
     }
 
+    /// A build and every shelf it watches share one budget of MusicBrainz
+    /// album lookups; a person's read has none.
+    #[test]
+    fn a_build_spends_at_most_its_lookups_across_its_shelves() {
+        let build = Ask::build(RequestPriority::BackgroundSync);
+        let shelf = build.watched();
+        let spent = (0..BUILD_LOOKUPS * 2)
+            .filter(|at| if at % 2 == 0 { &build } else { &shelf }.take_lookup())
+            .count();
+        assert_eq!(spent, BUILD_LOOKUPS);
+        assert!(!build.take_lookup() && !shelf.take_lookup());
+
+        let person = Ask::person();
+        assert!((0..BUILD_LOOKUPS * 2).all(|_| person.take_lookup()));
+    }
+
     #[test]
     fn a_background_rate_limit_lets_lastfm_stand_in_and_a_person_read_does_not() {
         let limited: ListeningResult<()> =

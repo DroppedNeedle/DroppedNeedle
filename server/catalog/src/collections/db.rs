@@ -71,11 +71,6 @@ impl CollectionsDb {
         self.clock.now_ms().max(0) as f64 / 1000.0
     }
 
-    /// The database handle, for statements run on the same reader pool and writer lane.
-    pub fn db(&self) -> &Db {
-        &self.db
-    }
-
     /// One request-path read on a pooled connection.
     pub async fn read<F, R>(&self, name: &'static str, op: F) -> Result<R, StoreError>
     where

@@ -348,12 +348,16 @@ impl ListeningNetwork for LiveNetwork {
     ) -> Read<'a, Vec<ScoredArtist>> {
         Box::pin(async move {
             let creds = self.credentials(user_id).await;
-            let rows = provider(
-                self.listenbrainz
-                    .similar_artists(artist_mbid, limit, &creds, priority)
-                    .await,
-            )?;
-            Ok(super::shared::scored_artists(rows))
+            provider(
+                super::shared::similar_from(
+                    &self.listenbrainz,
+                    artist_mbid,
+                    limit,
+                    &creds,
+                    priority,
+                )
+                .await,
+            )
         })
     }
 
