@@ -2101,20 +2101,6 @@ fn split_literals(text: &str) -> (String, Vec<(usize, String)>) {
     (code, literals)
 }
 
-/// The folders still allowed to hold raw SQL, from
-/// `server/sql-outside-registry.txt`.
-fn outside_registry() -> Vec<String> {
-    let list = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("sql-outside-registry.txt"),
-    )
-    .expect("sql-outside-registry.txt reads");
-    list.lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty() && !line.starts_with('#'))
-        .map(str::to_owned)
-        .collect()
-}
-
 /// A literal allowed outside `sql.rs` for good, and why.
 struct AllowedLiteral {
     path: &'static str,
@@ -2168,15 +2154,28 @@ const ALLOWED_LITERALS: &[AllowedLiteral] = &[
     },
 ];
 
+/// The export's bundle builder. Each statement is made at run time from the
+/// columns the v2 database being exported has (an install of any age), into
+/// bundle tables made the same way, so there is no fixed text to prepare;
+/// its fixed reads are in `tool/src/export/sql.rs`.
+const EXPORT_BUNDLE: &[&str] = &[
+    "tool/src/export/artist_keys.rs",
+    "tool/src/export/bundle.rs",
+    "tool/src/export/library_keys.rs",
+    "tool/src/export/sections/",
+];
+
 /// Source that may hold raw SQL for good: unit test files and test folders
-/// (a unit test that needs raw SQL lives in one), and the builder of the v2
-/// fixture database, which writes the v2 schema. `server/tests/`,
-/// `server/testkit/` and `server/migrations/` are never walked.
+/// (a unit test that needs raw SQL lives in one), the builder of the v2
+/// fixture database, which writes the v2 schema, and [`EXPORT_BUNDLE`].
+/// `server/tests/`, `server/testkit/` and `server/migrations/` are never
+/// walked.
 fn exempt(path: &str) -> bool {
     path.ends_with("/tests.rs")
         || path.ends_with("_tests.rs")
         || path.contains("/tests/")
         || path == "tool/src/tooling/fixture.rs"
+        || EXPORT_BUNDLE.iter().any(|place| path.starts_with(place))
 }
 
 /// Raw SQL lives only in `sql.rs` files. A string literal that starts with
@@ -2185,9 +2184,7 @@ fn exempt(path: &str) -> bool {
 /// `PRAGMA`, `ANALYZE`, `VACUUM` or transaction control fails outside
 /// `kernel/src/db/`, which owns connection set-up and transactions. A table
 /// name read from the database is quoted by
-/// `db::statement::quoted_identifier`. The folders listed in
-/// `server/sql-outside-registry.txt` have not moved yet; an area that moves
-/// deletes its line.
+/// `db::statement::quoted_identifier`.
 #[test]
 fn raw_sql_stays_in_sql_files() {
     let verb = Regex::new(r"^\s*(?:SELECT|INSERT|UPDATE|DELETE|REPLACE|WITH|CREATE|DROP|ALTER)\b")
@@ -2196,18 +2193,13 @@ fn raw_sql_stays_in_sql_files() {
     let control =
         Regex::new(r"^\s*(?:PRAGMA|ANALYZE|VACUUM|BEGIN|COMMIT|ROLLBACK|SAVEPOINT|RELEASE)\b")
             .unwrap();
-    let outside = outside_registry();
     let sources = workspace_sources();
-    let mut used = vec![false; outside.len()];
     let mut allowed_used = vec![false; ALLOWED_LITERALS.len()];
     let mut wrong = Vec::new();
     for source in &sources {
         if exempt(&source.path) {
             continue;
         }
-        let listed = outside
-            .iter()
-            .position(|prefix| source.path.starts_with(prefix.as_str()));
         for (line, value) in split_literals(&source.text).1 {
             let raw = if control.is_match(&value) {
                 !source.path.starts_with("kernel/src/db/")
@@ -2215,10 +2207,6 @@ fn raw_sql_stays_in_sql_files() {
                 !is_sql_file(&source.path) && (verb.is_match(&value) || fragment.is_match(&value))
             };
             if !raw {
-                continue;
-            }
-            if let Some(at) = listed {
-                used[at] = true;
                 continue;
             }
             if let Some(at) = ALLOWED_LITERALS.iter().position(|allowed| {
@@ -2231,20 +2219,6 @@ fn raw_sql_stays_in_sql_files() {
             wrong.push(format!(
                 "{}:{line}: raw SQL outside sql.rs: {first}",
                 source.path
-            ));
-        }
-    }
-    for (prefix, used) in outside.iter().zip(used) {
-        if !sources
-            .iter()
-            .any(|source| source.path.starts_with(prefix.as_str()))
-        {
-            wrong.push(format!(
-                "{prefix}: listed in sql-outside-registry.txt, but no longer exists"
-            ));
-        } else if !used {
-            wrong.push(format!(
-                "{prefix}: listed in sql-outside-registry.txt, but holds no raw SQL; delete the line"
             ));
         }
     }

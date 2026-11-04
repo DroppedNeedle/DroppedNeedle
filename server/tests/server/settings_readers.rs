@@ -17,10 +17,6 @@
 //!
 //! A field read only through a method on its section is listed in
 //! [`READ_THROUGH`] with the method, which must be called.
-//!
-//! [`PENDING`] lists fields whose reader has not landed yet. A row that
-//! covers no unread field fails, so the list only shrinks; it must be
-//! empty before release.
 
 use std::collections::{BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
@@ -34,10 +30,6 @@ use serde_json::Value;
 use utoipa::OpenApi as _;
 
 use crate::common::sources::workspace_sources;
-
-/// Fields with no reader yet: a path prefix (section key, then fields;
-/// `[]` steps into list items, `{}` into map values) and why.
-const PENDING: &[(&str, &str)] = &[];
 
 /// Fields read only through a method on their section, with the method.
 /// A row whose method nothing calls counts as unread.
@@ -113,19 +105,10 @@ fn every_stored_settings_field_has_a_reader() {
         })
         .collect();
 
-    let mut failures = Vec::new();
-    for path in &unread {
-        if !PENDING.iter().any(|(prefix, _)| covers(prefix, path)) {
-            failures.push(format!("{path} has no reader"));
-        }
-    }
-    for (prefix, why) in PENDING {
-        if !unread.iter().any(|path| covers(prefix, path)) {
-            failures.push(format!(
-                "pending `{prefix}` ({why}) covers no unread field: remove it"
-            ));
-        }
-    }
+    let failures: Vec<String> = unread
+        .iter()
+        .map(|path| format!("{path} has no reader"))
+        .collect();
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
@@ -223,14 +206,6 @@ fn leaf(path: &str) -> &str {
         .unwrap_or(path)
         .trim_end_matches("[]")
         .trim_end_matches("{}")
-}
-
-/// `prefix` is the path or one of its parents.
-fn covers(prefix: &str, path: &str) -> bool {
-    path == prefix
-        || path
-            .strip_prefix(prefix)
-            .is_some_and(|rest| rest.starts_with(['.', '[', '{']))
 }
 
 /// Every name read as `.name` in shipping Rust outside [`RUST_NOT_READERS`].

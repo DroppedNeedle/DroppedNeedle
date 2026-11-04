@@ -66,6 +66,15 @@ const USER_ROW_READS: &[(&str, &str)] = &[
     ),
 ];
 
+/// Role checks written out by hand, each with its reason. Anything else
+/// says who may call through `User`, `Curator` or `Admin`, or asks
+/// `Principal::is_admin` for owner-or-admin.
+const ROLE_CHECKS: &[(&str, &str)] = &[(
+    "library/src/reviews/service.rs",
+    "a queued review re-checks, with no request in hand, that the person who \
+     asked for an admin-only step is still an admin when the step runs",
+)];
+
 /// Names of the removed caller shapes. None may come back anywhere. Each
 /// is split so that a search of the tree finds none, this file included.
 const GONE: &[&str] = &[
@@ -98,10 +107,14 @@ fn one_principal_and_three_caller_extractors() {
     )
     .unwrap();
     let principal_from_request = Regex::new(
-        r"\bExtension\s*<\s*(?:\w+::)*Principal\s*>|\bextensions\(\)\s*\.get::<\s*(?:\w+::)*Principal\s*>",
+        r"\bExtension\s*<\s*(?:\w+::)*Principal\s*>|\bextensions(?:\(\))?\s*\.\s*(?:get|get_mut|remove)::<\s*(?:\w+::)*Principal\s*>",
     )
     .unwrap();
-    let raw_role_check = Regex::new(r"\brole\(\)\s*\.is_admin\(\)").unwrap();
+    let raw_role_check = Regex::new(
+        r"\brole\(\)\s*(?:\.\s*is_admin\(\)|[!=]=\s*(?:\w+::)*Role::\w+)|\bRole::\w+\s*[!=]=\s*[\w.]*role\(\)",
+    )
+    .unwrap();
+    let mut role_checks_seen = vec![false; ROLE_CHECKS.len()];
 
     let mut wrong = Vec::new();
     let mut extractors_seen = Vec::new();
@@ -153,10 +166,16 @@ fn one_principal_and_three_caller_extractors() {
             }
         }
         for found in raw_role_check.find_iter(&source.text) {
+            if let Some(at) = ROLE_CHECKS.iter().position(|(file, _)| *file == path) {
+                role_checks_seen[at] = true;
+                continue;
+            }
             let line = line_of(source, found.start());
             wrong.push(format!(
-                "{path}:{line}: `role().is_admin()`; owner-or-admin is `Principal::is_admin`, \
-                 which also checks the session"
+                "{path}:{line}: a role check by hand (`{}`); a handler takes `User`, \
+                 `Curator` or `Admin`, and owner-or-admin is `Principal::is_admin`, \
+                 which also checks the session",
+                found.as_str()
             ));
         }
         for found in extractor.captures_iter(&source.text) {
@@ -189,6 +208,13 @@ fn one_principal_and_three_caller_extractors() {
                 let line = line_of(source, offset);
                 wrong.push(format!("{path}:{line}: `{name}` is gone; use `Principal`"));
             }
+        }
+    }
+    for ((file, why), seen) in ROLE_CHECKS.iter().zip(role_checks_seen) {
+        if !seen {
+            wrong.push(format!(
+                "{file}: listed for a role check by hand, but holds none; remove the entry ({why})"
+            ));
         }
     }
     extractors_seen.sort();

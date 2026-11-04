@@ -21,7 +21,7 @@ const RULES: &[Rule] = &[
     Rule {
         what: "an IntoResponse impl (only ApiError answers errors)",
         under: "",
-        pattern: r"impl\s*(?:<[^>]*>)?\s*(?:[\w:]+::)?IntoResponse\s+for\s+(\w+)",
+        pattern: r"\bimpl\b[^{;]*?\bIntoResponse\s+for\s+&?\s*(?:[\w:]+::)?(\$?\w+)",
         allowed: &[(
             "kernel/src/error.rs",
             "ApiError, the one error type that becomes a response",
@@ -42,11 +42,23 @@ const RULES: &[Rule] = &[
     Rule {
         what: "a raw Query or Json extractor",
         under: "",
-        pattern: r"(?:^|[^:]):\s*(?:axum::(?:extract::)?)?(?:Query|Json)\s*<",
+        pattern: r"(?:^|[^:]):\s*(?:(?:Option|Result)\s*<\s*)?(?:::)?(?:axum::)?(?:extract::)?(?:Query|Json)\s*<",
         allowed: &[(
             "compat/src/",
             "Subsonic and Jellyfin answer in their own protocol shapes",
         )],
+    },
+    Rule {
+        what: "a Query or Json renamed on import, which the extractor rule would miss",
+        under: "",
+        pattern: r"\b(?:Query|Json)\s+as\s+\w+",
+        allowed: &[],
+    },
+    Rule {
+        what: "an error envelope built as JSON by hand",
+        under: "",
+        pattern: r#"\bjson!\s*\(\s*\{\s*"error"\s*:"#,
+        allowed: &[],
     },
     Rule {
         what: "the literal error_id",
@@ -106,7 +118,7 @@ fn errors_and_extractors_have_one_way_in() {
                     .iter()
                     .any(|(place, _)| relative.starts_with(place));
                 if !allowed {
-                    let line = code[..hit.start()].lines().count().max(1);
+                    let line = code[..hit.start()].matches('\n').count() + 1;
                     found.push(format!(
                         "{relative}:{line}: {} ({})",
                         rule.what,
@@ -138,7 +150,7 @@ fn errors_and_extractors_have_one_way_in() {
     };
     only(
         "kernel/src/error.rs",
-        r"impl\s*(?:<[^>]*>)?\s*(?:[\w:]+::)?IntoResponse\s+for\s+(\w+)",
+        r"\bimpl\b[^{;]*?\bIntoResponse\s+for\s+&?\s*(?:[\w:]+::)?(\$?\w+)",
         &["ApiError"],
     );
 }

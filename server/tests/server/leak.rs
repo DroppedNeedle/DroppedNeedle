@@ -97,45 +97,61 @@ async fn every_native_5xx_leaves_as_the_fixed_envelope() {
     app.stop().await;
 }
 
-/// The closed list as the plan tables it: code, status, fixed sentence. A
-/// new pass-through code is an edit to this table.
-const CLOSED_LIST: &[(&str, u16, &str)] = &[
-    (
-        "SERVER_BUSY",
-        503,
-        "The server is busy. Try again in a moment.",
-    ),
-    (
-        "REMOTE_UNAVAILABLE",
-        502,
-        "Your media server did not answer or returned an error.",
-    ),
-    ("UPSTREAM_REFUSED", 502, "GitHub refused the request"),
-    (
-        "UPSTREAM_RATE_LIMITED",
-        503,
-        "GitHub is rate limiting this server, try again later",
-    ),
-    ("UPSTREAM_ERROR", 502, "GitHub could not be reached"),
-    (
-        "UPSTREAM_UNREADABLE",
-        502,
-        "GitHub sent an answer DroppedNeedle could not read.",
-    ),
-    (
-        "PROVIDER_UNAVAILABLE",
-        503,
-        "An outside service is not answering. Try again later.",
-    ),
-    (
-        "UPGRADE_REQUIRED",
-        503,
-        "DroppedNeedle needs its upgrade from v2. Open the web page to run it.",
-    ),
-];
+/// One closed-list answer as the boundary must write it: code, status,
+/// fixed sentence and the `Retry-After` the test variant carries.
+type Golden = (&'static str, u16, &'static str, Option<&'static str>);
+
+/// The closed list, written out by hand and never read from the kit. The
+/// match has no wildcard, so a new variant fails to compile until its row
+/// is written here.
+fn golden(variant: &Unavailable) -> Golden {
+    match variant {
+        Unavailable::ServerBusy => (
+            "SERVER_BUSY",
+            503,
+            "The server is busy. Try again in a moment.",
+            Some("1"),
+        ),
+        Unavailable::MediaServer => (
+            "REMOTE_UNAVAILABLE",
+            502,
+            "Your media server did not answer or returned an error.",
+            None,
+        ),
+        Unavailable::UpstreamRefused => {
+            ("UPSTREAM_REFUSED", 502, "GitHub refused the request", None)
+        }
+        Unavailable::UpstreamRateLimited { .. } => (
+            "UPSTREAM_RATE_LIMITED",
+            503,
+            "GitHub is rate limiting this server, try again later",
+            Some("42"),
+        ),
+        Unavailable::UpstreamError => ("UPSTREAM_ERROR", 502, "GitHub could not be reached", None),
+        Unavailable::UpstreamUnreadable => (
+            "UPSTREAM_UNREADABLE",
+            502,
+            "GitHub sent an answer DroppedNeedle could not read.",
+            None,
+        ),
+        Unavailable::Provider { .. } => (
+            "PROVIDER_UNAVAILABLE",
+            503,
+            "An outside service is not answering. Try again later.",
+            Some("30"),
+        ),
+        Unavailable::UpgradeRequired => (
+            "UPGRADE_REQUIRED",
+            503,
+            "DroppedNeedle needs its upgrade from v2. Open the web page to run it.",
+            None,
+        ),
+    }
+}
 
 #[tokio::test]
 async fn closed_list_answers_pass_the_boundary_with_their_sentence() {
+    // One of each variant, beside the match above that gives its row.
     let variants = [
         Unavailable::ServerBusy,
         Unavailable::MediaServer,
@@ -151,30 +167,18 @@ async fn closed_list_answers_pass_the_boundary_with_their_sentence() {
         },
         Unavailable::UpgradeRequired,
     ];
-    // Written out by hand, never read from the kit: a new variant fails to
-    // compile here, and once listed above it needs its row in the table.
-    let retry_after_of = |variant: Unavailable| match variant {
-        Unavailable::ServerBusy => Some("1"),
-        Unavailable::MediaServer
-        | Unavailable::UpstreamRefused
-        | Unavailable::UpstreamError
-        | Unavailable::UpstreamUnreadable
-        | Unavailable::UpgradeRequired => None,
-        Unavailable::UpstreamRateLimited { .. } => Some("42"),
-        Unavailable::Provider { .. } => Some("30"),
-    };
-    let kit: Vec<(&str, u16, &str)> = variants
-        .iter()
-        .map(|variant| {
-            let answer = variant.answer();
-            (answer.code, answer.status.as_u16(), answer.sentence)
-        })
-        .collect();
-    assert_eq!(kit, CLOSED_LIST);
+    for variant in &variants {
+        let answer = variant.answer();
+        let (code, status, sentence, _) = golden(variant);
+        assert_eq!(
+            (answer.code, answer.status.as_u16(), answer.sentence),
+            (code, status, sentence)
+        );
+    }
 
     let app = TestApp::start_configured("leak-unavailable", AppConfig::with_test_hooks).await;
-    for (variant, &(code, status, sentence)) in variants.into_iter().zip(CLOSED_LIST) {
-        let retry_after = retry_after_of(variant);
+    for variant in variants {
+        let (code, status, sentence, retry_after) = golden(&variant);
         let request_id = format!("leak-{code}");
         let (got_status, headers, body) = app
             .raw(

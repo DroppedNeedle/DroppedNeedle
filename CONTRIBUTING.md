@@ -109,7 +109,7 @@ pub(super) fn feed_page(for_user: bool, newest_first: bool) -> String { ... }
 
 `every_registered_statement_prepares` fails when a `sql.rs` is missing from its crate's list or declares something outside its `sql!` block, then prepares every statement, and every family over every combination, against the migrated schema. It catches a renamed column, a dropped table and a second statement after a `;`. It does not check how many values a call site binds, that a column list matches its row mapper, or the query plan.
 
-`raw_sql_stays_in_sql_files` fails on SQL text anywhere else, and on `PRAGMA` or transaction control outside `server/kernel/src/db/`. Test files are exempt. Areas that have not moved their SQL yet are listed in `server/sql-outside-registry.txt`; moving an area deletes its line.
+`raw_sql_stays_in_sql_files` fails on SQL text anywhere else, and on `PRAGMA` or transaction control outside `server/kernel/src/db/`. Test files are exempt, as is the export's bundle builder, whose statements are made at run time from the columns of the v2 database being exported; the few other literals allowed for good are listed in the test with their reasons.
 
 A column that stores an enum as text declares the enum's spellings with `droppedneedle_kernel::spelled!` and carries a `CHECK (column IN (...))` listing exactly those spellings; `every_state_column_lists_exactly_its_enums_values` in `persist_schema.rs` registers each such column with its enum and fails when the two differ.
 

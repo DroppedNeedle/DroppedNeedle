@@ -122,6 +122,14 @@ const markupRules = [
 	}
 ];
 
+// Retired ways of doing things the app now does in one place.
+const retiredRules = [
+	{
+		selector: "Identifier[name='createLocalStorageCache']",
+		message: 'Queries are saved to the browser only through their meta.persist.'
+	}
+];
+
 // Buttons, cards and text inputs come from the kit in src/lib/ui, so their
 // look is defined in one place. Outside the kit a DaisyUI btn or card class
 // (bare or with one of its modifiers) is refused wherever a class can come
@@ -278,14 +286,14 @@ export default defineConfig(
 	},
 	{
 		rules: {
-			'no-restricted-syntax': ['error', ...queryClientRules, ...markupRules]
+			'no-restricted-syntax': ['error', ...queryClientRules, ...markupRules, ...retiredRules]
 		}
 	},
 	{
 		// A spec's fake client may call these.
 		files: ['src/**/*.spec.ts'],
 		rules: {
-			'no-restricted-syntax': ['error', ...markupRules]
+			'no-restricted-syntax': ['error', ...markupRules, ...retiredRules]
 		}
 	},
 	{
@@ -305,6 +313,7 @@ export default defineConfig(
 				...queryClientRules,
 				...transportRules,
 				...markupRules,
+				...retiredRules,
 				...linkRules
 			]
 		}
@@ -318,6 +327,7 @@ export default defineConfig(
 				...queryClientRules,
 				...transportRules,
 				...markupRules,
+				...retiredRules,
 				...linkRules,
 				...mutationNameRules
 			]
@@ -332,6 +342,7 @@ export default defineConfig(
 				...queryClientRules,
 				...transportRules,
 				...markupRules,
+				...retiredRules,
 				...kitRules,
 				...linkRules
 			]
