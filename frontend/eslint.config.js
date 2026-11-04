@@ -186,32 +186,6 @@ const kitRules = [
 	dialogRule
 ];
 
-// Hand-built dialogs not yet moved onto Modal. The list only shrinks.
-const DIALOGS_TO_MOVE = [
-	'discover/components/PlaylistDiscoveryModal.svelte',
-	'downloads/components/DiscographyDownloadModal.svelte',
-	'library/components/TagEditor.svelte',
-	'library-management/components/AlbumOrganizationDialog.svelte',
-	'library-management/components/ArtistIdentityDesk.svelte',
-	'library-management/components/LibraryManagementActivationDialog.svelte',
-	'library-management/components/LibraryManagementCollisionDialog.svelte',
-	'library-management/components/LibraryManagementDiscardPreview.svelte',
-	'library-management/components/LibraryManagementIdentityReadiness.svelte',
-	'library-management/components/LibraryManagementOperationPage.svelte',
-	'library-management/components/LibraryManagementProfileEditor.svelte',
-	'library-management/components/LibraryManagementProfileList.svelte',
-	'library-management/components/LibraryManagementProfileSharing.svelte',
-	'library-management/components/LibraryManagementPurgeDialog.svelte',
-	'library-management/components/LibraryManagementRunner.svelte',
-	'library-management/components/LibraryRepairPanel.svelte',
-	'library-management/components/LibraryRootPolicyEditor.svelte',
-	'library-management/components/LibraryScanningPanel.svelte',
-	'library-management/components/LibraryWorkDialog.svelte',
-	'playlists/components/AddToPlaylistModal.svelte',
-	'search/components/SearchDialog.svelte',
-	'settings/components/SettingsLibrary.svelte'
-].map((path) => `src/lib/features/${path}`);
-
 // In-app links and goto take their path through withBasePath
 // (lib/utils/basePath.ts), so a deployment base path is kept. A root path
 // written as a literal skips it: an href (static, in {...} or a template
@@ -383,20 +357,6 @@ export default defineConfig(
 				...markupRules,
 				...retiredRules,
 				...kitRules,
-				...linkRules
-			]
-		}
-	},
-	{
-		files: DIALOGS_TO_MOVE,
-		rules: {
-			'no-restricted-syntax': [
-				'error',
-				...queryClientRules,
-				...transportRules,
-				...markupRules,
-				...retiredRules,
-				...kitRules.filter((rule) => rule !== dialogRule),
 				...linkRules
 			]
 		}
