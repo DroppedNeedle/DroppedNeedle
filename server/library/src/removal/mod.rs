@@ -1459,12 +1459,14 @@ fn record_action(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::publish::bin::utc_stamp;
+    use crate::publish::bin::{entry_stamp, utc_stamp};
 
     #[test]
     fn stamp_and_path_guard() {
         let at = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
         assert_eq!(utc_stamp(at), "20231114T221320");
+        assert_eq!(entry_stamp("20231114T221320-0123abcd"), Some(1_700_000_000));
+        assert_eq!(entry_stamp("20230230T221320-0123abcd"), None);
         assert!(join_inside(Path::new("/lib"), "a/../../etc").is_none());
         assert!(join_inside(Path::new("/lib"), "/etc/passwd").is_none());
         assert_eq!(

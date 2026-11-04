@@ -104,18 +104,17 @@ impl SettingsSetup {
         &self.service
     }
 
-    /// `response` with the reason its recycle bin path is not used, if it
-    /// is not. The check resolves paths, so it runs on the blocking pool.
+    /// `response` with what keeps a recycle bin from being used, if
+    /// anything does. The check resolves paths, so it runs on the blocking
+    /// pool.
     pub async fn with_bin_warning(
         &self,
         mut response: LibraryManagementSettingsResponse,
     ) -> LibraryManagementSettingsResponse {
         let bins = self.bins.clone();
         let configured = response.settings.recycle_bin_path.clone();
-        match tokio::task::spawn_blocking(move || bins.refusal(&configured)).await {
-            Ok(refusal) => {
-                response.recycle_bin_warning = refusal.map(|refusal| refusal.message().to_owned());
-            }
+        match tokio::task::spawn_blocking(move || bins.warning(&configured)).await {
+            Ok(warning) => response.recycle_bin_warning = warning,
             Err(error) => tracing::warn!(%error, "recycle bin check did not run"),
         }
         response

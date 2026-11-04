@@ -5849,6 +5849,39 @@ fn a_plugin_file_is_listed_and_taken_back_only_while_unchanged() {
     assert!(hidden_leftovers(&fix.dir).is_empty());
 }
 
+/// A library folder whose `.recycle` is a link the bin checks refuse has
+/// no bin, so its removals wait; Library Management's settings say so,
+/// naming the folder, as they do for a refused configured bin.
+#[tokio::test]
+async fn a_refused_recycle_link_shows_in_the_settings() {
+    use axum::http::StatusCode;
+
+    let app = crate::common::TestApp::start("recycle-link-warning").await;
+    let auth = app.login_admin().await;
+    let headers = [("authorization", auth.as_str())];
+    let music = app.config.root_app_dir.join("music");
+    std::fs::create_dir_all(music.join("kept")).unwrap();
+    let flac = std::fs::read(fixtures_dir().join("management_full.flac")).unwrap();
+    std::fs::write(music.join("kept/01.flac"), &flac).unwrap();
+    std::os::unix::fs::symlink(
+        app.config.root_app_dir.join("nowhere"),
+        music.join(".recycle"),
+    )
+    .unwrap();
+    app.add_library_folder("music", &music).await;
+
+    let (status, body) = app
+        .call("GET", "/api/v3/settings/library-management", &headers, None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let warning = body["recycle_bin_warning"].as_str().unwrap_or_default();
+    assert!(
+        warning.contains(&*music.to_string_lossy()) && warning.contains(".recycle"),
+        "{warning:?}"
+    );
+    app.stop().await;
+}
+
 /// A plugin's file the scan made into a track goes missing once its add
 /// is undone, with no scan asked for: the undo marks the folder for the
 /// scan. Undo then answers 409 with the reason for an add already taken

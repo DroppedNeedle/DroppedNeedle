@@ -272,7 +272,8 @@ droppedneedle_kernel::sql! {
              SELECT a.id, a.title, a.album_artist_name, a.has_indexed_track, \
              (SELECT e.release_group_mbid FROM local_album_external_identities e \
              WHERE e.local_album_id = a.id AND e.provider = 'musicbrainz') AS release_group_mbid, \
-             EXISTS (SELECT 1 FROM local_album_artwork w WHERE w.local_album_id = a.id) \
+             EXISTS (SELECT 1 FROM local_album_artwork w WHERE w.local_album_id = a.id \
+             AND w.source IN ('folder', 'embedded')) \
              AS cover_available \
              FROM chain JOIN local_albums a ON a.id = chain.id WHERE chain.next IS NULL";
     /// How many files the bin holds. `?1` is the state of a row that waits

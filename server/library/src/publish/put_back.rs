@@ -312,7 +312,15 @@ pub fn prepare(
         let Some(file) = &found.file else {
             continue;
         };
-        let mut candidates = vec![(PathBuf::from(&found.row.staged), None)];
+        // Only the states the plan reads a copy in: it refuses the rest
+        // before reading anything.
+        let mut candidates = match found.row.state {
+            JournalState::Cleaned => Vec::new(),
+            JournalState::Committed | JournalState::CleanupPending => {
+                vec![(PathBuf::from(&found.row.staged), None)]
+            }
+            _ => continue,
+        };
         if let Some(replaced) = &found.row.replaces {
             candidates.push((PathBuf::from(&replaced.recycle_to), found.binned));
         }

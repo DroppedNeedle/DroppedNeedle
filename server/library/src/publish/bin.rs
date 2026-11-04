@@ -15,7 +15,7 @@
 use std::collections::BTreeSet;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::SystemTime;
 
 use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::db::Db;
@@ -333,21 +333,43 @@ impl BinSource {
         ))
     }
 
-    /// Why `configured` would not be used as the bin, for the Library
-    /// Management settings. `None` when it would be, or while that cannot be told.
-    /// Blocking: it resolves paths.
-    pub fn refusal(&self, configured: &str) -> Option<BinRefusal> {
-        if configured.trim().is_empty() {
-            return None;
-        }
+    /// What the Library Management settings say about the bins with
+    /// `configured` as the bin path: why it would not be used, and each
+    /// library folder whose `.recycle` is a link the checks refuse, so its
+    /// removals wait. `None` when every bin would be used, or while that
+    /// cannot be told. Blocking: it resolves paths.
+    pub fn warning(&self, configured: &str) -> Option<String> {
         let library = self.library.read()?;
         let registry = crate::settings::registry_from(&library);
         let mut trees = || (self.downloads)().ok_or(BinsUnknown::DownloadsUnread);
-        match choose(configured, &resolve_roots(&registry), &mut trees) {
-            Ok(choice) => choice.refused,
-            Err(BinsUnknown::Unreachable) => Some(BinRefusal::Unresolvable),
-            Err(_) => None,
+        let choice = match choose(configured, &resolve_roots(&registry), &mut trees) {
+            Ok(choice) => choice,
+            Err(BinsUnknown::Unreachable) => {
+                return Some(BinRefusal::Unresolvable.message().to_owned());
+            }
+            Err(_) => return None,
+        };
+        let mut lines: Vec<String> = choice
+            .refused
+            .iter()
+            .map(|refusal| refusal.message().to_owned())
+            .collect();
+        for (root_id, refusal) in &choice.unusable {
+            let Some(root) = registry.resolve(root_id) else {
+                continue;
+            };
+            let why = match refusal {
+                BinRefusal::Unresolvable => "is a link that can't be followed",
+                BinRefusal::NotAbsolute
+                | BinRefusal::OverlapsLibrary
+                | BinRefusal::OverlapsDownloads => "links into a library or download folder",
+            };
+            lines.push(format!(
+                "Removals from {} wait: its .recycle {why}.",
+                root.path.display()
+            ));
         }
+        (!lines.is_empty()).then(|| lines.join(" "))
     }
 
     fn log(&self, choice: &Result<BinChoice, BinsUnknown>) {
@@ -447,28 +469,10 @@ pub fn fresh_entry(bin: &Path, name: &str, now: SystemTime) -> Option<PathBuf> {
 /// `YYYYMMDDTHHMMSS` in UTC: every bin entry's name starts with it, and
 /// expiry reads it for an entry no row names ([`entry_stamp`]).
 pub fn utc_stamp(now: SystemTime) -> String {
-    let secs = now
-        .duration_since(UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_secs())
-        .unwrap_or(0);
-    let days = (secs / 86_400) as i64;
-    let rest = secs % 86_400;
-    // Howard Hinnant's civil-from-days.
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = doy - (153 * mp + 2) / 5 + 1;
-    let month = if mp < 10 { mp + 3 } else { mp - 9 };
-    let year = yoe + era * 400 + i64::from(month <= 2);
-    format!(
-        "{year:04}{month:02}{day:02}T{:02}{:02}{:02}",
-        rest / 3600,
-        (rest % 3600) / 60,
-        rest % 60
-    )
+    jiff::Timestamp::try_from(now)
+        .unwrap_or(jiff::Timestamp::UNIX_EPOCH)
+        .strftime("%Y%m%dT%H%M%S")
+        .to_string()
 }
 
 /// Whether `name` is the name of a bin entry folder made since removals
@@ -504,23 +508,23 @@ pub(crate) fn entry_stamp(name: &str) -> Option<i64> {
         return None;
     }
     let (hour, minute, second) = (number(9..11)?, number(11..13)?, number(13..15)?);
-    if !(1..=12).contains(&month)
-        || !(1..=31).contains(&day)
-        || hour > 23
-        || minute > 59
-        || second > 60
-    {
-        return None;
-    }
-    // Howard Hinnant's days-from-civil.
-    let y = if month <= 2 { year - 1 } else { year };
-    let era = y.div_euclid(400);
-    let yoe = y.rem_euclid(400);
-    let mp = (month + 9) % 12;
-    let doy = (153 * mp + 2) / 5 + day - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    let days = era * 146_097 + doe - 719_468;
-    Some(days * 86_400 + hour * 3600 + minute * 60 + second)
+    let narrow = |value: i64| i8::try_from(value).ok();
+    let at = jiff::civil::DateTime::new(
+        i16::try_from(year).ok()?,
+        narrow(month)?,
+        narrow(day)?,
+        narrow(hour)?,
+        narrow(minute)?,
+        narrow(second)?,
+        0,
+    )
+    .ok()?;
+    Some(
+        at.to_zoned(jiff::tz::TimeZone::UTC)
+            .ok()?
+            .timestamp()
+            .as_second(),
+    )
 }
 
 /// The bins expiry may delete from, out of `bins`: never one that is `/`,
