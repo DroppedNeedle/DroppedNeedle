@@ -1,8 +1,8 @@
-//! Admin-route briefs: gating, cache stats/clear, queue and
-//! provider stats, quota admin and checkpoint health.
+//! Admin-route briefs: the library image refresh, queue stats, quota admin
+//! and checkpoint health. Each route's posture is in `auth_e2e`'s matrix.
 //!
-//! The router mounts directly with sessions injected; health rides the full
-//! app. Scratch runtimes only - no network, no production database.
+//! The router mounts directly with sessions injected; the boot-loop check
+//! rides the full app. Scratch runtimes only - no network, no production database.
 
 use crate::common::Probe;
 use std::sync::Arc;
@@ -14,7 +14,7 @@ use axum::http::{Request, StatusCode};
 use droppedneedle::admin::AdminSetup;
 use droppedneedle_auth::users::roles::{Role, SessionKind};
 use droppedneedle_kernel::db::{DbRuntime, Lane};
-use droppedneedle_providers::{CacheKey, Source};
+use droppedneedle_kernel::events::{EventHub, Subscription};
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
 
@@ -29,8 +29,9 @@ struct Rig {
     rig: AuthRig,
     admin_id: String,
     user_id: String,
-    cache: droppedneedle_providers::ProviderCacheStore,
     quota: Arc<droppedneedle_acquire::requests::quota::QuotaLedger>,
+    /// The hub the image refresh publishes its `cache.sync` frames on.
+    events: EventHub,
     jobs: droppedneedle::bootstrap::jobs::JobsSetup,
     /// The count the library bumps when a scan ends.
     scans: droppedneedle::bootstrap::jobs::ScansEnded,
@@ -68,7 +69,7 @@ impl Rig {
             crate::common::closed_outbound().providers(),
             droppedneedle_kernel::db::cache::CacheDb::scratch(),
         ));
-        let cache = providers.cache.clone();
+        let events = platform.events.clone();
         let scans = droppedneedle::bootstrap::jobs::ScansEnded::default();
         let jobs = crate::common::bundles::jobs_at(
             &platform,
@@ -96,8 +97,8 @@ impl Rig {
             rig,
             admin_id: admin_user.id,
             user_id: plain_user.id,
-            cache,
             quota,
+            events,
             jobs,
             scans,
             _scratch: scratch,
@@ -146,80 +147,6 @@ async fn call(app: Router, method: &str, uri: &str, body: Option<Value>) -> (Sta
     (status, json)
 }
 
-/// Every admin route with concrete ids.
-fn routes(user_id: &str) -> Vec<(&'static str, String, Option<Value>)> {
-    vec![
-        ("GET", "/api/v3/admin/backups".to_owned(), None),
-        ("POST", "/api/v3/admin/backups".to_owned(), None),
-        (
-            "GET",
-            "/api/v3/admin/backups/library-0-0.db/restore-report".to_owned(),
-            None,
-        ),
-        ("GET", "/api/v3/admin/cache/stats".to_owned(), None),
-        (
-            "POST",
-            "/api/v3/admin/cache/clear".to_owned(),
-            Some(json!({})),
-        ),
-        ("GET", "/api/v3/admin/queue-stats".to_owned(), None),
-        ("GET", "/api/v3/admin/provider-stats".to_owned(), None),
-        ("GET", format!("/api/v3/admin/users/{user_id}/quota"), None),
-        (
-            "PUT",
-            format!("/api/v3/admin/users/{user_id}/quota"),
-            Some(json!({})),
-        ),
-        ("POST", "/api/v3/admin/precache/run".to_owned(), None),
-    ]
-}
-
-#[tokio::test]
-async fn admin_gate_posts_its_posture_on_every_route() {
-    let rig = Rig::open("gate").await;
-    for (method, uri, body) in routes(&rig.user_id) {
-        let (status, payload) = call(rig.app(None), method, &uri, body.clone()).await;
-        assert_eq!(status, StatusCode::UNAUTHORIZED, "{method} {uri}");
-        assert_eq!(payload["error"]["code"], Value::from("UNAUTHORIZED"));
-
-        let (status, payload) = call(rig.user_app(), method, &uri, body.clone()).await;
-        assert_eq!(status, StatusCode::FORBIDDEN, "{method} {uri}");
-        assert_eq!(payload["error"]["code"], Value::from("FORBIDDEN"));
-
-        let (status, _) = call(rig.admin_app(), method, &uri, body).await;
-        assert!(
-            !status.is_server_error()
-                && status != StatusCode::UNAUTHORIZED
-                && status != StatusCode::FORBIDDEN,
-            "{method} {uri} admits the admin, got {status}"
-        );
-    }
-}
-
-/// Any signed-in user reads system health (every user sees the header dot),
-/// in v2's wire shape, once a run of provider failures marks a service.
-#[tokio::test]
-async fn system_health_lists_degraded_services_for_any_user() {
-    let rig = Rig::open("system-health").await;
-    let (status, payload) = call(rig.user_app(), "GET", "/api/v3/system/health", None).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(payload, json!({"degraded": []}));
-
-    let now = std::time::Instant::now();
-    for _ in 0..5 {
-        rig.admin.providers.health.record_failure("lastfm", now);
-    }
-    let (status, payload) = call(rig.user_app(), "GET", "/api/v3/system/health", None).await;
-    assert_eq!(status, StatusCode::OK);
-    let entry = &payload["degraded"][0];
-    assert_eq!(entry["service"], "lastfm");
-    assert_eq!(entry["capability"], "music data");
-    assert_eq!(entry["severity"], "degraded");
-    assert_eq!(entry["fallback"], Value::Null);
-    assert!(entry["message"].as_str().is_some_and(|m| !m.is_empty()));
-    assert!(entry["degraded_seconds"].is_u64());
-}
-
 /// A failed checkpoint pass reaches the admin as a fixed code, never as
 /// failure text that could carry a path.
 #[tokio::test]
@@ -244,105 +171,6 @@ async fn queue_stats_reports_a_failed_checkpoint_as_a_code() {
         !payload.to_string().contains(&*dir.to_string_lossy()),
         "{payload}"
     );
-}
-
-#[tokio::test]
-async fn cache_clear_provider_data_then_all() {
-    let rig = Rig::open("cache-clear").await;
-    let minute = Duration::from_secs(60);
-    rig.cache.set_bytes(
-        &CacheKey::new(Source::MusicBrainz, &["ns", "artist", "x"]),
-        vec![1],
-        minute,
-    );
-    rig.cache.set_bytes(
-        &CacheKey::new(Source::LastFm, &["page_recent", "molly", "10"]).personal(),
-        vec![2],
-        minute,
-    );
-    // Puts are queued: a waited delete commits after them.
-    rig.cache.forget(&[]).await;
-    let (status, body) = call(rig.admin_app(), "GET", "/api/v3/admin/cache/stats", None).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["entries"], Value::from(2), "{body}");
-    assert_eq!(body["provider_data_on"], Value::from(true));
-
-    let (status, body) = call(
-        rig.admin_app(),
-        "POST",
-        "/api/v3/admin/cache/clear",
-        Some(json!({"scope": "provider_data"})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["cleared_entries"], Value::from(2));
-    assert_eq!(body["remaining_entries"], Value::from(0));
-
-    let (status, _) = call(
-        rig.admin_app(),
-        "POST",
-        "/api/v3/admin/cache/clear",
-        Some(json!({"scope": "source", "source": "musicbrainz"})),
-    )
-    .await;
-    assert_eq!(
-        status,
-        StatusCode::BAD_REQUEST,
-        "per-source clears are gone"
-    );
-
-    let (status, body) = call(
-        rig.admin_app(),
-        "POST",
-        "/api/v3/admin/cache/clear",
-        Some(json!({})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["cleared_entries"], Value::from(0));
-}
-
-/// Phases that never finish, holding a run open for the 409 brief.
-#[derive(Clone)]
-struct HangWork;
-
-impl droppedneedle_kernel::jobs::precache::PrecacheWork for HangWork {
-    fn run(
-        &self,
-        _progress: droppedneedle_kernel::jobs::precache::Progress,
-    ) -> droppedneedle_kernel::jobs::BoxFuture<'_, Result<(), String>> {
-        Box::pin(async { std::future::pending().await })
-    }
-}
-
-#[tokio::test]
-async fn precache_second_run_is_409_while_live() {
-    let rig = Rig::open("precache-busy").await;
-    // Hold the run's name directly on the supervisor: the route must see it.
-    let _held = droppedneedle_kernel::jobs::precache::spawn_run(
-        rig.jobs.supervisor(),
-        HangWork,
-        droppedneedle_kernel::jobs::precache::PrecacheLimits::new(
-            Duration::from_secs(60),
-            Duration::from_secs(600),
-        ),
-        |_| {},
-    )
-    .expect("held run starts");
-    let (status, body) = call(rig.admin_app(), "POST", "/api/v3/admin/precache/run", None).await;
-    assert_eq!(status, StatusCode::CONFLICT, "{body}");
-    assert_eq!(body["error"]["code"], Value::from("CONFLICT"));
-
-    // Once the live run ends, the route starts again.
-    rig.jobs
-        .supervisor()
-        .cancel(
-            droppedneedle_kernel::jobs::precache::JOB_NAME,
-            Duration::from_secs(5),
-        )
-        .await;
-    let (status, _) = call(rig.admin_app(), "POST", "/api/v3/admin/precache/run", None).await;
-    assert_eq!(status, StatusCode::ACCEPTED);
 }
 
 const ALPHA: &str = "aaaaaaaa-0000-4000-8000-000000000001";
@@ -472,6 +300,8 @@ impl droppedneedle_kernel::jobs::precache_phases::PrecacheSources for ScriptedLi
         album: &'a droppedneedle_kernel::jobs::precache_phases::LibraryAlbum,
     ) -> droppedneedle_kernel::jobs::BoxFuture<'a, ()> {
         Box::pin(async move {
+            // Recorded once the run is in its albums phase, before the gate.
+            self.record(format!("album-waiting:{}", album.release_group_mbid));
             let _permit = self.album_gate.acquire().await;
             self.record(format!("album:{}", album.release_group_mbid));
         })
@@ -534,53 +364,82 @@ async fn a_burst_of_scans_starts_one_image_refresh() {
     tokio::time::resume();
 }
 
-/// Poll the status route until `done` holds.
-async fn wait_for_status(rig: &Rig, done: impl Fn(&Value) -> bool) -> Value {
-    for _ in 0..500 {
-        let (status, body) = call(rig.user_app(), "GET", "/api/v3/cache/sync/status", None).await;
-        assert_eq!(status, StatusCode::OK, "{body}");
-        if done(&body) {
-            return body;
+/// The refresh status as any signed-in user reads it.
+async fn refresh_status(rig: &Rig) -> Value {
+    let (status, body) = call(rig.user_app(), "GET", "/api/v3/cache/sync/status", None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    body
+}
+
+/// Wait until a run's `cache.sync` frames go live and then idle again.
+/// Frames replayed from before the run are passed over until a live one.
+async fn run_ended(frames: &mut Subscription) {
+    let mut live = false;
+    while let Some(frame) = frames.next().await {
+        if frame.name() != "cache.sync" {
+            continue;
         }
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        let progress: Value = serde_json::from_str(frame.data()).expect("frame decodes");
+        if progress["is_syncing"] == true {
+            live = true;
+        } else if live {
+            return;
+        }
     }
-    panic!("the refresh status never got there");
+    panic!("the event hub closed before the run ended");
 }
 
 /// The library image refresh end to end through its routes: progress any
-/// user can read, a curator-only cancel that leaves the status idle, and a
-/// rerun that walks every phase, discovery as the admin who started it.
+/// user can read, one run at a time, a curator-only cancel that leaves the
+/// status idle and frees the job name, and a rerun that walks every phase,
+/// discovery as the admin who started it.
 #[tokio::test]
-async fn library_image_refresh_reports_progress_and_cancels() {
+async fn library_image_refresh_runs_once_reports_and_cancels() {
     let library = Arc::new(ScriptedLibrary {
         calls: std::sync::Mutex::new(Vec::new()),
         recorded: tokio::sync::Notify::new(),
         album_gate: tokio::sync::Semaphore::new(0),
     });
     let rig = Rig::open_with("image-refresh", library.clone()).await;
-    let idle = wait_for_status(&rig, |_| true).await;
+    let idle = refresh_status(&rig).await;
     assert_eq!(idle["is_syncing"], Value::Bool(false));
 
     let (status, _) = call(rig.admin_app(), "POST", "/api/v3/admin/precache/run", None).await;
     assert_eq!(status, StatusCode::ACCEPTED);
-    let live = wait_for_status(&rig, |body| body["phase"] == "albums").await;
+    tokio::time::timeout(
+        Duration::from_secs(30),
+        library.wait_called(&format!("album-waiting:{FIRST}")),
+    )
+    .await
+    .expect("the run reaches its albums phase");
+    let live = refresh_status(&rig).await;
+    assert_eq!(live["phase"], "albums", "{live}");
     assert_eq!(live["is_syncing"], Value::Bool(true));
     assert_eq!(live["processed_artists"], Value::from(2));
     assert_eq!(live["total_albums"], Value::from(1));
     assert!(library.called(&format!("artist:{BETA}")));
     assert!(library.called(&format!("discovery:{}:{ALPHA}", rig.admin_id)));
 
+    let (status, body) = call(rig.admin_app(), "POST", "/api/v3/admin/precache/run", None).await;
+    assert_eq!(
+        status,
+        StatusCode::CONFLICT,
+        "a second run while one is live: {body}"
+    );
+    assert_eq!(body["error"]["code"], Value::from("CONFLICT"));
+
     let (status, _) = call(rig.user_app(), "POST", "/api/v3/cache/sync/cancel", None).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
     let (status, body) = call(rig.admin_app(), "POST", "/api/v3/cache/sync/cancel", None).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["status"], Value::from("cancelled"));
-    let stopped = wait_for_status(&rig, |_| true).await;
+    let stopped = refresh_status(&rig).await;
     assert_eq!(stopped["is_syncing"], Value::Bool(false));
     assert_eq!(stopped["error_message"], Value::Null);
     assert!(!library.called(&format!("album:{FIRST}")));
 
     library.album_gate.add_permits(8);
+    let mut frames = rig.events.subscribe(&rig.admin_id);
     let (status, _) = call(rig.admin_app(), "POST", "/api/v3/admin/precache/run", None).await;
     assert_eq!(
         status,
@@ -593,7 +452,11 @@ async fn library_image_refresh_reports_progress_and_cancels() {
     )
     .await
     .expect("the run reaches the album's AudioDB warm");
-    let done = wait_for_status(&rig, |body| body["is_syncing"] == false).await;
+    tokio::time::timeout(Duration::from_secs(30), run_ended(&mut frames))
+        .await
+        .expect("the rerun ends");
+    let done = refresh_status(&rig).await;
+    assert_eq!(done["is_syncing"], Value::Bool(false));
     assert_eq!(done["error_message"], Value::Null);
     assert!(library.called(&format!("album:{FIRST}")));
     assert!(
@@ -602,8 +465,12 @@ async fn library_image_refresh_reports_progress_and_cancels() {
     );
 }
 
+/// A user's quota override over one rig: set and cleared durably,
+/// out-of-bounds values refused by field, curators shown exempt, a user
+/// missing from this database answered 404, and stored rows reloaded into
+/// the ledger.
 #[tokio::test]
-async fn quota_round_trip_set_and_clear() {
+async fn quota_overrides_save_validate_and_reload() {
     let rig = Rig::open("quota").await;
 
     let uri = format!("/api/v3/admin/users/{}/quota", rig.user_id);
@@ -651,13 +518,8 @@ async fn quota_round_trip_set_and_clear() {
         "SELECT user_id FROM user_quotas WHERE user_id = ?1",
         rusqlite::params![&rig.user_id],
     );
-    assert_eq!(stored, None);
-}
+    assert_eq!(stored, None, "all-null clears the row");
 
-#[tokio::test]
-async fn quota_rejects_out_of_bounds_overrides() {
-    let rig = Rig::open("quota-bounds").await;
-    let uri = format!("/api/v3/admin/users/{}/quota", rig.user_id);
     for (body, field) in [
         (json!({"request_quota_days": 0}), "request_quota_days"),
         (
@@ -667,8 +529,12 @@ async fn quota_rejects_out_of_bounds_overrides() {
         (json!({"storage_quota_gb": 1_000_001}), "storage_quota_gb"),
     ] {
         let (status, payload) = call(rig.admin_app(), "PUT", &uri, Some(body)).await;
-        assert_eq!(status, StatusCode::BAD_REQUEST, "{payload}");
-        assert_eq!(payload["error"]["code"], Value::from("INVALID_INPUT"));
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{field}: {payload}");
+        assert_eq!(
+            payload["error"]["code"],
+            Value::from("INVALID_INPUT"),
+            "{field}"
+        );
         assert!(
             payload["error"]["message"]
                 .as_str()
@@ -676,6 +542,62 @@ async fn quota_rejects_out_of_bounds_overrides() {
             "{payload}"
         );
     }
+
+    let trusted = rig.rig.seed_user("terry", Role::Trusted).await;
+    for (user_id, exempt) in [
+        (&rig.admin_id, true),
+        (&trusted.id, true),
+        (&rig.user_id, false),
+    ] {
+        let user_id = user_id.clone();
+        let uri = format!("/api/v3/admin/users/{user_id}/quota");
+        let (status, body) = call(rig.admin_app(), "GET", &uri, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["exempt"], Value::from(exempt), "exempt {user_id}");
+    }
+
+    // A user the user store knows but whose row is not in this database is
+    // refused by the foreign key.
+    let elsewhere = AuthRig::new("quota-unmirrored-users").await;
+    let user = elsewhere.seed_user("ursula", Role::User).await;
+    let admin = AdminSetup {
+        users: elsewhere.deps.clone(),
+        ..rig.admin.clone()
+    };
+    let app = with_test_principal(
+        droppedneedle::admin::routes()
+            .with_state(admin)
+            .into_router(),
+        test_principal(&rig.admin_id, Role::Admin, "sess-1", SessionKind::Standard),
+    );
+    let unmirrored = format!("/api/v3/admin/users/{}/quota", user.id);
+    let (status, body) = call(
+        app,
+        "PUT",
+        &unmirrored,
+        Some(json!({"request_quota_count": 3})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "unmirrored user: {body}");
+    assert_eq!(body["error"]["code"], Value::from("NOT_FOUND"));
+
+    lane_seed(
+        &rig,
+        "INSERT INTO user_quotas
+             (user_id, request_quota_count, request_quota_days, storage_quota_gb)
+         VALUES (?1, 12, 30, 9)",
+        &[&rig.user_id],
+    )
+    .await;
+    let loaded = rig.quota.reload_overrides().await.expect("reload runs");
+    assert_eq!(loaded, 1);
+    let effective = rig
+        .quota
+        .effective_quota(&rig.user_id)
+        .expect("effective reads");
+    assert_eq!(effective.request_count, 12);
+    assert_eq!(effective.request_days, 30);
+    assert_eq!(effective.storage_gb, 9);
 }
 
 #[tokio::test]
@@ -763,68 +685,6 @@ async fn quota_usage_counts_asks_and_bytes() {
     // Storage is the figure the quota enforces: the user's downloaded files
     // still in the library, not the size a download task recorded.
     assert_eq!(body["storage_bytes"], Value::from(4096));
-}
-
-#[tokio::test]
-async fn quota_marks_curators_exempt() {
-    let rig = Rig::open("quota-exempt").await;
-    let trusted = rig.rig.seed_user("terry", Role::Trusted).await;
-    for (user_id, exempt) in [
-        (&rig.admin_id, true),
-        (&trusted.id, true),
-        (&rig.user_id, false),
-    ] {
-        let user_id = user_id.clone();
-        let uri = format!("/api/v3/admin/users/{user_id}/quota");
-        let (status, body) = call(rig.admin_app(), "GET", &uri, None).await;
-        assert_eq!(status, StatusCode::OK, "{body}");
-        assert_eq!(body["exempt"], Value::from(exempt), "{user_id}");
-    }
-}
-
-/// An override for a user the user store knows but whose row is not in
-/// this database is refused by the foreign key and answers 404.
-#[tokio::test]
-async fn quota_override_for_an_unmirrored_user_is_not_found() {
-    let rig = Rig::open("quota-unmirrored").await;
-    let elsewhere = AuthRig::new("quota-unmirrored-users").await;
-    let user = elsewhere.seed_user("ursula", Role::User).await;
-    let admin = AdminSetup {
-        users: elsewhere.deps.clone(),
-        ..rig.admin.clone()
-    };
-    let app = with_test_principal(
-        droppedneedle::admin::routes()
-            .with_state(admin)
-            .into_router(),
-        test_principal(&rig.admin_id, Role::Admin, "sess-1", SessionKind::Standard),
-    );
-    let uri = format!("/api/v3/admin/users/{}/quota", user.id);
-    let (status, body) = call(app, "PUT", &uri, Some(json!({"request_quota_count": 3}))).await;
-    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
-    assert_eq!(body["error"]["code"], Value::from("NOT_FOUND"));
-}
-
-#[tokio::test]
-async fn quota_overrides_reload_into_the_ledger() {
-    let rig = Rig::open("quota-reload").await;
-    lane_seed(
-        &rig,
-        "INSERT INTO user_quotas
-             (user_id, request_quota_count, request_quota_days, storage_quota_gb)
-         VALUES (?1, 12, 30, 9)",
-        &[&rig.user_id],
-    )
-    .await;
-    let loaded = rig.quota.reload_overrides().await.expect("reload runs");
-    assert_eq!(loaded, 1);
-    let effective = rig
-        .quota
-        .effective_quota(&rig.user_id)
-        .expect("effective reads");
-    assert_eq!(effective.request_count, 12);
-    assert_eq!(effective.request_days, 30);
-    assert_eq!(effective.storage_gb, 9);
 }
 
 /// One INSERT through the writer lane: the pool is read-only by design, so

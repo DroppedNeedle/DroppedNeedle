@@ -185,39 +185,42 @@ mod tests {
         }
     }
 
+    /// A link as the database file or as a folder above it is refused; a
+    /// real path and a file not there yet pass.
     #[test]
-    fn symlink_paths_are_refused() {
+    fn links_on_the_database_path_are_refused() {
         let dir = std::env::temp_dir().join(format!("db-fs-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let real = dir.join("real");
+        std::fs::create_dir_all(&real).unwrap();
         let target = dir.join("library.db");
         std::fs::write(&target, b"x").unwrap();
         let link = dir.join("link.db");
-        #[cfg(unix)]
-        std::os::unix::fs::symlink(&target, &link).unwrap();
-        assert!(matches!(
-            reject_symlink(&link),
-            Err(DbError::SymlinkRefused { .. })
-        ));
-        assert!(reject_symlink(&target).is_ok());
-        assert!(reject_symlink(&dir.join("missing.db")).is_ok());
-        std::fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn symlinked_parent_directories_are_refused() {
-        let dir = std::env::temp_dir().join(format!("db-fs-parent-{}", std::process::id()));
-        let real = dir.join("real");
-        std::fs::create_dir_all(&real).unwrap();
         let link_dir = dir.join("linked");
         #[cfg(unix)]
-        std::os::unix::fs::symlink(&real, &link_dir).unwrap();
-        let nested = link_dir.join("library.db");
-        #[cfg(unix)]
-        assert!(matches!(
-            reject_symlink(&nested),
-            Err(DbError::SymlinkRefused { .. })
-        ));
-        assert!(reject_symlink(&real.join("library.db")).is_ok());
+        {
+            std::os::unix::fs::symlink(&target, &link).unwrap();
+            std::os::unix::fs::symlink(&real, &link_dir).unwrap();
+            assert!(
+                matches!(reject_symlink(&link), Err(DbError::SymlinkRefused { .. })),
+                "a link as the file"
+            );
+            assert!(
+                matches!(
+                    reject_symlink(&link_dir.join("library.db")),
+                    Err(DbError::SymlinkRefused { .. })
+                ),
+                "a link as a parent folder"
+            );
+        }
+        assert!(reject_symlink(&target).is_ok(), "a real file");
+        assert!(
+            reject_symlink(&real.join("library.db")).is_ok(),
+            "a real parent folder"
+        );
+        assert!(
+            reject_symlink(&dir.join("missing.db")).is_ok(),
+            "a missing file"
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

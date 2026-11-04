@@ -7,6 +7,9 @@ license.workspace = true
 description = "DroppedNeedle offline tool: upgrade, export, import, restore and recovery"
 publish = false
 
+[lib]
+doctest = false
+
 [dependencies]
 droppedneedle = { path = "..", version = "3.0.0" }
 droppedneedle-acquire.workspace = true

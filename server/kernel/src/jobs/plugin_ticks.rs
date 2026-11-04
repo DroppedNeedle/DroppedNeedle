@@ -473,29 +473,28 @@ mod tests {
         );
     }
 
+    /// State keys name files a plugin writes: v2's shapes pass, anything
+    /// that could leave the plugin's folder or is too long is refused.
     #[test]
-    fn state_keys_accept_v2_shapes() {
-        for key in ["cache/seen", "a", "x-1_y/2", "tick-toy"] {
-            assert!(validate_state_key(key).is_ok(), "{key}");
-        }
-    }
-
-    #[test]
-    fn state_keys_reject_unsafe_shapes() {
-        for key in [
-            "",
-            "../escape",
-            "/absolute",
-            "UPPER",
-            "trailing/",
-            "a//b",
-            "a/./b",
-            "with space",
-            "sneaky/../../x",
-        ] {
-            assert!(validate_state_key(key).is_err(), "{key}");
-        }
+    fn state_keys_accept_only_safe_shapes() {
         let long = "a".repeat(STATE_KEY_MAX_LEN + 1);
-        assert!(validate_state_key(&long).is_err());
+        for (key, ok) in [
+            ("cache/seen", true),
+            ("a", true),
+            ("x-1_y/2", true),
+            ("tick-toy", true),
+            ("", false),
+            ("../escape", false),
+            ("/absolute", false),
+            ("UPPER", false),
+            ("trailing/", false),
+            ("a//b", false),
+            ("a/./b", false),
+            ("with space", false),
+            ("sneaky/../../x", false),
+            (long.as_str(), false),
+        ] {
+            assert_eq!(validate_state_key(key).is_ok(), ok, "{key}");
+        }
     }
 }

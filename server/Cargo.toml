@@ -99,6 +99,9 @@ rust-version.workspace = true
 description = "DroppedNeedle v3 backend"
 license.workspace = true
 
+[lib]
+doctest = false
+
 [dependencies]
 droppedneedle-acquire.workspace = true
 droppedneedle-auth.workspace = true

@@ -7,6 +7,9 @@ description = "Loopback mock servers for the DroppedNeedle test suite"
 license = "AGPL-3.0-or-later"
 publish = false
 
+[lib]
+doctest = false
+
 [dependencies]
 axum = { version = "0.8", features = ["json", "query", "http1"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }

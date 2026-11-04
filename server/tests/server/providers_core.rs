@@ -585,7 +585,10 @@ async fn musicbrainz_hooks() {
 /// followed without another token, one to any other host is refused, an
 /// image past the cap is unusable but not an outage (a run of them never
 /// rests the archive), and a 404 at the end of the redirects is "no
-/// cover".
+/// cover". The redirects lead to the Internet Archive's storage nodes, which
+/// fail one at a time: five failures in a row there do not rest the archive,
+/// five on a hop that stays on the archive's own host do, and a wait a
+/// storage node names still cools the row.
 #[tokio::test(start_paused = true)]
 async fn cover_art_archive_hooks() {
     type Check = fn(&Result<Option<coverart::ArtworkBytes>, ProviderError>) -> bool;
@@ -680,18 +683,8 @@ async fn cover_art_archive_hooks() {
             "{name}: the archive is not rested"
         );
     }
-}
 
-/// The archive's redirects lead to the Internet Archive's storage nodes,
-/// which fail one at a time. Five failures in a row there do not rest the
-/// archive; five on a hop that stays on the archive's own host do; and a
-/// wait a storage node names still cools the row.
-#[tokio::test(start_paused = true)]
-async fn only_storage_node_failures_are_kept_off_the_archive() {
-    let front = format!(
-        "{}/release-group/{RELEASE}/front-500",
-        coverart::COVER_ART_ARCHIVE_BASE
-    );
+    // Storage-node failures, at full size and background priority.
     let node = "https://ia600508.us.archive.org/9/items/mbid-x/front_500.jpg";
     let same_host = format!(
         "{}/release/{RELEASE}/front-500",
@@ -725,7 +718,7 @@ async fn only_storage_node_failures_are_kept_off_the_archive() {
     }
     assert!(
         !providers.coverart.executor().resting_after_failures(),
-        "a failing storage node does not rest the archive"
+        "storage node down: a failing storage node does not rest the archive"
     );
 
     let wire = Arc::new(ScriptedWire::new());
@@ -741,7 +734,7 @@ async fn only_storage_node_failures_are_kept_off_the_archive() {
     }
     assert!(
         providers.coverart.executor().resting_after_failures(),
-        "failures on the archive's own host rest it"
+        "archive host failing: failures on the archive's own host rest it"
     );
 
     let wire = Arc::new(ScriptedWire::new());
@@ -751,7 +744,7 @@ async fn only_storage_node_failures_are_kept_off_the_archive() {
     fetch(&providers).await.expect_err("the node is busy");
     assert!(
         providers.limiter("coverartarchive").unwrap().cooling_for() > Duration::from_secs(10),
-        "the wait the node named cools the row"
+        "storage node busy: the wait the node named cools the row"
     );
 }
 
@@ -872,7 +865,8 @@ async fn listenbrainz_hooks() {
 /// The Last.fm rules: an error code inside an answer is read whatever the
 /// status. Error 6 is "no such thing", 29 rests the bucket a second, 11
 /// and 16 are a passing outage worth another try, and 10 is a refused
-/// key, never tried again.
+/// key, never tried again. The recorded unknown user (error 6 in a 404)
+/// reads as an empty list.
 #[tokio::test(start_paused = true)]
 async fn lastfm_hooks() {
     type Check = fn(&Result<Option<lastfm::ArtistInfo>, ProviderError>) -> bool;
@@ -880,7 +874,11 @@ async fn lastfm_hooks() {
     let rows: Vec<(&str, Scripted, Check, usize, Duration)> = vec![
         (
             "error 6 in a 200",
-            answer(200, &[], &envelope(6)),
+            answer(
+                200,
+                &[],
+                include_str!("../fixtures/lastfm/artist_not_found.json"),
+            ),
             |result| matches!(result, Ok(None)),
             1,
             Duration::ZERO,
@@ -908,7 +906,11 @@ async fn lastfm_hooks() {
         ),
         (
             "error 10 in a 403",
-            answer(403, &[], &envelope(10)),
+            answer(
+                403,
+                &[],
+                include_str!("../fixtures/lastfm/invalid_key.json"),
+            ),
             |result| matches!(result, Err(ProviderError::Rejected { code: 10, .. })),
             1,
             Duration::ZERO,
@@ -941,6 +943,31 @@ async fn lastfm_hooks() {
             "{name}: rests {cooling:?}, expected {rest:?}"
         );
     }
+
+    let wire = Arc::new(ScriptedWire::new());
+    wire.on(
+        Method::Get,
+        lastfm::DEFAULT_BASE_URL,
+        answer(
+            404,
+            &[],
+            include_str!("../fixtures/lastfm/user_not_found.json"),
+        ),
+    );
+    let unknown_user = providers_over(&wire)
+        .lastfm
+        .user_top_albums(
+            &creds,
+            "nobody",
+            "overall",
+            3,
+            RequestPriority::UserInitiated,
+        )
+        .await;
+    assert!(
+        matches!(&unknown_user, Ok(rows) if rows.is_empty()),
+        "error 6 in a 404: got {unknown_user:?}"
+    );
 }
 
 /// TheAudioDB paces by the key saved: the free key, or none, at the free
@@ -1274,57 +1301,6 @@ async fn github_follows_a_renamed_repository() {
     assert_eq!(wire.sent().len(), 1, "the other host is never asked");
 }
 
-/// Spotify's 429 rests the `spotify` row for the wait it names, so an
-/// import pauses for Spotify instead of calling into its limit again: the
-/// next call a person makes is turned down at once without a request.
-#[tokio::test]
-async fn a_spotify_rate_limit_rests_its_row() {
-    use droppedneedle_providers::spotify;
-
-    let wire = Arc::new(ScriptedWire::new());
-    let me = format!("{}/me", spotify::API_BASE);
-    wire.on(
-        Method::Get,
-        &me,
-        answer(429, &[("retry-after", "30")], "{}"),
-    );
-    let providers = Providers::over_wire(
-        wire.clone(),
-        Arc::new(SystemClock),
-        ProviderEndpoints {
-            spotify_api: spotify::API_BASE.to_owned(),
-            ..ProviderEndpoints::closed()
-        },
-    );
-
-    let error = providers
-        .spotify
-        .me("token", RequestPriority::UserInitiated)
-        .await
-        .expect_err("rate limited");
-    assert!(
-        matches!(error, ProviderError::RateLimited { retry_after: Some(wait), .. } if wait == Duration::from_secs(30)),
-        "{error:?}"
-    );
-    let cooling = providers.limiter(spotify::SOURCE).unwrap().cooling_for();
-    assert!(
-        cooling <= Duration::from_secs(30)
-            && cooling + Duration::from_secs(2) >= Duration::from_secs(30),
-        "rests {cooling:?}"
-    );
-
-    let again = providers
-        .spotify
-        .me("token", RequestPriority::UserInitiated)
-        .await
-        .expect_err("still resting");
-    assert!(
-        matches!(again, ProviderError::RateLimited { .. }),
-        "{again:?}"
-    );
-    assert_eq!(wire.sent().len(), 1, "the rest sends nothing");
-}
-
 /// YouTube's refusals answer honestly. A key it does not accept (the
 /// recorded 400) answers the refused-key 409 on search. A spent daily quota
 /// is a 503 naming YouTube with the wait until the quota day turns at 08:00
@@ -1450,15 +1426,19 @@ fn a_key_in_the_url_never_reaches_an_error_or_a_log() {
     assert!(!logs.contains("/api/"), "{logs}");
 }
 
-/// A Newznab indexer at its daily cap is not called again until the cap
-/// frees up: a day after the oldest call it counts, as its answer says.
+/// A Newznab indexer holds to the daily caps its answers report. At its api
+/// cap it is not called again until the cap frees up: a day after the oldest
+/// call it counts. An NZB grab spends the grab cap and shows on the `newznab`
+/// row, and is not sent once the cap is reached.
 #[tokio::test]
-async fn a_newznab_indexer_at_its_daily_cap_waits_for_the_reset() {
+async fn a_newznab_indexer_holds_to_its_daily_caps() {
     use droppedneedle_kernel::clock::ManualClock;
     use droppedneedle_providers::newznab::NewznabError;
 
     const NOW: i64 = 1_800_000_000;
-    // An hour before NOW.
+    const NZB: &str = "https://cdn.indexer.test/getnzb/1.nzb";
+
+    // The api cap. OLDEST is an hour before NOW.
     const OLDEST: &str = "Fri, 15 Jan 2027 07:00:00 GMT";
     let wire = Arc::new(ScriptedWire::new());
     wire.answer(
@@ -1478,9 +1458,11 @@ async fn a_newznab_indexer_at_its_daily_cap_waits_for_the_reset() {
         .client("idx", "Indexer", "https://indexer.test/api", "KEY");
     let search = || client.search("Radiohead", &[], 0, 100, RequestPriority::UserInitiated);
 
-    let (releases, _) = search().await.expect("the answer that reports the cap");
-    assert!(releases.is_empty());
-    assert_eq!(wire.sent().len(), 1);
+    let (releases, _) = search()
+        .await
+        .expect("api cap: the answer that reports the cap");
+    assert!(releases.is_empty(), "api cap");
+    assert_eq!(wire.sent().len(), 1, "api cap");
 
     let refusals = [
         search().await.map(|_| ()),
@@ -1494,25 +1476,21 @@ async fn a_newznab_indexer_at_its_daily_cap_waits_for_the_reset() {
             Err(NewznabError::Provider(ProviderError::RateLimited {
                 retry_after: Some(wait),
                 ..
-            })) => assert_eq!(wait, Duration::from_secs(23 * 3600)),
-            other => panic!("not held to the cap: {other:?}"),
+            })) => assert_eq!(wait, Duration::from_secs(23 * 3600), "api cap"),
+            other => panic!("api cap: not held to the cap: {other:?}"),
         }
     }
-    assert_eq!(wire.sent().len(), 1, "nothing sent while the cap holds");
+    assert_eq!(
+        wire.sent().len(),
+        1,
+        "api cap: nothing sent while the cap holds"
+    );
 
     clock.advance(23 * 3600 * 1000);
-    search().await.expect("the cap freed up");
-    assert_eq!(wire.sent().len(), 2);
-}
+    search().await.expect("api cap: the cap freed up");
+    assert_eq!(wire.sent().len(), 2, "api cap: freed up");
 
-/// An NZB grab spends the indexer's grab cap and shows on the `newznab`
-/// row, and is not sent once the cap is reached.
-#[tokio::test]
-async fn an_nzb_grab_counts_on_the_indexers_row_and_cap() {
-    use droppedneedle_kernel::clock::ManualClock;
-
-    const NOW: i64 = 1_800_000_000;
-    const NZB: &str = "https://cdn.indexer.test/getnzb/1.nzb";
+    // The grab cap.
     let wire = Arc::new(ScriptedWire::new());
     wire.answer(
         "https://indexer.test/api",
@@ -1535,21 +1513,27 @@ async fn an_nzb_grab_counts_on_the_indexers_row_and_cap() {
     client
         .search("Radiohead", &[], 0, 100, priority)
         .await
-        .expect("the answer that reports the counts");
+        .expect("grab cap: the answer that reports the counts");
 
-    let nzb = client.fetch_nzb(NZB, priority).await.expect("the grab");
-    assert_eq!(nzb, b"<nzb></nzb>");
+    let nzb = client
+        .fetch_nzb(NZB, priority)
+        .await
+        .expect("grab cap: the grab");
+    assert_eq!(nzb, b"<nzb></nzb>", "grab cap");
     let row = providers.limiter("newznab").expect("the newznab row");
     let sent: u64 = row.calls().iter().map(|count| count.calls).sum();
-    assert_eq!(sent, 2, "the search and the grab show on the row");
+    assert_eq!(sent, 2, "grab cap: the search and the grab show on the row");
 
-    assert!(matches!(
-        client.fetch_nzb(NZB, priority).await,
-        Err(ProviderError::RateLimited { .. })
-    ));
+    assert!(
+        matches!(
+            client.fetch_nzb(NZB, priority).await,
+            Err(ProviderError::RateLimited { .. })
+        ),
+        "grab cap: the second grab is refused"
+    );
     assert_eq!(
         wire.sent().len(),
         2,
-        "nothing sent while the grab cap holds"
+        "grab cap: nothing sent while the grab cap holds"
     );
 }

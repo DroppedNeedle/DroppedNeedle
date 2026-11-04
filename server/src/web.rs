@@ -566,8 +566,10 @@ mod tests {
         ScratchDir::new(&format!("web-{name}")).unwrap()
     }
 
+    /// `prepare` stamps the base into a fresh copy and drops stale
+    /// variants, or refuses a build it cannot stamp.
     #[test]
-    fn prepare_stamps_the_base_and_drops_stale_variants() {
+    fn prepare_stamps_the_base_or_refuses() {
         let dir = scratch("stamp");
         let template = build(&dir);
         let served = dir.join("cache/static");
@@ -594,10 +596,7 @@ mod tests {
             .map(|entry| entry.unwrap().file_name())
             .collect();
         assert_eq!(leftovers, vec![std::ffi::OsString::from("static")]);
-    }
 
-    #[test]
-    fn prepare_refuses_builds_it_cannot_stamp() {
         let dir = scratch("refuse");
         let template = build(&dir);
         std::fs::write(template.join("logo.png"), BASE_PATH_PLACEHOLDER).unwrap();

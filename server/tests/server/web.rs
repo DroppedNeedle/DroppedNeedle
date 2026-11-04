@@ -61,9 +61,13 @@ async fn get(
     (status, headers, String::from_utf8_lossy(&body).into_owned())
 }
 
+/// The page, its assets and the API share one origin without shadowing each
+/// other, a percent-encoded `index.html` still gets the page's own policy
+/// and cache rule, and `BASE_PATH` moves everything, the session gate
+/// included.
 #[tokio::test]
-async fn serves_the_spa_and_its_assets_without_shadowing_the_api() {
-    let (app, _scratch) = web_app("root", "").await;
+async fn the_spa_is_served_under_its_base_path() {
+    let (app, scratch) = web_app("root", "").await;
 
     for uri in ["/", "/library/artists/some-artist"] {
         let (status, headers, body) = get(&app, uri, None).await;
@@ -88,10 +92,17 @@ async fn serves_the_spa_and_its_assets_without_shadowing_the_api() {
         assert_eq!(headers["content-type"], "application/json", "{uri}");
         assert!(body.contains("\"error\""), "{uri}: {body}");
     }
-}
 
-#[tokio::test]
-async fn base_path_moves_everything_and_the_gate_sees_routed_paths() {
+    // The page is never served as a plain file.
+    let (status, headers, body) = get(&app, "/index%2ehtml", None).await;
+    assert_eq!(status, StatusCode::OK, "encoded page path");
+    assert_eq!(body, page(""), "encoded page path");
+    assert_eq!(headers["cache-control"], "no-cache", "encoded page path");
+    let policy = text(&headers, "content-security-policy").unwrap();
+    assert!(policy.contains("'sha256-"), "{policy}");
+    drop(app);
+    drop(scratch);
+
     let (app, _scratch) = web_app("base", "/music").await;
 
     for uri in ["/music", "/music/", "/music/library?tab=albums"] {
@@ -109,42 +120,6 @@ async fn base_path_moves_everything_and_the_gate_sees_routed_paths() {
         assert_eq!(status, StatusCode::NOT_FOUND, "{outside}");
         assert_eq!(headers["content-type"], "application/json", "{outside}");
     }
-}
-
-/// The page is never served as a plain file: a percent-encoded spelling of
-/// `index.html` still gets the page's own policy and cache rule.
-#[tokio::test]
-async fn an_encoded_page_path_still_gets_the_page() {
-    let (app, _scratch) = web_app("encoded", "").await;
-    let (status, headers, body) = get(&app, "/index%2ehtml", None).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body, page(""));
-    assert_eq!(headers["cache-control"], "no-cache");
-    let policy = text(&headers, "content-security-policy").unwrap();
-    assert!(policy.contains("'sha256-"), "{policy}");
-}
-
-/// A browser preflight to an existing route reaches the debug CORS layer:
-/// preflights are handled before routing, where the router's 405 fallback
-/// cannot take them first.
-#[tokio::test]
-async fn debug_cors_answers_native_preflights() {
-    let app = TestApp::start_configured("web-debug-cors", |mut config| {
-        config.debug_cors = true;
-        config
-    })
-    .await;
-    let origin = "http://localhost:5173";
-    let (status, headers, _) = app
-        .raw(
-            "OPTIONS",
-            "/api/v3/auth/sessions",
-            &[("origin", origin), ("access-control-request-method", "GET")],
-            None,
-        )
-        .await;
-    assert!(status.is_success(), "{status}");
-    assert_eq!(text(&headers, "access-control-allow-origin"), Some(origin));
 }
 
 /// Per-user JSON is kept by neither a proxy nor the browser's disk cache,

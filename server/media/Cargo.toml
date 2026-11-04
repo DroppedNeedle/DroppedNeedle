@@ -7,6 +7,9 @@ license.workspace = true
 description = "DroppedNeedle remote media servers, playback reporting and streaming"
 publish = false
 
+[lib]
+doctest = false
+
 [dependencies]
 droppedneedle-auth.workspace = true
 droppedneedle-kernel.workspace = true

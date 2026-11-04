@@ -134,8 +134,11 @@ where
     }
 }
 
+/// Every example's manifest validates, and a manifest written for an older
+/// plugin API is refused before any of its code runs, the message saying
+/// where the porting guide is.
 #[test]
-fn every_example_manifest_validates() {
+fn example_and_older_manifests_are_judged() {
     let mut names = Vec::new();
     for entry in std::fs::read_dir(repo().join("examples/plugins")).unwrap() {
         let dir = entry.unwrap().path();
@@ -154,12 +157,7 @@ fn every_example_manifest_validates() {
             "webhook-scrobbler",
         ]
     );
-}
 
-/// A manifest written for an older plugin API is refused before any of its
-/// code runs, and the message says where the porting guide is.
-#[test]
-fn manifests_for_older_plugin_apis_are_refused() {
     for version in [0, 1] {
         let text = format!(
             "[plugin]\nname = \"old-toy\"\napi_version = {version}\n\
@@ -171,7 +169,8 @@ fn manifests_for_older_plugin_apis_are_refused() {
             format!(
                 "old-toy: written for api_version {version}; this DroppedNeedle reads \
                  api_version 2; see Porting a v2 plugin in PLUGINS.md"
-            )
+            ),
+            "api_version {version}"
         );
     }
 }

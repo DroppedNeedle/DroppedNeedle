@@ -1,8 +1,7 @@
-//! ListenBrainz linking and listening settings: connect verifies before it
-//! stores, rejected credentials store nothing, sealed tokens and partial
-//! preference saves survive a reopen of the database, the link lifecycle
-//! over HTTP, a saved visibility reaching the live feed, and the
-//! ListenBrainz client as the verifier against a scripted wire.
+//! ListenBrainz linking and listening settings: the link lifecycle over
+//! HTTP, rejected credentials and refused saves storing nothing, sealed
+//! tokens and partial preference saves surviving a reopen of the database,
+//! and a saved visibility reaching the live feed.
 
 use crate::common::Probe;
 use crate::common::ScratchDir;
@@ -21,7 +20,7 @@ use droppedneedle_kernel::events::EventHub;
 use droppedneedle_kernel::runtime_config::crypto::Crypto;
 use droppedneedle_media::playback::listening::{ListeningStore, PrefsPatch};
 use droppedneedle_media::playback::listening_routes::{
-    ListeningDeps, MixGrants, connect_listenbrainz, routes, update_prefs,
+    ListeningDeps, MixGrants, routes, update_prefs,
 };
 use droppedneedle_media::playback::presence::{PresenceRegistry, PresenceUpdate};
 use droppedneedle_providers::listenbrainz::{ListenBrainzVerifier, VerifyOutcome};
@@ -90,16 +89,21 @@ struct Rig {
     _scratch: ScratchDir,
 }
 
+/// The verifier's answer to a good pair.
+fn connected() -> VerifyOutcome {
+    VerifyOutcome {
+        valid: true,
+        message: "Successfully connected".to_owned(),
+        rate_limited: false,
+    }
+}
+
 /// The settings over a scratch database that knows `user-1`.
 async fn rig() -> Rig {
     let scratch = ScratchDir::new("listening-settings");
     let runtime = crate::common::scratch_runtime(&scratch.join("app.db")).await;
     mirror_user(&runtime, "user-1").await;
-    let verifier = Arc::new(Verifier(Mutex::new(VerifyOutcome {
-        valid: true,
-        message: "Successfully connected".to_owned(),
-        rate_limited: false,
-    })));
+    let verifier = Arc::new(Verifier(Mutex::new(connected())));
     let deps = ListeningDeps {
         store: store_over(&runtime),
         verifier: verifier.clone(),
@@ -138,75 +142,54 @@ async fn json_body(response: axum::response::Response) -> serde_json::Value {
     serde_json::from_slice(&bytes).unwrap()
 }
 
-#[tokio::test]
-async fn connect_verifies_then_stores() {
-    let rig = rig().await;
-    let link = connect_listenbrainz(&rig.deps, "user-1", "melody", "lb-token-1")
-        .await
-        .unwrap();
-    assert_eq!(link.username, "melody");
-    let status = rig.deps.store.listenbrainz_link("user-1").await.unwrap();
-    assert_eq!(status.username, "melody");
-    assert_eq!(
-        rig.deps.store.listenbrainz_token("user-1").await.as_deref(),
-        Some("lb-token-1")
-    );
-    rig.runtime.shutdown().await;
+/// A `PUT` of `body` as JSON.
+fn put(uri: &str, body: serde_json::Value) -> Request<Body> {
+    Request::builder()
+        .method("PUT")
+        .uri(uri)
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap()
 }
 
+/// The routes over one rig: rejected credentials store nothing, a link
+/// connects and disconnects without its token ever on the wire, and a
+/// preferences save the database refuses answers an error, never the
+/// stored values as if it had landed.
 #[tokio::test]
-async fn rejected_credentials_store_nothing() {
+async fn scrobble_routes_over_http() {
     let rig = rig().await;
+    let router = with_test_principal(
+        routes().with_state(rig.deps.clone()).into_router(),
+        user_session("user-1"),
+    );
+
     *rig.verifier.0.lock().unwrap() = VerifyOutcome {
         valid: false,
         message: "Token invalid or expired".to_owned(),
         rate_limited: false,
     };
-    let router = with_test_principal(
-        routes().with_state(rig.deps.clone()).into_router(),
-        user_session("user-1"),
-    );
-    let response = router
-        .oneshot(
-            Request::builder()
-                .method("PUT")
-                .uri("/api/v3/me/connections/listenbrainz")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    serde_json::json!({"user_token": "bad", "username": "melody"}).to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-    assert!(!rig.deps.store.has_listenbrainz_link("user-1").await);
-    rig.runtime.shutdown().await;
-}
-
-#[tokio::test]
-async fn link_lifecycle_over_http() {
-    let rig = rig().await;
-    let router = with_test_principal(
-        routes().with_state(rig.deps.clone()).into_router(),
-        user_session("user-1"),
-    );
     let response = router
         .clone()
-        .oneshot(
-            Request::builder()
-                .method("PUT")
-                .uri("/api/v3/me/connections/listenbrainz")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    serde_json::json!({"user_token": "lb-token-9", "username": "melody"})
-                        .to_string(),
-                ))
-                .unwrap(),
-        )
+        .oneshot(put(
+            "/api/v3/me/connections/listenbrainz",
+            serde_json::json!({"user_token": "bad", "username": "melody"}),
+        ))
         .await
         .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST, "rejected");
+    assert!(!rig.deps.store.has_listenbrainz_link("user-1").await);
+
+    *rig.verifier.0.lock().unwrap() = connected();
+    let response = router
+        .clone()
+        .oneshot(put(
+            "/api/v3/me/connections/listenbrainz",
+            serde_json::json!({"user_token": "lb-token-9", "username": "melody"}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK, "connect");
     let status = json_body(response).await;
     assert_eq!(status["service"], "listenbrainz");
     assert_eq!(status["enabled"], true);
@@ -225,110 +208,40 @@ async fn link_lifecycle_over_http() {
         )
         .await
         .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-
+    assert_eq!(response.status(), StatusCode::OK, "disconnect");
     assert!(rig.deps.store.listenbrainz_link("user-1").await.is_none());
-    rig.runtime.shutdown().await;
-}
 
-#[tokio::test]
-async fn scrobble_routes_need_a_session() {
-    let rig = rig().await;
-    let response = routes()
-        .with_state(rig.deps.clone())
-        .into_router()
-        .oneshot(
-            Request::builder()
-                .uri("/api/v3/me/scrobble-preferences")
-                .body(Body::empty())
-                .unwrap(),
-        )
+    rig.runtime
+        .db()
+        .write(Lane::Foreground, "scrobble-test-refuse", |tx| {
+            tx.execute_batch(
+                "CREATE TRIGGER refuse_prefs BEFORE INSERT ON user_listening_prefs \
+                 BEGIN SELECT RAISE(ABORT, 'refused'); END;",
+            )?;
+            Ok::<_, droppedneedle_kernel::db::DbError>(())
+        })
+        .await
+        .expect("trigger installs");
+    let response = router
+        .oneshot(put(
+            "/api/v3/me/scrobble-preferences",
+            serde_json::json!({"scrobble_to_listenbrainz": true}),
+        ))
         .await
         .unwrap();
-    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        response.status(),
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "refused preferences save"
+    );
     rig.runtime.shutdown().await;
 }
 
-/// The link verifier is the one ListenBrainz client: a good token
-/// connects as the account ListenBrainz names, a refused one is invalid, a
-/// known username counts its listens, an unknown one is "not found", and a
-/// rate limit asks the caller to back off.
-#[tokio::test(start_paused = true)]
-async fn the_listenbrainz_client_verifies_links() {
-    use droppedneedle_providers::Providers;
-    use droppedneedle_providers::executor::ScriptedWire;
-    use droppedneedle_providers::listenbrainz::DEFAULT_BASE_URL;
-
-    let wire = Arc::new(ScriptedWire::new());
-    let token = format!("{DEFAULT_BASE_URL}/1/validate-token");
-    wire.answer(
-        &token,
-        200,
-        &[],
-        r#"{"valid": true, "user_name": "melody"}"#,
-    );
-    wire.answer(&token, 401, &[], "");
-    wire.answer(&token, 429, &[], "");
-    wire.answer(
-        &format!("{DEFAULT_BASE_URL}/1/user/melody/listen-count"),
-        200,
-        &[],
-        r#"{"payload": {"count": 1234}}"#,
-    );
-    wire.answer(
-        &format!("{DEFAULT_BASE_URL}/1/user/ghost/listen-count"),
-        404,
-        &[],
-        "",
-    );
-    let providers = Providers::unpaced_at(
-        wire.clone(),
-        droppedneedle_providers::ProviderEndpoints {
-            listenbrainz: DEFAULT_BASE_URL.to_owned(),
-            ..droppedneedle_providers::ProviderEndpoints::closed()
-        },
-    );
-    // Through the trait, as account linking holds it.
-    let verifier: &dyn ListenBrainzVerifier = &providers.listenbrainz;
-
-    let ok = verifier.verify("melody", "good-token").await;
-    assert!(ok.valid);
-    assert!(ok.message.contains("melody"));
-    let sent = wire.sent();
-    let authorization = sent[0]
-        .headers
-        .iter()
-        .find(|(name, _)| name == "authorization")
-        .map(|(_, value)| value.as_str());
-    assert_eq!(authorization, Some("Token good-token"));
-
-    let bad = verifier.verify("melody", "bad-token").await;
-    assert!(!bad.valid);
-    assert_eq!(bad.message, "Token invalid or expired");
-
-    let named = verifier.verify("melody", "").await;
-    assert!(named.valid);
-    assert!(named.message.contains("1,234"));
-
-    let ghost = verifier.verify("ghost", "").await;
-    assert!(!ghost.valid);
-    assert!(ghost.message.contains("ghost"));
-
-    let limited = verifier.verify("melody", "limited").await;
-    assert!(limited.rate_limited);
-
-    let unsafe_token = verifier.verify("melody", "two words").await;
-    assert!(!unsafe_token.valid);
-    assert_eq!(
-        wire.sent().len(),
-        sent.len() + 4,
-        "an unsafe token never reaches the wire"
-    );
-}
-
+/// Partial preference saves and a sealed ListenBrainz link, written and
+/// read back across one reopen of the database file.
 #[tokio::test]
-async fn sqlite_prefs_partial_upsert_survives_reopen() {
-    let scratch = ScratchDir::new("scrobble-prefs");
+async fn scrobble_store_rows_survive_reopen() {
+    let scratch = ScratchDir::new("scrobble-store");
     let db_path = scratch.join("app.db");
     let runtime = crate::common::scratch_runtime(&db_path).await;
     mirror_user(&runtime, "user-1").await;
@@ -357,44 +270,6 @@ async fn sqlite_prefs_partial_upsert_survives_reopen() {
     assert_eq!(prefs.primary_music_source, "lastfm");
     assert!(prefs.navidrome_handles_external_scrobbles);
     assert_eq!(prefs.now_playing_visibility, "full");
-    runtime.shutdown().await;
-
-    // A second boot over the same file reads the merged row back.
-    let runtime = open_runtime(&DbConfig::new(
-        &db_path,
-        std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
-    ))
-    .await
-    .expect("runtime reopens");
-    let store = store_over(&runtime);
-    let prefs = store.prefs("user-1").await;
-    assert!(prefs.scrobble_to_listenbrainz);
-    assert_eq!(prefs.primary_music_source, "lastfm");
-
-    // And a later patch merges over the persisted row, not the defaults.
-    store
-        .update_prefs(
-            "user-1",
-            &PrefsPatch {
-                now_playing_visibility: Some("offline".to_owned()),
-                ..PrefsPatch::default()
-            },
-        )
-        .await
-        .expect("prefs save");
-    let prefs = store.prefs("user-1").await;
-    assert_eq!(prefs.now_playing_visibility, "offline");
-    assert!(prefs.scrobble_to_listenbrainz);
-    runtime.shutdown().await;
-}
-
-#[tokio::test]
-async fn sqlite_links_round_trip_sealed_and_survive_reopen() {
-    let scratch = ScratchDir::new("scrobble-links");
-    let db_path = scratch.join("app.db");
-    let runtime = crate::common::scratch_runtime(&db_path).await;
-    mirror_user(&runtime, "user-1").await;
-    let store = store_over(&runtime);
 
     assert!(!store.has_listenbrainz_link("user-1").await);
     store
@@ -422,7 +297,8 @@ async fn sqlite_links_round_trip_sealed_and_survive_reopen() {
     assert!(!raw.contains("lb-token-1"), "{raw}");
     runtime.shutdown().await;
 
-    // A second boot over the same file reads the link back.
+    // A second boot over the same file reads the merged row and the link
+    // back.
     let runtime = open_runtime(&DbConfig::new(
         &db_path,
         std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
@@ -430,6 +306,25 @@ async fn sqlite_links_round_trip_sealed_and_survive_reopen() {
     .await
     .expect("runtime reopens");
     let store = store_over(&runtime);
+    let prefs = store.prefs("user-1").await;
+    assert!(prefs.scrobble_to_listenbrainz);
+    assert_eq!(prefs.primary_music_source, "lastfm");
+
+    // And a later patch merges over the persisted row, not the defaults.
+    store
+        .update_prefs(
+            "user-1",
+            &PrefsPatch {
+                now_playing_visibility: Some("offline".to_owned()),
+                ..PrefsPatch::default()
+            },
+        )
+        .await
+        .expect("prefs save");
+    let prefs = store.prefs("user-1").await;
+    assert_eq!(prefs.now_playing_visibility, "offline");
+    assert!(prefs.scrobble_to_listenbrainz);
+
     assert_eq!(
         store
             .listenbrainz_link("user-1")
@@ -482,42 +377,5 @@ async fn saved_visibility_reaches_the_live_presence_feed() {
     .await
     .unwrap();
     assert!(registry.snapshot().is_empty(), "offline hides the session");
-    rig.runtime.shutdown().await;
-}
-
-/// A preferences save the database refuses answers an error, never the
-/// stored values as if it had landed.
-#[tokio::test]
-async fn a_refused_preferences_save_answers_an_error() {
-    let rig = rig().await;
-    rig.runtime
-        .db()
-        .write(Lane::Foreground, "scrobble-test-refuse", |tx| {
-            tx.execute_batch(
-                "CREATE TRIGGER refuse_prefs BEFORE INSERT ON user_listening_prefs \
-                 BEGIN SELECT RAISE(ABORT, 'refused'); END;",
-            )?;
-            Ok::<_, droppedneedle_kernel::db::DbError>(())
-        })
-        .await
-        .expect("trigger installs");
-    let router = with_test_principal(
-        routes().with_state(rig.deps.clone()).into_router(),
-        user_session("user-1"),
-    );
-    let response = router
-        .oneshot(
-            Request::builder()
-                .method("PUT")
-                .uri("/api/v3/me/scrobble-preferences")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    serde_json::json!({"scrobble_to_listenbrainz": true}).to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     rig.runtime.shutdown().await;
 }

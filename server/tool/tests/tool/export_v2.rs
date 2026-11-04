@@ -34,47 +34,64 @@ fn request(v2_root: &Path) -> ExportRequest {
     }
 }
 
+/// A missing, empty, unparseable or wrong v2 key refuses the export, writes
+/// no output and never mints a key file.
 #[test]
-fn missing_key_file_refuses_with_no_output() {
-    let dir = scratch_dir("no-key");
-    std::fs::write(dir.join("config/config.json"), "{}").unwrap();
+fn a_bad_v2_key_refuses_with_no_output() {
+    for (label, env, code) in [
+        ("missing key file", None, "V2_KEY_NOT_FOUND"),
+        (
+            "key file without a key",
+            Some("# no key here\nOTHER=1\n"),
+            "V2_KEY_INVALID",
+        ),
+        (
+            "unparseable key",
+            Some("DATA_ENC_KEY=not-a-key\n"),
+            "V2_KEY_INVALID",
+        ),
+    ] {
+        let dir = scratch_dir("bad-key");
+        if let Some(env) = env {
+            std::fs::write(dir.join("config/.env"), env).unwrap();
+        }
+        std::fs::write(dir.join("config/config.json"), "{}").unwrap();
+        let out = dir.join("export.json");
+
+        let error = export_v2(&request(&dir), &dir.join("export.bundle.sqlite")).unwrap_err();
+        assert_eq!(error.code(), code, "case: {label}");
+        if env.is_none() {
+            assert!(
+                matches!(error, ExportError::V2KeyNotFound { .. }),
+                "case: {label}"
+            );
+        }
+
+        let error = export_v2_to_file(&request(&dir), &out).unwrap_err();
+        assert_eq!(error.code(), code, "case: {label}");
+        assert!(
+            !out.exists(),
+            "case: {label}: a refused export must not write a file"
+        );
+        if env.is_none() {
+            let key_file = droppedneedle::bootstrap::data_dirs::key_file_path(&dir.join("config"));
+            assert!(!key_file.exists(), "case: {label}: no key file is minted");
+        }
+    }
+
+    // A token that fails its MAC means the v2 key is wrong: refuse instead
+    // of exporting the ciphertext as the secret.
+    let (dir, _key) = fixture_v2_root();
+    let other = FernetKey::generate().unwrap();
+    std::fs::write(
+        dir.join("config/.env"),
+        format!("DATA_ENC_KEY='{}'\n", other.to_base64()),
+    )
+    .unwrap();
     let out = dir.join("export.json");
-
-    let error = export_v2(&request(&dir), &dir.join("export.bundle.sqlite")).unwrap_err();
-    assert_eq!(error.code(), "V2_KEY_NOT_FOUND");
-    assert!(matches!(error, ExportError::V2KeyNotFound { .. }));
-
     let error = export_v2_to_file(&request(&dir), &out).unwrap_err();
-    assert_eq!(error.code(), "V2_KEY_NOT_FOUND");
-    assert!(!out.exists(), "a refused export must not write a file");
-}
-
-#[test]
-fn key_file_without_a_key_refuses() {
-    let dir = scratch_dir("empty-key");
-    std::fs::write(dir.join("config/.env"), "# no key here\nOTHER=1\n").unwrap();
-    std::fs::write(dir.join("config/config.json"), "{}").unwrap();
-    let out = dir.join("export.json");
-
-    let error = export_v2(&request(&dir), &dir.join("export.bundle.sqlite")).unwrap_err();
-    assert_eq!(error.code(), "V2_KEY_INVALID");
-    let error = export_v2_to_file(&request(&dir), &out).unwrap_err();
-    assert_eq!(error.code(), "V2_KEY_INVALID");
-    assert!(!out.exists(), "a refused export must not write a file");
-}
-
-#[test]
-fn unparseable_key_refuses() {
-    let dir = scratch_dir("bad-key");
-    std::fs::write(dir.join("config/.env"), "DATA_ENC_KEY=not-a-key\n").unwrap();
-    std::fs::write(dir.join("config/config.json"), "{}").unwrap();
-    let out = dir.join("export.json");
-
-    let error = export_v2(&request(&dir), &dir.join("export.bundle.sqlite")).unwrap_err();
-    assert_eq!(error.code(), "V2_KEY_INVALID");
-    let error = export_v2_to_file(&request(&dir), &out).unwrap_err();
-    assert_eq!(error.code(), "V2_KEY_INVALID");
-    assert!(!out.exists(), "a refused export must not write a file");
+    assert_eq!(error.code(), "V2_KEY_MISMATCH", "case: wrong v2 key");
+    assert!(!out.exists(), "case: wrong v2 key");
 }
 
 /// One Fernet-encrypted value plus one legacy-plaintext value, so the
@@ -354,17 +371,18 @@ fn open(parsed: &droppedneedle_tool::export::ParsedExport, value: &Value) -> Str
     unseal(PASSPHRASE, &parsed.doc.secret_envelope, sealed(value)).unwrap()
 }
 
+/// One export of the full fixture carries exactly the migrated set: provenance,
+/// accounts, sealed secrets, follows, filtered settings and a digest.
 #[test]
-fn export_marks_provenance() {
-    let (_text, parsed) = exported();
+fn one_export_carries_the_migrated_set() {
+    let (text, parsed) = exported();
+
+    // Provenance.
     assert_eq!(parsed.doc.instance_id, INSTANCE_ID);
     assert_eq!(parsed.doc.exported_at, "2026-09-28T12:00:00Z");
     assert_eq!(parsed.doc.v2_commit.as_deref(), Some("cf7278a1"));
-}
 
-#[test]
-fn export_carries_users_providers_and_recovery() {
-    let (text, parsed) = exported();
+    // Users, providers and the recovery code.
     let users = &parsed.doc.users;
     assert_eq!(users.len(), 1);
     let user = &users[0];
@@ -388,11 +406,8 @@ fn export_carries_users_providers_and_recovery() {
     let recovery = user.recovery_code.as_ref().unwrap();
     assert_eq!(recovery.code_hash, "code-hash-1");
     assert!(!text.contains("prov-1"), "surrogate ids stay behind");
-}
 
-#[test]
-fn export_seals_app_passwords_revoked_kept() {
-    let (text, parsed) = exported();
+    // App passwords are sealed, revoked ones kept as revoked.
     let passwords = &parsed.doc.users[0].app_passwords;
     assert_eq!(passwords.len(), 2);
     assert!(!passwords[0].revoked);
@@ -409,11 +424,8 @@ fn export_seals_app_passwords_revoked_kept() {
     assert_eq!(secrets["phone"], "app-secret-active");
     assert_eq!(secrets["old-laptop"], "app-secret-revoked");
     assert!(!text.contains("secret_sha256"), "hashes stay derived");
-}
 
-#[test]
-fn export_carries_follows_and_approvals() {
-    let (text, parsed) = exported();
+    // Follows and approvals.
     assert_eq!(parsed.doc.follows.len(), 1);
     assert_eq!(
         parsed.doc.follows[0].artist_mbid,
@@ -426,11 +438,8 @@ fn export_carries_follows_and_approvals() {
         !text.contains("artist_mbid_lower"),
         "derived keys stay derived"
     );
-}
 
-#[test]
-fn export_seals_config_secrets() {
-    let (_text, parsed) = exported();
+    // Config secrets are sealed, Fernet and legacy plaintext alike.
     let settings = &parsed.doc.settings;
     assert_eq!(
         settings["user_preferences"]["primary_types"],
@@ -460,22 +469,15 @@ fn export_seals_config_secrets() {
         settings["library_settings"]["library_roots"][0]["id"],
         json!("root-1")
     );
-}
 
-#[test]
-fn export_keeps_indexer_order() {
-    let (_text, parsed) = exported();
-    let indexers = parsed.doc.settings["indexers"].as_array().unwrap();
+    // Indexers keep their order.
+    let indexers = settings["indexers"].as_array().unwrap();
     assert_eq!(indexers[0]["name"], json!("first"));
     assert_eq!(indexers[1]["name"], json!("second"));
     assert_eq!(open(&parsed, &indexers[0]["api_key"]), "one-key");
     assert_eq!(open(&parsed, &indexers[1]["api_key"]), "two-key");
-}
 
-#[test]
-fn export_filters_partial_sections() {
-    let (_text, parsed) = exported();
-    let settings = &parsed.doc.settings;
+    // Partial sections keep only what travels.
     let advanced = &settings["advanced_settings"];
     assert_eq!(
         open(&parsed, &advanced["audiodb_api_key"]),
@@ -508,12 +510,8 @@ fn export_filters_partial_sections() {
     assert_eq!(open(&parsed, &demo["settings"]["token"]), "plugin-secret");
     assert_eq!(demo["settings"]["theme"], json!("dark"));
     assert!(demo.get("version").is_none());
-}
 
-#[test]
-fn export_drops_vestigial_sections() {
-    let (text, parsed) = exported();
-    let settings = &parsed.doc.settings;
+    // Vestigial sections are dropped.
     for dropped in [
         "library_sync_settings",
         "library_scan_dirty_scopes",
@@ -530,36 +528,11 @@ fn export_drops_vestigial_sections() {
         !text.contains("must-not-survive"),
         "legacy plaintext never crosses"
     );
-}
 
-/// The fixture export with its v2 config changed first.
-fn exported_with(change: impl FnOnce(&mut Value)) -> ParsedExport {
-    let (dir, _key) = fixture_v2_root();
-    let path = dir.join("config/config.json");
-    let mut config: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    change(&mut config);
-    std::fs::write(&path, config.to_string()).unwrap();
-    let doc = export_v2(&request(&dir), &dir.join("export.bundle.sqlite")).unwrap();
-    parse_export(&doc.to_json_string().unwrap()).unwrap()
-}
-
-fn settings_left_behind(parsed: &ParsedExport) -> Vec<&str> {
-    parsed
-        .doc
-        .left_behind
-        .iter()
-        .filter(|item| item.kind == LeftBehindKind::Setting)
-        .map(|item| item.table.as_str())
-        .collect()
-}
-
-/// A top-level-only Jellyfin address lands in the section, and every config
-/// key that does not travel is listed by name, its value kept out.
-#[test]
-fn export_carries_the_address_and_lists_settings_left_behind() {
-    let (text, parsed) = exported();
+    // A top-level-only Jellyfin address lands in the section, and every
+    // config key that does not travel is listed by name, its value kept out.
     assert_eq!(
-        parsed.doc.settings["jellyfin_settings"]["jellyfin_url"],
+        settings["jellyfin_settings"]["jellyfin_url"],
         "http://jellyfin.lan:8096"
     );
     let left = settings_left_behind(&parsed);
@@ -584,7 +557,6 @@ fn export_carries_the_address_and_lists_settings_left_behind() {
     ] {
         assert!(!left.contains(&carried), "{carried} is carried");
     }
-    assert!(!text.contains("must-not-survive"));
     assert!(
         parsed
             .doc
@@ -601,13 +573,42 @@ fn export_carries_the_address_and_lists_settings_left_behind() {
             .iter()
             .any(|note| note.contains("Jellyfin"))
     );
+
+    // The digest authenticates every section.
+    let opener = Opener::derive(PASSPHRASE, &parsed.doc.secret_envelope).unwrap();
+    let mut root: Value = serde_json::from_str(&text).unwrap();
+    opener.verify(&root).unwrap();
+    root["users"][0]["display_name"] = json!("someone else");
+    assert_eq!(opener.verify(&root), Err(SealError::DigestMismatch));
 }
 
-/// The section's own address wins and the other copy is listed. v2's own
-/// v2's default before the rename counts as nobody's choice, and an address
-/// with a password in it or no web scheme never lands in the export.
+/// The fixture export with its v2 config changed first.
+fn exported_with(change: impl FnOnce(&mut Value)) -> ParsedExport {
+    let (dir, _key) = fixture_v2_root();
+    let path = dir.join("config/config.json");
+    let mut config: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    change(&mut config);
+    std::fs::write(&path, config.to_string()).unwrap();
+    let doc = export_v2(&request(&dir), &dir.join("export.bundle.sqlite")).unwrap();
+    parse_export(&doc.to_json_string().unwrap()).unwrap()
+}
+
+fn settings_left_behind(parsed: &ParsedExport) -> Vec<&str> {
+    parsed
+        .doc
+        .left_behind
+        .iter()
+        .filter(|item| item.kind == LeftBehindKind::Setting)
+        .map(|item| item.table.as_str())
+        .collect()
+}
+
+/// Addresses move only when someone chose them: v2 defaults make no section
+/// and no note, an address with a password or no web scheme never lands, the
+/// section's own address wins, and a contact v3 would refuse is not offered.
 #[test]
-fn a_retired_contact_and_an_odd_jellyfin_address_stay_behind() {
+fn addresses_move_only_when_someone_chose_them() {
+    let case = "retired contact, address with a password";
     let parsed = exported_with(|config| {
         config["contact_email"] = json!("contact@musicseerr.com");
         config["jellyfin_url"] = json!("http://user:secret@jellyfin.lan:8096");
@@ -617,73 +618,95 @@ fn a_retired_contact_and_an_odd_jellyfin_address_stay_behind() {
             .doc
             .notes
             .iter()
-            .any(|note| note.contains("CONTACT_EMAIL"))
+            .any(|note| note.contains("CONTACT_EMAIL")),
+        "case: {case}"
     );
     assert!(
         !serde_json::to_string(&parsed.doc.settings)
             .unwrap()
-            .contains("secret@")
+            .contains("secret@"),
+        "case: {case}"
     );
-    assert!(settings_left_behind(&parsed).contains(&"jellyfin_url"));
-    let parsed = exported_with(|config| config["jellyfin_url"] = json!("ftp://jellyfin.lan"));
-    assert!(parsed.doc.settings.get("jellyfin_settings").is_none());
-}
+    assert!(
+        settings_left_behind(&parsed).contains(&"jellyfin_url"),
+        "case: {case}"
+    );
 
-/// defaults say nobody chose anything, so they make no section and no note.
-#[test]
-fn only_an_address_someone_chose_moves() {
+    let case = "address with no web scheme";
+    let parsed = exported_with(|config| config["jellyfin_url"] = json!("ftp://jellyfin.lan"));
+    assert!(
+        parsed.doc.settings.get("jellyfin_settings").is_none(),
+        "case: {case}"
+    );
+
+    let case = "the section's own address wins";
     let parsed = exported_with(|config| {
         config["jellyfin_settings"] = json!({"jellyfin_url": "http://section:8096"});
     });
     assert_eq!(
-        parsed.doc.settings["jellyfin_settings"]["jellyfin_url"],
-        "http://section:8096"
+        parsed.doc.settings["jellyfin_settings"]["jellyfin_url"], "http://section:8096",
+        "case: {case}"
     );
-    assert!(settings_left_behind(&parsed).contains(&"jellyfin_url"));
+    assert!(
+        settings_left_behind(&parsed).contains(&"jellyfin_url"),
+        "case: {case}"
+    );
     assert!(
         !parsed
             .doc
             .notes
             .iter()
-            .any(|note| note.contains("Jellyfin"))
+            .any(|note| note.contains("Jellyfin")),
+        "case: {case}"
     );
 
+    let case = "an empty section address takes the top-level one";
     let parsed = exported_with(|config| {
         config["jellyfin_settings"] = json!({"jellyfin_url": "", "enabled": true});
     });
     assert_eq!(
-        parsed.doc.settings["jellyfin_settings"]["jellyfin_url"],
-        "http://jellyfin.lan:8096"
+        parsed.doc.settings["jellyfin_settings"]["jellyfin_url"], "http://jellyfin.lan:8096",
+        "case: {case}"
     );
-    assert_eq!(parsed.doc.settings["jellyfin_settings"]["enabled"], true);
+    assert_eq!(
+        parsed.doc.settings["jellyfin_settings"]["enabled"], true,
+        "case: {case}"
+    );
 
+    let case = "v2 defaults";
     let parsed = exported_with(|config| {
         config["jellyfin_url"] = json!("http://jellyfin:8096");
         config["contact_email"] = json!("contact@droppedneedle.com");
     });
-    assert!(parsed.doc.settings.get("jellyfin_settings").is_none());
-    assert!(parsed.doc.notes.is_empty(), "{:?}", parsed.doc.notes);
-    assert!(settings_left_behind(&parsed).contains(&"contact_email"));
-}
+    assert!(
+        parsed.doc.settings.get("jellyfin_settings").is_none(),
+        "case: {case}"
+    );
+    assert!(
+        parsed.doc.notes.is_empty(),
+        "case: {case}: {:?}",
+        parsed.doc.notes
+    );
+    assert!(
+        settings_left_behind(&parsed).contains(&"contact_email"),
+        "case: {case}"
+    );
 
-/// v3 refuses to start on a CONTACT_EMAIL with a space, so the note never
-/// tells anyone to set one.
-#[test]
-fn a_contact_address_v3_would_refuse_is_not_offered() {
+    // v3 refuses to start on a CONTACT_EMAIL with a space, so the note never
+    // tells anyone to set one.
+    let case = "a contact v3 would refuse";
     let parsed = exported_with(|config| config["contact_email"] = json!("ops at example"));
     assert!(
         parsed.doc.notes.iter().any(|note| {
             note.starts_with("Set CONTACT_EMAIL in your environment") && note.contains("ops at")
         }),
-        "{:?}",
+        "case: {case}: {:?}",
         parsed.doc.notes
     );
-}
 
-/// An install with neither case writes what it wrote before: nothing is
-/// added to its settings, notes or list, and a table entry has no `kind`.
-#[test]
-fn an_install_with_neither_case_gains_nothing() {
+    // An install with neither case writes what it wrote before: nothing is
+    // added to its settings, notes or list, and a table entry has no `kind`.
+    let case = "neither case";
     let section = json!({"jellyfin_url": "http://jellyfin.lan:8096"});
     let parsed = exported_with(|config| {
         *config = json!({
@@ -692,17 +715,27 @@ fn an_install_with_neither_case_gains_nothing() {
             "jellyfin_settings": section,
         });
     });
-    assert_eq!(parsed.doc.settings["jellyfin_settings"], section);
-    assert_eq!(parsed.doc.settings.len(), 1);
-    assert!(parsed.doc.notes.is_empty(), "{:?}", parsed.doc.notes);
-    assert!(parsed.doc.left_behind.is_empty());
+    assert_eq!(
+        parsed.doc.settings["jellyfin_settings"], section,
+        "case: {case}"
+    );
+    assert_eq!(parsed.doc.settings.len(), 1, "case: {case}");
+    assert!(
+        parsed.doc.notes.is_empty(),
+        "case: {case}: {:?}",
+        parsed.doc.notes
+    );
+    assert!(parsed.doc.left_behind.is_empty(), "case: {case}");
     let table = LeftBehind {
         table: "t".to_owned(),
         rows: 1,
         reason: "r".to_owned(),
         kind: LeftBehindKind::Table,
     };
-    assert!(serde_json::to_value(table).unwrap().get("kind").is_none());
+    assert!(
+        serde_json::to_value(table).unwrap().get("kind").is_none(),
+        "case: {case}"
+    );
 }
 
 #[test]
@@ -721,34 +754,6 @@ fn export_to_file_writes_a_parseable_envelope() {
         let mode = std::fs::metadata(&bundle).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o600, "the bundle holds listening history");
     }
-}
-
-// The export carries a digest that authenticates every section.
-#[test]
-fn export_digest_covers_every_section() {
-    let (text, parsed) = exported();
-    let opener = Opener::derive(PASSPHRASE, &parsed.doc.secret_envelope).unwrap();
-    let mut root: Value = serde_json::from_str(&text).unwrap();
-    opener.verify(&root).unwrap();
-    root["users"][0]["display_name"] = json!("someone else");
-    assert_eq!(opener.verify(&root), Err(SealError::DigestMismatch));
-}
-
-// A token that fails its MAC means the v2 key is wrong: refuse instead of
-// exporting the ciphertext as the secret.
-#[test]
-fn wrong_v2_key_refuses_token_values() {
-    let (dir, _key) = fixture_v2_root();
-    let other = FernetKey::generate().unwrap();
-    std::fs::write(
-        dir.join("config/.env"),
-        format!("DATA_ENC_KEY='{}'\n", other.to_base64()),
-    )
-    .unwrap();
-    let out = dir.join("export.json");
-    let error = export_v2_to_file(&request(&dir), &out).unwrap_err();
-    assert_eq!(error.code(), "V2_KEY_MISMATCH");
-    assert!(!out.exists());
 }
 
 // The stopped v2 database opens immutable: a WAL database exports

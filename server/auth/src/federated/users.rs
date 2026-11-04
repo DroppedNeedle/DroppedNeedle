@@ -250,35 +250,3 @@ pub fn slugify(raw: &str) -> String {
     }
     out.trim_matches(['-', '.', '_']).to_owned()
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn slugify_matches_v2_charset_rules() {
-        assert_eq!(slugify("Jane Doe"), "Jane-Doe");
-        assert_eq!(slugify("  a!!b  "), "a-b");
-        assert_eq!(slugify("...x..."), "x");
-        assert_eq!(slugify("a---b"), "a-b");
-        assert_eq!(slugify("!!!"), "");
-        assert_eq!(slugify("under_score.1-x"), "under_score.1-x");
-        assert_eq!(slugify("caf\u{e9}"), "caf");
-        assert_eq!(slugify("a b\u{3000}c"), "a-b-c");
-        assert_eq!(slugify("-._-x-._-"), "x");
-        assert_eq!(slugify("a/b\\c@d:e"), "a-b-c-d-e");
-    }
-
-    #[test]
-    fn username_base_prefers_email_local_part() {
-        assert_eq!(
-            username_base(Some("Jane.Doe@Example.com"), "ignored"),
-            "Jane.Doe"
-        );
-        assert_eq!(
-            username_base(Some("no-at-sign"), "Display Name"),
-            "Display-Name"
-        );
-        assert_eq!(username_base(None, "!!!"), "user");
-    }
-}

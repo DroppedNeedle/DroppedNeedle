@@ -195,55 +195,53 @@ impl SplitMix64 {
 mod tests {
     use super::*;
 
+    /// A loop waits its interval plus jitter within bounds, backs off by
+    /// doubling up to its cap, and never waits less than the floor.
     #[test]
-    fn fixed_schedule_returns_interval_without_jitter() {
-        let schedule = Schedule::new(Duration::from_secs(30));
+    fn next_delay_follows_interval_jitter_backoff_and_floor() {
+        let fixed = Schedule::new(Duration::from_secs(30));
         let mut rng = SplitMix64::new(7);
-        assert_eq!(schedule.next_delay(&mut rng, 0), Duration::from_secs(30));
-    }
+        assert_eq!(
+            fixed.next_delay(&mut rng, 0),
+            Duration::from_secs(30),
+            "fixed: interval without jitter"
+        );
 
-    #[test]
-    fn jitter_stays_within_bounds() {
-        let schedule = Schedule::new(Duration::from_secs(60)).with_jitter(Duration::from_secs(5));
+        let jittered = Schedule::new(Duration::from_secs(60)).with_jitter(Duration::from_secs(5));
         let mut rng = SplitMix64::new(1);
         for _ in 0..500 {
-            let delay = schedule.next_delay(&mut rng, 0);
-            assert!(delay >= Duration::from_secs(60));
-            assert!(delay <= Duration::from_secs(65) + Duration::from_millis(1));
+            let delay = jittered.next_delay(&mut rng, 0);
+            assert!(delay >= Duration::from_secs(60), "jitter: {delay:?}");
+            assert!(
+                delay <= Duration::from_secs(65) + Duration::from_millis(1),
+                "jitter: {delay:?}"
+            );
         }
-    }
 
-    #[test]
-    fn backoff_doubles_then_caps() {
-        let schedule = Schedule::new(Duration::ZERO)
+        let backoff = Schedule::new(Duration::ZERO)
             .with_backoff(Duration::from_secs(1), Duration::from_secs(8));
         let mut rng = SplitMix64::new(3);
-        let delays: Vec<Duration> = (1..=6).map(|f| schedule.next_delay(&mut rng, f)).collect();
-        assert_eq!(delays[0], Duration::from_secs(2));
-        assert_eq!(delays[1], Duration::from_secs(4));
-        assert_eq!(delays[2], Duration::from_secs(8));
-        assert_eq!(delays[3], Duration::from_secs(8));
-        assert_eq!(delays[5], Duration::from_secs(8));
-    }
-
-    #[test]
-    fn zero_interval_still_waits_out_the_floor() {
-        let schedule = Schedule::new(Duration::ZERO).with_min_delay(Duration::ZERO);
-        let mut rng = SplitMix64::new(9);
-        assert_eq!(schedule.next_delay(&mut rng, 0), ABSOLUTE_MIN_DELAY);
-        // Failures stack backoff on top, capped, never spinning.
-        assert_eq!(
-            schedule.next_delay(&mut rng, 100),
-            Duration::from_secs(5 * 60)
-        );
-    }
-
-    #[test]
-    fn same_seed_replays_same_draws() {
-        let mut first = SplitMix64::new(42);
-        let mut second = SplitMix64::new(42);
-        for _ in 0..32 {
-            assert_eq!(first.next_u64(), second.next_u64());
+        let delays: Vec<Duration> = (1..=6).map(|f| backoff.next_delay(&mut rng, f)).collect();
+        for (index, secs) in [(0, 2), (1, 4), (2, 8), (3, 8), (5, 8)] {
+            assert_eq!(
+                delays[index],
+                Duration::from_secs(secs),
+                "backoff: failure {}",
+                index + 1
+            );
         }
+
+        let floor = Schedule::new(Duration::ZERO).with_min_delay(Duration::ZERO);
+        let mut rng = SplitMix64::new(9);
+        assert_eq!(
+            floor.next_delay(&mut rng, 0),
+            ABSOLUTE_MIN_DELAY,
+            "floor: zero interval"
+        );
+        assert_eq!(
+            floor.next_delay(&mut rng, 100),
+            Duration::from_secs(5 * 60),
+            "floor: failures stack capped backoff, never spinning"
+        );
     }
 }

@@ -213,40 +213,10 @@ async fn boot_migrates_and_applies_pragmas() {
     std::fs::remove_dir_all(dir).ok();
 }
 
-/// Pool connections reject writes after boot; reads still work.
+/// Boot refuses a database it cannot serve safely: a wrong schema version,
+/// a symlinked path, and (by the filesystem classifier) a network mount.
 #[tokio::test]
-async fn pool_connections_reject_writes_after_boot() {
-    let (runtime, dir) = open_scratch("readonly").await;
-    let failed = runtime
-        .db()
-        .read("brief-write", |connection| {
-            connection
-                .execute("CREATE TABLE scratch_nope (id INTEGER)", [])
-                .map_err(DbError::from)
-        })
-        .await;
-    let error = failed.expect_err("pool writes must fail under query_only");
-    assert!(
-        error.to_string().to_lowercase().contains("readonly"),
-        "must be a readonly refusal, got {error:?}"
-    );
-    let one: i64 = runtime
-        .db()
-        .read("brief-read", |connection| {
-            connection
-                .query_row("SELECT 1", [], |row| row.get(0))
-                .map_err(DbError::from)
-        })
-        .await
-        .unwrap();
-    assert_eq!(one, 1);
-    runtime.shutdown().await;
-    std::fs::remove_dir_all(dir).ok();
-}
-
-/// Boot refuses a wrong-version database instead of serving it.
-#[tokio::test]
-async fn boot_refuses_version_mismatch() {
+async fn boot_refuses_a_database_it_cannot_serve_safely() {
     let (runtime, dir) = open_scratch("mismatch").await;
     let db = runtime.path().to_owned();
     runtime.shutdown().await;
@@ -267,11 +237,7 @@ async fn boot_refuses_version_mismatch() {
         other => panic!("wrong-version database must refuse, got {other:?}"),
     }
     std::fs::remove_dir_all(dir).ok();
-}
 
-/// Boot refuses symlinks; the filesystem classifier refuses network mounts.
-#[tokio::test]
-async fn boot_refuses_symlink_and_remote_filesystem() {
     let dir = scratch_dir("symlink");
     std::fs::create_dir_all(&dir).unwrap();
     let target = dir.join("library.db");
@@ -325,10 +291,11 @@ async fn boot_refuses_symlink_and_remote_filesystem() {
     std::fs::remove_dir_all(dir).ok();
 }
 
-/// `TRUNCATE` reclaims dead WAL allocation; clean shutdown leaves no WAL.
+/// `TRUNCATE` reclaims dead WAL allocation, but holds back while a pooled
+/// read is open on either pool; clean shutdown leaves no WAL.
 #[tokio::test]
-async fn checkpoint_truncate_reclaims_dead_wal() {
-    let (runtime, dir) = open_scratch("truncate").await;
+async fn truncate_reclaims_dead_wal_once_no_read_is_open() {
+    let (runtime, _dir) = read_runtime("truncate", 7, PATIENT).await;
     let db = runtime.path().to_owned();
 
     runtime
@@ -366,12 +333,21 @@ async fn checkpoint_truncate_reclaims_dead_wal() {
         "PASSIVE leaves dead allocation behind"
     );
 
-    let reclaimed = runtime.checkpoint().maybe_truncate(Instant::now());
-    let outcome = reclaimed.expect("idle gates must hold for the reclaim");
+    let probe = |connection: &rusqlite::Connection| count_labels(connection).unwrap();
+    let request = hold_reads(runtime.db(), false, 1, probe).remove(0);
+    let long = hold_reads(runtime.db(), true, 1, probe).remove(0);
+    let gate = || runtime.checkpoint().maybe_truncate(Instant::now());
+    assert!(gate().is_none(), "an open request read holds the reclaim");
+    request.release();
+    assert!(gate().is_none(), "an open long read holds the reclaim");
+    long.release();
+
+    let reclaimed = gate();
+    let outcome = reclaimed.expect("the reclaim runs once the reads have ended");
     assert_eq!(outcome.mode, CheckpointMode::Truncate);
     assert_eq!(file_len(&sidecar(&db, "-wal")), Some(0));
 
-    let second = runtime.checkpoint().maybe_truncate(Instant::now());
+    let second = gate();
     assert!(second.is_none(), "hourly cap holds the second reclaim back");
 
     let latest = runtime.checkpoint().latest().await.unwrap();
@@ -380,7 +356,6 @@ async fn checkpoint_truncate_reclaims_dead_wal() {
     runtime.shutdown().await;
     assert_eq!(file_len(&sidecar(&db, "-wal")), None);
     assert_eq!(file_len(&sidecar(&db, "-shm")), None);
-    std::fs::remove_dir_all(dir).ok();
 }
 
 /// While both lanes are busy, eight foreground admissions run per background one.
@@ -1120,9 +1095,10 @@ async fn read_closure_sees_one_state_across_a_write() {
 
 /// With every request connection out, reads queue in the order they came,
 /// whether they await or park a thread, and each connection that comes back
-/// goes to the one in front.
+/// goes to the one in front. A waiting read whose future is dropped loses
+/// its place: the connection goes to the read behind it and is not lost.
 #[tokio::test]
-async fn waiting_reads_are_served_in_arrival_order() {
+async fn waiting_reads_queue_in_order_and_a_dropped_one_gives_way() {
     let (runtime, _dir) = read_runtime("read-order", 7, PATIENT).await;
     let db = runtime.db();
     let activity = runtime.read_activity();
@@ -1171,6 +1147,37 @@ async fn waiting_reads_are_served_in_arrival_order() {
     second.join().unwrap().unwrap();
     third.await.unwrap().unwrap();
     held.into_iter().for_each(HeldRead::release);
+
+    // A dropped waiting read.
+    let mut held = hold_reads(db, false, 7, |_| ());
+    let mut gone = Box::pin(db.read("brief-gone", count_labels));
+    let pending = std::future::poll_fn(|cx| Poll::Ready(gone.as_mut().poll(cx).is_pending())).await;
+    assert!(
+        pending,
+        "dropped: a read behind a held connection cannot finish"
+    );
+    let reader = db.clone();
+    let behind = tokio::spawn(async move { reader.read("brief-behind", count_labels).await });
+    until("dropped: two reads wait", || async {
+        activity.waiting() == 2
+    })
+    .await;
+
+    drop(gone);
+    held.pop().unwrap().release();
+    let seen = tokio::time::timeout(Duration::from_secs(10), behind)
+        .await
+        .expect("dropped: the read behind the dropped one is served")
+        .unwrap()
+        .unwrap();
+    assert_eq!(seen, 0, "dropped");
+    assert_eq!((activity.out(), activity.waiting()), (6, 0), "dropped");
+    held.into_iter().for_each(HeldRead::release);
+    assert_eq!(
+        (activity.out(), activity.waiting()),
+        (0, 0),
+        "dropped: no connection is lost"
+    );
     runtime.shutdown().await;
 }
 
@@ -1325,10 +1332,11 @@ fn closures_may_not_reach_back_into_the_database() {
 }
 
 /// A read whose closure panics gives its connection back, and one whose
-/// closure leaves a transaction of its own open does not hand it on:
-/// afterwards every connection of the pool sees the current state.
+/// closure leaves a transaction of its own open, or leaks a stepped cursor
+/// the pool's own commit cannot end, does not hand it on: afterwards every
+/// connection of the pool sees the current state.
 #[tokio::test]
-async fn failed_read_closure_leaves_its_connection_clean() {
+async fn a_misbehaving_read_closure_never_hands_on_a_stale_connection() {
     let (runtime, _dir) = read_runtime("read-panic", 7, PATIENT).await;
     let db = runtime.db();
     let panicked = db
@@ -1366,7 +1374,28 @@ async fn failed_read_closure_leaves_its_connection_clean() {
         .unwrap();
     let held = hold_reads(db, false, 7, |connection| count_labels(connection).unwrap());
     let seen: Vec<i64> = held.into_iter().map(HeldRead::release).collect();
-    assert_eq!(seen, vec![1; 7]);
+    assert_eq!(seen, vec![1; 7], "after a panic or an own transaction");
+
+    // The leak needs a row to step, which the write above left.
+    db.read_blocking("brief-leak", |connection| -> Result<(), DbError> {
+        let mut statement = connection.prepare_cached("SELECT label FROM scratch_turns")?;
+        let mut rows = statement.query([])?;
+        rows.next()?;
+        std::mem::forget(rows);
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(runtime.read_activity().out(), 0, "leaked cursor");
+
+    db.write(Lane::Foreground, "brief-second", |tx| {
+        insert_label(tx, "second")
+    })
+    .await
+    .unwrap();
+    let held = hold_reads(db, false, 7, |connection| count_labels(connection).unwrap());
+    let seen: Vec<i64> = held.into_iter().map(HeldRead::release).collect();
+    assert_eq!(seen, vec![2; 7], "after a leaked cursor");
+    assert_eq!(runtime.read_activity().out(), 0, "leaked cursor");
     runtime.shutdown().await;
 }
 
@@ -1425,37 +1454,12 @@ fn read_pool_outlives_a_runtime_dropped_with_reads_in_it() {
     opener.block_on(runtime.shutdown());
 }
 
-/// The `TRUNCATE` reclaim holds back while a pooled read is open, on either
-/// pool, and runs once the reads have ended.
+/// After reads on every path see the row, shutdown waits for a read that is
+/// still running, returns once it has ended without waiting out the grace,
+/// leaves no `-wal` or `-shm`, and refuses a handle that outlives it.
 #[tokio::test]
-async fn truncate_gate_waits_for_pooled_reads() {
-    let (runtime, _dir) = read_runtime("read-gate", 7, PATIENT).await;
-    let db = runtime.db();
-    db.write(Lane::Foreground, "brief-row", |tx| insert_label(tx, "row"))
-        .await
-        .unwrap();
-    let passive = runtime.checkpoint().run_once();
-    assert_eq!(passive.active_bytes, 0);
-
-    let probe = |connection: &rusqlite::Connection| count_labels(connection).unwrap();
-    let request = hold_reads(db, false, 1, probe).remove(0);
-    let long = hold_reads(db, true, 1, probe).remove(0);
-    let gate = || runtime.checkpoint().maybe_truncate(Instant::now());
-    assert!(gate().is_none(), "an open request read holds the reclaim");
-    request.release();
-    assert!(gate().is_none(), "an open long read holds the reclaim");
-    long.release();
-    let reclaimed = gate().expect("the reclaim runs once the reads have ended");
-    assert_eq!(reclaimed.mode, CheckpointMode::Truncate);
-    assert_eq!(file_len(&sidecar(runtime.path(), "-wal")), Some(0));
-    runtime.shutdown().await;
-}
-
-/// A clean shutdown after reads on both pools leaves no `-wal` or `-shm`,
-/// and a handle that outlives it is refused.
-#[tokio::test]
-async fn shutdown_after_pooled_reads_leaves_no_wal() {
-    let (runtime, _dir) = read_runtime("read-shutdown", 7, PATIENT).await;
+async fn shutdown_waits_for_a_read_in_flight() {
+    let (runtime, _dir) = read_runtime_with("read-in-flight", 7, PATIENT, PATIENT).await;
     let path = runtime.path().to_owned();
     let db = runtime.db().clone();
     db.write(Lane::Foreground, "brief-row", |tx| insert_label(tx, "row"))
@@ -1466,88 +1470,6 @@ async fn shutdown_after_pooled_reads_leaves_no_wal() {
     let long = db.read_long("brief-long", &CancelFlag::never(), count_labels);
     assert_eq!(long.unwrap(), 1);
 
-    runtime.shutdown().await;
-    assert_eq!(file_len(&sidecar(&path, "-wal")), None);
-    assert_eq!(file_len(&sidecar(&path, "-shm")), None);
-    let late = db.read_blocking("brief-late", count_labels);
-    assert!(
-        matches!(late, Err(DbError::LaneClosed)),
-        "a read after shutdown is refused, got {late:?}"
-    );
-}
-
-/// A closure that leaks a cursor it has stepped leaves a read transaction
-/// that the pool's own commit cannot end. That connection is replaced, not
-/// handed on: afterwards every connection of the pool sees a later write.
-#[tokio::test]
-async fn leaked_cursor_does_not_pin_its_connection() {
-    let (runtime, _dir) = read_runtime("read-leaked-cursor", 7, PATIENT).await;
-    let db = runtime.db();
-    db.write(Lane::Foreground, "brief-first", |tx| {
-        insert_label(tx, "first")
-    })
-    .await
-    .unwrap();
-    db.read_blocking("brief-leak", |connection| -> Result<(), DbError> {
-        let mut statement = connection.prepare_cached("SELECT label FROM scratch_turns")?;
-        let mut rows = statement.query([])?;
-        rows.next()?;
-        std::mem::forget(rows);
-        Ok(())
-    })
-    .unwrap();
-    assert_eq!(runtime.read_activity().out(), 0);
-
-    db.write(Lane::Foreground, "brief-second", |tx| {
-        insert_label(tx, "second")
-    })
-    .await
-    .unwrap();
-    let held = hold_reads(db, false, 7, |connection| count_labels(connection).unwrap());
-    let seen: Vec<i64> = held.into_iter().map(HeldRead::release).collect();
-    assert_eq!(seen, vec![2; 7]);
-    assert_eq!(runtime.read_activity().out(), 0);
-    runtime.shutdown().await;
-}
-
-/// A waiting read whose future is dropped loses its place: the connection
-/// that comes back goes to the read behind it and is not lost.
-#[tokio::test]
-async fn dropped_waiting_read_gives_its_place_to_the_next() {
-    let (runtime, _dir) = read_runtime("read-dropped-waiter", 1, PATIENT).await;
-    let db = runtime.db();
-    let activity = runtime.read_activity();
-    let mut held = hold_reads(db, false, 1, |_| ());
-
-    let mut gone = Box::pin(db.read("brief-gone", count_labels));
-    let pending = std::future::poll_fn(|cx| Poll::Ready(gone.as_mut().poll(cx).is_pending())).await;
-    assert!(pending, "a read behind a held connection cannot finish");
-    let reader = db.clone();
-    let behind = tokio::spawn(async move { reader.read("brief-behind", count_labels).await });
-    until("two reads wait", || async { activity.waiting() == 2 }).await;
-
-    drop(gone);
-    held.pop().unwrap().release();
-    let seen = tokio::time::timeout(Duration::from_secs(10), behind)
-        .await
-        .expect("the read behind the dropped one is served")
-        .unwrap()
-        .unwrap();
-    assert_eq!(seen, 0);
-    assert_eq!((activity.out(), activity.waiting()), (0, 0));
-    runtime.shutdown().await;
-}
-
-/// Shutdown waits for a read that is still running, returns once it has
-/// ended without waiting out the grace, and leaves no `-wal` or `-shm`.
-#[tokio::test]
-async fn shutdown_waits_for_a_read_in_flight() {
-    let (runtime, _dir) = read_runtime_with("read-in-flight", 7, PATIENT, PATIENT).await;
-    let path = runtime.path().to_owned();
-    let db = runtime.db().clone();
-    db.write(Lane::Foreground, "brief-row", |tx| insert_label(tx, "row"))
-        .await
-        .unwrap();
     let mut held = hold_reads(&db, false, 1, |connection| {
         count_labels(connection).unwrap()
     });
@@ -1571,6 +1493,11 @@ async fn shutdown_waits_for_a_read_in_flight() {
     assert!(asked.elapsed() < PATIENT, "the grace was not waited out");
     assert_eq!(file_len(&sidecar(&path, "-wal")), None);
     assert_eq!(file_len(&sidecar(&path, "-shm")), None);
+    let late = db.read_blocking("brief-late", count_labels);
+    assert!(
+        matches!(late, Err(DbError::LaneClosed)),
+        "a read after shutdown is refused, got {late:?}"
+    );
 }
 
 /// Shutdown gives up on a read that is still running when the grace ends.

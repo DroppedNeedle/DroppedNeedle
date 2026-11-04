@@ -508,11 +508,14 @@ fn the_contract_lists_every_rate_with_its_date() {
     assert_eq!(listed.len(), RATES.len(), "CLAUDE.md lists other rate rows");
 }
 
-/// Each shape a review found dodging the gate, written in a file no entry
-/// lists, fails it.
+/// The gate judges each shape: a dodge a review found, written in a file no
+/// entry lists, fails it; an entry grants only the shapes it names; what the
+/// rules leave alone (a body read, a parsed address, a status, a caller that
+/// names its priority) passes.
 #[test]
-fn dodges_fail_the_gate() {
-    let cases: &[(&Rule, &str)] = &[
+fn the_gate_judges_each_shape() {
+    const FILE: &str = "catalog/src/fetch.rs";
+    let dodges: &[(&Rule, &str)] = &[
         (&RATE, "const FETCH_PER_SECOND: f64 = 2.0;"),
         (&RATE, "pub(crate) const CALLS_PER_MINUTE: u32 = 30;"),
         (
@@ -568,17 +571,14 @@ fn dodges_fail_the_gate() {
             "let priority = asked.unwrap_or_else(|| RequestPriority::BackgroundSync);",
         ),
     ];
-    for (rule, code) in cases {
-        let (wrong, _) = check(rule, &[("catalog/src/fetch.rs", code)]);
-        assert!(!wrong.is_empty(), "the gate let through: {code}");
+    for (rule, code) in dodges {
+        let (wrong, _) = check(rule, &[(FILE, code)]);
+        assert!(!wrong.is_empty(), "dodge: the gate let through: {code}");
     }
-}
 
-/// An entry grants only the shapes it names: a semaphore file that grows a
-/// rate constant, or a user-run client that reaches the factory, fails.
-#[test]
-fn entries_grant_only_their_shapes() {
-    let cases: &[(&Rule, &str, &str)] = &[
+    // A semaphore file that grows a rate constant, or a user-run client that
+    // reaches the factory, fails.
+    let outside_their_entry: &[(&Rule, &str, &str)] = &[
         (
             &RATE,
             "library/src/scan/pool.rs",
@@ -590,17 +590,12 @@ fn entries_grant_only_their_shapes() {
             "let http = platform.http.shared().clone();",
         ),
     ];
-    for (rule, path, code) in cases {
+    for (rule, path, code) in outside_their_entry {
         let (wrong, _) = check(rule, &[(path, code)]);
-        assert!(!wrong.is_empty(), "{path} was let through: {code}");
+        assert!(!wrong.is_empty(), "entry: {path} was let through: {code}");
     }
-}
 
-/// What the rules leave alone: a body read, a parsed address, a status, a
-/// caller that names its priority.
-#[test]
-fn chosen_shapes_pass() {
-    let cases: &[(&Rule, &str)] = &[
+    let chosen: &[(&Rule, &str)] = &[
         (
             &HTTP,
             "let body = read_capped(response, MAX).await?; let url = reqwest::Url::parse(raw)?;",
@@ -619,8 +614,8 @@ fn chosen_shapes_pass() {
             "const POLL_INTERVAL: Duration = Duration::from_secs(5);",
         ),
     ];
-    for (rule, code) in cases {
-        let (wrong, _) = check(rule, &[("catalog/src/fetch.rs", code)]);
-        assert!(wrong.is_empty(), "refused {code}: {wrong:?}");
+    for (rule, code) in chosen {
+        let (wrong, _) = check(rule, &[(FILE, code)]);
+        assert!(wrong.is_empty(), "chosen: refused {code}: {wrong:?}");
     }
 }

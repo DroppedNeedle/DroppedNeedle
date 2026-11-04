@@ -1,11 +1,12 @@
-//! Validator tests: one behavior per rule.
+//! Validator tests: one table of the rules that refuse a file and one of
+//! the warnings that accept it.
 //!
-//! Each test pins one error or warning of the standalone export
+//! Each row pins one error or warning of the standalone export
 //! validator. No database, no passphrase, no filesystem.
 
 use crate::import_support as support;
 
-use serde_json::json;
+use serde_json::{Value, json};
 use support::Fixture;
 
 use droppedneedle_tool::import::validate_export;
@@ -18,36 +19,47 @@ fn warning_codes(report: &droppedneedle_tool::import::ValidationReport) -> Vec<&
     report.warnings.iter().map(|issue| issue.code).collect()
 }
 
-#[test]
-fn valid_shell_passes_silent() {
-    let fixture = Fixture::shared();
-    let report = validate_export(&fixture.shell());
-    assert!(report.valid(), "errors: {:?}", report.errors);
-    assert!(report.warnings.is_empty());
+/// The shell with `users` set.
+fn with_users(fixture: &Fixture, users: Value) -> Value {
+    let mut export = fixture.shell();
+    export["users"] = users;
+    export
 }
 
+/// Each rule refuses the file with its own code.
 #[test]
-fn bad_format_rejected() {
+fn validator_refuses_each_rule() {
     let fixture = Fixture::shared();
+    let mut rows: Vec<(String, Value, &str)> = Vec::new();
+    let mut row = |label: &str, export: Value, code: &'static str| {
+        rows.push((label.to_owned(), export, code));
+    };
+
     let mut export = fixture.shell();
     export["format"] = json!("something-else");
-    let report = validate_export(&export);
-    assert!(!report.valid());
-    assert!(codes(&report).contains(&"BAD_FORMAT"));
-}
+    row("bad format", export, "BAD_FORMAT");
 
-#[test]
-fn future_format_version_rejected() {
-    let fixture = Fixture::shared();
     let mut export = fixture.shell();
     export["format_version"] = json!(3);
-    let report = validate_export(&export);
-    assert!(codes(&report).contains(&"UNSUPPORTED_FORMAT_VERSION"));
-}
+    row(
+        "future format version",
+        export,
+        "UNSUPPORTED_FORMAT_VERSION",
+    );
 
-#[test]
-fn missing_required_key_rejected() {
-    let fixture = Fixture::shared();
+    for version in [json!(0), json!("1"), json!(null)] {
+        let mut export = fixture.shell();
+        export["format_version"] = version.clone();
+        row(
+            &format!("format version {version}"),
+            export,
+            "BAD_FORMAT_VERSION",
+        );
+    }
+    let mut export = fixture.shell();
+    export.as_object_mut().unwrap().remove("format_version");
+    row("missing format version", export, "BAD_FORMAT_VERSION");
+
     // `format` and `format_version` report their value codes when absent,
     // so they are not in this loop.
     for key in [
@@ -61,17 +73,13 @@ fn missing_required_key_rejected() {
     ] {
         let mut export = fixture.shell();
         export.as_object_mut().unwrap().remove(key);
-        let report = validate_export(&export);
-        assert!(
-            codes(&report).contains(&"MISSING_KEY"),
-            "key {key} must fail"
-        );
+        row(&format!("missing key {key}"), export, "MISSING_KEY");
     }
-}
 
-#[test]
-fn bad_exported_at_rejected() {
-    let fixture = Fixture::shared();
+    for root in [json!([1, 2]), json!("export"), json!(null)] {
+        row(&format!("root {root}"), root, "EXPORT_NOT_OBJECT");
+    }
+
     for stamp in [
         "not-a-date",
         "2026-09-28T12:00:00+02:00",
@@ -79,26 +87,13 @@ fn bad_exported_at_rejected() {
     ] {
         let mut export = fixture.shell();
         export["exported_at"] = json!(stamp);
-        let report = validate_export(&export);
-        assert!(
-            codes(&report).contains(&"BAD_EXPORTED_AT"),
-            "stamp {stamp} must fail"
-        );
+        row(&format!("exported_at {stamp}"), export, "BAD_EXPORTED_AT");
     }
-}
 
-#[test]
-fn unknown_envelope_scheme_rejected() {
-    let fixture = Fixture::shared();
     let mut export = fixture.shell();
     export["secret_envelope"]["scheme"] = json!("rot13");
-    let report = validate_export(&export);
-    assert!(codes(&report).contains(&"UNKNOWN_ENVELOPE_SCHEME"));
-}
+    row("unknown envelope scheme", export, "UNKNOWN_ENVELOPE_SCHEME");
 
-#[test]
-fn unpinned_kdf_rejected() {
-    let fixture = Fixture::shared();
     for (param, bad) in [
         ("m", json!(1024)),
         ("t", json!(1)),
@@ -107,39 +102,296 @@ fn unpinned_kdf_rejected() {
     ] {
         let mut export = fixture.shell();
         export["secret_envelope"]["kdf"][param] = bad;
-        let report = validate_export(&export);
-        assert!(
-            codes(&report).contains(&"BAD_ENVELOPE_PARAMS"),
-            "param {param} must fail"
+        row(
+            &format!("unpinned kdf {param}"),
+            export,
+            "BAD_ENVELOPE_PARAMS",
         );
+    }
+
+    let mut short = fixture.shell();
+    short["secret_envelope"]["kdf"]["salt_b64"] = json!("AAAA");
+    short["secret_envelope"]["nonce_b64"] = json!("AAAA");
+    row("short salt", short.clone(), "BAD_ENVELOPE_SALT");
+    row("short nonce", short, "BAD_ENVELOPE_NONCE");
+
+    // Users.
+    row(
+        "users not an array",
+        with_users(fixture, json!({"u1": {}})),
+        "USERS_NOT_ARRAY",
+    );
+    row(
+        "user not an object",
+        with_users(fixture, json!(["u1"])),
+        "USER_NOT_OBJECT",
+    );
+    for id in [json!(null), json!("")] {
+        let mut user = fixture.user("u1");
+        user["id"] = id.clone();
+        row(
+            &format!("user id {id}"),
+            with_users(fixture, json!([user])),
+            "USER_MISSING_ID",
+        );
+    }
+    let mut user = fixture.user("u1");
+    user.as_object_mut().unwrap().remove("id");
+    row(
+        "user without an id",
+        with_users(fixture, json!([user])),
+        "USER_MISSING_ID",
+    );
+
+    row(
+        "duplicate user id",
+        with_users(fixture, json!([fixture.user("u1"), fixture.user("u1")])),
+        "DUPLICATE_USER_ID",
+    );
+
+    let mut first = fixture.user("u1");
+    let mut second = fixture.user("u2");
+    second["email"] = first["email"].clone();
+    row(
+        "email collision",
+        with_users(fixture, json!([first.clone(), second])),
+        "USER_FIELD_COLLISION",
+    );
+    let mut third = fixture.user("u3");
+    third["username"] = first["username"].clone();
+    first["email"] = json!("unique@example.com");
+    row(
+        "username collision",
+        with_users(fixture, json!([first, third])),
+        "USER_FIELD_COLLISION",
+    );
+
+    let mut first = fixture.user("u1");
+    let mut second = fixture.user("u2");
+    second["providers"] = first["providers"].clone();
+    second["email"] = json!("u2@example.com");
+    second["username"] = json!("u2");
+    first["email"] = json!("u1@example.com");
+    first["username"] = json!("u1");
+    row(
+        "duplicate provider",
+        with_users(fixture, json!([first, second])),
+        "DUPLICATE_PROVIDER",
+    );
+
+    let mut user = fixture.user("u1");
+    user["providers"] = json!({"local": {}});
+    row(
+        "providers not an array",
+        with_users(fixture, json!([user])),
+        "PROVIDERS_NOT_ARRAY",
+    );
+    let mut user = fixture.user("u1");
+    user["providers"] = json!(["local"]);
+    row(
+        "provider not an object",
+        with_users(fixture, json!([user])),
+        "PROVIDER_NOT_OBJECT",
+    );
+    for field in ["provider", "provider_uid"] {
+        let mut user = fixture.user("u1");
+        user["providers"][0][field] = json!("");
+        row(
+            &format!("provider without {field}"),
+            with_users(fixture, json!([user])),
+            "PROVIDER_MISSING_KEY",
+        );
+    }
+
+    let mut user = fixture.user("u1");
+    user["providers"][0]["hash_scheme"] = json!("opaque");
+    row(
+        "local provider with an opaque hash",
+        with_users(fixture, json!([user.clone()])),
+        "BAD_LOCAL_HASH",
+    );
+    user["providers"][0]["hash_scheme"] = json!("bcrypt");
+    user["providers"][0]["provider_data"] = json!(r#"{"password_hash": "md5:abc"}"#);
+    row(
+        "local provider with an md5 hash",
+        with_users(fixture, json!([user])),
+        "BAD_LOCAL_HASH",
+    );
+
+    let mut user = fixture.user("u1");
+    user["app_passwords"] = json!({"phone": {}});
+    row(
+        "app passwords not an array",
+        with_users(fixture, json!([user])),
+        "APP_PASSWORDS_NOT_ARRAY",
+    );
+    let mut user = fixture.user("u1");
+    user["app_passwords"] = json!(["phone"]);
+    row(
+        "app password not an object",
+        with_users(fixture, json!([user])),
+        "APP_PASSWORD_NOT_OBJECT",
+    );
+    let mut user = fixture.user("u1");
+    user["app_passwords"][0]["secret"] = json!("plaintext-secret");
+    row(
+        "app password secret not sealed",
+        with_users(fixture, json!([user])),
+        "SECRET_NOT_SEALED",
+    );
+
+    // Settings.
+    let mut export = fixture.shell();
+    export["settings"] = json!([]);
+    row("settings not an object", export, "SETTINGS_NOT_OBJECT");
+
+    for section in [
+        "library_sync_settings",
+        "_legacy_lidarr",
+        "local_files_settings",
+    ] {
+        let mut export = fixture.shell();
+        export["settings"][section] = json!({});
+        row(
+            &format!("dropped section {section}"),
+            export,
+            "DROPPED_SECTION_PRESENT",
+        );
+    }
+    let mut export = fixture.shell();
+    export["settings"]["cache_ttl_default"] = json!({});
+    row(
+        "dropped env name in settings",
+        export,
+        "DROPPED_SECTION_PRESENT",
+    );
+    let mut export = fixture.shell();
+    export["jellyfin_url"] = json!("http://mirror");
+    row(
+        "dropped top-level jellyfin_url",
+        export,
+        "DROPPED_SECTION_PRESENT",
+    );
+
+    let mut export = fixture.shell();
+    export["settings"]["advanced_settings"] =
+        json!({"http_timeout": 30, "artist_discovery_warm_interval": 5});
+    row(
+        "advanced setting not allowed",
+        export,
+        "SETTINGS_FIELD_NOT_ALLOWED",
+    );
+    let mut export = fixture.shell();
+    export["settings"]["_internal"] = json!({
+        "plex_client_id": "x",
+        "audiodb_sweep_cursor": "y",
+    });
+    row(
+        "internal key not allowed",
+        export,
+        "SETTINGS_FIELD_NOT_ALLOWED",
+    );
+
+    let mut export = fixture.shell();
+    export["settings"]["jellyfin_settings"] = json!({"api_key": "bare-secret"});
+    row("bare secret", export, "SECRET_NOT_SEALED");
+    let mut export = fixture.shell();
+    export["settings"]["lastfm_settings"] = json!({"enabled": true, "api_key": "bare-key"});
+    row("bare Last.fm key", export, "SECRET_NOT_SEALED");
+
+    let mut export = fixture.shell();
+    export["settings"]["jellyfin_settings"] = json!({"api_key": {"$sealed": "!!!not-b64!!!"}});
+    row("sealed blob not base64", export, "SEALED_NOT_BASE64");
+    let mut export = fixture.shell();
+    export["settings"]["jellyfin_settings"] = json!({"api_key": {"$sealed": "AAAA"}});
+    row("sealed blob too short", export, "SEALED_TOO_SHORT");
+
+    let mut export = fixture.shell();
+    export["settings"]["indexers"] = json!({"name": "x"});
+    row("indexers not an array", export, "INDEXERS_NOT_ARRAY");
+
+    // Follows and approvals.
+    for (section, map_code, item_code) in [
+        ("follows", "FOLLOWS_NOT_ARRAY", "FOLLOW_NOT_OBJECT"),
+        ("approvals", "APPROVALS_NOT_ARRAY", "APPROVAL_NOT_OBJECT"),
+    ] {
+        let mut export = fixture.shell();
+        export[section] = json!({"mbid": {}});
+        row(&format!("{section} not an array"), export, map_code);
+        let mut export = fixture.shell();
+        export[section] = json!(["mbid"]);
+        row(&format!("{section} item not an object"), export, item_code);
+    }
+
+    let with_u1 = with_users(fixture, json!([fixture.user("u1")]));
+    for mbid in ["", "not-an-mbid", "01234567-89ab-cdef-0123-456789abcde!"] {
+        let mut bad = with_u1.clone();
+        bad["follows"] = json!([fixture.follow("u1", mbid)]);
+        row(&format!("follow mbid {mbid:?}"), bad, "BAD_MBID");
+        let mut bad = with_u1.clone();
+        bad["approvals"] = json!([fixture.approval("u1", mbid)]);
+        row(&format!("approval mbid {mbid:?}"), bad, "BAD_MBID");
+    }
+
+    let mut follow = fixture.follow("u1", support::MBID);
+    follow.as_object_mut().unwrap().remove("user_id");
+    let mut export = fixture.shell();
+    export["follows"] = json!([follow]);
+    row("follow without a user id", export, "MISSING_USER_ID");
+    let mut approval = fixture.approval("u1", support::MBID);
+    approval.as_object_mut().unwrap().remove("user_id");
+    let mut export = fixture.shell();
+    export["approvals"] = json!([approval]);
+    row("approval without a user id", export, "MISSING_USER_ID");
+
+    let mut export = with_u1.clone();
+    export["follows"] = json!([fixture.follow("ghost", support::MBID)]);
+    row("follow of an unknown user", export, "DANGLING_USER_REF");
+    let mut export = with_u1.clone();
+    export["approvals"] = json!([fixture.approval("ghost", support::MBID)]);
+    row("approval of an unknown user", export, "DANGLING_USER_REF");
+
+    let upper = support::MBID.to_uppercase();
+    let mut duplicates = with_u1;
+    duplicates["follows"] = json!([
+        fixture.follow("u1", support::MBID),
+        fixture.follow("u1", &upper)
+    ]);
+    duplicates["approvals"] = json!([
+        fixture.approval("u1", support::MBID),
+        fixture.approval("u1", &upper)
+    ]);
+    row("duplicate follow", duplicates.clone(), "DUPLICATE_FOLLOW");
+    row("duplicate approval", duplicates, "DUPLICATE_APPROVAL");
+
+    for (label, export, code) in &rows {
+        let report = validate_export(export);
+        assert!(!report.valid(), "case: {label}");
+        let found = codes(&report);
+        assert!(found.contains(code), "case: {label}: {found:?}");
     }
 }
 
+/// What a file may carry and still import: the clean shell passes silent,
+/// and each of these only warns.
 #[test]
-fn short_salt_and_nonce_rejected() {
+fn validator_warns_and_accepts() {
     let fixture = Fixture::shared();
-    let mut export = fixture.shell();
-    export["secret_envelope"]["kdf"]["salt_b64"] = json!("AAAA");
-    export["secret_envelope"]["nonce_b64"] = json!("AAAA");
-    let report = validate_export(&export);
-    let found = codes(&report);
-    assert!(found.contains(&"BAD_ENVELOPE_SALT"));
-    assert!(found.contains(&"BAD_ENVELOPE_NONCE"));
-}
+    let report = validate_export(&fixture.shell());
+    assert!(report.valid(), "case: clean shell: {:?}", report.errors);
+    assert!(report.warnings.is_empty(), "case: clean shell");
 
-#[test]
-fn unknown_top_level_key_warns() {
-    let fixture = Fixture::shared();
+    // A row with no warning code only has to stay valid.
+    let mut rows: Vec<(String, Value, Option<&str>)> = Vec::new();
+
     let mut export = fixture.shell();
     export["future_thing"] = json!({});
-    let report = validate_export(&export);
-    assert!(report.valid());
-    assert!(warning_codes(&report).contains(&"UNKNOWN_TOP_LEVEL_KEY"));
-}
+    rows.push((
+        "unknown top-level key".to_owned(),
+        export,
+        Some("UNKNOWN_TOP_LEVEL_KEY"),
+    ));
 
-#[test]
-fn reserved_section_warns() {
-    let fixture = Fixture::shared();
     for section in [
         "playlists",
         "favorites",
@@ -149,425 +401,74 @@ fn reserved_section_warns() {
     ] {
         let mut export = fixture.shell();
         export[section] = json!([]);
-        let report = validate_export(&export);
-        assert!(report.valid());
-        assert!(
-            warning_codes(&report).contains(&"IGNORED_RESERVED_SECTION"),
-            "section {section} must warn"
-        );
+        rows.push((
+            format!("reserved section {section}"),
+            export,
+            Some("IGNORED_RESERVED_SECTION"),
+        ));
     }
-}
 
-#[test]
-fn missing_v2_commit_warns() {
-    let fixture = Fixture::shared();
     let mut export = fixture.shell();
     export.as_object_mut().unwrap().remove("v2_commit");
-    let report = validate_export(&export);
-    assert!(report.valid());
-    assert!(warning_codes(&report).contains(&"MISSING_V2_COMMIT"));
-}
+    rows.push((
+        "missing v2 commit".to_owned(),
+        export,
+        Some("MISSING_V2_COMMIT"),
+    ));
 
-#[test]
-fn duplicate_user_id_rejected() {
-    let fixture = Fixture::shared();
-    let mut export = fixture.shell();
-    export["users"] = json!([fixture.user("u1"), fixture.user("u1")]);
-    let report = validate_export(&export);
-    assert!(codes(&report).contains(&"DUPLICATE_USER_ID"));
-}
-
-#[test]
-fn email_and_username_collisions_rejected() {
-    let fixture = Fixture::shared();
-    let mut first = fixture.user("u1");
-    let mut second = fixture.user("u2");
-    second["email"] = first["email"].clone();
-    let mut export = fixture.shell();
-    export["users"] = json!([first.clone(), second]);
-    assert!(codes(&validate_export(&export)).contains(&"USER_FIELD_COLLISION"));
-
-    let mut third = fixture.user("u3");
-    third["username"] = first["username"].clone();
-    first["email"] = json!("unique@example.com");
-    export["users"] = json!([first, third]);
-    assert!(codes(&validate_export(&export)).contains(&"USER_FIELD_COLLISION"));
-}
-
-#[test]
-fn duplicate_provider_rejected() {
-    let fixture = Fixture::shared();
-    let mut first = fixture.user("u1");
-    let mut second = fixture.user("u2");
-    second["providers"] = first["providers"].clone();
-    second["email"] = json!("u2@example.com");
-    second["username"] = json!("u2");
-    first["email"] = json!("u1@example.com");
-    first["username"] = json!("u1");
-    let mut export = fixture.shell();
-    export["users"] = json!([first, second]);
-    assert!(codes(&validate_export(&export)).contains(&"DUPLICATE_PROVIDER"));
-}
-
-#[test]
-fn local_provider_requires_bcrypt() {
-    let fixture = Fixture::shared();
-    let mut user = fixture.user("u1");
-    user["providers"][0]["hash_scheme"] = json!("opaque");
-    let mut export = fixture.shell();
-    export["users"] = json!([user.clone()]);
-    assert!(codes(&validate_export(&export)).contains(&"BAD_LOCAL_HASH"));
-
-    user["providers"][0]["hash_scheme"] = json!("bcrypt");
-    user["providers"][0]["provider_data"] = json!(r#"{"password_hash": "md5:abc"}"#);
-    export["users"] = json!([user]);
-    assert!(codes(&validate_export(&export)).contains(&"BAD_LOCAL_HASH"));
-}
-
-#[test]
-fn app_password_secret_must_be_sealed() {
-    let fixture = Fixture::shared();
-    let mut user = fixture.user("u1");
-    user["app_passwords"][0]["secret"] = json!("plaintext-secret");
-    let mut export = fixture.shell();
-    export["users"] = json!([user]);
-    assert!(codes(&validate_export(&export)).contains(&"SECRET_NOT_SEALED"));
-}
-
-#[test]
-fn revoked_app_password_warns() {
-    let fixture = Fixture::shared();
     let mut user = fixture.user("u1");
     user["app_passwords"][0]["revoked"] = json!(true);
-    let mut export = fixture.shell();
-    export["users"] = json!([user]);
-    let report = validate_export(&export);
-    assert!(report.valid());
-    assert!(warning_codes(&report).contains(&"REVOKED_APP_PASSWORD_KEPT"));
-}
+    rows.push((
+        "revoked app password".to_owned(),
+        with_users(fixture, json!([user])),
+        Some("REVOKED_APP_PASSWORD_KEPT"),
+    ));
 
-#[test]
-fn dropped_sections_rejected() {
-    let fixture = Fixture::shared();
-    for section in [
-        "library_sync_settings",
-        "_legacy_lidarr",
-        "local_files_settings",
-    ] {
-        let mut export = fixture.shell();
-        export["settings"][section] = json!({});
-        let report = validate_export(&export);
-        assert!(
-            codes(&report).contains(&"DROPPED_SECTION_PRESENT"),
-            "section {section} must fail"
-        );
-    }
-}
-
-#[test]
-fn dropped_env_names_rejected() {
-    let fixture = Fixture::shared();
-    let mut export = fixture.shell();
-    export["settings"]["cache_ttl_default"] = json!({});
-    assert!(codes(&validate_export(&export)).contains(&"DROPPED_SECTION_PRESENT"));
-    let mut export = fixture.shell();
-    export["jellyfin_url"] = json!("http://mirror");
-    assert!(codes(&validate_export(&export)).contains(&"DROPPED_SECTION_PRESENT"));
-}
-
-#[test]
-fn advanced_settings_allowlist_enforced() {
-    let fixture = Fixture::shared();
-    let mut export = fixture.shell();
-    export["settings"]["advanced_settings"] =
-        json!({"http_timeout": 30, "artist_discovery_warm_interval": 5});
-    assert!(codes(&validate_export(&export)).contains(&"SETTINGS_FIELD_NOT_ALLOWED"));
-    let mut export = fixture.shell();
-    export["settings"]["advanced_settings"] =
-        json!({"http_timeout": 30, "cache_ttl_something_new": 5});
-    assert!(validate_export(&export).valid());
-}
-
-#[test]
-fn internal_allowlist_enforced() {
-    let fixture = Fixture::shared();
-    let mut export = fixture.shell();
-    export["settings"]["_internal"] = json!({
-        "plex_client_id": "x",
-        "audiodb_sweep_cursor": "y",
-    });
-    assert!(codes(&validate_export(&export)).contains(&"SETTINGS_FIELD_NOT_ALLOWED"));
-}
-
-#[test]
-fn secret_bare_string_rejected() {
-    let fixture = Fixture::shared();
-    let mut export = fixture.shell();
-    export["settings"]["jellyfin_settings"] = json!({"api_key": "bare-secret"});
-    assert!(codes(&validate_export(&export)).contains(&"SECRET_NOT_SEALED"));
-
-    let mut export = fixture.shell();
-    export["settings"]["jellyfin_settings"] = json!({"api_key": fixture.seal("real-secret")});
-    assert!(validate_export(&export).valid());
-}
-
-#[test]
-fn sealed_blob_must_be_long_base64() {
-    let fixture = Fixture::shared();
-    let mut export = fixture.shell();
-    export["settings"]["jellyfin_settings"] = json!({"api_key": {"$sealed": "!!!not-b64!!!"}});
-    assert!(codes(&validate_export(&export)).contains(&"SEALED_NOT_BASE64"));
-
-    let mut export = fixture.shell();
-    export["settings"]["jellyfin_settings"] = json!({"api_key": {"$sealed": "AAAA"}});
-    assert!(codes(&validate_export(&export)).contains(&"SEALED_TOO_SHORT"));
-}
-
-#[test]
-fn indexers_must_be_array() {
-    let fixture = Fixture::shared();
-    let mut export = fixture.shell();
-    export["settings"]["indexers"] = json!({"name": "x"});
-    assert!(codes(&validate_export(&export)).contains(&"INDEXERS_NOT_ARRAY"));
-}
-
-#[test]
-fn bad_mbid_rejected() {
-    let fixture = Fixture::shared();
-    let mut export = fixture.shell();
-    export["users"] = json!([fixture.user("u1")]);
-    for mbid in ["", "not-an-mbid", "01234567-89ab-cdef-0123-456789abcde!"] {
-        let mut bad = export.clone();
-        bad["follows"] = json!([fixture.follow("u1", mbid)]);
-        assert!(
-            codes(&validate_export(&bad)).contains(&"BAD_MBID"),
-            "follow mbid {mbid:?} must fail"
-        );
-        let mut bad = export.clone();
-        bad["approvals"] = json!([fixture.approval("u1", mbid)]);
-        assert!(
-            codes(&validate_export(&bad)).contains(&"BAD_MBID"),
-            "approval mbid {mbid:?} must fail"
-        );
-    }
-}
-
-#[test]
-fn missing_user_id_rejected() {
-    let fixture = Fixture::shared();
-    let mut follow = fixture.follow("u1", support::MBID);
-    follow.as_object_mut().unwrap().remove("user_id");
-    let mut export = fixture.shell();
-    export["follows"] = json!([follow]);
-    assert!(codes(&validate_export(&export)).contains(&"MISSING_USER_ID"));
-
-    let mut approval = fixture.approval("u1", support::MBID);
-    approval.as_object_mut().unwrap().remove("user_id");
-    let mut export = fixture.shell();
-    export["approvals"] = json!([approval]);
-    assert!(codes(&validate_export(&export)).contains(&"MISSING_USER_ID"));
-}
-
-#[test]
-fn dangling_user_ref_rejected() {
-    let fixture = Fixture::shared();
-    let mut export = fixture.shell();
-    export["users"] = json!([fixture.user("u1")]);
-    export["follows"] = json!([fixture.follow("ghost", support::MBID)]);
-    assert!(codes(&validate_export(&export)).contains(&"DANGLING_USER_REF"));
-
-    let mut export = fixture.shell();
-    export["users"] = json!([fixture.user("u1")]);
-    export["approvals"] = json!([fixture.approval("ghost", support::MBID)]);
-    assert!(codes(&validate_export(&export)).contains(&"DANGLING_USER_REF"));
-}
-
-#[test]
-fn dangling_reviewer_warns() {
-    let fixture = Fixture::shared();
-    let mut export = fixture.shell();
-    export["users"] = json!([fixture.user("u1")]);
+    let mut export = with_users(fixture, json!([fixture.user("u1")]));
     let mut approval = fixture.approval("u1", support::MBID);
     approval["reviewed_by_id"] = json!("ghost");
     export["approvals"] = json!([approval]);
-    let report = validate_export(&export);
-    assert!(report.valid());
-    assert!(warning_codes(&report).contains(&"DANGLING_REVIEWER"));
-}
+    rows.push((
+        "dangling reviewer".to_owned(),
+        export,
+        Some("DANGLING_REVIEWER"),
+    ));
 
-#[test]
-fn non_object_root_rejected() {
-    for root in [json!([1, 2]), json!("export"), json!(null)] {
-        let report = validate_export(&root);
-        assert!(!report.valid());
-        assert!(codes(&report).contains(&"EXPORT_NOT_OBJECT"));
+    let mut unknown_section = fixture.shell();
+    unknown_section["settings"]["future_section"] =
+        json!({"api_key": {"$sealed": "!!!not-b64!!!"}});
+    rows.push((
+        "unknown settings section".to_owned(),
+        unknown_section.clone(),
+        Some("UNKNOWN_SETTINGS_SECTION"),
+    ));
+
+    let mut export = fixture.shell();
+    export["settings"]["advanced_settings"] =
+        json!({"http_timeout": 30, "cache_ttl_something_new": 5});
+    rows.push(("advanced cache_ttl key".to_owned(), export, None));
+
+    let mut export = fixture.shell();
+    export["settings"]["jellyfin_settings"] = json!({"api_key": fixture.seal("real-secret")});
+    rows.push(("sealed secret".to_owned(), export, None));
+
+    for (label, export, warning) in &rows {
+        let report = validate_export(export);
+        assert!(report.valid(), "case: {label}: {:?}", report.errors);
+        if let Some(warning) = warning {
+            assert!(
+                warning_codes(&report).contains(warning),
+                "case: {label}: {:?}",
+                report.warnings
+            );
+        }
     }
-}
 
-#[test]
-fn wrong_format_version_rejected() {
-    let fixture = Fixture::shared();
-    for version in [json!(0), json!("1"), json!(null)] {
-        let mut export = fixture.shell();
-        export["format_version"] = version;
-        assert!(
-            codes(&validate_export(&export)).contains(&"BAD_FORMAT_VERSION"),
-            "version must fail"
-        );
-    }
-    let mut export = fixture.shell();
-    export.as_object_mut().unwrap().remove("format_version");
-    assert!(codes(&validate_export(&export)).contains(&"BAD_FORMAT_VERSION"));
-}
-
-#[test]
-fn users_shape_rejected() {
-    let fixture = Fixture::shared();
-    let mut export = fixture.shell();
-    export["users"] = json!({"u1": {}});
-    assert!(codes(&validate_export(&export)).contains(&"USERS_NOT_ARRAY"));
-
-    let mut export = fixture.shell();
-    export["users"] = json!(["u1"]);
-    assert!(codes(&validate_export(&export)).contains(&"USER_NOT_OBJECT"));
-
-    for id in [json!(null), json!("")] {
-        let mut user = fixture.user("u1");
-        user["id"] = id;
-        let mut export = fixture.shell();
-        export["users"] = json!([user]);
-        assert!(codes(&validate_export(&export)).contains(&"USER_MISSING_ID"));
-    }
-    let mut user = fixture.user("u1");
-    user.as_object_mut().unwrap().remove("id");
-    let mut export = fixture.shell();
-    export["users"] = json!([user]);
-    assert!(codes(&validate_export(&export)).contains(&"USER_MISSING_ID"));
-}
-
-#[test]
-fn providers_shape_rejected() {
-    let fixture = Fixture::shared();
-    let mut user = fixture.user("u1");
-    user["providers"] = json!({"local": {}});
-    let mut export = fixture.shell();
-    export["users"] = json!([user]);
-    assert!(codes(&validate_export(&export)).contains(&"PROVIDERS_NOT_ARRAY"));
-
-    let mut user = fixture.user("u1");
-    user["providers"] = json!(["local"]);
-    let mut export = fixture.shell();
-    export["users"] = json!([user]);
-    assert!(codes(&validate_export(&export)).contains(&"PROVIDER_NOT_OBJECT"));
-}
-
-#[test]
-fn provider_without_a_binding_rejected() {
-    let fixture = Fixture::shared();
-    for field in ["provider", "provider_uid"] {
-        let mut user = fixture.user("u1");
-        user["providers"][0][field] = json!("");
-        let mut export = fixture.shell();
-        export["users"] = json!([user]);
-        assert!(
-            codes(&validate_export(&export)).contains(&"PROVIDER_MISSING_KEY"),
-            "field {field} must fail"
-        );
-    }
-}
-
-#[test]
-fn app_passwords_shape_rejected() {
-    let fixture = Fixture::shared();
-    let mut user = fixture.user("u1");
-    user["app_passwords"] = json!({"phone": {}});
-    let mut export = fixture.shell();
-    export["users"] = json!([user]);
-    assert!(codes(&validate_export(&export)).contains(&"APP_PASSWORDS_NOT_ARRAY"));
-
-    let mut user = fixture.user("u1");
-    user["app_passwords"] = json!(["phone"]);
-    let mut export = fixture.shell();
-    export["users"] = json!([user]);
-    assert!(codes(&validate_export(&export)).contains(&"APP_PASSWORD_NOT_OBJECT"));
-}
-
-#[test]
-fn settings_shape_rejected() {
-    let fixture = Fixture::shared();
-    let mut export = fixture.shell();
-    export["settings"] = json!([]);
-    assert!(codes(&validate_export(&export)).contains(&"SETTINGS_NOT_OBJECT"));
-}
-
-#[test]
-fn follows_shape_rejected() {
-    let fixture = Fixture::shared();
-    let mut export = fixture.shell();
-    export["follows"] = json!({"mbid": {}});
-    assert!(codes(&validate_export(&export)).contains(&"FOLLOWS_NOT_ARRAY"));
-
-    let mut export = fixture.shell();
-    export["follows"] = json!(["mbid"]);
-    assert!(codes(&validate_export(&export)).contains(&"FOLLOW_NOT_OBJECT"));
-}
-
-#[test]
-fn approvals_shape_rejected() {
-    let fixture = Fixture::shared();
-    let mut export = fixture.shell();
-    export["approvals"] = json!({"mbid": {}});
-    assert!(codes(&validate_export(&export)).contains(&"APPROVALS_NOT_ARRAY"));
-
-    let mut export = fixture.shell();
-    export["approvals"] = json!(["mbid"]);
-    assert!(codes(&validate_export(&export)).contains(&"APPROVAL_NOT_OBJECT"));
-}
-
-#[test]
-fn unknown_settings_section_warns_and_skips() {
-    let fixture = Fixture::shared();
-    let mut export = fixture.shell();
-    export["settings"]["future_section"] = json!({"api_key": {"$sealed": "!!!not-b64!!!"}});
-    let report = validate_export(&export);
-    assert!(report.valid());
-    assert!(
-        warning_codes(&report).contains(&"UNKNOWN_SETTINGS_SECTION"),
-        "warnings: {:?}",
-        report.warnings
-    );
+    let report = validate_export(&unknown_section);
     assert!(
         !codes(&report).contains(&"SEALED_NOT_BASE64"),
         "ignored sections skip sealed-shape checks"
     );
-}
-
-#[test]
-fn lastfm_bare_secret_rejected() {
-    let fixture = Fixture::shared();
-    let mut export = fixture.shell();
-    export["settings"]["lastfm_settings"] = json!({"enabled": true, "api_key": "bare-key"});
-    assert!(codes(&validate_export(&export)).contains(&"SECRET_NOT_SEALED"));
-}
-
-#[test]
-fn duplicate_follow_and_approval_rejected() {
-    let fixture = Fixture::shared();
-    let mut export = fixture.shell();
-    export["users"] = json!([fixture.user("u1")]);
-    let upper = support::MBID.to_uppercase();
-    export["follows"] = json!([
-        fixture.follow("u1", support::MBID),
-        fixture.follow("u1", &upper)
-    ]);
-    export["approvals"] = json!([
-        fixture.approval("u1", support::MBID),
-        fixture.approval("u1", &upper)
-    ]);
-    let report = validate_export(&export);
-    let found = codes(&report);
-    assert!(found.contains(&"DUPLICATE_FOLLOW"), "{found:?}");
-    assert!(found.contains(&"DUPLICATE_APPROVAL"), "{found:?}");
 }
 
 /// A missing identity field and a field of the wrong type both refuse the

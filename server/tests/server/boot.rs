@@ -317,28 +317,26 @@ async fn database_one_version_behind_is_backed_up_before_migrating() {
     );
 }
 
-/// A running offline import holds the data lock exclusively: the server
-/// refuses to boot before it opens, backs up or migrates the database.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn boot_refuses_while_the_offline_tool_holds_the_database() {
-    let dir = scratch("locked");
-    let config = AppConfig::with_root(0, &dir);
-    let db_path = config.library_db_path.clone();
-    std::fs::create_dir_all(db_path.parent().unwrap()).unwrap();
-    let _import = droppedneedle_kernel::db::datalock::DataLock::exclusive(&db_path).unwrap();
-    let refused = build(config).await;
-    assert!(
-        matches!(refused, Err(bootstrap::BootError::DataLock(_))),
-        "boot must refuse a held database"
-    );
-    assert!(!db_path.exists(), "the database was opened under the lock");
-}
-
-/// A running server holds the server lock, so a second server on the same
-/// data folder is refused before it opens the database. Once the first has
+/// A running offline import holds the data lock exclusively, and a running
+/// server holds the server lock: either way boot refuses the folder before
+/// it opens, backs up or migrates the database. Once the other server has
 /// stopped, the folder boots again.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn boot_refuses_a_second_server_on_the_same_data_folder() {
+async fn boot_refuses_a_data_folder_another_process_holds() {
+    {
+        let dir = scratch("locked");
+        let config = AppConfig::with_root(0, &dir);
+        let db_path = config.library_db_path.clone();
+        std::fs::create_dir_all(db_path.parent().unwrap()).unwrap();
+        let _import = droppedneedle_kernel::db::datalock::DataLock::exclusive(&db_path).unwrap();
+        let refused = build(config).await;
+        assert!(
+            matches!(refused, Err(bootstrap::BootError::DataLock(_))),
+            "boot must refuse a held database"
+        );
+        assert!(!db_path.exists(), "the database was opened under the lock");
+    }
+
     let dir = scratch("second-server");
     let config = AppConfig::with_root(0, &dir);
     let db_path = config.library_db_path.clone();
@@ -501,7 +499,15 @@ async fn acquire_recovery_waits_out_a_busy_reader_and_stops_on_a_real_failure() 
     runtime.shutdown().await;
 }
 
+/// The session cookie is `Secure` once the server knows the sign-in came
+/// over HTTPS: from a trusted TLS proxy, or from a stated https address.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_login_over_https_sets_a_secure_cookie() {
+    login_behind_a_trusted_tls_proxy_sets_a_secure_cookie().await;
+    the_answer_to_a_login_from_a_stated_https_address_sets_a_secure_cookie().await;
+}
+
+/// The trusted proxy case of [`a_login_over_https_sets_a_secure_cookie`].
 async fn login_behind_a_trusted_tls_proxy_sets_a_secure_cookie() {
     let dir = scratch("proxy");
     let (router, background) = build(config_in(&dir)).await.unwrap();
@@ -566,7 +572,6 @@ fn set_cookies(headers: &reqwest::header::HeaderMap) -> Vec<String> {
 ///
 /// First-run setup stands for the other places that set the cookie: the
 /// address is stated from the host before the first boot.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_answer_to_a_login_from_a_stated_https_address_sets_a_secure_cookie() {
     const HTTPS_PAGE: &str = "https://music.test";
     const HTTP_PAGE: &str = "http://music.test:8080";
@@ -1100,9 +1105,17 @@ async fn the_page_policy_follows_the_saved_mode_and_framing_list() {
     running.shut_down().await;
 }
 
+/// What an admin sets from the host with the server stopped, the page
+/// policy's mode or the public address, is refused while a server runs and
+/// served from the next boot.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn host_commands_take_effect_at_the_next_boot() {
+    the_policy_mode_set_from_the_host_is_served_at_the_next_boot().await;
+    public_address_set_from_the_host_is_honoured_at_the_next_boot().await;
+}
+
 /// An admin whose browser shows a blank page under the policy changes its
 /// mode from the host, with the server stopped.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_policy_mode_set_from_the_host_is_served_at_the_next_boot() {
     use droppedneedle_kernel::runtime_config::sections::ContentSecurityPolicyMode as Mode;
     use droppedneedle_tool::tooling::host_settings::{
@@ -1227,11 +1240,13 @@ fn public_address(origins: &[&str]) -> (&'static str, serde_json::Value) {
 /// A proxy drops the port from `Host`: the browser is on
 /// `http://music.test:8080` and the server sees itself at
 /// `http://music.test`. Every save is refused until the admin states the
-/// address, and nothing but that saved address widens the check.
+/// address, and nothing but that saved address widens the check. A stored
+/// section that states no address reads as none, never as an empty list.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_stated_public_address_is_the_only_thing_that_widens_the_origin_check() {
+async fn only_a_stated_public_address_widens_the_origin_check() {
     const PAGE: &str = "http://music.test:8080";
     const OTHER_APP: &str = "http://music.test:8096";
+    a_stored_public_address_without_origins_is_unreadable_not_empty();
     let dir = scratch("public-address");
     let (router, background) = build(config_in(&dir)).await.unwrap();
     let running = start(router.clone(), background).await;
@@ -1336,7 +1351,6 @@ async fn a_stated_public_address_is_the_only_thing_that_widens_the_origin_check(
 /// Settings with no public address section, or `null` in its place, state
 /// no address. A section without `origins` is unreadable, never an empty
 /// list: a save cannot write one, so it is a hand edit.
-#[test]
 fn a_stored_public_address_without_origins_is_unreadable_not_empty() {
     let dir = scratch("public-address-stored");
     let config = config_in(&dir);
@@ -1373,7 +1387,6 @@ fn a_stored_public_address_without_origins_is_unreadable_not_empty() {
 
 /// An admin who can only reach the app through the proxy states the address
 /// from the host, with the server stopped.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn public_address_set_from_the_host_is_honoured_at_the_next_boot() {
     use droppedneedle_tool::tooling::host_settings::{
         HostSettingsError, public_address as stored, set_public_address,

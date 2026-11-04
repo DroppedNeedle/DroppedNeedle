@@ -1,7 +1,6 @@
 //! Tooling CLI tests: every `droppedneedle-tool` subcommand runs
 //! as the real binary, plus the in-place upgrade's failure and recovery
-//! paths, the conflict-merge decisions, the offline restore guards, and
-//! the dev-only covers-debug gate.
+//! paths, the offline restore guards, and the dev-only covers-debug gate.
 //!
 //! Nothing here touches the network; every database is a scratch file.
 
@@ -152,7 +151,7 @@ fn export_writes_then_refuses_a_keyless_instance() {
 #[test]
 fn validate_accepts_rejects_and_cross_checks() {
     let root = scratch_dir("validate");
-    let (_fixture, clean) = repaired_export(&root);
+    let (fixture, clean) = repaired_export(&root);
     let text = std::fs::read_to_string(&clean).expect("export reads");
 
     let status = Command::new(tool())
@@ -261,12 +260,8 @@ fn validate_accepts_rejects_and_cross_checks() {
         "stderr: {}",
         String::from_utf8_lossy(&status.stderr)
     );
-}
 
-#[test]
-fn validate_accepts_a_matching_v2_root() {
-    let root = scratch_dir("validate-match");
-    let (fixture, clean) = repaired_export(&root);
+    // The root the file was exported from passes the cross-check.
     let status = Command::new(tool())
         .args(["validate"])
         .arg(&clean)
@@ -281,6 +276,60 @@ fn validate_accepts_a_matching_v2_root() {
     );
 }
 
+/// Run `verb` (import or dry-run) on `export` into `db`, the passphrase read
+/// from `passphrase`: a file's path, or stdin when it is `None`, where
+/// `stdin` is what the tool reads.
+fn import_verb(
+    verb: &str,
+    export: &Path,
+    db: &Path,
+    config_dir: &Path,
+    passphrase: Option<&Path>,
+    stdin: Option<&[u8]>,
+) -> std::process::Output {
+    let mut command = Command::new(tool());
+    command
+        .args([verb, "--file"])
+        .arg(export)
+        .args(["--db"])
+        .arg(db)
+        .args(["--config-dir"])
+        .arg(config_dir)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if let Some(file) = passphrase {
+        command.args(["--passphrase-file"]).arg(file);
+    }
+    match stdin {
+        Some(bytes) => {
+            let mut child = command.stdin(Stdio::piped()).spawn().expect("tool spawns");
+            use std::io::Write as _;
+            child
+                .stdin
+                .as_mut()
+                .expect("stdin pipes")
+                .write_all(bytes)
+                .expect("passphrase writes");
+            child.wait_with_output().expect("tool runs")
+        }
+        None => command.stdin(Stdio::null()).output().expect("tool runs"),
+    }
+}
+
+/// The exit code in the one JSON report a run prints.
+fn report_code(output: &std::process::Output) -> String {
+    let report: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON report on stdout");
+    report
+        .get("exit")
+        .and_then(|exit| exit.get("code"))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .to_owned()
+}
+
+/// A dry run and an import through the binary agree, the dry run reading
+/// the passphrase from a file and the import from stdin.
 #[test]
 fn import_and_dry_run_match_through_the_binary() {
     let root = scratch_dir("import");
@@ -290,20 +339,14 @@ fn import_and_dry_run_match_through_the_binary() {
     let config_dir = root.join("config");
     std::fs::create_dir_all(&config_dir).expect("config dir");
 
-    let run = |verb: &str| {
-        Command::new(tool())
-            .args([verb, "--file"])
-            .arg(&export)
-            .args(["--db"])
-            .arg(&db)
-            .args(["--config-dir"])
-            .arg(&config_dir)
-            .args(["--passphrase-file"])
-            .arg(&pass)
-            .output()
-            .expect("tool runs")
-    };
-    let dry = run("dry-run");
+    let dry = import_verb(
+        "dry-run",
+        &export,
+        &db,
+        &config_dir,
+        Some(pass.as_path()),
+        None,
+    );
     assert!(
         dry.status.success(),
         "stderr: {}",
@@ -315,8 +358,20 @@ fn import_and_dry_run_match_through_the_binary() {
         dry_report.get("dry_run"),
         Some(&serde_json::Value::Bool(true))
     );
+    let code = report_code(&dry);
+    assert!(
+        code == "OK" || code == "OK_WITH_DROPS",
+        "dry-run report: {code}"
+    );
 
-    let real = run("import");
+    let real = import_verb(
+        "import",
+        &export,
+        &db,
+        &config_dir,
+        None,
+        Some(b"operator-passphrase\n".as_slice()),
+    );
     assert!(
         real.status.success(),
         "stderr: {}",
@@ -325,6 +380,11 @@ fn import_and_dry_run_match_through_the_binary() {
     let report: serde_json::Value =
         serde_json::from_slice(&real.stdout).expect("import prints one JSON object");
     assert_eq!(report.get("dry_run"), Some(&serde_json::Value::Bool(false)));
+    let code = report_code(&real);
+    assert!(
+        code == "OK" || code == "OK_WITH_DROPS",
+        "import report: {code}"
+    );
     assert_eq!(
         report.get("entities"),
         dry_report.get("entities"),
@@ -337,204 +397,106 @@ fn import_and_dry_run_match_through_the_binary() {
     assert!(!config_dir.join("config.json").exists());
 }
 
+/// A wrong passphrase file, an empty one and a closed stdin each fail the
+/// envelope check, print the one report and write nothing.
 #[test]
-fn import_with_the_wrong_passphrase_writes_nothing() {
-    let root = scratch_dir("passphrase");
+fn a_bad_passphrase_fails_closed_through_the_binary() {
+    let root = scratch_dir("bad-passphrase");
     let (_fixture, export) = repaired_export(&root);
-    let wrong = passphrase_file(&root, "wrong-passphrase");
-    let db = root.join("v3.db");
-    let config_dir = root.join("config");
-    std::fs::create_dir_all(&config_dir).expect("config dir");
+    let wrong = root.join("wrong-passphrase.txt");
+    std::fs::write(&wrong, "wrong-passphrase").expect("passphrase file writes");
+    let empty = root.join("empty-passphrase.txt");
+    std::fs::write(&empty, "").expect("passphrase file writes");
 
-    let status = Command::new(tool())
-        .args(["import", "--file"])
-        .arg(&export)
-        .args(["--db"])
-        .arg(&db)
-        .args(["--config-dir"])
-        .arg(&config_dir)
-        .args(["--passphrase-file"])
-        .arg(&wrong)
-        .output()
-        .expect("tool runs");
-    assert!(!status.status.success());
-    let report: serde_json::Value =
-        serde_json::from_slice(&status.stdout).expect("failure still prints one report");
-    assert_eq!(
-        report.get("exit").and_then(|exit| exit.get("code")),
-        Some(&serde_json::json!("ENVELOPE_AUTH_FAILED"))
-    );
-    assert!(settings_in(&db).is_empty(), "zero writes");
-}
-
-#[test]
-fn import_and_dry_run_read_the_passphrase_from_stdin() {
-    let root = scratch_dir("stdin-pass");
-    let (_fixture, export) = repaired_export(&root);
-    let db = root.join("v3.db");
-    let config_dir = root.join("config");
-    std::fs::create_dir_all(&config_dir).expect("config dir");
-
-    for verb in ["dry-run", "import"] {
-        let mut child = Command::new(tool())
-            .args([verb, "--file"])
-            .arg(&export)
-            .args(["--db"])
-            .arg(&db)
-            .args(["--config-dir"])
-            .arg(&config_dir)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("tool spawns");
-        use std::io::Write as _;
-        child
-            .stdin
-            .as_mut()
-            .expect("stdin pipes")
-            .write_all(b"operator-passphrase\n")
-            .expect("passphrase writes");
-        let out = child.wait_with_output().expect("tool runs");
-        assert!(
-            out.status.success(),
-            "{verb} stderr: {}",
-            String::from_utf8_lossy(&out.stderr)
+    for (label, tag, verb, passphrase) in [
+        (
+            "wrong passphrase file",
+            "wrong",
+            "import",
+            Some(wrong.as_path()),
+        ),
+        (
+            "empty passphrase file",
+            "empty",
+            "import",
+            Some(empty.as_path()),
+        ),
+        // Closed stdin reads as empty and fails the same way.
+        ("closed stdin", "stdin", "dry-run", None),
+    ] {
+        let db = root.join(tag).join("v3.db");
+        let config_dir = root.join(tag).join("config");
+        std::fs::create_dir_all(&config_dir).expect("config dir");
+        let status = import_verb(verb, &export, &db, &config_dir, passphrase, None);
+        assert!(!status.status.success(), "case: {label}");
+        assert_eq!(
+            report_code(&status),
+            "ENVELOPE_AUTH_FAILED",
+            "case: {label}: failure still prints one report"
         );
-        let report: serde_json::Value =
-            serde_json::from_slice(&out.stdout).expect("one JSON report on stdout");
-        let code = report
-            .get("exit")
-            .and_then(|exit| exit.get("code"))
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_default();
-        assert!(
-            code == "OK" || code == "OK_WITH_DROPS",
-            "{verb} report: {code}"
-        );
+        assert!(settings_in(&db).is_empty(), "case: {label}: zero writes");
     }
 }
 
+/// The import refuses a database another writer holds, and one a running
+/// server holds, before it opens the database at all.
 #[test]
-fn import_with_an_empty_passphrase_fails_closed() {
-    let root = scratch_dir("empty-pass");
-    let (_fixture, export) = repaired_export(&root);
-    let db = root.join("v3.db");
-    let config_dir = root.join("config");
-    std::fs::create_dir_all(&config_dir).expect("config dir");
-
-    // An empty passphrase file.
-    let empty = passphrase_file(&root, "");
-    let status = Command::new(tool())
-        .args(["import", "--file"])
-        .arg(&export)
-        .args(["--db"])
-        .arg(&db)
-        .args(["--config-dir"])
-        .arg(&config_dir)
-        .args(["--passphrase-file"])
-        .arg(&empty)
-        .output()
-        .expect("tool runs");
-    assert!(!status.status.success());
-    let report: serde_json::Value =
-        serde_json::from_slice(&status.stdout).expect("failure still prints one report");
-    assert_eq!(
-        report.get("exit").and_then(|exit| exit.get("code")),
-        Some(&serde_json::json!("ENVELOPE_AUTH_FAILED"))
-    );
-    assert!(settings_in(&db).is_empty(), "zero writes");
-
-    // Closed stdin reads as empty and fails the same way.
-    let dry_db = root.join("dry.db");
-    let status = Command::new(tool())
-        .args(["dry-run", "--file"])
-        .arg(&export)
-        .args(["--db"])
-        .arg(&dry_db)
-        .args(["--config-dir"])
-        .arg(&config_dir)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .expect("tool runs");
-    assert!(!status.status.success());
-    let report: serde_json::Value =
-        serde_json::from_slice(&status.stdout).expect("failure still prints one report");
-    assert_eq!(
-        report.get("exit").and_then(|exit| exit.get("code")),
-        Some(&serde_json::json!("ENVELOPE_AUTH_FAILED"))
-    );
-}
-
-#[tokio::test]
-async fn import_refuses_a_locked_database() {
-    let root = scratch_dir("locked");
+fn import_refuses_a_held_database() {
+    let root = scratch_dir("held-db");
     let (_fixture, export) = repaired_export(&root);
     let pass = passphrase_file(&root, "operator-passphrase");
-    let db = root.join("v3.db");
-    let config_dir = root.join("config");
-    std::fs::create_dir_all(&config_dir).expect("config dir");
-
-    droppedneedle_kernel::db::migrate_file(&db, &droppedneedle_kernel::schema::CHAIN)
-        .expect("schema migrates");
 
     // Another writer holds the database for the duration of the CLI run.
+    let case = "SQLite write lock";
+    let config_dir = root.join("locked").join("config");
+    std::fs::create_dir_all(&config_dir).expect("config dir");
+    let db = root.join("locked").join("v3.db");
+    droppedneedle_kernel::db::migrate_file(&db, &droppedneedle_kernel::schema::CHAIN)
+        .expect("schema migrates");
     let held = rusqlite::Connection::open(&db).expect("lock connection opens");
     held.execute_batch("BEGIN IMMEDIATE")
         .expect("write lock taken");
-    let status = Command::new(tool())
-        .args(["import", "--file"])
-        .arg(&export)
-        .args(["--db"])
-        .arg(&db)
-        .args(["--config-dir"])
-        .arg(&config_dir)
-        .args(["--passphrase-file"])
-        .arg(&pass)
-        .output()
-        .expect("tool runs");
+    let status = import_verb(
+        "import",
+        &export,
+        &db,
+        &config_dir,
+        Some(pass.as_path()),
+        None,
+    );
     drop(held);
-
-    assert!(!status.status.success());
+    assert!(!status.status.success(), "case: {case}");
     assert!(
         status.stdout.is_empty(),
-        "a pre-pipeline refusal prints no report"
+        "case: {case}: a pre-pipeline refusal prints no report"
     );
-    assert!(!String::from_utf8_lossy(&status.stderr).is_empty());
-}
+    assert!(
+        !String::from_utf8_lossy(&status.stderr).is_empty(),
+        "case: {case}"
+    );
 
-/// A running server holds the database lock; the import refuses before it
-/// opens the database at all.
-#[test]
-fn import_refuses_while_the_server_holds_the_database() {
-    let root = scratch_dir("server-lock");
-    let (_fixture, export) = repaired_export(&root);
-    let pass = passphrase_file(&root, "operator-passphrase");
-    let db = root.join("v3.db");
-    let config_dir = root.join("config");
+    // A running server holds the data lock; the import refuses before it
+    // opens the database at all.
+    let case = "server data lock";
+    let config_dir = root.join("served").join("config");
     std::fs::create_dir_all(&config_dir).expect("config dir");
+    let db = root.join("served").join("v3.db");
     let _server = droppedneedle_kernel::db::datalock::DataLock::shared(&db).expect("server lock");
-
-    let status = Command::new(tool())
-        .args(["import", "--file"])
-        .arg(&export)
-        .args(["--db"])
-        .arg(&db)
-        .args(["--config-dir"])
-        .arg(&config_dir)
-        .args(["--passphrase-file"])
-        .arg(&pass)
-        .output()
-        .expect("tool runs");
-    assert!(!status.status.success());
+    let status = import_verb(
+        "import",
+        &export,
+        &db,
+        &config_dir,
+        Some(pass.as_path()),
+        None,
+    );
+    assert!(!status.status.success(), "case: {case}");
     assert!(
         String::from_utf8_lossy(&status.stderr).contains("stop the server"),
-        "stderr: {}",
+        "case: {case}: stderr: {}",
         String::from_utf8_lossy(&status.stderr)
     );
-    assert!(!db.exists(), "the database was never opened");
+    assert!(!db.exists(), "case: {case}: the database was never opened");
 }
 
 /// Run the tool against the data directory under `root` the way a
@@ -994,7 +956,23 @@ async fn reset_key_clears_every_secret_of_a_lost_key() {
     std::fs::remove_file(&key).expect("key removes");
     droppedneedle_kernel::runtime_config::Crypto::mint_file(&key).expect("another key");
     let wrong = std::fs::read(&key).expect("key reads");
-    let (_fixture, export) = repaired_export(&scratch.join("export"));
+    // The export comes from the v2 files the upgrade kept in its backup.
+    let export = scratch.join("export.json");
+    droppedneedle_tool::export::export_v2_to_file(
+        &droppedneedle_tool::export::ExportRequest {
+            v2: droppedneedle_tool::export::v2dir::V2Dirs {
+                config_dir: config.join("v2-backup"),
+                cache_dir: root.join("cache").join("v2-backup"),
+                plugins_dir: root.join("plugins"),
+            },
+            db_path: None,
+            passphrase: droppedneedle_kernel::runtime_config::Secret::new("operator-passphrase"),
+            exported_at: None,
+            v2_commit: None,
+        },
+        &export,
+    )
+    .expect("export of the kept v2 files writes");
     let pass = passphrase_file(&scratch, "operator-passphrase");
     let import = Command::new(tool())
         .args(["import", "--file"])
@@ -1603,151 +1581,6 @@ fn undo_returns_the_v2_files_and_no_backup_keeps_none() {
         stderr_of(&nothing_to_undo)
     );
     assert!(is_v3(&root));
-}
-
-/// A migrated merge target plus its repaired export, ready for one seed.
-/// The scratch guard comes last; keep it alive for the whole test.
-async fn merge_target(
-    tag: &str,
-) -> (
-    droppedneedle_tool::tooling::fixture::V2Fixture,
-    PathBuf,
-    PathBuf,
-    PathBuf,
-    crate::common::ScratchDir,
-) {
-    let root = scratch_dir(tag);
-    let (fixture, export) = repaired_export(&root);
-    let db_path = root.join("v3.db");
-    droppedneedle_kernel::db::migrate_file(&db_path, &droppedneedle_kernel::schema::CHAIN)
-        .expect("schema migrates");
-    let config_dir = root.join("config");
-    std::fs::create_dir_all(&config_dir).expect("config dir");
-    (fixture, export, db_path, config_dir, root)
-}
-
-async fn run_merge(
-    export: &std::path::Path,
-    target_db: &Path,
-    config_dir: &std::path::Path,
-) -> droppedneedle_tool::r#import::ImportReport {
-    let (crypto, _) = droppedneedle_kernel::runtime_config::Crypto::load_or_generate(config_dir)
-        .expect("v3 key loads");
-    droppedneedle_tool::r#import::run_import(droppedneedle_tool::r#import::ImportRequest {
-        export_bytes: std::fs::read(export).expect("export reads"),
-        passphrase: "operator-passphrase".to_owned(),
-        db_path: target_db.to_owned(),
-        legacy: droppedneedle_kernel::runtime_config::LegacyConfig::at(config_dir, false),
-        crypto,
-        v2_config_path: None,
-        attachments_dir: export.parent().map(std::path::Path::to_path_buf),
-        cache_dir: None,
-        dry_run: false,
-        fault_before_commit: false,
-        fault_after_commit: false,
-        fault_after_sections: None,
-    })
-    .await
-}
-
-/// Same-id users keep the existing row, untouched.
-#[tokio::test]
-async fn same_id_user_conflict_keeps_existing_row() {
-    let (fixture, export, target_db, config_dir, _root) = merge_target("merge-user").await;
-    target_db.exec(
-        "INSERT INTO auth_users (id, display_name, email, role, created_at, username)
-         VALUES (?, 'Old Alice', 'old@example.com', 'user',
-                 1767225600000, 'alice')",
-        rusqlite::params![&fixture.alice_id],
-    );
-
-    let report = run_merge(&export, &target_db, &config_dir).await;
-    assert_eq!(
-        report.exit.code,
-        droppedneedle_tool::r#import::ExitCode::OkWithDrops
-    );
-    assert_eq!(
-        report
-            .entities
-            .get("user")
-            .expect("user counted")
-            .conflict_kept_existing,
-        1
-    );
-
-    let display: String = target_db.one(
-        "SELECT display_name FROM auth_users WHERE id = ?",
-        rusqlite::params![&fixture.alice_id],
-    );
-    assert_eq!(display, "Old Alice");
-}
-
-/// Follows merge: auto_download OR, followed_at min, updated_at max.
-#[tokio::test]
-async fn follow_conflict_merges_or_min_max() {
-    let (fixture, export, target_db, config_dir, _root) = merge_target("merge-follow").await;
-    target_db.exec("INSERT INTO auth_users (id, display_name, role, created_at) VALUES (?, 'Alice', 'user', 0)", rusqlite::params![&fixture.alice_id]);
-    target_db.exec(
-        "INSERT INTO acquire_followed_artists (user_id, artist_mbid, artist_mbid_lower,
-             artist_name, auto_download, followed_at, updated_at)
-         VALUES (?, ?, ?, 'Fixture Artist One', 0, 9999999999000, 100000)",
-        rusqlite::params![
-            &fixture.alice_id,
-            &fixture.artist_one_mbid,
-            fixture.artist_one_mbid.to_lowercase()
-        ],
-    );
-
-    let report = run_merge(&export, &target_db, &config_dir).await;
-    assert_eq!(
-        report
-            .entities
-            .get("follow")
-            .expect("follow counted")
-            .conflict_kept_existing,
-        1
-    );
-
-    let merged: (i64, i64, i64) = target_db.row(
-        "SELECT auto_download, followed_at, updated_at FROM acquire_followed_artists
-         WHERE user_id = ? AND artist_mbid_lower = ?",
-        rusqlite::params![&fixture.alice_id, fixture.artist_one_mbid.to_lowercase()],
-    );
-    assert_eq!(merged, (1, 1_700_000_000_000, 1_760_000_000_000));
-}
-
-/// Approvals keep the most-permissive state with the earliest request.
-#[tokio::test]
-async fn approval_conflict_keeps_most_permissive() {
-    let (fixture, export, target_db, config_dir, _root) = merge_target("merge-approval").await;
-    target_db.exec("INSERT INTO auth_users (id, display_name, role, created_at) VALUES (?, 'Alice', 'user', 0)", rusqlite::params![&fixture.alice_id]);
-    target_db.exec(
-        "INSERT INTO auto_download_approvals (user_id, artist_mbid, artist_mbid_lower,
-             artist_name, state, requested_at)
-         VALUES (?, ?, ?, 'Fixture Artist One', 'approved', 9999999999000)",
-        rusqlite::params![
-            &fixture.alice_id,
-            &fixture.artist_one_mbid,
-            fixture.artist_one_mbid.to_lowercase()
-        ],
-    );
-
-    let report = run_merge(&export, &target_db, &config_dir).await;
-    assert_eq!(
-        report
-            .entities
-            .get("approval")
-            .expect("approval counted")
-            .conflict_kept_existing,
-        1
-    );
-
-    let approval: (String, i64) = target_db.row(
-        "SELECT state, requested_at FROM auto_download_approvals
-         WHERE user_id = ? AND artist_mbid_lower = ?",
-        rusqlite::params![&fixture.alice_id, fixture.artist_one_mbid.to_lowercase()],
-    );
-    assert_eq!(approval, ("approved".to_owned(), 1_740_000_000_000));
 }
 
 #[tokio::test]

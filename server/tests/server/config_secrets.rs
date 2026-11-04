@@ -126,10 +126,24 @@ fn every_secret_section_masks_and_keeps() {
         false,
         SECRET_MASK
     );
+
+    // A saved empty value clears the stored secret. AdvancedSettings has a
+    // non-empty default key, so this case is not in the macro.
+    let mut incoming = PlexConnection::default();
+    *incoming.plex_token.expose_mut() = "plex-live".to_owned();
+    store.save_secret_blocking(incoming).unwrap();
+    let cleared = PlexConnection::default();
+    store.save_secret_blocking(cleared).unwrap();
+    let masked: PlexConnection = store.get_masked::<PlexConnection>().unwrap().into_inner();
+    assert_eq!(masked.plex_token.expose(), "", "empty clears: masked");
+    let raw = store.get_raw::<PlexConnection>().unwrap();
+    assert_eq!(raw.plex_token.expose(), "", "empty clears: raw");
 }
 
+/// A section with several secrets resolves each mask by its own key: the
+/// masked one keeps its stored value, the other takes the new one.
 #[test]
-fn events_masks_resolve_each_key_independently() {
+fn multi_secret_sections_resolve_each_mask_by_its_own_key() {
     let (_dir, store) = test_store("events_mask");
     let mut incoming = EventsSettings::default();
     *incoming.ticketmaster_api_key.expose_mut() = "tm-live".to_owned();
@@ -140,11 +154,54 @@ fn events_masks_resolve_each_key_independently() {
     *incoming.skiddle_api_key.expose_mut() = "sk-next".to_owned();
     store.save_secret_blocking(incoming).unwrap();
     let raw = store.get_raw::<EventsSettings>().unwrap();
-    assert_eq!(raw.ticketmaster_api_key.expose(), "tm-live");
-    assert_eq!(raw.skiddle_api_key.expose(), "sk-next");
+    assert_eq!(raw.ticketmaster_api_key.expose(), "tm-live", "events");
+    assert_eq!(raw.skiddle_api_key.expose(), "sk-next", "events");
     let masked: EventsSettings = store.get_masked::<EventsSettings>().unwrap().into_inner();
-    assert_eq!(masked.ticketmaster_api_key.expose(), SECRET_MASK);
-    assert_eq!(masked.skiddle_api_key.expose(), SECRET_MASK);
+    assert_eq!(masked.ticketmaster_api_key.expose(), SECRET_MASK, "events");
+    assert_eq!(masked.skiddle_api_key.expose(), SECRET_MASK, "events");
+
+    // Plugin settings: secret keys are sealed and masked, the rest plain.
+    let secrets: HashSet<String> = HashSet::from(["token".to_owned()]);
+    let mut settings = std::collections::HashMap::new();
+    settings.insert("token".to_owned(), "plugin-live-token".to_owned());
+    settings.insert("nick".to_owned(), "plain".to_owned());
+    store
+        .save_plugin_blocking(
+            "demo",
+            PluginConfig {
+                enabled: true,
+                settings,
+            },
+            &secrets,
+        )
+        .unwrap();
+    let masked = store.get_plugin_masked("demo", &secrets).unwrap();
+    assert_eq!(masked.settings["token"], SECRET_MASK, "plugin");
+    assert_eq!(masked.settings["nick"], "plain", "plugin");
+    let raw = store
+        .get_plugin_raw("demo", &secrets)
+        .unwrap()
+        .into_settings();
+    assert_eq!(raw["token"], "plugin-live-token", "plugin");
+    let mut settings = std::collections::HashMap::new();
+    settings.insert("token".to_owned(), SECRET_MASK.to_owned());
+    settings.insert("nick".to_owned(), "renamed".to_owned());
+    store
+        .save_plugin_blocking(
+            "demo",
+            PluginConfig {
+                enabled: true,
+                settings,
+            },
+            &secrets,
+        )
+        .unwrap();
+    let raw = store
+        .get_plugin_raw("demo", &secrets)
+        .unwrap()
+        .into_settings();
+    assert_eq!(raw["token"], "plugin-live-token", "plugin mask keeps");
+    assert_eq!(raw["nick"], "renamed", "plugin");
 }
 
 #[test]
@@ -200,20 +257,6 @@ fn secrets_rest_encrypted_and_never_plaintext_in_the_database() {
 }
 
 #[test]
-fn empty_secret_stays_empty_and_clears() {
-    let (_dir, store) = test_store("empty_secret");
-    let mut incoming = PlexConnection::default();
-    *incoming.plex_token.expose_mut() = "plex-live".to_owned();
-    store.save_secret_blocking(incoming).unwrap();
-    let cleared = PlexConnection::default();
-    store.save_secret_blocking(cleared).unwrap();
-    let masked: PlexConnection = store.get_masked::<PlexConnection>().unwrap().into_inner();
-    assert_eq!(masked.plex_token.expose(), "");
-    let raw = store.get_raw::<PlexConnection>().unwrap();
-    assert_eq!(raw.plex_token.expose(), "");
-}
-
-#[test]
 fn wrong_key_fails_closed_never_legacy_passthrough() {
     let (dir, store) = test_store("wrong_key");
     let mut incoming = SlskdConnection::default();
@@ -254,243 +297,9 @@ fn secrets_never_appear_in_debug_output() {
         assert!(!shown.contains("debug-live-tm"), "leaked: {shown}");
         assert!(!shown.contains(SECRET_MASK), "mask leaked: {shown}");
     }
-}
 
-#[test]
-fn secrets_never_reach_structured_logs() {
-    let (_dir, store) = test_store("log_capture");
-    let (_, text) = capture_logs(|| {
-        let mut slskd = SlskdConnection::default();
-        *slskd.api_key.expose_mut() = "log-live-slskd-secret".to_owned();
-        store.save_secret_blocking(slskd).unwrap();
-        let _ = store.get_raw::<SlskdConnection>().unwrap();
-        let _: SlskdConnection = store.get_masked::<SlskdConnection>().unwrap().into_inner();
-        tracing::info!("round-trip done");
-    });
-    assert!(text.contains("round-trip done"));
-    assert!(!text.contains("log-live-slskd-secret"), "leaked: {text}");
-    assert!(!text.contains(SECRET_MASK), "mask leaked: {text}");
-}
-
-#[test]
-fn wrong_shapes_fail_typed_not_panics() {
-    let dir = test_dir("shapes");
-    std::fs::write(
-        dir.join("config.json"),
-        r#"{"youtube_settings": {"daily_quota_limit": "lots"},
-            "scan_frequency": "x",
-            "library_scan_schedule": {"scan_frequency": "fortnightly"}}"#,
-    )
-    .unwrap();
-    let store = open_store(&dir, [42u8; 32]);
-    let result = store.get_raw::<YouTubeConnection>();
-    assert!(matches!(
-        result,
-        Err(ConfigError::SectionDecode {
-            section: "youtube_settings",
-            ..
-        })
-    ));
-    let result: Result<LibraryScanSchedule, ConfigError> = store.get();
-    assert!(matches!(
-        result,
-        Err(ConfigError::SectionDecode {
-            section: "library_scan_schedule",
-            ..
-        })
-    ));
-}
-
-/// A first start's `config.json` holding a retired scan schedule lands as 30
-/// minutes, not as a section that does not read and stops scheduled scans.
-#[test]
-fn a_config_json_fast_scan_schedule_lands_as_thirty_minutes() {
-    let dir = test_dir("fast-schedule");
-    std::fs::write(
-        dir.join("config.json"),
-        r#"{"library_scan_schedule": {"scan_frequency": "5min", "daily_scan_time": "04:00"}}"#,
-    )
-    .unwrap();
-    let store = open_store(&dir, [42u8; 32]);
-    let schedule: LibraryScanSchedule = store.get().unwrap();
-    assert_eq!(schedule.scan_frequency, ScanFrequency::Min30);
-    assert_eq!(schedule.daily_scan_time, "04:00");
-}
-
-#[test]
-fn indexer_crud_matches_masks_by_id() {
-    let (_dir, store) = test_store("indexers");
-    let id = store
-        .save_indexer_blocking(NewznabIndexer {
-            name: "first".to_owned(),
-            url: "example.com".to_owned(),
-            api_key: Secret::new("indexer-live-1"),
-            ..NewznabIndexer::default()
-        })
-        .unwrap();
-    assert_eq!(id.len(), 32);
-    let masked = store.get_indexers().unwrap();
-    assert_eq!(masked.len(), 1);
-    assert_eq!(masked[0].api_key.expose(), SECRET_MASK);
-    assert_eq!(masked[0].url, "https://example.com");
-    let raw = store.get_indexers_raw().unwrap();
-    assert_eq!(raw[0].api_key.expose(), "indexer-live-1");
-    store
-        .save_indexer_blocking(NewznabIndexer {
-            id: id.clone(),
-            name: "renamed".to_owned(),
-            url: "https://example.com".to_owned(),
-            api_key: Secret::new(SECRET_MASK),
-            ..NewznabIndexer::default()
-        })
-        .unwrap();
-    let raw = store.get_indexers_raw().unwrap();
-    assert_eq!(raw.len(), 1);
-    assert_eq!(raw[0].name, "renamed");
-    assert_eq!(raw[0].api_key.expose(), "indexer-live-1");
-    let second = store
-        .save_indexer_blocking(NewznabIndexer {
-            name: "second".to_owned(),
-            url: "https://two.example".to_owned(),
-            api_key: Secret::new("indexer-live-2"),
-            priority: 5,
-            ..NewznabIndexer::default()
-        })
-        .unwrap();
-    store
-        .reorder_indexers_blocking(&[second.clone(), id.clone()])
-        .unwrap();
-    let raw = store.get_indexers_raw().unwrap();
-    assert_eq!(raw[0].id, second);
-    assert_eq!(raw[0].priority, 1);
-    assert_eq!(raw[1].priority, 2);
-    store.delete_indexer_blocking(&id).unwrap();
-    let raw = store.get_indexers_raw().unwrap();
-    assert_eq!(raw.len(), 1);
-    assert_eq!(raw[0].id, second);
-}
-
-#[test]
-fn plugin_secrets_encrypted_and_mask_resolved() {
-    let (_dir, store) = test_store("plugins");
-    let secrets: HashSet<String> = HashSet::from(["token".to_owned()]);
-    let mut settings = std::collections::HashMap::new();
-    settings.insert("token".to_owned(), "plugin-live-token".to_owned());
-    settings.insert("nick".to_owned(), "plain".to_owned());
-    store
-        .save_plugin_blocking(
-            "demo",
-            droppedneedle_kernel::runtime_config::sections::PluginConfig {
-                enabled: true,
-                settings,
-            },
-            &secrets,
-        )
-        .unwrap();
-    let masked = store.get_plugin_masked("demo", &secrets).unwrap();
-    assert_eq!(masked.settings["token"], SECRET_MASK);
-    assert_eq!(masked.settings["nick"], "plain");
-    let raw = store
-        .get_plugin_raw("demo", &secrets)
-        .unwrap()
-        .into_settings();
-    assert_eq!(raw["token"], "plugin-live-token");
-    let mut settings = std::collections::HashMap::new();
-    settings.insert("token".to_owned(), SECRET_MASK.to_owned());
-    settings.insert("nick".to_owned(), "renamed".to_owned());
-    store
-        .save_plugin_blocking(
-            "demo",
-            droppedneedle_kernel::runtime_config::sections::PluginConfig {
-                enabled: true,
-                settings,
-            },
-            &secrets,
-        )
-        .unwrap();
-    let raw = store
-        .get_plugin_raw("demo", &secrets)
-        .unwrap()
-        .into_settings();
-    assert_eq!(raw["token"], "plugin-live-token");
-    assert_eq!(raw["nick"], "renamed");
-}
-
-#[test]
-fn musicbrainz_official_clamp_and_mirror_rules() {
-    let (_dir, store) = test_store("musicbrainz");
-    let settings = MusicBrainzSettings {
-        source_mode: droppedneedle_kernel::runtime_config::sections::MbSourceMode::Mirror,
-        api_url: "https://musicbrainz.org/ws/2".to_owned(),
-        rate_limit: 50.0,
-        ..Default::default()
-    };
-    let saved = store.save_blocking(settings).unwrap();
-    assert_eq!(saved.rate_limit, 1.0);
-    assert!(saved.clamped_to_official_limits);
-    let reread: MusicBrainzSettings = store.get().unwrap();
-    assert_eq!(reread.rate_limit, 1.0);
-    assert!(!reread.clamped_to_official_limits);
-    let settings = MusicBrainzSettings {
-        source_mode: droppedneedle_kernel::runtime_config::sections::MbSourceMode::Mirror,
-        api_url: "not-a-url".to_owned(),
-        ..Default::default()
-    };
-    assert!(matches!(
-        store.save_blocking(settings),
-        Err(ConfigError::Validation {
-            field: "api_url",
-            ..
-        })
-    ));
-}
-
-#[test]
-fn dropped_and_unknown_keys_left_behind_never_read() {
-    let dir = test_dir("dropped");
-    std::fs::write(
-        dir.join("config.json"),
-        r#"{"local_files_settings": {"enabled": true},
-            "_legacy_lidarr": {},
-            "jellyfin_url": "http://x",
-            "future_section": {}}"#,
-    )
-    .unwrap();
-    let store = open_store(&dir, [42u8; 32]);
-    let db = rusqlite::Connection::open(dir.join("settings.db")).unwrap();
-    let left: String = db
-        .query_row("SELECT keys_left FROM config_ingests", [], |row| row.get(0))
-        .unwrap();
-    let left: Vec<String> = serde_json::from_str(&left).unwrap();
-    for key in [
-        "_legacy_lidarr",
-        "future_section",
-        "jellyfin_url",
-        "local_files_settings",
-    ] {
-        assert!(
-            left.contains(&key.to_owned()),
-            "{key} left behind: {left:?}"
-        );
-    }
-    let rows: i64 = db
-        .query_row("SELECT COUNT(*) FROM config_sections", [], |row| row.get(0))
-        .unwrap();
-    assert_eq!(rows, 0);
-    assert!(
-        DROPPED_SECTIONS
-            .iter()
-            .any(|dropped| dropped.key == "jellyfin_url")
-    );
-    let prefs: droppedneedle_kernel::runtime_config::sections::UserPreferences =
-        store.get().unwrap();
-    assert_eq!(prefs.primary_types, vec!["album", "ep", "single"]);
-}
-
-/// Debug output of every secret section, plugin settings included, hides
-/// decrypted secrets.
-#[test]
-fn every_secret_section_debug_redacts() {
+    // Every secret section, plugin settings included, hides decrypted
+    // secrets in its own Debug output.
     fn assert_redacted<T: std::fmt::Debug>(value: T, secret: &str) {
         let shown = format!("{value:?}");
         assert!(!shown.contains(secret), "leaked in {shown}");
@@ -557,4 +366,197 @@ fn every_secret_section_debug_redacts() {
     assert!(!shown.contains("redact-me"), "leaked in {shown}");
     assert!(!shown.contains("plain"), "leaked in {shown}");
     assert!(shown.contains("token"), "keys must stay visible: {shown}");
+}
+
+#[test]
+fn secrets_never_reach_structured_logs() {
+    let (_dir, store) = test_store("log_capture");
+    let (_, text) = capture_logs(|| {
+        let mut slskd = SlskdConnection::default();
+        *slskd.api_key.expose_mut() = "log-live-slskd-secret".to_owned();
+        store.save_secret_blocking(slskd).unwrap();
+        let _ = store.get_raw::<SlskdConnection>().unwrap();
+        let _: SlskdConnection = store.get_masked::<SlskdConnection>().unwrap().into_inner();
+        tracing::info!("round-trip done");
+    });
+    assert!(text.contains("round-trip done"));
+    assert!(!text.contains("log-live-slskd-secret"), "leaked: {text}");
+    assert!(!text.contains(SECRET_MASK), "mask leaked: {text}");
+}
+
+#[test]
+fn wrong_shapes_fail_typed_not_panics() {
+    let dir = test_dir("shapes");
+    std::fs::write(
+        dir.join("config.json"),
+        r#"{"youtube_settings": {"daily_quota_limit": "lots"},
+            "scan_frequency": "x",
+            "library_scan_schedule": {"scan_frequency": "fortnightly"}}"#,
+    )
+    .unwrap();
+    let store = open_store(&dir, [42u8; 32]);
+    let result = store.get_raw::<YouTubeConnection>();
+    assert!(matches!(
+        result,
+        Err(ConfigError::SectionDecode {
+            section: "youtube_settings",
+            ..
+        })
+    ));
+    let result: Result<LibraryScanSchedule, ConfigError> = store.get();
+    assert!(matches!(
+        result,
+        Err(ConfigError::SectionDecode {
+            section: "library_scan_schedule",
+            ..
+        })
+    ));
+}
+
+/// The one-time copy of a first start's `config.json`: a retired scan
+/// schedule lands as 30 minutes, not as a section that does not read and
+/// stops scheduled scans; dropped and unknown keys are left behind, never
+/// read.
+#[test]
+fn an_old_config_json_lands_as_it_can_be_read() {
+    let dir = test_dir("fast-schedule");
+    std::fs::write(
+        dir.join("config.json"),
+        r#"{"library_scan_schedule": {"scan_frequency": "5min", "daily_scan_time": "04:00"}}"#,
+    )
+    .unwrap();
+    let store = open_store(&dir, [42u8; 32]);
+    let schedule: LibraryScanSchedule = store.get().unwrap();
+    assert_eq!(
+        schedule.scan_frequency,
+        ScanFrequency::Min30,
+        "fast schedule"
+    );
+    assert_eq!(schedule.daily_scan_time, "04:00", "fast schedule");
+
+    let dir = test_dir("dropped");
+    std::fs::write(
+        dir.join("config.json"),
+        r#"{"local_files_settings": {"enabled": true},
+            "_legacy_lidarr": {},
+            "jellyfin_url": "http://x",
+            "future_section": {}}"#,
+    )
+    .unwrap();
+    let store = open_store(&dir, [42u8; 32]);
+    let db = rusqlite::Connection::open(dir.join("settings.db")).unwrap();
+    let left: String = db
+        .query_row("SELECT keys_left FROM config_ingests", [], |row| row.get(0))
+        .unwrap();
+    let left: Vec<String> = serde_json::from_str(&left).unwrap();
+    for key in [
+        "_legacy_lidarr",
+        "future_section",
+        "jellyfin_url",
+        "local_files_settings",
+    ] {
+        assert!(
+            left.contains(&key.to_owned()),
+            "dropped: {key} left behind: {left:?}"
+        );
+    }
+    let rows: i64 = db
+        .query_row("SELECT COUNT(*) FROM config_sections", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(rows, 0, "dropped: no section row");
+    assert!(
+        DROPPED_SECTIONS
+            .iter()
+            .any(|dropped| dropped.key == "jellyfin_url"),
+        "dropped: jellyfin_url is a dropped section"
+    );
+    let prefs: droppedneedle_kernel::runtime_config::sections::UserPreferences =
+        store.get().unwrap();
+    assert_eq!(
+        prefs.primary_types,
+        vec!["album", "ep", "single"],
+        "dropped: defaults read"
+    );
+}
+
+#[test]
+fn indexer_crud_matches_masks_by_id() {
+    let (_dir, store) = test_store("indexers");
+    let id = store
+        .save_indexer_blocking(NewznabIndexer {
+            name: "first".to_owned(),
+            url: "example.com".to_owned(),
+            api_key: Secret::new("indexer-live-1"),
+            ..NewznabIndexer::default()
+        })
+        .unwrap();
+    assert_eq!(id.len(), 32);
+    let masked = store.get_indexers().unwrap();
+    assert_eq!(masked.len(), 1);
+    assert_eq!(masked[0].api_key.expose(), SECRET_MASK);
+    assert_eq!(masked[0].url, "https://example.com");
+    let raw = store.get_indexers_raw().unwrap();
+    assert_eq!(raw[0].api_key.expose(), "indexer-live-1");
+    store
+        .save_indexer_blocking(NewznabIndexer {
+            id: id.clone(),
+            name: "renamed".to_owned(),
+            url: "https://example.com".to_owned(),
+            api_key: Secret::new(SECRET_MASK),
+            ..NewznabIndexer::default()
+        })
+        .unwrap();
+    let raw = store.get_indexers_raw().unwrap();
+    assert_eq!(raw.len(), 1);
+    assert_eq!(raw[0].name, "renamed");
+    assert_eq!(raw[0].api_key.expose(), "indexer-live-1");
+    let second = store
+        .save_indexer_blocking(NewznabIndexer {
+            name: "second".to_owned(),
+            url: "https://two.example".to_owned(),
+            api_key: Secret::new("indexer-live-2"),
+            priority: 5,
+            ..NewznabIndexer::default()
+        })
+        .unwrap();
+    store
+        .reorder_indexers_blocking(&[second.clone(), id.clone()])
+        .unwrap();
+    let raw = store.get_indexers_raw().unwrap();
+    assert_eq!(raw[0].id, second);
+    assert_eq!(raw[0].priority, 1);
+    assert_eq!(raw[1].priority, 2);
+    store.delete_indexer_blocking(&id).unwrap();
+    let raw = store.get_indexers_raw().unwrap();
+    assert_eq!(raw.len(), 1);
+    assert_eq!(raw[0].id, second);
+}
+
+#[test]
+fn musicbrainz_official_clamp_and_mirror_rules() {
+    let (_dir, store) = test_store("musicbrainz");
+    let settings = MusicBrainzSettings {
+        source_mode: droppedneedle_kernel::runtime_config::sections::MbSourceMode::Mirror,
+        api_url: "https://musicbrainz.org/ws/2".to_owned(),
+        rate_limit: 50.0,
+        ..Default::default()
+    };
+    let saved = store.save_blocking(settings).unwrap();
+    assert_eq!(saved.rate_limit, 1.0);
+    assert!(saved.clamped_to_official_limits);
+    let reread: MusicBrainzSettings = store.get().unwrap();
+    assert_eq!(reread.rate_limit, 1.0);
+    assert!(!reread.clamped_to_official_limits);
+    let settings = MusicBrainzSettings {
+        source_mode: droppedneedle_kernel::runtime_config::sections::MbSourceMode::Mirror,
+        api_url: "not-a-url".to_owned(),
+        ..Default::default()
+    };
+    assert!(matches!(
+        store.save_blocking(settings),
+        Err(ConfigError::Validation {
+            field: "api_url",
+            ..
+        })
+    ));
 }

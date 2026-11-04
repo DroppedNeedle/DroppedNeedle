@@ -179,10 +179,17 @@ fn current_thread_runtime() -> tokio::runtime::Runtime {
 /// back; a closure that swallows that and writes one more row leaves no row,
 /// and the caller hears the timeout whatever the closure returned. The
 /// timeout reports the rows that transaction changed, not the connection's
-/// running total.
+/// running total. The budget is scaled down from 2 s to 100 ms.
 #[tokio::test]
 async fn runaway_write_aborts_at_hard_budget() {
-    let (lane, _dir) = scratch_lane("abort");
+    let abort = Duration::from_millis(100);
+    let (lane, _dir) = scratch_lane_with(
+        "abort",
+        LaneLimits {
+            foreground: Budget { warn: abort, abort },
+            ..LaneLimits::default()
+        },
+    );
     lane.write(Lane::Foreground, "brief-earlier", |tx| {
         for label in ["a", "b", "c", "d", "e"] {
             insert_label(tx, label)?;
@@ -218,7 +225,7 @@ async fn runaway_write_aborts_at_hard_budget() {
         other => panic!("runaway write must abort, got {other:?}"),
     }
     assert!(
-        started.elapsed() < Duration::from_secs(15),
+        started.elapsed() < Duration::from_secs(5),
         "abort must fire near the budget"
     );
 
@@ -254,7 +261,8 @@ fn burn(tx: &rusqlite::Transaction, span: Duration) -> Result<(), DbError> {
 /// past its own budget is rolled back.
 #[tokio::test]
 async fn background_budget_outlasts_the_foreground_one() {
-    let foreground_abort = Duration::from_millis(100);
+    let foreground_abort = Duration::from_millis(50);
+    let background_abort = Duration::from_millis(600);
     let (lane, _dir) = scratch_lane_with(
         "class-budgets",
         LaneLimits {
@@ -263,8 +271,8 @@ async fn background_budget_outlasts_the_foreground_one() {
                 abort: foreground_abort,
             },
             background: Budget {
-                warn: Duration::from_secs(1),
-                abort: Duration::from_secs(1),
+                warn: background_abort,
+                abort: background_abort,
             },
             ..LaneLimits::default()
         },

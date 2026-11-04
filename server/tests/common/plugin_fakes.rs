@@ -12,7 +12,7 @@ use droppedneedle_plugins::runtime::{
     PluginEvent, PluginLauncher, RuntimeState, RuntimeStatus, ScrobbleEvent,
 };
 use droppedneedle_providers::executor::{Prepared, WireAnswer, WireError};
-use droppedneedle_providers::github::{API_BASE, CODELOAD_BASE, GitHubRepos};
+use droppedneedle_providers::github::GitHubRepos;
 use droppedneedle_providers::{ProviderEndpoints, Providers, Wire};
 use serde_json::Value;
 
@@ -204,7 +204,10 @@ impl PluginLauncher for FakeLauncher {
 type GitHubAnswer = (u16, Vec<(String, String)>, Vec<u8>);
 
 /// Stands in for GitHub on the providers' wire: each URL gives the answer
-/// last set for it, and a URL with none is a 404.
+/// last set for it, and a URL with none is a 404. GitHub sits at the closed
+/// addresses of [`ProviderEndpoints::closed`] (`http://127.0.0.1:9/github`
+/// and `http://127.0.0.1:9/codeload`), so a request that ever left the
+/// fake could reach nothing.
 pub struct FakeGitHub {
     answers: Mutex<HashMap<String, GitHubAnswer>>,
     /// Requested URLs, in order.
@@ -240,18 +243,15 @@ impl FakeGitHub {
         }
     }
 
-    /// The installer's GitHub client over this fake, with GitHub at its real
-    /// addresses, on a fresh `github` row that holds cooldowns but does not
-    /// pace.
+    /// The installer's GitHub client over this fake, on a fresh `github`
+    /// row that holds cooldowns but does not pace.
     pub fn client(self: &Arc<Self>) -> GitHubRepos {
-        let endpoints = ProviderEndpoints {
-            github_api: API_BASE.to_owned(),
-            github_codeload: CODELOAD_BASE.to_owned(),
-            ..ProviderEndpoints::closed()
-        };
-        Providers::unpaced_at(Arc::clone(self) as Arc<dyn Wire>, endpoints)
-            .github_repos
-            .clone()
+        Providers::unpaced_at(
+            Arc::clone(self) as Arc<dyn Wire>,
+            ProviderEndpoints::closed(),
+        )
+        .github_repos
+        .clone()
     }
 }
 
@@ -262,11 +262,7 @@ impl FakeGitHub {
         Providers::over_wire(
             Arc::clone(self) as Arc<dyn Wire>,
             Arc::new(droppedneedle_kernel::clock::SystemClock),
-            ProviderEndpoints {
-                github_api: API_BASE.to_owned(),
-                github_codeload: CODELOAD_BASE.to_owned(),
-                ..ProviderEndpoints::closed()
-            },
+            ProviderEndpoints::closed(),
         )
     }
 }

@@ -241,8 +241,8 @@ pub fn sha256_hex(value: &str) -> String {
 
 /// MD5 hex digest (RFC 1321). Used only for the Subsonic token scheme
 /// (`t=md5(secret+s)`), which mandates MD5 for interop; never for anything
-/// security-sensitive. The RFC vectors below plus the v2 spot value in the
-/// compat goldens pin the bytes across the crate swap.
+/// security-sensitive. The RFC vectors and the v2 spot value in the server's
+/// auth store tests pin the bytes across the crate swap.
 pub fn md5_hex(input: &str) -> String {
     format!("{:x}", md5::compute(input.as_bytes()))
 }
@@ -250,25 +250,6 @@ pub fn md5_hex(input: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn md5_matches_rfc1321_vectors() {
-        assert_eq!(md5_hex(""), "d41d8cd98f00b204e9800998ecf8427e");
-        assert_eq!(md5_hex("a"), "0cc175b9c0f1b6a831c399e269772661");
-        assert_eq!(md5_hex("abc"), "900150983cd24fb0d6963f7d28e17f72");
-        assert_eq!(
-            md5_hex("message digest"),
-            "f96b697d7cb7938d525a2f31aaf161d0"
-        );
-        assert_eq!(
-            md5_hex("abcdefghijklmnopqrstuvwxyz"),
-            "c3fcd3d76192e4007dfb496cca67e13b"
-        );
-        assert_eq!(
-            md5_hex("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"),
-            "d174ab98d277d9f5a5611c2c9f419d9f"
-        );
-    }
 
     #[test]
     fn password_decode_matches_v2() {

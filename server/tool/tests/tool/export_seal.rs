@@ -3,26 +3,24 @@
 
 use droppedneedle_tool::export::{SealError, Sealer, secret_envelope_params, unseal};
 
+/// Seals open again under the same passphrase; every seal takes a fresh
+/// nonce and every envelope a fresh salt.
 #[test]
-fn seal_round_trip() {
-    let sealer = Sealer::generate("correct horse").unwrap();
+fn seals_round_trip_with_a_fresh_nonce_and_salt() {
+    let sealer = Sealer::generate("passphrase").unwrap();
     let envelope = sealer.secret_envelope();
     for plaintext in ["slskd-api-key", "", "unicode: héllo ✓"] {
         let blob = sealer.seal(plaintext).unwrap();
         assert_eq!(
-            unseal("correct horse", &envelope, &blob).unwrap(),
-            plaintext
+            unseal("passphrase", &envelope, &blob).unwrap(),
+            plaintext,
+            "round trip of {plaintext:?}"
         );
     }
-}
 
-#[test]
-fn every_seal_uses_a_fresh_nonce() {
-    let sealer = Sealer::generate("passphrase").unwrap();
     let first = sealer.seal("same secret").unwrap();
     let second = sealer.seal("same secret").unwrap();
-    assert_ne!(first, second);
-    let envelope = sealer.secret_envelope();
+    assert_ne!(first, second, "fresh nonce per seal");
     assert_eq!(
         unseal("passphrase", &envelope, &first).unwrap(),
         "same secret"
@@ -31,65 +29,80 @@ fn every_seal_uses_a_fresh_nonce() {
         unseal("passphrase", &envelope, &second).unwrap(),
         "same secret"
     );
+
+    let other = Sealer::generate("passphrase").unwrap().secret_envelope();
+    assert_ne!(envelope.kdf.salt_b64, other.kdf.salt_b64, "fresh salt");
+    assert_ne!(envelope.nonce_b64, other.nonce_b64, "fresh envelope nonce");
 }
 
+/// A wrong passphrase, a changed blob or a changed envelope never opens.
 #[test]
-fn envelopes_carry_distinct_salts() {
-    let first = Sealer::generate("passphrase").unwrap().secret_envelope();
-    let second = Sealer::generate("passphrase").unwrap().secret_envelope();
-    assert_ne!(first.kdf.salt_b64, second.kdf.salt_b64);
-    assert_ne!(first.nonce_b64, second.nonce_b64);
-}
-
-#[test]
-fn wrong_passphrase_fails_closed() {
-    let sealer = Sealer::generate("right").unwrap();
-    let envelope = sealer.secret_envelope();
-    let blob = sealer.seal("secret").unwrap();
-    assert_eq!(
-        unseal("wrong", &envelope, &blob),
-        Err(SealError::AuthFailed)
-    );
-    assert_eq!(SealError::AuthFailed.code(), "ENVELOPE_AUTH_FAILED");
-}
-
-#[test]
-fn tampered_blob_fails_closed() {
+fn unseal_fails_closed_on_any_mismatch() {
     let sealer = Sealer::generate("passphrase").unwrap();
     let envelope = sealer.secret_envelope();
-    let mut blob = sealer.seal("secret").unwrap();
-    let first = blob.remove(0);
-    blob.insert(0, if first == 'A' { 'B' } else { 'A' });
-    assert_eq!(
-        unseal("passphrase", &envelope, &blob),
-        Err(SealError::AuthFailed)
-    );
-}
-
-#[test]
-fn swapped_envelope_salt_fails_closed() {
-    let sealer = Sealer::generate("passphrase").unwrap();
     let blob = sealer.seal("secret").unwrap();
-    let mut envelope = sealer.secret_envelope();
-    envelope.kdf.salt_b64 = Sealer::generate("passphrase")
-        .unwrap()
-        .secret_envelope()
+
+    let mut tampered = blob.clone();
+    let first = tampered.remove(0);
+    tampered.insert(0, if first == 'A' { 'B' } else { 'A' });
+
+    // Another salt of the same length: the first base64 character carries
+    // six whole bits of the first byte.
+    let mut swapped_salt = envelope.clone();
+    let first = swapped_salt.kdf.salt_b64.remove(0);
+    swapped_salt
         .kdf
-        .salt_b64;
-    assert_eq!(
-        unseal("passphrase", &envelope, &blob),
-        Err(SealError::AuthFailed)
-    );
-}
+        .salt_b64
+        .insert(0, if first == 'A' { 'B' } else { 'A' });
 
-#[test]
-fn undecodable_blob_is_rejected_before_opening() {
-    let sealer = Sealer::generate("passphrase").unwrap();
-    let envelope = sealer.secret_envelope();
-    assert_eq!(
-        unseal("passphrase", &envelope, "!!!not-base64!!!"),
-        Err(SealError::InvalidBlob)
-    );
+    let mut unknown_scheme = envelope.clone();
+    unknown_scheme.scheme = "rot13".to_owned();
+
+    let cases = [
+        (
+            "wrong passphrase",
+            "wrong",
+            &envelope,
+            blob.as_str(),
+            SealError::AuthFailed,
+        ),
+        (
+            "tampered blob",
+            "passphrase",
+            &envelope,
+            tampered.as_str(),
+            SealError::AuthFailed,
+        ),
+        (
+            "swapped envelope salt",
+            "passphrase",
+            &swapped_salt,
+            blob.as_str(),
+            SealError::AuthFailed,
+        ),
+        (
+            "undecodable blob",
+            "passphrase",
+            &envelope,
+            "!!!not-base64!!!",
+            SealError::InvalidBlob,
+        ),
+        (
+            "unknown scheme",
+            "passphrase",
+            &unknown_scheme,
+            blob.as_str(),
+            SealError::InvalidEnvelope,
+        ),
+    ];
+    for (label, passphrase, envelope, blob, expected) in cases {
+        assert_eq!(
+            unseal(passphrase, envelope, blob),
+            Err(expected),
+            "case: {label}"
+        );
+    }
+    assert_eq!(SealError::AuthFailed.code(), "ENVELOPE_AUTH_FAILED");
     assert_eq!(SealError::InvalidBlob.code(), "INVALID_SEALED_BLOB");
 }
 
@@ -101,16 +114,4 @@ fn envelope_params_match_the_spec_pin() {
     assert_eq!(params.kdf.m_cost_kib, 65536);
     assert_eq!(params.kdf.t_cost, 3);
     assert_eq!(params.kdf.p_cost, 1);
-}
-
-#[test]
-fn unseal_rejects_an_unknown_scheme() {
-    let sealer = Sealer::generate("passphrase").unwrap();
-    let mut envelope = sealer.secret_envelope();
-    let blob = sealer.seal("secret").unwrap();
-    envelope.scheme = "rot13".to_owned();
-    assert_eq!(
-        unseal("passphrase", &envelope, &blob),
-        Err(SealError::InvalidEnvelope)
-    );
 }

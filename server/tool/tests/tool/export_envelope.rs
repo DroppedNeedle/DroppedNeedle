@@ -27,34 +27,35 @@ fn parse(value: &Value) -> Result<droppedneedle_tool::export::ParsedExport, Expo
     parse_export(&serde_json::to_string(value).unwrap())
 }
 
+/// Each bad envelope is refused with its own code.
 #[test]
-fn valid_envelope_parses_without_warnings() {
-    let parsed = parse(&minimal_envelope()).unwrap();
-    assert!(parsed.warnings.is_empty());
-    assert_eq!(parsed.doc.instance_id, "instance-1");
-    assert_eq!(parsed.doc.format_version, 1);
-}
+fn parse_refuses_each_bad_envelope() {
+    let mut cases: Vec<(String, Value, &str)> = Vec::new();
 
-#[test]
-fn rejects_unknown_format() {
-    let mut envelope = minimal_envelope();
-    envelope["format"] = json!("droppedneedle-backup");
-    assert_eq!(parse(&envelope), Err(ExportError::UnsupportedFormat));
+    let mut unknown_format = minimal_envelope();
+    unknown_format["format"] = json!("droppedneedle-backup");
+    assert_eq!(
+        parse(&unknown_format),
+        Err(ExportError::UnsupportedFormat),
+        "unknown format"
+    );
     assert_eq!(ExportError::UnsupportedFormat.code(), "UNSUPPORTED_FORMAT");
-}
+    cases.push((
+        "unknown format".to_owned(),
+        unknown_format,
+        "UNSUPPORTED_FORMAT",
+    ));
 
-#[test]
-fn rejects_unsupported_format_versions() {
     for version in [json!(0), json!(3), json!(99), json!("1"), json!(null)] {
         let mut envelope = minimal_envelope();
-        envelope["format_version"] = version;
-        let error = parse(&envelope).unwrap_err();
-        assert_eq!(error.code(), "UNSUPPORTED_FORMAT_VERSION",);
+        envelope["format_version"] = version.clone();
+        cases.push((
+            format!("format_version {version}"),
+            envelope,
+            "UNSUPPORTED_FORMAT_VERSION",
+        ));
     }
-}
 
-#[test]
-fn rejects_each_missing_required_key() {
     // `format` and `format_version` fail their value checks when absent, so
     // they report the format/version codes rather than the key code.
     for (key, code) in [
@@ -70,58 +71,17 @@ fn rejects_each_missing_required_key() {
     ] {
         let mut envelope = minimal_envelope();
         envelope.as_object_mut().unwrap().remove(key);
-        let error = parse(&envelope).unwrap_err();
-        assert_eq!(error.code(), code, "key: {key}");
+        cases.push((format!("missing key {key}"), envelope, code));
     }
-    let mut envelope = minimal_envelope();
-    envelope.as_object_mut().unwrap().remove("users");
+    let mut no_users = minimal_envelope();
+    no_users.as_object_mut().unwrap().remove("users");
     assert_eq!(
-        parse(&envelope),
+        parse(&no_users),
         Err(ExportError::MissingRequiredKey {
             key: "users".to_owned()
         })
     );
-}
 
-#[test]
-fn reserved_sections_are_ignored_with_warning() {
-    for section in [
-        "playlists",
-        "favorites",
-        "quotas",
-        "user_prefs",
-        "wanted_watches",
-    ] {
-        let mut envelope = minimal_envelope();
-        envelope[section] = json!([{"whatever": true}]);
-        let parsed = parse(&envelope).unwrap();
-        assert_eq!(
-            parsed.warnings,
-            vec![EnvelopeWarning::ignored_reserved_section(section)],
-            "section: {section}"
-        );
-    }
-}
-
-#[test]
-fn unknown_top_level_keys_warn_and_parse() {
-    let mut envelope = minimal_envelope();
-    envelope["future_section"] = json!({"x": 1});
-    let parsed = parse(&envelope).unwrap();
-    assert_eq!(
-        parsed.warnings,
-        vec![EnvelopeWarning::unknown_top_level_key("future_section")]
-    );
-}
-
-#[test]
-fn rejects_malformed_json() {
-    let error = parse_export("{not json").unwrap_err();
-    assert_eq!(error.code(), "INVALID_ENVELOPE");
-}
-
-#[test]
-fn rejects_wrongly_typed_sections() {
     for (section, bad) in [
         ("users", json!({"not": "a list"})),
         ("settings", json!(["not", "an", "object"])),
@@ -131,7 +91,56 @@ fn rejects_wrongly_typed_sections() {
     ] {
         let mut envelope = minimal_envelope();
         envelope[section] = bad;
-        let error = parse(&envelope).unwrap_err();
-        assert_eq!(error.code(), "INVALID_ENVELOPE", "section: {section}");
+        cases.push((
+            format!("wrongly typed {section}"),
+            envelope,
+            "INVALID_ENVELOPE",
+        ));
+    }
+
+    for (label, envelope, code) in &cases {
+        let error = parse(envelope).unwrap_err();
+        assert_eq!(error.code(), *code, "case: {label}");
+    }
+
+    let error = parse_export("{not json").unwrap_err();
+    assert_eq!(error.code(), "INVALID_ENVELOPE", "case: malformed json");
+}
+
+/// A valid envelope parses; reserved sections and unknown keys only warn.
+#[test]
+fn parse_accepts_and_warns() {
+    let parsed = parse(&minimal_envelope()).unwrap();
+    assert!(parsed.warnings.is_empty(), "case: valid envelope");
+    assert_eq!(parsed.doc.instance_id, "instance-1");
+    assert_eq!(parsed.doc.format_version, 1);
+
+    let mut cases: Vec<(String, Value, Vec<EnvelopeWarning>)> = Vec::new();
+    for section in [
+        "playlists",
+        "favorites",
+        "quotas",
+        "user_prefs",
+        "wanted_watches",
+    ] {
+        let mut envelope = minimal_envelope();
+        envelope[section] = json!([{"whatever": true}]);
+        cases.push((
+            format!("reserved section {section}"),
+            envelope,
+            vec![EnvelopeWarning::ignored_reserved_section(section)],
+        ));
+    }
+    let mut envelope = minimal_envelope();
+    envelope["future_section"] = json!({"x": 1});
+    cases.push((
+        "unknown top-level key".to_owned(),
+        envelope,
+        vec![EnvelopeWarning::unknown_top_level_key("future_section")],
+    ));
+
+    for (label, envelope, warnings) in &cases {
+        let parsed = parse(envelope).unwrap();
+        assert_eq!(&parsed.warnings, warnings, "case: {label}");
     }
 }

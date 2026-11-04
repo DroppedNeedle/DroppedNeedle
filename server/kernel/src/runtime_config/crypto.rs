@@ -321,34 +321,42 @@ mod tests {
         Crypto::from_key_bytes(&[7u8; KEY_LEN]).unwrap()
     }
 
+    /// A seal round-trips with a fresh nonce each time, empty passes
+    /// through both ways, and anything not sealed under this key fails
+    /// closed.
     #[test]
-    fn round_trip_with_fresh_nonce_each_time() {
+    fn seals_open_only_under_their_key() {
         let crypto = test_crypto();
         let first = crypto.encrypt("slskd-api-key").unwrap();
         let second = crypto.encrypt("slskd-api-key").unwrap();
-        assert!(first.starts_with(CIPHER_PREFIX));
-        assert_ne!(first, second);
-        assert_eq!(crypto.decrypt(&first).unwrap(), "slskd-api-key");
-    }
+        assert!(first.starts_with(CIPHER_PREFIX), "round trip: prefix");
+        assert_ne!(first, second, "round trip: fresh nonce");
+        assert_eq!(
+            crypto.decrypt(&first).unwrap(),
+            "slskd-api-key",
+            "round trip"
+        );
 
-    #[test]
-    fn empty_passes_through_both_ways() {
-        let crypto = test_crypto();
-        assert_eq!(crypto.encrypt("").unwrap(), "");
-        assert_eq!(crypto.decrypt("").unwrap(), "");
-    }
+        assert_eq!(crypto.encrypt("").unwrap(), "", "empty: encrypt");
+        assert_eq!(crypto.decrypt("").unwrap(), "", "empty: decrypt");
 
-    #[test]
-    fn wrong_key_and_garbage_fail_closed() {
-        let crypto = test_crypto();
         let other = Crypto::from_key_bytes(&[9u8; KEY_LEN]).unwrap();
         let sealed = crypto.encrypt("secret").unwrap();
-        assert_eq!(other.decrypt(&sealed), Err(CryptoError::DecryptFailed));
+        assert_eq!(
+            other.decrypt(&sealed),
+            Err(CryptoError::DecryptFailed),
+            "other key"
+        );
         assert_eq!(
             crypto.decrypt("not-ciphertext"),
-            Err(CryptoError::UnknownFormat)
+            Err(CryptoError::UnknownFormat),
+            "not ciphertext"
         );
-        assert_eq!(crypto.decrypt("v3:!!!"), Err(CryptoError::UnknownFormat));
+        assert_eq!(
+            crypto.decrypt("v3:!!!"),
+            Err(CryptoError::UnknownFormat),
+            "bad body"
+        );
     }
 
     #[test]

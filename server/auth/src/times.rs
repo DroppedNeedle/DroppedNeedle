@@ -86,54 +86,47 @@ pub fn parse_iso_ms(raw: &str) -> Option<i64> {
 mod tests {
     use super::*;
 
+    /// The v2 importer reads every time through `parse_iso_ms`: known
+    /// instants format exactly, v2's forms parse, milliseconds keep three
+    /// digits, the range round-trips and anything else fails closed.
     #[test]
-    fn known_instants_format_exactly() {
-        assert_eq!(to_iso(0), "1970-01-01T00:00:00+00:00");
-        assert_eq!(to_iso(-1), "1969-12-31T23:59:59+00:00");
-        assert_eq!(to_iso(1_700_000_000), "2023-11-14T22:13:20+00:00");
-        assert_eq!(to_iso(1_709_164_800), "2024-02-29T00:00:00+00:00");
-        assert_eq!(to_iso(4_102_444_800), "2100-01-01T00:00:00+00:00");
-    }
+    fn iso_times_round_trip_and_fail_closed() {
+        for (secs, text) in [
+            (0, "1970-01-01T00:00:00+00:00"),
+            (-1, "1969-12-31T23:59:59+00:00"),
+            (1_700_000_000, "2023-11-14T22:13:20+00:00"),
+            (1_709_164_800, "2024-02-29T00:00:00+00:00"),
+            (4_102_444_800, "2100-01-01T00:00:00+00:00"),
+        ] {
+            assert_eq!(to_iso(secs), text, "formats {secs}");
+        }
 
-    #[test]
-    fn v2_fractional_and_offset_forms_parse() {
-        assert_eq!(
-            parse_iso("2026-09-28T12:34:56.123456+00:00"),
-            parse_iso("2026-09-28T12:34:56+00:00")
-        );
-        assert_eq!(
-            parse_iso("2026-09-28T12:34:56Z"),
-            parse_iso("2026-09-28T12:34:56+00:00")
-        );
-        assert_eq!(
-            parse_iso("2026-09-28T14:34:56+02:00"),
-            parse_iso("2026-09-28T12:34:56+00:00")
-        );
-        assert_eq!(
-            parse_iso("2026-09-28 12:34:56"),
-            parse_iso("2026-09-28T12:34:56+00:00")
-        );
-        assert_eq!(
-            parse_iso("2026-09-28T10:04:56-02:30"),
-            parse_iso("2026-09-28T12:34:56+00:00")
-        );
-    }
+        let utc = parse_iso("2026-09-28T12:34:56+00:00");
+        for form in [
+            "2026-09-28T12:34:56.123456+00:00",
+            "2026-09-28T12:34:56Z",
+            "2026-09-28T14:34:56+02:00",
+            "2026-09-28 12:34:56",
+            "2026-09-28T10:04:56-02:30",
+        ] {
+            assert_eq!(parse_iso(form), utc, "v2 form {form:?}");
+        }
 
-    #[test]
-    fn milliseconds_keep_three_fraction_digits() {
         let whole = parse_iso_ms("2026-09-28T12:34:56+00:00").unwrap();
-        assert_eq!(whole % 1_000, 0);
+        assert_eq!(whole % 1_000, 0, "a whole second has no millis");
+        for (text, millis) in [
+            ("2026-09-28T12:34:56.123456+00:00", whole + 123),
+            ("2026-09-28T12:34:56.5Z", whole + 500),
+            ("1969-12-31T23:59:59.25Z", -750),
+        ] {
+            assert_eq!(parse_iso_ms(text), Some(millis), "millis of {text:?}");
+        }
         assert_eq!(
-            parse_iso_ms("2026-09-28T12:34:56.123456+00:00"),
-            Some(whole + 123)
+            parse_iso("1969-12-31T23:59:59.25Z"),
+            Some(-1),
+            "seconds round down before the epoch"
         );
-        assert_eq!(parse_iso_ms("2026-09-28T12:34:56.5Z"), Some(whole + 500));
-        assert_eq!(parse_iso_ms("1969-12-31T23:59:59.25Z"), Some(-750));
-        assert_eq!(parse_iso("1969-12-31T23:59:59.25Z"), Some(-1));
-    }
 
-    #[test]
-    fn round_trip_covers_edges() {
         for secs in [
             -62_167_219_200, // 0000-01-01T00:00:00+00:00, the range floor
             -86_400,
@@ -144,12 +137,9 @@ mod tests {
             4_102_444_800,
             253_402_300_799, // 9999-12-31T23:59:59+00:00, the range ceiling
         ] {
-            assert_eq!(parse_iso(&to_iso(secs)), Some(secs), "{secs}");
+            assert_eq!(parse_iso(&to_iso(secs)), Some(secs), "round trip {secs}");
         }
-    }
 
-    #[test]
-    fn garbage_fails_closed() {
         for raw in [
             "",
             "abc",
@@ -166,7 +156,7 @@ mod tests {
             "10000-01-01T00:00:00+00:00",
             "+2026-01-01T00:00:00+00:00",
         ] {
-            assert_eq!(parse_iso(raw), None, "{raw:?}");
+            assert_eq!(parse_iso(raw), None, "fails closed: {raw:?}");
         }
         // Trailing space trims clean, so this one parses.
         assert!(parse_iso("  2026-01-01T00:00:00+00:00  ").is_some());

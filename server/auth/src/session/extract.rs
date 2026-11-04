@@ -74,64 +74,61 @@ mod tests {
         headers
     }
 
+    /// Bearer wins (any casing), then the cookie; an empty Bearer never
+    /// falls through, while a bare `Bearer` word or another scheme does.
     #[test]
-    fn bearer_wins_then_cookie() {
-        let both = headers(&[
-            ("authorization", "Bearer tok-b"),
-            ("cookie", "droppedneedle_sid=tok-c"),
-        ]);
-        assert_eq!(
-            extract(&both),
-            Some(("tok-b".to_owned(), Transport::Bearer))
+    fn token_extraction_order() {
+        const COOKIE: &str = "droppedneedle_sid=tok-c";
+        let bearer = |token: &str| Some((token.to_owned(), Transport::Bearer));
+        let cookie = Some(("tok-c".to_owned(), Transport::Cookie));
+        type Case = (
+            &'static str,
+            Option<&'static str>,
+            Option<&'static str>,
+            Option<(String, Transport)>,
         );
-
-        let cookie_only = headers(&[("cookie", "droppedneedle_sid=tok-c")]);
-        assert_eq!(
-            extract(&cookie_only),
-            Some(("tok-c".to_owned(), Transport::Cookie))
-        );
-
-        assert_eq!(extract(&HeaderMap::new()), None);
-        let empty_bearer = headers(&[("authorization", "Bearer  ")]);
-        assert_eq!(extract(&empty_bearer), None);
-    }
-
-    #[test]
-    fn bearer_scheme_matches_any_casing() {
-        for scheme in ["Bearer", "bearer", "BEARER", "bEaReR"] {
-            let headers = headers(&[("authorization", &format!("{scheme} tok-1"))]);
-            assert_eq!(
-                extract(&headers),
-                Some(("tok-1".to_owned(), Transport::Bearer)),
-                "{scheme} must authenticate"
-            );
+        let cases: [Case; 11] = [
+            (
+                "bearer beats cookie",
+                Some("Bearer tok-b"),
+                Some(COOKIE),
+                bearer("tok-b"),
+            ),
+            ("cookie alone", None, Some(COOKIE), cookie.clone()),
+            ("nothing presented", None, None, None),
+            ("empty bearer alone", Some("Bearer  "), None, None),
+            ("scheme Bearer", Some("Bearer tok-1"), None, bearer("tok-1")),
+            ("scheme bearer", Some("bearer tok-1"), None, bearer("tok-1")),
+            ("scheme BEARER", Some("BEARER tok-1"), None, bearer("tok-1")),
+            ("scheme bEaReR", Some("bEaReR tok-1"), None, bearer("tok-1")),
+            (
+                "a bare Bearer word is not a scheme (v2 parity)",
+                Some("Bearer"),
+                Some(COOKIE),
+                cookie.clone(),
+            ),
+            (
+                "empty bearer never falls through to the cookie",
+                Some("Bearer  "),
+                Some(COOKIE),
+                None,
+            ),
+            (
+                "non-Bearer schemes still fall through",
+                Some("Basic dXNlcjpwYXNz"),
+                Some(COOKIE),
+                cookie.clone(),
+            ),
+        ];
+        for (label, authorization, cookie_header, expected) in cases {
+            let mut pairs = Vec::new();
+            if let Some(value) = authorization {
+                pairs.push(("authorization", value));
+            }
+            if let Some(value) = cookie_header {
+                pairs.push(("cookie", value));
+            }
+            assert_eq!(extract(&headers(&pairs)), expected, "{label}");
         }
-        let bare = headers(&[
-            ("authorization", "Bearer"),
-            ("cookie", "droppedneedle_sid=tok-c"),
-        ]);
-        assert_eq!(
-            extract(&bare),
-            Some(("tok-c".to_owned(), Transport::Cookie)),
-            "a bare Bearer word is not a scheme (v2 parity)"
-        );
-    }
-
-    #[test]
-    fn empty_bearer_never_falls_through_to_cookie() {
-        let empty = headers(&[
-            ("authorization", "Bearer  "),
-            ("cookie", "droppedneedle_sid=tok-c"),
-        ]);
-        assert_eq!(extract(&empty), None);
-        let other_scheme = headers(&[
-            ("authorization", "Basic dXNlcjpwYXNz"),
-            ("cookie", "droppedneedle_sid=tok-c"),
-        ]);
-        assert_eq!(
-            extract(&other_scheme),
-            Some(("tok-c".to_owned(), Transport::Cookie)),
-            "non-Bearer schemes still fall through"
-        );
     }
 }

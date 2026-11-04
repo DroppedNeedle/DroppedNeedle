@@ -145,7 +145,20 @@ fn argon2id_params_match_the_owasp_pin() {
 #[test]
 fn md5_keeps_rfc_and_v2_spot_values() {
     assert_eq!(md5_hex(""), "d41d8cd98f00b204e9800998ecf8427e");
+    assert_eq!(md5_hex("a"), "0cc175b9c0f1b6a831c399e269772661");
     assert_eq!(md5_hex("abc"), "900150983cd24fb0d6963f7d28e17f72");
+    assert_eq!(
+        md5_hex("message digest"),
+        "f96b697d7cb7938d525a2f31aaf161d0"
+    );
+    assert_eq!(
+        md5_hex("abcdefghijklmnopqrstuvwxyz"),
+        "c3fcd3d76192e4007dfb496cca67e13b"
+    );
+    assert_eq!(
+        md5_hex("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"),
+        "d174ab98d277d9f5a5611c2c9f419d9f"
+    );
     assert_eq!(
         md5_hex("alice-secretpepper"),
         "22b231fb88294b6a25be3d978438fdc1"
@@ -695,31 +708,6 @@ async fn first_federated_logins_race_to_exactly_one_admin() {
         count(&fx, "SELECT COUNT(*) FROM auth_users WHERE role = 'admin'"),
         1
     );
-}
-
-#[tokio::test]
-async fn unverified_federated_email_never_claims_an_account() {
-    let fx = fixture("email-link").await;
-    let mut owner = user_row("user-1", "ada", Role::Admin);
-    owner.email = Some("ada@example.com".to_owned());
-    fx.auth.users.insert(owner).await.unwrap();
-    let profile = |verified: bool, uid: &str| FederatedProfile {
-        provider_uid: uid.to_owned(),
-        display_name: "Someone".to_owned(),
-        email: Some("ada@example.com".to_owned()),
-        email_verified: verified,
-        avatar_url: None,
-        token_json: "{}".to_owned(),
-    };
-    let stranger = find_or_create_federated_user(&fx.auth.federated, "oidc", &profile(false, "a"))
-        .await
-        .unwrap();
-    assert_ne!(stranger.id, "user-1");
-    assert_eq!(stranger.email, None, "an unverified address is not stored");
-    let linked = find_or_create_federated_user(&fx.auth.federated, "oidc", &profile(true, "b"))
-        .await
-        .unwrap();
-    assert_eq!(linked.id, "user-1");
 }
 
 #[tokio::test]

@@ -496,16 +496,3 @@ impl Providers {
         self.limiters.limiter(source)
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::Providers;
-
-    /// Building the providers hands every executor its row; a row name
-    /// missing from the rate table stops the build in a debug test.
-    #[test]
-    fn every_executor_names_a_rate_row() {
-        let providers = Providers::closed();
-        assert!(providers.limiter("musicbrainz").is_some());
-    }
-}

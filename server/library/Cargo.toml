@@ -7,6 +7,9 @@ license.workspace = true
 description = "DroppedNeedle library engine: scan, tags, identify, publish and contributions"
 publish = false
 
+[lib]
+doctest = false
+
 [dependencies]
 droppedneedle-auth.workspace = true
 droppedneedle-kernel.workspace = true

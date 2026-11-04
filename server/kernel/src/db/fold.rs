@@ -23,22 +23,24 @@ pub fn fold_text(value: &str) -> String {
 mod tests {
     use super::*;
 
-    #[test]
-    fn fold_matches_v1_semantics() {
-        assert_eq!(fold_text("Beyoncé"), "beyonce");
-        assert_eq!(fold_text("  Sigur   Rós  "), "sigur ros");
-        assert_eq!(fold_text("Æther"), "æther");
-        assert_eq!(fold_text("ﬁsh"), "fish");
-        assert_eq!(fold_text(""), "");
-    }
-
+    /// Folding keys names in matching and the v2 artist keys, so it must
+    /// agree with v2 step for step.
     #[test]
     fn fold_matches_v2_casefold() {
-        assert_eq!(fold_text("Straße"), "strasse");
-        assert_eq!(fold_text("ς"), "σ");
-        assert_eq!(fold_text("Σ"), "σ");
-        assert_eq!(fold_text("Οδυσσέας"), "οδυσσεασ");
-        assert_eq!(fold_text("İ"), "i");
-        assert_eq!(fold_text("ﬁŒß"), "fiœss");
+        for (input, folded) in [
+            ("Beyoncé", "beyonce"),
+            ("  Sigur   Rós  ", "sigur ros"),
+            ("Æther", "æther"),
+            ("ﬁsh", "fish"),
+            ("", ""),
+            ("Straße", "strasse"),
+            ("ς", "σ"),
+            ("Σ", "σ"),
+            ("Οδυσσέας", "οδυσσεασ"),
+            ("İ", "i"),
+            ("ﬁŒß", "fiœss"),
+        ] {
+            assert_eq!(fold_text(input), folded, "{input:?}");
+        }
     }
 }

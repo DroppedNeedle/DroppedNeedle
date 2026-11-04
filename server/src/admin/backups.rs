@@ -361,23 +361,30 @@ fn run_response(report: &BackupReport) -> BackupRunResponse {
 mod tests {
     use super::*;
 
+    /// A route takes a plain backup file name only, and the listing counts
+    /// finished backups only.
     #[test]
-    fn backup_names_accept_plain_files_only() {
+    fn backup_names_and_listing() {
         assert_eq!(safe_backup_name("library-1-0.db"), Some("library-1-0.db"));
-        assert_eq!(safe_backup_name(""), None);
-        assert_eq!(safe_backup_name("library.db.bak"), None);
-        assert_eq!(safe_backup_name(".staging-1.db"), None);
-        assert_eq!(safe_backup_name("../library.db"), None);
-        assert_eq!(safe_backup_name("sub/library.db"), None);
-        assert_eq!(safe_backup_name("..\\library.db"), None);
-        assert_eq!(safe_backup_name("library..db"), None);
-    }
+        for refused in [
+            "",
+            "library.db.bak",
+            ".staging-1.db",
+            "../library.db",
+            "sub/library.db",
+            "..\\library.db",
+            "library..db",
+        ] {
+            assert_eq!(safe_backup_name(refused), None, "name {refused:?}");
+        }
 
-    #[test]
-    fn listing_counts_finished_backups_only() {
         assert!(is_backup_file("library-1-0.db"));
-        assert!(!is_backup_file("library-1-0.db.manifest.json"));
-        assert!(!is_backup_file(".staging-1-2-3.db"));
-        assert!(!is_backup_file(".restore-1-2.tmp"));
+        for unfinished in [
+            "library-1-0.db.manifest.json",
+            ".staging-1-2-3.db",
+            ".restore-1-2.tmp",
+        ] {
+            assert!(!is_backup_file(unfinished), "listed {unfinished:?}");
+        }
     }
 }

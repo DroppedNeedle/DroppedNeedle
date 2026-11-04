@@ -1120,21 +1120,20 @@ mod tests {
         let _ = std::fs::remove_file(path);
     }
 
+    /// Rotation deletes by name order, so names sort in creation order and
+    /// two backups in one millisecond never share a name.
     #[test]
-    fn backup_names_sort_in_creation_order() {
+    fn backup_names_sort_and_never_collide() {
         let first = backup_file_name(UNIX_EPOCH + Duration::from_millis(10), 0);
         let second = backup_file_name(UNIX_EPOCH + Duration::from_millis(11), 1);
-        assert!(first < second);
-        assert!(first.ends_with(".db"));
-    }
+        assert!(first < second, "later millisecond");
+        assert!(first.ends_with(".db"), "extension");
 
-    #[test]
-    fn backup_names_share_no_millisecond_collision() {
         let same_ms = UNIX_EPOCH + Duration::from_millis(10);
         let first = backup_file_name(same_ms, 0);
         let second = backup_file_name(same_ms, 1);
-        assert_ne!(first, second);
-        assert!(first < second);
+        assert_ne!(first, second, "same millisecond");
+        assert!(first < second, "same millisecond");
     }
 
     /// An entry the listing cannot read means occupied; nothing, or only

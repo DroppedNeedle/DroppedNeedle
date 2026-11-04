@@ -1536,11 +1536,23 @@ async fn credentialed_pass(matrix: &MatrixApp, operations: &[Operation], caller:
                 StatusCode::UNAUTHORIZED,
                 "a {who} session must not satisfy {method} {uri}, got {status}: {body}"
             ),
-            Expect::Forbidden => assert_eq!(
-                status,
-                StatusCode::FORBIDDEN,
-                "{who} {method} {uri} must 403, got {status}: {body}"
-            ),
+            Expect::Forbidden => {
+                assert_eq!(
+                    status,
+                    StatusCode::FORBIDDEN,
+                    "{who} {method} {uri} must 403, got {status}: {body}"
+                );
+                // HEAD has no body, and the status-only and raw reads keep none.
+                let body_read = method != "HEAD"
+                    && !matches!(exception, Some(Exception::StatusOnly | Exception::Raw));
+                if body_read {
+                    assert_eq!(
+                        error_code(&body),
+                        "FORBIDDEN",
+                        "{who} {method} {uri}: {body}"
+                    );
+                }
+            }
             Expect::Admitted => {
                 assert!(
                     status != StatusCode::UNAUTHORIZED && status != StatusCode::FORBIDDEN,

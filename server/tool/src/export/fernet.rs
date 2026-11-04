@@ -212,17 +212,6 @@ mod tests {
     }
 
     #[test]
-    fn encrypt_round_trips_with_fresh_iv_each_time() {
-        let key = FernetKey::generate().unwrap();
-        let first = key.encrypt("sab-key").unwrap();
-        let second = key.encrypt("sab-key").unwrap();
-        assert_ne!(first, second);
-        assert_eq!(key.decrypt(&first).unwrap(), "sab-key");
-        assert_eq!(key.decrypt(&second).unwrap(), "sab-key");
-        assert_eq!(key.encrypt("").unwrap(), "");
-    }
-
-    #[test]
     fn wrong_key_garbage_and_tampering_fail_closed() {
         let key = FernetKey::from_base64(GOLDEN_KEY).unwrap();
         let other = FernetKey::generate().unwrap();

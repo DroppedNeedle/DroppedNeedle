@@ -1,8 +1,8 @@
 //! Users routes over the auth rig: the behaviors that live in the users
-//! handlers and services (credentials, ownership, recovery, Last.fm, admin
-//! guards, user import). The test sign-in layer stands in for the session
-//! middleware; transactional store guards are pinned in `auth_stores`, and
-//! the role matrix in `auth_e2e`.
+//! handlers and services (credentials, recovery, Last.fm, admin guards, user
+//! import). The test sign-in layer stands in for the session middleware;
+//! transactional store guards are pinned in `auth_stores`, the role matrix
+//! in `auth_e2e` and ownership in `auth_ownership`.
 
 use std::sync::Arc;
 
@@ -236,62 +236,6 @@ async fn first_local_password_is_set_once() {
     assert_eq!(status, StatusCode::OK);
     let (status, _) = call(app(), "POST", "/api/v3/me/local-password", body).await;
     assert_eq!(status, StatusCode::CONFLICT);
-}
-
-#[tokio::test]
-async fn foreign_sessions_and_app_passwords_are_404_not_403() {
-    let (rig, _, user) = rig_with_admin().await;
-    let other = rig.seed_user("other", Role::User).await;
-    let (status, created) = call(
-        test_app(&rig, Some(principal_for(&user, "sess-molly"))),
-        "POST",
-        "/api/v3/me/app-passwords",
-        Some(json!({"name": "x"})),
-    )
-    .await;
-    assert!(status.is_success(), "{status}: {created}");
-    let app_password = created["id"].as_str().unwrap().to_owned();
-    let stranger = || test_app(&rig, Some(principal_for(&other, "sess-other")));
-    for uri in [
-        format!("/api/v3/me/app-passwords/{app_password}"),
-        "/api/v3/auth/sessions/sess-molly".to_owned(),
-    ] {
-        let (status, _) = call(stranger(), "DELETE", &uri, None).await;
-        assert_eq!(status, StatusCode::NOT_FOUND, "{uri}");
-    }
-}
-
-#[tokio::test]
-async fn avatars_are_self_or_admin() {
-    use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
-
-    let (rig, admin, user) = rig_with_admin().await;
-    let png = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
-    let payload = json!({"content_type": "image/png", "image_base64": B64.encode(png)});
-    let (status, body) = call(
-        test_app(&rig, Some(principal_for(&user, "sess-molly"))),
-        "POST",
-        "/api/v3/me/avatar",
-        Some(payload),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let stranger = rig.seed_user("stranger", Role::User).await;
-    let uri = format!("/api/v3/users/{}/avatar", user.id);
-    for (who, session, expected) in [
-        (&user, "sess-molly", StatusCode::OK),
-        (&admin, "sess-admin", StatusCode::OK),
-        (&stranger, "sess-stranger", StatusCode::FORBIDDEN),
-    ] {
-        let (status, _) = call(
-            test_app(&rig, Some(principal_for(who, session))),
-            "GET",
-            &uri,
-            None,
-        )
-        .await;
-        assert_eq!(status, expected, "{}", who.id);
-    }
 }
 
 #[tokio::test]

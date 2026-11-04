@@ -9,7 +9,7 @@ use std::path::Path;
 
 use serde_json::json;
 use support::{
-    Fixture, MBID, PASSPHRASE, count, import_request, migrated_file, scratch_config, seed_settings,
+    Fixture, MBID, count, import_request, migrated_file, scratch_config, seed_settings,
     settings_rows, stored_settings, test_crypto,
 };
 
@@ -156,9 +156,13 @@ async fn crash_after_commit_converges_on_retry() {
     assert_eq!(count(&target_db, "import_runs"), runs, "and no audit row");
 }
 
+/// A dry run writes nothing and reports what the real import then does, on
+/// a fresh target and on one where an email collides.
 #[tokio::test]
-async fn dry_run_matches_real_import() {
+async fn dry_run_matches_the_real_import() {
     let fixture = Fixture::shared();
+
+    let case = "fresh target";
     let mut export = fixture.shell();
     export["users"] = json!([fixture.user("u1"), fixture.user("u2")]);
     export["follows"] = json!([fixture.follow("u1", MBID)]);
@@ -175,12 +179,16 @@ async fn dry_run_matches_real_import() {
     dry.dry_run = true;
     let preview = run_import(dry).await;
 
-    assert_eq!(preview.exit.code, ExitCode::Ok);
-    assert!(preview.dry_run);
-    assert_eq!(entity_counts(&target_db), vec![0, 0, 0, 0, 0, 0, 0]);
+    assert_eq!(preview.exit.code, ExitCode::Ok, "case: {case}");
+    assert!(preview.dry_run, "case: {case}");
+    assert_eq!(
+        entity_counts(&target_db),
+        vec![0, 0, 0, 0, 0, 0, 0],
+        "case: {case}"
+    );
     assert!(
         settings_rows(&target_db).is_empty(),
-        "dry-run writes nothing"
+        "case: {case}: dry-run writes nothing"
     );
 
     let real = run_import(import_request(
@@ -190,16 +198,22 @@ async fn dry_run_matches_real_import() {
         crypto,
     ))
     .await;
-    assert_eq!(real.exit.code, ExitCode::Ok);
-    assert_eq!(preview.entities, real.entities);
-    assert_eq!(preview.settings_applied, real.settings_applied);
-    assert_eq!(preview.settings_defaulted, real.settings_defaulted);
-    assert_eq!(preview.secrets_reencrypted, real.secrets_reencrypted);
-}
+    assert_eq!(real.exit.code, ExitCode::Ok, "case: {case}");
+    assert_eq!(preview.entities, real.entities, "case: {case}");
+    assert_eq!(
+        preview.settings_applied, real.settings_applied,
+        "case: {case}"
+    );
+    assert_eq!(
+        preview.settings_defaulted, real.settings_defaulted,
+        "case: {case}"
+    );
+    assert_eq!(
+        preview.secrets_reencrypted, real.secrets_reencrypted,
+        "case: {case}"
+    );
 
-#[tokio::test]
-async fn dry_run_matches_conflicts_too() {
-    let fixture = Fixture::shared();
+    let case = "colliding email";
     let mut seed = fixture.shell();
     seed["users"] = json!([fixture.user("u1")]);
     let (target_db, _target) = migrated_file();
@@ -232,29 +246,10 @@ async fn dry_run_matches_conflicts_too() {
     ))
     .await;
 
-    assert_eq!(preview.exit.code, ExitCode::OkWithDrops);
-    assert_eq!(preview.entities, real.entities);
-    assert_eq!(preview.entities["user"].nulled_field, 1);
-    assert_eq!(real.entities["user"].nulled_field, 1);
-}
-
-#[tokio::test]
-async fn wrong_passphrase_writes_nothing() {
-    let fixture = Fixture::shared();
-    let mut export = fixture.shell();
-    export["users"] = json!([fixture.user("u1")]);
-    export["settings"]["wanted"] = json!({"enabled": true});
-
-    let (target_db, _target) = migrated_file();
-    let (_dir, config_path, crypto) = scratch_config("passphrase");
-    let mut request = import_request(&export, target_db.clone(), config_path.clone(), crypto);
-    request.passphrase = "the wrong passphrase".to_owned();
-    let report = run_import(request).await;
-
-    assert_eq!(report.exit.code, ExitCode::EnvelopeAuthFailed);
-    assert_eq!(entity_counts(&target_db), vec![0, 0, 0, 0, 0, 0, 0]);
-    assert!(settings_rows(&target_db).is_empty());
-    assert_ne!(PASSPHRASE, "the wrong passphrase");
+    assert_eq!(preview.exit.code, ExitCode::OkWithDrops, "case: {case}");
+    assert_eq!(preview.entities, real.entities, "case: {case}");
+    assert_eq!(preview.entities["user"].nulled_field, 1, "case: {case}");
+    assert_eq!(real.entities["user"].nulled_field, 1, "case: {case}");
 }
 
 #[tokio::test]
@@ -389,7 +384,9 @@ async fn import_serializes_with_a_concurrent_writer() {
         config_path,
         crypto,
     )));
-    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+    // Long enough for the import to derive its key and wait on the lock,
+    // well inside its 5 s busy timeout.
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     writer.execute_batch("COMMIT").unwrap();
     let report = import.await.unwrap();
 

@@ -425,11 +425,13 @@ async fn a_config_json_that_does_not_read_refuses_the_start() {
     assert!(ingest_record(&config).is_none());
 }
 
-/// A database that holds this server's data, sealed values among it and no
-/// key check yet, with its key file gone, refuses the start instead of
-/// taking a new key that could read none of its secrets.
+/// A start never mints a key over sealed data. A database with sealed values
+/// and no key check yet, its key file gone, refuses the start instead of
+/// taking a new key that could read none of its secrets. A key file that is
+/// not the database's own refuses and is left as it was; with it gone, the
+/// stored check still refuses and no key is minted.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_database_whose_key_is_gone_refuses_the_start() {
+async fn a_start_never_mints_a_key_over_sealed_data() {
     let dir = ScratchDir::new("settings-lost-key");
     let config = AppConfig::with_root(0, &dir);
     std::fs::create_dir_all(config.config_dir()).unwrap();
@@ -449,10 +451,52 @@ async fn a_database_whose_key_is_gone_refuses_the_start() {
     };
     assert!(
         matches!(refused, BootError::DataDir(BootRefusal::KeyMissing { .. })),
-        "{refused:?}"
+        "no check: {refused:?}"
     );
-    assert!(refused.to_string().contains("CONFIG_DIR"), "{refused}");
-    assert!(!config.config_dir().join("data_enc.key").exists());
+    assert!(
+        refused.to_string().contains("CONFIG_DIR"),
+        "no check: {refused}"
+    );
+    assert!(
+        !config.config_dir().join("data_enc.key").exists(),
+        "no check: no key minted"
+    );
+
+    let dir = ScratchDir::new("settings-wrong-key");
+    let config = AppConfig::with_root(0, &dir);
+    boot_once(&config).await.unwrap();
+    assert!(key_check(&config).is_some(), "checked: the check is stored");
+
+    let key = config.config_dir().join("data_enc.key");
+    std::fs::remove_file(&key).unwrap();
+    Crypto::mint_file(&key).unwrap();
+    let wrong = std::fs::read(&key).unwrap();
+    let Err(refused) = bootstrap::build_with(config.clone(), closed_outbound()).await else {
+        panic!("a key from elsewhere must refuse the start");
+    };
+    assert!(
+        matches!(refused, BootError::DataDir(BootRefusal::KeyMismatch { .. })),
+        "wrong key: {refused:?}"
+    );
+    assert!(
+        refused.to_string().contains("reset-key"),
+        "wrong key: {refused}"
+    );
+    assert_eq!(
+        std::fs::read(&key).unwrap(),
+        wrong,
+        "wrong key: left as it was"
+    );
+
+    std::fs::remove_file(&key).unwrap();
+    let Err(refused) = bootstrap::build_with(config.clone(), closed_outbound()).await else {
+        panic!("a database with a check and no key must refuse the start");
+    };
+    assert!(
+        matches!(refused, BootError::DataDir(BootRefusal::KeyMissing { .. })),
+        "checked, key gone: {refused:?}"
+    );
+    assert!(!key.exists(), "checked, key gone: no key minted");
 }
 
 /// The stored check value for the data key, if any.
@@ -487,45 +531,11 @@ fn unchecked_instance(name: &str) -> (ScratchDir, AppConfig, Crypto) {
     (dir, config, crypto)
 }
 
-/// A key file that is not the database's own refuses the start and is left
-/// as it was; with the key file gone, the stored check still refuses and no
-/// key is minted.
+/// The first start after the check arrived accepts its own key and records
+/// the check: on a database holding a link sealed whole (not JSON), and on
+/// one where a stale value that opens under no key sits beside a good one.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_key_that_does_not_belong_refuses_the_start() {
-    let dir = ScratchDir::new("settings-wrong-key");
-    let config = AppConfig::with_root(0, &dir);
-    boot_once(&config).await.unwrap();
-    assert!(key_check(&config).is_some());
-
-    let key = config.config_dir().join("data_enc.key");
-    std::fs::remove_file(&key).unwrap();
-    Crypto::mint_file(&key).unwrap();
-    let wrong = std::fs::read(&key).unwrap();
-    let Err(refused) = bootstrap::build_with(config.clone(), closed_outbound()).await else {
-        panic!("a key from elsewhere must refuse the start");
-    };
-    assert!(
-        matches!(refused, BootError::DataDir(BootRefusal::KeyMismatch { .. })),
-        "{refused:?}"
-    );
-    assert!(refused.to_string().contains("reset-key"), "{refused}");
-    assert_eq!(std::fs::read(&key).unwrap(), wrong);
-
-    std::fs::remove_file(&key).unwrap();
-    let Err(refused) = bootstrap::build_with(config.clone(), closed_outbound()).await else {
-        panic!("a database with a check and no key must refuse the start");
-    };
-    assert!(
-        matches!(refused, BootError::DataDir(BootRefusal::KeyMissing { .. })),
-        "{refused:?}"
-    );
-    assert!(!key.exists());
-}
-
-/// The first start after the check arrived, on a database holding a link
-/// sealed whole (not JSON), accepts its own key and records the check.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_whole_sealed_link_lets_the_right_key_start() {
+async fn the_right_key_starts_a_database_with_no_check() {
     let (_dir, config, crypto) = unchecked_instance("settings-check-link");
     rusqlite::Connection::open(&config.library_db_path)
         .unwrap()
@@ -539,14 +549,10 @@ async fn a_whole_sealed_link_lets_the_right_key_start() {
     boot_once(&config).await.unwrap();
     assert_eq!(
         key_check(&config),
-        Some(serde_json::to_string(&crypto.check_value()).unwrap())
+        Some(serde_json::to_string(&crypto.check_value()).unwrap()),
+        "whole sealed link"
     );
-}
 
-/// One stale value that opens under no key does not refuse the right key,
-/// as long as another sealed value opens under it.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_stale_value_beside_a_good_one_lets_the_right_key_start() {
     let (_dir, config, crypto) = unchecked_instance("settings-check-stale");
     let stale = Crypto::from_key_bytes(&[9u8; 32])
         .unwrap()
@@ -567,12 +573,15 @@ async fn a_stale_value_beside_a_good_one_lets_the_right_key_start() {
     .unwrap();
 
     boot_once(&config).await.unwrap();
-    assert!(key_check(&config).is_some());
+    assert!(
+        key_check(&config).is_some(),
+        "stale value beside a good one"
+    );
 }
 
 /// W3.8: a backup carries the settings. A secret saved over HTTP, backed up
 /// through the backup service and restored into an empty data directory
-/// beside the key file reads back at the next start.
+/// beside the key file opens under that key.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_restored_backup_brings_its_settings() {
     let source = TestApp::start("settings-backup-source").await;
@@ -598,18 +607,17 @@ async fn a_restored_backup_brings_its_settings() {
         .join(run["name"].as_str().unwrap());
     let key = source.config.config_dir().join("data_enc.key");
 
-    let restored = TestApp::start_prepared("settings-backup-target", |config| {
-        std::fs::remove_file(&config.library_db_path).unwrap();
-        std::fs::copy(&backup, &config.library_db_path).unwrap();
-        std::fs::copy(&key, config.config_dir().join("data_enc.key")).unwrap();
-    })
-    .await;
+    let target = ScratchDir::new("settings-backup-target");
+    let config = AppConfig::with_root(0, &target);
+    std::fs::create_dir_all(config.config_dir()).unwrap();
+    if let Some(parent) = config.library_db_path.parent() {
+        std::fs::create_dir_all(parent).unwrap();
+    }
+    std::fs::copy(&backup, &config.library_db_path).unwrap();
+    std::fs::copy(&key, config.config_dir().join("data_enc.key")).unwrap();
     source.stop().await;
-    let (restored, wrapped) = restored
-        .while_stopped(|config| app_settings(config).get_raw::<WrappedSettings>().unwrap())
-        .await;
+    let wrapped = app_settings(&config).get_raw::<WrappedSettings>().unwrap();
     assert_eq!(wrapped.api_key.expose(), "wrapped-plaintext");
-    restored.stop().await;
 }
 
 /// An older `config.json` wrote `target_bitrate_kbps` on every recipe step.

@@ -840,8 +840,10 @@ mod tests {
         parse_manifest("toy", text.as_bytes())
     }
 
+    /// The minimal manifest and a web homepage pass; each problem fails with
+    /// an error naming it.
     #[test]
-    fn minimal_subscriber_manifest_validates() {
+    fn manifest_accepts_or_names_each_problem() {
         let manifest = parse(
             "[plugin]\n\
              name = \"toy\"\n\
@@ -855,6 +857,98 @@ mod tests {
         assert_eq!(manifest.display_name, "toy");
         assert_eq!(manifest.capabilities, [Capability::Subscriber]);
         assert!(manifest.schedule.is_none());
+
+        let with_homepage = |homepage: &str| {
+            format!(
+                "[plugin]\nname = \"toy\"\napi_version = 2\nentrypoint = \"plugin:Toy\"\n\
+                 capabilities = [\"subscriber\"]\nhomepage = \"{homepage}\"\n"
+            )
+        };
+        assert!(
+            parse(&with_homepage("https://toy.test/about")).is_ok(),
+            "a web homepage passes"
+        );
+
+        let error = parse(
+            "[plugin]\n\
+             name = \"toy\"\n\
+             api_version = 2\n\
+             entrypoint = \"plugin:Toy\"\n\
+             capabilities = [\"subscriber\", \"mind-reading\"]\n",
+        )
+        .unwrap_err();
+        assert_eq!(
+            error.0, "toy: unknown capability 'mind-reading'",
+            "unknown capability"
+        );
+
+        let refused: [(&str, String, &[&str]); 7] = [
+            (
+                "a misspelt key",
+                "[plugin]\n\
+                 name = \"toy\"\n\
+                 api_version = 2\n\
+                 entrypoint = \"plugin:Toy\"\n\
+                 capabilites = [\"subscriber\"]\n"
+                    .to_owned(),
+                &["line 5", "capabilites"],
+            ),
+            (
+                "a scheduler without a schedule",
+                "[plugin]\n\
+                 name = \"toy\"\n\
+                 api_version = 2\n\
+                 entrypoint = \"plugin:Toy\"\n\
+                 capabilities = [\"scheduler\"]\n"
+                    .to_owned(),
+                &["requires a [schedule] table"],
+            ),
+            (
+                "routes without the publisher capability",
+                "[plugin]\n\
+                 name = \"toy\"\n\
+                 api_version = 2\n\
+                 entrypoint = \"plugin:Toy\"\n\
+                 capabilities = [\"subscriber\"]\n\
+                 [[route]]\n\
+                 path = \"status\"\n"
+                    .to_owned(),
+                &["requires the publisher capability"],
+            ),
+            (
+                "an indexer without a target",
+                "[plugin]\n\
+                 name = \"toy\"\n\
+                 api_version = 2\n\
+                 entrypoint = \"plugin:Toy\"\n\
+                 capabilities = [\"indexer\"]\n\
+                 [[capability]]\n\
+                 id = \"indexer\"\n"
+                    .to_owned(),
+                &["requires target_source"],
+            ),
+            (
+                "a javascript homepage",
+                with_homepage("javascript:alert(1)"),
+                &["homepage"],
+            ),
+            (
+                "an ftp homepage",
+                with_homepage("ftp://toy.test"),
+                &["homepage"],
+            ),
+            (
+                "a homepage with credentials",
+                with_homepage("https://user:pw@toy.test"),
+                &["homepage"],
+            ),
+        ];
+        for (label, text, fragments) in refused {
+            let error = parse(&text).unwrap_err();
+            for fragment in fragments {
+                assert!(error.0.contains(fragment), "{label}: {error}");
+            }
+        }
     }
 
     /// The protocol and the API send a capability as its manifest id.
@@ -866,94 +960,5 @@ mod tests {
                 serde_json::Value::String(capability.as_str().to_owned())
             );
         }
-    }
-
-    #[test]
-    fn unknown_capability_is_named() {
-        let error = parse(
-            "[plugin]\n\
-             name = \"toy\"\n\
-             api_version = 2\n\
-             entrypoint = \"plugin:Toy\"\n\
-             capabilities = [\"subscriber\", \"mind-reading\"]\n",
-        )
-        .unwrap_err();
-        assert_eq!(error.0, "toy: unknown capability 'mind-reading'");
-    }
-
-    #[test]
-    fn a_misspelt_key_is_named() {
-        let error = parse(
-            "[plugin]\n\
-             name = \"toy\"\n\
-             api_version = 2\n\
-             entrypoint = \"plugin:Toy\"\n\
-             capabilites = [\"subscriber\"]\n",
-        )
-        .unwrap_err();
-        assert!(error.0.contains("line 5"), "{error}");
-        assert!(error.0.contains("capabilites"), "{error}");
-    }
-
-    #[test]
-    fn scheduler_without_schedule_is_rejected() {
-        let error = parse(
-            "[plugin]\n\
-             name = \"toy\"\n\
-             api_version = 2\n\
-             entrypoint = \"plugin:Toy\"\n\
-             capabilities = [\"scheduler\"]\n",
-        )
-        .unwrap_err();
-        assert!(error.0.contains("requires a [schedule] table"));
-    }
-
-    #[test]
-    fn routes_need_the_publisher_capability() {
-        let error = parse(
-            "[plugin]\n\
-             name = \"toy\"\n\
-             api_version = 2\n\
-             entrypoint = \"plugin:Toy\"\n\
-             capabilities = [\"subscriber\"]\n\
-             [[route]]\n\
-             path = \"status\"\n",
-        )
-        .unwrap_err();
-        assert!(error.0.contains("requires the publisher capability"));
-    }
-
-    #[test]
-    fn homepage_must_be_a_web_address() {
-        let manifest = |homepage: &str| {
-            parse(&format!(
-                "[plugin]\nname = \"toy\"\napi_version = 2\nentrypoint = \"plugin:Toy\"\n\
-                 capabilities = [\"subscriber\"]\nhomepage = \"{homepage}\"\n"
-            ))
-        };
-        assert!(manifest("https://toy.test/about").is_ok());
-        for bad in [
-            "javascript:alert(1)",
-            "ftp://toy.test",
-            "https://user:pw@toy.test",
-        ] {
-            let error = manifest(bad).unwrap_err();
-            assert!(error.0.contains("homepage"), "{bad}: {error}");
-        }
-    }
-
-    #[test]
-    fn indexer_without_a_target_is_rejected() {
-        let error = parse(
-            "[plugin]\n\
-             name = \"toy\"\n\
-             api_version = 2\n\
-             entrypoint = \"plugin:Toy\"\n\
-             capabilities = [\"indexer\"]\n\
-             [[capability]]\n\
-             id = \"indexer\"\n",
-        )
-        .unwrap_err();
-        assert!(error.0.contains("requires target_source"));
     }
 }

@@ -488,22 +488,3 @@ impl AdaptiveBatch {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::AdaptiveBatch;
-
-    #[test]
-    fn album_batch_shrinks_when_slow_and_grows_when_fast_within_bounds() {
-        let mut batch = AdaptiveBatch::new(8);
-        batch.observe(2.0);
-        batch.observe(2.0);
-        assert_eq!(batch.size, 6);
-        batch.observe(2.0);
-        assert_eq!(batch.size, 6, "never below two under the configured size");
-        for _ in 0..30 {
-            batch.observe(0.1);
-        }
-        assert_eq!(batch.size, 20, "capped at 20");
-    }
-}

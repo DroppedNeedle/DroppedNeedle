@@ -359,5 +359,17 @@ mod tests {
                 "{raw}"
             );
         }
+
+        // TheAudioDB still names some pictures over http; they are fetched
+        // over https from the same host and path.
+        assert_eq!(
+            check_image_url(
+                "http://r2.theaudiodb.com/images/media/artist/thumb/radiohead.jpg",
+                Some(&deezer)
+            )
+            .map(|url| url.to_string()),
+            Some("https://r2.theaudiodb.com/images/media/artist/thumb/radiohead.jpg".to_owned()),
+            "an http TheAudioDB picture is upgraded to https"
+        );
     }
 }

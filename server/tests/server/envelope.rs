@@ -28,48 +28,40 @@ fn assert_minted(request_id: &str) {
     assert!(uuid::Uuid::parse_str(request_id).is_ok(), "{request_id}");
 }
 
+/// One app without hooks: 404 and 405 answer the envelope with a minted
+/// request id and a SCREAMING_SNAKE code, and no `__test__` hook is routed.
 #[tokio::test]
-async fn unknown_route_renders_not_found_envelope() {
-    let app = TestApp::start("envelope-404").await;
-    let (status, json, request_id) = request(&app, "GET", "/api/v3/nope").await;
+async fn the_router_answers_the_envelope_and_has_no_test_hooks() {
+    let app = TestApp::start("envelope").await;
 
-    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, json, request_id) = request(&app, "GET", "/api/v3/nope").await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "unknown route");
     assert_minted(&request_id);
     assert_eq!(
         json,
-        serde_json::json!({"error": {"code": "NOT_FOUND", "message": "Not found", "details": null}})
+        serde_json::json!({"error": {"code": "NOT_FOUND", "message": "Not found", "details": null}}),
+        "unknown route"
     );
-}
 
-#[tokio::test]
-async fn error_codes_are_screaming_snake() {
-    let app = TestApp::start("envelope-code").await;
     let (_, json, _) = request(&app, "GET", "/missing").await;
     let code = json["error"]["code"].as_str().unwrap();
-    assert!(!code.is_empty());
-    assert_eq!(code, code.to_uppercase());
+    assert!(!code.is_empty(), "code of /missing");
+    assert_eq!(code, code.to_uppercase(), "code of /missing");
     assert!(
         code.chars()
-            .all(|char| char.is_ascii_uppercase() || char == '_')
+            .all(|char| char.is_ascii_uppercase() || char == '_'),
+        "code of /missing: {code}"
     );
-}
 
-#[tokio::test]
-async fn wrong_method_renders_method_not_allowed_envelope() {
-    let app = TestApp::start("envelope-405").await;
     let (status, json, request_id) = request(&app, "POST", "/health").await;
-
-    assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
+    assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED, "wrong method");
     assert_minted(&request_id);
     assert_eq!(
         json,
-        serde_json::json!({"error": {"code": "METHOD_NOT_ALLOWED", "message": "Method not allowed", "details": null}})
+        serde_json::json!({"error": {"code": "METHOD_NOT_ALLOWED", "message": "Method not allowed", "details": null}}),
+        "wrong method"
     );
-}
 
-#[tokio::test]
-async fn test_hooks_are_absent_without_opt_in() {
-    let app = TestApp::start("envelope-no-hooks").await;
     for uri in [
         "/__test__/typed-error",
         "/__test__/panic",

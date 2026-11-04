@@ -203,48 +203,27 @@ where
 mod tests {
     use super::*;
 
+    /// The events poll fires at its slot today while it is still ahead,
+    /// strictly after it rolls to tomorrow, and a poll time that does not
+    /// read falls back to 06:00.
     #[test]
-    fn next_slot_today_when_still_ahead() {
-        let after = WallTime {
-            days_since_epoch: 10,
-            minutes_since_midnight: 300,
+    fn next_daily_occurrence_cases() {
+        let at = |days_since_epoch, minutes_since_midnight| WallTime {
+            days_since_epoch,
+            minutes_since_midnight,
         };
-        assert_eq!(
-            next_daily_occurrence("06:00", after),
-            WallTime {
-                days_since_epoch: 10,
-                minutes_since_midnight: 360,
-            }
-        );
-    }
-
-    #[test]
-    fn next_slot_tomorrow_once_passed() {
-        let after = WallTime {
-            days_since_epoch: 10,
-            minutes_since_midnight: 360,
-        };
-        // Strictly after: the exact slot rolls to tomorrow.
-        assert_eq!(
-            next_daily_occurrence("06:00", after),
-            WallTime {
-                days_since_epoch: 11,
-                minutes_since_midnight: 360,
-            }
-        );
-    }
-
-    #[test]
-    fn garbage_poll_time_falls_back_to_six() {
-        let after = WallTime::day(10);
+        let mut cases = vec![
+            ("06:00", at(10, 300), at(10, 360)),
+            ("06:00", at(10, 360), at(11, 360)),
+        ];
         for poll in ["nope", "25:00", "10:99", "10", "10:00:00", ""] {
+            cases.push((poll, WallTime::day(10), at(10, 360)));
+        }
+        for (poll, after, expected) in cases {
             assert_eq!(
                 next_daily_occurrence(poll, after),
-                WallTime {
-                    days_since_epoch: 10,
-                    minutes_since_midnight: 360,
-                },
-                "{poll:?}"
+                expected,
+                "{poll:?} after {after:?}"
             );
         }
     }

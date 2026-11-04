@@ -10,30 +10,6 @@ use droppedneedle::handlers::test_hooks::LEAK_MARKERS;
 use droppedneedle_kernel::{config::AppConfig, error::Unavailable};
 use serde_json::json;
 
-async fn get(uri: &str, request_id: Option<&str>) -> (StatusCode, String, String) {
-    let (status, headers, text) = get_full(uri, request_id).await;
-    let header_id = headers
-        .get("x-request-id")
-        .unwrap()
-        .to_str()
-        .unwrap()
-        .to_owned();
-    (status, header_id, text)
-}
-
-async fn get_full(
-    uri: &str,
-    request_id: Option<&str>,
-) -> (StatusCode, axum::http::HeaderMap, String) {
-    let app = TestApp::start_configured("leak", AppConfig::with_test_hooks).await;
-    let headers: Vec<(&str, &str)> = request_id
-        .map(|id| ("x-request-id", id))
-        .into_iter()
-        .collect();
-    let (status, headers, body) = app.raw("GET", uri, &headers, None).await;
-    (status, headers, String::from_utf8(body).unwrap())
-}
-
 fn assert_fixed_envelope(text: &str, expected_id: &str) {
     let json: serde_json::Value = serde_json::from_str(text).unwrap();
     assert_eq!(
@@ -51,18 +27,74 @@ fn assert_fixed_envelope(text: &str, expected_id: &str) {
     }
 }
 
+/// One app with the hooks: a typed fault, a raw 500 or 503 and a panic each
+/// leave as the fixed envelope naming the request id (the caller's, or one
+/// minted when it sent none), a 503 keeping its status and `Retry-After`.
 #[tokio::test]
-async fn typed_server_fault_stays_generic_and_names_request_id() {
-    let (status, header_id, text) = get("/__test__/typed-error", Some("leak-1")).await;
-    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
-    assert_eq!(header_id, "leak-1");
-    assert_fixed_envelope(&text, "leak-1");
-
-    let (status, headers, text) =
-        get_full("/__test__/typed-error?status=503", Some("leak-1b")).await;
-    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-    assert_eq!(headers.get("retry-after").unwrap(), "30");
-    assert_fixed_envelope(&text, "leak-1b");
+async fn every_native_5xx_leaves_as_the_fixed_envelope() {
+    let app = TestApp::start_configured("leak", AppConfig::with_test_hooks).await;
+    let rows: [(&str, Option<&str>, StatusCode, Option<&str>); 6] = [
+        (
+            "/__test__/typed-error",
+            Some("leak-1"),
+            StatusCode::INTERNAL_SERVER_ERROR,
+            None,
+        ),
+        (
+            "/__test__/typed-error?status=503",
+            Some("leak-1b"),
+            StatusCode::SERVICE_UNAVAILABLE,
+            Some("30"),
+        ),
+        (
+            "/__test__/raw-500",
+            Some("leak-3"),
+            StatusCode::INTERNAL_SERVER_ERROR,
+            None,
+        ),
+        (
+            "/__test__/raw-503",
+            Some("leak-503"),
+            StatusCode::SERVICE_UNAVAILABLE,
+            Some("120"),
+        ),
+        (
+            "/__test__/typed-error",
+            None,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            None,
+        ),
+        (
+            "/__test__/panic",
+            Some("leak-2"),
+            StatusCode::INTERNAL_SERVER_ERROR,
+            None,
+        ),
+    ];
+    for (uri, sent_id, status, retry_after) in rows {
+        let sent: Vec<(&str, &str)> = sent_id.map(|id| ("x-request-id", id)).into_iter().collect();
+        let (got_status, headers, body) = app.raw("GET", uri, &sent, None).await;
+        let text = String::from_utf8(body).unwrap();
+        assert_eq!(got_status, status, "{uri} {sent_id:?}");
+        let header_id = headers
+            .get("x-request-id")
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_owned();
+        match sent_id {
+            Some(id) => assert_eq!(header_id, id, "{uri}"),
+            None => assert!(
+                uuid::Uuid::parse_str(&header_id).is_ok(),
+                "{uri} minted {header_id}"
+            ),
+        }
+        if let Some(wait) = retry_after {
+            assert_eq!(headers.get("retry-after").unwrap(), wait, "{uri}");
+        }
+        assert_fixed_envelope(&text, &header_id);
+    }
+    app.stop().await;
 }
 
 /// The closed list as the plan tables it: code, status, fixed sentence. A
@@ -182,31 +214,6 @@ async fn closed_list_answers_pass_the_boundary_with_their_sentence() {
 }
 
 #[tokio::test]
-async fn panicking_handler_still_answers_the_envelope() {
-    let (status, header_id, text) = get("/__test__/panic", Some("leak-2")).await;
-    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
-    assert_eq!(header_id, "leak-2");
-    assert_fixed_envelope(&text, "leak-2");
-}
-
-#[tokio::test]
-async fn raw_500_is_rewritten_to_the_envelope() {
-    let (status, header_id, text) = get("/__test__/raw-500", Some("leak-3")).await;
-    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
-    assert_eq!(header_id, "leak-3");
-    assert_fixed_envelope(&text, "leak-3");
-}
-
-#[tokio::test]
-async fn raw_503_keeps_status_and_retry_after_with_generic_body() {
-    let (status, headers, text) = get_full("/__test__/raw-503", Some("leak-503")).await;
-    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-    assert_eq!(headers.get("x-request-id").unwrap(), "leak-503");
-    assert_eq!(headers.get("retry-after").unwrap(), "120");
-    assert_fixed_envelope(&text, "leak-503");
-}
-
-#[tokio::test]
 async fn compat_5xx_answers_the_protocol_shape_with_status_and_retry_after() {
     let app = TestApp::start_configured("leak-compat", AppConfig::with_test_hooks).await;
     let cases = [
@@ -248,12 +255,4 @@ async fn compat_5xx_answers_the_protocol_shape_with_status_and_retry_after() {
         assert_eq!(reply["error"]["message"], "Internal server error", "{text}");
     }
     app.stop().await;
-}
-
-#[tokio::test]
-async fn minted_request_id_is_used_when_caller_sends_none() {
-    let (status, header_id, text) = get("/__test__/typed-error", None).await;
-    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
-    assert!(uuid::Uuid::parse_str(&header_id).is_ok(), "{header_id}");
-    assert_fixed_envelope(&text, &header_id);
 }

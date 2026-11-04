@@ -148,32 +148,24 @@ impl<T: utoipa::ToSchema> utoipa::ToSchema for Masked<T> {
 mod tests {
     use super::*;
 
+    /// Only the mask itself keeps the stored secret: a value that merely
+    /// starts with it is new, and a verbatim secret is compared unstripped.
     #[test]
-    fn exact_match_keeps_but_prefix_match_does_not() {
-        assert_eq!(
-            resolve_on_save(SECRET_MASK, true),
-            SaveResolution::KeepStored
-        );
-        assert_eq!(
-            resolve_on_save("********extra", true),
-            SaveResolution::StoreNew("********extra".to_owned())
-        );
-        assert_eq!(
-            resolve_on_save("  ********  ", true),
-            SaveResolution::KeepStored
-        );
-    }
-
-    #[test]
-    fn verbatim_secrets_compare_without_stripping() {
-        assert_eq!(
-            resolve_on_save(SECRET_MASK, false),
-            SaveResolution::KeepStored
-        );
-        assert_eq!(
-            resolve_on_save("  ********  ", false),
-            SaveResolution::StoreNew("  ********  ".to_owned())
-        );
+    fn mask_means_keep_only_on_an_exact_match() {
+        let new = |value: &str| SaveResolution::StoreNew(value.to_owned());
+        for (input, strip, expected) in [
+            (SECRET_MASK, true, SaveResolution::KeepStored),
+            ("********extra", true, new("********extra")),
+            ("  ********  ", true, SaveResolution::KeepStored),
+            (SECRET_MASK, false, SaveResolution::KeepStored),
+            ("  ********  ", false, new("  ********  ")),
+        ] {
+            assert_eq!(
+                resolve_on_save(input, strip),
+                expected,
+                "{input:?} strip={strip}"
+            );
+        }
     }
 
     #[test]

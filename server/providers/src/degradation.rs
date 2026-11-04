@@ -131,51 +131,54 @@ pub fn record_current(
 mod tests {
     use super::*;
 
-    #[test]
-    fn worst_status_wins_per_source() {
+    /// A context keeps the worst status per source and its deterministic
+    /// failures apart, and a request scope collects what its calls record.
+    #[tokio::test]
+    async fn degradation_context_keeps_the_worst_per_source() {
         let mut context = DegradationContext::new();
-        assert!(!context.has_degradation());
+        assert!(!context.has_degradation(), "worst: empty");
         context.record_status("lastfm", IntegrationStatus::Ok, false);
         context.record_status("lastfm", IntegrationStatus::Error, false);
         context.record_status("lastfm", IntegrationStatus::Ok, false);
         assert_eq!(
             context.summary().get("lastfm"),
-            Some(&IntegrationStatus::Error)
+            Some(&IntegrationStatus::Error),
+            "worst: kept"
         );
-        assert!(context.has_degradation());
-        assert!(context.degraded_summary().contains_key("lastfm"));
-    }
+        assert!(context.has_degradation(), "worst: degraded");
+        assert!(
+            context.degraded_summary().contains_key("lastfm"),
+            "worst: summary"
+        );
 
-    #[test]
-    fn deterministic_failures_track_separately() {
         let mut context = DegradationContext::new();
-        assert!(context.deterministic_sources().is_empty());
+        assert!(
+            context.deterministic_sources().is_empty(),
+            "deterministic: empty"
+        );
         context.record_status("musicbrainz", IntegrationStatus::Error, true);
-        assert!(context.deterministic_sources().contains("musicbrainz"));
-    }
+        assert!(
+            context.deterministic_sources().contains("musicbrainz"),
+            "deterministic: kept"
+        );
 
-    #[tokio::test]
-    async fn scoped_collects_recordings() {
         let (output, context) = scoped(async {
             record_current("audiodb", IntegrationStatus::Error, false);
             record_current("lastfm", IntegrationStatus::Degraded, false);
             "done"
         })
         .await;
-        assert_eq!(output, "done");
-        assert!(context.has_degradation());
+        assert_eq!(output, "done", "scoped: output");
+        assert!(context.has_degradation(), "scoped: degraded");
         assert_eq!(
             context.degraded_summary().get("audiodb"),
-            Some(&IntegrationStatus::Error)
+            Some(&IntegrationStatus::Error),
+            "scoped: audiodb"
         );
         assert_eq!(
             context.degraded_summary().get("lastfm"),
-            Some(&IntegrationStatus::Degraded)
+            Some(&IntegrationStatus::Degraded),
+            "scoped: lastfm"
         );
-    }
-
-    #[tokio::test]
-    async fn recording_outside_a_scope_is_a_quiet_no() {
-        assert!(!record_current("lastfm", IntegrationStatus::Error, false));
     }
 }

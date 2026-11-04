@@ -682,22 +682,27 @@ mod tests {
         assert_eq!(quiet.reader_blocked, Duration::ZERO);
     }
 
+    /// A pass without evidence (`active = -1`) neither counts as progress
+    /// nor lifts a suspension.
     #[test]
-    fn unmeasured_passes_never_feed_the_baseline() {
+    fn an_unmeasured_pass_changes_nothing() {
         let mut policy = BackpressurePolicy::new();
         observe(&mut policy, 0, 100, 100);
         let unmeasured = policy.observe(true, 0, 0, -1, Instant::now(), false);
-        assert!(!unmeasured.progress);
+        assert!(!unmeasured.progress, "baseline: the unmeasured pass");
         let next = observe(&mut policy, 0, 100, 100);
-        assert!(!next.progress, "fabricated zeros must not read as progress");
-    }
+        assert!(
+            !next.progress,
+            "baseline: fabricated zeros must not read as progress"
+        );
 
-    #[test]
-    fn suspension_survives_unmeasured_passes() {
         let mut policy = BackpressurePolicy::new();
         observe(&mut policy, ACTIVE_HIGH_WATER_BYTES + 1, 100, 0);
-        assert!(policy.suspended());
+        assert!(policy.suspended(), "suspension: high water suspends");
         let pass = policy.observe(true, 0, 0, -1, Instant::now(), false);
-        assert!(pass.suspended, "active -1 is evidence-free, not drained");
+        assert!(
+            pass.suspended,
+            "suspension: active -1 is evidence-free, not drained"
+        );
     }
 }

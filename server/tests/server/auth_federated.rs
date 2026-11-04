@@ -20,7 +20,7 @@ use droppedneedle_auth::federated::oidc::{
 use droppedneedle_auth::federated::password_import::SESSIONS_SURVIVE_IMPORT;
 use droppedneedle_auth::federated::plex::plex_auth_url;
 use droppedneedle_auth::federated::users::{
-    FederatedProfile, derive_username, find_or_create_federated_user, username_base,
+    FederatedProfile, derive_username, find_or_create_federated_user, slugify, username_base,
 };
 use droppedneedle_auth::prod::{StoredPassword, Verdict};
 use droppedneedle_auth::session::tokens;
@@ -1259,8 +1259,10 @@ async fn lastfm_links_with_the_instance_key_and_binds_tokens_to_the_user() {
 // Wire goldens and v2-import building blocks
 // ---------------------------------------------------------------------------
 
+/// The outbound sign-in bytes: the OIDC authorize URL (param order and
+/// form encoding), the Emby auth header and the Plex auth URL.
 #[test]
-fn authorize_url_golden_pins_param_order_and_encoding() {
+fn federated_wire_goldens_hold() {
     let config = OidcConfig {
         enabled: true,
         issuer: "https://idp.test".to_owned(),
@@ -1275,12 +1277,23 @@ fn authorize_url_golden_pins_param_order_and_encoding() {
         &AuthorizeParams {
             state: "state 1",
             challenge: "ch+llenge",
-            nonce: "n/1",
+            nonce: "n/1?a=b~c",
         },
     );
     assert_eq!(
         url,
-        "https://idp.test/authorize?response_type=code&client_id=droppedneedle&redirect_uri=https%3A%2F%2Fmusic.test%2Fapi%2Fv3%2Fauth%2Foidc%2Fcallback&scope=openid+profile+email&state=state+1&code_challenge=ch%2Bllenge&code_challenge_method=S256&nonce=n%2F1"
+        "https://idp.test/authorize?response_type=code&client_id=droppedneedle&redirect_uri=https%3A%2F%2Fmusic.test%2Fapi%2Fv3%2Fauth%2Foidc%2Fcallback&scope=openid+profile+email&state=state+1&code_challenge=ch%2Bllenge&code_challenge_method=S256&nonce=n%2F1%3Fa%3Db%7Ec",
+        "authorize URL"
+    );
+    assert_eq!(
+        emby_auth_header("dev-1"),
+        "MediaBrowser Client=\"DroppedNeedle\", Device=\"DroppedNeedle\", DeviceId=\"dev-1\", Version=\"1.4.0\"",
+        "emby auth header"
+    );
+    assert_eq!(
+        plex_auth_url("client-1", "ABCD"),
+        "https://app.plex.tv/auth#?clientID=client-1&code=ABCD&context%5Bdevice%5D%5Bproduct%5D=DroppedNeedle",
+        "plex auth url"
     );
 }
 
@@ -1313,22 +1326,6 @@ fn claims_normalisation_keeps_v2_fallback_chain() {
     );
 }
 
-#[test]
-fn emby_auth_header_bytes_are_pinned() {
-    assert_eq!(
-        emby_auth_header("dev-1"),
-        "MediaBrowser Client=\"DroppedNeedle\", Device=\"DroppedNeedle\", DeviceId=\"dev-1\", Version=\"1.4.0\""
-    );
-}
-
-#[test]
-fn plex_auth_url_golden_is_shared_by_all_flows() {
-    assert_eq!(
-        plex_auth_url("client-1", "ABCD"),
-        "https://app.plex.tv/auth#?clientID=client-1&code=ABCD&context%5Bdevice%5D%5Bproduct%5D=DroppedNeedle"
-    );
-}
-
 #[tokio::test]
 async fn federated_username_derivation_prefers_email_local_part() {
     // Every provider runs the email-first rule, so jane.doe@ beats any
@@ -1337,6 +1334,15 @@ async fn federated_username_derivation_prefers_email_local_part() {
         username_base(Some("jane.doe@example.com"), "Jane Q. Elsewhere"),
         "jane.doe"
     );
+    assert_eq!(
+        username_base(Some("no-at-sign"), "Display Name"),
+        "Display-Name"
+    );
+    assert_eq!(username_base(None, "!!!"), "user");
+    // v2's slug charset: other bytes become one `-`, ends trimmed.
+    assert_eq!(slugify("a/b\\c@d:e"), "a-b-c-d-e");
+    assert_eq!(slugify("!!!"), "");
+    assert_eq!(slugify("-._-x-._-"), "x");
     let rig = AuthRig::new("federated-username").await;
     assert_eq!(
         derive_username(

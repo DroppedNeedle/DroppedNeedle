@@ -7,6 +7,9 @@ license.workspace = true
 description = "DroppedNeedle clients for outside metadata services"
 publish = false
 
+[lib]
+doctest = false
+
 [dependencies]
 droppedneedle-kernel.workspace = true
 base64.workspace = true

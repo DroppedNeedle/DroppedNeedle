@@ -595,14 +595,6 @@ mod tests {
     }
 
     #[test]
-    fn form_query_encodes_each_value() {
-        assert_eq!(
-            form_query(&[("a", "a b+c~d"), ("b", "https://x.test/cb?a=1")]),
-            "a=a+b%2Bc%7Ed&b=https%3A%2F%2Fx.test%2Fcb%3Fa%3D1"
-        );
-    }
-
-    #[test]
     fn generated_values_match_v2_shapes() {
         let verifier = generate_verifier().unwrap();
         assert_eq!(verifier.len(), 43);

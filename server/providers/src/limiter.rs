@@ -729,7 +729,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn user_waiter_jumps_ahead_of_background_waiter() {
         use tokio::sync::Mutex as AsyncMutex;
 

@@ -97,15 +97,29 @@ async fn tick_hung_tick_cancelled_at_interval() {
 // Tick state on the store
 // ---------------------------------------------------------------------------
 
+/// Unsafe keys, unknown plugins and oversize writes are refused before the
+/// disk; what was written survives a full restart.
 #[tokio::test]
-async fn tick_state_rejects_unsafe_paths_unknown_plugins_and_over_cap() {
-    let dir = ScratchDir::new("tick-refusals");
-    let runtime = crate::common::scratch_runtime(&dir.join("app.db")).await;
+async fn sqlite_tick_state_refuses_unsafe_writes_and_survives_a_restart() {
+    let dir = ScratchDir::new("tick-store");
+    let db_path = dir.join("app.db");
+
+    // First boot: register, write, shut everything down.
+    let runtime = crate::common::scratch_runtime(&db_path).await;
     let store = SqliteTickStore::new(
         runtime.db().clone(),
         Arc::new(droppedneedle_kernel::clock::SystemClock),
     );
     store.add_plugin("tick-toy");
+    store
+        .write("tick-toy", "cache/seen", b"tick-1".to_vec())
+        .await
+        .expect("write wins");
+    // Unknown plugins and unsafe keys are refused before the disk.
+    assert!(matches!(
+        store.write("ghost", "cache/seen", b"x".to_vec()).await,
+        Err(TickStoreError::UnknownPlugin(_))
+    ));
     for bad in ["../escape", "/absolute", "UPPER", "trailing/", "a//b"] {
         let error = store
             .write("tick-toy", bad, b"x".to_vec())
@@ -132,34 +146,6 @@ async fn tick_state_rejects_unsafe_paths_unknown_plugins_and_over_cap() {
         .await
         .expect_err("missing key is an error");
     assert!(matches!(error, TickStoreError::NotFound(_)));
-    runtime.shutdown().await;
-}
-
-#[tokio::test]
-async fn sqlite_tick_state_survives_a_full_restart() {
-    let dir = ScratchDir::new("tick-store");
-    let db_path = dir.join("app.db");
-
-    // First boot: register, write, shut everything down.
-    let runtime = crate::common::scratch_runtime(&db_path).await;
-    let store = SqliteTickStore::new(
-        runtime.db().clone(),
-        Arc::new(droppedneedle_kernel::clock::SystemClock),
-    );
-    store.add_plugin("tick-toy");
-    store
-        .write("tick-toy", "cache/seen", b"tick-1".to_vec())
-        .await
-        .expect("write wins");
-    // Unknown plugins and unsafe keys are refused before the disk.
-    assert!(matches!(
-        store.write("ghost", "cache/seen", b"x".to_vec()).await,
-        Err(TickStoreError::UnknownPlugin(_))
-    ));
-    assert!(matches!(
-        store.write("tick-toy", "../escape", b"x".to_vec()).await,
-        Err(TickStoreError::UnsafePath(_))
-    ));
     runtime.shutdown().await;
 
     // Second boot over the same file: fresh pool, fresh lane, fresh store.

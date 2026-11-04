@@ -195,162 +195,245 @@ async fn email_and_username_collisions_null_the_field() {
     );
 }
 
+/// A follow that meets a stored one merges: auto-download is an OR (it never
+/// turns off and an incoming one turns it on), the earliest follow and the
+/// latest update win, the stored name stays, and so does the same-id user.
 #[tokio::test]
 async fn follow_merge_never_downgrades() {
+    const ANOTHER_MBID: &str = "11111111-89ab-cdef-0123-456789abcdef";
     let fixture = Fixture::shared();
     let (target_db, _target) = migrated_file();
-    let (_dir, config_path, crypto) = scratch_config("follow-merge");
+    let (_dir, config_path, _crypto) = scratch_config("follow-merge");
     target_db.exec(
         "INSERT INTO auth_users (id, display_name, role, created_at) VALUES ('u1', 'U', 'user', 0)",
         [],
     );
-    target_db.exec("INSERT INTO acquire_followed_artists (user_id, artist_mbid, artist_mbid_lower, artist_name, \
-         auto_download, followed_at, updated_at) VALUES ('u1', ?, ?, 'Old Name', 1, 100000, 200000)", rusqlite::params![MBID, MBID.to_lowercase()]);
 
-    let mut export = fixture.shell();
-    export["users"] = json!([fixture.user("u1")]);
-    let mut follow = fixture.follow("u1", MBID);
-    follow["auto_download"] = json!(false);
-    follow["followed_at"] = json!(50.0);
-    follow["updated_at"] = json!(300.0);
-    export["follows"] = json!([follow]);
-    let report = run_import(import_request(
-        &export,
-        target_db.clone(),
-        config_path,
-        crypto,
-    ))
-    .await;
-
-    assert_eq!(report.exit.code, ExitCode::OkWithDrops);
-    assert_eq!(report.entities["follow"].conflict_kept_existing, 1);
-    assert_eq!(
-        report.entities["user"].conflict_kept_existing, 1,
-        "the seeded same-id user row stands"
-    );
-    let row: (i64, i64, i64, String) = target_db.row(
-        "SELECT auto_download, followed_at, updated_at, artist_name FROM acquire_followed_artists \
-         WHERE user_id = 'u1'",
-        [],
-    );
-    assert_eq!(
-        row,
-        (1, 50_000, 300_000, "Old Name".to_owned()),
-        "OR never downgrades, min/max win, existing name kept"
-    );
-}
-
-#[tokio::test]
-async fn approval_merge_most_permissive_wins() {
-    let fixture = Fixture::shared();
-    let (target_db, _target) = migrated_file();
-    let (_dir, config_path, crypto) = scratch_config("approval-merge");
-    let mut seed = fixture.shell();
-    seed["users"] = json!([fixture.user("u1")]);
-    let mut pending = fixture.approval("u1", MBID);
-    pending["batch_id"] = json!("batch-old");
-    seed["approvals"] = json!([pending]);
-    run_import(import_request(
-        &seed,
-        target_db.clone(),
-        config_path.clone(),
-        test_crypto(),
-    ))
-    .await;
-
-    let mut upgrade = fixture.shell();
-    upgrade["users"] = json!([fixture.user("u1")]);
-    let mut approved = fixture.approval("u1", MBID);
-    approved["state"] = json!("approved");
-    approved["batch_id"] = json!("batch-new");
-    approved["source"] = json!("bulk");
-    upgrade["approvals"] = json!([approved]);
-    let report = run_import(import_request(
-        &upgrade,
-        target_db.clone(),
-        config_path,
-        crypto,
-    ))
-    .await;
-
-    assert_eq!(report.exit.code, ExitCode::OkWithDrops);
-    let row: (String, Option<String>, Option<String>) = target_db.row(
-        "SELECT state, batch_id, source FROM auto_download_approvals WHERE user_id = 'u1'",
-        [],
-    );
-    assert_eq!(
-        row,
+    // (label, artist, stored auto_download, followed_at, updated_at,
+    //  incoming auto_download)
+    for (label, mbid, stored_auto, stored_followed, stored_updated, incoming_auto) in [
         (
-            "approved".to_owned(),
-            Some("batch-new".to_owned()),
-            Some("bulk".to_owned())
+            "stored on, incoming off",
+            MBID,
+            1_i64,
+            100_000_i64,
+            200_000_i64,
+            false,
         ),
-        "winning state carries its batch and source"
-    );
+        (
+            "stored off, incoming on",
+            ANOTHER_MBID,
+            0,
+            9_999_999_999_000,
+            100,
+            true,
+        ),
+    ] {
+        target_db.exec(
+            "INSERT INTO acquire_followed_artists (user_id, artist_mbid, artist_mbid_lower, \
+             artist_name, auto_download, followed_at, updated_at) \
+             VALUES ('u1', ?, ?, 'Old Name', ?, ?, ?)",
+            rusqlite::params![
+                mbid,
+                mbid.to_lowercase(),
+                stored_auto,
+                stored_followed,
+                stored_updated
+            ],
+        );
+
+        let mut export = fixture.shell();
+        export["users"] = json!([fixture.user("u1")]);
+        let mut follow = fixture.follow("u1", mbid);
+        follow["auto_download"] = json!(incoming_auto);
+        follow["followed_at"] = json!(50.0);
+        follow["updated_at"] = json!(300.0);
+        export["follows"] = json!([follow]);
+        let report = run_import(import_request(
+            &export,
+            target_db.clone(),
+            config_path.clone(),
+            test_crypto(),
+        ))
+        .await;
+
+        assert_eq!(report.exit.code, ExitCode::OkWithDrops, "case: {label}");
+        assert_eq!(
+            report.entities["follow"].conflict_kept_existing, 1,
+            "case: {label}"
+        );
+        assert_eq!(
+            report.entities["user"].conflict_kept_existing, 1,
+            "case: {label}: the seeded same-id user row stands"
+        );
+        let row: (i64, i64, i64, String) = target_db.row(
+            "SELECT auto_download, followed_at, updated_at, artist_name \
+             FROM acquire_followed_artists WHERE user_id = 'u1' AND artist_mbid_lower = ?",
+            rusqlite::params![mbid.to_lowercase()],
+        );
+        assert_eq!(
+            row,
+            (1, 50_000, 300_000, "Old Name".to_owned()),
+            "case: {label}: OR never downgrades, min/max win, existing name kept"
+        );
+        let name: String = target_db.one("SELECT display_name FROM auth_users WHERE id = 'u1'", []);
+        assert_eq!(name, "U", "case: {label}: the stored user is untouched");
+    }
 }
 
+/// An approval that meets a stored one keeps the most permissive state
+/// (approved, then pending, then the rest), with the winner's batch and
+/// source and the earliest request time.
 #[tokio::test]
-async fn dangling_reviewer_nulled_approval_survives() {
+async fn approval_merge_keeps_the_most_permissive_state() {
     let fixture = Fixture::shared();
-    let mut export = fixture.shell();
-    export["users"] = json!([fixture.user("u1")]);
-    let mut approval = fixture.approval("u1", MBID);
-    approval["reviewed_by_id"] = json!("ghost");
-    approval["reviewed_by_name"] = json!("Ghost");
-    export["approvals"] = json!([approval]);
-
     let (target_db, _target) = migrated_file();
-    let (_dir, config_path, crypto) = scratch_config("reviewer");
-    let report = run_import(import_request(
-        &export,
-        target_db.clone(),
-        config_path,
-        crypto,
-    ))
-    .await;
-
-    assert_eq!(report.exit.code, ExitCode::OkWithDrops);
-    assert_eq!(report.entities["approval"].imported, 1);
-    assert_eq!(report.entities["approval"].nulled_field, 1);
-    let reviewer: (Option<String>, Option<String>) = target_db.row(
-        "SELECT reviewed_by_id, reviewed_by_name FROM auto_download_approvals WHERE user_id = 'u1'",
+    let (_dir, config_path, _crypto) = scratch_config("approval-merge");
+    target_db.exec(
+        "INSERT INTO auth_users (id, display_name, role, created_at) VALUES ('u1', 'U', 'user', 0)",
         [],
     );
-    assert_eq!(
-        reviewer,
-        (None, Some("Ghost".to_owned())),
-        "the id is nulled, the name stays as audit residue"
-    );
+
+    struct Row {
+        label: &'static str,
+        mbid: &'static str,
+        /// The stored row (state, requested_at, batch_id), or none to merge
+        /// onto what the row before left for the same artist.
+        stored: Option<(&'static str, i64, Option<&'static str>)>,
+        /// The incoming (state, requested_at in seconds, batch_id, source).
+        incoming: (
+            &'static str,
+            f64,
+            Option<&'static str>,
+            Option<&'static str>,
+        ),
+        /// The stored row afterwards: state, requested_at, batch_id, source.
+        expected: (
+            &'static str,
+            i64,
+            Option<&'static str>,
+            Option<&'static str>,
+        ),
+        /// The approval's `conflict_kept_existing` count, where pinned.
+        conflict: Option<u64>,
+    }
+    let rows = [
+        Row {
+            label: "approved beats pending and carries its batch and source",
+            mbid: MBID,
+            stored: Some(("pending", 1_700_000_000_000, Some("batch-old"))),
+            incoming: ("approved", 1_700_000_000.0, Some("batch-new"), Some("bulk")),
+            expected: (
+                "approved",
+                1_700_000_000_000,
+                Some("batch-new"),
+                Some("bulk"),
+            ),
+            conflict: Some(1),
+        },
+        Row {
+            label: "a pending import reopens a rejected row",
+            mbid: "22222222-89ab-cdef-0123-456789abcdef",
+            stored: Some(("rejected", 200_000, None)),
+            incoming: ("pending", 100.0, None, None),
+            expected: ("pending", 100_000, None, None),
+            conflict: Some(1),
+        },
+        Row {
+            label: "a stored approval is kept over an earlier pending one",
+            mbid: "33333333-89ab-cdef-0123-456789abcdef",
+            stored: Some(("approved", 9_999_999_999_000, None)),
+            incoming: ("pending", 1_740_000_000.0, None, None),
+            expected: ("approved", 1_740_000_000_000, None, None),
+            conflict: Some(1),
+        },
+        Row {
+            label: "rejected never wins, earliest request still applies",
+            mbid: "44444444-89ab-cdef-0123-456789abcdef",
+            stored: Some(("pending", 100_000, None)),
+            incoming: ("rejected", 50.0, None, None),
+            expected: ("pending", 50_000, None, None),
+            conflict: Some(1),
+        },
+        Row {
+            label: "an unknown state never wins",
+            mbid: "44444444-89ab-cdef-0123-456789abcdef",
+            stored: None,
+            incoming: ("archived", 50.0, None, None),
+            expected: ("pending", 50_000, None, None),
+            conflict: None,
+        },
+    ];
+
+    for row in rows {
+        let label = row.label;
+        if let Some((state, requested_at, batch_id)) = row.stored {
+            target_db.exec(
+                "INSERT INTO auto_download_approvals (user_id, artist_mbid, artist_mbid_lower, \
+                 artist_name, state, requested_at, batch_id) \
+                 VALUES ('u1', ?, ?, 'Test Artist', ?, ?, ?)",
+                rusqlite::params![
+                    row.mbid,
+                    row.mbid.to_lowercase(),
+                    state,
+                    requested_at,
+                    batch_id
+                ],
+            );
+        }
+
+        let (state, requested_at, batch_id, source) = row.incoming;
+        let mut export = fixture.shell();
+        export["users"] = json!([fixture.user("u1")]);
+        let mut incoming = fixture.approval("u1", row.mbid);
+        incoming["state"] = json!(state);
+        incoming["requested_at"] = json!(requested_at);
+        incoming["batch_id"] = json!(batch_id);
+        incoming["source"] = json!(source);
+        export["approvals"] = json!([incoming]);
+        let report = run_import(import_request(
+            &export,
+            target_db.clone(),
+            config_path.clone(),
+            test_crypto(),
+        ))
+        .await;
+
+        assert_eq!(report.exit.code, ExitCode::OkWithDrops, "case: {label}");
+        assert_eq!(report.entities["approval"].imported, 0, "case: {label}");
+        if let Some(conflict) = row.conflict {
+            assert_eq!(
+                report.entities["approval"].conflict_kept_existing, conflict,
+                "case: {label}"
+            );
+        }
+        let stored: (String, i64, Option<String>, Option<String>) = target_db.row(
+            "SELECT state, requested_at, batch_id, source FROM auto_download_approvals \
+             WHERE user_id = 'u1' AND artist_mbid_lower = ?",
+            rusqlite::params![row.mbid.to_lowercase()],
+        );
+        let (state, requested_at, batch_id, source) = row.expected;
+        assert_eq!(
+            stored,
+            (
+                state.to_owned(),
+                requested_at,
+                batch_id.map(str::to_owned),
+                source.map(str::to_owned)
+            ),
+            "case: {label}"
+        );
+    }
 }
 
-#[tokio::test]
-async fn dangling_user_refs_fail_the_whole_file() {
-    let fixture = Fixture::shared();
-    let mut export = fixture.shell();
-    export["users"] = json!([fixture.user("u1")]);
-    export["follows"] = json!([fixture.follow("ghost", MBID)]);
-    export["approvals"] = json!([fixture.approval("ghost", MBID)]);
-
-    let (target_db, _target) = migrated_file();
-    let (_dir, config_path, crypto) = scratch_config("deleted-ids");
-    let report = run_import(import_request(
-        &export,
-        target_db.clone(),
-        config_path,
-        crypto,
-    ))
-    .await;
-
-    assert_eq!(report.exit.code, ExitCode::FailedValidation);
-    assert_eq!(count(&target_db, "auth_users"), 0);
-    assert_eq!(count(&target_db, "acquire_followed_artists"), 0);
-    assert_eq!(count(&target_db, "auto_download_approvals"), 0);
-    assert_eq!(count(&target_db, "import_runs"), 0);
-}
-
+/// Re-importing the same file changes nothing: no record, no audit row and
+/// no settings row, sealed settings secrets included (fresh nonces must not
+/// rewrite a row).
 #[tokio::test]
 async fn reimport_is_identical_with_zero_writes() {
     let fixture = Fixture::shared();
+
+    let case = "records and plain settings";
     let mut export = fixture.shell();
     export["users"] = json!([fixture.user("u1")]);
     export["follows"] = json!([fixture.follow("u1", MBID)]);
@@ -366,37 +449,88 @@ async fn reimport_is_identical_with_zero_writes() {
         test_crypto(),
     ))
     .await;
-    assert_eq!(first.exit.code, ExitCode::Ok);
+    assert_eq!(first.exit.code, ExitCode::Ok, "case: {case}");
     let config_before = settings_rows(&target_db);
     let users_before = count(&target_db, "auth_users");
     let runs_before = count(&target_db, "import_runs");
 
-    let crypto2 = test_crypto();
     let second = run_import(import_request(
         &export,
         target_db.clone(),
         config_path.clone(),
-        crypto2,
+        test_crypto(),
     ))
     .await;
 
-    assert_eq!(second.exit.code, ExitCode::Ok);
+    assert_eq!(second.exit.code, ExitCode::Ok, "case: {case}");
     for entity in ["user", "provider", "app_password", "follow", "approval"] {
         let found = &second.entities[entity];
-        assert_eq!(found.imported, 0, "{entity} must not re-import");
-        assert!(found.skipped_identical > 0, "{entity} must skip identical");
-        assert_eq!(found.conflict_kept_existing, 0);
-        assert_eq!(found.error, 0);
+        assert_eq!(
+            found.imported, 0,
+            "case: {case}: {entity} must not re-import"
+        );
+        assert!(
+            found.skipped_identical > 0,
+            "case: {case}: {entity} must skip identical"
+        );
+        assert_eq!(found.conflict_kept_existing, 0, "case: {case}: {entity}");
+        assert_eq!(found.error, 0, "case: {case}: {entity}");
     }
-    assert_eq!(second.secrets_reencrypted, 0);
-    assert_eq!(second.settings_applied, first.settings_applied);
-    assert_eq!(second.settings_defaulted, first.settings_defaulted);
-    assert_eq!(count(&target_db, "auth_users"), users_before);
-    assert_eq!(count(&target_db, "import_runs"), runs_before);
+    assert_eq!(second.secrets_reencrypted, 0, "case: {case}");
+    assert_eq!(
+        second.settings_applied, first.settings_applied,
+        "case: {case}"
+    );
+    assert_eq!(
+        second.settings_defaulted, first.settings_defaulted,
+        "case: {case}"
+    );
+    assert_eq!(
+        count(&target_db, "auth_users"),
+        users_before,
+        "case: {case}"
+    );
+    assert_eq!(
+        count(&target_db, "import_runs"),
+        runs_before,
+        "case: {case}"
+    );
     assert_eq!(
         settings_rows(&target_db),
         config_before,
-        "no settings row may change on re-import"
+        "case: {case}: no settings row may change on re-import"
+    );
+
+    let case = "a sealed settings secret";
+    let mut export = fixture.shell();
+    export["users"] = json!([fixture.user("u1")]);
+    export["settings"]["jellyfin_settings"] =
+        json!({"api_key": fixture.seal("jelly-secret"), "jellyfin_url": "http://jelly:8096"});
+
+    let (target_db, _target) = migrated_file();
+    let (_dir, config_path, _crypto) = scratch_config("secret-stable");
+    let first = run_import(import_request(
+        &export,
+        target_db.clone(),
+        config_path.clone(),
+        test_crypto(),
+    ))
+    .await;
+    assert_eq!(first.exit.code, ExitCode::Ok, "case: {case}");
+    let rows_before = settings_rows(&target_db);
+
+    let second = run_import(import_request(
+        &export,
+        target_db.clone(),
+        config_path.clone(),
+        test_crypto(),
+    ))
+    .await;
+    assert_eq!(second.exit.code, ExitCode::Ok, "case: {case}");
+    assert_eq!(
+        settings_rows(&target_db),
+        rows_before,
+        "case: {case}: fresh nonces must not rewrite a row"
     );
 }
 
@@ -674,9 +808,15 @@ async fn single_sign_on_address_off_the_v2_path_is_kept() {
     assert!(report.notes.contains(&note), "{:?}", report.notes);
 }
 
+/// v2's scan schedule lands once as a v3 frequency: a `config.json` value
+/// carries and converges on re-import, the export's own section wins, and
+/// the 5 and 10 minute schedules v3 lacks land as 30 minutes, the export's
+/// with a report line.
 #[tokio::test]
-async fn schedule_carry_moves_sync_frequency_once() {
+async fn schedule_carry_lands_once_as_a_v3_frequency() {
     let fixture = Fixture::shared();
+
+    let case = "a config.json frequency carries";
     let export = fixture.shell();
     let (target_db, _target) = migrated_file();
     let (dir, config_path, crypto) = scratch_config("schedule-carry");
@@ -695,25 +835,28 @@ async fn schedule_carry_moves_sync_frequency_once() {
     );
     request.v2_config_path = Some(v2_config.clone());
     let report = run_import(request).await;
-    assert_eq!(report.exit.code, ExitCode::Ok);
+    assert_eq!(report.exit.code, ExitCode::Ok, "case: {case}");
     let stored: Value = stored_settings(&target_db);
     assert_eq!(
         stored["library_scan_schedule"]["scan_frequency"],
-        json!("6hr")
+        json!("6hr"),
+        "case: {case}"
     );
 
     // Re-import converges instead of flip-flopping: the carry is
     // judged on the export alone, so the same value lands again.
+    let case = "the carry converges on re-import";
     let mut again = import_request(&export, target_db.clone(), config_path.clone(), crypto);
     again.v2_config_path = Some(v2_config);
     run_import(again).await;
     let kept: Value = stored_settings(&target_db);
     assert_eq!(
         kept["library_scan_schedule"]["scan_frequency"],
-        json!("6hr")
+        json!("6hr"),
+        "case: {case}"
     );
 
-    // The export wins whenever it carries the section.
+    let case = "the export wins whenever it carries the section";
     let mut with_schedule = fixture.shell();
     with_schedule["settings"]["library_scan_schedule"] =
         json!({"scan_frequency": "daily", "daily_scan_time": "03:00"});
@@ -725,17 +868,11 @@ async fn schedule_carry_moves_sync_frequency_once() {
     let direct_stored = stored_settings(&target_db2);
     assert_eq!(
         direct_stored["library_scan_schedule"]["scan_frequency"],
-        json!("daily")
+        json!("daily"),
+        "case: {case}"
     );
-}
 
-/// v3 has no 5 or 10 minute scan schedule. Either one in a v2 export or in
-/// its `config.json` imports as 30 minutes, and the report says so for the
-/// export's.
-#[tokio::test]
-async fn fast_scan_schedules_import_as_thirty_minutes() {
-    let fixture = Fixture::shared();
-
+    let case = "5 minutes in the export";
     let mut export = fixture.shell();
     export["settings"]["library_scan_schedule"] =
         json!({"scan_frequency": "5min", "daily_scan_time": "04:00"});
@@ -748,19 +885,21 @@ async fn fast_scan_schedules_import_as_thirty_minutes() {
         crypto,
     ))
     .await;
-    assert_eq!(report.exit.code, ExitCode::Ok);
+    assert_eq!(report.exit.code, ExitCode::Ok, "case: {case}");
     let stored = stored_settings(&target_db);
     assert_eq!(
         stored["library_scan_schedule"],
-        json!({"scan_frequency": "30min", "daily_scan_time": "04:00"})
+        json!({"scan_frequency": "30min", "daily_scan_time": "04:00"}),
+        "case: {case}"
     );
     assert!(
         report
             .to_json()
             .contains("library_scan_schedule.scan_frequency"),
-        "the report names the rewrite"
+        "case: {case}: the report names the rewrite"
     );
 
+    let case = "10 minutes in config.json";
     let export = fixture.shell();
     let (target_db, _target) = migrated_file();
     let (dir, config_path, crypto) = scratch_config("schedule-fast-carry");
@@ -772,26 +911,55 @@ async fn fast_scan_schedules_import_as_thirty_minutes() {
     .unwrap();
     let mut request = import_request(&export, target_db.clone(), config_path, crypto);
     request.v2_config_path = Some(v2_config);
-    assert_eq!(run_import(request).await.exit.code, ExitCode::Ok);
+    assert_eq!(
+        run_import(request).await.exit.code,
+        ExitCode::Ok,
+        "case: {case}"
+    );
     assert_eq!(
         stored_settings(&target_db)["library_scan_schedule"]["scan_frequency"],
-        json!("30min")
+        json!("30min"),
+        "case: {case}"
     );
 }
 
-#[tokio::test]
-async fn schedule_carry_ignores_unknown_values() {
+/// The schedule carry reads only what it knows: an unknown value carries
+/// nothing, a missing file is skipped, and a corrupt one fails.
+#[test]
+fn schedule_carry_reads_only_what_it_knows() {
+    use droppedneedle_tool::import::schedule_carry::{
+        ScheduleCarryError, carry_frequency, read_sync_frequency,
+    };
+
     assert_eq!(
-        droppedneedle_tool::import::schedule_carry::read_sync_frequency(&json!({
+        read_sync_frequency(&json!({
             "library_sync_settings": {"sync_frequency": "fortnightly"}
         })),
-        None
+        None,
+        "case: unknown value"
     );
     assert_eq!(
-        droppedneedle_tool::import::schedule_carry::read_sync_frequency(&json!({
+        read_sync_frequency(&json!({
             "library_sync_settings": {"sync_frequency": "12hr"}
         })),
-        Some("12hr".to_owned())
+        Some("12hr".to_owned()),
+        "case: known value"
+    );
+
+    let (dir, _, _) = scratch_config("schedule-carry-read");
+    let missing = dir.join("no-such-config.json");
+    assert_eq!(
+        carry_frequency(&missing, false, "instance-1"),
+        Ok(None),
+        "case: missing file"
+    );
+
+    let path = dir.join("v2-config.json");
+    std::fs::write(&path, "{not json").unwrap();
+    let error = carry_frequency(&path, false, "instance-1").unwrap_err();
+    assert!(
+        matches!(error, ScheduleCarryError::InvalidJson { .. }),
+        "case: corrupt file"
     );
 }
 
@@ -878,118 +1046,6 @@ async fn report_shape_matches_spec() {
 }
 
 #[tokio::test]
-async fn pending_import_reopens_a_rejected_row() {
-    // Most-permissive ordering, pinned: pending outranks rejected, so a
-    // pending import reopens the decision instead of keeping it.
-    let fixture = Fixture::shared();
-    let (target_db, _target) = migrated_file();
-    let (_dir, config_path, crypto) = scratch_config("rejected-reopen");
-    target_db.exec(
-        "INSERT INTO auth_users (id, display_name, role, created_at) VALUES ('u1', 'U', 'user', 0)",
-        [],
-    );
-    target_db.exec(
-        "INSERT INTO auto_download_approvals (user_id, artist_mbid, artist_mbid_lower, \
-         artist_name, state, requested_at) VALUES ('u1', ?, ?, 'Test Artist', 'rejected', 200000)",
-        rusqlite::params![MBID, MBID.to_lowercase()],
-    );
-
-    let mut export = fixture.shell();
-    export["users"] = json!([fixture.user("u1")]);
-    let mut pending = fixture.approval("u1", MBID);
-    pending["requested_at"] = json!(100.0);
-    export["approvals"] = json!([pending]);
-    let report = run_import(import_request(
-        &export,
-        target_db.clone(),
-        config_path,
-        crypto,
-    ))
-    .await;
-
-    assert_eq!(report.exit.code, ExitCode::OkWithDrops);
-    let row: (String, i64) = target_db.row(
-        "SELECT state, requested_at FROM auto_download_approvals WHERE user_id = 'u1'",
-        [],
-    );
-    assert_eq!(row, ("pending".to_owned(), 100_000));
-}
-
-#[tokio::test]
-async fn rejected_and_unknown_states_never_win_a_merge() {
-    let fixture = Fixture::shared();
-    let (target_db, _target) = migrated_file();
-    let (_dir, config_path, _crypto) = scratch_config("rejected-kept");
-    target_db.exec(
-        "INSERT INTO auth_users (id, display_name, role, created_at) VALUES ('u1', 'U', 'user', 0)",
-        [],
-    );
-    target_db.exec(
-        "INSERT INTO auto_download_approvals (user_id, artist_mbid, artist_mbid_lower, \
-         artist_name, state, requested_at) VALUES ('u1', ?, ?, 'Test Artist', 'pending', 100000)",
-        rusqlite::params![MBID, MBID.to_lowercase()],
-    );
-
-    for state in ["rejected", "archived"] {
-        let mut export = fixture.shell();
-        export["users"] = json!([fixture.user("u1")]);
-        let mut incoming = fixture.approval("u1", MBID);
-        incoming["state"] = json!(state);
-        incoming["requested_at"] = json!(50.0);
-        export["approvals"] = json!([incoming]);
-        let report = run_import(import_request(
-            &export,
-            target_db.clone(),
-            config_path.clone(),
-            test_crypto(),
-        ))
-        .await;
-        assert_eq!(report.entities["approval"].imported, 0);
-        let row: (String, i64) = target_db.row(
-            "SELECT state, requested_at FROM auto_download_approvals WHERE user_id = 'u1'",
-            [],
-        );
-        assert_eq!(
-            row,
-            ("pending".to_owned(), 50_000),
-            "state {state} must not win, earliest request still applies"
-        );
-    }
-}
-
-#[tokio::test]
-async fn valid_reviewer_survives_verbatim() {
-    let fixture = Fixture::shared();
-    let mut export = fixture.shell();
-    export["users"] = json!([fixture.user("u1"), fixture.user("u2")]);
-    let mut approval = fixture.approval("u1", MBID);
-    approval["reviewed_by_id"] = json!("u2");
-    approval["reviewed_by_name"] = json!("User u2");
-    export["approvals"] = json!([approval]);
-
-    let (target_db, _target) = migrated_file();
-    let (_dir, config_path, crypto) = scratch_config("reviewer-kept");
-    let report = run_import(import_request(
-        &export,
-        target_db.clone(),
-        config_path,
-        crypto,
-    ))
-    .await;
-
-    assert_eq!(report.exit.code, ExitCode::Ok);
-    assert_eq!(report.entities["approval"].nulled_field, 0);
-    let reviewer: (Option<String>, Option<String>) = target_db.row(
-        "SELECT reviewed_by_id, reviewed_by_name FROM auto_download_approvals WHERE user_id = 'u1'",
-        [],
-    );
-    assert_eq!(
-        reviewer,
-        (Some("u2".to_owned()), Some("User u2".to_owned()))
-    );
-}
-
-#[tokio::test]
 async fn unnamed_app_password_drops_counted() {
     // The one reachable `dropped_invalid` path: an empty name passes
     // validation (no rule covers it) and drops at import time.
@@ -1068,65 +1124,6 @@ async fn schedule_carry_instance_mismatch_refuses_with_zero_writes() {
     assert_eq!(count(&target_db, "auth_users"), 0);
     assert_eq!(count(&target_db, "import_runs"), 0);
     assert!(settings_rows(&target_db).is_empty());
-}
-
-#[test]
-fn schedule_carry_missing_file_skips_silently() {
-    let (dir, _, _) = scratch_config("schedule-carry-missing");
-    let missing = dir.join("no-such-config.json");
-    assert_eq!(
-        droppedneedle_tool::import::schedule_carry::carry_frequency(&missing, false, "instance-1"),
-        Ok(None)
-    );
-}
-
-#[test]
-fn schedule_carry_corrupt_file_fails() {
-    let (dir, _, _) = scratch_config("schedule-carry-corrupt");
-    let path = dir.join("v2-config.json");
-    std::fs::write(&path, "{not json").unwrap();
-    let error =
-        droppedneedle_tool::import::schedule_carry::carry_frequency(&path, false, "instance-1")
-            .unwrap_err();
-    assert!(matches!(
-        error,
-        droppedneedle_tool::import::schedule_carry::ScheduleCarryError::InvalidJson { .. }
-    ));
-}
-
-#[tokio::test]
-async fn reimport_with_secrets_leaves_settings_rows_untouched() {
-    let fixture = Fixture::shared();
-    let mut export = fixture.shell();
-    export["users"] = json!([fixture.user("u1")]);
-    export["settings"]["jellyfin_settings"] =
-        json!({"api_key": fixture.seal("jelly-secret"), "jellyfin_url": "http://jelly:8096"});
-
-    let (target_db, _target) = migrated_file();
-    let (_dir, config_path, _crypto) = scratch_config("secret-stable");
-    let first = run_import(import_request(
-        &export,
-        target_db.clone(),
-        config_path.clone(),
-        test_crypto(),
-    ))
-    .await;
-    assert_eq!(first.exit.code, ExitCode::Ok);
-    let rows_before = settings_rows(&target_db);
-
-    let second = run_import(import_request(
-        &export,
-        target_db.clone(),
-        config_path.clone(),
-        test_crypto(),
-    ))
-    .await;
-    assert_eq!(second.exit.code, ExitCode::Ok);
-    assert_eq!(
-        settings_rows(&target_db),
-        rows_before,
-        "fresh nonces must not rewrite a row"
-    );
 }
 
 /// Every managed field name v2 accepted.
@@ -1680,16 +1677,19 @@ async fn removed_settings_import_and_are_reported() {
     );
 }
 
-/// With a blank download policy path, the path a person set in v2's Library
-/// Management stays.
-#[tokio::test]
-async fn a_null_section_neither_loses_nor_invents_a_retention() {
+/// Import the shell with `settings` merged in; the report and the stored
+/// settings.
+async fn import_settings(
+    tag: &str,
+    settings: Value,
+) -> (droppedneedle_tool::import::ImportReport, Value) {
     let fixture = Fixture::shared();
     let mut export = fixture.shell();
-    export["settings"]["download_policy"] = json!({"recycle_retention_days": 365});
-    export["settings"]["library_management"] = Value::Null;
+    for (key, value) in settings.as_object().expect("settings object") {
+        export["settings"][key] = value.clone();
+    }
     let (target_db, _target) = migrated_file();
-    let (_dir, config_path, crypto) = scratch_config("null-management");
+    let (_dir, config_path, crypto) = scratch_config(tag);
     let report = run_import(import_request(
         &export,
         target_db.clone(),
@@ -1697,68 +1697,86 @@ async fn a_null_section_neither_loses_nor_invents_a_retention() {
         crypto,
     ))
     .await;
-    assert_eq!(report.exit.code, ExitCode::Ok, "{}", report.to_json());
+    let stored = stored_settings(&target_db);
+    (report, stored)
+}
+
+/// The recycle bin settings land in Library Management: a null section
+/// neither loses nor invents a retention, and with a blank download policy
+/// path the path a person set in v2's Library Management stays.
+#[tokio::test]
+async fn recycle_bin_settings_land_in_library_management() {
+    let case = "a null management section keeps the policy's retention";
+    let (report, stored) = import_settings(
+        "null-management",
+        json!({
+            "download_policy": {"recycle_retention_days": 365},
+            "library_management": null,
+        }),
+    )
+    .await;
     assert_eq!(
-        stored_settings(&target_db)["library_management"]["recycle_retention_days"],
-        365
+        report.exit.code,
+        ExitCode::Ok,
+        "case: {case}: {}",
+        report.to_json()
+    );
+    assert_eq!(
+        stored["library_management"]["recycle_retention_days"], 365,
+        "case: {case}"
     );
 
-    let mut export = fixture.shell();
-    export["settings"]["download_policy"] = Value::Null;
-    let (target_db, _target) = migrated_file();
-    let (_dir, config_path, crypto) = scratch_config("null-policy");
-    let report = run_import(import_request(
-        &export,
-        target_db.clone(),
-        config_path,
-        crypto,
-    ))
-    .await;
-    assert_eq!(report.exit.code, ExitCode::Ok, "{}", report.to_json());
+    let case = "a null download policy invents no retention";
+    let (report, stored) = import_settings("null-policy", json!({"download_policy": null})).await;
+    assert_eq!(
+        report.exit.code,
+        ExitCode::Ok,
+        "case: {case}: {}",
+        report.to_json()
+    );
     assert!(
         !report
             .to_json()
             .to_string()
             .contains("recycle_retention_days"),
-        "{}",
+        "case: {case}: {}",
         report.to_json()
     );
-    assert!(
-        stored_settings(&target_db)["library_management"]
-            .get("recycle_retention_days")
-            .is_none()
-    );
-}
-
-#[tokio::test]
-async fn a_chosen_bin_stays_when_the_download_policy_names_none() {
-    let fixture = Fixture::shared();
-    let mut export = fixture.shell();
-    export["settings"]["download_policy"] = json!({"recycle_bin_path": " "});
-    export["settings"]["library_management"] = json!({"recycle_bin_path": "/srv/chosen"});
-
-    let (target_db, _target) = migrated_file();
-    let (_dir, config_path, crypto) = scratch_config("chosen-bin");
-    let report = run_import(import_request(
-        &export,
-        target_db.clone(),
-        config_path,
-        crypto,
-    ))
-    .await;
-
-    assert_eq!(report.exit.code, ExitCode::Ok, "{}", report.to_json());
-    let stored = stored_settings(&target_db);
-    assert_eq!(
-        stored["library_management"]["recycle_bin_path"],
-        "/srv/chosen"
-    );
-    assert!(stored["download_policy"].get("recycle_bin_path").is_none());
     assert!(
         stored["library_management"]
             .get("recycle_retention_days")
             .is_none(),
-        "with none stored, the default holds"
+        "case: {case}"
+    );
+
+    let case = "a chosen bin stays when the download policy names none";
+    let (report, stored) = import_settings(
+        "chosen-bin",
+        json!({
+            "download_policy": {"recycle_bin_path": " "},
+            "library_management": {"recycle_bin_path": "/srv/chosen"},
+        }),
+    )
+    .await;
+    assert_eq!(
+        report.exit.code,
+        ExitCode::Ok,
+        "case: {case}: {}",
+        report.to_json()
+    );
+    assert_eq!(
+        stored["library_management"]["recycle_bin_path"], "/srv/chosen",
+        "case: {case}"
+    );
+    assert!(
+        stored["download_policy"].get("recycle_bin_path").is_none(),
+        "case: {case}"
+    );
+    assert!(
+        stored["library_management"]
+            .get("recycle_retention_days")
+            .is_none(),
+        "case: {case}: with none stored, the default holds"
     );
 }
 

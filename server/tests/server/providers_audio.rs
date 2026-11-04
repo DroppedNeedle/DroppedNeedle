@@ -1,7 +1,8 @@
-//! The AudioDB, AcoustID, Last.fm and ListenBrainz clients against the
-//! scripted provider wire: the decode of each real wire shape, what goes
-//! out on the wire, and credential handling. What each status and error
-//! code becomes is pinned in `providers_core`.
+//! The AcoustID, Last.fm and ListenBrainz clients against the scripted
+//! provider wire: what goes out on the wire, what the answers that feed
+//! identification mean, and credential handling. What each status and error
+//! code becomes is pinned in `providers_core`; the decode of each recorded
+//! answer in `providers_models`.
 
 use droppedneedle_providers::executor::{Body, Method, Scripted, ScriptedWire, Sent};
 use droppedneedle_providers::{
@@ -50,102 +51,6 @@ fn form_value(sent: &Sent, name: &str) -> Option<String> {
 }
 
 // ---------------------------------------------------------------------------
-// AudioDB
-// ---------------------------------------------------------------------------
-
-fn audiodb_url(endpoint: &str) -> String {
-    format!("{}/123/{endpoint}", audiodb::DEFAULT_BASE_URL)
-}
-
-/// The recorded artist lookup for Radiohead, and the recorded no-match answer.
-const AUDIODB_ARTIST_FOUND: &str = include_str!("../fixtures/audiodb/artist_mb_found.json");
-const AUDIODB_NOT_FOUND: &str = include_str!("../fixtures/audiodb/artist_mb_not_found.json");
-
-#[tokio::test]
-async fn audiodb_artist_by_mbid_found_tolerates_unknown_fields() {
-    let wire = Arc::new(ScriptedWire::new());
-    wire.on(
-        Method::Get,
-        &audiodb_url("artist-mb.php"),
-        bytes_answer(200, AUDIODB_ARTIST_FOUND.as_bytes().to_vec()),
-    );
-    let providers = audio_providers(&wire);
-
-    let artist = providers
-        .audiodb
-        .artist_by_mbid("", "a74b1b7f-71a5-4011-9441-d0b5e4122711", PRIORITY)
-        .await
-        .expect("answered")
-        .expect("artist found");
-
-    assert_eq!(artist.id_artist, "111418");
-    assert_eq!(artist.name, "Radiohead");
-    assert_eq!(
-        artist.mbid.as_deref(),
-        Some("a74b1b7f-71a5-4011-9441-d0b5e4122711")
-    );
-    assert_eq!(
-        artist.thumb.as_deref(),
-        Some("https://r2.theaudiodb.com/images/media/artist/thumb/35poth1668098458.jpg")
-    );
-    let sent = wire.sent();
-    assert_eq!(sent.len(), 1);
-    assert_eq!(
-        sent[0].query("i").as_deref(),
-        Some("a74b1b7f-71a5-4011-9441-d0b5e4122711")
-    );
-}
-
-/// Nothing found is `{"artists": null}`: no match, never a failure.
-#[tokio::test]
-async fn audiodb_not_found_is_no_match() {
-    let wire = Arc::new(ScriptedWire::new());
-    wire.on(
-        Method::Get,
-        &audiodb_url("artist-mb.php"),
-        bytes_answer(200, AUDIODB_NOT_FOUND.as_bytes().to_vec()),
-    );
-    let found = audio_providers(&wire)
-        .audiodb
-        .artist_by_mbid("", "00000000-0000-0000-0000-000000000000", PRIORITY)
-        .await;
-    assert!(matches!(found, Ok(None)), "{found:?}");
-}
-
-/// An entry missing its identity, or an answer that is not JSON, is a
-/// payload failure: never an empty success, never "no match".
-#[tokio::test]
-async fn audiodb_unusable_answers_are_payload_failures() {
-    for body in [
-        serde_json::json!({"artists": [{"strArtistThumb": "https://x/y.jpg"}]})
-            .to_string()
-            .into_bytes(),
-        b"not json".to_vec(),
-    ] {
-        let wire = Arc::new(ScriptedWire::new());
-        wire.on(
-            Method::Get,
-            &audiodb_url("artist-mb.php"),
-            bytes_answer(200, body),
-        );
-        let found = audio_providers(&wire)
-            .audiodb
-            .artist_by_mbid("", "mbid", PRIORITY)
-            .await;
-        assert!(
-            matches!(
-                found,
-                Err(ProviderError::Payload {
-                    kind: PayloadKind::Decode,
-                    ..
-                })
-            ),
-            "got {found:?}"
-        );
-    }
-}
-
-// ---------------------------------------------------------------------------
 // AcoustID
 // ---------------------------------------------------------------------------
 
@@ -169,51 +74,6 @@ fn acoustid_providers(
 const SINGLE_LOOKUP: &[u8] = include_bytes!("../fixtures/acoustid/single_lookup.json");
 const SINGLE_NO_MATCH: &[u8] = include_bytes!("../fixtures/acoustid/single_no_match.json");
 
-#[tokio::test]
-async fn acoustid_lookup_posts_form_and_finds_match() {
-    let (wire, providers) = acoustid_providers([bytes_answer(200, SINGLE_LOOKUP.to_vec())]);
-
-    let found = providers
-        .acoustid
-        .lookup("api-key", "fingerprint-body", 218, PRIORITY)
-        .await
-        .expect("answered")
-        .expect("match found");
-
-    assert_eq!(found.recording_id, "fe000616-c72c-43d4-8cba-a4083e99636b");
-    assert_eq!(
-        found.recording_ids,
-        vec!["fe000616-c72c-43d4-8cba-a4083e99636b".to_owned()]
-    );
-    assert!((found.score - 0.8158072).abs() < f64::EPSILON);
-    assert_eq!(found.title.as_deref(), Some("Sand in My Face"));
-    assert_eq!(found.artist.as_deref(), Some("10cc"));
-    assert_eq!(found.duration_secs, Some(219));
-    // The recording's sixteen release groups, in the order AcoustID lists them.
-    assert_eq!(found.release_group_ids.len(), 16);
-    assert_eq!(
-        found.release_group_ids.first().map(String::as_str),
-        Some("b9b7e8e5-3f28-4d7c-afa1-7affe08abdef")
-    );
-    assert_eq!(
-        found.release_group_ids.last().map(String::as_str),
-        Some("617d7f12-95e3-3469-965d-f3583c862384")
-    );
-    let sent = wire.sent();
-    assert_eq!(sent.len(), 1);
-    assert_eq!(sent[0].method, Method::Post);
-    assert_eq!(form_value(&sent[0], "client").as_deref(), Some("api-key"));
-    assert_eq!(
-        form_value(&sent[0], "fingerprint").as_deref(),
-        Some("fingerprint-body")
-    );
-    assert_eq!(form_value(&sent[0], "duration").as_deref(), Some("218"));
-    assert_eq!(
-        form_value(&sent[0], "meta").as_deref(),
-        Some("recordings releasegroups")
-    );
-}
-
 /// The batch answer for `count` prints: two strong recordings and one weak
 /// one per print.
 fn batch_payload(count: usize) -> serde_json::Value {
@@ -234,10 +94,84 @@ fn batch_payload(count: usize) -> serde_json::Value {
     serde_json::json!({"status": "ok", "fingerprints": fingerprints})
 }
 
-/// Twenty-five prints go out as two batch requests (20 + 5); answers map
-/// back by index, and every recording above 0.5 is kept.
+fn acoustid_fixture(name: &str) -> Vec<u8> {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/acoustid")
+        .join(name);
+    std::fs::read(path).expect("fixture reads")
+}
+
+fn one_query(print: &str) -> [acoustid::BatchQuery<'_>; 1] {
+    [acoustid::BatchQuery {
+        fingerprint: print,
+        duration_secs: 218,
+    }]
+}
+
+/// What goes out to AcoustID (the form fields, twenty prints per batch, no
+/// call without a key) and the recording and release ids read back from the
+/// recorded answers. These ids feed identification.
 #[tokio::test]
-async fn acoustid_batch_posts_twenty_per_request() {
+async fn acoustid_requests_and_recorded_answers_map_to_recordings() {
+    // A single lookup posts its form and finds the recorded match.
+    let (wire, providers) = acoustid_providers([bytes_answer(200, SINGLE_LOOKUP.to_vec())]);
+    let found = providers
+        .acoustid
+        .lookup("api-key", "fingerprint-body", 218, PRIORITY)
+        .await
+        .expect("single: answered")
+        .expect("single: match found");
+    assert_eq!(
+        found.recording_id, "fe000616-c72c-43d4-8cba-a4083e99636b",
+        "single"
+    );
+    assert_eq!(
+        found.recording_ids,
+        vec!["fe000616-c72c-43d4-8cba-a4083e99636b".to_owned()],
+        "single"
+    );
+    assert!((found.score - 0.8158072).abs() < f64::EPSILON, "single");
+    assert_eq!(found.title.as_deref(), Some("Sand in My Face"), "single");
+    assert_eq!(found.artist.as_deref(), Some("10cc"), "single");
+    assert_eq!(found.duration_secs, Some(219), "single");
+    // The recording's sixteen release groups, in the order AcoustID lists them.
+    assert_eq!(found.release_group_ids.len(), 16, "single");
+    assert_eq!(
+        found.release_group_ids.first().map(String::as_str),
+        Some("b9b7e8e5-3f28-4d7c-afa1-7affe08abdef"),
+        "single"
+    );
+    assert_eq!(
+        found.release_group_ids.last().map(String::as_str),
+        Some("617d7f12-95e3-3469-965d-f3583c862384"),
+        "single"
+    );
+    let sent = wire.sent();
+    assert_eq!(sent.len(), 1, "single");
+    assert_eq!(sent[0].method, Method::Post, "single");
+    assert_eq!(
+        form_value(&sent[0], "client").as_deref(),
+        Some("api-key"),
+        "single"
+    );
+    assert_eq!(
+        form_value(&sent[0], "fingerprint").as_deref(),
+        Some("fingerprint-body"),
+        "single"
+    );
+    assert_eq!(
+        form_value(&sent[0], "duration").as_deref(),
+        Some("218"),
+        "single"
+    );
+    assert_eq!(
+        form_value(&sent[0], "meta").as_deref(),
+        Some("recordings releasegroups"),
+        "single"
+    );
+
+    // Twenty-five prints go out as two batch requests (20 + 5); answers map
+    // back by index, and every recording above 0.5 is kept.
     let (wire, providers) = acoustid_providers([
         json_answer(200, &batch_payload(20)),
         json_answer(200, &batch_payload(5)),
@@ -250,30 +184,34 @@ async fn acoustid_batch_posts_twenty_per_request() {
             duration_secs: 200,
         })
         .collect();
-
     let found = providers
         .acoustid
         .lookup_batch("api-key", &queries, PRIORITY)
         .await
-        .expect("answered");
-
+        .expect("batch: answered");
     let sent = wire.sent();
-    assert_eq!(sent.len(), 2);
-    assert_eq!(form_value(&sent[0], "batch").as_deref(), Some("1"));
+    assert_eq!(sent.len(), 2, "batch");
+    assert_eq!(form_value(&sent[0], "batch").as_deref(), Some("1"), "batch");
     assert_eq!(
         form_value(&sent[0], "fingerprint.19").as_deref(),
-        Some("print-19")
+        Some("print-19"),
+        "batch"
     );
-    assert_eq!(form_value(&sent[0], "fingerprint.20"), None);
+    assert_eq!(form_value(&sent[0], "fingerprint.20"), None, "batch");
     assert_eq!(
         form_value(&sent[1], "fingerprint.4").as_deref(),
-        Some("print-24")
+        Some("print-24"),
+        "batch"
     );
-    assert_eq!(form_value(&sent[1], "duration.4").as_deref(), Some("200"));
-    assert_eq!(found.len(), 25);
+    assert_eq!(
+        form_value(&sent[1], "duration.4").as_deref(),
+        Some("200"),
+        "batch"
+    );
+    assert_eq!(found.len(), 25, "batch");
     let last = &found[&24];
-    assert_eq!(last.recording_ids, vec!["rec-4", "rec-4-single"]);
-    assert_eq!(last.release_ids, vec!["rel-1"]);
+    assert_eq!(last.recording_ids, vec!["rec-4", "rec-4-single"], "batch");
+    assert_eq!(last.release_ids, vec!["rel-1"], "batch");
     // An empty key never dials out.
     assert!(
         providers
@@ -281,18 +219,66 @@ async fn acoustid_batch_posts_twenty_per_request() {
             .lookup_batch("", &queries, PRIORITY)
             .await
             .expect("no key hears nothing")
-            .is_empty()
+            .is_empty(),
+        "batch without a key"
     );
-    assert_eq!(wire.sent().len(), 2);
+    assert_eq!(wire.sent().len(), 2, "batch without a key sends nothing");
+
+    // The recorded batch answer decodes with AcoustID's own track id and
+    // score, and identification reads the same recording and releases.
+    let (_, providers) =
+        acoustid_providers([bytes_answer(200, acoustid_fixture("batch_lookup.json"))]);
+    let outcome = providers
+        .acoustid
+        .lookup_batch_request("key", &one_query("print"), PRIORITY)
+        .await;
+    let acoustid::BatchOutcome::Answered(entries) = outcome else {
+        panic!("recorded batch: expected an answer, got {outcome:?}");
+    };
+    assert_eq!(entries.len(), 1, "recorded batch");
+    let (index, results) = &entries[0];
+    assert_eq!(*index, 0, "recorded batch");
+    assert_eq!(results.len(), 1, "recorded batch");
+    assert_eq!(
+        results[0].id, "a2558b28-8f9d-44ca-b97b-f800ff935a1b",
+        "recorded batch"
+    );
+    assert_eq!(results[0].score(), 0.8158072, "recorded batch");
+    let recordings = results[0].recordings();
+    assert_eq!(recordings.len(), 1, "recorded batch");
+    assert_eq!(
+        recordings[0].id, "fe000616-c72c-43d4-8cba-a4083e99636b",
+        "recorded batch"
+    );
+    assert_eq!(
+        recordings[0].releases.as_deref().map(<[_]>::len),
+        Some(43),
+        "recorded batch"
+    );
+    let found = providers
+        .acoustid
+        .lookup_batch("key", &one_query("print"), PRIORITY)
+        .await
+        .expect("recorded batch: answered");
+    assert_eq!(
+        found[&0].recording_ids,
+        vec!["fe000616-c72c-43d4-8cba-a4083e99636b"],
+        "recorded batch"
+    );
+    assert_eq!(found[&0].release_ids.len(), 43, "recorded batch");
 }
 
-/// One request AcoustID does not serve fails the whole lookup. A print it
-/// cannot read is steady, not an outage: left out of an answer or refused
-/// with its code, it is absent and the other files still answer. A refused
-/// key reads as no key.
+/// An AcoustID answer that could not be had is never "heard nothing". One
+/// request AcoustID does not serve fails the whole lookup; a print it cannot
+/// read is steady, not an outage: left out of an answer or refused with its
+/// code, it is absent and the other files still answer. Only error code 4 is
+/// a refused key, which reads as no key; an outage, a redirect, a bare 401, a
+/// 400 naming another code, a 429 or a result without its id is unavailable,
+/// so the work waits.
 #[tokio::test(start_paused = true)]
-async fn acoustid_batch_tells_an_unreadable_print_from_an_outage() {
-    use acoustid::Unanswered;
+async fn acoustid_never_reads_an_unanswered_print_as_heard_nothing() {
+    use acoustid::{BatchOutcome, Unanswered};
+
     let prints: Vec<String> = (0..25).map(|index| format!("print-{index}")).collect();
     let queries: Vec<acoustid::BatchQuery<'_>> = prints
         .iter()
@@ -321,67 +307,12 @@ async fn acoustid_batch_tells_an_unreadable_print_from_an_outage() {
             .await;
         outcomes.push(found.map(|found| found.len()));
     }
-    assert_eq!(outcomes, [Err(Unanswered::Code(2)), Ok(20), Ok(24), Ok(0)]);
-}
-
-fn acoustid_fixture(name: &str) -> Vec<u8> {
-    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/acoustid")
-        .join(name);
-    std::fs::read(path).expect("fixture reads")
-}
-
-fn one_query(print: &str) -> [acoustid::BatchQuery<'_>; 1] {
-    [acoustid::BatchQuery {
-        fingerprint: print,
-        duration_secs: 218,
-    }]
-}
-
-/// The recorded batch answer decodes with AcoustID's own track id and
-/// score, and identification reads the same recording and releases.
-#[tokio::test]
-async fn acoustid_recorded_batch_answer_decodes() {
-    let (_, providers) =
-        acoustid_providers([bytes_answer(200, acoustid_fixture("batch_lookup.json"))]);
-
-    let outcome = providers
-        .acoustid
-        .lookup_batch_request("key", &one_query("print"), PRIORITY)
-        .await;
-
-    let acoustid::BatchOutcome::Answered(entries) = outcome else {
-        panic!("expected an answer, got {outcome:?}");
-    };
-    assert_eq!(entries.len(), 1);
-    let (index, results) = &entries[0];
-    assert_eq!(*index, 0);
-    assert_eq!(results.len(), 1);
-    assert_eq!(results[0].id, "a2558b28-8f9d-44ca-b97b-f800ff935a1b");
-    assert_eq!(results[0].score(), 0.8158072);
-    let recordings = results[0].recordings();
-    assert_eq!(recordings.len(), 1);
-    assert_eq!(recordings[0].id, "fe000616-c72c-43d4-8cba-a4083e99636b");
-    assert_eq!(recordings[0].releases.as_deref().map(<[_]>::len), Some(43));
-
-    let found = providers
-        .acoustid
-        .lookup_batch("key", &one_query("print"), PRIORITY)
-        .await
-        .expect("answered");
     assert_eq!(
-        found[&0].recording_ids,
-        vec!["fe000616-c72c-43d4-8cba-a4083e99636b"]
+        outcomes,
+        [Err(Unanswered::Code(2)), Ok(20), Ok(24), Ok(0)],
+        "second batch answered with code 2, code 3, a short answer, code 4"
     );
-    assert_eq!(found[&0].release_ids.len(), 43);
-}
 
-/// Only AcoustID's error code 4 is a refused key. An outage, a redirect,
-/// a bare 401, a 400 naming another code, a 429 or a result without its id
-/// is unavailable, so the work waits.
-#[tokio::test(start_paused = true)]
-async fn acoustid_batch_tells_rejected_from_unavailable() {
-    use acoustid::{BatchOutcome, Unanswered};
     let lookup = |answer: Scripted| async move {
         let (_, providers) = acoustid_providers([answer]);
         providers
@@ -392,9 +323,14 @@ async fn acoustid_batch_tells_rejected_from_unavailable() {
     let unavailable = BatchOutcome::Unavailable(Unanswered::Failed);
     assert_eq!(
         lookup(bytes_answer(400, acoustid_fixture("invalid_key.json"))).await,
-        BatchOutcome::KeyRefused
+        BatchOutcome::KeyRefused,
+        "recorded invalid key"
     );
-    assert_eq!(lookup(bytes_answer(503, Vec::new())).await, unavailable);
+    assert_eq!(
+        lookup(bytes_answer(503, Vec::new())).await,
+        unavailable,
+        "503"
+    );
     let moved = Scripted::Answer {
         status: 302,
         headers: vec![(
@@ -403,15 +339,20 @@ async fn acoustid_batch_tells_rejected_from_unavailable() {
         )],
         body: Vec::new(),
     };
-    assert_eq!(lookup(moved).await, unavailable);
-    assert_eq!(lookup(bytes_answer(401, Vec::new())).await, unavailable);
+    assert_eq!(lookup(moved).await, unavailable, "redirect");
+    assert_eq!(
+        lookup(bytes_answer(401, Vec::new())).await,
+        unavailable,
+        "bare 401"
+    );
     let other_code = serde_json::json!({
         "status": "error",
         "error": {"code": 3, "message": "invalid fingerprint"}
     });
     assert_eq!(
         lookup(json_answer(400, &other_code)).await,
-        BatchOutcome::Unavailable(Unanswered::Code(3))
+        BatchOutcome::Unavailable(Unanswered::Code(3)),
+        "400 naming code 3"
     );
     let limited = Scripted::Answer {
         status: 429,
@@ -420,7 +361,8 @@ async fn acoustid_batch_tells_rejected_from_unavailable() {
     };
     assert_eq!(
         lookup(limited).await,
-        BatchOutcome::Unavailable(Unanswered::Paused)
+        BatchOutcome::Unavailable(Unanswered::Paused),
+        "429"
     );
     let no_id = serde_json::json!({
         "status": "ok",
@@ -428,20 +370,28 @@ async fn acoustid_batch_tells_rejected_from_unavailable() {
             {"score": 0.9, "recordings": [{"id": "fe000616-c72c-43d4-8cba-a4083e99636b"}]}
         ]}]
     });
-    assert_eq!(lookup(json_answer(200, &no_id)).await, unavailable);
+    assert_eq!(
+        lookup(json_answer(200, &no_id)).await,
+        unavailable,
+        "result without its id"
+    );
     let (wire, providers) = acoustid_providers([]);
     assert_eq!(
         providers
             .acoustid
             .lookup_batch_request("", &one_query("print"), PRIORITY)
             .await,
-        BatchOutcome::NoKey
+        BatchOutcome::NoKey,
+        "no key"
     );
-    assert!(wire.sent().is_empty());
+    assert!(wire.sent().is_empty(), "no key sends nothing");
 }
 
+/// A single lookup with no confident match is no match; a confident match
+/// with nothing to key the row on is never a negative (v2 FAIL): it is a
+/// payload failure, which wiring routes to manual review, exactly like v2.
 #[tokio::test]
-async fn acoustid_empty_and_low_score_results_are_no_match() {
+async fn acoustid_single_lookup_tells_no_match_from_unusable() {
     let (_, providers) = acoustid_providers([bytes_answer(200, SINGLE_NO_MATCH.to_vec())]);
     let found = providers.acoustid.lookup("key", "print", 5, PRIORITY).await;
     assert!(
@@ -457,25 +407,18 @@ async fn acoustid_empty_and_low_score_results_are_no_match() {
         serde_json::json!({"status": "ok", "results": [{"id": "t", "recordings": []}]}),
     ] {
         let (_, providers) = acoustid_providers([json_answer(200, &body)]);
-
         let found = providers
             .acoustid
             .lookup("key", "print", 200, PRIORITY)
             .await;
-
         assert!(
             matches!(found, Ok(None)),
             "no confident match means no match: {body}"
         );
     }
-}
 
-#[tokio::test]
-async fn acoustid_confident_match_without_recording_id_is_never_no_match() {
-    // v2 FAIL: confident audio, nothing to key the row on. It must not read
-    // as a negative, so it is a payload failure (wiring routes it to manual
-    // review, exactly like v2). No recording at all is a contract break; a
-    // recording without its id fails decoding.
+    // No recording at all is a contract break; a recording without its id
+    // fails decoding.
     for (body, kind) in [
         (
             serde_json::json!({"status": "ok", "results": [{"id": "t", "score": 0.99, "recordings": []}]}),
@@ -491,15 +434,13 @@ async fn acoustid_confident_match_without_recording_id_is_never_no_match() {
         ),
     ] {
         let (_, providers) = acoustid_providers([json_answer(200, &body)]);
-
         let found = providers
             .acoustid
             .lookup("key", "print", 200, PRIORITY)
             .await;
-
         assert!(
             matches!(&found, Err(ProviderError::Payload { kind: got, .. }) if *got == kind),
-            "{body}: got {found:?}"
+            "confident match without a recording id: {body}: got {found:?}"
         );
     }
 }
@@ -546,23 +487,40 @@ fn lastfm_creds() -> lastfm::LastFmCredentials {
     }
 }
 
+/// Each user's key and signature go out on their own call: a token request
+/// is signed with the caller's secret and carries no session, and one client
+/// serving two users sends each call with its own key and stores neither.
 #[tokio::test]
-async fn lastfm_request_token_signs_without_session() {
+async fn lastfm_calls_carry_the_callers_own_credentials() {
     let (wire, providers) = lastfm_providers(&serde_json::json!({"token": "approve-me"}));
-
     let token = providers
         .lastfm
         .request_token(&lastfm_creds(), PRIORITY)
         .await
         .expect("token found");
-
-    assert_eq!(token.token, "approve-me");
+    assert_eq!(token.token, "approve-me", "token request");
     let sent = wire.sent();
-    assert_eq!(sent.len(), 1);
-    assert_eq!(sent[0].query("method").as_deref(), Some("auth.getToken"));
-    assert_eq!(sent[0].query("api_key").as_deref(), Some("user-key"));
-    assert_eq!(sent[0].query("format").as_deref(), Some("json"));
-    assert_eq!(sent[0].query("sk"), None, "no session rides yet");
+    assert_eq!(sent.len(), 1, "token request");
+    assert_eq!(
+        sent[0].query("method").as_deref(),
+        Some("auth.getToken"),
+        "token request"
+    );
+    assert_eq!(
+        sent[0].query("api_key").as_deref(),
+        Some("user-key"),
+        "token request"
+    );
+    assert_eq!(
+        sent[0].query("format").as_deref(),
+        Some("json"),
+        "token request"
+    );
+    assert_eq!(
+        sent[0].query("sk"),
+        None,
+        "token request: no session rides yet"
+    );
     // The signature recomputes from the sent parameters.
     let captured_sig = sent[0].query("api_sig").expect("call is signed");
     let unsigned: Vec<(String, String)> = sent[0]
@@ -574,100 +532,12 @@ async fn lastfm_request_token_signs_without_session() {
     assert_eq!(
         lastfm::api_sig(&unsigned, "user-secret"),
         captured_sig,
-        "wire signature matches the documented scheme"
-    );
-}
-
-fn lastfm_recording(body: &str) -> serde_json::Value {
-    serde_json::from_str(body).expect("recording parses")
-}
-
-#[tokio::test]
-async fn lastfm_artist_info_found_with_lenient_counts() {
-    let (wire, providers) = lastfm_providers(&lastfm_recording(include_str!(
-        "../fixtures/lastfm/artist_getinfo.json"
-    )));
-
-    let info = providers
-        .lastfm
-        .artist_info(&lastfm_creds(), "Radiohead", None, PRIORITY)
-        .await
-        .expect("answered")
-        .expect("artist info found");
-
-    assert_eq!(info.name, "Radiohead");
-    assert_eq!(
-        info.mbid.as_deref(),
-        Some("a74b1b7f-71a5-4011-9441-d0b5e4122711")
-    );
-    assert_eq!(info.listeners, Some(8_489_583), "string counts parse");
-    assert_eq!(info.playcount, Some(1_431_560_207));
-    assert!(info.bio_summary.starts_with("Placeholder summary."));
-    assert_eq!(info.tags.len(), 5);
-    assert_eq!(info.similar.len(), 5);
-    assert_eq!(info.similar[0].name, "Thom Yorke");
-    assert_eq!(
-        info.similar[0].mbid, None,
-        "info's similar rows carry no id"
-    );
-    let sent = wire.sent();
-    assert_eq!(sent[0].query("method").as_deref(), Some("artist.getInfo"));
-    assert_eq!(sent[0].query("artist").as_deref(), Some("Radiohead"));
-    assert_eq!(sent[0].query("api_sig"), None, "info reads are unsigned");
-}
-
-/// Last.fm's recorded error answers read as their typed outcome, whatever
-/// status they came with: an unknown artist (error 6 in a 200) and an
-/// unknown user (error 6 in a 404) are absence, a refused key (error 10 in
-/// a 403) is unauthorized.
-#[tokio::test]
-async fn lastfm_recorded_errors_read_as_typed_outcomes() {
-    let serve = |status: u16, body: &str| {
-        let wire = Arc::new(ScriptedWire::new());
-        wire.on(
-            Method::Get,
-            lastfm::DEFAULT_BASE_URL,
-            json_answer(status, &lastfm_recording(body)),
-        );
-        audio_providers(&wire)
-    };
-
-    let unknown_artist = serve(
-        200,
-        include_str!("../fixtures/lastfm/artist_not_found.json"),
-    )
-    .lastfm
-    .artist_info(&lastfm_creds(), "nobody", None, PRIORITY)
-    .await;
-    assert!(matches!(unknown_artist, Ok(None)), "{unknown_artist:?}");
-
-    let unknown_user = serve(404, include_str!("../fixtures/lastfm/user_not_found.json"))
-        .lastfm
-        .user_top_albums(&lastfm_creds(), "nobody", "overall", 3, PRIORITY)
-        .await;
-    assert!(
-        matches!(&unknown_user, Ok(rows) if rows.is_empty()),
-        "{unknown_user:?}"
+        "token request: wire signature matches the documented scheme"
     );
 
-    let refused = serve(403, include_str!("../fixtures/lastfm/invalid_key.json"))
-        .lastfm
-        .artist_info(&lastfm_creds(), "Radiohead", None, PRIORITY)
-        .await;
-    assert!(
-        matches!(refused, Err(ProviderError::Rejected { code: 10, .. })),
-        "{refused:?}"
-    );
-}
-
-#[tokio::test]
-async fn lastfm_per_user_credentials_stay_isolated() {
-    // One client, two users; each call carries its own key and the
-    // client stores neither.
     let (wire, providers) = lastfm_providers(&serde_json::json!({"artist": {"name": "x"}}));
     let mut other = lastfm_creds();
     other.api_key = "other-key".to_owned();
-
     let _ = providers
         .lastfm
         .artist_info(&lastfm_creds(), "a", None, PRIORITY)
@@ -676,11 +546,18 @@ async fn lastfm_per_user_credentials_stay_isolated() {
         .lastfm
         .artist_info(&other, "a", None, PRIORITY)
         .await;
-
     let sent = wire.sent();
-    assert_eq!(sent.len(), 2);
-    assert_eq!(sent[0].query("api_key").as_deref(), Some("user-key"));
-    assert_eq!(sent[1].query("api_key").as_deref(), Some("other-key"));
+    assert_eq!(sent.len(), 2, "two users");
+    assert_eq!(
+        sent[0].query("api_key").as_deref(),
+        Some("user-key"),
+        "two users: the first"
+    );
+    assert_eq!(
+        sent[1].query("api_key").as_deref(),
+        Some("other-key"),
+        "two users: the second"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -721,8 +598,11 @@ fn lb_authed() -> listenbrainz::ListenBrainzCredentials {
 const LB_PRIORITY: droppedneedle_providers::RequestPriority =
     droppedneedle_providers::RequestPriority::UserInitiated;
 
+/// A ListenBrainz token goes out only in the `Authorization: Token` header,
+/// beside the JSON headers, and a token that could break out of that header
+/// (a newline, a space, or past the length cap) is refused before the wire.
 #[tokio::test]
-async fn listenbrainz_required_headers_sent() {
+async fn listenbrainz_tokens_go_out_only_in_a_safe_header() {
     let wire = Arc::new(droppedneedle_providers::executor::ScriptedWire::new());
     wire.answer(
         &lb_url("/1/user/listener/listens"),
@@ -731,15 +611,13 @@ async fn listenbrainz_required_headers_sent() {
         r#"{"payload": {"listens": []}}"#,
     );
     let providers = listenbrainz_providers(&wire);
-
     providers
         .listenbrainz
         .user_listens("listener", 25, &lb_authed(), LB_PRIORITY)
         .await
         .expect("listens answered");
-
     let sent = wire.sent();
-    assert_eq!(sent.len(), 1);
+    assert_eq!(sent.len(), 1, "safe token");
     let header = |name: &str| {
         sent[0]
             .headers
@@ -747,17 +625,18 @@ async fn listenbrainz_required_headers_sent() {
             .find(|(key, _)| key == name)
             .map(|(_, value)| value.as_str())
     };
-    assert_eq!(header("accept"), Some("application/json"));
-    assert_eq!(header("content-type"), Some("application/json"));
+    assert_eq!(header("accept"), Some("application/json"), "safe token");
+    assert_eq!(
+        header("content-type"),
+        Some("application/json"),
+        "safe token"
+    );
     assert_eq!(
         header("authorization"),
         Some("Token lb-token"),
-        "Token scheme, exactly like v2"
+        "safe token: Token scheme, exactly like v2"
     );
-}
 
-#[tokio::test]
-async fn listenbrainz_unsafe_tokens_rejected_without_wire() {
     let wire = Arc::new(droppedneedle_providers::executor::ScriptedWire::new());
     wire.answer(
         &lb_url("/1/user/listener/listens"),
@@ -775,7 +654,6 @@ async fn listenbrainz_unsafe_tokens_rejected_without_wire() {
             username: Some("listener".to_owned()),
             user_token: Some(token.clone()),
         };
-
         let error = providers
             .listenbrainz
             .user_listens("listener", 25, &creds, LB_PRIORITY)
@@ -786,7 +664,7 @@ async fn listenbrainz_unsafe_tokens_rejected_without_wire() {
                 error,
                 droppedneedle_providers::ProviderError::Invalid { .. }
             ),
-            "{error:?}"
+            "unsafe token {token:?} on a read: {error:?}"
         );
         let refused = providers
             .listenbrainz
@@ -798,7 +676,7 @@ async fn listenbrainz_unsafe_tokens_rejected_without_wire() {
                 refused,
                 droppedneedle_providers::ProviderError::Invalid { .. }
             ),
-            "{refused:?}"
+            "unsafe token {token:?} on a submit: {refused:?}"
         );
     }
     assert!(
@@ -857,10 +735,13 @@ async fn listenbrainz_user_listens_found_with_mbid_mapping() {
     assert_eq!(wire.sent()[0].query("count").as_deref(), Some("25"));
 }
 
+/// An answer missing its field is never zero counts or a verdict: a
+/// malformed popularity answer is a payload error, never an empty map a
+/// caller could store as "no listens", and a credential check whose answer
+/// lacks its verdict field is never "User found with 0 listens" or "Token
+/// invalid".
 #[tokio::test]
-async fn listenbrainz_popularity_malformed_never_reads_as_zeros() {
-    // A malformed answer is a payload error, never an empty map that a
-    // caller could store as "no listens".
+async fn listenbrainz_answers_missing_their_field_give_no_verdict() {
     let popularity = lb_url("/1/popularity/release-group");
     let wire = Arc::new(droppedneedle_providers::executor::ScriptedWire::new());
     wire.on(
@@ -888,20 +769,14 @@ async fn listenbrainz_popularity_malformed_never_reads_as_zeros() {
             .listenbrainz
             .release_group_popularity(&ids, &creds, LB_PRIORITY)
     };
-
     let malformed = ask().await.expect_err("a malformed answer is no counts");
     assert!(
         matches!(malformed, ProviderError::Payload { .. }),
-        "{malformed:?}"
+        "malformed popularity: {malformed:?}"
     );
     let counts = ask().await.expect("an empty list is legitimate");
-    assert!(counts.is_empty());
-}
+    assert!(counts.is_empty(), "empty popularity list");
 
-/// A credential check whose answer lacks its verdict field gives no
-/// verdict: never "User found with 0 listens" or "Token invalid".
-#[tokio::test]
-async fn listenbrainz_verify_without_its_verdict_field_gives_none() {
     let wire = Arc::new(ScriptedWire::new());
     wire.answer(
         &lb_url("/1/user/listener/listen-count"),
@@ -911,7 +786,6 @@ async fn listenbrainz_verify_without_its_verdict_field_gives_none() {
     );
     wire.answer(&lb_url("/1/validate-token"), 200, &[], r#"{"code": 200}"#);
     let providers = listenbrainz_providers(&wire);
-
     let user = providers
         .listenbrainz
         .verify("listener", "", LB_PRIORITY)
@@ -920,12 +794,11 @@ async fn listenbrainz_verify_without_its_verdict_field_gives_none() {
         .listenbrainz
         .verify("listener", "made-up-token", LB_PRIORITY)
         .await;
-
-    for outcome in [user, token] {
-        assert!(!outcome.valid, "{outcome:?}");
+    for (case, outcome) in [("user check", user), ("token check", token)] {
+        assert!(!outcome.valid, "{case}: {outcome:?}");
         assert_eq!(
             outcome.message, "ListenBrainz is temporarily unavailable. Try again shortly.",
-            "{outcome:?}"
+            "{case}: {outcome:?}"
         );
     }
 }

@@ -162,16 +162,25 @@ async fn ended_run(router: &Router, cookie: &str) -> Value {
     }
 }
 
+/// The state read and sign-in are the only routes without the session:
+/// every other upgrade operation answers 401 with no cookie, a v3 session
+/// cookie or a made-up upgrade cookie. The app's API answers 503
+/// `UPGRADE_REQUIRED`, Subsonic its failed envelope, `/health` the upgrade
+/// status, and an undocumented method 405.
+///
 /// Only an admin's v2 password signs in, with one uniform 401 for a wrong
 /// password, an unknown name and a non-admin. The logged code signs in
 /// once, and a new one is logged when it is used. The cookie is the
 /// upgrade page's own: HttpOnly, SameSite=Strict, scoped to the upgrade
-/// routes, 12 hours, and not Secure over plain HTTP.
+/// routes, 12 hours, and not Secure over plain HTTP. The app itself
+/// refuses an upgrade cookie.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn only_admins_and_the_one_time_code_sign_in() {
+async fn upgrade_mode_signs_in_only_admins_and_reaches_only_its_routes() {
     let (dir, config) = v2_dir("sign-in");
     let (dispatch, logged) = logs::warnings();
-    async {
+    // Only the sign-in runs under the log capture: the code is read back
+    // from the latest `code=` line, and other answers log lines of their own.
+    let (mode, router, cookie) = async {
         let (mode, router) = open(&config, false, scripted(&dir, "exit 1\n")).await;
         mode.sign_in().log_code();
 
@@ -254,21 +263,11 @@ async fn only_admins_and_the_one_time_code_sign_in() {
         }
         assert_eq!(statuses[..5], [StatusCode::UNAUTHORIZED; 5]);
         assert_eq!(statuses[5], StatusCode::TOO_MANY_REQUESTS);
+        (mode, router, cookie)
     }
     .with_subscriber(dispatch)
     .await;
-}
 
-/// The state read and sign-in are the only routes without the session:
-/// every other upgrade operation answers 401 with no cookie, a v3 session
-/// cookie or a made-up upgrade cookie. The app's API answers 503
-/// `UPGRADE_REQUIRED`, Subsonic its failed envelope, `/health` the
-/// upgrade status, and an undocumented method 405. The app itself refuses
-/// an upgrade cookie.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn only_the_upgrade_session_reaches_the_upgrade_routes() {
-    let (dir, config) = v2_dir("gated");
-    let (mode, router) = open(&config, false, scripted(&dir, "exit 1\n")).await;
     let doc = serde_json::to_value(ApiDoc::openapi()).expect("document serializes");
     let mut gated = 0;
     for (path, item) in doc["paths"].as_object().expect("paths") {
@@ -329,15 +328,9 @@ async fn only_the_upgrade_session_reaches_the_upgrade_routes() {
     let (status, _, body) = call(&router, "GET", "/health", None, None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["status"], "upgrade");
-
-    let (status, headers, _) = sign_in(
-        &router,
-        json!({"method": "password", "username": "alice", "password": "alice-v2-pass"}),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    let cookie = upgrade_cookie(&headers);
+    drop(router);
     drop(mode);
+
     let app = TestApp::start("upgrade-cookie-in-the-app").await;
     let (status, _, _) = app
         .raw(
@@ -462,8 +455,16 @@ async fn upgrade_mode_keeps_its_security_headers_and_origin_check() {
 /// Start refuses until a pre-flight found nothing to fix and every address
 /// change it listed is acknowledged, and only then passes
 /// `--callbacks-changed`. A second run while one is under way is refused.
+/// A pre-flight that found something to fix, or no v2 data, is refused
+/// whatever it acknowledges, and nothing but the check runs on it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn start_needs_a_clean_preflight_with_its_addresses_acknowledged() {
+async fn start_needs_a_clean_acknowledged_preflight() {
+    start_passes_a_clean_acknowledged_preflight().await;
+    start_refuses_a_preflight_with_blockers_or_without_v2_data().await;
+}
+
+/// The clean case of [`start_needs_a_clean_acknowledged_preflight`].
+async fn start_passes_a_clean_acknowledged_preflight() {
     let (dir, config) = v2_dir("start");
     let args = dir.join("args.txt");
     let warning = json!({
@@ -559,6 +560,70 @@ async fn start_needs_a_clean_preflight_with_its_addresses_acknowledged() {
     );
 }
 
+/// The refusal cases of [`start_needs_a_clean_acknowledged_preflight`]:
+/// `--callbacks-changed` is never passed on a blocked or v3 pre-flight.
+async fn start_refuses_a_preflight_with_blockers_or_without_v2_data() {
+    let (dir, config) = v2_dir("blocked");
+    let (args, check, exit) = (
+        dir.join("args.txt"),
+        dir.join("check.json"),
+        dir.join("check.exit"),
+    );
+    let script = format!(
+        "case \"$*\" in\n\
+         *--check*) cat '{check}'; exit \"$(cat '{exit}')\";;\n\
+         esac\n\
+         echo \"$*\" >> '{args}'\n\
+         exit 2\n",
+        check = check.display(),
+        exit = exit.display(),
+        args = args.display(),
+    );
+    let (_mode, router) = open(&config, false, scripted(&dir, &script)).await;
+    let (_, headers, _) = sign_in(
+        &router,
+        json!({"method": "password", "username": "alice", "password": "alice-v2-pass"}),
+    )
+    .await;
+    let cookie = upgrade_cookie(&headers);
+    let warning = json!({
+        "feature": "single_sign_on",
+        "message": "Change the sign-in redirect address.",
+        "old_address": {"kind": "path", "value": "/api/v1/auth/oidc/callback"},
+        "new_address": {"kind": "path", "value": "/api/v3/auth/oidc/callback"},
+    });
+    let blocker =
+        json!({"code": "V2_WAL_PRESENT", "message": "Unmerged writes.", "fix": "Stop v2."});
+    for (layout, blockers, code) in [("v2", json!([blocker]), "1"), ("v3", json!([]), "0")] {
+        let line = json!({
+            "v": 1, "type": "check", "layout": layout, "counts": null, "orphans": 0,
+            "blockers": blockers, "warnings": [warning],
+        });
+        std::fs::write(&check, format!("{line}\n")).unwrap();
+        std::fs::write(&exit, code).unwrap();
+        let (status, _, body) = call(
+            &router,
+            "POST",
+            "/api/v3/upgrade/preflight",
+            Some(&cookie),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["check"]["layout"], layout, "{body}");
+        let (status, _, body) = call(
+            &router,
+            "POST",
+            "/api/v3/upgrade/start",
+            Some(&cookie),
+            Some(json!({"acknowledged": [warning]})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{layout}: {body}");
+    }
+    assert!(!args.exists(), "nothing but the check ran");
+}
+
 /// A run that ends without a line it can stand on (a result of another
 /// line version, or a kill midway) is a failure with a fixed message, and
 /// the folders a kill left halfway read as interrupted, where the
@@ -637,72 +702,6 @@ async fn a_run_killed_midway_leaves_an_interrupted_upgrade() {
     .await;
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
     drop(mode);
-}
-
-/// Start refuses a pre-flight that found something to fix, and one that
-/// did not find v2 data, whatever it acknowledges: nothing but the check
-/// runs, so `--callbacks-changed` is never passed on it.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn start_refuses_a_preflight_with_blockers_or_without_v2_data() {
-    let (dir, config) = v2_dir("blocked");
-    let (args, check, exit) = (
-        dir.join("args.txt"),
-        dir.join("check.json"),
-        dir.join("check.exit"),
-    );
-    let script = format!(
-        "case \"$*\" in\n\
-         *--check*) cat '{check}'; exit \"$(cat '{exit}')\";;\n\
-         esac\n\
-         echo \"$*\" >> '{args}'\n\
-         exit 2\n",
-        check = check.display(),
-        exit = exit.display(),
-        args = args.display(),
-    );
-    let (_mode, router) = open(&config, false, scripted(&dir, &script)).await;
-    let (_, headers, _) = sign_in(
-        &router,
-        json!({"method": "password", "username": "alice", "password": "alice-v2-pass"}),
-    )
-    .await;
-    let cookie = upgrade_cookie(&headers);
-    let warning = json!({
-        "feature": "single_sign_on",
-        "message": "Change the sign-in redirect address.",
-        "old_address": {"kind": "path", "value": "/api/v1/auth/oidc/callback"},
-        "new_address": {"kind": "path", "value": "/api/v3/auth/oidc/callback"},
-    });
-    let blocker =
-        json!({"code": "V2_WAL_PRESENT", "message": "Unmerged writes.", "fix": "Stop v2."});
-    for (layout, blockers, code) in [("v2", json!([blocker]), "1"), ("v3", json!([]), "0")] {
-        let line = json!({
-            "v": 1, "type": "check", "layout": layout, "counts": null, "orphans": 0,
-            "blockers": blockers, "warnings": [warning],
-        });
-        std::fs::write(&check, format!("{line}\n")).unwrap();
-        std::fs::write(&exit, code).unwrap();
-        let (status, _, body) = call(
-            &router,
-            "POST",
-            "/api/v3/upgrade/preflight",
-            Some(&cookie),
-            None,
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK, "{body}");
-        assert_eq!(body["check"]["layout"], layout, "{body}");
-        let (status, _, body) = call(
-            &router,
-            "POST",
-            "/api/v3/upgrade/start",
-            Some(&cookie),
-            Some(json!({"acknowledged": [warning]})),
-        )
-        .await;
-        assert_eq!(status, StatusCode::CONFLICT, "{layout}: {body}");
-    }
-    assert!(!args.exists(), "nothing but the check ran");
 }
 
 /// Upgrade mode holds the server lock alone: a second server on the folder

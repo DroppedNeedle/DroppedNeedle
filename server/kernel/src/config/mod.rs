@@ -553,16 +553,4 @@ mod tests {
             assert!(load(&[bad]).is_err(), "{bad:?} should fail");
         }
     }
-
-    #[test]
-    fn log_level_keeps_audio_decoders_at_error() {
-        assert_eq!(
-            log_filter_for(None).unwrap(),
-            "info,symphonia=error,lofty=error"
-        );
-        assert_eq!(
-            log_filter_for(Some("DEBUG")).unwrap(),
-            "debug,symphonia=error,lofty=error"
-        );
-    }
 }

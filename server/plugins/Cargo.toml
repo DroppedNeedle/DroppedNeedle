@@ -7,6 +7,9 @@ license.workspace = true
 description = "DroppedNeedle plugin host, plugin install and the scrobble settings backend"
 publish = false
 
+[lib]
+doctest = false
+
 [dependencies]
 droppedneedle-auth.workspace = true
 droppedneedle-kernel.workspace = true

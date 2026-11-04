@@ -492,25 +492,35 @@ mod tests {
         assert_eq!(server_id(), "2f54b621b8fde6d933fab26bd6378f85");
     }
 
+    /// The v2 order: the header's token wins, and an empty capture falls
+    /// through to the next source.
     #[test]
-    fn token_extraction_follows_v2_order() {
-        let header = "MediaBrowser Token=\"abc\", Client=\"Finamp\"";
-        let request = JellyfinRequest {
-            authorization: Some(header),
+    fn token_extraction_order() {
+        let header_first = JellyfinRequest {
+            authorization: Some("MediaBrowser Token=\"abc\", Client=\"Finamp\""),
             query_apikey: Some("query-wins-never"),
             ..JellyfinRequest::default()
         };
-        assert_eq!(extract_token(&request).as_deref(), Some("abc"));
-        assert_eq!(extract_client(&request).as_deref(), Some("Finamp"));
-    }
+        assert_eq!(
+            extract_token(&header_first).as_deref(),
+            Some("abc"),
+            "header beats the query key"
+        );
+        assert_eq!(
+            extract_client(&header_first).as_deref(),
+            Some("Finamp"),
+            "header names the client"
+        );
 
-    #[test]
-    fn empty_token_capture_falls_through() {
-        let request = JellyfinRequest {
+        let empty_capture = JellyfinRequest {
             authorization: Some("MediaBrowser Token=\"\""),
             emby_token: Some("direct"),
             ..JellyfinRequest::default()
         };
-        assert_eq!(extract_token(&request).as_deref(), Some("direct"));
+        assert_eq!(
+            extract_token(&empty_capture).as_deref(),
+            Some("direct"),
+            "an empty header token falls through"
+        );
     }
 }

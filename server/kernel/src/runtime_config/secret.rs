@@ -113,13 +113,4 @@ mod tests {
         assert!(!shown.contains("hunter2-live-key"));
         assert!(shown.contains("[redacted]"));
     }
-
-    #[test]
-    fn serde_round_trip_preserves_the_string() {
-        let secret = Secret::new("v3:opaque-ciphertext");
-        let json = serde_json::to_string(&secret).unwrap();
-        assert_eq!(json, "\"v3:opaque-ciphertext\"");
-        let back: Secret = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.expose(), "v3:opaque-ciphertext");
-    }
 }

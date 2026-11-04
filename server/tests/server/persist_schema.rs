@@ -66,7 +66,8 @@ fn schema_rows(connection: &Connection) -> Vec<(String, String, String, Option<S
 }
 
 /// A fresh database stamps the latest version and holds the singleton and
-/// sentinel rows the services expect to exist.
+/// sentinel rows the services expect to exist. Running the migrations again
+/// is a clean no-op: version stable, seeds single.
 #[test]
 fn fresh_migrate_marks_version_and_seeds() {
     let connection = migrated();
@@ -117,15 +118,18 @@ fn fresh_migrate_marks_version_and_seeds() {
             "seed rows in {table}"
         );
     }
-}
 
-/// Running the migrations again is a clean no-op: version stable, seeds
-/// single.
-#[test]
-fn migrate_rerun_is_clean() {
-    let connection = migrate(migrated(), &CHAIN).unwrap();
-    assert_eq!(scalar(&connection, "PRAGMA user_version"), latest_version());
-    assert_eq!(scalar(&connection, "SELECT COUNT(*) FROM local_artists"), 2);
+    let connection = migrate(connection, &CHAIN).unwrap();
+    assert_eq!(
+        scalar(&connection, "PRAGMA user_version"),
+        latest_version(),
+        "rerun"
+    );
+    assert_eq!(
+        scalar(&connection, "SELECT COUNT(*) FROM local_artists"),
+        2,
+        "rerun"
+    );
 }
 
 /// Dropped tables stay dropped: no lidarr marker, no rebuild leftovers, no
@@ -2353,9 +2357,11 @@ PRAGMA foreign_keys=ON;
 
     /// An old orphan in another table does not block the rebuild; a rebuild
     /// that makes a new orphan is refused and leaves the database exactly
-    /// as it was, its stamp included.
+    /// as it was, its stamp included. A WITHOUT ROWID child reports every
+    /// orphan with a NULL rowid, so one old orphan there must not let a new
+    /// one through either.
     #[test]
-    fn an_old_orphan_upgrades_and_a_new_one_is_refused() {
+    fn a_rebuild_refuses_every_new_orphan() {
         let dir = ScratchDir::new("rebuild-orphan");
         let (connection, _) = based(&dir);
         seed(&connection, true);
@@ -2377,12 +2383,7 @@ PRAGMA foreign_keys=ON;
             "the guard after the copy refuses"
         );
         assert_eq!(snapshot(&path), before, "the database is as it was");
-    }
 
-    /// A WITHOUT ROWID child reports every orphan with a NULL rowid, so one
-    /// old orphan there must not let a new one through.
-    #[test]
-    fn a_new_orphan_behind_an_old_one_without_rowid_is_refused() {
         let dir = ScratchDir::new("rebuild-keyed-orphan");
         let (connection, path) = based(&dir);
         connection
@@ -2398,8 +2399,15 @@ PRAGMA foreign_keys=ON;
         let orphaning = RECIPE.replace("0 FROM p;", "0 FROM p WHERE id <> 'a';");
 
         let error = run(connection, &rebuilt_by(&orphaning)).unwrap_err();
-        assert!(execute_failure(error).contains("CHECK constraint failed"));
-        assert_eq!(snapshot(&path), before, "the database is as it was");
+        assert!(
+            execute_failure(error).contains("CHECK constraint failed"),
+            "without rowid: the guard after the copy refuses"
+        );
+        assert_eq!(
+            snapshot(&path),
+            before,
+            "without rowid: the database is as it was"
+        );
     }
 
     /// The naive versions of the recipe fail, so each step it adds is

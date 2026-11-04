@@ -243,8 +243,10 @@ impl State {
 mod tests {
     use super::*;
 
+    /// A run of failures inside the window degrades a source until its
+    /// entry expires; failures spread out or broken by a success never do.
     #[test]
-    fn a_run_of_failures_degrades_and_the_entry_expires() {
+    fn only_a_tight_run_of_failures_degrades() {
         let health = ServiceHealth::new();
         let start = Instant::now();
         for second in 0..4 {
@@ -252,24 +254,27 @@ mod tests {
         }
         assert!(
             health.current(start).is_empty(),
-            "four blips are not an outage"
+            "tight run: four blips are not an outage"
         );
 
         health.record_failure("lastfm", start + Duration::from_secs(4));
         let live = health.current(start + Duration::from_secs(5));
-        assert_eq!(live.len(), 1);
-        assert_eq!(live[0].service, "lastfm");
-        assert_eq!(live[0].capability, "music data");
-        assert_eq!(live[0].degraded_for, Duration::from_secs(1));
+        assert_eq!(live.len(), 1, "tight run: degraded");
+        assert_eq!(live[0].service, "lastfm", "tight run: service");
+        assert_eq!(live[0].capability, "music data", "tight run: capability");
+        assert_eq!(
+            live[0].degraded_for,
+            Duration::from_secs(1),
+            "tight run: degraded for"
+        );
 
         let later = start + Duration::from_secs(4) + ENTRY_TTL + Duration::from_secs(1);
-        assert!(health.current(later).is_empty(), "heals once failures stop");
-    }
+        assert!(
+            health.current(later).is_empty(),
+            "tight run: heals once failures stop"
+        );
 
-    #[test]
-    fn spread_out_or_interrupted_failures_never_degrade() {
         let health = ServiceHealth::new();
-        let start = Instant::now();
         for step in 0..10 {
             health.record_failure("musicbrainz", start + Duration::from_secs(step * 30));
         }
@@ -279,6 +284,9 @@ mod tests {
             }
             health.record_failure("audiodb", start + Duration::from_secs(second));
         }
-        assert!(health.current(start + Duration::from_secs(300)).is_empty());
+        assert!(
+            health.current(start + Duration::from_secs(300)).is_empty(),
+            "spread out or interrupted: never degraded"
+        );
     }
 }

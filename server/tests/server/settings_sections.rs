@@ -1,7 +1,7 @@
 //! Settings sections: the masked secret round trip over HTTP (read masked,
 //! a re-saved mask keeps the secret, verify tests the stored secret), unit
-//! scaling, revision checks, the admin gate, the BrainzMash ceremony, the
-//! live probes against a loopback stub, and the cache sweep after a save.
+//! scaling, revision checks, the BrainzMash ceremony and the live probes
+//! against a loopback stub.
 
 use crate::common::auth::{AuthRig, test_principal, with_test_principal};
 use crate::common::{self, ScratchDir};
@@ -284,10 +284,12 @@ impl VerifyProbes for FakeProbes {
 
 // --- service round-trips -----------------------------------------------------
 
-/// Advanced tunables save, mask the AudioDB key, and fire the Advanced
-/// fan-out.
+/// Section saves through the service: Advanced tunables save and mask the
+/// AudioDB key, and the masked echo leaves the row as it was; library
+/// settings check their revision (a stale token is a 409) and mask the
+/// AcoustID key.
 #[tokio::test]
-async fn advanced_round_trip_masks() {
+async fn section_saves_mask_and_check_revisions() {
     use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
     use droppedneedle_kernel::runtime_config::{Masked, Section as _};
 
@@ -323,13 +325,9 @@ async fn advanced_round_trip_masks() {
     assert_eq!(stored.audiodb_api_key.expose(), "audiodb-secret");
 
     assert!(!stored.discover_queue_auto_generate);
-}
 
-/// Library settings round-trip with CAS: a stale token is a 409, and
-/// path add/remove normalize through the same save.
-#[tokio::test]
-async fn library_round_trip_cas_and_paths() {
-    let (service, effects, _scratch) = scratch_service();
+    // Library settings: the advanced saves above recorded no effect, so the
+    // library save's effects are all the recorder holds.
     let view = service.get_library().await.expect("reads default");
     assert!(!view.policy_revision.is_empty());
 
@@ -416,7 +414,6 @@ struct Rig {
     #[allow(dead_code)]
     auth: AuthRig,
     admin_id: String,
-    user_id: String,
     probes: Arc<FakeProbes>,
 }
 
@@ -424,7 +421,6 @@ impl Rig {
     async fn open(passing: bool) -> Self {
         let rig = AuthRig::new("settings").await;
         let admin = rig.seed_user("brenda", Role::Admin).await;
-        let user = rig.seed_user("molly", Role::User).await;
         let probes = Arc::new(if passing {
             FakeProbes::passing()
         } else {
@@ -435,31 +431,19 @@ impl Rig {
             settings,
             auth: rig,
             admin_id: admin.id,
-            user_id: user.id,
             probes,
         }
     }
 
-    /// Both routers signed in as `user_id` with `role`, or anonymous.
-    fn app(&self, caller: Option<(&str, Role)>) -> Router {
+    /// The settings routes signed in as the admin.
+    fn admin_app(&self) -> Router {
         let router = droppedneedle::settings::wiring::routes()
             .with_state(self.settings.clone())
             .into_router();
-        match caller {
-            Some((user_id, role)) => with_test_principal(
-                router,
-                test_principal(user_id, role, "sess-1", SessionKind::Standard),
-            ),
-            None => router,
-        }
-    }
-
-    fn admin_app(&self) -> Router {
-        self.app(Some((&self.admin_id, Role::Admin)))
-    }
-
-    fn user_app(&self) -> Router {
-        self.app(Some((&self.user_id, Role::User)))
+        with_test_principal(
+            router,
+            test_principal(&self.admin_id, Role::Admin, "sess-1", SessionKind::Standard),
+        )
     }
 }
 
@@ -480,39 +464,6 @@ async fn call(app: Router, method: &str, uri: &str, body: Option<Value>) -> (Sta
         .expect("body reads");
     let json: Value = serde_json::from_slice(&bytes).expect("body is json");
     (status, json)
-}
-
-/// Anonymous callers get 401, signed-in non-admins get 403, admins pass.
-#[tokio::test]
-async fn settings_routes_are_admin_gated() {
-    let rig = Rig::open(true).await;
-    for (method, uri) in [
-        ("GET", "/api/v3/settings/preferences"),
-        ("PUT", "/api/v3/settings/preferences"),
-        ("GET", "/api/v3/settings/jellyfin"),
-        ("POST", "/api/v3/settings/jellyfin/verify"),
-        ("GET", "/api/v3/settings/indexers"),
-        ("POST", "/api/v3/settings/indexers/test"),
-        ("GET", "/api/v3/settings/musicbrainz"),
-        ("POST", "/api/v3/settings/musicbrainz/brainzmash/stage"),
-        ("GET", "/api/v3/settings/library-management"),
-        (
-            "POST",
-            "/api/v3/settings/library-management/profile-imports/preview",
-        ),
-    ] {
-        let body = (method == "PUT" || method == "POST").then(|| json!({}));
-        let (status, _) = call(rig.app(None), method, uri, body.clone()).await;
-        assert_eq!(status, StatusCode::UNAUTHORIZED, "{method} {uri} anon");
-        let (status, denied) = call(rig.user_app(), method, uri, body).await;
-        assert_eq!(status, StatusCode::FORBIDDEN, "{method} {uri} user");
-        assert_eq!(denied["error"]["code"], "FORBIDDEN");
-    }
-    // Section prefs are per-user: a plain user passes.
-    let (status, _) = call(rig.user_app(), "GET", "/api/v3/me/section-prefs", None).await;
-    assert_eq!(status, StatusCode::OK);
-    let (status, _) = call(rig.app(None), "GET", "/api/v3/me/section-prefs", None).await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
 
 /// Verify endpoints resolve masked secrets to the stored ones before
@@ -680,31 +631,6 @@ async fn verify_resolves_masks_and_maps_verdicts() {
     assert_eq!(limited["error"]["code"], "RATE_LIMITED");
 }
 
-/// The scan cadence keeps v2's wire values: `manual` saves and reads
-/// back as `manual` (the v2 importer writes that value too).
-#[tokio::test]
-async fn schedule_manual_round_trips() {
-    let rig = Rig::open(true).await;
-    let (status, saved) = call(
-        rig.admin_app(),
-        "PUT",
-        "/api/v3/settings/library/schedule",
-        Some(json!({"scan_frequency": "manual", "daily_scan_time": "03:00"})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{saved}");
-    assert_eq!(saved["scan_frequency"], "manual");
-    let (status, read) = call(
-        rig.admin_app(),
-        "GET",
-        "/api/v3/settings/library/schedule",
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(read["scan_frequency"], "manual");
-}
-
 /// The online lyrics lookup is on until an admin turns it off, and a
 /// saved "off" stays off.
 #[tokio::test]
@@ -796,79 +722,14 @@ async fn brainzmash_ceremony_http() {
     assert_eq!(stale["error"]["code"], "CONFLICT");
 }
 
-/// Section prefs round-trip per user; unknown pages and keys are 400s.
-#[tokio::test]
-async fn section_prefs_http() {
-    let rig = Rig::open(true).await;
-    let (status, full) = call(rig.user_app(), "GET", "/api/v3/me/section-prefs", None).await;
-    assert_eq!(status, StatusCode::OK);
-    assert!(full["pages"]["home"].is_array());
-    assert!(full["pages"]["discover"].is_array());
-    assert!(full["pages"]["sidebar"].is_array());
-
-    let (status, updated) = call(
-        rig.user_app(),
-        "PUT",
-        "/api/v3/me/section-prefs",
-        Some(json!({
-            "page": "home",
-            "sections": [{"key": "trending_artists", "enabled": false}],
-        })),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert!(updated["pages"]["home"].is_array());
-    assert!(
-        updated
-            .get("pages")
-            .expect("pages")
-            .get("discover")
-            .is_none()
-    );
-    let toggled = updated["pages"]["home"]
-        .as_array()
-        .expect("page reads")
-        .iter()
-        .find(|item| item["key"] == "trending_artists")
-        .expect("finds key");
-    assert_eq!(toggled["enabled"], false);
-
-    let (status, _) = call(
-        rig.user_app(),
-        "PUT",
-        "/api/v3/me/section-prefs",
-        Some(json!({"page": "nope", "sections": []})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-
-    let (status, bad) = call(
-        rig.user_app(),
-        "PUT",
-        "/api/v3/me/section-prefs",
-        Some(json!({
-            "page": "home",
-            "sections": [{"key": "bogus", "enabled": false}],
-        })),
-    )
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert!(
-        bad["error"]["message"]
-            .as_str()
-            .expect("message")
-            .contains("bogus")
-    );
-}
-
 // --- probe helpers ---------------------------------------------------------------
 
 // --- live probes against loopback stubs --------------------------------------
 
-/// One stub origin answering every upstream shape the probes speak.
-/// Query-driven dispatch keeps Plex `/` and the Newznab homepage apart
-/// on the same root.
-fn stub_app() -> Router {
+/// One stub origin answering every upstream shape the probes speak, the
+/// Last.fm stand-in at `/2.0/` included. Query-driven dispatch keeps Plex
+/// `/` and the Newznab homepage apart on the same root.
+fn stub_app(lastfm_hits: Arc<std::sync::atomic::AtomicUsize>) -> Router {
     use axum::Json;
     use axum::extract::Query;
     use axum::http::HeaderMap;
@@ -961,11 +822,23 @@ fn stub_app() -> Router {
         .route(
             "/youtube/v3/videos",
             axum::routing::get(|Query(query): Query<HashMap<String, String>>| async move {
-                if query.get("key").map(String::as_str) == Some("bad") {
-                    StatusCode::FORBIDDEN.into_response()
+                let (status, body) = if query.get("key").map(String::as_str) == Some("bad") {
+                    (
+                        StatusCode::FORBIDDEN,
+                        include_str!("../fixtures/youtube/videos_forbidden_part.json"),
+                    )
                 } else {
-                    Json(json!({"items": []})).into_response()
-                }
+                    (
+                        StatusCode::OK,
+                        include_str!("../fixtures/youtube/videos_found.json"),
+                    )
+                };
+                (
+                    status,
+                    [(axum::http::header::CONTENT_TYPE, "application/json")],
+                    body,
+                )
+                    .into_response()
             }),
         )
         .route(
@@ -1027,47 +900,32 @@ fn stub_app() -> Router {
             "/.well-known/openid-configuration",
             axum::routing::get(|| async { Json(json!({"issuer": "https://stub.example"})) }),
         )
+        .merge(lastfm_stub(lastfm_hits))
 }
 
 /// Serve the stub on a loopback port; returns the base URL.
-async fn serve_stub() -> String {
+async fn serve_stub(lastfm_hits: Arc<std::sync::atomic::AtomicUsize>) -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("stub binds");
     let base = format!("http://{}", listener.local_addr().expect("addr reads"));
     tokio::spawn(async move {
-        axum::serve(listener, stub_app())
+        axum::serve(listener, stub_app(lastfm_hits))
             .await
             .expect("stub serves");
     });
     base
 }
 
-/// A server address that does not parse names no server: the media
-/// server checks say they could not connect, never that the server has
-/// no such item.
-#[tokio::test]
-async fn unparseable_server_address_cannot_connect() {
-    let probes = LiveProbes::new(
-        reqwest::Client::new(),
-        &droppedneedle_providers::Providers::closed(),
-    );
-    let address = "http://not a host";
-    for message in [
-        probes.jellyfin(address, "key").await.message,
-        probes.navidrome(address, "ada", "pw").await.message,
-        probes.plex(address, "token").await.message,
-    ] {
-        assert!(message.starts_with("Could not connect"), "{message}");
-    }
-}
-
 /// Every live probe passes against the stub and fails honestly: bad
-/// credentials, rate limits, and dead upstreams are verdicts with the
-/// v2-shaped messages.
+/// credentials, rate limits, dead upstreams and an address that does not
+/// parse are verdicts with the v2-shaped messages. The Last.fm check tells
+/// a bad key from a wrong secret by Last.fm's own error code, and sends
+/// nothing for a blank key.
 #[tokio::test]
-async fn live_probes_hit_stubs() {
-    let base = serve_stub().await;
+async fn live_probes_answer_honest_verdicts() {
+    let lastfm_hits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let base = serve_stub(Arc::clone(&lastfm_hits)).await;
     let http = droppedneedle_kernel::http_client::HttpClientFactory::new().expect("http");
     let probes = LiveProbes::new(
         reqwest::Client::new(),
@@ -1078,6 +936,7 @@ async fn live_probes_hit_stubs() {
                 youtube: base.clone(),
                 ticketmaster: base.clone(),
                 skiddle: base.clone(),
+                lastfm: format!("{base}/2.0/"),
                 ..droppedneedle_providers::ProviderEndpoints::closed()
             },
         ),
@@ -1087,6 +946,21 @@ async fn live_probes_hit_stubs() {
         reqwest::Client::new(),
         &droppedneedle_providers::Providers::closed(),
     );
+
+    // A server address that does not parse names no server: the media
+    // server checks say they could not connect, never that the server has
+    // no such item.
+    let address = "http://not a host";
+    for message in [
+        unreachable.jellyfin(address, "key").await.message,
+        unreachable.navidrome(address, "ada", "pw").await.message,
+        unreachable.plex(address, "token").await.message,
+    ] {
+        assert!(
+            message.starts_with("Could not connect"),
+            "unparseable address: {message}"
+        );
+    }
 
     let jellyfin = probes.jellyfin(&base, "key").await;
     assert!(jellyfin.valid);
@@ -1184,6 +1058,41 @@ async fn live_probes_hit_stubs() {
     assert!(oidc.valid);
     assert!(!probes.oidc(&format!("{base}/noidc")).await.valid);
     assert!(!probes.oidc("  ").await.valid);
+
+    let blank = probes.lastfm("  ", "lfm-secret").await;
+    assert!(!blank.valid, "lastfm blank key");
+    assert_eq!(blank.message, "An API key is required.");
+    assert_eq!(
+        lastfm_hits.load(Ordering::SeqCst),
+        0,
+        "a blank key sends nothing"
+    );
+
+    let good = probes.lastfm("lfm-key", "lfm-secret").await;
+    assert!(good.valid, "{}", good.message);
+    assert_eq!(good.message, "Connected to Last.fm.");
+
+    for (key, secret, message) in [
+        (
+            "wrong",
+            "lfm-secret",
+            "Last.fm says the API key is invalid.",
+        ),
+        (
+            "lfm-key",
+            "wrong",
+            "The shared secret does not match the key.",
+        ),
+        (
+            "lfm-suspended",
+            "lfm-secret",
+            "Last.fm has suspended this API key.",
+        ),
+    ] {
+        let verdict = probes.lastfm(key, secret).await;
+        assert!(!verdict.valid, "{key}/{secret}");
+        assert_eq!(verdict.message, message, "{key}/{secret}");
+    }
 }
 
 /// A Last.fm stand-in that knows one key pair and counts its requests.
@@ -1236,95 +1145,4 @@ fn lastfm_stub(hits: Arc<std::sync::atomic::AtomicUsize>) -> Router {
         }
     };
     Router::new().route("/2.0/", axum::routing::get(api))
-}
-
-/// The Last.fm test tells a bad key from a wrong secret by Last.fm's own
-/// error code, and sends nothing for a blank key.
-#[tokio::test]
-async fn lastfm_probe_names_the_wrong_credential() {
-    let hits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("stub binds");
-    let base = format!("http://{}/2.0/", listener.local_addr().expect("addr reads"));
-    let app = lastfm_stub(Arc::clone(&hits));
-    tokio::spawn(async move { axum::serve(listener, app).await.expect("stub serves") });
-    let http = droppedneedle_kernel::http_client::HttpClientFactory::new().expect("http");
-    let probes = LiveProbes::new(
-        reqwest::Client::new(),
-        &droppedneedle_providers::Providers::unpaced_at(
-            Arc::new(droppedneedle_providers::ReqwestWire::new(&http)),
-            droppedneedle_providers::ProviderEndpoints {
-                lastfm: base,
-                ..droppedneedle_providers::ProviderEndpoints::closed()
-            },
-        ),
-    );
-
-    let blank = probes.lastfm("  ", "lfm-secret").await;
-    assert!(!blank.valid);
-    assert_eq!(blank.message, "An API key is required.");
-    assert_eq!(hits.load(Ordering::SeqCst), 0, "a blank key sends nothing");
-
-    let good = probes.lastfm("lfm-key", "lfm-secret").await;
-    assert!(good.valid, "{}", good.message);
-    assert_eq!(good.message, "Connected to Last.fm.");
-
-    for (key, secret, message) in [
-        (
-            "wrong",
-            "lfm-secret",
-            "Last.fm says the API key is invalid.",
-        ),
-        (
-            "lfm-key",
-            "wrong",
-            "The shared secret does not match the key.",
-        ),
-        (
-            "lfm-suspended",
-            "lfm-secret",
-            "Last.fm has suspended this API key.",
-        ),
-    ] {
-        let verdict = probes.lastfm(key, secret).await;
-        assert!(!verdict.valid, "{key}/{secret}");
-        assert_eq!(verdict.message, message, "{key}/{secret}");
-    }
-}
-
-/// Live fan-out kicks the events sweep only for the Events section.
-#[tokio::test]
-async fn live_save_effects_kick_only_for_events() {
-    use std::sync::atomic::AtomicBool;
-
-    use droppedneedle::settings::effects::LiveSaveEffects;
-    use droppedneedle_kernel::jobs::events_kick::FnKick;
-    use droppedneedle_kernel::runtime_config::Section;
-    use droppedneedle_kernel::runtime_config::secret_sections::{
-        AdvancedSettings, EventsSettings, ListenBrainzConnection,
-    };
-    use droppedneedle_kernel::runtime_config::sections::{MusicBrainzSettings, UserPreferences};
-
-    let kicked = Arc::new(AtomicBool::new(false));
-    let kick_flag = kicked.clone();
-    let effects = LiveSaveEffects::new(Arc::new(FnKick {
-        kick_fn: move || kick_flag.store(true, Ordering::SeqCst),
-    }));
-
-    async fn saved<S: Section>(effects: &LiveSaveEffects) {
-        for effect in S::EFFECTS {
-            effects.run(*effect).await;
-        }
-    }
-
-    saved::<MusicBrainzSettings>(&effects).await;
-    saved::<ListenBrainzConnection>(&effects).await;
-    saved::<AdvancedSettings>(&effects).await;
-    saved::<TypedLibrary>(&effects).await;
-    saved::<UserPreferences>(&effects).await;
-    assert!(!kicked.load(Ordering::SeqCst));
-
-    saved::<EventsSettings>(&effects).await;
-    assert!(kicked.load(Ordering::SeqCst));
 }

@@ -224,27 +224,27 @@ fn map_db_error(error: &droppedneedle_kernel::db::DbError, target_dir: &Path) ->
 mod tests {
     use super::*;
 
+    /// A backup that is not there, or whose manifest was never checked, is
+    /// refused.
     #[test]
-    fn missing_backup_refuses() {
-        let missing = std::env::temp_dir().join(format!(
-            "droppedneedle-restore-{}-missing.db",
-            std::process::id()
-        ));
-        let target = std::env::temp_dir().join(format!(
-            "droppedneedle-restore-{}-target",
-            std::process::id()
-        ));
-        let error = restore_backup(&missing, &target, "library.db", false).unwrap_err();
-        assert!(matches!(error, RestoreError::BackupUnreadable(_)));
-    }
+    fn restore_refuses_an_unusable_backup() {
+        let dir = droppedneedle_kernel::db::scratch::ScratchDir::new("restore-refuses").unwrap();
 
-    #[test]
-    fn unchecked_manifest_refuses() {
-        let dir = droppedneedle_kernel::db::scratch::ScratchDir::new("restore-sidecar").unwrap();
+        let missing = dir.join("missing.db");
+        let error =
+            restore_backup(&missing, &dir.join("target-missing"), "library.db", false).unwrap_err();
+        assert!(
+            matches!(error, RestoreError::BackupUnreadable(_)),
+            "case: missing backup: {error:?}"
+        );
+
         let backup = dir.join("backup.sqlite");
         std::fs::write(&backup, b"not checked").unwrap();
         std::fs::write(dir.join("backup.sqlite.manifest.json"), b"{}").unwrap();
         let error = restore_backup(&backup, &dir.join("target"), "library.db", false).unwrap_err();
-        assert!(matches!(error, RestoreError::Refused(_)), "{error:?}");
+        assert!(
+            matches!(error, RestoreError::Refused(_)),
+            "case: unchecked manifest: {error:?}"
+        );
     }
 }

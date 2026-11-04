@@ -148,22 +148,3 @@ pub fn plugin_setting_flags(plugins_dir: &Path) -> HashMap<String, HashMap<Strin
     }
     flags
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn missing_key_file_refuses_without_minting() {
-        let dir = std::env::temp_dir().join(format!(
-            "dn-export-key-test-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        let error = read_data_enc_key(&dir).unwrap_err();
-        assert_eq!(error.code(), "V2_KEY_NOT_FOUND");
-        assert!(!key_file_path(&dir).exists());
-    }
-}

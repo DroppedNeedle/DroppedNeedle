@@ -329,11 +329,11 @@ mod tests {
         assert!(!search_sorted_file(&path, "5BAA61E4C9B93F3F0682250B6CF8331B7EE68FD9").unwrap());
         assert!(!search_sorted_file(&path, "0000000000000000000000000000000000000000").unwrap());
         assert!(!search_sorted_file(&path, "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF").unwrap());
-    }
 
-    #[test]
-    fn file_search_on_empty_file_misses() {
-        let (_dir, path) = hash_file("empty", "");
-        assert!(!search_sorted_file(&path, "5BAA61E4C9B93F3F0682250B6CF8331B7EE68FD8").unwrap());
+        let (_empty_dir, empty) = hash_file("empty", "");
+        assert!(
+            !search_sorted_file(&empty, "5BAA61E4C9B93F3F0682250B6CF8331B7EE68FD8").unwrap(),
+            "an empty file misses"
+        );
     }
 }

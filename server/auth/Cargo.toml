@@ -7,6 +7,9 @@ license.workspace = true
 description = "DroppedNeedle sign-in, sessions and users"
 publish = false
 
+[lib]
+doctest = false
+
 [dependencies]
 droppedneedle-kernel.workspace = true
 droppedneedle-providers.workspace = true

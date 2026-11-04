@@ -2038,8 +2038,49 @@ fn short_cause(error: &rusqlite::Error) -> String {
 mod tests {
     use super::*;
 
+    /// With both lanes busy the foreground gets eight grants, then the
+    /// background one; a lone lane drains; a fresh background waiter
+    /// resets the burst as v1 did.
     #[test]
-    fn burst_eight_then_one_while_both_lanes_busy() {
+    fn decide_lane_cases() {
+        for (label, fg, bg, grants, fresh, expected) in [
+            (
+                "lone foreground",
+                true,
+                false,
+                40,
+                false,
+                (Some(Lane::Foreground), 41),
+            ),
+            (
+                "lone background",
+                false,
+                true,
+                40,
+                false,
+                (Some(Lane::Background), 0),
+            ),
+            ("nobody waiting", false, false, 7, false, (None, 7)),
+            (
+                "fresh background waiter",
+                true,
+                true,
+                8,
+                true,
+                (Some(Lane::Foreground), 1),
+            ),
+            (
+                "burst spent",
+                true,
+                true,
+                8,
+                false,
+                (Some(Lane::Background), 0),
+            ),
+        ] {
+            assert_eq!(decide_lane(fg, bg, grants, fresh), expected, "{label}");
+        }
+
         let mut grants = 0;
         let mut seen = Vec::new();
         for _ in 0..18 {
@@ -2070,25 +2111,8 @@ mod tests {
                 Some(foreground),
                 Some(foreground),
                 Some(background),
-            ]
+            ],
+            "burst of eight then one"
         );
-    }
-
-    #[test]
-    fn lone_lane_drains_without_alternation() {
-        let (lane, grants) = decide_lane(true, false, 40, false);
-        assert_eq!((lane, grants), (Some(Lane::Foreground), 41));
-        let (lane, grants) = decide_lane(false, true, 40, false);
-        assert_eq!((lane, grants), (Some(Lane::Background), 0));
-        let (lane, grants) = decide_lane(false, false, 7, false);
-        assert_eq!((lane, grants), (None, 7));
-    }
-
-    #[test]
-    fn fresh_background_waiter_resets_the_burst_like_v1() {
-        let (lane, grants) = decide_lane(true, true, 8, true);
-        assert_eq!((lane, grants), (Some(Lane::Foreground), 1));
-        let (lane, grants) = decide_lane(true, true, 8, false);
-        assert_eq!((lane, grants), (Some(Lane::Background), 0));
     }
 }
