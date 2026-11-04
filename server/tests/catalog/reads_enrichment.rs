@@ -1,13 +1,24 @@
 //! Search-result counts run through the app against a scripted
-//! ListenBrainz: a failed row stays on its row.
+//! ListenBrainz and the recorded Last.fm answer: a failed row stays on its
+//! row.
 
-/// ListenBrainz on a loopback origin, refusing the second artist.
-fn listenbrainz_stub() -> axum::Router {
+/// ListenBrainz on a loopback origin, refusing the second artist, and
+/// Last.fm answering every read with the recorded `artist.getInfo`.
+fn counts_stub() -> axum::Router {
     use axum::extract::Path;
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
     use axum::routing::{get, post};
     axum::Router::new()
+        .route(
+            "/lastfm/",
+            get(|| async {
+                (
+                    [(axum::http::header::CONTENT_TYPE, "application/json")],
+                    include_str!("../fixtures/lastfm/artist_getinfo.json"),
+                )
+            }),
+        )
         .route(
             "/listenbrainz/1/popularity/top-release-groups-for-artist/{mbid}",
             get(|Path(mbid): Path<String>| async move {
@@ -34,12 +45,12 @@ fn listenbrainz_stub() -> axum::Router {
 /// ListenBrainz counts sum an artist's top release groups and read album
 /// counts in one call; a refused artist call leaves that row without a
 /// count and notes ListenBrainz once, and the other rows still count.
+/// With ListenBrainz off, an instance Last.fm key gives Last.fm counts.
 #[tokio::test]
 async fn a_failed_count_stays_on_its_row() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let origin = format!("http://{}", listener.local_addr().unwrap());
-    let server =
-        tokio::spawn(async move { axum::serve(listener, listenbrainz_stub()).await.unwrap() });
+    let server = tokio::spawn(async move { axum::serve(listener, counts_stub()).await.unwrap() });
     let app =
         crate::common::TestApp::start_with("search-counts", crate::common::outbound_at(&origin))
             .await;
@@ -62,6 +73,35 @@ async fn a_failed_count_stays_on_its_row() {
     assert!(body["source"].is_null(), "{body}");
     assert!(body["artists"][0]["listen_count"].is_null(), "{body}");
     assert_eq!(body["degradations"], serde_json::json!([]), "{body}");
+
+    // With ListenBrainz off and an instance Last.fm key, Last.fm counts.
+    let (status, body) = app
+        .call(
+            "PUT",
+            "/api/v3/settings/lastfm",
+            &auth,
+            Some(serde_json::json!({
+                "enabled": true,
+                "api_key": "instance-key",
+                "shared_secret": "instance-secret",
+            })),
+        )
+        .await;
+    assert!(status.is_success(), "{status} {body}");
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/v3/search/enrich/batch",
+            &auth,
+            Some(serde_json::json!({
+                "artists": [{"musicbrainz_id": "artist-mbid-1", "name": "Portishead"}],
+                "albums": [],
+            })),
+        )
+        .await;
+    assert!(status.is_success(), "{status} {body}");
+    assert_eq!(body["source"], "lastfm", "{body}");
+    assert_eq!(body["artists"][0]["listen_count"], 8_489_583, "{body}");
 
     let (status, body) = app
         .call(

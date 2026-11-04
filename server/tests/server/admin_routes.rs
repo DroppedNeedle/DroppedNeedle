@@ -174,6 +174,50 @@ async fn queue_stats_reports_a_failed_checkpoint_as_a_code() {
     );
 }
 
+/// A call a provider client sends is counted on the admin's provider
+/// stats under its source, the priority its caller stated and its outcome.
+#[tokio::test]
+async fn provider_stats_count_a_call_by_source_priority_and_outcome() {
+    use droppedneedle_providers::lastfm::LastFmCredentials;
+    use droppedneedle_providers::test_support::ScriptedWire;
+    use droppedneedle_providers::{Providers, RequestPriority};
+
+    let mut rig = Rig::open("provider-stats").await;
+    let wire = Arc::new(ScriptedWire::new());
+    wire.answer(
+        "http://127.0.0.1:9/lastfm/",
+        200,
+        &[("content-type", "application/json")],
+        include_str!("../fixtures/lastfm/artist_getinfo.json"),
+    );
+    let providers = Arc::new(Providers::unpaced(wire));
+    rig.admin.providers = providers.clone();
+    let creds = LastFmCredentials {
+        api_key: "instance-key".to_owned(),
+        ..LastFmCredentials::default()
+    };
+    let info = providers
+        .lastfm
+        .artist_info(&creds, "Radiohead", None, RequestPriority::UserInitiated)
+        .await
+        .expect("the recorded answer reads");
+    assert!(info.is_some());
+
+    let (status, payload) =
+        call(rig.admin_app(), "GET", "/api/v3/admin/provider-stats", None).await;
+    assert_eq!(status, StatusCode::OK, "{payload}");
+    let rows: Vec<&Value> = payload["calls"]
+        .as_array()
+        .expect("calls")
+        .iter()
+        .filter(|row| row["source"] == "lastfm")
+        .collect();
+    assert_eq!(rows.len(), 1, "{payload}");
+    assert_eq!(rows[0]["priority"], "user_initiated");
+    assert_eq!(rows[0]["outcome"], "ok");
+    assert_eq!(rows[0]["calls"], 1);
+}
+
 const ALPHA: &str = "aaaaaaaa-0000-4000-8000-000000000001";
 const BETA: &str = "bbbbbbbb-0000-4000-8000-000000000002";
 const FIRST: &str = "cccccccc-0000-4000-8000-000000000003";
