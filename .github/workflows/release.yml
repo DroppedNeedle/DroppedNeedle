@@ -142,8 +142,8 @@ jobs:
             exit 1
           fi
 
-      # CI is path-filtered, so a commit that changed no code has no v3 CI
-      # run. Start v3 CI by hand on the release branch for such a commit.
+      # CI is path-filtered, so a commit that changed no code has no CI
+      # run. Start CI by hand on the release branch for such a commit.
       - name: Check CI passed on the commit
         env:
           GH_TOKEN: ${{ github.token }}
@@ -161,7 +161,7 @@ jobs:
 
           v3="$(latest .github/workflows/v3-ci.yml)"
           if [[ "$v3" != "completed success" ]]; then
-            echo "::error::v3 CI has not passed on $sha (latest run: ${v3:-none})."
+            echo "::error::CI has not passed on $sha (latest run: ${v3:-none})."
             exit 1
           fi
 

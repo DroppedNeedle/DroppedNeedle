@@ -151,12 +151,12 @@ If you used AI, say so in the pull request: the tool and model (for example Clau
 
 Maintainers cut releases. A release is a version tag, `v3.1.0` or `v3.1.0-rc.1` for a pre-release, on a commit of the release branch that CI has passed on. Bump `version` under `[workspace.package]` in `server/Cargo.toml` to the same version, without the `v`, before tagging: the workflow rejects a tag that does not match it. Pushing the tag starts the Release workflow, which checks the tag, the branch and CI, then waits for a maintainer to approve the `release` environment before it publishes `droppedneedle/droppedneedle:<tag>`. `:latest` only moves forward: a pre-release never moves it, and neither does a patch to an older line once a higher full version is tagged.
 
-CI is path-filtered: a commit that changes no code gets no v3 CI run, and a run on one that changes only some areas skips the other jobs and still passes. The Release workflow takes any passing v3 CI run on the commit, so start a full one by hand.
+CI is path-filtered: a commit that changes no code gets no CI run, and a run on one that changes only some areas skips the other jobs and still passes. The Release workflow takes any passing CI run on the commit, so start a full one by hand.
 
 Only maintainers tag, and nothing but a version tag publishes a release image. To cut one:
 
 1. Bump `version` in `server/Cargo.toml` to the release version and push that commit to the release branch.
-2. Start v3 CI by hand on that commit, so every job runs, and wait for it to pass.
+2. Start CI by hand on that commit, so every job runs, and wait for it to pass.
 3. Check that the latest Frontend CI run on the release branch and the weekly Perf budgets run are green.
 4. Run the release dry run described below.
 5. Push the tag.

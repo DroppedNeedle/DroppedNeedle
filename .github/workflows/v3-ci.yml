@@ -1,4 +1,4 @@
-name: v3 CI
+name: CI
 
 # Runs for pushes to any branch and for pull requests, so it keeps working
 # when the release branch is renamed. Dependabot branches are covered by
