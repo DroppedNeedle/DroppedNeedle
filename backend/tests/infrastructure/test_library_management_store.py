@@ -920,6 +920,7 @@ def test_schema_ratchet_is_idempotent_and_has_no_management_side_effects(
         "idx_management_plan_destination",
         "idx_management_apply_idempotency",
         "idx_management_journal_recovery",
+        "idx_management_import_recovery",
         "idx_local_track_identity_release_track",
     }.issubset(indexes)
     assert foreign_key_errors == []
@@ -928,6 +929,28 @@ def test_schema_ratchet_is_idempotent_and_has_no_management_side_effects(
     assert "proposed_settings_revision" in management_job_columns
     assert "apply_idempotency_key" in management_job_columns
     assert "recovery_evidence_json" in journal_columns
+
+
+def test_import_bundle_recovery_query_uses_state_index(db_path: Path) -> None:
+    """The operation worker polls recoverable import bundles every few seconds.
+
+    Each bundle row carries a multi-megabyte request payload stored before the
+    ``state`` column, so a table scan reads every payload just to discard the
+    row. The recovery query must resolve through the state index instead.
+    """
+    NativeLibraryStore(db_path, threading.Lock())
+
+    with sqlite3.connect(db_path) as connection:
+        plan = connection.execute(
+            "EXPLAIN QUERY PLAN "
+            "SELECT * FROM library_management_import_bundles "
+            "WHERE state IN (?,?,?,?) ORDER BY updated_at,id LIMIT ?",
+            ("preparing", "publishing", "catalog_committed", "cleanup_pending", 100),
+        ).fetchall()
+
+    details = " | ".join(str(row[3]) for row in plan)
+    assert "idx_management_import_recovery" in details, details
+    assert "SCAN library_management_import_bundles" not in details, details
 
 
 def test_management_preview_proposed_revision_ratchet_is_idempotent(
