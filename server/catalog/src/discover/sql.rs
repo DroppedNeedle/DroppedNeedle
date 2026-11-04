@@ -10,7 +10,7 @@ use droppedneedle_kernel::db::statement::ListLen;
 use droppedneedle_kernel::db::time::Millis;
 
 use crate::artwork::local::art_tracks_column;
-use crate::local::definitions::{live_album, musicbrainz, owned_album, owned_artist, track_codec};
+use crate::local::sql::{live_album, musicbrainz, owned_album, owned_artist, track_codec};
 use droppedneedle_library::identity::asked_groups;
 use droppedneedle_library::{named_group_guess, not_yet_identified, owns_group, recording_mbid};
 

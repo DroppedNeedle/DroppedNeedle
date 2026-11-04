@@ -1,8 +1,6 @@
 # Folders under server/ whose source still holds raw SQL outside a sql.rs.
 # The gate in tests/server/persist_schema.rs skips them. An area that moves
 # its statements into sql.rs deletes its line.
-catalog/src/local/definitions.rs
-kernel/src/events/
 tool/src/export/artist_keys.rs
 tool/src/export/bundle.rs
 tool/src/export/library_keys.rs

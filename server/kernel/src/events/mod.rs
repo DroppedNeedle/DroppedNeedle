@@ -32,6 +32,7 @@ mod follow;
 pub mod hub;
 pub mod model;
 pub mod revisions;
+pub(crate) mod sql;
 
 pub use hub::{EventHub, Subscription};
 

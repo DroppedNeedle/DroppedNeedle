@@ -33,6 +33,7 @@ pub fn statement_files() -> Vec<db::statement::StatementFile> {
         db::sql::registered(),
         db::cache::sql::registered(),
         jobs::queue::sql::registered(),
+        events::sql::registered(),
         jobs::sql::registered(),
         runtime_config::sql::registered(),
     ]

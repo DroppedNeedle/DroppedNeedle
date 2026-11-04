@@ -7,7 +7,7 @@
 // is written in parentheses.
 #![allow(unused_parens, clippy::double_parens)]
 
-use crate::local::definitions::{live_album, musicbrainz};
+use crate::local::sql::{live_album, musicbrainz};
 use droppedneedle_library::{match_flagged, recording_mbid};
 
 droppedneedle_kernel::sql! {

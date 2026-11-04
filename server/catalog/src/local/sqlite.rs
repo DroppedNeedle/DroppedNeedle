@@ -14,7 +14,7 @@
 //!   static bind list; only id IN-lists build placeholders.
 //! - Retired artists (`retired_into_artist_id` set) are merged away and read
 //!   as absent everywhere. Live, owned albums and a track's recording id
-//!   mean what [`super::definitions`] says.
+//!   mean what [`super::sql`] says.
 //! - Long lists page by keyset: each page reads the rows after the last
 //!   one sent, in an order that ends in the row id, so a deep page costs
 //!   what the first does. Their totals come from the maintained counts or

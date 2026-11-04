@@ -11,6 +11,7 @@ use std::collections::BTreeMap;
 
 use super::hub::EventHub;
 use super::model::{ActivityChanged, Event};
+use super::sql;
 use crate::db::{Db, DbError};
 use crate::jobs::{AlreadyRunning, Supervisor};
 use rusqlite::{Connection, OptionalExtension as _};
@@ -38,21 +39,14 @@ fn read_revisions(conn: &Connection) -> Result<BTreeMap<String, u64>, DbError> {
         .iter()
         .map(|stream| ((*stream).to_owned(), 0))
         .collect();
-    let mut statement =
-        conn.prepare("SELECT stream_kind, value FROM library_event_stream_revisions")?;
-    let rows = statement.query_map([], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
-    })?;
+    let mut statement = conn.prepare(sql::STREAM_REVISIONS.text())?;
+    let rows = statement.query_map([], sql::StreamRevision::read)?;
     for row in rows {
-        let (stream, value) = row?;
-        revisions.insert(stream, u64::try_from(value).unwrap_or(0));
+        let sql::StreamRevision { stream_kind, value } = row?;
+        revisions.insert(stream_kind, u64::try_from(value).unwrap_or(0));
     }
     let catalog: Option<i64> = conn
-        .query_row(
-            "SELECT value FROM library_catalog_revision WHERE singleton = 1",
-            [],
-            |row| row.get(0),
-        )
+        .query_row(sql::CATALOG_REVISION.text(), [], |row| row.get(0))
         .optional()?;
     revisions.insert(
         "catalog".to_owned(),

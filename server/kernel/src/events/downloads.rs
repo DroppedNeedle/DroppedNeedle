@@ -13,6 +13,7 @@
 
 use super::hub::EventHub;
 use super::model::{DownloadsChanged, Event};
+use super::sql;
 use crate::db::{Db, DbError};
 use crate::jobs::{AlreadyRunning, Supervisor};
 use rusqlite::{Connection, OptionalExtension as _};
@@ -35,11 +36,7 @@ fn event_id(revision: i64) -> String {
 /// Read the global download activity revision.
 fn read_revision(conn: &Connection) -> Result<i64, DbError> {
     let revision: Option<i64> = conn
-        .query_row(
-            "SELECT revision FROM download_activity_global_revision WHERE singleton = 1",
-            [],
-            |row| row.get(0),
-        )
+        .query_row(sql::DOWNLOAD_REVISION.text(), [], |row| row.get(0))
         .optional()?;
     Ok(revision.unwrap_or(0))
 }
