@@ -1,6 +1,7 @@
 //! YouTube links a user found or set for albums and tracks. v3 keeps their
-//! times in integer milliseconds where v2 had ISO text, and a flag and count
-//! that are never NULL; the rest travels verbatim. The album id is a
+//! times in integer milliseconds where v2 had ISO text, and a flag that is
+//! never NULL; v2's stored track count stays behind, as v3 counts the track
+//! links. The rest travels verbatim. The album id is a
 //! MusicBrainz release group id, not a library id, so nothing waits on the
 //! library carry.
 
@@ -25,8 +26,6 @@ pub const ALBUM_LINKS: TableSection = TableSection {
         col("cover_url"),
         Column::new("created_at").from_sql(concat!("COALESCE(", millis!("created_at"), ", 0)")),
         Column::new("is_manual").from_sql(flag!("is_manual")),
-        Column::new("track_count")
-            .from_sql("CASE WHEN typeof(s.track_count) = 'integer' THEN s.track_count ELSE 0 END"),
     ],
     key: &["album_id"],
     unique: &[],

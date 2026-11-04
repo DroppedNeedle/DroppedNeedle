@@ -320,6 +320,10 @@ const SHIPPED: &[(&str, &str)] = &[
         "0137_library_scan_indexes.sql",
         "5fe5a1867a748067bc2576d474c08c9eb87a587125d58f88e3f01a1fbfd31a84",
     ),
+    (
+        "0138_lookup_indexes.sql",
+        "13b2851a45637374ae7110ac736df4af04c4df675c873ad71dbaad14b35bab5d",
+    ),
 ];
 
 /// The files in `server/migrations/`, by name.
@@ -624,7 +628,7 @@ fn scan_indexes_upgrade_and_keep_every_row() {
     let (before_rows, before_schema) = (rows(&connection), others(&connection));
     drop(connection);
 
-    migrate_file(&path, &CHAIN).unwrap();
+    migrate_file(&path, &Chain::new(&MIGRATIONS[..3], None)).unwrap();
     let connection = Connection::open(&path).unwrap();
     assert_eq!(scalar(&connection, "PRAGMA user_version"), 137);
     assert_eq!(rows(&connection), before_rows, "rows are untouched");
@@ -667,6 +671,111 @@ fn scan_indexes_upgrade_and_keep_every_row() {
             vec!["library_scan_album_moves 0".to_owned()],
             vec!["run_id".to_owned(), "local_track_id".to_owned()]
         )
+    );
+}
+
+/// 0138 indexes favourites and their names by item, indexes the blocklist
+/// by release group, drops the favourites index the primary key repeats
+/// and drops the YouTube link's stored track count. Every row keeps its
+/// other values and nothing else in the schema changes.
+#[test]
+fn lookup_indexes_upgrade_and_keep_every_row() {
+    let dir = ScratchDir::new("lookup-indexes");
+    let path = dir.join("app.db");
+    let connection = migrate(
+        Connection::open(&path).unwrap(),
+        &Chain::new(&MIGRATIONS[..3], None),
+    )
+    .unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 137);
+    connection
+        .execute_batch(
+            "INSERT INTO auth_users (id, display_name, created_at) VALUES ('u1', 'U', 1);
+             INSERT INTO catalog_user_favorites VALUES ('u1', 'track', 't1', 5);
+             INSERT INTO catalog_user_favorite_names VALUES ('u1', 'track', 't1', 'One');
+             INSERT INTO download_quarantine (source, identity, release_group_mbid, reason,
+                 quarantined_at) VALUES ('soulseek', 'peer/a', 'rg1', 'corrupt', 7);
+             INSERT INTO catalog_youtube_links (album_id, video_id, album_name, artist_name,
+                 embed_url, cover_url, created_at, is_manual, track_count)
+             VALUES ('rg1', 'v1', 'A', 'B', 'https://e/a', NULL, 9, 1, 4);",
+        )
+        .unwrap();
+    let rows = |connection: &Connection| {
+        texts(
+            connection,
+            "SELECT user_id || ':' || item_kind || ':' || item_id || ':' || created_at
+                 FROM catalog_user_favorites
+             UNION ALL SELECT user_id || ':' || item_id || ':' || display_name
+                 FROM catalog_user_favorite_names
+             UNION ALL SELECT id || ':' || source || ':' || identity || ':'
+                 || release_group_mbid || ':' || reason || ':' || quarantined_at
+                 FROM download_quarantine
+             UNION ALL SELECT album_id || ':' || video_id || ':' || album_name || ':'
+                 || artist_name || ':' || embed_url || ':' || COALESCE(cover_url, '-') || ':'
+                 || created_at || ':' || is_manual FROM catalog_youtube_links
+             ORDER BY 1",
+            [],
+        )
+    };
+    let changed = [
+        "idx_catalog_user_favorites_item",
+        "idx_catalog_user_favorite_names_item",
+        "idx_catalog_user_favorites_user_kind",
+        "idx_download_quarantine_release_group",
+        "catalog_youtube_links",
+    ];
+    let others = |connection: &Connection| {
+        let mut rows = schema_rows(connection);
+        rows.retain(|(_, name, _, _)| !changed.contains(&name.as_str()));
+        rows
+    };
+    let link_columns = |connection: &Connection| {
+        texts(
+            connection,
+            "SELECT name FROM pragma_table_info('catalog_youtube_links') ORDER BY cid",
+            [],
+        )
+    };
+    let (before_rows, before_schema, mut columns) = (
+        rows(&connection),
+        others(&connection),
+        link_columns(&connection),
+    );
+    drop(connection);
+
+    migrate_file(&path, &CHAIN).unwrap();
+    let connection = Connection::open(&path).unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 138);
+    assert_eq!(rows(&connection), before_rows, "rows are untouched");
+    assert_eq!(others(&connection), before_schema, "nothing else changes");
+    columns.retain(|name| name != "track_count");
+    assert_eq!(
+        link_columns(&connection),
+        columns,
+        "only the track count goes"
+    );
+    let index_columns = |index: &str| {
+        texts(
+            &connection,
+            "SELECT name FROM pragma_index_info(?1) ORDER BY seqno",
+            [index],
+        )
+    };
+    assert_eq!(
+        index_columns("idx_catalog_user_favorites_item"),
+        ["item_kind", "item_id"]
+    );
+    assert_eq!(
+        index_columns("idx_catalog_user_favorite_names_item"),
+        ["item_kind", "item_id"]
+    );
+    assert_eq!(
+        index_columns("idx_download_quarantine_release_group"),
+        ["release_group_mbid"]
+    );
+    assert!(
+        index_columns("idx_catalog_user_favorites_user_kind").is_empty(),
+        "the repeated index is gone"
     );
 }
 
@@ -2105,6 +2214,10 @@ fn split_literals(text: &str) -> (String, Vec<(usize, String)>) {
 struct AllowedLiteral {
     path: &'static str,
     starts_with: &'static str,
+    /// The literal is `starts_with` and nothing more, as an HTTP method's
+    /// name is, so a statement in the same file that starts with that word
+    /// is still refused.
+    whole: bool,
     why: &'static str,
 }
 
@@ -2112,43 +2225,51 @@ const ALLOWED_LITERALS: &[AllowedLiteral] = &[
     AllowedLiteral {
         path: "kernel/src/db/analyze.rs",
         starts_with: "CREATE TABLE db_planner_stats_reload (x); DROP TABLE",
+        whole: false,
         why: "bumps the schema cookie so readers reload the planner statistics; the marker \
               table is never in the schema, so there is nothing to prepare it against",
     },
     AllowedLiteral {
         path: "compat/src/jellyfin/router.rs",
         starts_with: "DELETE",
+        whole: true,
         why: "the HTTP method's name in the Jellyfin route table, not a statement",
     },
     AllowedLiteral {
         path: "compat/src/shared/ratelimit.rs",
         starts_with: "DELETE",
+        whole: true,
         why: "the HTTP method's name when classing a request as a mutation, not a statement",
     },
     AllowedLiteral {
         path: "plugins/src/manifest.rs",
         starts_with: "DELETE",
+        whole: true,
         why: "the HTTP method's name in a plugin's route list, not a statement",
     },
     AllowedLiteral {
         path: "plugins/src/capabilities/routes.rs",
         starts_with: "DELETE",
+        whole: true,
         why: "an HTTP method a plugin route may declare, not a statement",
     },
     AllowedLiteral {
         path: "src/bootstrap/data_dirs.rs",
         starts_with: "PRAGMA ",
+        whole: false,
         why: "the stamp probe reads a file's version before the runtime opens it, and its \
               tests put a probed file in WAL mode; a pragma prepares only in kernel/src/db/",
     },
     AllowedLiteral {
         path: "src/bootstrap/data_dirs.rs",
         starts_with: "CREATE TABLE ",
+        whole: false,
         why: "the stamp probe's tests build a small file of each kind it tells apart",
     },
     AllowedLiteral {
         path: "src/admin/backups.rs",
         starts_with: "PRAGMA ",
+        whole: false,
         why: "the backup checks read a backup file's integrity and version, a file the \
               server never opens as its database",
     },
@@ -2210,7 +2331,12 @@ fn raw_sql_stays_in_sql_files() {
                 continue;
             }
             if let Some(at) = ALLOWED_LITERALS.iter().position(|allowed| {
-                allowed.path == source.path && value.starts_with(allowed.starts_with)
+                allowed.path == source.path
+                    && if allowed.whole {
+                        value == allowed.starts_with
+                    } else {
+                        value.starts_with(allowed.starts_with)
+                    }
             }) {
                 allowed_used[at] = true;
                 continue;

@@ -1,9 +1,8 @@
 //! SQLite store over `catalog_youtube_links` and `catalog_youtube_track_links`.
 //!
 //! Reads go through the reader pool, writes through the writer lane, one
-//! transaction per call. Track counts are always counted live when read;
-//! the stored `track_count` column is still kept up to date because the v2
-//! export carries it.
+//! transaction per call. Track counts are counted from the track links when
+//! read; none is stored.
 //!
 //! Times are stored as integer milliseconds, which SQLite makes inside the
 //! write so a row's time is the time it was stored, and read as ISO-8601 UTC

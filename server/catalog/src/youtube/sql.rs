@@ -91,9 +91,8 @@ droppedneedle_kernel::sql! {
     }
     /// A saved album link up to its cover rule.
     fragment SAVE_LINK_START = "INSERT INTO catalog_youtube_links (album_id, video_id, album_name, \
-         artist_name, embed_url, cover_url, created_at, is_manual, track_count) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, " + NOW + ", ?7, \
-         (SELECT COUNT(*) FROM catalog_youtube_track_links WHERE album_id = ?1)) \
+         artist_name, embed_url, cover_url, created_at, is_manual) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, " + NOW + ", ?7) \
          ON CONFLICT(album_id) DO UPDATE SET video_id = excluded.video_id, \
          album_name = excluded.album_name, artist_name = excluded.artist_name, \
          embed_url = excluded.embed_url, cover_url = ";
@@ -125,11 +124,10 @@ droppedneedle_kernel::sql! {
          video_id = excluded.video_id, artist_name = excluded.artist_name, \
          embed_url = excluded.embed_url, recording_mbid = excluded.recording_mbid, \
          created_at = excluded.created_at";
-    /// Make sure an album with track videos has an entry, with their count.
+    /// Make sure an album with track videos has an entry.
     pub(super) ENSURE_LINK = "INSERT INTO catalog_youtube_links (album_id, video_id, album_name, \
-         artist_name, embed_url, cover_url, created_at, is_manual, track_count) \
-         VALUES (?1, NULL, ?2, ?3, NULL, ?4, " + NOW + ", 0, \
-         (SELECT COUNT(*) FROM catalog_youtube_track_links WHERE album_id = ?1)) \
-         ON CONFLICT(album_id) DO UPDATE SET track_count = excluded.track_count, \
+         artist_name, embed_url, cover_url, created_at, is_manual) \
+         VALUES (?1, NULL, ?2, ?3, NULL, ?4, " + NOW + ", 0) \
+         ON CONFLICT(album_id) DO UPDATE SET \
          cover_url = COALESCE(excluded.cover_url, catalog_youtube_links.cover_url)";
 }
