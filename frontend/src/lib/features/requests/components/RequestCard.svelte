@@ -480,8 +480,8 @@
 								);
 							}}
 							disabled={reimport.isPending}
-							title="Already fixed this in slskd? Check the downloads mount again without re-searching."
-							aria-label="Retry import from slskd"
+							title="Already fixed this in the download client? Check the downloads mount again without re-searching."
+							aria-label="Retry import"
 						/>
 					{/if}
 					{#if authStore.isAdmin && !isTrackRequest && item.status === 'imported' && item.in_library !== false}
