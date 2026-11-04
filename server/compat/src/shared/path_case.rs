@@ -33,39 +33,37 @@ pub fn canonicalize(templates: &[&str], path: &str) -> Option<String> {
     if !is_compat_path(path) {
         return None;
     }
-    let mut best: Option<(Vec<bool>, String)> = None;
+    let got: Vec<&str> = path.split('/').collect();
+    let mut best: Option<(Vec<bool>, &str)> = None;
     for template in templates {
-        let Some(canon) = match_template(template, path) else {
+        if !matches_template(template, &got) {
             continue;
-        };
+        }
         let rank: Vec<bool> = template.split('/').map(|w| !is_param(w)).collect();
         if best.as_ref().is_none_or(|(top, _)| rank > *top) {
-            best = Some((rank, canon));
+            best = Some((rank, template));
         }
     }
-    best.map(|(_, canon)| canon).filter(|canon| canon != path)
+    let (_, template) = best?;
+    let canon = template
+        .split('/')
+        .zip(&got)
+        .map(|(w, g)| if is_param(w) { *g } else { w })
+        .collect::<Vec<_>>()
+        .join("/");
+    (canon != path).then_some(canon)
 }
 
-fn match_template(template: &str, path: &str) -> Option<String> {
-    let want: Vec<&str> = template.split('/').collect();
-    let got: Vec<&str> = path.split('/').collect();
-    if want.len() != got.len() {
-        return None;
-    }
-    let mut out = Vec::with_capacity(want.len());
-    for (w, g) in want.iter().zip(got.iter()) {
-        if is_param(w) {
-            if g.is_empty() {
-                return None;
-            }
-            out.push((*g).to_owned());
-        } else if w.eq_ignore_ascii_case(g) {
-            out.push((*w).to_owned());
-        } else {
-            return None;
-        }
-    }
-    Some(out.join("/"))
+/// Whether `got`, a path split on `/`, fits `template`: as many segments,
+/// each parameter non-empty and each static segment equal ignoring case.
+fn matches_template(template: &str, got: &[&str]) -> bool {
+    let mut want = template.split('/');
+    let fits = got.iter().all(|g| match want.next() {
+        Some(w) if is_param(w) => !g.is_empty(),
+        Some(w) => w.eq_ignore_ascii_case(g),
+        None => false,
+    });
+    fits && want.next().is_none()
 }
 
 fn is_param(segment: &str) -> bool {

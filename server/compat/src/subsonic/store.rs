@@ -113,7 +113,7 @@ fn view_track(track: PlayerTrack, local_first: bool) -> ViewTrack {
         musicbrainz_recording_id: track.recording_mbid.clone().filter(|id| is_valid_mbid(id)),
         musicbrainz_artist_id: track.artist_mbid,
         musicbrainz_album_artist_id: track.album_artist_mbid,
-        recording_mbid: track.recording_mbid,
+        recording_mbid: track.recording_mbid.filter(|id| is_valid_mbid(id)),
         provider_identity_projected: true,
         played_at: None,
         sort_name: track.sort_name,

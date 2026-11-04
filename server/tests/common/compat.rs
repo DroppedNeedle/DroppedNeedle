@@ -25,9 +25,12 @@ fn goldens_dir() -> PathBuf {
 /// Whether this run rewrites the goldens, from the values of `COMPAT_BLESS`
 /// and `CI`. A CI run never rewrites one: with both set the answer is the
 /// refusal, so a bless can neither pass as a compare nor commit itself.
+/// `CI` set to `false` or `0`, as some shells and tools leave it, is not CI.
 pub fn bless_requested(compat_bless: Option<&str>, ci: Option<&str>) -> Result<bool, String> {
     let blessing = compat_bless.is_some();
-    let in_ci = ci.is_some_and(|value| !value.is_empty());
+    let in_ci = ci.map(str::trim).is_some_and(|value| {
+        !value.is_empty() && value != "0" && !value.eq_ignore_ascii_case("false")
+    });
     if blessing && in_ci {
         return Err(
             "COMPAT_BLESS and CI are both set: goldens are never rewritten in CI. \

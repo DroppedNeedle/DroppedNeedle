@@ -24,6 +24,8 @@ fn goldens_are_safe() {
     assert_eq!(bless_requested(None, Some("true")), Ok(false));
     assert_eq!(bless_requested(Some("1"), None), Ok(true));
     assert_eq!(bless_requested(Some("1"), Some("")), Ok(true));
+    assert_eq!(bless_requested(Some("1"), Some("false")), Ok(true));
+    assert_eq!(bless_requested(Some("1"), Some("0")), Ok(true));
     let refusal = bless_requested(Some("1"), Some("true")).expect_err("refused");
     assert!(
         refusal.contains("COMPAT_BLESS") && refusal.contains("CI"),
