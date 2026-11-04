@@ -19,8 +19,8 @@
 //!   the recycle bin and left it
 //!   ([`droppedneedle_library::album_gone_through_bin`]): a removed album
 //!   is listed, marked "no files", while any of its files can still be put
-//!   back. One whose files vanished from disk stays listed. Every album
-//!   still opens by its id.
+//!   back. One whose files vanished from disk stays listed, unless they
+//!   vanished before it was removed. Every album still opens by its id.
 //! - **Live track.** A track every read shows is indexed and sits on a
 //!   live album. Merges retire only emptied albums, so a track left on a
 //!   retired one is a leftover no read lists, counts or returns.

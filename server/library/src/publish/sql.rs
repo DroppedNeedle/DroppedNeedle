@@ -38,9 +38,11 @@ macro_rules! in_bin {
 /// missing because its file went to the bin (a copy reached the bin no
 /// earlier than the track went missing: a removal marks the track missing
 /// in its commit and its copy lands after), and none is there now (put
-/// back, expired or emptied). A track missing for another reason (its
-/// folder vanished, even after an earlier trip to the bin and back) or
-/// one excluded keeps the album out of this.
+/// back, expired or emptied). A track whose file vanished before the
+/// album's last removal counts as removed with it: the person removed the
+/// album with that track already gone. A track that went missing later
+/// (its folder vanished, even after an earlier trip to the bin and back)
+/// or one excluded keeps the album out of this.
 #[macro_export]
 macro_rules! album_gone_through_bin {
     ($album_id:expr) => {
@@ -50,8 +52,13 @@ macro_rules! album_gone_through_bin {
             ") AND NOT EXISTS (SELECT 1 FROM local_tracks gbt WHERE gbt.local_album_id = ",
             $album_id,
             " AND (gbt.availability <> 'missing' OR gbt.missing_at IS NULL \
-             OR NOT EXISTS (SELECT 1 FROM library_publish_replacements gbr \
+             OR (NOT EXISTS (SELECT 1 FROM library_publish_replacements gbr \
              WHERE gbr.replaced_track_id = gbt.id AND gbr.recycled_at >= gbt.missing_at) \
+             AND gbt.missing_at > IFNULL((SELECT MAX(gbo.missing_at) \
+             FROM library_publish_replacements gbl \
+             JOIN local_tracks gbo ON gbo.id = gbl.replaced_track_id \
+             WHERE gbo.local_album_id = gbt.local_album_id AND +gbo.availability = 'missing' \
+             AND gbl.recycled_at >= gbo.missing_at), -1)) \
              OR EXISTS (SELECT 1 FROM library_publish_replacements gbr \
              JOIN library_publish_journal gbj ON gbj.id = gbr.journal_id \
              WHERE gbr.replaced_track_id = gbt.id AND ",
