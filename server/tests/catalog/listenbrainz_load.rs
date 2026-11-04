@@ -580,7 +580,8 @@ async fn journey(tag: &str, lastfm: bool) -> Measured {
     );
     let requests = RequestsState {
         quota: Arc::new(
-            droppedneedle_acquire::requests::quota::QuotaLedger::unlimited(acquire.db.clone()),
+            droppedneedle_acquire::requests::quota::QuotaLedger::unlimited(acquire.db.clone())
+                .expect("quota ledger"),
         ),
         ..acquire.requests.clone()
     };

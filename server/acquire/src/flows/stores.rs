@@ -396,23 +396,18 @@ impl UpgradePolicy {
 /// the catalog the same way the download landing does (an indexed file on
 /// an album identified as the group, or whose own tags name the group);
 /// tests mark MBIDs by hand.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct LibraryPresence {
     mbids: Mutex<HashSet<String>>,
-    catalog: Option<Db>,
+    catalog: Db,
 }
 
 impl LibraryPresence {
-    /// Empty presence.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     /// Presence read from the library catalog over the reader pool.
     pub fn over_catalog(catalog: Db) -> Self {
         Self {
             mbids: Mutex::new(HashSet::new()),
-            catalog: Some(catalog),
+            catalog,
         }
     }
 
@@ -437,10 +432,7 @@ impl LibraryPresence {
         if marked {
             return true;
         }
-        let Some(catalog) = &self.catalog else {
-            return false;
-        };
-        match crate::edition::library_holds(catalog, mbid.trim()).await {
+        match crate::edition::library_holds(&self.catalog, mbid.trim()).await {
             Ok(owned) => owned,
             Err(error) => {
                 tracing::warn!(mbid, %error, "library presence unreadable");

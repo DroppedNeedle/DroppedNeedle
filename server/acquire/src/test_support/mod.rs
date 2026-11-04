@@ -42,6 +42,20 @@ pub fn scratch_settings(dir: &std::path::Path) -> Result<ConfigStore, String> {
     ConfigStore::scratch(dir, crypto)
 }
 
+impl crate::requests::quota::QuotaLedger {
+    /// A ledger over a download policy nobody saved, whose defaults set no
+    /// limits. Its settings live in a folder beside the database file.
+    pub fn unlimited(db: AcquireDb) -> Result<Self, String> {
+        let dir = db
+            .path()
+            .parent()
+            .ok_or("the database has no folder")?
+            .join("quota-settings");
+        let settings = scratch_settings(&dir)?;
+        Ok(Self::new(settings.live(), db))
+    }
+}
+
 impl AcquireDb {
     /// Scratch database for tests: a private copy of the migrated template
     /// in the temp dir, removed once the last handle on it has closed.

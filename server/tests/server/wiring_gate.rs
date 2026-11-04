@@ -192,6 +192,16 @@ fn nothing_is_wired_after_construction() {
 /// parameter or field), each with its reason.
 const LATE_ALLOWED: &[(&str, &str, &str)] = &[
     (
+        "acquire/src/probes.rs",
+        "sabnzbd",
+        "one health pass's SABnzbd queue, there only while the section sets one up",
+    ),
+    (
+        "acquire/src/probes.rs",
+        "slskd",
+        "one health pass's slskd client, there only while the section sets one up",
+    ),
+    (
         "acquire/src/usenet/sabnzbd.rs",
         "grab",
         "the release's own indexer, there only for a release found through one",

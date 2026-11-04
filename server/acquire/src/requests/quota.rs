@@ -95,9 +95,8 @@ pub struct EffectiveQuota {
 /// Quota decisions over the live policy, the admin overrides and the
 /// durable request and library rows.
 pub struct QuotaLedger {
-    /// The download-policy section the limits come from; `None` for no
-    /// limits.
-    policy: Option<Live<DownloadPolicy>>,
+    /// The download-policy section the limits come from.
+    policy: Live<DownloadPolicy>,
     /// Per-user overrides. The admin face persists them in `user_quotas`
     /// and reloads them at boot.
     overrides: RwLock<HashMap<String, QuotaOverride>>,
@@ -110,15 +109,6 @@ pub struct QuotaLedger {
 impl QuotaLedger {
     /// Ledger over the live download policy and the database.
     pub fn new(policy: Live<DownloadPolicy>, db: AcquireDb) -> Self {
-        Self::over(Some(policy), db)
-    }
-
-    /// Ledger with no limits (the policy defaults).
-    pub fn unlimited(db: AcquireDb) -> Self {
-        Self::over(None, db)
-    }
-
-    fn over(policy: Option<Live<DownloadPolicy>>, db: AcquireDb) -> Self {
         Self {
             policy,
             overrides: RwLock::new(HashMap::new()),
@@ -130,10 +120,8 @@ impl QuotaLedger {
     /// The limits as saved right now. A download policy that does not read
     /// is never "unlimited": every check fails until it is saved again.
     fn policy(&self) -> Result<QuotaPolicy, RequestsError> {
-        let Some(live) = self.policy.as_ref() else {
-            return Ok(QuotaPolicy::default());
-        };
-        live.read()
+        self.policy
+            .read()
             .map(|policy| QuotaPolicy::from_policy(&policy))
             .ok_or_else(|| RequestsError::internal(&"download settings cannot be read"))
     }

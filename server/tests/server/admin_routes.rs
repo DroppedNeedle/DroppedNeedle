@@ -62,7 +62,8 @@ impl Rig {
                     runtime.db().clone(),
                     platform.clock.clone(),
                 ),
-            ),
+            )
+            .expect("quota ledger"),
         );
         let providers = Arc::new(droppedneedle_providers::Providers::build(
             &platform,

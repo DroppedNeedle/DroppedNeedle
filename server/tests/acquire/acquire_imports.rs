@@ -1617,7 +1617,7 @@ async fn readiness_answers(setup: SourceSetup) -> Vec<bool> {
         JobStore::new(db.clone()),
         worker,
         targets,
-        Arc::new(QuotaLedger::unlimited(db)),
+        Arc::new(QuotaLedger::unlimited(db).expect("quota ledger")),
         platform.events.clone(),
     ));
     let principal = test_principal(&user_id, Role::User, "sess-1", SessionKind::Standard);

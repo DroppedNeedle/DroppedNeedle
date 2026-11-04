@@ -83,7 +83,7 @@ pub(crate) async fn requests_state() -> (RequestsState, AcquireDb, Arc<DownloadD
         &library,
         &crate::common::bundles::collections_at(&platform).stores,
     );
-    let quota = Arc::new(QuotaLedger::unlimited(acquire.db.clone()));
+    let quota = Arc::new(QuotaLedger::unlimited(acquire.db.clone()).expect("quota ledger"));
     let state = RequestsState {
         quota,
         ..acquire.requests.clone()

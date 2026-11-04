@@ -247,7 +247,7 @@ async fn wanted_with_slskd(db: &AcquireDb, slskd_on: bool) -> Wanted {
         })
         .expect("watcher settings save");
     let (sources, slskd) = sources_over(db, &settings, slskd_on).await;
-    let library = Arc::new(LibraryPresence::new());
+    let library = Arc::new(LibraryPresence::over_catalog(db.db().clone()));
     let events = EventHub::new();
     Wanted {
         deps: WantedDeps {
@@ -453,7 +453,7 @@ async fn status_sweep_settles_what_the_journal_missed() {
     seed_task(&db, "task-done", "rg-done", TaskStatus::Completed).await;
     seed_task(&db, "task-short", "rg-short", TaskStatus::Partial).await;
     seed_task(&db, "task-retry", "rg-retried", TaskStatus::Completed).await;
-    let library = Arc::new(LibraryPresence::new());
+    let library = Arc::new(LibraryPresence::over_catalog(db.db().clone()));
     library.add(&["rg-held", "rg-gone", "rg-partial", "rg-cancelled"]);
     let recorded = Arc::new(crate::common::bundles::FulfilledTicks::default());
     let deps = SyncDeps {
@@ -566,7 +566,7 @@ async fn follow_poll_baselines_then_emits() {
             },
             RequestPriority::BackgroundSync,
         ));
-    let library = Arc::new(LibraryPresence::new());
+    let library = Arc::new(LibraryPresence::over_catalog(db.db().clone()));
     library.add(&["rg-owned"]);
     let settings = settings(&db);
     let downloads = dispatch(&db, &settings);
@@ -889,7 +889,7 @@ async fn follow_rig(db: &AcquireDb, settings: &ConfigStore) -> (FollowDeps, Arc<
         poll: Arc::new(poll),
         downloads,
         requests: requests.clone(),
-        library: Arc::new(LibraryPresence::new()),
+        library: Arc::new(LibraryPresence::over_catalog(db.db().clone())),
         ticks: ticks(db, &EventHub::new()).await,
         preferences: settings.live(),
         today: Arc::new(|| "2024-06-01".to_owned()),
@@ -1104,7 +1104,7 @@ async fn cancelling_a_wanted_download_stops_its_watch() {
     assert_eq!(checked.dispatched, 1);
 
     let requests = RequestsService::new(&RequestsState {
-        quota: Arc::new(QuotaLedger::unlimited(db.clone())),
+        quota: Arc::new(QuotaLedger::unlimited(db.clone()).expect("quota ledger")),
         dispatch: rig.deps.downloads.clone(),
         ..requests_over(&db).await
     });
@@ -1145,7 +1145,7 @@ async fn a_rejected_re_ask_stops_its_watch() {
     wanted_tick(NOW, &rig.deps).await;
 
     let requests = RequestsService::new(&RequestsState {
-        quota: Arc::new(QuotaLedger::unlimited(db.clone())),
+        quota: Arc::new(QuotaLedger::unlimited(db.clone()).expect("quota ledger")),
         dispatch: rig.deps.downloads.clone(),
         ..requests_over(&db).await
     });

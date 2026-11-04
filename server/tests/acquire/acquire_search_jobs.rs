@@ -122,7 +122,7 @@ async fn rig(mock: &MockSlskd, review: bool) -> Rig {
         JobStore::new(db.clone()),
         worker.clone(),
         targets,
-        Arc::new(QuotaLedger::unlimited(db.clone())),
+        Arc::new(QuotaLedger::unlimited(db.clone()).expect("quota ledger")),
         events.clone(),
     ));
     Rig {
@@ -777,7 +777,7 @@ async fn kept_rig_with(copies: &[Copy], saved: Value) -> KeptRig {
         JobStore::new(db.clone()),
         worker.clone(),
         targets,
-        Arc::new(QuotaLedger::unlimited(db.clone())),
+        Arc::new(QuotaLedger::unlimited(db.clone()).expect("quota ledger")),
         events.clone(),
     ));
     KeptRig {
