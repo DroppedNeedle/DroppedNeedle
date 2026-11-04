@@ -1,0 +1,66 @@
+name: Upgrade from v2
+description: The upgrade from v2 to v3 stopped, failed or left something wrong
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Check [Upgrading from v2](https://github.com/DroppedNeedle/DroppedNeedle/blob/v3/docs/upgrading-from-v2.md) first. Its table at the end lists every message the upgrade shows and what to do about it.
+  - type: input
+    id: v2-version
+    attributes:
+      label: v2 version
+      description: The version or image tag you ran before the upgrade.
+    validations:
+      required: true
+  - type: input
+    id: v3-version
+    attributes:
+      label: v3 version
+      description: The image tag you upgraded to.
+      placeholder: v3.0.0
+    validations:
+      required: true
+  - type: dropdown
+    id: how
+    attributes:
+      label: How did you upgrade?
+      options:
+        - The upgrade page in the browser
+        - droppedneedle-tool upgrade
+        - Export and import by hand
+    validations:
+      required: true
+  - type: textarea
+    id: stopped-at
+    attributes:
+      label: Where did it stop?
+      description: The step the page showed, or the message and code it gave (for example V2_WAL_PRESENT).
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: What you did and what you saw.
+    validations:
+      required: true
+  - type: textarea
+    id: report
+    attributes:
+      label: upgrade-report.json
+      description: |
+        If the upgrade got as far as its summary, attach `upgrade-report.json` from your cache folder (the page shows its path). Drag the file into this box. Look it over first: it names your folders and the callback addresses you changed.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Output from `docker compose logs droppedneedle` around the upgrade. This will be formatted as code automatically.
+      render: shell
+  - type: checkboxes
+    id: search-existing
+    attributes:
+      label: Duplicate check
+      options:
+        - label: I have searched existing issues and this hasn't been reported before.
+          required: true

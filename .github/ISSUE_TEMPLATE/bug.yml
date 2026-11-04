@@ -67,9 +67,12 @@ body:
     id: browser
     attributes:
       label: Browser
-      description: e.g. Chrome 120, Firefox 121, Safari 17
-    validations:
-      required: true
+      description: If it happened in the web app, e.g. Chrome 120, Firefox 121, Safari 17
+  - type: input
+    id: music-app
+    attributes:
+      label: Music app
+      description: If it happened in a music app, its name and version and whether it connects as Subsonic or Jellyfin, e.g. Symfonium 12.4 (Subsonic)
   - type: textarea
     id: additional-context
     attributes:
