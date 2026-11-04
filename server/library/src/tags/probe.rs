@@ -11,7 +11,6 @@
 //! nonzero exit with output: the samples decoded so far stand, and
 //! the partial flag tells downstream to corroborate before acting.
 
-use std::fs::File;
 use std::path::Path;
 use std::sync::OnceLock;
 
@@ -128,7 +127,7 @@ fn probe_adts_duration(
 }
 
 fn open_reader(path: &Path, format: AudioFormat) -> Result<OpenStream, TagsError> {
-    let file = File::open(path).map_err(|source| TagsError::Io {
+    let file = super::open_track(path).map_err(|source| TagsError::Io {
         path: path.display().to_string(),
         source,
     })?;
@@ -422,7 +421,10 @@ fn bit_depth_for(path: &Path, format: AudioFormat, is_alac: bool) -> Option<u8> 
     if lossy {
         return None;
     }
-    lofty::read_from_path(path)
+    let file = super::open_track(path).ok()?;
+    let file_type = lofty::file::FileType::from_path(path)?;
+    lofty::probe::Probe::with_file_type(std::io::BufReader::new(file), file_type)
+        .read()
         .ok()
         .and_then(|tagged| tagged.properties().bit_depth())
         .filter(|depth| *depth > 0)

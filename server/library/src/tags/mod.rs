@@ -34,9 +34,22 @@ pub use save::{
     document_from_captured, read_document, read_fields, save_tags,
 };
 
+use std::fs::File;
 use std::path::Path;
 
+use droppedneedle_kernel::beneath::{RootLinks, open_file_beneath};
 use thiserror::Error;
+
+/// Open a track for reading without following a link in its last
+/// component. Whoever writes a library or downloads folder can swap a file
+/// for a link or a FIFO; a link fails the open and a FIFO fails rather
+/// than hanging it. Every read of a track's bytes here goes through this.
+pub(crate) fn open_track(path: &Path) -> std::io::Result<File> {
+    let folder = path
+        .parent()
+        .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::InvalidInput))?;
+    open_file_beneath(folder, path, RootLinks::Follow)
+}
 
 /// Audio container the tag code understands, routed by file extension.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]

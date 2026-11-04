@@ -23,7 +23,7 @@
 //! tag itself (reads only; AAC stays read-only for writes).
 
 use std::fs::File;
-use std::io::{BufReader, Seek as _};
+use std::io::{BufReader, Read as _, Seek as _};
 use std::path::Path;
 
 use lofty::config::{ParseOptions, ParsingMode};
@@ -247,18 +247,41 @@ fn header_of(tagged: &TaggedFile, format: AudioFormat) -> HeaderInfo {
 /// rather than a date) instead of failing the whole file, so the track is
 /// still listed. Writes keep the default mode and refuse such a file.
 fn read_lenient(path: &Path) -> Result<TaggedFile, lofty::error::FileParseError> {
-    match lofty::read_from_path(path) {
+    let file = super::open_track(path)?;
+    let read = |options: ParseOptions| -> Result<TaggedFile, FileParseError> {
+        let mut reread = file.try_clone()?;
+        let mut file = file.try_clone()?;
+        file.rewind()?;
+        let mut probe = Probe::new(BufReader::new(file)).options(options);
+        if let Some(file_type) = FileType::from_path(path) {
+            probe = probe.set_file_type(file_type);
+        }
+        let tagged = probe.read()?;
+        confirm_untagged_mp4(&tagged, &mut reread)?;
+        Ok(tagged)
+    };
+    match read(ParseOptions::new()) {
         Err(error) if io_source(&error).is_none() => {
             tracing::debug!(path = %path.display(), %error, "tags read again in relaxed mode");
-            lofty::probe::Probe::open(path)?
-                .options(
-                    lofty::config::ParseOptions::new()
-                        .parsing_mode(lofty::config::ParsingMode::Relaxed),
-                )
-                .read()
+            read(ParseOptions::new().parsing_mode(ParsingMode::Relaxed))
         }
         read => read,
     }
+}
+
+/// lofty walks an MP4's `moov` while each child atom's header reads, so a
+/// failed read there ends the walk and the file parses with no tag. On a
+/// failing mount that would read as an untagged file. An MP4 that parsed
+/// with no tag is only believed once it reads to its end.
+pub(super) fn confirm_untagged_mp4<R: std::io::Read + std::io::Seek>(
+    tagged: &TaggedFile,
+    reader: &mut R,
+) -> std::io::Result<()> {
+    if tagged.file_type() != FileType::Mp4 || !tagged.tags().is_empty() {
+        return Ok(());
+    }
+    reader.rewind()?;
+    std::io::copy(reader, &mut std::io::sink()).map(|_| ())
 }
 
 /// The I/O error under a lofty read failure, if that is what it was.
@@ -332,7 +355,7 @@ fn audio_tag_from_file(path: &Path, tagged: &TaggedFile, format: AudioFormat) ->
 /// The tag editor's date for a mixed ID3v2.3 tag. A file that cannot be
 /// read again gives no date: lofty has already read it once.
 fn read_mixed_v23_date(path: &Path) -> Option<String> {
-    let bytes = std::fs::File::open(path).and_then(|mut file| id3v23_tag_bytes(&mut file));
+    let bytes = super::open_track(path).and_then(|mut file| id3v23_tag_bytes(&mut file));
     match bytes {
         Ok(bytes) => bytes
             .and_then(|bytes| super::save::mixed_v23_date(&bytes))
@@ -349,7 +372,6 @@ fn read_mixed_v23_date(path: &Path) -> Option<String> {
 /// v2.3 and no larger than lofty's own allocation limit. `None` for any
 /// other file; an oversized tag's body is never read.
 fn id3v23_tag_bytes(file: &mut impl std::io::Read) -> std::io::Result<Option<Vec<u8>>> {
-    use std::io::Read as _;
     let mut bytes = Vec::with_capacity(10);
     (&mut *file).take(10).read_to_end(&mut bytes)?;
     if bytes.len() < 10 || &bytes[..3] != b"ID3" || bytes[3] != 3 {
@@ -383,7 +405,7 @@ fn select_tag(tagged: &TaggedFile, format: AudioFormat) -> Option<&Tag> {
 pub fn read_cover_art(path: &Path) -> Result<Option<Vec<u8>>, TagsError> {
     // WMA is not read: the extension is rejected before any reader runs.
     format_for_path(path)?;
-    let file = File::open(path).map_err(|source| TagsError::Io {
+    let file = super::open_track(path).map_err(|source| TagsError::Io {
         path: path.display().to_string(),
         source,
     })?;
@@ -413,11 +435,14 @@ fn tagged_from(file: &File, path: &Path) -> Result<TaggedFile, TagsError> {
     let read = |options: Option<ParseOptions>| -> Result<TaggedFile, FileParseError> {
         let mut file = file.try_clone()?;
         file.rewind()?;
+        let mut reread = file.try_clone()?;
         let probe = Probe::with_file_type(BufReader::new(file), file_type);
-        match options {
+        let tagged = match options {
             Some(options) => probe.options(options).read(),
             None => probe.read(),
-        }
+        }?;
+        confirm_untagged_mp4(&tagged, &mut reread)?;
+        Ok(tagged)
     };
     // The same two passes as `read_lenient`.
     match read(None) {
@@ -679,10 +704,13 @@ fn gain(values: &[String], positive: bool) -> Option<f64> {
 /// key table, so the one mapping above serves AAC too. Unmapped keys and
 /// non-text items are skipped; a missing tag reads as untagged.
 fn read_ape_tag(path: &Path) -> Result<AudioTag, TagsError> {
-    let bytes = std::fs::read(path).map_err(|source| TagsError::Io {
-        path: path.display().to_string(),
-        source,
-    })?;
+    let mut bytes = Vec::new();
+    super::open_track(path)
+        .and_then(|mut file| file.read_to_end(&mut bytes))
+        .map_err(|source| TagsError::Io {
+            path: path.display().to_string(),
+            source,
+        })?;
     let Some(items) = parse_apev2(&bytes) else {
         return Ok(AudioTag::default());
     };
@@ -852,6 +880,31 @@ mod tests {
                 .unwrap_or_else(|| panic!("{file_type:?} read past the failure"));
             assert!(is_read_failure(&error), "{file_type:?}: {error}");
         }
+    }
+
+    /// A failed read of the header of `udta`, which holds an M4A's tags,
+    /// ends lofty's `moov` walk without an error and the file parses with
+    /// no tag. That read is not believed: the file is read to its end and
+    /// the failure surfaces.
+    #[test]
+    fn an_m4a_that_lost_its_tag_header_is_a_failed_read() {
+        let bytes: &'static [u8] =
+            include_bytes!("../../../tests/fixtures/library/management_full.m4a");
+        let udta = bytes
+            .windows(4)
+            .position(|name| name == b"udta")
+            .expect("the fixture has its udta");
+        let mut reader = FailsAfter {
+            inner: std::io::Cursor::new(bytes),
+            limit: udta as u64 - 2,
+        };
+        let tagged = Probe::with_file_type(&mut reader, FileType::Mp4)
+            .read()
+            .expect("lofty drops the failed header read");
+        assert!(lofty::file::TaggedFileExt::tags(&tagged).is_empty());
+        let error =
+            super::confirm_untagged_mp4(&tagged, &mut reader).expect_err("the failure surfaces");
+        assert_eq!(error.raw_os_error(), Some(libc::EIO));
     }
 
     /// The tag `pairs` make for a `tag_type` file.

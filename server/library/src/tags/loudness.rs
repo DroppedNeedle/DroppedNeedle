@@ -286,7 +286,7 @@ pub fn analyse_cached(path: &Path, deadline: Instant) -> Result<TrackLoudness, U
 
 fn file_sha256(path: &Path) -> std::io::Result<String> {
     use sha2::{Digest, Sha256};
-    let mut file = std::fs::File::open(path)?;
+    let mut file = super::open_track(path)?;
     let mut hasher = Sha256::new();
     std::io::copy(&mut file, &mut hasher)?;
     Ok(format!("{:x}", hasher.finalize()))

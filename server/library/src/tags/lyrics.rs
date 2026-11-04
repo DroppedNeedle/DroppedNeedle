@@ -25,7 +25,6 @@ use std::fs::File;
 use std::io::{Read as _, Seek as _, SeekFrom};
 use std::path::{Path, PathBuf};
 
-use droppedneedle_kernel::beneath::{RootLinks, open_file_beneath};
 use lofty::file::TaggedFileExt as _;
 use lofty::tag::{ItemKey, TagType};
 
@@ -338,22 +337,13 @@ impl Sidecars {
     }
 }
 
-/// Open a regular file for reading without following a link in the last
-/// component. A FIFO or device fails rather than hanging the open.
-fn open_no_follow(path: &Path) -> std::io::Result<File> {
-    let folder = path
-        .parent()
-        .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::InvalidInput))?;
-    open_file_beneath(folder, path, RootLinks::Follow)
-}
-
 /// The lyrics of a `.lrc` file. `Err` when it could not be read, `None`
 /// when what it holds does not count.
 fn read_sidecar(path: &Path) -> std::io::Result<Option<Lyrics>> {
     let skip = |why: &dyn std::fmt::Display| {
         tracing::debug!(path = %path.display(), reason = %why, "lyrics file skipped");
     };
-    let file = open_no_follow(path)?;
+    let file = super::open_track(path)?;
     let mut bytes = Vec::new();
     // One byte past the cap tells an oversized file from one exactly at it.
     let cap = u64::try_from(MAX_LYRICS_BYTES)
@@ -428,7 +418,7 @@ impl From<std::io::Error> for TagValuesError {
 /// `UnsyncLyrics`.
 fn tag_lyrics_values(audio: &Path, format: AudioFormat) -> Result<Vec<String>, TagValuesError> {
     const KEYS: [ItemKey; 2] = [ItemKey::Lyrics, ItemKey::UnsyncLyrics];
-    let mut file = open_no_follow(audio)?;
+    let mut file = super::open_track(audio)?;
     if format == AudioFormat::Aac {
         let bytes = ape_tail(&mut file)?;
         let items = super::read::parse_apev2(&bytes).unwrap_or_default();
@@ -460,6 +450,7 @@ fn tag_lyrics_values(audio: &Path, format: AudioFormat) -> Result<Vec<String>, T
                 }
             }
         })?;
+    super::read::confirm_untagged_mp4(&tagged, &mut opened.try_clone()?)?;
     let mut values = Vec::new();
     for key in KEYS {
         for tag in tagged.tags() {

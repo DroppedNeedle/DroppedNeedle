@@ -158,10 +158,20 @@ fn mp4_listing(
         // Two atoms of one code, or a value that is not text: left alone.
         match texts.filter(|texts| !texts.is_empty()) {
             None => {
+                // Empty UTF-8 data parses as bytes; it is empty text all
+                // the same.
                 let all_text = atom
                     .items
                     .iter()
-                    .all(|item| matches!(item, Mp4Item::Text(_)));
+                    .enumerate()
+                    .all(|(index, item)| match item {
+                        Mp4Item::Text(_) => true,
+                        Mp4Item::Bytes(bytes) => {
+                            bytes.is_empty()
+                                && matches!(atom.types.get(index), Some(None | Some(0 | 1)))
+                        }
+                        _ => false,
+                    });
                 let why = if all_text {
                     LeftAlone::Empty
                 } else {
@@ -739,4 +749,24 @@ fn atom_items(atoms: &[Mp4AtomTruth]) -> BTreeMap<[u8; 4], Vec<TypedItem>> {
         });
     }
     map
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{LeftAlone, Mp4AtomTruth, mp4_data_item, mp4_listing};
+
+    /// An item whose UTF-8 data is empty is left alone as empty, not as a
+    /// value that is not text; one holding real bytes still is.
+    #[test]
+    fn an_empty_text_item_is_left_alone_as_empty() {
+        let atom = |kind: [u8; 4], payload: &[u8]| Mp4AtomTruth {
+            kind,
+            items: vec![mp4_data_item(kind, Some(1), payload)],
+            types: vec![Some(1)],
+        };
+        let atoms = [atom(*b"zzz1", b""), atom(*b"zzz2", b"\0\x01\x02\x03\x04")];
+        let left_alone = mp4_listing(&atoms, false).1;
+        assert_eq!(left_alone.get("mp4:zzz1"), Some(&LeftAlone::Empty));
+        assert_eq!(left_alone.get("mp4:zzz2"), Some(&LeftAlone::NotText));
+    }
 }

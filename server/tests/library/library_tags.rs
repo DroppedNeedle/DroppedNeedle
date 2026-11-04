@@ -626,6 +626,46 @@ fn fixtures_read_their_tags() {
     );
 }
 
+/// A track path that is a link is never read through: a library folder's
+/// writer can point one anywhere, or swap in a FIFO that would hang the
+/// read. Every reader a scan, a landing or an analysis uses opens the
+/// file without following its last component.
+#[test]
+fn track_readers_refuse_a_link() {
+    let dir = ScratchDir::new("tags-link");
+    for name in [
+        "management_full.mp3",
+        "management_full.flac",
+        "management_full.aac",
+    ] {
+        let real = std::fs::canonicalize(fixture(name)).unwrap();
+        let link = dir.join(name);
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let format = format_for_path(&link).unwrap();
+        assert!(tags::read_tags(&link).is_err(), "{name}: read_tags");
+        assert!(
+            tags::read::read_scan_metadata(&link, format).is_err(),
+            "{name}: read_scan_metadata"
+        );
+        assert!(tags::probe(&link).is_err(), "{name}: probe");
+        assert!(
+            tags::read_cover_art(&link).is_err(),
+            "{name}: read_cover_art"
+        );
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        assert!(
+            tags::loudness::analyse_cached(&link, deadline).is_err(),
+            "{name}: analyse_cached"
+        );
+        if format == AudioFormat::Mp3 {
+            assert!(
+                tags::mpeg_length::length_measured(&link).is_err(),
+                "{name}: length_measured"
+            );
+        }
+    }
+}
+
 /// The reader says whether a file's artist names came from the list keys
 /// (ARTISTS, ALBUMARTISTS), the only names that line up with the
 /// MusicBrainz artist ids one for one. An ID3v2.3 file holds a list as one
