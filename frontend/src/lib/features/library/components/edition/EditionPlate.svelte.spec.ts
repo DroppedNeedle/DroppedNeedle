@@ -4,7 +4,7 @@ import { render } from 'vitest-browser-svelte';
 
 import { ApiError } from '$lib/api/errors';
 import type { components } from '$lib/api/v3/openapi';
-import type { AlbumView } from '$lib/types';
+import type { AlbumView } from '$lib/features/library/queries/types';
 
 type EditionStatus = components['schemas']['EditionStatusView'];
 type EditionPlan = components['schemas']['EditionPlanView'];

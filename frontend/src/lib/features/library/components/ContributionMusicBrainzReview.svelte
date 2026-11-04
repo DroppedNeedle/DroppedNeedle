@@ -12,7 +12,8 @@
 		SearchCheck,
 		ShieldCheck
 	} from 'lucide-svelte';
-	import type { ContributionDuplicateCandidate, LibraryContribution } from '$lib/types';
+	import type { LibraryContribution } from '$lib/features/library/queries/types';
+	import type { components } from '$lib/api/v3/openapi';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import Input from '$lib/ui/Input.svelte';
@@ -29,6 +30,8 @@
 		parseMusicBrainzReleaseId,
 		postMusicBrainzSeed
 	} from '$lib/features/library/components/musicBrainzSeedForm';
+
+	type ContributionDuplicateCandidate = components['schemas']['DuplicateCandidate'];
 
 	interface Props {
 		contribution: LibraryContribution;

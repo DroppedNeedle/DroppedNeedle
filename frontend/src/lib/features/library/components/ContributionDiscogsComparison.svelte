@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { TriangleAlert, Check, ExternalLink, GitCompareArrows } from 'lucide-svelte';
-	import type { LibraryContribution, ReleaseDraft } from '$lib/types';
+	import type { LibraryContribution, ReleaseDraft } from '$lib/features/library/queries/types';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 

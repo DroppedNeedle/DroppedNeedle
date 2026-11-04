@@ -1,5 +1,10 @@
 import { v3 } from '$lib/api/v3/endpoint';
-import type { AlbumBasicInfo, LocalAlbumMatch, LocalTrackInfo, Track } from '$lib/types';
+import type {
+	AlbumBasicInfo,
+	LocalAlbumMatch,
+	LocalTrackInfo,
+	Track
+} from '$lib/features/album/queries/types';
 import type { RemoteMatch, RemoteTrack } from '$lib/features/remote-library/queries/types';
 import type { QueueItem, PlaybackMeta } from '$lib/features/player/playback/types';
 import type { TrackMeta, TrackSourceData } from '$lib/features/player/playback/queueHelpers';

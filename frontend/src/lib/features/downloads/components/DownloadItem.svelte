@@ -30,7 +30,7 @@
 		retryDisplay
 	} from '$lib/features/downloads/queries/downloadStatus';
 	import { authStore } from '$lib/stores/authStore.svelte';
-	import type { DownloadTask } from '$lib/types';
+	import type { DownloadTask } from '$lib/features/downloads/queries/types';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import { albumHref, artistHref } from '$lib/utils/entityRoutes';

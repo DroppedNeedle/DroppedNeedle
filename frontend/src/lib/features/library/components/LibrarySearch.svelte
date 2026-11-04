@@ -6,7 +6,7 @@
 	import ArtistImage from '$lib/media/ArtistImage.svelte';
 	import { buildDiscoveryQueueFromLocal } from '$lib/features/player/playback/queueHelpers';
 	import { playerStore } from '$lib/features/player/state/player.svelte';
-	import type { TrackView } from '$lib/types';
+	import type { TrackView } from '$lib/features/library/queries/types';
 	import { albumHref, artistHref } from '$lib/utils/entityRoutes';
 	import { withBasePath } from '$lib/utils/basePath';
 	import IconButton from '$lib/ui/IconButton.svelte';

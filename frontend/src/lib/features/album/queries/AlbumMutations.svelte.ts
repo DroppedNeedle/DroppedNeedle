@@ -2,7 +2,7 @@ import { v3 } from '$lib/api/v3/endpoint';
 import { useQueryClient } from '@tanstack/svelte-query';
 
 import { api } from '$lib/api/client';
-import type { AlbumBasicInfo } from '$lib/types';
+import type { AlbumBasicInfo } from '$lib/features/album/queries/types';
 import {
 	albumHeaderChanged,
 	albumReread,

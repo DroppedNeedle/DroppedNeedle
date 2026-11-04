@@ -2,7 +2,7 @@
 	import { albumHref } from '$lib/utils/entityRoutes';
 	import { Play } from 'lucide-svelte';
 	import CoverPlaceholder from '$lib/ui/CoverPlaceholder.svelte';
-	import type { TopSong, ResolvedTrack } from '$lib/types';
+	import type { TopSong, ResolvedTrack } from '$lib/features/artist/queries/types';
 	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import SampleButton from '$lib/features/discover/components/SampleButton.svelte';
 

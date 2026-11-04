@@ -9,7 +9,8 @@
 	import ViewMoreArtistCard from '$lib/features/search/components/ViewMoreArtistCard.svelte';
 	import ArtistCardSkeleton from '$lib/features/artist/components/ArtistCardSkeleton.svelte';
 	import AlbumCardSkeleton from '$lib/features/album/components/AlbumCardSkeleton.svelte';
-	import type { EnrichmentSource, SearchRemoteStatus } from '$lib/types';
+	import type { EnrichmentSource } from '$lib/features/album/queries/types';
+	import type { SearchRemoteStatus } from '$lib/features/search/queries/types';
 	import {
 		applyArtistEnrichment,
 		applyAlbumEnrichment

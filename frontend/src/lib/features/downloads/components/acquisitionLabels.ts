@@ -10,7 +10,9 @@
  * - Lossless says bit depth / sample rate words, never "lossless bitrate".
  */
 
-import type { Reason } from '$lib/types';
+import type { components } from '$lib/api/v3/openapi';
+
+type Reason = components['schemas']['Reason'];
 
 /** Shown when a zero-byte wait has no deadline and nothing further can follow. */
 export const NO_FALLBACK_COPY = 'No fallback accepted';

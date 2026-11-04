@@ -1,6 +1,8 @@
 <script lang="ts">
-	import type { LastFmArtistEnrichment } from '$lib/types';
+	import type { components } from '$lib/api/v3/openapi';
 	import LastFmInfoCard from './LastFmInfoCard.svelte';
+
+	type LastFmArtistEnrichment = components['schemas']['LastFmArtistEnrichment'];
 
 	interface Props {
 		enrichment: LastFmArtistEnrichment | null | undefined;

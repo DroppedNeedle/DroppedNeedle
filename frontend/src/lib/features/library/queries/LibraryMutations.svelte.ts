@@ -6,7 +6,8 @@ import { authStore } from '$lib/stores/authStore.svelte';
 import { libraryStore } from '$lib/stores/library';
 import { setQueryDataWithPersister } from '$lib/queries/QueryClient';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
-import type { LibraryAlbumStatus, LibraryScanSchedule } from '$lib/types';
+import type { LibraryAlbumStatus } from '$lib/features/library/queries/types';
+import type { components } from '$lib/api/v3/openapi';
 import {
 	albumLocalCopyChanged,
 	albumRemovalsChanged,
@@ -21,6 +22,8 @@ import {
 	localChanged,
 	scanScheduleChanged
 } from '$lib/queries/effects';
+
+type LibraryScanSchedule = components['schemas']['LibraryScanSchedule'];
 
 export function createRemoveLibraryAlbumMutation() {
 	return createAppMutation(() => ({

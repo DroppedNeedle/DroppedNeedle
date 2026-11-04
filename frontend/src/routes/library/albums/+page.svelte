@@ -15,12 +15,12 @@
 	import Button from '$lib/ui/Button.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import Input from '$lib/ui/Input.svelte';
-	import type { AlbumSort, AlbumView } from '$lib/types';
+	import type { AlbumView } from '$lib/features/library/queries/types';
 
 	const PAGE_SIZE = 50;
 	const SEARCH_DEBOUNCE_MS = 300;
 	// `hearted` is the favourites' own order: the newest heart first.
-	type Sort = AlbumSort | 'hearted';
+	type Sort = 'recent' | 'title' | 'artist' | 'hearted';
 	const VALID_SORTS: Sort[] = ['recent', 'title', 'artist'];
 
 	// browse state lives in the url so it's shareable and back-button stable

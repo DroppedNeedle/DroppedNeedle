@@ -12,7 +12,7 @@ import { api } from '$lib/api/client';
 import type { components } from '$lib/api/v3/openapi';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { toastStore } from '$lib/stores/toast';
-import type { ReleaseDraft } from '$lib/types';
+import type { ReleaseDraft } from '$lib/features/library/queries/types';
 import { setQueryDataWithPersister } from '$lib/queries/QueryClient';
 import { LibraryContributionQueryKeyFactory } from './LibraryContributionQueryKeyFactory';
 

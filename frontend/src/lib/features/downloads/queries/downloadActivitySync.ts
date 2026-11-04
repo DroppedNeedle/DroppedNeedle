@@ -5,7 +5,7 @@ import {
 	heldFilesChanged
 } from '$lib/queries/effects';
 import { getDownloadScope } from './downloadScope.svelte';
-import type { DownloadActivitySummary } from '$lib/types';
+import type { DownloadActivitySummary } from '$lib/features/downloads/queries/types';
 
 export interface DownloadActivityObservation {
 	userId: string | null;

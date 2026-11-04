@@ -13,7 +13,7 @@
 	import { toastStore } from '$lib/stores/toast';
 	import { getSourceColor, getSourceLabel } from '$lib/utils/sources';
 	import { createArtistTrackLoader } from '$lib/features/artist/state/artistTrackLoader.svelte';
-	import type { ReleaseGroup } from '$lib/types';
+	import type { ReleaseGroup } from '$lib/features/album/queries/types';
 	import type { SourceType } from '$lib/features/player/playback/types';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';

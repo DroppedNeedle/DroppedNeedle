@@ -8,7 +8,7 @@ import type { Getter } from 'runed';
 import { api } from '$lib/api/client';
 import { ApiError } from '$lib/api/errors';
 import { v3 } from '$lib/api/v3/endpoint';
-import type { LocalAlbumMatch, LocalTrackInfo } from '$lib/types';
+import type { LocalAlbumMatch, LocalTrackInfo } from '$lib/features/album/queries/types';
 import type { components } from '$lib/api/v3/openapi';
 
 type UserId = string | null | undefined;

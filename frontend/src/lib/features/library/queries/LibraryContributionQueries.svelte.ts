@@ -3,7 +3,7 @@ import { createQuery } from '@tanstack/svelte-query';
 import type { Getter } from 'runed';
 import { api } from '$lib/api/client';
 import { authStore } from '$lib/stores/authStore.svelte';
-import type { LibraryContribution } from '$lib/types';
+import type { LibraryContribution } from '$lib/features/library/queries/types';
 import { LibraryContributionQueryKeyFactory } from './LibraryContributionQueryKeyFactory';
 
 export const getLibraryContributionQuery = (getContributionId: Getter<string>) => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { DownloadTask } from '$lib/types';
+import type { DownloadTask } from '$lib/features/downloads/queries/types';
 
 import {
 	canCancel,

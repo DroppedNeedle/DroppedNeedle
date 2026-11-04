@@ -4,7 +4,7 @@ import {
 } from '$lib/features/album/queries/albumMatch.svelte';
 import type { QueueItem } from '$lib/features/player/playback/types';
 import type { SourceType } from '$lib/features/player/playback/types';
-import type { ReleaseGroup } from '$lib/types';
+import type { ReleaseGroup } from '$lib/features/album/queries/types';
 import {
 	buildQueueItemsFromLocal,
 	buildRemoteQueueItems

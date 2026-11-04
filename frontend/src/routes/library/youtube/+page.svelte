@@ -8,7 +8,7 @@
 	import YouTubeDetailModal from '$lib/features/youtube/components/YouTubeDetailModal.svelte';
 	import ContextMenu from '$lib/ui/ContextMenu.svelte';
 	import type { MenuItem } from '$lib/ui/ContextMenu.svelte';
-	import type { YouTubeLink } from '$lib/types';
+	import type { YouTubeLink } from '$lib/features/youtube/queries/types';
 	import { Plus, Info, Play, Shuffle, ListPlus, ListStart, ListMusic } from 'lucide-svelte';
 	import LibraryFilterBar from '$lib/features/remote-library/components/LibraryFilterBar.svelte';
 	import Card from '$lib/ui/Card.svelte';

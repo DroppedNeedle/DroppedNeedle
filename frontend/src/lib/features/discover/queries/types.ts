@@ -2,6 +2,9 @@ import type { components } from '$lib/api/v3/openapi';
 
 type Schemas = components['schemas'];
 
+export type DiscoverActivity = Schemas['DiscoverActivityRequest'];
+export type RadioSeedItem = Schemas['RadioSeedItem'];
+
 export type AlbumRef = Schemas['AlbumRef'];
 export type ArtistRef = Schemas['ArtistRef'];
 export type TrackRef = Schemas['TrackRef'];

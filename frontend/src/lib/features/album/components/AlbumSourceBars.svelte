@@ -2,11 +2,13 @@
 	import type {
 		AlbumBasicInfo,
 		AlbumTracksInfo,
+		LocalAlbumMatch
+	} from '$lib/features/album/queries/types';
+	import type {
 		YouTubeTrackLink,
 		YouTubeLink,
-		YouTubeQuotaStatus,
-		LocalAlbumMatch
-	} from '$lib/types';
+		YouTubeQuotaStatus
+	} from '$lib/features/youtube/queries/types';
 	import type { RemoteMatch } from '$lib/features/remote-library/queries/types';
 	import type { SourceCallbacks } from '../state/albumPageState.svelte';
 	import AlbumYouTubeBar from '$lib/features/youtube/components/AlbumYouTubeBar.svelte';

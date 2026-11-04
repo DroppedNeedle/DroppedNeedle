@@ -14,7 +14,7 @@
 	} from '$lib/features/downloads/queries/downloadStatus';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { nowSeconds, startSharedClock } from '$lib/stores/clock.svelte';
-	import type { DownloadTask } from '$lib/types';
+	import type { DownloadTask } from '$lib/features/downloads/queries/types';
 	import { albumHref, artistHref } from '$lib/utils/entityRoutes';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { formatRelativeTime } from '$lib/utils/formatting';

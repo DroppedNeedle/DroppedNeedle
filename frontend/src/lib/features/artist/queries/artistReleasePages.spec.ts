@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { ArtistReleases, ReleaseGroup } from '$lib/types';
+import type { ArtistReleases, ReleaseGroup } from '$lib/features/album/queries/types';
 
 import { mergeArtistReleasePages } from './artistReleasePages';
 

@@ -1,7 +1,7 @@
 import { page } from 'vitest/browser';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
-import type { LibraryContribution } from '$lib/types';
+import type { LibraryContribution } from '$lib/features/library/queries/types';
 
 const h = vi.hoisted(() => ({
 	mutateSave: vi.fn(),

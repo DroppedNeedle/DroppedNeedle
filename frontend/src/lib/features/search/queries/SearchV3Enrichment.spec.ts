@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Album, Artist } from '$lib/types';
+import type { Album } from '$lib/features/album/queries/types';
+import type { Artist } from '$lib/features/search/queries/types';
 import {
 	ENRICH_COLLECTOR_DELAY_MS,
 	MAX_ENRICH_IDS_PER_BUCKET,

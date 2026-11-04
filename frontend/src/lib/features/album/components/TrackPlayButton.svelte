@@ -11,7 +11,7 @@
 	} from '$lib/features/player/playback/queueHelpers';
 	import YouTubeIcon from '$lib/media/icons/YouTubeIcon.svelte';
 	import { getCoverUrl } from '$lib/utils/errorHandling';
-	import type { YouTubeTrackLink, YouTubeQuotaStatus } from '$lib/types';
+	import type { YouTubeTrackLink, YouTubeQuotaStatus } from '$lib/features/youtube/queries/types';
 	import Button from '$lib/ui/Button.svelte';
 
 	interface Props {

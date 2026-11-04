@@ -5,7 +5,7 @@
 	import TagEditor from './TagEditor.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { formatBytes, formatDurationSec } from '$lib/utils/formatting';
-	import type { TrackView } from '$lib/types';
+	import type { TrackView } from '$lib/features/library/queries/types';
 
 	interface Props {
 		meta: TrackView;

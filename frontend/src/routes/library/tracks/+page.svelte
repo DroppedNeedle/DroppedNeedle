@@ -32,7 +32,7 @@
 		Search,
 		X
 	} from 'lucide-svelte';
-	import type { TrackView } from '$lib/types';
+	import type { TrackView } from '$lib/features/library/queries/types';
 
 	const PAGE_SIZE = 48;
 	const SEARCH_DEBOUNCE_MS = 300;

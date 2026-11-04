@@ -6,7 +6,7 @@
 	import { playerStore } from '$lib/features/player/state/player.svelte';
 	import { buildDiscoveryQueueFromLocal } from '$lib/features/player/playback/queueHelpers';
 	import { formatBytes, formatDurationSec } from '$lib/utils/formatting';
-	import type { TrackView } from '$lib/types';
+	import type { TrackView } from '$lib/features/library/queries/types';
 	import { artistHref } from '$lib/utils/entityRoutes';
 	import ContextMenu, { type MenuItem } from '$lib/ui/ContextMenu.svelte';
 

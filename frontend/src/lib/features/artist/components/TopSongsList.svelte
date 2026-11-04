@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { TopSong, ResolvedTrack } from '$lib/types';
+	import type { TopSong, ResolvedTrack } from '$lib/features/artist/queries/types';
 	import type { QueueItem, SourceType } from '$lib/features/player/playback/types';
 	import { getResolvedTracksQuery } from '$lib/features/library/queries/LibraryQueries.svelte';
 	import { withBasePath } from '$lib/utils/basePath';

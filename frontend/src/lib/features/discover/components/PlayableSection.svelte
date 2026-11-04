@@ -5,8 +5,10 @@
 	import DiscoveryBatchModal from '$lib/features/discover/components/DiscoveryBatchModal.svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 	import Button from '$lib/ui/Button.svelte';
-	import type { RadioSeedItem } from '$lib/types';
-	import type { ChartSection as HomeSectionType } from '$lib/features/discover/queries/types';
+	import type {
+		RadioSeedItem,
+		ChartSection as HomeSectionType
+	} from '$lib/features/discover/queries/types';
 	import { albumRows } from '$lib/features/discover/components/sectionRows';
 
 	interface Props {

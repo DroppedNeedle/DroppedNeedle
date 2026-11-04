@@ -21,7 +21,7 @@
 	} from '$lib/features/downloads/queries/HeldQueries.svelte';
 	import { formatCountdown } from '$lib/features/downloads/queries/downloadStatus';
 	import { createFromAlbumMutation } from '$lib/features/requests/queries/RequestMutations.svelte';
-	import type { HeldEntry, HeldFile } from '$lib/types';
+	import type { HeldEntry, HeldFile } from '$lib/features/downloads/queries/types';
 	import Button from '$lib/ui/Button.svelte';
 	import ConfirmDialog from '$lib/ui/ConfirmDialog.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';

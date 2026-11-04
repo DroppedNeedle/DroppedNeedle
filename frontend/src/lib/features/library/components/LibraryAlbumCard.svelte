@@ -5,7 +5,7 @@
 	import LibraryFormatBadge from './LibraryFormatBadge.svelte';
 	import LocalIdentityBadge from './LocalIdentityBadge.svelte';
 	import NoFilesBadge from './NoFilesBadge.svelte';
-	import type { AlbumView } from '$lib/types';
+	import type { AlbumView } from '$lib/features/library/queries/types';
 	import { albumHref } from '$lib/utils/entityRoutes';
 	import { trackCountLabel } from '$lib/utils/trackCount';
 

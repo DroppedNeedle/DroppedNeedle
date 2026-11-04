@@ -6,7 +6,7 @@
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import SearchSuggestions from '$lib/features/search/components/SearchSuggestions.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
-	import type { SuggestResult } from '$lib/types';
+	import type { SuggestResult } from '$lib/features/search/queries/types';
 
 	let { open = $bindable(false) }: { open: boolean } = $props();
 

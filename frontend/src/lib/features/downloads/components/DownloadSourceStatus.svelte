@@ -5,7 +5,7 @@
 
 	import { createTryNextSourceMutation } from '$lib/features/downloads/queries/DownloadMutations.svelte';
 	import type { DownloadSourceUpdate } from '$lib/features/downloads/queries/DownloadSSE.svelte';
-	import type { DownloadTask } from '$lib/types';
+	import type { DownloadTask } from '$lib/features/downloads/queries/types';
 	import Button from '$lib/ui/Button.svelte';
 
 	interface Props {

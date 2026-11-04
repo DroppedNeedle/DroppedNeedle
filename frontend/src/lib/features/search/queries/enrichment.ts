@@ -1,4 +1,5 @@
-import type { Artist, Album, EnrichmentSource } from '$lib/types';
+import type { Artist } from '$lib/features/search/queries/types';
+import type { Album, EnrichmentSource } from '$lib/features/album/queries/types';
 import type { EnrichmentResponseV3 } from './SearchV3Queries.svelte';
 
 export function getListenTitle(

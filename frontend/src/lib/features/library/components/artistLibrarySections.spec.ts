@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { AlbumView } from '$lib/types';
+import type { AlbumView } from '$lib/features/library/queries/types';
 import { fileOwnedAlbums } from './artistLibrarySections';
 
 function album(id: string, rg: string | null, extra: Partial<AlbumView> = {}) {

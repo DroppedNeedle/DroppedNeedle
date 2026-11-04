@@ -8,7 +8,7 @@ import { authStore } from '$lib/stores/authStore.svelte';
 import { toastStore } from '$lib/stores/toast';
 import { fakeApi } from '$lib/test/api';
 import { renderWithQuery } from '$lib/test/render';
-import type { DownloadTask, HeldEntry, HeldFile } from '$lib/types';
+import type { DownloadTask, HeldEntry, HeldFile } from '$lib/features/downloads/queries/types';
 
 import DownloadQueue from './DownloadQueue.svelte';
 

@@ -3,7 +3,10 @@
 //   queued + no search_job_id             -> searching
 //   queued + search_job_id + no candidate -> awaiting_review (parked on its search for the owner's pick)
 //   otherwise                             -> raw status
-import type { DownloadStatus, DownloadTask } from '$lib/types';
+import type { DownloadTask } from '$lib/features/downloads/queries/types';
+import type { components } from '$lib/api/v3/openapi';
+
+type DownloadStatus = components['schemas']['TaskStatus'];
 
 export type DerivedDownloadStatus = 'searching' | 'awaiting_review' | DownloadStatus;
 

@@ -16,7 +16,7 @@
 	import ArtistAppearancesSection from '$lib/features/library/components/ArtistAppearancesSection.svelte';
 	import ArtistMusicBrainzLink from '$lib/features/library/components/ArtistMusicBrainzLink.svelte';
 	import LocalArtistPage from './LocalArtistPage.svelte';
-	import type { ArtistView } from '$lib/types';
+	import type { ArtistView } from '$lib/features/library/queries/types';
 	import PageSectionToc from '$lib/ui/PageSectionToc.svelte';
 	import { createRequestAlbumMutation } from '$lib/features/downloads/queries/DownloadMutations.svelte';
 	import { withBasePath } from '$lib/utils/basePath';

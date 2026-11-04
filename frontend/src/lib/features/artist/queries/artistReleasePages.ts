@@ -1,4 +1,4 @@
-import type { ArtistReleases, ReleaseGroup } from '$lib/types';
+import type { ArtistReleases, ReleaseGroup } from '$lib/features/album/queries/types';
 import { dedupeById } from '$lib/utils/dedupe';
 
 export interface MergedArtistReleases {

@@ -1,6 +1,8 @@
 <script lang="ts">
-	import type { RadioSeedItem } from '$lib/types';
-	import type { ChartSection as HomeSectionType } from '$lib/features/discover/queries/types';
+	import type {
+		RadioSeedItem,
+		ChartSection as HomeSectionType
+	} from '$lib/features/discover/queries/types';
 	import { albumRows } from '$lib/features/discover/components/sectionRows';
 	import HomeSection from '$lib/features/discover/components/HomeSection.svelte';
 	import AlbumImage from '$lib/media/AlbumImage.svelte';

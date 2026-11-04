@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 
 import type { LibraryManagementTagEditorContext } from '$lib/features/library-management/queries/types';
-import type { TrackView } from '$lib/types';
+import type { TrackView } from '$lib/features/library/queries/types';
 
 const { mockCreate, mockGoto, mockQuery, mockRemember } = vi.hoisted(() => ({
 	mockCreate: vi.fn(),

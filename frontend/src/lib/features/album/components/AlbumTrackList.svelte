@@ -1,11 +1,12 @@
 <script lang="ts">
 	import type {
 		AlbumBasicInfo,
-		YouTubeTrackLink,
-		YouTubeQuotaStatus,
 		LocalAlbumMatch,
-		LocalTrackInfo
-	} from '$lib/types';
+		LocalTrackInfo,
+		LibraryStatusTrack,
+		HeldFileInEntry
+	} from '$lib/features/album/queries/types';
+	import type { YouTubeTrackLink, YouTubeQuotaStatus } from '$lib/features/youtube/queries/types';
 	import type { RemoteMatch, RemoteTrack } from '$lib/features/remote-library/queries/types';
 	import type { MenuItem } from '$lib/ui/ContextMenu.svelte';
 	import type { RenderedTrackSection } from './albumTrackResolvers';
@@ -31,7 +32,7 @@
 	import RatingStars from '$lib/ui/RatingStars.svelte';
 	import FavoriteHeart from '$lib/features/library/components/FavoriteHeart.svelte';
 	import { SvelteSet } from 'svelte/reactivity';
-	import type { LibraryStatusTrack, DownloadTask, HeldFileInEntry } from '$lib/types';
+	import type { DownloadTask } from '$lib/features/downloads/queries/types';
 	import TrackRequestButton from '$lib/features/downloads/components/TrackRequestButton.svelte';
 	import TrackDownloadStatus from '$lib/features/downloads/components/TrackDownloadStatus.svelte';
 	import HeldFileRow from '$lib/features/downloads/components/HeldFileRow.svelte';

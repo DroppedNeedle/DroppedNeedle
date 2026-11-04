@@ -7,7 +7,7 @@
 		getNavidromeSettingsQuery
 	} from '$lib/features/settings/queries/SectionSettingsQueries.svelte';
 	import { ApiError } from '$lib/api/errors';
-	import type { NavidromePlaylistSyncResult } from '$lib/types';
+	import type { components } from '$lib/api/v3/openapi';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
@@ -17,6 +17,8 @@
 	import TextField from '$lib/ui/TextField.svelte';
 	import ToggleRow from '$lib/ui/ToggleRow.svelte';
 	import { createSettingsSection } from '$lib/ui/settingsSection.svelte';
+
+	type NavidromePlaylistSyncResult = components['schemas']['PlaylistSyncResult'];
 
 	const verify = createVerifyNavidromeMutation();
 

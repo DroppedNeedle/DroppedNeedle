@@ -3,7 +3,7 @@ import { v3 } from '$lib/api/v3/endpoint';
 import { createQuery } from '@tanstack/svelte-query';
 import { api } from '$lib/api/client';
 import type { V3Body } from '$lib/api/v3/client';
-import type { YouTubeLink } from '$lib/types';
+import type { YouTubeLink } from '$lib/features/youtube/queries/types';
 import { setQueryDataWithPersister } from '$lib/queries/QueryClient';
 import { albumVideoChanged, createAppMutation } from '$lib/queries/effects';
 

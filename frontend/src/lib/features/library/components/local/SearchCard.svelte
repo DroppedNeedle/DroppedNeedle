@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { CrateTrack } from '$lib/types';
+	import type { CrateTrack } from '$lib/features/library/queries/types';
 	import { getLibrarySearchV3Query } from '$lib/features/library/queries/LocalV3Queries.svelte';
 	import {
 		albumCoverUrl,

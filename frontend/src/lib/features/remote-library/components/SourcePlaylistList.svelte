@@ -4,14 +4,14 @@
 	import BackButton from '$lib/ui/BackButton.svelte';
 	import SourcePlaylistCard from '$lib/features/remote-library/components/SourcePlaylistCard.svelte';
 	import { getSourcePlaylistsQuery } from '$lib/features/remote-library/queries/source-playlists.svelte';
-	import type { SourcePlaylistSource } from '$lib/types';
+	import type { RemoteSource } from '$lib/features/remote-library/queries/types';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { CircleAlert, Link2, ListMusic, RefreshCw } from 'lucide-svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 
 	interface Props {
-		source: SourcePlaylistSource;
+		source: RemoteSource;
 		sourceLabel: string;
 		backFallback: string;
 		playlistBaseHref: string;

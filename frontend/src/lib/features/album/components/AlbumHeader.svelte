@@ -1,12 +1,8 @@
 <script lang="ts">
 	import { coverSrc } from '$lib/api/covers';
-	import type {
-		AlbumBasicInfo,
-		AlbumTracksInfo,
-		DownloadTask,
-		HeldFile,
-		AlbumView
-	} from '$lib/types';
+	import type { AlbumBasicInfo, AlbumTracksInfo } from '$lib/features/album/queries/types';
+	import type { DownloadTask, HeldFile } from '$lib/features/downloads/queries/types';
+	import type { AlbumView } from '$lib/features/library/queries/types';
 	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import HeroBackdrop from '$lib/media/HeroBackdrop.svelte';
 	import AlbumDownloadStatus from '$lib/features/downloads/components/AlbumDownloadStatus.svelte';

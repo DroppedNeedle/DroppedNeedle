@@ -4,7 +4,7 @@
 	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import { createMatchHeldMutation } from '$lib/features/downloads/queries/HeldQueries.svelte';
 	import { getAlbumSearchQuery } from '$lib/features/library/queries/LibraryQueries.svelte';
-	import type { Album } from '$lib/types';
+	import type { Album } from '$lib/features/album/queries/types';
 	import Input from '$lib/ui/Input.svelte';
 	import Modal from '$lib/ui/Modal.svelte';
 

@@ -1,4 +1,4 @@
-import type { MusicBrainzSeed } from '$lib/types';
+import type { MusicBrainzSeed } from '$lib/features/library/queries/types';
 
 export const MUSICBRAINZ_RELEASE_EDITOR = 'https://musicbrainz.org/release/add';
 

@@ -2,7 +2,7 @@ import { page } from 'vitest/browser';
 import { describe, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import LibraryAlbumCard from './LibraryAlbumCard.svelte';
-import type { AlbumView } from '$lib/types';
+import type { AlbumView } from '$lib/features/library/queries/types';
 
 // Keep the image on its first source: the test has no server to answer it.
 vi.mock('$lib/media/lazyImage', () => ({

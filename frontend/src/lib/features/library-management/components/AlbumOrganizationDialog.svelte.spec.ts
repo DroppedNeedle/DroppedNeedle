@@ -1,7 +1,7 @@
 import { page } from 'vitest/browser';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
-import type { AlbumDetailView, TrackView } from '$lib/types';
+import type { AlbumDetailView, TrackView } from '$lib/features/library/queries/types';
 import type { MembershipPreviewResponse } from '$lib/features/library-management/queries/LibraryOperationsTypes';
 
 const album: AlbumDetailView = {

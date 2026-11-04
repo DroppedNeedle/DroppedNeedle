@@ -9,7 +9,8 @@
 		"queries/GetItQueries.svelte.ts",
 		"queries/albumMatch.svelte.ts",
 		"queries/albumTracks.ts",
-		"queries/catalogAdapters.ts"
+		"queries/catalogAdapters.ts",
+		"queries/types.ts"
 	],
 	"artist": [
 		"components/ArtistCardDownloadButton.svelte",
@@ -46,6 +47,7 @@
 		"queries/ProwlarrQueries.svelte.ts",
 		"queries/UpgradeQueries.svelte.ts",
 		"queries/downloadStatus.ts",
+		"queries/types.ts",
 		"state/discographyDownload.svelte.ts"
 	],
 	"following": [
@@ -88,7 +90,8 @@
 		"queries/LocalV3Keys.ts",
 		"queries/LocalV3Queries.svelte.ts",
 		"queries/artist-reconciliation.svelte.ts",
-		"queries/ratings.svelte.ts"
+		"queries/ratings.svelte.ts",
+		"queries/types.ts"
 	],
 	"library-management": [
 		"components/AlbumOrganizationDialog.svelte",
@@ -170,5 +173,5 @@
 		"queries/plugins/PluginSourceQueries.svelte.ts"
 	],
 	"upgrade": [],
-	"youtube": ["components/AlbumYouTubeBar.svelte", "queries/youtube.svelte.ts"]
+	"youtube": ["components/AlbumYouTubeBar.svelte", "queries/types.ts", "queries/youtube.svelte.ts"]
 }

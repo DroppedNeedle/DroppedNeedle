@@ -8,7 +8,7 @@
 		downloadStatusConfig,
 		retryBadgeConfig
 	} from '$lib/features/downloads/queries/downloadStatusConfig';
-	import type { DownloadTask } from '$lib/types';
+	import type { DownloadTask } from '$lib/features/downloads/queries/types';
 
 	let { task }: { task: DownloadTask } = $props();
 

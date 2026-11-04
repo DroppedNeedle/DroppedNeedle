@@ -2,7 +2,7 @@
 	import { coverSrc } from '$lib/api/covers';
 	import { useDirectRemoteImages } from '$lib/features/settings/queries/AdvancedSettingsReads.svelte';
 	import { Check, MicVocal, RefreshCw } from 'lucide-svelte';
-	import type { ArtistInfo } from '$lib/types';
+	import type { ArtistInfoBasic } from '$lib/features/album/queries/types';
 	import { extractDominantColor, DEFAULT_GRADIENT } from '$lib/utils/colors';
 	import ArtistImage from '$lib/media/ArtistImage.svelte';
 	import ArtistLinks from './ArtistLinks.svelte';
@@ -18,7 +18,7 @@
 	const directRemoteImages = useDirectRemoteImages();
 
 	interface Props {
-		artist: ArtistInfo;
+		artist: ArtistInfoBasic;
 		showBackButton?: boolean;
 		refreshing?: boolean;
 		onrefresh?: () => void;

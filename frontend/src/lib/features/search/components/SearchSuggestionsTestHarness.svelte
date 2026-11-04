@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { QueryClientProvider } from '@tanstack/svelte-query';
 	import { queryClient } from '$lib/queries/QueryClient';
-	import type { SuggestResult } from '$lib/types';
+	import type { SuggestResult } from '$lib/features/search/queries/types';
 	import SearchSuggestions from './SearchSuggestions.svelte';
 
 	interface Props {

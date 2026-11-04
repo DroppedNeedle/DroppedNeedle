@@ -1,18 +1,18 @@
 <script lang="ts">
-	import type { SourcePlaylistSummary } from '$lib/types';
+	import type { RemotePlaylist } from '$lib/features/remote-library/queries/types';
 	import { formatTotalDurationSec } from '$lib/utils/formatting';
 	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import Card from '$lib/ui/Card.svelte';
 
 	interface Props {
-		playlist: SourcePlaylistSummary;
+		playlist: RemotePlaylist;
 		href: string;
 	}
 
 	let { playlist, href }: Props = $props();
 
 	let durationText = $derived(
-		playlist.duration_seconds ? formatTotalDurationSec(playlist.duration_seconds) : ''
+		playlist.duration_secs ? formatTotalDurationSec(playlist.duration_secs) : ''
 	);
 
 	let subtitle = $derived(
@@ -32,7 +32,7 @@
 			class="h-full w-full transform-gpu transition-transform duration-200 motion-safe:group-hover:scale-105"
 		>
 			<AlbumImage
-				customUrl={playlist.cover_url}
+				customUrl={playlist.image_url}
 				alt={playlist.name}
 				size="full"
 				requestSize={250}

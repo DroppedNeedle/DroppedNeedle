@@ -11,7 +11,8 @@
 	} from '$lib/features/downloads/queries/HeldQueries.svelte';
 	import { createRetryDownloadMutation } from '$lib/features/downloads/queries/DownloadMutations.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
-	import type { HeldEntry, HeldFileAction } from '$lib/types';
+	import type { HeldEntry } from '$lib/features/downloads/queries/types';
+	import type { components } from '$lib/api/v3/openapi';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import ConfirmDialog from '$lib/ui/ConfirmDialog.svelte';
@@ -21,6 +22,8 @@
 
 	import HeldFileRow from './HeldFileRow.svelte';
 	import { keptUntil, nextTry } from './heldExpiry';
+
+	type HeldFileAction = components['schemas']['HeldFileAction'];
 
 	interface Props {
 		entry: HeldEntry;

@@ -1,4 +1,4 @@
-import type { SearchRemoteStatus } from '$lib/types';
+import type { SearchRemoteStatus } from '$lib/features/search/queries/types';
 
 export type SearchStatusNotice = {
 	message: string;

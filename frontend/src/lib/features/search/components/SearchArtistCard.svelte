@@ -1,5 +1,6 @@
 <script lang="ts">
-	import type { Artist, EnrichmentSource } from '$lib/types';
+	import type { Artist } from '$lib/features/search/queries/types';
+	import type { EnrichmentSource } from '$lib/features/album/queries/types';
 	import { artistHref } from '$lib/utils/entityRoutes';
 	import { imageMbid, isLocalOnlyRow } from '$lib/features/search/queries/SearchV3Adapters';
 	import { formatListenCount } from '$lib/utils/formatting';

@@ -6,7 +6,8 @@
 	import SearchArtistCard from '$lib/features/search/components/SearchArtistCard.svelte';
 	import ArtistCardSkeleton from '$lib/features/artist/components/ArtistCardSkeleton.svelte';
 	import SearchTopResult from '$lib/features/search/components/SearchTopResult.svelte';
-	import type { Artist, EnrichmentSource, SearchRemoteStatus } from '$lib/types';
+	import type { Artist, SearchRemoteStatus } from '$lib/features/search/queries/types';
+	import type { EnrichmentSource } from '$lib/features/album/queries/types';
 	import { applyArtistEnrichment } from '$lib/features/search/queries/enrichment';
 	import { getSearchStatusNotice } from '$lib/features/search/components/searchStatus';
 	import {

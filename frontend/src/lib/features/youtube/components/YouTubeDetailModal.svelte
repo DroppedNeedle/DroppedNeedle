@@ -34,7 +34,7 @@
 	import ContextMenu from '$lib/ui/ContextMenu.svelte';
 	import NowPlayingIndicator from '$lib/features/player/components/NowPlayingIndicator.svelte';
 	import type { MenuItem } from '$lib/ui/ContextMenu.svelte';
-	import type { YouTubeLink, YouTubeTrackLink } from '$lib/types';
+	import type { YouTubeLink, YouTubeTrackLink } from '$lib/features/youtube/queries/types';
 	import Button from '$lib/ui/Button.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import Modal from '$lib/ui/Modal.svelte';

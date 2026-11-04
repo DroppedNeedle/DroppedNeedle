@@ -4,7 +4,7 @@
 	import ArtistImage from '$lib/media/ArtistImage.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Input from '$lib/ui/Input.svelte';
-	import type { SearchRemoteStatus, SuggestResult } from '$lib/types';
+	import type { SearchRemoteStatus, SuggestResult } from '$lib/features/search/queries/types';
 	import { getSearchSuggestionsV3Query } from '$lib/features/search/queries/SearchV3Queries.svelte';
 	import { toSuggestResultsV1 } from '$lib/features/search/queries/SearchV3Adapters';
 

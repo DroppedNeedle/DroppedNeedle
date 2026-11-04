@@ -4,7 +4,7 @@ import { createInfiniteQuery, createQuery, queryOptions } from '@tanstack/svelte
 import type { Getter } from 'runed';
 import { ArtistQueryKeyFactory } from './ArtistQueryKeyFactory';
 import { api } from '$lib/api/client';
-import type { ReleaseGroup } from '$lib/types';
+import type { ReleaseGroup } from '$lib/features/album/queries/types';
 import type { MusicSource } from '$lib/stores/musicSource';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { setQueryDataWithPersister } from '$lib/queries/QueryClient';

@@ -3,16 +3,18 @@ import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { useQueryClient } from '@tanstack/svelte-query';
 import type {
 	AlbumBasicInfo,
-	YouTubeTrackLink,
-	YouTubeLink,
-	YouTubeQuotaStatus,
 	LocalAlbumMatch,
 	LocalTrackInfo,
-	LibraryAlbumStatus,
 	LibraryStatusTrack,
-	DownloadTask,
 	HeldFileInEntry
-} from '$lib/types';
+} from '$lib/features/album/queries/types';
+import type {
+	YouTubeTrackLink,
+	YouTubeLink,
+	YouTubeQuotaStatus
+} from '$lib/features/youtube/queries/types';
+import type { LibraryAlbumStatus } from '$lib/features/library/queries/types';
+import type { DownloadTask } from '$lib/features/downloads/queries/types';
 import type { RemoteTrack } from '$lib/features/remote-library/queries/types';
 import { libraryStore } from '$lib/stores/library';
 import { useIntegrationStatus } from '$lib/features/home/queries/home.svelte';

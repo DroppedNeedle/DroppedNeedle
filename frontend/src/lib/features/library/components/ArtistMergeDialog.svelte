@@ -3,7 +3,7 @@
 	import Button from '$lib/ui/Button.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 
-	import type { ArtistView } from '$lib/types';
+	import type { ArtistView } from '$lib/features/library/queries/types';
 
 	interface Props {
 		artist: ArtistView;

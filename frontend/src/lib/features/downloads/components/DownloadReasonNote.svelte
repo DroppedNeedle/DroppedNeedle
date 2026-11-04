@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { DownloadTask } from '$lib/types';
+	import type { DownloadTask } from '$lib/features/downloads/queries/types';
 
 	interface Props {
 		task: DownloadTask;

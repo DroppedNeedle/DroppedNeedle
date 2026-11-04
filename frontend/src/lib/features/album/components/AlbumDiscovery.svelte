@@ -1,6 +1,9 @@
 <script lang="ts">
-	import type { MoreByArtistResponse, SimilarAlbumsResponse } from '$lib/types';
+	import type { components } from '$lib/api/v3/openapi';
 	import DiscoveryAlbumCarousel from '$lib/features/album/components/DiscoveryAlbumCarousel.svelte';
+
+	type MoreByArtistResponse = components['schemas']['MoreByArtistResponse'];
+	type SimilarAlbumsResponse = components['schemas']['SimilarAlbumsResponse'];
 
 	interface Props {
 		moreByArtist: MoreByArtistResponse | null;

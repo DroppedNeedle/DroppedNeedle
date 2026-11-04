@@ -11,7 +11,11 @@
 	import Input from '$lib/ui/Input.svelte';
 	import Tabs, { type TabItem } from '$lib/ui/Tabs.svelte';
 	import { getLibraryArtistsInfiniteQuery } from '$lib/features/library/queries/LibraryQueries.svelte';
-	import type { ArtistSort, LibraryArtistScope, ArtistView } from '$lib/types';
+	import type {
+		ArtistSort,
+		LibraryArtistScope,
+		ArtistView
+	} from '$lib/features/library/queries/types';
 	import { artistHref } from '$lib/utils/entityRoutes';
 	import { ChevronLeft, Disc3, Heart, Mic, Search, UsersRound, X } from 'lucide-svelte';
 	import LibraryFilterMenu from '$lib/features/library/components/LibraryFilterMenu.svelte';

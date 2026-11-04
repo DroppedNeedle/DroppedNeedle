@@ -9,7 +9,7 @@ import {
 import { openGlobalPlaylistModal } from '$lib/features/playlists/state/playlistModal.svelte';
 import { getCoverUrl } from '$lib/utils/errorHandling';
 import type { QueueItem } from '$lib/features/player/playback/types';
-import type { YouTubeLink } from '$lib/types';
+import type { YouTubeLink } from '$lib/features/youtube/queries/types';
 
 type FetchResult = { items: QueueItem[]; error: boolean };
 

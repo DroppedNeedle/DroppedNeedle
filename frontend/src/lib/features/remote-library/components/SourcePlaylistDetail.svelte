@@ -9,12 +9,12 @@
 	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import { Download } from 'lucide-svelte';
-	import type { SourcePlaylistSource } from '$lib/types';
+	import type { RemoteSource } from '$lib/features/remote-library/queries/types';
 	import type { Snippet } from 'svelte';
 
 	interface Props {
 		playlistId: string;
-		source: SourcePlaylistSource;
+		source: RemoteSource;
 		backFallback: string;
 		icon: Snippet;
 	}
@@ -98,11 +98,12 @@
 			{/if}
 		</div>
 	{:else if detail}
+		{@const playlist = detail.playlist}
 		<div class="flex flex-col sm:flex-row gap-6">
 			<div class="w-48 h-48 shrink-0 rounded-lg overflow-hidden shadow-md">
 				<AlbumImage
-					customUrl={detail.cover_url}
-					alt={detail.name}
+					customUrl={playlist.image_url}
+					alt={playlist.name}
 					size="full"
 					requestSize={500}
 					rounded="none"
@@ -110,11 +111,11 @@
 				/>
 			</div>
 			<div class="space-y-2">
-				<h1 class="hero-title text-2xl font-bold">{detail.name}</h1>
+				<h1 class="hero-title text-2xl font-bold">{playlist.name}</h1>
 				<p class="text-base-content/60">
-					{detail.track_count} track{detail.track_count === 1 ? '' : 's'}
-					{#if detail.duration_seconds}
-						- {formatTotalDurationSec(detail.duration_seconds)}
+					{playlist.track_count} track{playlist.track_count === 1 ? '' : 's'}
+					{#if playlist.duration_secs}
+						- {formatTotalDurationSec(playlist.duration_secs)}
 					{/if}
 				</p>
 				<Button
@@ -162,13 +163,13 @@
 						{#each detail.tracks as track, i (track.id)}
 							<tr class="hover:bg-base-200/50">
 								<td class="text-base-content/40">{i + 1}</td>
-								<td class="font-medium">{track.track_name}</td>
+								<td class="font-medium">{track.title}</td>
 								<td class="text-base-content/70">{track.artist_name}</td>
 								<td class="text-base-content/70">{track.album_name}</td>
 								<td class="text-right text-base-content/50">
-									{#if track.duration_seconds}
-										{Math.floor(track.duration_seconds / 60)}:{String(
-											track.duration_seconds % 60
+									{#if track.duration_secs}
+										{Math.floor(track.duration_secs / 60)}:{String(
+											track.duration_secs % 60
 										).padStart(2, '0')}
 									{/if}
 								</td>

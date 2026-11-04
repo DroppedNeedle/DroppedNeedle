@@ -6,7 +6,8 @@
 	import AlbumCard from '$lib/features/album/components/AlbumCard.svelte';
 	import AlbumCardSkeleton from '$lib/features/album/components/AlbumCardSkeleton.svelte';
 	import SearchTopResult from '$lib/features/search/components/SearchTopResult.svelte';
-	import type { Album, EnrichmentSource, SearchRemoteStatus } from '$lib/types';
+	import type { Album, EnrichmentSource } from '$lib/features/album/queries/types';
+	import type { SearchRemoteStatus } from '$lib/features/search/queries/types';
 	import { applyAlbumEnrichment } from '$lib/features/search/queries/enrichment';
 	import { getSearchStatusNotice } from '$lib/features/search/components/searchStatus';
 	import {

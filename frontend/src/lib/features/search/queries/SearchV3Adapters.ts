@@ -1,7 +1,8 @@
 import type { components } from '$lib/api/v3/openapi';
 import { normalizeDiscNumber } from '$lib/features/player/playback/queueHelpers';
 import type { QueueItem } from '$lib/features/player/playback/types';
-import type { Album, Artist, SuggestResult } from '$lib/types';
+import type { Album } from '$lib/features/album/queries/types';
+import type { Artist, SuggestResult } from '$lib/features/search/queries/types';
 import { getApiUrl } from '$lib/api/api-utils';
 import { libraryCoverPath } from '$lib/features/library/queries/LocalV3Adapters';
 

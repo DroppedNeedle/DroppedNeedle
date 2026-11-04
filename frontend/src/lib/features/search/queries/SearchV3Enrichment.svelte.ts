@@ -1,5 +1,6 @@
 import type { components } from '$lib/api/v3/openapi';
-import type { Album, Artist } from '$lib/types';
+import type { Album } from '$lib/features/album/queries/types';
+import type { Artist } from '$lib/features/search/queries/types';
 import { SvelteMap } from 'svelte/reactivity';
 import type { EnrichmentBatchRequestV3 } from './SearchV3Queries.svelte';
 

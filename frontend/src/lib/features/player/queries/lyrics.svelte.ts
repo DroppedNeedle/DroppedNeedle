@@ -6,7 +6,7 @@ import { v3 } from '$lib/api/v3/endpoint';
 import { api } from '$lib/api/client';
 import { ApiError } from '$lib/api/errors';
 import { STALE_SLOW } from '$lib/queries/staleTime';
-import type { LyricLine } from '$lib/types';
+import type { LyricLine } from '$lib/features/player/queries/types';
 import { createQuery } from '@tanstack/svelte-query';
 import type { Getter } from 'runed';
 

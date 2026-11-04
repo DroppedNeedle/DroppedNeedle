@@ -22,7 +22,7 @@
 	import { fetchAlbumTracks } from '$lib/features/album/queries/albumTracks';
 	import { ApiError } from '$lib/api/errors';
 	import { formatDuration } from '$lib/utils/formatting';
-	import type { Track } from '$lib/types';
+	import type { Track } from '$lib/features/album/queries/types';
 	import type { AlbumRef } from '$lib/features/discover/queries/types';
 	import { albumRows } from '$lib/features/discover/components/sectionRows';
 	import { toastStore } from '$lib/stores/toast';

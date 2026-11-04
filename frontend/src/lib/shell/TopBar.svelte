@@ -10,7 +10,7 @@
 	import { getApiUrl } from '$lib/api/api-utils';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
-	import type { SuggestResult } from '$lib/types';
+	import type { SuggestResult } from '$lib/features/search/queries/types';
 
 	let query = $state('');
 

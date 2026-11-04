@@ -7,7 +7,7 @@
 		refreshRemoteSource,
 		remoteErrorCode
 	} from '$lib/features/remote-library/queries/RemoteQueries.svelte';
-	import type { RemoteAlbum } from '$lib/features/remote-library/queries/types';
+	import type { RemoteAlbum, BrowseHeroCard } from '$lib/features/remote-library/queries/types';
 	import { getSourcePlaylistsQuery } from '$lib/features/remote-library/queries/source-playlists.svelte';
 	import AlbumGrid from '$lib/features/remote-library/components/AlbumGrid.svelte';
 	import ArtistIndexSidebar from '$lib/features/remote-library/components/ArtistIndexSidebar.svelte';
@@ -24,7 +24,6 @@
 	import { reveal } from '$lib/actions/reveal';
 	import { nowPlayingMerged } from '$lib/features/player/state/nowPlayingMerged.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
-	import type { ArtistIndexEntry, BrowseHeroCard } from '$lib/types';
 	import AlbumCarousel from '$lib/features/remote-library/components/AlbumCarousel.svelte';
 	import BrandLine from '$lib/features/remote-library/components/BrandLine.svelte';
 	import HubArtistShelves from '$lib/features/remote-library/components/HubArtistShelves.svelte';
@@ -76,18 +75,7 @@
 	);
 	const sessions = $derived(nowPlayingMerged.sessionsForSource(remote.source));
 
-	const artistIndex = $derived<ArtistIndexEntry[]>(
-		(artistIndexQuery.data?.index ?? []).map((e) => ({
-			name: e.name,
-			artists: e.artists.map((a) => ({
-				id: a.id,
-				name: a.name,
-				image_url: a.image_url ?? null,
-				album_count: a.album_count ?? undefined,
-				musicbrainz_id: a.artist_mbid ?? null
-			}))
-		}))
-	);
+	const artistIndex = $derived(artistIndexQuery.data?.index ?? []);
 
 	const browseCards = $derived<BrowseHeroCard[]>([
 		{
@@ -250,8 +238,8 @@
 							<ArtistIndexSidebar
 								index={artistIndex}
 								onselect={(artist) => {
-									if (artist.musicbrainz_id) {
-										goto(withBasePath(`/artist/${artist.musicbrainz_id}`));
+									if (artist.artist_mbid) {
+										goto(withBasePath(`/artist/${artist.artist_mbid}`));
 									} else {
 										goto(
 											withBasePath(

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { albumArtworkPath, coverPath } from '$lib/api/covers';
-	import type { Artist, Album } from '$lib/types';
+	import type { Artist } from '$lib/features/search/queries/types';
+	import type { Album } from '$lib/features/album/queries/types';
 	import { artistHref, albumHref } from '$lib/utils/entityRoutes';
 	import { imageMbid, isLocalOnlyRow } from '$lib/features/search/queries/SearchV3Adapters';
 	import HeroBackdrop from '$lib/media/HeroBackdrop.svelte';

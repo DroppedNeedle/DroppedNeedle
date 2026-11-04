@@ -9,10 +9,12 @@
 		ShoppingBag
 	} from 'lucide-svelte';
 	import { getPurchaseOptionsQuery } from '$lib/features/album/queries/GetItQueries.svelte';
-	import type { PurchaseLink } from '$lib/types';
+	import type { components } from '$lib/api/v3/openapi';
 	import { outsideLink } from '$lib/ui/outsideLink';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
+
+	type PurchaseLink = components['schemas']['PurchaseLink'];
 
 	interface Props {
 		releaseGroupMbid: string;

@@ -8,7 +8,7 @@
 	import ArtistMusicBrainzLink from '$lib/features/library/components/ArtistMusicBrainzLink.svelte';
 	import LocalIdentityBadge from '$lib/features/library/components/LocalIdentityBadge.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
-	import type { AlbumView } from '$lib/types';
+	import type { AlbumView } from '$lib/features/library/queries/types';
 	import {
 		getLibraryArtistAlbumsQuery,
 		getLibraryArtistDetailQuery

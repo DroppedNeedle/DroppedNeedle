@@ -40,7 +40,8 @@
 		getLibraryAlbumDetailQuery,
 		getLibraryAlbumTracksQuery
 	} from '$lib/features/library/queries/LibraryQueries.svelte';
-	import type { AlbumBasicInfo, LocalTrackInfo, TrackView } from '$lib/types';
+	import type { AlbumBasicInfo, LocalTrackInfo } from '$lib/features/album/queries/types';
+	import type { TrackView } from '$lib/features/library/queries/types';
 	import { createLibraryContributionMutation } from '$lib/features/library/queries/LibraryContributionMutations.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { artistHref } from '$lib/utils/entityRoutes';

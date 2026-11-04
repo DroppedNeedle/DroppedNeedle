@@ -1,4 +1,4 @@
-import type { AlbumView } from '$lib/types';
+import type { AlbumView } from '$lib/features/library/queries/types';
 import type { components } from '$lib/api/v3/openapi';
 
 /** A release group's MusicBrainz types, as `/artists/{mbid}/owned-releases` gives them. */

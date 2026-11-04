@@ -15,7 +15,12 @@
 	import YouTubeIcon from '$lib/media/icons/YouTubeIcon.svelte';
 	import { getCoverUrl } from '$lib/utils/errorHandling';
 	import { Link, Download, Search, Play } from 'lucide-svelte';
-	import type { Track, YouTubeLink, YouTubeTrackLink, YouTubeQuotaStatus } from '$lib/types';
+	import type { Track } from '$lib/features/album/queries/types';
+	import type {
+		YouTubeLink,
+		YouTubeTrackLink,
+		YouTubeQuotaStatus
+	} from '$lib/features/youtube/queries/types';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 

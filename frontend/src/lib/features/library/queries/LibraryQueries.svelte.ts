@@ -23,20 +23,21 @@ import {
 import { toMusicBrainzAlbums } from '$lib/features/search/queries/SearchV3Adapters';
 import { fetchLibraryTracks, type LibraryTrackPage } from './libraryTracks';
 import type { components } from '$lib/api/v3/openapi';
+import type { Album } from '$lib/features/album/queries/types';
 import type {
-	Album,
 	AlbumDetailView,
 	AlbumView,
 	ArtistSort,
 	ArtistView,
 	LibraryAlbumStatus,
 	LibraryArtistScope,
-	LibraryMembershipResponse,
 	TrackView
-} from '$lib/types';
+} from '$lib/features/library/queries/types';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { setQueryDataWithPersister } from '$lib/queries/QueryClient';
 import { PERSIST } from '$lib/queries/persistedCache';
+
+type LibraryMembershipResponse = components['schemas']['LibraryMembershipResponse'];
 
 // Catalog reads for the local library. Keys come from the v3 key set, which
 // carries the user id because the views include per-caller favorite flags.

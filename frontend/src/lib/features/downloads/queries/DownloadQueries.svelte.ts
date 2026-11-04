@@ -4,11 +4,13 @@ import type { Getter } from 'runed';
 
 import { api } from '$lib/api/client';
 import { authStore } from '$lib/stores/authStore.svelte';
-import type { DownloadListResponse } from '$lib/types';
+import type { components } from '$lib/api/v3/openapi';
 
 import { DownloadQueryKeyFactory } from './DownloadQueryKeyFactory';
 import { hasActiveTask } from './downloadStatus';
 import { STALE_LIVE } from '$lib/queries/staleTime';
+
+type DownloadListResponse = components['schemas']['DownloadListResponse'];
 
 // `downloads.changed` refreshes every download query (see `queries/effects.ts`);
 // the interval is only a safety net for a missed event.

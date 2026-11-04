@@ -7,7 +7,7 @@
 	import { createSaveLibraryScanScheduleMutation } from '$lib/features/library/queries/LibraryMutations.svelte';
 	import { SCAN_FREQUENCY_OPTIONS } from '$lib/features/library-management/components/scanFrequency';
 	import { toastStore } from '$lib/stores/toast';
-	import type { ScanFrequency } from '$lib/types';
+	import type { ScanFrequency } from '$lib/features/library-management/queries/types';
 
 	const scheduleQuery = getLibraryScanScheduleQuery();
 	const save = createSaveLibraryScanScheduleMutation();

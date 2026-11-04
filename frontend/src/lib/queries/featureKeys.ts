@@ -2,7 +2,6 @@ import type { SourceType } from '$lib/features/player/playback/types';
 import { ADMIN, key, SHARED, userScope } from '$lib/queries/keys';
 import type { RemoteMatchHints } from '$lib/queries/remotes/params';
 import type { RemoteSource } from '$lib/features/remote-library/queries/types';
-import type { SourcePlaylistSource } from '$lib/types';
 
 // The keys of the small features that effects.ts sweeps. They live apart from
 // those features' one file so that effects.ts, which every mutation imports,
@@ -144,11 +143,11 @@ export const SessionsQueryKeyFactory = {
 
 export const SourcePlaylistQueryKeyFactory = {
 	user: (userId: UserId) => key(userScope(userId), 'source-playlists'),
-	source: (userId: UserId, source: SourcePlaylistSource) =>
+	source: (userId: UserId, source: RemoteSource) =>
 		[...SourcePlaylistQueryKeyFactory.user(userId), source] as const,
-	list: (userId: UserId, source: SourcePlaylistSource, limit: number) =>
+	list: (userId: UserId, source: RemoteSource, limit: number) =>
 		[...SourcePlaylistQueryKeyFactory.source(userId, source), 'list', limit] as const,
-	detail: (userId: UserId, source: SourcePlaylistSource, playlistId: string) =>
+	detail: (userId: UserId, source: RemoteSource, playlistId: string) =>
 		[...SourcePlaylistQueryKeyFactory.source(userId, source), 'detail', playlistId] as const
 };
 

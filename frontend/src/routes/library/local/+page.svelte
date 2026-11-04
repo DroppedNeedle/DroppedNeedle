@@ -8,7 +8,7 @@
 	import { deckFocus } from '$lib/features/player/state/deckFocus.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { formatBytes } from '$lib/utils/formatting';
-	import type { CrateTrack } from '$lib/types';
+	import type { CrateTrack } from '$lib/features/library/queries/types';
 	import type { QueueItem } from '$lib/features/player/playback/types';
 	import { slide } from '$lib/ui/motion';
 	import Turntable from '$lib/features/library/components/local/Turntable.svelte';

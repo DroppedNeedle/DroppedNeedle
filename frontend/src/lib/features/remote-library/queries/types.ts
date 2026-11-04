@@ -14,3 +14,15 @@ export type RemoteMatch = components['schemas']['MatchView'];
 export type RemoteFolders = components['schemas']['FolderResolutionView'];
 export type RemoteFolderSave = components['schemas']['FolderSave'];
 export type RemoteFavorites = components['schemas']['FavoritesView'];
+export type RemotePlaylist = components['schemas']['RemotesPlaylistSummary'];
+
+export type BrowseHeroCard = {
+	label: string;
+	value: number | null;
+	href: string;
+	subtitle?: string;
+	colorScheme: 'primary' | 'secondary' | 'accent';
+	icon: 'disc' | 'users' | 'music';
+};
+
+export type RemoteArtistIndexEntry = components['schemas']['ArtistIndexEntry'];

@@ -14,7 +14,7 @@
 	import { getLyricsQuery } from '$lib/features/player/queries/lyrics.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { navidromeFolderScope } from '$lib/features/remote-library/queries/RemoteQueries.svelte';
-	import type { CrateTrack } from '$lib/types';
+	import type { CrateTrack } from '$lib/features/library/queries/types';
 	import type { SpinAlbum } from '$lib/features/library/queries/LocalV3Adapters';
 	import { isValidMbid } from '$lib/utils/formatting';
 	import {

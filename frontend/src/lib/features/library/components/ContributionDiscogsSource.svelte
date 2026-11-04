@@ -3,7 +3,7 @@
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import Input from '$lib/ui/Input.svelte';
-	import type { LibraryContribution } from '$lib/types';
+	import type { LibraryContribution } from '$lib/features/library/queries/types';
 	import {
 		createRemoveDiscogsReleaseMutation,
 		createSearchDiscogsReleasesMutation,

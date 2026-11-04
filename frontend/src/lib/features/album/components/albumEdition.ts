@@ -2,7 +2,7 @@
 // the album pages' track rows and their "Unmatched files" section.
 import type { EditionPlan } from '$lib/features/library/queries/EditionQueries.svelte';
 import { getDiscTrackKey } from '$lib/features/player/playback/queueHelpers';
-import type { LibraryStatusTrack } from '$lib/types';
+import type { LibraryStatusTrack } from '$lib/features/album/queries/types';
 
 type EditionPlanFile = EditionPlan['files'][number];
 

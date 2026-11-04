@@ -4,7 +4,7 @@
 	import { createCancelDownloadMutation } from '$lib/features/downloads/queries/DownloadMutations.svelte';
 	import { createDownloadStream } from '$lib/features/downloads/queries/DownloadSSE.svelte';
 	import { canCancel, derivedDownloadStatus } from '$lib/features/downloads/queries/downloadStatus';
-	import type { DownloadTask } from '$lib/types';
+	import type { DownloadTask } from '$lib/features/downloads/queries/types';
 	import { albumHref, artistHref } from '$lib/utils/entityRoutes';
 
 	import DownloadProgressBar from './DownloadProgressBar.svelte';

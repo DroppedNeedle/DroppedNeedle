@@ -14,7 +14,7 @@
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { formatLastUpdated } from '$lib/utils/formatting';
 	import type { DropImportItemStatus } from '$lib/features/downloads/queries/import.svelte';
-	import type { HeldEntry } from '$lib/types';
+	import type { HeldEntry } from '$lib/features/downloads/queries/types';
 	import Card from '$lib/ui/Card.svelte';
 
 	interface Props {

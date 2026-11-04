@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { derivedDownloadStatus } from '$lib/features/downloads/queries/downloadStatus';
 	import { downloadStatusConfig } from '$lib/features/downloads/queries/downloadStatusConfig';
-	import type { DownloadTask } from '$lib/types';
+	import type { DownloadTask } from '$lib/features/downloads/queries/types';
 
 	import VinylProgress from './VinylProgress.svelte';
 

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { Album, EnrichmentSource } from '$lib/types';
+	import type { Album, EnrichmentSource } from '$lib/features/album/queries/types';
 	import { albumHref } from '$lib/utils/entityRoutes';
 	import { libraryStore } from '$lib/stores/library';
 	import { createRequestAlbumMutation } from '$lib/features/downloads/queries/DownloadMutations.svelte';

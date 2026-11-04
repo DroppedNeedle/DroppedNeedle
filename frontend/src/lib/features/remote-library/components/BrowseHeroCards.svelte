@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { BrowseHeroCard } from '$lib/types';
+	import type { BrowseHeroCard } from '$lib/features/remote-library/queries/types';
 	import { Disc3, Users, Music, ChevronRight } from 'lucide-svelte';
 	import { tweened, type Tweened } from 'svelte/motion';
 	import { cubicOut } from 'svelte/easing';

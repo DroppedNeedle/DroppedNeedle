@@ -1,4 +1,4 @@
-import type { AlbumTracksInfo } from '$lib/types';
+import type { AlbumTracksInfo } from '$lib/features/album/queries/types';
 import {
 	getDiscTrackKey,
 	normalizeDiscNumber,

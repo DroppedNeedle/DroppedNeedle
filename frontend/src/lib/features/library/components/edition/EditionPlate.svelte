@@ -19,7 +19,7 @@
 	import { withBasePath } from '$lib/utils/basePath';
 	import { createImportHeldMutation } from '$lib/features/downloads/queries/HeldQueries.svelte';
 	import { getLibraryAlbumDetailQuery } from '$lib/features/library/queries/LibraryQueries.svelte';
-	import type { AlbumView } from '$lib/types';
+	import type { AlbumView } from '$lib/features/library/queries/types';
 	import {
 		createMarkLooksWrongMutation,
 		getAlbumEditionStatusQuery,

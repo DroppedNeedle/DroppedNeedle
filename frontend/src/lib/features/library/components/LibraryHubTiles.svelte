@@ -6,9 +6,11 @@
 		getLibraryArtistThumbsQuery,
 		getLibraryRecentlyAddedQuery
 	} from '$lib/features/library/queries/LibraryQueries.svelte';
-	import type { LibraryStats } from '$lib/types';
+	import type { components } from '$lib/api/v3/openapi';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { NOISE_TEXTURE } from './noiseTexture';
+
+	type LibraryStats = components['schemas']['StatsView'];
 
 	interface Props {
 		stats: LibraryStats;

@@ -7,7 +7,7 @@
 <script lang="ts">
 	import { CirclePause } from 'lucide-svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
-	import type { AlbumDetailView } from '$lib/types';
+	import type { AlbumDetailView } from '$lib/features/library/queries/types';
 	import { createReenableAlbumManagementMutation } from '$lib/features/library/queries/LibraryCatalogMutations.svelte';
 	import { getAlbumEditionsQuery } from '$lib/features/library/queries/EditionQueries.svelte';
 	import { getAlbumHistoryQuery } from '$lib/features/library/queries/LibraryAlbumHistoryQueries.svelte';

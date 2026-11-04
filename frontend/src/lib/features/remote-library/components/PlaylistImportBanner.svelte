@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { SourcePlaylistSummary } from '$lib/types';
+	import type { RemotePlaylist } from '$lib/features/remote-library/queries/types';
 	import type { Snippet } from 'svelte';
 	import {
 		ArrowRight,
@@ -17,7 +17,7 @@
 	import Card from '$lib/ui/Card.svelte';
 
 	interface Props {
-		playlists?: SourcePlaylistSummary[];
+		playlists?: RemotePlaylist[];
 		sourceLabel: string;
 		playlistsHref: string;
 		sourceIcon: Snippet;
@@ -48,7 +48,7 @@
 	let coverUrls = $derived(
 		playlists
 			.slice(0, 4)
-			.map((playlist) => playlist.cover_url)
+			.map((playlist) => playlist.image_url)
 			.filter((url): url is string => Boolean(url))
 	);
 	let progressPct = $derived(totalCount > 0 ? (importedCount / totalCount) * 100 : 0);

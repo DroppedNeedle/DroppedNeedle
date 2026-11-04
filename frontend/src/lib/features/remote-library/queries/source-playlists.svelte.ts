@@ -1,10 +1,5 @@
 import { SourcePlaylistQueryKeyFactory } from '$lib/queries/featureKeys';
-import type {
-	SourcePlaylistCollection,
-	SourcePlaylistDetail,
-	SourcePlaylistSource,
-	SourcePlaylistSummary
-} from '$lib/types';
+import type { RemotePlaylist, RemoteSource } from '$lib/features/remote-library/queries/types';
 
 import { v3 } from '$lib/api/v3/endpoint';
 import { createQuery } from '@tanstack/svelte-query';
@@ -21,23 +16,17 @@ import {
 } from '$lib/queries/effects';
 
 type Getter<T> = () => T;
-type PlaylistSummaryView = components['schemas']['RemotesPlaylistSummary'];
 
-function toSummary(playlist: PlaylistSummaryView): SourcePlaylistSummary {
-	return {
-		id: playlist.id,
-		name: playlist.name,
-		track_count: playlist.track_count,
-		duration_seconds: playlist.duration_secs,
-		cover_url: playlist.image_url ?? '',
-		is_smart: playlist.is_smart,
-		is_imported: playlist.is_imported
-	};
-}
+/** A source's playlists with the account they are read as. */
+export type SourcePlaylistCollection = {
+	account_mode: 'linked' | 'shared';
+	account_label: string;
+	playlists: RemotePlaylist[];
+};
 
 // The playlist list and the account it belongs to come from two v3 reads.
 async function fetchCollection(
-	source: SourcePlaylistSource,
+	source: RemoteSource,
 	signal: AbortSignal
 ): Promise<SourcePlaylistCollection> {
 	const [playlists, connection] = await Promise.all([
@@ -47,41 +36,23 @@ async function fetchCollection(
 	return {
 		account_mode: connection.account_mode === 'linked' ? 'linked' : 'shared',
 		account_label: connection.account_label,
-		playlists: playlists.items.map(toSummary)
+		playlists: playlists.items
 	};
 }
 
-async function fetchDetail(
-	source: SourcePlaylistSource,
+function fetchDetail(
+	source: RemoteSource,
 	playlistId: string,
 	signal: AbortSignal
-): Promise<SourcePlaylistDetail> {
-	const detail = await api.v3.GET(
+): Promise<components['schemas']['RemotesPlaylistDetail']> {
+	return api.v3.GET(
 		v3('/api/v3/remotes/{source}/playlists/{id}', { path: { source, id: playlistId } }),
-		{
-			signal
-		}
+		{ signal }
 	);
-	return {
-		...toSummary(detail.playlist),
-		tracks: detail.tracks.map((track) => ({
-			id: track.id,
-			track_name: track.title,
-			artist_name: track.artist_name,
-			album_name: track.album_name,
-			album_id: track.album_id ?? '',
-			artist_id: track.artist_id ?? undefined,
-			plex_rating_key: source === 'plex' ? track.id : undefined,
-			duration_seconds: track.duration_secs ?? 0,
-			track_number: track.track_number ?? 0,
-			disc_number: track.disc_number ?? 1,
-			cover_url: track.image_url ?? ''
-		}))
-	};
 }
 
 export const getSourcePlaylistsQuery = (
-	getSource: Getter<SourcePlaylistSource>,
+	getSource: Getter<RemoteSource>,
 	getLimit: Getter<number> = () => 200,
 	getEnabled: Getter<boolean> = () => true
 ) =>
@@ -92,7 +63,7 @@ export const getSourcePlaylistsQuery = (
 	}));
 
 export const getSourcePlaylistDetailQuery = (
-	getSource: Getter<SourcePlaylistSource>,
+	getSource: Getter<RemoteSource>,
 	getPlaylistId: Getter<string>
 ) =>
 	createQuery(() => ({
@@ -108,7 +79,7 @@ export const getSourcePlaylistDetailQuery = (
 // Copies one remote playlist into the caller's playlists. The new playlist
 // shows up in the playlist list, so the playlist root is refreshed with the
 // source's own lists.
-export const createSourcePlaylistImportMutation = (getSource: () => SourcePlaylistSource) =>
+export const createSourcePlaylistImportMutation = (getSource: () => RemoteSource) =>
 	createAppMutation(() => ({
 		mutationFn: (playlistId: string) =>
 			api.v3.POST(

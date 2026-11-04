@@ -71,7 +71,7 @@ import type {
 	LibraryStatusTrack,
 	LocalAlbumMatch,
 	LocalTrackInfo
-} from '$lib/types';
+} from '$lib/features/album/queries/types';
 import type { RemoteTrack } from '$lib/features/remote-library/queries/types';
 
 const TRACKS: AlbumTracksInfo['tracks'] = [

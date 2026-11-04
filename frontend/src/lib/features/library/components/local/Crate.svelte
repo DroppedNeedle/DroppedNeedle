@@ -1,7 +1,7 @@
 <script lang="ts">
 	import '$lib/features/player/components/now-playing.css';
 	import '$lib/features/library/components/local/deck.css';
-	import type { CrateTrack, CrateReason } from '$lib/types';
+	import type { CrateTrack, CrateReason } from '$lib/features/library/queries/types';
 	import { flip, fly } from '$lib/ui/motion';
 	import { crateCoverUrl, type SpinAlbum } from '$lib/features/library/queries/LocalV3Adapters';
 	import {

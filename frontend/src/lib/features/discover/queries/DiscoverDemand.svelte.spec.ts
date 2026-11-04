@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushSync } from 'svelte';
-import type { DiscoverActivity } from '$lib/types';
+import type { DiscoverActivity } from '$lib/features/discover/queries/types';
 
 const h = vi.hoisted(() => ({
 	post: vi.fn(),

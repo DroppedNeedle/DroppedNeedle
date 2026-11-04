@@ -2,7 +2,7 @@
 	import { X, Music2, LoaderCircle, CircleAlert } from 'lucide-svelte';
 	import { slide } from '$lib/ui/motion';
 	import IconButton from '$lib/ui/IconButton.svelte';
-	import type { LyricLine } from '$lib/types';
+	import type { LyricLine } from '$lib/features/player/queries/types';
 
 	interface Props {
 		open: boolean;

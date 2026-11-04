@@ -8,6 +8,7 @@ type WithJson<T, K extends keyof T> = Omit<T, K> & {
 	[P in K]: T[P] extends unknown[] ? Array<Record<string, unknown>> : Record<string, unknown>;
 };
 
+export type ScanFrequency = Schemas['ScanFrequency'];
 export type ManagementFieldMode = Schemas['FieldMode'];
 export type ManagementSelectionKind = Schemas['ManagementSelectionKind'];
 export type ManagementEligibility = Schemas['Eligibility'];

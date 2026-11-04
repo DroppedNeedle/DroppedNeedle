@@ -23,7 +23,7 @@
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import { useIntegrationStatus } from '$lib/features/home/queries/home.svelte';
-	import type { AlbumView } from '$lib/types';
+	import type { AlbumView } from '$lib/features/library/queries/types';
 	import { getLibraryAlbumDetailQuery } from '$lib/features/library/queries/LibraryQueries.svelte';
 	import { getReleaseEditionSearchQuery } from '$lib/features/library/queries/LibraryEditionQueries.svelte';
 	import {

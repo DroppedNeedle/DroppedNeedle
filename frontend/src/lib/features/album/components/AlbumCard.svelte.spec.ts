@@ -2,7 +2,7 @@ import { page } from 'vitest/browser';
 import { describe, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 
-import type { Album } from '$lib/types';
+import type { Album } from '$lib/features/album/queries/types';
 
 const { emptyComponent } = vi.hoisted(() => ({
 	emptyComponent: () => {

@@ -1,10 +1,13 @@
 <script lang="ts">
-	import type { ArtistIndexEntry, ArtistIndexArtist } from '$lib/types';
+	import type {
+		RemoteArtist,
+		RemoteArtistIndexEntry
+	} from '$lib/features/remote-library/queries/types';
 	import ArtistImage from '$lib/media/ArtistImage.svelte';
 
 	type Props = {
-		index: ArtistIndexEntry[];
-		onselect?: (artist: ArtistIndexArtist) => void;
+		index: RemoteArtistIndexEntry[];
+		onselect?: (artist: RemoteArtist) => void;
 	};
 
 	let { index, onselect }: Props = $props();
@@ -79,7 +82,7 @@
 							>
 								<div class="w-8 h-8 rounded-full overflow-hidden shrink-0">
 									<ArtistImage
-										mbid={artist.musicbrainz_id ?? artist.id}
+										mbid={artist.artist_mbid ?? artist.id}
 										remoteUrl={artist.image_url}
 										alt={artist.name}
 										size="full"

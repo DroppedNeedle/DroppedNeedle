@@ -2,7 +2,7 @@ import { page } from 'vitest/browser';
 import { describe, expect, it } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import LibraryTrackRow from './LibraryTrackRow.svelte';
-import type { TrackView } from '$lib/types';
+import type { TrackView } from '$lib/features/library/queries/types';
 
 const meta: TrackView = {
 	id: 'file-1',

@@ -1,5 +1,9 @@
 import type { components } from '$lib/api/v3/openapi';
-import type { ArtistInfoBasic, ArtistReleases, ReleaseGroup } from '$lib/types';
+import type {
+	ArtistInfoBasic,
+	ArtistReleases,
+	ReleaseGroup
+} from '$lib/features/album/queries/types';
 
 type V3ArtistInfo = components['schemas']['ArtistInfo'];
 type V3ArtistImages = components['schemas']['ArtistImages'];

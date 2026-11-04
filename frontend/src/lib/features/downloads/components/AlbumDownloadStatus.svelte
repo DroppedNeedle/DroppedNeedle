@@ -14,7 +14,7 @@
 		retryDisplay
 	} from '$lib/features/downloads/queries/downloadStatus';
 	import { downloadStatusConfig } from '$lib/features/downloads/queries/downloadStatusConfig';
-	import type { DownloadTask, HeldFile } from '$lib/types';
+	import type { DownloadTask, HeldFile } from '$lib/features/downloads/queries/types';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import { withBasePath } from '$lib/utils/basePath';

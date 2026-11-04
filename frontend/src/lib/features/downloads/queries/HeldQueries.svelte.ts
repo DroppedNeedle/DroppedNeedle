@@ -6,7 +6,7 @@ import type { Getter } from 'runed';
 import { api } from '$lib/api/client';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { toastStore } from '$lib/stores/toast';
-import type { HeldActionResult, HeldRecheckAllResult } from '$lib/types';
+import type { components } from '$lib/api/v3/openapi';
 
 import { DownloadQueryKeyFactory } from './DownloadQueryKeyFactory';
 import type { HeldListFilters } from './heldFilters';
@@ -19,6 +19,9 @@ import {
 	type Effect,
 	libraryChanged
 } from '$lib/queries/effects';
+
+type HeldActionResult = components['schemas']['HeldActionResponse'];
+type HeldRecheckAllResult = components['schemas']['HeldRecheckAllResponse'];
 
 // Held files waiting for a decision, one entry per download or upload. Three
 // callers: the Downloads queue (every entry), the import tab (an upload's

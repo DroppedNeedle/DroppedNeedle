@@ -7,7 +7,7 @@ import {
 } from '$lib/queries/musicbrainz/sourceScope.svelte';
 import type { MusicBrainzSourceMode } from '$lib/features/settings/queries/musicbrainz/types';
 import { authStore } from '$lib/stores/authStore.svelte';
-import type { DiscoverActivity } from '$lib/types';
+import type { DiscoverActivity } from '$lib/features/discover/queries/types';
 import { createAppMutation } from '$lib/queries/effects';
 
 // Discover demand: the server records which discovery surfaces a user

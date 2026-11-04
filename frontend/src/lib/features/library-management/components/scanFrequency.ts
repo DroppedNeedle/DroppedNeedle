@@ -1,4 +1,4 @@
-import type { ScanFrequency } from '$lib/types';
+import type { ScanFrequency } from '$lib/features/library-management/queries/types';
 
 interface ScanFrequencyOption {
 	value: ScanFrequency;

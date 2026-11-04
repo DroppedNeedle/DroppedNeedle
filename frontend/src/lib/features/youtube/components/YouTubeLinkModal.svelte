@@ -9,7 +9,8 @@
 	import { getCoverUrl } from '$lib/utils/errorHandling';
 	import { getSearchBucketV3Query } from '$lib/features/search/queries/SearchV3Queries.svelte';
 	import { toMusicBrainzAlbums } from '$lib/features/search/queries/SearchV3Adapters';
-	import type { YouTubeLink, Album } from '$lib/types';
+	import type { YouTubeLink } from '$lib/features/youtube/queries/types';
+	import type { Album } from '$lib/features/album/queries/types';
 	import Button from '$lib/ui/Button.svelte';
 	import Field from '$lib/ui/Field.svelte';
 	import Input from '$lib/ui/Input.svelte';

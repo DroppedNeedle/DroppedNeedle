@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { DownloadActivitySummary } from '$lib/types';
+import type { DownloadActivitySummary } from '$lib/features/downloads/queries/types';
 
 import {
 	createDownloadActivityObservation,
