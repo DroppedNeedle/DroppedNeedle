@@ -29,6 +29,7 @@ use droppedneedle_acquire::probes::{LiveProbes, ProbeCache, refresh_probes};
 use droppedneedle_acquire::readiness::SourceReadiness;
 use droppedneedle_acquire::settings::{ConfigLidarrSettings, ConfigSpotifySettings};
 use droppedneedle_acquire::target::Targets;
+use droppedneedle_acquire::test_support::imports_router;
 use droppedneedle_acquire::wiring::ClientLives;
 use droppedneedle_auth::users::roles::{Role, SessionKind};
 use droppedneedle_catalog::collections::db::CollectionsDb;
@@ -52,7 +53,7 @@ use droppedneedle_testkit::imports::{
 };
 use droppedneedle_testkit::musicbrainz::MockMusicBrainz;
 use droppedneedle_testkit::slskd::{MOCK_API_KEY, MockSlskd};
-use imports::handlers::{ImportsDeps, imports_router};
+use imports::handlers::ImportsDeps;
 use imports::jobs::{SPEC, SpotifyImportJobs, SpotifyImports};
 use imports::lidarr::LidarrClient;
 use imports::models::{LidarrConnectionSettings, SpotifySettings};
@@ -477,7 +478,7 @@ fn unreadable_settings(
         json!({ section: stored }).to_string(),
     )
     .expect("config.json");
-    Arc::new(droppedneedle_acquire::settings::scratch_settings(dir).expect("settings open"))
+    Arc::new(droppedneedle_acquire::test_support::scratch_settings(dir).expect("settings open"))
 }
 
 /// The bespoke Lidarr settings routes. Settings that do not read are never

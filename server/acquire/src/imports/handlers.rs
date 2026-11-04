@@ -109,12 +109,6 @@ impl ImportsDeps {
     }
 }
 
-/// Every imports route in one router with no layers, for tests.
-#[cfg(any(test, feature = "test-support"))]
-pub fn imports_router(deps: ImportsDeps) -> axum::Router {
-    routes().with_state(deps).into_router()
-}
-
 /// The imports, health and Spotify routes, in the group of each handler's
 /// caller extractor. The Spotify OAuth callback is public: it is
 /// state-token identified.

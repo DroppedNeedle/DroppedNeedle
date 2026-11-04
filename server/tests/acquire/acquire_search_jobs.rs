@@ -101,7 +101,7 @@ async fn rig(mock: &MockSlskd, review: bool) -> Rig {
     let journal = Arc::new(Journal::new(db.clone(), quiet_ticks()));
     let mut albums = FixedAlbums::default();
     albums.releases.insert(RELEASE.to_owned(), album());
-    let settings = droppedneedle_acquire::settings::scratch_settings(&staging.join("settings"))
+    let settings = droppedneedle_acquire::test_support::scratch_settings(&staging.join("settings"))
         .expect("settings open");
     save_slskd(&settings, &mock.base_url());
     if !review {
@@ -745,7 +745,7 @@ async fn kept_rig_with(copies: &[Copy], saved: Value) -> KeptRig {
         json!({"download_policy": saved}).to_string(),
     )
     .expect("config.json");
-    let settings = droppedneedle_acquire::settings::scratch_settings(&band).expect("settings");
+    let settings = droppedneedle_acquire::test_support::scratch_settings(&band).expect("settings");
 
     let journal = Arc::new(Journal::new(db.clone(), quiet_ticks()));
     let landing = Arc::new(LandingService::new(

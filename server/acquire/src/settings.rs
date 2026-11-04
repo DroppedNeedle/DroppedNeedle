@@ -38,15 +38,6 @@ pub(crate) fn clamp_usize(value: i64) -> usize {
     usize::try_from(value.max(0)).unwrap_or(usize::MAX)
 }
 
-/// A settings store for tests over `settings.db` in `dir`, with a fixed
-/// test key. Opening the same `dir` again reopens the same rows.
-#[cfg(any(test, feature = "test-support"))]
-pub fn scratch_settings(dir: &std::path::Path) -> Result<ConfigStore, String> {
-    let crypto = droppedneedle_kernel::runtime_config::Crypto::from_key_bytes(&[7u8; 32])
-        .map_err(|error| error.to_string())?;
-    ConfigStore::scratch(dir, crypto)
-}
-
 /// The section as stored, or the error it does not read with. [`Live::read`]
 /// logs a section that does not read, once per revision.
 fn open<S: Listed>(live: &Live<S>) -> Result<Arc<Plain<S>>, ConfigError> {

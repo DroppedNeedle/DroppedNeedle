@@ -1000,8 +1000,9 @@ async fn plugins_conform() {
             .await
             .expect("download seeds");
     }
-    let settings = droppedneedle_acquire::settings::scratch_settings(&worker_dir.join("settings"))
-        .expect("settings open");
+    let settings =
+        droppedneedle_acquire::test_support::scratch_settings(&worker_dir.join("settings"))
+            .expect("settings open");
     let (worker, _) = crate::common::acquire::worker_over(
         &worker_db,
         journal.clone(),

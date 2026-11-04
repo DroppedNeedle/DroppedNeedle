@@ -25,8 +25,8 @@ use super::writer::{
 /// end before giving up: long enough that a loaded host only slows a test.
 pub const TEST_PATIENCE: Duration = Duration::from_secs(60);
 
-/// How often a scratch cache's folder is looked at for its last handle.
-const CACHE_GONE_POLL: Duration = Duration::from_millis(100);
+/// How often a scratch folder is looked at for the last handle on it.
+const GONE_POLL: Duration = Duration::from_millis(100);
 
 impl LaneLimits {
     /// Limits for a test database on a loaded host: a minute to wait for
@@ -70,6 +70,22 @@ impl Db {
     /// run a write past its budget without waiting out the real one.
     pub fn open_for_tests_with(path: &Path, limits: LaneLimits) -> Result<Self, DbError> {
         Self::on_test_lane(path, WriteLane::open_limited(path, limits)?)
+    }
+
+    /// A private copy of the migrated template in a scratch folder named
+    /// after `tag`, opened through [`Db::open_for_tests`]. The folder is
+    /// removed once the last handle on it has closed.
+    pub fn scratch(tag: &str) -> Result<Self, String> {
+        let dir = ScratchDir::new(tag).map_err(|error| format!("scratch dir: {error}"))?;
+        let path = dir.path().join("app.db");
+        crate::test_support::template::copy_to(&path)?;
+        let db = Self::open_for_tests(&path).map_err(|error| error.to_string())?;
+        let reads = std::sync::Arc::downgrade(db.reads());
+        std::thread::Builder::new()
+            .name("droppedneedle-scratch-db".to_owned())
+            .spawn(move || remove_when_gone(&reads, dir))
+            .map_err(|error| format!("scratch folder keeper: {error}"))?;
+        Ok(db)
     }
 
     /// A test handle over `lane` and both read pools.
@@ -140,7 +156,7 @@ impl CacheDb {
 /// Hold `dir` until nothing holds `shared`, then remove it.
 fn remove_when_gone<T>(shared: &Weak<T>, dir: ScratchDir) {
     while shared.strong_count() > 0 {
-        std::thread::sleep(CACHE_GONE_POLL);
+        std::thread::sleep(GONE_POLL);
     }
     drop(dir);
 }

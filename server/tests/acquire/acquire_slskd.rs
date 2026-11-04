@@ -984,8 +984,8 @@ async fn soulseek_picks_follow_the_saved_quality_policy() {
     let db = AcquireDb::scratch().expect("scratch db");
     db.add_user("u1", "U", "user").await.expect("user seeds");
     let dir = db.path().parent().expect("scratch dir").to_path_buf();
-    let settings =
-        droppedneedle_acquire::settings::scratch_settings(&dir.join("settings")).expect("settings");
+    let settings = droppedneedle_acquire::test_support::scratch_settings(&dir.join("settings"))
+        .expect("settings");
     settings
         .save_secret_blocking(SlskdConnection {
             enabled: true,

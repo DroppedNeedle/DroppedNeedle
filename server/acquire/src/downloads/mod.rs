@@ -43,8 +43,6 @@ pub mod upgrades;
 pub mod watchdog;
 pub mod worker;
 
-#[cfg(any(test, feature = "test-support"))]
-pub use http::downloads_router;
 pub use http::{DownloadsRoutes, ReimportResponse, routes, search_routes};
 pub use orphans::{OrphanDecision, OrphanEvidence, OrphanPolicy, evaluate_orphan, job_name_parts};
 pub use plan::{ExpectedTrack, PlannedAlbum, ReplaceVersion, TaskPlan, TrackAlbum, TrackPosition};

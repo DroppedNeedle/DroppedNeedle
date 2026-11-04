@@ -18,11 +18,11 @@ use droppedneedle_acquire::dispatch::{
 use droppedneedle_acquire::downloads::journal::Journal;
 use droppedneedle_acquire::downloads::worker::{DownloadWorker, run_startup_recovery};
 use droppedneedle_acquire::downloads::{
-    http::downloads_router,
     state::{AttemptDisposition, AttemptState, TaskStatus},
     store::{NewTask, TaskOutcome},
 };
 use droppedneedle_acquire::reason::Reason;
+use droppedneedle_acquire::test_support::downloads_router;
 use droppedneedle_auth::Role;
 use droppedneedle_auth::session::store::SessionKind;
 use droppedneedle_kernel::db::{DbError, Lane};
@@ -239,7 +239,7 @@ fn settings_beside(journal: &Journal) -> droppedneedle_kernel::runtime_config::C
         .parent()
         .expect("scratch dir")
         .join("settings");
-    droppedneedle_acquire::settings::scratch_settings(&dir).expect("settings open")
+    droppedneedle_acquire::test_support::scratch_settings(&dir).expect("settings open")
 }
 
 fn staging_for(journal: &Journal) -> std::path::PathBuf {
@@ -884,7 +884,7 @@ async fn a_busy_edition_read_defers_the_dispatch_until_the_edition_reads() {
     .await
     .unwrap();
     let journal = Arc::new(Journal::new(db.clone(), quiet_ticks()));
-    let settings = droppedneedle_acquire::settings::scratch_settings(&dir.join("settings"))
+    let settings = droppedneedle_acquire::test_support::scratch_settings(&dir.join("settings"))
         .expect("settings open");
     let dispatch = DownloadDispatch::new(journal.clone(), Arc::new(UuidGenerator), settings.live());
     let request = DispatchRequest {

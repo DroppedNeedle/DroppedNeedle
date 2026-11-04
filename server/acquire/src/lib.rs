@@ -62,26 +62,10 @@ pub mod search_jobs;
 pub mod settings;
 pub mod slskd;
 pub mod sources;
-mod sql;
 pub mod target;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
 pub mod usenet;
 pub mod wiring;
 
 pub use wiring::AcquireSetup;
-
-/// Every `sql.rs` of this crate, one line each, for the schema test.
-#[cfg(any(test, feature = "test-support"))]
-pub fn statement_files() -> Vec<droppedneedle_kernel::db::statement::StatementFile> {
-    vec![
-        downloads::sql::registered(),
-        drop_import::sql::registered(),
-        flows::sql::registered(),
-        follows::sql::registered(),
-        held::sql::registered(),
-        imports::sql::registered(),
-        landing::sql::registered(),
-        requests::sql::registered(),
-        search_jobs::sql::registered(),
-        sql::registered(),
-    ]
-}

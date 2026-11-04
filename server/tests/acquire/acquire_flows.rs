@@ -107,7 +107,7 @@ async fn status_of(store: &RequestStore, key: &str) -> String {
 /// Settings beside `db`, at their defaults until a test saves one.
 fn settings(db: &AcquireDb) -> ConfigStore {
     let dir = db.path().parent().expect("scratch dir").join("settings");
-    droppedneedle_acquire::settings::scratch_settings(&dir).expect("settings open")
+    droppedneedle_acquire::test_support::scratch_settings(&dir).expect("settings open")
 }
 
 /// The production dispatch over the download journal on `db`.

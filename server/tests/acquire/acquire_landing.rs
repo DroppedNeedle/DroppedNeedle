@@ -2616,7 +2616,7 @@ async fn a_quality_waiver_keeps_only_the_pinned_attempts_files() {
                 .to_string(),
         )
         .expect("config.json");
-        let store = droppedneedle_acquire::settings::scratch_settings(&band).expect("settings");
+        let store = droppedneedle_acquire::test_support::scratch_settings(&band).expect("settings");
         let landing = droppedneedle_acquire::landing::LandingService::new(
             acquire.journal.clone(),
             acquire.landing.library().clone(),

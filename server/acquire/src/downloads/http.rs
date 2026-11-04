@@ -982,36 +982,6 @@ pub fn routes() -> Routes<DownloadsRoutes> {
         .admin(routes!(delete_quarantine_handler))
 }
 
-/// Queue routes over default settings (upgrades off), for tests. The
-/// settings sit beside the worker's scratch database.
-#[cfg(any(test, feature = "test-support"))]
-pub fn downloads_router(worker: Arc<DownloadWorker>) -> Result<axum::Router, String> {
-    let db = worker.journal().db().clone();
-    let dir = db
-        .path()
-        .parent()
-        .map(|dir| dir.join("settings"))
-        .ok_or_else(|| "scratch database has no directory".to_owned())?;
-    let settings = crate::settings::scratch_settings(&dir)?;
-    let dispatch = crate::dispatch::DownloadDispatch::new(
-        worker.journal().clone(),
-        Arc::new(droppedneedle_kernel::ids::UuidGenerator),
-        settings.live(),
-    );
-    let upgrades = Upgrades::new(
-        crate::flows::stores::UpgradeWorklist::new(db),
-        settings.live(),
-        Arc::new(dispatch),
-    );
-    Ok(routes()
-        .with_state(DownloadsRoutes::new(
-            worker.journal().clone(),
-            worker,
-            upgrades,
-        ))
-        .into_router())
-}
-
 // Manual album searches.
 
 /// Start a manual search for one album.

@@ -19,8 +19,6 @@ use droppedneedle_kernel::db::{Db, DbError, Lane};
 pub struct AcquireDb {
     db: Db,
     clock: Arc<dyn Clock>,
-    #[cfg(any(test, feature = "test-support"))]
-    _scratch: Option<Arc<droppedneedle_kernel::db::scratch::ScratchDir>>,
 }
 
 impl std::fmt::Debug for AcquireDb {
@@ -34,12 +32,7 @@ impl std::fmt::Debug for AcquireDb {
 impl AcquireDb {
     /// Handle over the serving runtime's database and clock.
     pub fn new(db: Db, clock: Arc<dyn Clock>) -> Self {
-        Self {
-            db,
-            clock,
-            #[cfg(any(test, feature = "test-support"))]
-            _scratch: None,
-        }
+        Self { db, clock }
     }
 
     /// The database, for a write that is not one of the two below.
@@ -83,41 +76,6 @@ impl AcquireDb {
         R: Send + 'static,
     {
         self.db.write(Lane::Background, name, op).await
-    }
-
-    /// Scratch database for tests: a private copy of the migrated template
-    /// in the temp dir, opened through [`Db::open_for_tests`]. The directory
-    /// is removed when the last clone drops.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn scratch() -> Result<Self, String> {
-        let scratch = Arc::new(
-            droppedneedle_kernel::db::scratch::ScratchDir::new("acquire-db")
-                .map_err(|error| format!("scratch dir: {error}"))?,
-        );
-        let dir = scratch.to_path_buf();
-        let path = dir.join("app.db");
-        droppedneedle_kernel::test_support::template::copy_to(&path)?;
-        let db = Db::open_for_tests(&path).map_err(|error| error.to_string())?;
-        Ok(Self {
-            db,
-            clock: Arc::new(droppedneedle_kernel::clock::SystemClock),
-            _scratch: Some(scratch),
-        })
-    }
-
-    /// Insert one user row so foreign keys to `auth_users` hold in tests.
-    #[cfg(any(test, feature = "test-support"))]
-    pub async fn add_user(&self, id: &str, display_name: &str, role: &str) -> Result<(), String> {
-        let (id, display_name, role) = (id.to_owned(), display_name.to_owned(), role.to_owned());
-        self.write("test.add_user", move |tx| {
-            tx.execute(
-                crate::sql::INSERT_TEST_USER.text(),
-                rusqlite::params![id, display_name, role],
-            )?;
-            Ok(())
-        })
-        .await
-        .map_err(|error| error.to_string())
     }
 }
 

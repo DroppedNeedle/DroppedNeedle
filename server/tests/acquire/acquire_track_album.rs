@@ -117,8 +117,8 @@ async fn track_request_fetches_one_file_from_the_album_folder() {
         .parent()
         .expect("scratch dir")
         .join("settings");
-    let settings =
-        droppedneedle_acquire::settings::scratch_settings(&settings_dir).expect("settings open");
+    let settings = droppedneedle_acquire::test_support::scratch_settings(&settings_dir)
+        .expect("settings open");
     let dispatch = DownloadDispatch::new(journal.clone(), Arc::new(UuidGenerator), settings.live());
     let outcome = dispatch
         .dispatch(&DispatchRequest {
