@@ -34,6 +34,14 @@ export const retryBadgeConfig: Record<RetryKind, Omit<DownloadStatusMeta, 'label
 	failed_exhausted: { badgeClass: 'badge-error', icon: CircleX, pulse: false }
 };
 
+// A cancel the app made because nothing was left to do: finished, not stopped.
+export const settledBadgeConfig: DownloadStatusMeta = {
+	label: 'Done',
+	badgeClass: 'badge-ghost',
+	icon: CircleCheck,
+	pulse: false
+};
+
 export const downloadStatusConfig: Record<DerivedDownloadStatus, DownloadStatusMeta> = {
 	searching: { label: 'Searching', badgeClass: 'badge-ghost', icon: Search, pulse: true },
 	awaiting_review: {

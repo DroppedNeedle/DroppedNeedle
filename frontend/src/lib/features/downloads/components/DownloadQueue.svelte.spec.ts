@@ -216,6 +216,7 @@ describe('finished downloads on the Downloads queue', () => {
 
 		await page.getByRole('button', { name: /^History/ }).click();
 		const row = page.getByRole('article').filter({ hasText: 'Album waited' });
+		await expect.element(row.getByLabelText('Status: Done')).toBeVisible();
 		await expect
 			.element(row.getByRole('link', { name: 'See the download' }))
 			.toHaveAttribute('href', '#download-live');
