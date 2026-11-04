@@ -136,7 +136,8 @@ async fn home_and_genre_pages_build_from_library_and_listening() {
             Arc::new(crate::common::bundles::NoDownloadSource),
         )
     };
-    let warm = crate::common::bundles::cover_warm_at(&db);
+    let warm =
+        crate::common::bundles::cover_warm_at(&db, Arc::new(ManualClock::at(1_790_000_000_000)));
     let home_over = || {
         let clock = Arc::new(ManualClock::at(1_790_000_000_000));
         LiveHome::new(HomeInputs {

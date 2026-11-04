@@ -116,9 +116,16 @@ fn seed_catalog(app_db: &Path) {
     );
 }
 
-fn search_deps(app_db: PathBuf, enrichment: Arc<dyn EnrichmentPort>) -> SearchDeps {
+/// The search deps over `app_db`, MusicBrainz search failing at once
+/// without a request: these tests read the library's own hits.
+fn search_deps(
+    app_db: PathBuf,
+    enrichment: Arc<dyn EnrichmentPort>,
+    users: droppedneedle_auth::users::UsersDeps,
+) -> SearchDeps {
     let db = droppedneedle_kernel::db::Db::open_for_tests(&app_db).expect("search database opens");
-    SearchDeps::new(SearchService::new(db), enrichment)
+    let remote = crate::common::bundles::offline_catalog(&db, users);
+    SearchDeps::new(SearchService::new(db, remote), enrichment)
 }
 
 /// What a test's router needs alive: the rig its session lives in and the
@@ -137,7 +144,7 @@ async fn app(app_db: PathBuf, enrichment: Arc<dyn EnrichmentPort>) -> (axum::Rou
     let app = scope
         .request_scope(
             search::routes()
-                .with_state(search_deps(app_db, enrichment))
+                .with_state(search_deps(app_db, enrichment, rig.deps.clone()))
                 .into_router()
                 .layer(middleware::from_fn_with_state(
                     rig.session_gate(),

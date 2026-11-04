@@ -141,12 +141,6 @@ pub struct KnownMissing<'a> {
 }
 
 impl KnownMissing<'_> {
-    /// Knows nothing: every answer is false.
-    #[must_use]
-    pub fn nothing() -> Self {
-        Self::default()
-    }
-
     /// Whether the release-group route answers 404 for the 250 and 500
     /// px covers: the archive's "no art" answer for the 500 file (which
     /// both sizes share) is fresh and no TheAudioDB thumbnail stands in.

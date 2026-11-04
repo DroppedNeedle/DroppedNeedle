@@ -45,20 +45,17 @@ pub struct LibraryDeps {
     /// Stored-lyrics reads; the provider fetch sits behind this port too.
     pub lyrics: Arc<dyn LyricsPort>,
     /// The download policy album status reads its upgrade cutoff from, per
-    /// call; `None` shows no upgrades.
-    pub upgrade_policy: Option<
-        droppedneedle_kernel::runtime_config::Live<
-            droppedneedle_kernel::runtime_config::sections::DownloadPolicy,
-        >,
+    /// call.
+    pub upgrade_policy: droppedneedle_kernel::runtime_config::Live<
+        droppedneedle_kernel::runtime_config::sections::DownloadPolicy,
     >,
     /// The cover service, whose cache tells the views which covers are
-    /// known missing. `None` knows no cache answers: only albums with no
-    /// art and no release group, and unlinked artists with no album art,
-    /// read as missing.
-    pub covers: Option<crate::artwork::ArtworkService>,
+    /// known missing.
+    pub covers: crate::artwork::ArtworkService,
     /// The MusicBrainz releases the catalog holds, for how many tracks an
-    /// album's edition has. `None` counts from the files' tags alone.
-    pub releases: Option<crate::metadata::Catalog>,
+    /// album's edition has; a release it does not hold counts from the
+    /// files' tags.
+    pub releases: crate::metadata::Catalog,
 }
 
 /// The library read routes, at their full `/api/v3` paths. Every handler

@@ -544,7 +544,7 @@ impl CompatLibrary {
         &self,
         album_ids: &[String],
     ) -> Result<HashMap<String, i64>, CompatError> {
-        let counts = album_tracks(&self.catalog, Some(&self.releases), album_ids).await?;
+        let counts = album_tracks(&self.catalog, &self.releases, album_ids).await?;
         Ok(counts
             .into_iter()
             .filter_map(|(id, tracks)| Some((id, i64::try_from(tracks.expected?).ok()?)))

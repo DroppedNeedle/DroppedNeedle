@@ -21,7 +21,7 @@ use super::stores::{
     After, AlbumFilter, AlbumRecord, AlbumSort, ArtistRecord, ArtistScope, ArtistSort, KeyedPage,
     StoreError, TrackFilter, TrackRecord, TrackSort, UpgradePolicy,
 };
-use crate::artwork::{ArtworkService, KnownMissing};
+use crate::artwork::KnownMissing;
 use droppedneedle_providers::musicbrainz::is_valid_mbid;
 use rusqlite::types::Value;
 
@@ -49,12 +49,9 @@ impl From<StoreError> for LibraryFailure {
     }
 }
 
-/// What the cover cache knows is missing; nothing when the reads run
-/// without one.
+/// What the cover cache knows is missing.
 fn known_missing(deps: &LibraryDeps) -> KnownMissing<'_> {
-    deps.covers
-        .as_ref()
-        .map_or_else(KnownMissing::nothing, ArtworkService::known_missing)
+    deps.covers.known_missing()
 }
 
 /// The albums, by id, whose cover the web UI would ask for and get a 404:
@@ -377,7 +374,7 @@ async fn album_views(
     let ids: Vec<String> = records.iter().map(|record| record.id.clone()).collect();
     let favorites = favorites_for(deps, user_id, "album", &ids).await?;
     let missing = albums_missing_art(deps, &records).await?;
-    let tracks = edition_tracks::album_tracks(&deps.catalog, deps.releases.as_ref(), &ids).await?;
+    let tracks = edition_tracks::album_tracks(&deps.catalog, &deps.releases, &ids).await?;
     Ok(records
         .into_iter()
         .map(|record| {
@@ -948,8 +945,7 @@ async fn held_tracks(
     let mut albums: Vec<String> = owners.iter().map(|(album, _)| album.clone()).collect();
     albums.sort_unstable();
     albums.dedup();
-    let tracks =
-        edition_tracks::album_tracks(&deps.catalog, deps.releases.as_ref(), &albums).await?;
+    let tracks = edition_tracks::album_tracks(&deps.catalog, &deps.releases, &albums).await?;
     let mut by_group: HashMap<String, Vec<AlbumTracks>> = HashMap::new();
     for (album, group) in owners {
         if let Some(album) = tracks.get(&album) {
@@ -1029,7 +1025,7 @@ pub async fn album_status(
     let ids: Vec<String> = records.iter().map(|record| record.id.clone()).collect();
     let favorites = favorites_for(deps, user_id, "track", &ids).await?;
     let missing = track_albums_missing_art(deps, &records).await?;
-    let policy = UpgradePolicy::read(deps.upgrade_policy.as_ref());
+    let policy = UpgradePolicy::read(&deps.upgrade_policy);
     let album_id = records
         .first()
         .map(|record| record.album_id.clone())

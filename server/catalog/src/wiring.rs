@@ -159,7 +159,7 @@ impl CatalogSetup {
             clock,
         );
         let search = search::SearchDeps::new(
-            search::service::SearchService::new(db.clone()).with_remote(catalog.clone()),
+            search::service::SearchService::new(db.clone(), catalog.clone()),
             enrichment.search,
         );
         Self {
@@ -191,9 +191,9 @@ fn library_deps(
     local::LibraryDeps {
         lyrics: Arc::new(lyrics::LyricsService::new(catalog.clone(), files, online)),
         catalog,
-        upgrade_policy: Some(settings.live()),
-        covers: Some(covers),
-        releases: Some(releases),
+        upgrade_policy: settings.live(),
+        covers,
+        releases,
     }
 }
 

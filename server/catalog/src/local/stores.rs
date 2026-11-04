@@ -354,18 +354,13 @@ pub struct UpgradePolicy {
 }
 
 impl UpgradePolicy {
-    /// The download policy's upgrade settings now; upgrades off when there
-    /// is no policy (test builds) or it cannot be read.
+    /// The download policy's upgrade settings now; upgrades off when it
+    /// cannot be read.
     pub fn read(
-        policy: Option<
-            &droppedneedle_kernel::runtime_config::Live<
-                droppedneedle_kernel::runtime_config::sections::DownloadPolicy,
-            >,
+        policy: &droppedneedle_kernel::runtime_config::Live<
+            droppedneedle_kernel::runtime_config::sections::DownloadPolicy,
         >,
     ) -> Self {
-        let Some(policy) = policy else {
-            return Self::default();
-        };
         match policy.get() {
             Ok(policy) => Self {
                 quality_cutoff: Some(policy.quality_cutoff.clone()),

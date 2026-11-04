@@ -599,7 +599,8 @@ async fn journey(tag: &str, lastfm: bool) -> Measured {
     for (name, day) in DAYS {
         let before = snapshot();
         for hour in 0..24 {
-            rig.clock().set(start + i64::from(day * 24 + hour) * HOUR_MS);
+            rig.clock()
+                .set(start + i64::from(day * 24 + hour) * HOUR_MS);
             if matches!(hour, 0 | 5 | 12 | 19) {
                 let visit = hour / 5;
                 for feature in [Feature::Home, Feature::Discover, Feature::Queue] {

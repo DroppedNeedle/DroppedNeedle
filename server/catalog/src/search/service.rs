@@ -86,19 +86,17 @@ pub struct BucketLimits {
     pub tracks: u32,
 }
 
-/// Unified search over one database plus, when wired, MusicBrainz.
+/// Unified search over one database plus MusicBrainz.
 /// Clone shares the database handle and the catalog.
 #[derive(Clone)]
 pub struct SearchService {
     db: Db,
-    remote: Option<Catalog>,
+    remote: Catalog,
 }
 
 impl std::fmt::Debug for SearchService {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SearchService")
-            .field("remote", &self.remote.is_some())
-            .finish_non_exhaustive()
+        f.debug_struct("SearchService").finish_non_exhaustive()
     }
 }
 
@@ -108,16 +106,10 @@ pub const FULL_SEARCH_DEADLINE: Duration = Duration::from_secs(6);
 pub const SUGGEST_DEADLINE: Duration = Duration::from_secs(3);
 
 impl SearchService {
-    /// Serve searches from this database only.
-    pub fn new(db: Db) -> Self {
-        Self { db, remote: None }
-    }
-
-    /// Also search MusicBrainz through this catalog.
-    #[must_use]
-    pub fn with_remote(mut self, catalog: Catalog) -> Self {
-        self.remote = Some(catalog);
-        self
+    /// Serve searches from this database, and from MusicBrainz through
+    /// `remote`.
+    pub fn new(db: Db, remote: Catalog) -> Self {
+        Self { db, remote }
     }
 
     /// Ranked hits per selected bucket plus each bucket's standout hit.
@@ -379,8 +371,7 @@ impl SearchService {
         })
     }
 
-    /// One MusicBrainz bucket, or `None` when MusicBrainz search is not
-    /// wired or the bucket is not wanted.
+    /// One MusicBrainz bucket, or `None` when the bucket is not wanted.
     async fn remote_bucket(
         &self,
         bucket: Bucket,
@@ -390,7 +381,10 @@ impl SearchService {
         deadline: Duration,
         wanted: bool,
     ) -> Option<RemoteBucket> {
-        let catalog = self.remote.as_ref().filter(|_| wanted && limit > 0)?;
+        if !wanted || limit == 0 {
+            return None;
+        }
+        let catalog = &self.remote;
         match bucket {
             Bucket::Artists => Some(
                 catalog
@@ -409,9 +403,7 @@ impl SearchService {
     /// Fill in library flags for provider hits: owned artists and albums,
     /// and open requests for albums the library lacks.
     async fn apply_flags(&self, artists: &mut [Candidate], albums: &mut [Candidate]) {
-        let Some(catalog) = &self.remote else {
-            return;
-        };
+        let catalog = &self.remote;
         let ids = |rows: &[Candidate]| -> Vec<String> {
             rows.iter()
                 .filter(|row| row.item.id.is_none())
@@ -547,55 +539,64 @@ impl SearchService {
             .collect())
     }
 
-    /// One page of song hits, ranked by [`song_query`]. The page is cut on
-    /// `local_tracks` alone; identities, artwork and the track artist are
-    /// read for the page's rows only.
+    /// One page of song hits.
     async fn search_tracks(
         &self,
         folded: &str,
         limit: u32,
         offset: u32,
     ) -> Result<Vec<SearchResultItem>, DbError> {
-        let (text, binds) = song_query(folded, limit, offset);
-        let rows = self
-            .db
-            .read("search.tracks", move |conn| {
-                let rows = conn
-                    .prepare(&text)?
-                    .query_map(rusqlite::params_from_iter(binds), sql::SongHit::read)?
-                    .collect::<rusqlite::Result<Vec<_>>>()?;
-                Ok::<_, DbError>(rows)
-            })
-            .await?;
-        Ok(rows
-            .into_iter()
-            .map(|row| SearchResultItem {
-                kind: SearchKind::Track,
-                id: Some(row.id),
-                title: row.title,
-                artist: row.artist_name,
-                year: row.year,
-                musicbrainz_id: row.mbid,
-                in_library: true,
-                requested: false,
-                score: song_score(&row.title_folded, folded),
-                disambiguation: None,
-                type_info: None,
-                art_missing: art_missing(row.own_art, row.release_group_mbid.as_deref()),
-                track: Some(SearchTrackDetail {
-                    album_id: row.local_album_id,
-                    album_title: row.album_title,
-                    artist_id: row.artist_id,
-                    release_group_mbid: row.release_group_mbid,
-                    disc_number: row.disc_number,
-                    track_number: row.track_number,
-                    duration_seconds: row.duration_seconds,
-                    format: row.file_format,
-                    cover_available: row.cover_available,
-                }),
-            })
-            .collect())
+        song_hits(&self.db, folded, limit, offset).await
     }
+}
+
+/// One page of song hits for a folded query, ranked by [`song_query`].
+/// The page is cut on `local_tracks` alone; identities, artwork and the
+/// track artist are read for the page's rows only.
+pub(crate) async fn song_hits(
+    db: &Db,
+    folded: &str,
+    limit: u32,
+    offset: u32,
+) -> Result<Vec<SearchResultItem>, DbError> {
+    let (text, binds) = song_query(folded, limit, offset);
+    let rows = db
+        .read("search.tracks", move |conn| {
+            let rows = conn
+                .prepare(&text)?
+                .query_map(rusqlite::params_from_iter(binds), sql::SongHit::read)?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok::<_, DbError>(rows)
+        })
+        .await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| SearchResultItem {
+            kind: SearchKind::Track,
+            id: Some(row.id),
+            title: row.title,
+            artist: row.artist_name,
+            year: row.year,
+            musicbrainz_id: row.mbid,
+            in_library: true,
+            requested: false,
+            score: song_score(&row.title_folded, folded),
+            disambiguation: None,
+            type_info: None,
+            art_missing: art_missing(row.own_art, row.release_group_mbid.as_deref()),
+            track: Some(SearchTrackDetail {
+                album_id: row.local_album_id,
+                album_title: row.album_title,
+                artist_id: row.artist_id,
+                release_group_mbid: row.release_group_mbid,
+                disc_number: row.disc_number,
+                track_number: row.track_number,
+                duration_seconds: row.duration_seconds,
+                format: row.file_format,
+                cover_available: row.cover_available,
+            }),
+        })
+        .collect())
 }
 
 /// Whether a library album is known to have no cover: no art of its own
@@ -992,8 +993,8 @@ fn slice_of(rows: &[SearchResultItem], limit: u32, offset: u32) -> Option<Vec<Se
     Some(rows[start..end].to_vec())
 }
 
-/// The wire status of one MusicBrainz bucket. No bucket (not wired, not
-/// wanted) reads as `ok`.
+/// The wire status of one MusicBrainz bucket. No bucket (not wanted)
+/// reads as `ok`.
 fn status_of(bucket: Option<&RemoteBucket>) -> SearchRemoteStatus {
     match bucket.map(|bucket| bucket.state) {
         None | Some(RemoteState::Ok) => SearchRemoteStatus::Ok,

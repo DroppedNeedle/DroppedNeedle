@@ -3,7 +3,7 @@
 //! the catalog, favorites and lookups reads, including a missing and an
 //! excluded track proving streamable-only counts.
 
-use crate::common::auth::{test_principal, with_test_principal};
+use crate::common::auth::{AuthRig, test_principal, with_test_principal};
 use crate::common::{ScratchDir, TestApp};
 use droppedneedle_catalog::local;
 use droppedneedle_catalog::lyrics::LyricsService;
@@ -50,10 +50,18 @@ fn scripted_lyrics() -> ScriptedLyrics {
 }
 
 /// The production library deps over one database, with `lyrics` for the
-/// lyrics route, or the production lyrics without an online lookup.
-fn deps(db: &Db, lyrics: Option<Arc<dyn LyricsPort>>) -> LibraryDeps {
+/// lyrics route, or the production lyrics without an online lookup. The
+/// cover cache, the download policy and the users come from `beside`;
+/// the metadata catalog holds no releases and calls no provider.
+fn deps(beside: &AuthRig, db: &Db, lyrics: Option<Arc<dyn LyricsPort>>) -> LibraryDeps {
     let catalog = LocalCatalog::new(db.clone());
     let files = LibraryFiles::new(db.clone(), SharedResolver::default());
+    let releases = crate::common::bundles::offline_catalog(db, beside.deps.clone());
+    let covers = droppedneedle_catalog::wiring::artwork(
+        &beside.platform,
+        &crate::common::catalog_inputs(&beside.platform),
+        releases.clone(),
+    );
     LibraryDeps {
         lyrics: lyrics.unwrap_or_else(|| {
             Arc::new(LyricsService::new(
@@ -63,9 +71,9 @@ fn deps(db: &Db, lyrics: Option<Arc<dyn LyricsPort>>) -> LibraryDeps {
             ))
         }),
         catalog,
-        upgrade_policy: None,
-        covers: None,
-        releases: None,
+        upgrade_policy: beside.config.live(),
+        covers,
+        releases,
     }
 }
 
@@ -124,8 +132,13 @@ const ROUTES: &[&str] = &[
 #[tokio::test]
 async fn bad_input_stays_in_the_envelope() {
     let fixture = sqlite_fixture().await;
+    let beside = AuthRig::new("reads-library").await;
     let app = app(
-        deps(fixture.runtime.db(), Some(Arc::new(scripted_lyrics()))),
+        deps(
+            &beside,
+            fixture.runtime.db(),
+            Some(Arc::new(scripted_lyrics())),
+        ),
         Some(ADA),
     );
     for path in [
@@ -156,7 +169,8 @@ async fn every_route_hides_store_faults() {
     let secret = dir.join("secret-library.db");
     std::fs::write(&secret, b"").expect("empty database file writes");
     let db = Db::open_for_tests(&secret).expect("empty database opens");
-    let app = scope.request_scope(app(deps(&db, None), Some(ADA)));
+    let beside = AuthRig::new("reads-library-faults").await;
+    let app = scope.request_scope(app(deps(&beside, &db, None), Some(ADA)));
     for path in ROUTES {
         let response = app
             .clone()
@@ -690,7 +704,8 @@ async fn the_seeded_catalog_reads_back() {
 #[tokio::test]
 async fn album_and_artist_pages_answer_the_seeded_catalog() {
     let fixture = sqlite_fixture().await;
-    let deps = deps(fixture.runtime.db(), None);
+    let beside = AuthRig::new("reads-library").await;
+    let deps = deps(&beside, fixture.runtime.db(), None);
 
     // Appearances by MusicBrainz id as by library id.
     let (status, by_id) = get(
@@ -1132,7 +1147,8 @@ async fn one_album_set_everywhere() {
 #[tokio::test]
 async fn lists_filter_by_formats_and_minimum_tracks() {
     let fixture = sqlite_fixture().await;
-    let app = || app(deps(fixture.runtime.db(), None), Some(ADA));
+    let beside = AuthRig::new("reads-library").await;
+    let app = || app(deps(&beside, fixture.runtime.db(), None), Some(ADA));
     let ids = |page: &Value| sorted_ids(&page["items"], "id");
 
     for (query, want) in [

@@ -34,10 +34,10 @@ pub struct AlbumTracks {
 
 /// [`AlbumTracks`] for each of `album_ids` that names an album, as the
 /// module describes. `releases` is the metadata catalog whose cache holds
-/// the releases; without one only the tags count.
+/// the releases; a release it does not hold counts from the tags.
 pub async fn album_tracks(
     local: &LocalCatalog,
-    releases: Option<&Catalog>,
+    releases: &Catalog,
     album_ids: &[String],
 ) -> Result<HashMap<String, AlbumTracks>, StoreError> {
     let mut found: Vec<(String, u64, Option<String>)> = Vec::new();
@@ -62,9 +62,10 @@ pub async fn album_tracks(
         .collect();
     wanted.sort_unstable();
     wanted.dedup();
-    let held = match releases {
-        Some(catalog) if !wanted.is_empty() => catalog.held_release_track_counts(&wanted).await,
-        _ => HashMap::new(),
+    let held = if wanted.is_empty() {
+        HashMap::new()
+    } else {
+        releases.held_release_track_counts(&wanted).await
     };
     let from_release = |release: &Option<String>| {
         release

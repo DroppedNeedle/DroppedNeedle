@@ -20,7 +20,7 @@ use droppedneedle_catalog::metadata::{
     Catalog, PageSources,
     library::LocalCatalog,
     ports::{NoDetails, NoFollows, NoPurchaseLinks},
-    upstream::{LiveCatalogSettings, Upstream},
+    upstream::{CatalogSettings, LiveCatalogSettings, Upstream},
 };
 use droppedneedle_catalog::test_support::UnconfiguredEnrichment;
 use droppedneedle_catalog::wiring::{CatalogInputs, CatalogPorts, CatalogSetup};
@@ -28,6 +28,8 @@ use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::db::Db;
 use droppedneedle_kernel::jobs::queue::JobQueue;
 use droppedneedle_kernel::platform::Platform;
+use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
+use droppedneedle_kernel::runtime_config::sections::{MusicBrainzSettings, UserPreferences};
 use droppedneedle_library::wiring::{LibraryCore, LibrarySetup};
 use droppedneedle_media::stream::local_files::LibraryFiles;
 use droppedneedle_plugins::host::PluginHost;
@@ -253,6 +255,53 @@ pub fn quiet_page_sources(cover_warm: CoverWarm) -> PageSources {
         purchase_links: Arc::new(NoPurchaseLinks),
         details: Arc::new(NoDetails),
         cover_warm,
+    }
+}
+
+/// A metadata catalog over `db` whose MusicBrainz settings never read, so
+/// a MusicBrainz search fails at once without a request and only what the
+/// cache already holds answers. For rigs that test the library's own reads
+/// beside it.
+pub fn offline_catalog(db: &Db, users: UsersDeps) -> Catalog {
+    Catalog::new(
+        Upstream::new(
+            Arc::new(Providers::unpaced(Arc::new(
+                droppedneedle_providers::test_support::ScriptedWire::new(),
+            ))),
+            Arc::new(NoMusicBrainz),
+            users,
+        ),
+        LocalCatalog::new(db.clone()),
+        quiet_page_sources(cover_warm_at(
+            db,
+            Arc::new(droppedneedle_kernel::clock::SystemClock),
+        )),
+    )
+}
+
+/// Catalog settings whose MusicBrainz section does not read, with the
+/// other sections at their defaults and ListenBrainz off.
+struct NoMusicBrainz;
+
+impl CatalogSettings for NoMusicBrainz {
+    fn musicbrainz(&self) -> Option<MusicBrainzSettings> {
+        None
+    }
+
+    fn preferences(&self) -> UserPreferences {
+        UserPreferences::default()
+    }
+
+    fn advanced(&self) -> AdvancedSettings {
+        AdvancedSettings::default()
+    }
+
+    fn listenbrainz_enabled(&self) -> bool {
+        false
+    }
+
+    fn store_region(&self) -> Option<String> {
+        None
     }
 }
 

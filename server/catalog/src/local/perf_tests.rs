@@ -3710,7 +3710,7 @@ async fn perf_100k_endpoints_hold_p95() {
     .into_iter()
     .map(|name| (name, Vec::new()))
     .collect();
-    let search = crate::search::service::SearchService::new(fixture.db().clone());
+    let search = fixture.db().clone();
     // Timed and reported, not budgeted: random track pages key every track,
     // and a song search whose words are in every track ("perf", "artist")
     // reads the whole FTS index and ranks every track, as the player's
@@ -3790,7 +3790,7 @@ async fn perf_100k_endpoints_hold_p95() {
 /// One read of a timed endpoint: a song search page, or a library read.
 async fn read_timed(
     catalog: &LocalCatalog,
-    search: &crate::search::service::SearchService,
+    search: &droppedneedle_kernel::db::Db,
     name: &str,
     deep: &(After, After, After),
 ) {
@@ -3805,15 +3805,11 @@ async fn read_timed(
     let Some((query, offset)) = page else {
         return read_endpoint(catalog, name, deep).await;
     };
-    let page = search
-        .search_bucket(crate::search::service::Bucket::Tracks, query, 24, offset)
+    let folded = droppedneedle_kernel::db::fold::fold_text(query);
+    let page = crate::search::service::song_hits(search, &folded, 24, offset)
         .await
         .expect("song search reads");
-    assert_eq!(
-        page.results.is_empty(),
-        name == "search_songs_miss",
-        "{name}"
-    );
+    assert_eq!(page.is_empty(), name == "search_songs_miss", "{name}");
 }
 
 /// One read of a timed library endpoint.
