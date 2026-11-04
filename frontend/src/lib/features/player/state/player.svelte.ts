@@ -699,6 +699,26 @@ function createPlayerStore() {
 			showQueueMutationToast('next', items.length);
 		},
 
+		/** Takes library tracks a removal took out of the library out of the queue. */
+		dropTracks(trackIds: readonly string[]): void {
+			const gone = new Set(trackIds);
+			const isGone = (item: QueueItem | undefined) =>
+				item?.sourceType === 'local' && gone.has(item.trackSourceId);
+			// From the end, so every index still names its item; the current one goes last.
+			for (let index = queue.length - 1; index >= 0; index--) {
+				if (index === currentIndex || !isGone(queue[index])) continue;
+				const r = removeAtIndex(queue, index, currentIndex, shuffleEnabled, shuffleOrder);
+				queue = r.newQueue;
+				currentIndex = r.newIndex;
+				shuffleOrder = r.newShuffleOrder;
+			}
+			if (isGone(queue[currentIndex])) {
+				this.removeFromQueue(currentIndex);
+			} else {
+				persist();
+			}
+		},
+
 		removeFromQueue(index: number): void {
 			if (index < 0 || index >= queue.length) return;
 			if (queue.length <= 1) {

@@ -4,6 +4,7 @@ import { api } from '$lib/api/client';
 import { isStaleRevision } from '$lib/api/errors';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { libraryStore } from '$lib/stores/library';
+import { playerStore } from '$lib/features/player/state/player.svelte';
 import { setQueryDataWithPersister } from '$lib/queries/QueryClient';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
 import type { LibraryAlbumStatus } from '$lib/features/library/queries/types';
@@ -59,6 +60,7 @@ export function createRemoveLibraryAlbumMutation() {
 			for (const mbid of removedMbids) {
 				libraryStore.removeMbid(mbid);
 			}
+			playerStore.dropTracks(result.removed_track_ids);
 			try {
 				await setQueryDataWithPersister<LibraryAlbumStatus>(
 					LibraryQueryKeyFactory.album(authStore.user?.id, requestedMbid),
@@ -145,6 +147,7 @@ export function createRemoveLibraryTrackMutation() {
 						query: { expected_revision: expectedRevision }
 					})
 				),
+			onSuccess: (result) => playerStore.dropTracks(result.removed_track_ids),
 			// A refusal for a moved revision means the page is old: read it again.
 			onError: (error, { albumMbid, albumId }) => {
 				if (!isStaleRevision(error)) return;

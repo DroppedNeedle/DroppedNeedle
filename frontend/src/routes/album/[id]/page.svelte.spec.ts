@@ -16,7 +16,8 @@ vi.mock('$lib/features/player/state/player.svelte', () => ({
 		addToQueue: vi.fn(),
 		playNext: vi.fn(),
 		playMultipleNext: vi.fn(),
-		addMultipleToQueue: vi.fn()
+		addMultipleToQueue: vi.fn(),
+		dropTracks: vi.fn()
 	}
 }));
 

@@ -824,4 +824,16 @@ describe('track failure reporting', () => {
 			'warning'
 		);
 	});
+
+	it('takes the tracks a removal took out of the queue', async () => {
+		playerStore.playQueue(singleSourceItems(3));
+		await vi.advanceTimersByTimeAsync(0);
+
+		playerStore.dropTracks(['vid-0', 'vid-2', 'not-queued']);
+		await vi.advanceTimersByTimeAsync(0);
+
+		expect(playerStore.queue.map((item) => item.trackSourceId)).toEqual(['vid-1']);
+		expect(playerStore.currentIndex).toBe(0);
+		expect(playerStore.nowPlaying?.trackName).toBe('Track 2');
+	});
 });
