@@ -512,10 +512,14 @@ impl LiveDiscogsContrib {
     }
 
     /// The priority to send at, or "unavailable" when a display read would
-    /// have to wait.
+    /// have to wait. A display read keeps its priority, so the client sends
+    /// it once.
     fn turn(&self, priority: RequestPriority) -> Result<RequestPriority, ContribError> {
+        if priority != RequestPriority::PrefetchVisible {
+            return Ok(RequestPriority::UserInitiated);
+        }
         let wait = self.client.limiter().retry_after(1);
-        if priority == RequestPriority::PrefetchVisible && !wait.is_zero() {
+        if !wait.is_zero() {
             return Err(ContribError::DiscogsUnavailable(
                 ProviderError::RateLimited {
                     provider: "discogs",
@@ -523,7 +527,7 @@ impl LiveDiscogsContrib {
                 },
             ));
         }
-        Ok(RequestPriority::UserInitiated)
+        Ok(priority)
     }
 }
 

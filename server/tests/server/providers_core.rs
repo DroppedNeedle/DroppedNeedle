@@ -1537,3 +1537,123 @@ async fn a_newznab_indexer_holds_to_its_daily_caps() {
         "grab cap: nothing sent while the grab cap holds"
     );
 }
+
+/// A 204 (ListenBrainz still computing) and an answer of the wrong shape
+/// store nothing through the cache, so the next read asks again; a good
+/// answer is kept.
+#[tokio::test]
+async fn a_204_or_a_wrong_shape_stores_nothing() {
+    use droppedneedle_providers::listenbrainz::ListenBrainzCredentials;
+    use droppedneedle_providers::{CacheKey, Fetched, Policy, Source};
+
+    const SEED: &str = "a74b1b7f-71a5-4011-9441-d0b5e4122711";
+    let radio = format!(
+        "{}/1/lb-radio/artist/{SEED}",
+        listenbrainz::DEFAULT_BASE_URL
+    );
+    for (name, scripted, kept) in [
+        ("204", answer(204, &[], ""), false),
+        ("wrong shape", answer(200, &[], r#"{"payload": 7}"#), false),
+        (
+            "recorded answer",
+            answer(
+                200,
+                &[],
+                include_str!("../fixtures/listenbrainz/lb_radio_artist.json"),
+            ),
+            true,
+        ),
+    ] {
+        let wire = Arc::new(ScriptedWire::new());
+        wire.on(Method::Get, &radio, scripted);
+        let providers = providers_over(&wire);
+        let key = CacheKey::new(Source::ListenBrainz, &["similar_artists", name]);
+        let client = providers.listenbrainz.clone();
+        let _ = providers
+            .cache
+            .get_or_fetch(
+                &key,
+                Policy::LISTENBRAINZ_ARTIST,
+                RequestPriority::BackgroundSync,
+                move |priority| async move {
+                    let rows = client
+                        .similar_artists(SEED, 5, &ListenBrainzCredentials::default(), priority)
+                        .await?;
+                    let names: Vec<String> = rows.into_iter().map(|row| row.artist_name).collect();
+                    Ok::<_, ProviderError>(if names.is_empty() {
+                        Fetched::Missing
+                    } else {
+                        Fetched::Found(names)
+                    })
+                },
+            )
+            .await;
+        providers.cache.forget(&[]).await;
+        let held = providers.cache.peek::<Vec<String>>(&key).await;
+        assert_eq!(held.is_some(), kept, "{name}: {held:?}");
+    }
+}
+
+/// A Discogs read for a page on show is sent once, so a failing Discogs
+/// never holds the page for a retry; a person's own read is tried again.
+#[tokio::test(start_paused = true)]
+async fn a_discogs_display_read_is_sent_once() {
+    for (priority, sends) in [
+        (RequestPriority::PrefetchVisible, 1),
+        (RequestPriority::UserInitiated, 2),
+    ] {
+        let wire = Arc::new(ScriptedWire::new());
+        wire.answer("http://fake/discogs/releases/1", 500, &[], "{}");
+        let providers = Providers::unpaced_at(
+            wire.clone(),
+            ProviderEndpoints {
+                discogs: "http://fake/discogs".to_owned(),
+                ..ProviderEndpoints::closed()
+            },
+        );
+        let read = providers.discogs.get_release("1", 0.0, priority).await;
+        assert!(
+            matches!(read, Err(ProviderError::Server { status: 500, .. })),
+            "{priority:?}: {read:?}"
+        );
+        assert_eq!(wire.sent().len(), sends, "{priority:?}");
+    }
+}
+
+/// iTunes and Wikimedia refuse us, not one request, with a 403, so the
+/// page's answer shows that source failing.
+#[tokio::test]
+async fn an_itunes_or_wikimedia_refusal_marks_the_page() {
+    use droppedneedle_providers::{IntegrationStatus, scoped};
+
+    let wire = Arc::new(ScriptedWire::new());
+    wire.answer("http://fake/itunes/search", 403, &[], "{}");
+    wire.answer("http://fake/en.wiki/w/api.php", 403, &[], "{}");
+    let providers = Providers::unpaced_at(
+        wire.clone(),
+        ProviderEndpoints {
+            itunes: "http://fake/itunes/search".to_owned(),
+            wikipedia: "http://fake/{lang}.wiki".to_owned(),
+            ..ProviderEndpoints::closed()
+        },
+    );
+    let priority = RequestPriority::UserInitiated;
+    let (itunes, page) = scoped(providers.itunes.find_album("A", "B", "US", priority)).await;
+    assert!(
+        matches!(itunes, Err(ProviderError::Forbidden { .. })),
+        "{itunes:?}"
+    );
+    assert_eq!(
+        page.summary().get("itunes"),
+        Some(&IntegrationStatus::Error)
+    );
+    let (wikipedia, page) = scoped(providers.wikidata.wikipedia_extract("X", "en", priority)).await;
+    assert!(
+        matches!(wikipedia, Err(ProviderError::Forbidden { .. })),
+        "{wikipedia:?}"
+    );
+    assert_eq!(
+        page.summary().get("wikidata"),
+        Some(&IntegrationStatus::Error)
+    );
+}

@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::RequestPriority;
 use crate::client::{decode, parse_base, unusable_base};
+use crate::degradation::{IntegrationStatus, record_current};
 use crate::error::{MAX_RETRY_AFTER, ProviderError};
 use crate::executor::{Backoff, Executor, Reply, Request, Spec, Url, standard_classify};
 
@@ -305,6 +306,13 @@ impl ITunesClient {
         match self.executor.send(request, priority).await {
             Ok(reply) => Ok(Some(reply)),
             Err(ProviderError::NotFound { .. }) => Ok(None),
+            // Apple documents a limit of about 20 calls a minute but not the
+            // answer past it (performance-partners.apple.com/search-api, read
+            // 2026-11-04); a 403 is a refusal of us, so the page shows it.
+            Err(error @ ProviderError::Forbidden { .. }) => {
+                record_current(SOURCE, IntegrationStatus::Error, false);
+                Err(error)
+            }
             Err(error) => Err(error),
         }
     }

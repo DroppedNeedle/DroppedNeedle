@@ -506,7 +506,7 @@ impl YouTubeClient {
     /// a search for it would not spend quota.
     pub async fn is_cached(&self, artist: &str, title: &str, kind: SearchKind) -> bool {
         let key = preview_key(kind, artist, title);
-        self.recent(&key).is_some() || self.cache.settled(&key).await
+        self.recent(&key).is_some() || self.cache.settled::<String>(&key).await
     }
 
     /// Album preview search: the query gains a `full album` suffix.

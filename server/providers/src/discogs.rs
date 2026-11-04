@@ -549,7 +549,10 @@ impl DiscogsClient {
         self.executor.limiter()
     }
 
-    /// One GET of `segments` under the origin, or `None` on a 404.
+    /// One GET of `segments` under the origin, or `None` on a 404. A read
+    /// for a page on show (`PrefetchVisible`) goes out at user priority and
+    /// is sent once: a retry waits out the 2.4 second spacing, which would
+    /// hold the page.
     async fn get(
         &self,
         segments: &[&str],
@@ -557,7 +560,13 @@ impl DiscogsClient {
         priority: RequestPriority,
     ) -> Result<Option<Reply>, ProviderError> {
         let base = self.base.as_ref().ok_or_else(|| unusable_base(SOURCE))?;
-        let request = Request::get(base, segments, query).map_err(|_| unusable_base(SOURCE))?;
+        let (priority, retry) = match priority {
+            RequestPriority::PrefetchVisible => (RequestPriority::UserInitiated, false),
+            other => (other, true),
+        };
+        let request = Request::get(base, segments, query)
+            .map_err(|_| unusable_base(SOURCE))?
+            .idempotent(retry);
         match self.executor.send(request, priority).await {
             Ok(reply) => Ok(Some(reply)),
             Err(ProviderError::NotFound { .. }) => Ok(None),

@@ -521,7 +521,8 @@ fn parse_hms(text: &str) -> Option<(u32, u32, u32)> {
     Some((hour, minute, second))
 }
 
-/// Gregorian civil date to unix seconds (Howard Hinnant's days-from-civil).
+/// A UTC date and clock to unix seconds; `None` for a date that does not
+/// exist or one before the epoch. A leap second (`:60`) is kept as given.
 fn civil_to_unix(
     year: i32,
     month: u32,
@@ -530,21 +531,10 @@ fn civil_to_unix(
     minute: u32,
     second: u32,
 ) -> Option<u64> {
-    if month == 0 || month > 12 || day == 0 || day > 31 {
-        return None;
-    }
-    let year = if month <= 2 { year - 1 } else { year };
-    let era = year.div_euclid(400);
-    let year_of_era = year.rem_euclid(400) as u64;
-    let month_prime = (month + 9) % 12;
-    let day_of_year = (153 * month_prime + 2) / 5 + day - 1;
-    let day_of_era =
-        year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + u64::from(day_of_year);
-    let days = era as i64 * 146_097 + day_of_era as i64 - 719_468;
-    let seconds = u64::try_from(days).ok()?;
-    seconds
-        .checked_mul(86_400)?
-        .checked_add(u64::from(hour) * 3_600 + u64::from(minute) * 60 + u64::from(second))
+    let month = time::Month::try_from(u8::try_from(month).ok()?).ok()?;
+    let date = time::Date::from_calendar_date(year, month, u8::try_from(day).ok()?).ok()?;
+    let midnight = u64::try_from(date.midnight().assume_utc().unix_timestamp()).ok()?;
+    midnight.checked_add(u64::from(hour) * 3_600 + u64::from(minute) * 60 + u64::from(second))
 }
 
 #[cfg(test)]

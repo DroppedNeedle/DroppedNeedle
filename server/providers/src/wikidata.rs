@@ -32,6 +32,7 @@ use std::time::Duration;
 
 use crate::RequestPriority;
 use crate::client::{decode, parse_base, payload, unusable_base};
+use crate::degradation::{IntegrationStatus, record_current};
 use crate::error::{MAX_RETRY_AFTER, PayloadKind, ProviderError};
 use crate::executor::{Backoff, Executor, Reply, Request, Spec, Url, standard_classify};
 use crate::web_address::WebAddress;
@@ -485,6 +486,13 @@ impl WikidataClient {
         match self.executor.send(request, priority).await {
             Ok(reply) => Ok(Some(reply)),
             Err(ProviderError::NotFound { .. }) => Ok(None),
+            // Wikimedia answers 403 to a User-Agent its policy blocks
+            // (foundation.wikimedia.org, User-Agent Policy, read 2026-11-04):
+            // a refusal of every call, so the page shows it.
+            Err(error @ ProviderError::Forbidden { .. }) => {
+                record_current(SOURCE, IntegrationStatus::Error, false);
+                Err(error)
+            }
             Err(error) => Err(error),
         }
     }

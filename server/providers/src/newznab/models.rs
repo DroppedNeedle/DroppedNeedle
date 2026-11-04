@@ -515,25 +515,25 @@ fn zone_offset_seconds(zone: &str) -> Option<i64> {
     None
 }
 
-/// Howard Hinnant's days-from-civil; `None` for out-of-range input. The
-/// Prowlarr ISO-8601 parser's date step.
+/// Days from 1970-01-01 to a Gregorian date; `None` for a date that does
+/// not exist. The Prowlarr ISO-8601 parser's date step.
 #[must_use]
 pub fn days_from_civil(year: i64, month: i64, day: i64) -> Option<i64> {
-    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
-        return None;
-    }
-    let adjusted_year = if month <= 2 { year - 1 } else { year };
-    let era = adjusted_year.div_euclid(400);
-    let year_of_era = adjusted_year.rem_euclid(400);
-    let month_prime = (month + 9).rem_euclid(12);
-    let day_of_year = (153 * month_prime + 2) / 5 + day - 1;
-    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
-    Some(era * 146_097 + day_of_era - 719_468)
+    let month = time::Month::try_from(u8::try_from(month).ok()?).ok()?;
+    let date =
+        time::Date::from_calendar_date(i32::try_from(year).ok()?, month, u8::try_from(day).ok()?)
+            .ok()?;
+    Some(
+        date.midnight()
+            .assume_utc()
+            .unix_timestamp()
+            .div_euclid(86_400),
+    )
 }
 
 #[cfg(test)]
 mod date_tests {
-    use super::rfc2822_seconds;
+    use super::{days_from_civil, rfc2822_seconds};
 
     #[test]
     fn indexer_dates_read_as_they_are_sent() {
@@ -557,5 +557,9 @@ mod date_tests {
         ] {
             assert_eq!(rfc2822_seconds(text), expected, "{text:?}");
         }
+        assert_eq!(days_from_civil(1970, 1, 1), Some(0));
+        assert_eq!(days_from_civil(2026, 2, 19), Some(AT.div_euclid(86_400)));
+        assert_eq!(days_from_civil(1969, 12, 31), Some(-1));
+        assert_eq!(days_from_civil(2026, 2, 30), None);
     }
 }

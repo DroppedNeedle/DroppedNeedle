@@ -719,13 +719,15 @@ impl ProviderCacheStore {
     }
 
     /// Whether a lookup of `key` is settled without asking: a found row
-    /// inside its keep time, or a fresh "nothing there". A stale "nothing
-    /// there" is asked again. Never dials out.
-    pub async fn settled(&self, key: &CacheKey) -> bool {
+    /// inside its keep time that reads as `T`, or a fresh "nothing there".
+    /// A stale "nothing there", and a row that does not read, are asked
+    /// again. Never dials out.
+    pub async fn settled<T: DeserializeOwned>(&self, key: &CacheKey) -> bool {
         let now = self.clock.now_ms();
-        self.kept(key)
-            .await
-            .is_some_and(|row| row.kind == CacheKind::Found || row.fresh_until > now)
+        self.kept(key).await.is_some_and(|row| match row.kind {
+            CacheKind::Found => decode::<T>(&row).is_some(),
+            CacheKind::Missing => row.fresh_until > now,
+        })
     }
 
     /// [`Self::peek`] for each of `keys`, in order, in one read.
@@ -884,6 +886,25 @@ mod tests {
             store.peek::<String>(&key()).await,
             Some(Some("answer".to_owned()))
         );
+    }
+
+    /// A found row settles a lookup only when it reads as the caller's
+    /// type: one that does not is asked again, as a fetch would.
+    #[tokio::test]
+    async fn a_row_that_does_not_read_is_not_settled() {
+        let (store, _) = store();
+        let found = store
+            .get_or_fetch(
+                &key(),
+                Policy::MUSICBRAINZ_ENTITY,
+                RequestPriority::BackgroundSync,
+                |_| async { Ok::<_, String>(Fetched::Found("answer".to_owned())) },
+            )
+            .await;
+        assert_eq!(found, Ok(Some("answer".to_owned())));
+        settle(&store).await;
+        assert!(store.settled::<String>(&key()).await);
+        assert!(!store.settled::<i64>(&key()).await);
     }
 
     /// A kept answer beats one the refresh could not finish: a "nothing
