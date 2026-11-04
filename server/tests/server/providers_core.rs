@@ -1538,6 +1538,64 @@ async fn a_newznab_indexer_holds_to_its_daily_caps() {
     );
 }
 
+/// A saved Newznab indexer whose search fails shows on service health by
+/// name, while another indexer's answer leaves it there, and its own next
+/// answer clears it. A connection test of an unsaved indexer shows nothing.
+#[tokio::test]
+async fn a_failing_newznab_indexer_shows_on_service_health_until_it_answers() {
+    const EMPTY: &str = "<rss><channel></channel></rss>";
+    let wire = Arc::new(ScriptedWire::new());
+    wire.answer("https://down.test/api", 401, &[], "");
+    wire.answer("https://down.test/api", 200, &[], EMPTY);
+    wire.answer("https://up.test/api", 200, &[], EMPTY);
+    wire.answer("https://unsaved.test/api", 401, &[], "");
+    let providers = Providers::over_wire(
+        wire.clone(),
+        Arc::new(SystemClock),
+        ProviderEndpoints::closed(),
+    );
+    let down = providers
+        .newznab
+        .client("down", "Down Indexer", "https://down.test/api", "KEY");
+    let up = providers
+        .newznab
+        .client("up", "Up Indexer", "https://up.test/api", "KEY");
+    let unsaved = providers
+        .newznab
+        .client("", "", "https://unsaved.test/api", "KEY");
+    let priority = RequestPriority::BackgroundSync;
+    let shown = || -> Vec<String> {
+        providers
+            .health
+            .current(std::time::Instant::now())
+            .into_iter()
+            .map(|entry| format!("{} {}", entry.service, entry.message))
+            .collect()
+    };
+
+    assert!(unsaved.caps(priority).await.is_err());
+    assert!(shown().is_empty(), "an unsaved indexer: {:?}", shown());
+
+    assert!(
+        down.search("Radiohead", &[], 0, 100, priority)
+            .await
+            .is_err()
+    );
+    up.search("Radiohead", &[], 0, 100, priority)
+        .await
+        .expect("the other indexer answers");
+    assert_eq!(
+        shown(),
+        ["newznab The Usenet indexer Down Indexer is failing - \
+          Usenet searches may find less for now."]
+    );
+
+    down.search("Radiohead", &[], 0, 100, priority)
+        .await
+        .expect("the indexer answers again");
+    assert!(shown().is_empty(), "healed: {:?}", shown());
+}
+
 /// A 204 (ListenBrainz still computing) and an answer of the wrong shape
 /// store nothing through the cache, so the next read asks again; a good
 /// answer is kept.

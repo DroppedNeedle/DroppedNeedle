@@ -12,7 +12,9 @@
 //!
 //! A loop that counts its own trouble (the download cleanup) reports its
 //! entry directly with [`ServiceHealth::report`], each pass, and heals it
-//! once the count is back to zero.
+//! once the count is back to zero. Newznab indexers do the same, by name:
+//! one is called too rarely for a run of failures, so a single failed
+//! search or caps call shows it until it answers again.
 
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},

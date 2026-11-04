@@ -20,6 +20,10 @@
 //! its releases could be fetched. A grab counts against the grab cap
 //! before it is sent, and is refused while that cap is reached.
 //!
+//! A saved indexer whose search or caps call fails (no answer, or a
+//! refused key) shows on service health under `newznab`, named, until it
+//! answers again. Nothing calls an indexer just to check it.
+//!
 //! The key is an `apikey` query parameter. It never reaches a log line or
 //! an error: the executor shows only the host, and a failure carries only
 //! its kind. Wire shapes are in `newznab/models.rs`, the XML reader in
@@ -28,9 +32,9 @@
 mod models;
 mod xml;
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use droppedneedle_kernel::clock::Clock;
 use thiserror::Error;
@@ -72,6 +76,10 @@ const DAY_SECS: i64 = 86_400;
 const UNSTATED_RESET_SECS: i64 = 3_600;
 /// How far into an answer the `<error>` check looks before parsing it.
 const ERROR_SNIFF_BYTES: usize = 512;
+/// How long a failing indexer shows on service health after its last
+/// failed call. Indexers are only called for searches and grabs, never on
+/// a timer, so the entry is cleared by the next answer or by this.
+const TROUBLE_TTL: Duration = Duration::from_secs(3_600);
 
 /// Newznab on the wire: 30 seconds an attempt, as indexers were given
 /// before; an `<error>` naming the key or a reached limit is a refusal or
@@ -281,6 +289,7 @@ pub struct NewznabIndexers {
     health: Arc<ServiceHealth>,
     clock: Arc<dyn Clock>,
     known: Arc<Mutex<HashMap<String, Arc<Indexer>>>>,
+    trouble: Arc<Trouble>,
 }
 
 impl std::fmt::Debug for NewznabIndexers {
@@ -308,6 +317,10 @@ impl NewznabIndexers {
         Self {
             row,
             shared: row_limiter,
+            trouble: Arc::new(Trouble {
+                health: Arc::clone(&health),
+                failing: Mutex::new(BTreeMap::new()),
+            }),
             wire,
             health,
             clock,
@@ -348,6 +361,7 @@ impl NewznabIndexers {
                 name.to_owned()
             },
             clock: Arc::clone(&self.clock),
+            trouble: Arc::clone(&self.trouble),
         }
     }
 
@@ -377,6 +391,64 @@ impl NewznabIndexers {
     }
 }
 
+/// Saved indexers whose last search or caps call failed, by id, with the
+/// name the service health entry shows. Shared by every client.
+#[derive(Debug)]
+struct Trouble {
+    health: Arc<ServiceHealth>,
+    failing: Mutex<BTreeMap<String, String>>,
+}
+
+impl Trouble {
+    /// Record whether the indexer `id` failed its last call, and show every
+    /// failing indexer as one `newznab` entry, or clear it once none is.
+    fn note(&self, id: &str, name: &str, failed: bool) {
+        let mut failing = self
+            .failing
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if failed {
+            failing.insert(id.to_owned(), name.to_owned());
+        } else if failing.remove(id).is_none() {
+            return;
+        }
+        let names: Vec<&str> = failing.values().map(String::as_str).collect();
+        let message = match names.as_slice() {
+            [] => {
+                self.health.heal(SOURCE);
+                return;
+            }
+            [one] => format!(
+                "The Usenet indexer {one} is failing - Usenet searches may find less for now."
+            ),
+            many => format!(
+                "The Usenet indexers {} are failing - Usenet searches may find less for now.",
+                many.join(", ")
+            ),
+        };
+        self.health
+            .report(SOURCE, "downloads", message, TROUBLE_TTL, Instant::now());
+    }
+}
+
+/// Whether a call says its indexer is failing (`Some(true)`: it did not
+/// answer, or refused its key) or answering (`Some(false)`). A rate limit,
+/// a call held back before it was sent, or an answer that did not read
+/// says neither.
+fn indexer_failed<T>(outcome: &Result<T, NewznabError>) -> Option<bool> {
+    match outcome {
+        Ok(_) | Err(NewznabError::Api { .. }) => Some(false),
+        Err(NewznabError::Provider(
+            ProviderError::Transport { .. }
+            | ProviderError::Server { .. }
+            | ProviderError::Unavailable { .. }
+            | ProviderError::Unauthorized { .. }
+            | ProviderError::Forbidden { .. },
+        )) => Some(true),
+        Err(NewznabError::Provider(_)) => None,
+    }
+}
+
 /// One indexer's client. Cheap to clone; clones share the indexer's
 /// bucket and counters.
 #[derive(Clone)]
@@ -387,6 +459,7 @@ pub struct NewznabClient {
     id: String,
     name: String,
     clock: Arc<dyn Clock>,
+    trouble: Arc<Trouble>,
 }
 
 impl std::fmt::Debug for NewznabClient {
@@ -542,7 +615,24 @@ impl NewznabClient {
             .map(|wait| Duration::from_secs(u64::try_from(wait).unwrap_or(0)))
     }
 
+    /// One API call. A saved indexer that fails it shows on service health
+    /// until it answers again; an unsaved one (a connection test) does not.
     async fn get(
+        &self,
+        params: &[(&str, &str)],
+        search: bool,
+        priority: RequestPriority,
+    ) -> Result<(xml::Element, Url), NewznabError> {
+        let outcome = self.ask(params, search, priority).await;
+        if !self.id.is_empty()
+            && let Some(failed) = indexer_failed(&outcome)
+        {
+            self.trouble.note(&self.id, &self.name, failed);
+        }
+        outcome
+    }
+
+    async fn ask(
         &self,
         params: &[(&str, &str)],
         search: bool,
