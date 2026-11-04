@@ -1947,7 +1947,8 @@ impl Publishing {
     /// commit landed answers what it removed even when a later step failed:
     /// recovery finishes it. `sidecars` go with the tracks, those still as
     /// they were read. `album_removed` queues the album's clean-up in the
-    /// removal's commit. Blocking.
+    /// removal's commit, and the commit refuses once `guard` no longer
+    /// holds. Blocking.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn publish_removal(
         &self,
@@ -1957,6 +1958,7 @@ impl Publishing {
         actor: Option<&str>,
         undo: Option<crate::publish::planner::UndoRecord>,
         album_removed: Option<crate::publish::planner::AlbumRemoved>,
+        guard: Option<crate::publish::remove::Guard>,
         entry: RemovalEntry,
     ) -> Result<RemovalDone, crate::publish::remove::Refusal> {
         use crate::publish::JournalState;
@@ -1993,6 +1995,7 @@ impl Publishing {
             self.core.clock.now_system(),
         )?;
         removal.album_removed = album_removed;
+        removal.guard = guard;
         let track_ids: Vec<String> = removal
             .items
             .iter()

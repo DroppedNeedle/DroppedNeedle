@@ -17,6 +17,10 @@ droppedneedle_kernel::sql! {
     pub(super) ALBUM_ROW_REVISION = "SELECT row_revision FROM local_albums WHERE id = ?1";
     pub(super) ALBUM_INDEXED_TRACKS = "SELECT COUNT(*) FROM local_tracks \
                      WHERE local_album_id = ?1 AND availability = 'indexed'";
+    /// The unary plus keeps the planner on the album key: without statistics
+    /// a covering index led by `availability` looks as good.
+    pub(super) ALBUM_INDEXED_TRACK_IDS = "SELECT id FROM local_tracks \
+                     WHERE local_album_id = ?1 AND +availability = 'indexed'";
     pub(super) TRACK_ROW_REVISION = "SELECT row_revision FROM local_tracks WHERE id = ?1";
     pub(super) LIFT_EXCLUSION = "DELETE FROM library_management_exclusions \
                      WHERE local_album_id = ?1 AND row_revision = ?2 \

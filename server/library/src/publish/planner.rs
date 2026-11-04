@@ -412,6 +412,10 @@ pub struct Removal {
     /// [`ALBUM_REMOVED`] job in the commit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub album_removed: Option<AlbumRemoved>,
+    /// The rows the removal was asked against, checked again in the
+    /// commit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guard: Option<super::remove::Guard>,
 }
 
 /// The job kind a removed album's clean-up outside the library runs as:

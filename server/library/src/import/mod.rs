@@ -971,6 +971,7 @@ impl Imports {
                     sidecars: Vec::new(),
                     undo: None,
                     album_removed: None,
+                    guard: None,
                 }),
             };
             let token_hash = sha256_hex(bundle.id.as_bytes());

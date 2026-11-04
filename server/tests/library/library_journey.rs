@@ -5076,6 +5076,108 @@ async fn a_stopped_removal_keeps_each_file_with_its_track() {
     }
 }
 
+/// An album renamed, or with one track swapped for another, after its
+/// removal was checked but before the removal commits is refused in that
+/// commit, whether a person or a batch asked: nothing moves and every track
+/// stays listed.
+#[tokio::test]
+async fn an_album_that_changes_before_its_removal_commits_keeps_its_files() {
+    use droppedneedle_library::removal::{MutationError, Mutations, SeenAlbum};
+
+    let (scratch, library, music) = bare_library("lib-remove-window").await;
+    let files = [
+        plant(&music, "Kept/01.flac", "flac_no_tags.flac"),
+        plant(&music, "Kept/02.flac", "flac_no_tags.flac"),
+        plant(&music, "Other/01.flac", "flac_no_tags.flac"),
+    ];
+    add_music_root(&library, &music).await;
+    add_admin(&library);
+    let conn = scratch_db(&scratch);
+    let track = |rel: &str| {
+        library
+            .scan_store
+            .track_at("music", rel)
+            .unwrap()
+            .expect("track indexed")
+    };
+    let (kept, leaving, joining) = (
+        track("Kept/01.flac"),
+        track("Kept/02.flac"),
+        track("Other/01.flac"),
+    );
+    let album_of = |track: &str| -> String {
+        conn.query_row(
+            "SELECT local_album_id FROM local_tracks WHERE id = ?1",
+            [track],
+            |row| row.get(0),
+        )
+        .expect("album id")
+    };
+    let (album, other) = (album_of(&kept), album_of(&joining));
+    assert_ne!(album, other);
+    let revision: i64 = conn
+        .query_row(
+            "SELECT row_revision FROM local_albums WHERE id = ?1",
+            [&album],
+            |row| row.get(0),
+        )
+        .expect("album revision");
+
+    let renamed = format!(
+        "UPDATE local_albums SET title = 'Renamed', row_revision = {} WHERE id = '{album}'",
+        revision + 1
+    );
+    let swapped = format!(
+        "UPDATE local_tracks SET local_album_id = CASE id WHEN '{leaving}' THEN '{other}' \
+         ELSE '{album}' END WHERE id IN ('{leaving}', '{joining}')"
+    );
+    for (case, change, person) in [
+        ("renamed, a person asked", renamed, true),
+        ("a track swapped, a batch asked", swapped, false),
+    ] {
+        let writer = scratch_db(&scratch);
+        library.publishing.set_publish_hooks(
+            None,
+            Some(Box::new(move |_| {
+                writer.execute_batch(&change).expect("rows changed");
+            })),
+        );
+        let mutations = Mutations::new(&library);
+        let answer = if person {
+            mutations.remove_album_now(
+                &album,
+                SeenAlbum {
+                    revision,
+                    track_count: 2,
+                },
+                true,
+                true,
+                "admin",
+            )
+        } else {
+            mutations.remove_album(&album, true, true, "admin")
+        };
+        library.publishing.set_publish_hooks(None, None);
+        let code = if person {
+            "STALE_REVISION"
+        } else {
+            "REMOVAL_CHANGED"
+        };
+        assert!(
+            matches!(&answer, Err(MutationError::Conflict(reason)) if reason.code == code),
+            "{case}: {answer:?}"
+        );
+        assert!(
+            files.iter().all(|file| file.exists()),
+            "{case}: a file moved"
+        );
+        for track in [&kept, &leaving, &joining] {
+            assert_eq!(availability_of(&conn, track), "indexed", "{case}");
+        }
+        assert!(no_hidden_files(&music), "{case}");
+    }
+}
+
 /// One album of two untagged files per folder `Case{index}`, every file
 /// taken out by Remove extras. Answers the album, its tracks, their
 /// paths and the undo's action id.
