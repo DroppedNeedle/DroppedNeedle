@@ -185,6 +185,25 @@ mod tests {
         }
     }
 
+    /// The refusal says what to do: a local disk, and on Unraid a pool path
+    /// or an exclusive share.
+    #[test]
+    fn the_remote_filesystem_refusal_names_the_fix() {
+        let refusal = DbError::NonLocalFilesystem {
+            path: PathBuf::from("/app/cache/library.db"),
+            fs_type: "fuse.shfs".to_owned(),
+            mount: "/app/cache".to_owned(),
+        }
+        .to_string();
+        for fix in [
+            "/mnt/cache/appdata/droppedneedle",
+            "exclusive",
+            "local disk",
+        ] {
+            assert!(refusal.contains(fix), "{fix}: {refusal}");
+        }
+    }
+
     /// A link as the database file or as a folder above it is refused; a
     /// real path and a file not there yet pass.
     #[test]

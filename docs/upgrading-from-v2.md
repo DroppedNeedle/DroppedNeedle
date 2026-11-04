@@ -394,6 +394,14 @@ you upgrade.
   v3 refuses to start with it. Set `CONFIG_DIR` to that file's folder
   instead.
 
+- **Unraid data folder.** v3 refuses to start with its database on a FUSE
+  mount, and Unraid's `/mnt/user` paths are one unless the share is set to
+  exclusive access. v2 ran there, so an existing install keeps that path.
+  Before the v3 container first starts, either set the `appdata` share to
+  exclusive access, or, with the container stopped, move the data folder's
+  contents to a pool path such as `/mnt/cache/appdata/droppedneedle/cache`
+  and point the container's `/app/cache` at it.
+
 ### Locked out
 
 If nobody can sign in to v3 (single sign-on fails and no admin remembers a

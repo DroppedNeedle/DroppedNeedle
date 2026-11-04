@@ -18,7 +18,14 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 pub enum DbError {
     /// The database path or one of its sidecars sits on a network filesystem.
-    #[error("refusing database on non-local filesystem {fs_type} at mount {mount}: {path:?}")]
+    /// The message says how to fix it, Unraid's `/mnt/user` being the usual
+    /// cause.
+    #[error(
+        "refusing database on non-local filesystem {fs_type} at mount {mount}: {path:?}. \
+         SQLite needs a local disk. On Unraid, point the container's /app/cache at a pool \
+         path such as /mnt/cache/appdata/droppedneedle, or set the appdata share to \
+         exclusive access; elsewhere, move it to a local disk"
+    )]
     NonLocalFilesystem {
         /// The path that was refused.
         path: PathBuf,
