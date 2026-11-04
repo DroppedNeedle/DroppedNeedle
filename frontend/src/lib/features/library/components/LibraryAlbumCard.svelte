@@ -1,7 +1,6 @@
 <script lang="ts">
 	import AlbumImage from '$lib/media/AlbumImage.svelte';
-	import Card from '$lib/ui/Card.svelte';
-	import CardTitle from '$lib/ui/CardTitle.svelte';
+	import MediaTile from '$lib/media/MediaTile.svelte';
 	import LibraryFormatBadge from './LibraryFormatBadge.svelte';
 	import LocalIdentityBadge from './LocalIdentityBadge.svelte';
 	import NoFilesBadge from './NoFilesBadge.svelte';
@@ -19,14 +18,14 @@
 	let href = $derived(albumHref(album.release_group_mbid ?? album.id));
 </script>
 
-<Card
+<MediaTile
+	title={album.title}
+	titleAs="h2"
 	{href}
-	variant="raised"
-	padding="none"
-	class="group relative w-full shrink-0 overflow-hidden"
-	aria-label="Open {album.title}"
+	label="Open {album.title}"
+	class="w-full shrink-0"
 >
-	<figure class="aspect-square overflow-hidden relative">
+	{#snippet art()}
 		<AlbumImage
 			albumId={album.id}
 			mbid={album.release_group_mbid ?? ''}
@@ -35,9 +34,28 @@
 			alt={album.title}
 			size="full"
 			requestSize={250}
-			rounded="none"
 			className="w-full h-full"
 		/>
+	{/snippet}
+	<!-- One line for year and artist, cut letter by letter at the cover's
+	     width; count and kind share a line and wrap only when short of room. -->
+	{#snippet meta()}
+		{#if album.year}{album.year}{:else}Unknown{/if}
+		{#if album.artist_name}
+			<span class="mr-1" aria-hidden="true">·</span>{album.artist_name}
+		{/if}
+	{/snippet}
+	{#snippet footer()}
+		<p class="flex flex-wrap gap-x-1 font-mono text-xs leading-tight text-muted">
+			<span class="whitespace-nowrap">
+				{trackCountLabel(album.track_count, album.expected_track_count)}
+			</span>
+			{#if kind}
+				<span class="whitespace-nowrap"><span aria-hidden="true" class="mr-1">·</span>{kind}</span>
+			{/if}
+		</p>
+	{/snippet}
+	{#snippet overlay()}
 		<div class="absolute top-2 right-2 z-10">
 			{#if album.track_count === 0}
 				<NoFilesBadge />
@@ -54,25 +72,5 @@
 				className="absolute left-2 top-2 z-10"
 			/>
 		{/if}
-	</figure>
-
-	<!-- One line for year and artist, cut letter by letter at the cover's
-	     width; count and kind share a line and wrap only when short of room. -->
-	<div class="space-y-1 px-3 pb-3">
-		<CardTitle class="text-sm line-clamp-2 min-h-[2.5rem]">{album.title}</CardTitle>
-		<p class="truncate text-xs leading-tight opacity-70">
-			{#if album.year}{album.year}{:else}Unknown{/if}
-			{#if album.artist_name}
-				<span class="opacity-50 mx-1">•</span>{album.artist_name}
-			{/if}
-		</p>
-		<p class="flex flex-wrap gap-x-1 text-[11px] leading-tight opacity-50">
-			<span class="whitespace-nowrap">
-				{trackCountLabel(album.track_count, album.expected_track_count)}
-			</span>
-			{#if kind}
-				<span class="whitespace-nowrap"><span aria-hidden="true" class="mr-1">•</span>{kind}</span>
-			{/if}
-		</p>
-	</div>
-</Card>
+	{/snippet}
+</MediaTile>

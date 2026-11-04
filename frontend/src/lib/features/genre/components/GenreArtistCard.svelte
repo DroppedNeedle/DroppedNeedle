@@ -2,7 +2,8 @@
 	import { Check } from 'lucide-svelte';
 	import ArtistImage from '$lib/media/ArtistImage.svelte';
 	import ArtistCardDownloadButton from '$lib/features/artist/components/ArtistCardDownloadButton.svelte';
-	import Card from '$lib/ui/Card.svelte';
+	import MediaTile from '$lib/media/MediaTile.svelte';
+	import StatusChip from '$lib/ui/StatusChip.svelte';
 	import type { ArtistRef } from '$lib/features/discover/queries/types';
 
 	interface Props {
@@ -15,49 +16,36 @@
 	let { artist, showLibraryBadge = false, onclick, href = null }: Props = $props();
 </script>
 
-<Card
-	padding="none"
+<MediaTile
+	kind="artist"
+	title={artist.name}
 	href={href ?? undefined}
 	onclick={href ? undefined : onclick}
-	onkeydown={href || !onclick
-		? undefined
-		: (e: KeyboardEvent) => {
-				if (e.key === 'Enter' || e.key === ' ') {
-					e.preventDefault();
-					onclick();
-				}
-			}}
-	role={href || !onclick ? undefined : 'button'}
-	tabindex={href || !onclick ? undefined : 0}
-	class="group {href
-		? ''
-		: onclick
-			? 'cursor-pointer transition-colors hover:bg-base-300 focus-visible:outline-2 focus-visible:outline-primary'
-			: 'cursor-default'}"
+	class="w-full"
 >
-	{#if artist.musicbrainz_id}
-		<ArtistCardDownloadButton artistName={artist.name} artistMbid={artist.musicbrainz_id} />
-	{/if}
-	<figure class="flex justify-center pt-4 relative">
+	{#snippet art()}
 		<ArtistImage
 			mbid={artist.musicbrainz_id || ''}
 			localId={artist.local_id}
 			alt={artist.name}
-			size="md"
+			size="full"
+			className="w-full h-full"
 			lazy={true}
 		/>
-		{#if showLibraryBadge || artist.in_library}
-			<div class="absolute top-2 right-2 badge badge-success badge-sm gap-1 opacity-90">
-				<Check class="w-3 h-3" />
-			</div>
-		{/if}
-	</figure>
-	<div class="flex flex-col items-center gap-2 px-3 pt-1 pb-3 text-center">
-		<h3 class="font-semibold text-sm line-clamp-1">{artist.name}</h3>
+	{/snippet}
+	{#snippet meta()}
 		{#if artist.listen_count}
-			<p class="text-xs text-muted">
-				{artist.listen_count} album{artist.listen_count !== 1 ? 's' : ''}
-			</p>
+			{artist.listen_count} album{artist.listen_count !== 1 ? 's' : ''}
 		{/if}
-	</div>
-</Card>
+	{/snippet}
+	{#snippet overlay()}
+		{#if artist.musicbrainz_id}
+			<ArtistCardDownloadButton artistName={artist.name} artistMbid={artist.musicbrainz_id} />
+		{/if}
+		{#if showLibraryBadge || artist.in_library}
+			<StatusChip tone="action" size="xs" icon={Check} class="absolute top-2 left-2">
+				<span class="sr-only">In library</span>
+			</StatusChip>
+		{/if}
+	{/snippet}
+</MediaTile>

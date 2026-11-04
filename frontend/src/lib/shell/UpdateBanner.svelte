@@ -38,7 +38,7 @@
 		class:mt-12={hasDegradation}
 	>
 		<div
-			class="alert border-info/40 shadow-lg mx-auto mt-2 max-w-xl pointer-events-auto text-sm gap-2 py-2 banner-enter"
+			class="alert border-line bg-base-200 shadow-lg mx-auto mt-2 max-w-xl pointer-events-auto text-sm gap-2 py-2 banner-enter"
 			role="status"
 		>
 			<CircleArrowUp class="h-4 w-4 shrink-0 text-info" />

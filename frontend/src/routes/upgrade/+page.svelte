@@ -12,6 +12,7 @@
 	import Card from '$lib/ui/Card.svelte';
 	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
+	import Logo from '$lib/ui/Logo.svelte';
 	import BackOnV2 from '$lib/features/upgrade/components/BackOnV2.svelte';
 	import Done from '$lib/features/upgrade/components/Done.svelte';
 	import Failed from '$lib/features/upgrade/components/Failed.svelte';
@@ -72,12 +73,7 @@
 <div class="upgrade-wrap min-h-screen px-4 py-10">
 	<div class="mx-auto flex w-full max-w-xl flex-col gap-6">
 		<div class="upgrade-brand">
-			<img
-				src={withBasePath('/logo_icon.png')}
-				alt=""
-				aria-hidden="true"
-				class="dn-logo upgrade-mark"
-			/>
+			<Logo variant="icon" label="" class="h-12 text-base-content" />
 			<h1 class="upgrade-wordmark">DroppedNeedle</h1>
 			<p class="upgrade-sub">Upgrade from v2</p>
 		</div>
@@ -159,12 +155,6 @@
 		gap: 0.5rem;
 	}
 
-	.upgrade-mark {
-		height: 3rem;
-		width: auto;
-		opacity: 0.9;
-	}
-
 	.upgrade-wordmark {
 		font-family: var(--font-display);
 		font-weight: 800;
@@ -179,6 +169,6 @@
 		font-size: 0.75rem;
 		letter-spacing: 0.12em;
 		text-transform: uppercase;
-		color: oklch(from var(--color-base-content) l c h / 0.55);
+		color: var(--color-muted);
 	}
 </style>

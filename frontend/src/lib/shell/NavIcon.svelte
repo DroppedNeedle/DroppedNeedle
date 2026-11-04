@@ -6,11 +6,11 @@
 	let { item, children }: { item: NavItem; children?: Snippet } = $props();
 </script>
 
-<span class="relative flex h-6 w-6 shrink-0">
-	<item.icon class="h-6 w-6" />
+<span class="relative flex h-5 w-5 shrink-0">
+	<item.icon class="h-5 w-5" />
 	{#if item.iconMark}
 		<span
-			class="absolute -bottom-1.5 -right-1.5 grid h-4 w-4 place-items-center rounded-full bg-base-200 text-library-manage"
+			class="absolute -right-1.5 -bottom-1.5 grid h-4 w-4 place-items-center rounded-full bg-base-100 text-library-manage"
 		>
 			<item.iconMark class="h-3 w-3" />
 		</span>

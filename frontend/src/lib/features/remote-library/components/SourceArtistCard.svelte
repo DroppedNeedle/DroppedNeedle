@@ -2,8 +2,7 @@
 	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import ArtistImage from '$lib/media/ArtistImage.svelte';
 	import ArtistCardDownloadButton from '$lib/features/artist/components/ArtistCardDownloadButton.svelte';
-	import Card from '$lib/ui/Card.svelte';
-	import CardTitle from '$lib/ui/CardTitle.svelte';
+	import MediaTile from '$lib/media/MediaTile.svelte';
 	import CoverPlaceholder from '$lib/ui/CoverPlaceholder.svelte';
 
 	interface Props {
@@ -17,17 +16,14 @@
 	let { name, imageUrl = null, mbid = null, href, albumCount }: Props = $props();
 </script>
 
-<Card
-	variant="raised"
-	padding="none"
+<MediaTile
+	kind="artist"
+	title={name}
 	{href}
-	class="group relative w-full shrink-0"
-	aria-label={href ? `Open ${name}` : undefined}
+	label={href ? `Open ${name}` : undefined}
+	class="w-full shrink-0"
 >
-	{#if href && mbid}
-		<ArtistCardDownloadButton artistName={name} artistMbid={mbid} />
-	{/if}
-	<figure class="aspect-square p-3">
+	{#snippet art()}
 		{#if mbid}
 			<ArtistImage
 				{mbid}
@@ -52,11 +48,15 @@
 				<CoverPlaceholder kind="artist" {name} />
 			</div>
 		{/if}
-	</figure>
-	<div class="flex flex-col items-center gap-1 p-2 pt-0 text-center">
-		<CardTitle class="text-xs line-clamp-1 min-h-[1.25rem]">{name}</CardTitle>
+	{/snippet}
+	{#snippet meta()}
 		{#if albumCount !== undefined}
-			<p class="text-xs text-muted">{albumCount} album{albumCount !== 1 ? 's' : ''}</p>
+			{albumCount} album{albumCount !== 1 ? 's' : ''}
 		{/if}
-	</div>
-</Card>
+	{/snippet}
+	{#snippet overlay()}
+		{#if href && mbid}
+			<ArtistCardDownloadButton artistName={name} artistMbid={mbid} />
+		{/if}
+	{/snippet}
+</MediaTile>

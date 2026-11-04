@@ -2,7 +2,8 @@
 	import { Check } from 'lucide-svelte';
 	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import AlbumCardOverlay from '$lib/features/album/components/AlbumCardOverlay.svelte';
-	import Card from '$lib/ui/Card.svelte';
+	import MediaTile from '$lib/media/MediaTile.svelte';
+	import StatusChip from '$lib/ui/StatusChip.svelte';
 	import type { AlbumRef } from '$lib/features/discover/queries/types';
 
 	interface Props {
@@ -15,39 +16,32 @@
 	let { album, showLibraryBadge = false, onclick, href = null }: Props = $props();
 </script>
 
-<Card
-	padding="none"
+<MediaTile
+	title={album.title}
 	href={href ?? undefined}
 	onclick={href ? undefined : onclick}
-	onkeydown={href || !onclick
-		? undefined
-		: (e: KeyboardEvent) => {
-				if (e.key === 'Enter' || e.key === ' ') {
-					e.preventDefault();
-					onclick();
-				}
-			}}
-	role={href || !onclick ? undefined : 'button'}
-	tabindex={href || !onclick ? undefined : 0}
-	class="group {href
-		? ''
-		: onclick
-			? 'cursor-pointer transition-colors hover:bg-base-300 focus-visible:outline-2 focus-visible:outline-primary'
-			: 'cursor-default'}"
+	class="w-full"
 >
-	<figure class="aspect-square overflow-hidden relative rounded-t-2xl">
+	{#snippet art()}
 		<AlbumImage
 			mbid={album.musicbrainz_id || ''}
 			alt={album.title}
-			size="md"
-			rounded="none"
+			size="full"
 			className="w-full h-full"
 			customUrl={album.cover_url || null}
 		/>
+	{/snippet}
+	{#snippet meta()}
+		{album.artist_name || 'Unknown Artist'}
+		{#if album.release_date}
+			<span class="mr-1" aria-hidden="true">·</span>{album.release_date}
+		{/if}
+	{/snippet}
+	{#snippet overlay()}
 		{#if showLibraryBadge || album.in_library}
-			<div class="absolute top-2 left-2 z-20 badge badge-success badge-sm gap-1 opacity-90">
-				<Check class="w-3 h-3" />
-			</div>
+			<StatusChip tone="action" size="xs" icon={Check} class="absolute top-2 left-2 z-20">
+				<span class="sr-only">In library</span>
+			</StatusChip>
 		{/if}
 		{#if album.musicbrainz_id && album.in_library}
 			<AlbumCardOverlay
@@ -57,14 +51,5 @@
 				coverUrl={album.cover_url || null}
 			/>
 		{/if}
-	</figure>
-	<div class="flex flex-col gap-2 px-3 pt-1 pb-3">
-		<h3 class="font-semibold text-sm line-clamp-1">{album.title}</h3>
-		<p class="text-xs text-muted line-clamp-1">
-			{album.artist_name || 'Unknown Artist'}
-			{#if album.release_date}
-				· {album.release_date}
-			{/if}
-		</p>
-	</div>
-</Card>
+	{/snippet}
+</MediaTile>

@@ -13,7 +13,7 @@
 	let { icon, label, settingsTab }: Props = $props();
 </script>
 
-<li class="opacity-30 hover:opacity-70 transition-opacity duration-200">
+<li class="opacity-60 transition-opacity duration-150 hover:opacity-100">
 	<a
 		href={withBasePath(`/settings?tab=${settingsTab}`)}
 		class="is-drawer-close:tooltip is-drawer-close:tooltip-right"
@@ -23,7 +23,7 @@
 		<div class="relative">
 			{@render icon()}
 			<span
-				class="absolute -bottom-1 -right-1 bg-base-300 rounded-full p-0.5 flex items-center justify-center"
+				class="absolute -right-1 -bottom-1 flex items-center justify-center rounded-full bg-base-300 p-0.5"
 			>
 				<Plus class="w-2.5 h-2.5" />
 			</span>

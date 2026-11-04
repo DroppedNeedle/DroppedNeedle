@@ -3,7 +3,6 @@
 	import { page } from '$app/state';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { ChevronRight } from 'lucide-svelte';
-	import AlbumImage from '$lib/media/AlbumImage.svelte';
 
 	function handleClick() {
 		const query = page.url.searchParams.get('q') || '';
@@ -13,33 +12,16 @@
 	}
 </script>
 
+<!-- The last tile of a search row: the same box as the tiles beside it, on
+     a plain surface, opening the full list. -->
 <button
-	class="relative w-full aspect-square cursor-pointer transition-transform duration-200 ease-in-out hover:scale-105 rounded-box overflow-hidden"
+	type="button"
+	class="flex aspect-square w-full cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border border-edge bg-base-200 p-2 text-center transition-colors duration-150 hover:bg-neutral"
 	onclick={handleClick}
 >
-	<div class="absolute inset-0 overflow-hidden bg-base-200">
-		<AlbumImage
-			customUrl={withBasePath('/img/album_bg-250.webp')}
-			alt=""
-			size="full"
-			rounded="none"
-			showPlaceholder={false}
-			lazy={false}
-			testId="view-more-album-background"
-			className="h-full w-full blur-[8px]"
-		/>
-	</div>
-	<div class="absolute inset-0 z-10 flex flex-col items-center justify-center p-2">
-		<div
-			class="px-2 py-1 rounded-lg bg-base-300/40 light:bg-base-100/80 text-accent backdrop-blur-sm shadow-lg max-w-full"
-		>
-			<div class="flex flex-col items-center gap-0.5">
-				<span class="text-sm font-bold block text-center drop-shadow-lg truncate">ALBUMS</span>
-				<div class="flex items-center gap-1">
-					<span class="text-xs font-semibold text-center drop-shadow-lg">View More</span>
-					<ChevronRight class="h-3 w-3 drop-shadow-lg" strokeWidth={2.5} />
-				</div>
-			</div>
-		</div>
-	</div>
+	<span class="font-display text-xl leading-none text-title">ALBUMS</span>
+	<span class="flex items-center gap-1 font-mono text-xs font-semibold uppercase text-base-content">
+		View More
+		<ChevronRight class="h-3 w-3" strokeWidth={2.5} />
+	</span>
 </button>

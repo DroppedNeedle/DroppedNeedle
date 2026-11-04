@@ -13,7 +13,7 @@
 		coverUrls = [],
 		customCoverUrl = null,
 		size = 'w-32 h-32',
-		rounded = 'rounded-box'
+		rounded = 'rounded-lg'
 	}: Props = $props();
 
 	let urls = $derived(coverUrls.slice(0, 4));
@@ -29,7 +29,7 @@
 	<AlbumImage customUrl={url} {alt} size="full" rounded="none" className="w-full h-full" />
 {/snippet}
 
-<div class="overflow-hidden {rounded} {size}">
+<div class="sleeve-shadow overflow-hidden {rounded} {size}">
 	{#if customCoverUrl}
 		{@render cover(customCoverUrl, 'Playlist cover')}
 	{:else if urls.length >= 2}

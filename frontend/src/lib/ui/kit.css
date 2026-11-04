@@ -66,7 +66,6 @@
 	.dn-btn-ghost {
 		--btn-bg: transparent;
 		--btn-border: transparent;
-		color: var(--btn-fg, var(--color-base-content));
 	}
 	.dn-btn-spotify {
 		--btn-color: var(--dn-spotify);
@@ -88,11 +87,16 @@
 	/* disabled is plainly off, but still readable */
 	:where(.btn):is(:disabled, [aria-disabled='true'], .btn-disabled):not(.dn-btn-loading) {
 		color: var(--dn-muted);
-		--btn-border: var(--dn-line);
 		opacity: 0.7;
 	}
-	/* a button at work keeps its colours */
-	.btn.dn-btn-loading {
+	:where(.btn):is(:disabled, [aria-disabled='true'], .btn-disabled):not(
+			.dn-btn-loading,
+			.dn-btn-ghost
+		) {
+		--btn-border: var(--dn-line);
+	}
+	/* a button at work keeps its colours (the service variants paint their own) */
+	.btn.dn-btn-loading:not(.btn-lastfm, .btn-listenbrainz) {
 		--btn-bg: var(--btn-color, var(--color-base-200));
 		background-color: var(--btn-bg);
 		color: var(--btn-fg, var(--color-base-content));
@@ -123,6 +127,10 @@
 	}
 	:where(.input-error, .select-error, .textarea-error) {
 		--input-color: var(--color-error);
+	}
+	/* the box may shrink below its text's width (a phone's top bar) */
+	:where(.input) input {
+		min-width: 0;
 	}
 	:where(.input, .textarea, .input input)::placeholder {
 		color: var(--dn-muted);

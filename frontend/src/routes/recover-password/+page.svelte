@@ -2,6 +2,7 @@
 	import '../../auth.css';
 	import { ApiError } from '$lib/api/errors';
 	import { withBasePath } from '$lib/utils/basePath';
+	import Logo from '$lib/ui/Logo.svelte';
 	import { createPasswordRecoveryResetMutation } from '$lib/features/auth/queries/AuthMutations.svelte';
 	import {
 		ArrowLeft,
@@ -89,12 +90,7 @@
 <div class="recovery-wrap min-h-screen flex items-center justify-center p-4 py-10">
 	<div class="w-full max-w-lg">
 		<div class="recovery-brand">
-			<img
-				src={withBasePath('/logo_icon.png')}
-				alt=""
-				aria-hidden="true"
-				class="dn-logo recovery-mark"
-			/>
+			<Logo variant="icon" label="" class="h-10 text-base-content" />
 			<h1 class="recovery-wordmark">DroppedNeedle</h1>
 			<div class="recovery-rule" aria-hidden="true"></div>
 			<p class="recovery-kicker">Account recovery</p>
@@ -307,12 +303,6 @@
 		margin-bottom: 1.75rem;
 	}
 
-	.recovery-mark {
-		height: 2.5rem;
-		width: auto;
-		opacity: 0.9;
-	}
-
 	.recovery-wordmark {
 		font-family: var(--font-display);
 		font-size: clamp(2.4rem, 11vw, 3.5rem);
@@ -341,7 +331,7 @@
 		font-size: 0.7rem;
 		letter-spacing: 0.08em;
 		text-transform: uppercase;
-		color: oklch(from var(--color-base-content) l c h / 0.45);
+		color: var(--color-muted);
 	}
 
 	.owner-help[open] {

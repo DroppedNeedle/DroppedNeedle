@@ -41,7 +41,7 @@
 </script>
 
 {#if integrations.current.loaded && anyEntryVisible}
-	<div class="divider my-0"></div>
+	<div class="dn-rail__rule" aria-hidden="true"></div>
 {/if}
 
 {#if !hidden.has('youtube')}
@@ -53,13 +53,13 @@
 				data-tip="YouTube"
 				aria-label="YouTube"
 			>
-				<YouTubeIcon class="h-6 w-6 text-error" />
+				<YouTubeIcon class="h-5 w-5 text-error" />
 				<span class="is-drawer-close:hidden">YouTube</span>
 			</a>
 		</li>
 	{:else if integrations.current.loaded && authStore.isAdmin}
 		<SidebarServiceHint label="YouTube" settingsTab="youtube">
-			{#snippet icon()}<YouTubeIcon class="h-6 w-6 text-error" />{/snippet}
+			{#snippet icon()}<YouTubeIcon class="h-5 w-5 text-error" />{/snippet}
 		</SidebarServiceHint>
 	{/if}
 {/if}
@@ -74,7 +74,7 @@
 				aria-label="Jellyfin"
 			>
 				<div class="relative inline-flex">
-					<JellyfinIcon class="h-6 w-6 text-info" />
+					<JellyfinIcon class="h-5 w-5 text-info" />
 					{#if nowPlayingMerged.isSourcePlaying('jellyfin')}
 						<span class="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-primary animate-pulse"
 						></span>
@@ -90,7 +90,7 @@
 		</li>
 	{:else if integrations.current.loaded && authStore.isAdmin}
 		<SidebarServiceHint label="Jellyfin" settingsTab="jellyfin">
-			{#snippet icon()}<JellyfinIcon class="h-6 w-6 text-info" />{/snippet}
+			{#snippet icon()}<JellyfinIcon class="h-5 w-5 text-info" />{/snippet}
 		</SidebarServiceHint>
 	{/if}
 {/if}
@@ -105,7 +105,7 @@
 				aria-label="Navidrome"
 			>
 				<div class="relative inline-flex">
-					<NavidromeIcon class="h-6 w-6 text-primary" />
+					<NavidromeIcon class="h-5 w-5 text-primary" />
 					{#if nowPlayingMerged.isSourcePlaying('navidrome')}
 						<span class="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-primary animate-pulse"
 						></span>
@@ -121,7 +121,7 @@
 		</li>
 	{:else if integrations.current.loaded && authStore.isAdmin}
 		<SidebarServiceHint label="Navidrome" settingsTab="navidrome">
-			{#snippet icon()}<NavidromeIcon class="h-6 w-6 text-primary" />{/snippet}
+			{#snippet icon()}<NavidromeIcon class="h-5 w-5 text-primary" />{/snippet}
 		</SidebarServiceHint>
 	{/if}
 {/if}
@@ -136,7 +136,7 @@
 				aria-label="Plex"
 			>
 				<div class="relative inline-flex">
-					<PlexIcon class="h-6 w-6 text-[rgb(var(--brand-plex))]" />
+					<PlexIcon class="h-5 w-5 text-[rgb(var(--brand-plex))]" />
 					{#if nowPlayingMerged.isSourcePlaying('plex')}
 						<span class="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-primary animate-pulse"
 						></span>
@@ -152,7 +152,7 @@
 		</li>
 	{:else if integrations.current.loaded && authStore.isAdmin}
 		<SidebarServiceHint label="Plex" settingsTab="plex">
-			{#snippet icon()}<PlexIcon class="h-6 w-6 text-[rgb(var(--brand-plex))]" />{/snippet}
+			{#snippet icon()}<PlexIcon class="h-5 w-5 text-[rgb(var(--brand-plex))]" />{/snippet}
 		</SidebarServiceHint>
 	{/if}
 {/if}
@@ -167,7 +167,7 @@
 				aria-label="Local Files"
 			>
 				<div class="relative inline-flex">
-					<Headphones class="h-6 w-6 text-accent" />
+					<Headphones class="h-5 w-5 text-accent" />
 					{#if localPlaying}
 						<span class="absolute -top-1 -right-1" aria-label="Playing local files">
 							<Disc3 class="vinyl-spin h-3 w-3 text-accent" />
@@ -179,7 +179,7 @@
 		</li>
 	{:else if integrations.current.loaded && authStore.isAdmin}
 		<SidebarServiceHint label="Local Files" settingsTab="library">
-			{#snippet icon()}<Headphones class="h-6 w-6 text-accent" />{/snippet}
+			{#snippet icon()}<Headphones class="h-5 w-5 text-accent" />{/snippet}
 		</SidebarServiceHint>
 	{/if}
 {/if}

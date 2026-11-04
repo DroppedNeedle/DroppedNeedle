@@ -31,6 +31,8 @@
 	import Card from '$lib/ui/Card.svelte';
 	import CardTitle from '$lib/ui/CardTitle.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
+	import StatusChip from '$lib/ui/StatusChip.svelte';
+	import MediaTile from '$lib/media/MediaTile.svelte';
 
 	interface Props {
 		section: ChartSection;
@@ -162,70 +164,67 @@
 					{@const artistHref =
 						artistHrefOrNull(item.musicbrainz_id) ??
 						(item.local_id ? localArtistHref(item.local_id) : null)}
-					<div class="w-32 sm:w-36 md:w-44 shrink-0">
-						<Card
-							variant="raised"
-							padding="none"
-							href={artistHref ?? undefined}
-							data-sveltekit-preload-data={artistHref ? 'hover' : undefined}
-							class="w-full {artistHref ? '' : 'cursor-default opacity-80'}"
-						>
-							<figure class="flex justify-center pt-4 relative">
-								<ArtistImage
-									mbid={item.musicbrainz_id ?? ''}
-									localId={item.local_id}
-									alt={item.name}
-									size="md"
-									lazy={lazyAt(i)}
-								/>
-								{#if !item.musicbrainz_id}
-									<div
-										class="absolute top-2 left-2 badge badge-ghost badge-sm"
-										title="Not linked to MusicBrainz"
-									>
-										<X class="w-3 h-3" />
-									</div>
-								{/if}
-								{#if item.in_library}
-									<div class="absolute top-2 right-2 badge badge-success badge-sm">
-										<Check class="w-3.5 h-3.5" />
-									</div>
-								{/if}
-							</figure>
-							<div class="flex flex-col items-center gap-2 px-2 pb-2 text-center">
-								<CardTitle as="h3" class="text-xs line-clamp-1">{item.name}</CardTitle>
-								{#if item.listen_count}
-									<p class="text-xs text-muted">{formatListenCount(item.listen_count)}</p>
-								{/if}
-							</div>
-						</Card>
-					</div>
+					<MediaTile
+						kind="artist"
+						title={item.name}
+						href={artistHref ?? undefined}
+						class="w-32 shrink-0 sm:w-36 md:w-44 {artistHref ? '' : 'opacity-80'}"
+					>
+						{#snippet art()}
+							<ArtistImage
+								mbid={item.musicbrainz_id ?? ''}
+								localId={item.local_id}
+								alt={item.name}
+								size="full"
+								className="w-full h-full"
+								lazy={lazyAt(i)}
+							/>
+						{/snippet}
+						{#snippet meta()}
+							{#if item.listen_count}{formatListenCount(item.listen_count)}{:else}&nbsp;{/if}
+						{/snippet}
+						{#snippet overlay()}
+							{#if !item.musicbrainz_id}
+								<StatusChip size="xs" icon={X} class="absolute top-2 left-2">
+									<span class="sr-only">Not linked to MusicBrainz</span>
+								</StatusChip>
+							{/if}
+							{#if item.in_library}
+								<StatusChip tone="action" size="xs" icon={Check} class="absolute top-2 right-2">
+									<span class="sr-only">In library</span>
+								</StatusChip>
+							{/if}
+						{/snippet}
+					</MediaTile>
 				{:else if item.kind === 'album'}
 					{@const albumHref =
 						albumHrefOrNull(item.musicbrainz_id) ??
 						(item.local_id ? localAlbumHref(item.local_id) : null)}
 					{@const isItemRequested = item.requested || libraryStore.isRequested(item.musicbrainz_id)}
 					<div class="w-32 sm:w-36 md:w-44 shrink-0">
-						<Card
-							variant="raised"
-							padding="none"
+						<MediaTile
+							title={item.title}
 							href={albumHref ?? undefined}
-							class="group w-full {albumHref ? '' : 'cursor-default opacity-90'}"
+							class="w-full {albumHref ? '' : 'opacity-90'}"
 						>
-							<figure class="aspect-square overflow-hidden relative">
+							{#snippet art()}
 								<AlbumImage
 									mbid={item.musicbrainz_id || ''}
 									alt={item.title}
-									size="md"
-									rounded="none"
+									size="full"
 									className="w-full h-full"
 									lazy={lazyAt(i)}
 									customUrl={item.cover_url || null}
 								/>
+							{/snippet}
+							{#snippet meta()}
+								{item.artist_name || ' '}
+							{/snippet}
+							{#snippet overlay()}
 								{#if item.in_library}
-									<div class="absolute top-2 left-2 z-20 badge badge-success badge-sm">
-										<Check class="w-3.5 h-3.5" />
-									</div>
+									<StatusChip tone="action" size="xs" icon={Check} class="absolute top-2 left-2">
+										<span class="sr-only">In library</span>
+									</StatusChip>
 								{/if}
 								{#if item.musicbrainz_id && item.in_library}
 									<AlbumCardOverlay
@@ -239,25 +238,20 @@
 								{#if !item.musicbrainz_id && !item.local_id}
 									<IconButton
 										size="xs"
+										variant="neutral"
 										icon={Search}
 										label="Search album"
-										class="absolute bottom-2 right-2"
+										class="absolute right-2 bottom-2"
 										onclick={(e) => {
 											e.stopPropagation();
 											handleAlbumSearch(item);
 										}}
 									/>
 								{/if}
-							</figure>
-							<div class="flex flex-col gap-2 px-2 pb-2">
-								<CardTitle as="h3" class="text-xs line-clamp-1">{item.title}</CardTitle>
-								{#if item.artist_name}
-									<p class="text-xs text-muted line-clamp-1">{item.artist_name}</p>
-								{/if}
-							</div>
-						</Card>
+							{/snippet}
+						</MediaTile>
 						{#if item.musicbrainz_id && ((!item.in_library && !isItemRequested) || showPreview)}
-							<div class="flex items-center justify-center gap-1 mt-1 pb-1">
+							<div class="flex items-center gap-1 px-1 pb-1">
 								{#if !item.in_library && !isItemRequested}
 									<AlbumRequestButton
 										mbid={item.musicbrainz_id}

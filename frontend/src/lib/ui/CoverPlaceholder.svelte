@@ -1,7 +1,7 @@
 <!--
 	The fallback for cover or artist art that is missing or still loading: a
-	full-strength gradient with a mark on top, a record for an album and the
-	name's first letter for an artist (a person icon when there is no name).
+	full-strength gradient with a mark on top: a record for an album, a
+	person for an artist.
 	The colours come from the id, or from the name when there is no valid id,
 	so an item looks the same on every screen. Fills its nearest positioned
 	ancestor, so the parent must be `relative`. `className` goes on the root,
@@ -24,11 +24,10 @@
 	let { id = null, name = '', kind = 'album', className = '' }: Props = $props();
 
 	let look = $derived(coverPlaceholder(id && isValidMbid(id) ? id : name));
-	const initial = $derived(name.trim().charAt(0).toLocaleUpperCase());
 </script>
 
 <div
-	class="pointer-events-none absolute inset-0 flex items-center justify-center transition-opacity duration-300 @container {look.ink} {className}"
+	class="pointer-events-none absolute inset-0 flex items-center justify-center transition-opacity duration-300 {look.ink} {className}"
 	style:background-image={look.background}
 	aria-hidden="true"
 	data-testid="cover-placeholder"
@@ -40,9 +39,7 @@
 			<circle cx="50" cy="50" r="29" stroke-width="1.5" opacity="0.6" />
 			<circle cx="50" cy="50" r="10" stroke-width="10" />
 		</svg>
-	{:else if initial}
-		<span class="font-display text-[40cqw] leading-none uppercase opacity-80">{initial}</span>
 	{:else}
-		<Users class="h-1/3 w-1/3" />
+		<Users class="h-1/3 w-1/3 opacity-80" />
 	{/if}
 </div>

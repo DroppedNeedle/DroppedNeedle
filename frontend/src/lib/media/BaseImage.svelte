@@ -169,6 +169,8 @@
 	let sizeClasses = $derived(imageType === 'album' ? albumSizeClasses : artistSizeClasses);
 	let sizeClass = $derived(sizeClasses[size]);
 	let roundedClass = $derived(roundedClasses[rounded]);
+	// A sleeve casts a soft shadow; a cell of a mosaic or a backdrop does not.
+	let sleeveClass = $derived(imageType === 'album' && rounded !== 'none' ? 'sleeve-shadow' : '');
 
 	$effect(() => {
 		const newKey = visualSourceKey;
@@ -299,7 +301,7 @@
 <div
 	class="relative overflow-hidden shrink-0 {transparentFallback
 		? 'bg-transparent'
-		: 'bg-base-200'} {sizeClass} {roundedClass} {className}"
+		: 'bg-base-200'} {sizeClass} {roundedClass} {sleeveClass} {className}"
 >
 	{#if showPlaceholder && !transparentFallback}
 		<CoverPlaceholder

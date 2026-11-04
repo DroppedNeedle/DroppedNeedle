@@ -250,7 +250,7 @@
 
 {#if showNavigationProgress}
 	<div class="fixed top-0 left-0 right-0 z-120 pointer-events-none">
-		<progress class="progress progress-primary w-full h-1" aria-label="Loading page"></progress>
+		<progress class="progress dn-progress w-full h-1" aria-label="Loading page"></progress>
 	</div>
 {/if}
 
@@ -316,6 +316,10 @@
 {/if}
 
 <style>
+	.dn-progress {
+		color: var(--dn-action);
+	}
+
 	.droppedneedle-main-content {
 		display: flex;
 		flex-direction: column;
@@ -341,15 +345,28 @@
 		max-width: 100%;
 	}
 
-	/* app headings use the display face, like modal titles */
-	:global(.droppedneedle-main-content :is(h1, h2)) {
+	/* Page titles and big section headings use the display face, like modal
+	   titles, always uppercase. Anton has one weight and is for big type
+	   only, so an h2 set smaller than text-lg keeps the body face. */
+	:global(
+		.droppedneedle-main-content
+			:is(h1, h2:is(.text-lg, .text-xl, .text-2xl, .text-3xl, .text-4xl, .text-5xl, .text-6xl))
+	) {
 		font-family: var(--font-display);
+		font-weight: 400;
+		letter-spacing: 0.01em;
+		text-transform: uppercase;
 	}
 
-	/* structural labels go uppercase; content names keep their case via .hero-title */
-	:global(.droppedneedle-main-content :is(h1, h2):not(.hero-title)) {
+	/* a page's title is in the title colour (acid in dark, forest in light);
+	   section headings stay in the text colour */
+	:global(.droppedneedle-main-content h1:not(.alert *)) {
+		color: var(--dn-title);
+	}
+
+	/* smaller structural labels go uppercase; content names keep their case via .hero-title */
+	:global(.droppedneedle-main-content h2:not(.hero-title)) {
 		text-transform: uppercase;
-		letter-spacing: 0.02em;
 	}
 
 	.droppedneedle-main-content.droppedneedle-player-visible {

@@ -10,6 +10,7 @@
 		createOidcAuthorizeMutation
 	} from '$lib/features/auth/queries/AuthMutations.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
+	import Logo from '$lib/ui/Logo.svelte';
 	import { providerUnavailableMessage } from '$lib/utils/serviceError';
 	import { takeSignInReturn } from '$lib/utils/signInReturn';
 	import { outsideLink } from '$lib/ui/outsideLink';
@@ -177,12 +178,7 @@
 <div class="login-wrap min-h-screen flex items-center justify-center p-4">
 	<div class="w-full max-w-md">
 		<div class="login-brand">
-			<img
-				src={withBasePath('/logo_icon.png')}
-				alt=""
-				aria-hidden="true"
-				class="dn-logo login-mark"
-			/>
+			<Logo variant="icon" label="" class="mb-1 h-12 text-base-content" />
 			<h1 class="login-wordmark">DroppedNeedle</h1>
 			<div class="login-rule" aria-hidden="true"></div>
 			<p class="login-sub">Sign in to continue</p>
@@ -348,7 +344,7 @@
 		padding: 0.5rem 0.85rem;
 		font-size: 0.875rem;
 		font-weight: 500;
-		color: oklch(from var(--color-base-content) l c h / 0.45);
+		color: var(--color-muted);
 		border-bottom: 2px solid transparent;
 		transition: all 0.15s ease;
 		cursor: pointer;
@@ -380,13 +376,6 @@
 		margin-bottom: 2rem;
 	}
 
-	.login-mark {
-		height: 3rem;
-		width: auto;
-		margin-bottom: 0.25rem;
-		opacity: 0.9;
-	}
-
 	.login-wordmark {
 		font-family: var(--font-display);
 		font-weight: 800;
@@ -415,6 +404,6 @@
 		font-size: 0.75rem;
 		letter-spacing: 0.06em;
 		text-transform: uppercase;
-		color: oklch(from var(--color-base-content) l c h / 0.5);
+		color: var(--color-muted);
 	}
 </style>

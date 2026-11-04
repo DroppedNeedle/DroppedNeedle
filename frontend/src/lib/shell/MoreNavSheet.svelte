@@ -18,7 +18,7 @@
 </script>
 
 <Modal bind:open title="More" size="sm" bottomSheet closeButton>
-	<ul class="menu -mx-4 -mt-2 w-auto">
+	<ul class="dn-more menu -mx-4 -mt-2 w-auto gap-0.5">
 		{#each items as item (item.id)}
 			{@const active = item.more?.active(currentPath) ?? false}
 			<li>
@@ -40,3 +40,17 @@
 		{/each}
 	</ul>
 </Modal>
+
+<style>
+	/* the rail's look: 44px rows, the current one on the action fill */
+	.dn-more :global(li > a) {
+		min-height: 2.75rem;
+		border-radius: 0.5rem;
+		font-weight: 600;
+	}
+	.dn-more :global(li > a.menu-active) {
+		background-color: var(--dn-action);
+		color: var(--dn-action-content);
+		box-shadow: inset 0 0 0 1px var(--dn-action-edge);
+	}
+</style>

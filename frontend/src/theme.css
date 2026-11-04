@@ -116,6 +116,11 @@
 	/* plain dividers */
 	--dn-line: #4d604d;
 	--dn-selected: #1f3222;
+	/* decoration: the frit dots and the record behind a sleeve */
+	--dn-frit: #b8ef64;
+	--dn-frit-opacity: 0.75;
+	--dn-vinyl: #0b0e0c;
+	--dn-vinyl-groove: #2b342b;
 }
 
 [data-theme='light'] {
@@ -134,16 +139,15 @@
 	--dn-edge: #6f8570;
 	--dn-line: #9fb49c;
 	--dn-selected: #e5f5cf;
+	--dn-frit: #4f8f2a;
+	--dn-frit-opacity: 0.45;
+	--dn-vinyl: #0b0e0c;
+	--dn-vinyl-groove: #2b342b;
 }
 
 /* Dark is the base look; `light:` overrides the few raw palette colours that
    are too pale on a light background. */
 @custom-variant light (&:where([data-theme=light], [data-theme=light] *));
-
-/* The logo PNGs are drawn in the dark theme's pale blue */
-[data-theme='light'] .dn-logo {
-	filter: brightness(0.45) saturate(1.6);
-}
 
 /* The placeholder cover's palette, the same in both themes. It mirrors
    PLACEHOLDER_PALETTE in server/compat/src/subsonic/stream.rs, which draws the

@@ -40,15 +40,15 @@
 
 {#if visible && entry}
 	<div
-		class="preview-widget fixed right-3 z-40 w-[min(20rem,calc(100vw-1.5rem))] overflow-hidden rounded-2xl border border-secondary/20 bg-base-300/95 shadow-[0_8px_32px_rgba(0,0,0,0.4)] backdrop-blur-md"
+		class="preview-widget fixed right-3 z-40 w-[min(20rem,calc(100vw-1.5rem))] overflow-hidden rounded-box border border-line bg-base-200 shadow-xl"
 		class:preview-widget--player={playerStore.isPlayerVisible}
 		role="region"
 		aria-label="Album preview"
 	>
 		<!-- progress: thin bar across the top -->
-		<div class="h-0.5 w-full bg-base-content/10">
+		<div class="h-0.5 w-full bg-base-300">
 			<div
-				class="h-full bg-secondary transition-[width] duration-100 ease-linear motion-reduce:transition-none"
+				class="h-full bg-action transition-[width] duration-100 ease-linear motion-reduce:transition-none"
 				style="width: {Math.round(deckSampler.progress * 100)}%"
 			></div>
 		</div>
@@ -81,11 +81,11 @@
 			<!-- meta -->
 			<div class="min-w-0 flex-1">
 				<div class="flex items-center gap-1.5">
-					<span class="text-[0.6rem] font-semibold uppercase tracking-wider text-secondary/80">
+					<span class="font-mono text-xs font-semibold uppercase tracking-wider text-muted">
 						{deckSampler.isStation ? 'Preview station' : 'Now sampling'}
 					</span>
 					{#if deckSampler.isStation}
-						<span class="text-[0.6rem] text-muted">
+						<span class="font-mono text-xs text-muted">
 							{deckSampler.stationPosition.index + 1}/{deckSampler.stationPosition.total}
 						</span>
 					{/if}
@@ -147,7 +147,7 @@
 				step="0.05"
 				value={deckSampler.volume}
 				oninput={(e) => deckSampler.setVolume(Number(e.currentTarget.value))}
-				class="range range-secondary range-xs flex-1"
+				class="range range-primary range-xs flex-1"
 				aria-label="Preview volume"
 			/>
 		</div>

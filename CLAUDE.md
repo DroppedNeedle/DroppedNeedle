@@ -705,7 +705,9 @@ Run from the repo root. `make help` lists every target.
   `ToggleRow`, `RadioCards`, `StatusChip`,
   `SaveBar`,
   `AsyncButton`, `QueryBoundary`, `RatingStars`, `PageShell`, `Toaster`,
-  `CoverPlaceholder`, `UnsavedChangesGuard`):
+  `CoverPlaceholder`, `UnsavedChangesGuard`, `Logo`, and the decoration
+  `FritEdge`, `VinylSleeve`, `BarcodeOrnament`; in `src/lib/media` the one
+  album and artist tile, `MediaTile` and `MediaTileSkeleton`):
   do not hand-write a button, a card, a text input, a modal, a confirm, a
   form row, a `<dialog>` or a query's loading, error and empty branches
   (lint refuses a `<dialog>` outside `src/lib/ui` and any `confirm()`). Lint refuses a

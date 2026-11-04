@@ -62,8 +62,8 @@
 		height: 1rem;
 		padding: 0 0.25rem;
 		border-radius: 999px;
-		background: oklch(from var(--color-info) l c h);
-		color: oklch(from var(--color-info-content) l c h);
+		background: var(--color-info);
+		color: var(--color-info-content);
 		font-size: 0.625rem;
 		font-weight: 800;
 		line-height: 1rem;

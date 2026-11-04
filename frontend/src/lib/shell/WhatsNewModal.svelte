@@ -70,7 +70,7 @@
 >
 	{#if sections.length > 0}
 		<div
-			class="whats-new-content release-notes-prose max-h-[55vh] overflow-y-auto rounded-lg border border-base-content/5 bg-base-200/50 p-4"
+			class="whats-new-content release-notes-prose max-h-[55vh] overflow-y-auto rounded-lg border border-line bg-base-100 p-4"
 		>
 			{#each sections as section, i (section.tag)}
 				{#if i > 0}

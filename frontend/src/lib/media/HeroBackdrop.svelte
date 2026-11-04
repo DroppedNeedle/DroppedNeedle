@@ -1,3 +1,8 @@
+<!--
+	A quiet wash of a picture behind a hero: faded into the page so the hero
+	reads as a clean surface. It is a backdrop only; the cover itself is shown
+	untouched beside it. Hover brightens it a little and never zooms.
+-->
 <script lang="ts">
 	import { getApiUrl } from '$lib/api/api-utils';
 
@@ -55,7 +60,7 @@
 			></div>
 		{/if}
 		<div
-			class="absolute inset-0 bg-gradient-to-t from-base-100/90 via-transparent to-base-100/40"
+			class="absolute inset-0 bg-gradient-to-t from-base-100 via-base-100/50 to-base-100/30"
 		></div>
 	</div>
 {/if}
@@ -69,15 +74,17 @@
 	:global(.group):hover .hero-backdrop-img {
 		opacity: var(--hb-hover-opacity, 0.2);
 		filter: blur(var(--hb-hover-blur, 1px));
-		scale: 1.05;
 	}
 
 	@media (prefers-reduced-motion: reduce) {
 		.hero-backdrop-img {
 			transition: none !important;
 		}
-		:global(.group):hover .hero-backdrop-img {
-			scale: 1;
+	}
+
+	@media (prefers-contrast: more) {
+		.hero-backdrop {
+			display: none;
 		}
 	}
 </style>
