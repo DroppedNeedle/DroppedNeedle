@@ -103,12 +103,18 @@ droppedneedle_kernel::sql! {
     pub(super) FAVORITES_TO_MOVE = "SELECT f.user_id FROM catalog_user_favorites f WHERE f.item_kind = 'track' \
          AND f.item_id = ?1 AND NOT EXISTS (SELECT 1 FROM catalog_user_favorites g \
          WHERE g.user_id = f.user_id AND g.item_kind = 'track' AND g.item_id = ?2)";
-    pub(super) FAVORITES_IN_BOTH = "SELECT f.user_id, f.created_at / 1000.0, n.display_name FROM catalog_user_favorites f \
+    pub(super) FAVORITES_IN_BOTH = "SELECT f.user_id, f.created_at, n.display_name FROM catalog_user_favorites f \
              LEFT JOIN catalog_user_favorite_names n ON n.user_id = f.user_id \
              AND n.item_kind = f.item_kind AND n.item_id = f.item_id \
              WHERE f.item_kind = 'track' AND f.item_id = ?1 \
              AND EXISTS (SELECT 1 FROM catalog_user_favorites g WHERE g.user_id = f.user_id \
              AND g.item_kind = 'track' AND g.item_id = ?2)";
+    /// One star `FAVORITES_IN_BOTH` reads.
+    pub(super) row FavoriteInBoth for [FAVORITES_IN_BOTH] {
+        user_id: String,
+        created_at: Millis,
+        display_name: Option<String>,
+    }
     pub(super) FAVORITE_NAMES_IN_BOTH = "SELECT n.user_id, n.display_name FROM catalog_user_favorite_names n \
              WHERE n.item_kind = 'track' AND n.item_id = ?1 \
              AND EXISTS (SELECT 1 FROM catalog_user_favorites g WHERE g.user_id = n.user_id \

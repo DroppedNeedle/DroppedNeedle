@@ -767,7 +767,7 @@ const UNPLACED: &str = "fe000616-c72c-43d4-8cba-a4083e99636b";
 #[derive(Clone, Copy, Debug)]
 enum Heard {
     /// A recording no candidate carries, as AcoustID often answers for a
-    /// reissue it links to no recording or to an older one.
+    /// reissue it links to an older one.
     Unplaced,
     /// The recording the file pairs with on its release.
     Own,

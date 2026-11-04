@@ -162,6 +162,9 @@ pub(crate) fn merge_retagged(
             now,
         )?;
         bump_catalog(tx)?;
+        // The join retires an album the identification queue or review
+        // list may name, so open identification views read again.
+        crate::identify::queue::bump_identification_stream(tx)?;
         if cause == JoinCause::SameRelease {
             return Ok(MergeOutcome::Merged { offered: false });
         }

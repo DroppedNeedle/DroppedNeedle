@@ -201,7 +201,7 @@ pub struct Progress {
 /// A MusicBrainz credit proof behind a member's credit.
 #[derive(Debug, Clone)]
 pub struct CreditEvidence {
-    pub subject_kind: String,
+    pub subject_kind: crate::identify::artist_links::ProofSubject,
     pub subject_id: String,
     pub subject_name: String,
     pub source_local_artist_id: Option<String>,

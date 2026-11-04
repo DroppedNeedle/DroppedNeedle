@@ -249,7 +249,7 @@ pub struct ArtistCreditEvidence {
 impl From<CreditEvidence> for ArtistCreditEvidence {
     fn from(e: CreditEvidence) -> Self {
         Self {
-            subject_kind: e.subject_kind,
+            subject_kind: e.subject_kind.as_str().to_owned(),
             subject_id: e.subject_id,
             subject_name: e.subject_name,
             source_local_artist_id: e.source_local_artist_id,

@@ -6,6 +6,7 @@ use droppedneedle_kernel::db::time::Millis;
 use crate::corrections::artist_convergence::{
     MERGED_BY_NAME, MOVED_BY_NAME, MOVED_WITH_ID, V2_PLACEHOLDER_FOLDED,
 };
+use crate::identify::artist_links::ProofSubject;
 use crate::identify::sql::CURRENT_PROOF;
 
 droppedneedle_kernel::sql! {
@@ -186,7 +187,7 @@ droppedneedle_kernel::sql! {
         provider_artist_id: Option<String>,
     }
     pub(super) row EvidenceRow for family [group_credit_evidence] {
-        subject_kind: String,
+        subject_kind: ProofSubject,
         subject_id: String,
         subject_name: String,
         source_local_artist_id: Option<String>,

@@ -585,10 +585,11 @@ fn sweep(
     let stars_deleted: Vec<Value> = tx
         .prepare(crate::corrections::sql::FAVORITES_IN_BOTH.text())?
         .query_map(params![old, new], |row| {
+            let star = crate::corrections::sql::FavoriteInBoth::read(row)?;
             Ok(json!({
-                "user_id": row.get::<_, String>(0)?,
-                "created_at": row.get::<_, f64>(1)?,
-                "display_name": row.get::<_, Option<String>>(2)?,
+                "user_id": star.user_id,
+                "created_at": crate::clock::at_secs(star.created_at),
+                "display_name": star.display_name,
             }))
         })?
         .collect::<rusqlite::Result<_>>()?;
