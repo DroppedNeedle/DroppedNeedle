@@ -214,22 +214,17 @@ impl droppedneedle_media::stream::gateway::RemoteReader for NoRemote {
 
 #[tokio::test]
 async fn real_gateway_streams_the_asked_span_from_the_file() {
-    use droppedneedle_media::stream::gateway::Gateway;
     use droppedneedle_media::stream::leases::TranscodeGate;
-    use droppedneedle_media::stream::transcode::{
-        FfmpegTranscoder, ProcessSpawner, TranscodeSettings,
-    };
+    use droppedneedle_media::stream::transcode::{FfmpegTranscoder, ProcessSpawner};
 
-    let root = crate::common::ScratchDir::new("compat-stream");
-    std::fs::write(root.join("song.mp3"), (0..100u8).collect::<Vec<_>>()).unwrap();
-    let gateway = Arc::new(Gateway::new(
-        root.to_path_buf(),
+    let root = crate::common::bundles::StreamFolder::new("compat-stream").await;
+    root.put("song.mp3", &(0..100u8).collect::<Vec<_>>());
+    let gateway = Arc::new(root.gateway(
         NoRemote,
         FfmpegTranscoder::new(
             ProcessSpawner::with_path("ffmpeg".into()),
             Arc::new(TranscodeGate::new()),
         ),
-        TranscodeSettings::default(),
         false,
     ));
     let audio = GatewayAudio::new(gateway).for_caller("u1");

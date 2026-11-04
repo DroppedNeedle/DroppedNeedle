@@ -17,7 +17,7 @@ use std::time::Duration;
 use droppedneedle_media::stream::engine::{
     AudioSource, MediaBody, StreamEngine as _, StreamFault, StreamMedia, StreamOpen, StreamParams,
 };
-use droppedneedle_media::stream::gateway::{Gateway, RemoteReader};
+use droppedneedle_media::stream::gateway::RemoteReader;
 use droppedneedle_media::stream::leases::{DirectGate, TranscodeGate};
 use futures_util::StreamExt as _;
 use transcode::{
@@ -26,7 +26,7 @@ use transcode::{
     estimate_size, out_media_type,
 };
 
-use crate::common::ScratchDir;
+use crate::common::bundles::StreamFolder;
 
 // ---------------------------------------------------------------------------
 // Scripted ffmpeg
@@ -583,15 +583,13 @@ async fn a_dropped_transcode_stops_ffmpeg_and_frees_both_slots() {
     assert_eq!(direct.active(), 0, "service: the direct slot goes with it");
 
     // Through the gateway, which takes the direct slot on open.
-    let root = ScratchDir::new("transcode-disconnect");
-    std::fs::write(root.join("song.flac"), b"FLAC").unwrap();
+    let root = StreamFolder::new("transcode-disconnect").await;
+    root.put("song.flac", b"FLAC");
     let gate = transcode_gate();
     let probe = Probe::default();
-    let gateway = Gateway::new(
-        root.to_path_buf(),
+    let gateway = root.gateway(
         NoRemote,
         FfmpegTranscoder::new(FakeSpawner::endless(probe.clone()), Arc::clone(&gate)),
-        settings(),
         true,
     );
     let media = gateway

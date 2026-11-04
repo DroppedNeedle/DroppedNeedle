@@ -11,13 +11,10 @@
 //! [`LibraryFiles::locate_track`], the same lookup and root confinement
 //! that library downloads use, so playback and downloads agree on which
 //! files exist; the row's format, bitrate and length are the facts the
-//! decision reads. A gateway without the library wired (tests, unwired
-//! builds) joins the key onto its constructor root as a relative path
-//! instead, sandboxed to that root, and knows only the file's extension.
-//! The open hands the routes a file body read by range, or the transcode
-//! output chunk by chunk; HEAD answers from file metadata and never starts
-//! ffmpeg. Range slicing, 206/416 decisions, and headers stay in
-//! [`framing`](super::framing).
+//! decision reads. The open hands the routes a file body read by range,
+//! or the transcode output chunk by chunk; HEAD answers from file metadata
+//! and never starts ffmpeg. Range slicing, 206/416 decisions, and headers
+//! stay in [`framing`](super::framing).
 //!
 //! The open hands its direct lease back inside [`StreamMedia`], so a caller
 //! that moves it into the response body bounds response concurrency, not
@@ -30,7 +27,7 @@
 //! [`StreamParams`]: super::engine::StreamParams
 //! [`decide()`]: super::transcode::decide
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use super::leases::DirectGate;
@@ -47,8 +44,7 @@ use super::engine::{
 };
 use super::leases::OwnedDirectLease;
 use super::transcode::{
-    StreamPlan, TrackInfo, TranscodeError, TranscodeSettings, Transcoder, decide, estimate_size,
-    out_media_type,
+    StreamPlan, TrackInfo, TranscodeError, Transcoder, decide, estimate_size, out_media_type,
 };
 
 /// A canned remote object, for scripted readers: upstream bytes plus the
@@ -89,46 +85,52 @@ pub trait RemoteReader: Send + Sync {
     ) -> impl Future<Output = Result<StreamMedia, StreamFault>> + Send;
 }
 
-/// One source-keyed gateway: sandboxed local reads, injected remote reads,
-/// and injected ffmpeg execution behind the routes' engine seam.
+/// What the gateway serves `streaming_source` plugins under
+/// [`AudioSource::Plugin`] through.
+pub struct PluginStreams {
+    /// The host whose `streaming_source` plugins answer.
+    pub host: Arc<droppedneedle_plugins::host::PluginHost>,
+    /// Proxies plugin URLs. It must not follow redirects on its own,
+    /// because every hop is re-checked.
+    pub no_redirect: reqwest::Client,
+    /// Holds the temp files plugin transcodes read.
+    pub spool_dir: PathBuf,
+}
+
+/// One source-keyed gateway: local reads confined to the library, injected
+/// remote reads, and injected ffmpeg execution behind the routes' engine
+/// seam.
 pub struct Gateway<R, T> {
-    local_root: PathBuf,
-    library: Option<LibraryFiles>,
-    plugins: Option<(
-        Arc<droppedneedle_plugins::host::PluginHost>,
-        reqwest::Client,
-    )>,
-    /// Where a plugin URL is spooled for a transcode.
-    spool_dir: PathBuf,
+    library: LibraryFiles,
+    plugins: PluginStreams,
     remote: R,
     transcoder: T,
-    fixed: TranscodeSettings,
-    settings: Option<Live<ConnectApps>>,
+    settings: Live<ConnectApps>,
     ffmpeg_present: bool,
     direct: Arc<DirectGate>,
 }
 
 impl<R, T> Gateway<R, T> {
-    /// Build a gateway over one local root, one remote reader, and one
-    /// ffmpeg service. `ffmpeg_present` is whether the builder was given an
-    /// ffmpeg. Production reads the transcode policy live
-    /// ([`Self::with_settings`]); tests script every seam.
+    /// Build a gateway over the live library, the plugin sources, one
+    /// remote reader and one ffmpeg service. Local keys resolve as catalog
+    /// track ids, and the root registry is read again on every open, so
+    /// root changes apply without a restart. The transcode policy is read
+    /// from `settings` on every open, so a change applies to the next
+    /// stream. `ffmpeg_present` is whether the builder was given an ffmpeg.
     pub fn new(
-        local_root: PathBuf,
+        library: LibraryFiles,
+        plugins: PluginStreams,
         remote: R,
         transcoder: T,
-        settings: TranscodeSettings,
+        settings: Live<ConnectApps>,
         ffmpeg_present: bool,
     ) -> Self {
         Self {
-            local_root,
-            library: None,
-            plugins: None,
-            spool_dir: PathBuf::new(),
+            library,
+            plugins,
             remote,
             transcoder,
-            fixed: settings,
-            settings: None,
+            settings,
             ffmpeg_present,
             direct: Arc::new(DirectGate::new()),
         }
@@ -138,37 +140,6 @@ impl<R, T> Gateway<R, T> {
     /// The compat APIs read it to decide what they offer.
     pub fn can_transcode(&self) -> bool {
         self.ffmpeg_present
-    }
-
-    /// Read the transcode policy from `settings` on every open instead of
-    /// the fixed settings the gateway was built with, so a change applies
-    /// to the next stream without a restart.
-    pub fn with_settings(mut self, settings: Live<ConnectApps>) -> Self {
-        self.settings = Some(settings);
-        self
-    }
-
-    /// Resolve local keys as catalog track ids against the live library
-    /// instead of paths under the constructor root. The root registry is
-    /// read again on every open, so root changes apply without a restart.
-    pub fn with_library(mut self, library: LibraryFiles) -> Self {
-        self.library = Some(library);
-        self
-    }
-
-    /// Serve `streaming_source` plugins under [`AudioSource::Plugin`].
-    /// `no_redirect` proxies plugin URLs; it must not follow redirects on
-    /// its own, because every hop is re-checked. `spool_dir` holds the
-    /// temp files plugin transcodes read.
-    pub fn with_plugins(
-        mut self,
-        host: Arc<droppedneedle_plugins::host::PluginHost>,
-        no_redirect: reqwest::Client,
-        spool_dir: PathBuf,
-    ) -> Self {
-        self.plugins = Some((host, no_redirect));
-        self.spool_dir = spool_dir;
-        self
     }
 }
 
@@ -274,25 +245,13 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
 
     /// Resolve the file, its content type, and the plan.
     async fn local_read(&self, request: &StreamOpen) -> Result<LocalRead, StreamFault> {
-        match &self.library {
-            Some(library) => {
-                let (row, file) = catalog_file(library, &request.key).await?;
-                let track = TrackInfo {
-                    file_format: row.file_format,
-                    bitrate_kbps: row.bitrate_kbps,
-                    duration_seconds: row.duration_seconds.unwrap_or(0.0),
-                };
-                self.read_plan(file, Some(track), request)
-            }
-            None => {
-                // `sandboxed_path` proved it resolves inside the root; it is
-                // read as it resolves.
-                let path = self.sandboxed_path(&request.key)?;
-                let path = path.canonicalize().unwrap_or(path);
-                let root = path.parent().ok_or(StreamFault::NotFound)?.to_path_buf();
-                self.read_plan(LocatedFile { root, path }, None, request)
-            }
-        }
+        let (row, file) = catalog_file(&self.library, &request.key).await?;
+        let track = TrackInfo {
+            file_format: row.file_format,
+            bitrate_kbps: row.bitrate_kbps,
+            duration_seconds: row.duration_seconds.unwrap_or(0.0),
+        };
+        self.read_plan(file, Some(track), request)
     }
 
     /// Content type and transcode plan for one resolved local file. A file
@@ -334,12 +293,10 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
             .format
             .as_deref()
             .is_some_and(|format| format.eq_ignore_ascii_case("raw"));
-        let settings = match &self.settings {
-            Some(live) => crate::transcode_policy(live).ok_or_else(|| StreamFault::Internal {
+        let settings =
+            crate::transcode_policy(&self.settings).ok_or_else(|| StreamFault::Internal {
                 cause: "connect_apps settings cannot be read".to_owned(),
-            })?,
-            None => self.fixed.clone(),
-        };
+            })?;
         Ok(decide(
             track,
             request.params.format.as_deref(),
@@ -353,15 +310,12 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
 
     /// Every library root a plugin path may point into.
     fn all_library_roots(&self) -> Vec<PathBuf> {
-        match &self.library {
-            Some(library) => library
-                .registry()
-                .roots()
-                .iter()
-                .map(|root| root.path.clone())
-                .collect(),
-            None => vec![self.local_root.clone()],
-        }
+        self.library
+            .registry()
+            .roots()
+            .iter()
+            .map(|root| root.path.clone())
+            .collect()
     }
 
     /// Ask `streaming_source` plugins for one recording. A file answer is
@@ -376,9 +330,11 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
     ) -> Result<StreamMedia, StreamFault> {
         use droppedneedle_plugins::capabilities::stream::PluginStream;
 
-        let Some((host, client)) = &self.plugins else {
-            return Err(StreamFault::NotFound);
-        };
+        let PluginStreams {
+            host,
+            no_redirect: client,
+            ..
+        } = &self.plugins;
         let roots = self.all_library_roots();
         let resolved = host
             .resolve_stream(&request.key, &request.user_id, &roots)
@@ -493,7 +449,7 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
             return Ok(media);
         }
         let response = plugin_url_response(client, plugin, url, None).await?;
-        let spool = plugin_url::Spool::fill(response, format, &self.spool_dir)
+        let spool = plugin_url::Spool::fill(response, format, &self.plugins.spool_dir)
             .await
             .map_err(|error| StreamFault::Upstream {
                 source: AudioSource::Plugin,
@@ -521,35 +477,6 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
                 .boxed(),
         );
         Ok(media)
-    }
-
-    /// Join `key` under the constructor root, refusing anything that
-    /// escapes it. Only gateways without the library wired read this way.
-    /// The refusal message is fixed: the key never reaches the wire.
-    /// Component screening runs first; then both sides canonicalize so a
-    /// symlink inside the root cannot point at a file outside it. Paths
-    /// that do not resolve (missing files, missing root) skip the prefix
-    /// check and fall through to the read, which reports them.
-    fn sandboxed_path(&self, key: &str) -> Result<PathBuf, StreamFault> {
-        if key.is_empty() || Path::new(key).is_absolute() {
-            return Err(forbidden());
-        }
-        let root = &self.local_root;
-        let mut path = root.clone();
-        for component in Path::new(key).components() {
-            match component {
-                std::path::Component::Normal(part) => path.push(part),
-                _ => {
-                    return Err(forbidden());
-                }
-            }
-        }
-        if let (Ok(canonical_root), Ok(resolved)) = (root.canonicalize(), path.canonicalize())
-            && !resolved.starts_with(&canonical_root)
-        {
-            return Err(forbidden());
-        }
-        Ok(path)
     }
 }
 

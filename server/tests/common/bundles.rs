@@ -35,6 +35,7 @@ use droppedneedle_media::stream::local_files::LibraryFiles;
 use droppedneedle_plugins::host::PluginHost;
 use droppedneedle_providers::Providers;
 
+use super::Probe as _;
 use super::acquire::FixedPlugin;
 
 /// Flow outcomes sent nowhere, for rigs that build the download journal
@@ -707,4 +708,115 @@ pub async fn requests_over(
 async fn platform_over(db: &droppedneedle_acquire::db::AcquireDb) -> Platform {
     let dir = db.path().parent().expect("scratch dir").to_path_buf();
     super::TestPlatform::on(db.db(), &dir).build().await
+}
+
+/// One library folder a hand-built stream gateway serves, on a platform
+/// of its own: each file put in it is a catalog track whose id is the
+/// file's name, so a local stream of that key reads it.
+pub struct StreamFolder {
+    platform: Platform,
+    music: super::ScratchDir,
+    _runtime: droppedneedle_kernel::db::DbRuntime,
+    _scratch: super::ScratchDir,
+}
+
+impl StreamFolder {
+    /// An empty folder tagged `tag`.
+    pub async fn new(tag: &str) -> Self {
+        let scratch = super::ScratchDir::new(&format!("stream-{tag}"));
+        let runtime = super::scratch_runtime(&scratch.join("app.db")).await;
+        let platform = super::TestPlatform::on(runtime.db(), &scratch)
+            .build()
+            .await;
+        runtime.exec(
+            "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, \
+             updated_at) VALUES ('artist-stream', 'Artist', 'artist', 'group', 0, 0)",
+            [],
+        );
+        runtime.exec(
+            "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+             album_artist_id, grouping_source, created_at, updated_at) \
+             VALUES ('album-stream', 'root-stream', 'group-stream', 'Stream', 'stream', \
+             'artist-stream', 'manual', 0, 0)",
+            [],
+        );
+        Self {
+            platform,
+            music: super::ScratchDir::new(&format!("stream-{tag}-music")),
+            _runtime: runtime,
+            _scratch: scratch,
+        }
+    }
+
+    /// The folder.
+    pub fn path(&self) -> &std::path::Path {
+        &self.music
+    }
+
+    /// Write `name` with `bytes` into the folder and index it as track
+    /// `name`, its format read from the extension.
+    pub fn put(&self, name: &str, bytes: &[u8]) {
+        std::fs::write(self.music.join(name), bytes).expect("track file writes");
+        self.index(name);
+    }
+
+    /// Index `name` in the folder as track `name`, whatever is at that
+    /// path.
+    pub fn index(&self, name: &str) {
+        let format = name.rsplit_once('.').map_or("", |(_, ext)| ext);
+        self.platform.db.exec(
+            "INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
+             path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
+             artist_name, artist_name_folded, album_title, album_title_folded, \
+             file_format, availability, ingest_source, imported_at, membership_source) \
+             VALUES (?1, 'album-stream', 'root-stream', ?2, ?1, ?1, 0, 0, 's', ?1, ?1, \
+             'Artist', 'artist', 'Stream', 'stream', ?3, 'indexed', 'scan', 0, 'manual')",
+            rusqlite::params![
+                name,
+                self.music.join(name).to_string_lossy().into_owned(),
+                format
+            ],
+        );
+    }
+
+    /// A gateway over the folder's catalog and folder, a plugin host that
+    /// launches nothing and the platform's `connect_apps` section, reading
+    /// remote keys through `remote` and transcoding through `transcoder`.
+    pub fn gateway<R, T>(
+        &self,
+        remote: R,
+        transcoder: T,
+        ffmpeg_present: bool,
+    ) -> droppedneedle_media::stream::gateway::Gateway<R, T> {
+        use droppedneedle_library::scan::coordinator::SharedResolver;
+        use droppedneedle_library::scan::models::EffectivePolicy;
+        use droppedneedle_library::scan::roots::{LibraryRoot, RootRegistry};
+        use droppedneedle_media::stream::gateway::{Gateway, PluginStreams};
+
+        let roots = SharedResolver::new(RootRegistry::new(
+            vec![LibraryRoot::new(
+                "root-stream",
+                self.music.to_path_buf(),
+                EffectivePolicy::Automatic,
+            )],
+            true,
+            "rev-stream",
+        ));
+        let queue = JobQueue::new(self.platform.db.clone(), self.platform.clock.clone());
+        Gateway::new(
+            LibraryFiles::new(self.platform.db.clone(), roots),
+            PluginStreams {
+                host: idle_host(
+                    &self.platform,
+                    super::library::library_core(&self.platform, queue),
+                ),
+                no_redirect: self.platform.http.direct_no_redirect().clone(),
+                spool_dir: self.platform.config.temp_dir.clone(),
+            },
+            remote,
+            transcoder,
+            self.platform.settings.live(),
+            ffmpeg_present,
+        )
+    }
 }

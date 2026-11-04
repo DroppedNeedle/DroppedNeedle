@@ -1,15 +1,15 @@
-//! Gateway-engine tests: the stream gates, sandboxing, and the engine seam.
+//! Gateway-engine tests: the stream gates, confinement, and the engine seam.
 //!
 //! The engine (`Gateway`) is tested directly with a scripted remote reader
 //! and a scripted ffmpeg service. No live servers, no real ffmpeg, no
-//! network. Local reads use a per-test scratch dir under the system temp
-//! dir, removed afterwards. The last test puts the real engine behind the
-//! stream routes: the per-user cap on concurrent direct streams.
+//! network. Local reads are catalog tracks over a per-test library folder
+//! under the system temp dir, removed afterwards. The last test puts the
+//! real engine behind the stream routes: the per-user cap on concurrent
+//! direct streams.
 
 use droppedneedle_media::stream;
 
 use std::collections::HashMap;
-use std::path::Path;
 use std::sync::Arc;
 
 use axum::Router;
@@ -24,22 +24,18 @@ use stream::engine::{
     StreamParams,
 };
 use stream::framing::file_range;
-use stream::gateway::{Gateway, RemoteMedia, RemoteReader};
+use stream::gateway::{Gateway, OUTSIDE_MESSAGE, RemoteMedia, RemoteReader};
 use stream::leases::{
     CapacityExhausted, DIRECT_PRINCIPAL_LIMIT, DirectGate, GateLimits, OwnedDirectLease,
     TranscodeGate, WAIT_TIMEOUT,
 };
 use stream::routes::StreamState;
-use stream::transcode::{StreamPlan, TranscodeError, TranscodeSettings, Transcoder};
+use stream::transcode::{StreamPlan, TranscodeError, Transcoder};
 use tower::ServiceExt as _;
 
 use crate::common::ScratchDir;
 use crate::common::auth::{test_principal, with_test_principal};
-
-/// Write one file into a scratch root.
-fn put(root: &Path, name: &str, bytes: &[u8]) {
-    std::fs::write(root.join(name), bytes).unwrap();
-}
+use crate::common::bundles::StreamFolder;
 
 /// Scripted remote reader: canned objects plus canned faults by key.
 #[derive(Clone, Default)]
@@ -119,20 +115,14 @@ impl Transcoder for FakeTranscoder {
     }
 }
 
-/// One engine over a scratch root, a fake remote, and a fake ffmpeg.
+/// One engine over a library folder, a fake remote, and a fake ffmpeg.
 fn engine(
-    root: &ScratchDir,
+    root: &StreamFolder,
     remote: FakeRemote,
     transcoder: FakeTranscoder,
     ffmpeg_present: bool,
 ) -> Gateway<FakeRemote, FakeTranscoder> {
-    Gateway::new(
-        root.to_path_buf(),
-        remote,
-        transcoder,
-        TranscodeSettings::default(),
-        ffmpeg_present,
-    )
+    root.gateway(remote, transcoder, ffmpeg_present)
 }
 
 /// Whole bytes of a local direct open, read through its file body.
@@ -171,10 +161,17 @@ fn open_transcode(key: &str, format: &str) -> StreamOpen {
     }
 }
 
+/// A key is a track id, never a path, and a track whose file leads out
+/// of the library folder through a link is refused.
 #[tokio::test]
-async fn local_escape_attempts_are_forbidden() {
-    let root = ScratchDir::new("sandbox");
-    put(&root, "song.mp3", b"MP3");
+#[cfg(unix)]
+async fn keys_are_tracks_and_links_out_are_forbidden() {
+    let root = StreamFolder::new("confined").await;
+    root.put("song.mp3", b"MP3");
+    let outside = ScratchDir::new("confined-outside");
+    std::fs::write(outside.join("secret.mp3"), b"SECRET").unwrap();
+    std::os::unix::fs::symlink(outside.join("secret.mp3"), root.path().join("link.mp3")).unwrap();
+    root.index("link.mp3");
     let app = engine(
         &root,
         FakeRemote::default(),
@@ -187,31 +184,8 @@ async fn local_escape_attempts_are_forbidden() {
             .open_stream(open(AudioSource::Local, key), false)
             .await
             .unwrap_err();
-        assert_eq!(
-            fault,
-            StreamFault::Forbidden {
-                message: "Playback not allowed".to_owned()
-            },
-            "key: {key}"
-        );
+        assert_eq!(fault, StreamFault::NotFound, "key: {key}");
     }
-}
-
-#[tokio::test]
-#[cfg(unix)]
-async fn symlink_escape_is_forbidden() {
-    let root = ScratchDir::new("symlink-root");
-    put(&root, "song.mp3", b"MP3");
-    let outside = ScratchDir::new("symlink-outside");
-    put(&outside, "secret.mp3", b"SECRET");
-    std::os::unix::fs::symlink(outside.join("secret.mp3"), root.join("link.mp3")).unwrap();
-    std::os::unix::fs::symlink(root.join("song.mp3"), root.join("inner.mp3")).unwrap();
-    let app = engine(
-        &root,
-        FakeRemote::default(),
-        FakeTranscoder::succeeding(vec![]),
-        true,
-    );
 
     let fault = app
         .open_stream(open(AudioSource::Local, "link.mp3"), false)
@@ -220,12 +194,12 @@ async fn symlink_escape_is_forbidden() {
     assert_eq!(
         fault,
         StreamFault::Forbidden {
-            message: "Playback not allowed".to_owned()
+            message: OUTSIDE_MESSAGE.to_owned()
         }
     );
 
     let media = app
-        .open_stream(open(AudioSource::Local, "inner.mp3"), false)
+        .open_stream(open(AudioSource::Local, "song.mp3"), false)
         .await
         .unwrap();
     assert_eq!(file_bytes(media).await, b"MP3");
@@ -233,8 +207,8 @@ async fn symlink_escape_is_forbidden() {
 
 #[tokio::test]
 async fn wma_never_streams() {
-    let root = ScratchDir::new("wma");
-    put(&root, "song.wma", b"WMA");
+    let root = StreamFolder::new("wma").await;
+    root.put("song.wma", b"WMA");
     let app = engine(
         &root,
         FakeRemote::default(),
@@ -258,8 +232,8 @@ async fn wma_never_streams() {
 /// ffmpeg serves a transcode ask direct; neither runs the transcoder.
 #[tokio::test]
 async fn direct_when_raw_or_ffmpeg_absent() {
-    let root = ScratchDir::new("direct-fallback");
-    put(&root, "song.flac", b"FLAC-BYTES");
+    let root = StreamFolder::new("direct-fallback").await;
+    root.put("song.flac", b"FLAC-BYTES");
     for (case, format, ffmpeg_present) in [("raw", "raw", true), ("ffmpeg absent", "mp3", false)] {
         let transcoder = FakeTranscoder::succeeding(vec![b"SHOULD-NOT-RUN".to_vec()]);
         let calls = Arc::clone(&transcoder.calls);
@@ -277,8 +251,8 @@ async fn direct_when_raw_or_ffmpeg_absent() {
 
 #[tokio::test]
 async fn transcode_capacity_maps_to_fault() {
-    let root = ScratchDir::new("transcode-cap");
-    put(&root, "song.flac", b"FLAC-BYTES");
+    let root = StreamFolder::new("transcode-cap").await;
+    root.put("song.flac", b"FLAC-BYTES");
     let app = engine(
         &root,
         FakeRemote::default(),
@@ -297,8 +271,8 @@ async fn transcode_capacity_maps_to_fault() {
 async fn seek_then_transcode_starts_at_offset() {
     // The seek offset rides the params into decide(), so the ffmpeg
     // plan starts at T instead of 0.
-    let root = ScratchDir::new("seek-transcode");
-    put(&root, "song.flac", b"FLAC-BYTES");
+    let root = StreamFolder::new("seek-transcode").await;
+    root.put("song.flac", b"FLAC-BYTES");
     let transcoder = FakeTranscoder::succeeding(vec![b"OUT".to_vec()]);
     let calls = Arc::clone(&transcoder.calls);
     let app = engine(&root, FakeRemote::default(), transcoder, true);
@@ -376,8 +350,8 @@ async fn cancelled_acquire_leaves_no_waiter() {
 // arrives before the transcode ends.
 #[tokio::test]
 async fn streaming_open_reads_lazily() {
-    let root = ScratchDir::new("lazy");
-    put(&root, "song.flac", b"FLAC-BYTES");
+    let root = StreamFolder::new("lazy").await;
+    root.put("song.flac", b"FLAC-BYTES");
     let mut transcoder = FakeTranscoder::succeeding(vec![b"FIRST".to_vec()]);
     transcoder.stall = true;
     let calls = Arc::clone(&transcoder.calls);
@@ -566,17 +540,14 @@ async fn media_concurrent_streams_under_caps() {
         content_type: "audio/mpeg".to_owned(),
         bytes: bytes.clone(),
     };
-    let scratch = ScratchDir::new("media-caps");
-    let root = scratch.to_path_buf();
+    let root = StreamFolder::new("media-caps").await;
 
     // Under the caps, N concurrent reads all succeed.
-    let engine = Gateway::new(
-        root.clone(),
+    let engine = root.gateway(
         CannedRemote {
             media: media.clone(),
         },
         NeverTranscoder,
-        TranscodeSettings::default(),
         false,
     );
     let app = stream_app(engine);
@@ -630,13 +601,7 @@ async fn media_concurrent_streams_under_caps() {
     // The leases release before the responses send, so the 429 only shows
     // while the N holders are still inside their opens.
     let blocking = BlockingRemote::new(media.clone());
-    let engine = Gateway::new(
-        root,
-        blocking.clone(),
-        NeverTranscoder,
-        TranscodeSettings::default(),
-        false,
-    );
+    let engine = root.gateway(blocking.clone(), NeverTranscoder, false);
     let app = stream_app(engine);
     let mut holders = Vec::new();
     for _ in 0..DIRECT_PRINCIPAL_LIMIT {
