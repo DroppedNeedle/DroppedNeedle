@@ -29,6 +29,7 @@ use crate::scan::models::EffectivePolicy;
 use crate::scan::roots::RootRegistry;
 use crate::service::ServiceError;
 use crate::tags::AudioFormat;
+use crate::tags::TrackFile;
 use crate::wiring::RootDirs;
 use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::db::{CancelFlag, Db, DbError, Lane};
@@ -1492,7 +1493,9 @@ impl Publishing {
         let path = sandbox
             .resolve_no_symlink(root_id, rel_path)
             .map_err(publish_error)?;
-        crate::publish::staging::document_from_file(&path).map_err(publish_error)
+        let root = sandbox.root_dir(root_id).map_err(publish_error)?;
+        crate::publish::staging::document_from_file(TrackFile::new(root, &path))
+            .map_err(publish_error)
     }
 
     /// The before-state document for a write: the file's fields plus an
@@ -1506,7 +1509,9 @@ impl Publishing {
         let path = sandbox
             .resolve_no_symlink(root_id, rel_path)
             .map_err(publish_error)?;
-        crate::publish::staging::document_for_write(&path, managed_updates).map_err(publish_error)
+        let root = sandbox.root_dir(root_id).map_err(publish_error)?;
+        crate::publish::staging::document_for_write(TrackFile::new(root, &path), managed_updates)
+            .map_err(publish_error)
     }
 
     /// The tags a retag writes: the identified release's full tag set
@@ -2260,9 +2265,13 @@ impl Publishing {
             let path = open
                 .sandbox
                 .resolve_no_symlink(&item.source_root, &item.source_rel)?;
+            let root = open.sandbox.root_dir(&item.source_root)?;
             docs.insert(
                 item.track_id.clone(),
-                crate::publish::staging::document_for_write(&path, &item.managed_updates)?,
+                crate::publish::staging::document_for_write(
+                    TrackFile::new(root, &path),
+                    &item.managed_updates,
+                )?,
             );
         }
         open.publisher.set_undo_retention_days(retention);
@@ -2375,10 +2384,17 @@ impl Publishing {
                 .sandbox
                 .resolve_no_symlink(&file.plan.source_root, &file.plan.source_rel)
                 .map_err(publish_error)?;
+            let root = open
+                .sandbox
+                .root_dir(&file.plan.source_root)
+                .map_err(publish_error)?;
             docs.insert(
                 file.plan.track_id.clone(),
-                crate::publish::staging::document_for_write(&path, &file.plan.managed_updates)
-                    .map_err(publish_error)?,
+                crate::publish::staging::document_for_write(
+                    TrackFile::new(root, &path),
+                    &file.plan.managed_updates,
+                )
+                .map_err(publish_error)?,
             );
             plan_items.push(file.plan);
         }

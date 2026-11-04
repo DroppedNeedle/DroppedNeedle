@@ -680,7 +680,9 @@ pub(super) fn index_file(
     let meta = std::fs::symlink_metadata(path).map_err(PublishError::from)?;
     let format = crate::tags::format_for_path(path)
         .map_err(|error| PublishError::Catalog(error.to_string().into()))?;
-    let (tag, header) = crate::tags::read::read_scan_metadata(path, format).map_err(|error| {
+    let file = crate::tags::TrackFile::in_library(path, rel_path)
+        .ok_or_else(|| PublishError::UnsafePath("empty relative path".into()))?;
+    let (tag, header) = crate::tags::read::read_scan_metadata(file, format).map_err(|error| {
         PublishError::Catalog(format!("published file unreadable: {error}").into())
     })?;
     Ok(CommitIndexedItem {

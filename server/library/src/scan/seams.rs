@@ -12,9 +12,10 @@
 //! full runs; a tag reader that writes (padding rewrites, mtime restores)
 //! fails that test.
 
-use std::path::Path;
 #[cfg(any(test, feature = "test-support"))]
 use std::sync::Mutex;
+
+use crate::tags::TrackFile;
 
 /// Tags plus header properties for one file: everything the catalog
 /// stores per track.
@@ -35,17 +36,18 @@ pub enum TagReadError {
     Fatal,
 }
 
-/// Read-only tag access for one audio file. Implementations must never
-/// write to the file: no padding rewrites, no mtime restores, no sidecars.
+/// Read-only tag access for one audio file, read beneath its library
+/// folder. Implementations must never write to the file: no padding
+/// rewrites, no mtime restores, no sidecars.
 pub trait TagReader: Send + Sync {
-    fn read_tags(&self, path: &Path) -> Result<ScannedTags, TagReadError>;
+    fn read_tags(&self, file: TrackFile<'_>) -> Result<ScannedTags, TagReadError>;
 
     /// Whether the file's length is measured
     /// ([`crate::tags::read::HeaderInfo::duration_measured`]), for a
     /// catalog row that does not say. A reader that can tell from less
     /// than a full read overrides this.
-    fn length_measured(&self, path: &Path) -> Result<bool, TagReadError> {
-        self.read_tags(path)
+    fn length_measured(&self, file: TrackFile<'_>) -> Result<bool, TagReadError> {
+        self.read_tags(file)
             .map(|read| read.header.duration_measured)
     }
 }
@@ -74,7 +76,7 @@ impl NullTagReader {
 
 #[cfg(any(test, feature = "test-support"))]
 impl TagReader for NullTagReader {
-    fn read_tags(&self, _path: &Path) -> Result<ScannedTags, TagReadError> {
+    fn read_tags(&self, _file: TrackFile<'_>) -> Result<ScannedTags, TagReadError> {
         *self
             .reads
             .lock()
@@ -109,8 +111,9 @@ impl ArmableDeferTagReader {
 
 #[cfg(any(test, feature = "test-support"))]
 impl TagReader for ArmableDeferTagReader {
-    fn read_tags(&self, path: &Path) -> Result<ScannedTags, TagReadError> {
-        let basename = path
+    fn read_tags(&self, file: TrackFile<'_>) -> Result<ScannedTags, TagReadError> {
+        let basename = file
+            .path()
             .file_name()
             .map(|name| name.to_string_lossy().into_owned());
         if let Some(basename) = basename
@@ -122,7 +125,7 @@ impl TagReader for ArmableDeferTagReader {
         {
             return Err(TagReadError::Deferred);
         }
-        self.inner.read_tags(path)
+        self.inner.read_tags(file)
     }
 }
 

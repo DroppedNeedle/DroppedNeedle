@@ -1,8 +1,5 @@
 //! A v2.3 tag holding v2.4 frames, saved whole as ID3v2.4.
 
-use std::fs;
-use std::path::Path;
-
 use super::Refusal;
 use super::document::FieldRead;
 use super::id3::{date_parts, frame_key, id3_read_as, id3_text, key_multiset, raw_map, text_map};
@@ -12,7 +9,7 @@ use super::id3_bytes::{
 };
 use super::kept::PicturesPlan;
 use crate::tags::fields::{Id3Target, TagField};
-use crate::tags::{AudioFormat, TagsError, format_for_path};
+use crate::tags::{AudioFormat, TagsError, TrackFile, format_for_path};
 
 /// Frame ids that only exist in ID3v2.4. Any of them inside a v2.3 tag
 /// makes it a mixed tag, saved whole as ID3v2.4 ([`upgrade_to_v24`]).
@@ -144,11 +141,12 @@ pub(super) fn frames_kept_once(tag: &DeepId3, pictures: PicturesPlan) -> Option<
 /// and holds no v2.4 frames (a mixed tag is saved as v2.4). Such a save
 /// joins several values of one text frame with "/", and a read gives
 /// them back as one value.
-pub fn id3_lands_as_v23(path: &Path) -> Result<bool, TagsError> {
+pub fn id3_lands_as_v23(at: TrackFile<'_>) -> Result<bool, TagsError> {
+    let path = at.path();
     if format_for_path(path)? != AudioFormat::Mp3 {
         return Ok(false);
     }
-    let bytes = fs::read(path).map_err(|source| TagsError::Io {
+    let bytes = at.read().map_err(|source| TagsError::Io {
         path: path.display().to_string(),
         source,
     })?;

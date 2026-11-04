@@ -9,7 +9,7 @@
 //! landing port, publisher and catalog over one scratch database;
 //! MusicBrainz is a scripted release source.
 
-use crate::common::Probe;
+use crate::common::{Probe, track_file};
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -177,7 +177,8 @@ fn length_ms(bytes: &[u8], scratch: &Path) -> Option<u64> {
     std::fs::write(&path, bytes).expect("probe copy");
     let format = droppedneedle_library::tags::format_for_path(&path).expect("format");
     let (_, header) =
-        droppedneedle_library::tags::read::read_scan_metadata(&path, format).expect("header");
+        droppedneedle_library::tags::read::read_scan_metadata(track_file(&path), format)
+            .expect("header");
     header
         .duration_seconds
         .map(|seconds| (seconds * 1000.0) as u64)

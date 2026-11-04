@@ -111,7 +111,10 @@ impl SqliteScanStore {
                         .parent()
                         .and_then(|dir| sidecars.get(dir))
                         .and_then(|listed| listed.for_track(&track.path));
-                    let (found, failed) = read_lyrics_checked(&track.path, sidecar);
+                    let (found, failed) = match track.file() {
+                        Some(file) => read_lyrics_checked(file, sidecar),
+                        None => (None, true),
+                    };
                     unread |= failed;
                     found.map(|(source, _)| (track.id.clone(), source))
                 })

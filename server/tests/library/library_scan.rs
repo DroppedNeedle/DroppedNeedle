@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use crate::common::library::TestSql as _;
 use crate::common::library::library_at;
-use crate::common::{ScratchDir, TestPlatform, config_store, migrated_db};
+use crate::common::{ScratchDir, TestPlatform, config_store, migrated_db, track_file};
 use droppedneedle_kernel::clock::SystemClock;
 use droppedneedle_kernel::db::{Budget, Db, LaneLimits};
 use droppedneedle_kernel::jobs::CancellationToken;
@@ -31,6 +31,7 @@ use droppedneedle_library::scan::{
     ScannedTags, SqliteScanStore, StaticResolver, StreamRootSeam, TagReadError, TagReader,
     WatcherAction, WorkWakeups,
 };
+use droppedneedle_library::tags::TrackFile;
 use droppedneedle_library::wiring::LibrarySetup;
 use sha2::{Digest, Sha256};
 
@@ -162,7 +163,7 @@ async fn scan_catalogs_tags_without_touching_files() {
     assert_eq!(run.state.scan_state(), ScanState::Completed);
     assert_eq!(count(&run, Counter::Indexed), 3);
     let tag = droppedneedle_library::tags::read::read_tag_only(
-        &tagged,
+        track_file(&tagged),
         droppedneedle_library::tags::AudioFormat::Flac,
     )
     .expect("tags read");
@@ -311,7 +312,7 @@ async fn carried_file(name: &str, fixture_name: &str) -> (ScratchDir, LibrarySet
 struct DateOnlyReader;
 
 impl TagReader for DateOnlyReader {
-    fn read_tags(&self, _path: &Path) -> Result<ScannedTags, TagReadError> {
+    fn read_tags(&self, _file: TrackFile<'_>) -> Result<ScannedTags, TagReadError> {
         let mut read = ScannedTags::default();
         read.tag.title = "Song".to_owned();
         read.tag.artist = "Artist".to_owned();
@@ -806,7 +807,7 @@ struct HoldOnRead {
 }
 
 impl TagReader for HoldOnRead {
-    fn read_tags(&self, _path: &Path) -> Result<ScannedTags, TagReadError> {
+    fn read_tags(&self, _file: TrackFile<'_>) -> Result<ScannedTags, TagReadError> {
         if self.reads.fetch_add(1, Ordering::SeqCst) + 1 == self.hold_at {
             if let Ok(reached) = self.reached.lock() {
                 let _ = reached.send(());
@@ -854,7 +855,7 @@ impl GatedReader {
 }
 
 impl TagReader for GatedReader {
-    fn read_tags(&self, _path: &Path) -> Result<ScannedTags, TagReadError> {
+    fn read_tags(&self, _file: TrackFile<'_>) -> Result<ScannedTags, TagReadError> {
         let mut state = self.state.lock().expect("gate");
         state.1 += 1;
         self.turned.notify_all();
@@ -2345,6 +2346,43 @@ async fn lyrics_sweep_marks_what_files_carry_and_only_reads() {
     assert_eq!(snapshot(&music), kept);
 }
 
+/// The art and lyrics sweeps read an album's files beneath its library
+/// folder: with a folder on the way swapped for a link to outside, the
+/// cover, embedded art and `.lrc` found there are not read, while the same
+/// files in a real folder are.
+#[tokio::test]
+async fn sweeps_never_read_through_a_linked_folder() {
+    let scratch = ScratchDir::new("scan-sweep-link");
+    let music = scratch.join("music");
+    plant(&music, "Artist/Album/01 Song.flac", "flac_no_tags.flac");
+    let library = bundle(&scratch).await;
+    scan(&library).await;
+    let sweep =
+        |library: &LibrarySetup| library.scan_store.refresh_album_sweeps(&|| false).unwrap();
+    let rows = |library: &LibrarySetup| {
+        (
+            query(library, "SELECT COUNT(*) FROM local_album_artwork"),
+            query(library, "SELECT COUNT(*) FROM local_track_lyrics"),
+        )
+    };
+    sweep(&library);
+    assert_eq!(rows(&library), (0, 0), "no art and no lyrics yet");
+
+    let outside = scratch.join("outside");
+    plant(&outside, "Album/01 Song.flac", "management_full.flac");
+    std::fs::write(outside.join("Album/cover.png"), COVER_PNG).expect("cover");
+    plant(&outside, "Album/01 Song.lrc", "lyrics_airbag.lrc");
+    std::fs::rename(music.join("Artist"), scratch.join("held")).expect("folder moves");
+    std::os::unix::fs::symlink(&outside, music.join("Artist")).expect("link");
+    sweep(&library);
+    assert_eq!(rows(&library), (0, 0), "nothing read through the link");
+
+    std::fs::remove_file(music.join("Artist")).expect("link goes");
+    std::fs::rename(&outside, music.join("Artist")).expect("a real folder");
+    sweep(&library);
+    assert_eq!(rows(&library), (1, 1), "the same files in a real folder");
+}
+
 /// A library folder that is away, gone or an empty mount point, is not "no
 /// art" and not "no lyrics": a boot sweep keeps every row, and when the
 /// folder is back the rows and art versions are as they were. A file that
@@ -2463,7 +2501,8 @@ impl RetagReader {
 }
 
 impl TagReader for RetagReader {
-    fn read_tags(&self, path: &Path) -> Result<ScannedTags, TagReadError> {
+    fn read_tags(&self, file: TrackFile<'_>) -> Result<ScannedTags, TagReadError> {
+        let path = file.path();
         let name = path.file_name().expect("name").to_string_lossy();
         let relative = path
             .strip_prefix(&self.root)

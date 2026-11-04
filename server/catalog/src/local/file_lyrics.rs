@@ -8,6 +8,7 @@
 //! whose lyrics were removed since the sweep reads as none. A database
 //! error is an error, never "no lyrics".
 
+use droppedneedle_library::tags::TrackFile;
 use droppedneedle_library::tags::lyrics::read_file_lyrics;
 use droppedneedle_media::stream::local_files::{LibraryFiles, LocateError};
 
@@ -23,14 +24,16 @@ pub(crate) async fn read(
     if !catalog.track_has_lyrics(track_id).await? {
         return Ok(None);
     }
-    let path = match files.locate_track(track_id).await {
-        Ok((_, file)) => file.path,
+    let file = match files.locate_track(track_id).await {
+        Ok((_, file)) => file,
         Err(LocateError::Internal(cause)) => return Err(StoreError::Internal(cause)),
         Err(LocateError::Unknown | LocateError::Refused(_)) => return Ok(None),
     };
-    let read = tokio::task::spawn_blocking(move || read_file_lyrics(&path))
-        .await
-        .map_err(|error| StoreError::Internal(error.to_string()))?;
+    let read = tokio::task::spawn_blocking(move || {
+        read_file_lyrics(TrackFile::new(&file.root, &file.path))
+    })
+    .await
+    .map_err(|error| StoreError::Internal(error.to_string()))?;
     Ok(read.map(|(_, lyrics)| LyricDoc {
         lines: lyrics.lines,
         synced: lyrics.synced,

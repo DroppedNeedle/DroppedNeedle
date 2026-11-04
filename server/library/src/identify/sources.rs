@@ -1384,13 +1384,14 @@ impl AcoustIdFingerprints {
             HashMap::new()
         });
         let registry = self.roots.resolver().registry().clone();
-        let jobs: Vec<(String, PathBuf)> = tracks
+        let jobs: Vec<PrintJob> = tracks
             .iter()
             .filter(|track| !stored.contains_key(&track.local_track_id))
             .filter_map(|track| {
                 let root = registry.resolve(&track.root_id)?;
                 Some((
                     track.local_track_id.clone(),
+                    root.path.clone(),
                     root.path.join(&track.relative_path),
                 ))
             })
@@ -1492,14 +1493,19 @@ impl AcoustIdFingerprints {
     }
 }
 
+/// A file to print: caller id, the folder it is read beneath, its path.
+type PrintJob = (String, PathBuf, PathBuf);
+
 impl AcoustIdFingerprints {
     /// Chromaprint each file on the CPU pool: (id, print, seconds).
-    async fn print(&self, jobs: Vec<(String, PathBuf)>) -> Vec<(String, String, u32)> {
-        let printed = futures_util::future::join_all(jobs.into_iter().map(|(id, path)| {
+    async fn print(&self, jobs: Vec<PrintJob>) -> Vec<(String, String, u32)> {
+        let printed = futures_util::future::join_all(jobs.into_iter().map(|(id, root, path)| {
             let pool = self.pool.clone();
             async move {
                 let result = pool
-                    .run(move || crate::tags::generate_fingerprint(&path))
+                    .run(move || {
+                        crate::tags::generate_fingerprint(crate::tags::TrackFile::new(&root, &path))
+                    })
                     .await;
                 (id, result)
             }
@@ -1536,6 +1542,8 @@ impl AcoustIdFingerprints {
     }
 
     /// Print files outside the library and look them up, by caller id.
+    /// They are not below a library folder: each is read beneath its own
+    /// folder, as the landing that hands them over confines them.
     async fn heard_in_paths(
         &self,
         files: &[(String, PathBuf)],
@@ -1548,7 +1556,11 @@ impl AcoustIdFingerprints {
         let Some(key) = self.lookup_key()? else {
             return Ok(HashMap::new());
         };
-        let prints = self.print(files.to_vec()).await;
+        let jobs = files
+            .iter()
+            .filter_map(|(id, path)| Some((id.clone(), path.parent()?.to_path_buf(), path.clone())))
+            .collect();
+        let prints = self.print(jobs).await;
         let queries: Vec<BatchQuery<'_>> = prints
             .iter()
             .map(|(_, print, seconds)| BatchQuery {

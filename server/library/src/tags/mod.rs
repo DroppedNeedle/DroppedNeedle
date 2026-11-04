@@ -40,15 +40,70 @@ use std::path::Path;
 use droppedneedle_kernel::beneath::{RootLinks, open_file_beneath};
 use thiserror::Error;
 
-/// Open a track for reading without following a link in its last
-/// component. Whoever writes a library or downloads folder can swap a file
-/// for a link or a FIFO; a link fails the open and a FIFO fails rather
-/// than hanging it. Every read of a track's bytes here goes through this.
-pub(crate) fn open_track(path: &Path) -> std::io::Result<File> {
-    let folder = path
-        .parent()
-        .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::InvalidInput))?;
-    open_file_beneath(folder, path, RootLinks::Follow)
+/// A track or sidecar file and the folder it is read beneath: the library
+/// folder it lies in, which is an admin's setting and may itself be a
+/// link, or the downloads or scratch folder holding it. Whoever writes
+/// that folder can swap any file or folder below it for a link or a FIFO,
+/// so every read of a file's bytes here opens it from the folder one name
+/// at a time without following a link (`kernel::beneath`): a link met on
+/// the way fails the open, and a FIFO fails rather than hanging it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TrackFile<'a> {
+    root: &'a Path,
+    path: &'a Path,
+}
+
+impl<'a> TrackFile<'a> {
+    /// The file at `path`, read beneath `root`.
+    #[must_use]
+    pub fn new(root: &'a Path, path: &'a Path) -> Self {
+        Self { root, path }
+    }
+
+    /// The file at `path` that lies at `relative` below its library
+    /// folder: the folder is `path` less as many components as `relative`
+    /// has (the two may be spelled in different Unicode forms, so their
+    /// lengths say nothing). `None` when `relative` is empty or longer
+    /// than `path`.
+    #[must_use]
+    pub fn in_library(path: &'a Path, relative: &str) -> Option<Self> {
+        let depth = Path::new(relative).components().count();
+        let root = path.ancestors().nth(depth).filter(|_| depth > 0)?;
+        Some(Self { root, path })
+    }
+
+    /// Another file below the same folder, such as a track's `.lrc`.
+    #[must_use]
+    pub fn beside(self, path: &'a Path) -> Self {
+        Self {
+            root: self.root,
+            path,
+        }
+    }
+
+    /// The file's path.
+    #[must_use]
+    pub fn path(self) -> &'a Path {
+        self.path
+    }
+
+    /// The folder the file is read beneath.
+    #[must_use]
+    pub fn root(self) -> &'a Path {
+        self.root
+    }
+
+    /// Open the regular file for reading. Blocking.
+    pub fn open(self) -> std::io::Result<File> {
+        open_file_beneath(self.root, self.path, RootLinks::Follow)
+    }
+
+    /// The whole file's bytes. Blocking.
+    pub fn read(self) -> std::io::Result<Vec<u8>> {
+        let mut bytes = Vec::new();
+        std::io::Read::read_to_end(&mut self.open()?, &mut bytes)?;
+        Ok(bytes)
+    }
 }
 
 /// Audio container the tag code understands, routed by file extension.

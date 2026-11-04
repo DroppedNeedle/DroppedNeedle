@@ -16,7 +16,7 @@ use std::sync::Arc;
 use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto, Secret};
 use droppedneedle_library::identify::models::DecisionSource;
 use droppedneedle_library::tags::save::{TagEdit, save_tags};
-use droppedneedle_library::tags::{TagField, read_fields};
+use droppedneedle_library::tags::{TagField, TrackFile, read_fields};
 use droppedneedle_library::wiring::LibrarySetup;
 use droppedneedle_tool::tooling::fixture::{
     MUSIC_ROOT_ID, V2_ALBUM_ID, V2_TRACK_ID, V2_TRACK_REL, build_v2_fixture, delete_orphan_rows,
@@ -456,5 +456,6 @@ async fn managed_identified_album_keeps_ids_identity_and_original() {
     .into_iter()
     .map(|(field, value)| (field, vec![value.to_owned()]))
     .collect();
-    assert_eq!(read_fields(&original).expect("fields read"), expected);
+    let file = TrackFile::new(&music, &original);
+    assert_eq!(read_fields(file).expect("fields read"), expected);
 }

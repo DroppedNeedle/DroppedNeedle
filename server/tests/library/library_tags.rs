@@ -8,7 +8,7 @@
 use droppedneedle_library::publish::TagTarget;
 use droppedneedle_library::tags;
 
-use crate::common::ScratchDir;
+use crate::common::{ScratchDir, track_file};
 use std::path::{Path, PathBuf};
 
 use lofty::file::TaggedFileExt as _;
@@ -320,18 +320,18 @@ fn extension_routing_refuses_wma() {
     }
 
     let path = fixture("management_full.wma");
-    let error = tags::read_tags(&path).unwrap_err();
+    let error = tags::read_tags(track_file(&path)).unwrap_err();
     assert!(error.is_unrecognized());
     assert!(matches!(
-        tags::probe(&path),
+        tags::probe(track_file(&path)),
         Err(TagsError::UnrecognizedExtension { .. })
     ));
     assert!(matches!(
-        tags::generate_fingerprint(&path),
+        tags::generate_fingerprint(track_file(&path)),
         Err(TagsError::UnrecognizedExtension { .. })
     ));
     assert!(matches!(
-        tags::read_cover_art(&path),
+        tags::read_cover_art(track_file(&path)),
         Err(TagsError::UnrecognizedExtension { .. })
     ));
     assert!(matches!(
@@ -348,7 +348,7 @@ fn extension_routing_refuses_wma() {
 /// included (they feed identity); the tagged ones carry a cover.
 #[test]
 fn fixtures_read_their_tags() {
-    let read = |name: &str| -> AudioTag { tags::read_tags(&fixture(name)).unwrap().0 };
+    let read = |name: &str| -> AudioTag { tags::read_tags(track_file(&fixture(name))).unwrap().0 };
 
     let name = "flac_full_01.flac";
     let tag = read(name);
@@ -615,12 +615,12 @@ fn fixtures_read_their_tags() {
         "management_full.ogg",
         "management_full.opus",
     ] {
-        let art = tags::read_cover_art(&fixture(name)).unwrap();
+        let art = tags::read_cover_art(track_file(&fixture(name))).unwrap();
         assert!(art.is_some(), "{name} should carry cover art");
         assert!(!art.unwrap().is_empty(), "{name}");
     }
     assert_eq!(
-        tags::read_cover_art(&fixture("flac_no_tags.flac")).unwrap(),
+        tags::read_cover_art(track_file(&fixture("flac_no_tags.flac"))).unwrap(),
         None,
         "flac_no_tags.flac"
     );
@@ -642,26 +642,120 @@ fn track_readers_refuse_a_link() {
         let link = dir.join(name);
         std::os::unix::fs::symlink(&real, &link).unwrap();
         let format = format_for_path(&link).unwrap();
-        assert!(tags::read_tags(&link).is_err(), "{name}: read_tags");
         assert!(
-            tags::read::read_scan_metadata(&link, format).is_err(),
+            tags::read_tags(track_file(&link)).is_err(),
+            "{name}: read_tags"
+        );
+        assert!(
+            tags::read::read_scan_metadata(track_file(&link), format).is_err(),
             "{name}: read_scan_metadata"
         );
-        assert!(tags::probe(&link).is_err(), "{name}: probe");
+        assert!(tags::probe(track_file(&link)).is_err(), "{name}: probe");
         assert!(
-            tags::read_cover_art(&link).is_err(),
+            tags::read_cover_art(track_file(&link)).is_err(),
             "{name}: read_cover_art"
         );
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
         assert!(
-            tags::loudness::analyse_cached(&link, deadline).is_err(),
+            tags::loudness::analyse_cached(track_file(&link), deadline).is_err(),
             "{name}: analyse_cached"
         );
         if format == AudioFormat::Mp3 {
             assert!(
-                tags::mpeg_length::length_measured(&link).is_err(),
+                tags::mpeg_length::length_measured(track_file(&link)).is_err(),
                 "{name}: length_measured"
             );
+        }
+    }
+}
+
+/// Every reader opens a file beneath its library folder, which may itself
+/// be a link, and follows no link below it: a folder on the way swapped for
+/// a link to outside is refused, while the same files read through a real
+/// folder. The tag editor, a preview, a scan, a publish's re-read, a
+/// fingerprint and the lyrics read all go through these.
+#[test]
+fn track_readers_refuse_a_linked_folder() {
+    let dir = ScratchDir::new("tags-linked-folder");
+    let (music, outside) = (dir.join("music"), dir.join("outside"));
+    std::fs::create_dir_all(outside.join("Album")).unwrap();
+    for name in ["management_full.mp3", "management_full.flac"] {
+        std::fs::copy(fixture(name), outside.join("Album").join(name)).unwrap();
+    }
+    std::fs::write(
+        outside.join("Album/management_full.lrc"),
+        "[00:01.00]Words\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(music.join("Artist")).unwrap();
+    std::os::unix::fs::symlink(&music, dir.join("music-link")).unwrap();
+
+    // Each reader, answering whether it read the file.
+    let reads = |file: tags::TrackFile<'_>| -> Vec<(&str, bool)> {
+        let format = format_for_path(file.path()).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        let mut reads = vec![
+            ("read_tags", tags::read_tags(file).is_ok()),
+            (
+                "read_scan_metadata",
+                tags::read::read_scan_metadata(file, format).is_ok(),
+            ),
+            ("probe", tags::probe(file).is_ok()),
+            ("read_cover_art", tags::read_cover_art(file).is_ok()),
+            (
+                "analyse_cached",
+                tags::loudness::analyse_cached(file, deadline).is_ok(),
+            ),
+            ("read_document", tags::read_document(file).is_ok()),
+            (
+                "tags_kept",
+                tags::save::tags_kept(file, PicturesPlan::Untouched).is_ok(),
+            ),
+            (
+                "document_from_file",
+                droppedneedle_library::publish::staging::document_from_file(file).is_ok(),
+            ),
+            (
+                "generate_fingerprint",
+                tags::generate_fingerprint(file).is_ok(),
+            ),
+        ];
+        if format == AudioFormat::Mp3 {
+            reads.push((
+                "length_measured",
+                tags::mpeg_length::length_measured(file).is_ok(),
+            ));
+            reads.push((
+                "id3_lands_as_v23",
+                tags::save::id3_lands_as_v23(file).is_ok(),
+            ));
+        } else {
+            reads.push((
+                "read_file_lyrics",
+                tags::lyrics::read_file_lyrics(file).is_some(),
+            ));
+        }
+        reads
+    };
+
+    // A folder below the library folder swapped for a link to outside.
+    std::os::unix::fs::symlink(&outside, music.join("Artist/Linked")).unwrap();
+    for name in ["management_full.mp3", "management_full.flac"] {
+        let path = music.join("Artist/Linked/Album").join(name);
+        for (reader, read) in reads(tags::TrackFile::new(&music, &path)) {
+            assert!(!read, "{name}: {reader} read through a linked folder");
+        }
+    }
+
+    // The same files in a real folder read, the library folder itself
+    // reached through a link.
+    std::fs::remove_file(music.join("Artist/Linked")).unwrap();
+    std::fs::rename(&outside, music.join("Artist/Linked")).unwrap();
+    let root = dir.join("music-link");
+    for name in ["management_full.mp3", "management_full.flac"] {
+        let path = root.join("Artist/Linked/Album").join(name);
+        for (reader, read) in reads(tags::TrackFile::new(&root, &path)) {
+            assert!(read, "{name}: {reader} reads through a real folder");
         }
     }
 }
@@ -678,7 +772,7 @@ fn artist_lists_say_where_their_names_came_from() {
         "management_full.mp3",
         "management_full.m4a",
     ] {
-        let (tag, _) = tags::read_tags(&fixture(name)).unwrap();
+        let (tag, _) = tags::read_tags(track_file(&fixture(name))).unwrap();
         assert!(tag.artists_listed, "{name}");
         assert_eq!(tag.artists.len(), 2, "{name}");
         assert_eq!(tag.musicbrainz_artist_ids.len(), 2, "{name}");
@@ -687,11 +781,11 @@ fn artist_lists_say_where_their_names_came_from() {
         assert!(!tag.album_artists_listed, "{name}");
     }
 
-    let (plain, _) = tags::read_tags(&fixture("flac_full_01.flac")).unwrap();
+    let (plain, _) = tags::read_tags(track_file(&fixture("flac_full_01.flac"))).unwrap();
     assert!(!plain.artists_listed);
     assert!(!plain.album_artists_listed);
 
-    let (v23, _) = tags::read_tags(&fixture("management_full_v23.mp3")).unwrap();
+    let (v23, _) = tags::read_tags(track_file(&fixture("management_full_v23.mp3"))).unwrap();
     let aligned = v23.artists_listed
         && v23.artists.len() == v23.musicbrainz_artist_ids.len()
         && v23.musicbrainz_artist_ids.iter().all(uuid);
@@ -724,7 +818,7 @@ const ORACLE_DURATIONS: &[(&str, f64)] = &[
 #[test]
 fn probe_reads_each_fixture() {
     for (name, oracle) in ORACLE_DURATIONS {
-        let info = tags::probe(&fixture(name)).unwrap();
+        let info = tags::probe(track_file(&fixture(name))).unwrap();
         let drift = (info.duration_seconds - oracle).abs() / oracle;
         assert!(
             drift < 0.25,
@@ -734,16 +828,16 @@ fn probe_reads_each_fixture() {
         assert_eq!(info.channels, 2, "{name}");
     }
 
-    let flac: AudioInfo = tags::probe(&fixture("management_full.flac")).unwrap();
+    let flac: AudioInfo = tags::probe(track_file(&fixture("management_full.flac"))).unwrap();
     assert_eq!(flac.sample_rate, 44100, "flac");
     assert_eq!(flac.bit_depth, Some(16), "flac");
     assert_eq!(flac.file_format, "flac", "flac");
 
-    let opus = tags::probe(&fixture("management_full.opus")).unwrap();
+    let opus = tags::probe(track_file(&fixture("management_full.opus"))).unwrap();
     assert_eq!(opus.sample_rate, 48000, "opus");
     assert_eq!(opus.bit_depth, None, "opus");
 
-    let wav = tags::probe(&fixture("management_full.wav")).unwrap();
+    let wav = tags::probe(track_file(&fixture("management_full.wav"))).unwrap();
     assert_eq!(wav.bit_depth, Some(16), "wav");
 
     // Lossy containers suppress bit depth, including AAC-backed M4A.
@@ -753,7 +847,7 @@ fn probe_reads_each_fixture() {
         "management_full.ogg",
         "management_full.aac",
     ] {
-        let info = tags::probe(&fixture(name)).unwrap();
+        let info = tags::probe(track_file(&fixture(name))).unwrap();
         assert_eq!(info.bit_depth, None, "{name}");
         assert!(info.bitrate > 0, "{name}");
     }
@@ -764,7 +858,7 @@ fn probe_reads_each_fixture() {
 
     // ADTS: mutagen cannot even parse this file (length 0); the
     // demux-count fallback must still land in a sane band.
-    let info = tags::probe(&fixture("management_full.aac")).unwrap();
+    let info = tags::probe(track_file(&fixture("management_full.aac"))).unwrap();
     assert_eq!(info.sample_rate, 44100, "aac");
     assert_eq!(info.channels, 2, "aac");
     assert!(
@@ -790,8 +884,8 @@ fn fingerprint_is_deterministic_and_well_formed() {
         "management_full.aac",
     ] {
         let path = fixture(name);
-        let first: Fingerprint = tags::generate_fingerprint(&path).unwrap();
-        let second = tags::generate_fingerprint(&path).unwrap();
+        let first: Fingerprint = tags::generate_fingerprint(track_file(&path)).unwrap();
+        let second = tags::generate_fingerprint(track_file(&path)).unwrap();
         assert_eq!(first, second, "{name} must be deterministic");
         assert!(!first.fingerprint.is_empty(), "{name}");
         // URL-safe base64 without padding: never `+`, `/`, or `=`.
@@ -810,7 +904,7 @@ fn fingerprint_is_deterministic_and_well_formed() {
             first.fingerprint
         );
         assert!(!first.partial_decode, "{name}");
-        let info = tags::probe(&path).unwrap();
+        let info = tags::probe(track_file(&path)).unwrap();
         assert_eq!(
             first.duration_seconds, info.duration_seconds as u32,
             "{name}"
@@ -846,7 +940,7 @@ fn title_save_keeps_other_tags_and_audio() {
     let report: SaveReport = tags::save_tags(&path, &[TagEdit::set_title("WRAP TITLE")]).unwrap();
     assert_eq!(report.id3_version.as_deref(), Some("2.4"), "mp3");
 
-    let (tag, _) = tags::read_tags(&path).unwrap();
+    let (tag, _) = tags::read_tags(track_file(&path)).unwrap();
     assert_eq!(tag.title, "WRAP TITLE", "mp3");
     assert_eq!(tag.artist, "Alpha feat. Beta", "mp3");
     assert_eq!(tag.artists.len(), 2, "mp3");
@@ -887,8 +981,12 @@ fn title_save_keeps_other_tags_and_audio() {
     assert!(byte_report.frame_ids.contains(&"PRIV".to_owned()), "mp3");
     assert!(byte_report.frame_ids.contains(&"WXXX".to_owned()), "mp3");
     // Cover and audio untouched.
-    let art_before = tags::read_cover_art(&fixture("management_full.mp3")).unwrap();
-    assert_eq!(tags::read_cover_art(&path).unwrap(), art_before, "mp3");
+    let art_before = tags::read_cover_art(track_file(&fixture("management_full.mp3"))).unwrap();
+    assert_eq!(
+        tags::read_cover_art(track_file(&path)).unwrap(),
+        art_before,
+        "mp3"
+    );
     assert_eq!(
         mp3_audio_tail(&std::fs::read(&path).unwrap()),
         audio_before,
@@ -904,7 +1002,7 @@ fn title_save_keeps_other_tags_and_audio() {
 
     tags::save_tags(&path, &[TagEdit::set_title("WRAP TITLE")]).unwrap();
 
-    let (tag, _) = tags::read_tags(&path).unwrap();
+    let (tag, _) = tags::read_tags(track_file(&path)).unwrap();
     assert_eq!(tag.title, "WRAP TITLE", "flac");
     assert_eq!(tag.artists.len(), 2, "flac");
     assert_eq!(
@@ -934,9 +1032,9 @@ fn title_save_keeps_other_tags_and_audio() {
         "management_full.m4a",
     ] {
         let (_scratch, path) = temp_copy(name, "roundtrip");
-        let info_before = tags::probe(&path).unwrap();
+        let info_before = tags::probe(track_file(&path)).unwrap();
         tags::save_tags(&path, &[TagEdit::set_title("WRAP TITLE")]).unwrap();
-        let (tag, _) = tags::read_tags(&path).unwrap();
+        let (tag, _) = tags::read_tags(track_file(&path)).unwrap();
         assert_eq!(tag.title, "WRAP TITLE", "{name}");
         assert_eq!(tag.artists.len(), 2, "{name}");
         // CUSTOM_KEEP bytes still in the file.
@@ -946,7 +1044,7 @@ fn title_save_keeps_other_tags_and_audio() {
             bytes.windows(needle.len()).any(|window| window == needle),
             "{name} lost CUSTOM_KEEP"
         );
-        let info_after = tags::probe(&path).unwrap();
+        let info_after = tags::probe(track_file(&path)).unwrap();
         assert_eq!(info_after.sample_rate, info_before.sample_rate, "{name}");
         assert_eq!(info_after.channels, info_before.channels, "{name}");
         assert!(
@@ -959,7 +1057,7 @@ fn title_save_keeps_other_tags_and_audio() {
     let (_scratch, path) = temp_copy("management_full.flac", "untagged");
     flac_strip_comments(&path);
     tags::save_tags(&path, &[TagEdit::set_title("Fresh Title")]).unwrap();
-    let (tag, _) = tags::read_tags(&path).unwrap();
+    let (tag, _) = tags::read_tags(track_file(&path)).unwrap();
     assert_eq!(tag.title, "Fresh Title", "untagged flac");
 }
 
@@ -1076,7 +1174,7 @@ fn assert_mixed_values(fields: &std::collections::BTreeMap<TagField, Vec<String>
 /// frame, from the file and from tags captured away from it.
 #[test]
 fn mixed_v23_reads_its_v24_frames() {
-    assert_mixed_values(&tags::read_fields(&fixture(MIXED_V23)).unwrap());
+    assert_mixed_values(&tags::read_fields(track_file(&fixture(MIXED_V23))).unwrap());
     let bytes = std::fs::read(fixture(MIXED_V23)).unwrap();
     let size = bytes[6..10]
         .iter()
@@ -1113,7 +1211,7 @@ fn mixed_v23_is_saved_as_v24() {
     }
     assert_eq!(id3_text_values(&path, "TIT2"), texts(&["WRAP TITLE"]));
     assert_eq!(after_id3v2(&path), tail);
-    let fields = tags::read_fields(&path).unwrap();
+    let fields = tags::read_fields(track_file(&path)).unwrap();
     assert_mixed_values(&fields);
     assert_eq!(fields[&TagField::Title], texts(&["WRAP TITLE"]));
 
@@ -1156,10 +1254,10 @@ fn mixed_v23_frames_move_to_their_v24_homes() {
         assert_eq!(fields[&TagField::Isrc], texts(&["AA", "BB"]));
         assert_eq!(fields[&TagField::AlbumSort], texts(&["Z"]));
     };
-    check(tags::read_fields(&path).unwrap());
+    check(tags::read_fields(track_file(&path)).unwrap());
 
     tags::save_tags(&path, &[TagEdit::set_title("Moved")]).unwrap();
-    check(tags::read_fields(&path).unwrap());
+    check(tags::read_fields(track_file(&path)).unwrap());
     let (major, view) = id3_view(&path);
     assert_eq!(major, 4);
     assert_eq!(id3_text_values(&path, "TDRC"), texts(&["2019-03-01"]));
@@ -1181,7 +1279,7 @@ fn mixed_v23_frames_move_to_their_v24_homes() {
 fn mixed_v23_date_pairs() {
     let first = "Its ID3v2.3 tag also holds newer ID3v2.4 tags, so it is saved as ID3v2.4.";
     let notes = |path: &Path| {
-        tags::save::tags_kept(path, PicturesPlan::Untouched)
+        tags::save::tags_kept(track_file(path), PicturesPlan::Untouched)
             .unwrap()
             .upgrade_notes
     };
@@ -1231,7 +1329,7 @@ fn mixed_v23_date_pairs() {
         "conflicting"
     );
     assert_eq!(
-        tags::read_fields(&path).unwrap()[&TagField::Date],
+        tags::read_fields(track_file(&path)).unwrap()[&TagField::Date],
         texts(&["2024-03-02"]),
         "conflicting"
     );
@@ -1324,7 +1422,7 @@ fn mixed_v23_credits_merge_into_tipl() {
         .map(|(id, payload)| (*id, payload.as_slice()))
         .collect();
     let credits = |path: &Path| {
-        let fields = tags::read_fields(path).unwrap();
+        let fields = tags::read_fields(track_file(path)).unwrap();
         assert_eq!(fields[&TagField::Performer], texts(&["W (guitar)"]));
         assert_eq!(fields[&TagField::Producer], texts(&["Z"]));
         assert_eq!(fields[&TagField::Arranger], texts(&["X"]));
@@ -1402,7 +1500,7 @@ fn save_pure_v23_stays_v23() {
 
     let report = tags::save_tags(&path, &[TagEdit::set_title("WRAP TITLE")]).unwrap();
     assert_eq!(report.id3_version.as_deref(), Some("2.3"));
-    let (tag, _) = tags::read_tags(&path).unwrap();
+    let (tag, _) = tags::read_tags(track_file(&path)).unwrap();
     assert_eq!(tag.title, "WRAP TITLE");
     let bytes = std::fs::read(&path).unwrap();
     let byte_report = inspect_id3_bytes(&bytes).unwrap();
@@ -1421,7 +1519,7 @@ fn save_pure_v23_stays_v23() {
     for id in ["TYER", "TDAT", "TORY", "TSO2"] {
         assert!(byte_report.frame_ids.contains(&id.to_owned()), "{id}");
     }
-    let fields = tags::read_fields(&path).unwrap();
+    let fields = tags::read_fields(track_file(&path)).unwrap();
     assert_eq!(fields[&TagField::Date], vec!["2024-05-10".to_owned()]);
     assert_eq!(fields[&TagField::OriginalDate], vec!["2019".to_owned()]);
     assert_eq!(
@@ -1478,7 +1576,7 @@ fn vorbis_total_spellings_update_and_restore() {
 
     let (_scratch, path) = temp_copy("management_full.flac", "spellings");
     flac_inject_pairs(&path, &[("TOTALTRACKS", "12"), ("TRACKTOTAL", "9")]);
-    let baseline = staging::document_from_file(&path).unwrap();
+    let baseline = staging::document_from_file(track_file(&path)).unwrap();
     assert_eq!(
         baseline
             .managed
@@ -1540,7 +1638,7 @@ fn older_baselines_keep_tags_they_never_listed() {
         let mut edits = vec![TagEdit::set_title("Later")];
         edits.extend_from_slice(later);
         tags::save_tags(path, &edits).unwrap();
-        let current = staging::document_from_file(path).unwrap();
+        let current = staging::document_from_file(track_file(path)).unwrap();
         let name = path.file_name().unwrap().to_str().unwrap();
         let updates = staging::restore_updates(baseline, &current, name);
         let edits = staging::tag_edits(&updates);
@@ -1572,7 +1670,7 @@ fn older_baselines_keep_tags_they_never_listed() {
     assert_eq!((original.2.len(), original.3.len()), (1, 1));
     assert!(!original.4.is_empty());
     // The document as the reader before these fields recorded it.
-    let mut old = staging::document_from_file(&path).unwrap();
+    let mut old = staging::document_from_file(track_file(&path)).unwrap();
     let new_fields = &TagField::ALL[TagField::ALL
         .iter()
         .position(|field| *field == TagField::AlbumArtists)
@@ -1619,7 +1717,7 @@ fn older_baselines_keep_tags_they_never_listed() {
         TagField::Director,
     ];
     let restore = |path: &Path, native: &[(TagField, &str)], later: &[TagEdit]| {
-        let mut baseline = staging::document_from_file(path).unwrap();
+        let mut baseline = staging::document_from_file(track_file(path)).unwrap();
         for field in other_roles {
             let values = baseline.managed.remove(&TagTarget::Field(field));
             if let Some((_, key)) = native.iter().find(|(owned, _)| *owned == field) {
@@ -1737,7 +1835,7 @@ fn verbatim_values_round_trip() {
         .map(|(field, value)| TagEdit::verbatim(*field, vec![(*value).to_owned()]))
         .collect();
     tags::save_tags(&path, &edits).unwrap();
-    let fields = tags::read_fields(&path).unwrap();
+    let fields = tags::read_fields(track_file(&path)).unwrap();
     for (field, value) in raw {
         assert_eq!(fields[&field], vec![value.to_owned()], "{field:?}");
     }
@@ -1869,7 +1967,7 @@ fn save_refusals_leave_the_file_as_it_was() {
         ("TDRL", latin1(&["www.example.com"])),
     ];
     let (_dir, path) = raw_id3_mp3("unparsable-item", 3, &frames);
-    let (tag, _) = tags::read_tags(&path).unwrap();
+    let (tag, _) = tags::read_tags(track_file(&path)).unwrap();
     assert_eq!(tag.title, "Probe", "unparsable item");
     let before = std::fs::read(&path).unwrap();
     assert!(
@@ -1882,7 +1980,7 @@ fn save_refusals_leave_the_file_as_it_was() {
     // spelling is refused rather than touching the other.
     let (_scratch, path) = temp_copy("management_full.flac", "vorbis-case");
     flac_inject_pairs(&path, &[("Mood", "Calm"), ("MOOD", "Bright")]);
-    let native = tags::save::read_document(&path).unwrap().native;
+    let native = tags::save::read_document(track_file(&path)).unwrap().native;
     assert!(
         native
             .keys()
@@ -2009,7 +2107,7 @@ fn picard_tag_set_round_trips_per_format() {
             .cloned()
             .collect();
         tags::save_tags(&path, &edits).unwrap_or_else(|error| panic!("{name}: {error}"));
-        let fields = tags::read_fields(&path).unwrap();
+        let fields = tags::read_fields(track_file(&path)).unwrap();
         for edit in &edits {
             assert_eq!(
                 fields.get(&edit.field),
@@ -2018,7 +2116,7 @@ fn picard_tag_set_round_trips_per_format() {
                 edit.field
             );
         }
-        let (tag, _) = tags::read_tags(&path).unwrap();
+        let (tag, _) = tags::read_tags(track_file(&path)).unwrap();
         assert_eq!((tag.track_number, tag.disc_number), (3, 2), "{name}");
         assert_eq!(tag.album_artist.as_deref(), Some("The Lanterns"), "{name}");
         assert_eq!(
@@ -2039,14 +2137,16 @@ fn picard_tag_set_round_trips_per_format() {
 
         tags::save_tags(&path, &[TagEdit::new(TagField::Barcode, Vec::new())])
             .unwrap_or_else(|error| panic!("{name}: {error}"));
-        let fields = tags::read_fields(&path).unwrap();
+        let fields = tags::read_fields(track_file(&path)).unwrap();
         assert!(!fields.contains_key(&TagField::Barcode), "{name}");
         assert_eq!(fields.len(), edits.len() - 1, "{name}");
     }
     // WAV and AAC stay read-only: nothing there for a publish to write.
     for name in ["management_full.wav", "management_full.aac"] {
         assert!(
-            tags::read_fields(&fixture(name)).unwrap().is_empty(),
+            tags::read_fields(track_file(&fixture(name)))
+                .unwrap()
+                .is_empty(),
             "{name}"
         );
     }
@@ -2066,7 +2166,7 @@ fn native_items_scrub_and_restore() {
     ] {
         let (_scratch, path) = temp_copy(name, "native");
         let values = vec!["Someone".to_owned()];
-        let native = |path: &Path| read_document(path).unwrap().native;
+        let native = |path: &Path| read_document(track_file(path)).unwrap().native;
         tags::save_tags(&path, &[TagEdit::native(key, values.clone())])
             .unwrap_or_else(|error| panic!("{name}: {error}"));
         assert_eq!(native(&path).get(key), Some(&values), "{name}");
@@ -2095,7 +2195,7 @@ fn native_items_scrub_and_restore() {
         ],
     )
     .unwrap();
-    let held = read_document(&path).unwrap().native;
+    let held = read_document(track_file(&path)).unwrap().native;
     assert_eq!(held.get("id3:COMM"), Some(&vec![comment.clone()]), "COMM");
     assert_eq!(held.get("id3:PRIV"), Some(&vec![private.clone()]), "PRIV");
     assert_eq!(held.get("id3:WOAR"), Some(&vec![link.clone()]), "WOAR");
@@ -2107,7 +2207,7 @@ fn native_items_scrub_and_restore() {
         ],
     )
     .unwrap();
-    let scrubbed = read_document(&path).unwrap().native;
+    let scrubbed = read_document(track_file(&path)).unwrap().native;
     assert!(!scrubbed.contains_key("id3:PRIV"), "PRIV scrubbed");
     assert!(!scrubbed.contains_key("id3:WOAR"), "WOAR scrubbed");
     assert_eq!(scrubbed.get("id3:COMM"), Some(&vec![comment]), "COMM kept");
@@ -2119,7 +2219,7 @@ fn native_items_scrub_and_restore() {
         ],
     )
     .unwrap();
-    let restored = read_document(&path).unwrap().native;
+    let restored = read_document(track_file(&path)).unwrap().native;
     assert_eq!(
         restored.get("id3:PRIV"),
         Some(&vec![private]),
@@ -2157,17 +2257,17 @@ fn pictures_replace_and_restore() {
         "management_full.m4a",
     ] {
         let (_scratch, path) = temp_copy(name, "pictures");
-        let before = read_document(&path).unwrap().pictures;
+        let before = read_document(track_file(&path)).unwrap().pictures;
         save_tags_with_pictures(&path, &[], Some(std::slice::from_ref(&front)))
             .unwrap_or_else(|error| panic!("{name}: {error}"));
-        let after = read_document(&path).unwrap().pictures;
+        let after = read_document(track_file(&path)).unwrap().pictures;
         assert_eq!(after.len(), 1, "{name}");
         assert_eq!(after[0].data, front.data, "{name}");
         // MP4 has no picture types: its first cover reads as the front.
         assert_eq!(after[0].kind, 3, "{name}");
         save_tags_with_pictures(&path, &[], Some(&before))
             .unwrap_or_else(|error| panic!("{name}: {error}"));
-        let restored = read_document(&path).unwrap().pictures;
+        let restored = read_document(track_file(&path)).unwrap().pictures;
         if name.ends_with(".m4a") {
             let data = |list: &[PictureSpec]| {
                 list.iter()
@@ -2192,7 +2292,7 @@ fn pictures_replace_and_restore() {
     let (_scratch, path) = temp_copy("management_full.flac", "picture-facts");
     save_tags_with_pictures(&path, &[], Some(std::slice::from_ref(&odd))).unwrap();
     assert_eq!(
-        read_document(&path).unwrap().pictures,
+        read_document(track_file(&path)).unwrap().pictures,
         vec![odd],
         "flac picture facts"
     );
@@ -2224,7 +2324,7 @@ fn id3_large_frame_survives_scrub_and_undo() {
         )],
     )
     .unwrap();
-    let listed = read_document(&path).unwrap().native;
+    let listed = read_document(track_file(&path)).unwrap().native;
     assert_eq!(
         listed.get("id3:GEOB"),
         Some(&vec![small.clone()]),
@@ -2255,7 +2355,7 @@ fn id3_large_frame_survives_scrub_and_undo() {
     tags::save_tags(&path, &[TagEdit::native("id3:GEOB", Vec::new())]).unwrap();
     assert_eq!(geob_payloads(&path), vec![both[1]], "the large frame stays");
     assert!(
-        !read_document(&path)
+        !read_document(track_file(&path))
             .unwrap()
             .native
             .contains_key("id3:GEOB")
@@ -2264,7 +2364,10 @@ fn id3_large_frame_survives_scrub_and_undo() {
     tags::save_tags(&path, &[TagEdit::native("id3:GEOB", vec![small.clone()])]).unwrap();
     assert_eq!(geob_payloads(&path), both, "both frames after undo");
     assert_eq!(
-        read_document(&path).unwrap().native.get("id3:GEOB"),
+        read_document(track_file(&path))
+            .unwrap()
+            .native
+            .get("id3:GEOB"),
         Some(&vec![small])
     );
 }
@@ -2276,7 +2379,7 @@ fn id3_large_frame_survives_scrub_and_undo() {
 fn save_drops_empty_vorbis_values() {
     let (_scratch, path) = temp_copy("management_full.flac", "empty-vorbis");
     flac_inject_pairs(&path, &[("ZZZ_EMPTY_TEST", ""), ("LYRICS", "")]);
-    let before = tags::save::read_document(&path).unwrap();
+    let before = tags::save::read_document(track_file(&path)).unwrap();
     assert!(!before.native.contains_key("vorbis:ZZZ_EMPTY_TEST"));
     assert!(!before.values.contains_key(&TagField::Lyrics));
     let pairs_before: Vec<(String, String)> = vorbis_pairs(&path)
@@ -2284,7 +2387,7 @@ fn save_drops_empty_vorbis_values() {
         .filter(|(key, value)| !value.is_empty() && key != "TITLE")
         .collect();
     assert_eq!(
-        tags::save::tags_kept(&path, PicturesPlan::Untouched)
+        tags::save::tags_kept(track_file(&path), PicturesPlan::Untouched)
             .unwrap()
             .refusal,
         None
@@ -2863,11 +2966,11 @@ fn credits_round_trip(path: &Path, edits: &[TagEdit], check: &dyn Fn(&Path)) {
     let audio = audio_bytes(path);
     tags::save_tags(path, edits).unwrap_or_else(|error| panic!("{name}: {error}"));
     check(path);
-    let fields = tags::read_fields(path).unwrap();
+    let fields = tags::read_fields(track_file(path)).unwrap();
     tags::save_tags(path, &[TagEdit::set_title("Later")])
         .unwrap_or_else(|error| panic!("{name}: {error}"));
     check(path);
-    let after = tags::read_fields(path).unwrap();
+    let after = tags::read_fields(track_file(path)).unwrap();
     for edit in edits {
         assert_eq!(after.get(&edit.field), fields.get(&edit.field), "{name}");
     }
@@ -2937,7 +3040,7 @@ fn credit_fields_land_in_their_homes() {
             assert!(vorbis_key_values(path, "ENCODED-BY").is_empty(), "{name}");
         };
         credits_round_trip(&path, &edits, &check);
-        let fields = tags::read_fields(&path).unwrap();
+        let fields = tags::read_fields(track_file(&path)).unwrap();
         for edit in &edits {
             assert_eq!(fields.get(&edit.field), Some(&edit.values), "{name}");
         }
@@ -3004,7 +3107,7 @@ fn credit_fields_land_in_their_homes() {
         );
     };
     credits_round_trip(&path, &edits, &check);
-    let fields = tags::read_fields(&path).unwrap();
+    let fields = tags::read_fields(track_file(&path)).unwrap();
     for edit in &edits {
         assert_eq!(
             fields.get(&edit.field),
@@ -3071,7 +3174,7 @@ fn credit_fields_land_in_their_homes() {
         );
     };
     credits_round_trip(&path, &edits, &check);
-    let fields = tags::read_fields(&path).unwrap();
+    let fields = tags::read_fields(track_file(&path)).unwrap();
     for field in [
         TagField::Performer,
         TagField::Arranger,
@@ -3125,7 +3228,7 @@ fn credit_fields_land_in_their_homes() {
     };
     // `credits_round_trip` also holds the `mdat` byte for byte.
     credits_round_trip(&path, &edits, &check);
-    let fields = tags::read_fields(&path).unwrap();
+    let fields = tags::read_fields(track_file(&path)).unwrap();
     for edit in &edits {
         assert_eq!(
             fields.get(&edit.field),
@@ -3145,7 +3248,7 @@ fn credit_fields_land_in_their_homes() {
         many(TagField::Director, &["Dora Director"]),
     ];
     let read_back = |path: &Path| {
-        let fields = tags::read_fields(path).unwrap();
+        let fields = tags::read_fields(track_file(path)).unwrap();
         for edit in &edits {
             assert_eq!(
                 fields.get(&edit.field),
@@ -3270,7 +3373,7 @@ fn management_fixtures_read_their_credits() {
         "management_full.opus",
         "management_full.m4a",
     ] {
-        let document = tags::save::read_document(&fixture(name)).unwrap();
+        let document = tags::save::read_document(track_file(&fixture(name))).unwrap();
         let get = |field: TagField| document.values.get(&field).cloned().unwrap_or_default();
         // The MP4 fixture carries no composer.
         if name != "management_full.m4a" {
@@ -3677,7 +3780,7 @@ fn v2_baseline_restore_keeps_v23_musician_credits() {
     let baseline = v2_baseline::translate(json.as_bytes(), "mp3", "music", "a.mp3")
         .unwrap()
         .doc;
-    let current = staging::document_from_file(&path).unwrap();
+    let current = staging::document_from_file(track_file(&path)).unwrap();
     let updates = staging::restore_updates(&baseline, &current, "a.mp3");
     let edits = staging::tag_edits(&updates);
     tags::save_tags(&path, &edits).unwrap();
@@ -3712,7 +3815,7 @@ fn v24_tipl_musicians_read_as_performers() {
     let mut bytes = id3v24_raw(&refs);
     bytes.extend_from_slice(&audio);
     std::fs::write(&mp3, &bytes).unwrap();
-    let fields = tags::read_fields(&mp3).unwrap();
+    let fields = tags::read_fields(track_file(&mp3)).unwrap();
     assert_eq!(
         fields[&TagField::Performer],
         texts(&["B (bass)", "A (guitar)"])
@@ -3766,7 +3869,7 @@ fn lofty_v23_ipls_keeps_its_names() {
         "lofty-ipls",
         &[("TIT2", b"\x00Management Track"), ("IPLS", &ipls)],
     );
-    let fields = tags::read_fields(&path).unwrap();
+    let fields = tags::read_fields(track_file(&path)).unwrap();
     assert_eq!(fields[&TagField::Performer], texts(&["Ána (guitar)"]));
     assert_eq!(fields[&TagField::Producer], texts(&["Pål"]));
     tags::save_tags(&path, &[TagEdit::set_title("Later")]).unwrap();
@@ -3963,7 +4066,7 @@ fn title_save_keeps_frames_lofty_rewrites() {
         let tail = after_id3v2(&path);
         let (_, before) = id3_view(&path);
         assert_eq!(
-            tags::save::tags_kept(&path, PicturesPlan::Untouched)
+            tags::save::tags_kept(track_file(&path), PicturesPlan::Untouched)
                 .unwrap()
                 .refusal,
             None
@@ -4004,7 +4107,7 @@ fn kept_frame_refusals_by_pictures_plan() {
     for (id, first, second) in cases {
         let frames = vec![("TIT2", latin1(&["Probe"])), (id, first), (id, second)];
         let (_dir, path) = raw_id3_mp3(&format!("unkept-{id}"), 3, &frames);
-        let message = tags::save::tags_kept(&path, PicturesPlan::Untouched)
+        let message = tags::save::tags_kept(track_file(&path), PicturesPlan::Untouched)
             .unwrap()
             .refusal
             .unwrap();
@@ -4020,8 +4123,11 @@ fn kept_frame_refusals_by_pictures_plan() {
         assert_eq!(std::fs::read(&path).unwrap(), before, "{id}");
     }
 
-    let refusal =
-        |path: &Path, plan: PicturesPlan| tags::save::tags_kept(path, plan).unwrap().refusal;
+    let refusal = |path: &Path, plan: PicturesPlan| {
+        tags::save::tags_kept(track_file(path), plan)
+            .unwrap()
+            .refusal
+    };
 
     // APICs differing only in text encoding read as two equal pictures.
     let frames = vec![
@@ -4043,7 +4149,9 @@ fn kept_frame_refusals_by_pictures_plan() {
     let message = refusal(&path, PicturesPlan::Written).unwrap();
     assert!(message.contains("two file icon pictures"), "{message}");
     assert_eq!(refusal(&path, PicturesPlan::Untouched), None, "two icons");
-    let before = tags::save::read_document(&path).unwrap().pictures;
+    let before = tags::save::read_document(track_file(&path))
+        .unwrap()
+        .pictures;
     assert_eq!(
         before.iter().filter(|picture| picture.kind == 1).count(),
         2,
@@ -4051,7 +4159,9 @@ fn kept_frame_refusals_by_pictures_plan() {
     );
     tags::save_tags(&path, &[TagEdit::set_title("New")]).unwrap();
     assert_eq!(
-        tags::save::read_document(&path).unwrap().pictures,
+        tags::save::read_document(track_file(&path))
+            .unwrap()
+            .pictures,
         before,
         "two icons"
     );
@@ -4078,19 +4188,21 @@ fn mp3_with_padding_after_the_tag_is_saved() {
     };
     std::fs::write(&path, padded(70 * 1024)).unwrap();
     assert!(matches!(
-        tags::save::read_document(&path),
+        tags::save::read_document(track_file(&path)),
         Err(TagsError::TagRead { .. })
     ));
     std::fs::write(&path, padded(1044)).unwrap();
-    let pictures = tags::save::read_document(&path).unwrap().pictures;
+    let pictures = tags::save::read_document(track_file(&path))
+        .unwrap()
+        .pictures;
     assert_eq!(
-        tags::save::tags_kept(&path, PicturesPlan::Untouched)
+        tags::save::tags_kept(track_file(&path), PicturesPlan::Untouched)
             .unwrap()
             .refusal,
         None
     );
     tags::save_tags(&path, &[TagEdit::set_title("Padded")]).unwrap();
-    let after = tags::save::read_document(&path).unwrap();
+    let after = tags::save::read_document(track_file(&path)).unwrap();
     assert_eq!(after.values[&TagField::Title], vec!["Padded".to_owned()]);
     assert_eq!(after.pictures, pictures);
     assert!(std::fs::read(&path).unwrap().ends_with(&bytes[end..]));
@@ -4124,7 +4236,7 @@ fn chapters_move_to_v24_readable() {
     ];
     let (_dir, path) = raw_id3_mp3("chapters", 3, &frames);
     assert_eq!(
-        tags::save::tags_kept(&path, PicturesPlan::Untouched)
+        tags::save::tags_kept(track_file(&path), PicturesPlan::Untouched)
             .unwrap()
             .refusal,
         None
@@ -4208,8 +4320,8 @@ fn scan_and_editor_agree_on_writable_fields() {
         }
         checked += 1;
         let name = path.file_name().unwrap().to_string_lossy().into_owned();
-        let (scan, _) = tags::read::read_scan_metadata(&path, format).unwrap();
-        let editor = tags::save::read_document(&path).unwrap();
+        let (scan, _) = tags::read::read_scan_metadata(track_file(&path), format).unwrap();
+        let editor = tags::save::read_document(track_file(&path)).unwrap();
         let mut agree = |label: &str, scanned: String, edited: String| {
             if scanned != edited {
                 differences.push(format!("{name} {label}: scan {scanned}, editor {edited}"));

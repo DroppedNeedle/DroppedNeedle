@@ -37,6 +37,7 @@ use super::walk::InventoryScanner;
 use super::watcher::WorkWakeups;
 use crate::activity::store::EventStream;
 use crate::clock::LibraryClock as _;
+use crate::tags::TrackFile;
 
 /// Return freed scan heap to the OS after a terminal run. A 100k scan
 /// churns hundreds of megabytes of transient buffers (inventory pages,
@@ -1197,12 +1198,18 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
     ) -> Vec<Result<ScannedTags, TagReadError>> {
         let reads = items.iter().map(|item| {
             let tags = Arc::clone(&self.tags);
-            let path = PathBuf::from(&item.absolute_path);
+            let (path, relative) = (
+                PathBuf::from(&item.absolute_path),
+                item.relative_path.clone(),
+            );
             let pool = self.pool.clone();
             async move {
-                pool.run(move || tags.read_tags(&path))
-                    .await
-                    .unwrap_or(Err(TagReadError::Fatal))
+                pool.run(move || match TrackFile::in_library(&path, &relative) {
+                    Some(file) => tags.read_tags(file),
+                    None => Err(TagReadError::Fatal),
+                })
+                .await
+                .unwrap_or(Err(TagReadError::Fatal))
             }
         });
         futures_util::future::join_all(reads).await
@@ -1212,12 +1219,18 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
     async fn measure_files(&self, items: &[&ScanInventoryItem]) -> Vec<Result<bool, TagReadError>> {
         let reads = items.iter().map(|item| {
             let tags = Arc::clone(&self.tags);
-            let path = PathBuf::from(&item.absolute_path);
+            let (path, relative) = (
+                PathBuf::from(&item.absolute_path),
+                item.relative_path.clone(),
+            );
             let pool = self.pool.clone();
             async move {
-                pool.run(move || tags.length_measured(&path))
-                    .await
-                    .unwrap_or(Err(TagReadError::Fatal))
+                pool.run(move || match TrackFile::in_library(&path, &relative) {
+                    Some(file) => tags.length_measured(file),
+                    None => Err(TagReadError::Fatal),
+                })
+                .await
+                .unwrap_or(Err(TagReadError::Fatal))
             }
         });
         futures_util::future::join_all(reads).await

@@ -21,7 +21,7 @@ use std::path::Path;
 use super::super::tags::save::{accepts, check_writable, writable};
 
 use super::super::tags::{
-    AudioFormat, Refusal, TagEdit, TagField, TagsError, format_for_path, read_document,
+    AudioFormat, Refusal, TagEdit, TagField, TagsError, TrackFile, format_for_path, read_document,
 };
 use super::PublishError;
 use super::tags_seam::{
@@ -105,9 +105,9 @@ pub fn stage_tags(
 /// replay `managed` through staging, so anything stored here must
 /// round-trip; unknown frames and custom tags stay preserved by the
 /// save wrapper's byte-level handling, not by this document.
-pub fn document_from_file(path: &Path) -> Result<TagDocument, PublishError> {
-    let name = message_name_path(path);
-    let fields = read_document(path).map_err(|error| match error {
+pub fn document_from_file(file: TrackFile<'_>) -> Result<TagDocument, PublishError> {
+    let name = message_name_path(file.path());
+    let fields = read_document(file).map_err(|error| match error {
         TagsError::UnrecognizedExtension { extension } => {
             PublishError::Capability(format!("format {extension} has no staged writer").into())
         }
@@ -165,8 +165,11 @@ pub fn document_from_fields(fields: super::super::tags::FieldDocument) -> TagDoc
 /// undo removes what the write put there. A write that would overwrite
 /// a field the file holds in a shape undo cannot put back is refused
 /// here, before anything is staged.
-pub fn document_for_write(path: &Path, updates: &TagUpdates) -> Result<TagDocument, PublishError> {
-    let mut document = document_from_file(path)?;
+pub fn document_for_write(
+    file: TrackFile<'_>,
+    updates: &TagUpdates,
+) -> Result<TagDocument, PublishError> {
+    let mut document = document_from_file(file)?;
     let opaque = updates.targets().find_map(|target| match target {
         TagTarget::Field(field) if document.opaque.iter().any(|name| name == field.name()) => {
             Some(field.name())
@@ -177,7 +180,7 @@ pub fn document_for_write(path: &Path, updates: &TagUpdates) -> Result<TagDocume
         return Err(PublishError::Capability(
             format!(
                 "field {name} of '{}' holds a value undo could not restore",
-                message_name_path(path)
+                message_name_path(file.path())
             )
             .into(),
         ));
@@ -198,7 +201,7 @@ pub fn document_for_write(path: &Path, updates: &TagUpdates) -> Result<TagDocume
             return Err(PublishError::Capability(
                 format!(
                     "a picture in '{}' has a MIME type undo could not restore",
-                    message_name_path(path)
+                    message_name_path(file.path())
                 )
                 .into(),
             ));

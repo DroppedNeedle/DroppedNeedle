@@ -20,7 +20,7 @@ use droppedneedle_library::tags;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use crate::common::ScratchDir;
+use crate::common::{ScratchDir, track_file};
 use droppedneedle_kernel::clock::{ManualClock, SystemClock};
 use droppedneedle_kernel::db::undo_dir::{self, Stored, UndoDir};
 use droppedneedle_kernel::db::{Db, DurableLane, Lane};
@@ -383,10 +383,10 @@ fn open_publisher(fix: &Fixture) -> Publisher<FixedSpace> {
 /// Staged bytes carry the planned title through the real save
 /// wrapper and still decode as audio.
 fn assert_staged(dest: &std::path::Path, track_id: &str) {
-    let tag = tags::read::read_tag_only(dest, tags::AudioFormat::Flac).unwrap();
+    let tag = tags::read::read_tag_only(track_file(dest), tags::AudioFormat::Flac).unwrap();
     assert_eq!(tag.title, format!("Title {track_id}"));
     assert_eq!(tag.genres, vec!["Electronic", "Ambient"]);
-    tags::probe(dest).unwrap();
+    tags::probe(track_file(dest)).unwrap();
 }
 
 fn hidden_leftovers(dir: &std::path::Path) -> Vec<PathBuf> {
@@ -4172,7 +4172,7 @@ fn unknown_empty_and_multivalued_tags_survive_apply() {
     let dest = fix.sandbox.resolve("music", "staging/s.flac").unwrap();
     // The planned title landed through the real save wrapper while
     // multi-values, custom fields, and the vendor spelling survived.
-    let tag = tags::read::read_tag_only(&dest, tags::AudioFormat::Flac).unwrap();
+    let tag = tags::read::read_tag_only(track_file(&dest), tags::AudioFormat::Flac).unwrap();
     assert_eq!(tag.title, "New Title");
     assert_eq!(tag.genres, vec!["Electronic", "Ambient"]);
     let bytes = std::fs::read(&dest).unwrap();
@@ -4182,7 +4182,7 @@ fn unknown_empty_and_multivalued_tags_survive_apply() {
             "missing {needle:?}"
         );
     }
-    tags::probe(&dest).unwrap();
+    tags::probe(track_file(&dest)).unwrap();
 }
 
 // --- Archive safety briefs. ---
@@ -4754,7 +4754,7 @@ fn error_messages_name_files_not_server_paths() {
     // Reading the current tag document off garbage: file name only.
     let garbage = fix.sandbox.resolve("music", "garbage.flac").unwrap();
     std::fs::write(&garbage, [0u8; 64]).unwrap();
-    let err = publish::staging::document_from_file(&garbage).unwrap_err();
+    let err = publish::staging::document_from_file(track_file(&garbage)).unwrap_err();
     assert!(!err.to_string().contains(&root_text), "{err}");
     assert!(err.to_string().contains("garbage.flac"), "{err}");
     // The collision gate on a symlinked destination: root and relative
@@ -4832,9 +4832,9 @@ fn a_240_byte_file_name_is_published_and_retagged() {
     publisher.publish(&sealed, &live, &docs).unwrap();
 
     let dest = fix.sandbox.resolve("music", &long_rel).unwrap();
-    let tag = tags::read::read_tag_only(&dest, tags::AudioFormat::Flac).unwrap();
+    let tag = tags::read::read_tag_only(track_file(&dest), tags::AudioFormat::Flac).unwrap();
     assert_eq!(tag.title, "Retagged");
-    tags::probe(&dest).unwrap();
+    tags::probe(track_file(&dest)).unwrap();
     assert!(hidden_leftovers(&fix.dir).is_empty());
 
     // The longest hidden name is a tag write's temp, which ends in the
@@ -4870,7 +4870,7 @@ fn a_symlink_at_a_hidden_working_name_is_never_written_through() {
 
     assert_eq!(std::fs::read(&victim).unwrap(), b"theirs");
 
-    let tag = tags::read::read_tag_only(&dest, tags::AudioFormat::Flac).unwrap();
+    let tag = tags::read::read_tag_only(track_file(&dest), tags::AudioFormat::Flac).unwrap();
     assert_eq!(tag.title, "Retagged");
     assert!(hidden_leftovers(&fix.dir).is_empty());
 }
@@ -4896,7 +4896,7 @@ fn a_retag_keeps_the_files_permission_bits() {
         let (sealed, live) = seal(&bundle);
         publisher.publish(&sealed, &live, &docs).unwrap();
 
-        let tag = tags::read::read_tag_only(&dest, tags::AudioFormat::Flac).unwrap();
+        let tag = tags::read::read_tag_only(track_file(&dest), tags::AudioFormat::Flac).unwrap();
         assert_eq!(tag.title, title);
         let mode = std::fs::metadata(&dest).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, bits, "{bits:o}");
@@ -5050,7 +5050,7 @@ fn mp3_unknown_frames_survive_publish_staging() {
     publisher.publish(&sealed, &live, &docs).unwrap();
 
     let dest = fix.sandbox.resolve("music", "staging/s.mp3").unwrap();
-    let tag = tags::read::read_tag_only(&dest, tags::AudioFormat::Mp3).unwrap();
+    let tag = tags::read::read_tag_only(track_file(&dest), tags::AudioFormat::Mp3).unwrap();
     assert_eq!(tag.title, "Title track-s");
     let saved = std::fs::read(&dest).unwrap();
     for needle in [
@@ -5064,7 +5064,7 @@ fn mp3_unknown_frames_survive_publish_staging() {
             "missing {needle:?}"
         );
     }
-    tags::probe(&dest).unwrap();
+    tags::probe(track_file(&dest)).unwrap();
 }
 
 // --- Recycle-bin expiry briefs: only a copy a row names, as it was binned,

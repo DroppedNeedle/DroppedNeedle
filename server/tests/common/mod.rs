@@ -101,6 +101,13 @@ impl Drop for ScratchDir {
     }
 }
 
+/// A file a test made or a fixture, read beneath its own folder: the
+/// folders tests read hold no links.
+pub fn track_file(path: &Path) -> droppedneedle_library::tags::TrackFile<'_> {
+    let folder = path.parent().expect("a file has a folder");
+    droppedneedle_library::tags::TrackFile::new(folder, path)
+}
+
 /// Ask again while the app answers busy (503 with `Retry-After`), waiting
 /// as long as it says, the way a client does. A busy answer means the
 /// request was not carried out, so asking again is safe. For the requests

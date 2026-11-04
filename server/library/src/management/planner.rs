@@ -33,7 +33,7 @@ use crate::publish::{MAX_PLAN_SUBJECTS, PublishError, Sandbox, collision_key};
 use crate::scan::models::EffectivePolicy;
 use crate::scan::roots::RootRegistry;
 use crate::scan::sqlite_store::holds_new_files;
-use crate::tags::{self, TagField};
+use crate::tags::{self, TagField, TrackFile};
 use droppedneedle_kernel::db::Lane;
 
 /// Why an album's match keeps its files from being managed, if it does.
@@ -599,17 +599,21 @@ fn plan_file(
         .sandbox
         .resolve_no_symlink(&track.root_id, &track.relative_path)
         .map_err(unreadable)?;
+    let file = TrackFile::new(
+        ctx.sandbox.root_dir(&track.root_id).map_err(unreadable)?,
+        &path,
+    );
     let hashed = crate::publish::paths::hash_regular_file(&path).map_err(unreadable)?;
     let fingerprint = FileFingerprint {
         size: hashed.size,
         sha256: hashed.sha256,
     };
-    let doc = crate::publish::staging::document_from_file(&path).map_err(|error| {
+    let doc = crate::publish::staging::document_from_file(file).map_err(|error| {
         tracing::info!(%error, track = track.id, "tags unreadable at preview");
         reasons::file_unreadable()
     })?;
     let writable = tags::save::writable(format);
-    let id3v23 = tags::save::id3_lands_as_v23(&path).map_err(|error| {
+    let id3v23 = tags::save::id3_lands_as_v23(file).map_err(|error| {
         tracing::info!(%error, track = track.id, "tags unreadable at preview");
         reasons::file_unreadable()
     })?;
@@ -695,7 +699,7 @@ fn plan_file(
         } else {
             tags::save::PicturesPlan::Untouched
         };
-        let kept = tags::save::tags_kept(&path, pictures).map_err(|error| {
+        let kept = tags::save::tags_kept(file, pictures).map_err(|error| {
             tracing::info!(%error, track = track.id, "tags unreadable at preview");
             reasons::file_unreadable()
         })?;
@@ -1409,14 +1413,16 @@ fn measure_replaygain(
     if !settings.enabled || settings.mode == ReplayGainMode::Preserve || tracks.is_empty() {
         return;
     }
-    let paths: Vec<(&str, Option<std::path::PathBuf>)> = tracks
+    let paths: Vec<(&str, Option<(&std::path::Path, std::path::PathBuf)>)> = tracks
         .iter()
         .map(|track| {
             (
                 track.id.as_str(),
-                ctx.sandbox
-                    .resolve_no_symlink(&track.root_id, &track.relative_path)
-                    .ok(),
+                ctx.sandbox.root_dir(&track.root_id).ok().zip(
+                    ctx.sandbox
+                        .resolve_no_symlink(&track.root_id, &track.relative_path)
+                        .ok(),
+                ),
             )
         })
         .collect();
@@ -1426,8 +1432,10 @@ fn measure_replaygain(
             needed.extend([TagField::ReplayGainAlbumGain, TagField::ReplayGainAlbumPeak]);
         }
         let complete = paths.iter().all(|(_, path)| {
-            path.as_deref()
-                .and_then(|path| crate::publish::staging::document_from_file(path).ok())
+            path.as_ref()
+                .and_then(|(root, path)| {
+                    crate::publish::staging::document_from_file(TrackFile::new(root, path)).ok()
+                })
                 .is_some_and(|doc| {
                     needed
                         .iter()
@@ -1457,7 +1465,7 @@ fn measure_replaygain(
     let mut whole = true;
     for (track_id, path) in &paths {
         let result = match path {
-            Some(path) => loudness::analyse_cached(path, deadline),
+            Some((root, path)) => loudness::analyse_cached(TrackFile::new(root, path), deadline),
             None => Err(Unanalysed::Undecodable),
         };
         match result {
@@ -1648,10 +1656,14 @@ pub(crate) fn acoustid_values(
         let Ok(path) = sandbox.resolve_no_symlink(subject.root_id, subject.relative_path) else {
             continue;
         };
+        let Ok(root) = sandbox.root_dir(subject.root_id) else {
+            continue;
+        };
+        let file = TrackFile::new(root, &path);
         if !tags::format_for_path(&path).is_ok_and(tags::save::writable) {
             continue;
         }
-        let Ok(doc) = crate::publish::staging::document_from_file(&path) else {
+        let Ok(doc) = crate::publish::staging::document_from_file(file) else {
             continue;
         };
         let held = |field: TagField| {
@@ -1726,7 +1738,7 @@ pub(crate) fn acoustid_values(
                 out_of_time.get_or_insert(subject.track_id);
                 continue;
             }
-            None => match tags::generate_fingerprint(&path) {
+            None => match tags::generate_fingerprint(file) {
                 Ok(found) if !found.fingerprint.is_empty() => {
                     if let Err(error) = parts.identify_store.keep_fingerprint(
                         subject.track_id,

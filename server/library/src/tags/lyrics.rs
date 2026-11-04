@@ -28,7 +28,7 @@ use std::path::{Path, PathBuf};
 use lofty::file::TaggedFileExt as _;
 use lofty::tag::{ItemKey, TagType};
 
-use super::{AudioFormat, format_for_path};
+use super::{AudioFormat, TrackFile, format_for_path};
 
 /// Largest lyrics payload read, in bytes.
 pub const MAX_LYRICS_BYTES: usize = 2 * 1024 * 1024;
@@ -209,16 +209,23 @@ fn parse_lrc_stamp(line: &str) -> Option<(i64, &str)> {
 /// no lyrics instead of taking the caller down. Blocking: run it off the
 /// async workers.
 #[must_use]
-pub fn read_file_lyrics(audio: &Path) -> Option<(LyricsSource, Lyrics)> {
-    let sidecars = audio.parent().map(Sidecars::list).unwrap_or_default();
-    read_lyrics_beside(audio, sidecars.for_track(audio))
+pub fn read_file_lyrics(audio: TrackFile<'_>) -> Option<(LyricsSource, Lyrics)> {
+    let sidecars = audio
+        .path()
+        .parent()
+        .map(Sidecars::list)
+        .unwrap_or_default();
+    read_lyrics_beside(audio, sidecars.for_track(audio.path()))
 }
 
 /// [`read_file_lyrics`] with the `.lrc` file already found (from a
 /// [`Sidecars`] listing of the track's folder), so a sweep lists each
-/// folder once.
+/// folder once. The `.lrc` file is read beneath the track's folder.
 #[must_use]
-pub fn read_lyrics_beside(audio: &Path, sidecar: Option<&Path>) -> Option<(LyricsSource, Lyrics)> {
+pub fn read_lyrics_beside(
+    audio: TrackFile<'_>,
+    sidecar: Option<&Path>,
+) -> Option<(LyricsSource, Lyrics)> {
     read_lyrics_checked(audio, sidecar).0
 }
 
@@ -226,13 +233,13 @@ pub fn read_lyrics_beside(audio: &Path, sidecar: Option<&Path>) -> Option<(Lyric
 /// lyrics found is not the same as none there.
 #[must_use]
 pub fn read_lyrics_checked(
-    audio: &Path,
+    audio: TrackFile<'_>,
     sidecar: Option<&Path>,
 ) -> (Option<(LyricsSource, Lyrics)>, bool) {
     let read = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let mut unread = false;
         if let Some(path) = sidecar {
-            match read_sidecar(path) {
+            match read_sidecar(audio.beside(path)) {
                 Ok(Some(lyrics)) => return (Some((LyricsSource::Sidecar, lyrics)), false),
                 Ok(None) => {}
                 Err(error) => {
@@ -244,13 +251,13 @@ pub fn read_lyrics_checked(
         match read_tag_lyrics(audio) {
             Ok(lyrics) => (lyrics.map(|lyrics| (LyricsSource::Tag, lyrics)), unread),
             Err(error) => {
-                tracing::debug!(path = %audio.display(), %error, "lyrics tag not read");
+                tracing::debug!(path = %audio.path().display(), %error, "lyrics tag not read");
                 (None, true)
             }
         }
     }));
     read.unwrap_or_else(|_| {
-        tracing::error!(path = %audio.display(), "lyrics read panicked; read as none");
+        tracing::error!(path = %audio.path().display(), "lyrics read panicked; read as none");
         (None, false)
     })
 }
@@ -339,11 +346,11 @@ impl Sidecars {
 
 /// The lyrics of a `.lrc` file. `Err` when it could not be read, `None`
 /// when what it holds does not count.
-fn read_sidecar(path: &Path) -> std::io::Result<Option<Lyrics>> {
+fn read_sidecar(at: TrackFile<'_>) -> std::io::Result<Option<Lyrics>> {
     let skip = |why: &dyn std::fmt::Display| {
-        tracing::debug!(path = %path.display(), reason = %why, "lyrics file skipped");
+        tracing::debug!(path = %at.path().display(), reason = %why, "lyrics file skipped");
     };
-    let file = super::open_track(path)?;
+    let file = at.open()?;
     let mut bytes = Vec::new();
     // One byte past the cap tells an oversized file from one exactly at it.
     let cap = u64::try_from(MAX_LYRICS_BYTES)
@@ -373,11 +380,12 @@ fn read_sidecar(path: &Path) -> std::io::Result<Option<Lyrics>> {
 
 /// The first lyrics item of the file's tag that gives a line. `Err` when
 /// the file could not be read; a tag that does not parse holds no lyrics.
-fn read_tag_lyrics(audio: &Path) -> std::io::Result<Option<Lyrics>> {
+fn read_tag_lyrics(at: TrackFile<'_>) -> std::io::Result<Option<Lyrics>> {
+    let audio = at.path();
     let Ok(format) = format_for_path(audio) else {
         return Ok(None);
     };
-    let values = match tag_lyrics_values(audio, format) {
+    let values = match tag_lyrics_values(at, format) {
         Ok(values) => values,
         Err(TagValuesError::Read(error)) => return Err(error),
         Err(TagValuesError::Parse(error)) => {
@@ -416,9 +424,12 @@ impl From<std::io::Error> for TagValuesError {
 
 /// Every lyrics value in the file's tags: `Lyrics` items first, then
 /// `UnsyncLyrics`.
-fn tag_lyrics_values(audio: &Path, format: AudioFormat) -> Result<Vec<String>, TagValuesError> {
+fn tag_lyrics_values(
+    audio: TrackFile<'_>,
+    format: AudioFormat,
+) -> Result<Vec<String>, TagValuesError> {
     const KEYS: [ItemKey; 2] = [ItemKey::Lyrics, ItemKey::UnsyncLyrics];
-    let mut file = super::open_track(audio)?;
+    let mut file = audio.open()?;
     if format == AudioFormat::Aac {
         let bytes = ape_tail(&mut file)?;
         let items = super::read::parse_apev2(&bytes).unwrap_or_default();
@@ -533,8 +544,9 @@ mod tests {
             "[ar:Someone]\n[00:12.00][00:45.00]Chorus\n[00:20.00]\n",
         )
         .expect("lrc writes");
+        let song = dir.path().join("song.flac");
         let (source, lyrics) =
-            read_file_lyrics(&dir.path().join("song.flac")).expect("the sidecar reads");
+            read_file_lyrics(TrackFile::new(dir.path(), &song)).expect("the sidecar reads");
         assert_eq!(source, LyricsSource::Sidecar);
         assert!(lyrics.synced);
         assert_eq!(

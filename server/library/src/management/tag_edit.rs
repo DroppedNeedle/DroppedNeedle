@@ -261,7 +261,13 @@ impl Management {
                 "The audio file is no longer on disk. Rescan the library.".to_owned(),
             ));
         }
-        let doc = crate::publish::staging::document_from_file(&path).map_err(|error| {
+        let root = sandbox.root_dir(&subject.root_id).map_err(|_| {
+            ManagementError::Conflict(
+                "The track's library folder is not available right now.".to_owned(),
+            )
+        })?;
+        let file = crate::tags::TrackFile::new(root, &path);
+        let doc = crate::publish::staging::document_from_file(file).map_err(|error| {
             tracing::info!(%error, track_id, "tag editor could not read the file");
             ManagementError::Conflict("The audio file's tags could not be read.".to_owned())
         })?;

@@ -2,8 +2,6 @@
 //! from the native homes the writer uses.
 
 use std::collections::BTreeMap;
-use std::fs;
-use std::path::Path;
 
 use lofty::file::TaggedFileExt as _;
 use lofty::tag::TagType;
@@ -15,7 +13,7 @@ use super::mp4::Mp4;
 use super::vorbis::Vorbis;
 use super::{PictureSpec, Refusal, TagFormat, error_chain};
 use crate::tags::fields::TagField;
-use crate::tags::{AudioFormat, TagsError, format_for_path};
+use crate::tags::{AudioFormat, TagsError, TrackFile, format_for_path};
 
 /// Every writable field a file carries, read from the native homes the
 /// writer uses and kept exactly as written, so writing them back
@@ -44,7 +42,8 @@ pub struct FieldDocument {
 
 /// Read a file's [`FieldDocument`]. Read-only containers report nothing:
 /// there is nothing to write back.
-pub fn read_document(path: &Path) -> Result<FieldDocument, TagsError> {
+pub fn read_document(at: TrackFile<'_>) -> Result<FieldDocument, TagsError> {
+    let path = at.path();
     let format = format_for_path(path)?;
     let mut document = FieldDocument::default();
     let list: ListFn = match format {
@@ -53,7 +52,7 @@ pub fn read_document(path: &Path) -> Result<FieldDocument, TagsError> {
         AudioFormat::M4a => list_as::<Mp4>,
         AudioFormat::Aac | AudioFormat::Wav => return Ok(document),
     };
-    let bytes = fs::read(path).map_err(|source| TagsError::Io {
+    let bytes = at.read().map_err(|source| TagsError::Io {
         path: path.display().to_string(),
         source,
     })?;
@@ -202,8 +201,8 @@ pub(super) fn collect_reads(document: &mut FieldDocument, reads: Vec<(TagField, 
 }
 
 /// The writable fields a file carries as text (see [`read_document`]).
-pub fn read_fields(path: &Path) -> Result<BTreeMap<TagField, Vec<String>>, TagsError> {
-    Ok(read_document(path)?.values)
+pub fn read_fields(at: TrackFile<'_>) -> Result<BTreeMap<TagField, Vec<String>>, TagsError> {
+    Ok(read_document(at)?.values)
 }
 
 /// What a file holds for one field.

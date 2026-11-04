@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 use crate::common::library::TestSql as _;
 use crate::common::library::{ScriptedContrib, ScriptedIdentify, library_asking, library_with};
-use crate::common::{ScratchDir, TestApp, closed_outbound};
+use crate::common::{ScratchDir, TestApp, closed_outbound, track_file};
 use axum::http::StatusCode;
 use droppedneedle::bootstrap::Port;
 use droppedneedle_catalog::collections::db::CollectionsDb;
@@ -464,7 +464,7 @@ fn ambiguous_from(facts: &LocalAlbumFacts) -> RecallResult {
 
 fn read_title(path: &Path) -> String {
     droppedneedle_library::tags::read::read_tag_only(
-        path,
+        track_file(path),
         droppedneedle_library::tags::AudioFormat::Flac,
     )
     .expect("tags read")
@@ -833,7 +833,7 @@ async fn an_artist_renamed_by_a_managed_run_keeps_its_row() {
     .await;
 
     let (tags, job) = rig.write_edition_tags(&headers, &album).await;
-    let written = read_fields(&music.join("album/02.flac")).expect("fields read");
+    let written = read_fields(track_file(&music.join("album/02.flac"))).expect("fields read");
     assert_eq!(
         (
             &written[&TagField::Artists],
@@ -942,7 +942,7 @@ async fn a_managed_change_is_undone_only_by_its_writer_or_an_admin() {
     rig.identified(&album, 1).await;
     rig.choose_first_edition(&album).await;
     rig.edition_settled(&album).await;
-    let before = read_fields(&file).expect("fields read");
+    let before = read_fields(track_file(&file)).expect("fields read");
 
     // A retag of the file, applied as the first trusted user.
     let publishing = app.state().library_services.publishing.clone();
@@ -981,20 +981,20 @@ async fn a_managed_change_is_undone_only_by_its_writer_or_an_admin() {
     }
 
     let bundle = retag().await;
-    assert_ne!(read_fields(&file).expect("fields read"), before);
+    assert_ne!(read_fields(track_file(&file)).expect("fields read"), before);
     let (status, body) = call(app, &kit, &bundle).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
     let (status, body) = call(app, &molly, &bundle).await;
     assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
     let (status, body) = call(app, &tris, &bundle).await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(read_fields(&file).expect("fields read"), before);
+    assert_eq!(read_fields(track_file(&file)).expect("fields read"), before);
 
     // An admin may undo the trusted user's change.
     let bundle = retag().await;
     let (status, body) = call(app, &admin, &bundle).await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(read_fields(&file).expect("fields read"), before);
+    assert_eq!(read_fields(track_file(&file)).expect("fields read"), before);
 
     // A Library Management run's change is undone from History, never here.
     let (_, job) = rig.write_edition_tags(&admin, &album).await;
@@ -1007,7 +1007,7 @@ async fn a_managed_change_is_undone_only_by_its_writer_or_an_admin() {
             |row| row.get(0),
         )
         .expect("the run's bundle");
-    let written = read_fields(&file).expect("fields read");
+    let written = read_fields(track_file(&file)).expect("fields read");
     let (status, body) = call(app, &kit, &bundle).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
     let (status, body) = call(app, &admin, &bundle).await;
@@ -1017,7 +1017,10 @@ async fn a_managed_change_is_undone_only_by_its_writer_or_an_admin() {
         body["error"]["details"]["action"], "Undo this run from History.",
         "{body}"
     );
-    assert_eq!(read_fields(&file).expect("fields read"), written);
+    assert_eq!(
+        read_fields(track_file(&file)).expect("fields read"),
+        written
+    );
     rig.stop().await;
 }
 
@@ -1281,7 +1284,7 @@ async fn an_editions_tags_are_written_as_the_folders_profile_says() {
         files
             .iter()
             .map(|file| {
-                let document = read_document(file).expect("tags read");
+                let document = read_document(track_file(file)).expect("tags read");
                 let pictures: Vec<Vec<u8>> = document
                     .pictures
                     .iter()
@@ -1475,7 +1478,7 @@ async fn an_editions_tags_are_written_as_the_folders_profile_says() {
 
     // The write holds the profile's fields; no file is renamed or moved.
     write_planned(app, &tris, &uri, &queued["preview_token"]).await;
-    let fields = read_fields(&files[0]).expect("fields read");
+    let fields = read_fields(track_file(&files[0])).expect("fields read");
     assert_eq!(fields[&TagField::Title], vec!["Kept Title".to_owned()]);
     assert_eq!(
         fields[&TagField::Comment],
@@ -2985,7 +2988,7 @@ async fn undo_restores_values_no_new_edit_could_write() {
         .unwrap()
         .expect("album");
     approve_first_candidate(&library, &scratch.identify, &album).await;
-    let before = read_fields(&file).expect("fields read");
+    let before = read_fields(track_file(&file)).expect("fields read");
 
     let bundle = publish_one(
         &library,
@@ -2995,7 +2998,7 @@ async fn undo_restores_values_no_new_edit_could_write() {
         None,
         &[("date", "2001")],
     );
-    let retagged = read_fields(&file).expect("fields read");
+    let retagged = read_fields(track_file(&file)).expect("fields read");
     assert_eq!(retagged[&TagField::Date], vec!["2001".to_owned()]);
     assert_ne!(retagged[&TagField::TrackNumber], vec!["3/12".to_owned()]);
 
@@ -3003,7 +3006,7 @@ async fn undo_restores_values_no_new_edit_could_write() {
         .management
         .undo_bundle(&bundle, None)
         .expect("undo publishes");
-    assert_eq!(read_fields(&file).expect("fields read"), before);
+    assert_eq!(read_fields(track_file(&file)).expect("fields read"), before);
 }
 
 /// A backup carries the undo copies with the database: restored into an
@@ -3037,7 +3040,7 @@ async fn a_restored_backup_still_undoes_and_restores_originals() {
         .unwrap()
         .expect("album");
     approve_first_candidate(&library, &scratch.identify, &album).await;
-    let original = read_fields(&first).expect("fields read");
+    let original = read_fields(track_file(&first)).expect("fields read");
     let retag = |rel: &str, title: &str| {
         publish_one(
             &library,
@@ -3049,10 +3052,10 @@ async fn a_restored_backup_still_undoes_and_restores_originals() {
         )
     };
     retag("album/01.flac", "First pass");
-    let first_pass = read_fields(&first).expect("fields read");
+    let first_pass = read_fields(track_file(&first)).expect("fields read");
     let later = retag("album/01.flac", "Second pass");
     let other = retag("album/02.flac", "Other");
-    let other_title = read_fields(&second).expect("fields read");
+    let other_title = read_fields(track_file(&second)).expect("fields read");
 
     let backups = scratch.join("backups");
     let service = BackupService::new(
@@ -3103,7 +3106,10 @@ async fn a_restored_backup_still_undoes_and_restores_originals() {
         .management
         .undo_bundle(&later, None)
         .expect("undo of a change made before the backup publishes");
-    assert_eq!(read_fields(&first).expect("fields read"), first_pass);
+    assert_eq!(
+        read_fields(track_file(&first)).expect("fields read"),
+        first_pass
+    );
     match crate::common::library::services(&library)
         .management
         .undo_bundle(&other, None)
@@ -3118,8 +3124,14 @@ async fn a_restored_backup_still_undoes_and_restores_originals() {
         .publishing
         .baseline_restore(&[one, two])
         .expect("restore of originals publishes");
-    assert_eq!(read_fields(&first).expect("fields read"), original);
-    assert_eq!(read_fields(&second).expect("fields read"), other_title);
+    assert_eq!(
+        read_fields(track_file(&first)).expect("fields read"),
+        original
+    );
+    assert_eq!(
+        read_fields(track_file(&second)).expect("fields read"),
+        other_title
+    );
 }
 
 /// Baseline restore takes a file back to how it was before its first
@@ -3144,7 +3156,7 @@ async fn baseline_restore_removes_fields_added_later() {
         .unwrap()
         .expect("album");
     approve_first_candidate(&library, &scratch.identify, &album).await;
-    let before = read_fields(&file).expect("fields read");
+    let before = read_fields(track_file(&file)).expect("fields read");
     assert!(!before.contains_key(&TagField::MusicBrainzReleaseId));
 
     publish_one(
@@ -3164,7 +3176,7 @@ async fn baseline_restore_removes_fields_added_later() {
         &[],
     );
     let moved = music.join("moved/01.flac");
-    let retagged = read_fields(&moved).expect("fields read");
+    let retagged = read_fields(track_file(&moved)).expect("fields read");
     assert_eq!(
         retagged[&TagField::MusicBrainzReleaseId],
         vec![REL_1.to_owned()]
@@ -3175,7 +3187,7 @@ async fn baseline_restore_removes_fields_added_later() {
         .baseline_restore(std::slice::from_ref(&track))
         .expect("restore publishes");
     assert!(file.is_file(), "the file is back where it started");
-    assert_eq!(read_fields(&file).expect("fields read"), before);
+    assert_eq!(read_fields(track_file(&file)).expect("fields read"), before);
 }
 
 /// A publish is checked against its own rows, not the catalog counter: a
@@ -3243,7 +3255,7 @@ async fn a_publish_checks_its_own_rows() {
         .apply_preview(&sealed.token, None)
         .expect("a scan of another album leaves the preview good");
     assert_eq!(
-        read_fields(&file).expect("fields read")[&TagField::Date],
+        read_fields(track_file(&file)).expect("fields read")[&TagField::Date],
         vec!["2001".to_owned()]
     );
     assert!(counter() > after_scan, "the commit still bumps the counter");
@@ -6911,7 +6923,7 @@ async fn a_library_folder_reached_through_a_symlink_takes_writes() {
     let applied = management_apply(&library, &edit).await;
     assert_eq!(applied.job.state.as_str(), "succeeded");
     assert_eq!(
-        read_fields(&file).expect("tags read")[&TagField::Title],
+        read_fields(track_file(&file)).expect("tags read")[&TagField::Title],
         vec!["Linked Title".to_owned()]
     );
 
@@ -9768,7 +9780,7 @@ async fn library_management_preview_apply_undo() {
     assert!(music.join("incoming/Second Song.flac").exists());
     assert!(!first.exists() && !second.exists());
     let renamed = music.join("incoming/Management Track.flac");
-    let tagged = read_fields(&renamed).expect("fields read");
+    let tagged = read_fields(track_file(&renamed)).expect("fields read");
 
     // The Picard-style profile moves the album; its sidecars come along.
     let handle = management
@@ -9872,7 +9884,7 @@ async fn library_management_preview_apply_undo() {
     let undone = management.detail(&undo.job_id).expect("detail");
     assert_eq!(undone.job.state.as_str(), "succeeded");
     assert_eq!(
-        read_fields(&renamed).expect("restored file reads"),
+        read_fields(track_file(&renamed)).expect("restored file reads"),
         tagged,
         "undo puts every tag back"
     );
@@ -10425,9 +10437,10 @@ async fn library_management_tools_journey() {
     lm::service::LibraryManagementService::new(Arc::new(library.settings.store().clone()))
         .get_settings()
         .expect("settings normalized");
-    let original = read_fields(&file).expect("original tags");
-    let title =
-        |path: &std::path::Path| read_fields(path).expect("tags read")[&TagField::Title].clone();
+    let original = read_fields(track_file(&file)).expect("original tags");
+    let title = |path: &std::path::Path| {
+        read_fields(track_file(path)).expect("tags read")[&TagField::Title].clone()
+    };
     let management = Management::new(&library);
     let policy = library.core.policy_revision().expect("policy revision");
     let revision = || {
@@ -10468,7 +10481,7 @@ async fn library_management_tools_journey() {
         )
         .expect("custom tag planted");
         rescan(&library).await;
-        let before = read_document(&file).expect("tags before");
+        let before = read_document(track_file(&file)).expect("tags before");
         let stored: LibraryManagement = library.settings.store().get().expect("settings");
         let mut enriched = stored.clone();
         for profile in enriched
@@ -10549,7 +10562,7 @@ async fn library_management_tools_journey() {
             )
             .expect("managed path");
         let managed = music.join(&rel);
-        let after = read_document(&managed).expect("tags after");
+        let after = read_document(track_file(&managed)).expect("tags after");
         assert!(!after.native.contains_key("vorbis:MOOD"), "scrubbed");
         assert_eq!(
             after.values.get(&TagField::Lyrics),
@@ -10588,7 +10601,7 @@ async fn library_management_tools_journey() {
         assert!(management_step(&library).await, "undo planning runs");
         let undone = management_apply(&library, &undo).await;
         assert_eq!(undone.job.state.as_str(), "succeeded");
-        let restored = read_document(&file).expect("tags restored");
+        let restored = read_document(track_file(&file)).expect("tags restored");
         assert_eq!(
             restored.native.get("vorbis:MOOD"),
             Some(&vec!["Calm".to_owned()]),
@@ -10767,7 +10780,7 @@ async fn library_management_tools_journey() {
     assert!(management_step(&library).await, "restore planning runs");
     let restored = management_apply(&library, &restore).await;
     assert_eq!(restored.job.state.as_str(), "succeeded");
-    assert_eq!(read_fields(&file).expect("restored"), original);
+    assert_eq!(read_fields(track_file(&file)).expect("restored"), original);
 
     // The purge drops the originals only with the typed confirmation.
     let impact = management.purge_impact().expect("purge impact");
@@ -10848,7 +10861,7 @@ async fn library_management_tools_journey() {
             .as_str(),
         "ready"
     );
-    assert_eq!(read_fields(&file).expect("tags"), original);
+    assert_eq!(read_fields(track_file(&file)).expect("tags"), original);
     switch(true);
     management
         .discard(&ready.job_id, ready_revision)
@@ -11274,7 +11287,7 @@ async fn library_management_custom_edition_journey() {
             .expect("db")
     };
     let release_id_before =
-        read_fields(&file).expect("tags")[&TagField::MusicBrainzReleaseId].clone();
+        read_fields(track_file(&file)).expect("tags")[&TagField::MusicBrainzReleaseId].clone();
     db().execute_batch(&format!(
         "UPDATE local_album_external_identities SET release_mbid = NULL, \
          row_revision = row_revision + 1 WHERE local_album_id = '{album}'; \
@@ -11332,7 +11345,7 @@ async fn library_management_custom_edition_journey() {
             |row| row.get(0),
         )
         .expect("managed path");
-    let fields = read_fields(&music.join(&rel)).expect("managed tags");
+    let fields = read_fields(track_file(&music.join(&rel))).expect("managed tags");
     assert_eq!(fields[&TagField::Title], vec!["Sealed Title".to_owned()]);
     assert_eq!(fields[&TagField::Album], vec!["Sealed Album".to_owned()]);
     assert_eq!(
@@ -11462,7 +11475,7 @@ async fn library_management_artwork_journey() {
         .store()
         .save_blocking(settings)
         .expect("settings saved");
-    let original = read_document(&file).expect("original tags");
+    let original = read_document(track_file(&file)).expect("original tags");
     lm::service::LibraryManagementService::new(Arc::new(library.settings.store().clone()))
         .get_settings()
         .expect("settings normalized");
@@ -11500,7 +11513,7 @@ async fn library_management_artwork_journey() {
             .expect("managed path");
         music.join(rel)
     };
-    let managed_doc = || read_document(&managed_path()).expect("managed tags");
+    let managed_doc = || read_document(track_file(&managed_path())).expect("managed tags");
 
     let first = management
         .create_preview(preview("art-1"), "admin")
@@ -11622,7 +11635,7 @@ async fn library_management_artwork_journey() {
         restored.job.terminal_code
     );
     assert!(!cover_file.exists(), "the generated cover is gone");
-    let back = read_document(&file).expect("restored tags");
+    let back = read_document(track_file(&file)).expect("restored tags");
     assert_eq!(back.native, original.native, "the scrubbed tag is back");
     assert_eq!(
         back.pictures
@@ -12422,7 +12435,8 @@ async fn a_hand_retag_takes_the_album_over() {
     let (other, _) = managed.add_album("second", 1).await;
     managed.activate().await;
     let track = &tracks[0];
-    let title = |path: &Path| read_fields(path).expect("tags read")[&TagField::Title].clone();
+    let title =
+        |path: &Path| read_fields(track_file(path)).expect("tags read")[&TagField::Title].clone();
 
     // The app has never written this file: its first run goes ahead.
     managed.edit_outside(track, title_edit("Before")).await;
@@ -12563,7 +12577,7 @@ async fn unmanaged_changes_do_not_take_the_album_over() {
     assert_eq!(file_sha256(&file), edited, "the tag is left in the file");
     assert_eq!(managed.recorded(track), Some(edited), "and recorded");
     let mood = |path: &Path| {
-        read_document(path)
+        read_document(track_file(path))
             .expect("tags read")
             .native
             .get("vorbis:MOOD")
@@ -12756,7 +12770,7 @@ async fn a_mixed_id3v23_file_is_saved_as_v24() {
         .add_untouched_album("mixed", "management_full_v23.mp3")
         .await;
     let file = || managed.path(&tracks[0]);
-    let original = read_fields(&file()).expect("tags read");
+    let original = read_fields(track_file(&file())).expect("tags read");
     let audio = mp3_audio_tail(&std::fs::read(file()).expect("file reads")).to_vec();
     let saved_as_v24 = |what: &str| {
         assert_eq!(id3_frames(&file()).0, 4, "{what}");
@@ -12801,7 +12815,11 @@ async fn a_mixed_id3v23_file_is_saved_as_v24() {
     );
     let undone = management_apply(&managed.library, &undo).await;
     assert_eq!(undone.job.state.as_str(), "succeeded");
-    assert_eq!(read_fields(&file()).expect("tags read"), original, "undone");
+    assert_eq!(
+        read_fields(track_file(&file())).expect("tags read"),
+        original,
+        "undone"
+    );
     saved_as_v24("undone");
 
     let (handle, _) = managed
@@ -12840,7 +12858,7 @@ async fn a_mixed_id3v23_file_is_saved_as_v24() {
         restored.job.terminal_code
     );
     assert_eq!(
-        read_fields(&file()).expect("tags read"),
+        read_fields(track_file(&file())).expect("tags read"),
         original,
         "restored"
     );
@@ -13033,7 +13051,7 @@ async fn an_artwork_embed_is_refused_only_when_it_would_lose_a_picture() {
 
     // The run renames the file, so each read asks where it is now.
     let pictures = || {
-        read_document(&managed.path(&fronts_tracks[0]))
+        read_document(track_file(&managed.path(&fronts_tracks[0])))
             .expect("read")
             .pictures
     };
@@ -13229,7 +13247,7 @@ async fn a_hand_edit_of_a_managed_field_takes_the_album_over() {
     managed.look(&album).await;
     let file = managed.path(track);
     assert_eq!(
-        read_fields(&file).expect("tags read")[&TagField::Isrc],
+        read_fields(track_file(&file)).expect("tags read")[&TagField::Isrc],
         vec![isrc(0)],
         "{case}: the app wrote the ISRC"
     );
@@ -13607,7 +13625,8 @@ async fn handing_an_album_back_lets_the_app_write_again() {
     let (album, tracks) = managed.add_album("first", 2).await;
     managed.activate().await;
     managed.look(&album).await;
-    let title = |path: &Path| read_fields(path).expect("tags read")[&TagField::Title].clone();
+    let title =
+        |path: &Path| read_fields(track_file(path)).expect("tags read")[&TagField::Title].clone();
     let hand_back = || {
         Mutations::new(&managed.library)
             .hand_back_management(&album, "admin")
@@ -14082,7 +14101,7 @@ impl ManagedLibrary {
 /// The album tag in the file.
 fn album_tag(path: &Path) -> Vec<String> {
     use droppedneedle_library::tags::{TagField, read_fields};
-    read_fields(path).expect("tags read")[&TagField::Album].clone()
+    read_fields(track_file(path)).expect("tags read")[&TagField::Album].clone()
 }
 
 const STEPPED_BACK: &str =
@@ -14388,7 +14407,8 @@ async fn a_persons_write_over_a_hand_edit_leaves_it_the_users() {
     for album in [&renamed, &edited, &stale] {
         managed.look(album).await;
     }
-    let title = |path: &Path| read_fields(path).expect("tags read")[&TagField::Title].clone();
+    let title =
+        |path: &Path| read_fields(track_file(path)).expect("tags read")[&TagField::Title].clone();
 
     // A managed tag changed by hand, then the file renamed in the app.
     let track = &renamed_tracks[0];
@@ -14515,7 +14535,7 @@ async fn an_unmanaged_change_stays_accepted_through_every_write() {
     managed.look(&moved).await;
     let calm = || TagEdit::native("vorbis:MOOD", vec!["Calm".to_owned()]);
     let mood = |path: &Path| {
-        read_document(path)
+        read_document(track_file(path))
             .expect("tags read")
             .native
             .get("vorbis:MOOD")
@@ -15722,7 +15742,7 @@ async fn a_persons_run_over_a_hand_edit_in_a_manual_folder() {
             assert_eq!(undone.job.state.as_str(), "succeeded", "{case}");
             let file = managed.path(&tracks[0]);
             assert_eq!(
-                read_fields(&file).expect("tags read")[&TagField::Title],
+                read_fields(track_file(&file)).expect("tags read")[&TagField::Title],
                 vec!["By Hand".to_owned()],
                 "{case}: the hand edit is back"
             );
@@ -19769,7 +19789,7 @@ struct HoldFirstRead {
 impl droppedneedle_library::scan::TagReader for HoldFirstRead {
     fn read_tags(
         &self,
-        path: &Path,
+        file: droppedneedle_library::tags::TrackFile<'_>,
     ) -> Result<droppedneedle_library::scan::ScannedTags, droppedneedle_library::scan::TagReadError>
     {
         if self.armed.swap(false, std::sync::atomic::Ordering::SeqCst) {
@@ -19782,7 +19802,7 @@ impl droppedneedle_library::scan::TagReader for HoldFirstRead {
         }
         droppedneedle_library::scan::TagReader::read_tags(
             &droppedneedle_library::adapters::LoftyTagReader,
-            path,
+            file,
         )
     }
 }
@@ -20404,14 +20424,14 @@ struct HoldAfterRead {
 impl droppedneedle_library::scan::TagReader for HoldAfterRead {
     fn read_tags(
         &self,
-        path: &Path,
+        file: droppedneedle_library::tags::TrackFile<'_>,
     ) -> Result<droppedneedle_library::scan::ScannedTags, droppedneedle_library::scan::TagReadError>
     {
         let tags = droppedneedle_library::scan::TagReader::read_tags(
             &droppedneedle_library::adapters::LoftyTagReader,
-            path,
+            file,
         );
-        if path.ends_with(self.target)
+        if file.path().ends_with(self.target)
             && self.armed.swap(false, std::sync::atomic::Ordering::SeqCst)
         {
             if let Ok(reached) = self.reached.lock() {
@@ -21571,7 +21591,7 @@ async fn the_picard_profile_writes_musicbrainz_credits() {
     for (index, track) in tracks.iter().enumerate() {
         let file = managed.path(track);
         let name = file.display().to_string();
-        let fields = read_fields(&file).expect("tags read");
+        let fields = read_fields(track_file(&file)).expect("tags read");
         let get = |field: TagField| fields.get(&field).cloned().unwrap_or_default();
         let m4a = name.ends_with(".m4a");
         if index < 4 {
@@ -21769,7 +21789,7 @@ async fn automatic_credits_wait_for_musicbrainz_and_respect_a_hand_edit() {
     managed.worker_looks().await;
     let file = managed.path(&tracks[0]);
     assert_eq!(
-        read_fields(&file).expect("tags read")[&TagField::Composer],
+        read_fields(track_file(&file)).expect("tags read")[&TagField::Composer],
         vec!["Ludwig van Beethoven".to_owned()],
         "the credits are written once MusicBrainz answers"
     );
@@ -23249,7 +23269,9 @@ async fn acoustid_prints_are_written_from_the_audio() {
         .map(|track| {
             let path = managed.path(track);
             assert!(raw_acoustid(&path, "Fingerprint").is_empty());
-            generate_fingerprint(&path).expect("printed").fingerprint
+            generate_fingerprint(track_file(&path))
+                .expect("printed")
+                .fingerprint
         })
         .collect();
 
@@ -24391,7 +24413,7 @@ async fn a_translating_profile_writes_english_artist_names() {
         .iter()
         .map(|track| {
             let path = managed.path(track);
-            let tags = read_fields(&path).expect("tags read");
+            let tags = read_fields(track_file(&path)).expect("tags read");
             (path, tags)
         })
         .collect();
@@ -24413,7 +24435,7 @@ async fn a_translating_profile_writes_english_artist_names() {
             rel.starts_with("Ryūichi Sakamoto + Shiro Takatani"),
             "the folder follows the album artist: {name}"
         );
-        let fields = read_fields(&file).expect("tags read");
+        let fields = read_fields(track_file(&file)).expect("tags read");
         let get = |field: TagField| fields.get(&field).cloned().unwrap_or_default();
         assert_eq!(
             get(TagField::Artist),
@@ -24531,7 +24553,7 @@ async fn a_translating_profile_writes_english_artist_names() {
             .collect::<Vec<_>>()
     };
     for (path, tags) in &before {
-        let restored = read_fields(path).expect("restored file reads");
+        let restored = read_fields(track_file(path)).expect("restored file reads");
         assert_eq!(
             joined(&restored),
             joined(tags),
@@ -25015,7 +25037,7 @@ async fn an_artist_whose_files_carry_a_merged_id_is_linked_and_kept() {
     // identification the rescan queued for it has ended.
     rig.identification_idle(&album).await;
     rig.write_edition_tags(&headers, &album).await;
-    let written = read_fields(&music.join("first/01.flac")).expect("fields read");
+    let written = read_fields(track_file(&music.join("first/01.flac"))).expect("fields read");
     assert_eq!(
         written[&TagField::MusicBrainzArtistId],
         vec![CURRENT.to_owned()]
@@ -25122,7 +25144,7 @@ async fn translated_names_wait_for_musicbrainz() {
     *scripted.relations.lock().expect("script") =
         Some(managed.scripted_credits(&tracks, |_| concerto_credits()));
     let file = managed.path(&tracks[0]);
-    let original = read_fields(&file).expect("tags read");
+    let original = read_fields(track_file(&file)).expect("tags read");
 
     let (_, items) = managed
         .preview(SelectionKind::Albums, &[&album], "names-down")
@@ -25178,7 +25200,7 @@ async fn translated_names_wait_for_musicbrainz() {
     )
     .expect("woken");
     managed.worker_looks().await;
-    let fields = read_fields(&managed.path(&tracks[0])).expect("tags read");
+    let fields = read_fields(track_file(&managed.path(&tracks[0]))).expect("tags read");
     assert_eq!(
         fields[&TagField::Artist],
         vec!["Ryūichi Sakamoto".to_owned()]
@@ -26992,10 +27014,11 @@ async fn a_re_ripped_track_is_managed_again_and_undo_gives_it_back() {
         tracks.iter().all(|track| has_record(track)),
         "the app's own write"
     );
-    let title = |path: &Path| read_fields(path).expect("tags read")[&TagField::Title].clone();
+    let title =
+        |path: &Path| read_fields(track_file(path)).expect("tags read")[&TagField::Title].clone();
 
     let file = managed.path(track);
-    let before = read_scan_metadata(&file, AudioFormat::Flac)
+    let before = read_scan_metadata(track_file(&file), AudioFormat::Flac)
         .expect("reads")
         .1
         .duration_seconds
@@ -27004,7 +27027,7 @@ async fn a_re_ripped_track_is_managed_again_and_undo_gives_it_back() {
     std::fs::copy(&file, &rip).expect("copied to scratch");
     save_tags(&rip, &[title_edit("First 1 (rip)")]).expect("retagged");
     lengthen_flac(&rip, 2.0);
-    let after = read_scan_metadata(&rip, AudioFormat::Flac)
+    let after = read_scan_metadata(track_file(&rip), AudioFormat::Flac)
         .expect("reads")
         .1
         .duration_seconds
@@ -27709,7 +27732,7 @@ async fn undo_keeps_an_edited_edition_cover_and_still_undoes_the_tags() {
     std::fs::write(&cover, &own).unwrap();
     let track = managed.music.join("edited/01.flac");
     let title = || {
-        read_tag_only(&track, AudioFormat::Flac)
+        read_tag_only(track_file(&track), AudioFormat::Flac)
             .expect("tags read")
             .title
     };

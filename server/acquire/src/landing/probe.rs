@@ -3,13 +3,14 @@
 //! The download client reports files or a job folder; the probe walks
 //! them (never following symlinks), sorts audio from everything else, and
 //! reads each audio file's tags and stream header the way the library
-//! scan does: container headers only, no decode. Blocking work: callers
-//! run it on a blocking thread.
+//! scan does: container headers only, no decode. A file is read beneath
+//! the reported path it was found under, following no link below it.
+//! Blocking work: callers run it on a blocking thread.
 
 use std::path::{Path, PathBuf};
 
 use droppedneedle_library::tags::read::{HeaderInfo, read_scan_metadata};
-use droppedneedle_library::tags::{AudioFormat, AudioTag, format_for_path};
+use droppedneedle_library::tags::{AudioFormat, AudioTag, TrackFile, format_for_path};
 
 /// How deep the probe walks a job folder (`Album/CD1/track.flac` is 2).
 const MAX_DEPTH: usize = 4;
@@ -106,11 +107,11 @@ pub fn probe(paths: &[PathBuf], libraries: &[PathBuf]) -> Landing {
     let mut files = Vec::new();
     let mut landing = Landing::default();
     for path in paths {
-        collect(path, 0, libraries, &mut files, &mut landing);
+        collect(path, path, 0, libraries, &mut files, &mut landing);
     }
-    files.sort();
-    files.dedup();
-    for path in files {
+    files.sort_by(|left, right| left.1.cmp(&right.1));
+    files.dedup_by(|left, right| left.1 == right.1);
+    for (root, path) in files {
         if landing.audio.len() + landing.unreadable.len() >= MAX_FILES {
             landing.truncated = true;
             break;
@@ -123,7 +124,7 @@ pub fn probe(paths: &[PathBuf], libraries: &[PathBuf]) -> Landing {
             landing.samples.push(path);
             continue;
         }
-        match read_one(&path, format) {
+        match read_one(TrackFile::new(&root, &path), format) {
             Some(file) => landing.audio.push(file),
             None => landing.unreadable.push(path),
         }
@@ -131,11 +132,14 @@ pub fn probe(paths: &[PathBuf], libraries: &[PathBuf]) -> Landing {
     landing
 }
 
+/// Gather the files below reported path `top`, each with the folder it is
+/// read beneath: `top` itself, or its parent when it is a file.
 fn collect(
+    top: &Path,
     path: &Path,
     depth: usize,
     libraries: &[PathBuf],
-    files: &mut Vec<PathBuf>,
+    files: &mut Vec<(PathBuf, PathBuf)>,
     landing: &mut Landing,
 ) {
     if libraries.iter().any(|dir| path.starts_with(dir)) {
@@ -156,7 +160,10 @@ fn collect(
         return;
     }
     if meta.is_file() {
-        files.push(path.to_path_buf());
+        let root = if depth == 0 { top.parent() } else { Some(top) };
+        if let Some(root) = root {
+            files.push((root.to_path_buf(), path.to_path_buf()));
+        }
         return;
     }
     if !meta.is_dir() || depth >= MAX_DEPTH || files.len() >= MAX_FILES {
@@ -171,16 +178,17 @@ fn collect(
         if name.to_string_lossy().starts_with('.') {
             continue;
         }
-        collect(&entry.path(), depth + 1, libraries, files, landing);
+        collect(top, &entry.path(), depth + 1, libraries, files, landing);
     }
 }
 
 /// Tags and header for one file. A parser panic on a malformed file
 /// counts as unreadable instead of taking the worker down.
-fn read_one(path: &Path, format: AudioFormat) -> Option<LandedFile> {
+fn read_one(file: TrackFile<'_>, format: AudioFormat) -> Option<LandedFile> {
+    let path = file.path();
     let size_bytes = std::fs::metadata(path).map(|meta| meta.len()).ok()?;
     let read = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        read_scan_metadata(path, format)
+        read_scan_metadata(file, format)
     }));
     match read {
         Ok(Ok((tag, header))) => Some(LandedFile {

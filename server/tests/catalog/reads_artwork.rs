@@ -544,9 +544,11 @@ async fn embedded_art_from_the_scan_beats_the_archive_when_preferred() {
     let files = ScratchDir::new("reads-artwork-files");
     let track = files.join("01.flac");
     std::fs::copy("tests/fixtures/library/management_full.flac", &track).unwrap();
-    let embedded = droppedneedle_library::tags::read_cover_art(&track)
-        .unwrap()
-        .expect("fixture carries art");
+    let embedded = droppedneedle_library::tags::read_cover_art(
+        droppedneedle_library::tags::TrackFile::new(&files, &track),
+    )
+    .unwrap()
+    .expect("fixture carries art");
     let rig = rig(Some(&track)).await;
 
     let store = SqliteScanStore::new(

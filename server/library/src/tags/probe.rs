@@ -27,7 +27,7 @@ use symphonia::core::io::{MediaSource, MediaSourceStream};
 use symphonia::core::meta::MetadataOptions;
 use symphonia_adapter_libopus::OpusDecoder;
 
-use super::{AudioFormat, TagsError, format_for_path};
+use super::{AudioFormat, TagsError, TrackFile, format_for_path};
 
 /// Technical properties of the audio stream and file on disk.
 #[derive(Debug, Clone, PartialEq)]
@@ -66,14 +66,15 @@ fn codec_registry() -> &'static CodecRegistry {
 }
 
 /// Probe technical info. WMA is rejected before any byte is read.
-pub fn probe(path: &Path) -> Result<AudioInfo, TagsError> {
+pub fn probe(at: TrackFile<'_>) -> Result<AudioInfo, TagsError> {
+    let path = at.path();
     let format = format_for_path(path)?;
-    let file_size_bytes = path.metadata().map(|meta| meta.len()).unwrap_or(0);
     if format == AudioFormat::Aac {
-        return probe_adts(path, file_size_bytes);
+        return probe_adts(at);
     }
 
-    let opened = open_reader(path, format)?;
+    let opened = open_reader(at, format)?;
+    let file_size_bytes = opened.size;
     let is_alac = opened.params.codec == CODEC_ID_ALAC;
     let duration_seconds =
         decode_count_duration(opened.reader, opened.params.clone()).map_err(|reason| {
@@ -83,7 +84,7 @@ pub fn probe(path: &Path) -> Result<AudioInfo, TagsError> {
             }
         })?;
     let bitrate = average_bitrate(file_size_bytes, duration_seconds);
-    let bit_depth = bit_depth_for(path, format, is_alac);
+    let bit_depth = bit_depth_for(at, format, is_alac);
     Ok(AudioInfo {
         duration_seconds,
         bitrate,
@@ -96,6 +97,8 @@ pub fn probe(path: &Path) -> Result<AudioInfo, TagsError> {
 }
 
 struct OpenStream {
+    /// The file's size in bytes, 0 when it could not be read.
+    size: u64,
     reader: Box<dyn FormatReader>,
     track_id: u32,
     params: AudioCodecParameters,
@@ -126,16 +129,19 @@ fn probe_adts_duration(
     Ok(packets as f64 * 1024.0 / f64::from(sample_rate))
 }
 
-fn open_reader(path: &Path, format: AudioFormat) -> Result<OpenStream, TagsError> {
-    let file = super::open_track(path).map_err(|source| TagsError::Io {
+fn open_reader(at: TrackFile<'_>, format: AudioFormat) -> Result<OpenStream, TagsError> {
+    let path = at.path();
+    let file = at.open().map_err(|source| TagsError::Io {
         path: path.display().to_string(),
         source,
     })?;
-    open_stream(Box::new(file), path, format)
+    let size = file.metadata().map(|meta| meta.len()).unwrap_or(0);
+    open_stream(Box::new(file), size, path, format)
 }
 
 fn open_stream(
     source: Box<dyn MediaSource>,
+    size: u64,
     path: &Path,
     format: AudioFormat,
 ) -> Result<OpenStream, TagsError> {
@@ -184,6 +190,7 @@ fn open_stream(
     }
     let track_id = track.id;
     Ok(OpenStream {
+        size,
         reader,
         track_id,
         params,
@@ -195,10 +202,15 @@ fn open_stream(
 /// ADTS has no trustworthy container duration (symphonia's measured
 /// 10x wrong), so duration comes from the packet count: every ADTS
 /// frame carries exactly 1024 samples.
-fn probe_adts(path: &Path, file_size_bytes: u64) -> Result<AudioInfo, TagsError> {
-    let opened = open_reader(path, AudioFormat::Aac)?;
-    let duration_seconds =
-        probe_adts_duration(opened.reader, opened.track_id, opened.sample_rate, path)?;
+fn probe_adts(at: TrackFile<'_>) -> Result<AudioInfo, TagsError> {
+    let opened = open_reader(at, AudioFormat::Aac)?;
+    let file_size_bytes = opened.size;
+    let duration_seconds = probe_adts_duration(
+        opened.reader,
+        opened.track_id,
+        opened.sample_rate,
+        at.path(),
+    )?;
     Ok(AudioInfo {
         duration_seconds,
         bitrate: average_bitrate(file_size_bytes, duration_seconds),
@@ -254,11 +266,12 @@ fn decode_count_duration(
 /// count. Nothing larger than one packet is held. `sink` answers false to
 /// stop early. True when the decode wobbled mid-stream.
 pub(crate) fn decode_stream(
-    path: &Path,
+    at: TrackFile<'_>,
     format: AudioFormat,
     mut sink: impl FnMut(u32, u32, &[f32]) -> bool,
 ) -> Result<bool, TagsError> {
-    let opened = open_reader(path, format).map_err(|error| match error {
+    let path = at.path();
+    let opened = open_reader(at, format).map_err(|error| match error {
         TagsError::Probe { reason, .. } => TagsError::Decode {
             path: path.display().to_string(),
             reason,
@@ -324,11 +337,12 @@ pub(crate) fn decode_stream(
 /// set. Tolerates mid-stream errors with the partial flag; a
 /// decode that yields nothing at all is a hard error.
 pub(crate) fn decode_pcm_s16(
-    path: &Path,
+    at: TrackFile<'_>,
     format: AudioFormat,
     max_seconds: Option<f64>,
 ) -> Result<DecodedPcm, TagsError> {
-    let opened = open_reader(path, format).map_err(|error| match error {
+    let path = at.path();
+    let opened = open_reader(at, format).map_err(|error| match error {
         TagsError::Probe { reason, .. } => TagsError::Decode {
             path: path.display().to_string(),
             reason,
@@ -412,7 +426,7 @@ fn average_bitrate(file_size_bytes: u64, duration_seconds: f64) -> u32 {
 
 /// Bit depth from lofty's header parse with v2's suppression rules: only
 /// for lossless containers (FLAC/WAV), and for M4A only when ALAC.
-fn bit_depth_for(path: &Path, format: AudioFormat, is_alac: bool) -> Option<u8> {
+fn bit_depth_for(at: TrackFile<'_>, format: AudioFormat, is_alac: bool) -> Option<u8> {
     let lossy = match format {
         AudioFormat::Flac | AudioFormat::Wav => false,
         AudioFormat::M4a => !is_alac,
@@ -421,8 +435,8 @@ fn bit_depth_for(path: &Path, format: AudioFormat, is_alac: bool) -> Option<u8> 
     if lossy {
         return None;
     }
-    let file = super::open_track(path).ok()?;
-    let file_type = lofty::file::FileType::from_path(path)?;
+    let file = at.open().ok()?;
+    let file_type = lofty::file::FileType::from_path(at.path())?;
     lofty::probe::Probe::with_file_type(std::io::BufReader::new(file), file_type)
         .read()
         .ok()

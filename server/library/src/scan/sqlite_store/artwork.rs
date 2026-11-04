@@ -48,7 +48,6 @@ use super::{Lane, RunStop, ScanStoreError, SqliteScanStore};
 use crate::clock::LibraryClock as _;
 use crate::scan::models::ArtworkSource;
 use crate::tags::TagsError;
-use droppedneedle_kernel::beneath::{RootLinks, open_file_beneath};
 use droppedneedle_providers::coverart::sniff_image_content_type;
 
 /// Folder image names, most deliberate first, matched case-insensitively.
@@ -83,9 +82,18 @@ pub struct ArtworkSweep {
 pub(super) struct TrackFile {
     pub(super) id: String,
     pub(super) path: PathBuf,
+    /// The path below the library folder the scan found it in.
+    relative_path: String,
     pub(super) stat_revision: String,
     /// The size the scan read.
     pub(super) size_bytes: i64,
+}
+
+impl TrackFile {
+    /// The track's file, read beneath its library folder.
+    pub(super) fn file(&self) -> Option<crate::tags::TrackFile<'_>> {
+        crate::tags::TrackFile::in_library(&self.path, &self.relative_path)
+    }
 }
 
 /// The art row an album has now.
@@ -311,6 +319,7 @@ pub(super) fn album_tracks(
         let track = TrackFile {
             id: row.id,
             path: PathBuf::from(row.file_path),
+            relative_path: row.relative_path,
             stat_revision: row.stat_revision,
             size_bytes: row.file_size_bytes,
         };
@@ -404,7 +413,7 @@ fn found_folder(found: &Option<FoundArt>) -> Option<&Path> {
 /// Folder image first, then the first embedded picture.
 fn find_art(tracks: &[TrackFile], dirs: &[PathBuf]) -> ArtSearch {
     let mut unread = false;
-    if let Some((path, bytes)) = folder_image(dirs, &mut unread) {
+    if let Some((path, bytes)) = folder_image(tracks, dirs, &mut unread) {
         return ArtSearch {
             found: Some(FoundArt {
                 source: ArtworkSource::Folder,
@@ -416,7 +425,7 @@ fn find_art(tracks: &[TrackFile], dirs: &[PathBuf]) -> ArtSearch {
         };
     }
     for track in tracks {
-        match read_track_art(&track.path) {
+        match read_track_art(track) {
             Ok(Some(bytes))
                 if bytes.len() as u64 <= COVER_MAX_BYTES
                     && sniff_image_content_type(&bytes).is_some() =>
@@ -444,13 +453,15 @@ fn find_art(tracks: &[TrackFile], dirs: &[PathBuf]) -> ArtSearch {
     }
 }
 
-/// The first picture in a track file, opened without following a link. A
-/// FIFO or device fails rather than hanging the sweep.
-fn read_track_art(path: &Path) -> Result<Option<Vec<u8>>, TagsError> {
-    let file = path
-        .parent()
+/// The first picture in a track file, opened beneath its library folder
+/// without following a link. A FIFO or device fails rather than hanging
+/// the sweep.
+fn read_track_art(track: &TrackFile) -> Result<Option<Vec<u8>>, TagsError> {
+    let path = track.path.as_path();
+    let file = track
+        .file()
         .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::InvalidInput))
-        .and_then(|folder| open_file_beneath(folder, path, RootLinks::Follow))
+        .and_then(crate::tags::TrackFile::open)
         .map_err(|source| TagsError::Io {
             path: path.display().to_string(),
             source,
@@ -459,9 +470,23 @@ fn read_track_art(path: &Path) -> Result<Option<Vec<u8>>, TagsError> {
 }
 
 /// The first readable raster image named like a cover in the folders.
-/// `unread` is set when a folder or image could not be read.
-fn folder_image(dirs: &[PathBuf], unread: &mut bool) -> Option<(PathBuf, Vec<u8>)> {
+/// `unread` is set when a folder or image could not be read. A folder no
+/// track's library folder holds (above two library folders an album
+/// spans) is not looked in.
+fn folder_image(
+    tracks: &[TrackFile],
+    dirs: &[PathBuf],
+    unread: &mut bool,
+) -> Option<(PathBuf, Vec<u8>)> {
     for dir in dirs {
+        let Some(root) = tracks
+            .iter()
+            .filter_map(TrackFile::file)
+            .map(crate::tags::TrackFile::root)
+            .find(|root| dir.starts_with(root))
+        else {
+            continue;
+        };
         let Ok(entries) = std::fs::read_dir(dir) else {
             *unread = true;
             continue;
@@ -485,7 +510,7 @@ fn folder_image(dirs: &[PathBuf], unread: &mut bool) -> Option<(PathBuf, Vec<u8>
                 let Some(path) = by_name.get(&format!("{stem}.{extension}")) else {
                     continue;
                 };
-                match read_listed_image(dir, path) {
+                match read_listed_image(root, path) {
                     Ok(Some(bytes)) if sniff_image_content_type(&bytes).is_some() => {
                         return Some((path.clone(), bytes));
                     }
@@ -501,12 +526,12 @@ fn folder_image(dirs: &[PathBuf], unread: &mut bool) -> Option<(PathBuf, Vec<u8>
     None
 }
 
-/// The bytes of image `path`, listed in `dir` as a regular file. The open
-/// does not follow a link, so a file swapped for one after the listing is
-/// not read. `None` when it is empty or too large, an error when it does
-/// not open or read.
-fn read_listed_image(dir: &Path, path: &Path) -> std::io::Result<Option<Vec<u8>>> {
-    let file = open_file_beneath(dir, path, RootLinks::Follow)?;
+/// The bytes of image `path`, listed as a regular file, opened beneath
+/// library folder `root`. The open follows no link below it, so a file or
+/// folder swapped for one after the listing is not read. `None` when it is
+/// empty or too large, an error when it does not open or read.
+fn read_listed_image(root: &Path, path: &Path) -> std::io::Result<Option<Vec<u8>>> {
+    let file = crate::tags::TrackFile::new(root, path).open()?;
     let size = file.metadata()?.len();
     if size == 0 || size > COVER_MAX_BYTES {
         return Ok(None);

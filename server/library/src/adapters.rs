@@ -10,6 +10,7 @@ use std::sync::Arc;
 use super::publish::PublishError;
 use super::publish::planner::SpaceProbe;
 use super::scan::seams::{ScannedTags, TagReadError, TagReader};
+use super::tags::TrackFile;
 
 // ---------------------------------------------------------------------------
 // Scan -> tags: read-only tag access over the tags module.
@@ -23,10 +24,11 @@ use super::scan::seams::{ScannedTags, TagReadError, TagReader};
 pub struct LoftyTagReader;
 
 impl TagReader for LoftyTagReader {
-    fn read_tags(&self, path: &Path) -> Result<ScannedTags, TagReadError> {
+    fn read_tags(&self, file: TrackFile<'_>) -> Result<ScannedTags, TagReadError> {
+        let path = file.path();
         let format = super::tags::format_for_path(path).map_err(|_| TagReadError::Fatal)?;
         let read = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            super::tags::read::read_scan_metadata(path, format)
+            super::tags::read::read_scan_metadata(file, format)
         }));
         match read {
             Ok(Ok((tag, header))) => Ok(ScannedTags { tag, header }),
@@ -40,12 +42,12 @@ impl TagReader for LoftyTagReader {
 
     /// Reads only the first MPEG frame of an MP3, never its tags; every
     /// other format is measured.
-    fn length_measured(&self, path: &Path) -> Result<bool, TagReadError> {
-        let format = super::tags::format_for_path(path).map_err(|_| TagReadError::Fatal)?;
+    fn length_measured(&self, file: TrackFile<'_>) -> Result<bool, TagReadError> {
+        let format = super::tags::format_for_path(file.path()).map_err(|_| TagReadError::Fatal)?;
         if format != super::tags::AudioFormat::Mp3 {
             return Ok(true);
         }
-        super::tags::mpeg_length::length_measured(path).map_err(|_| TagReadError::Deferred)
+        super::tags::mpeg_length::length_measured(file).map_err(|_| TagReadError::Deferred)
     }
 }
 
@@ -108,10 +110,8 @@ pub fn free_bytes_for(dir: &Path) -> Result<u64, PublishError> {
 mod tests {
     use super::*;
 
-    fn fixture(name: &str) -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../tests/fixtures/library")
-            .join(name)
+    fn fixtures() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../tests/fixtures/library")
     }
 
     /// The scan reads the same tags the full read does, and its header
@@ -129,12 +129,13 @@ mod tests {
             "management_full.wav",
             "management_full.aac",
         ] {
-            let path = fixture(name);
+            let (root, path) = (fixtures(), fixtures().join(name));
+            let file = TrackFile::new(&root, &path);
             let format = super::super::tags::format_for_path(&path).expect("fixture format");
-            let scanned = reader.read_tags(&path).expect("scan read");
-            let full = super::super::tags::read::read_tag_only(&path, format).expect("full read");
+            let scanned = reader.read_tags(file).expect("scan read");
+            let full = super::super::tags::read::read_tag_only(file, format).expect("full read");
             assert_eq!(scanned.tag, full, "fixture {name}");
-            let probed = super::super::tags::probe(&path)
+            let probed = super::super::tags::probe(file)
                 .expect("probe")
                 .duration_seconds;
             let header = scanned.header.duration_seconds.expect("header duration");
@@ -143,13 +144,17 @@ mod tests {
                 "fixture {name}: {header} vs {probed}"
             );
         }
+        let wma = fixtures().join("management_full.wma");
         assert_eq!(
-            reader.read_tags(&fixture("management_full.wma")),
+            reader.read_tags(TrackFile::new(&fixtures(), &wma)),
             Err(TagReadError::Fatal)
         );
         // A vanished file is an I/O failure: deferred, offered again.
         assert_eq!(
-            reader.read_tags(Path::new("/nonexistent-missing-file.mp3")),
+            reader.read_tags(TrackFile::new(
+                Path::new("/"),
+                Path::new("/nonexistent-missing-file.mp3")
+            )),
             Err(TagReadError::Deferred)
         );
     }

@@ -20,7 +20,7 @@ use rubato::{
 };
 use rusty_chromaprint::{Configuration, FingerprintCompressor, Fingerprinter};
 
-use super::{TagsError, format_for_path};
+use super::{TagsError, TrackFile, format_for_path};
 
 /// Chromaprint's native rate: everything is resampled to this.
 const TARGET_RATE: u32 = 11025;
@@ -44,18 +44,19 @@ pub struct Fingerprint {
 }
 
 /// Generate the fingerprint for one file. WMA is rejected outright.
-pub fn generate_fingerprint(path: &Path) -> Result<Fingerprint, TagsError> {
+pub fn generate_fingerprint(at: TrackFile<'_>) -> Result<Fingerprint, TagsError> {
+    let path = at.path();
     let format = format_for_path(path)?;
     // The container header knows the duration; decoding the whole file
     // for it is the fallback when the header says nothing.
-    let header_seconds = super::read::read_scan_metadata(path, format)
+    let header_seconds = super::read::read_scan_metadata(at, format)
         .ok()
         .and_then(|(_, header)| header.duration_seconds)
         .filter(|seconds| *seconds > 0.0);
     let duration_seconds = match header_seconds {
         Some(seconds) => seconds,
         None => {
-            super::probe(path)
+            super::probe(at)
                 .map_err(|error| match error {
                     TagsError::Probe { reason, .. } => TagsError::Fingerprint {
                         path: path.display().to_string(),
@@ -67,15 +68,15 @@ pub fn generate_fingerprint(path: &Path) -> Result<Fingerprint, TagsError> {
         }
     };
     let pcm =
-        super::probe::decode_pcm_s16(path, format, Some(WINDOW_SECONDS)).map_err(|error| {
-            match error {
+        super::probe::decode_pcm_s16(at, format, Some(WINDOW_SECONDS)).map_err(
+            |error| match error {
                 TagsError::Decode { reason, .. } => TagsError::Fingerprint {
                     path: path.display().to_string(),
                     reason,
                 },
                 other => other,
-            }
-        })?;
+            },
+        )?;
     let mono = downmix_to_mono(&pcm.samples, pcm.channels);
     let at_target = resample_to_target(&mono, pcm.sample_rate, path)?;
     let quantized = quantize(&at_target);

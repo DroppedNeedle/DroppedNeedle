@@ -2,15 +2,12 @@
 //! at all, and the items it leaves as they are because undo could not
 //! put them back exactly.
 
-use std::fs;
-use std::path::Path;
-
 use super::document::read_pictures;
 use super::id3::Id3;
 use super::mp4::Mp4;
 use super::vorbis::Vorbis;
 use super::{Refusal, TagFormat};
-use crate::tags::{AudioFormat, TagsError, format_for_path};
+use crate::tags::{AudioFormat, TagsError, TrackFile, format_for_path};
 
 /// Why a save leaves a tag item as it is: a scrub does not remove it,
 /// and no edit may replace it.
@@ -61,7 +58,8 @@ impl TagsKept {
 /// What a tag write that does `pictures` can keep of this file's tag.
 /// Read-only containers report nothing, as untagged files do unless a
 /// picture write would lose one of their pictures.
-pub fn tags_kept(path: &Path, pictures: PicturesPlan) -> Result<TagsKept, TagsError> {
+pub fn tags_kept(at: TrackFile<'_>, pictures: PicturesPlan) -> Result<TagsKept, TagsError> {
+    let path = at.path();
     let format = format_for_path(path)?;
     let kept: KeptFn = match format {
         AudioFormat::Mp3 => kept_as::<Id3>,
@@ -69,7 +67,7 @@ pub fn tags_kept(path: &Path, pictures: PicturesPlan) -> Result<TagsKept, TagsEr
         AudioFormat::M4a => kept_as::<Mp4>,
         AudioFormat::Aac | AudioFormat::Wav => return Ok(TagsKept::default()),
     };
-    let bytes = fs::read(path).map_err(|source| TagsError::Io {
+    let bytes = at.read().map_err(|source| TagsError::Io {
         path: path.display().to_string(),
         source,
     })?;

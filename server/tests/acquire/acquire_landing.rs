@@ -5,7 +5,7 @@
 //! candidates run out. Real worker, landing, publisher and catalog over
 //! one scratch database; MusicBrainz is a scripted release source.
 
-use crate::common::Probe;
+use crate::common::{Probe, track_file};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -139,7 +139,8 @@ pub(crate) fn land_file(
 pub(crate) fn length_ms(path: &Path) -> Option<u64> {
     let format = droppedneedle_library::tags::format_for_path(path).expect("format");
     let (_, header) =
-        droppedneedle_library::tags::read::read_scan_metadata(path, format).expect("header");
+        droppedneedle_library::tags::read::read_scan_metadata(track_file(path), format)
+            .expect("header");
     header
         .duration_seconds
         .map(|seconds| (seconds * 1000.0) as u64)
@@ -4594,8 +4595,9 @@ async fn a_download_into_a_folder_that_keeps_its_own_tags_keeps_them() {
         assert_eq!(identity.2, placed_on(&e.new, 1).2, "{case}");
         let placed = rig.music.join(copy_rel(1, SOUR_TIMES));
         let format = droppedneedle_library::tags::format_for_path(&placed).expect("format");
-        let (tag, _) = droppedneedle_library::tags::read::read_scan_metadata(&placed, format)
-            .expect("tags read");
+        let (tag, _) =
+            droppedneedle_library::tags::read::read_scan_metadata(track_file(&placed), format)
+                .expect("tags read");
         let policy: String = rig.scalar(&format!(
             "SELECT applied_policy FROM local_tracks WHERE id = '{track}'"
         ));
@@ -5260,7 +5262,8 @@ async fn a_version_is_replaced_and_its_history_follows() {
         let file = rig.music.join(copy_rel(s, SOUR_TIMES));
         let format = droppedneedle_library::tags::format_for_path(&file).expect("format");
         let (tag, _) =
-            droppedneedle_library::tags::read::read_scan_metadata(&file, format).expect("tags");
+            droppedneedle_library::tags::read::read_scan_metadata(track_file(&file), format)
+                .expect("tags");
         assert_eq!(
             tag.title, "Sour Times",
             "{s}: not retagged with O's override"
