@@ -8,18 +8,26 @@
 	page shows sits on them.
 	The dots press in from the corners when the frame mounts (key it on the
 	route to print again), and as the page scrolls the top corners ease away
-	and the bottom edge rises a little. It draws only then: nothing runs while
-	the page is still. Reduced motion gets the finished frame and no drift;
+	and the bottom edge rises a little. It draws only then. Once printed it
+	breathes: each band is drawn twice, the second time with its fields at
+	BREATH_LEAST of their extent, and the full drawing fades out over the
+	smaller one and back on a slow cycle. The dots never move, so they keep
+	clear of content throughout, and the compositor runs it with no redraw.
+	It pauses while the tab is hidden, a band is off screen or the page
+	scrolls. Reduced motion gets the finished frame with no drift or breath;
 	high contrast and forced colours get none (`dn-decor`).
 -->
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { prefersReducedMotion } from 'svelte/motion';
 	import { drawFrit, easeOut, PRINT_MS, type FritClear, type FritField } from './frit';
 
 	let root: HTMLDivElement;
 	let topCanvas: HTMLCanvasElement;
 	let bottomCanvas: HTMLCanvasElement;
+	// The same bands with their fields at BREATH_LEAST, shown under the
+	// full ones as they fade.
+	let topLeast: HTMLCanvasElement;
+	let bottomLeast: HTMLCanvasElement;
 
 	// Every size is in CSS pixels, from the frame's own width.
 	function sizes(width: number) {
@@ -47,13 +55,22 @@
 	const RISE = 0.3;
 	const DRIFT_PX = 900;
 
+	// The breath: 7 s each way, so a 14 s cycle, from the drawn frame down to
+	// fields of BREATH_LEAST their extent and back.
+	const BREATH_MS = 7000;
+	const BREATH_LEAST = 0.86;
+	const SCROLL_REST_MS = 200;
+
 	onMount(() => {
 		const host = root.parentElement;
 		const top = topCanvas.getContext('2d');
 		const bottom = bottomCanvas.getContext('2d');
-		if (!host || !top || !bottom) return;
+		const topSmall = topLeast.getContext('2d');
+		const bottomSmall = bottomLeast.getContext('2d');
+		if (!host || !top || !bottom || !topSmall || !bottomSmall) return;
 
 		const quiet = matchMedia('(prefers-contrast: more), (forced-colors: active)');
+		const reduce = matchMedia('(prefers-reduced-motion: reduce)');
 		const started = performance.now();
 		let width = 0;
 		let topHeight = 0;
@@ -70,6 +87,11 @@
 		let layout = 0;
 		let drawnTop = '';
 		let drawnBottom = '';
+		// The two breaths, top then bottom, once the print-in has finished.
+		let breaths: Animation[] = [];
+		// Whether each canvas, top then bottom, is on screen.
+		const shown = [false, false];
+		let scrolling = 0;
 
 		function fit(canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D, height: number) {
 			const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -131,9 +153,12 @@
 				bottomHeight = Math.ceil(s.bottom.ry * (1 + RISE));
 				fit(topCanvas, top!, topHeight);
 				fit(bottomCanvas, bottom!, bottomHeight);
+				fit(topLeast, topSmall!, topHeight);
+				fit(bottomLeast, bottomSmall!, bottomHeight);
 			}
 			const bottomAt = Math.max(0, floorTop - bottomHeight);
 			bottomCanvas.style.top = `${bottomAt}px`;
+			bottomLeast.style.top = `${bottomAt}px`;
 			clearTop = collect(box.top, box.top + topHeight, box.left);
 			clearBottom = collect(box.top + bottomAt, box.top + bottomAt + bottomHeight, box.left);
 			layout += 1;
@@ -142,7 +167,7 @@
 		function frame(now: number) {
 			raf = 0;
 			if (quiet.matches || width === 0) return;
-			const still = prefersReducedMotion.current;
+			const still = reduce.matches;
 			const progress = still ? 1 : easeOut((now - started) / PRINT_MS);
 			const y = window.scrollY;
 			const view = window.innerHeight;
@@ -152,15 +177,19 @@
 				const drift = still ? 0 : Math.min(y / DRIFT_PX, 1);
 				const key = `${layout} ${colour} ${progress} ${drift}`;
 				if (key !== drawnTop) {
-					const shrink = 1 - SHRINK * drift;
-					const fields: FritField[] = [
-						{ x: width, y: 0, rx: s.right.rx * shrink, ry: s.right.ry * shrink, k: 1 }
-					];
-					if (s.left) {
-						fields.push({ x: 0, y: 0, rx: s.left.rx * shrink, ry: s.left.ry * shrink, k: 0.9 });
-					}
-					top!.fillStyle = colour;
-					drawFrit(top!, fields, s.step, progress, width, topHeight, clearTop);
+					const fields = (scale: number): FritField[] => {
+						const shrink = (1 - SHRINK * drift) * scale;
+						const right = {
+							x: width,
+							y: 0,
+							rx: s.right.rx * shrink,
+							ry: s.right.ry * shrink,
+							k: 1
+						};
+						if (!s.left) return [right];
+						return [right, { x: 0, y: 0, rx: s.left.rx * shrink, ry: s.left.ry * shrink, k: 0.9 }];
+					};
+					paint(top!, topSmall!, fields, progress, topHeight, clearTop);
 					drawnTop = key;
 				}
 			}
@@ -171,18 +200,88 @@
 				const drift = still ? 0 : Math.min(Math.max((view - floorInView) / (view * 0.6), 0), 1);
 				const key = `${layout} ${colour} ${progress} ${drift}`;
 				if (key !== drawnBottom) {
-					const ry = s.bottom.ry * (1 + RISE * drift);
-					const fields: FritField[] = [
-						{ x: 0, y: bottomHeight, rx: s.bottom.rx, ry, k: 1 },
-						{ x: width, y: bottomHeight, rx: s.bottom.rx, ry, k: 1 }
-					];
-					bottom!.fillStyle = colour;
-					drawFrit(bottom!, fields, s.step, progress, width, bottomHeight, clearBottom);
+					const fields = (scale: number): FritField[] => {
+						const rx = s.bottom.rx * scale;
+						const ry = s.bottom.ry * (1 + RISE * drift) * scale;
+						return [
+							{ x: 0, y: bottomHeight, rx, ry, k: 1 },
+							{ x: width, y: bottomHeight, rx, ry, k: 1 }
+						];
+					};
+					paint(bottom!, bottomSmall!, fields, progress, bottomHeight, clearBottom);
 					drawnBottom = key;
 				}
 			}
 
 			if (progress < 1) raf = requestAnimationFrame(frame);
+			else breathe();
+		}
+
+		// Draws one band in full and, while it may breathe, at BREATH_LEAST
+		// beneath it. The smaller fields cover only dots the full ones do, so
+		// the full drawing alone shows while it is opaque.
+		function paint(
+			full: CanvasRenderingContext2D,
+			least: CanvasRenderingContext2D,
+			fields: (scale: number) => FritField[],
+			progress: number,
+			height: number,
+			clear: FritClear[]
+		) {
+			const step = sizes(width).step;
+			full.fillStyle = colour;
+			drawFrit(full, fields(1), step, progress, width, height, clear);
+			if (reduce.matches) {
+				least.clearRect(0, 0, width, height);
+				return;
+			}
+			least.fillStyle = colour;
+			drawFrit(least, fields(BREATH_LEAST), step, progress, width, height, clear);
+		}
+
+		function breathe() {
+			if (breaths.length > 0 || reduce.matches || quiet.matches) return;
+			const keyframes = [{ opacity: 1 }, { opacity: 0 }];
+			breaths = [topCanvas, bottomCanvas].map((canvas) =>
+				canvas.animate(keyframes, {
+					duration: BREATH_MS,
+					easing: 'ease-in-out',
+					direction: 'alternate',
+					iterations: Infinity
+				})
+			);
+			sync();
+		}
+
+		// Runs each breath only while the tab shows, its canvas is on screen
+		// and the page is not scrolling; stops them for reduced motion.
+		function sync() {
+			if (reduce.matches || quiet.matches) {
+				for (const breath of breaths) breath.cancel();
+				breaths = [];
+				return;
+			}
+			const run = !document.hidden && !scrolling;
+			breaths.forEach((breath, i) => {
+				const go = run && shown[i];
+				if (go && breath.playState !== 'running') breath.play();
+				else if (!go && breath.playState === 'running') breath.pause();
+			});
+		}
+
+		function scrolled() {
+			schedule();
+			clearTimeout(scrolling);
+			scrolling = window.setTimeout(() => {
+				scrolling = 0;
+				sync();
+			}, SCROLL_REST_MS);
+			sync();
+		}
+
+		function motionChanged() {
+			relayout();
+			sync();
 		}
 
 		function schedule() {
@@ -215,24 +314,46 @@
 			attributes: true,
 			attributeFilter: ['class', 'hidden']
 		});
-		window.addEventListener('scroll', schedule, { passive: true });
+		// A canvas coming into view takes the other's place in the cycle, so
+		// the two breathe together; it is at the screen's edge as it does.
+		const onScreen = new IntersectionObserver((entries) => {
+			for (const entry of entries) {
+				const i = entry.target === topCanvas ? 0 : 1;
+				shown[i] = entry.isIntersecting;
+				const [mine, other] = [breaths[i], breaths[1 - i]];
+				if (shown[i] && mine && other?.currentTime != null) mine.currentTime = other.currentTime;
+			}
+			sync();
+		});
+		onScreen.observe(topCanvas);
+		onScreen.observe(bottomCanvas);
+		window.addEventListener('scroll', scrolled, { passive: true });
 		window.addEventListener('resize', relayout, { passive: true });
-		quiet.addEventListener('change', schedule);
+		document.addEventListener('visibilitychange', sync);
+		quiet.addEventListener('change', motionChanged);
+		reduce.addEventListener('change', motionChanged);
 
 		return () => {
 			cancelAnimationFrame(raf);
 			clearTimeout(settle);
+			clearTimeout(scrolling);
+			for (const breath of breaths) breath.cancel();
 			resized.disconnect();
 			themed.disconnect();
 			changed.disconnect();
-			window.removeEventListener('scroll', schedule);
+			onScreen.disconnect();
+			window.removeEventListener('scroll', scrolled);
 			window.removeEventListener('resize', relayout);
-			quiet.removeEventListener('change', schedule);
+			document.removeEventListener('visibilitychange', sync);
+			quiet.removeEventListener('change', motionChanged);
+			reduce.removeEventListener('change', motionChanged);
 		};
 	});
 </script>
 
 <div class="dn-decor dn-frit-frame" aria-hidden="true" bind:this={root}>
+	<canvas bind:this={topLeast}></canvas>
+	<canvas bind:this={bottomLeast}></canvas>
 	<canvas bind:this={topCanvas}></canvas>
 	<canvas bind:this={bottomCanvas}></canvas>
 </div>
