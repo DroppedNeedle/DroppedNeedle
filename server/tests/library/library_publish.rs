@@ -3376,16 +3376,27 @@ fn files_under(dir: &std::path::Path) -> Vec<PathBuf> {
 /// A removal of two files stopped before its commit is unwound by
 /// recovery, never committed: one stopped after its first file was
 /// journaled never counts as staged in full, and one whose unwind put a
-/// file home and stopped before it recorded so is finished as an unwind.
-/// Both files stay home, both tracks stay listed, and nothing reaches the
-/// bin.
+/// file home and stopped before it recorded so, or stopped with the file
+/// linked home and its hidden name not yet removed, is finished as an
+/// unwind. Both files stay home under one name each, both tracks stay
+/// listed, and nothing reaches the bin.
 #[test]
 fn a_stopped_removal_unwinds_with_every_file_home() {
-    for (case, point) in [
-        ("after the first file", CrashPoint::AfterFirstFileStaged),
+    for (case, point, linked) in [
+        (
+            "after the first file",
+            CrashPoint::AfterFirstFileStaged,
+            false,
+        ),
         (
             "unwind stopped after a file went home",
             CrashPoint::BeforeCatalogCommit,
+            false,
+        ),
+        (
+            "unwind stopped between the link and the unlink",
+            CrashPoint::BeforeCatalogCommit,
+            true,
         ),
     ] {
         let fix = fixture("remove-stopped");
@@ -3425,15 +3436,22 @@ fn a_stopped_removal_unwinds_with_every_file_home() {
                 .unwrap();
             assert_eq!(row_a.state, JournalState::Published, "{case}");
             let a = fix.sandbox.resolve("music", "staging/a.flac").unwrap();
-            std::fs::rename(&row_a.staged, &a).unwrap();
+            if linked {
+                std::fs::hard_link(&row_a.staged, &a).unwrap();
+            } else {
+                std::fs::rename(&row_a.staged, &a).unwrap();
+            }
         }
 
         reconcile(&restart(&fix), &fix.sandbox).unwrap();
         let conn = open_db(&fix);
         for (track, rel) in [("track-a", "staging/a.flac"), ("track-b", "staging/b.flac")] {
-            assert!(
-                fix.sandbox.resolve("music", rel).unwrap().exists(),
-                "{case}: {rel} is home"
+            let home = fix.sandbox.resolve("music", rel).unwrap();
+            assert!(home.exists(), "{case}: {rel} is home");
+            assert_eq!(
+                std::os::unix::fs::MetadataExt::nlink(&std::fs::metadata(&home).unwrap()),
+                1,
+                "{case}: {rel} has one name"
             );
             assert_eq!(
                 track_row(&conn, track).1,

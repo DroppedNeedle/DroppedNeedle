@@ -5295,6 +5295,60 @@ async fn a_removed_album_is_put_back_from_its_page() {
     assert_eq!(availability_of(&conn, &gone_track), "missing");
 }
 
+/// A plugin's file that reaches placement past its deadline, or after the
+/// caller stopped waiting, is never placed: the write answers busy or
+/// cancelled and the library folder is as it was, with no folder made for
+/// it left behind.
+#[tokio::test]
+async fn a_plugin_write_past_its_budget_is_never_placed() {
+    use droppedneedle_library::publish::session::PluginFileRefusal;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::{Duration, Instant};
+
+    let (_scratch, library, music) = bare_library("lib-plugin-budget").await;
+    plant(&music, "Kept/01.flac", "flac_no_tags.flac");
+    add_music_root(&library, &music).await;
+    let before = snapshot_tree(&music);
+    for (case, late) in [
+        ("past the deadline", true),
+        ("caller stopped waiting", false),
+    ] {
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let flag = cancelled.clone();
+        let budget = if late {
+            Duration::from_millis(200)
+        } else {
+            Duration::from_secs(30)
+        };
+        library.publishing.set_publish_hooks(
+            Some(Box::new(move |_: &Path| {
+                if late {
+                    std::thread::sleep(Duration::from_millis(400));
+                } else {
+                    flag.store(true, Ordering::SeqCst);
+                }
+            })),
+            None,
+        );
+        let added = library.core.add_plugin_file(
+            "notes",
+            "plugin/late.txt",
+            b"hello".to_vec(),
+            Instant::now() + budget,
+            &cancelled,
+            &|_, _| Ok(true),
+            &|_, _, _| Ok(()),
+        );
+        library.publishing.set_publish_hooks(None, None);
+        match (late, &added) {
+            (true, Err(PluginFileRefusal::Busy)) | (false, Err(PluginFileRefusal::Cancelled)) => {}
+            _ => panic!("{case}: {added:?}"),
+        }
+        assert_eq!(snapshot_tree(&music), before, "{case}: nothing was placed");
+        assert!(!music.join("plugin").exists(), "{case}: no folder left");
+    }
+}
+
 /// While the library-wide switch is off nothing writes to a library
 /// folder: removing an album to the recycle bin, putting one back and a
 /// plugin's new file are refused with the library-off 409 and leave the
@@ -18162,24 +18216,34 @@ async fn a_retagged_and_renamed_album_keeps_what_people_made() {
         assert!(!sent.contains(private), "{private} in {sent}");
     }
 
-    // An album marked from a player app marks the tracks that answer for
-    // it, never an old row that continued into one.
+    // An album, or an album artist, marked from a player app marks the
+    // tracks that answer for it, never an old row that continued into one.
     let path = scratch.join("app.db");
-    PlayMarkStore::new(CollectionsDb::new(
+    let marks = PlayMarkStore::new(CollectionsDb::new(
         droppedneedle_kernel::db::Db::open_for_tests(&path).expect("database opens"),
         std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
-    ))
-    .mark("listener", MarkScope::Album(&joined), false)
-    .await
-    .expect("the album is marked");
-    let on_old_rows: i64 = db
+    ));
+    let artist: String = db
         .query_row(
-            "SELECT COUNT(*) FROM catalog_user_play_marks WHERE local_track_id IN (?1, ?2)",
-            [o4, o5],
+            "SELECT album_artist_id FROM local_albums WHERE id = ?1",
+            [&joined],
             |row| row.get(0),
         )
-        .expect("marks count");
-    assert_eq!(on_old_rows, 0, "an album mark skips the continued rows");
+        .expect("the album's artist");
+    for scope in [MarkScope::Album(&joined), MarkScope::AlbumArtist(&artist)] {
+        marks
+            .mark("listener", scope, false)
+            .await
+            .expect("the scope is marked");
+        let on_old_rows: i64 = db
+            .query_row(
+                "SELECT COUNT(*) FROM catalog_user_play_marks WHERE local_track_id IN (?1, ?2)",
+                [o4, o5],
+                |row| row.get(0),
+            )
+            .expect("marks count");
+        assert_eq!(on_old_rows, 0, "a mark skips the continued rows");
+    }
 
     rescan(&library).await;
     assert_eq!(continuations(&db), 1, "a second scan moves nothing");
