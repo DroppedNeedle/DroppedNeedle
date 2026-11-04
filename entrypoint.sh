@@ -78,25 +78,26 @@ if [ "$TARGET_UID" != "$PUID" ] || [ "$TARGET_GID" != "$PGID" ]; then
     echo "[init] WARNING: Requested $PUID:$PGID but running as $TARGET_UID:$TARGET_GID."
 fi
 
-# The four folders the server writes belong to the runtime user. A folder owned
-# by another uid was left by an earlier start under another PUID (a remap, or a
-# PUID set back to the baked 1000), so the files that uid owns in it move to the
-# runtime user. A folder the runtime user already owns was handed over before
-# and is not walked, so a recreate costs nothing; a root-owned one is left to the
-# write check below. -depth moves the folder itself last, so a stopped hand-over
-# runs again. find does not follow links, and chown -h changes a link itself,
-# never its target. A folder that refuses the change gets a warning, not a stop;
-# the write check for config and cache below still decides whether the start
-# can go on.
-for dir in /app/config /app/cache /app/plugins /app/imports; do
-    PREV_UID=$(stat -c %u "$dir" 2>/dev/null) || continue
-    [ "$PREV_UID" = "$TARGET_UID" ] && continue
-    [ "$PREV_UID" = 0 ] && continue
-    echo "[init] Handing $dir over from uid=$PREV_UID to uid=$TARGET_UID."
-    if ! find "$dir" -depth -user "$PREV_UID" -exec chown -h "$TARGET_UID:$TARGET_GID" {} + 2>/dev/null; then
-        echo "[init] WARNING: Could not hand $dir over to uid=$TARGET_UID (the mount may not support ownership changes)."
-    fi
-done
+# The four folders the server writes belong to the runtime user. The uid that
+# owns /app/config is the one the server last ran as: when it differs from the
+# runtime uid (a remap, or a PUID set back to the baked 1000), the files that
+# uid owns in the four folders move to the runtime user. Only that uid's files
+# move, so files another account owns in a shared folder (often imports) are
+# never touched. A root-owned config is left to the write check below.
+# -depth moves each folder itself last, so a stopped hand-over runs again. find
+# does not follow links, and chown -h changes a link itself, never its target.
+# A folder that refuses the change gets a warning, not a stop; the write check
+# for config and cache below still decides whether the start can go on.
+PREV_UID=$(stat -c %u /app/config 2>/dev/null || echo "$TARGET_UID")
+if [ "$PREV_UID" != "$TARGET_UID" ] && [ "$PREV_UID" != 0 ]; then
+    echo "[init] Handing the data folders over from uid=$PREV_UID to uid=$TARGET_UID."
+    for dir in /app/config /app/cache /app/plugins /app/imports; do
+        [ -d "$dir" ] || continue
+        if ! find "$dir" -depth -user "$PREV_UID" -exec chown -h "$TARGET_UID:$TARGET_GID" {} + 2>/dev/null; then
+            echo "[init] WARNING: Could not hand $dir over to uid=$TARGET_UID (the mount may not support ownership changes)."
+        fi
+    done
+fi
 
 if is_server "$1"; then
     echo "[init] Runtime user: droppedneedle (uid=$TARGET_UID gid=$TARGET_GID)"
