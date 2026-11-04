@@ -1165,12 +1165,28 @@ async fn unreadable_spotify_settings_refuse_new_imports_and_hold_queued_ones() {
         })
         .await
         .expect("settings save");
-    let requeued =
-        after_commits(&bundle.db, "the job goes back", || latest_in(State::Queued)).await;
-    assert_eq!(requeued.attempts, 0, "the wait spent no attempt");
-    auth.clock().advance(10_000);
+    // It goes back with its attempt returned. Due at once it may run
+    // before the wait sees it queued, so either is the step after the hold.
+    let after = after_commits(&bundle.db, "the job goes back", || async {
+        queue_ref
+            .latest(imports::jobs::KIND, key_ref)
+            .await
+            .expect("job reads")
+            .filter(|row| matches!(row.state, State::Queued | State::Done))
+    })
+    .await;
+    if after.state == State::Queued {
+        assert_eq!(after.attempts, 0, "the wait spent no attempt");
+        auth.clock().advance(10_000);
+    }
     let done = poll_job_done(&bundle, &user_id, "sp-playlist-1").await;
     assert_eq!(done, ImportState::Done, "queued import finishes");
+    let finished = queue_ref
+        .latest(imports::jobs::KIND, key_ref)
+        .await
+        .expect("job reads")
+        .expect("the job row");
+    assert_eq!(finished.attempts, 1, "the wait spent no attempt");
 }
 
 /// A re-import that fails while its tracks are written leaves the playlist
