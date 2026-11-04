@@ -701,11 +701,13 @@ Run from the repo root. `make help` lists every target.
   Build on `src/lib/ui` (`Button`, `IconButton`, `Card`, `Input`, `Modal`,
   `CardTitle`, `CardActions`, `ConfirmDialog`, `Field`, `TextField`,
   `NumberField`, `SecretField`, `SelectField`, `TextAreaField`, `ToggleRow`,
+  `RadioCards`,
   `SaveBar`,
   `AsyncButton`, `QueryBoundary`, `RatingStars`, `PageShell`, `Toaster`,
   `CoverPlaceholder`, `UnsavedChangesGuard`):
   do not hand-write a button, a card, a text input, a modal, a confirm, a
-  form row or a query's loading, error and empty branches. Lint refuses a
+  form row, a `<dialog>` or a query's loading, error and empty branches
+  (lint refuses a `<dialog>` outside `src/lib/ui` and any `confirm()`). Lint refuses a
   raw `btn` or `card` class (or their DaisyUI modifiers) and a text-like
   `<input>` outside `src/lib/ui`. A look the kit lacks is added to the kit
   as a variant, not to one screen.
