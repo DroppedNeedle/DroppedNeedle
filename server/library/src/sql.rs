@@ -35,6 +35,13 @@ droppedneedle_kernel::sql! {
     pub(super) ALBUM_TRACKS = "SELECT id, local_album_id, root_id, relative_path FROM local_tracks \
                  WHERE local_album_id = ?1 AND availability = 'indexed' \
                  ORDER BY disc_number, track_number, id";
+    /// One indexed track's file, as `INDEXED_TRACK` and `ALBUM_TRACKS` read it.
+    pub(super) row IndexedTrackFile for [INDEXED_TRACK, ALBUM_TRACKS] {
+        id: String,
+        local_album_id: String,
+        root_id: String,
+        relative_path: String,
+    }
 }
 
 /// `?,?,?` for an `IN` list of `len` values.

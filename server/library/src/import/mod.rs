@@ -90,6 +90,7 @@ use super::publish::publisher::{JoinedAlbum, copy_folder, joined_album};
 use super::publish::remove::{self, Probe, Refusal, Target};
 use super::publish::snapshots::sha256_hex;
 use super::publish::{PublishError, TagUpdates};
+use super::removal::TargetFault;
 use super::scan::models::{Availability, EffectivePolicy};
 use super::scan::roots::{LibraryRoot, RootRegistry};
 use super::settings::LibrarySettings;
@@ -1157,21 +1158,17 @@ fn old_copies(
 ) -> Result<Vec<Target>, String> {
     let mut targets = Vec::with_capacity(replaces.len());
     for copy in indexed.iter().filter(|copy| replaces.contains(&copy.id)) {
-        let path = registry.resolve(&copy.root_id).and_then(|root| {
-            crate::removal::join_inside(&root.path, &copy.relative_path).map(|path| (root, path))
-        });
-        let Some((root, path)) = path else {
-            return Err(OUTSIDE_ROOT.to_owned());
-        };
-        match remove::probe(&root.path, &path) {
-            Ok(probe) => targets.push(Target {
-                track_id: copy.id.clone(),
-                root_id: copy.root_id.clone(),
-                relative_path: copy.relative_path.clone(),
-                probe,
-                expect_sha256: None,
-            }),
-            Err(error) => {
+        let target = crate::removal::probed_target(
+            registry,
+            &copy.id,
+            &copy.root_id,
+            &copy.relative_path,
+            None,
+        );
+        match target {
+            Ok(target) => targets.push(target),
+            Err(TargetFault::OutsideRoot) => return Err(OUTSIDE_ROOT.to_owned()),
+            Err(TargetFault::Unreadable(error)) => {
                 tracing::warn!(%error, track_id = copy.id, "the copy an imported file replaces could not be read");
                 return Err("Your copy could not be read.".to_owned());
             }

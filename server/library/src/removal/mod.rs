@@ -949,20 +949,18 @@ impl Mutations {
         }
         let mut targets = Vec::with_capacity(tracks.len());
         for track in tracks {
-            let root = registry
-                .resolve(&track.root_id)
-                .ok_or(MutationError::Conflict(FILE_OUTSIDE_ROOT))?;
-            let path = join_inside(&root.path, &track.relative_path)
-                .ok_or(MutationError::Conflict(FILE_OUTSIDE_ROOT))?;
-            let probe =
-                remove::probe(&root.path, &path).map_err(|error| refusal(Refusal::from(error)))?;
-            targets.push(Target {
-                track_id: track.id.clone(),
-                root_id: track.root_id.clone(),
-                relative_path: track.relative_path.clone(),
-                probe,
-                expect_sha256: removal.expect_sha256.map(str::to_owned),
-            });
+            let target = probed_target(
+                &registry,
+                &track.id,
+                &track.root_id,
+                &track.relative_path,
+                removal.expect_sha256,
+            )
+            .map_err(|fault| match fault {
+                TargetFault::OutsideRoot => MutationError::Conflict(FILE_OUTSIDE_ROOT),
+                TargetFault::Unreadable(error) => refusal(Refusal::from(error)),
+            })?;
+            targets.push(target);
         }
         let sidecars = self.sidecars(tracks, &registry);
         // Reading the files above takes time on a large album.
@@ -1143,11 +1141,12 @@ impl Mutations {
 }
 
 fn track_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TrackFile> {
+    let row = crate::sql::IndexedTrackFile::read(row)?;
     Ok(TrackFile {
-        id: row.get(0)?,
-        album_id: row.get(1)?,
-        root_id: row.get(2)?,
-        relative_path: row.get(3)?,
+        id: row.id,
+        album_id: row.local_album_id,
+        root_id: row.root_id,
+        relative_path: row.relative_path,
     })
 }
 
@@ -1181,6 +1180,35 @@ fn rescan_scopes(album_id: &str, tracks: &[TrackFile], registry: &RootRegistry) 
             });
     }
     scopes.into_values().collect()
+}
+
+/// Why a track's file cannot be taken away.
+pub(crate) enum TargetFault {
+    /// The file's path does not lie inside a known library folder.
+    OutsideRoot,
+    /// The file could not be read.
+    Unreadable(PublishError),
+}
+
+/// The removal target for one track's file: placed inside its library
+/// folder and read once, before the publish lock (see [`remove::probe`]).
+pub(crate) fn probed_target(
+    registry: &RootRegistry,
+    track_id: &str,
+    root_id: &str,
+    relative_path: &str,
+    expect_sha256: Option<&str>,
+) -> Result<Target, TargetFault> {
+    let root = registry.resolve(root_id).ok_or(TargetFault::OutsideRoot)?;
+    let path = join_inside(&root.path, relative_path).ok_or(TargetFault::OutsideRoot)?;
+    let probe = remove::probe(&root.path, &path).map_err(TargetFault::Unreadable)?;
+    Ok(Target {
+        track_id: track_id.to_owned(),
+        root_id: root_id.to_owned(),
+        relative_path: relative_path.to_owned(),
+        probe,
+        expect_sha256: expect_sha256.map(str::to_owned),
+    })
 }
 
 /// Join a stored relative path under its root, refusing anything that
