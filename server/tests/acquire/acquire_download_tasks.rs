@@ -659,6 +659,7 @@ enum Chosen {
 async fn queued_past_the_wait(
     copies: i64,
     chosen: Chosen,
+    discards_fail: bool,
 ) -> (Vec<(i64, String)>, Option<Reason>, usize) {
     use droppedneedle_acquire::downloads::store::TaskDetails;
     use droppedneedle_acquire::search_jobs::store::{
@@ -727,6 +728,7 @@ async fn queued_past_the_wait(
     let mock = MockSlskd::start().await.expect("mock starts");
     mock.script_responses((0..copies).map(soulseek_peer).collect());
     mock.queue_enqueued(true);
+    mock.fail_removals(discards_fail);
     let worker = soulseek_worker(&journal, &mock).await;
     worker.run_once(1).await;
     clock.advance(16 * 60 * 1000);
@@ -754,15 +756,15 @@ async fn queued_past_the_wait(
 
 // A Soulseek copy queued at its peer past the preferred-quality wait gives
 // way only once the next copy is queued: with a second peer it moves, the
-// slow copy is cleaned up and nothing is blocklisted; with one peer it
-// keeps its place. A first copy the automatic review took gives way; one a
-// person picked does not.
+// slow copy is cleaned up (or kept for cleanup while slskd refuses to drop
+// it) and nothing is blocklisted; with one peer it keeps its place. A first
+// copy the automatic review took gives way; one a person picked does not.
 #[tokio::test]
 async fn a_queued_copy_gives_way_only_to_a_copy_that_is_queued() {
     let waiting = |index: i64| (index, "acquiring".to_owned());
     let moved = vec![(0, "complete".to_owned()), waiting(1)];
 
-    let (attempts, outcome, quarantined) = queued_past_the_wait(2, Chosen::Searched).await;
+    let (attempts, outcome, quarantined) = queued_past_the_wait(2, Chosen::Searched, false).await;
     assert_eq!(
         attempts, moved,
         "the next copy is queued, the slow one discarded"
@@ -770,15 +772,24 @@ async fn a_queued_copy_gives_way_only_to_a_copy_that_is_queued() {
     assert_eq!(outcome, Some(Reason::QueueGaveWay));
     assert_eq!(quarantined, 0, "a slow peer is not blocklisted");
 
-    let (attempts, outcome, _) = queued_past_the_wait(1, Chosen::Searched).await;
+    let (attempts, outcome, quarantined) = queued_past_the_wait(2, Chosen::Searched, true).await;
+    assert_eq!(
+        attempts,
+        vec![(0, "cleanup_pending".to_owned()), waiting(1)],
+        "a slow copy slskd will not drop stays for cleanup"
+    );
+    assert_eq!(outcome, Some(Reason::QueueGaveWay));
+    assert_eq!(quarantined, 0, "a slow peer is not blocklisted");
+
+    let (attempts, outcome, _) = queued_past_the_wait(1, Chosen::Searched, false).await;
     assert_eq!(attempts, vec![waiting(0)], "the only peer keeps its place");
     assert_eq!(outcome, None);
 
-    let (attempts, outcome, _) = queued_past_the_wait(2, Chosen::Reviewed).await;
+    let (attempts, outcome, _) = queued_past_the_wait(2, Chosen::Reviewed, false).await;
     assert_eq!(attempts, moved, "an automatic pick gives way");
     assert_eq!(outcome, Some(Reason::QueueGaveWay));
 
-    let (attempts, outcome, _) = queued_past_the_wait(2, Chosen::Picked).await;
+    let (attempts, outcome, _) = queued_past_the_wait(2, Chosen::Picked, false).await;
     assert_eq!(attempts, vec![waiting(0)], "a person's pick stays");
     assert_eq!(outcome, None);
 }

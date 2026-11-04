@@ -111,6 +111,8 @@ struct MockState {
     handler_delay_ms: u64,
     /// Enqueued files wait in the peer's queue instead of finishing.
     queue_enqueued: bool,
+    /// Removing a transfer answers 500.
+    fail_removals: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -563,6 +565,13 @@ async fn remove_transfer(
         .inner
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if guard.fail_removals {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"detail": "removal refused"})),
+        )
+            .into_response();
+    }
     let before = guard.transfers.get(&username).map(Vec::len).unwrap_or(0);
     if let Some(bucket) = guard.transfers.get_mut(&username) {
         bucket.retain(|transfer| transfer.id != transfer_id);
@@ -695,6 +704,15 @@ impl MockSlskd {
             .queue_enqueued = queued;
     }
 
+    /// Make every later transfer removal fail (or succeed again).
+    pub fn fail_removals(&self, fail: bool) {
+        self.state
+            .inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .fail_removals = fail;
+    }
+
     /// Delay (ms) inside search/enqueue handlers for the semaphore test.
     pub fn set_handler_delay_ms(&self, delay_ms: u64) {
         self.state
@@ -810,6 +828,7 @@ impl MockSlskd {
         guard.max_in_flight = 0;
         guard.handler_delay_ms = 0;
         guard.queue_enqueued = false;
+        guard.fail_removals = false;
         self.statuses.reset();
     }
 }
