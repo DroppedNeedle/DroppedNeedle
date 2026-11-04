@@ -196,7 +196,7 @@ DroppedNeedle talks to your own running slskd over its local HTTP API (`X-API-Ke
 The downloads path is where most installs go wrong. Three rules:
 
 1. Expose slskd's completed-downloads directory to DroppedNeedle read-write under one shared parent mount (e.g. library at `/data/music`, completions at `/data/slskd/complete`).
-2. Point `SLSKD_DOWNLOADS_PATH` at that exact directory, not its parent.
+2. Point `SLSKD_DOWNLOADS_PATH` at that exact directory as mounted, not its parent or a folder below it. DroppedNeedle takes the path you set as given and checks only what lies below it for links; to read a folder inside it, use the Downloads subfolder setting.
 3. Skip nested binds under `/data`. Each one is a new mount boundary, which drops imports to the slower copy fallback.
 
 Keep slskd's incomplete directory on the same mount as its downloads directory: slskd can report a transfer Completed before a cross-mount move between the two finishes, so a split mount risks verifying half-copied files.
@@ -230,7 +230,7 @@ web:
 The second source is Usenet through SABnzbd. For searching, either add Newznab-compatible indexers one by one (NZBGeek, NZBPlanet, NZB.su, Slug, and others) or point at a Prowlarr that already has them. The engine searches your chosen side, enqueues NZBs in your SABnzbd, and imports finished files through the same scoring, verification, and quarantine pipeline as slskd.
 
 1. Expose SABnzbd's completed-downloads directory read-write, ideally under the same shared parent mount as the library so the [mount rules](#slskd) hold. In SABnzbd, point its Downloads folder setting at the matching path (e.g. `/data/sabnzbd/complete`).
-2. Under Settings > Download Client, enable Usenet and enter your SABnzbd URL and API key.
+2. Under Settings > Download Client, enable Usenet, enter your SABnzbd URL and API key, and set Downloads mount to that directory as mounted, not a folder below it (only what lies below the path you set is checked for links).
 3. Under Settings > Indexers / Prowlarr, pick one search backend: add each indexer's URL plus API key, or enter your Prowlarr URL plus API key. Then Test and Save.
 
 Indexers added one by one are asked at most about once a second each. Many cap API calls and NZB grabs per day and report how much is used; DroppedNeedle keeps to those caps, skipping an indexer that has used up its day until its allowance comes back, and waits out any slow-down an indexer asks for.
@@ -291,7 +291,7 @@ Behind a reverse proxy, list the proxy in `TRUSTED_PROXY_IPS` and have it pass `
 
 Keep `027` for a private box. Use `002` when DroppedNeedle and another trusted service in the same group both write the same media. Skip `000`: it makes new files writable by every local account the filesystem allows. `UMASK` shapes new files only; a move can keep the source mode the download client set.
 
-Unraid commonly uses `nobody:users` (PUID 99, PGID 100). Point PUID and PGID at whoever owns the mounted config and cache paths. The container skips ownership changes it cannot make, which covers FUSE, NFS, CIFS, and rootless setups. A read-only config or cache mount refuses to start before anything gets written.
+Unraid commonly uses `nobody:users` (PUID 99, PGID 100). Point PUID and PGID at whoever owns the mounted config and cache paths. After a PUID change, back to 1000 included, the next start hands the files the old id owns in `/app/config`, `/app/cache`, `/app/plugins` and `/app/imports` to the new one. The container skips ownership changes it cannot make, which covers FUSE, NFS, CIFS, and rootless setups. A read-only config or cache mount refuses to start before anything gets written.
 
 `/app/config` and `/app/cache` must be writable and honor SQLite locking, `fsync`, and atomic replacement. Plain bind mounts, named volumes, local Unraid shares, and TrueNAS datasets with normal permissions all qualify. NFS and SMB mounts only work when they support the same file locking SQLite needs. If `/app/cache` is on a network or FUSE mount, or is a symlink, `metadata-cache.db` is kept beside the database instead; if that place is refused too, provider answers are fetched each time and the server log says the provider cache is off. On Docker Desktop for Windows, prefer named volumes for those two paths.
 
@@ -309,8 +309,8 @@ Where things live in the UI:
 
 | Setting | Location |
 |-|-|
-| Library paths, import naming script, scan schedule, folder watching, AcoustID key | Settings > Library |
-| Library Management profiles, previews, recovery, the recycle bin folder and retention | Library Management (admin) |
+| Library paths, import naming script, scan schedule, folder watching, AcoustID key, storage cap | Settings > Library |
+| Library Management profiles, previews, recovery, the recycle bin folder and retention | Library Management (admin), also reached from Organize files under Settings > Library |
 | Download clients (slskd, SABnzbd), source priority, quality tiers, picking a copy, wanted watcher | Settings > Download Client |
 | Newznab indexers or Prowlarr | Settings > Indexers / Prowlarr |
 | Edition preferences, managing unconfirmed matches | Settings > Editions |
@@ -341,8 +341,10 @@ Where things live in the UI:
 | Wrapped API | Settings > Wrapped API |
 | Outbound provider calls, rate limits and background jobs | Settings > Diagnostics |
 | Discover queue and top picks tuning | Settings > Advanced |
+| AudioDB images: on or off, key, name search fallback, direct remote images, preferring local cover art | Settings > Advanced |
 | Request history, ignored albums and clean-up interval | Settings > Advanced |
 | Usenet retention days | Settings > Download Client |
+| App version, update check and release notes | Settings > About |
 
 ---
 
