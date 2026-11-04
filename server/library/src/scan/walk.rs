@@ -1685,7 +1685,7 @@ mod tests {
     #[test]
     fn a_walk_reports_the_folders_on_another_filesystem() {
         let scratch =
-            droppedneedle_kernel::db::scratch::ScratchDir::new("walk-mounts").expect("scratch");
+            droppedneedle_kernel::test_support::ScratchDir::new("walk-mounts").expect("scratch");
         let root = scratch.join("music");
         for file in ["local/1.flac", "nas/x/2.flac", "nas/y/z/3.flac"] {
             let path = root.join(file);

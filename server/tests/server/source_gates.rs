@@ -1629,7 +1629,7 @@ fn no_port_narration_or_plan_ids() {
 const TEST_SUPPORT_SITES: &[(&str, &str)] = &[
     (
         "kernel/src/db/mod.rs",
-        "the database's own test knobs and scratch folders, which reach the lane, the read pools and the cache from inside db/",
+        "the database's own test knobs, which reach the lane, the read pools and the cache from inside db/",
     ),
     (
         "kernel/src/db/statement.rs",

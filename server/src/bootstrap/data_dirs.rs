@@ -490,7 +490,7 @@ pub fn names_data_enc_key(config_dir: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use droppedneedle_kernel::db::scratch::ScratchDir;
+    use droppedneedle_kernel::test_support::ScratchDir;
 
     fn dirs_in(root: &Path) -> DataDirs {
         let dirs = DataDirs::from_config(&AppConfig::with_root(0, root));

@@ -563,7 +563,7 @@ mod tests {
     /// sets the watcher off.
     #[test]
     fn staging_temps_leave_the_digests_alone() {
-        let scratch = droppedneedle_kernel::db::scratch::ScratchDir::new("scan-watch-sidecar")
+        let scratch = droppedneedle_kernel::test_support::ScratchDir::new("scan-watch-sidecar")
             .expect("scratch");
         let root = scratch.to_path_buf();
         std::fs::create_dir_all(root.join("a")).expect("mkdir");

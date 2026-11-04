@@ -221,8 +221,8 @@ pub const PREVIEW_EXPIRED: Reason = reason(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use droppedneedle_kernel::db::scratch::ScratchDir;
     use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto};
+    use droppedneedle_kernel::test_support::ScratchDir;
 
     /// A token confirms only the material it was issued for, for the
     /// person who previewed, in the flow that issued it, as issued, and

@@ -316,9 +316,9 @@ mod tests {
 
     #[test]
     fn only_files_inside_a_root_resolve() {
-        let music =
-            droppedneedle_kernel::db::scratch::ScratchDir::new("download-root").expect("music dir");
-        let elsewhere = droppedneedle_kernel::db::scratch::ScratchDir::new("download-other")
+        let music = droppedneedle_kernel::test_support::ScratchDir::new("download-root")
+            .expect("music dir");
+        let elsewhere = droppedneedle_kernel::test_support::ScratchDir::new("download-other")
             .expect("other dir");
         std::fs::create_dir_all(music.path().join("Artist")).expect("album dir");
         std::fs::write(music.path().join("Artist/song.flac"), b"x").expect("song");
@@ -369,7 +369,7 @@ mod tests {
     #[test]
     fn a_linked_folder_below_a_root_is_never_served() {
         let scratch =
-            droppedneedle_kernel::db::scratch::ScratchDir::new("download-linked").expect("dir");
+            droppedneedle_kernel::test_support::ScratchDir::new("download-linked").expect("dir");
         let base = scratch.path();
         let music = base.join("music");
         std::fs::create_dir_all(music.join("Artist/Album")).expect("album dir");

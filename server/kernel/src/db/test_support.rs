@@ -15,11 +15,11 @@ use super::cache::CacheDb;
 use super::factory::DbConfig;
 use super::handle::Db;
 use super::read_pool::ReadPools;
-use super::scratch::ScratchDir;
 use super::writer::{
     BACKGROUND_SOFT_BUDGET, Budget, FOREGROUND_SOFT_BUDGET, LaneLimits, WATCH_TICK, WalHold,
     WriteLane,
 };
+use crate::test_support::ScratchDir;
 
 /// How long a test database waits for a turn, a connection or a write's
 /// end before giving up: long enough that a loaded host only slows a test.

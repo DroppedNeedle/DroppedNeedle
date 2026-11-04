@@ -5,7 +5,7 @@ use super::*;
 /// neither match and no review changes.
 #[test]
 fn settling_two_different_chosen_matches_is_refused() {
-    let dir = droppedneedle_kernel::db::scratch::ScratchDir::new("settle-match").unwrap();
+    let dir = droppedneedle_kernel::test_support::ScratchDir::new("settle-match").unwrap();
     let path = dir.path().join("app.db");
     droppedneedle_kernel::test_support::template::copy_to(&path).unwrap();
     let db = Db::open_for_tests(&path).unwrap();

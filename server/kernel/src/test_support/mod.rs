@@ -1,12 +1,16 @@
 //! What tests need from the kernel and production never uses: a clock that
 //! moves only when told, a kick that does nothing, the migrated template,
-//! scratch settings stores, the statement registry and the knobs tests turn
-//! on the jobs table and the precache watchdog. The database's own test
-//! knobs sit in [`crate::db::test_support`], beside what they reach.
+//! self-removing scratch folders, scratch settings stores, the statement
+//! registry and the knobs tests turn on the jobs table and the precache
+//! watchdog. The database's own test knobs sit in
+//! [`crate::db::test_support`], beside what they reach.
 //!
 //! Compiled for this crate's tests and for the `test-support` feature only.
 
+pub mod scratch;
 pub mod template;
+
+pub use scratch::ScratchDir;
 
 use std::sync::{
     Arc,

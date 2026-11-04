@@ -1869,7 +1869,7 @@ mod tests {
     use std::path::PathBuf;
 
     fn coordinator() -> (
-        droppedneedle_kernel::db::scratch::ScratchDir,
+        droppedneedle_kernel::test_support::ScratchDir,
         LibraryScanCoordinator<NullTagReader>,
     ) {
         let registry = RootRegistry::new(

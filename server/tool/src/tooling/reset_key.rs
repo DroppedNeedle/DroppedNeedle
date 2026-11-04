@@ -232,7 +232,7 @@ mod tests {
     #[tokio::test]
     async fn a_folder_with_no_database_is_left_as_it_was() {
         let scratch =
-            droppedneedle_kernel::db::scratch::ScratchDir::new("reset-key-empty").unwrap();
+            droppedneedle_kernel::test_support::ScratchDir::new("reset-key-empty").unwrap();
         let dirs = DataDirs {
             config_dir: scratch.join("config"),
             cache_dir: scratch.join("cache"),

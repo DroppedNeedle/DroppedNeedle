@@ -538,7 +538,7 @@ mod tests {
         );
 
         let dir =
-            droppedneedle_kernel::db::scratch::ScratchDir::new("lyrics-lrc").expect("scratch");
+            droppedneedle_kernel::test_support::ScratchDir::new("lyrics-lrc").expect("scratch");
         std::fs::write(
             dir.path().join("song.lrc"),
             "[ar:Someone]\n[00:12.00][00:45.00]Chorus\n[00:20.00]\n",

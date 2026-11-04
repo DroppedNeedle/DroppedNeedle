@@ -338,8 +338,8 @@ mod tests {
     /// its folded spelling covers adds nothing.
     #[test]
     fn included_rules_walk_the_folder_on_disk() {
-        let dir =
-            droppedneedle_kernel::db::scratch::ScratchDir::new("scheduler-rules").expect("scratch");
+        let dir = droppedneedle_kernel::test_support::ScratchDir::new("scheduler-rules")
+            .expect("scratch");
         std::fs::create_dir_all(dir.path().join("live").join("90s")).unwrap();
         std::fs::create_dir_all(dir.path().join("LIVE")).unwrap();
         let registry = RootRegistry::new(

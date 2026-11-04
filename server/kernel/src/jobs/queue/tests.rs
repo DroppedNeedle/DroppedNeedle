@@ -7,9 +7,9 @@ use std::sync::Arc;
 use rusqlite::named_params;
 
 use super::{JobKind, JobQueue, KindSpec, Outcome, State};
-use crate::db::scratch::ScratchDir;
 use crate::db::{DbConfig, DbRuntime, Lane, open_runtime};
 use crate::test_support::ManualClock;
+use crate::test_support::ScratchDir;
 use crate::test_support::template::copy_to;
 
 const KIND: JobKind = JobKind::new("test.unit");

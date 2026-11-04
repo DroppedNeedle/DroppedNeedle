@@ -263,7 +263,7 @@ mod tests {
     #[test]
     fn only_paths_inside_the_mount_without_a_link_are_kept() {
         let scratch =
-            droppedneedle_kernel::db::scratch::ScratchDir::new("confine").expect("scratch");
+            droppedneedle_kernel::test_support::ScratchDir::new("confine").expect("scratch");
         let scratch = scratch.path().canonicalize().expect("scratch path");
         let mount = scratch.join("downloads");
         let lookalike = scratch.join("downloads-other");

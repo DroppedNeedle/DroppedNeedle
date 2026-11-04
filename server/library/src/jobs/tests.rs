@@ -1,5 +1,5 @@
-use droppedneedle_kernel::db::scratch::ScratchDir;
 use droppedneedle_kernel::db::{DbConfig, open_runtime};
+use droppedneedle_kernel::test_support::ScratchDir;
 use droppedneedle_kernel::test_support::template::copy_to;
 
 /// The job table's lease statements keep the promises the kernel's

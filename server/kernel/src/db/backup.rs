@@ -1193,7 +1193,7 @@ mod tests {
     /// bytes as they were.
     #[test]
     fn placing_onto_an_existing_database_never_replaces_it() {
-        let dir = crate::db::scratch::ScratchDir::new("backup-place").unwrap();
+        let dir = crate::test_support::ScratchDir::new("backup-place").unwrap();
         let temp = dir.join(".restore-1-2-3.tmp");
         let target = dir.join("library.db");
         std::fs::write(&temp, b"restored").unwrap();
@@ -1208,7 +1208,7 @@ mod tests {
     /// writes is refused rather than restored without them.
     #[test]
     fn a_backup_with_writes_in_its_wal_is_refused() {
-        let dir = crate::db::scratch::ScratchDir::new("backup-wal").unwrap();
+        let dir = crate::test_support::ScratchDir::new("backup-wal").unwrap();
         let backup = dir.join("library-1-0.db");
         // Held open so the writes stay in the -wal file.
         let writer = Connection::open(&backup).unwrap();

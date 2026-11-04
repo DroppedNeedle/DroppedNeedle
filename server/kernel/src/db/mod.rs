@@ -70,9 +70,8 @@
 //! accent-insensitive search, `savepoint` runs a part of a write that may
 //! fail alone, `scope` records which write and read closures a thread is
 //! inside, [`datalock`] is the file lock the server holds and the offline
-//! tool takes exclusively, `scratch` is the self-removing directory tests
-//! write under, [`statement`] declares the SQL every area keeps in its
-//! `sql.rs`, `sql` is this module's own, `spelled` is the one codec for a
+//! tool takes exclusively, [`statement`] declares the SQL every area keeps
+//! in its `sql.rs`, `sql` is this module's own, `spelled` is the one codec for a
 //! closed set stored as text ([`spelled!`](crate::spelled)), [`error`] holds the typed
 //! errors, and [`cache`] is the provider cache's own throwaway file, with
 //! its own writer and readers, and [`undo_dir`] is the folder of undo
@@ -95,8 +94,6 @@ pub mod migrate;
 pub mod read_pool;
 mod savepoint;
 mod scope;
-#[cfg(any(test, feature = "test-support"))]
-pub mod scratch;
 mod spelled;
 pub(crate) mod sql;
 pub mod statement;

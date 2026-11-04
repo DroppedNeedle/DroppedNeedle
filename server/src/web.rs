@@ -546,7 +546,7 @@ fn swap_into_place(stage: &Path, served: &Path) -> Result<(), WebError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use droppedneedle_kernel::db::scratch::ScratchDir;
+    use droppedneedle_kernel::test_support::ScratchDir;
 
     fn build(dir: &Path) -> PathBuf {
         let template = dir.join("template");

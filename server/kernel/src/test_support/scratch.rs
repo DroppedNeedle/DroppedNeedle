@@ -16,14 +16,11 @@ impl ScratchDir {
     /// Create a fresh directory named after `tag`.
     pub fn new(tag: &str) -> std::io::Result<Self> {
         static NEXT: AtomicU64 = AtomicU64::new(0);
-        let stamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|span| span.as_nanos())
-            .unwrap_or(0);
         let path = std::env::temp_dir().join(format!(
-            "dn-{tag}-{}-{}-{stamp}",
+            "dn-{tag}-{}-{}-{}",
             std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
+            NEXT.fetch_add(1, Ordering::Relaxed),
+            uuid::Uuid::new_v4().simple()
         ));
         std::fs::create_dir_all(&path)?;
         Ok(Self { path })

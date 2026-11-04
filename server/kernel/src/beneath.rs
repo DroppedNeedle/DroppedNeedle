@@ -143,7 +143,7 @@ mod tests {
     /// folder may be a link only when the caller says so.
     #[test]
     fn the_opener_never_follows_a_link_below_its_folder() {
-        let scratch = crate::db::scratch::ScratchDir::new("beneath-open").expect("scratch");
+        let scratch = crate::test_support::ScratchDir::new("beneath-open").expect("scratch");
         let base = scratch.path().canonicalize().expect("scratch path");
         let (music, outside) = (base.join("music"), base.join("outside"));
         std::fs::create_dir_all(music.join("Artist/Album")).expect("dir");

@@ -212,10 +212,10 @@ impl SqliteScanStore {
 /// The directory goes when the returned guard drops, so keep it.
 #[cfg(test)]
 pub(crate) fn scratch_store() -> (
-    droppedneedle_kernel::db::scratch::ScratchDir,
+    droppedneedle_kernel::test_support::ScratchDir,
     SqliteScanStore,
 ) {
-    let dir = droppedneedle_kernel::db::scratch::ScratchDir::new("scan-store").unwrap();
+    let dir = droppedneedle_kernel::test_support::ScratchDir::new("scan-store").unwrap();
     let path = dir.path().join("app.db");
     droppedneedle_kernel::test_support::template::copy_to(&path).unwrap();
     let db = Db::open_for_tests(&path).unwrap();

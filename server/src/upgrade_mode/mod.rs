@@ -754,7 +754,7 @@ fn lock_take<T>(mutex: &Mutex<Option<T>>) -> Option<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use droppedneedle_kernel::db::scratch::ScratchDir;
+    use droppedneedle_kernel::test_support::ScratchDir;
 
     /// The upgrade page is never served from a folder someone placed
     /// first: one already there under the name, or a link, is refused, and

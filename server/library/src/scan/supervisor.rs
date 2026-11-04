@@ -227,7 +227,7 @@ mod tests {
     use std::sync::atomic::Ordering;
 
     fn coordinator() -> (
-        droppedneedle_kernel::db::scratch::ScratchDir,
+        droppedneedle_kernel::test_support::ScratchDir,
         LibraryScanCoordinator<NullTagReader>,
     ) {
         let registry = RootRegistry::new(

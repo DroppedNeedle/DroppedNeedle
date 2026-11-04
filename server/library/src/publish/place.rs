@@ -670,7 +670,7 @@ fn link_count(path: &Path) -> std::io::Result<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use droppedneedle_kernel::db::scratch::ScratchDir;
+    use droppedneedle_kernel::test_support::ScratchDir;
 
     fn listing(dir: &Path) -> Vec<String> {
         let mut names: Vec<String> = std::fs::read_dir(dir)

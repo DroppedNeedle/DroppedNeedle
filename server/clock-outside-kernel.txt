@@ -7,7 +7,6 @@
 # file of its own is checked like any other. Instant::now() is never listed.
 
 
-kernel/src/db/scratch.rs  unique temp folder name from the system time, not app time
 kernel/src/jobs/schedule.rs  seed for timer jitter, not a time anyone reads
 
 tool/src/export/exporter.rs  offline tool, not a server area

@@ -15,7 +15,7 @@ use std::io::Write as _;
 use std::path::Path;
 use std::sync::OnceLock;
 
-use crate::db::scratch::ScratchDir;
+use crate::test_support::ScratchDir;
 
 static TEMPLATE: OnceLock<Result<Vec<u8>, String>> = OnceLock::new();
 

@@ -31,7 +31,7 @@ struct Fixture {
     runtime: DbRuntime,
     catalog: LocalCatalog,
     /// Dropped last: removes the scratch database.
-    _dir: droppedneedle_kernel::db::scratch::ScratchDir,
+    _dir: droppedneedle_kernel::test_support::ScratchDir,
 }
 
 impl Fixture {
@@ -42,7 +42,7 @@ impl Fixture {
 
 async fn seed_small() -> Fixture {
     let seq = PERF_SEQ.fetch_add(1, Ordering::Relaxed);
-    let dir = droppedneedle_kernel::db::scratch::ScratchDir::new(&format!("reads-perf-{seq}"))
+    let dir = droppedneedle_kernel::test_support::ScratchDir::new(&format!("reads-perf-{seq}"))
         .expect("scratch dir");
     let path = dir.join("app.db");
     droppedneedle_kernel::test_support::template::copy_to(&path).expect("migrated database copies");

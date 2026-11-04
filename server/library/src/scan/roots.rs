@@ -660,7 +660,7 @@ mod tests {
     #[test]
     fn a_rule_finds_each_spelling_at_every_depth() {
         let dir =
-            droppedneedle_kernel::db::scratch::ScratchDir::new("rule-spellings").expect("scratch");
+            droppedneedle_kernel::test_support::ScratchDir::new("rule-spellings").expect("scratch");
         std::fs::create_dir_all(dir.path().join("Shut").join("live")).expect("twin");
         assert_eq!(
             on_disk_rule_paths(dir.path(), "shut/Live"),
@@ -745,7 +745,7 @@ mod tests {
     /// middle root is excluded at its own folder but includes `inner`.
     #[test]
     fn a_nested_file_goes_home_to_the_root_that_keeps_it() {
-        let dir = droppedneedle_kernel::db::scratch::ScratchDir::new("nested-roots").expect("dir");
+        let dir = droppedneedle_kernel::test_support::ScratchDir::new("nested-roots").expect("dir");
         let outer = dir.path().join("outer");
         let middle = outer.join("middle");
         let inner = middle.join("inner");

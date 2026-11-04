@@ -402,7 +402,7 @@ impl DbRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{db::scratch::ScratchDir, test_support::template::copy_to};
+    use crate::test_support::{ScratchDir, template::copy_to};
 
     /// Shutdown returns at its grace while a watch pass is still running.
     /// The pass holds until the test releases it, and shutdown must not wait

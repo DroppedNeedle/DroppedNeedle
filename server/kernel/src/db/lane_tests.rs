@@ -14,14 +14,13 @@ use std::{
 use super::{
     AnalyzeService, BACKGROUND_QUEUE_CAPACITY, CancelFlag, ChunkedError, DbConfig, DbError,
     DbRuntime, DurableLane, Lane, LaneLimits, block_on, open_runtime,
-    scratch::ScratchDir,
     writer::{Budget, WriteLane},
 };
 use crate::{
     clock::SystemClock,
     db::durable::list_loops,
     jobs::{CancellationToken, Supervisor, checkpoint},
-    test_support::template::copy_to,
+    test_support::{ScratchDir, template::copy_to},
 };
 
 /// Unique scratch directory per brief, removed on drop.

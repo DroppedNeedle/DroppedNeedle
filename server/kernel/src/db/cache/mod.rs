@@ -1136,7 +1136,7 @@ mod tests {
     /// with damaged table pages are replaced at open and the cache works.
     #[tokio::test]
     async fn foreign_files_are_replaced() {
-        let dir = crate::db::scratch::ScratchDir::new("cache-foreign").unwrap();
+        let dir = crate::test_support::ScratchDir::new("cache-foreign").unwrap();
         let path = dir.path().join(FILE_NAME);
         std::fs::write(&path, b"not a database at all, just bytes").unwrap();
         let cache = CacheDb::open(dir.path(), &dir.path().join("library.db")).await;

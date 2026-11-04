@@ -228,7 +228,7 @@ mod tests {
     /// refused.
     #[test]
     fn restore_refuses_an_unusable_backup() {
-        let dir = droppedneedle_kernel::db::scratch::ScratchDir::new("restore-refuses").unwrap();
+        let dir = droppedneedle_kernel::test_support::ScratchDir::new("restore-refuses").unwrap();
 
         let missing = dir.join("missing.db");
         let error =
