@@ -1086,7 +1086,7 @@ fn finished_backups(backup_dir: &Path) -> Result<Vec<PathBuf>, DbError> {
 /// Where a backup sorts: by the millisecond and then the sequence its
 /// [`backup_file_name`] holds, read as numbers, so `-10` comes after `-9`.
 /// A name of another shape sorts first, by name.
-fn backup_order(path: &Path) -> (Option<(u128, u64)>, PathBuf) {
+pub fn backup_order(path: &Path) -> (Option<(u128, u64)>, PathBuf) {
     let stamp = path
         .file_name()
         .and_then(|name| name.to_str())

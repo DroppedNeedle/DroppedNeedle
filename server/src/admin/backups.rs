@@ -25,7 +25,7 @@ use super::{
 };
 use droppedneedle_kernel::db::{
     BACKUP_KEEP, BackupManifest, BackupReport, BackupService, SchemaError, Stamp, UndoDir,
-    backup::{MANIFEST_SUFFIX, named_undo_copies},
+    backup::{MANIFEST_SUFFIX, backup_order, named_undo_copies},
     undo_dir::UNDO_DIR_NAME,
 };
 
@@ -66,7 +66,7 @@ pub fn list_backups(backup_dir: &Path) -> Result<BackupListResponse, AdminError>
             names.push(name);
         }
     }
-    names.sort();
+    names.sort_by_cached_key(|name| backup_order(Path::new(name)));
     let mut backups = Vec::with_capacity(names.len());
     for name in names {
         let path = backup_dir.join(&name);
