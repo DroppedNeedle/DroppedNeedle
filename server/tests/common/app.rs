@@ -20,6 +20,7 @@ use droppedneedle::{
     middleware::{Boundary, request_scope},
 };
 use droppedneedle_kernel::config::AppConfig;
+use droppedneedle_kernel::db::datalock::DataLockError;
 use droppedneedle_library::scan::models::FailureCode;
 use droppedneedle_testkit::{
     remotes::{MockServer, serve_plex},
@@ -202,6 +203,13 @@ impl TestApp {
                     if busy_open(&error) && Instant::now() < deadline =>
                 {
                     tokio::time::sleep(Duration::from_secs(1)).await;
+                }
+                // On a restart, a blocking read the old app started may
+                // still hold its handle for a moment after the shutdown.
+                Err(bootstrap::BootError::DataLock(DataLockError::Held { .. }))
+                    if Instant::now() < deadline =>
+                {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
                 }
                 Err(error) => panic!("the app builds: {error:?}"),
             }
