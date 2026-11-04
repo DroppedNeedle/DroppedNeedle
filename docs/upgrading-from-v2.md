@@ -3,8 +3,9 @@
 v3 is a rewrite with a new database. The upgrade turns your v2 data into v3
 data where it sits. You keep the same folders and the same compose mounts.
 
-Your music files are not touched. Your library comes across as v2 knew it,
-with the same ids, and v3 checks it against your files on its first scan.
+Your music files are not touched. Your library comes across as v2 knew it.
+Albums and songs keep their ids, and an artist's v2 id still opens it. v3
+checks the library against your files on its first scan.
 
 ## Upgrade
 
@@ -17,8 +18,8 @@ with the same ids, and v3 checks it against your files on its first scan.
    Let it stop on its own. A v2 that was killed can leave unsaved writes
    behind, and the upgrade refuses those (`V2_WAL_PRESENT` below).
 
-2. Change the image tag in your compose file to v3. Leave the volumes as
-   they are.
+2. Change the image in your compose file to a v3 tag (such as `:v3.0.0`, or
+   `:latest` once v3 is released). Leave the volumes as they are.
 
 3. Start it:
 
@@ -77,9 +78,9 @@ page, and find the code in the server's log:
 docker compose logs droppedneedle
 ```
 
-It is on the line that starts `upgrade sign-in code`. `droppedneedle` is the
-service name in your compose file. Use yours if it differs. A code works once:
-after it is used, the server prints a new one.
+It is on the line that contains `upgrade sign-in code`, after `code=` at the
+end. `droppedneedle` is the service name in your compose file. Use yours if it
+differs. A code works once: after it is used, the server prints a new one.
 
 Attempts are limited per address and per username, as on v3's own sign-in.
 The sign-in lasts 12 hours, or until the upgrade page closes.
@@ -96,8 +97,8 @@ v3 again and open the page. It says "An upgrade didn't finish" and offers two
 buttons:
 
 - **Finish the upgrade** puts the v2 files back first, then upgrades again.
-  If addresses still need changing, it stops before it moves anything and
-  shows them in the pre-flight.
+  If addresses still need changing, it stops once the v2 files are back.
+  Press Try again to see them in the pre-flight.
 - **Go back to v2** puts the v2 files back and stops there (see
   [Going back to v2](#going-back-to-v2)).
 
@@ -107,11 +108,12 @@ buttons:
 users, playlists, requests and history stay behind. It moves your v2 files
 into the same `v2-backup` folders the upgrade uses, so going back to v2 still
 works. Your music files are not touched. When you press Continue, v3 asks for
-its first admin account and scans your music folder from scratch.
+its first admin account. Then add your music folder under Settings > Library,
+and v3 scans it from scratch.
 
 Creating that account needs a code from the server log, so nobody who
 reaches the page before you can take the server. It is on the line that
-starts `first-admin setup code`:
+contains `first-admin setup code`, after `code=` at the end:
 
 ```sh
 docker compose logs droppedneedle
@@ -137,9 +139,10 @@ what v2 wrote. Files of your own that you kept there move too. Take out
 anything you want to keep before you remove the backup.
 
 Moving the files into the backup takes no time and no extra disk space.
-The upgrade does need some free space in the cache folder while it runs,
-about twice the size of the v2 database plus the originals Library
-Management saved. The pre-flight checks that.
+The upgrade does need some free space in the cache folder while it runs:
+about twice the size of the v2 database plus the files the upgrade carries
+(saved originals, held downloads, profile pictures and playlist covers),
+plus a little headroom. The pre-flight checks that.
 
 The backup sits on the same disk as your data. It lets you go back to v2,
 but it is not a second copy. If you want one, copy your config and cache
@@ -207,14 +210,15 @@ before it moves anything, counts what the export would carry, and changes
 nothing in your data folders. It writes that export to the temporary folder
 (`TMPDIR`) and deletes it again, so that folder needs the same free space
 the upgrade asks of the cache folder. It exits 1 while something must be
-fixed first and 3 while the upgrade would stop on callback addresses.
+fixed first, and 3 while the upgrade would stop on callback addresses or on
+an admin nobody could get back in.
 
 `droppedneedle-tool upgrade --fresh --yes` moves your v2 files into the
 `v2-backup` folders as the upgrade does, and imports nothing. v3 then starts
-empty and asks for its first admin account, with the code from the line
-that starts `first-admin setup code` in the server log (printed again at each
-start until the first account exists). `upgrade --undo --yes` goes back to
-v2 from there too.
+empty and asks for its first admin account, with the code after `code=` on
+the line that contains `first-admin setup code` in the server log (printed
+again at each start until the first account exists). `upgrade --undo --yes`
+goes back to v2 from there too.
 
 For scripted installs, add `--progress json` to the upgrade or to any of
 these. Each command then writes one JSON object a line to stdout: `step` and
@@ -238,9 +242,7 @@ The usual text goes to stderr.
 - Playlists with their covers, favorites (with the names they had in v2)
   and play history. A playlist with no owner in v2 stays ownerless: public
   ones stay readable by everyone, and an admin may delete any of them. In
-  v3, deleting a user deletes their playlists, favorites and follows. A v3
-  database upgraded in place turns a playlist whose owner no longer exists
-  into an ownerless one, and drops favorites left by a deleted user.
+  v3, deleting a user deletes their playlists, favorites and follows.
 - Finished requests and finished downloads, wanted watches, and the list of
   bad download sources.
 - Per-user quota overrides. Past requests still count toward each user's
@@ -275,17 +277,19 @@ The usual text goes to stderr.
   point at the album or artist that replaced them, "keep as tagged" and
   "exclude" decisions, edition pins and custom editions, albums you kept
   out of Library Management, and field overrides.
-- The original of every file Library Management changed. "Restore original"
-  in v3 puts such a file back where it was and gives it back the tags it had
-  before v2 first touched it.
+- The original of every file Library Management changed. "Restore original
+  state" in v3 puts such a file back where it was and gives it back the tags
+  it had before v2 first touched it.
 - Downloads held back for review, with their files and the reason
   they were held. They land in the `held` folder of your v3 cache and
-  join the list of held files on the Downloads page, one entry per album.
+  join the list of held files on the Downloads page, one entry per album
+  (per song for a track download).
   v2's "waiting on the library" holds read as a file already in the way;
   a reason v3 does not use reads as held by an earlier version. Held
   files and uploads waiting for you are kept at least 90 days after the
   upgrade.
-- MusicBrainz contributions you had in progress, with their verification.
+- MusicBrainz contributions you had in progress. v3 checks each one being
+  verified again when it starts.
   An edit still open in MusicBrainz's release editor cannot come back to
   v3, since its return link names v2's address. Start it again from the
   album's contribution in v3; the upgrade's "Worth a look" list says how
@@ -300,7 +304,6 @@ placed on that edition's tracks in the background once MusicBrainz is
 reachable. v3's automatic identification never replaces it; only you can,
 from the album page. If an album had both a manual match and a pin naming a
 different release, the manual match wins and the import report says so.
-Upgrading an existing v3 install does the same with any pins it holds.
 
 Albums that were waiting on a review question in v2 go back on v3's
 identify queue, so v3 asks again with its own candidates.
@@ -387,6 +390,9 @@ you upgrade.
   redirect address. Add the v3 address before you upgrade, and remove v2's
   once v3 signs in. If your provider allows only one, change it as you run
   the upgrade, not before.
+- **`CONFIG_FILE_PATH`.** Remove it from your compose file if you set it:
+  v3 refuses to start with it. Set `CONFIG_DIR` to that file's folder
+  instead.
 
 ### Locked out
 
@@ -423,6 +429,8 @@ machine and its data folders can run it.
 
 ### Removed
 
+- **The v2 API.** Nothing under `/api/v1` answers in v3. A script that
+  called it has to move to `/api/v3`, whose shapes differ.
 - **Free Music.** v2 had its own download client for Creative Commons and
   public-domain music from the Internet Archive. v3 has none. Its settings
   tab and its downloads list are gone. Music it already downloaded stays in
@@ -433,6 +441,13 @@ machine and its data folders can run it.
   or 1 is refused. Port yours first ("Porting a v2 plugin" in
   [PLUGINS.md](../PLUGINS.md)), or ask its author to, then install it
   again from Settings > Plugins.
+- **Library Management profile options v3 does not act on.** The artwork
+  source list, size and picture-type rules, cover file naming and
+  overwriting, the ID3 version and the other per-format tag policies, genre
+  ancestry depth, source cleanup, empty folder removal, the file safety
+  switches (keep timestamps, refuse links, check the file after writing) and
+  the lyrics provider are gone. A carried profile keeps its other options.
+  The import report does not list these.
 - **v2 profile share codes and files.** A Library Management profile share
   code (`DNLP1:`) or `.dnprofile` file made in v2 does not import into v3.
   Share the profile again from v3 to get a code or file v3 reads.
@@ -475,7 +490,8 @@ machine and its data folders can run it.
   settings are gone. Most were never read; the cache lifetimes and the
   library image pacing now use fixed values equal to v2's defaults. An
   import of a v2 export carrying them goes ahead, and its report lists
-  each one as `dropped_setting`.
+  each one as `dropped_setting`. The server-wide home page section settings
+  are not exported at all, so they show under `left_behind` instead.
   - The server-wide primary music source. Each person's own choice stays
     in their profile; a discovery section with no source named asks
     ListenBrainz first.
@@ -518,6 +534,9 @@ machine and its data folders can run it.
 
 ### Changed
 
+- **Held downloads expire.** v2 kept a held download until you acted on it.
+  v3 removes a held file or upload 90 days after it was held. Ones carried
+  from v2 get 90 days from the upgrade.
 - **Quality settings.** A v2 quality range becomes the matching quality
   recipe, with FLAC at every resolution for "lossless". A policy capped at
   16-bit and 48 kHz or lower, as v2's default was from August 2026, gets FLAC
@@ -569,7 +588,8 @@ machine and its data folders can run it.
   first time v3 writes such a file it saves the whole tag as ID3v2.4, so
   every tag keeps its own frame; the preview says so for each file. There
   is no switch to keep ID3v2.3, and a few old players read only ID3v2.3.
-  Undo and "Restore originals" put the values back; the tag stays ID3v2.4.
+  Undo and "Restore original state" put the values back; the tag stays
+  ID3v2.4.
 - **Other people's public playlists in music apps.** In v2 Subsonic and
   Jellyfin apps listed them next to your own. In v3 apps list your own
   playlists only, for every user, until you turn on the switch under
@@ -578,6 +598,10 @@ machine and its data folders can run it.
 
 ### Moved
 
+- **Recycle bin.** The recycle bin folder and how long removed files are
+  kept moved from the download settings to Library Management. The upgrade
+  carries the folder your removals used; the report names any path it
+  dropped.
 - **Playlist "request missing" for scripts.** v2 had a server route,
   `POST /api/v1/playlists/<id>/request-missing`. The button on the playlist
   page works as before, but v3 has no such route: the page works out the
@@ -829,8 +853,10 @@ data named before the library itself came across. The report's
 `library_link` notes say how many of them now point at your library and how
 many name something v2 had already lost.
 
-Settings the export could not carry are listed under `settings_defaulted`
-in `WORK/import.json`. Check that list for anything you expected to keep.
+Settings v2 had nothing saved for are listed under `settings_defaulted` in
+`WORK/import.json`; they start at v3's defaults. Settings v3 no longer has
+are listed under `left_behind` and as `dropped_setting` notes. Check both
+lists for anything you expected to keep.
 
 v3 keeps its settings in the database, beside the accounts, so the import
 writes no `config.json`. `V3_ROOT/config` holds the key file
@@ -845,7 +871,7 @@ without it, v3 refuses to start on that database rather than lose the
 stored secrets. The database remembers which key it belongs to, so a key
 file from another instance or another backup is refused as well.
 
-The copies Undo and "Restore originals" need live in the `undo` folder
+The copies Undo and "Restore original state" need live in the `undo` folder
 beside the database, and each backup copies the ones it names into
 `cache/backups/undo`, which all kept backups share. Copy the whole
 `backups` folder when you move backups elsewhere, not only the `.db`
@@ -876,19 +902,20 @@ whose `-wal` file holds writes the copy would leave out.
 Backups leave out `metadata-cache.db` on purpose: it holds only provider
 answers that are fetched again when needed.
 
-If that key is lost for good, stop the server and run
-`droppedneedle-tool reset-key --yes`. It gives the instance a new key and
-clears every stored password and API key: the secrets in Settings, every
-app password, and every user's link to Plex, Jellyfin, Navidrome, Spotify,
-ListenBrainz and Last.fm. It prints the settings it cleared so you know
-what to enter again. It replaces a lost key and does not change the
-Jellyfin ids of what you already have: stored album and artist ids survive
-the reset, so Finamp and Jellify keep their pins and downloads, and only
-items added afterwards get ids under the new key. Whoever holds the old key
-can still work out the picture ids of albums and artists stored before the
-reset.
-The replaced key is kept as `config/data_enc.key.old`. The command refuses,
-changing nothing, while the key file still belongs to the database.
+If that key is lost for good, stop the server and run `droppedneedle-tool
+reset-key --yes`. It gives the instance a new key and clears every stored
+password and API key: the secrets in Settings, every app password, and every
+user's link to Plex, Jellyfin, Navidrome, Spotify, ListenBrainz and Last.fm.
+It prints the settings it cleared so you know what to enter again. It replaces
+a lost key and does not change the Jellyfin ids of what you already have:
+stored album and artist ids survive the reset, so Finamp and Jellify keep
+their pins and downloads, and only items added afterwards get ids under the
+new key. Whoever holds the old key can still work out the picture ids of
+albums and artists stored before the reset. Subsonic picture, corrections and
+transcode links made before the reset stop opening. The replaced key is kept
+as `config/data_enc.key.old` (or `.old.1`, `.old.2` when that name is taken).
+The command refuses, changing nothing, while the key file still belongs to the
+database.
 
 ### 7. Start v3
 
@@ -907,11 +934,12 @@ Then go through the checks under "After the upgrade" above.
 ### Each kind of data moves once
 
 The import remembers, per v2 instance, which kinds of data it has brought
-across: playlists, history, requests and so on. Running the same import
-again changes nothing. Importing a newer export of the same v2 instance
-later brings only the kinds that never came across before, so a playlist
-you deleted in v3 does not come back. If you want a clean second try, start
-again from an empty `V3_ROOT`.
+across: playlists, history, requests and so on. Running the same import again
+changes nothing. Importing a newer export of the same v2 instance later brings
+only the kinds that never came across before, so a playlist you deleted in v3
+does not come back. Its settings do replace v3's, so a setting you changed in
+v3 goes back to the v2 value. If you want a clean second try, start again from
+an empty `V3_ROOT`.
 
 Import before anyone signs in to v3. Someone who signs in first and, say,
 uploads an avatar or links Last.fm keeps what they set up in v3, and the
@@ -945,5 +973,6 @@ import leaves their v2 version out.
 | `BUNDLE_SECTION_MISSING` | The bundle lacks a part the export says it holds | Export again; do not edit the bundle |
 | `BUNDLE_COLUMN_MISSING` | Your v2 is too old to have a value v3 needs for some data | Update v2 to its last release, start and stop it once, then upgrade again |
 | `target database is locked` | A server has the v3 database open | Stop it and re-run |
+| `is held by another process` | A server, or another import, has the v3 data open | Stop it and re-run |
 | `the key file ... is missing` or `does not belong to the database` | The database's `data_enc.key` is not in the config folder | Nothing was changed. Put back the `data_enc.key` saved with the database, or set `CONFIG_DIR` to its folder. Only if it is lost for good: `reset-key --yes` (see "Backups and restore") |
 | `a reset-key did not finish` | `reset-key` was stopped partway | Run `reset-key --yes` again to finish it |

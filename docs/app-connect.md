@@ -13,7 +13,7 @@ This is the OAuth 2.0 authorization code flow with PKCE for native apps ([RFC 67
 
 It is off until you list an app. Under Settings > Connect Apps > Sign-in from apps, add each app with:
 
-- **Client ID**: what the app sends as `client_id`. The app's maker tells you this. Lower-case letters, digits, `.`, `_` and `-`.
+- **Client ID**: what the app sends as `client_id`. The app's maker tells you this. Up to 64 lower-case letters, digits, `.`, `_` and `-`, starting with a letter or digit.
 - **Name**: what the person is shown and what the app-password is called, such as `My Player`. It is never taken from the app's request.
 - **Return addresses**: where the browser hands the result back, one per line, matched exactly. Each one is an `https` address or a private scheme named after a domain the app's maker owns, such as `com.example.player:/connect`. The app's maker tells you these too.
 

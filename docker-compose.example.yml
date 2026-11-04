@@ -1,14 +1,16 @@
 # DroppedNeedle example compose.
 #
-# DroppedNeedle downloads through your OWN slskd (Soulseek) and/or SABnzbd (Usenet); it
-# doesn't run either for you. Start them yourself, then connect them under
-# Settings > Download Client. A commented-out slskd sidecar is at the bottom.
+# DroppedNeedle downloads through your OWN slskd (Soulseek) or SABnzbd with Newznab
+# indexers (Usenet), or a plugin download source; it doesn't run slskd or SABnzbd for
+# you. Start them yourself, then connect them under Settings > Download Client. A
+# commented-out slskd sidecar is at the bottom.
 # Full walkthrough: the Quick start section of the README.
 
 services:
   droppedneedle:
     image: droppedneedle/droppedneedle:latest
-    # :dev is built from main on every push and may break.
+    # :dev is built from main on each code change and may break. Until v3 is released,
+    # main is v2.
     container_name: droppedneedle
     environment:
       - PUID=1000            # your host user/group; run `id` to find them (Unraid: usually 99/100)
@@ -26,8 +28,9 @@ services:
       - ./config:/app/config       # encryption key; keep it with your backups
       - ./cache:/app/cache         # database, backups, cover art and metadata cache
       - ./plugins:/app/plugins     # installed plugins; omit and they vanish on recreate
-      # One common-parent mount keeps the library and completed downloads on one container
-      # mount boundary, enabling fast atomic moves. Configure the library root as /data/music.
+      # One mount holding both the library and the download clients' completed folders keeps
+      # the paths simple. Imports copy each file out of the downloads folder. Configure the
+      # library root as /data/music.
       # Avoid nested binds beneath /data: they create new mount boundaries even on one disk.
       - /path/to/media:/data:rw
       # OPTIONAL download and drop-import staging. Put its host path beneath /path/to/media and
@@ -39,7 +42,7 @@ services:
 
 # Optional: run slskd alongside DroppedNeedle (you manage slskd and its shares).
 #  slskd:
-#    image: slskd/slskd:0.25.1   # pinned; requires >= 0.25.0
+#    image: slskd/slskd:0.25.1   # pinned; DroppedNeedle is tested against 0.25.1
 #    container_name: droppedneedle-slskd
 #    restart: unless-stopped
 #    ports:
@@ -51,4 +54,5 @@ services:
 #      # above at the corresponding host path beneath the common media parent.
 #      - /path/to/media/slskd/complete:/downloads:rw
 #    environment:
+#      - SLSKD_DOWNLOADS_DIR=/downloads
 #      - SLSKD_REMOTE_CONFIGURATION=true

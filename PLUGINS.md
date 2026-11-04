@@ -31,10 +31,11 @@ What DroppedNeedle does to keep a plugin in its lane:
   DroppedNeedle restarts it after a short wait (1 second, doubling up to 5
   minutes). If it hangs, its calls time out and the rest of the server
   carries on; three timeouts in a row restart it.
-- **It gets a clean environment.** The plugin process does not inherit the
-  server's environment variables, so no secrets from there. Its working
-  directory and `HOME` are its own data folder. DroppedNeedle never tells it
-  where the config and database folders are.
+- **It gets a clean environment.** Only `PATH`, `TZ` and the proxy and
+  certificate variables pass through from the server's environment, plus the
+  plugin's own name and folders. A proxy address with a password in it reaches
+  the plugin too. Its working directory and `HOME` are its own data folder.
+  DroppedNeedle never tells it where the config and database folders are.
 - **Memory is capped.** Each plugin process can use at most 1 GiB of address
   space, and it cannot dump core or gain privileges.
 - **Calls have time limits** (listed per capability below).
@@ -62,8 +63,11 @@ In **Settings > Plugins**, paste the repository URL and press **Preview**.
   tag) as it is now.
 - `https://github.com/owner/repo/commit/<sha>` installs that commit.
 
+An install archive may be at most 32 MiB, hold at most 2000 files and unpack
+to at most 256 MiB.
+
 DroppedNeedle keeps its GitHub requests under GitHub's limit for servers
-without an account: 10 at once, then about 50 an hour, shared by installs,
+without an account: a burst of 10, then about 50 an hour, shared by installs,
 updates and DroppedNeedle's own update check. A preview uses 4 requests
 from a plain repository URL and 3 from the other kinds. An install from
 the preview uses 2, and an update 2 or 3, plus 1 when there is a new
@@ -118,8 +122,8 @@ data folder stays on disk, so reinstalling picks up where you left off.
 The Docker image includes `python3`, so plugins written in Python work out of
 the box. If you build the image with `--build-arg PLUGIN_PYTHON=0`, Python is
 left out and only plugins that ship their own program (see `command` below)
-will run. Outside Docker, `python3` (3.9 or newer; the examples use 3.11) must
-be on the server's `PATH`.
+will run. Outside Docker, `python3` (3.9 or newer for the helper; the example
+plugins need 3.11, which the image ships) must be on the server's `PATH`.
 
 Python plugins need nothing else installed. DroppedNeedle ships a small helper
 module, `droppedneedle_plugin`, and puts it on the plugin's import path.
@@ -173,15 +177,18 @@ interval_minutes = 60               # 5 to 1440
 run_on_load = false
 
 [[route]]                           # needs the "publisher" capability
-path = "lookup"                     # served at /api/v3/plugins/ext/acme-music/lookup
+path = "lookup"                     # served at /api/v3/plugins/ext/acme-music/lookup;
+                                    # up to 64 lowercase letters, digits, /, _ and -,
+                                    # starting with a letter or digit
 method = "GET"                      # GET, POST or DELETE
 auth = "user"                       # "admin" (default) or "user"
 rate_limit_per_minute = 60          # 1 to 600
 
 [plugin_ui]                         # optional settings panel
 entry = "ui/dist/panel.js"          # a script inside the plugin folder
-pages = ["panel"]
-# external_url = "https://acme-music.test/setup"   # or a link instead
+pages = ["panel"]                   # one page at most
+# external_url = "https://acme-music.test/setup"   # or a link instead: https, or
+                                                   # http to a loopback address only
 ```
 
 `plugin.toml` is ordinary TOML: arrays may span lines, and strings may use
@@ -199,7 +206,7 @@ acme-music: written for api_version 1; this DroppedNeedle reads api_version 2; s
 ### Settings
 
 Settings are what the admin types into the plugin's card. The plugin gets the
-current values when it starts and again every time they are saved, secrets
+current values when it starts and again whenever a save changes them, secrets
 decrypted. Secret values are encrypted in the settings database and shown as
 `********`; saving the mask back keeps the stored value.
 
@@ -232,10 +239,11 @@ server carries on as if the plugin had said nothing.
 | `download_client` | `enqueue`, `get_status`, `inspect_materialization`, `discard_client_artifacts`, `abort` | 120 s enqueue, 30 s others | the download fails over |
 
 Every plugin may also have `is_configured()` and `health_check()`. The server
-asks for them once the plugin is running, after every settings save, and
-again when Settings or a source list is opened and the last answer is over a
-minute old. The answer (status, message, and whether it is configured) shows
-on the plugin's card in Settings > Plugins and in the source lists. A plugin
+asks for them once the plugin is running, after a save that changes its
+settings, and again when Settings or a source list is opened and the last
+answer is over a minute old. The answer (status, message, and whether it is
+configured) shows on the plugin's card in Settings > Plugins and in the source
+lists. A plugin
 without them counts as healthy and configured; one that fails or does not
 answer within 10 seconds shows as an error.
 
@@ -255,7 +263,8 @@ after the links MusicBrainz knows, and adds theirs to it.
 
 `purchase_links(artist, album, release_group_mbid)` returns a list of
 `PluginPurchaseLink(label, url, kind)`, where `kind` is `digital`, `physical`
-or `free`. Links must be `http` or `https`. Duplicates (same URL) are dropped,
+or `free`. Links must be `http` or `https`. A link with an empty label is
+dropped, and so are duplicates (same URL),
 and the album page orders links by its own rules: a plugin cannot put itself
 first. At most 20 links per plugin.
 
@@ -295,14 +304,15 @@ Two things come with `publisher`:
 **Routes.** Each `[[route]]` is served at
 `/api/v3/plugins/ext/<plugin>/<path>` and calls
 `handle_route(method, subpath, query, body)`, which returns
-`PluginRouteResponse(status, body)`. DroppedNeedle checks the session and
-role first (`auth = "admin"` refuses other users with 403), applies the
-per-user rate limit (429 with `Retry-After`), and refuses request bodies over
-1 MiB (413). Only statuses 200-299, 400 and 404 pass through; 500-599 become
-502 and anything else becomes 200, so a plugin cannot redirect people through
-your server. Answers over 1 MiB, and any failure, become a plain 502; the
-plugin's error text never reaches the browser. An undeclared path or a
-disabled plugin is 404.
+`PluginRouteResponse(status, body)`. DroppedNeedle checks the session and role
+first (`auth = "admin"` refuses other users with 403), applies the per-user
+rate limit (429 with `Retry-After`), and refuses request bodies over 1 MiB
+(413). Statuses 200-299 and 400 pass through with the plugin's body. A 404
+answers the server's own not-found error, 500-599 become 502, and anything
+else becomes 200, so a plugin cannot redirect people through your server.
+Answers over 1 MiB, and any failure, become a plain 502; the plugin's error
+text never reaches the browser. An undeclared path or a disabled plugin is
+404.
 
 **Publishing.** `await ctx.publish(kind, payload)` sends one of three hints:
 
@@ -329,27 +339,26 @@ Last.fm notes.
 `enrich_artist(*, artist_name, mbid=None, timeout=...)` and
 `enrich_album(*, artist_name, album_title, mbid=None, timeout=...)` return a
 `PluginArtistEnrichment` / `PluginAlbumEnrichment` (`biography`, `links`,
-`tags`, `image_urls`) or `None` for "not mine". Plugins only fill gaps:
+`tags`, `image_urls`) or `None` for "not mine". Plugins only fill gaps, and
+not every field shows:
 
-| Field | Already known from MusicBrainz, Wikidata and friends | Missing |
-|---|---|---|
-| biography | kept | the first plugin biography |
-| links, tags | kept, plugin entries added after | plugin entries |
-| image | kept | the first plugin image URL |
+| Page | What shows from a plugin |
+|---|---|
+| Artist | the first plugin biography and the first image (https only), each only when Wikipedia and Wikidata have none; links and tags are not shown |
+| Album | the notes, only when Last.fm has none; tags Last.fm did not already list; links (http and https); no image |
 
-On the artist page a plugin biography or image shows only when Wikipedia and
-Wikidata have none. On the album page the plugin notes show only when Last.fm
-has none, and only tags Last.fm did not already list are added. Links show
-as they come.
+All plugin text is shown as plain text.
 
 Example: `examples/plugins/metadata-joke-toy`.
 
 ### scheduler
 
 `on_tick()` runs every `interval_minutes` (at least 5). One tick at a time per
-plugin; a tick still running when the next is due is cancelled; a failed tick
-is logged and the next one runs as normal; missed ticks are not made up. With
-`run_on_load = true` the first tick runs right after the plugin starts.
+plugin; a tick still running when the next is due is cancelled; a failed or
+cancelled tick is logged, and the next one comes a little later: one extra
+second, doubling while ticks keep failing, up to five minutes. Missed ticks
+are not made up. With `run_on_load = true` the first tick runs right after the
+plugin starts.
 
 For state that should survive restarts, use `await ctx.state_set(key, value)`
 and `await ctx.state_get(key)`: small strings (up to 1 MiB each) that the
@@ -357,12 +366,12 @@ server keeps in its database for you (at most 1000 keys and 64 MiB per
 plugin). Files in `ctx.data_dir` also survive.
 
 To put a file into the music library itself, declare the `library_writer`
-capability and use `await ctx.write_library_file(rel_path, data)`. It adds
-one new file under your first library folder and answers the full path. The path is relative,
-in lowercase letters, digits, `_`, `-`, `.` and `/`, without hidden or `..`
-parts. A file that already exists is never replaced, nor is a file whose
-name differs only in letter case or Unicode form (`Straße` for
-`strasse`): the call fails instead. A first library
+capability and use `await ctx.write_library_file(rel_path, data)`. It adds one
+new file under your first library folder and answers the full path. The path
+is relative, at most 200 characters, in lowercase letters, digits, `_`, `-`,
+`.` and `/`, without hidden or `..` parts. A file that already exists is never
+replaced, nor is a file whose name differs only in letter case or Unicode form
+(`Straße` for `strasse`): the call fails instead. A first library
 folder set to Excluded, one that isn't there (a share not mounted), one
 reached through a link into another library folder, or one on a disk that
 can only add a file by checking first and then renaming, takes no plugin
@@ -400,7 +409,8 @@ changed since, or its folder takes no changes now, the undo says so and
 leaves the file. Each write can be undone once, and the folder is scanned
 again afterwards, so a track made from the file goes missing.
 
-Example: `examples/plugins/http-catalog`.
+Example: `examples/plugins/http-catalog` (its tick). No example writes state
+or library files.
 
 ### streaming_source
 
@@ -418,14 +428,14 @@ Before anything is served, DroppedNeedle checks the answer:
   in the plugin's `downloads_dir` setting if it has one, or a library
   folder. It is then served like a library file, with seeking and
   transcoding.
-- A `url` must be `http` or `https`, and the host must resolve to public
-  internet addresses only: no `localhost`, private networks, link-local,
-  or IPv6 addresses outside global unicast (IPv4 hidden inside IPv6 is
-  checked as IPv4). The server connects directly, without any proxy, checks
-  the address it actually connected to, and follows up to three redirects,
-  each checked again. The server must answer within 10 seconds and keep
-  sending at least every 30 seconds; a stream stops at 500 MiB. The audio
-  is passed through as-is, without seeking or transcoding.
+- A `url` must be `http` or `https`, with no user name or password in it, and
+  the host must resolve to public internet addresses only: no `localhost`,
+  private networks, link-local, or IPv6 addresses outside global unicast (IPv4
+  hidden inside IPv6 is checked as IPv4). The server connects directly,
+  without any proxy, checks the address it actually connected to, and follows
+  up to three redirects, each checked again. The server must answer within 10
+  seconds and keep sending at least every 30 seconds; a stream stops at 500
+  MiB. The audio is passed through as-is, without seeking or transcoding.
 
 Plugin streams are reachable through Subsonic and Jellyfin clients (when the
 library misses) and at `/api/v3/stream/plugin/<recording mbid>`.
@@ -442,7 +452,8 @@ An `indexer` searches for releases. Its results go to the source named in
 `target_source`: its own client (the default when it also has
 `download_client`), another plugin's client (`plugin:other-name`), or
 `usenet`, where results that carry an `nzb_url` join the SABnzbd pipeline
-next to your Newznab or Prowlarr results.
+next to your Newznab or Prowlarr results. The first 200 results of a search
+are kept.
 
 Search methods return a list of `IndexerResult(source, plugin=PluginSearchResult(...))`
 (or bare `PluginSearchResult`s):
@@ -520,12 +531,14 @@ mode, two plugins paired).
 With `[plugin_ui] entry`, the admin's plugin card shows the plugin's own
 script in a locked-down frame: no access to the page or its cookies, and no
 requests of its own. It can talk to the page only through `postMessage`, with four
-read-only requests: `sources.list`, `search.preview`, `get_settings` (its own,
-secrets masked) and `health.get` (its own). `search.preview` with `{query}`
-calls the plugin's own `search` route
+read-only requests: `sources.list` (every plugin download source),
+`search.preview`, `get_settings` (its own, secrets masked) and `health.get`
+(whether it is on, its load error and its active capabilities).
+`search.preview` with `{query}` calls the plugin's own `search` route
 (`GET /api/v3/plugins/ext/<plugin>/search?query=...`), so a panel that uses
 it needs the `publisher` capability and a `[[route]] path = "search"`.
-`external_url` shows a link instead.
+`external_url` shows a link instead. The panel is served only while the
+plugin is enabled.
 
 The server reads the script from inside the plugin folder and serves it to
 admins only, inlined into a small page of its own with an empty
@@ -541,8 +554,8 @@ way, for example `'<' + '!--'` or `'<' + 'script'`.
 One thing the panel page cannot stop by itself: its script sending its own
 frame to another address, with whatever it writes into that address. The
 web UI's content-security policy holds the frame to DroppedNeedle's own
-address, so this is closed only while that policy is enforced (Settings >
-Security), not while it only reports or is off.
+address and YouTube's player, so this is closed while that policy is
+enforced or only reporting (Settings > Security), not while it is off.
 
 ## The Python helper
 
@@ -624,8 +637,9 @@ of this; you need it only for a plugin in another language.
    {"jsonrpc": "2.0", "id": 1, "result": {"protocol_version": 1, "capabilities": ["indexer"]}}
    ```
 
-   A different `protocol_version`, or an error answer, stops the plugin until
-   it is changed.
+   A different `protocol_version`, an answer that does not read, or an error
+   answer stops the plugin until plugins next reload (a settings save, an
+   install, an update or a restart).
 3. To stop, the server sends `shutdown` and waits 2 seconds before killing the
    plugin's process group. A plugin must also exit when stdin closes.
 
@@ -673,8 +687,13 @@ server does not know, reads as `unknown`.
 
 State keys are 1-64 lowercase letters, digits, `_`, `-` or `/`, starting
 with a letter or digit; values are strings up to 1 MiB. One plugin may keep
-at most 1000 keys and 64 MiB in total. `host.log` is a notification with `{level, message}`
-(`error`, `warning`, `info`, `debug`) for plugins that prefer it to stderr.
+at most 1000 keys and 64 MiB in total. `host.log` is a notification with
+`{level, message}` (`error`, `warning`, `info`, `debug`) for plugins that
+prefer it to stderr.
+
+A plugin may have 32 requests to the host in flight; more are refused
+(-32001). The host answers each within 10 seconds or fails it, and the
+helper waits 15 seconds for an answer.
 
 ## Examples
 

@@ -15,16 +15,15 @@ operation, save a source or stage/activate BrainzMash to switch it, and failures
 guide covers the source boundary, BrainzMash consent and contribution guidance, and the full
 self-hosted mirror setup.
 
-## Upgrade migration
+## The starting source
 
-On upgrade, DroppedNeedle normalizes persisted MusicBrainz settings before serving requests. Missing
-settings, legacy Official settings, malformed settings, and explicit Official settings migrate to
-built-in BrainzMash. A valid Self-hosted mirror or Community / external setting stays selected.
+A server with no MusicBrainz settings starts on BrainzMash. Settings carried over from v2 keep
+their source, Official included. Settings that cannot be read stop MusicBrainz lookups until they
+are saved again.
 
-This startup normalization is not a runtime fallback. Because it can make BrainzMash active, review
-**Settings > MusicBrainz**, the active source, and its disclosure after upgrading. An administrator
-can switch to Official, a Self-hosted mirror, or Community / external by explicitly saving it, and a
-deliberate Official save persists across restarts.
+On a fresh install BrainzMash is the active source. Review **Settings > MusicBrainz** after setting
+up or upgrading. An administrator can switch to Official, a Self-hosted mirror, or Community /
+external by explicitly saving it, and a saved choice persists across restarts.
 
 ## Where these details come from
 
@@ -103,8 +102,8 @@ DroppedNeedle therefore applies its own policy before every BrainzMash request a
 - 10 requests per second;
 - token capacity 1 and one request in flight at a time, so local queue concurrency cannot
   create a wire burst;
-- after a 429, a pause for the `Retry-After` it names, or one that doubles from 1 second to
-  a minute while 429s name no wait;
+- after a 429, a pause for the `Retry-After` it names, up to a minute, or one that doubles from
+  1 second to a minute while 429s name no wait;
 - the Official source uses 1 request per second and the same capacity-1 wire policy; and
 - explicit typed failures when the provider is unavailable or returns an unsupported result.
 
@@ -138,7 +137,7 @@ prepare the pending identity for activation.
 }
 ```
 
-The values are generated and stored locally. They are not hostnames, URL fingerprints, provider
+The values are generated locally and held in the server's memory. They are not hostnames, URL fingerprints, provider
 credentials, or values to copy into public documentation.
 
 1. **Stage the built-in endpoint.** An administrator sends `POST
@@ -150,7 +149,8 @@ BrainzMash; if BrainzMash was already active, the current binding continues serv
 2. **Accept the disclosure.** An administrator sends `POST
 /api/v3/settings/musicbrainz/brainzmash/consent` with the exact current `access_revision`,
 `source_id`, `generation`, and `disclosure_version`. This is a local zero-wire action. It
-persists consent for that exact pending identity and enables Test Connection for that proposal.
+records consent for that exact pending proposal and enables Test Connection for it. The proposal
+and its consent are held in memory, so a restart drops them and staging starts again.
 3. **Test Connection.** DroppedNeedle sends `POST
 /api/v3/settings/musicbrainz/verify` with the same exact binding. The test request goes
 through the dedicated BrainzMash client, under the same local 10 requests/second, capacity-1
@@ -162,13 +162,14 @@ activate the proposal.
 and successful verification can atomically promote the pending proposal to the active
 BrainzMash binding.
 
-Changing the endpoint, access revision, source ID, generation, proposed source, or disclosure
-version clears consent and verification. Reset invalidates the old pending identity, stages the
+Staging again, saving another source or restarting the server drops the pending proposal with
+its consent and verification. A consent, test or activation that names any other values is refused
+as stale. Reset invalidates the old pending identity, stages the
 built-in endpoint with a fresh opaque identity, preselects BrainzMash, and sends no provider
 request. Staging can replace a different active source; consent and testing do not change the
 active source.
 
-### Failure, disable, rollback, and source switching
+### Failure and source switching
 
 A BrainzMash outage, 503 response, unsupported route, stale binding, failed activation, or later
 runtime error remains an explicit BrainzMash error. DroppedNeedle does not call Official, a
@@ -176,18 +177,15 @@ mirror, or a Community server as a hidden fallback, and it does not guess a cred
 authentication header.
 
 To switch away from an active BrainzMash source, an administrator selects Official, Self-hosted
-mirror, or Community / external and explicitly saves that source. A connection test is
-available before saving when the endpoint needs checking; the save commits the selected source
-and its source-specific limits and disclosure. Selecting a card alone does not silently switch
+mirror, or Community / external and explicitly saves that source. While BrainzMash is active,
+Test Connection is off for the other sources: save the new source to switch, and failures then
+show as errors from that source. Between the other sources, test before saving. The save commits
+the selected source and its source-specific limits and disclosure. Selecting a card alone does not silently switch
 runtime traffic. The same explicit save rule applies when moving between the other source
 classes.
 
-If BrainzMash must be withdrawn, rollback disables BrainzMash verification and runtime traffic,
-removes its Recommended and fresh/reset presentation in the affected release, and requires the
-administrator to choose another source. The app shows the failure and preserves the source
-choice; it never redirects BrainzMash traffic to Official automatically. Existing active source
-state, pending identity fencing, consent bindings, cache-generation isolation, and provenance
-must remain intact during rollback.
+DroppedNeedle never sends BrainzMash traffic to another source by itself. If BrainzMash stops
+working, choose and save another source.
 
 ## Contributing a mirror to the BrainzMash pool
 
@@ -358,7 +356,7 @@ policy.
 
 In DroppedNeedle, open **Settings > MusicBrainz** and choose **Self-hosted mirror**. Set:
 
-- **API URL:** `http://<mirror-host>:5000/ws/2` if using the Compose stack's published port. Use
+- **Mirror API Endpoint URL:** `http://<mirror-host>:5000/ws/2` if using the Compose stack's published port. Use
   the URL and port chosen for your deployment.
 - **Rate limit:** 0.1 to 500 requests/second, or `0` for the local Unlimited sentinel on
   non-official sources.
@@ -367,8 +365,8 @@ On hardware you operate, raised limits or the Unlimited sentinel can be appropri
 create a provider guarantee. Be reasonable with servers you do not own. In particular, do not set
 Unlimited against a Community server merely because the UI permits that value.
 
-Press **Test Connection** before saving. The test checks the configured server, paced like
-real traffic: at the rate you entered, or at 1 request per second when the address is a public
+Press **Test Connection** before saving. While BrainzMash is the active source the test is off,
+so save and watch for errors. The test checks the configured server, paced like real traffic: at the rate you entered, or at 1 request per second when the address is a public
 MusicBrainz host. A successful test
 is not evidence that every lookup, browse, search, include, redirect, or error shape matches the
 current DroppedNeedle request set.

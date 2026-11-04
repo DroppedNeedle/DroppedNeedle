@@ -103,7 +103,7 @@ Then open [http://localhost:8688](http://localhost:8688).
 1. Create the first admin account. This happens once.
 2. Add your library path under Settings > Library, using the in-container path (e.g. `/data/music`).
 3. Add your download client under Settings > Download Client, then Test and Save.
-4. Hit Scan on Settings > Library. The scan reads and identifies files without renaming or retagging anything.
+4. Press Scan for changes on Settings > Library. The scan reads and identifies files without renaming or retagging anything.
 5. Search the catalogue, open an album, and Request it. Watch it land live on the Downloads page.
 
 Settings > Library won't let you remove your last library path while the library still has tracks in it. Set the path to Excluded instead if you want it left alone. If a path disappears from the settings while its tracks are still in the library, the page offers to put it back.
@@ -122,9 +122,9 @@ Before a new version changes the database schema, DroppedNeedle writes a verifie
 
 Admins can also back up at any time, and check that a backup would restore, under Settings > Backups. The five newest backups are kept. Restoring is always the host command above. See [Backups](docs/reverse-proxy-and-security.md#backups).
 
-Coming from v2? Follow [docs/upgrading-from-v2.md](docs/upgrading-from-v2.md). Stop v2, switch the image tag to v3 and start it. On v2 data it serves only an upgrade page: open it, sign in with a v2 admin's password (or the one-time code in the server log), and follow it. It checks first, upgrades your data directory in place, shows its progress and keeps your v2 files in a `v2-backup` folder so you can go back. `droppedneedle-tool upgrade` does the same from the command line. The guide lists what comes across (accounts, settings, playlists, history, your library with its ids and matches, and the originals of files Library Management changed) and what stays behind. If v2 uses single sign-on, Spotify playlist import or MusicBrainz contributions, their v2 callback addresses stop working: the upgrade lists the new ones and stops until you have changed them. v2 plugins need porting before they run, and v2 profile share codes do not import.
+Coming from v2? Follow [docs/upgrading-from-v2.md](docs/upgrading-from-v2.md). Stop v2, switch the image to a v3 tag (such as `:v3.0.0`, or `:latest` once v3 is released) and start it. On v2 data it serves only an upgrade page: open it, sign in with a v2 admin's password (or the one-time code in the server log), and follow it. It checks first, upgrades your data directory in place, shows its progress and keeps your v2 files in a `v2-backup` folder so you can go back. `droppedneedle-tool upgrade` does the same from the command line. The guide lists what comes across (accounts, settings, playlists, history, your library with its ids and matches, and the originals of files Library Management changed) and what stays behind. If v2 uses single sign-on, Spotify playlist import or MusicBrainz contributions, their v2 callback addresses stop working: the upgrade lists the new ones and stops until you have changed them. v2 plugins need porting before they run, and v2 profile share codes do not import.
 
-A `:dev` tag (`droppedneedle/droppedneedle:dev`) is built from `main` on every push that changes the code, and may break. Pin a commit with `:dev-<short-sha>`.
+A `:dev` tag (`droppedneedle/droppedneedle:dev`) is built from `main` on every push that changes the code, and may break. Pin a commit with `:dev-<short-sha>`. Until v3 is released, `main` and `:dev` are still v2.
 
 Pre-releases are published to the same image under their own version tag, for example `droppedneedle/droppedneedle:v3.1.0-rc.1`. They never move `:latest`, so you only get one by asking for its tag.
 
@@ -138,7 +138,7 @@ Pre-releases are published to the same image under their own version tag, for ex
 |-|-|
 | Request | Whole albums or single tracks from the MusicBrainz catalogue, with an approval queue for the User role |
 | Wanted | Failed and partial requests get re-searched on their own until a verified copy shows up |
-| Quality | Per-format quality floors, automatic upgrades when a better copy appears, storage caps and quotas |
+| Quality | An ordered list of formats and qualities to try, automatic upgrades when a better copy appears, storage caps and quotas |
 | Player | Queue, shuffle, 10-band EQ, lyrics from your files (or from LRCLIB when it is on), live now-playing updates |
 | Discovery | Trending, charts, genre browsing, recommendations from your ListenBrainz and Last.fm history, an album-by-album discover queue, and a weekly mix that can queue up to five missing albums |
 | Live events | Ticketmaster and Skiddle gig alerts for artists you follow, each user with their own cities |
@@ -177,7 +177,7 @@ Which edition a request fetches, how single tracks are found, following artists,
 
 ## Download sources
 
-A download source is slskd or SABnzbd once it is turned on with a URL and an API key, or an enabled plugin download client (see [PLUGINS.md](PLUGINS.md)). It counts while it is down too: DroppedNeedle keeps retrying it, and the acquisition health check reports it as degraded. Requests, manual search, the health check and Discover's "set up a download client" prompt all go by this one answer.
+A download source is slskd or SABnzbd once it is turned on with a URL and an API key, or an enabled plugin download client (see [PLUGINS.md](PLUGINS.md)). It counts while it is down too: DroppedNeedle keeps retrying it, and the Download Client page shows it as not reachable. Requests, manual search, the health check and Discover's "set up a download client" prompt all go by this one answer.
 
 Request buttons show whether or not a download source is turned on. A request made while none is on is accepted and held. The Requests and Downloads pages show it as "Waiting: no download source configured", and it starts by itself as soon as an admin turns a source on or enables a plugin download client. From then on its card shows what the download is doing: searching, awaiting review or downloading.
 
@@ -276,7 +276,7 @@ Behind a reverse proxy, list the proxy in `TRUSTED_PROXY_IPS` and have it pass `
 | `HTTP_CONNECT_TIMEOUT` | `10` | Outbound connect timeout, seconds |
 | `HTTP_MAX_KEEPALIVE` | `50` | Idle outbound connections kept per host |
 | `RUST_LOG` | unset | Full log filter (e.g. `info,droppedneedle_library=debug`, or `droppedneedle_auth=debug` for sign-in); wins over `LOG_LEVEL` |
-| `ROOT_APP_DIR` | `/app` | Base for the paths below and for `/app/plugins` and `/app/imports` |
+| `ROOT_APP_DIR` | `/app` | Base for the cache, database, config and web UI paths below, and for `/app/plugins` and `/app/imports` |
 | `CACHE_DIR` | `/app/cache` | Database, backups, served web UI, caches |
 | `COVER_CACHE_MAX_SIZE_MB` | `500` | Size cap for downloaded and extracted cover art under `CACHE_DIR/covers`; the least recently shown covers go first |
 | `LIBRARY_DB_PATH` | `/app/cache/library.db` | The database file; backups go in `backups/` and Undo's saved copies in `undo/` next to it. `droppedneedle-tool restore` writes a backup back under this file name |
@@ -293,14 +293,14 @@ Keep `027` for a private box. Use `002` when DroppedNeedle and another trusted s
 
 Unraid commonly uses `nobody:users` (PUID 99, PGID 100). Point PUID and PGID at whoever owns the mounted config and cache paths. After a PUID change, back to 1000 included, the next start hands the files the old id owns in `/app/config`, `/app/cache`, `/app/plugins` and `/app/imports` to the new one. The container skips ownership changes it cannot make, which covers FUSE, NFS, CIFS, and rootless setups. A read-only config or cache mount refuses to start before anything gets written.
 
-`/app/config` and `/app/cache` must be writable and honor SQLite locking, `fsync`, and atomic replacement. Plain bind mounts, named volumes, local Unraid shares, and TrueNAS datasets with normal permissions all qualify. NFS and SMB mounts only work when they support the same file locking SQLite needs. If `/app/cache` is on a network or FUSE mount, or is a symlink, `metadata-cache.db` is kept beside the database instead; if that place is refused too, provider answers are fetched each time and the server log says the provider cache is off. On Docker Desktop for Windows, prefer named volumes for those two paths.
+`/app/config` and `/app/cache` must be writable and honor SQLite locking, `fsync`, and atomic replacement. Plain bind mounts, named volumes, local Unraid shares, and TrueNAS datasets with normal permissions all qualify. The database (`/app/cache/library.db` unless `LIBRARY_DB_PATH` moves it) must be on a local filesystem: DroppedNeedle refuses to start with it on NFS, SMB/CIFS or a FUSE mount, whatever locking the mount offers, or behind a symlink. If `LIBRARY_DB_PATH` puts the database on a local disk while `/app/cache` is on a network or FUSE mount, or is a symlink, `metadata-cache.db` is kept beside the database instead; if that place is refused too, provider answers are fetched each time and the server log says the provider cache is off. On Docker Desktop for Windows, prefer named volumes for those two paths.
 
 </details>
 
 | Data | Container path | Notes |
 |-|-|-|
 | Settings and encryption key | `/app/config` | Persist it |
-| Database, backups, cover art and metadata cache | `/app/cache` | Persist it. The `undo` folder beside `library.db` holds the tags, pictures and files Undo and "Restore originals" put back; backups copy it into `backups/undo`, so keep the whole `backups` folder. Provider answers (MusicBrainz, Last.fm and the like) live in `metadata-cache.db`, which survives a restart, is not in the backups, and can be deleted safely while the server is stopped |
+| Database, backups, cover art and metadata cache | `/app/cache` | Persist it. The `undo` folder beside `library.db` holds the tags, pictures and files Undo and "Restore original state" put back; backups copy it into `backups/undo`, so keep the whole `backups` folder. Provider answers (MusicBrainz, Last.fm and the like) live in `metadata-cache.db`, which survives a restart, is not in the backups, and can be deleted safely while the server is stopped |
 | Plugins | `/app/plugins` | Persist it or installs vanish on recreate |
 | Download and drop-import staging | `/app/imports` | Optional; without it, staged downloads, large uploads and unmatched files live on the container layer |
 | Media | `/data` | Shared parent for library (`/data/music`) and client completions |
@@ -353,7 +353,7 @@ Where things live in the UI:
 | Role | Requests | Admin |
 |-|-|-|
 | Admin | Requests start immediately, no approval | Everything: users, approvals, all settings |
-| Trusted | Requests start immediately, no approval | Nothing admin side |
+| Trusted | Requests start immediately, no approval | Library curation: editions, matches, the review queue, drop imports, removals and upgrades. No settings or users |
 | User | Requests wait for admin approval | Nothing admin side |
 
 The first account is always admin. Later accounts are created by an admin or automatically on first Jellyfin, Plex, or OIDC sign-in (all start as User). Every login method toggles in the UI; no environment variables involved. Sessions last 30 days and die with the account if an admin deletes it. "Sign out everywhere" on Profile > Sessions signs every browser and device out of your account; an admin can do it for anyone from Settings > Users. App passwords are separate and keep working.
@@ -391,7 +391,7 @@ Things worth knowing:
 <details>
 <summary>Signing in with Plex or Jellyfin</summary>
 
-Turn on "Allow login with Plex" or "Allow login with Jellyfin" on that server's settings page. The login page then shows the matching tab, and the sign-in only works while the switch is on.
+Turn on "Allow login with Plex" on the Plex page, or "Sign in with Jellyfin" on the Jellyfin page. The login page then shows the matching tab, and the sign-in only works while the switch is on.
 
 - Jellyfin checks the username and password against your Jellyfin server.
 - Plex sends the user to plex.tv to approve the sign-in. When a Plex server is set up, only accounts that can reach that server get in, and if DroppedNeedle cannot reach the server to check, nobody gets in until it can.
@@ -432,7 +432,7 @@ Either way the user's own media account is linked for playback, so plays count f
 
 ## For builders
 
-The OpenAPI document is served at `/openapi.json` on your instance. Every `/api/v3/*` route takes a Bearer token or the session cookie, everything under `/api/v3/settings/*` also needs Admin, and `/health` stays public for the container check.
+The OpenAPI document is served at `/openapi.json` on your instance. Apart from sign-in, setup and the OAuth callbacks, every `/api/v3/*` route takes a Bearer token or the session cookie; the Wrapped API takes its own key. Everything under `/api/v3/settings/*` needs Admin, except reading the Connect Apps settings, and `/health` stays public for the container check.
 
 Plugins work like community plugins in Lidarr: paste a GitHub repository URL in Settings > Plugins, check what it asks to do, and install it, pinned to an exact commit. Each enabled plugin runs as its own process, so a crash or a hang stays with that plugin; it gets a clean environment, its own folder and a memory cap. It is still trusted code with your server's file and network access, not a sandbox, so only install plugins you trust. Python plugins work out of the box in the Docker image. v2 plugins do not load as they are: they port with an import change and `api_version = 2`. Nothing is bundled. Files a plugin adds to your library are listed on its card, where an admin can undo each one. Reference: [PLUGINS.md](PLUGINS.md). Walkthrough: [docs/PLUGIN-CREATION.md](docs/PLUGIN-CREATION.md).
 
