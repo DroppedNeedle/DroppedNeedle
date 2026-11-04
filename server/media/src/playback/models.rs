@@ -13,7 +13,9 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+use super::ports::Visibility;
 use crate::remotes::models::SourceName;
+use droppedneedle_kernel::runtime_config::sections::ListenSource;
 
 /// Default playback source: the local library.
 fn default_source() -> String {
@@ -327,34 +329,46 @@ pub struct ScrobblePreferences {
     /// Navidrome owns external forwarding for Navidrome plays.
     #[serde(default = "default_navidrome_delegation")]
     pub navidrome_handles_external_scrobbles: bool,
-    /// `listenbrainz` or `lastfm`.
-    #[serde(default = "default_primary_source")]
-    pub primary_music_source: String,
-    /// `full`, `track_hidden`, or `offline`.
+    /// Where discovery reads the user's listening.
+    #[serde(default)]
+    pub primary_music_source: ListenSource,
+    /// Who sees what the user plays.
     #[serde(default = "default_visibility")]
-    pub now_playing_visibility: String,
+    pub now_playing_visibility: Visibility,
     /// Standing intent to auto-request the personal mix.
     #[serde(default)]
     pub auto_request_personal_mix: bool,
     /// Standing-grant state for auto-request.
     #[serde(default = "default_mix_state")]
-    pub auto_request_state: String,
+    pub auto_request_state: MixGrantState,
+}
+
+/// Where the user's personal-mix auto-request stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum MixGrantState {
+    /// The toggle is off, or on with nothing asked yet.
+    None,
+    /// Waits for an admin.
+    Pending,
+    /// Approved, or the user needs no approval.
+    Approved,
+    /// An admin turned it down.
+    Rejected,
+    /// Approved once, then withdrawn.
+    Revoked,
 }
 
 fn default_navidrome_delegation() -> bool {
     true
 }
 
-fn default_primary_source() -> String {
-    "listenbrainz".to_owned()
+fn default_visibility() -> Visibility {
+    Visibility::Full
 }
 
-fn default_visibility() -> String {
-    "full".to_owned()
-}
-
-fn default_mix_state() -> String {
-    "none".to_owned()
+fn default_mix_state() -> MixGrantState {
+    MixGrantState::None
 }
 
 /// Partial prefs update: absent fields keep their stored values.
@@ -368,9 +382,9 @@ pub struct ScrobblePreferencesUpdate {
     /// New Navidrome delegation switch.
     pub navidrome_handles_external_scrobbles: Option<bool>,
     /// New primary source.
-    pub primary_music_source: Option<String>,
+    pub primary_music_source: Option<ListenSource>,
     /// New presence visibility.
-    pub now_playing_visibility: Option<String>,
+    pub now_playing_visibility: Option<Visibility>,
     /// New personal-mix auto-request intent.
     pub auto_request_personal_mix: Option<bool>,
 }

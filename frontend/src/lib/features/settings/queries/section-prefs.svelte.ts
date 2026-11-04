@@ -10,6 +10,7 @@ import { anyDiscoverChanged, applyEffects, homeChanged } from '$lib/queries/effe
 export type SectionPrefItem = components['schemas']['SectionPrefItem'];
 export type SectionPrefsResponse = components['schemas']['SectionPrefsResponse'];
 export type SectionPrefsUpdate = components['schemas']['SectionPrefsUpdate'];
+export type SectionPage = components['schemas']['SectionPage'];
 
 export const SectionPrefsQueryKeyFactory = {
 	prefs: (userId: string | null | undefined) => key(userScope(userId), 'section-prefs')

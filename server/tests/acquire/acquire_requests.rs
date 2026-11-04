@@ -20,6 +20,7 @@ use droppedneedle_kernel::runtime_config::sections::DownloadPolicy;
 use droppedneedle_kernel::runtime_config::{ConfigStore, Live};
 use droppedneedle_media::playback::listening::{ListeningStore, PrefsPatch};
 use droppedneedle_media::playback::listening_routes::MixGrants as _;
+use droppedneedle_media::playback::models::MixGrantState;
 use droppedneedle_providers::listenbrainz::playlists::{
     RecommendationPlaylist, RecommendationTrack,
 };
@@ -1161,7 +1162,7 @@ async fn standing_grants_wait_for_an_admin_and_follow_the_role() {
     hooks.on_toggle("u-ada", Role::User, true).await;
     assert_eq!(
         hooks.state("u-ada", Role::User, true).await,
-        "pending",
+        MixGrantState::Pending,
         "{case}"
     );
     let approve = "/api/v3/requests/personal-mix-approvals/u-ada/approve";
@@ -1174,7 +1175,7 @@ async fn standing_grants_wait_for_an_admin_and_follow_the_role() {
     );
     assert_eq!(
         hooks.state("u-ada", Role::User, true).await,
-        "approved",
+        MixGrantState::Approved,
         "{case}"
     );
 
@@ -1214,7 +1215,7 @@ async fn standing_grants_wait_for_an_admin_and_follow_the_role() {
     hooks.on_toggle("u-tris", Role::Trusted, true).await;
     assert_eq!(
         hooks.state("u-tris", Role::Trusted, true).await,
-        "approved",
+        MixGrantState::Approved,
         "{case}"
     );
     let trusted = builder.build_for_user("u-tris", false).await.unwrap();
@@ -1234,7 +1235,7 @@ async fn standing_grants_wait_for_an_admin_and_follow_the_role() {
     .expect("demotion");
     assert_eq!(
         hooks.state("u-tris", Role::User, true).await,
-        "none",
+        MixGrantState::None,
         "{case}"
     );
     let demoted = builder.build_for_user("u-tris", true).await.unwrap();

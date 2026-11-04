@@ -1,5 +1,9 @@
 import { SourcePlaylistQueryKeyFactory } from '$lib/queries/featureKeys';
-import type { RemotePlaylist, RemoteSource } from '$lib/features/remote-library/queries/types';
+import type {
+	RemoteAccountMode,
+	RemotePlaylist,
+	RemoteSource
+} from '$lib/features/remote-library/queries/types';
 
 import { v3 } from '$lib/api/v3/endpoint';
 import { createQuery } from '@tanstack/svelte-query';
@@ -19,7 +23,7 @@ type Getter<T> = () => T;
 
 /** A source's playlists with the account they are read as. */
 export type SourcePlaylistCollection = {
-	account_mode: 'linked' | 'shared';
+	account_mode: RemoteAccountMode;
 	account_label: string;
 	playlists: RemotePlaylist[];
 };
@@ -34,7 +38,7 @@ async function fetchCollection(
 		api.v3.GET(v3('/api/v3/remotes/{source}/connection', { path: { source } }), { signal })
 	]);
 	return {
-		account_mode: connection.account_mode === 'linked' ? 'linked' : 'shared',
+		account_mode: connection.account_mode,
 		account_label: connection.account_label,
 		playlists: playlists.items
 	};

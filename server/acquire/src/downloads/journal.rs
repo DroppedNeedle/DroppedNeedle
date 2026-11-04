@@ -14,6 +14,7 @@ use super::sources::SourceHandle;
 use super::state::TaskStatus;
 use super::store::{AttemptRow, DownloadStore, QuarantineRow, RetryAnchor, StoreError, TaskRow};
 use crate::db::AcquireDb;
+use crate::dispatch::DispatchOrigin;
 use crate::flows::seams::TickSink;
 use crate::requests::settle::announce_fulfilled;
 
@@ -210,7 +211,7 @@ impl Journal {
         now: f64,
     ) -> Result<Blocklist, StoreError> {
         let group = task.release_group_mbid.clone();
-        let not_better = task.origin == "upgrade";
+        let not_better = task.origin == DispatchOrigin::Upgrade;
         let live = self
             .read("downloads.automatic_blocklist", move |store| {
                 let mut live = store.load_quarantine_set(now, QUARANTINE_TTL_SECONDS)?;

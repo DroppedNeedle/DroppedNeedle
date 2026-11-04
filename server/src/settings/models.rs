@@ -57,12 +57,13 @@ pub struct UsenetSearchBackend {
     pub backend: UsenetBackend,
 }
 
-/// How the stored quality settings read: a usable recipe, or a section or
-/// recipe that does not validate.
+/// How the stored quality settings read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum QualityRecipeStatus {
-    V2,
+    /// The recipe validates and is in use.
+    Valid,
+    /// The section or its recipe does not validate.
     Invalid,
 }
 
@@ -477,11 +478,37 @@ pub struct SectionPrefUpdateItem {
     pub enabled: bool,
 }
 
+/// A page whose sections a user can turn on and off.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SectionPage {
+    /// The home page.
+    Home,
+    /// The discover page.
+    Discover,
+    /// The sidebar's service entries.
+    Sidebar,
+}
+
+impl SectionPage {
+    /// Every page, in the order the settings show them.
+    pub const ALL: [Self; 3] = [Self::Home, Self::Discover, Self::Sidebar];
+
+    /// The stored and wire spelling.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Home => "home",
+            Self::Discover => "discover",
+            Self::Sidebar => "sidebar",
+        }
+    }
+}
+
 /// Section prefs update (one page per call).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct SectionPrefsUpdate {
-    /// Page to update (`home`, `discover`, `sidebar`).
-    pub page: String,
+    /// Page to update.
+    pub page: SectionPage,
     /// Toggles to apply.
     pub sections: Vec<SectionPrefUpdateItem>,
 }

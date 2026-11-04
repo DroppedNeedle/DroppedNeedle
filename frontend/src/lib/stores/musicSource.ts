@@ -1,10 +1,11 @@
 import { browser } from '$app/environment';
+import type { components } from '$lib/api/v3/openapi';
 import { PAGE_SOURCE_KEYS } from '$lib/constants';
 import { registerUserSessionReset } from '$lib/utils/userSessionCleanup';
 
 // The primary source itself is the scrobble-preferences query; this module
 // holds only its type and each page's own switch, kept in the browser.
-export type MusicSource = 'listenbrainz' | 'lastfm';
+export type MusicSource = components['schemas']['ListenSource'];
 
 export const DEFAULT_SOURCE: MusicSource = 'listenbrainz';
 

@@ -7,6 +7,7 @@
 
 use crate::federated::users::StoredUser;
 use crate::session::login::TransportParam;
+use crate::users::roles::Role;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -81,8 +82,7 @@ pub struct FederatedUserView {
     pub id: String,
     /// Display name from the provider.
     pub display_name: String,
-    /// `user`, `trusted`, or `admin`.
-    pub role: String,
+    pub role: Role,
     /// Lowercased email, when the provider supplies one.
     pub email: Option<String>,
     /// Avatar URL from the provider.
@@ -98,7 +98,7 @@ impl From<&StoredUser> for FederatedUserView {
         Self {
             id: user.id.clone(),
             display_name: user.display_name.clone(),
-            role: user.role.clone(),
+            role: Role::from_stored(&user.role),
             email: user.email.clone(),
             avatar_url: user.avatar_url.clone(),
             username: user.username.clone(),

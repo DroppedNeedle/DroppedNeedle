@@ -8,15 +8,15 @@ export type ArtistView = Schemas['ArtistView'];
 export type TrackView = Schemas['TrackView'];
 export type LibraryAlbumStatus = Schemas['LibraryAlbumStatus'];
 
-export type ArtistSort = 'name' | 'album_count' | 'appearance_count' | 'date_added';
-export type LibraryArtistScope = 'album' | 'contributors';
+export type ArtistSort = Schemas['ArtistListSort'];
+/** The artist pages' two lists: album artists or contributors. */
+export type LibraryArtistScope = Exclude<Schemas['ArtistListScope'], 'all'>;
 
 export type ReleaseDraft = Schemas['ReleaseDraft'];
 export type MusicBrainzSeed = Schemas['MusicBrainzSeed'];
 export type LibraryContribution = Schemas['ContributionRecord'];
 
-// The suggestion's reason is plain text in the contract; the crate knows these.
-export type CrateReason = 'recent' | 'rediscover' | 'surprise' | 'same_era';
+export type CrateReason = Schemas['SuggestionReason'];
 
 /** A track on the local page's crate, from a search hit or a suggestion. */
 export type CrateTrack = {

@@ -117,6 +117,9 @@ pub struct OperationWorkResultView {
     /// `reason_code`, `candidate_keys`).
     #[schema(value_type = Object)]
     pub result: serde_json::Value,
+    /// The publish bundle the item wrote its files under, when it wrote
+    /// any: the id the recovery list names.
+    pub bundle_id: Option<String>,
 }
 
 /// One local file against one candidate release.
@@ -400,6 +403,7 @@ pub(super) fn detail_view(detail: &OperationDetail) -> OperationView {
                 failure_code: result.failure_code.clone(),
                 failure_reason: ending(result.failure_code.as_deref()),
                 result: result.result.clone(),
+                bundle_id: result.bundle_id.clone(),
             })
             .collect(),
         results_truncated: detail.results_truncated,

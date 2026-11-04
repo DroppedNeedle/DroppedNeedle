@@ -29,7 +29,7 @@ use super::source_tag::SourceTag;
 use super::state::TaskStatus;
 use super::store::QuarantineRow;
 use super::upgrades::{UpgradeAsk, UpgradeError, UpgradeOutcome, Upgrades};
-use crate::dispatch::DispatchTarget;
+use crate::dispatch::{DispatchOrigin, DispatchTarget};
 use crate::downloads::worker::{DownloadWorker, ReimportError};
 use crate::reason::{Reason, ReasonKind};
 use crate::requests::error::RequestsError;
@@ -116,9 +116,8 @@ pub struct DownloadTaskResponse {
     pub download_type: String,
     /// `soulseek`, `usenet` or `plugin:<key>`.
     pub source: String,
-    /// What started the download: `user`, `approval`, `retry`, `wanted`,
-    /// `upgrade`, `edition` or `follow`.
-    pub origin: String,
+    /// What started the download.
+    pub origin: DispatchOrigin,
     pub release_group_mbid: String,
     pub release_mbid: Option<String>,
     pub release_track_mbid: Option<String>,

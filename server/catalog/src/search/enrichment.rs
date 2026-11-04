@@ -98,7 +98,8 @@ impl SearchCounts {
             let key = lastfm.api_key.expose().trim();
             (lastfm.enabled && !key.is_empty()).then(|| key.to_owned())
         });
-        let follows_lastfm = self.listening.prefs(user_id).await.primary_music_source == "lastfm";
+        let follows_lastfm =
+            self.listening.prefs(user_id).await.primary_music_source == ListenSource::Lastfm;
         if follows_lastfm && let Some(creds) = self.lastfm_for(user_id, &instance_key).await {
             return Source::LastFm(creds);
         }

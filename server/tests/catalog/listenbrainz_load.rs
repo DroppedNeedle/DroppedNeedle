@@ -528,7 +528,9 @@ async fn journey(tag: &str, lastfm: bool) -> Measured {
             .update_prefs(
                 USER,
                 &PrefsPatch {
-                    primary_music_source: Some("lastfm".to_owned()),
+                    primary_music_source: Some(
+                        droppedneedle_kernel::runtime_config::sections::ListenSource::Lastfm,
+                    ),
                     ..PrefsPatch::default()
                 },
             )

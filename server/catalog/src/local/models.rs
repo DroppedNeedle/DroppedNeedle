@@ -148,6 +148,76 @@ pub struct AlbumPage {
     pub next: Option<String>,
 }
 
+/// Which way a list runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ListOrder {
+    /// Smallest or earliest first.
+    Asc,
+    /// Largest or latest first.
+    Desc,
+}
+
+/// How the album list is sorted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AlbumListSort {
+    /// Title.
+    Name,
+    /// Import time.
+    DateAdded,
+    /// Release year, unknowns last.
+    Year,
+    /// Album artist.
+    Artist,
+    /// One shuffle per walk, kept across its pages.
+    Random,
+    /// Oldest imports first.
+    Rediscover,
+}
+
+/// How the artist list is sorted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ArtistListSort {
+    /// Display name.
+    Name,
+    /// Albums the artist leads.
+    AlbumCount,
+    /// Albums the artist appears on without leading.
+    AppearanceCount,
+    /// First import time.
+    DateAdded,
+}
+
+/// Which artists the artist list covers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ArtistListScope {
+    /// Every credited artist.
+    All,
+    /// Artists leading at least one album.
+    AlbumArtists,
+    /// Artists appearing without leading.
+    Contributors,
+}
+
+/// How the track list is sorted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TrackListSort {
+    /// Title.
+    Title,
+    /// Import time.
+    DateAdded,
+    /// Track artist, then album, disc and track number.
+    Artist,
+    /// Album, then disc and track number.
+    Album,
+    /// One shuffle per walk, kept across its pages.
+    Random,
+}
+
 /// Album list query. Unknown `sort` values fail with INVALID_INPUT.
 #[derive(Debug, Clone, Default, Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
@@ -157,12 +227,10 @@ pub struct AlbumQuery {
     /// The `next` of the page before, with the same sort and order.
     /// Absent for the first page.
     pub after: Option<String>,
-    /// `name`, `date_added`, `year`, `artist`, `random` (one shuffle per
-    /// walk, kept across its pages), or `rediscover` (oldest first).
     /// Default `name`.
-    pub sort: Option<String>,
-    /// `asc` or `desc`. Default `asc`.
-    pub order: Option<String>,
+    pub sort: Option<AlbumListSort>,
+    /// Default `asc`.
+    pub order: Option<ListOrder>,
     /// Title/artist substring filter, case folded.
     pub q: Option<String>,
     /// Restrict to one album artist.
@@ -284,15 +352,14 @@ pub struct ArtistQuery {
     /// The `next` of the page before, with the same scope, sort and
     /// order. Absent for the first page.
     pub after: Option<String>,
-    /// `name`, `album_count`, `appearance_count`, or `date_added`.
     /// Default `name`.
-    pub sort: Option<String>,
-    /// `asc` or `desc`. Default `asc`.
-    pub order: Option<String>,
+    pub sort: Option<ArtistListSort>,
+    /// Default `asc`.
+    pub order: Option<ListOrder>,
     /// Name substring filter, case folded.
     pub q: Option<String>,
-    /// `all`, `album_artists`, or `contributors`. Default `all`.
-    pub scope: Option<String>,
+    /// Default `all`.
+    pub scope: Option<ArtistListScope>,
     /// Only artists with at least this many indexed tracks in the library,
     /// 1-10000: the tracks credited to them and the tracks on the albums
     /// they lead, each once. The scope totals count the same artists.
@@ -437,12 +504,10 @@ pub struct TrackQuery {
     /// The `next` of the page before, with the same sort and order.
     /// Absent for the first page.
     pub after: Option<String>,
-    /// `title`, `date_added`, `artist` (then album, disc and track),
-    /// `album` (then disc and track), or `random` (one shuffle per walk,
-    /// kept across its pages). Default `title`.
-    pub sort: Option<String>,
-    /// `asc` or `desc`. Default `asc`.
-    pub order: Option<String>,
+    /// Default `title`.
+    pub sort: Option<TrackListSort>,
+    /// Default `asc`.
+    pub order: Option<ListOrder>,
     /// Title/artist/album substring filter, case folded.
     pub q: Option<String>,
     /// Restrict to one album.
@@ -540,13 +605,27 @@ pub struct SuggestionTrack {
     pub year: Option<i64>,
     /// Duration, seconds.
     pub duration_seconds: Option<f64>,
-    /// `recent`, `rediscover`, `surprise`, or `same_era`.
-    pub reason: String,
+    /// Which pool the track came from.
+    pub reason: SuggestionReason,
+}
+
+/// Why a track was suggested: the pool it came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SuggestionReason {
+    /// Among the newest imports.
+    Recent,
+    /// Among the oldest imports.
+    Rediscover,
+    /// A random pick.
+    Surprise,
+    /// A random pick from the asked-for decade.
+    SameEra,
 }
 
 /// A library track with why it was suggested.
-impl From<(TrackRecord, &str)> for SuggestionTrack {
-    fn from((track, reason): (TrackRecord, &str)) -> Self {
+impl From<(TrackRecord, SuggestionReason)> for SuggestionTrack {
+    fn from((track, reason): (TrackRecord, SuggestionReason)) -> Self {
         Self {
             track_id: track.id,
             title: track.title,
@@ -557,7 +636,7 @@ impl From<(TrackRecord, &str)> for SuggestionTrack {
             format: track.format,
             year: track.year,
             duration_seconds: track.duration_seconds,
-            reason: reason.to_owned(),
+            reason,
         }
     }
 }

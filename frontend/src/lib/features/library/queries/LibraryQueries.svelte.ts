@@ -134,7 +134,7 @@ export const getLibraryAlbumsInfiniteQuery = (getParams: Getter<LibraryV3AlbumsP
 export interface LibraryArtistsParams {
 	/** `hearted` is the favourites' own order: the newest heart first. */
 	sortBy: ArtistSort | 'hearted';
-	sortOrder: 'asc' | 'desc';
+	sortOrder: components['schemas']['ListOrder'];
 	q: string;
 	scope: LibraryArtistScope;
 	/** Only artists with at least this many tracks in the library. */
@@ -149,7 +149,7 @@ function artistParams(params: LibraryArtistsParams): LibraryV3ArtistsParams {
 		limit: ARTISTS_PAGE_SIZE,
 		...(params.sortBy === 'hearted' ? {} : { sort: params.sortBy, order: params.sortOrder }),
 		q: params.q || undefined,
-		scope: params.scope === 'contributors' ? 'contributors' : 'album_artists',
+		scope: params.scope,
 		...(params.minTracks && params.minTracks > 1 ? { minTracks: params.minTracks } : {}),
 		...(params.favorites ? { favorites: true } : {})
 	};

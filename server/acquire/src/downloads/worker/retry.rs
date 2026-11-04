@@ -16,7 +16,12 @@ enum Retried {
 /// The retry successor row for a settled task: same ask, one generation
 /// on. `None` for a task that is not settled yet.
 pub(super) fn successor_row(task: &TaskRow) -> Option<NewTask> {
-    let spawn = plan_retry(&task.id, task.status, &task.origin, task.retry_count)?;
+    let spawn = plan_retry(
+        &task.id,
+        task.status,
+        task.origin.as_str(),
+        task.retry_count,
+    )?;
     // Successor ids keep the 32-hex shape the orphan parser recognises;
     // the retry generation rides in `retry_count`.
     Some(NewTask {

@@ -297,7 +297,11 @@ async fn wanted_watch_lifecycle() {
     assert_eq!((checked.checked, checked.dispatched), (1, 1));
     let queued = tasks(&db).await;
     assert_eq!(queued.len(), 1);
-    assert_eq!(queued[0].origin, "wanted", "a wanted find says so");
+    assert_eq!(
+        queued[0].origin,
+        DispatchOrigin::Wanted,
+        "a wanted find says so"
+    );
     assert_eq!(queued[0].release_group_mbid, "rg-blue");
     let row = rig
         .deps
@@ -701,7 +705,7 @@ async fn upgrade_sweep_gates_cap_and_active() {
     let grabs: Vec<TaskRow> = tasks(&db)
         .await
         .into_iter()
-        .filter(|task| task.origin == "upgrade")
+        .filter(|task| task.origin == DispatchOrigin::Upgrade)
         .collect();
     assert_eq!(grabs.len(), 2);
     assert_eq!(

@@ -7,6 +7,9 @@
 //! fallible method returns a plain string cause: provider detail stays in
 //! the log, never on the wire.
 
+use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
+
 use super::forwarding::Service;
 use crate::remotes::models::SourceName;
 
@@ -185,7 +188,9 @@ impl PlayEvents for NoPlayEvents {
 }
 
 /// Who sees what a user plays: `user_listening_prefs.now_playing_visibility`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+#[schema(as = NowPlayingVisibility)]
 pub enum Visibility {
     /// Full track detail for other listeners.
     Full,

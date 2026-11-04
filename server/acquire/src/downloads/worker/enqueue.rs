@@ -87,7 +87,7 @@ impl DownloadWorker {
             return false;
         }
         if Self::parked(task) {
-            if task.origin == DispatchOrigin::Upgrade.as_str() {
+            if task.origin == DispatchOrigin::Upgrade {
                 self.settle_upgrade(task, now).await;
             }
             // Any other parked task waits for its owner's pick.

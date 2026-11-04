@@ -136,7 +136,7 @@ impl DownloadWorker {
         let job_id = uuid::Uuid::new_v4().simple().to_string();
         let ordered: Vec<_> = in_try_order(sources, order).into_iter().cloned().collect();
         let (candidates, _failed) = search_sources(&ordered, &target, &job_id).await;
-        let upgrade = task.origin == DispatchOrigin::Upgrade.as_str();
+        let upgrade = task.origin == DispatchOrigin::Upgrade;
         // "Always wait for my pick" covers requests and wanted albums: an
         // upgrade that waits costs nothing but a growing queue.
         let mode = if upgrade && mode == ReviewMode::Always {

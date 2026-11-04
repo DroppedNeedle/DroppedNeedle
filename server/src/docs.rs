@@ -8,7 +8,7 @@ use utoipa::{
     Modify, OpenApi, ToSchema,
     openapi::{
         Content, RefOr, Response,
-        schema::Ref,
+        schema::{Ref, Schema},
         security::{ApiKey, ApiKeyValue, HttpAuthScheme, HttpBuilder, SecurityScheme},
     },
 };
@@ -31,6 +31,13 @@ use droppedneedle_kernel::{
         // The value type of the `service_status` maps; no operation refers
         // to it by name.
         droppedneedle_catalog::metadata::models::SourceStatus,
+        // The library lists' query enums: a query parameter names its
+        // schema, but the path macro does not collect it.
+        droppedneedle_catalog::local::models::AlbumListSort,
+        droppedneedle_catalog::local::models::ArtistListSort,
+        droppedneedle_catalog::local::models::ArtistListScope,
+        droppedneedle_catalog::local::models::TrackListSort,
+        droppedneedle_catalog::local::models::ListOrder,
     )),
     info(
         title = "DroppedNeedle v3",
@@ -51,6 +58,7 @@ impl OpenApi for ApiDoc {
         doc.merge(crate::upgrade_mode::routes::document());
         ErrorBodies.modify(&mut doc);
         SecuritySchemes.modify(&mut doc);
+        OptionalRefDescriptions.modify(&mut doc);
         doc
     }
 }
@@ -106,8 +114,16 @@ struct ErrorBodies;
 
 /// Error answers sent with no body, as (path, status). The held file's
 /// audio answers a range outside the file with a bare 416, as a player
-/// expects.
-const BODILESS_ERRORS: &[(&str, &str)] = &[("/api/v3/held/files/{file_id}/audio", "416")];
+/// expects. The image routes answer missing art with a bare 404, so an
+/// `<img>` draws nothing and the web UI keeps its own placeholder.
+const BODILESS_ERRORS: &[(&str, &str)] = &[
+    ("/api/v3/held/files/{file_id}/audio", "416"),
+    ("/api/v3/covers/release-group/{release_group_id}", "404"),
+    ("/api/v3/covers/release/{release_id}", "404"),
+    ("/api/v3/covers/artist/{artist_id}", "404"),
+    ("/api/v3/library/albums/{id}/artwork", "404"),
+    ("/api/v3/library/artists/{id}/artwork", "404"),
+];
 
 impl Modify for ErrorBodies {
     fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
@@ -138,5 +154,47 @@ impl Modify for ErrorBodies {
                 }
             }
         }
+    }
+}
+
+/// utoipa puts the doc comment of an optional field whose type is a named
+/// schema on the `$ref` inside the field's `oneOf`, where the TypeScript
+/// generator does not read it. This moves it up to the field.
+struct OptionalRefDescriptions;
+
+impl Modify for OptionalRefDescriptions {
+    fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
+        if let Some(components) = openapi.components.as_mut() {
+            components
+                .schemas
+                .values_mut()
+                .for_each(lift_ref_descriptions);
+        }
+    }
+}
+
+fn lift_ref_descriptions(schema: &mut RefOr<Schema>) {
+    let RefOr::T(schema) = schema else {
+        return;
+    };
+    match schema {
+        Schema::Object(object) => {
+            for property in object.properties.values_mut() {
+                if let RefOr::T(Schema::OneOf(one_of)) = property
+                    && one_of.description.is_none()
+                {
+                    one_of.description = one_of.items.iter_mut().find_map(|item| match item {
+                        RefOr::Ref(reference) if !reference.description.is_empty() => {
+                            Some(std::mem::take(&mut reference.description))
+                        }
+                        _ => None,
+                    });
+                }
+                lift_ref_descriptions(property);
+            }
+        }
+        Schema::AllOf(all_of) => all_of.items.iter_mut().for_each(lift_ref_descriptions),
+        Schema::OneOf(one_of) => one_of.items.iter_mut().for_each(lift_ref_descriptions),
+        _ => {}
     }
 }

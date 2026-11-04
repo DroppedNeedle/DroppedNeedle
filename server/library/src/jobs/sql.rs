@@ -290,7 +290,7 @@ pub(super) WORK_OF_BUNDLE = "SELECT job_id, ordinal FROM library_operation_work 
          WHERE bundle_id = :bundle";
 
 pub(super) WORK_RESULTS = "SELECT ordinal, local_album_id, local_track_id, action, state, failure_code, \
-     result_json FROM library_operation_work WHERE job_id = ?1 ORDER BY ordinal LIMIT ?2";
+     result_json, bundle_id FROM library_operation_work WHERE job_id = ?1 ORDER BY ordinal LIMIT ?2";
 pub(super) CONTROL_OF_IDEMPOTENCY_KEY = "SELECT job_id, control FROM library_operation_control_idempotency \
              WHERE idempotency_key = ?1";
 pub(super) RECORD_CONTROL_REQUEST = "INSERT INTO library_operation_control_idempotency \
@@ -338,6 +338,7 @@ pub(super) row WorkResultRow for [WORK_RESULTS] {
     state: WorkState,
     failure_code: Option<String>,
     result_json: Option<String>,
+    bundle_id: Option<String>,
 }
 pub(super) row ControlKey for [CONTROL_OF_IDEMPOTENCY_KEY] {
     job_id: String,

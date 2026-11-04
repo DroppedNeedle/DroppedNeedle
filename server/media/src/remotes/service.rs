@@ -18,10 +18,11 @@ use super::folders::{
 };
 use super::jellyfin::{JellyfinAdapter, MixSeed};
 use super::models::{
-    AlbumPage, AlbumView, AnalyticsView, ArtistIndexEntry, ArtistPage, ConnectionStatus,
-    DiscoveryView, FavoritesView, FilterFacetsView, FolderResolutionView, HistoryPage, HubView,
-    ImportResult, InfoView, LyricsView, MatchQuery, MatchView, MusicFolderView, PlaylistCollection,
-    PlaylistDetail, SearchResults, SourceName, StatsView, TrackPage, TrackView,
+    AccountMode, AlbumPage, AlbumView, AnalyticsView, ArtistIndexEntry, ArtistPage,
+    ConnectionStatus, DiscoveryView, FavoritesView, FilterFacetsView, FolderResolutionView,
+    HistoryPage, HubView, ImportResult, InfoView, LyricsView, MatchQuery, MatchView,
+    MusicFolderView, PlaylistCollection, PlaylistDetail, SearchResults, SourceName, StatsView,
+    TrackPage, TrackView,
 };
 use super::source::{
     AdapterError, AlbumBrowse, ArtistBrowse, ImportSink, RemoteHandle, TrackBrowse, album_page,
@@ -920,7 +921,7 @@ impl RemotesService {
         // the status still asks the user to relink their own.
         let mut resolved = self.resolver.resolve(user_id, source, PERSON_WAITING).await;
         if let Ok(shared) = &resolved
-            && shared.account_mode == "shared"
+            && shared.account_mode == Some(AccountMode::Shared)
             && let Ok(Some(server)) = self.resolver.server(source)
             && matches!(
                 self.resolver
@@ -932,24 +933,31 @@ impl RemotesService {
             resolved = Err(ResolveError::Stale);
         }
         Ok(match resolved {
-            Ok(resolved) => ConnectionStatus {
-                source,
-                connected: true,
-                server_url: (resolved.account_mode == "linked").then(|| resolved.base_url.clone()),
-                account_mode: resolved.account_mode,
-                account_label: resolved.account_label,
-            },
+            Ok(resolved) => {
+                let linked = resolved.account_mode == Some(AccountMode::Linked);
+                ConnectionStatus {
+                    source,
+                    connected: true,
+                    server_url: linked.then(|| resolved.base_url.clone()),
+                    account_mode: if linked {
+                        AccountMode::Linked
+                    } else {
+                        AccountMode::Shared
+                    },
+                    account_label: resolved.account_label,
+                }
+            }
             Err(ResolveError::Stale) => ConnectionStatus {
                 source,
                 connected: false,
-                account_mode: "linked".to_owned(),
+                account_mode: AccountMode::Linked,
                 account_label: "Reconnect required".to_owned(),
                 server_url: None,
             },
             Err(ResolveError::NotConfigured) => ConnectionStatus {
                 source,
                 connected: false,
-                account_mode: "linked".to_owned(),
+                account_mode: AccountMode::Linked,
                 account_label: String::new(),
                 server_url: None,
             },

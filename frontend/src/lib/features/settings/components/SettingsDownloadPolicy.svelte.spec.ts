@@ -44,7 +44,7 @@ const basePolicy: DownloadPolicySettings = {
 	search_review: 'when_unsure',
 	usenet_retention_days: 0,
 	quality_recipe: recipe,
-	quality_recipe_status: 'v2',
+	quality_recipe_status: 'valid',
 	quality_recipe_error: null
 };
 

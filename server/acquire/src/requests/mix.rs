@@ -37,6 +37,7 @@ use droppedneedle_kernel::events::{
     EventHub, PersonalMixRefreshed, UserNotice, model::new_event_id,
 };
 use droppedneedle_media::playback::listening::{ListeningStore, PrefsPatch};
+use droppedneedle_media::playback::models::MixGrantState;
 use droppedneedle_providers::listenbrainz::playlists::{
     RecommendationPlaylist, RecommendationTrack,
 };
@@ -261,12 +262,16 @@ impl PersonalMixBuilder {
         }
     }
 
-    /// Display state of the user's standing grant
-    /// (`none|pending|approved|rejected|revoked`), with the override for
+    /// Display state of the user's standing grant, with the override for
     /// admins and trusted users. An enabled toggle with no row reads `none`.
-    pub async fn auto_request_state(&self, user_id: &str, role: Role, toggle_on: bool) -> String {
+    pub async fn auto_request_state(
+        &self,
+        user_id: &str,
+        role: Role,
+        toggle_on: bool,
+    ) -> MixGrantState {
         if toggle_on && role.is_curator() {
-            return "approved".to_owned();
+            return MixGrantState::Approved;
         }
         let state = match self.requests.mixes.state(user_id).await {
             Ok(state) => state,
@@ -276,12 +281,11 @@ impl PersonalMixBuilder {
             }
         };
         match (toggle_on, state) {
-            (true, Some(state)) => state.as_str().to_owned(),
-            (true, None) => "none".to_owned(),
-            (false, Some(state @ (ApprovalState::Rejected | ApprovalState::Revoked))) => {
-                state.as_str().to_owned()
-            }
-            (false, _) => "none".to_owned(),
+            (true, Some(ApprovalState::Pending)) => MixGrantState::Pending,
+            (true, Some(ApprovalState::Approved)) => MixGrantState::Approved,
+            (_, Some(ApprovalState::Rejected)) => MixGrantState::Rejected,
+            (_, Some(ApprovalState::Revoked)) => MixGrantState::Revoked,
+            (true, None) | (false, _) => MixGrantState::None,
         }
     }
 
@@ -839,7 +843,12 @@ impl droppedneedle_media::playback::listening_routes::MixGrants for MixGrantHook
         Box::pin(async move { self.mixer.on_toggle(user_id, role, enabled).await })
     }
 
-    fn state<'a>(&'a self, user_id: &'a str, role: Role, toggle_on: bool) -> BoxFuture<'a, String> {
+    fn state<'a>(
+        &'a self,
+        user_id: &'a str,
+        role: Role,
+        toggle_on: bool,
+    ) -> BoxFuture<'a, MixGrantState> {
         Box::pin(async move {
             self.mixer
                 .auto_request_state(user_id, role, toggle_on)

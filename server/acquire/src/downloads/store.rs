@@ -22,6 +22,7 @@ use super::source_tag::SourceTag;
 use super::sql;
 use super::state::{AttemptDisposition, AttemptState, TaskStatus};
 use crate::db::{ms_from_secs_f64 as ms, secs_f64_from_ms as secs};
+use crate::dispatch::DispatchOrigin;
 use crate::reason::Reason;
 use crate::requests::settle::{Fulfilled, on_task_settled};
 
@@ -65,8 +66,8 @@ pub struct TaskRow {
     pub album_title: String,
     /// Current persisted status.
     pub status: TaskStatus,
-    /// Why the task exists: a `DispatchOrigin` as stored text.
-    pub origin: String,
+    /// Why the task exists.
+    pub origin: DispatchOrigin,
     /// `album` or `track`.
     pub download_type: String,
     /// Target release-group MBID.

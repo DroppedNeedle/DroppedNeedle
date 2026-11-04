@@ -4356,14 +4356,7 @@
             }
           },
           "404": {
-            "description": "No image for this artist",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
+            "description": "No image for this artist"
           }
         },
         "security": [
@@ -4483,14 +4476,7 @@
             }
           },
           "404": {
-            "description": "No art for this release group",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
+            "description": "No art for this release group"
           }
         },
         "security": [
@@ -4560,14 +4546,7 @@
             }
           },
           "404": {
-            "description": "No art for this release",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
+            "description": "No art for this release"
           }
         },
         "security": [
@@ -8679,19 +8658,19 @@
           {
             "name": "sort",
             "in": "query",
-            "description": "`name`, `date_added`, `year`, `artist`, `random` (one shuffle per\nwalk, kept across its pages), or `rediscover` (oldest first).\nDefault `name`.",
+            "description": "Default `name`.",
             "required": false,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/AlbumListSort"
             }
           },
           {
             "name": "order",
             "in": "query",
-            "description": "`asc` or `desc`. Default `asc`.",
+            "description": "Default `asc`.",
             "required": false,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/ListOrder"
             }
           },
           {
@@ -12111,14 +12090,7 @@
             }
           },
           "404": {
-            "description": "The album has no local art",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
+            "description": "The album has no local art"
           }
         },
         "security": [
@@ -12508,19 +12480,19 @@
           {
             "name": "sort",
             "in": "query",
-            "description": "`name`, `album_count`, `appearance_count`, or `date_added`.\nDefault `name`.",
+            "description": "Default `name`.",
             "required": false,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/ArtistListSort"
             }
           },
           {
             "name": "order",
             "in": "query",
-            "description": "`asc` or `desc`. Default `asc`.",
+            "description": "Default `asc`.",
             "required": false,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/ListOrder"
             }
           },
           {
@@ -12535,10 +12507,10 @@
           {
             "name": "scope",
             "in": "query",
-            "description": "`all`, `album_artists`, or `contributors`. Default `all`.",
+            "description": "Default `all`.",
             "required": false,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/ArtistListScope"
             }
           },
           {
@@ -13383,14 +13355,7 @@
             }
           },
           "404": {
-            "description": "None of the artist's albums has art",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
+            "description": "None of the artist's albums has art"
           }
         },
         "security": [
@@ -21285,19 +21250,19 @@
           {
             "name": "sort",
             "in": "query",
-            "description": "`title`, `date_added`, `artist` (then album, disc and track),\n`album` (then disc and track), or `random` (one shuffle per walk,\nkept across its pages). Default `title`.",
+            "description": "Default `title`.",
             "required": false,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/TrackListSort"
             }
           },
           {
             "name": "order",
             "in": "query",
-            "description": "`asc` or `desc`. Default `asc`.",
+            "description": "Default `asc`.",
             "required": false,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/ListOrder"
             }
           },
           {
@@ -34566,6 +34531,14 @@
   },
   "components": {
     "schemas": {
+      "AccountMode": {
+        "type": "string",
+        "description": "Whose account a source is reached through.",
+        "enum": [
+          "linked",
+          "shared"
+        ]
+      },
       "AcknowledgedWarning": {
         "type": "object",
         "description": "An address change the caller has made at the outside service, as the\npre-flight listed it.",
@@ -34583,10 +34556,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/UpgradeAddress",
-                "description": "The address v3 uses, as the pre-flight gave it."
+                "$ref": "#/components/schemas/UpgradeAddress"
               }
-            ]
+            ],
+            "description": "The address v3 uses, as the pre-flight gave it."
           },
           "old_address": {
             "oneOf": [
@@ -34594,10 +34567,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/UpgradeAddress",
-                "description": "The address v2 registered, as the pre-flight gave it."
+                "$ref": "#/components/schemas/UpgradeAddress"
               }
-            ]
+            ],
+            "description": "The address v2 registered, as the pre-flight gave it."
           }
         }
       },
@@ -35018,10 +34991,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/Role",
-                "description": "Defaults to `user`."
+                "$ref": "#/components/schemas/Role"
               }
-            ]
+            ],
+            "description": "Defaults to `user`."
           },
           "username": {
             "type": "string",
@@ -35280,10 +35253,10 @@
                     "type": "null"
                   },
                   {
-                    "$ref": "#/components/schemas/ManagementHoldView",
-                    "description": "Set when library management leaves this album's files alone."
+                    "$ref": "#/components/schemas/ManagementHoldView"
                   }
-                ]
+                ],
+                "description": "Set when library management leaves this album's files alone."
               },
               "pending_review_id": {
                 "type": [
@@ -35567,10 +35540,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/AlbumHistoryByView",
-                "description": "Who asked, for `retag_joined` and the undo entries; null when the\napp did it."
+                "$ref": "#/components/schemas/AlbumHistoryByView"
               }
-            ]
+            ],
+            "description": "Who asked, for `retag_joined` and the undo entries; null when the\napp did it."
           },
           "kind": {
             "$ref": "#/components/schemas/AlbumHistoryKindView"
@@ -35696,6 +35669,18 @@
             "description": "Release year."
           }
         }
+      },
+      "AlbumListSort": {
+        "type": "string",
+        "description": "How the album list is sorted.",
+        "enum": [
+          "name",
+          "date_added",
+          "year",
+          "artist",
+          "random",
+          "rediscover"
+        ]
       },
       "AlbumPage": {
         "type": "object",
@@ -36715,8 +36700,7 @@
             "type": "string"
           },
           "subject_kind": {
-            "type": "string",
-            "description": "`album` or `track`."
+            "$ref": "#/components/schemas/ProofSubject"
           },
           "subject_name": {
             "type": "string"
@@ -36745,10 +36729,10 @@
           "standardization": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/ArtistStandardization",
-                "description": "Standardization level."
+                "$ref": "#/components/schemas/ArtistStandardization"
               }
             ],
+            "description": "Standardization level.",
             "default": "credited"
           },
           "translate_names": {
@@ -36925,10 +36909,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/ArtistMergeBasis",
-                "description": "What that merge rested on."
+                "$ref": "#/components/schemas/ArtistMergeBasis"
               }
-            ]
+            ],
+            "description": "What that merge rested on."
           },
           "provider_mbids": {
             "type": "array",
@@ -37062,10 +37046,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/PhotoCredit",
-                "description": "`null` when the picture asks for none, or no picture is held."
+                "$ref": "#/components/schemas/PhotoCredit"
               }
-            ]
+            ],
+            "description": "`null` when the picture asks for none, or no picture is held."
           }
         }
       },
@@ -37277,10 +37261,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/LifeSpan",
-                "description": "Life span."
+                "$ref": "#/components/schemas/LifeSpan"
               }
-            ]
+            ],
+            "description": "Life span."
           },
           "musicbrainz_id": {
             "type": "string",
@@ -37383,10 +37367,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/ArtistLinkByView",
-                "description": "Null when there is no link."
+                "$ref": "#/components/schemas/ArtistLinkByView"
               }
-            ]
+            ],
+            "description": "Null when there is no link."
           },
           "source": {
             "oneOf": [
@@ -37394,12 +37378,31 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/ArtistLinkSourceView",
-                "description": "Null when there is no link."
+                "$ref": "#/components/schemas/ArtistLinkSourceView"
               }
-            ]
+            ],
+            "description": "Null when there is no link."
           }
         }
+      },
+      "ArtistListScope": {
+        "type": "string",
+        "description": "Which artists the artist list covers.",
+        "enum": [
+          "all",
+          "album_artists",
+          "contributors"
+        ]
+      },
+      "ArtistListSort": {
+        "type": "string",
+        "description": "How the artist list is sorted.",
+        "enum": [
+          "name",
+          "album_count",
+          "appearance_count",
+          "date_added"
+        ]
       },
       "ArtistMergeApplyBody": {
         "type": "object",
@@ -37988,10 +37991,10 @@
           "embedded_format": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/ArtworkOutputFormat",
-                "description": "Embedded output format."
+                "$ref": "#/components/schemas/ArtworkOutputFormat"
               }
             ],
+            "description": "Embedded output format.",
             "default": "jpeg"
           },
           "embedded_maximum_size": {
@@ -38008,10 +38011,10 @@
           "external_format": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/ArtworkOutputFormat",
-                "description": "External output format."
+                "$ref": "#/components/schemas/ArtworkOutputFormat"
               }
             ],
+            "description": "External output format.",
             "default": "original"
           },
           "external_maximum_size": {
@@ -38490,10 +38493,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/RequestKind",
-                "description": "Request kind; defaults to album."
+                "$ref": "#/components/schemas/RequestKind"
               }
-            ]
+            ],
+            "description": "Request kind; defaults to album."
           },
           "musicbrainz_ids": {
             "type": "array",
@@ -39539,10 +39542,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/ShelfSource",
-                "description": "Service the user must connect for the full shelf, when gated."
+                "$ref": "#/components/schemas/ShelfSource"
               }
-            ]
+            ],
+            "description": "Service the user must connect for the full shelf, when gated."
           },
           "fallback_message": {
             "type": [
@@ -39571,10 +39574,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/RadioSeedKind",
-                "description": "Radio seed kind, when the shelf is playable as radio."
+                "$ref": "#/components/schemas/RadioSeedKind"
               }
-            ]
+            ],
+            "description": "Radio seed kind, when the shelf is playable as radio."
           },
           "source": {
             "oneOf": [
@@ -39582,10 +39585,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/ShelfSource",
-                "description": "Where the rows came from, when the shelf names it."
+                "$ref": "#/components/schemas/ShelfSource"
               }
-            ]
+            ],
+            "description": "Where the rows came from, when the shelf names it."
           },
           "title": {
             "type": "string",
@@ -39998,10 +40001,10 @@
           "transcode_default_format": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/AudioFormat",
-                "description": "Default transcode format."
+                "$ref": "#/components/schemas/AudioFormat"
               }
             ],
+            "description": "Default transcode format.",
             "default": "mp3"
           },
           "transcode_max_bitrate_kbps": {
@@ -40094,8 +40097,8 @@
             "description": "Display label, e.g. the login name."
           },
           "account_mode": {
-            "type": "string",
-            "description": "\"linked\" (own credential) or \"shared\" (admin credential)."
+            "$ref": "#/components/schemas/AccountMode",
+            "description": "Whose account the source is reached through."
           },
           "connected": {
             "type": "boolean",
@@ -40314,10 +40317,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/ContributionReason",
-                "description": "Why the contribution needs review, when it does: a stable code, a\nplain sentence, and what to do next."
+                "$ref": "#/components/schemas/ContributionReason"
               }
-            ]
+            ],
+            "description": "Why the contribution needs review, when it does: a stable code, a\nplain sentence, and what to do next."
           },
           "row_revision": {
             "type": "integer",
@@ -40530,7 +40533,7 @@
       },
       "CoverUploadBody": {
         "type": "object",
-        "description": "Cover-upload body. Base64 JSON instead of multipart: the app has no\nmultipart feature and the frontend regenerates against this contract.",
+        "description": "Cover-upload body: the image as base64 in JSON.",
         "required": [
           "image_base64",
           "content_type"
@@ -41322,10 +41325,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/ListenSource",
-                "description": "Provider behind the row, when it had one."
+                "$ref": "#/components/schemas/ListenSource"
               }
-            ]
+            ],
+            "description": "Provider behind the row, when it had one."
           },
           "section": {
             "type": [
@@ -41527,10 +41530,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/IntegrationStatus",
-                "description": "Integration availability behind the shelves."
+                "$ref": "#/components/schemas/IntegrationStatus"
               }
-            ]
+            ],
+            "description": "Integration availability behind the shelves."
           },
           "refresh_started_at": {
             "type": [
@@ -41882,6 +41885,19 @@
             "type": "boolean"
           }
         }
+      },
+      "DispatchOrigin": {
+        "type": "string",
+        "description": "What started a download. Stored as the task's `origin`; origins decide\nquota exemptions and how a landing treats the files, never routing.\nA request row stores it too, in the order `request_history.origin`'s\nCHECK lists them.",
+        "enum": [
+          "user",
+          "approval",
+          "retry",
+          "wanted",
+          "upgrade",
+          "edition",
+          "follow"
+        ]
       },
       "DisplayNameUpdate": {
         "type": "object",
@@ -42416,10 +42432,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/ImportDecisionView",
-                "description": "The import's decision on the newest landing."
+                "$ref": "#/components/schemas/ImportDecisionView"
               }
-            ]
+            ],
+            "description": "The import's decision on the newest landing."
           },
           "download_type": {
             "type": "string",
@@ -42464,10 +42480,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/MaybeHaveView",
-                "description": "A library album whose edition is a guess of this album, though its\nfiles name another: \"You may have this\"."
+                "$ref": "#/components/schemas/MaybeHaveView"
               }
-            ]
+            ],
+            "description": "A library album whose edition is a guess of this album, though its\nfiles name another: \"You may have this\"."
           },
           "next_retry_at": {
             "type": [
@@ -42478,8 +42494,8 @@
             "description": "When the next automatic retry is due, if one will run."
           },
           "origin": {
-            "type": "string",
-            "description": "What started the download: `user`, `approval`, `retry`, `wanted`,\n`upgrade`, `edition` or `follow`."
+            "$ref": "#/components/schemas/DispatchOrigin",
+            "description": "What started the download."
           },
           "outcome_code": {
             "oneOf": [
@@ -42487,10 +42503,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/Reason",
-                "description": "The worker's last outcome. Show `reason` instead."
+                "$ref": "#/components/schemas/Reason"
               }
-            ]
+            ],
+            "description": "The worker's last outcome. Show `reason` instead."
           },
           "progress_percent": {
             "type": "integer",
@@ -42543,10 +42559,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/DownloadTaskReason",
-                "description": "Why the task sits where it does, when that needs saying."
+                "$ref": "#/components/schemas/DownloadTaskReason"
               }
-            ]
+            ],
+            "description": "Why the task sits where it does, when that needs saying."
           },
           "recording_mbid": {
             "type": [
@@ -42750,10 +42766,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/Reason",
-                "description": "Why the item stopped short, when it did."
+                "$ref": "#/components/schemas/Reason"
               }
-            ]
+            ],
+            "description": "Why the item stopped short, when it did."
           },
           "release_group_mbid": {
             "type": [
@@ -43311,10 +43327,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/EditionFetchView",
-                "description": "Absent when the album has no edition fetch on record (none was\nstarted, or its download was cleared from the queue)."
+                "$ref": "#/components/schemas/EditionFetchView"
               }
-            ]
+            ],
+            "description": "Absent when the album has no edition fetch on record (none was\nstarted, or its download was cleared from the queue)."
           }
         }
       },
@@ -43511,10 +43527,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/ReasonView",
-                "description": "A sentence about the file's tags, when they need one:\n`TRACK_ID_CORRECTED` on a kept file whose track ID belongs to\nanother edition (it is matched by its recording, and the ID is\ncorrected when the album's MusicBrainz tags are written), or\n`TRACK_ID_ELSEWHERE` on a file that is not kept because its track ID\nbelongs to another edition and it has no recording ID. Absent\notherwise."
+                "$ref": "#/components/schemas/ReasonView"
               }
-            ]
+            ],
+            "description": "A sentence about the file's tags, when they need one:\n`TRACK_ID_CORRECTED` on a kept file whose track ID belongs to\nanother edition (it is matched by its recording, and the ID is\ncorrected when the album's MusicBrainz tags are written), or\n`TRACK_ID_ELSEWHERE` on a file that is not kept because its track ID\nbelongs to another edition and it has no recording ID. Absent\notherwise."
           },
           "suggested": {
             "oneOf": [
@@ -43522,10 +43538,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/EditionSuggestionView",
-                "description": "The edition track no file holds that this file may be matched to\nby hand: the one its disc and track number name, or on a whole\nalbum its place in file order. Set only on a file the edition does\nnot place; nothing applies it by itself."
+                "$ref": "#/components/schemas/EditionSuggestionView"
               }
-            ]
+            ],
+            "description": "The edition track no file holds that this file may be matched to\nby hand: the one its disc and track number name, or on a whole\nalbum its place in file order. Set only on a file the edition does\nnot place; nothing applies it by itself."
           },
           "title": {
             "type": "string"
@@ -43698,10 +43714,10 @@
           "date": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/EditionDatePreference",
-                "description": "Earliest, latest, or any release date."
+                "$ref": "#/components/schemas/EditionDatePreference"
               }
             ],
+            "description": "Earliest, latest, or any release date.",
             "default": "earliest"
           },
           "format_order": {
@@ -43738,10 +43754,10 @@
           "version": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/EditionVersionPreference",
-                "description": "Standard, deluxe, or either."
+                "$ref": "#/components/schemas/EditionVersionPreference"
               }
             ],
+            "description": "Standard, deluxe, or either.",
             "default": "standard"
           }
         }
@@ -43867,10 +43883,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/EditionPlacingView",
-                "description": "Set while the chosen edition's files are still being placed on it."
+                "$ref": "#/components/schemas/EditionPlacingView"
               }
-            ]
+            ],
+            "description": "Set while the chosen edition's files are still being placed on it."
           },
           "reason": {
             "$ref": "#/components/schemas/ReasonView",
@@ -43979,10 +43995,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/ReasonView",
-                "description": "Why the file is left alone, when it is."
+                "$ref": "#/components/schemas/ReasonView"
               }
-            ]
+            ],
+            "description": "Why the file is left alone, when it is."
           },
           "changes": {
             "type": "array",
@@ -44089,10 +44105,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/ReasonView",
-                "description": "Why the job ended without writing, when it did."
+                "$ref": "#/components/schemas/ReasonView"
               }
-            ]
+            ],
+            "description": "Why the job ended without writing, when it did."
           },
           "row_revision": {
             "type": "integer",
@@ -44340,10 +44356,10 @@
           "lyrics": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/LyricsManagementSettings",
-                "description": "Lyrics."
+                "$ref": "#/components/schemas/LyricsManagementSettings"
               }
             ],
+            "description": "Lyrics.",
             "default": {
               "enabled": false,
               "preserve_existing": false,
@@ -44355,10 +44371,10 @@
           "replaygain": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/ReplayGainManagementSettings",
-                "description": "ReplayGain."
+                "$ref": "#/components/schemas/ReplayGainManagementSettings"
               }
             ],
+            "description": "ReplayGain.",
             "default": {
               "album_aware": true,
               "enabled": false,
@@ -44404,10 +44420,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/ListenSource",
-                "description": "Provider that answered; `null` when none did, and the counts are\nthen absent, never zero-filled."
+                "$ref": "#/components/schemas/ListenSource"
               }
-            ]
+            ],
+            "description": "Provider that answered; `null` when none did, and the counts are\nthen absent, never zero-filled."
           }
         }
       },
@@ -44606,10 +44622,10 @@
           "sweep_scope": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/EventsSweepScope",
-                "description": "Sweep scope."
+                "$ref": "#/components/schemas/EventsSweepScope"
               }
             ],
+            "description": "Sweep scope.",
             "default": "followed"
           },
           "ticketmaster_api_key": {
@@ -44699,10 +44715,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/RefreshCode",
-                "description": "Why the last try did not go through."
+                "$ref": "#/components/schemas/RefreshCode"
               }
-            ]
+            ],
+            "description": "Why the last try did not go through."
           },
           "finished_at": {
             "type": [
@@ -44875,8 +44891,7 @@
             "description": "User id."
           },
           "role": {
-            "type": "string",
-            "description": "`user`, `trusted`, or `admin`."
+            "$ref": "#/components/schemas/Role"
           },
           "username": {
             "type": "string",
@@ -45322,10 +45337,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/GenreLibrarySection",
-                "description": "Owned rows for the genre."
+                "$ref": "#/components/schemas/GenreLibrarySection"
               }
-            ]
+            ],
+            "description": "Owned rows for the genre."
           },
           "popular": {
             "oneOf": [
@@ -45333,10 +45348,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/GenrePopularSection",
-                "description": "Popular rows for the genre."
+                "$ref": "#/components/schemas/GenrePopularSection"
               }
-            ]
+            ],
+            "description": "Popular rows for the genre."
           },
           "total_count": {
             "type": [
@@ -45453,10 +45468,10 @@
           "mode": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/GenreMode",
-                "description": "Write mode."
+                "$ref": "#/components/schemas/GenreMode"
               }
             ],
+            "description": "Write mode.",
             "default": "replace"
           },
           "musicbrainz_minimum_count": {
@@ -46256,10 +46271,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/DiscoverPreview",
-                "description": "Discover teaser: the first \"because you listen to\" shelf of the\nuser's last discover page."
+                "$ref": "#/components/schemas/DiscoverPreview"
               }
-            ]
+            ],
+            "description": "Discover teaser: the first \"because you listen to\" shelf of the\nuser's last discover page."
           },
           "genre_artwork": {
             "type": "object",
@@ -46281,10 +46296,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/IntegrationStatus",
-                "description": "Integration availability behind the shelves."
+                "$ref": "#/components/schemas/IntegrationStatus"
               }
-            ]
+            ],
+            "description": "Integration availability behind the shelves."
           },
           "refreshing": {
             "type": "boolean",
@@ -46379,10 +46394,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/RemotesStatsView",
-                "description": "Library totals, when the source can count cheaply."
+                "$ref": "#/components/schemas/RemotesStatsView"
               }
-            ]
+            ],
+            "description": "Library totals, when the source can count cheaply."
           }
         }
       },
@@ -46643,10 +46658,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/Reason",
-                "description": "Why, when the landing was not a clean import."
+                "$ref": "#/components/schemas/Reason"
               }
-            ]
+            ],
+            "description": "Why, when the landing was not a clean import."
           },
           "reason_text": {
             "type": [
@@ -47590,10 +47605,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/LibraryManagementProfile",
-                "description": "The preset profile, when tracked."
+                "$ref": "#/components/schemas/LibraryManagementProfile"
               }
-            ]
+            ],
+            "description": "The preset profile, when tracked."
           },
           "preset_version": {
             "type": [
@@ -47623,10 +47638,10 @@
           "artwork": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/ArtworkManagementSettings",
-                "description": "Artwork block."
+                "$ref": "#/components/schemas/ArtworkManagementSettings"
               }
             ],
+            "description": "Artwork block.",
             "default": {
               "embedded_enabled": true,
               "embedded_format": "jpeg",
@@ -47655,10 +47670,10 @@
           "enrichment": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/EnrichmentManagementSettings",
-                "description": "Enrichment block."
+                "$ref": "#/components/schemas/EnrichmentManagementSettings"
               }
             ],
+            "description": "Enrichment block.",
             "default": {
               "lyrics": {
                 "enabled": false,
@@ -47678,10 +47693,10 @@
           "genres": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/GenreManagementSettings",
-                "description": "Genre block."
+                "$ref": "#/components/schemas/GenreManagementSettings"
               }
             ],
+            "description": "Genre block.",
             "default": {
               "aliases": [],
               "allowlist": [],
@@ -47711,10 +47726,10 @@
           "identity": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/IdentityManagementSettings",
-                "description": "Identity policy."
+                "$ref": "#/components/schemas/IdentityManagementSettings"
               }
             ],
+            "description": "Identity policy.",
             "default": {
               "automatic_edition_acceptance_enabled": false
             }
@@ -47722,10 +47737,10 @@
           "metadata": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/MetadataManagementSettings",
-                "description": "Metadata block."
+                "$ref": "#/components/schemas/MetadataManagementSettings"
               }
             ],
+            "description": "Metadata block.",
             "default": {
               "artist_credits": {
                 "preferred_locales": [],
@@ -47760,10 +47775,10 @@
           "notification": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/ProfileNotificationSettings",
-                "description": "Notifications."
+                "$ref": "#/components/schemas/ProfileNotificationSettings"
               }
             ],
+            "description": "Notifications.",
             "default": {
               "refresh_external_servers": false
             }
@@ -47771,10 +47786,10 @@
           "organization": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/OrganizationManagementSettings",
-                "description": "Organization block."
+                "$ref": "#/components/schemas/OrganizationManagementSettings"
               }
             ],
+            "description": "Organization block.",
             "default": {
               "compatibility": {
                 "extension_case": "preserve",
@@ -48210,10 +48225,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/LibraryManagementRootOverrides",
-                "description": "Per-root overrides."
+                "$ref": "#/components/schemas/LibraryManagementRootOverrides"
               }
             ],
+            "description": "Per-root overrides.",
             "default": null
           },
           "profile_id": {
@@ -48286,10 +48301,10 @@
           "multi_disc_naming_mode": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/MultiDiscNamingMode",
-                "description": "Multi-disc naming mode."
+                "$ref": "#/components/schemas/MultiDiscNamingMode"
               }
             ],
+            "description": "Multi-disc naming mode.",
             "default": "inherit"
           },
           "multi_disc_naming_script_id": {
@@ -48348,10 +48363,10 @@
           "external_refresh": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/ExternalRefreshSettings",
-                "description": "External refresh."
+                "$ref": "#/components/schemas/ExternalRefreshSettings"
               }
             ],
+            "description": "External refresh.",
             "default": {
               "enabled": false,
               "jellyfin_enabled": false,
@@ -48545,10 +48560,10 @@
           "policy": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/IdentificationPolicy",
-                "description": "Policy for this path."
+                "$ref": "#/components/schemas/IdentificationPolicy"
               }
             ],
+            "description": "Policy for this path.",
             "default": "automatic"
           },
           "relative_path": {
@@ -48897,10 +48912,10 @@
           "policy": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/IdentificationPolicy",
-                "description": "Default policy."
+                "$ref": "#/components/schemas/IdentificationPolicy"
               }
             ],
+            "description": "Default policy.",
             "default": "automatic"
           },
           "rules": {
@@ -48925,10 +48940,10 @@
           "scan_frequency": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/ScanFrequency",
-                "description": "Rolling-gap cadence, or `daily` for a fixed clock time."
+                "$ref": "#/components/schemas/ScanFrequency"
               }
             ],
+            "description": "Rolling-gap cadence, or `daily` for a fixed clock time.",
             "default": "24hr"
           }
         }
@@ -49321,6 +49336,14 @@
           }
         }
       },
+      "ListOrder": {
+        "type": "string",
+        "description": "Which way a list runs.",
+        "enum": [
+          "asc",
+          "desc"
+        ]
+      },
       "ListenBrainzConnectRequest": {
         "type": "object",
         "description": "ListenBrainz connect request. The username is required: it drives every\nper-user read, and without it a \"connected\" account yields silently\nempty discovery.",
@@ -49694,10 +49717,10 @@
           "mode": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/FieldMode",
-                "description": "Write mode."
+                "$ref": "#/components/schemas/FieldMode"
               }
             ],
+            "description": "Write mode.",
             "default": "replace"
           }
         }
@@ -50528,10 +50551,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/ManagementReasonView",
-                "description": "The reason in words, with what to do about it."
+                "$ref": "#/components/schemas/ManagementReasonView"
               }
-            ]
+            ],
+            "description": "The reason in words, with what to do about it."
           },
           "reason_code": {
             "type": [
@@ -50584,10 +50607,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/LibraryManagementRootOverrides",
-                "description": "Switches for this run only, on top of the profile."
+                "$ref": "#/components/schemas/LibraryManagementRootOverrides"
               }
-            ]
+            ],
+            "description": "Switches for this run only, on top of the profile."
           },
           "profile_id": {
             "type": "string"
@@ -50922,10 +50945,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/ManagementReasonView",
-                "description": "Why the file failed or was not written, with what to do about it."
+                "$ref": "#/components/schemas/ManagementReasonView"
               }
-            ]
+            ],
+            "description": "Why the file failed or was not written, with what to do about it."
           },
           "journal_states": {
             "type": "array",
@@ -51710,10 +51733,10 @@
           "artist_credits": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/ArtistCreditSettings",
-                "description": "Artist credits."
+                "$ref": "#/components/schemas/ArtistCreditSettings"
               }
             ],
+            "description": "Artist credits.",
             "default": {
               "preferred_locales": [],
               "standardization": "credited",
@@ -51749,10 +51772,10 @@
           "relationships": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/RelationshipCreditSettings",
-                "description": "Relationship credits."
+                "$ref": "#/components/schemas/RelationshipCreditSettings"
               }
             ],
+            "description": "Relationship credits.",
             "default": {
               "enabled": true,
               "types": [
@@ -51780,6 +51803,17 @@
             "default": []
           }
         }
+      },
+      "MixGrantState": {
+        "type": "string",
+        "description": "Where the user's personal-mix auto-request stands.",
+        "enum": [
+          "none",
+          "pending",
+          "approved",
+          "rejected",
+          "revoked"
+        ]
       },
       "MixRefreshStatus": {
         "type": "string",
@@ -51941,10 +51975,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/BrainzmashActiveBinding",
-                "description": "Active BrainzMash binding, if any."
+                "$ref": "#/components/schemas/BrainzmashActiveBinding"
               }
             ],
+            "description": "Active BrainzMash binding, if any.",
             "default": null
           },
           "api_url": {
@@ -51977,10 +52011,10 @@
           "selected_source_mode": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/MbSourceMode",
-                "description": "Last tier the admin chose."
+                "$ref": "#/components/schemas/MbSourceMode"
               }
             ],
+            "description": "Last tier the admin chose.",
             "default": "brainzmash"
           },
           "source_id": {
@@ -51990,10 +52024,10 @@
           "source_mode": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/MbSourceMode",
-                "description": "Active source tier."
+                "$ref": "#/components/schemas/MbSourceMode"
               }
             ],
+            "description": "Active source tier.",
             "default": "brainzmash"
           }
         }
@@ -52027,10 +52061,10 @@
           "source_mode": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/MbSourceMode",
-                "description": "Desired source tier."
+                "$ref": "#/components/schemas/MbSourceMode"
               }
             ],
+            "description": "Desired source tier.",
             "default": "official"
           }
         }
@@ -52050,10 +52084,10 @@
                     "type": "null"
                   },
                   {
-                    "$ref": "#/components/schemas/BrainzmashPendingProposal",
-                    "description": "Transient pending proposal, when one is staged."
+                    "$ref": "#/components/schemas/BrainzmashPendingProposal"
                   }
-                ]
+                ],
+                "description": "Transient pending proposal, when one is staged."
               }
             }
           }
@@ -52496,6 +52530,15 @@
           }
         }
       },
+      "NowPlayingVisibility": {
+        "type": "string",
+        "description": "Who sees what a user plays: `user_listening_prefs.now_playing_visibility`.",
+        "enum": [
+          "full",
+          "track_hidden",
+          "offline"
+        ]
+      },
       "OidcAuthorizeBody": {
         "type": "object",
         "description": "OIDC authorize answer: the browser URL for this login.",
@@ -52843,10 +52886,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/RepairSummaryView",
-                "description": "An identity repair or preparation's report, once its check is done."
+                "$ref": "#/components/schemas/RepairSummaryView"
               }
-            ]
+            ],
+            "description": "An identity repair or preparation's report, once its check is done."
           },
           "results": {
             "type": "array",
@@ -52893,10 +52936,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/ReasonView",
-                "description": "What `terminal_code` means and what to do about it."
+                "$ref": "#/components/schemas/ReasonView"
               }
-            ]
+            ],
+            "description": "What `terminal_code` means and what to do about it."
           },
           "updated_at": {
             "type": "number",
@@ -52917,6 +52960,13 @@
           "action": {
             "type": "string"
           },
+          "bundle_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The publish bundle the item wrote its files under, when it wrote\nany: the id the recovery list names."
+          },
           "failure_code": {
             "type": [
               "string",
@@ -52929,10 +52979,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/ReasonView",
-                "description": "Why the item failed, in words, with what to do about it."
+                "$ref": "#/components/schemas/ReasonView"
               }
-            ]
+            ],
+            "description": "Why the item failed, in words, with what to do about it."
           },
           "local_album_id": {
             "type": [
@@ -52987,10 +53037,10 @@
           "compatibility": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/PathCompatibilitySettings",
-                "description": "Path compatibility."
+                "$ref": "#/components/schemas/PathCompatibilitySettings"
               }
             ],
+            "description": "Path compatibility.",
             "default": {
               "extension_case": "preserve",
               "maximum_component_length": 240,
@@ -54730,10 +54780,10 @@
           "extension_case": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/ExtensionCase",
-                "description": "Extension case."
+                "$ref": "#/components/schemas/ExtensionCase"
               }
             ],
+            "description": "Extension case.",
             "default": "preserve"
           },
           "maximum_component_length": {
@@ -54766,10 +54816,10 @@
           "unicode_normalization": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/UnicodeNormalization",
-                "description": "Unicode normalization."
+                "$ref": "#/components/schemas/UnicodeNormalization"
               }
             ],
+            "description": "Unicode normalization.",
             "default": "NFC"
           },
           "windows_compatible": {
@@ -55373,10 +55423,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/ListenSource",
-                "description": "Provider preference."
+                "$ref": "#/components/schemas/ListenSource"
               }
-            ]
+            ],
+            "description": "Provider preference."
           }
         }
       },
@@ -55847,10 +55897,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/FederatedUserView",
-                "description": "Present only when completed."
+                "$ref": "#/components/schemas/FederatedUserView"
               }
-            ]
+            ],
+            "description": "Present only when completed."
           }
         }
       },
@@ -56112,10 +56162,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/PluginInstallInfo",
-                "description": "Where the plugin was installed from, when it came from GitHub."
+                "$ref": "#/components/schemas/PluginInstallInfo"
               }
-            ]
+            ],
+            "description": "Where the plugin was installed from, when it came from GitHub."
           },
           "name": {
             "type": "string",
@@ -56134,10 +56184,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/PluginRuntimeInfo",
-                "description": "The running process, while enabled."
+                "$ref": "#/components/schemas/PluginRuntimeInfo"
               }
-            ]
+            ],
+            "description": "The running process, while enabled."
           },
           "settings_fields": {
             "type": "array",
@@ -56333,10 +56383,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/PluginRefKind",
-                "description": "What the preview's `reference` is. Sent with `reference` and `commit`,\nso a plain URL need not be resolved a second time."
+                "$ref": "#/components/schemas/PluginRefKind"
               }
-            ]
+            ],
+            "description": "What the preview's `reference` is. Sent with `reference` and `commit`,\nso a plain URL need not be resolved a second time."
           },
           "reference": {
             "type": [
@@ -56397,10 +56447,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/PluginHealth",
-                "description": "The plugin's own answer to its health check in this run; absent\nuntil it has answered."
+                "$ref": "#/components/schemas/PluginHealth"
               }
-            ]
+            ],
+            "description": "The plugin's own answer to its health check in this run; absent\nuntil it has answered."
           },
           "implemented_capabilities": {
             "type": "array",
@@ -56765,6 +56815,14 @@
           "lastfm",
           "jellyfin",
           "download-client"
+        ]
+      },
+      "ProofSubject": {
+        "type": "string",
+        "description": "What a credit proof is for: an album credit or a track credit.",
+        "enum": [
+          "album",
+          "track"
         ]
       },
       "ProviderCallsView": {
@@ -57150,9 +57208,9 @@
       },
       "QualityRecipeStatus": {
         "type": "string",
-        "description": "How the stored quality settings read: a usable recipe, or a section or\nrecipe that does not validate.",
+        "description": "How the stored quality settings read.",
         "enum": [
-          "v2",
+          "valid",
           "invalid"
         ]
       },
@@ -57515,10 +57573,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/CheckpointView",
-                "description": "Latest database checkpoint pass, once the checkpoint loop has\nrecorded one."
+                "$ref": "#/components/schemas/CheckpointView"
               }
-            ]
+            ],
+            "description": "Latest database checkpoint pass, once the checkpoint loop has\nrecorded one."
           },
           "jobs": {
             "type": "array",
@@ -57859,10 +57917,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/ListenSource",
-                "description": "Provider preference."
+                "$ref": "#/components/schemas/ListenSource"
               }
-            ]
+            ],
+            "description": "Provider preference."
           }
         }
       },
@@ -58435,10 +58493,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/DownloadTaskReason",
-                "description": "Why the import did not complete, when it did not."
+                "$ref": "#/components/schemas/DownloadTaskReason"
               }
-            ]
+            ],
+            "description": "Why the import did not complete, when it did not."
           },
           "status": {
             "$ref": "#/components/schemas/TaskStatus",
@@ -59681,10 +59739,10 @@
           "mode": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/ReplayGainMode",
-                "description": "Write mode."
+                "$ref": "#/components/schemas/ReplayGainMode"
               }
             ],
+            "description": "Write mode.",
             "default": "preserve"
           },
           "required": {
@@ -59940,10 +59998,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/RequestTaskState",
-                "description": "The linked download's own state while it is in flight or held for\nreview, whoever started it: a request joined to another person's\ndownload reads it here. None when no download is live."
+                "$ref": "#/components/schemas/RequestTaskState"
               }
-            ]
+            ],
+            "description": "The linked download's own state while it is in flight or held for\nreview, whoever started it: a request joined to another person's\ndownload reads it here. None when no download is live."
           },
           "track_release_group_mbid": {
             "type": [
@@ -59972,10 +60030,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/WaitingReason",
-                "description": "Why a live request has not started, when it waits."
+                "$ref": "#/components/schemas/WaitingReason"
               }
-            ]
+            ],
+            "description": "Why a live request has not started, when it waits."
           },
           "year": {
             "type": [
@@ -60618,10 +60676,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/OperationView",
-                "description": "The job; none when the preview left nothing to change."
+                "$ref": "#/components/schemas/OperationView"
               }
-            ]
+            ],
+            "description": "The job; none when the preview left nothing to change."
           },
           "queued": {
             "type": "integer",
@@ -60686,10 +60744,10 @@
                     "type": "null"
                   },
                   {
-                    "$ref": "#/components/schemas/ReviewJobAction",
-                    "description": "What it does to each review; none when its work is gone."
+                    "$ref": "#/components/schemas/ReviewJobAction"
                   }
-                ]
+                ],
+                "description": "What it does to each review; none when its work is gone."
               },
               "skipped": {
                 "type": "array",
@@ -60731,10 +60789,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/IdentityView",
-                "description": "Sealed identity (approvals only)."
+                "$ref": "#/components/schemas/IdentityView"
               }
-            ]
+            ],
+            "description": "Sealed identity (approvals only)."
           },
           "review": {
             "$ref": "#/components/schemas/ReviewView",
@@ -60782,10 +60840,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/OperationView",
-                "description": "The job that retries them; none for a preview or when nothing was\npending."
+                "$ref": "#/components/schemas/OperationView"
               }
-            ]
+            ],
+            "description": "The job that retries them; none for a preview or when nothing was\npending."
           },
           "preview": {
             "type": "boolean",
@@ -61071,10 +61129,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/ReviewSort",
-                "description": "Sort order; newest change first by default."
+                "$ref": "#/components/schemas/ReviewSort"
               }
-            ]
+            ],
+            "description": "Sort order; newest change first by default."
           },
           "state": {
             "type": [
@@ -61625,10 +61683,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/ScanKind",
-                "description": "Kind of the run in the way, on a conflict."
+                "$ref": "#/components/schemas/ScanKind"
               }
-            ]
+            ],
+            "description": "Kind of the run in the way, on a conflict."
           },
           "disposition": {
             "$ref": "#/components/schemas/ScanDisposition"
@@ -61739,10 +61797,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/ScanPhase",
-                "description": "Phase a paused run picks up from."
+                "$ref": "#/components/schemas/ScanPhase"
               }
-            ]
+            ],
+            "description": "Phase a paused run picks up from."
           },
           "row_revision": {
             "type": "integer",
@@ -61783,10 +61841,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/FailureCode",
-                "description": "Terminal code, when terminal."
+                "$ref": "#/components/schemas/FailureCode"
               }
-            ]
+            ],
+            "description": "Terminal code, when terminal."
           },
           "terminal_message": {
             "type": [
@@ -61920,7 +61978,7 @@
             "description": "Standing intent to auto-request the personal mix."
           },
           "auto_request_state": {
-            "type": "string",
+            "$ref": "#/components/schemas/MixGrantState",
             "description": "Standing-grant state for auto-request."
           },
           "navidrome_handles_external_scrobbles": {
@@ -61928,12 +61986,12 @@
             "description": "Navidrome owns external forwarding for Navidrome plays."
           },
           "now_playing_visibility": {
-            "type": "string",
-            "description": "`full`, `track_hidden`, or `offline`."
+            "$ref": "#/components/schemas/NowPlayingVisibility",
+            "description": "Who sees what the user plays."
           },
           "primary_music_source": {
-            "type": "string",
-            "description": "`listenbrainz` or `lastfm`."
+            "$ref": "#/components/schemas/ListenSource",
+            "description": "Where discovery reads the user's listening."
           },
           "scrobble_to_lastfm": {
             "type": "boolean",
@@ -61966,17 +62024,25 @@
             "default": null
           },
           "now_playing_visibility": {
-            "type": [
-              "string",
-              "null"
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/NowPlayingVisibility"
+              }
             ],
             "description": "New presence visibility.",
             "default": null
           },
           "primary_music_source": {
-            "type": [
-              "string",
-              "null"
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ListenSource"
+              }
             ],
             "description": "New primary source.",
             "default": null
@@ -62193,10 +62259,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/SearchResultItem",
-                "description": "Standout hit, present only on the first page and only when one\nscored high enough to headline."
+                "$ref": "#/components/schemas/SearchResultItem"
               }
-            ]
+            ],
+            "description": "Standout hit, present only on the first page and only when one\nscored high enough to headline."
           }
         }
       },
@@ -62392,10 +62458,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/DownloadReason",
-                "description": "Why the search failed or found nothing, and what to do."
+                "$ref": "#/components/schemas/DownloadReason"
               }
-            ]
+            ],
+            "description": "Why the search failed or found nothing, and what to do."
           },
           "release_group_mbid": {
             "type": [
@@ -62527,10 +62593,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/SearchResultItem",
-                "description": "Standout album hit, if one scored high enough to headline."
+                "$ref": "#/components/schemas/SearchResultItem"
               }
-            ]
+            ],
+            "description": "Standout album hit, if one scored high enough to headline."
           },
           "top_artist": {
             "oneOf": [
@@ -62538,10 +62604,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/SearchResultItem",
-                "description": "Standout artist hit, if one scored high enough to headline."
+                "$ref": "#/components/schemas/SearchResultItem"
               }
-            ]
+            ],
+            "description": "Standout artist hit, if one scored high enough to headline."
           },
           "top_track": {
             "oneOf": [
@@ -62549,10 +62615,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/SearchResultItem",
-                "description": "Standout track hit, if one scored high enough to headline."
+                "$ref": "#/components/schemas/SearchResultItem"
               }
-            ]
+            ],
+            "description": "Standout track hit, if one scored high enough to headline."
           },
           "track_status": {
             "$ref": "#/components/schemas/SearchRemoteStatus",
@@ -62638,10 +62704,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/SearchTrackDetail",
-                "description": "Library details of a song hit; present exactly when `kind` is\n`track`."
+                "$ref": "#/components/schemas/SearchTrackDetail"
               }
-            ]
+            ],
+            "description": "Library details of a song hit; present exactly when `kind` is\n`track`."
           },
           "type_info": {
             "type": [
@@ -62975,6 +63041,15 @@
           "genres"
         ]
       },
+      "SectionPage": {
+        "type": "string",
+        "description": "A page whose sections a user can turn on and off.",
+        "enum": [
+          "home",
+          "discover",
+          "sidebar"
+        ]
+      },
       "SectionPrefItem": {
         "type": "object",
         "description": "One toggleable UI section.",
@@ -63067,8 +63142,8 @@
         ],
         "properties": {
           "page": {
-            "type": "string",
-            "description": "Page to update (`home`, `discover`, `sidebar`)."
+            "$ref": "#/components/schemas/SectionPage",
+            "description": "Page to update."
           },
           "sections": {
             "type": "array",
@@ -63102,10 +63177,10 @@
           "content_security_policy": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/ContentSecurityPolicyMode",
-                "description": "How the web UI's content-security policy is sent."
+                "$ref": "#/components/schemas/ContentSecurityPolicyMode"
               }
             ],
+            "description": "How the web UI's content-security policy is sent.",
             "default": "enforce"
           },
           "frame_ancestors": {
@@ -63145,10 +63220,10 @@
           "library_download_access": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/DownloadAccess",
-                "description": "Who may download library files."
+                "$ref": "#/components/schemas/DownloadAccess"
               }
             ],
+            "description": "Who may download library files.",
             "default": "everyone"
           }
         }
@@ -63176,10 +63251,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/WrappedAlbum",
-                "description": "Sitewide top album when known."
+                "$ref": "#/components/schemas/WrappedAlbum"
               }
-            ]
+            ],
+            "description": "Sitewide top album when known."
           },
           "top_artist_sitewide": {
             "oneOf": [
@@ -63187,10 +63262,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/WrappedArtist",
-                "description": "Sitewide top artist when known."
+                "$ref": "#/components/schemas/WrappedArtist"
               }
-            ]
+            ],
+            "description": "Sitewide top artist when known."
           },
           "total_listens_estimated": {
             "type": "integer",
@@ -63699,10 +63774,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/DownloadsMountView",
-                "description": "The downloads mount, once the first probe pass checked it."
+                "$ref": "#/components/schemas/DownloadsMountView"
               }
-            ]
+            ],
+            "description": "The downloads mount, once the first probe pass checked it."
           },
           "mount_advisory": {
             "type": [
@@ -64570,6 +64645,16 @@
           }
         }
       },
+      "SuggestionReason": {
+        "type": "string",
+        "description": "Why a track was suggested: the pool it came from.",
+        "enum": [
+          "recent",
+          "rediscover",
+          "surprise",
+          "same_era"
+        ]
+      },
       "SuggestionTrack": {
         "type": "object",
         "description": "One suggested track, tagged with why it was picked.",
@@ -64613,8 +64698,8 @@
             "description": "Container or codec label."
           },
           "reason": {
-            "type": "string",
-            "description": "`recent`, `rediscover`, `surprise`, or `same_era`."
+            "$ref": "#/components/schemas/SuggestionReason",
+            "description": "Which pool the track came from."
           },
           "title": {
             "type": "string",
@@ -64846,10 +64931,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/ShelfSource",
-                "description": "Provider behind the picks, when it has one."
+                "$ref": "#/components/schemas/ShelfSource"
               }
-            ]
+            ],
+            "description": "Provider behind the picks, when it has one."
           },
           "title": {
             "type": "string",
@@ -65275,6 +65360,17 @@
           }
         }
       },
+      "TrackListSort": {
+        "type": "string",
+        "description": "How the track list is sorted.",
+        "enum": [
+          "title",
+          "date_added",
+          "artist",
+          "album",
+          "random"
+        ]
+      },
       "TrackPage": {
         "type": "object",
         "description": "One page of catalog tracks.",
@@ -65650,10 +65746,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/GitHubRelease",
-                "description": "Latest release detail, present only when an update is available."
+                "$ref": "#/components/schemas/GitHubRelease"
               }
-            ]
+            ],
+            "description": "Latest release detail, present only when an update is available."
           },
           "latest_version": {
             "type": [
@@ -66000,10 +66096,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/UpgradeCheck",
-                "description": "The check's findings: counts, blockers with their fixes, and the\naddress changes to acknowledge."
+                "$ref": "#/components/schemas/UpgradeCheck"
               }
-            ]
+            ],
+            "description": "The check's findings: counts, blockers with their fixes, and the\naddress changes to acknowledge."
           },
           "failure": {
             "oneOf": [
@@ -66011,10 +66107,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/UpgradeFailure",
-                "description": "Why the check could not run."
+                "$ref": "#/components/schemas/UpgradeFailure"
               }
-            ]
+            ],
+            "description": "Why the check could not run."
           }
         }
       },
@@ -66035,10 +66131,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/UpgradeRun",
-                "description": "The latest upgrade, fresh start or undo; none yet."
+                "$ref": "#/components/schemas/UpgradeRun"
               }
-            ]
+            ],
+            "description": "The latest upgrade, fresh start or undo; none yet."
           }
         }
       },
@@ -66074,10 +66170,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/UpgradeBackupFolders",
-                "description": "Where the v2 files are kept; none when there are none to keep."
+                "$ref": "#/components/schemas/UpgradeBackupFolders"
               }
-            ]
+            ],
+            "description": "Where the v2 files are kept; none when there are none to keep."
           },
           "outcome": {
             "$ref": "#/components/schemas/UpgradeOutcome",
@@ -66089,10 +66185,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/UpgradeSummary",
-                "description": "What an upgrade moved; only after an upgrade."
+                "$ref": "#/components/schemas/UpgradeSummary"
               }
-            ]
+            ],
+            "description": "What an upgrade moved; only after an upgrade."
           }
         }
       },
@@ -66119,10 +66215,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/UpgradeFailure",
-                "description": "Why it failed, once it has."
+                "$ref": "#/components/schemas/UpgradeFailure"
               }
-            ]
+            ],
+            "description": "Why it failed, once it has."
           },
           "label": {
             "type": [
@@ -66137,10 +66233,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/UpgradeResult",
-                "description": "How the run finished, once it has."
+                "$ref": "#/components/schemas/UpgradeResult"
               }
-            ]
+            ],
+            "description": "How the run finished, once it has."
           },
           "running": {
             "type": "boolean",
@@ -66152,10 +66248,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/UpgradeStep",
-                "description": "The step under way, or the last one."
+                "$ref": "#/components/schemas/UpgradeStep"
               }
-            ]
+            ],
+            "description": "The step under way, or the last one."
           },
           "task": {
             "$ref": "#/components/schemas/UpgradeTask",
@@ -66417,10 +66513,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/UpgradeAddress",
-                "description": "The address v3 uses; none for MusicBrainz contributions."
+                "$ref": "#/components/schemas/UpgradeAddress"
               }
-            ]
+            ],
+            "description": "The address v3 uses; none for MusicBrainz contributions."
           },
           "old_address": {
             "oneOf": [
@@ -66428,10 +66524,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/UpgradeAddress",
-                "description": "The address v2 registered; none for MusicBrainz contributions."
+                "$ref": "#/components/schemas/UpgradeAddress"
               }
-            ]
+            ],
+            "description": "The address v2 registered; none for MusicBrainz contributions."
           }
         }
       },
@@ -66450,10 +66546,10 @@
           "backend": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/UsenetBackend",
-                "description": "Active backend."
+                "$ref": "#/components/schemas/UsenetBackend"
               }
             ],
+            "description": "Active backend.",
             "default": "indexers"
           }
         }
@@ -66729,10 +66825,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/WaitingGuessView",
-                "description": "What \"That's right\" confirms, for a best guess."
+                "$ref": "#/components/schemas/WaitingGuessView"
               }
-            ]
+            ],
+            "description": "What \"That's right\" confirms, for a best guess."
           },
           "identity_revision": {
             "type": "integer",
@@ -66894,10 +66990,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/WatchOutcome",
-                "description": "What the last check found, once one ran."
+                "$ref": "#/components/schemas/WatchOutcome"
               }
-            ]
+            ],
+            "description": "What the last check found, once one ran."
           },
           "musicbrainz_id": {
             "type": "string",

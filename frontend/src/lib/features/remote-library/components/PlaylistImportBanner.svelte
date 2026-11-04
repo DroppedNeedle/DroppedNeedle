@@ -1,5 +1,8 @@
 <script lang="ts">
-	import type { RemotePlaylist } from '$lib/features/remote-library/queries/types';
+	import type {
+		RemoteAccountMode,
+		RemotePlaylist
+	} from '$lib/features/remote-library/queries/types';
 	import type { Snippet } from 'svelte';
 	import {
 		ArrowRight,
@@ -21,7 +24,7 @@
 		sourceLabel: string;
 		playlistsHref: string;
 		sourceIcon: Snippet;
-		accountMode?: 'linked' | 'shared';
+		accountMode?: RemoteAccountMode;
 		accountLabel?: string;
 		loading?: boolean;
 		errorCode?: string;

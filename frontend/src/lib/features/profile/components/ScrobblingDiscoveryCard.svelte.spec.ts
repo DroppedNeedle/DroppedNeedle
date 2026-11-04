@@ -2,6 +2,7 @@ import { page } from 'vitest/browser';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fakeApi, type FakeRequest } from '$lib/test/api';
 import { renderWithQuery } from '$lib/test/render';
+import type { ScrobblePreferences } from '$lib/features/profile/queries/scrobble-preferences.svelte';
 
 // The preferences read waits for a signed-in user.
 vi.mock('$lib/stores/authStore.svelte', () => ({
@@ -11,7 +12,7 @@ vi.mock('$lib/stores/authStore.svelte', () => ({
 
 import ScrobblingDiscoveryCard from './ScrobblingDiscoveryCard.svelte';
 
-const prefs = {
+const prefs: ScrobblePreferences = {
 	scrobble_to_lastfm: false,
 	scrobble_to_listenbrainz: false,
 	navidrome_handles_external_scrobbles: true,

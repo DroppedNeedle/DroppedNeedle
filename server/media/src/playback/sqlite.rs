@@ -172,7 +172,7 @@ impl PlaybackStore {
         off_worker(|| {
             self.listening
                 .prefs_blocking(user_id)
-                .map(|prefs| prefs.now_playing_visibility)
+                .map(|prefs| prefs.now_playing_visibility.as_str().to_owned())
                 .map_err(|error| {
                     tracing::warn!(read = "playback-visibility", %error, "playback read failed");
                     ProviderFailure(error.to_string())

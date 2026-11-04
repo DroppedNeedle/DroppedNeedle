@@ -22,11 +22,15 @@ use droppedneedle_kernel::db::DbError;
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::sections::DownloadPolicy;
+use serde::Serialize;
+use utoipa::ToSchema;
 
 /// What started a download. Stored as the task's `origin`; origins decide
 /// quota exemptions and how a landing treats the files, never routing.
-/// A request row stores it too.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// A request row stores it too, in the order `request_history.origin`'s
+/// CHECK lists them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum DispatchOrigin {
     /// A fresh ask from intake.
     User,
@@ -44,45 +48,15 @@ pub enum DispatchOrigin {
     Follow,
 }
 
-impl DispatchOrigin {
-    /// Every origin, in the order `request_history.origin`'s CHECK lists them.
-    pub const ALL: [Self; 7] = [
-        Self::User,
-        Self::Approval,
-        Self::Retry,
-        Self::Wanted,
-        Self::Upgrade,
-        Self::Edition,
-        Self::Follow,
-    ];
-
-    /// The text stored in `download_tasks.origin` and `request_history.origin`.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::User => "user",
-            Self::Approval => "approval",
-            Self::Retry => "retry",
-            Self::Wanted => "wanted",
-            Self::Upgrade => "upgrade",
-            Self::Edition => "edition",
-            Self::Follow => "follow",
-        }
-    }
-
-    /// Read back a stored origin.
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "user" => Some(Self::User),
-            "approval" => Some(Self::Approval),
-            "retry" => Some(Self::Retry),
-            "wanted" => Some(Self::Wanted),
-            "upgrade" => Some(Self::Upgrade),
-            "edition" => Some(Self::Edition),
-            "follow" => Some(Self::Follow),
-            _ => None,
-        }
-    }
-}
+droppedneedle_kernel::spelled!(DispatchOrigin {
+    User => "user",
+    Approval => "approval",
+    Retry => "retry",
+    Wanted => "wanted",
+    Upgrade => "upgrade",
+    Edition => "edition",
+    Follow => "follow",
+});
 
 /// What a download fetches.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -447,6 +447,16 @@ pub struct MatchView {
     pub tracks: Vec<TrackView>,
 }
 
+/// Whose account a source is reached through.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AccountMode {
+    /// The caller's own linked account.
+    Linked,
+    /// The admin's shared account.
+    Shared,
+}
+
 /// Connection status for one source. Never carries credential material.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct ConnectionStatus {
@@ -454,8 +464,8 @@ pub struct ConnectionStatus {
     pub source: SourceName,
     /// True when a credential is stored and the source is enabled.
     pub connected: bool,
-    /// "linked" (own credential) or "shared" (admin credential).
-    pub account_mode: String,
+    /// Whose account the source is reached through.
+    pub account_mode: AccountMode,
     /// Display label, e.g. the login name.
     pub account_label: String,
     /// The configured server address. Set only when the caller's own account

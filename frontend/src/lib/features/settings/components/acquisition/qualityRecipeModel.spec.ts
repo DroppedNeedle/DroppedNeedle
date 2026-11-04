@@ -63,7 +63,7 @@ describe('quality recipe model', () => {
 		expect(validateRecipeEntry(existing[0], existing, existing[0].id)).toBeNull();
 		const loaded = recipeFromPolicy({
 			...basePolicy,
-			quality_recipe_status: 'v2',
+			quality_recipe_status: 'valid',
 			quality_recipe: [
 				{ format: 'flac', quality: 'custom', bit_depth: 24, sample_rate_hz: 96_000 },
 				{ format: 'flac', quality: 'custom', bit_depth: 24, sample_rate_hz: 96_000 }

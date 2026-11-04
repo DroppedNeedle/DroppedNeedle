@@ -314,8 +314,7 @@ pub struct ResolveSourcesResponse {
     pub sources: HashMap<String, Vec<String>>,
 }
 
-/// Cover-upload body. Base64 JSON instead of multipart: the app has no
-/// multipart feature and the frontend regenerates against this contract.
+/// Cover-upload body: the image as base64 in JSON.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CoverUploadBody {
     /// Base64-encoded image bytes (png, jpeg, or webp, max 5 MiB decoded).

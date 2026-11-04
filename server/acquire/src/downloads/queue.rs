@@ -16,6 +16,7 @@ use super::reasons::{DecisionReason, task_reason};
 use super::state::TaskStatus;
 use super::store::{QuarantineRow, TaskRow};
 use super::watchdog::RetryPolicy;
+use crate::dispatch::DispatchOrigin;
 use crate::downloads::worker::{DownloadWorker, NextSourceError, RetryError};
 use crate::reason::Reason;
 
@@ -73,7 +74,7 @@ pub struct DownloadQueue {
 
 /// Whether the retry sweep will pick the task up again by itself.
 fn will_auto_retry(policy: &RetryPolicy, task: &TaskRow, held: bool) -> Option<f64> {
-    if held || task.origin == "upgrade" {
+    if held || task.origin == DispatchOrigin::Upgrade {
         return None;
     }
     policy.next_retry_at(

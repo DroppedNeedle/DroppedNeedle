@@ -42,6 +42,7 @@ pub fn work_results(conn: &Connection, job_id: &str) -> rusqlite::Result<(Vec<Wo
                     .result_json
                     .and_then(|raw| serde_json::from_str(&raw).ok())
                     .unwrap_or_else(|| serde_json::json!({})),
+                bundle_id: row.bundle_id,
             })
         })
         .collect::<rusqlite::Result<Vec<_>>>()?;

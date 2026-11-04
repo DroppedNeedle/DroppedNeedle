@@ -14,10 +14,7 @@ import {
 } from '$lib/queries/effects';
 
 // how a user's listening appears to others in the now-playing feed
-export type NowPlayingVisibility = 'full' | 'track_hidden' | 'offline';
-
-// standing-grant state for Weekly Mix auto-request (admins and trusted users read 'approved' by role)
-export type AutoRequestState = 'none' | 'pending' | 'approved' | 'rejected' | 'revoked';
+export type NowPlayingVisibility = components['schemas']['NowPlayingVisibility'];
 
 // shapes come straight from the generated v3 contract (no hand mirror)
 export type ScrobblePreferences = components['schemas']['ScrobblePreferences'];

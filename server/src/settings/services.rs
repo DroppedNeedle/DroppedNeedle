@@ -673,7 +673,7 @@ fn policy_view(policy: DownloadPolicy) -> DownloadPolicyView {
     let quality_recipe_status = if quality_recipe_error.is_some() {
         QualityRecipeStatus::Invalid
     } else {
-        QualityRecipeStatus::V2
+        QualityRecipeStatus::Valid
     };
     DownloadPolicyView {
         policy,

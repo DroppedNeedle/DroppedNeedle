@@ -30,6 +30,7 @@ pub struct WorkResult {
     pub state: WorkState,
     pub failure_code: Option<String>,
     pub result: serde_json::Value,
+    pub bundle_id: Option<String>,
 }
 
 /// A job with its work results and, for re-identification, the

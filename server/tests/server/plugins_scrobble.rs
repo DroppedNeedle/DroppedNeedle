@@ -18,10 +18,13 @@ use droppedneedle_auth::users::roles::Role;
 use droppedneedle_kernel::db::{DbConfig, DbRuntime, Lane, open_runtime};
 use droppedneedle_kernel::events::EventHub;
 use droppedneedle_kernel::runtime_config::crypto::Crypto;
+use droppedneedle_kernel::runtime_config::sections::ListenSource;
 use droppedneedle_media::playback::listening::{ListeningStore, PrefsPatch};
 use droppedneedle_media::playback::listening_routes::{
     ListeningDeps, MixGrants, routes, update_prefs,
 };
+use droppedneedle_media::playback::models::MixGrantState;
+use droppedneedle_media::playback::ports::Visibility;
 use droppedneedle_media::playback::presence::{PresenceRegistry, PresenceUpdate};
 use droppedneedle_providers::listenbrainz::{ListenBrainzVerifier, VerifyOutcome};
 use tower::ServiceExt as _;
@@ -72,13 +75,13 @@ impl MixGrants for RoleOnlyGrants {
         _user_id: &'a str,
         role: Role,
         toggle_on: bool,
-    ) -> BoxFuture<'a, String> {
+    ) -> BoxFuture<'a, MixGrantState> {
         let state = match (toggle_on, role) {
-            (false, _) => "none",
-            (true, Role::Admin) => "approved",
-            (true, _) => "pending",
+            (false, _) => MixGrantState::None,
+            (true, Role::Admin) => MixGrantState::Approved,
+            (true, _) => MixGrantState::Pending,
         };
-        Box::pin(async move { state.to_owned() })
+        Box::pin(async move { state })
     }
 }
 
@@ -251,7 +254,7 @@ async fn scrobble_store_rows_survive_reopen() {
     let prefs = store.prefs("user-1").await;
     assert!(!prefs.scrobble_to_listenbrainz);
     assert!(prefs.navidrome_handles_external_scrobbles);
-    assert_eq!(prefs.primary_music_source, "listenbrainz");
+    assert_eq!(prefs.primary_music_source, ListenSource::Listenbrainz);
 
     // A partial patch lands; untouched fields keep their values.
     store
@@ -259,7 +262,7 @@ async fn scrobble_store_rows_survive_reopen() {
             "user-1",
             &PrefsPatch {
                 scrobble_to_listenbrainz: Some(true),
-                primary_music_source: Some("lastfm".to_owned()),
+                primary_music_source: Some(ListenSource::Lastfm),
                 ..PrefsPatch::default()
             },
         )
@@ -267,9 +270,9 @@ async fn scrobble_store_rows_survive_reopen() {
         .expect("prefs save");
     let prefs = store.prefs("user-1").await;
     assert!(prefs.scrobble_to_listenbrainz);
-    assert_eq!(prefs.primary_music_source, "lastfm");
+    assert_eq!(prefs.primary_music_source, ListenSource::Lastfm);
     assert!(prefs.navidrome_handles_external_scrobbles);
-    assert_eq!(prefs.now_playing_visibility, "full");
+    assert_eq!(prefs.now_playing_visibility, Visibility::Full);
 
     assert!(!store.has_listenbrainz_link("user-1").await);
     store
@@ -308,21 +311,21 @@ async fn scrobble_store_rows_survive_reopen() {
     let store = store_over(&runtime);
     let prefs = store.prefs("user-1").await;
     assert!(prefs.scrobble_to_listenbrainz);
-    assert_eq!(prefs.primary_music_source, "lastfm");
+    assert_eq!(prefs.primary_music_source, ListenSource::Lastfm);
 
     // And a later patch merges over the persisted row, not the defaults.
     store
         .update_prefs(
             "user-1",
             &PrefsPatch {
-                now_playing_visibility: Some("offline".to_owned()),
+                now_playing_visibility: Some(Visibility::Offline),
                 ..PrefsPatch::default()
             },
         )
         .await
         .expect("prefs save");
     let prefs = store.prefs("user-1").await;
-    assert_eq!(prefs.now_playing_visibility, "offline");
+    assert_eq!(prefs.now_playing_visibility, Visibility::Offline);
     assert!(prefs.scrobble_to_listenbrainz);
 
     assert_eq!(
@@ -370,7 +373,7 @@ async fn saved_visibility_reaches_the_live_presence_feed() {
         "user-1",
         Role::User,
         &PrefsPatch {
-            now_playing_visibility: Some("offline".to_owned()),
+            now_playing_visibility: Some(Visibility::Offline),
             ..PrefsPatch::default()
         },
     )

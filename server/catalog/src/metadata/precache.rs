@@ -406,7 +406,8 @@ impl CatalogPrecache {
         }
         let access = RunAccess {
             lastfm: self.catalog.lastfm_readable(user_id).await,
-            follows_lastfm: self.listening.prefs(user_id).await.primary_music_source == "lastfm",
+            follows_lastfm: self.listening.prefs(user_id).await.primary_music_source
+                == ListenSource::Lastfm,
         };
         *known = Some((user_id.to_owned(), access));
         access

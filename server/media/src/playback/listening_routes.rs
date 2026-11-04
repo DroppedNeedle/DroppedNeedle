@@ -18,7 +18,6 @@ use droppedneedle_kernel::db::DbError;
 use droppedneedle_kernel::error::{ApiError, Unavailable};
 use droppedneedle_kernel::extract::ValidJson;
 use droppedneedle_kernel::mount::{Routes, routes};
-use droppedneedle_kernel::runtime_config::sections::ListenSource;
 use droppedneedle_plugins::models::StatusMessage;
 use droppedneedle_providers::listenbrainz::ListenBrainzVerifier;
 
@@ -26,9 +25,9 @@ use super::listening::{
     BoxFuture, LinkSaveError, ListenBrainzLink, ListeningStore, PrefsPatch, ScrobblePrefs,
 };
 use super::models::{
-    LinkStatus, ListenBrainzConnectRequest, ScrobblePreferences, ScrobblePreferencesUpdate,
+    LinkStatus, ListenBrainzConnectRequest, MixGrantState, ScrobblePreferences,
+    ScrobblePreferencesUpdate,
 };
-use super::ports::Visibility;
 use super::presence::PresenceRegistry;
 
 /// The personal-mix standing grant, which the requests side keeps. A
@@ -36,9 +35,13 @@ use super::presence::PresenceRegistry;
 pub trait MixGrants: Send + Sync {
     /// The auto-request toggle changed value.
     fn on_toggle<'a>(&'a self, user_id: &'a str, role: Role, enabled: bool) -> BoxFuture<'a, ()>;
-    /// Grant state for the preferences answer (`none`, `pending`,
-    /// `approved`, `rejected` or `revoked`).
-    fn state<'a>(&'a self, user_id: &'a str, role: Role, toggle_on: bool) -> BoxFuture<'a, String>;
+    /// Grant state for the preferences answer.
+    fn state<'a>(
+        &'a self,
+        user_id: &'a str,
+        role: Role,
+        toggle_on: bool,
+    ) -> BoxFuture<'a, MixGrantState>;
 }
 
 /// What the listening-settings routes need.
@@ -66,15 +69,6 @@ pub enum ConnectError {
     Rejected(String),
     /// The link failed to persist.
     StoreFailed(LinkSaveError),
-}
-
-/// Every way a preferences save can fail.
-#[derive(Debug)]
-pub enum PrefsError {
-    /// An enum field named an unknown value.
-    InvalidValue(String),
-    /// The save did not land.
-    StoreFailed(DbError),
 }
 
 /// A database failure as an answer: busy asks the caller to try again,
@@ -115,40 +109,20 @@ pub async fn connect_listenbrainz(
     })
 }
 
-/// Save one user's preferences. Enum fields are checked before anything
-/// is written; a save that does not land changes nothing else; a saved
-/// visibility applies to the live feed at once; only
-/// a real change of the auto-request toggle reaches the grant, so sending
-/// an unchanged full object back never queues a grant again.
+/// Save one user's preferences. A save that does not land changes nothing
+/// else; a saved visibility applies to the live feed at once; only a real
+/// change of the auto-request toggle reaches the grant, so sending an
+/// unchanged full object back never queues a grant again.
 pub async fn update_prefs(
     deps: &ListeningDeps,
     user_id: &str,
     role: Role,
     patch: &PrefsPatch,
-) -> Result<ScrobblePrefs, PrefsError> {
-    if let Some(source) = &patch.primary_music_source
-        && ListenSource::parse(source).is_none()
-    {
-        return Err(PrefsError::InvalidValue(format!(
-            "primary_music_source must be one of {}",
-            ListenSource::ALL.map(ListenSource::as_str).join(", ")
-        )));
-    }
-    if let Some(visibility) = &patch.now_playing_visibility
-        && Visibility::parse(visibility).is_none()
-    {
-        return Err(PrefsError::InvalidValue(format!(
-            "now_playing_visibility must be one of {}",
-            Visibility::ALL.map(Visibility::as_str).join(", ")
-        )));
-    }
+) -> Result<ScrobblePrefs, DbError> {
     let before = deps.store.prefs(user_id).await;
-    deps.store
-        .update_prefs(user_id, patch)
-        .await
-        .map_err(PrefsError::StoreFailed)?;
-    if let Some(visibility) = &patch.now_playing_visibility {
-        deps.presence.set_visibility(user_id, visibility);
+    deps.store.update_prefs(user_id, patch).await?;
+    if let Some(visibility) = patch.now_playing_visibility {
+        deps.presence.set_visibility(user_id, visibility.as_str());
     }
     if let Some(enabled) = patch.auto_request_personal_mix
         && enabled != before.auto_request_personal_mix
@@ -230,8 +204,7 @@ pub async fn update_scrobble_preferences(
         Ok(_) => Ok(Json(
             prefs_response(&deps, user.user_id(), user.role()).await,
         )),
-        Err(PrefsError::InvalidValue(message)) => Err(ApiError::invalid_input(message)),
-        Err(PrefsError::StoreFailed(error)) => Err(store_error(error)),
+        Err(error) => Err(store_error(error)),
     }
 }
 

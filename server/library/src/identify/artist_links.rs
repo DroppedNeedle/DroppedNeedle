@@ -100,7 +100,10 @@ droppedneedle_kernel::spelled!(CreditState {
 });
 
 /// What a credit proof is for: an album credit or a track credit.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, utoipa::ToSchema,
+)]
+#[serde(rename_all = "snake_case")]
 pub enum ProofSubject {
     Album,
     Track,

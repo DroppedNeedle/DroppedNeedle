@@ -1172,7 +1172,7 @@ pub fn target_for(task: &TaskRow, details: &TaskDetails, plan: &TaskPlan) -> Tar
             .filter(|mbid| !mbid.is_empty())
             .map(str::to_ascii_lowercase),
         track_title: details.track_title.clone(),
-        origin: task.origin.clone(),
+        origin: task.origin.as_str().to_owned(),
         album_version: task.download_type == "track" && plan.album_version,
         album_copy_proven: false,
         album_positions: plan.track_album.as_ref().map(|album| {

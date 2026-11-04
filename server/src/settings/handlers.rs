@@ -1257,6 +1257,6 @@ pub async fn put_section_prefs(
         super::section_prefs::save_page(settings.prefs(), caller.user_id(), &body, lastfm_master)
             .await?;
     Ok(Json(SectionPrefsResponse {
-        pages: BTreeMap::from([(body.page.clone(), items)]),
+        pages: BTreeMap::from([(body.page.as_str().to_owned(), items)]),
     }))
 }

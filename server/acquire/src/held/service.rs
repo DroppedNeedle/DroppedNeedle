@@ -24,6 +24,7 @@ use droppedneedle_providers::RequestPriority;
 use super::HeldFolders;
 use super::store::{Entry, EntryOrigin, FileState, HeldFile, HeldRoot, HeldRows, Pairing};
 use crate::db::AcquireDb;
+use crate::dispatch::DispatchOrigin;
 use crate::downloads::journal::Journal;
 use crate::downloads::plan::PlannedAlbum;
 use crate::downloads::queue_rows::Viewer;
@@ -1024,7 +1025,7 @@ impl HeldService {
                     .source_task_id
                     .clone()
                     .unwrap_or_else(|| staging_name(entry)),
-                upgrade: task.is_some_and(|task| task.origin == "upgrade"),
+                upgrade: task.is_some_and(|task| task.origin == DispatchOrigin::Upgrade),
                 staging: Some(staging_name(entry)),
                 downloads_folders: None,
             },

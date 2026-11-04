@@ -4,6 +4,7 @@
 //! sealed credentials that never echo, and the per-source feature matrix.
 
 use droppedneedle_media::remotes;
+use droppedneedle_media::remotes::models::AccountMode;
 
 use crate::common::auth::{test_principal, with_test_principal};
 
@@ -799,7 +800,7 @@ async fn a_users_own_link_is_sealed_wins_and_needs_the_admin_server() {
         )
         .await
         .expect("shared resolves");
-    assert_eq!(shared.account_mode, "shared");
+    assert_eq!(shared.account_mode, Some(AccountMode::Shared));
     assert_eq!(shared.credential, "admin-pass");
 
     resolver
@@ -832,7 +833,7 @@ async fn a_users_own_link_is_sealed_wins_and_needs_the_admin_server() {
         )
         .await
         .expect("own resolves");
-    assert_eq!(own.account_mode, "linked");
+    assert_eq!(own.account_mode, Some(AccountMode::Linked));
     assert_eq!(own.credential, "s3cret");
 
     rows.upsert(USER_ID, "navidrome", "v3:garbage".to_owned())
@@ -846,7 +847,11 @@ async fn a_users_own_link_is_sealed_wins_and_needs_the_admin_server() {
         )
         .await
         .expect("stale link falls back");
-    assert_eq!(fallback.account_mode, "shared", "stale link");
+    assert_eq!(
+        fallback.account_mode,
+        Some(AccountMode::Shared),
+        "stale link"
+    );
 
     // The routes: the same path for a plain user. The link never echoes
     // the password, lists under `/me/connections`, and unlinking falls
@@ -957,7 +962,7 @@ async fn plex_links_without_a_server_token_look_one_up_and_keep_it() {
         .resolve(USER_ID, SourceName::Plex, RequestPriority::UserInitiated)
         .await
         .expect("link resolves");
-    assert_eq!(resolved.account_mode, "linked");
+    assert_eq!(resolved.account_mode, Some(AccountMode::Linked));
     assert_eq!(resolved.credential, PLEX_TOKEN);
     let stored = resolver
         .link(USER_ID, SourceName::Plex)

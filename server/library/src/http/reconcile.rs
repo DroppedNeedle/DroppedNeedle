@@ -20,6 +20,7 @@ use utoipa::{IntoParams, ToSchema};
 use super::blocking;
 use super::error::refused;
 use super::operations::ReasonView;
+use crate::identify::artist_links::ProofSubject;
 use crate::reconcile::groups::PAGE_MAX;
 use crate::reconcile::models::{
     CreditEvidence, Group, GroupDetail, GroupState, Member, MergeBasisLabel, OwnedReference,
@@ -229,8 +230,7 @@ pub struct ArtistDuplicateGroupListResponse {
 /// A MusicBrainz credit proof behind one record's credit.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ArtistCreditEvidence {
-    /// `album` or `track`.
-    pub subject_kind: String,
+    pub subject_kind: ProofSubject,
     pub subject_id: String,
     pub subject_name: String,
     pub source_local_artist_id: Option<String>,
@@ -249,7 +249,7 @@ pub struct ArtistCreditEvidence {
 impl From<CreditEvidence> for ArtistCreditEvidence {
     fn from(e: CreditEvidence) -> Self {
         Self {
-            subject_kind: e.subject_kind.as_str().to_owned(),
+            subject_kind: e.subject_kind,
             subject_id: e.subject_id,
             subject_name: e.subject_name,
             source_local_artist_id: e.source_local_artist_id,

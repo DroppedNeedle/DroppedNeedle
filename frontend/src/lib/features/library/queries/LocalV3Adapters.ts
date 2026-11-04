@@ -2,7 +2,7 @@ import { getApiUrl } from '$lib/api/api-utils';
 import { albumArtworkPath, coverPath } from '$lib/api/covers';
 import type { QueueItem, SourceType } from '$lib/features/player/playback/types';
 import type { components } from '$lib/api/v3/openapi';
-import type { CrateReason, CrateTrack, TrackView } from '$lib/features/library/queries/types';
+import type { CrateTrack, TrackView } from '$lib/features/library/queries/types';
 import type { AlbumCardV3, SuggestionTrackV3 } from './LocalV3Queries.svelte';
 
 type SearchItemV3 = components['schemas']['SearchResultItem'];
@@ -18,14 +18,6 @@ export type SpinAlbum = Pick<
 // album shapes. The crate, search card, and turntable trade these shapes
 // through callbacks and drag payloads, so the page adapts at the query
 // edge instead of retyping every component.
-
-const KNOWN_REASONS: readonly CrateReason[] = ['recent', 'rediscover', 'surprise', 'same_era'];
-
-function toCrateReason(reason: string): CrateReason {
-	return (KNOWN_REASONS as readonly string[]).includes(reason)
-		? (reason as CrateReason)
-		: 'surprise';
-}
 
 // A library album's cover path: its release group's when linked, its own art
 // otherwise, null when the server knows there is none.
@@ -107,7 +99,7 @@ export function suggestionToCrateTrack(
 		format: suggestion.format,
 		year: suggestion.year,
 		duration_seconds: suggestion.duration_seconds,
-		reason: toCrateReason(suggestion.reason)
+		reason: suggestion.reason
 	};
 }
 

@@ -27,7 +27,7 @@
 
 	const browse = $derived.by(() => {
 		const view = page.url.searchParams.get('view') === 'contributors' ? 'contributors' : 'albums';
-		const scope: LibraryArtistScope = view === 'contributors' ? 'contributors' : 'album';
+		const scope: LibraryArtistScope = view === 'contributors' ? 'contributors' : 'album_artists';
 		const favorites = page.url.searchParams.get('favorites') === '1';
 		const rawSort = page.url.searchParams.get('sort') as Sort | null;
 		const validSorts: Sort[] = [
@@ -143,7 +143,7 @@
 				{browse.favorites ? 'Favourite Artists' : 'Artists'}
 			</h1>
 			<p class="mt-1 text-sm text-base-content/60">
-				{browse.scope === 'album'
+				{browse.scope === 'album_artists'
 					? 'The artists who own releases in your library.'
 					: 'Guests, featured artists, and track-level credits.'}
 			</p>
@@ -163,7 +163,9 @@
 				<Input
 					icon={Search}
 					label="Search artists"
-					placeholder={browse.scope === 'album' ? 'Search album artists…' : 'Search contributors…'}
+					placeholder={browse.scope === 'album_artists'
+						? 'Search album artists…'
+						: 'Search contributors…'}
 					class="w-full pr-12"
 					value={searchInput}
 					oninput={handleSearchInput}
@@ -193,7 +195,7 @@
 				{#if browse.favorites}<option value="hearted:asc">Recently favourited</option>{/if}
 				<option value="name:asc">Name A-Z</option>
 				<option value="name:desc">Name Z-A</option>
-				{#if browse.scope === 'album'}
+				{#if browse.scope === 'album_artists'}
 					<option value="album_count:desc">Most releases</option>
 					<option value="album_count:asc">Fewest releases</option>
 				{:else}
@@ -235,7 +237,7 @@
 						? 'Try a different search term.'
 						: browse.favorites
 							? 'Tap the heart on an artist to add them here.'
-							: browse.scope === 'album'
+							: browse.scope === 'album_artists'
 								? 'Album artists appear here as releases are added to your library.'
 								: 'Track-level guests and featured artists will appear here.'}
 				</p>
@@ -278,7 +280,7 @@
 						<div class="flex flex-col gap-1 p-3 pt-0 text-center">
 							<h2 class="truncate font-semibold">{artist.name}</h2>
 							<p class="text-xs text-base-content/55">
-								{#if browse.scope === 'album'}
+								{#if browse.scope === 'album_artists'}
 									{artist.album_count}
 									{artist.album_count === 1 ? 'release' : 'releases'} ·
 									{artist.led_track_count}

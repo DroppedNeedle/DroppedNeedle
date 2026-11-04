@@ -135,7 +135,6 @@
 		surprise: { label: 'Surprise', icon: Dices, badge: 'badge-warning' },
 		same_era: { label: 'Same era', icon: Clock, badge: 'badge-info' }
 	};
-	const reasonMeta = (r: string) => REASONS[r as CrateReason] ?? REASONS.surprise;
 
 	const flipDur = $derived(reducedMotion ? 0 : 340);
 	let draggingId = $state<string | null>(null);
@@ -243,7 +242,7 @@
 				{/each}
 			{:else}
 				{#each tracks as t, i (t.track_file_id)}
-					{@const meta = reasonMeta(t.reason)}
+					{@const meta = REASONS[t.reason]}
 					{@const Icon = meta.icon}
 					{@const cover = crateCoverUrl(t)}
 					<div

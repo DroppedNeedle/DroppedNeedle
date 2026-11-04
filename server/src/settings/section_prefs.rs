@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use rusqlite::OptionalExtension as _;
 
-use super::models::{SectionPrefItem, SectionPrefsResponse, SectionPrefsUpdate};
+use super::models::{SectionPage, SectionPrefItem, SectionPrefsResponse, SectionPrefsUpdate};
 use super::sql;
 use droppedneedle_auth::sqlite::LastFmLinks;
 use droppedneedle_catalog::discover::sections::{self, Page};
@@ -23,9 +23,6 @@ use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::db::time::Millis;
 use droppedneedle_kernel::db::{Db, DbError, Lane};
 use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
-
-/// Visible pages.
-pub const PAGES: &[&str] = &["home", "discover", "sidebar"];
 
 /// One entry of the section settings.
 pub struct CatalogEntry {
@@ -59,7 +56,7 @@ const SIDEBAR: &[(&str, &str, &str)] = &[
 ];
 
 /// The entries of one page, in page order.
-pub fn catalog(page: &str) -> Vec<CatalogEntry> {
+pub fn catalog(page: SectionPage) -> Vec<CatalogEntry> {
     let sections_of = |page: Page| {
         sections::of(page)
             .map(|def| CatalogEntry {
@@ -72,9 +69,9 @@ pub fn catalog(page: &str) -> Vec<CatalogEntry> {
             .collect()
     };
     match page {
-        "home" => sections_of(Page::Home),
-        "discover" => sections_of(Page::Discover),
-        "sidebar" => SIDEBAR
+        SectionPage::Home => sections_of(Page::Home),
+        SectionPage::Discover => sections_of(Page::Discover),
+        SectionPage::Sidebar => SIDEBAR
             .iter()
             .map(|(key, title, description)| CatalogEntry {
                 key: (*key).to_owned(),
@@ -84,12 +81,11 @@ pub fn catalog(page: &str) -> Vec<CatalogEntry> {
                 requires: None,
             })
             .collect(),
-        _ => Vec::new(),
     }
 }
 
 /// Known keys for one page.
-pub fn valid_keys(page: &str) -> HashSet<String> {
+pub fn valid_keys(page: SectionPage) -> HashSet<String> {
     catalog(page).into_iter().map(|entry| entry.key).collect()
 }
 
@@ -110,8 +106,8 @@ impl SectionPrefs {
     }
 
     /// The disabled keys for one user page.
-    async fn disabled(&self, user_id: &str, page: &str) -> Result<HashSet<String>, DbError> {
-        let (user_id, page) = (user_id.to_owned(), page.to_owned());
+    async fn disabled(&self, user_id: &str, page: SectionPage) -> Result<HashSet<String>, DbError> {
+        let (user_id, page) = (user_id.to_owned(), page.as_str().to_owned());
         self.db
             .read("settings.section_prefs.read", move |conn| {
                 conn.prepare_cached(sql::DISABLED_SECTIONS.text())?
@@ -126,10 +122,10 @@ impl SectionPrefs {
     async fn set_disabled(
         &self,
         user_id: &str,
-        page: &str,
+        page: SectionPage,
         disabled: &HashSet<String>,
     ) -> Result<(), DbError> {
-        let (user_id, page) = (user_id.to_owned(), page.to_owned());
+        let (user_id, page) = (user_id.to_owned(), page.as_str().to_owned());
         let mut disabled: Vec<String> = disabled.iter().cloned().collect();
         disabled.sort();
         let now = Millis(self.clock.now_ms());
@@ -194,7 +190,7 @@ impl SectionPrefs {
 pub async fn page(
     prefs: &SectionPrefs,
     user_id: &str,
-    page: &str,
+    page: SectionPage,
     lastfm_master: bool,
 ) -> Result<Vec<SectionPrefItem>, SettingsError> {
     let disabled = prefs
@@ -232,36 +228,26 @@ pub async fn full_response(
     lastfm_master: bool,
 ) -> Result<SectionPrefsResponse, SettingsError> {
     let mut pages = BTreeMap::new();
-    for page_key in PAGES {
+    for page_key in SectionPage::ALL {
         pages.insert(
-            (*page_key).to_owned(),
+            page_key.as_str().to_owned(),
             page(prefs, user_id, page_key, lastfm_master).await?,
         );
     }
     Ok(SectionPrefsResponse { pages })
 }
 
-/// Replace one page's disabled set from a PUT body. The page must be a
-/// known page and every key must belong to that page's catalog; unknown
-/// keys are a 400 naming the offenders, so a stale client learns its
-/// catalog drifted instead of silently dropping toggles. Returns the
-/// rebuilt page.
+/// Replace one page's disabled set from a PUT body. Every key must belong
+/// to that page's catalog; unknown keys are a 400 naming the offenders, so
+/// a stale client learns its catalog drifted instead of silently dropping
+/// toggles. Returns the rebuilt page.
 pub async fn save_page(
     prefs: &SectionPrefs,
     user_id: &str,
     update: &SectionPrefsUpdate,
     lastfm_master: bool,
 ) -> Result<Vec<SectionPrefItem>, SettingsError> {
-    if !PAGES.contains(&update.page.as_str()) {
-        return Err(SettingsError::InvalidInput {
-            message: format!(
-                "Unknown section page: {:?}. Expected one of: {}.",
-                update.page,
-                PAGES.join(", ")
-            ),
-        });
-    }
-    let known = valid_keys(&update.page);
+    let known = valid_keys(update.page);
     let mut unknown: Vec<&str> = update
         .sections
         .iter()
@@ -282,10 +268,10 @@ pub async fn save_page(
         .map(|section| section.key.clone())
         .collect();
     prefs
-        .set_disabled(user_id, &update.page, &disabled)
+        .set_disabled(user_id, update.page, &disabled)
         .await
         .map_err(|cause| store_failure("section prefs write", cause))?;
-    page(prefs, user_id, &update.page, lastfm_master).await
+    page(prefs, user_id, update.page, lastfm_master).await
 }
 
 /// A busy database answers `SERVER_BUSY`; anything else is a 500.

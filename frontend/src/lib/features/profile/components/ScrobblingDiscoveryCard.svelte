@@ -100,8 +100,8 @@
 			scrobbleLastfm = prefs.scrobble_to_lastfm ?? false;
 			scrobbleListenbrainz = prefs.scrobble_to_listenbrainz ?? false;
 			navidromeHandlesExternalScrobbles = prefs.navidrome_handles_external_scrobbles ?? true;
-			primarySource = (prefs.primary_music_source as MusicSource) ?? 'listenbrainz';
-			nowPlayingVisibility = (prefs.now_playing_visibility as NowPlayingVisibility) ?? 'full';
+			primarySource = prefs.primary_music_source ?? 'listenbrainz';
+			nowPlayingVisibility = prefs.now_playing_visibility ?? 'full';
 			autoRequestPersonalMix = prefs.auto_request_personal_mix ?? false;
 		}
 	});
@@ -189,8 +189,8 @@
 				scrobbleLastfm = prefs.scrobble_to_lastfm ?? false;
 				scrobbleListenbrainz = prefs.scrobble_to_listenbrainz ?? false;
 				navidromeHandlesExternalScrobbles = prefs.navidrome_handles_external_scrobbles ?? true;
-				primarySource = (prefs.primary_music_source as MusicSource) ?? 'listenbrainz';
-				nowPlayingVisibility = (prefs.now_playing_visibility as NowPlayingVisibility) ?? 'full';
+				primarySource = prefs.primary_music_source ?? 'listenbrainz';
+				nowPlayingVisibility = prefs.now_playing_visibility ?? 'full';
 				autoRequestPersonalMix = prefs.auto_request_personal_mix ?? false;
 			}
 		}

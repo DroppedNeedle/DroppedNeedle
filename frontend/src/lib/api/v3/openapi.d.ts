@@ -9472,13 +9472,20 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         /**
+         * @description Whose account a source is reached through.
+         * @enum {string}
+         */
+        AccountMode: "linked" | "shared";
+        /**
          * @description An address change the caller has made at the outside service, as the
          *     pre-flight listed it.
          */
         AcknowledgedWarning: {
             /** @description The feature the change concerns. */
             feature: components["schemas"]["UpgradeCallbackFeature"];
+            /** @description The address v3 uses, as the pre-flight gave it. */
             new_address?: null | components["schemas"]["UpgradeAddress"];
+            /** @description The address v2 registered, as the pre-flight gave it. */
             old_address?: null | components["schemas"]["UpgradeAddress"];
         };
         /** @description Mutation outcome for approve/reject/cancel/retry/clear. */
@@ -9635,6 +9642,7 @@ export interface components {
             email?: string | null;
             /** @description Initial password, at least 12 chars. */
             password: string;
+            /** @description Defaults to `user`. */
             role?: null | components["schemas"]["Role"];
             /** @description Login username, 3-32 chars. */
             username: string;
@@ -9802,6 +9810,7 @@ export interface components {
         };
         /** @description One catalog album with what its own page shows. */
         AlbumDetailView: components["schemas"]["AlbumView"] & {
+            /** @description Set when library management leaves this album's files alone. */
             management_hold?: null | components["schemas"]["ManagementHoldView"];
             /** @description The album's pending identification review, if any. */
             pending_review_id?: string | null;
@@ -9919,6 +9928,10 @@ export interface components {
              * @description Unix milliseconds.
              */
             at: number;
+            /**
+             * @description Who asked, for `retag_joined` and the undo entries; null when the
+             *     app did it.
+             */
             by?: null | components["schemas"]["AlbumHistoryByView"];
             kind: components["schemas"]["AlbumHistoryKindView"];
             /**
@@ -9978,6 +9991,11 @@ export interface components {
              */
             year?: number | null;
         };
+        /**
+         * @description How the album list is sorted.
+         * @enum {string}
+         */
+        AlbumListSort: "name" | "date_added" | "year" | "artist" | "random" | "rediscover";
         /** @description One page of catalog albums. */
         AlbumPage: {
             /** @description This page of albums. */
@@ -10460,8 +10478,7 @@ export interface components {
             release_track_mbid?: string | null;
             source_local_artist_id?: string | null;
             subject_id: string;
-            /** @description `album` or `track`. */
-            subject_kind: string;
+            subject_kind: components["schemas"]["ProofSubject"];
             subject_name: string;
             /** Format: int64 */
             track_identity_revision?: number | null;
@@ -10473,7 +10490,10 @@ export interface components {
              * @default []
              */
             preferred_locales: string[];
-            /** @default credited */
+            /**
+             * @description Standardization level.
+             * @default credited
+             */
             standardization: components["schemas"]["ArtistStandardization"];
             /**
              * @description Translate names.
@@ -10529,6 +10549,7 @@ export interface components {
             id: string;
             member_count: number;
             members: components["schemas"]["ArtistReconciliationMember"][];
+            /** @description What that merge rested on. */
             merge_basis?: null | components["schemas"]["ArtistMergeBasis"];
             provider_mbids: string[];
             /** @description Why the group is listed and what to do about it. */
@@ -10584,6 +10605,7 @@ export interface components {
         ArtistGroupState: "waiting_for_identity" | "provider_conflict" | "ambiguous_credit_structure" | "same_name_only" | "credits_moved" | "shared_provider_identity" | "resolved_automatically";
         /** @description The credit an artist's picture asks for. */
         ArtistImageCredit: {
+            /** @description `null` when the picture asks for none, or no picture is held. */
             credit: null | components["schemas"]["PhotoCredit"];
         };
         /** @description Artist images from TheAudioDB. Every field is optional. */
@@ -10656,6 +10678,7 @@ export interface components {
              *     at least one playable track.
              */
             in_library: boolean;
+            /** @description Life span. */
             life_span?: null | components["schemas"]["LifeSpan"];
             /** @description Canonical artist MBID (after any MusicBrainz merge redirect). */
             musicbrainz_id: string;
@@ -10702,9 +10725,21 @@ export interface components {
              * @description When it was set, unix milliseconds; null when there is no link.
              */
             selected_at?: number | null;
+            /** @description Null when there is no link. */
             set_by?: null | components["schemas"]["ArtistLinkByView"];
+            /** @description Null when there is no link. */
             source?: null | components["schemas"]["ArtistLinkSourceView"];
         };
+        /**
+         * @description Which artists the artist list covers.
+         * @enum {string}
+         */
+        ArtistListScope: "all" | "album_artists" | "contributors";
+        /**
+         * @description How the artist list is sorted.
+         * @enum {string}
+         */
+        ArtistListSort: "name" | "album_count" | "appearance_count" | "date_added";
         /** @description A previewed artist merge to apply. */
         ArtistMergeApplyBody: {
             expected_revisions?: {
@@ -10974,7 +11009,10 @@ export interface components {
              * @default true
              */
             embedded_enabled: boolean;
-            /** @default jpeg */
+            /**
+             * @description Embedded output format.
+             * @default jpeg
+             */
             embedded_format: components["schemas"]["ArtworkOutputFormat"];
             /**
              * Format: int64
@@ -10987,7 +11025,10 @@ export interface components {
              * @default true
              */
             external_enabled: boolean;
-            /** @default original */
+            /**
+             * @description External output format.
+             * @default original
+             */
             external_format: components["schemas"]["ArtworkOutputFormat"];
             /**
              * Format: int64
@@ -11215,6 +11256,7 @@ export interface components {
         };
         /** @description Batch-cancel body. Dedupe is by exact string before lookup. */
         BatchCancelBody: {
+            /** @description Request kind; defaults to album. */
             kind?: null | components["schemas"]["RequestKind"];
             /** @description MBIDs to cancel. */
             musicbrainz_ids: string[];
@@ -11743,6 +11785,7 @@ export interface components {
         };
         /** @description A titled shelf of rows: the unit both home and discover render. */
         ChartSection: {
+            /** @description Service the user must connect for the full shelf, when gated. */
             connect_service?: null | components["schemas"]["ShelfSource"];
             /** @description Explanation shown in place of rows when the shelf could not fill. */
             fallback_message?: string | null;
@@ -11750,7 +11793,9 @@ export interface components {
             items: components["schemas"]["SectionItem"][];
             /** @description Radio seed id, when playable. */
             radio_seed_id?: string | null;
+            /** @description Radio seed kind, when the shelf is playable as radio. */
             radio_seed_type?: null | components["schemas"]["RadioSeedKind"];
+            /** @description Where the rows came from, when the shelf names it. */
             source?: null | components["schemas"]["ShelfSource"];
             /** @description Shelf title. */
             title: string;
@@ -11949,7 +11994,10 @@ export interface components {
              * @default false
              */
             subsonic_enabled: boolean;
-            /** @default mp3 */
+            /**
+             * @description Default transcode format.
+             * @default mp3
+             */
             transcode_default_format: components["schemas"]["AudioFormat"];
             /**
              * Format: int64
@@ -12021,8 +12069,8 @@ export interface components {
         ConnectionStatus: {
             /** @description Display label, e.g. the login name. */
             account_label: string;
-            /** @description "linked" (own credential) or "shared" (admin credential). */
-            account_mode: string;
+            /** @description Whose account the source is reached through. */
+            account_mode: components["schemas"]["AccountMode"];
             /** @description True when a credential is stored and the source is enabled. */
             connected: boolean;
             /**
@@ -12088,6 +12136,10 @@ export interface components {
             result_received_at: number | null;
             result_release_mbid: string | null;
             result_source: string | null;
+            /**
+             * @description Why the contribution needs review, when it does: a stable code, a
+             *     plain sentence, and what to do next.
+             */
             review_reason: null | components["schemas"]["ContributionReason"];
             /** Format: int64 */
             row_revision: number;
@@ -12194,10 +12246,7 @@ export interface components {
              */
             unchanged_count: number;
         };
-        /**
-         * @description Cover-upload body. Base64 JSON instead of multipart: the app has no
-         *     multipart feature and the frontend regenerates against this contract.
-         */
+        /** @description Cover-upload body: the image as base64 in JSON. */
         CoverUploadBody: {
             /** @description Mime type of the image. */
             content_type: string;
@@ -12435,6 +12484,7 @@ export interface components {
             artist_mbid?: string | null;
             /** @description Surface the interaction happened on (`home`, `discover`, `queue`, `artist`). */
             feature: string;
+            /** @description Provider behind the row, when it had one. */
             provider?: null | components["schemas"]["ListenSource"];
             /** @description Artist-page section (`similar`, `top_songs`, `top_albums`), when it had one. */
             section?: string | null;
@@ -12515,6 +12565,7 @@ export interface components {
             };
             /** @description Genre artwork schema version. */
             genre_artwork_schema_version: string;
+            /** @description Integration availability behind the shelves. */
             integration_status?: null | components["schemas"]["IntegrationStatus"];
             /**
              * Format: int64
@@ -12684,6 +12735,14 @@ export interface components {
             state: string;
             success: boolean;
         };
+        /**
+         * @description What started a download. Stored as the task's `origin`; origins decide
+         *     quota exemptions and how a landing treats the files, never routing.
+         *     A request row stores it too, in the order `request_history.origin`'s
+         *     CHECK lists them.
+         * @enum {string}
+         */
+        DispatchOrigin: "user" | "approval" | "retry" | "wanted" | "upgrade" | "edition" | "follow";
         /** @description Change display name. */
         DisplayNameUpdate: {
             /** @description New display name, 1-64 chars after trimming. */
@@ -13014,6 +13073,7 @@ export interface components {
             completed_at?: number | null;
             /** Format: double */
             created_at: number;
+            /** @description The import's decision on the newest landing. */
             decision?: null | components["schemas"]["ImportDecisionView"];
             /** @description `album` or `track`. */
             download_type: string;
@@ -13031,17 +13091,19 @@ export interface components {
             /** @description Files of this task wait in the held list for a decision. */
             held_for_review: boolean;
             id: string;
+            /**
+             * @description A library album whose edition is a guess of this album, though its
+             *     files name another: "You may have this".
+             */
             maybe_have?: null | components["schemas"]["MaybeHaveView"];
             /**
              * Format: double
              * @description When the next automatic retry is due, if one will run.
              */
             next_retry_at?: number | null;
-            /**
-             * @description What started the download: `user`, `approval`, `retry`, `wanted`,
-             *     `upgrade`, `edition` or `follow`.
-             */
-            origin: string;
+            /** @description What started the download. */
+            origin: components["schemas"]["DispatchOrigin"];
+            /** @description The worker's last outcome. Show `reason` instead. */
             outcome_code?: null | components["schemas"]["Reason"];
             /** Format: int64 */
             progress_percent: number;
@@ -13056,6 +13118,7 @@ export interface components {
             queue_position_end?: number | null;
             /** Format: int64 */
             queue_position_start?: number | null;
+            /** @description Why the task sits where it does, when that needs saying. */
             reason?: null | components["schemas"]["DownloadTaskReason"];
             recording_mbid?: string | null;
             release_group_mbid: string;
@@ -13132,6 +13195,7 @@ export interface components {
             id: number;
             /** @description What to do about it. */
             reason_action?: string | null;
+            /** @description Why the item stopped short, when it did. */
             reason_code?: null | components["schemas"]["Reason"];
             release_group_mbid?: string | null;
             status: components["schemas"]["DropItemStatus"];
@@ -13335,6 +13399,10 @@ export interface components {
         };
         /** @description The album's current or last edition fetch. */
         EditionFetchResponse: {
+            /**
+             * @description Absent when the album has no edition fetch on record (none was
+             *     started, or its download was cleared from the queue).
+             */
             latest?: null | components["schemas"]["EditionFetchView"];
         };
         /**
@@ -13430,7 +13498,22 @@ export interface components {
              *     match stands: "Undo match" can take it back.
              */
             matched_by_hand: boolean;
+            /**
+             * @description A sentence about the file's tags, when they need one:
+             *     `TRACK_ID_CORRECTED` on a kept file whose track ID belongs to
+             *     another edition (it is matched by its recording, and the ID is
+             *     corrected when the album's MusicBrainz tags are written), or
+             *     `TRACK_ID_ELSEWHERE` on a file that is not kept because its track ID
+             *     belongs to another edition and it has no recording ID. Absent
+             *     otherwise.
+             */
             note?: null | components["schemas"]["ReasonView"];
+            /**
+             * @description The edition track no file holds that this file may be matched to
+             *     by hand: the one its disc and track number name, or on a whole
+             *     album its place in file order. Set only on a file the edition does
+             *     not place; nothing applies it by itself.
+             */
             suggested?: null | components["schemas"]["EditionSuggestionView"];
             title: string;
             /** Format: int32 */
@@ -13505,7 +13588,10 @@ export interface components {
              * @default []
              */
             countries: string[];
-            /** @default earliest */
+            /**
+             * @description Earliest, latest, or any release date.
+             * @default earliest
+             */
             date: components["schemas"]["EditionDatePreference"];
             /**
              * @description Media formats, most wanted first (`digital media`, `cd`, `vinyl`,
@@ -13535,7 +13621,10 @@ export interface components {
              *     ]
              */
             status_order: string[];
-            /** @default standard */
+            /**
+             * @description Standard, deluxe, or either.
+             * @default standard
+             */
             version: components["schemas"]["EditionVersionPreference"];
         };
         /** @description The edition revision a change was decided on. */
@@ -13608,6 +13697,7 @@ export interface components {
              *     another (`NAMED_GROUP_DIFFERS`): its editions are worth a look.
              */
             named_release_group_mbid?: string | null;
+            /** @description Set while the chosen edition's files are still being placed on it. */
             placing?: null | components["schemas"]["EditionPlacingView"];
             /** @description Why the edition is what it is, and what to do about it. */
             reason: components["schemas"]["ReasonView"];
@@ -13650,6 +13740,7 @@ export interface components {
             added_files: string[];
             /** @description The embedded cover art changes. */
             artwork_changed: boolean;
+            /** @description Why the file is left alone, when it is. */
             blocked?: null | components["schemas"]["ReasonView"];
             changes: components["schemas"]["EditionTagChangeView"][];
             /** @description The file's path in its library folder. */
@@ -13687,6 +13778,7 @@ export interface components {
             job_id: string;
             /** @description Planned, current and not expired. */
             ready_to_apply: boolean;
+            /** @description Why the job ended without writing, when it did. */
             reason?: null | components["schemas"]["ReasonView"];
             /**
              * Format: int64
@@ -13813,6 +13905,7 @@ export interface components {
         /** @description Enrichment management block. */
         EnrichmentManagementSettings: {
             /**
+             * @description Lyrics.
              * @default {
              *       "enabled": false,
              *       "preserve_existing": false,
@@ -13823,6 +13916,7 @@ export interface components {
              */
             lyrics: components["schemas"]["LyricsManagementSettings"];
             /**
+             * @description ReplayGain.
              * @default {
              *       "album_aware": true,
              *       "enabled": false,
@@ -13840,6 +13934,10 @@ export interface components {
             artists: components["schemas"]["ArtistEnrichment"][];
             /** @description Sources that degraded while answering; usually empty. */
             degradations: components["schemas"]["Degradation"][];
+            /**
+             * @description Provider that answered; `null` when none did, and the counts are
+             *     then absent, never zero-filled.
+             */
             source?: null | components["schemas"]["ListenSource"];
         };
         /**
@@ -13951,7 +14049,10 @@ export interface components {
              * @default false
              */
             skiddle_enabled: boolean;
-            /** @default followed */
+            /**
+             * @description Sweep scope.
+             * @default followed
+             */
             sweep_scope: components["schemas"]["EventsSweepScope"];
             /**
              * @description Ticketmaster key (encrypted at rest).
@@ -13997,6 +14098,7 @@ export interface components {
              * @description Tries so far.
              */
             attempts: number;
+            /** @description Why the last try did not go through. */
             code?: null | components["schemas"]["RefreshCode"];
             /**
              * Format: int64
@@ -14070,8 +14172,7 @@ export interface components {
             email?: string | null;
             /** @description User id. */
             id: string;
-            /** @description `user`, `trusted`, or `admin`. */
-            role: string;
+            role: components["schemas"]["Role"];
             /** @description Lowercased login identifier. */
             username: string;
             /** @description Preferred casing for display. */
@@ -14243,7 +14344,9 @@ export interface components {
             genre: string;
             /** @description Mosaic art for the genre. */
             genre_artwork: components["schemas"]["GenreArtwork"];
+            /** @description Owned rows for the genre. */
             library?: null | components["schemas"]["GenreLibrarySection"];
+            /** @description Popular rows for the genre. */
             popular?: null | components["schemas"]["GenrePopularSection"];
             /**
              * Format: int64
@@ -14323,7 +14426,10 @@ export interface components {
              * @default 5
              */
             maximum_count: number;
-            /** @default replace */
+            /**
+             * @description Write mode.
+             * @default replace
+             */
             mode: components["schemas"]["GenreMode"];
             /**
              * Format: int64
@@ -14666,6 +14772,10 @@ export interface components {
          *     section with no rows is left out.
          */
         HomeResponse: {
+            /**
+             * @description Discover teaser: the first "because you listen to" shelf of the
+             *     user's last discover page.
+             */
             discover_preview?: null | components["schemas"]["DiscoverPreview"];
             /** @description Mosaic art keyed by genre name. */
             genre_artwork: {
@@ -14673,6 +14783,7 @@ export interface components {
             };
             /** @description Genre artwork schema version. */
             genre_artwork_schema_version: string;
+            /** @description Integration availability behind the shelves. */
             integration_status?: null | components["schemas"]["IntegrationStatus"];
             /** @description True while a fuller build runs in the background (the UI polls). */
             refreshing: boolean;
@@ -14702,6 +14813,7 @@ export interface components {
             recently_played: components["schemas"]["RemotesAlbumView"][];
             /** @description Owning source. */
             source: components["schemas"]["SourceName"];
+            /** @description Library totals, when the source can count cheaply. */
             stats?: null | components["schemas"]["RemotesStatsView"];
         };
         /** @description A pause or resume of identification. */
@@ -14815,6 +14927,7 @@ export interface components {
             outcome: string;
             /** @description What to do about it. */
             reason_action?: string | null;
+            /** @description Why, when the landing was not a clean import. */
             reason_code?: null | components["schemas"]["Reason"];
             /** @description The reason as a plain sentence. */
             reason_text?: string | null;
@@ -15239,6 +15352,7 @@ export interface components {
             differs: boolean;
             /** @description Preset origin, when tracked. */
             preset_origin?: string | null;
+            /** @description The preset profile, when tracked. */
             preset_profile?: null | components["schemas"]["LibraryManagementProfile"];
             /**
              * Format: int64
@@ -15253,6 +15367,7 @@ export interface components {
         /** @description One named management profile. */
         LibraryManagementProfile: {
             /**
+             * @description Artwork block.
              * @default {
              *       "embedded_enabled": true,
              *       "embedded_format": "jpeg",
@@ -15280,6 +15395,7 @@ export interface components {
              */
             description: string;
             /**
+             * @description Enrichment block.
              * @default {
              *       "lyrics": {
              *         "enabled": false,
@@ -15298,6 +15414,7 @@ export interface components {
              */
             enrichment: components["schemas"]["EnrichmentManagementSettings"];
             /**
+             * @description Genre block.
              * @default {
              *       "aliases": [],
              *       "allowlist": [],
@@ -15326,12 +15443,14 @@ export interface components {
              */
             id: string;
             /**
+             * @description Identity policy.
              * @default {
              *       "automatic_edition_acceptance_enabled": false
              *     }
              */
             identity: components["schemas"]["IdentityManagementSettings"];
             /**
+             * @description Metadata block.
              * @default {
              *       "artist_credits": {
              *         "preferred_locales": [],
@@ -15365,12 +15484,14 @@ export interface components {
              */
             name: string;
             /**
+             * @description Notifications.
              * @default {
              *       "refresh_external_servers": false
              *     }
              */
             notification: components["schemas"]["ProfileNotificationSettings"];
             /**
+             * @description Organization block.
              * @default {
              *       "compatibility": {
              *         "extension_case": "preserve",
@@ -15608,7 +15729,10 @@ export interface components {
              * @default false
              */
             enabled: boolean;
-            /** @default null */
+            /**
+             * @description Per-root overrides.
+             * @default null
+             */
             overrides: null | components["schemas"]["LibraryManagementRootOverrides"];
             /**
              * @description Assigned profile id.
@@ -15653,7 +15777,10 @@ export interface components {
              * @default null
              */
             move_sidecars: boolean | null;
-            /** @default inherit */
+            /**
+             * @description Multi-disc naming mode.
+             * @default inherit
+             */
             multi_disc_naming_mode: components["schemas"]["MultiDiscNamingMode"];
             /**
              * @description Multi-disc naming script id.
@@ -15686,6 +15813,7 @@ export interface components {
              */
             default_profile_id: string;
             /**
+             * @description External refresh.
              * @default {
              *       "enabled": false,
              *       "jellyfin_enabled": false,
@@ -15811,7 +15939,10 @@ export interface components {
              * @default
              */
             id: string;
-            /** @default automatic */
+            /**
+             * @description Policy for this path.
+             * @default automatic
+             */
             policy: components["schemas"]["IdentificationPolicy"];
             /**
              * @description Path relative to the root.
@@ -15978,7 +16109,10 @@ export interface components {
              * @default
              */
             path: string;
-            /** @default automatic */
+            /**
+             * @description Default policy.
+             * @default automatic
+             */
             policy: components["schemas"]["IdentificationPolicy"];
             /**
              * @description Path rules.
@@ -15993,7 +16127,10 @@ export interface components {
              * @default 03:00
              */
             daily_scan_time: string;
-            /** @default 24hr */
+            /**
+             * @description Rolling-gap cadence, or `daily` for a fixed clock time.
+             * @default 24hr
+             */
             scan_frequency: components["schemas"]["ScanFrequency"];
         };
         /**
@@ -16189,6 +16326,11 @@ export interface components {
             connections: components["schemas"]["LinkedAccount"][];
         };
         /**
+         * @description Which way a list runs.
+         * @enum {string}
+         */
+        ListOrder: "asc" | "desc";
+        /**
          * @description ListenBrainz connect request. The username is required: it drives every
          *     per-user read, and without it a "connected" account yields silently
          *     empty discovery.
@@ -16366,7 +16508,10 @@ export interface components {
              * @default
              */
             field: string;
-            /** @default replace */
+            /**
+             * @description Write mode.
+             * @default replace
+             */
             mode: components["schemas"]["FieldMode"];
         };
         /** @description One row of a profile's field table. */
@@ -16669,6 +16814,7 @@ export interface components {
             local_track_id?: string | null;
             /** Format: int64 */
             ordinal: number;
+            /** @description The reason in words, with what to do about it. */
             reason?: null | components["schemas"]["ManagementReasonView"];
             reason_code?: string | null;
             source_relative_path?: string | null;
@@ -16682,6 +16828,7 @@ export interface components {
             expected_settings_revision: string;
             /** @description Makes a retried request return the same preview. */
             idempotency_key?: string | null;
+            /** @description Switches for this run only, on top of the profile. */
             overrides?: null | components["schemas"]["LibraryManagementRootOverrides"];
             profile_id: string;
             selection: components["schemas"]["ManagementSelectionBody"];
@@ -16811,6 +16958,7 @@ export interface components {
         /** @description One file after apply. */
         ManagementResultItemView: {
             failure_code?: string | null;
+            /** @description Why the file failed or was not written, with what to do about it. */
             failure_reason?: null | components["schemas"]["ManagementReasonView"];
             journal_states: string[];
             plan: components["schemas"]["ManagementPlanItemView"];
@@ -17096,6 +17244,7 @@ export interface components {
         /** @description Metadata management block. */
         MetadataManagementSettings: {
             /**
+             * @description Artist credits.
              * @default {
              *       "preferred_locales": [],
              *       "standardization": "credited",
@@ -17124,6 +17273,7 @@ export interface components {
              */
             preserve_fields: string[];
             /**
+             * @description Relationship credits.
              * @default {
              *       "enabled": true,
              *       "types": [
@@ -17149,6 +17299,11 @@ export interface components {
              */
             tagging_script_ids: string[];
         };
+        /**
+         * @description Where the user's personal-mix auto-request stands.
+         * @enum {string}
+         */
+        MixGrantState: "none" | "pending" | "approved" | "rejected" | "revoked";
         /**
          * @description Whether a personal-mix refresh started.
          * @enum {string}
@@ -17213,7 +17368,10 @@ export interface components {
         };
         /** @description MusicBrainz connection settings. */
         MusicBrainzSettings: {
-            /** @default null */
+            /**
+             * @description Active BrainzMash binding, if any.
+             * @default null
+             */
             active_brainzmash: null | components["schemas"]["BrainzmashActiveBinding"];
             /**
              * @description API base (canonicalized for official/brainzmash).
@@ -17243,11 +17401,17 @@ export interface components {
              * @default 10
              */
             rate_limit: number;
-            /** @default brainzmash */
+            /**
+             * @description Last tier the admin chose.
+             * @default brainzmash
+             */
             selected_source_mode: components["schemas"]["MbSourceMode"];
             /** @description Source identity. */
             source_id?: string;
-            /** @default brainzmash */
+            /**
+             * @description Active source tier.
+             * @default brainzmash
+             */
             source_mode: components["schemas"]["MbSourceMode"];
         };
         /**
@@ -17271,7 +17435,10 @@ export interface components {
              * @default 1
              */
             rate_limit: number;
-            /** @default official */
+            /**
+             * @description Desired source tier.
+             * @default official
+             */
             source_mode: components["schemas"]["MbSourceMode"];
         };
         /**
@@ -17279,6 +17446,7 @@ export interface components {
          *     transient pending BrainzMash proposal, when one is staged.
          */
         MusicBrainzSettingsView: components["schemas"]["MusicBrainzSettings"] & {
+            /** @description Transient pending proposal, when one is staged. */
             pending_brainzmash?: null | components["schemas"]["BrainzmashPendingProposal"];
         };
         /**
@@ -17532,6 +17700,11 @@ export interface components {
             /** @description Projected live sessions. */
             sessions: components["schemas"]["NowPlayingEntry"][];
         };
+        /**
+         * @description Who sees what a user plays: `user_listening_prefs.now_playing_visibility`.
+         * @enum {string}
+         */
+        NowPlayingVisibility: "full" | "track_hidden" | "offline";
         /** @description OIDC authorize answer: the browser URL for this login. */
         OidcAuthorizeBody: {
             /** @description IdP authorize URL (PKCE + state baked in). */
@@ -17676,6 +17849,7 @@ export interface components {
             kind: string;
             /** @description Candidates a re-identification waits on, best first. */
             reidentification_candidates: components["schemas"]["ReidentificationCandidateView"][];
+            /** @description An identity repair or preparation's report, once its check is done. */
             repair_summary?: null | components["schemas"]["RepairSummaryView"];
             /** @description The first 100 work results. */
             results: components["schemas"]["OperationWorkResultView"][];
@@ -17693,6 +17867,7 @@ export interface components {
             /** Format: int64 */
             succeeded_count: number;
             terminal_code?: string | null;
+            /** @description What `terminal_code` means and what to do about it. */
             terminal_reason?: null | components["schemas"]["ReasonView"];
             /** Format: double */
             updated_at: number;
@@ -17700,7 +17875,13 @@ export interface components {
         /** @description One work item's outcome. */
         OperationWorkResultView: {
             action: string;
+            /**
+             * @description The publish bundle the item wrote its files under, when it wrote
+             *     any: the id the recovery list names.
+             */
+            bundle_id?: string | null;
             failure_code?: string | null;
+            /** @description Why the item failed, in words, with what to do about it. */
             failure_reason?: null | components["schemas"]["ReasonView"];
             local_album_id?: string | null;
             local_track_id?: string | null;
@@ -17719,6 +17900,7 @@ export interface components {
         /** @description Organization management block. */
         OrganizationManagementSettings: {
             /**
+             * @description Path compatibility.
              * @default {
              *       "extension_case": "preserve",
              *       "maximum_component_length": 240,
@@ -18393,7 +18575,10 @@ export interface components {
         };
         /** @description Path-compatibility handling. */
         PathCompatibilitySettings: {
-            /** @default preserve */
+            /**
+             * @description Extension case.
+             * @default preserve
+             */
             extension_case: components["schemas"]["ExtensionCase"];
             /**
              * Format: int64
@@ -18422,7 +18607,10 @@ export interface components {
              * @default _
              */
             separator_replacement: string;
-            /** @default NFC */
+            /**
+             * @description Unicode normalization.
+             * @default NFC
+             */
             unicode_normalization: components["schemas"]["UnicodeNormalization"];
             /**
              * @description Windows-safe names.
@@ -18710,6 +18898,7 @@ export interface components {
             count?: number;
             /** @description Playlist to extend. */
             playlist_id: string;
+            /** @description Provider preference. */
             source?: null | components["schemas"]["ListenSource"];
         };
         /** @description Suggested rows for a playlist. */
@@ -18941,6 +19130,7 @@ export interface components {
             completed: boolean;
             /** @description Present only when completed in Bearer mode. */
             token?: string | null;
+            /** @description Present only when completed. */
             user?: null | components["schemas"]["FederatedUserView"];
         };
         /** @description One PIN to poll. */
@@ -19058,11 +19248,13 @@ export interface components {
             error?: string | null;
             /** @description Homepage URL. */
             homepage?: string;
+            /** @description Where the plugin was installed from, when it came from GitHub. */
             install?: null | components["schemas"]["PluginInstallInfo"];
             /** @description Manifest name. */
             name: string;
             /** @description What the plugin asks to do, in plain words. */
             permissions?: string[];
+            /** @description The running process, while enabled. */
             runtime?: null | components["schemas"]["PluginRuntimeInfo"];
             /** @description Declared settings fields. */
             settings_fields?: components["schemas"]["PluginSettingFieldInfo"][];
@@ -19142,6 +19334,10 @@ export interface components {
              *     installs, whatever the ref points at by now.
              */
             commit?: string | null;
+            /**
+             * @description What the preview's `reference` is. Sent with `reference` and `commit`,
+             *     so a plain URL need not be resolved a second time.
+             */
             ref_kind?: null | components["schemas"]["PluginRefKind"];
             /**
              * @description A release tag, tag, branch or commit; overrides any in the URL.
@@ -19172,6 +19368,10 @@ export interface components {
              * @description Events skipped because the plugin was still busy with the last one.
              */
             dropped_events?: number;
+            /**
+             * @description The plugin's own answer to its health check in this run; absent
+             *     until it has answered.
+             */
             health?: null | components["schemas"]["PluginHealth"];
             /** @description Capabilities the plugin said it implements. */
             implemented_capabilities?: string[];
@@ -19350,6 +19550,11 @@ export interface components {
          * @enum {string}
          */
         PromptService: "listenbrainz" | "lastfm" | "jellyfin" | "download-client";
+        /**
+         * @description What a credit proof is for: an album credit or a track credit.
+         * @enum {string}
+         */
+        ProofSubject: "album" | "track";
         /**
          * @description The calls one rate row sent at one priority that ended one way, since
          *     the server started.
@@ -19563,11 +19768,10 @@ export interface components {
             sample_rate_hz?: number | null;
         };
         /**
-         * @description How the stored quality settings read: a usable recipe, or a section or
-         *     recipe that does not validate.
+         * @description How the stored quality settings read.
          * @enum {string}
          */
-        QualityRecipeStatus: "v2" | "invalid";
+        QualityRecipeStatus: "valid" | "invalid";
         /** @description One blocklisted release. */
         QuarantineEntry: {
             /** @description The client label: `slskd`, `sabnzbd`, or the source for plugins. */
@@ -19710,6 +19914,10 @@ export interface components {
         };
         /** @description Background loops, job queues and the latest checkpoint pass. */
         QueueStatsResponse: {
+            /**
+             * @description Latest database checkpoint pass, once the checkpoint loop has
+             *     recorded one.
+             */
             checkpoint?: null | components["schemas"]["CheckpointView"];
             /** @description Background loops in name order. */
             jobs: components["schemas"]["JobView"][];
@@ -19870,6 +20078,7 @@ export interface components {
             seed_id: string;
             /** @description What the shelf starts from (`artist`, `album` or `genre`). */
             seed_type: components["schemas"]["RadioSeedKind"];
+            /** @description Provider preference. */
             source?: null | components["schemas"]["ListenSource"];
         };
         /** @description One seed row for an item-seeded radio plan. */
@@ -20096,6 +20305,7 @@ export interface components {
         };
         /** @description Reimport outcome: the task as the import left it. */
         ReimportResponse: {
+            /** @description Why the import did not complete, when it did not. */
             reason?: null | components["schemas"]["DownloadTaskReason"];
             /** @description Task status after the import. */
             status: components["schemas"]["TaskStatus"];
@@ -20605,7 +20815,10 @@ export interface components {
              * @default false
              */
             enabled: boolean;
-            /** @default preserve */
+            /**
+             * @description Write mode.
+             * @default preserve
+             */
             mode: components["schemas"]["ReplayGainMode"];
             /**
              * @description Gain required for completion.
@@ -20738,6 +20951,11 @@ export interface components {
             status_messages?: components["schemas"]["RequestStatusMessage"][] | null;
             /** @description Linked download task. */
             task_id?: string | null;
+            /**
+             * @description The linked download's own state while it is in flight or held for
+             *     review, whoever started it: a request joined to another person's
+             *     download reads it here. None when no download is live.
+             */
             task_state?: null | components["schemas"]["RequestTaskState"];
             /** @description Containing release group for exact-track rows (album context). */
             track_release_group_mbid?: string | null;
@@ -20745,6 +20963,7 @@ export interface components {
             track_title?: string | null;
             /** @description Primary owner id. */
             user_id?: string | null;
+            /** @description Why a live request has not started, when it waits. */
             waiting_reason?: null | components["schemas"]["WaitingReason"];
             /**
              * Format: int32
@@ -21047,6 +21266,7 @@ export interface components {
         };
         /** @description What a bulk review change started. */
         ReviewBulkResponse: {
+            /** @description The job; none when the preview left nothing to change. */
             job?: null | components["schemas"]["OperationView"];
             /**
              * Format: int32
@@ -21072,6 +21292,7 @@ export interface components {
         };
         /** @description A review job: a bulk change or retry running in the background. */
         ReviewJobView: components["schemas"]["OperationView"] & {
+            /** @description What it does to each review; none when its work is gone. */
             action?: null | components["schemas"]["ReviewJobAction"];
             /** @description Reviews it left alone so far, grouped by why. */
             skipped: components["schemas"]["SkippedReviews"][];
@@ -21082,6 +21303,7 @@ export interface components {
         };
         /** @description Review resolution answer. */
         ReviewResolveResponse: {
+            /** @description Sealed identity (approvals only). */
             identity?: null | components["schemas"]["IdentityView"];
             /** @description The settled review. */
             review: components["schemas"]["ReviewView"];
@@ -21105,6 +21327,10 @@ export interface components {
         };
         /** @description What a "retry all" started, or with `preview` would start. */
         ReviewRetryAllResponse: {
+            /**
+             * @description The job that retries them; none for a preview or when nothing was
+             *     pending.
+             */
             job?: null | components["schemas"]["OperationView"];
             /** @description True when nothing started: the counts are what a real run would do. */
             preview: boolean;
@@ -21232,6 +21458,7 @@ export interface components {
             root_id?: string | null;
             /** @description Album title or artist contains this, ignoring case. */
             search?: string | null;
+            /** @description Sort order; newest change first by default. */
             sort?: null | components["schemas"]["ReviewSort"];
             /**
              * @description `pending` (default), `approved`, `rejected`, `dismissed`,
@@ -21475,6 +21702,7 @@ export interface components {
         };
         /** @description Answer to a scan request. */
         ScanRunRequestedResponse: {
+            /** @description Kind of the run in the way, on a conflict. */
             conflicting_kind: null | components["schemas"]["ScanKind"];
             disposition: components["schemas"]["ScanDisposition"];
             /** @description Why the request waits, when it does. */
@@ -21523,6 +21751,7 @@ export interface components {
             requested_by_user_id?: string | null;
             /** @description Pending control. */
             requested_control: components["schemas"]["RequestedControl"];
+            /** @description Phase a paused run picks up from. */
             resume_phase?: null | components["schemas"]["ScanPhase"];
             /**
              * Format: int64
@@ -21543,6 +21772,7 @@ export interface components {
              * @description Terminal time, when terminal.
              */
             terminal_at?: number | null;
+            /** @description Terminal code, when terminal. */
             terminal_code?: null | components["schemas"]["FailureCode"];
             /** @description What the terminal code means, in plain words. */
             terminal_message?: string | null;
@@ -21598,13 +21828,13 @@ export interface components {
             /** @description Standing intent to auto-request the personal mix. */
             auto_request_personal_mix?: boolean;
             /** @description Standing-grant state for auto-request. */
-            auto_request_state?: string;
+            auto_request_state?: components["schemas"]["MixGrantState"];
             /** @description Navidrome owns external forwarding for Navidrome plays. */
             navidrome_handles_external_scrobbles?: boolean;
-            /** @description `full`, `track_hidden`, or `offline`. */
-            now_playing_visibility?: string;
-            /** @description `listenbrainz` or `lastfm`. */
-            primary_music_source?: string;
+            /** @description Who sees what the user plays. */
+            now_playing_visibility?: components["schemas"]["NowPlayingVisibility"];
+            /** @description Where discovery reads the user's listening. */
+            primary_music_source?: components["schemas"]["ListenSource"];
             /** @description Forward plays to Last.fm. */
             scrobble_to_lastfm?: boolean;
             /** @description Forward plays to ListenBrainz. */
@@ -21626,12 +21856,12 @@ export interface components {
              * @description New presence visibility.
              * @default null
              */
-            now_playing_visibility: string | null;
+            now_playing_visibility: null | components["schemas"]["NowPlayingVisibility"];
             /**
              * @description New primary source.
              * @default null
              */
-            primary_music_source: string | null;
+            primary_music_source: null | components["schemas"]["ListenSource"];
             /**
              * @description New Last.fm forwarding switch.
              * @default null
@@ -21732,6 +21962,10 @@ export interface components {
             results: components["schemas"]["SearchResultItem"][];
             /** @description Provider health for this bucket. */
             status: components["schemas"]["SearchRemoteStatus"];
+            /**
+             * @description Standout hit, present only on the first page and only when one
+             *     scored high enough to headline.
+             */
             top_result?: null | components["schemas"]["SearchResultItem"];
         };
         /** @description One candidate as the search page shows it. */
@@ -21811,6 +22045,7 @@ export interface components {
             /** @description Best first within each source; sources in the configured order. */
             candidates: components["schemas"]["SearchCandidateView"][];
             job_id: string;
+            /** @description Why the search failed or found nothing, and what to do. */
             reason?: null | components["schemas"]["DownloadReason"];
             release_group_mbid?: string | null;
             /** @description The edition the candidates were ranked against. */
@@ -21869,8 +22104,11 @@ export interface components {
             artist_status: components["schemas"]["SearchRemoteStatus"];
             /** @description Matching artists, best first. */
             artists: components["schemas"]["SearchResultItem"][];
+            /** @description Standout album hit, if one scored high enough to headline. */
             top_album?: null | components["schemas"]["SearchResultItem"];
+            /** @description Standout artist hit, if one scored high enough to headline. */
             top_artist?: null | components["schemas"]["SearchResultItem"];
+            /** @description Standout track hit, if one scored high enough to headline. */
             top_track?: null | components["schemas"]["SearchResultItem"];
             /** @description Provider health for the track bucket. */
             track_status: components["schemas"]["SearchRemoteStatus"];
@@ -21920,6 +22158,10 @@ export interface components {
             score: number;
             /** @description Display title (artist name, album title, or track title). */
             title: string;
+            /**
+             * @description Library details of a song hit; present exactly when `kind` is
+             *     `track`.
+             */
             track?: null | components["schemas"]["SearchTrackDetail"];
             /** @description Artist type, or an `Album + Live` style type label. */
             type_info?: string | null;
@@ -22010,6 +22252,11 @@ export interface components {
          * @enum {string}
          */
         SectionKind: "artists" | "albums" | "tracks" | "genres";
+        /**
+         * @description A page whose sections a user can turn on and off.
+         * @enum {string}
+         */
+        SectionPage: "home" | "discover" | "sidebar";
         /** @description One toggleable UI section. */
         SectionPrefItem: {
             /** @description Backend availability (requires + linked services). */
@@ -22046,8 +22293,8 @@ export interface components {
         };
         /** @description Section prefs update (one page per call). */
         SectionPrefsUpdate: {
-            /** @description Page to update (`home`, `discover`, `sidebar`). */
-            page: string;
+            /** @description Page to update. */
+            page: components["schemas"]["SectionPage"];
             /** @description Toggles to apply. */
             sections: components["schemas"]["SectionPrefUpdateItem"][];
         };
@@ -22058,7 +22305,10 @@ export interface components {
         SectionZone: "whats_hot" | "for_you" | "your_library" | "browse_genres" | "essentials" | "made_for_you" | "because_you_listened" | "new_and_fresh" | "from_your_library" | "trending_now";
         /** @description Security posture settings (no secrets; the HIBP path is a local file). */
         SecuritySettings: {
-            /** @default enforce */
+            /**
+             * @description How the web UI's content-security policy is sent.
+             * @default enforce
+             */
             content_security_policy: components["schemas"]["ContentSecurityPolicyMode"];
             /**
              * @description Up to eight origins that may show DroppedNeedle in a frame, such as
@@ -22093,14 +22343,19 @@ export interface components {
              * @default false
              */
             hsts_preload: boolean;
-            /** @default everyone */
+            /**
+             * @description Who may download library files.
+             * @default everyone
+             */
             library_download_access: components["schemas"]["DownloadAccess"];
         };
         /** @description Server-wide year-in-review. */
         ServerWrappedResponse: {
             /** @description Per-user listener leaderboard. */
             leaderboard: components["schemas"]["WrappedLeaderboardEntry"][];
+            /** @description Sitewide top album when known. */
             top_album_sitewide?: null | components["schemas"]["WrappedAlbum"];
+            /** @description Sitewide top artist when known. */
             top_artist_sitewide?: null | components["schemas"]["WrappedArtist"];
             /**
              * Format: int64
@@ -22351,6 +22606,7 @@ export interface components {
             effective_downloads_path?: string | null;
             /** @description User-safe summary. */
             message: string;
+            /** @description The downloads mount, once the first probe pass checked it. */
             mount?: null | components["schemas"]["DownloadsMountView"];
             /**
              * @description One plain sentence when the mount looks fine but cannot see slskd's
@@ -22702,6 +22958,11 @@ export interface components {
             /** Format: int32 */
             track_count: number;
         };
+        /**
+         * @description Why a track was suggested: the pool it came from.
+         * @enum {string}
+         */
+        SuggestionReason: "recent" | "rediscover" | "surprise" | "same_era";
         /** @description One suggested track, tagged with why it was picked. */
         SuggestionTrack: {
             /** @description Owning local album id. */
@@ -22719,8 +22980,8 @@ export interface components {
             duration_seconds?: number | null;
             /** @description Container or codec label. */
             format: string;
-            /** @description `recent`, `rediscover`, `surprise`, or `same_era`. */
-            reason: string;
+            /** @description Which pool the track came from. */
+            reason: components["schemas"]["SuggestionReason"];
             /** @description Track title. */
             title: string;
             /** @description Local track id. */
@@ -22831,6 +23092,7 @@ export interface components {
              *     resolved yet (the UI shows a "still personalising" hint).
              */
             personalizing: boolean;
+            /** @description Provider behind the picks, when it has one. */
             source?: null | components["schemas"]["ShelfSource"];
             /** @description Shelf title. */
             title: string;
@@ -22994,6 +23256,11 @@ export interface components {
              */
             total: number;
         };
+        /**
+         * @description How the track list is sorted.
+         * @enum {string}
+         */
+        TrackListSort: "title" | "date_added" | "artist" | "album" | "random";
         /** @description One page of catalog tracks. */
         TrackPage: {
             /** @description This page of tracks. */
@@ -23177,6 +23444,7 @@ export interface components {
             comparison_failed: boolean;
             /** @description Running version. */
             current_version: string;
+            /** @description Latest release detail, present only when an update is available. */
             latest_release?: null | components["schemas"]["GitHubRelease"];
             /** @description Latest known tag, absent when the lookup found nothing. */
             latest_version?: string | null;
@@ -23306,13 +23574,19 @@ export interface components {
         UpgradeOutcome: "upgraded" | "started_fresh" | "undone" | "already_v3" | "no_v2_data";
         /** @description What the pre-flight found: the check, or why it could not run. */
         UpgradePreflightBody: {
+            /**
+             * @description The check's findings: counts, blockers with their fixes, and the
+             *     address changes to acknowledge.
+             */
             check?: null | components["schemas"]["UpgradeCheck"];
+            /** @description Why the check could not run. */
             failure?: null | components["schemas"]["UpgradeFailure"];
         };
         /** @description The latest run and where the upgrade stands. */
         UpgradeProgressBody: {
             /** @description Where the upgrade stands. */
             layout: components["schemas"]["UpgradeLayout"];
+            /** @description The latest upgrade, fresh start or undo; none yet. */
             run?: null | components["schemas"]["UpgradeRun"];
         };
         /** @description What an upgrade ask did. */
@@ -23326,9 +23600,11 @@ export interface components {
         };
         /** @description The run finished. */
         UpgradeResult: {
+            /** @description Where the v2 files are kept; none when there are none to keep. */
             backup?: null | components["schemas"]["UpgradeBackupFolders"];
             /** @description How it ended. */
             outcome: components["schemas"]["UpgradeOutcome"];
+            /** @description What an upgrade moved; only after an upgrade. */
             summary?: null | components["schemas"]["UpgradeSummary"];
         };
         /** @description The latest run of the upgrade, a fresh start or an undo. */
@@ -23338,12 +23614,15 @@ export interface components {
              * @description Parts of the step done, when it counts them.
              */
             done?: number | null;
+            /** @description Why it failed, once it has. */
             failure?: null | components["schemas"]["UpgradeFailure"];
             /** @description The step's label. */
             label?: string | null;
+            /** @description How the run finished, once it has. */
             result?: null | components["schemas"]["UpgradeResult"];
             /** @description True until it ends. */
             running: boolean;
+            /** @description The step under way, or the last one. */
             step?: null | components["schemas"]["UpgradeStep"];
             /** @description What the run does. */
             task: components["schemas"]["UpgradeTask"];
@@ -23439,7 +23718,9 @@ export interface components {
             feature: components["schemas"]["UpgradeCallbackFeature"];
             /** @description What to do, as sentences. */
             message: string;
+            /** @description The address v3 uses; none for MusicBrainz contributions. */
             new_address?: null | components["schemas"]["UpgradeAddress"];
+            /** @description The address v2 registered; none for MusicBrainz contributions. */
             old_address?: null | components["schemas"]["UpgradeAddress"];
         };
         /**
@@ -23456,7 +23737,10 @@ export interface components {
          *     connection. Unknown values are a 400, never a silent reset.
          */
         UsenetSearchBackend: {
-            /** @default indexers */
+            /**
+             * @description Active backend.
+             * @default indexers
+             */
             backend: components["schemas"]["UsenetBackend"];
         };
         /** @description Release-type filters for discovery and search. */
@@ -23584,6 +23868,7 @@ export interface components {
              * @description Indexed files the album holds.
              */
             file_count: number;
+            /** @description What "That's right" confirms, for a best guess. */
             guess?: null | components["schemas"]["WaitingGuessView"];
             /**
              * Format: int64
@@ -23659,6 +23944,7 @@ export interface components {
             created_at: number;
             /** @description The whole album or the gaps of a short one. */
             kind: components["schemas"]["WatchKind"];
+            /** @description What the last check found, once one ran. */
             last_outcome?: null | components["schemas"]["WatchOutcome"];
             /** @description Release-group MBID. */
             musicbrainz_id: string;
@@ -27250,9 +27536,7 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
+                content?: never;
             };
         };
     };
@@ -27347,9 +27631,7 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
+                content?: never;
             };
         };
     };
@@ -27412,9 +27694,7 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
+                content?: never;
             };
         };
     };
@@ -30184,14 +30464,10 @@ export interface operations {
                  *     Absent for the first page.
                  */
                 after?: string;
-                /**
-                 * @description `name`, `date_added`, `year`, `artist`, `random` (one shuffle per
-                 *     walk, kept across its pages), or `rediscover` (oldest first).
-                 *     Default `name`.
-                 */
-                sort?: string;
-                /** @description `asc` or `desc`. Default `asc`. */
-                order?: string;
+                /** @description Default `name`. */
+                sort?: components["schemas"]["AlbumListSort"];
+                /** @description Default `asc`. */
+                order?: components["schemas"]["ListOrder"];
                 /** @description Title/artist substring filter, case folded. */
                 q?: string;
                 /** @description Restrict to one album artist. */
@@ -32628,9 +32904,7 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
+                content?: never;
             };
         };
     };
@@ -32888,17 +33162,14 @@ export interface operations {
                  *     order. Absent for the first page.
                  */
                 after?: string;
-                /**
-                 * @description `name`, `album_count`, `appearance_count`, or `date_added`.
-                 *     Default `name`.
-                 */
-                sort?: string;
-                /** @description `asc` or `desc`. Default `asc`. */
-                order?: string;
+                /** @description Default `name`. */
+                sort?: components["schemas"]["ArtistListSort"];
+                /** @description Default `asc`. */
+                order?: components["schemas"]["ListOrder"];
                 /** @description Name substring filter, case folded. */
                 q?: string;
-                /** @description `all`, `album_artists`, or `contributors`. Default `all`. */
-                scope?: string;
+                /** @description Default `all`. */
+                scope?: components["schemas"]["ArtistListScope"];
                 /**
                  * @description Only artists with at least this many indexed tracks in the library,
                  *     1-10000: the tracks credited to them and the tracks on the albums
@@ -33502,9 +33773,7 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
+                content?: never;
             };
         };
     };
@@ -39039,14 +39308,10 @@ export interface operations {
                  *     Absent for the first page.
                  */
                 after?: string;
-                /**
-                 * @description `title`, `date_added`, `artist` (then album, disc and track),
-                 *     `album` (then disc and track), or `random` (one shuffle per walk,
-                 *     kept across its pages). Default `title`.
-                 */
-                sort?: string;
-                /** @description `asc` or `desc`. Default `asc`. */
-                order?: string;
+                /** @description Default `title`. */
+                sort?: components["schemas"]["TrackListSort"];
+                /** @description Default `asc`. */
+                order?: components["schemas"]["ListOrder"];
                 /** @description Title/artist/album substring filter, case folded. */
                 q?: string;
                 /** @description Restrict to one album. */

@@ -34,7 +34,7 @@ use droppedneedle_providers::RequestPriority;
 use super::source::{AdapterError, BoxFuture, RemoteHandle};
 
 use super::jellyfin::JellyfinAdapter;
-use super::models::SourceName;
+use super::models::{AccountMode, SourceName};
 use super::navidrome::NavidromeAdapter;
 use super::plex::PlexAdapter;
 use super::sql;
@@ -511,8 +511,8 @@ pub struct ResolvedConnection {
     pub username: String,
     /// Plaintext credential. Never logged; the type has no `Display`.
     pub credential: String,
-    /// "linked" (own account) or "shared" (admin account).
-    pub account_mode: String,
+    /// Whose account this is; `None` for values not stored anywhere yet.
+    pub account_mode: Option<AccountMode>,
     /// Display label, e.g. the login name.
     pub account_label: String,
     /// Cache scope segment isolating this owner's entries.
@@ -534,7 +534,7 @@ impl ResolvedConnection {
             base_url,
             username: String::new(),
             credential,
-            account_mode: String::new(),
+            account_mode: None,
             account_label: String::new(),
             cache_scope: String::new(),
             client_id: String::new(),
@@ -1024,7 +1024,7 @@ fn linked(user_id: &str, server: &ServerSettings, link: UserLink) -> ResolvedCon
         base_url: server.base_url.clone(),
         username,
         credential,
-        account_mode: "linked".to_owned(),
+        account_mode: Some(AccountMode::Linked),
         account_label: label,
         client_id: server.client_id.clone(),
         user_id: remote_user,
@@ -1045,7 +1045,7 @@ fn shared(
         account_label: format!("Shared {} account", source.display()),
         username: credential.username,
         credential: credential.credential,
-        account_mode: "shared".to_owned(),
+        account_mode: Some(AccountMode::Shared),
         client_id: server.client_id.clone(),
         user_id: credential.user_id,
         section_ids: server.section_ids.clone(),

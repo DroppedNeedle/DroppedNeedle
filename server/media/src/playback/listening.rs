@@ -47,10 +47,10 @@ pub struct ScrobblePrefs {
     /// Navidrome owns external scrobbles: skip our forwarding for
     /// Navidrome-sourced plays (history still records).
     pub navidrome_handles_external_scrobbles: bool,
-    /// Where discovery reads the user's listening: a [`ListenSource`].
-    pub primary_music_source: String,
-    /// Who sees what the user plays: a [`Visibility`].
-    pub now_playing_visibility: String,
+    /// Where discovery reads the user's listening.
+    pub primary_music_source: ListenSource,
+    /// Who sees what the user plays.
+    pub now_playing_visibility: Visibility,
     /// Standing intent to auto-request the personal mix.
     pub auto_request_personal_mix: bool,
 }
@@ -62,8 +62,8 @@ impl Default for ScrobblePrefs {
             scrobble_to_lastfm: false,
             scrobble_to_listenbrainz: false,
             navidrome_handles_external_scrobbles: true,
-            primary_music_source: ListenSource::default().as_str().to_owned(),
-            now_playing_visibility: Visibility::Full.as_str().to_owned(),
+            primary_music_source: ListenSource::default(),
+            now_playing_visibility: Visibility::Full,
             auto_request_personal_mix: false,
         }
     }
@@ -78,10 +78,10 @@ pub struct PrefsPatch {
     pub scrobble_to_listenbrainz: Option<bool>,
     /// New Navidrome delegation switch.
     pub navidrome_handles_external_scrobbles: Option<bool>,
-    /// New primary source (validated before it reaches the store).
-    pub primary_music_source: Option<String>,
-    /// New presence visibility (validated before it reaches the store).
-    pub now_playing_visibility: Option<String>,
+    /// New primary source.
+    pub primary_music_source: Option<ListenSource>,
+    /// New presence visibility.
+    pub now_playing_visibility: Option<Visibility>,
     /// New personal-mix auto-request intent.
     pub auto_request_personal_mix: Option<bool>,
 }
@@ -97,11 +97,11 @@ impl PrefsPatch {
         if let Some(value) = self.navidrome_handles_external_scrobbles {
             prefs.navidrome_handles_external_scrobbles = value;
         }
-        if let Some(value) = &self.primary_music_source {
-            prefs.primary_music_source = value.clone();
+        if let Some(value) = self.primary_music_source {
+            prefs.primary_music_source = value;
         }
-        if let Some(value) = &self.now_playing_visibility {
-            prefs.now_playing_visibility = value.clone();
+        if let Some(value) = self.now_playing_visibility {
+            prefs.now_playing_visibility = value;
         }
         if let Some(value) = self.auto_request_personal_mix {
             prefs.auto_request_personal_mix = value;

@@ -2,7 +2,10 @@
 	import { onDestroy } from 'svelte';
 	import { SvelteMap } from 'svelte/reactivity';
 	import { Check, ExternalLink } from 'lucide-svelte';
-	import type { SectionPrefItem } from '$lib/features/settings/queries/section-prefs.svelte';
+	import type {
+		SectionPage,
+		SectionPrefItem
+	} from '$lib/features/settings/queries/section-prefs.svelte';
 	import {
 		getSectionPrefsQuery,
 		saveSectionPrefs
@@ -16,7 +19,7 @@
 	import ToggleRow from '$lib/ui/ToggleRow.svelte';
 
 	interface Props {
-		page: 'home' | 'discover' | 'sidebar';
+		page: SectionPage;
 		title: string;
 		description: string;
 	}

@@ -62,7 +62,7 @@
 			quality_max: qualityMax,
 			quality_cutoff: clampCutoff(policy.quality_cutoff, qualityMin, qualityMax),
 			quality_recipe: stripRecipeIds(recipe),
-			quality_recipe_status: 'v2',
+			quality_recipe_status: 'valid',
 			quality_recipe_error: null
 		};
 	}

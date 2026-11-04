@@ -3,11 +3,13 @@ import { ADMIN, key, userScope } from '$lib/queries/keys';
 
 export type LibraryV3UserId = string | null | undefined;
 
+type Schemas = components['schemas'];
+
 // A long list's params, without its cursor: a list's pages share one key.
 export interface LibraryV3AlbumsParams {
 	limit: number;
-	sort?: 'name' | 'date_added' | 'year' | 'artist' | 'random' | 'rediscover';
-	order?: 'asc' | 'desc';
+	sort?: Schemas['AlbumListSort'];
+	order?: Schemas['ListOrder'];
 	q?: string;
 	artistId?: string;
 	decade?: number;
@@ -23,10 +25,10 @@ export interface LibraryV3AlbumsParams {
 
 export interface LibraryV3ArtistsParams {
 	limit: number;
-	sort?: 'name' | 'album_count' | 'appearance_count' | 'date_added';
-	order?: 'asc' | 'desc';
+	sort?: Schemas['ArtistListSort'];
+	order?: Schemas['ListOrder'];
 	q?: string;
-	scope?: 'all' | 'album_artists' | 'contributors';
+	scope?: Schemas['ArtistListScope'];
 	/** Only artists with at least this many tracks in the library. */
 	minTracks?: number;
 	/** Only the caller's favourites; without a sort, the newest first. */
@@ -35,8 +37,8 @@ export interface LibraryV3ArtistsParams {
 
 export interface LibraryV3TracksParams {
 	limit: number;
-	sort?: 'title' | 'date_added' | 'artist' | 'album' | 'random';
-	order?: 'asc' | 'desc';
+	sort?: Schemas['TrackListSort'];
+	order?: Schemas['ListOrder'];
 	q?: string;
 	albumId?: string;
 	artistId?: string;
