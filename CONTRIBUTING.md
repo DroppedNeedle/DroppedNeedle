@@ -58,6 +58,7 @@ make frontend-lint          # eslint
 make frontend-format-check  # prettier
 make frontend-test-server   # vitest, node project
 make frontend-test-client   # vitest, browser project
+make library-file-gate      # no file changes in the library outside the publisher
 make check                  # all of the above (not cargo audit, cargo deny or the container test)
 ```
 
@@ -109,7 +110,7 @@ pub(super) fn feed_page(for_user: bool, newest_first: bool) -> String { ... }
 - The export tool's reads of a v2 database sit in a block that starts with `schema = V2;`, and the test prepares them against the v2 fixture database instead.
 - Each `sql!` block lists its own declarations. A crate that holds a `sql.rs` lists every one of them, one line each, in `statement_files()` at its crate root (compiled only for tests), and has a row in `REGISTRIES` in `server/tests/server/persist_schema.rs`.
 
-`every_registered_statement_prepares` fails when a `sql.rs` is missing from its crate's list or declares something outside its `sql!` block, then prepares every statement, and every family over every combination, against the migrated schema. It catches a renamed column, a dropped table and a second statement after a `;`. It does not check how many values a call site binds, that a column list matches its row mapper, or the query plan.
+`every_registered_statement_prepares` fails when a `sql.rs` is missing from its crate's list or declares something outside its `sql!` block, then prepares every statement, and every family over every combination, against the migrated schema. It catches a renamed column, a dropped table and a second statement after a `;`. It does not check how many values a call site binds or the query plan. A statement that answers more than one column is read through a `row` declared in its `sql!` block, and the test fails when the row's fields differ from the statement's columns.
 
 `raw_sql_stays_in_sql_files` fails on SQL text anywhere else, and on `PRAGMA` or transaction control outside `server/kernel/src/db/`. Test files are exempt, as is the export's bundle builder, whose statements are made at run time from the columns of the v2 database being exported; the few other literals allowed for good are listed in the test with their reasons.
 
@@ -117,7 +118,7 @@ A column that stores an enum as text declares the enum's spellings with `dropped
 
 ## Pull requests
 
-1. Fork the repo and create a branch from the default branch.
+1. Fork the repo and create a branch from `v3`. Until v3 is released, the default branch, `main`, holds v2.
 2. Give your branch a descriptive name: `fix-scrobble-timing`, `feature-playlist-export`, etc.
 3. If you're fixing a bug, mention the issue number in the PR description.
 4. Make sure tests pass before submitting.
@@ -144,7 +145,16 @@ You're still responsible for understanding and testing the code you submit.
 
 Maintainers cut releases. A release is a version tag, `v3.1.0` or `v3.1.0-rc.1` for a pre-release, on a commit of the release branch that CI has passed on. Bump `version` under `[workspace.package]` in `server/Cargo.toml` to the same version, without the `v`, before tagging: the workflow rejects a tag that does not match it. Pushing the tag starts the Release workflow, which checks the tag, the branch and CI, then waits for a maintainer to approve the `release` environment before it publishes `droppedneedle/droppedneedle:<tag>`. `:latest` only moves forward: a pre-release never moves it, and neither does a patch to an older line once a higher full version is tagged.
 
-CI skips commits that change no code. If the commit you want to tag has no v3 CI run, start v3 CI by hand on the release branch first.
+CI is path-filtered: a commit that changes no code gets no v3 CI run, and a run on one that changes only some areas skips the other jobs and still passes. The Release workflow takes any passing v3 CI run on the commit, so start a full one by hand.
+
+Only maintainers tag, and nothing but a version tag publishes a release image. To cut one:
+
+1. Bump `version` in `server/Cargo.toml` to the release version and push that commit to the release branch.
+2. Start v3 CI by hand on that commit, so every job runs, and wait for it to pass.
+3. Check that the latest Frontend CI run on the release branch and the weekly Perf budgets run are green.
+4. Run the release dry run described below.
+5. Push the tag.
+6. Approve the `release` environment when the Release workflow asks.
 
 To rehearse a release without publishing, run the Release workflow by hand with the version you plan to tag and leave `push` unticked. It runs every check, waits for the same approval and builds the image for both architectures without pushing anything.
 
