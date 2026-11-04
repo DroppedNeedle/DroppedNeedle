@@ -24,7 +24,14 @@ The server is Rust (Axum, tokio, SQLite through rusqlite). The frontend is Svelt
 
 ### Running locally
 
-Server, with its data in `./dev-data`:
+The short way, from the repo root:
+
+```bash
+make setup   # once: frontend dependencies, the test browser, frontend/.env.development
+make dev     # the server and the Vite dev server together; Ctrl-C stops both
+```
+
+Or one at a time. Server, with its data in `./dev-data`:
 
 ```bash
 make server-run
