@@ -27,10 +27,10 @@ pub struct CatalogSetup {
     pub search: search::SearchDeps,
     /// Discover/home/queue/radio deps.
     pub discover: discover::DiscoverDeps,
-    /// Collections state. Unwired on the test bundle.
+    /// Collections state.
     pub collections: collections::CollectionsState,
-    /// Artist and album pages. Unmounted on the test bundle.
-    pub metadata: Option<metadata::CatalogDeps>,
+    /// Artist and album pages.
+    pub metadata: metadata::CatalogDeps,
     /// Cover art routes.
     pub covers: art::covers::CoversState,
     /// Version check routes.
@@ -38,9 +38,9 @@ pub struct CatalogSetup {
     /// Wrapped routes.
     pub wrapped: wrapped::WrappedState,
     /// The cover and artist image service behind `covers`, for the
-    /// precache and the cache admin. `None` on test states.
-    pub artwork: Option<art::ArtworkService>,
-    /// Saved YouTube links. Unwired on the test bundle.
+    /// precache and the cache admin.
+    pub artwork: art::ArtworkService,
+    /// Saved YouTube links.
     pub youtube: youtube::YouTubeLinks,
 }
 
@@ -167,8 +167,8 @@ impl CatalogSetup {
             search,
             discover,
             collections,
-            metadata: Some(metadata::CatalogDeps { catalog }),
-            artwork: Some(artwork),
+            metadata: metadata::CatalogDeps { catalog },
+            artwork,
             covers,
             version,
             wrapped,

@@ -240,7 +240,7 @@ fn mount(m: Mount<'_>) -> Mount<'_> {
         .area(wrapped::routes(), |state| state.catalog.wrapped.clone())
         .area(youtube::routes(), |state| state.catalog.youtube.clone())
         .area(search::routes(), |state| state.catalog.search.clone())
-        .optional_area(metadata::routes(), |state| state.catalog.metadata.clone())
+        .area(metadata::routes(), |state| state.catalog.metadata.clone())
         .area(
             droppedneedle_catalog::concerts::handlers::routes(),
             |state| state.concerts.service(),
@@ -317,20 +317,6 @@ impl<'a> Mount<'a> {
         self.document.merge(routes.openapi());
         if let Some(app) = self.state {
             self.routes = self.routes.merge(routes.with_state(state(app)));
-        }
-        self
-    }
-
-    /// An area whose state is absent on an unwired setup: always in the
-    /// document, served only when the state is there.
-    fn optional_area<S: Clone + Send + Sync + 'static>(
-        mut self,
-        routes: Routes<S>,
-        state: impl FnOnce(&AppState) -> Option<S>,
-    ) -> Self {
-        self.document.merge(routes.openapi());
-        if let Some(served) = self.state.and_then(state) {
-            self.routes = self.routes.merge(routes.with_state(served));
         }
         self
     }

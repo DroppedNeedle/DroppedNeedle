@@ -184,9 +184,9 @@ pub struct CompatLibrary {
     /// Cover art by MBID.
     pub covers: Arc<dyn CoverArt>,
     /// The service behind `covers`, read for the local-art setting.
-    pub artwork: Option<ArtworkService>,
+    pub artwork: ArtworkService,
     /// The album pages' MusicBrainz reads, for the releases they hold.
-    pub releases: Option<Catalog>,
+    pub releases: Catalog,
     /// Per-caller seeds for paged random lists, shared by both protocols.
     pub shuffles: Arc<ShuffleSeeds>,
     /// Each person's choices for their apps.
@@ -280,10 +280,7 @@ impl CompatLibrary {
             lyrics: catalog_setup.local.lyrics.clone(),
             covers: catalog_setup.covers.covers.clone(),
             artwork: catalog_setup.artwork.clone(),
-            releases: catalog_setup
-                .metadata
-                .as_ref()
-                .map(|deps| deps.catalog.clone()),
+            releases: catalog_setup.metadata.catalog.clone(),
             shuffles: Arc::new(ShuffleSeeds::default()),
             user_settings: UserSettings::new(db),
         }
@@ -547,7 +544,7 @@ impl CompatLibrary {
         &self,
         album_ids: &[String],
     ) -> Result<HashMap<String, i64>, CompatError> {
-        let counts = album_tracks(&self.catalog, self.releases.as_ref(), album_ids).await?;
+        let counts = album_tracks(&self.catalog, Some(&self.releases), album_ids).await?;
         Ok(counts
             .into_iter()
             .filter_map(|(id, tracks)| Some((id, i64::try_from(tracks.expected?).ok()?)))
@@ -843,12 +840,10 @@ impl CompatLibrary {
     }
 
     /// Whether an album's own art comes before the Cover Art Archive,
-    /// as the cover read decides it. Local art wins without the service,
-    /// as it does when the setting cannot be read.
+    /// as the cover read decides it. Local art wins when the setting
+    /// cannot be read.
     pub fn local_art_first(&self) -> bool {
-        self.artwork
-            .as_ref()
-            .is_none_or(ArtworkService::prefers_local_art)
+        self.artwork.prefers_local_art()
     }
 
     /// Art for a local album: its own folder or embedded art, or the

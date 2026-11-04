@@ -9,7 +9,7 @@
 use std::sync::Arc;
 
 use crate::discover::genre::artwork::GenreArt;
-use crate::discover::home::{self, LiveHome, genre_names};
+use crate::discover::home::{LiveHome, genre_names};
 use crate::discover::page::{LiveDiscover, shelves::shelf_of};
 use crate::discover::scheduler::{ArtistDetail, Feature};
 use crate::discover::sql;
@@ -113,33 +113,33 @@ impl IntegrationSettings {
     }
 }
 
-/// The live discover page and, when given, the live home page, with
-/// the real integration status.
+/// The live discover and home pages, with the real integration status.
 pub struct LiveContent {
     settings: IntegrationSettings,
     db: Db,
     page: LiveDiscover,
-    home: Option<(LiveHome, Arc<GenreArt>)>,
+    home: LiveHome,
+    art: Arc<GenreArt>,
 }
 
 impl LiveContent {
     /// Read the integration flags from `settings` and the catalog from
-    /// `db`; discover comes from `page`. Home has no shelves until
-    /// [`Self::with_home`].
-    pub fn new(settings: IntegrationSettings, db: Db, page: LiveDiscover) -> Self {
+    /// `db`; discover comes from `page` and home from `home`, and genre
+    /// tiles take their artwork from `art`.
+    pub fn new(
+        settings: IntegrationSettings,
+        db: Db,
+        page: LiveDiscover,
+        home: LiveHome,
+        art: Arc<GenreArt>,
+    ) -> Self {
         Self {
             settings,
             db,
             page,
-            home: None,
+            home,
+            art,
         }
-    }
-
-    /// Serve home from `home`, and give genre tiles artwork from `art`.
-    #[must_use]
-    pub fn with_home(mut self, home: LiveHome, art: Arc<GenreArt>) -> Self {
-        self.home = Some((home, art));
-        self
     }
 
     fn status(&self) -> IntegrationStatus {
@@ -156,11 +156,9 @@ impl LiveContent {
         let status = self.status();
         Box::pin(async move {
             let mut page = self.page.page(user_id, status).await;
-            if let Some((_, art)) = &self.home {
-                let names = genre_names(shelf_of(&page.sections, SectionKey::GenreList));
-                if !names.is_empty() {
-                    page.genre_artwork = art.batch(&names).await;
-                }
+            let names = genre_names(shelf_of(&page.sections, SectionKey::GenreList));
+            if !names.is_empty() {
+                page.genre_artwork = self.art.batch(&names).await;
             }
             Ok(page)
         })
@@ -171,24 +169,20 @@ impl LiveContent {
         &'a self,
         user_id: &'a str,
     ) -> BoxFuture<'a, Result<HomeResponse, ProviderFailure>> {
-        let status = self.status();
         Box::pin(async move {
-            if let Some((home, _)) = &self.home {
-                // A visit keeps home in the warm cycle while it is used. A
-                // repeat within five minutes is noted in memory only.
-                let scheduler = Arc::clone(self.page.scheduler());
-                let user = user_id.to_owned();
-                tokio::spawn(async move {
-                    if let Err(error) = scheduler
-                        .record(&user, Feature::Home, ArtistDetail::default())
-                        .await
-                    {
-                        tracing::warn!(%error, "could not record home activity");
-                    }
-                });
-                return Ok(home.page(user_id).await);
-            }
-            Ok(home::empty_page(status, false))
+            // A visit keeps home in the warm cycle while it is used. A
+            // repeat within five minutes is noted in memory only.
+            let scheduler = Arc::clone(self.page.scheduler());
+            let user = user_id.to_owned();
+            tokio::spawn(async move {
+                if let Err(error) = scheduler
+                    .record(&user, Feature::Home, ArtistDetail::default())
+                    .await
+                {
+                    tracing::warn!(%error, "could not record home activity");
+                }
+            });
+            Ok(self.home.page(user_id).await)
         })
     }
 

@@ -142,7 +142,7 @@ pub fn deps_over(
         clock: Arc::clone(&inputs.clock),
         advanced: config.live(),
         integrations: content::IntegrationSettings::new(config, inputs.download_readiness.clone()),
-        warm: Some(inputs.warm.clone()),
+        warm: inputs.warm.clone(),
     });
     let (home, genre_art, charts) = home::wire(home::HomeWiring {
         db: inputs.db.clone(),
@@ -150,7 +150,7 @@ pub fn deps_over(
         integrations: content::IntegrationSettings::new(config, inputs.download_readiness.clone()),
         listening: listening.clone(),
         discover: pages.clone(),
-        warm: Some(inputs.warm.clone()),
+        warm: inputs.warm.clone(),
         charts,
     });
     let warm_scheduler = Arc::new(scheduler::WarmScheduler::new(
@@ -166,14 +166,13 @@ pub fn deps_over(
     ));
     let page = page::LiveDiscover::new(pages, warm_scheduler);
     DiscoverDeps {
-        content: Arc::new(
-            content::LiveContent::new(
-                content::IntegrationSettings::new(config, inputs.download_readiness.clone()),
-                inputs.db.clone(),
-                page,
-            )
-            .with_home(home, genre_art),
-        ),
+        content: Arc::new(content::LiveContent::new(
+            content::IntegrationSettings::new(config, inputs.download_readiness.clone()),
+            inputs.db.clone(),
+            page,
+            home,
+            genre_art,
+        )),
         queues,
         charts: Arc::new(charts),
         previews: Arc::new(previews::LivePreviews::new(

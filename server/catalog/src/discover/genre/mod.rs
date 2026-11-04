@@ -36,18 +36,13 @@ pub struct GenrePages {
     db: Db,
     listening: ListeningData,
     art: Arc<GenreArt>,
-    warm: Option<CoverWarm>,
+    warm: CoverWarm,
 }
 
 impl GenrePages {
     /// Pages over the library in `db` and the provider reads in
-    /// `listening`; `warm`, when given, warms the popular rows' images.
-    pub fn new(
-        db: Db,
-        listening: ListeningData,
-        art: Arc<GenreArt>,
-        warm: Option<CoverWarm>,
-    ) -> Self {
+    /// `listening`; `warm` warms the popular rows' images.
+    pub fn new(db: Db, listening: ListeningData, art: Arc<GenreArt>, warm: CoverWarm) -> Self {
         Self {
             library: HomeLibrary::new(db.clone()),
             db,
@@ -127,16 +122,14 @@ impl GenrePages {
             artists.iter_mut().collect(),
         )
         .await;
-        if let Some(warm) = &self.warm {
-            let mut targets = WarmTargets::default();
-            for row in &albums {
-                targets.cover(row.musicbrainz_id.as_deref());
-            }
-            for row in &artists {
-                targets.artist(row.musicbrainz_id.as_deref());
-            }
-            warm.queue("genre", targets);
+        let mut targets = WarmTargets::default();
+        for row in &albums {
+            targets.cover(row.musicbrainz_id.as_deref());
         }
+        for row in &artists {
+            targets.artist(row.musicbrainz_id.as_deref());
+        }
+        self.warm.queue("genre", targets);
         let total_count = Some(artists.len() as i64);
         GenreDetailResponse {
             genre: genre.to_owned(),

@@ -44,34 +44,25 @@ pub type LibraryRootsSaved = Arc<dyn Fn() + Send + Sync>;
 pub struct LiveSaveEffects {
     /// Events sweep kick.
     pub kick: Arc<dyn EventsKick>,
-    /// Download worker wake, where a worker runs.
-    pub download_wake: Option<DownloadWake>,
-    /// The library's roots refresh, where a library runs.
-    pub roots_saved: Option<LibraryRootsSaved>,
+    /// Download worker wake, run when a download source is saved.
+    pub download_wake: DownloadWake,
+    /// The library's roots refresh, run when the library settings are
+    /// saved.
+    pub roots_saved: LibraryRootsSaved,
 }
 
 impl LiveSaveEffects {
-    /// Build over a kick.
-    pub fn new(kick: Arc<dyn EventsKick>) -> Self {
+    /// Build over the kick, the worker's wake and the roots refresh.
+    pub fn new(
+        kick: Arc<dyn EventsKick>,
+        download_wake: DownloadWake,
+        roots_saved: LibraryRootsSaved,
+    ) -> Self {
         Self {
             kick,
-            download_wake: None,
-            roots_saved: None,
+            download_wake,
+            roots_saved,
         }
-    }
-
-    /// Wake the download worker when a download source is saved.
-    #[must_use]
-    pub fn with_download_wake(mut self, wake: DownloadWake) -> Self {
-        self.download_wake = Some(wake);
-        self
-    }
-
-    /// Refresh the library's roots when the library settings are saved.
-    #[must_use]
-    pub fn with_library_roots(mut self, roots_saved: LibraryRootsSaved) -> Self {
-        self.roots_saved = Some(roots_saved);
-        self
     }
 }
 
@@ -80,15 +71,10 @@ impl SaveEffects for LiveSaveEffects {
         Box::pin(async move {
             match effect {
                 Effect::KickEventsSweep => self.kick.kick(),
-                Effect::WakeDownloads => {
-                    if let Some(wake) = &self.download_wake {
-                        wake();
-                    }
-                }
+                Effect::WakeDownloads => (self.download_wake)(),
                 Effect::RefreshLibraryRoots => {
-                    if let Some(roots_saved) = self.roots_saved.clone()
-                        && let Err(error) = tokio::task::spawn_blocking(move || roots_saved()).await
-                    {
+                    let roots_saved = self.roots_saved.clone();
+                    if let Err(error) = tokio::task::spawn_blocking(move || roots_saved()).await {
                         tracing::error!(%error, "the library roots refresh did not finish");
                     }
                 }

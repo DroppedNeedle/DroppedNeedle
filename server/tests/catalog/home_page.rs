@@ -18,6 +18,8 @@ use droppedneedle_catalog::discover::models::{
     ArtworkKind, PromptService, SectionItem, SectionKey,
 };
 use droppedneedle_catalog::discover::page::shelves::shelf_of;
+use droppedneedle_catalog::discover::page::{DiscoverPages, PageInputs};
+use droppedneedle_catalog::discover::queue::store::QueueDb;
 use droppedneedle_kernel::clock::ManualClock;
 use droppedneedle_kernel::db::{DbError, Lane};
 
@@ -127,18 +129,32 @@ async fn home_and_genre_pages_build_from_library_and_listening() {
         droppedneedle_providers::Providers::closed().cache,
     );
     let art = Arc::new(GenreArt::new(HomeLibrary::new(db.clone())));
+    let settings = crate::common::config_store(&dir);
+    let integrations = || {
+        droppedneedle_catalog::discover::content::IntegrationSettings::new(
+            &settings,
+            Arc::new(crate::common::bundles::NoDownloadSource),
+        )
+    };
+    let warm = crate::common::bundles::cover_warm_at(&db);
     let home_over = || {
+        let clock = Arc::new(ManualClock::at(1_790_000_000_000));
         LiveHome::new(HomeInputs {
             listening: listening.clone(),
             db: runtime.db().clone(),
-            clock: Arc::new(ManualClock::at(1_790_000_000_000)),
-            integrations: droppedneedle_catalog::discover::content::IntegrationSettings::new(
-                &crate::common::config_store(&dir),
-                Arc::new(crate::common::bundles::NoDownloadSource),
-            ),
+            clock: clock.clone(),
+            integrations: integrations(),
             art: art.clone(),
-            warm: None,
-            discover: None,
+            warm: warm.clone(),
+            discover: DiscoverPages::new(PageInputs {
+                listening: listening.clone(),
+                queue_db: QueueDb::new(db.clone()),
+                db: db.clone(),
+                clock,
+                advanced: settings.live(),
+                integrations: integrations(),
+                warm: warm.clone(),
+            }),
         })
     };
     let home = home_over();
@@ -192,7 +208,7 @@ async fn home_and_genre_pages_build_from_library_and_listening() {
     assert!(shelf_of(&restarted.sections, SectionKey::RecentlyPlayed).is_some());
 
     // The genre page: owned and popular rows side by side.
-    let genre = GenrePages::new(db.clone(), listening, art.clone(), None)
+    let genre = GenrePages::new(db.clone(), listening, art.clone(), warm)
         .detail("Shoegaze", 50, 0, 0)
         .await;
     let library = genre.library.expect("library lane");

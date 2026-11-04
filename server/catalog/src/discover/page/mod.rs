@@ -113,8 +113,8 @@ pub struct PageInputs {
     pub advanced: Live<AdvancedSettings>,
     /// The integration flags, read per build.
     pub integrations: IntegrationSettings,
-    /// Where a published page queues its image warm, when anywhere.
-    pub warm: Option<CoverWarm>,
+    /// Where a published page queues its image warm.
+    pub warm: CoverWarm,
 }
 
 struct Inner {
@@ -125,7 +125,7 @@ struct Inner {
     memo: BuildMemo,
     advanced: Live<AdvancedSettings>,
     integrations: IntegrationSettings,
-    warm: Option<CoverWarm>,
+    warm: CoverWarm,
 }
 
 /// The discover pages: their cache and their build.
@@ -293,9 +293,7 @@ impl DiscoverPages {
             tracing::warn!(user = %user_id, "discover build found nothing to show; keeping the previous page");
             return None;
         }
-        if let Some(warm) = &self.inner.warm {
-            warm.queue("discover", warm_targets(&page));
-        }
+        self.inner.warm.queue("discover", warm_targets(&page));
         Some(BuiltPage {
             page,
             skipped: sections::sorted(&off),

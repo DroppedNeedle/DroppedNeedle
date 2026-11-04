@@ -208,9 +208,9 @@ struct Inner {
     db: Db,
     art: Arc<GenreArt>,
     integrations: IntegrationSettings,
-    warm: Option<CoverWarm>,
+    warm: CoverWarm,
     cache: UserPageCache<ProviderShelves>,
-    discover: Option<DiscoverPages>,
+    discover: DiscoverPages,
 }
 
 /// The live home page.
@@ -231,10 +231,10 @@ pub struct HomeInputs {
     pub integrations: IntegrationSettings,
     /// Genre tile artwork.
     pub art: Arc<GenreArt>,
-    /// Where a kept build queues its image warm, when anywhere.
-    pub warm: Option<CoverWarm>,
-    /// The discover pages, for the teaser, when there are any.
-    pub discover: Option<DiscoverPages>,
+    /// Where a kept build queues its image warm.
+    pub warm: CoverWarm,
+    /// The discover pages, for the teaser.
+    pub discover: DiscoverPages,
 }
 
 /// Sitewide or user album rows that map to a release group.
@@ -336,13 +336,11 @@ impl LiveHome {
             tracing::warn!(user = %user_id, "home build found nothing to show; keeping the previous shelves");
             return None;
         }
-        if let Some(warm) = &self.inner.warm {
-            let mut page = self
-                .local(user_id, &music, self.inner.integrations.status(), &off)
-                .await;
-            page.sections.extend(shelves.sections.iter().cloned());
-            warm.queue("home", warm_targets(&page));
-        }
+        let mut page = self
+            .local(user_id, &music, self.inner.integrations.status(), &off)
+            .await;
+        page.sections.extend(shelves.sections.iter().cloned());
+        self.inner.warm.queue("home", warm_targets(&page));
         Some(shelves)
     }
 
@@ -515,9 +513,9 @@ impl LiveHome {
         }
     }
 
-    /// The discover teaser, when there is a discover page.
+    /// The discover teaser, when there is a built discover page.
     async fn discover_preview(&self, user_id: &str) -> Option<super::models::DiscoverPreview> {
-        self.inner.discover.as_ref()?.teaser(user_id).await
+        self.inner.discover.teaser(user_id).await
     }
 
     async fn apply_artwork(&self, page: &mut HomeResponse) {
@@ -581,7 +579,7 @@ pub struct HomeWiring {
     /// The discover pages, for the teaser.
     pub discover: DiscoverPages,
     /// Where built pages queue their image warm.
-    pub warm: Option<CoverWarm>,
+    pub warm: CoverWarm,
     /// The charts genre pages are added to.
     pub charts: super::charts::LiveCharts,
 }
@@ -598,7 +596,7 @@ pub fn wire(wiring: HomeWiring) -> (LiveHome, Arc<GenreArt>, genre::WithGenrePag
         integrations: wiring.integrations,
         art: art.clone(),
         warm: wiring.warm.clone(),
-        discover: Some(wiring.discover),
+        discover: wiring.discover,
     });
     let pages = Arc::new(genre::GenrePages::new(
         db,

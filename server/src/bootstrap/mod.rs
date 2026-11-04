@@ -550,8 +550,7 @@ pub(crate) async fn build_on(
         Err(error) => tracing::warn!(%error, "quota overrides failed to reload; defaults apply"),
     }
     let concerts = droppedneedle_catalog::concerts::ConcertsSetup::from_platform(p, &providers);
-    let precache_sources = jobs::catalog_precache(&catalog_setup, config_store, listening.clone())
-        .map_err(stage("jobs setup"))?;
+    let precache_sources = jobs::catalog_precache(&catalog_setup, config_store, listening.clone());
     // Every kind that can be enqueued, so none waits with nothing to run
     // it. Library Management queues the media-server rescans after a run,
     // sent through media's connection resolver; pages queue their image
@@ -616,11 +615,11 @@ pub(crate) async fn build_on(
     // it, whoever saved it; settings routes wait for them before answering.
     let (effects, effects_runner) = Effects::new(
         config_store.clone(),
-        Arc::new(
-            LiveSaveEffects::new(jobs.events_kick())
-                .with_download_wake(Arc::new(move || download_worker.wake()))
-                .with_library_roots(Arc::new(move || roots_library.roots_saved())),
-        ),
+        Arc::new(LiveSaveEffects::new(
+            jobs.events_kick(),
+            Arc::new(move || download_worker.wake()),
+            Arc::new(move || roots_library.roots_saved()),
+        )),
     );
     if supervisor
         .one_shot("settings_effects", move |ctx| async move {

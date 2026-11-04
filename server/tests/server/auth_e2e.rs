@@ -267,8 +267,7 @@ impl E2e {
                     &catalog_setup,
                     &p.settings,
                     crate::common::listening_store(p),
-                )
-                .expect("the catalog bundle has its pages and artwork"),
+                ),
             ),
             droppedneedle::bootstrap::jobs::QueueSetup::new(p),
             droppedneedle::bootstrap::jobs::ScansEnded::default(),

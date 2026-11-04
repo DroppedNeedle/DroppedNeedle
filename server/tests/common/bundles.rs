@@ -585,9 +585,11 @@ pub fn settings_at(
     let store = platform.settings.clone();
     let (effects, _) = Effects::new(
         store.clone(),
-        Arc::new(LiveSaveEffects::new(Arc::new(
-            droppedneedle_kernel::jobs::events_kick::NoopKick,
-        ))),
+        Arc::new(LiveSaveEffects::new(
+            Arc::new(droppedneedle_kernel::jobs::events_kick::NoopKick),
+            Arc::new(|| {}),
+            Arc::new(|| {}),
+        )),
     );
     droppedneedle::settings::wiring::SettingsSetup::build(
         platform,
