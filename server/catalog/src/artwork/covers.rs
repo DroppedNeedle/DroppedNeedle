@@ -186,12 +186,6 @@ impl FakeCoverArt {
         self
     }
 
-    /// Preload one local album's art.
-    pub fn with_album(mut self, album_id: &str, cover: CoverBytes) -> Self {
-        self.albums.insert(album_id.to_owned(), cover);
-        self
-    }
-
     /// Mark one release-group cover as warming.
     pub fn warming_release_group(mut self, id: &str, size: Option<&str>) -> Self {
         self.warming_release_groups

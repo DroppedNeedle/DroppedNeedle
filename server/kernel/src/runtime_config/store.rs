@@ -540,22 +540,6 @@ impl ConfigStore {
     ///
     /// `update` runs inside the write transaction, so it must be pure: no
     /// call on this store, no database, no file or network access.
-    pub async fn update_secret<S, E, F>(&self, update: F) -> Result<Masked<S>, UpdateError<E>>
-    where
-        S: SecretSection + Send + 'static,
-        E: std::fmt::Display + Send + 'static,
-        F: FnOnce(Masked<S>) -> Result<S, E> + Send + 'static,
-    {
-        let store = self.clone();
-        match tokio::task::spawn_blocking(move || store.update_secret_blocking(update)).await {
-            Ok(updated) => updated,
-            Err(error) => Err(UpdateError::Config(ConfigError::Database(format!(
-                "the settings write stopped: {error}"
-            )))),
-        }
-    }
-
-    /// [`ConfigStore::update_secret`] for a blocking thread.
     pub fn update_secret_blocking<S, E, F>(&self, update: F) -> Result<Masked<S>, UpdateError<E>>
     where
         S: SecretSection,

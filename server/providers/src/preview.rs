@@ -447,22 +447,10 @@ impl PreviewClient {
         Ok(results)
     }
 
-    /// An artist's popular tracks via Deezer search.
-    /// The search over-fetches (`max(limit * 2,
-    /// 10)`), non-matching artists are filtered out, and titles dedupe
-    /// case-insensitively. Any failure is absence.
-    pub async fn get_artist_top_tracks(
-        &self,
-        artist: &str,
-        limit: usize,
-        priority: RequestPriority,
-    ) -> Vec<PreviewTrack> {
-        let found = self.artist_top_tracks_leg(artist, limit, priority).await;
-        found.unwrap_or_default()
-    }
-
-    /// Fallible leg behind `get_artist_top_tracks`, kept public so wiring
-    /// can tell a failed fetch from an artist with no previews.
+    /// An artist's popular tracks via Deezer search. The search
+    /// over-fetches (`max(limit * 2, 10)`), non-matching artists are
+    /// filtered out, and titles dedupe case-insensitively. A failed fetch is
+    /// an error, so a caller can tell it from an artist with no previews.
     ///
     /// # Errors
     ///

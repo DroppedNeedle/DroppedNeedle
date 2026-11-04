@@ -554,8 +554,3 @@ fn sweep_dead_tokens(tx: &rusqlite::Transaction, now_unix: i64) -> Result<(), su
     .map_err(op_error)?;
     Ok(())
 }
-
-/// Absolute expiry for a session issued now (30 days, the session rule).
-pub fn session_expires_at(now_unix: i64) -> i64 {
-    expires_at(now_unix)
-}

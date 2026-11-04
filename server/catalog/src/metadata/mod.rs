@@ -326,10 +326,6 @@ pub fn clean_recording(value: &str) -> Option<String> {
 // answer for every install. The provider cache holds the shared ones;
 // these are the catalog's own.
 
-/// An hour. The discover and home pages keep their tag searches twice
-/// this long.
-pub const SEARCH_TTL: Duration = Duration::from_secs(3600);
-
 /// Plugin details: an hour, so a plugin's new answers show up soon.
 const PLUGIN_DETAILS: Policy = Policy {
     fresh: Duration::from_secs(3600),

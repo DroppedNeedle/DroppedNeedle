@@ -22,9 +22,6 @@ pub enum ProviderFailure {
     /// The feature needs setup first (a key, an account). The string is a
     /// full sentence for the user.
     NotConfigured(String),
-    /// The feature is not built in this version yet. The string is a full
-    /// sentence for the user.
-    NotBuilt(String),
     /// A usage limit is spent for now. The string is a full sentence for
     /// the user.
     Exhausted(String),
@@ -40,11 +37,6 @@ impl ProviderFailure {
     pub fn not_configured(sentence: impl Into<String>) -> Self {
         Self::NotConfigured(sentence.into())
     }
-
-    /// A feature not built yet; `sentence` tells the user.
-    pub fn not_built(sentence: impl Into<String>) -> Self {
-        Self::NotBuilt(sentence.into())
-    }
 }
 
 impl std::fmt::Display for ProviderFailure {
@@ -52,9 +44,7 @@ impl std::fmt::Display for ProviderFailure {
         match self {
             Self::Provider(error) => write!(f, "{error}"),
             Self::Failed(cause) => f.write_str(cause),
-            Self::NotConfigured(sentence)
-            | Self::NotBuilt(sentence)
-            | Self::Exhausted(sentence) => f.write_str(sentence),
+            Self::NotConfigured(sentence) | Self::Exhausted(sentence) => f.write_str(sentence),
         }
     }
 }

@@ -54,7 +54,7 @@ use droppedneedle_testkit::musicbrainz::MockMusicBrainz;
 use droppedneedle_testkit::slskd::{MOCK_API_KEY, MockSlskd};
 use imports::handlers::{ImportsDeps, imports_router};
 use imports::jobs::{SPEC, SpotifyImportJobs, SpotifyImports};
-use imports::lidarr::{LidarrClient, LidarrImportService};
+use imports::lidarr::LidarrClient;
 use imports::models::{LidarrConnectionSettings, SpotifySettings};
 use imports::spotify::{ImportedTrack, SpotifyImportService};
 use imports::spotify_albums::AlbumResolver;
@@ -393,11 +393,11 @@ async fn lidarr_transport_errors_never_carry_the_url() {
 }
 
 /// One mock Lidarr: an admin's import follows once and a re-import never
-/// re-arms, a non-admin's auto-download waits behind an approval batch, and
-/// Lidarr only ever sees the two read-only GETs with the stored key.
+/// re-arms, and Lidarr only ever sees the two read-only GETs with the stored
+/// key.
 #[tokio::test]
-async fn lidarr_import_follows_once_reads_only_and_waits_for_approval() {
-    let (auth, admin_id, user_id) = seed_rig().await;
+async fn lidarr_import_follows_once_and_reads_only() {
+    let (auth, admin_id, _) = seed_rig().await;
     let (server, recorder) = serve_lidarr().await.expect("mock serves");
     let bundle = rig_for(&auth, "http://127.0.0.1:1", "http://127.0.0.1:1", None);
     seed_lidarr(&auth, &server.base_url).await;
@@ -414,7 +414,6 @@ async fn lidarr_import_follows_once_reads_only_and_waits_for_approval() {
     assert_eq!(body["already_following"], 0, "first import");
     assert_eq!(body["skipped_invalid"], 0, "first import");
     assert_eq!(body["auto_download_enabled"], 1, "first import");
-    assert_eq!(body["approval_batch_id"], Value::Null, "first import");
 
     // Re-import never re-arms or double-counts: disjoint pre-existing subset.
     let (status, body) = post_json(
@@ -436,42 +435,6 @@ async fn lidarr_import_follows_once_reads_only_and_waits_for_approval() {
     .await;
     assert_eq!(status, StatusCode::OK, "candidates");
     assert_eq!(body["artists"][0]["already_following"], true, "candidates");
-
-    // The HTTP surface is admin-only, so the non-admin branch is briefed at
-    // the service seam: the ordered writes still mirror intent, but only
-    // behind an approval batch id.
-    let follows = Follows::new(AcquireDb::new(
-        auth.platform.db.clone(),
-        auth.platform.clock.clone(),
-    ));
-    let service = LidarrImportService::new(
-        LidarrClient::new(http_client()),
-        Arc::new(ConfigLidarrSettings::new(auth.platform.settings.clone())),
-        follows.clone(),
-    );
-    let response = service
-        .import_artists(&user_id, false, &[LIDARR_MBID_ALL.to_owned()])
-        .await
-        .expect("import works");
-    assert_eq!(response.imported, 1, "non-admin import");
-    assert_eq!(response.auto_download_enabled, 1, "non-admin import");
-    let batches = follows.batch_list().await.expect("batches read");
-    assert_eq!(batches.count, 1, "non-admin import");
-    assert_eq!(
-        Some(batches.batches[0].batch_id.clone()),
-        response.approval_batch_id,
-        "non-admin import"
-    );
-    let status = follows
-        .status(&user_id, LIDARR_MBID_ALL)
-        .await
-        .expect("status reads");
-    assert!(status.auto_download, "non-admin import");
-    assert_eq!(
-        serde_json::to_value(status.auto_download_state).unwrap(),
-        "pending",
-        "non-admin import"
-    );
 
     // The connection test is the last call; every call was a read-only GET.
     let _ = post_json(

@@ -82,21 +82,4 @@ impl RecoveryCodes {
             expires_at,
         }))
     }
-
-    /// Delete one user's code. Used after a reset consumes it.
-    pub async fn delete_for_user(&self, user_id: &str) -> Result<(), StoreError> {
-        let user_id = user_id.to_owned();
-        self.db
-            .lane()
-            .write(Lane::Foreground, "auth.recovery.delete", move |tx| {
-                tx.execute(
-                    sql::DELETE_USER_RECOVERY_CODE.text(),
-                    rusqlite::params![user_id],
-                )
-                .map_err(op_error)?;
-                Ok(())
-            })
-            .await
-            .map_err(store_error)
-    }
 }

@@ -13,11 +13,6 @@ use droppedneedle_kernel::runtime_config::sections::{
 
 use crate::landing::quality::{RecipeFit, in_range, recipe_fit, tier_for};
 
-/// Known-unimportable audio containers (DSD families). A
-/// declared DSD release must not spend
-/// bandwidth even when a noisy title claims "lossless".
-pub const NOT_IMPORTABLE_EXTENSIONS: [&str; 3] = ["dsd", "dsf", "dff"];
-
 /// The tier a search result shows, by the landing's rules, or `None` when
 /// the search does not show it: a lossy file with no bitrate, or an MP4
 /// file with neither bit depth nor bitrate.

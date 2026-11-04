@@ -18,33 +18,19 @@ pub fn mime_for(file_format: &str) -> &'static str {
         .unwrap_or("application/octet-stream")
 }
 
-/// Unix seconds -> `YYYY-MM-DDTHH:MM:SSZ`.
+/// Unix seconds -> `YYYY-MM-DDTHH:MM:SSZ`; `None` outside the years -9999 to
+/// 9999.
 pub fn iso(unix_seconds: Option<i64>) -> Option<String> {
-    unix_seconds.map(|ts| {
-        let days = ts.div_euclid(86_400);
-        let secs = ts.rem_euclid(86_400);
-        let (year, month, day) = civil_from_days(days + 719_468);
-        format!(
-            "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z",
-            secs / 3600,
-            (secs % 3600) / 60,
-            secs % 60
-        )
-    })
-}
-
-/// Howard Hinnant's days-to-civil for the ISO formatter above.
-fn civil_from_days(z: i64) -> (i64, i64, i64) {
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
-    let mut y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    y += i64::from(m <= 2);
-    (y, m, d)
+    let at = time::OffsetDateTime::from_unix_timestamp(unix_seconds?).ok()?;
+    Some(format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+        at.year(),
+        u8::from(at.month()),
+        at.day(),
+        at.hour(),
+        at.minute(),
+        at.second()
+    ))
 }
 
 /// A UTC timestamp cut to whole seconds, as `...Z`. It

@@ -918,10 +918,3 @@ fn mount_has_any_file(mount: &std::path::Path) -> bool {
     }
     false
 }
-
-/// Total poll window: the search timeout plus the completion grace.
-#[cfg(any(test, feature = "test-support"))]
-#[must_use]
-pub fn poll_deadline(policy: &DownloadPolicy) -> std::time::Duration {
-    policy.search_timeout + policy.completion_grace
-}

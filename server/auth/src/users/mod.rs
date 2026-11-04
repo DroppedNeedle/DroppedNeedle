@@ -25,7 +25,6 @@ pub mod handlers;
 pub mod hibp;
 pub mod import;
 pub mod lastfm_http;
-pub mod lastfm_models;
 pub mod lastfm_pending;
 pub mod models;
 pub mod roles;

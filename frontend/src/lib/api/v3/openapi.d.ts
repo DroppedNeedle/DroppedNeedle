@@ -16135,8 +16135,6 @@ export interface components {
              * @description Selected MBIDs already followed before this import.
              */
             already_following: number;
-            /** @description Approval batch for a non-admin auto-download mirror; else null. */
-            approval_batch_id?: string | null;
             /**
              * Format: int64
              * @description Brand-new follows with auto-download armed.
@@ -27544,7 +27542,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE) */
+            /** @description Not configured (NOT_CONFIGURED) */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -28291,7 +28289,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE) */
+            /** @description Not configured (NOT_CONFIGURED) */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -28519,7 +28517,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE) */
+            /** @description Not configured (NOT_CONFIGURED) */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -29888,7 +29886,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE) */
+            /** @description Not configured (NOT_CONFIGURED) */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -29953,7 +29951,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE) */
+            /** @description Not configured (NOT_CONFIGURED) */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -30018,7 +30016,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE) */
+            /** @description Not configured (NOT_CONFIGURED) */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -30083,7 +30081,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE) */
+            /** @description Not configured (NOT_CONFIGURED) */
             409: {
                 headers: {
                     [name: string]: unknown;

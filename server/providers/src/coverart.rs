@@ -1,5 +1,4 @@
-//! Cover Art Archive provider client: metadata listing, downloads and
-//! front covers.
+//! Cover Art Archive provider client: front covers.
 //!
 //! Image bytes pass through untouched: originals may be PNG, so the client
 //! never assumes JPEG.
@@ -19,16 +18,10 @@ use crate::executor::{
 };
 use crate::musicbrainz::is_valid_mbid;
 
-mod models;
-
-use models::{CaaImage, CaaResponse};
-
 /// Cover Art Archive root.
 pub const COVER_ART_ARCHIVE_BASE: &str = "https://coverartarchive.org";
 /// The provider name errors carry, and the archive's rate row.
 pub const SOURCE: &str = "coverartarchive";
-/// Metadata documents larger than this are refused (5 MiB).
-pub const METADATA_MAX_BYTES: usize = 5 * 1024 * 1024;
 /// Largest body read from the archive: the biggest cap any caller applies
 /// (artwork bytes). A larger body is never
 /// buffered whole.
@@ -122,7 +115,7 @@ pub enum DownloadSize {
 }
 
 impl DownloadSize {
-    /// Label used in candidate ids.
+    /// The size as the archive names its thumbnails.
     pub fn label(&self) -> &'static str {
         match self {
             Self::Full => "full",
@@ -131,75 +124,6 @@ impl DownloadSize {
             Self::Size250 => "250",
         }
     }
-
-    /// Pick the listing URL for this size, falling back to the original
-    /// when the archive has no such thumbnail.
-    pub fn select<'image>(&self, image: &'image CaaImage) -> &'image str {
-        match self {
-            Self::Full => image.image.as_str(),
-            Self::Size1200 => image
-                .thumbnails
-                .size_1200
-                .as_deref()
-                .unwrap_or(image.image.as_str()),
-            Self::Size500 => image
-                .thumbnails
-                .size_500
-                .as_deref()
-                .unwrap_or(image.image.as_str()),
-            Self::Size250 => image
-                .thumbnails
-                .size_250
-                .as_deref()
-                .unwrap_or(image.image.as_str()),
-        }
-    }
-}
-
-/// Normalized artwork image type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ImageType {
-    /// Front cover.
-    Front,
-    /// Back cover.
-    Back,
-    /// Booklet page.
-    Booklet,
-    /// Medium photo.
-    Medium,
-    /// Tray photo.
-    Tray,
-    /// Obi strip.
-    Obi,
-    /// Spine.
-    Spine,
-    /// Track image.
-    Track,
-    /// Anything else, including an empty type list.
-    Other,
-}
-
-/// One typed artwork candidate.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ArtworkCandidate {
-    /// Stable id: `caa:{entity}:{mbid}:{image_id}:{size}`.
-    pub candidate_id: String,
-    /// Exact or fallback source label.
-    pub source: String,
-    /// Validated https artwork URL.
-    pub locator: String,
-    /// Normalized image types, front flag first.
-    pub image_types: Vec<ImageType>,
-    /// Editor approval flag.
-    pub approved: bool,
-    /// Whether this is the front (primary) image.
-    pub primary: bool,
-    /// Editor comment.
-    pub description: String,
-    /// Entity the listing was read for.
-    pub source_entity_mbid: String,
-    /// True only for exact-release listings.
-    pub source_is_exact_release: bool,
 }
 
 /// Downloaded artwork bytes with their effective content type.
@@ -210,38 +134,6 @@ pub struct ArtworkBytes {
     /// Effective content type: the response header when it names a raster
     /// image, else the sniffed type, else the raw header.
     pub content_type: String,
-}
-
-/// Validate an archive artwork URL and upgrade it to https:
-/// only `coverartarchive.org` over http/https,
-/// no credentials, default ports only, absolute path. Query strings
-/// survive; fragments do not. Anything else is `None`: a listing may name
-/// artwork over http, so only validated archive URLs may be upgraded.
-pub fn upgrade_artwork_url(url: &str) -> Option<String> {
-    let (scheme, authority, path_and_query) = split_artwork_url(url)?;
-    if scheme != "http" && scheme != "https" {
-        return None;
-    }
-    if authority.contains('@') {
-        return None;
-    }
-    let (host, port) = match authority.rsplit_once(':') {
-        Some((host, port_text)) => {
-            let port: u16 = port_text.parse().ok()?;
-            (host, Some(port))
-        }
-        None => (authority, None),
-    };
-    if !host.eq_ignore_ascii_case("coverartarchive.org")
-        || !matches!(port, None | Some(80) | Some(443))
-    {
-        return None;
-    }
-    if !path_and_query.starts_with('/') {
-        return None;
-    }
-    let path = path_and_query.split('#').next().unwrap_or("/");
-    Some(format!("https://coverartarchive.org{path}"))
 }
 
 /// Validate one artwork redirect target and return the https URL to
@@ -278,59 +170,6 @@ pub fn check_redirect_hop(next: &Url) -> Option<Url> {
     Some(next)
 }
 
-/// Split a URL into (scheme, authority, path+query+fragment). A bare
-/// origin has no path, and artwork locations always carry one, so the
-/// empty path stays empty for the caller to reject (v2 requires
-/// `parsed.path.startswith("/")`, which `""` fails).
-fn split_artwork_url(url: &str) -> Option<(&str, &str, &str)> {
-    let (scheme, rest) = url.split_once("://")?;
-    let end = rest.find('/').unwrap_or(rest.len());
-    let (authority, path) = rest.split_at(end);
-    if authority.is_empty() {
-        return None;
-    }
-    Some((scheme, authority, path))
-}
-
-/// Normalize image types from the archive's labels plus its front/back
-/// flags: casefolded, `front` prepended and
-/// `back` appended from the flags, known labels kept, anything else (or an
-/// empty list) becoming `Other`, order-preserved and deduplicated.
-pub fn classify_image_types(types: &[String], front: bool, back: bool) -> Vec<ImageType> {
-    let mut raw: Vec<String> = types
-        .iter()
-        .map(|entry| entry.trim().to_ascii_lowercase())
-        .filter(|entry| !entry.is_empty())
-        .collect();
-    if front {
-        raw.insert(0, "front".to_owned());
-    }
-    if back {
-        raw.push("back".to_owned());
-    }
-    if raw.is_empty() {
-        raw.push("other".to_owned());
-    }
-    let mut normalized = Vec::new();
-    for entry in raw {
-        let image_type = match entry.as_str() {
-            "front" => ImageType::Front,
-            "back" => ImageType::Back,
-            "booklet" => ImageType::Booklet,
-            "medium" => ImageType::Medium,
-            "tray" => ImageType::Tray,
-            "obi" => ImageType::Obi,
-            "spine" => ImageType::Spine,
-            "track" => ImageType::Track,
-            _ => ImageType::Other,
-        };
-        if !normalized.contains(&image_type) {
-            normalized.push(image_type);
-        }
-    }
-    normalized
-}
-
 /// Raster image MIME from magic bytes, or `None` for anything this client
 /// will not serve mislabeled: embedded
 /// declarations are often wrong, and a blob could be SVG or junk, so bytes
@@ -352,20 +191,6 @@ pub fn sniff_image_content_type(data: &[u8]) -> Option<&'static str> {
         return Some("image/webp");
     }
     None
-}
-
-/// True for content types this client serves as images.
-fn is_image_content_type(content_type: &str) -> bool {
-    matches!(
-        content_type
-            .split(';')
-            .next()
-            .unwrap_or("")
-            .trim()
-            .to_ascii_lowercase()
-            .as_str(),
-        "image/jpeg" | "image/jpg" | "image/png" | "image/gif" | "image/webp"
-    )
 }
 
 /// Cover Art Archive client over the archive's executor. Built once with
@@ -393,113 +218,6 @@ impl CaaClient {
     #[must_use]
     pub fn executor(&self) -> &Executor {
         &self.executor
-    }
-
-    /// List typed artwork images for an exact release or a labelled group
-    /// fallback. A missing entity (404) is authoritative empty artwork;
-    /// any other failure is a provider error, never silent emptiness.
-    ///
-    /// # Errors
-    ///
-    /// [`ProviderError::Invalid`] for a malformed MBID (nothing is sent),
-    /// otherwise the archive's typed failure.
-    pub async fn list_artwork(
-        &self,
-        entity: EntityKind,
-        mbid: &str,
-        size: DownloadSize,
-        priority: RequestPriority,
-    ) -> Result<Vec<ArtworkCandidate>, ProviderError> {
-        let normalized = normalize(mbid)?;
-        let request = Request::get(self.base()?, &[entity.path(), &normalized], &[])
-            .map_err(|_| invalid("the Cover Art Archive address cannot carry a path"))?
-            .max_body(METADATA_MAX_BYTES);
-        let Some(reply) = self.send(request, priority).await? else {
-            return Ok(Vec::new());
-        };
-        let listing: CaaResponse = reply.json()?;
-        let mut candidates = Vec::new();
-        for image in &listing.images {
-            let selected = size.select(image);
-            if selected.is_empty() {
-                tracing::warn!(
-                    image_id = image.id,
-                    "skipping a Cover Art Archive image with no file URL for this size"
-                );
-                continue;
-            }
-            let locator = upgrade_artwork_url(selected)
-                .ok_or_else(|| contract("the listing named an artwork URL off the archive"))?;
-            candidates.push(ArtworkCandidate {
-                candidate_id: format!(
-                    "caa:{}:{normalized}:{}:{}",
-                    entity.path(),
-                    image.id,
-                    size.label()
-                ),
-                source: entity.source().to_owned(),
-                locator,
-                image_types: classify_image_types(&image.types, image.front, image.back),
-                approved: image.approved,
-                primary: image.front,
-                description: image.comment.clone(),
-                source_entity_mbid: normalized.clone(),
-                source_is_exact_release: entity == EntityKind::Release,
-            });
-        }
-        Ok(candidates)
-    }
-
-    /// Download one candidate's bytes. The client only downloads its own
-    /// CAA candidates, revalidates the locator, and caps the body.
-    ///
-    /// # Errors
-    ///
-    /// [`ProviderError::Invalid`] for a candidate this client will not
-    /// fetch (nothing is sent), [`ProviderError::NotFound`] when the image
-    /// is gone, a [`PayloadKind::TooLarge`] payload error past
-    /// `maximum_bytes`, otherwise the archive's typed failure.
-    pub async fn download_artwork(
-        &self,
-        candidate: &ArtworkCandidate,
-        maximum_bytes: usize,
-        priority: RequestPriority,
-    ) -> Result<ArtworkBytes, ProviderError> {
-        if candidate.source != EntityKind::Release.source()
-            && candidate.source != EntityKind::ReleaseGroup.source()
-        {
-            return Err(invalid("the cover client only downloads CAA candidates"));
-        }
-        if maximum_bytes == 0 {
-            return Err(invalid("artwork byte limit must be positive"));
-        }
-        let url = upgrade_artwork_url(&candidate.locator)
-            .and_then(|url| Url::parse(&url).ok())
-            .ok_or_else(|| invalid("the artwork URL is off the archive"))?;
-        let query: Vec<(String, String)> = url.query_pairs().into_owned().collect();
-        let query: Vec<(&str, &str)> = query
-            .iter()
-            .map(|(key, value)| (key.as_str(), value.as_str()))
-            .collect();
-        let request = Request::get(&url, &[], &query)
-            .map_err(|_| invalid("the artwork URL cannot carry a path"))?
-            .max_body(maximum_bytes);
-        let reply = self
-            .send(request, priority)
-            .await?
-            .ok_or(ProviderError::NotFound { provider: SOURCE })?;
-        let declared = reply.content_type().unwrap_or("").to_owned();
-        let content_type = if is_image_content_type(&declared) {
-            declared
-        } else if let Some(sniffed) = sniff_image_content_type(reply.bytes()) {
-            sniffed.to_owned()
-        } else {
-            declared
-        };
-        Ok(ArtworkBytes {
-            bytes: reply.bytes().to_vec(),
-            content_type,
-        })
     }
 
     /// Fetch the front cover of a release or release group at one size,

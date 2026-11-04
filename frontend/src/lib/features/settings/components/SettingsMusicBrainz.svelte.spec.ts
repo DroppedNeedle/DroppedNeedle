@@ -102,38 +102,6 @@ function initialSettings(): MusicBrainzSettingsResponse {
 	};
 }
 
-function quarantinedSettings(
-	mode: 'official' | 'mirror' | 'community'
-): MusicBrainzSettingsResponse {
-	return settings({
-		source_mode: 'brainzmash',
-		selected_source_mode: mode,
-		api_url: 'https://api.brainzmash.cc/ws/2',
-		source_id: 'quarantine-source',
-		generation: 12,
-		active_brainzmash: {
-			endpoint: 'https://api.brainzmash.cc/ws/2',
-			access_revision: 'access-quarantine',
-			source_id: 'quarantine-source',
-			generation: 12,
-			disclosure_version: '2026-08-31',
-			consented: true,
-			verified: true
-		},
-		pending_brainzmash: {
-			endpoint: 'https://api.brainzmash.cc/ws/2',
-			access_revision: 'access-pending',
-			source_id: 'pending-source',
-			generation: 13,
-			disclosure_version: '2026-08-31',
-			consented: false,
-			verified: false
-		},
-		source_quarantined: true,
-		quarantine_reason: 'Existing source settings require review.'
-	});
-}
-
 function resetMutation(mutation: { isPending: boolean; mutateAsync: Mock }) {
 	mutation.isPending = false;
 	mutation.mutateAsync.mockReset();
@@ -157,74 +125,6 @@ afterEach(async () => {
 });
 
 describe('MusicBrainz four-way source picker', () => {
-	it('does not advertise a quarantined BrainzMash binding as active', async () => {
-		h.data = quarantinedSettings('official');
-		await render(SettingsMusicBrainz);
-
-		await expect.element(page.getByTestId('musicbrainz-quarantined')).toBeVisible();
-		await expect.element(page.getByTestId('active-brainzmash-binding')).not.toBeInTheDocument();
-		await expect.element(page.getByText('https://musicbrainz.org/ws/2')).toBeVisible();
-		await expect.element(page.getByRole('button', { name: 'Save Settings' })).toBeDisabled();
-	});
-
-	it.each([
-		['mirror', 'Mirror API Endpoint URL'],
-		['community', 'Community Server API Endpoint URL']
-	] as const)('does not seed the quarantine BrainzMash URL for %s', async (mode, label) => {
-		h.data = quarantinedSettings(mode);
-		await render(SettingsMusicBrainz);
-
-		await expect.element(page.getByTestId('musicbrainz-quarantined')).toBeVisible();
-		await expect.element(page.getByTestId('active-brainzmash-binding')).not.toBeInTheDocument();
-		await expect.element(page.getByRole('textbox', { name: label })).toHaveValue('');
-		await expect
-			.element(page.getByRole('textbox', { name: label }))
-			.not.toHaveValue('https://api.brainzmash.cc/ws/2');
-		await expect.element(page.getByRole('button', { name: 'Save Settings' })).toBeDisabled();
-	});
-
-	it('makes a quarantined community rollback actionable after endpoint and risk checks', async () => {
-		h.data = quarantinedSettings('community');
-		h.save.mutateAsync.mockResolvedValueOnce(
-			settings({
-				source_mode: 'community',
-				selected_source_mode: 'community',
-				api_url: 'https://community.example/ws/2',
-				community_acknowledged: true,
-				active_brainzmash: null,
-				pending_brainzmash: null,
-				source_quarantined: false,
-				quarantine_reason: ''
-			})
-		);
-		await render(SettingsMusicBrainz);
-
-		const endpoint = page.getByRole('textbox', { name: 'Community Server API Endpoint URL' });
-		await expect.element(page.getByRole('button', { name: 'Save Settings' })).toBeDisabled();
-		await endpoint.fill('https://community.example/ws/2');
-		await expect.element(page.getByRole('button', { name: 'Save Settings' })).toBeDisabled();
-		await page.getByRole('checkbox', { name: /I understand the risks/ }).click();
-		await expect.element(page.getByRole('button', { name: 'Save Settings' })).toBeDisabled();
-
-		await page.getByRole('button', { name: 'Test Connection' }).click();
-		expect(h.verify.mutateAsync).toHaveBeenCalledWith({
-			source_mode: 'community',
-			api_url: 'https://community.example/ws/2',
-			rate_limit: 1,
-			community_acknowledged: true
-		});
-		await expect.element(page.getByRole('button', { name: 'Save Settings' })).toBeEnabled();
-
-		await page.getByRole('button', { name: 'Save Settings' }).click();
-		expect(h.save.mutateAsync).toHaveBeenCalledWith({
-			source_mode: 'community',
-			api_url: 'https://community.example/ws/2',
-			rate_limit: 1,
-			community_acknowledged: true
-		});
-		await expect.element(page.getByText('MusicBrainz settings saved.')).toBeVisible();
-	});
-
 	it('keeps BrainzMash active without consent, verification, or activation staging', async () => {
 		const active = settings({
 			source_mode: 'brainzmash',

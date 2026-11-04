@@ -1,12 +1,7 @@
-//! AcoustID fingerprint-lookup client (Tier-3 identification).
-//!
-//! Ports v2's audio fingerprinter: a lookup call posts the compressed
-//! Chromaprint fingerprint to the AcoustID web service (see
-//! <https://acoustid.org/webservice>) and the answer is folded into a
-//! recording match. A clean "no match" is `Ok(None)`; every failure is a
-//! typed [`ProviderError`]. Library identification uses
-//! [`AcoustIdClient::lookup_batch`], which sends up to twenty fingerprints
-//! per request.
+//! AcoustID fingerprint-lookup client. Library identification posts
+//! compressed Chromaprint fingerprints to the AcoustID web service (see
+//! <https://acoustid.org/webservice>) through
+//! [`AcoustIdClient::lookup_batch`], up to twenty per request.
 //!
 //! Every request goes through the one AcoustID [`Executor`], at the
 //! `acoustid` row of the rate table (3 a second): identification, imports
@@ -18,20 +13,16 @@ use std::time::Duration;
 
 use crate::RequestPriority;
 use crate::degradation::{IntegrationStatus, record_current};
-use crate::error::{MAX_RETRY_AFTER, PayloadKind, ProviderError};
+use crate::error::{MAX_RETRY_AFTER, ProviderError};
 use crate::executor::{Answer, Backoff, Executor, Request, Spec, Url, standard_classify};
 
 mod models;
 
-use models::{ArtistCredit, Envelope, LookupAnswer, LookupRecording, LookupResult};
+use models::Envelope;
 pub use models::{BatchAnswer, BatchEntry, BatchIndex, BatchRecording, BatchRelease, BatchResult};
 
 /// Default AcoustID host. Tests point the client at a scripted fake instead.
 pub const DEFAULT_BASE_URL: &str = "https://api.acoustid.org";
-/// A best result under this score is not a confident match.
-pub const MIN_SCORE: f64 = 0.70;
-/// Metadata the lookup asks AcoustID to attach.
-pub const LOOKUP_META: &str = "recordings releasegroups";
 /// The provider name errors carry, and the AcoustID rate row.
 pub const SOURCE: &str = "acoustid";
 /// Largest AcoustID answer read. A batch of [`MAX_BATCH`] fingerprints
@@ -95,26 +86,6 @@ pub fn classify(answer: &Answer<'_>) -> Result<(), ProviderError> {
     standard_classify(answer)
 }
 
-/// A confident fingerprint match keyed on a MusicBrainz recording id.
-#[derive(Debug, Clone, PartialEq)]
-pub struct FingerprintMatch {
-    /// First valid recording MBID.
-    pub recording_id: String,
-    /// Every valid recording MBID, case-insensitively deduped.
-    pub recording_ids: Vec<String>,
-    /// AcoustID score of the best result (always `>= MIN_SCORE`).
-    pub score: f64,
-    /// Recording title, when the payload carried a non-blank one.
-    pub title: Option<String>,
-    /// Recording artists joined with `"; "`, when any were named.
-    pub artist: Option<String>,
-    /// Recording duration in seconds, when the payload carried a usable one.
-    pub duration_secs: Option<i64>,
-    /// Release-group MBIDs merged from the recording and result level,
-    /// deduped with order preserved.
-    pub release_group_ids: Vec<String>,
-}
-
 /// AcoustID lookup client over the AcoustID executor. Built once with the
 /// providers; cheap to clone.
 #[derive(Debug, Clone)]
@@ -134,45 +105,6 @@ impl AcoustIdClient {
             tracing::error!("the AcoustID address is not an http or https URL");
         }
         Self { executor, base }
-    }
-
-    /// Look one fingerprint up. `api_key` arrives per call, read fresh from
-    /// settings on every lookup; an empty key means "not configured" and
-    /// answers `None` without touching the wire.
-    ///
-    /// # Errors
-    ///
-    /// The typed failure of the call, or a payload failure for an answer
-    /// that does not decode or a confident match with no recording id to
-    /// key on (which must never read as "no match").
-    pub async fn lookup(
-        &self,
-        api_key: &str,
-        fingerprint: &str,
-        duration_secs: u64,
-        priority: RequestPriority,
-    ) -> Result<Option<FingerprintMatch>, ProviderError> {
-        if api_key.is_empty() {
-            return Ok(None);
-        }
-        let form = vec![
-            ("client".to_owned(), api_key.to_owned()),
-            ("duration".to_owned(), duration_secs.to_string()),
-            ("fingerprint".to_owned(), fingerprint.to_owned()),
-            ("meta".to_owned(), LOOKUP_META.to_owned()),
-        ];
-        let reply = self
-            .executor
-            .send(self.lookup_request(form)?, priority)
-            .await?;
-        if !(200..300).contains(&reply.status()) {
-            return Err(ProviderError::BadRequest {
-                provider: SOURCE,
-                status: reply.status(),
-            });
-        }
-        let answer: LookupAnswer = reply.json().inspect_err(|_| note_shape())?;
-        parse_lookup(answer)
     }
 
     /// Look many fingerprints up, up to [`MAX_BATCH`] per request
@@ -304,72 +236,6 @@ fn note_shape() {
     record_current(SOURCE, IntegrationStatus::Error, true);
 }
 
-/// A lookup answer that breaks its documented shape.
-fn malformed() -> ProviderError {
-    note_shape();
-    ProviderError::Payload {
-        provider: SOURCE,
-        kind: PayloadKind::Decode,
-        message: "malformed AcoustID answer".to_owned(),
-    }
-}
-
-/// Fold a lookup answer into a match.
-fn parse_lookup(answer: LookupAnswer) -> Result<Option<FingerprintMatch>, ProviderError> {
-    if answer.status != "ok" {
-        return Err(malformed());
-    }
-    // A missing or null `results` reads as no match (v2); any other type
-    // fails decoding.
-    let Some(best) = answer
-        .results
-        .and_then(|results| results.into_iter().next())
-    else {
-        return Ok(None);
-    };
-    // A missing score reads as 0.0 and falls below the threshold (v2).
-    let score = best.score.unwrap_or(0.0);
-    if score < MIN_SCORE {
-        return Ok(None);
-    }
-    let recordings = best.recordings.as_deref().unwrap_or_default();
-    // v2 dedupes recording ids case-insensitively but keeps the first
-    // spelling it saw.
-    let mut recording_ids: Vec<String> = Vec::new();
-    let mut folded_seen: Vec<String> = Vec::new();
-    for recording in recordings {
-        let folded = recording.id.to_lowercase();
-        if !folded_seen.contains(&folded) {
-            folded_seen.push(folded);
-            recording_ids.push(recording.id.clone());
-        }
-    }
-    // A confident audio match with nothing to key the row on (v2 FAIL):
-    // never "no match", and v2 queues it for manual review.
-    let Some(first) = recordings.first() else {
-        return Err(ProviderError::Payload {
-            provider: SOURCE,
-            kind: PayloadKind::Contract,
-            message: "AcoustID matched audio with no recording id".to_owned(),
-        });
-    };
-    let title = first
-        .title
-        .as_deref()
-        .map(str::trim)
-        .filter(|title| !title.is_empty())
-        .map(str::to_owned);
-    Ok(Some(FingerprintMatch {
-        recording_id: first.id.clone(),
-        recording_ids,
-        score,
-        title,
-        artist: first.artists.as_deref().and_then(joined_artist_names),
-        duration_secs: first.duration.and_then(whole_seconds),
-        release_group_ids: release_group_ids(first, &best),
-    }))
-}
-
 /// Fingerprints per batch request: the AcoustID server's limit.
 pub const MAX_BATCH: usize = 20;
 /// Batch results keep every recording scoring above this (Lidarr).
@@ -467,40 +333,6 @@ fn push_id(ids: &mut Vec<String>, id: &str) {
     if !id.is_empty() && !ids.contains(&id) {
         ids.push(id);
     }
-}
-
-/// Join the credited names with `"; "`, skipping blanks (v2).
-fn joined_artist_names(credits: &[ArtistCredit]) -> Option<String> {
-    let names: Vec<&str> = credits
-        .iter()
-        .filter_map(|credit| credit.name.as_deref())
-        .map(str::trim)
-        .filter(|name| !name.is_empty())
-        .collect();
-    (!names.is_empty()).then(|| names.join("; "))
-}
-
-/// A recording length as whole seconds. A fraction reads as absent (v2).
-fn whole_seconds(seconds: f64) -> Option<i64> {
-    (seconds.is_finite() && seconds.fract() == 0.0).then_some(seconds as i64)
-}
-
-/// Release-group MBIDs from the recording and from the result, deduped with
-/// order preserved (used by the download-verify release-group check). Unlike
-/// recording ids, these compare case-sensitively, exactly as v2 does.
-fn release_group_ids(recording: &LookupRecording, best: &LookupResult) -> Vec<String> {
-    let mut ids: Vec<String> = Vec::new();
-    let groups = recording
-        .releasegroups
-        .iter()
-        .chain(best.releasegroups.iter())
-        .flatten();
-    for group in groups {
-        if !ids.contains(&group.id) {
-            ids.push(group.id.clone());
-        }
-    }
-    ids
 }
 
 /// What `fpcalc` produced for one file.

@@ -795,7 +795,7 @@ const SPAWN_SITES: &[(&str, usize, &str)] = &[
     ("catalog/src/artwork/warm.rs", 1, WARM_ENQUEUE),
     ("compat/src/library.rs", 1, REQUEST),
     ("compat/src/subsonic/store.rs", 1, REQUEST),
-    ("kernel/src/runtime_config/store.rs", 4, AWAITED),
+    ("kernel/src/runtime_config/store.rs", 3, AWAITED),
     ("library/src/contrib/live.rs", 1, LOOP_STEP),
     ("library/src/http/mod.rs", 1, REQUEST),
     ("library/src/edition/service.rs", 9, LOOP_STEP),

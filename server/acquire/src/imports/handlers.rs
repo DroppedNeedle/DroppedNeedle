@@ -253,12 +253,9 @@ pub async fn import_lidarr(
     admin: Admin,
     ValidJson(body): ValidJson<LidarrImportRequest>,
 ) -> Result<Json<LidarrImportResponse>, ApiError> {
-    // Only an admin reaches this route, so the flag is always true; the
-    // service keeps it for a future non-admin import route whose
-    // auto-download mirror needs an approval batch instead.
     let summary = deps
         .lidarr_service()
-        .import_artists(admin.user_id(), true, &body.selected_mbids)
+        .import_artists(admin.user_id(), &body.selected_mbids)
         .await
         .map_err(lidarr_failed)?;
     Ok(Json(summary))

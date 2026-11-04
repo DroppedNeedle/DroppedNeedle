@@ -265,11 +265,6 @@ impl BackendError {
             failure: BackendFailure::Full,
         }
     }
-
-    /// True when the caller must answer 429.
-    pub fn is_full(&self) -> bool {
-        self.failure == BackendFailure::Full
-    }
 }
 
 impl std::fmt::Display for BackendError {

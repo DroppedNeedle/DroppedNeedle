@@ -133,7 +133,7 @@ pub use planner::{
     PlanBundle, PlanItem, PlanKind, Replacement, SealError, SealedPreview, SpaceProbe,
 };
 pub use publisher::{CrashPoint, PublishOutcome, Publisher};
-pub use recovery::{BundleRecovery, RecoveryAction, reconcile, startup_gate};
+pub use recovery::{BundleRecovery, RecoveryAction, reconcile};
 pub use snapshots::{BaselineStore, BlobStore, SnapshotStore};
 pub use tags_seam::{PictureRef, TagDocument, TagTarget, TagUpdate, TagUpdates};
 pub use undo::{BaselineRestorePlan, UndoItem, UndoPlan, plan_baseline_restore, plan_undo};

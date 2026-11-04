@@ -5,9 +5,7 @@
 //! answer in `providers_models`.
 
 use droppedneedle_providers::executor::{Body, Method, Scripted, ScriptedWire, Sent};
-use droppedneedle_providers::{
-    PayloadKind, ProviderEndpoints, ProviderError, Providers, RequestPriority,
-};
+use droppedneedle_providers::{ProviderEndpoints, ProviderError, Providers, RequestPriority};
 use droppedneedle_providers::{acoustid, audiodb, lastfm, listenbrainz};
 
 use std::sync::Arc;
@@ -69,11 +67,6 @@ fn acoustid_providers(
     (wire, providers)
 }
 
-/// The recorded single lookup of the 10cc print, and the recorded answer for
-/// a print with no match (`tests/fixtures/acoustid/`).
-const SINGLE_LOOKUP: &[u8] = include_bytes!("../fixtures/acoustid/single_lookup.json");
-const SINGLE_NO_MATCH: &[u8] = include_bytes!("../fixtures/acoustid/single_no_match.json");
-
 /// The batch answer for `count` prints: two strong recordings and one weak
 /// one per print.
 fn batch_payload(count: usize) -> serde_json::Value {
@@ -113,63 +106,6 @@ fn one_query(print: &str) -> [acoustid::BatchQuery<'_>; 1] {
 /// recorded answers. These ids feed identification.
 #[tokio::test]
 async fn acoustid_requests_and_recorded_answers_map_to_recordings() {
-    // A single lookup posts its form and finds the recorded match.
-    let (wire, providers) = acoustid_providers([bytes_answer(200, SINGLE_LOOKUP.to_vec())]);
-    let found = providers
-        .acoustid
-        .lookup("api-key", "fingerprint-body", 218, PRIORITY)
-        .await
-        .expect("single: answered")
-        .expect("single: match found");
-    assert_eq!(
-        found.recording_id, "fe000616-c72c-43d4-8cba-a4083e99636b",
-        "single"
-    );
-    assert_eq!(
-        found.recording_ids,
-        vec!["fe000616-c72c-43d4-8cba-a4083e99636b".to_owned()],
-        "single"
-    );
-    assert!((found.score - 0.8158072).abs() < f64::EPSILON, "single");
-    assert_eq!(found.title.as_deref(), Some("Sand in My Face"), "single");
-    assert_eq!(found.artist.as_deref(), Some("10cc"), "single");
-    assert_eq!(found.duration_secs, Some(219), "single");
-    // The recording's sixteen release groups, in the order AcoustID lists them.
-    assert_eq!(found.release_group_ids.len(), 16, "single");
-    assert_eq!(
-        found.release_group_ids.first().map(String::as_str),
-        Some("b9b7e8e5-3f28-4d7c-afa1-7affe08abdef"),
-        "single"
-    );
-    assert_eq!(
-        found.release_group_ids.last().map(String::as_str),
-        Some("617d7f12-95e3-3469-965d-f3583c862384"),
-        "single"
-    );
-    let sent = wire.sent();
-    assert_eq!(sent.len(), 1, "single");
-    assert_eq!(sent[0].method, Method::Post, "single");
-    assert_eq!(
-        form_value(&sent[0], "client").as_deref(),
-        Some("api-key"),
-        "single"
-    );
-    assert_eq!(
-        form_value(&sent[0], "fingerprint").as_deref(),
-        Some("fingerprint-body"),
-        "single"
-    );
-    assert_eq!(
-        form_value(&sent[0], "duration").as_deref(),
-        Some("218"),
-        "single"
-    );
-    assert_eq!(
-        form_value(&sent[0], "meta").as_deref(),
-        Some("recordings releasegroups"),
-        "single"
-    );
-
     // Twenty-five prints go out as two batch requests (20 + 5); answers map
     // back by index, and every recording above 0.5 is kept.
     let (wire, providers) = acoustid_providers([
@@ -385,64 +321,6 @@ async fn acoustid_never_reads_an_unanswered_print_as_heard_nothing() {
         "no key"
     );
     assert!(wire.sent().is_empty(), "no key sends nothing");
-}
-
-/// A single lookup with no confident match is no match; a confident match
-/// with nothing to key the row on is never a negative (v2 FAIL): it is a
-/// payload failure, which wiring routes to manual review, exactly like v2.
-#[tokio::test]
-async fn acoustid_single_lookup_tells_no_match_from_unusable() {
-    let (_, providers) = acoustid_providers([bytes_answer(200, SINGLE_NO_MATCH.to_vec())]);
-    let found = providers.acoustid.lookup("key", "print", 5, PRIORITY).await;
-    assert!(
-        matches!(&found, Ok(None)),
-        "the recorded empty answer: {found:?}"
-    );
-
-    for body in [
-        serde_json::json!({"status": "ok"}),
-        serde_json::json!({"status": "ok", "results": null}),
-        serde_json::json!({"status": "ok", "results": [{"id": "t", "score": 0.5}]}),
-        // A missing score reads as 0.0 and falls below the threshold (v2).
-        serde_json::json!({"status": "ok", "results": [{"id": "t", "recordings": []}]}),
-    ] {
-        let (_, providers) = acoustid_providers([json_answer(200, &body)]);
-        let found = providers
-            .acoustid
-            .lookup("key", "print", 200, PRIORITY)
-            .await;
-        assert!(
-            matches!(found, Ok(None)),
-            "no confident match means no match: {body}"
-        );
-    }
-
-    // No recording at all is a contract break; a recording without its id
-    // fails decoding.
-    for (body, kind) in [
-        (
-            serde_json::json!({"status": "ok", "results": [{"id": "t", "score": 0.99, "recordings": []}]}),
-            PayloadKind::Contract,
-        ),
-        (
-            serde_json::json!({"status": "ok", "results": [{"id": "t", "score": 0.99, "recordings": [{"title": "no id"}]}]}),
-            PayloadKind::Decode,
-        ),
-        (
-            serde_json::json!({"status": "ok", "results": [{"id": "t", "score": 0.99, "recordings": [{"id": "  "}]}]}),
-            PayloadKind::Decode,
-        ),
-    ] {
-        let (_, providers) = acoustid_providers([json_answer(200, &body)]);
-        let found = providers
-            .acoustid
-            .lookup("key", "print", 200, PRIORITY)
-            .await;
-        assert!(
-            matches!(&found, Err(ProviderError::Payload { kind: got, .. }) if *got == kind),
-            "confident match without a recording id: {body}: got {found:?}"
-        );
-    }
 }
 
 #[test]

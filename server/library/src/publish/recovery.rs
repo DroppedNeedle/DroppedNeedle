@@ -288,14 +288,6 @@ pub fn find_leftovers(
     ))
 }
 
-/// Refuse mutable runtime when more than `STARTUP_RECOVERY_LIMIT`
-/// bundles still have a row that has not committed. A committed bundle
-/// waiting for its cleanup (a file waiting for its recycle bin) does not
-/// count: it can only finish once writes run again.
-pub fn startup_gate(db: &Db) -> Result<(), PublishError> {
-    gate(db)
-}
-
 fn active_bundles(db: &Db) -> Result<Vec<String>, PublishError> {
     long_read(db, "publish.recovery_bundles", |conn| {
         JournalStore::new(conn).active_bundles()

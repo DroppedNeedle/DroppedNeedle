@@ -61,6 +61,8 @@ make frontend-test-client   # vitest, browser project
 make check                  # all of the above (not cargo audit, cargo deny or the container test)
 ```
 
+`python3 -I server/scripts/dead-code-scan.py server` fails on a public item nothing references; one that must stay goes in `server/scripts/dead-code-allowlist.txt` with its reason.
+
 The timing budgets are ignored tests, which `.github/workflows/perf.yml` runs in release every Monday and by hand. To run one locally: `cd server && cargo test --release --test server login_p95 -- --ignored --nocapture`.
 
 Browser tests use Playwright. Install the browser once with `make frontend-browser-install`.

@@ -22,10 +22,6 @@ export interface MusicBrainzSettingsResponse {
 	generation: number;
 	active_brainzmash?: BrainzMashActiveBinding | null;
 	pending_brainzmash: BrainzMashPendingProposal | null;
-	/** True when persisted source data was malformed and disabled at startup. */
-	source_quarantined?: boolean;
-	/** Safe, actionable migration explanation for administrators. */
-	quarantine_reason?: string;
 	/** Older backends may include this response-only warning during migration. */
 	clamped_to_official_limits?: boolean;
 }

@@ -87,20 +87,10 @@ pub const SPOTIFY_REGISTERED_REDIRECT: &str =
 #[derive(Debug, Clone, Default)]
 pub struct MockRecorder {
     inner: Arc<Mutex<RecordedCalls>>,
-    registered_redirect: Arc<Mutex<Option<String>>>,
     limit_playlists: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl MockRecorder {
-    /// Set the one redirect URI the mock Spotify app lists, as its
-    /// dashboard would. Code exchanges naming any other URI fail, like
-    /// Spotify's `invalid_grant`.
-    pub fn register_redirect_uri(&self, uri: &str) {
-        if let Ok(mut guard) = self.registered_redirect.lock() {
-            *guard = Some(uri.to_owned());
-        }
-    }
-
     /// Answer `/me/playlists` with a 429 asking for seven seconds from now on.
     pub fn limit_playlists(&self) {
         self.limit_playlists
@@ -109,11 +99,7 @@ impl MockRecorder {
 
     /// The redirect URI the mock app lists.
     pub fn registered_redirect_uri(&self) -> String {
-        self.registered_redirect
-            .lock()
-            .ok()
-            .and_then(|guard| guard.clone())
-            .unwrap_or_else(|| SPOTIFY_REGISTERED_REDIRECT.to_owned())
+        SPOTIFY_REGISTERED_REDIRECT.to_owned()
     }
 
     /// Snapshot the calls recorded so far.

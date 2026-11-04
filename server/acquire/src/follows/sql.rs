@@ -73,16 +73,6 @@ droppedneedle_kernel::sql! {
          requested_at = excluded.requested_at, reviewed_by_id = NULL, \
          reviewed_by_name = NULL, reviewed_at = NULL, batch_id = NULL \
          WHERE auto_download_approvals.state <> ?7";
-    /// File one batch member; a row in state `?9` stays.
-    pub(crate) FILE_BATCH_MEMBER = "INSERT INTO auto_download_approvals (user_id, artist_mbid, \
-         artist_mbid_lower, artist_name, state, requested_at, batch_id, source) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8) \
-         ON CONFLICT (user_id, artist_mbid_lower) DO UPDATE SET \
-         artist_name = excluded.artist_name, state = excluded.state, \
-         requested_at = excluded.requested_at, reviewed_by_id = NULL, \
-         reviewed_by_name = NULL, reviewed_at = NULL, \
-         batch_id = excluded.batch_id, source = excluded.source \
-         WHERE auto_download_approvals.state != ?9";
     /// Withdraw user `?1`'s ask for artist `?2` while in state `?3`.
     pub(crate) WITHDRAW_APPROVAL = "DELETE FROM auto_download_approvals WHERE user_id = ?1 \
          AND artist_mbid_lower = ?2 AND state = ?3";

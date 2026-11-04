@@ -44,7 +44,6 @@ pub use super::passwords::{
 };
 pub use super::sqlite::{
     AppPasswords, AuthDb, FederatedUsers, LastFmLinks, OidcStates, RecoveryCodes, Sessions, Users,
-    session_expires_at,
 };
 pub use super::times::{parse_iso, to_iso};
 

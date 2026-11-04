@@ -1,5 +1,5 @@
 //! Playback reporting on the playback store over a migrated database: the
-//! start, progress and stop lifecycle, dedup across duplicate and mixed
+//! start, progress and stop lifecycle, dedup across duplicate
 //! reports, presence visibility, and hidden faults. Only the outside
 //! services (the now-playing sinks and the media servers) are doubles; a
 //! counted play's scrobbles are read as the jobs written with it. Journeys
@@ -24,9 +24,9 @@ use droppedneedle_kernel::clock::{Clock, ManualClock};
 use droppedneedle_media::remotes::models::SourceName;
 use playback::PlaybackDeps;
 use playback::ports::{RemoteReport, RemoteReporters, ReportTrack, ScrobbleSinks, ScrobbleTargets};
-use playback::presence::{PresenceRegistry, presence_key};
-use playback::report::{MixedDedup, ScrobbleDedup, submit_session_scrobble};
-use playback::sessions::{SESSION_TTL_SECS, SessionKey, SessionStore};
+use playback::presence::PresenceRegistry;
+use playback::report::ScrobbleDedup;
+use playback::sessions::{SESSION_TTL_SECS, SessionStore};
 use playback::sqlite::PlaybackStore;
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
@@ -175,7 +175,6 @@ fn rig() -> Rig {
         sessions: SessionStore::new(),
         presence: PresenceRegistry::new(droppedneedle_kernel::events::EventHub::new()),
         dedup: ScrobbleDedup::new(),
-        mixed: MixedDedup::new(),
         clock: Arc::new(clock.clone()),
         events: Arc::new(playback::ports::NoPlayEvents),
     };
@@ -531,8 +530,6 @@ async fn a_play_waits_out_a_held_lane_and_lands_once() {
 
 /// A play counts once and forwards once:
 /// - a repeated submit counts one play and one scrobble;
-/// - a live report repeated through the mixed-report cache counts once,
-///   while a backdated play with a distinct time counts again;
 /// - with Navidrome handling outside scrobbles, the play is recorded and
 ///   nothing is forwarded a second time.
 #[tokio::test]
@@ -562,45 +559,6 @@ async fn submits_count_once_and_forward_once() {
     }
     {
         let rig = rig();
-        let track = rig
-            .deps
-            .store
-            .get_track("track-1")
-            .expect("the track is in the catalog");
-        let key = SessionKey {
-            user_id: "user-1".to_owned(),
-            client: "web".to_owned(),
-            track_id: track.track_id.clone(),
-        };
-        let presence = presence_key("user-1", "web");
-        let first = submit_session_scrobble(
-            &rig.deps, "user-1", &key, &presence, &track, None, None, NOW,
-        );
-        assert!(first.accepted, "mixed report");
-        let second = submit_session_scrobble(
-            &rig.deps, "user-1", &key, &presence, &track, None, None, NOW,
-        );
-        assert!(second.accepted, "mixed report");
-        assert!(second.services.is_empty(), "mixed report");
-        assert_eq!(rig.plays(), 1, "mixed report");
-
-        // Backdated plays bypass the mixed cache; a distinct play
-        // time counts again.
-        let third = submit_session_scrobble(
-            &rig.deps,
-            "user-1",
-            &key,
-            &presence,
-            &track,
-            None,
-            Some(NOW - 100),
-            NOW,
-        );
-        assert!(third.accepted, "backdated");
-        assert_eq!(rig.plays(), 2, "backdated");
-    }
-    {
-        let rig = rig();
         rig.set_scrobble("user-1", true, true, true);
         let (status, answer, _) = call(
             app(&rig, Some("user-1")),
@@ -620,50 +578,6 @@ async fn submits_count_once_and_forward_once() {
         assert_eq!(rig.plays(), 1, "navidrome delegation");
         assert_eq!(rig.scrobbles(), 0, "navidrome delegation");
     }
-}
-
-/// A live play whose save fails is not remembered as seen: the client's
-/// retry records it, once, and a repeat of that retry is still dropped.
-#[tokio::test]
-async fn a_live_play_whose_save_failed_is_kept_on_retry() {
-    let rig = rig();
-    let track = rig
-        .deps
-        .store
-        .get_track("track-1")
-        .expect("the track is in the catalog");
-    let key = SessionKey {
-        user_id: "user-1".to_owned(),
-        client: "web".to_owned(),
-        track_id: track.track_id.clone(),
-    };
-    let presence = presence_key("user-1", "web");
-    rig.sql()
-        .execute_batch(
-            "CREATE TRIGGER refuse_play BEFORE INSERT ON library_play_history \
-             BEGIN SELECT RAISE(ABORT, 'refused for the test'); END;",
-        )
-        .expect("trigger");
-    let failed = submit_session_scrobble(
-        &rig.deps, "user-1", &key, &presence, &track, None, None, NOW,
-    );
-    assert!(!failed.accepted);
-    assert_eq!(rig.plays(), 0);
-    rig.sql()
-        .execute_batch("DROP TRIGGER refuse_play")
-        .expect("trigger dropped");
-
-    let retried = submit_session_scrobble(
-        &rig.deps, "user-1", &key, &presence, &track, None, None, NOW,
-    );
-    assert!(retried.accepted);
-    assert_eq!(rig.plays(), 1);
-    assert_eq!(rig.scrobbles(), 1);
-    let repeated = submit_session_scrobble(
-        &rig.deps, "user-1", &key, &presence, &track, None, None, NOW,
-    );
-    assert!(repeated.accepted);
-    assert_eq!(rig.plays(), 1);
 }
 
 // ---------------------------------------------------------------------------

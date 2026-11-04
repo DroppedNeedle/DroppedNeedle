@@ -40,18 +40,6 @@ impl Operations {
         })
     }
 
-    /// The live automatic-edition undo for one album: the revisions to
-    /// echo. Blocking.
-    pub fn automatic_edition_undo(
-        &self,
-        album_id: &str,
-    ) -> Result<Option<(i64, i64)>, OperationError> {
-        self.db
-            .read_blocking("operations.automatic_edition_undo", |conn| {
-                Ok::<_, OperationError>(decisions::live_automatic_edition_undo(conn, album_id)?)
-            })
-    }
-
     /// One page of the albums whose match waits for a person. Blocking.
     pub fn waiting_albums(
         &self,

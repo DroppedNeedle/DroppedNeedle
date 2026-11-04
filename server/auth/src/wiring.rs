@@ -60,8 +60,6 @@ pub struct AuthSetup {
     pub sign_in: SignInSettings,
     /// The security section, read by the response security headers.
     pub security: Live<SecuritySettings>,
-    /// Deployment base path (`""` at the domain root).
-    pub base_path: String,
 }
 
 /// Warn at boot when OIDC is on with a plain-http issuer on a public
@@ -175,7 +173,7 @@ impl AuthSetup {
         let app_connect = AppConnectService::new(users.clone(), config_store.live());
         Self {
             users,
-            session_auth: SessionAuth::new(auth.sessions.clone(), clock.clone(), base_path)
+            session_auth: SessionAuth::new(auth.sessions.clone(), clock.clone())
                 .with_limits(limits.clone())
                 .with_stated_addresses(stated),
             limits,
@@ -186,7 +184,6 @@ impl AuthSetup {
             app_connect,
             sign_in,
             security: config_store.live(),
-            base_path: base_path.to_owned(),
         }
         .with_trusted_proxies(platform.config.trusted_proxies.clone())
     }

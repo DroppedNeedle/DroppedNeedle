@@ -7,12 +7,13 @@
 //! change between reachable and unreachable; only a corpus hit rejects. The
 //! HTTP call sits behind [`HibpHttp`] so tests never touch the network.
 //!
-//! SHA-1 is implemented here (~60 lines, NIST-vector tested) because no
-//! SHA-1 crate is depended on for this alone. It serves only HIBP lookups, never security decisions.
+//! SHA-1 serves only HIBP lookups, never security decisions.
 
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+
+use sha1::{Digest, Sha1};
 
 use super::stores::BoxFuture;
 use droppedneedle_kernel::runtime_config::Live;
@@ -25,64 +26,7 @@ pub const RANGE_PREFIX_LEN: usize = 5;
 
 /// SHA-1 hex digest (uppercase, the HIBP file ordering).
 pub fn sha1_hex_upper(data: &[u8]) -> String {
-    let mut state = [
-        0x6745_2301u32,
-        0xEFCD_AB89,
-        0x98BA_DCFE,
-        0x1032_5476,
-        0xC3D2_E1F0,
-    ];
-    let mut message = data.to_vec();
-    let bit_len = (data.len() as u64).wrapping_mul(8);
-    message.push(0x80);
-    while message.len() % 64 != 56 {
-        message.push(0);
-    }
-    message.extend_from_slice(&bit_len.to_be_bytes());
-
-    for chunk in message.chunks_exact(64) {
-        let mut schedule = [0u32; 80];
-        for (i, word) in schedule.iter_mut().enumerate().take(16) {
-            let o = i * 4;
-            *word = u32::from_be_bytes([chunk[o], chunk[o + 1], chunk[o + 2], chunk[o + 3]]);
-        }
-        for i in 16..80 {
-            schedule[i] = (schedule[i - 3] ^ schedule[i - 8] ^ schedule[i - 14] ^ schedule[i - 16])
-                .rotate_left(1);
-        }
-        let (mut a, mut b, mut c, mut d, mut e) =
-            (state[0], state[1], state[2], state[3], state[4]);
-        for (i, word) in schedule.iter().enumerate() {
-            let (f, k) = match i {
-                0..=19 => ((b & c) | (!b & d), 0x5A82_7999),
-                20..=39 => (b ^ c ^ d, 0x6ED9_EBA1),
-                40..=59 => ((b & c) | (b & d) | (c & d), 0x8F1B_BCDC),
-                _ => (b ^ c ^ d, 0xCA62_C1D6),
-            };
-            let tmp = a
-                .rotate_left(5)
-                .wrapping_add(f)
-                .wrapping_add(e)
-                .wrapping_add(k)
-                .wrapping_add(*word);
-            e = d;
-            d = c;
-            c = b.rotate_left(30);
-            b = a;
-            a = tmp;
-        }
-        state[0] = state[0].wrapping_add(a);
-        state[1] = state[1].wrapping_add(b);
-        state[2] = state[2].wrapping_add(c);
-        state[3] = state[3].wrapping_add(d);
-        state[4] = state[4].wrapping_add(e);
-    }
-
-    let mut out = String::with_capacity(40);
-    for word in state {
-        out.push_str(&format!("{word:08X}"));
-    }
-    out
+    hex::encode_upper(Sha1::digest(data))
 }
 
 /// One HTTP range lookup. Unit error: transport details never escape.

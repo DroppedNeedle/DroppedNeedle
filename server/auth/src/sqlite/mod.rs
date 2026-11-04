@@ -57,7 +57,7 @@ pub use federated::FederatedUsers;
 pub use lastfm::{LastFmLinks, parse_lastfm};
 pub use oidc::OidcStates;
 pub use recovery::RecoveryCodes;
-pub use sessions::{LoginWrite, Sessions, session_expires_at};
+pub use sessions::{LoginWrite, Sessions};
 pub use users::Users;
 
 /// Every `sql.rs` of this crate, one line each, for the schema test.

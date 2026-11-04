@@ -373,18 +373,6 @@ impl MusicBrainzView {
         .await
     }
 
-    /// Search artists carrying one tag,
-    /// spelling variants included.
-    pub async fn search_artists_by_tag(
-        &self,
-        tag: &str,
-        limit: u32,
-        criticality: Criticality,
-    ) -> Result<SearchPage<ArtistSearchHit>, ProviderError> {
-        self.search_artists_by_tag_from(tag, limit, 0, criticality)
-            .await
-    }
-
     /// One page of artists carrying one tag, starting at `offset` (the
     /// genre page's "more artists").
     pub async fn search_artists_by_tag_from(

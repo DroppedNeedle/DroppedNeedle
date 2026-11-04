@@ -14,7 +14,6 @@ use super::{
     models::{ScrobbleNowPlayingRequest, ScrobbleResponse, ScrobbleSubmitRequest, ServiceResult},
     ports::{PlayRecord, ReportTrack, ScrobbleTargets, TrackInfo},
     rules::{ServiceError, normalize_client},
-    sessions::SessionKey,
 };
 
 /// Scrobble name-dedup window in seconds: one hour.
@@ -23,10 +22,6 @@ pub const DEDUP_TTL_SECS: i64 = 3_600;
 pub const DEDUP_MAX_ENTRIES: usize = 200;
 /// Tracks shorter than this record locally but never forward (30s).
 pub const MIN_TRACK_DURATION_MS: i64 = 30_000;
-/// Mixed-report dedup window in seconds.
-pub const MIXED_REPORT_DEDUP_SECS: i64 = 5;
-/// Mixed-report dedup table cap.
-pub const MIXED_REPORT_DEDUP_MAX: usize = 1_000;
 /// Scrobble timestamps older than 14 days are rejected.
 pub const SCROBBLE_TIMESTAMP_MAX_AGE_SECS: i64 = 14 * 24 * 60 * 60;
 /// Clock skew tolerated for future scrobble timestamps (60s).
@@ -101,79 +96,17 @@ impl Default for ScrobbleDedup {
     }
 }
 
-/// Mixed-report dedup: a live stop right after a direct submit for the same
-/// track counts once. Only live submissions (no explicit play time) consult
-/// and feed this cache; backdated plays like Jellyfin stops bypass it.
-#[derive(Debug, Clone)]
-pub struct MixedDedup {
-    inner: Arc<Mutex<Vec<(SessionKey, i64)>>>,
-}
-
-impl MixedDedup {
-    /// Build an empty cache.
-    pub fn new() -> Self {
-        Self {
-            inner: Arc::new(Mutex::new(Vec::new())),
-        }
-    }
-
-    /// Drop one key: a fresh start clears the track's recent submission.
-    pub fn clear(&self, key: &SessionKey) {
-        if let Ok(mut entries) = self.inner.lock() {
-            entries.retain(|(known, _)| known != key);
-        }
-    }
-
-    /// True when the key landed within the window (evicting stale first).
-    pub fn contains(&self, key: &SessionKey, now: i64) -> bool {
-        if let Ok(mut entries) = self.inner.lock() {
-            let cutoff = now - MIXED_REPORT_DEDUP_SECS;
-            entries.retain(|(_, seen)| *seen >= cutoff);
-            entries.iter().any(|(known, _)| known == key)
-        } else {
-            false
-        }
-    }
-
-    /// Record a live submission, holding the cap oldest-first.
-    pub fn record(&self, key: SessionKey, now: i64) {
-        if let Ok(mut entries) = self.inner.lock() {
-            entries.push((key, now));
-            while entries.len() > MIXED_REPORT_DEDUP_MAX {
-                entries.remove(0);
-            }
-        }
-    }
-}
-
-impl Default for MixedDedup {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Count one session play: live submissions (no explicit play time) consult
-/// the 5s mixed-report dedup and feed it once saved; backdated ones like
-/// session stops bypass it; presence clears either way because the track is
-/// over.
-#[allow(clippy::too_many_arguments)]
+/// Count one session play at the time it started; presence clears either
+/// way because the track is over.
 pub fn submit_session_scrobble(
     deps: &PlaybackDeps,
     user_id: &str,
-    key: &SessionKey,
     presence: &str,
     track: &TrackInfo,
     source: Option<&str>,
-    played_at: Option<i64>,
+    played_at: i64,
     now: i64,
 ) -> ScrobbleResponse {
-    if played_at.is_none() && deps.mixed.contains(key, now) {
-        deps.presence.remove(presence);
-        return ScrobbleResponse {
-            accepted: true,
-            services: HashMap::new(),
-        };
-    }
     let report = ReportTrack {
         track_name: track.title.clone(),
         artist_name: track.artist_name.clone(),
@@ -182,13 +115,9 @@ pub fn submit_session_scrobble(
         mbid: track.recording_mbid.clone(),
         release_group_mbid: track.rg_mbid.clone(),
         source: source.map(str::to_owned),
-        played_at: Some(played_at.unwrap_or(now)),
+        played_at: Some(played_at),
     };
     let response = submit_counted_play(deps, user_id, &report, Some(&track.track_id), now);
-    // A play that was not saved is not seen: the client's retry counts it.
-    if played_at.is_none() && response.accepted {
-        deps.mixed.record(key.clone(), now);
-    }
     deps.presence.remove(presence);
     response
 }

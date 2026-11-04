@@ -969,7 +969,7 @@ async fn wanted_watches_stop_resume_remove_and_clear() {
 async fn standing_grants_wait_for_an_admin_and_follow_the_role() {
     // Auto-download approvals: single approve, then a batch reject.
     let case = "auto-download";
-    let (state, _db, _dispatch) = setup().await;
+    let (state, db, _dispatch) = setup().await;
     ask_auto_download(&state, ADA, ARTIST).await;
     let imported = state
         .follows
@@ -983,15 +983,22 @@ async fn standing_grants_wait_for_an_admin_and_follow_the_role() {
                     monitors_new: true,
                 })
                 .collect(),
-            Some("batch-1".to_owned()),
         )
         .await
         .unwrap();
-    assert_eq!(
-        imported.approval_batch_id.as_deref(),
-        Some("batch-1"),
-        "{case}"
-    );
+    assert_eq!(imported.auto_download_enabled, 2, "{case}");
+    // A batch of asks arrives only with the upgrade from v2: seed one.
+    db.write("seed batch", |tx| {
+        tx.execute_batch(&format!(
+            "INSERT INTO auto_download_approvals (user_id, artist_mbid, artist_mbid_lower, \
+               artist_name, state, requested_at, batch_id, source) VALUES \
+               ('u-bob', '{MBID_A}', lower('{MBID_A}'), 'One', 'pending', 1, 'batch-1', 'lidarr_import'), \
+               ('u-bob', '{MBID_B}', lower('{MBID_B}'), 'Two', 'pending', 1, 'batch-1', 'lidarr_import');"
+        ))?;
+        Ok(())
+    })
+    .await
+    .unwrap();
     let (_, count) = call(
         &state,
         Method::GET,

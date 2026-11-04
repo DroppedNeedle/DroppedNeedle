@@ -27,7 +27,7 @@ use crate::playback::forwarding::{Courier, NowPlayingSender, NowPlayingWorker, S
 use crate::playback::listening::ListeningStore;
 use crate::playback::listening_routes::{ListeningDeps, MixGrants};
 use crate::playback::presence::PresenceRegistry;
-use crate::playback::report::{MixedDedup, ScrobbleDedup};
+use crate::playback::report::ScrobbleDedup;
 use crate::playback::reports::{ReportQueue, run_report_worker};
 use crate::playback::sessions::SessionStore;
 use crate::playback::sqlite::PlaybackStore;
@@ -238,7 +238,6 @@ impl MediaSetup {
             sessions: SessionStore::new(),
             presence,
             dedup: ScrobbleDedup::new(),
-            mixed: MixedDedup::new(),
             clock: platform.clock.clone(),
             events: Arc::new(crate::playback::plugin_events::PluginPlayEvents(plugins)),
         };

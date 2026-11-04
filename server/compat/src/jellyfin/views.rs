@@ -362,13 +362,6 @@ pub struct ByteOutcome {
     pub body: crate::body::AudioBody,
 }
 
-/// Content-Type per extension, from the stream engine's table (unknown ->
-/// octet-stream).
-pub fn content_type_for_format(format: Option<&str>) -> &'static str {
-    droppedneedle_media::stream::engine::content_type_for_extension(format.unwrap_or(""))
-        .unwrap_or("application/octet-stream")
-}
-
 // ===== Playback sessions =====
 
 /// Whether a stop report counts as a play: an

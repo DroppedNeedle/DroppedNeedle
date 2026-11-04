@@ -4,28 +4,29 @@ import type { BrainzMashPendingProposal, MusicBrainzSettingsResponse } from './t
 type View = components['schemas']['MusicBrainzSettingsView'];
 type Proposal = components['schemas']['BrainzmashPendingProposal'];
 
-// The settings page reads every field filled in, so the defaults live here.
+// The settings page reads every field filled in; the one the view may leave
+// out (`source_id`) is filled here.
 function toProposal(proposal: Proposal): BrainzMashPendingProposal {
 	return {
-		endpoint: proposal.endpoint ?? '',
-		access_revision: proposal.access_revision ?? '',
-		source_id: proposal.source_id ?? '',
-		generation: proposal.generation ?? 0,
-		disclosure_version: proposal.disclosure_version ?? '',
-		consented: proposal.consented ?? false,
-		verified: proposal.verified ?? false
+		endpoint: proposal.endpoint,
+		access_revision: proposal.access_revision,
+		source_id: proposal.source_id,
+		generation: proposal.generation,
+		disclosure_version: proposal.disclosure_version,
+		consented: proposal.consented,
+		verified: proposal.verified
 	};
 }
 
 export function toMusicBrainzSettings(view: View): MusicBrainzSettingsResponse {
 	return {
-		source_mode: view.source_mode ?? 'official',
+		source_mode: view.source_mode,
 		selected_source_mode: view.selected_source_mode,
-		api_url: view.api_url ?? null,
-		rate_limit: view.rate_limit ?? 1,
-		community_acknowledged: view.community_acknowledged ?? null,
+		api_url: view.api_url,
+		rate_limit: view.rate_limit,
+		community_acknowledged: view.community_acknowledged,
 		source_id: view.source_id ?? '',
-		generation: view.generation ?? 0,
+		generation: view.generation,
 		active_brainzmash: view.active_brainzmash ? toProposal(view.active_brainzmash) : null,
 		pending_brainzmash: view.pending_brainzmash ? toProposal(view.pending_brainzmash) : null,
 		clamped_to_official_limits: view.clamped_to_official_limits

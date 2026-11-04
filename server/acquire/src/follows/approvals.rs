@@ -40,32 +40,6 @@ pub(super) fn file_pending(
     Ok(())
 }
 
-/// File one batch member. Never downgrades an approved row.
-pub(super) fn file_batch_member(
-    tx: &Transaction,
-    batch_id: &str,
-    user_id: &str,
-    (artist_mbid, artist_name): (&str, &str),
-    source: &str,
-    now_ms: i64,
-) -> rusqlite::Result<()> {
-    tx.execute(
-        sql::FILE_BATCH_MEMBER.text(),
-        params![
-            user_id,
-            artist_mbid,
-            artist_mbid.to_lowercase(),
-            artist_name,
-            ApprovalState::Pending,
-            now_ms,
-            batch_id,
-            source,
-            ApprovalState::Approved
-        ],
-    )?;
-    Ok(())
-}
-
 /// Withdraw a pending ask (the user turned auto-download back off).
 pub(super) fn withdraw_pending(
     tx: &Transaction,

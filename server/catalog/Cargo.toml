@@ -45,5 +45,4 @@ test-support = [
 ]
 
 [dev-dependencies]
-droppedneedle-auth = { workspace = true, features = ["test-support"] }
 droppedneedle-kernel = { workspace = true, features = ["test-support"] }

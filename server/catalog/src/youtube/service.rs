@@ -67,9 +67,7 @@ impl From<ProviderFailure> for LinkError {
         match failure {
             ProviderFailure::Provider(error) => Self::Provider(error),
             ProviderFailure::Failed(cause) => Self::Upstream(cause),
-            ProviderFailure::NotConfigured(sentence) | ProviderFailure::NotBuilt(sentence) => {
-                Self::NotConfigured(sentence)
-            }
+            ProviderFailure::NotConfigured(sentence) => Self::NotConfigured(sentence),
             ProviderFailure::Exhausted(sentence) => Self::Exhausted(sentence),
         }
     }
@@ -321,9 +319,7 @@ impl YouTubeLinks {
                     failed.push(failure(&track, SEARCH_FAILED));
                 }
                 Err(
-                    ProviderFailure::NotConfigured(reason)
-                    | ProviderFailure::NotBuilt(reason)
-                    | ProviderFailure::Exhausted(reason),
+                    ProviderFailure::NotConfigured(reason) | ProviderFailure::Exhausted(reason),
                 ) => {
                     failed.push(failure(&track, &reason));
                     stop = Some(reason);

@@ -57,9 +57,6 @@ use std::os::unix::fs::PermissionsExt as _;
 // Constants
 // ---------------------------------------------------------------------------
 
-/// Supported transcode output codecs.
-pub const SUPPORTED_OUT_FORMATS: &[&str] = &["mp3", "opus", "flac"];
-
 /// Internal format name for AAC in MPEG-TS, the segment format the
 /// Jellyfin HLS playlist serves. [`decide`] produces it only when it is
 /// asked for by this name.

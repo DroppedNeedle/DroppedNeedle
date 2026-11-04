@@ -80,8 +80,6 @@ pub struct LidarrImportResponse {
     pub skipped_invalid: i64,
     /// Brand-new follows with auto-download armed.
     pub auto_download_enabled: i64,
-    /// Approval batch for a non-admin auto-download mirror; else null.
-    pub approval_batch_id: Option<String>,
 }
 
 /// Admin Spotify app settings (issue #298).

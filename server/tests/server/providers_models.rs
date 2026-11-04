@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use crate::common::ScratchDir;
 use droppedneedle_kernel::clock::ManualClock;
-use droppedneedle_providers::coverart::{DownloadSize, EntityKind};
+use droppedneedle_providers::acoustid::{self, BatchOutcome, Unanswered};
 use droppedneedle_providers::executor::{Method, Scripted, ScriptedWire};
 use droppedneedle_providers::geocoding::DEFAULT_CITY_COUNT;
 use droppedneedle_providers::lastfm::{ArtistInfo, LastFmCredentials};
@@ -41,8 +41,6 @@ enum Provider {
     CommonsImage,
     WikidataRedirect,
     GithubReleases,
-    CoverArtRelease,
-    CoverArtReleaseGroup,
     AudioDbArtistMbid,
     AudioDbAlbumMbid,
     AudioDbArtistSearch,
@@ -63,7 +61,7 @@ enum Provider {
     MusicBrainzBrowse(&'static str),
     TicketmasterAttractions,
     TicketmasterEvents,
-    AcoustIdLookup,
+    AcoustIdBatch,
     LastFm(LastFmRead),
     ListenBrainz(ListenBrainzRead),
     YouTubeSearch,
@@ -119,11 +117,6 @@ const COMMONS_IMAGE_URL: &str = "http://fake/commons/w/api.php";
 const WIKIDATA_REDIRECT_URL: &str = "http://fake/wikidata/wiki/Special:EntityData/Q13165295.json";
 /// The GitHub releases list the release check reads.
 const GITHUB_RELEASES_URL: &str = "http://fake/github/releases";
-/// The release group of OK Computer, and the release its listing names as the
-/// source of its images. The two listings hold the same two images.
-const COVER_ART_RELEASE_GROUP_MBID: &str = "b1392450-e666-3926-a536-22c65f834433";
-/// The release the release group's listing names.
-const COVER_ART_RELEASE_MBID: &str = "30702389-5c67-4438-9ea0-2351c8de0f1d";
 /// Radiohead, and the release group of OK Computer, as TheAudioDB's lookups
 /// take them.
 const AUDIODB_ARTIST_MBID: &str = "a74b1b7f-71a5-4011-9441-d0b5e4122711";
@@ -327,34 +320,6 @@ const ROWS: &[Row] = &[
         body: include_str!("../fixtures/github/releases_list.json"),
         kind: PayloadKind::Decode,
         identity: "/0/tag_name",
-    },
-    Row {
-        name: "coverartarchive /release/{mbid}, image list",
-        provider: Provider::CoverArtRelease,
-        body: include_str!("../fixtures/coverartarchive/release_found.json"),
-        kind: PayloadKind::Decode,
-        identity: "/images",
-    },
-    Row {
-        name: "coverartarchive /release/{mbid}, image id",
-        provider: Provider::CoverArtRelease,
-        body: include_str!("../fixtures/coverartarchive/release_found.json"),
-        kind: PayloadKind::Decode,
-        identity: "/images/0/id",
-    },
-    Row {
-        name: "coverartarchive /release-group/{mbid}, image list",
-        provider: Provider::CoverArtReleaseGroup,
-        body: include_str!("../fixtures/coverartarchive/release_group_found.json"),
-        kind: PayloadKind::Decode,
-        identity: "/images",
-    },
-    Row {
-        name: "coverartarchive /release-group/{mbid}, image id",
-        provider: Provider::CoverArtReleaseGroup,
-        body: include_str!("../fixtures/coverartarchive/release_group_found.json"),
-        kind: PayloadKind::Decode,
-        identity: "/images/0/id",
     },
     Row {
         name: "audiodb /artist-mb.php, artist list",
@@ -727,18 +692,18 @@ const ROWS: &[Row] = &[
         identity: "/_embedded/events/0/_embedded/attractions/0/id",
     },
     Row {
-        name: "acoustid /v2/lookup, result id",
-        provider: Provider::AcoustIdLookup,
-        body: include_str!("../fixtures/acoustid/single_lookup.json"),
+        name: "acoustid /v2/lookup batch, result id",
+        provider: Provider::AcoustIdBatch,
+        body: include_str!("../fixtures/acoustid/batch_lookup.json"),
         kind: PayloadKind::Decode,
-        identity: "/results/0/id",
+        identity: "/fingerprints/0/results/0/id",
     },
     Row {
-        name: "acoustid /v2/lookup, recording id",
-        provider: Provider::AcoustIdLookup,
-        body: include_str!("../fixtures/acoustid/single_lookup.json"),
+        name: "acoustid /v2/lookup batch, recording id",
+        provider: Provider::AcoustIdBatch,
+        body: include_str!("../fixtures/acoustid/batch_lookup.json"),
         kind: PayloadKind::Decode,
-        identity: "/results/0/recordings/0/id",
+        identity: "/fingerprints/0/results/0/recordings/0/id",
     },
     Row {
         name: "listenbrainz /1/metadata/recording/, release group",
@@ -1146,12 +1111,6 @@ async fn read(provider: Provider, body: &str) -> Result<bool, ProviderError> {
             let releases = providers.github.fetch(PRIORITY).await?;
             Ok(!releases.is_empty())
         }
-        Provider::CoverArtRelease => {
-            cover_art(EntityKind::Release, COVER_ART_RELEASE_MBID, body).await
-        }
-        Provider::CoverArtReleaseGroup => {
-            cover_art(EntityKind::ReleaseGroup, COVER_ART_RELEASE_GROUP_MBID, body).await
-        }
         Provider::AudioDbArtistMbid => {
             let providers = audiodb("artist-mb.php", body);
             let artist = providers
@@ -1361,7 +1320,7 @@ async fn read(provider: Provider, body: &str) -> Result<bool, ProviderError> {
                 .await?;
             Ok(!page.items.is_empty())
         }
-        Provider::AcoustIdLookup => {
+        Provider::AcoustIdBatch => {
             let wire = Arc::new(ScriptedWire::new());
             wire.on(
                 Method::Post,
@@ -1379,11 +1338,27 @@ async fn read(provider: Provider, body: &str) -> Result<bool, ProviderError> {
                     ..ProviderEndpoints::closed()
                 },
             );
-            let found = providers
+            let query = [acoustid::BatchQuery {
+                fingerprint: "print",
+                duration_secs: 218,
+            }];
+            // A 200 the batch could not use is an answer that did not
+            // decode: the outcome carries no error to tell more.
+            match providers
                 .acoustid
-                .lookup("key", "print", 218, PRIORITY)
-                .await?;
-            Ok(found.is_some())
+                .lookup_batch_request("key", &query, PRIORITY)
+                .await
+            {
+                BatchOutcome::Answered(entries) => {
+                    Ok(entries.iter().any(|(_, results)| !results.is_empty()))
+                }
+                BatchOutcome::Unavailable(Unanswered::Failed) => Err(ProviderError::Payload {
+                    provider: "acoustid",
+                    kind: PayloadKind::Decode,
+                    message: "the batch answer did not decode".to_owned(),
+                }),
+                other => panic!("acoustid batch: {other:?}"),
+            }
         }
         Provider::LastFm(read) => lastfm(read, body).await,
         Provider::ListenBrainz(read) => listenbrainz(read, body).await,
@@ -1634,30 +1609,6 @@ async fn lastfm(read: LastFmRead, body: &str) -> Result<bool, ProviderError> {
             .await?
             .is_empty(),
     })
-}
-
-/// Serves `body` from the archive's listing address for the entity and reads
-/// it through the archive's client.
-async fn cover_art(entity: EntityKind, mbid: &str, body: &str) -> Result<bool, ProviderError> {
-    let wire = Arc::new(ScriptedWire::new());
-    wire.answer(
-        &format!("http://fake/coverart/{}/{mbid}", entity.path()),
-        200,
-        &[],
-        body.as_bytes().to_vec(),
-    );
-    let providers = Providers::unpaced_at(
-        wire,
-        ProviderEndpoints {
-            coverart: "http://fake/coverart".to_owned(),
-            ..ProviderEndpoints::closed()
-        },
-    );
-    let images = providers
-        .coverart
-        .list_artwork(entity, mbid, DownloadSize::Full, PRIORITY)
-        .await?;
-    Ok(!images.is_empty())
 }
 
 /// Serves `body` from TheAudioDB's free-key address for `endpoint` and returns

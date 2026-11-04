@@ -1086,14 +1086,6 @@ impl FakeProviders {
         }
     }
 
-    /// Replace the scripted edition search page.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn set_editions(&self, page: EditionPage) {
-        if let Ok(mut slot) = self.editions.lock() {
-            *slot = Some(page);
-        }
-    }
-
     fn scripted(&self) -> RecallResult {
         self.recall
             .lock()

@@ -466,7 +466,7 @@ pub async fn validate_queue(
         (status = 400, description = "Bad query string"),
         (status = 401, description = "Not authenticated"),
         (status = 429, description = "YouTube search quota used up for today (RATE_LIMITED)"),
-        (status = 409, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)"),
+        (status = 409, description = "Not configured (NOT_CONFIGURED)"),
         (status = 503, description = "A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known)"),
     )
 )]
@@ -494,7 +494,7 @@ pub async fn youtube_track_search(
         (status = 200, description = "Track preview", body = TrackPreviewResponse),
         (status = 400, description = "Bad query string"),
         (status = 401, description = "Not authenticated"),
-        (status = 409, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)"),
+        (status = 409, description = "Not configured (NOT_CONFIGURED)"),
         (status = 503, description = "A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known)"),
     )
 )]
@@ -523,7 +523,7 @@ pub async fn track_preview(
         (status = 200, description = "Album samples", body = AlbumPreviewResponse),
         (status = 400, description = "Bad query string"),
         (status = 401, description = "Not authenticated"),
-        (status = 409, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)"),
+        (status = 409, description = "Not configured (NOT_CONFIGURED)"),
         (status = 503, description = "A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known)"),
     )
 )]
@@ -570,7 +570,7 @@ pub async fn get_home(
     responses(
         (status = 200, description = "Integration availability", body = IntegrationStatus),
         (status = 401, description = "Not authenticated"),
-        (status = 409, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)"),
+        (status = 409, description = "Not configured (NOT_CONFIGURED)"),
         (status = 503, description = "A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known)"),
     )
 )]
@@ -635,7 +635,7 @@ pub async fn genre_detail(
         (status = 200, description = "Trending artists page", body = ChartPage<ArtistRef>),
         (status = 400, description = "Bad range or source"),
         (status = 401, description = "Not authenticated"),
-        (status = 409, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)"),
+        (status = 409, description = "Not configured (NOT_CONFIGURED)"),
         (status = 503, description = "A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known)"),
     )
 )]
@@ -672,7 +672,7 @@ pub async fn trending_artists(
         (status = 200, description = "Popular albums page", body = ChartPage<AlbumRef>),
         (status = 400, description = "Bad range or source"),
         (status = 401, description = "Not authenticated"),
-        (status = 409, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)"),
+        (status = 409, description = "Not configured (NOT_CONFIGURED)"),
         (status = 503, description = "A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known)"),
     )
 )]
@@ -709,7 +709,7 @@ pub async fn popular_albums(
         (status = 200, description = "Your-top albums page", body = ChartPage<AlbumRef>),
         (status = 400, description = "Bad range or source"),
         (status = 401, description = "Not authenticated"),
-        (status = 409, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)"),
+        (status = 409, description = "Not configured (NOT_CONFIGURED)"),
         (status = 503, description = "A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known)"),
     )
 )]

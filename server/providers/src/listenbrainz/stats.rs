@@ -375,24 +375,6 @@ impl ListenBrainzClient {
             .collect())
     }
 
-    /// The first artist MBID of each recording the user loved, in feedback
-    /// order (`/1/feedback/user/{user}/get-feedback?score=1&metadata=true`).
-    /// Recordings without a mapped artist
-    /// are skipped; repeats stay so the caller decides how to dedupe.
-    ///
-    /// # Errors
-    ///
-    /// The typed failure of the call.
-    pub async fn user_loved_artist_mbids(
-        &self,
-        username: &str,
-        count: u32,
-        priority: RequestPriority,
-    ) -> Result<Vec<String>, ProviderError> {
-        let rows = self.loved_feedback(username, count, priority).await?;
-        Ok(rows.iter().filter_map(loved_artist_mbid).collect())
-    }
-
     /// The user's loved recordings with their names, newest first (the home
     /// "Your Favorites" shelf). Rows without a track title are skipped.
     ///

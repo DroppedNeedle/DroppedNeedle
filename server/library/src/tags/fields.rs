@@ -322,13 +322,6 @@ impl TagField {
         TagField::ALL.into_iter().find(|field| field.name() == name)
     }
 
-    /// The managed name for one Vorbis spelling of a field
-    /// (`total_tracks:TRACKTOTAL`). Only documents read from a file carry
-    /// these; requests cannot.
-    pub fn spelling_name(self, spelling: &str) -> String {
-        format!("{}:{spelling}", self.name())
-    }
-
     /// Parse a managed name: a field, or a field with one of its Vorbis
     /// spellings.
     pub fn from_managed_name(name: &str) -> Option<(Self, Option<&'static str>)> {

@@ -102,9 +102,6 @@ pub struct SessionAuth {
     pub store: Sessions,
     /// Wall time a token's expiry is checked against.
     pub clock: Arc<dyn Clock>,
-    /// Deployment base path (`""` at the domain root). The router strips
-    /// it before this layer runs.
-    pub base_path: String,
     /// Proxies trusted to set `X-Forwarded-*`; loopback by default (v2
     /// parity). Off-host proxies are set from deployment config at wiring.
     pub trusted_proxies: TrustedProxies,
@@ -126,7 +123,6 @@ impl std::fmt::Debug for SessionAuth {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SessionAuth")
             .field("store", &self.store)
-            .field("base_path", &self.base_path)
             .field("trusted_proxies", &self.trusted_proxies)
             .finish_non_exhaustive()
     }
@@ -135,11 +131,10 @@ impl std::fmt::Debug for SessionAuth {
 impl SessionAuth {
     /// Build the shared state. Trusted proxies default to loopback; use
     /// [`SessionAuth::with_trusted_proxies`] when a proxy fronts the app.
-    pub fn new(store: Sessions, clock: Arc<dyn Clock>, base_path: &str) -> Self {
+    pub fn new(store: Sessions, clock: Arc<dyn Clock>) -> Self {
         Self {
             store,
             clock,
-            base_path: base_path.to_owned(),
             trusted_proxies: TrustedProxies::default(),
             limits: Arc::new(RateLimiter::new()),
             stated: StatedAddresses::default(),

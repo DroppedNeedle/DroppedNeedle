@@ -853,20 +853,11 @@ async fn the_source_is_read_at_every_request() {
 // Cover Art Archive (live provider boundary 2026-07-21).
 // ---------------------------------------------------------------------------
 
-fn caa_listing_url(entity: &str, mbid: &str) -> String {
+fn caa_front_url(entity: &str, mbid: &str) -> String {
     format!(
-        "{coverart_base}/{entity}/{mbid}",
+        "{coverart_base}/{entity}/{mbid}/front",
         coverart_base = coverart::COVER_ART_ARCHIVE_BASE
     )
-}
-
-/// The release whose listing is recorded in `release_found.json`.
-const CAA_RELEASE_MBID: &str = "30702389-5c67-4438-9ea0-2351c8de0f1d";
-
-/// The recorded listing of `CAA_RELEASE_MBID`: two images typed Front, the
-/// first one flagged front.
-fn caa_listing_body() -> Vec<u8> {
-    include_bytes!("../fixtures/coverartarchive/release_found.json").to_vec()
 }
 
 fn caa() -> FakeMb {
@@ -879,81 +870,27 @@ fn caa_answer(status: u16, headers: Vec<(&str, &str)>, body: Vec<u8>) -> Result<
 
 const CAA_PRIORITY: RequestPriority = RequestPriority::BackgroundSync;
 
-#[tokio::test(start_paused = true)]
-async fn caa_listing_decodes_the_live_shape() {
-    let fake = caa();
-    let url = caa_listing_url("release", CAA_RELEASE_MBID);
-    // The recorded listing with http addresses, as older listings named
-    // them: a candidate still answers https.
-    let body = String::from_utf8(caa_listing_body())
-        .expect("the recorded listing is text")
-        .replace("https://coverartarchive.org", "http://coverartarchive.org");
-    fake.script(&url, caa_answer(200, vec![], body.into_bytes()));
-    let candidates = fake
-        .providers
+/// The front of a release, as `fetch_front` asks for it in full.
+async fn caa_front(
+    fake: &FakeMb,
+    mbid: &str,
+    priority: RequestPriority,
+) -> Result<Option<coverart::ArtworkBytes>, ProviderError> {
+    fake.providers
         .coverart
-        .list_artwork(
+        .fetch_front(
             coverart::EntityKind::Release,
-            CAA_RELEASE_MBID,
-            coverart::DownloadSize::Size500,
-            CAA_PRIORITY,
+            mbid,
+            coverart::DownloadSize::Full,
+            1024 * 1024,
+            priority,
         )
         .await
-        .expect("listing decodes");
-    assert_eq!(candidates.len(), 2);
-    let first = &candidates[0];
-    assert_eq!(
-        first.candidate_id,
-        format!("caa:release:{CAA_RELEASE_MBID}:43287476628:500")
-    );
-    assert_eq!(first.source, "cover_art_archive_release");
-    assert!(first.source_is_exact_release);
-    assert!(first.approved && first.primary);
-    assert_eq!(
-        first.locator,
-        format!("https://coverartarchive.org/release/{CAA_RELEASE_MBID}/43287476628-500.jpg")
-    );
-    assert_eq!(first.image_types, vec![coverart::ImageType::Front]);
-    let second = &candidates[1];
-    assert!(
-        second.approved && !second.primary,
-        "the second image is typed Front but not flagged front"
-    );
-    assert_eq!(second.image_types, vec![coverart::ImageType::Front]);
-    // No recorded listing holds other types; the mapping is checked on the
-    // labels the archive sends with a back flag.
-    assert_eq!(
-        coverart::classify_image_types(&["Back".to_owned(), "Spine".to_owned()], false, true),
-        vec![coverart::ImageType::Back, coverart::ImageType::Spine]
-    );
 }
 
-/// Artwork addresses stay on the archive and are answered over https, and
-/// only raster bytes count as an image (SVG and short blobs are refused).
+/// Only raster bytes count as an image (SVG and short blobs are refused).
 #[test]
-fn caa_urls_and_image_bytes_are_checked() {
-    assert_eq!(
-        coverart::upgrade_artwork_url("http://coverartarchive.org/release/abc/front.png")
-            .as_deref(),
-        Some("https://coverartarchive.org/release/abc/front.png")
-    );
-    assert_eq!(
-        coverart::upgrade_artwork_url("https://coverartarchive.org:443/a/b.jpg?x=1#frag")
-            .as_deref(),
-        Some("https://coverartarchive.org/a/b.jpg?x=1")
-    );
-    for bad in [
-        "https://evil.example/a.jpg",
-        "https://coverartarchive.org.evil.example/a.jpg",
-        "ftp://coverartarchive.org/a.jpg",
-        "https://user@coverartarchive.org/a.jpg",
-        "https://coverartarchive.org:8443/a.jpg",
-        "https://coverartarchive.org",
-        "not-a-url",
-    ] {
-        assert_eq!(coverart::upgrade_artwork_url(bad), None, "url {bad}");
-    }
-
+fn caa_image_bytes_are_checked() {
     let jpeg = [b"\xff\xd8\xff".as_slice(), &[0u8; 16]].concat();
     assert_eq!(
         coverart::sniff_image_content_type(&jpeg),
@@ -990,16 +927,16 @@ fn caa_urls_and_image_bytes_are_checked() {
     );
 }
 
-/// A 404 is empty artwork, a 500 is a failure, a malformed mbid sends
+/// A 404 is no front cover, a 500 is a failure, a malformed mbid sends
 /// nothing; a 429 is retried after its wait, and a second 503 surfaces its
 /// wait.
 #[tokio::test(start_paused = true)]
-async fn caa_listing_tells_absence_from_failure() {
+async fn caa_front_tells_absence_from_failure() {
     let fake = caa();
     // The recorded 404 answer for a release with no artwork.
     let missing = "fd6ebf0e-85e4-4aa1-995a-07d5ac0c2147";
     fake.script(
-        &caa_listing_url("release", missing),
+        &caa_front_url("release", missing),
         caa_answer(
             404,
             vec![],
@@ -1008,41 +945,22 @@ async fn caa_listing_tells_absence_from_failure() {
     );
     // A 500 was never recorded; the client reads it by its status alone.
     fake.script(
-        &caa_listing_url("release", RELEASE_MBID),
+        &caa_front_url("release", RELEASE_MBID),
         caa_answer(500, vec![], Vec::new()),
     );
-    let client = &fake.providers.coverart;
-    let candidates = client
-        .list_artwork(
-            coverart::EntityKind::Release,
-            missing,
-            coverart::DownloadSize::Full,
-            CAA_PRIORITY,
-        )
+    let front = caa_front(&fake, missing, CAA_PRIORITY)
         .await
-        .expect("404 is authoritative emptiness");
-    assert!(candidates.is_empty(), "404: no artwork");
-    let error = client
-        .list_artwork(
-            coverart::EntityKind::Release,
-            RELEASE_MBID,
-            coverart::DownloadSize::Full,
-            CAA_PRIORITY,
-        )
+        .expect("404 is authoritative absence");
+    assert!(front.is_none(), "404: no front cover");
+    let error = caa_front(&fake, RELEASE_MBID, CAA_PRIORITY)
         .await
-        .expect_err("500 is a provider failure, not empty artwork");
+        .expect_err("500 is a provider failure, not a missing cover");
     assert!(
         matches!(error, ProviderError::Server { status: 500, .. }),
         "500: got {error:?}"
     );
     let before = fake.seen().len();
-    let error = client
-        .list_artwork(
-            coverart::EntityKind::Release,
-            "nope",
-            coverart::DownloadSize::Full,
-            CAA_PRIORITY,
-        )
+    let error = caa_front(&fake, "nope", CAA_PRIORITY)
         .await
         .expect_err("malformed mbid fails locally");
     assert!(
@@ -1052,26 +970,20 @@ async fn caa_listing_tells_absence_from_failure() {
     assert_eq!(fake.seen().len(), before, "malformed mbid sends nothing");
 
     // The archive never answered 429 or 503 while recording, so those
-    // answers are written here; the retried answer is the recorded listing.
+    // answers are written here.
+    let png: Vec<u8> = [b"\x89PNG\r\n\x1a\n".as_slice(), &[0u8; 16]].concat();
     let fake = caa();
-    let url = caa_listing_url("release", CAA_RELEASE_MBID);
+    let url = caa_front_url("release", RELEASE_MBID);
     fake.script(
         &url,
         caa_answer(429, vec![("Retry-After", "1")], Vec::new()),
     );
-    fake.script(&url, caa_answer(200, vec![], caa_listing_body()));
-    let candidates = fake
-        .providers
-        .coverart
-        .list_artwork(
-            coverart::EntityKind::Release,
-            CAA_RELEASE_MBID,
-            coverart::DownloadSize::Full,
-            RequestPriority::UserInitiated,
-        )
+    fake.script(&url, caa_answer(200, vec![], png.clone()));
+    let front = caa_front(&fake, RELEASE_MBID, RequestPriority::UserInitiated)
         .await
-        .expect("retry after backoff succeeds");
-    assert_eq!(candidates.len(), 2, "429: the retried listing is read");
+        .expect("retry after backoff succeeds")
+        .expect("the retried answer is the cover");
+    assert_eq!(front.bytes, png, "429: the retried cover is read");
     assert_eq!(fake.seen().len(), 2, "429: one retry");
 
     let fake = caa();
@@ -1080,97 +992,12 @@ async fn caa_listing_tells_absence_from_failure() {
         &url,
         caa_answer(503, vec![("Retry-After", "2")], Vec::new()),
     );
-    let error = fake
-        .providers
-        .coverart
-        .list_artwork(
-            coverart::EntityKind::Release,
-            CAA_RELEASE_MBID,
-            coverart::DownloadSize::Full,
-            RequestPriority::UserInitiated,
-        )
+    let error = caa_front(&fake, RELEASE_MBID, RequestPriority::UserInitiated)
         .await
         .expect_err("second 503 surfaces");
     assert!(
         matches!(error, ProviderError::Unavailable { retry_after: Some(wait), .. } if wait == Duration::from_secs(2)),
         "503: got {error:?}"
-    );
-}
-
-#[tokio::test(start_paused = true)]
-async fn caa_download_sniffs_when_declarations_lie() {
-    let png: Vec<u8> = [b"\x89PNG\r\n\x1a\n".as_slice(), &[0u8; 16]].concat();
-    assert!(png.len() >= 12);
-    let fake = caa();
-    let listing = caa_listing_url("release", CAA_RELEASE_MBID);
-    fake.script(&listing, caa_answer(200, vec![], caa_listing_body()));
-    let client = &fake.providers.coverart;
-    let candidates = client
-        .list_artwork(
-            coverart::EntityKind::Release,
-            CAA_RELEASE_MBID,
-            coverart::DownloadSize::Full,
-            CAA_PRIORITY,
-        )
-        .await
-        .expect("listing decodes");
-    let front = candidates
-        .into_iter()
-        .find(|candidate| candidate.primary)
-        .expect("front");
-
-    fake.script(
-        &front.locator,
-        caa_answer(200, vec![("Content-Type", "text/html")], png.clone()),
-    );
-    fake.script(
-        &front.locator,
-        caa_answer(
-            200,
-            vec![("Content-Type", "image/jpeg; charset=binary")],
-            png.clone(),
-        ),
-    );
-    fake.script(&front.locator, caa_answer(200, vec![], png.clone()));
-    let bytes = client
-        .download_artwork(&front, 1024 * 1024, CAA_PRIORITY)
-        .await
-        .expect("download decodes");
-    assert_eq!(bytes.bytes, png);
-    assert_eq!(bytes.content_type, "image/png", "bytes beat a lying header");
-
-    let bytes = client
-        .download_artwork(&front, 1024 * 1024, CAA_PRIORITY)
-        .await
-        .expect("download decodes");
-    assert_eq!(bytes.content_type, "image/jpeg; charset=binary");
-
-    let error = client
-        .download_artwork(&front, 4, CAA_PRIORITY)
-        .await
-        .expect_err("over-limit download fails");
-    assert!(
-        matches!(
-            error,
-            ProviderError::Payload {
-                kind: PayloadKind::TooLarge,
-                ..
-            }
-        ),
-        "got {error:?}"
-    );
-
-    let foreign = coverart::ArtworkCandidate {
-        source: "someone-else".to_owned(),
-        ..front.clone()
-    };
-    let error = client
-        .download_artwork(&foreign, 1024, CAA_PRIORITY)
-        .await
-        .expect_err("foreign source refused");
-    assert!(
-        matches!(error, ProviderError::Invalid { .. }),
-        "got {error:?}"
     );
 }
 

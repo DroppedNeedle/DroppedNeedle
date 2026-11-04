@@ -4754,7 +4754,7 @@
             }
           },
           "409": {
-            "description": "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)",
+            "description": "Not configured (NOT_CONFIGURED)",
             "content": {
               "application/json": {
                 "schema": {
@@ -5752,7 +5752,7 @@
             }
           },
           "409": {
-            "description": "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)",
+            "description": "Not configured (NOT_CONFIGURED)",
             "content": {
               "application/json": {
                 "schema": {
@@ -6054,7 +6054,7 @@
             }
           },
           "409": {
-            "description": "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)",
+            "description": "Not configured (NOT_CONFIGURED)",
             "content": {
               "application/json": {
                 "schema": {
@@ -8181,7 +8181,7 @@
             }
           },
           "409": {
-            "description": "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)",
+            "description": "Not configured (NOT_CONFIGURED)",
             "content": {
               "application/json": {
                 "schema": {
@@ -8289,7 +8289,7 @@
             }
           },
           "409": {
-            "description": "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)",
+            "description": "Not configured (NOT_CONFIGURED)",
             "content": {
               "application/json": {
                 "schema": {
@@ -8397,7 +8397,7 @@
             }
           },
           "409": {
-            "description": "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)",
+            "description": "Not configured (NOT_CONFIGURED)",
             "content": {
               "application/json": {
                 "schema": {
@@ -8505,7 +8505,7 @@
             }
           },
           "409": {
-            "description": "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)",
+            "description": "Not configured (NOT_CONFIGURED)",
             "content": {
               "application/json": {
                 "schema": {
@@ -49222,13 +49222,6 @@
             "type": "integer",
             "format": "int64",
             "description": "Selected MBIDs already followed before this import."
-          },
-          "approval_batch_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Approval batch for a non-admin auto-download mirror; else null."
           },
           "auto_download_enabled": {
             "type": "integer",

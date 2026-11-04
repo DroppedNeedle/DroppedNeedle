@@ -56,8 +56,6 @@ pub use self::http::routes;
 const UNKNOWN_ARTIST: &str = "Unknown Artist";
 /// What a batch card says produced its asks.
 const IMPORT_SOURCE: &str = "import";
-/// What a Lidarr import batch stores as its source.
-const LIDARR_SOURCE: &str = "lidarr_import";
 /// How many artist names a batch card previews.
 const BATCH_SAMPLE_COUNT: usize = 3;
 
@@ -88,8 +86,6 @@ pub struct ImportOutcome {
     pub already_following: usize,
     /// New follows with auto-download turned on.
     pub auto_download_enabled: usize,
-    /// The approval batch filed for them, when the user needs one.
-    pub approval_batch_id: Option<String>,
 }
 
 /// A follow an album request asks for, written in the request's own
@@ -416,19 +412,17 @@ impl Follows {
 
     /// Follow every artist of an import for `user_id` in one transaction.
     /// Artists already followed are left as they are. A new follow of an
-    /// artist Lidarr monitors gets auto-download, behind one approval
-    /// batch (`batch_id`) when the user does not approve themselves.
+    /// artist Lidarr monitors gets auto-download.
     pub async fn import(
         &self,
         user_id: &str,
         artists: Vec<ImportArtist>,
-        batch_id: Option<String>,
     ) -> Result<ImportOutcome, RequestsError> {
         let user = user_id.to_owned();
         let clock = self.db.clock().clone();
         self.db
             .write("follows.import", move |tx| {
-                let (now, now_ms) = (unix_secs_f64(clock.as_ref()), now_ms(clock.as_ref()));
+                let now = unix_secs_f64(clock.as_ref());
                 let mut already_following = 0;
                 let mut armed = Vec::new();
                 for artist in &artists {
@@ -444,25 +438,13 @@ impl Follows {
                     }
                     upsert_follow(tx, &user, &artist.mbid, Some(&artist.name), now)?;
                 }
-                let approval_batch_id = batch_id.filter(|_| !armed.is_empty());
                 for artist in &armed {
-                    if let Some(batch) = &approval_batch_id {
-                        approvals::file_batch_member(
-                            tx,
-                            batch,
-                            &user,
-                            (&artist.mbid, &artist.name),
-                            LIDARR_SOURCE,
-                            now_ms,
-                        )?;
-                    }
                     set_intent(tx, &user, &artist.mbid.to_lowercase(), true, now)?;
                 }
                 Ok(ImportOutcome {
                     imported: artists.len() - already_following,
                     already_following,
                     auto_download_enabled: armed.len(),
-                    approval_batch_id,
                 })
             })
             .await

@@ -249,7 +249,6 @@ pub fn start_playback(
         track_id: request.track_id.clone(),
     };
     deps.sessions.begin(key.clone(), resolved.clone(), now);
-    deps.mixed.clear(&key);
     let Resolved { track, user_name } = resolved;
 
     let source = Some(request.source.as_str());
@@ -367,11 +366,10 @@ pub fn stop_playback(
     let counted = submit_session_scrobble(
         deps,
         user_id,
-        &key,
         &presence_key(user_id, &request.device),
         &track,
         Some(request.source.as_str()),
-        Some(finish.started_at),
+        finish.started_at,
         now,
     );
     // A play that was not saved is not scrobbled: a stop sent again counts it.

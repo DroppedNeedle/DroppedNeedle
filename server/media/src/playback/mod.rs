@@ -17,8 +17,8 @@
 //!
 //! - Session lifecycle (start resets, rewind restarts, stop thresholds,
 //!   once-only submits)
-//! - Session-driven scrobbles (client normalization, 5s mixed-report
-//!   dedup, presence writes, played-at backdating)
+//! - Session-driven scrobbles (client normalization, presence writes,
+//!   played-at backdating)
 //! - Native submit and forward (hour dedup, always-record history, 30s gate,
 //!   Navidrome delegation, accepted quirks)
 //! - Native threshold (omitted position counts, past 90%, within the last
@@ -68,7 +68,7 @@ pub use handlers::routes;
 
 use ports::{PlayEvents, RemoteReporters, ScrobbleSinks};
 use presence::PresenceRegistry;
-use report::{MixedDedup, ScrobbleDedup};
+use report::ScrobbleDedup;
 use sessions::SessionStore;
 use sqlite::PlaybackStore;
 
@@ -93,8 +93,6 @@ pub struct PlaybackDeps {
     pub presence: PresenceRegistry,
     /// Scrobble name dedup.
     pub dedup: ScrobbleDedup,
-    /// Mixed-report dedup.
-    pub mixed: MixedDedup,
     /// Clock for TTLs and timestamps.
     pub clock: Arc<dyn Clock>,
     /// Listeners for accepted plays (plugins).

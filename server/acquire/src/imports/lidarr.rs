@@ -252,14 +252,13 @@ impl LidarrImportService {
     }
 
     /// Import a selection into one user's follows.
-    /// The follows, the approval batch and the auto-download intents land
-    /// in one transaction. Only brand-new follows of artists Lidarr
-    /// monitors with `all` get auto-download, so a re-import never re-arms
-    /// a follow the user turned off.
+    /// The follows and the auto-download intents land in one transaction.
+    /// Only brand-new follows of artists Lidarr monitors with `all` get
+    /// auto-download, so a re-import never re-arms a follow the user turned
+    /// off.
     pub async fn import_artists(
         &self,
         user_id: &str,
-        is_admin: bool,
         selected_mbids: &[String],
     ) -> Result<LidarrImportResponse, ServiceError> {
         let monitored = self.monitored_artists().await?;
@@ -290,10 +289,9 @@ impl LidarrImportService {
                 });
             }
         }
-        let batch_id = (!is_admin).then(|| format!("batch-{}", uuid::Uuid::new_v4().simple()));
         let outcome = self
             .follows
-            .import(user_id, artists, batch_id)
+            .import(user_id, artists)
             .await
             .map_err(ServiceError::Follows)?;
         Ok(LidarrImportResponse {
@@ -301,7 +299,6 @@ impl LidarrImportService {
             already_following: outcome.already_following as i64,
             skipped_invalid,
             auto_download_enabled: outcome.auto_download_enabled as i64,
-            approval_batch_id: outcome.approval_batch_id,
         })
     }
 }

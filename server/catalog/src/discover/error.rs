@@ -15,8 +15,6 @@ use super::services::ServiceError;
 
 /// The feature needs setup first: a key, an account (409).
 pub const NOT_CONFIGURED: &str = "NOT_CONFIGURED";
-/// The feature is not built in this version yet (409).
-pub const NOT_AVAILABLE: &str = "NOT_AVAILABLE";
 
 impl From<ServiceError> for ApiError {
     fn from(error: ServiceError) -> Self {
@@ -30,9 +28,6 @@ impl From<ServiceError> for ApiError {
             ServiceError::Internal(cause) => ApiError::internal(cause),
             ServiceError::NotConfigured(message) => {
                 ApiError::new(StatusCode::CONFLICT, NOT_CONFIGURED, message)
-            }
-            ServiceError::NotBuilt(message) => {
-                ApiError::new(StatusCode::CONFLICT, NOT_AVAILABLE, message)
             }
             ServiceError::Exhausted(message) => {
                 ApiError::new(StatusCode::TOO_MANY_REQUESTS, RATE_LIMITED, message)

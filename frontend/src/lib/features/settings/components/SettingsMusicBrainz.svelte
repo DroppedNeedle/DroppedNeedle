@@ -173,12 +173,10 @@
 					? 'Test the connection before saving.'
 					: ''
 	);
-	// A quarantined source, or a chosen source that is not yet the active one,
-	// can be saved as it stands.
+	// A chosen source that is not yet the active one can be saved as it stands.
 	let needsSave = $derived(
 		settings !== null &&
-			(settings.source_quarantined === true ||
-				(settings.selected_source_mode ?? settings.source_mode) !== settings.source_mode)
+			(settings.selected_source_mode ?? settings.source_mode) !== settings.source_mode
 	);
 	let selectedModeNeedsStage = $derived(
 		isBrainzMash && pendingBrainzMash === null && activeMode !== 'brainzmash'
@@ -190,7 +188,6 @@
 	function hasValidActiveBrainzMashBinding(data: MusicBrainzSettingsResponse | null): boolean {
 		if (
 			!data ||
-			data.source_quarantined === true ||
 			data.source_mode !== 'brainzmash' ||
 			typeof data.api_url !== 'string' ||
 			data.api_url.trim().replace(/\/+$/, '') !== BRAINZMASH_ENDPOINT_URL ||
@@ -214,13 +211,7 @@
 			(mode === 'mirror' || mode === 'community');
 		return {
 			source_mode: mode,
-			api_url: data.source_quarantined
-				? mode === 'official'
-					? OFFICIAL_ENDPOINT_URL
-					: mode === 'brainzmash'
-						? BRAINZMASH_ENDPOINT_URL
-						: ''
-				: (data.api_url ?? ''),
+			api_url: data.api_url ?? '',
 			rate_limit:
 				mode === 'brainzmash'
 					? BRAINZMASH_RATE_MAX
@@ -448,16 +439,6 @@
 					<div class="alert alert-warning text-sm" role="status">
 						<CircleAlert class="h-5 w-5 shrink-0" aria-hidden="true" />
 						<span>{CLAMPED_WARNING}</span>
-					</div>
-				{/if}
-
-				{#if settings?.source_quarantined}
-					<div class="alert alert-error text-sm" role="alert" data-testid="musicbrainz-quarantined">
-						<CircleAlert class="h-5 w-5 shrink-0" aria-hidden="true" />
-						<span>
-							{settings?.quarantine_reason ||
-								'Existing MusicBrainz source settings require review. Select and save a valid source to re-enable traffic.'}
-						</span>
 					</div>
 				{/if}
 
