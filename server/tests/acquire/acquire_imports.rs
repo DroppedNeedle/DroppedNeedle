@@ -650,7 +650,9 @@ async fn link_spotify(bundle_deps: ImportsDeps, recorder: &MockRecorder, user_id
 const PATIENCE: Duration = Duration::from_secs(30);
 
 /// Re-reads with `read` after each database commit until it answers, so a
-/// wait follows the job row instead of a timer.
+/// wait follows the job row instead of a timer. A settings save wakes the
+/// queue through a write the commit count may not see, so a short tick
+/// re-reads too.
 async fn after_commits<T, Fut>(db: &Db, what: &str, mut read: impl FnMut() -> Fut) -> T
 where
     Fut: std::future::Future<Output = Option<T>>,
@@ -662,7 +664,10 @@ where
             if let Some(found) = read().await {
                 return found;
             }
-            commits.changed().await.expect("the write lane is open");
+            tokio::select! {
+                changed = commits.changed() => changed.expect("the write lane is open"),
+                () = tokio::time::sleep(Duration::from_millis(50)) => {}
+            }
         }
     };
     tokio::time::timeout(PATIENCE, wait)
