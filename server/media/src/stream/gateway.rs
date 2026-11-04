@@ -34,7 +34,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use super::leases::DirectGate;
-use super::local_files::{CatalogFile, LibraryFiles, LocateError, PathRefusal};
+use super::local_files::{CatalogFile, LibraryFiles, LocateError, LocatedFile, PathRefusal};
 use super::plugin_url;
 use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::sections::ConnectApps;
@@ -198,10 +198,10 @@ impl<R: RemoteReader, T: Transcoder> StreamEngine for Gateway<R, T> {
     }
 }
 
-/// A resolved local read: the sandboxed path, its content type, and the
-/// transcode verdict.
+/// A resolved local read: the file and the folder it is read beneath, its
+/// content type, and the transcode verdict.
 struct LocalRead {
-    path: PathBuf,
+    file: LocatedFile,
     content_type: &'static str,
     plan: StreamPlan,
 }
@@ -229,22 +229,19 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
         lease: OwnedDirectLease,
     ) -> Result<StreamMedia, StreamFault> {
         let LocalRead {
-            path,
+            file,
             content_type,
             plan,
         } = read;
         match plan {
             StreamPlan::Direct { .. } => {
-                let metadata = tokio::fs::metadata(&path).await.map_err(io_fault)?;
-                if !metadata.is_file() {
-                    return Err(StreamFault::NotFound);
-                }
+                let (_, metadata) = open_local(&file).await?;
                 Ok(StreamMedia {
                     content_type: content_type.to_owned(),
                     total_len: metadata.len(),
                     transcoded: false,
                     estimated_len: None,
-                    body: MediaBody::File(path),
+                    body: MediaBody::File(file),
                     lease: Some(lease),
                 })
             }
@@ -255,9 +252,10 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
                 let (body, lease) = if head_only {
                     (MediaBody::Empty, Some(lease))
                 } else {
+                    let (source, _) = open_local(&file).await?;
                     let chunks = self
                         .transcoder
-                        .stream(&path, &plan, &request.user_id, Some(lease))
+                        .stream(source, &plan, &request.user_id, Some(lease))
                         .await
                         .map_err(transcode_fault)?;
                     (MediaBody::Chunks(chunks), None)
@@ -278,27 +276,35 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
     async fn local_read(&self, request: &StreamOpen) -> Result<LocalRead, StreamFault> {
         match &self.library {
             Some(library) => {
-                let (file, path) = catalog_file(library, &request.key).await?;
+                let (row, file) = catalog_file(library, &request.key).await?;
                 let track = TrackInfo {
-                    file_format: file.file_format,
-                    bitrate_kbps: file.bitrate_kbps,
-                    duration_seconds: file.duration_seconds.unwrap_or(0.0),
+                    file_format: row.file_format,
+                    bitrate_kbps: row.bitrate_kbps,
+                    duration_seconds: row.duration_seconds.unwrap_or(0.0),
                 };
-                self.read_plan(path, Some(track), request)
+                self.read_plan(file, Some(track), request)
             }
-            None => self.read_plan(self.sandboxed_path(&request.key)?, None, request),
+            None => {
+                // `sandboxed_path` proved it resolves inside the root; it is
+                // read as it resolves.
+                let path = self.sandboxed_path(&request.key)?;
+                let path = path.canonicalize().unwrap_or(path);
+                let root = path.parent().ok_or(StreamFault::NotFound)?.to_path_buf();
+                self.read_plan(LocatedFile { root, path }, None, request)
+            }
         }
     }
 
-    /// Content type and transcode plan for one resolved local path. A path
+    /// Content type and transcode plan for one resolved local file. A file
     /// with no catalog facts is known only by its extension.
     fn read_plan(
         &self,
-        path: PathBuf,
+        file: LocatedFile,
         track: Option<TrackInfo>,
         request: &StreamOpen,
     ) -> Result<LocalRead, StreamFault> {
-        let extension = path
+        let extension = file
+            .path
             .extension()
             .and_then(|ext| ext.to_str())
             .unwrap_or_default()
@@ -314,7 +320,7 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
         });
         let plan = self.plan_for(&track, request)?;
         Ok(LocalRead {
-            path,
+            file,
             content_type,
             plan,
         })
@@ -380,7 +386,10 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
             .ok_or(StreamFault::NotFound)?;
         match resolved {
             PluginStream::File { path, .. } => {
-                let read = self.read_plan(path, None, request)?;
+                // The plugin layer resolved the path to its real spelling,
+                // inside a folder the plugin may serve from.
+                let root = path.parent().ok_or(StreamFault::NotFound)?.to_path_buf();
+                let read = self.read_plan(LocatedFile { root, path }, None, request)?;
                 self.stream_read(read, request, head_only, lease).await
             }
             PluginStream::Remote {
@@ -492,9 +501,14 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
                     "plugin {plugin} stream URL could not be fetched for transcoding: {error}"
                 ),
             })?;
+        let source = tokio::fs::File::open(spool.path())
+            .await
+            .map_err(io_fault)?
+            .into_std()
+            .await;
         let chunks = self
             .transcoder
-            .stream(spool.path(), &plan, &request.user_id, Some(lease))
+            .stream(source, &plan, &request.user_id, Some(lease))
             .await
             .map_err(transcode_fault)?;
         // The spool lives inside the body stream and goes with it.
@@ -545,7 +559,7 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
 async fn catalog_file(
     library: &LibraryFiles,
     track_id: &str,
-) -> Result<(CatalogFile, PathBuf), StreamFault> {
+) -> Result<(CatalogFile, LocatedFile), StreamFault> {
     match library.locate_track(track_id).await {
         Ok(found) => Ok(found),
         Err(LocateError::Unknown | LocateError::Refused(PathRefusal::Missing)) => {
@@ -606,6 +620,32 @@ fn forbidden() -> StreamFault {
     StreamFault::Forbidden {
         message: "Playback not allowed".to_owned(),
     }
+}
+
+/// Open a local file beneath its folder, off the async workers, with its
+/// metadata. A link met below the folder is refused like a key that
+/// escapes it.
+async fn open_local(file: &LocatedFile) -> Result<(std::fs::File, std::fs::Metadata), StreamFault> {
+    let file = file.clone();
+    tokio::task::spawn_blocking(move || {
+        let opened = file.open()?;
+        let metadata = opened.metadata()?;
+        Ok((opened, metadata))
+    })
+    .await
+    .map_err(|error| StreamFault::Internal {
+        cause: error.to_string(),
+    })?
+    .map_err(|error: std::io::Error| {
+        if droppedneedle_kernel::beneath::met_a_link(&error) {
+            forbidden()
+        } else if error.kind() == std::io::ErrorKind::InvalidInput {
+            // Not a regular file.
+            StreamFault::NotFound
+        } else {
+            io_fault(error)
+        }
+    })
 }
 
 /// Map a local-read failure onto the routes' fault spelling. Missing files

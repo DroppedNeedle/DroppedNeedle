@@ -12,8 +12,6 @@
 //! content type (upstream wins for remotes); local reads go through this
 //! table.
 
-use std::path::PathBuf;
-
 use futures_util::stream::BoxStream;
 
 /// The stream sources behind one gateway. Display names feed the logged
@@ -120,7 +118,7 @@ pub enum MediaBody {
     /// The whole object in memory.
     Bytes(Vec<u8>),
     /// A local file, read by range when the response streams.
-    File(PathBuf),
+    File(super::local_files::LocatedFile),
     /// Live transcode output, chunk by chunk.
     Chunks(ChunkStream),
     /// A sized remote object opened by span on demand (plugin URLs), so a
@@ -134,7 +132,7 @@ impl std::fmt::Debug for MediaBody {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Bytes(bytes) => write!(f, "Bytes({} bytes)", bytes.len()),
-            Self::File(path) => write!(f, "File({})", path.display()),
+            Self::File(located) => write!(f, "File({})", located.path.display()),
             Self::Chunks(_) => f.write_str("Chunks"),
             Self::Spans(_) => f.write_str("Spans"),
             Self::Empty => f.write_str("Empty"),

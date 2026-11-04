@@ -88,6 +88,13 @@ pub fn parent_beneath(
     Ok((dir, c_name(name)?))
 }
 
+/// Whether an open here failed on a link below the folder: the name is a
+/// link (`ELOOP`), or a folder on the way is a link or not a folder at all
+/// (`ENOTDIR`).
+pub fn met_a_link(error: &io::Error) -> bool {
+    matches!(error.raw_os_error(), Some(libc::ELOOP | libc::ENOTDIR))
+}
+
 /// How a folder on the way is opened: as a handle to walk from, which
 /// needs only search permission on it.
 const DIR_FLAGS: libc::c_int = libc::O_PATH | libc::O_DIRECTORY;

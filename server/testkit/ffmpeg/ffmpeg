@@ -47,5 +47,8 @@ esac
 [ -n "$bitrate" ] || fail "no -b:a"
 [ "$last" = "pipe:1" ] || fail "output is not pipe:1"
 
-echo "$muxer $bitrate" >> "$(dirname "$input")/.ffmpeg-runs"
+# The server hands ffmpeg the opened file as stdin (/proc/self/fd/0); the run
+# is noted beside the file that stands behind it.
+source=$(readlink -f "$input")
+echo "$muxer $bitrate" >> "$(dirname "$source")/.ffmpeg-runs"
 printf 'ffmpeg stand-in: %s %s\n' "$muxer" "$bitrate"

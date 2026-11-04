@@ -107,7 +107,7 @@ impl FakeSpawner {
 impl FfmpegSpawner for FakeSpawner {
     type Child = FakeChild;
 
-    fn spawn(&self, argv: &[String]) -> Result<FakeChild, TranscodeError> {
+    fn spawn(&self, argv: &[String], _input: std::fs::File) -> Result<FakeChild, TranscodeError> {
         self.probe
             .argv_seen
             .lock()
@@ -501,6 +501,11 @@ fn transcode_gate() -> Arc<TranscodeGate> {
     Arc::new(TranscodeGate::new())
 }
 
+/// A stand-in for the opened source file: the scripted spawner never reads it.
+fn source() -> std::fs::File {
+    std::fs::File::open("/dev/null").expect("/dev/null opens")
+}
+
 /// Wait until the pump has let go of every slot. The pump runs as its own
 /// task, so a dropped body frees its slots a moment later.
 async fn settled(gate: &TranscodeGate) {
@@ -522,12 +527,7 @@ async fn scripted_stream_serves_chunks_then_frees_lease_at_eof() {
         Arc::clone(&gate),
     );
     let mut body = service
-        .stream(
-            Path::new("/validated/input.flac"),
-            &transcode_plan(),
-            "alice",
-            None,
-        )
+        .stream(source(), &transcode_plan(), "alice", None)
         .await
         .expect("stream starts");
     assert_eq!(gate.active(), 1);
@@ -544,6 +544,8 @@ async fn scripted_stream_serves_chunks_then_frees_lease_at_eof() {
     assert_eq!(argv.len(), 1);
     assert_eq!(argv[0][0], "ffmpeg");
     assert!(argv[0].contains(&"libmp3lame".to_owned()), "{argv:?}");
+    // ffmpeg reads the file it was handed, never a path it would look up.
+    assert!(argv[0].contains(&transcode::INPUT.to_owned()), "{argv:?}");
     assert_eq!(&argv[0][argv[0].len() - 3..], &["-f", "mp3", "pipe:1"]);
 }
 
@@ -559,7 +561,7 @@ async fn a_dropped_transcode_stops_ffmpeg_and_frees_both_slots() {
     let service = FfmpegTranscoder::new(FakeSpawner::endless(probe.clone()), Arc::clone(&gate));
     let mut body = service
         .stream(
-            Path::new("/validated/input.flac"),
+            source(),
             &transcode_plan(),
             "alice",
             Some(direct.acquire_owned("alice").await.expect("direct slot")),
@@ -632,7 +634,7 @@ async fn unread_body_is_stopped_after_the_idle_deadline() {
     let service = FfmpegTranscoder::new(FakeSpawner::endless(probe.clone()), Arc::clone(&gate));
     let mut body = service
         .stream(
-            Path::new("/validated/input.flac"),
+            source(),
             &transcode_plan(),
             "alice",
             Some(direct.acquire_owned("alice").await.expect("direct slot")),
@@ -670,12 +672,7 @@ async fn spawn_failure_releases_slot() {
         Arc::clone(&gate),
     );
     let Err(err) = service
-        .stream(
-            Path::new("/validated/input.flac"),
-            &transcode_plan(),
-            "alice",
-            None,
-        )
+        .stream(source(), &transcode_plan(), "alice", None)
         .await
     else {
         panic!("a missing binary cannot spawn");
@@ -705,12 +702,7 @@ async fn real_child_settles_a_trivial_process() {
     let gate = transcode_gate();
     let service = FfmpegTranscoder::new(ProcessSpawner::with_path(binary), Arc::clone(&gate));
     let mut body = service
-        .stream(
-            Path::new("/validated/input.flac"),
-            &transcode_plan(),
-            "alice",
-            None,
-        )
+        .stream(source(), &transcode_plan(), "alice", None)
         .await
         .expect("trivial process starts");
     assert!(body.next().await.is_none(), "EOF ends the body cleanly");
@@ -732,12 +724,12 @@ async fn killed_child_is_reaped() {
     let spawner = ProcessSpawner::with_path(binary);
     let argv = ["ffmpeg".to_owned(), "30".to_owned()];
 
-    let mut stopped = spawner.spawn(&argv).expect("sleep starts");
+    let mut stopped = spawner.spawn(&argv, source()).expect("sleep starts");
     let proc_dir = PathBuf::from(format!("/proc/{}", stopped.id().expect("pid")));
     stopped.stop().await;
     assert!(!proc_dir.exists(), "stop reaps the child");
 
-    let dropped = spawner.spawn(&argv).expect("sleep starts");
+    let dropped = spawner.spawn(&argv, source()).expect("sleep starts");
     let proc_dir = PathBuf::from(format!("/proc/{}", dropped.id().expect("pid")));
     drop(dropped);
     tokio::time::timeout(Duration::from_secs(5), async {

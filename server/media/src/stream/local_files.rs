@@ -5,14 +5,16 @@
 //! library catalog knows are ever served: a track row that is currently
 //! streamable (`availability = 'indexed'`). The row's
 //! root id and relative path are joined onto that root's configured
-//! directory, and the result must still sit inside a configured library
-//! root after symlinks resolve. Nothing a caller sends ever becomes part of
-//! a path; ids only select catalog rows.
+//! directory, and every read opens the file beneath that directory without
+//! following a link below it (the directory itself is the admin's and may
+//! be one). Nothing a caller sends ever becomes part of a path; ids only
+//! select catalog rows.
 
 use std::path::{Component, Path, PathBuf};
 
 use rusqlite::{OptionalExtension as _, Row};
 
+use droppedneedle_kernel::beneath::{RootLinks, met_a_link, open_file_beneath};
 use droppedneedle_kernel::db::{Db, DbError};
 use droppedneedle_library::scan::coordinator::{ResolverSource as _, SharedResolver};
 use droppedneedle_library::scan::roots::RootRegistry;
@@ -61,8 +63,26 @@ pub struct AlbumFiles {
 pub enum PathRefusal {
     /// The file is gone from disk, or its root is not configured.
     Missing,
-    /// The path resolves outside every library root.
+    /// The path leaves every library root, or meets a link below one.
     Outside,
+}
+
+/// A file on disk and the folder it is read beneath. Every read opens it
+/// with [`LocatedFile::open`], which follows no link below the folder, so
+/// a folder swapped for a link after the lookup is refused at the read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocatedFile {
+    /// The library folder as configured, which may itself be a link.
+    pub root: PathBuf,
+    /// The file, below `root`.
+    pub path: PathBuf,
+}
+
+impl LocatedFile {
+    /// Open the regular file for reading. Blocking.
+    pub fn open(&self) -> std::io::Result<std::fs::File> {
+        open_file_beneath(&self.root, &self.path, RootLinks::Follow)
+    }
 }
 
 impl CatalogFile {
@@ -178,29 +198,35 @@ fn join_relative(root: &Path, relative: &str) -> Option<PathBuf> {
     (parts > 0).then_some(path)
 }
 
-/// Canonical path of a catalog file, proven to sit inside a configured
-/// library root. Blocking: touches the filesystem, so callers run it off
-/// the async workers.
-pub fn resolve(registry: &RootRegistry, file: &CatalogFile) -> Result<PathBuf, PathRefusal> {
-    let roots: Vec<PathBuf> = registry
-        .roots()
-        .iter()
-        .filter_map(|root| root.path.canonicalize().ok())
-        .collect();
-    let candidate = match registry.resolve(&file.root_id) {
-        Some(root) => join_relative(&root.path, &file.relative_path).ok_or(PathRefusal::Outside)?,
+/// A catalog file and the library folder it is read beneath, proven to
+/// open there as a regular file. Blocking: touches the filesystem, so
+/// callers run it off the async workers.
+pub fn resolve(registry: &RootRegistry, file: &CatalogFile) -> Result<LocatedFile, PathRefusal> {
+    let located = match registry.resolve(&file.root_id) {
+        Some(root) => LocatedFile {
+            path: join_relative(&root.path, &file.relative_path).ok_or(PathRefusal::Outside)?,
+            root: root.path.clone(),
+        },
         // A root removed from settings keeps its rows until the next scan;
-        // the recorded absolute path still serves if another root covers it.
-        None => PathBuf::from(&file.file_path),
+        // the recorded path still serves while it lies below a configured
+        // library folder, and is read beneath that folder, so no link below
+        // it is followed.
+        None => {
+            let path = PathBuf::from(&file.file_path);
+            let root = registry
+                .roots()
+                .iter()
+                .map(|root| root.path.clone())
+                .find(|root| path.starts_with(root) && path != *root)
+                .ok_or(PathRefusal::Outside)?;
+            LocatedFile { root, path }
+        }
     };
-    let resolved = candidate.canonicalize().map_err(|_| PathRefusal::Missing)?;
-    if !roots.iter().any(|root| resolved.starts_with(root)) {
-        return Err(PathRefusal::Outside);
+    match located.open() {
+        Ok(_) => Ok(located),
+        Err(error) if met_a_link(&error) => Err(PathRefusal::Outside),
+        Err(_) => Err(PathRefusal::Missing),
     }
-    if !resolved.is_file() {
-        return Err(PathRefusal::Missing);
-    }
-    Ok(resolved)
 }
 
 /// Why a track id cannot be served from disk.
@@ -249,7 +275,7 @@ impl LibraryFiles {
     pub async fn locate_track(
         &self,
         track_id: &str,
-    ) -> Result<(CatalogFile, PathBuf), LocateError> {
+    ) -> Result<(CatalogFile, LocatedFile), LocateError> {
         let file = self
             .catalog
             .track(track_id)
@@ -335,5 +361,67 @@ mod tests {
                 "a symlink out of the root is refused"
             );
         }
+    }
+
+    /// Nothing below a library folder is followed, even a link that stays
+    /// inside it, and a folder swapped for a link after the lookup is
+    /// refused when the file is read. The folder itself may be a link.
+    #[test]
+    fn a_linked_folder_below_a_root_is_never_served() {
+        let scratch =
+            droppedneedle_kernel::db::scratch::ScratchDir::new("download-linked").expect("dir");
+        let base = scratch.path();
+        let music = base.join("music");
+        std::fs::create_dir_all(music.join("Artist/Album")).expect("album dir");
+        std::fs::write(music.join("Artist/Album/song.flac"), b"x").expect("song");
+        std::os::unix::fs::symlink(&music, base.join("alias")).expect("root link");
+        let registry = RootRegistry::new(
+            vec![LibraryRoot::new(
+                "r1",
+                base.join("alias"),
+                EffectivePolicy::Automatic,
+            )],
+            true,
+            "rev",
+        );
+
+        let located = resolve(&registry, &file("r1", "Artist/Album/song.flac", ""))
+            .expect("a real folder, under a linked root, serves");
+        std::os::unix::fs::symlink(music.join("Artist"), music.join("Linked")).expect("link");
+        assert_eq!(
+            resolve(&registry, &file("r1", "Linked/Album/song.flac", "")),
+            Err(PathRefusal::Outside),
+            "a link that stays inside the root is not followed"
+        );
+        let removed_root = base.join("alias/Linked");
+        let removed_file = removed_root.join("Album/song.flac");
+        assert_eq!(
+            resolve(
+                &registry,
+                &file(
+                    "gone-root",
+                    "Album/song.flac",
+                    &removed_file.to_string_lossy()
+                )
+            ),
+            Err(PathRefusal::Outside),
+            "a removed root's row is read beneath the configured folder, not through a link"
+        );
+        let kept_file = base.join("alias/Artist/Album/song.flac");
+        assert!(
+            resolve(
+                &registry,
+                &file("gone-root", "Album/song.flac", &kept_file.to_string_lossy())
+            )
+            .is_ok(),
+            "a removed root's row under a real folder still serves"
+        );
+
+        std::fs::rename(music.join("Artist"), base.join("held")).expect("folder moves");
+        std::os::unix::fs::symlink(base.join("held"), music.join("Artist")).expect("swap");
+        assert!(
+            located.open().is_err(),
+            "a folder swapped for a link after the lookup is refused at the read"
+        );
     }
 }

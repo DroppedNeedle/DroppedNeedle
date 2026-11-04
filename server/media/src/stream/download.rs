@@ -25,7 +25,7 @@
 
 mod archive;
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use axum::{
@@ -43,7 +43,9 @@ use super::engine::{ChunkStream, content_type_for_extension};
 use super::error::unsatisfiable;
 use super::framing::{DirectSpan, file_range, range_header};
 use super::gateway::OUTSIDE_MESSAGE;
-use super::local_files::{AlbumFiles, CatalogFile, LibraryFiles, LocateError, PathRefusal};
+use super::local_files::{
+    AlbumFiles, CatalogFile, LibraryFiles, LocateError, LocatedFile, PathRefusal,
+};
 use droppedneedle_auth::{Role, User};
 use droppedneedle_kernel::error::ApiError;
 use droppedneedle_kernel::mount::{Routes, routes};
@@ -208,7 +210,7 @@ pub async fn download_track(
         .library
         .as_ref()
         .ok_or(DownloadError::NotFound("Track file not found"))?;
-    let (_, path) = library
+    let (_, file) = library
         .locate_track(&id)
         .await
         .map_err(|error| match error {
@@ -222,10 +224,13 @@ pub async fn download_track(
             }
             LocateError::Internal(cause) => DownloadError::internal(cause),
         })?;
-    let size = tokio::fs::metadata(&path)
+    let opened = file.clone();
+    let size = tokio::task::spawn_blocking(move || opened.open()?.metadata())
         .await
+        .map_err(DownloadError::internal)?
         .map_err(|_| DownloadError::NotFound("Track file not found on disk"))?
         .len();
+    let path = file.path.as_path();
     let span = DirectSpan::for_request(range_header(&request_headers), size)
         .ok_or(DownloadError::Unsatisfiable { total_len: size })?;
     let content_type = path
@@ -244,7 +249,7 @@ pub async fn download_track(
     Ok((
         span.status(),
         headers,
-        Body::from_stream(file_range(path, span.start, span.len)),
+        Body::from_stream(file_range(file, span.start, span.len)),
     )
         .into_response())
 }
@@ -312,23 +317,29 @@ pub async fn download_album_by_mbid(
 // Files on disk
 // ---------------------------------------------------------------------------
 
-/// Canonical path, size and modification time of one catalog file.
+/// One catalog file on disk, with its size and modification time.
 /// Blocking.
-fn locate(registry: &RootRegistry, file: &CatalogFile) -> Result<(PathBuf, u64, i64), PathRefusal> {
-    let path = super::local_files::resolve(registry, file)?;
-    let metadata = std::fs::metadata(&path).map_err(|_| PathRefusal::Missing)?;
+fn locate(
+    registry: &RootRegistry,
+    file: &CatalogFile,
+) -> Result<(LocatedFile, u64, i64), PathRefusal> {
+    let located = super::local_files::resolve(registry, file)?;
+    let metadata = located
+        .open()
+        .and_then(|opened| opened.metadata())
+        .map_err(|_| PathRefusal::Missing)?;
     let modified = metadata
         .modified()
         .ok()
         .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
         .map_or(0, |span| i64::try_from(span.as_secs()).unwrap_or(i64::MAX));
-    Ok((path, metadata.len(), modified))
+    Ok((located, metadata.len(), modified))
 }
 
 /// One archive member: its entry and where its bytes live.
 struct Member {
     entry: Entry,
-    path: PathBuf,
+    file: LocatedFile,
 }
 
 /// Plan, then stream, one album archive.
@@ -393,8 +404,8 @@ fn plan_members(
     let mut taken = std::collections::HashSet::new();
     let members = located
         .into_iter()
-        .map(|(file, (path, size, modified))| {
-            let name = unique_name(&entry_name(file, &path, multi_disc), &mut taken);
+        .map(|(file, (located, size, modified))| {
+            let name = unique_name(&entry_name(file, &located.path, multi_disc), &mut taken);
             let (dos_time, dos_date) = archive::dos_datetime(modified);
             Member {
                 entry: Entry {
@@ -403,7 +414,7 @@ fn plan_members(
                     dos_time,
                     dos_date,
                 },
-                path,
+                file: located,
             }
         })
         .collect();
@@ -445,10 +456,10 @@ fn unique_name(name: &str, taken: &mut std::collections::HashSet<String>) -> Str
 
 /// Read a whole file once for its CRC-32, checking it still has the size
 /// the archive was planned with.
-async fn file_crc(path: PathBuf, size: u64) -> std::io::Result<u32> {
+async fn file_crc(located: LocatedFile, size: u64) -> std::io::Result<u32> {
     tokio::task::spawn_blocking(move || {
         use std::io::Read as _;
-        let mut file = std::fs::File::open(&path)?;
+        let mut file = located.open()?;
         let mut crc = flate2::Crc::new();
         let mut buffer = vec![0u8; 64 * 1024];
         let mut total = 0u64;
@@ -482,7 +493,7 @@ fn archive_stream(members: Vec<Member>, entries: Vec<Entry>, layout: Layout) -> 
         .then(move |member| {
             let crcs = Arc::clone(&recorded);
             async move {
-                let crc = file_crc(member.path.clone(), member.entry.size).await?;
+                let crc = file_crc(member.file.clone(), member.entry.size).await?;
                 crcs.lock()
                     .unwrap_or_else(|poison| poison.into_inner())
                     .push(crc);
@@ -491,7 +502,7 @@ fn archive_stream(members: Vec<Member>, entries: Vec<Entry>, layout: Layout) -> 
         })
         .flat_map(|prepared| match prepared {
             Ok((header, member)) => stream::once(async move { Ok(header) })
-                .chain(file_range(member.path, 0, member.entry.size))
+                .chain(file_range(member.file, 0, member.entry.size))
                 .boxed(),
             Err(error) => {
                 tracing::warn!(%error, "album archive stopped mid-stream");

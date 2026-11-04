@@ -98,7 +98,7 @@ impl FakeTranscoder {
 impl Transcoder for FakeTranscoder {
     async fn stream(
         &self,
-        _source_path: &Path,
+        _source: std::fs::File,
         plan: &StreamPlan,
         _principal: &str,
         _direct: Option<OwnedDirectLease>,
@@ -470,7 +470,7 @@ struct NeverTranscoder;
 impl Transcoder for NeverTranscoder {
     async fn stream(
         &self,
-        _source_path: &Path,
+        _source: std::fs::File,
         _plan: &StreamPlan,
         _principal: &str,
         _direct: Option<OwnedDirectLease>,

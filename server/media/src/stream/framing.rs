@@ -14,13 +14,12 @@
 //! file. Anything else, a multi-range request included, is 416 with
 //! `Content-Range: bytes */N`.
 
-use std::path::PathBuf;
-
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use futures_util::StreamExt as _;
 
 use super::engine::{ChunkStream, MediaBody, StreamMedia};
 use super::error::StreamError;
+use super::local_files::LocatedFile;
 
 /// Inclusive resolved byte range.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -302,14 +301,14 @@ fn direct_body(
 /// Read size of one file chunk.
 const FILE_CHUNK: u64 = 64 * 1024;
 
-/// Stream `len` bytes of `path` from `start`. The file is opened when the
-/// stream is first polled. A file that ends early fails the stream instead
-/// of sending short.
-pub fn file_range(path: PathBuf, start: u64, len: u64) -> ChunkStream {
+/// Stream `len` bytes of `located` from `start`. The file is opened, beneath
+/// its folder, when the stream is first polled. A file that ends early
+/// fails the stream instead of sending short.
+pub fn file_range(located: LocatedFile, start: u64, len: u64) -> ChunkStream {
     use tokio::io::{AsyncReadExt as _, AsyncSeekExt as _};
 
     struct Cursor {
-        path: PathBuf,
+        located: LocatedFile,
         file: Option<tokio::fs::File>,
         start: u64,
         remaining: u64,
@@ -318,7 +317,11 @@ pub fn file_range(path: PathBuf, start: u64, len: u64) -> ChunkStream {
         let mut file = match cursor.file.take() {
             Some(file) => file,
             None => {
-                let mut file = tokio::fs::File::open(&cursor.path).await?;
+                let located = cursor.located.clone();
+                let opened = tokio::task::spawn_blocking(move || located.open())
+                    .await
+                    .map_err(std::io::Error::other)??;
+                let mut file = tokio::fs::File::from_std(opened);
                 file.seek(std::io::SeekFrom::Start(cursor.start)).await?;
                 file
             }
@@ -338,7 +341,7 @@ pub fn file_range(path: PathBuf, start: u64, len: u64) -> ChunkStream {
         Ok((buf, cursor))
     }
     let cursor = Cursor {
-        path,
+        located,
         file: None,
         start,
         remaining: len,

@@ -28,6 +28,7 @@ use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 use droppedneedle_kernel::mount::{Routes, routes};
 use droppedneedle_media::stream::engine::content_type_for_extension;
 use droppedneedle_media::stream::framing::{DirectSpan, file_range, range_header};
+use droppedneedle_media::stream::local_files::LocatedFile;
 
 /// What a person can do with one held file, besides listening and
 /// discarding, which every file offers.
@@ -538,7 +539,12 @@ pub async fn audio_handler(
         .extension()
         .and_then(|ext| content_type_for_extension(&ext.to_string_lossy()))
         .unwrap_or("application/octet-stream");
-    let mut response = Response::new(Body::from_stream(file_range(path, span.start, span.len)));
+    // The held copy's real path, checked to lie in its folder.
+    let Some(root) = path.parent().map(std::path::Path::to_path_buf) else {
+        return Err(ApiError::from(RequestsError::NotFound));
+    };
+    let file = LocatedFile { root, path };
+    let mut response = Response::new(Body::from_stream(file_range(file, span.start, span.len)));
     *response.status_mut() = span.status();
     span.write_headers(response.headers_mut());
     response

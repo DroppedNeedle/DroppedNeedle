@@ -9,7 +9,10 @@
 //!
 //! # Execution
 //!
-//! ffmpeg runs as a `tokio::process` child with `kill_on_drop`. One task
+//! ffmpeg never opens the source by its path: the caller opens it (beneath
+//! its library folder, following no link) and the child gets that file as
+//! its standard input, which it reads as [`INPUT`]. ffmpeg runs as a
+//! `tokio::process` child with `kill_on_drop`. One task
 //! per transcode pumps its stdout into a one-chunk channel that the
 //! response body reads, and owns the child and both leases (the ffmpeg
 //! slot and the direct slot the open took). Every way the body can end
@@ -513,9 +516,15 @@ pub trait FfmpegSpawner: Send + Sync {
     /// Child type this spawner produces.
     type Child: FfmpegChild;
 
-    /// Start one child for already-built argv (see [`build_cmd`]).
-    fn spawn(&self, argv: &[String]) -> Result<Self::Child, TranscodeError>;
+    /// Start one child for already-built argv (see [`build_cmd`]), with
+    /// `input` as its standard input.
+    fn spawn(&self, argv: &[String], input: std::fs::File) -> Result<Self::Child, TranscodeError>;
 }
+
+/// The input path every transcode hands ffmpeg: its standard input,
+/// reopened through `/proc` so it reads as the seekable file it is (a
+/// `pipe:` input cannot seek, and an MP4 may keep its index at the end).
+pub const INPUT: &str = "/proc/self/fd/0";
 
 /// Production spawner: one `tokio::process` child per transcode.
 pub struct ProcessSpawner {
@@ -532,13 +541,13 @@ impl ProcessSpawner {
 impl FfmpegSpawner for ProcessSpawner {
     type Child = ProcessChild;
 
-    fn spawn(&self, argv: &[String]) -> Result<ProcessChild, TranscodeError> {
+    fn spawn(&self, argv: &[String], input: std::fs::File) -> Result<ProcessChild, TranscodeError> {
         let Some((_, args)) = argv.split_first() else {
             return Err(TranscodeError::Spawn("empty ffmpeg argv".to_owned()));
         };
         let mut child = tokio::process::Command::new(&self.ffmpeg)
             .args(args)
-            .stdin(std::process::Stdio::null())
+            .stdin(std::process::Stdio::from(input))
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .kill_on_drop(true)
@@ -646,14 +655,14 @@ impl FfmpegChild for ProcessChild {
 /// [`decide()`] first and only reaches `stream` on a transcode plan; the
 /// engine rejects direct plans defensively.
 pub trait Transcoder: Send + Sync {
-    /// Take an ffmpeg slot, spawn ffmpeg for the plan, and hand back its
-    /// output as a body stream. The ffmpeg slot and `direct`, the direct
-    /// slot the open took, are held until the transcode ends, and released
-    /// exactly once however it ends: EOF, failure, a dropped body, or
-    /// [`IDLE_DEADLINE`] without a read.
+    /// Take an ffmpeg slot, spawn ffmpeg for the plan over `source`, the
+    /// open source file, and hand back its output as a body stream. The
+    /// ffmpeg slot and `direct`, the direct slot the open took, are held
+    /// until the transcode ends, and released exactly once however it ends:
+    /// EOF, failure, a dropped body, or [`IDLE_DEADLINE`] without a read.
     fn stream(
         &self,
-        source_path: &Path,
+        source: std::fs::File,
         plan: &StreamPlan,
         principal: &str,
         direct: Option<OwnedDirectLease>,
@@ -676,12 +685,12 @@ impl<S> FfmpegTranscoder<S> {
 impl<S: FfmpegSpawner> Transcoder for FfmpegTranscoder<S> {
     async fn stream(
         &self,
-        source_path: &Path,
+        source: std::fs::File,
         plan: &StreamPlan,
         principal: &str,
         direct: Option<OwnedDirectLease>,
     ) -> Result<ChunkStream, TranscodeError> {
-        let Some(argv) = build_cmd(source_path, plan) else {
+        let Some(argv) = build_cmd(Path::new(INPUT), plan) else {
             return Err(TranscodeError::NotTranscoding);
         };
         // Lease before spawning; a failed start drops it, so it
@@ -691,7 +700,7 @@ impl<S: FfmpegSpawner> Transcoder for FfmpegTranscoder<S> {
             .acquire_owned(principal)
             .await
             .map_err(|_| TranscodeError::Capacity)?;
-        let child = self.spawner.spawn(&argv)?;
+        let child = self.spawner.spawn(&argv, source)?;
         Ok(start(
             child,
             Held {

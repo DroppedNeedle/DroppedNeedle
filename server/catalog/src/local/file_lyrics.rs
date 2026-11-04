@@ -24,7 +24,7 @@ pub(crate) async fn read(
         return Ok(None);
     }
     let path = match files.locate_track(track_id).await {
-        Ok((_, path)) => path,
+        Ok((_, file)) => file.path,
         Err(LocateError::Internal(cause)) => return Err(StoreError::Internal(cause)),
         Err(LocateError::Unknown | LocateError::Refused(_)) => return Ok(None),
     };
