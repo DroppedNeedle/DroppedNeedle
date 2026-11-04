@@ -1414,3 +1414,114 @@ fn crates_depend_only_downward() {
     }
     assert!(wrong.is_empty(), "crate layers:\n{}", wrong.join("\n"));
 }
+
+/// Where the narration gate looks, from the repository root: code, tests
+/// and config. The tool crate keeps v2's names to read the old data, and
+/// the plugin SDK is left out.
+const NARRATION_ROOTS: &[&str] = &[
+    "server",
+    "frontend/src",
+    "examples/plugins",
+    ".github",
+    "Dockerfile",
+    "Makefile",
+    "entrypoint.sh",
+];
+
+/// Under the roots, what the gate skips and why.
+const NARRATION_SKIPPED: &[(&str, &str)] = &[
+    ("server/target", "build output"),
+    (
+        "server/tool",
+        "the offline tool, which names v2's data as v2 wrote it",
+    ),
+    (
+        "server/tests/fixtures",
+        "recorded third-party answers, kept as they were sent",
+    ),
+];
+
+/// Every file under `root` (a file or a folder), as a path from the
+/// repository root and its text, past the skipped places and any folder
+/// named `node_modules`.
+fn narration_files(repo: &Path, root: &str, files: &mut Vec<(String, String)>) {
+    let mut pending = vec![repo.join(root)];
+    while let Some(path) = pending.pop() {
+        let relative = path
+            .strip_prefix(repo)
+            .expect("under the repository")
+            .to_string_lossy()
+            .replace('\\', "/");
+        if NARRATION_SKIPPED
+            .iter()
+            .any(|(skipped, _)| relative == *skipped)
+            || path.file_name().is_some_and(|name| name == "node_modules")
+        {
+            continue;
+        }
+        if path.is_dir() {
+            for entry in std::fs::read_dir(&path).expect("folder lists") {
+                pending.push(entry.expect("entry").path());
+            }
+        } else if path.is_file() {
+            let bytes = std::fs::read(&path).expect("file reads");
+            files.push((relative, String::from_utf8_lossy(&bytes).into_owned()));
+        }
+    }
+}
+
+/// Comments say what and why, never how the code came to be: no port
+/// narration, and no plan, package, task or review id, which point at
+/// notes outside the repository. Each pattern is spelled in parts so this
+/// file does not match itself.
+#[test]
+fn no_port_narration_or_plan_ids() {
+    let patterns: Vec<Regex> = [
+        format!(r"(?i)\b{}{}", "ported", " from"),
+        format!(r"(?i)\b{}{}", "parity", " with"),
+        r"\bstage[- ][0-9]".to_owned(),
+        r"\bW[0-9]+\.[0-9]+\b".to_owned(),
+        r"\b[A-L][0-9]{1,2}-[0-9]{2}[a-z]?\b".to_owned(),
+        r"\bEUI-[0-9]+".to_owned(),
+        r"\bAM[U]-".to_owned(),
+        r"\bQW[0-9]".to_owned(),
+        r"\bST[0-9]".to_owned(),
+        r"\bSlice [0-9]".to_owned(),
+        format!(
+            r"(?m)(?:^|//[/!]?|#|\*)\s*(?:{}|{}):\s",
+            "Step", "Reviewed-by"
+        ),
+    ]
+    .iter()
+    .map(|pattern| Regex::new(pattern).unwrap())
+    .collect();
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("the repository root");
+    let mut files = Vec::new();
+    for root in NARRATION_ROOTS {
+        narration_files(repo, root, &mut files);
+    }
+    assert!(
+        files
+            .iter()
+            .any(|(path, _)| path.starts_with("frontend/src/"))
+            && files.iter().any(|(path, _)| path == "Dockerfile"),
+        "the walk reaches every root"
+    );
+    let mut wrong = Vec::new();
+    for (path, text) in &files {
+        for pattern in &patterns {
+            for found in pattern.find_iter(text) {
+                let line = text[..found.start()].matches('\n').count() + 1;
+                wrong.push(format!("{path}:{line}: {}", found.as_str().trim()));
+            }
+        }
+    }
+    wrong.sort();
+    assert!(
+        wrong.is_empty(),
+        "port narration or a plan id:\n{}",
+        wrong.join("\n")
+    );
+}
