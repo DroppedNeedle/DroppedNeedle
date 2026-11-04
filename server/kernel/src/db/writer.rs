@@ -865,7 +865,15 @@ impl Shared {
     fn close(self: &Arc<Self>, grace: Duration) -> bool {
         // A grace too long to add to the clock is no bound at all.
         let deadline = Instant::now().checked_add(grace);
-        self.state().closed = true;
+        {
+            let mut state = self.state();
+            // An earlier close that gave up already answered every waiter;
+            // the write it gave up on ends by itself.
+            if state.gave_up {
+                return true;
+            }
+            state.closed = true;
+        }
         // Closing lifted the WAL hold. A bulk write it held on an idle lane
         // is started here, before the wait below, which would otherwise sit
         // out the whole grace for it.
@@ -1546,8 +1554,8 @@ impl WriteLane {
     /// write that still holds the lane at the bound is named in the log and
     /// left to end by itself; the writes queued behind it are answered
     /// `LaneClosed`. The first call closes the lane and a later one finds
-    /// nothing to close, unless the first gave up on a write that is still
-    /// running: a later call then waits for that write, up to `grace` again.
+    /// nothing to close and returns at once, also when the first gave up on
+    /// a write that is still running.
     pub async fn shutdown(&self, grace: Duration) {
         let shared = Arc::clone(&self.shared);
         let closed = tokio::task::spawn_blocking(move || shared.close(grace)).await;

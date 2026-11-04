@@ -50,7 +50,9 @@ pub struct AuthRig {
     pub deps: UsersDeps,
     /// The SQLite stores behind `deps`, for seeding and assertions.
     pub auth: ProdAuth,
-    /// The clock behind `deps` and the session list.
+    /// The clock a rig from [`AuthRig::new`] runs its platform on, for the
+    /// test to move. What the rig seeds is stamped by the platform's clock,
+    /// which the session gate reads.
     pub clock: Arc<ManualClock>,
     /// The settings `deps` read live: the platform's.
     pub config: Arc<ConfigStore>,
@@ -79,8 +81,8 @@ impl AuthRig {
     }
 
     /// A rig on the caller's platform, so its users sit beside the rows
-    /// the test seeds. Auth runs on the platform's clock; the rig's own
-    /// clock only stamps what it seeds.
+    /// the test seeds. Auth, and what the rig seeds, run on the platform's
+    /// clock.
     pub fn on(platform: &Platform) -> Self {
         Self::build(platform.clone(), Arc::new(ManualClock::at(TEST_NOW * 1000)))
     }
@@ -156,7 +158,7 @@ impl AuthRig {
             email: None,
             avatar_url: None,
             role,
-            created_at: self.clock.now_unix(),
+            created_at: self.platform.clock.now_unix(),
             last_login_at: None,
         };
         self.auth
@@ -175,9 +177,10 @@ impl AuthRig {
         row
     }
 
-    /// Seed one standard session for `user_id`, returning its raw token.
+    /// Seed one standard session for `user_id`, issued now by the platform's
+    /// clock, returning its raw token.
     pub async fn seed_session(&self, user_id: &str, session_id: &str) -> String {
-        let now = self.clock.now_unix();
+        let now = self.platform.clock.now_unix();
         let token = format!("raw-token-for-{session_id}");
         self.auth
             .sessions
@@ -207,7 +210,7 @@ impl AuthRig {
     /// Sign `user_id` in with the raw `token`: one standard session issued
     /// now by the platform clock, which the session gate reads.
     pub async fn sign_in(&self, user_id: &str, token: &str) {
-        let now = self.gate.clock.now_unix();
+        let now = self.platform.clock.now_unix();
         let token_hash = tokens::hash_token(token);
         self.auth
             .sessions

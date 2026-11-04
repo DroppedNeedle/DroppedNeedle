@@ -1042,11 +1042,16 @@ fn user_version(connection: &Connection) -> rusqlite::Result<i64> {
 }
 
 /// Keep the newest `keep` backups; older files and sidecars rotate out only
-/// after the new backup verified.
+/// after the new backup verified. Only the app's own `library-<ms>[-<seq>]`
+/// files rotate: a backup someone placed by hand is never counted or
+/// deleted.
 /// The database goes before its manifest, so no finished backup is left
 /// without one.
 fn rotate_backups(backup_dir: &Path, keep: usize) -> Result<(), DbError> {
-    let mut backups = finished_backups(backup_dir)?;
+    let mut backups: Vec<PathBuf> = finished_backups(backup_dir)?
+        .into_iter()
+        .filter(|path| backup_order(path).0.is_some())
+        .collect();
     while backups.len() > keep {
         let oldest = backups.remove(0);
         for path in [oldest.clone(), manifest_path(&oldest)] {
@@ -1062,6 +1067,7 @@ fn rotate_backups(backup_dir: &Path, keep: usize) -> Result<(), DbError> {
 }
 
 /// The finished backup files in `backup_dir`, oldest first.
+/// [`backup_order`] says what oldest means.
 fn finished_backups(backup_dir: &Path) -> Result<Vec<PathBuf>, DbError> {
     let mut backups: Vec<PathBuf> = Vec::new();
     for entry in std::fs::read_dir(backup_dir)? {
@@ -1073,8 +1079,23 @@ fn finished_backups(backup_dir: &Path) -> Result<Vec<PathBuf>, DbError> {
             backups.push(path);
         }
     }
-    backups.sort();
+    backups.sort_by_cached_key(|path| backup_order(path));
     Ok(backups)
+}
+
+/// Where a backup sorts: by the millisecond and then the sequence its
+/// [`backup_file_name`] holds, read as numbers, so `-10` comes after `-9`.
+/// A name of another shape sorts first, by name.
+fn backup_order(path: &Path) -> (Option<(u128, u64)>, PathBuf) {
+    let stamp = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .and_then(|name| name.strip_prefix("library-")?.strip_suffix(".db"))
+        .and_then(|stamp| {
+            let (millis, seq) = stamp.split_once('-').unwrap_or((stamp, "0"));
+            Some((millis.parse().ok()?, seq.parse().ok()?))
+        });
+    (stamp, path.to_owned())
 }
 
 /// Manifest sidecar path for a backup file.
@@ -1205,14 +1226,21 @@ mod tests {
         drop(writer);
     }
 
+    /// Rotation keeps the newest five with their manifests, a sequence of
+    /// 10 within one millisecond counting as newer than 9.
     #[test]
     fn rotation_keeps_the_newest_five() {
         let dir = std::env::temp_dir().join(format!("db-rotate-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        for index in 0..7 {
-            let name = format!("library-{index}.db");
+        let same_ms = UNIX_EPOCH + Duration::from_millis(1_700_000_000_000);
+        for seq in 0..12 {
+            let name = backup_file_name(same_ms, seq);
             std::fs::write(dir.join(&name), b"x").unwrap();
             std::fs::write(dir.join(format!("{name}{MANIFEST_SUFFIX}")), b"{}").unwrap();
+        }
+        let placed = ["before-test.db", "mybackup.db"];
+        for name in placed {
+            std::fs::write(dir.join(name), b"x").unwrap();
         }
         rotate_backups(&dir, 5).unwrap();
         let mut left: Vec<String> = std::fs::read_dir(&dir)
@@ -1220,21 +1248,13 @@ mod tests {
             .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
             .collect();
         left.sort();
-        assert_eq!(
-            left,
-            vec![
-                "library-2.db",
-                "library-2.db.manifest.json",
-                "library-3.db",
-                "library-3.db.manifest.json",
-                "library-4.db",
-                "library-4.db.manifest.json",
-                "library-5.db",
-                "library-5.db.manifest.json",
-                "library-6.db",
-                "library-6.db.manifest.json",
-            ]
-        );
+        let mut kept: Vec<String> = (7..12)
+            .map(|seq| backup_file_name(same_ms, seq))
+            .flat_map(|name| [format!("{name}{MANIFEST_SUFFIX}"), name])
+            .chain(placed.map(str::to_owned))
+            .collect();
+        kept.sort();
+        assert_eq!(left, kept);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

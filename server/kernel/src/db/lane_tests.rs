@@ -478,7 +478,8 @@ fn durable_write_syncs_fully_and_the_next_write_does_not() {
 /// Shutdown behind a write that does not return gives up at its bound: it
 /// comes back, and the writes still queued, from a thread and from an async
 /// caller, are answered `LaneClosed` and never run. One whose refusal
-/// panics does not stop the rest being answered.
+/// panics does not stop the rest being answered. A second shutdown
+/// returns at once.
 #[test]
 fn shutdown_gives_up_on_a_holder_that_does_not_return() {
     let (lane, _dir) = scratch_lane("shutdown-stuck");
@@ -546,6 +547,16 @@ fn shutdown_gives_up_on_a_holder_that_does_not_return() {
     assert!(
         matches!(refused, Err(DbError::LaneClosed)),
         "a parked write hears LaneClosed, got {refused:?}"
+    );
+
+    // The write it gave up on ends by itself; a second shutdown does not
+    // wait out its grace for it again.
+    let again = Instant::now();
+    current_thread_runtime().block_on(lane.shutdown(DRAIN));
+    assert!(
+        again.elapsed() < DRAIN / 2,
+        "a second shutdown returns at once, took {:?}",
+        again.elapsed()
     );
 
     let_go.send(()).unwrap();
