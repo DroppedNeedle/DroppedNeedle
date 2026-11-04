@@ -166,4 +166,4 @@ To rehearse a release without publishing, run the Release workflow by hand with 
 
 ## Questions?
 
-Open a thread in [Discord](https://discord.gg/B5suDg7gu2) or start a [GitHub Discussion](https://github.com/DroppedNeedle/DroppedNeedle/discussions).
+Ask in [Discord](https://discord.gg/B5suDg7gu2) or open an [issue](https://github.com/DroppedNeedle/DroppedNeedle/issues).
