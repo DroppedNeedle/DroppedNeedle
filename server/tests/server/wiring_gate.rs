@@ -10,15 +10,18 @@
 //! bundle leaves empty.
 //!
 //! A second pass reads signatures whole: a `with_*` method that takes a
-//! handle in any parameter, an `Option<&..>` of a handle, and an `Option`
-//! of a type alias that names a port. A handle is a trait object, an
-//! `impl` of anything but a conversion trait, an `Arc`, a `Live` settings
-//! handle, the `Platform` or `Db`, or a workspace type whose every
-//! definition holds one of those; type aliases are read as what they name.
+//! handle in any parameter (a generic bound by a trait other than a
+//! conversion or a marker counts as one), and an `Option` of a handle,
+//! owned or by reference. A handle is a trait object, an `impl` of
+//! anything but a conversion trait, an `Arc`, a `Live` settings handle,
+//! the `Platform` or `Db`, or a workspace type whose every definition
+//! holds one of those (a closure alone does not make one); type aliases
+//! are read as what they name, however their path is written.
 //!
 //! The few process-wide caches and run-time handles that stay are listed
-//! by file (or by file and name, for the second pass), each with its
-//! reason, and every listed entry must still match its rule.
+//! by file (or by file and name, for the second pass, one site per
+//! entry), each with its reason, and every listed entry must still match
+//! its rule.
 
 use std::collections::{HashMap, HashSet};
 
@@ -199,21 +202,6 @@ const LATE_ALLOWED: &[(&str, &str, &str)] = &[
         "what the cover cache knows, nothing until its index is loaded",
     ),
     (
-        "catalog/src/local/edition_tracks.rs",
-        "releases",
-        "the library reads' releases, which their test rigs leave out; to be made required",
-    ),
-    (
-        "catalog/src/local/stores.rs",
-        "policy",
-        "the library reads' download policy, which their test rigs leave out; to be made required",
-    ),
-    (
-        "catalog/src/search/service.rs",
-        "with_remote",
-        "MusicBrainz search, which the local search tests leave out; to be made required",
-    ),
-    (
         "kernel/src/db/backup.rs",
         "progress",
         "a caller's progress report for one backup",
@@ -259,21 +247,6 @@ const LATE_ALLOWED: &[(&str, &str, &str)] = &[
         "one publish's deadline for an added file",
     ),
     (
-        "media/src/stream/gateway.rs",
-        "with_settings",
-        "the stream gateway's live settings, which its test rigs leave out; to be made required",
-    ),
-    (
-        "media/src/stream/gateway.rs",
-        "with_library",
-        "the stream gateway's library reads, which its test rigs leave out; to be made required",
-    ),
-    (
-        "media/src/stream/gateway.rs",
-        "with_plugins",
-        "the stream gateway's plugin sources, which its test rigs leave out; to be made required",
-    ),
-    (
         "src/app.rs",
         "state",
         "the API document is built from the routes with no app state behind them",
@@ -290,7 +263,18 @@ struct Late {
 
 #[test]
 fn no_handle_is_attached_or_left_optional() {
-    let found = late_bindings(&workspace_sources());
+    let wrong = allowed_once(late_bindings(&workspace_sources()));
+    assert!(
+        wrong.is_empty(),
+        "take the handle as a constructor argument instead, or list a run-time choice with its reason:\n{}",
+        wrong.join("\n")
+    );
+}
+
+/// What is wrong with `found` against [`LATE_ALLOWED`]: a site no entry
+/// lists, a second site under an entry's file and name, and an entry
+/// that no longer matches.
+fn allowed_once(found: Vec<Late>) -> Vec<String> {
     let mut used = vec![false; LATE_ALLOWED.len()];
     let mut wrong = Vec::new();
     for late in found {
@@ -298,7 +282,11 @@ fn no_handle_is_attached_or_left_optional() {
             .iter()
             .position(|(path, name, _)| late.path == *path && late.name == *name)
         {
-            Some(at) => used[at] = true,
+            Some(at) if !used[at] => used[at] = true,
+            Some(_) => wrong.push(format!(
+                "{}:{}: {} ({}); the entry for {} covers one site, and this is another",
+                late.path, late.line, late.name, late.what, late.name
+            )),
             None => wrong.push(format!(
                 "{}:{}: {} ({})",
                 late.path, late.line, late.name, late.what
@@ -312,11 +300,7 @@ fn no_handle_is_attached_or_left_optional() {
             ));
         }
     }
-    assert!(
-        wrong.is_empty(),
-        "take the handle as a constructor argument instead, or list a run-time choice with its reason:\n{}",
-        wrong.join("\n")
-    );
+    wrong
 }
 
 /// Each shape the second pass exists for is found in a bait source, and
@@ -333,6 +317,9 @@ pub struct Limits { per_minute: u32, names: Arc<str> }
 pub struct Reader { files: CoverWarm }
 pub enum Status { CoverWarm, Idle(u32) }
 pub struct Effects { wake: Option<DownloadWake> }
+pub struct Folders { store: Box<dyn FolderStore> }
+pub struct Hook { run: Box<dyn FnMut(u32)> }
+pub struct Gateway { library: Option<CoverWarm>, hook: Option<Hook>, limits: Option<Limits> }
 impl Builder {
     pub fn with_cover_warm(mut self, warm: CoverWarm) -> Self { self }
     pub fn with_job(mut self, spec: JobSpec, handler: Arc<dyn JobHandler>) -> Self { self }
@@ -343,10 +330,18 @@ impl Builder {
     pub fn with_name(mut self, name: impl Into<String>) -> Self { self }
     pub fn with_jitter(mut self, jitter: Duration) -> Self { self }
     pub fn with_limits(mut self, limits: Limits) -> Self { self }
+    pub fn with_nested<T: Into<Vec<u8>>>(mut self, warm: CoverWarm) -> Self { self }
+    pub fn with_hooked<F: Fn(&Path) -> bool>(mut self, warm: CoverWarm) -> Self { self }
+    pub fn with_port<P: Send + SearchPort>(mut self, port: P) -> Self { self }
+    pub fn with_where<P>(mut self, port: P) -> Self where P: SearchPort { self }
+    pub fn with_label<S: Into<String> + Send>(mut self, label: S) -> Self { self }
+    pub fn with_folders(mut self, folders: Folders) -> Self { self }
+    pub fn with_hook(mut self, hook: Hook) -> Self { self }
 }
 fn enrich(enrichment: Option<&ProductionEnrichment>, settings: Option<&Live<Search>>) {}
 fn place(name: Option<&str>, hook: Option<&dyn Fn(&Path)>, limits: Option<&Limits>) {}
 fn report(status: Option<&Status>, reader: Option<&Reader>) {}
+fn wake(wake_up: Option<crate::effects::DownloadWake>, every: Option<Duration>) {}
 "#
         .to_owned(),
     };
@@ -359,17 +354,44 @@ fn report(status: Option<&Status>, reader: Option<&Reader>) {}
         found,
         [
             "enrichment",
+            "library",
             "reader",
             "settings",
             "wake",
+            "wake_up",
             "with_cover_warm",
             "with_download_wake",
+            "with_folders",
+            "with_hooked",
             "with_job",
             "with_lookup",
             "with_media_refresh",
+            "with_nested",
+            "with_port",
             "with_store",
+            "with_where",
         ]
     );
+}
+
+/// An entry of the allowlist covers the one site it was written for: a
+/// second site of the same name in the same file is not allowed by it.
+#[test]
+fn an_entry_allows_one_site() {
+    let (path, name, _) = LATE_ALLOWED[0];
+    let site = |line| Late {
+        path: path.to_owned(),
+        line,
+        name: name.to_owned(),
+        what: "bait".to_owned(),
+    };
+    let wrong = allowed_once(vec![site(1), site(2)]);
+    let second: Vec<&String> = wrong
+        .iter()
+        .filter(|message| message.contains("covers one site"))
+        .collect();
+    assert_eq!(second.len(), 1, "{wrong:?}");
+    assert!(second[0].starts_with(&format!("{path}:2:")), "{second:?}");
 }
 
 /// Every late binding in `sources`.
@@ -382,8 +404,7 @@ fn late_bindings(sources: &[Source]) -> Vec<Late> {
     let mut found = Vec::new();
     for (path, code) in &codes {
         kinds.with_methods(path, code, &mut found);
-        kinds.optional_refs(path, code, &mut found);
-        kinds.optional_aliases(path, code, &mut found);
+        kinds.optionals(path, code, &mut found);
     }
     found
 }
@@ -400,6 +421,28 @@ const CONVERSIONS: &[&str] = &[
     "ToOwned",
 ];
 
+/// Marker and value traits a generic's bound may name, beside the
+/// conversions, and still leave its type a plain value.
+const MARKERS: &[&str] = &[
+    "Send",
+    "Sync",
+    "Sized",
+    "Unpin",
+    "Clone",
+    "Copy",
+    "Debug",
+    "Default",
+    "PartialEq",
+    "Eq",
+    "PartialOrd",
+    "Ord",
+    "Hash",
+];
+
+/// The closure traits: a type that holds only a closure holds a run-time
+/// choice, not a port.
+const CLOSURES: &[&str] = &["Fn", "FnMut", "FnOnce"];
+
 /// What an `Arc` may hold and still be plain data.
 const SHARED_DATA: &[&str] = &["str", "[", "Path", "OsStr", "Value", "serde_json::Value"];
 
@@ -414,6 +457,8 @@ struct Kinds {
     arc: Regex,
     dyn_object: Regex,
     impl_trait: Regex,
+    /// The trait a `dyn` names.
+    dyn_trait: Regex,
     held_marker: Regex,
 }
 
@@ -445,8 +490,9 @@ impl Kinds {
             arc,
             dyn_object: Regex::new(r"\bdyn\b").unwrap(),
             impl_trait: Regex::new(r"\bimpl\s+(?:\w+::)*(\w+)").unwrap(),
+            dyn_trait: Regex::new(r"\bdyn\s+(?:\w+::)*(\w+)").unwrap(),
             held_marker: Regex::new(
-                r"\bdyn\s+[^F\s]|\bLive<|\bDb\b|\bPlatform\b|\breqwest::Client\b|\b(?:Mutex|RwLock)<|\bwatch::|\bmpsc::",
+                r"\bLive<|\bDb\b|\bPlatform\b|\breqwest::Client\b|\b(?:Mutex|RwLock)<|\bwatch::|\bmpsc::",
             )
             .unwrap(),
         };
@@ -484,10 +530,14 @@ impl Kinds {
         kinds
     }
 
-    /// Whether a type body holds a handle: a marker, a shared `Arc`, or a
-    /// type already known to be one.
+    /// Whether a type body holds a handle: a trait object other than a
+    /// closure, a marker, a shared `Arc`, or a type already known to be
+    /// one.
     fn holds_handle(&self, body: &str) -> bool {
-        self.held_marker.is_match(body)
+        self.dyn_trait
+            .captures_iter(body)
+            .any(|named| !CLOSURES.contains(&&named[1]))
+            || self.held_marker.is_match(body)
             || self.shares(body)
             || self
                 .word
@@ -549,12 +599,27 @@ impl Kinds {
             .map(|word| format!("the handle {word}"))
     }
 
-    /// `with_*` methods that take a handle in any parameter.
+    /// `with_*` methods that take a handle in any parameter. A generic
+    /// bound by a trait other than a conversion or a marker, in the
+    /// generics or a `where` clause, is a handle; other generics are plain
+    /// values.
     fn with_methods(&self, path: &str, code: &str, found: &mut Vec<Late>) {
-        let method = Regex::new(r"\bfn\s+(with_\w*)\s*(<[^>(]*>)?\s*\(").unwrap();
+        let method = Regex::new(r"\bfn\s+(with_\w*)\s*").unwrap();
         let receiver = Regex::new(r"^(?:&\s*(?:'\w+\s+)?)?(?:mut\s+)?self$").unwrap();
         for at in method.captures_iter(code) {
-            let open = at.get(0).unwrap().end() - 1;
+            let mut open = at.get(0).unwrap().end();
+            let mut bounds = String::new();
+            if code[open..].starts_with('<') {
+                let Some(close) = closing(code, open) else {
+                    continue;
+                };
+                bounds = code[open + 1..close].to_owned();
+                let rest = &code[close + 1..];
+                open = close + 1 + rest.len() - rest.trim_start().len();
+            }
+            if !code[open..].starts_with('(') {
+                continue;
+            }
             let Some(close) = closing(code, open) else {
                 continue;
             };
@@ -562,15 +627,17 @@ impl Kinds {
             if !params.first().is_some_and(|first| receiver.is_match(first)) {
                 continue;
             }
-            let generics: Vec<String> = at.get(2).map_or_else(Vec::new, |list| {
-                self.word
-                    .find_iter(list.as_str())
-                    .map(|word| word.as_str().to_owned())
-                    .collect()
-            });
+            if let Some(clause) = where_clause(&code[close + 1..]) {
+                bounds = format!("{bounds}, {clause}");
+            }
+            let (plain, bound) = generics(&bounds);
             if let Some(why) = params[1..].iter().find_map(|param| {
                 let (_, ty) = param.split_once(':')?;
-                self.handle(ty, &generics)
+                bound
+                    .iter()
+                    .find(|(name, _)| self.word.find_iter(ty).any(|word| word.as_str() == name))
+                    .map(|(name, by)| format!("{name}, a generic bound by {by}"))
+                    .or_else(|| self.handle(ty, &plain))
             }) {
                 found.push(Late {
                     path: path.to_owned(),
@@ -582,9 +649,10 @@ impl Kinds {
         }
     }
 
-    /// Parameters and fields of type `Option<&..>` of a handle. An
-    /// optional closure is a run-time choice, not a port.
-    fn optional_refs(&self, path: &str, code: &str, found: &mut Vec<Late>) {
+    /// Parameters, fields and bindings whose `Option` holds a handle, owned
+    /// or by reference, aliases read as what they name. An optional
+    /// closure is a run-time choice, not a port.
+    fn optionals(&self, path: &str, code: &str, found: &mut Vec<Late>) {
         let optional = Regex::new(r"\b(\w+)\s*:\s*Option\s*<").unwrap();
         let reference = Regex::new(r"^&\s*(?:'\w+\s+)?(?:mut\s+)?").unwrap();
         let closure = Regex::new(r"^dyn\s+Fn(?:Mut|Once)?\b").unwrap();
@@ -594,10 +662,10 @@ impl Kinds {
                 continue;
             };
             let inner = code[open + 1..close].trim();
-            let Some(reference) = reference.find(inner) else {
-                continue;
+            let (held, ty) = match reference.find(inner) {
+                Some(reference) => ("an Option<&..>", &inner[reference.end()..]),
+                None => ("an Option", inner),
             };
-            let ty = &inner[reference.end()..];
             if closure.is_match(ty) {
                 continue;
             }
@@ -606,28 +674,48 @@ impl Kinds {
                     path: path.to_owned(),
                     line: line_of(code, open),
                     name: at[1].to_owned(),
-                    what: format!("an Option<&..> of {why}, which a bundle may leave empty"),
+                    what: format!("{held} of {why}, which a bundle may leave empty"),
                 });
             }
         }
     }
+}
 
-    /// Parameters and fields whose `Option` holds a type alias that names a
-    /// port, which the text rules cannot see through.
-    fn optional_aliases(&self, path: &str, code: &str, found: &mut Vec<Late>) {
-        let optional = Regex::new(r"\b(\w+)\s*:\s*Option<\s*(\w+)\s*>").unwrap();
-        let port = Regex::new(r"^(?:(?:std::)?sync::)?(?:Arc|Box)<\s*dyn\b").unwrap();
-        for at in optional.captures_iter(code) {
-            if self.aliases.contains_key(&at[2]) && port.is_match(&self.resolve(&at[2])) {
-                found.push(Late {
-                    path: path.to_owned(),
-                    line: line_of(code, at.get(0).unwrap().start()),
-                    name: at[1].to_owned(),
-                    what: format!("an Option of {}, an alias of a port", &at[2]),
-                });
-            }
+/// The `where` clause of the signature whose parameters end at the start
+/// of `rest`, if it has one.
+fn where_clause(rest: &str) -> Option<&str> {
+    let head = &rest[..rest.find(['{', ';']).unwrap_or(rest.len())];
+    let at = Regex::new(r"\bwhere\b").unwrap().find(head)?;
+    Some(&head[at.end()..])
+}
+
+/// A function's type parameters, from its generics and `where` clause:
+/// the plain ones, and each one bound by a trait that is neither a
+/// conversion nor a marker, with that trait.
+fn generics(list: &str) -> (Vec<String>, Vec<(String, String)>) {
+    let parameter = Regex::new(r"^(?:const\s+)?([A-Z]\w*)\s*(?::([\s\S]*))?$").unwrap();
+    let named = Regex::new(r"^\??\s*(?:\w+::)*(\w+)").unwrap();
+    let mut plain = Vec::new();
+    let mut bound: Vec<(String, String)> = Vec::new();
+    for generic in split_top(list) {
+        let Some(at) = parameter.captures(&generic) else {
+            continue;
+        };
+        let port = at.get(2).and_then(|bounds| {
+            split_at_top(bounds.as_str(), '+').iter().find_map(|each| {
+                let trait_name = named.captures(each)?[1].to_owned();
+                let plain = CONVERSIONS.contains(&trait_name.as_str())
+                    || MARKERS.contains(&trait_name.as_str());
+                (!plain).then_some(trait_name)
+            })
+        });
+        match port {
+            Some(port) => bound.push((at[1].to_owned(), port)),
+            None => plain.push(at[1].to_owned()),
         }
     }
+    plain.retain(|name| !bound.iter().any(|(known, _)| known == name));
+    (plain, bound)
 }
 
 /// The body of the type whose name ends at `from`: what its braces or
@@ -672,6 +760,11 @@ fn closing(code: &str, open: usize) -> Option<usize> {
 
 /// `list` split at its top-level commas, each part trimmed.
 fn split_top(list: &str) -> Vec<String> {
+    split_at_top(list, ',')
+}
+
+/// `list` split at each top-level `separator`, each part trimmed.
+fn split_at_top(list: &str, separator: char) -> Vec<String> {
     let mut parts = Vec::new();
     let mut depth = 0usize;
     let mut part = String::new();
@@ -681,7 +774,7 @@ fn split_top(list: &str) -> Vec<String> {
             '(' | '[' | '{' | '<' => depth += 1,
             '>' if previous == '-' => {}
             ')' | ']' | '}' | '>' => depth = depth.saturating_sub(1),
-            ',' if depth == 0 => {
+            c if c == separator && depth == 0 => {
                 parts.push(part.trim().to_owned());
                 part.clear();
                 previous = c;
