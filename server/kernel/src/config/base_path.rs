@@ -1,6 +1,6 @@
 //! Reverse-proxy mount prefix (`BASE_PATH`) validation.
 //!
-//! One strict normalizer, ported from v2's `core/base_path.py`: the value is
+//! One strict normalizer: the value is
 //! either empty (served at the domain root) or a canonical `/seg[/seg...]`
 //! path. Anything else fails at config load instead of being coerced, so
 //! the router, the session gate and the stamped web UI all agree on one

@@ -1,14 +1,12 @@
 //! In-repo mock slskd server (axum).
 //!
-//! Ported from v2's slskd mock: the executable record
-//! of live-verified slskd 0.25.1 behavior. Shapes mirror the verified JSON
+//! The executable record of live-verified slskd 0.25.1 behavior. Shapes mirror the verified JSON
 //! (camelCase keys, comma-joined `state` flags, plain-array enqueue
 //! returning `{Enqueued, Failed}`, no batch GUID: correlation is by
 //! `(username, filename)`). No test touches a live slskd instance; every
 //! contract test runs against this on loopback.
 //!
-//! Beyond the v2 mock, this pins three more verified behaviors as
-//! scriptable modes so the tests can assert them:
+//! It also pins three verified behaviors as scriptable modes so the tests can assert them:
 //!
 //! - 429 single-op: one-shot flags make the next search or enqueue answer
 //!   429 (slskd permits only one concurrent operation).

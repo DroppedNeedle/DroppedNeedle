@@ -402,7 +402,7 @@ pub fn parse_year(date: Option<&str>) -> Option<i32> {
 // ---------------------------------------------------------------------------
 // Ranking: same-recording release-group choice. Ranking never substitutes
 // one recording MBID for another; it only orders the release groups already
-// attached to that recording (live 2026-07-20, `musicbrainz_API_NOTES.md`).
+// attached to that recording (seen live on 2026-07-20).
 // ---------------------------------------------------------------------------
 
 /// Secondary types that change the version enough to deprioritize.

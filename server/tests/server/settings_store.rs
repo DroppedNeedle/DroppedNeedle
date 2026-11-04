@@ -60,7 +60,7 @@ fn legacy_file(config: &AppConfig) -> std::path::PathBuf {
     config.config_dir().join("config.json")
 }
 
-/// W3.8: two saves of the same section at once both land. Each save reads
+/// Two saves of the same section at once both land. Each save reads
 /// the stored row inside its own write, so neither overwrites the other.
 #[test]
 fn two_saves_at_once_both_land() {
@@ -579,7 +579,7 @@ async fn the_right_key_starts_a_database_with_no_check() {
     );
 }
 
-/// W3.8: a backup carries the settings. A secret saved over HTTP, backed up
+/// A backup carries the settings. A secret saved over HTTP, backed up
 /// through the backup service and restored into an empty data directory
 /// beside the key file opens under that key.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

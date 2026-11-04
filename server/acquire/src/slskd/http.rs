@@ -1,9 +1,8 @@
 //! The smallest HTTP surface the slskd client needs.
 //!
-//! A local seam on purpose rather than the provider catalog `HttpPort`:
-//! that port is GET-only with catalog rate rows and cache prefixes, while
-//! slskd needs GET, POST, and DELETE, serializes through its own semaphores
-//! and caches nothing. Anything before a status line (bad URL, DNS, connect, TLS,
+//! slskd is a service the user runs, so it is called through this seam
+//! rather than a provider client: it needs GET, POST and DELETE, serializes
+//! through its own semaphores, is never paced and caches nothing. Anything before a status line (bad URL, DNS, connect, TLS,
 //! timeout, reset, truncated body) is an [`HttpFault`]; every answered
 //! status maps into the reply and the client decides what it means.
 

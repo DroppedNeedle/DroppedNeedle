@@ -1,6 +1,5 @@
 //! Quota admin: per-user overrides, effective values, and usage.
 //!
-//! Ported from v2 `quota_service.py` + the `admin/users/{id}/quota` pair.
 //! The live ledger stays the enforcement truth (acquisition reads it at
 //! submit and dispatch); this module is the admin face that edits and
 //! inspects it:

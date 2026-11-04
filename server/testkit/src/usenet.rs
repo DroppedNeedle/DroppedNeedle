@@ -1,10 +1,8 @@
 //! Loopback SABnzbd / Newznab / Prowlarr servers for the contract tests.
 //!
-//! Ported from v2's SABnzbd, Newznab and Prowlarr test mocks: the same
-//! feeds, the same
-//! scenario indexers, the same recorded-request discipline, served over
-//! real HTTP on `127.0.0.1` so the clients run their production reqwest
-//! path end to end. Nothing here is reachable beyond loopback, and the
+//! Scenario feeds and indexers that record every request, served over real
+//! HTTP on `127.0.0.1` so the clients run their production reqwest path
+//! end to end. Nothing here is reachable beyond loopback, and the
 //! tests never contact the live network.
 
 use std::collections::HashMap;

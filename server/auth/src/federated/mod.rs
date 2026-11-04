@@ -7,10 +7,6 @@
 //! OAuth) into one journey. v2 bcrypt rows verify once and rehash
 //! to Argon2id on success; sessions never survive import.
 //!
-//! Ported from v2's OIDC, Jellyfin, Plex and local auth services, the auth
-//! store's username derivation (`_derive_username`, `_slugify`), and the
-//! auth, connection and Plex auth routes.
-//!
 //! Each provider has one concrete client in a `*_http` module:
 //! [`oidc_http::OidcHttp`] at the issuer and endpoints the OIDC settings
 //! and discovery name, through the providers crate's OIDC client, and

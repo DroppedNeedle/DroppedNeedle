@@ -1,10 +1,8 @@
 //! Discogs contribution metadata: release lookup and release search.
 //!
-//! A Rust port of v2's Discogs repository (repository, models, and the API
-//! notes seen on 2026-07-21, per discogs_API_NOTES.md). Only contribution
-//! metadata crosses the boundary: image, community, and marketplace-adjacent
-//! fields decode and are dropped, exactly as in v2. Each quirk below cites
-//! the v2 code or note it came from.
+//! Only contribution metadata crosses the boundary: image, community, and
+//! marketplace-adjacent fields decode and are dropped. Each quirk below says
+//! what it was seen against.
 //!
 //! Requests go through the executor at the `discogs` row: 25 requests a
 //! minute unauthenticated, spaced 2.4 seconds with no burst. Response
@@ -25,7 +23,7 @@ mod models;
 
 use models::{WireArtist, WireRelease, WireSearchResponse, WireSearchResult, WireTrack};
 
-/// Live API origin, seen on 2026-07-21 per discogs_API_NOTES.md.
+/// Live API origin, seen on 2026-07-21.
 pub const API_BASE: &str = "https://api.discogs.com";
 /// Origin for canonical release/master/artist/label links.
 pub const WEB_BASE: &str = "https://www.discogs.com";

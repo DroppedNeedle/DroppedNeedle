@@ -8,8 +8,6 @@
 //!
 //! The join key must equal exactly what the live login produces: the
 //! Jellyfin user id from `GET /Users`, the Plex account uuid.
-//!
-//! Ported from v2's user import service and its `/admin/import/*` routes.
 
 use std::collections::HashMap;
 

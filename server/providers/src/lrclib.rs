@@ -191,9 +191,7 @@ pub fn normalize_exact(reply: &Reply) -> Result<LyricsLookup, ProviderError> {
 // Client
 // ---------------------------------------------------------------------------
 
-/// LRCLIB client. The caller passes the duration rounded to whole seconds;
-/// the exact call never takes a MusicBrainz id, which the endpoint does not
-/// accept.
+/// LRCLIB client. The caller passes the duration rounded to whole seconds.
 ///
 /// Built once with the providers; cheap to clone.
 #[derive(Debug, Clone)]

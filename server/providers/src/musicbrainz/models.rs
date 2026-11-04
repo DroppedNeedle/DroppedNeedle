@@ -542,8 +542,7 @@ pub struct RecordingRelease {
     /// Release date.
     #[serde(default)]
     pub date: Option<String>,
-    /// Release group carrying the ranking fields (live 2026-07-20,
-    /// `musicbrainz_API_NOTES.md`).
+    /// Release group carrying the ranking fields (seen live on 2026-07-20).
     #[serde(rename = "release-group", default)]
     pub release_group: Option<ReleaseGroupRef>,
 }
