@@ -90,22 +90,7 @@ const RATE: Rule = Rule {
                   `kernel_musicbrainz_rates_match_the_table` holds them equal",
         },
         Allow {
-            path: "auth/src/session/middleware.rs",
-            shapes: &["limiter"],
-            why: LOGIN_LIMITER,
-        },
-        Allow {
             path: "auth/src/wiring.rs",
-            shapes: &["limiter"],
-            why: LOGIN_LIMITER,
-        },
-        Allow {
-            path: "auth/src/routes/native.rs",
-            shapes: &["limiter"],
-            why: LOGIN_LIMITER,
-        },
-        Allow {
-            path: "auth/src/routes/federated.rs",
             shapes: &["limiter"],
             why: LOGIN_LIMITER,
         },

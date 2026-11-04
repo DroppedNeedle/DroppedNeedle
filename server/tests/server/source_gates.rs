@@ -1623,3 +1623,81 @@ fn no_port_narration_or_plan_ids() {
         wrong.join("\n")
     );
 }
+
+/// Places other than a crate's root that may name the `test-support`
+/// feature, each with its reason.
+const TEST_SUPPORT_SITES: &[(&str, &str)] = &[
+    (
+        "kernel/src/db/mod.rs",
+        "the database's own test knobs and scratch folders, which reach the lane, the read pools and the cache from inside db/",
+    ),
+    (
+        "kernel/src/db/statement.rs",
+        "the statement registry the sql! macro writes into each sql.rs for the schema test",
+    ),
+    (
+        "kernel/src/config/mod.rs",
+        "the switch that turns the /__test__ hooks on",
+    ),
+    ("src/app.rs", "mounts the /__test__ hooks"),
+    ("src/handlers.rs", "the /__test__ hook handlers"),
+    (
+        "src/bootstrap/jobs.rs",
+        "the scripted job kind and its clock, registered only under the test hooks",
+    ),
+];
+
+/// Test-only code lives in one place per crate: its `test_support`
+/// module, declared once in its `lib.rs`, and the few named sites above.
+/// Nothing else in shipping `src/` names the `test-support` feature, so no
+/// production type carries a field, variant or branch only tests see.
+#[test]
+fn test_support_stays_in_named_places() {
+    let declaration = Regex::new(
+        r#"(?m)^#\[cfg\(any\(test, feature = "test-support"\)\)\]\npub mod test_support;$"#,
+    )
+    .unwrap();
+    let mut wrong = Vec::new();
+    let mut seen = vec![false; TEST_SUPPORT_SITES.len()];
+    for source in workspace_sources() {
+        let code = source.code();
+        let named: Vec<usize> = code
+            .match_indices("test-support")
+            .map(|(at, _)| at)
+            .collect();
+        if named.is_empty() {
+            continue;
+        }
+        let path = source.path.as_str();
+        if let Some(site) = TEST_SUPPORT_SITES
+            .iter()
+            .position(|(site, _)| *site == path)
+        {
+            seen[site] = true;
+            continue;
+        }
+        let root = path == "src/lib.rs" || path.ends_with("/src/lib.rs");
+        if root && named.len() == 1 && declaration.find_iter(&code).count() == 1 {
+            continue;
+        }
+        for at in named {
+            let line = code[..at].matches('\n').count() + 1;
+            wrong.push(format!(
+                "{path}:{line}: names test-support; move the item into the crate's test_support module{}",
+                if root {
+                    ", which the crate root declares once"
+                } else {
+                    ""
+                }
+            ));
+        }
+    }
+    for ((path, why), seen) in TEST_SUPPORT_SITES.iter().zip(seen) {
+        if !seen {
+            wrong.push(format!(
+                "{path}: listed, but no longer names test-support; remove the entry ({why})"
+            ));
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
