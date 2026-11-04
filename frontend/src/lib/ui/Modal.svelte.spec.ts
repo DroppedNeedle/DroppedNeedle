@@ -72,4 +72,18 @@ describe('Modal', () => {
 		await expect.element(page.getByText('Dialog is open')).toBeVisible();
 		await expect.element(dialog()).toBeVisible();
 	});
+
+	it('asks its owner instead of closing when the owner wants to confirm first', async () => {
+		const onrequestclose = vi.fn();
+		await render(ModalTestHarness, { onrequestclose });
+		await opener().click();
+		await expect.element(dialog()).toBeVisible();
+
+		await userEvent.keyboard('{Escape}');
+		// The backdrop sits under the box, so click it directly.
+		(page.getByRole('button', { name: 'Close', exact: true }).element() as HTMLElement).click();
+
+		expect(onrequestclose).toHaveBeenCalledTimes(2);
+		await expect.element(dialog()).toBeVisible();
+	});
 });

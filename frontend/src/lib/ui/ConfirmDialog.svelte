@@ -4,6 +4,7 @@
 	and shows the error when it fails. `phrase` makes the user type a word
 	first. `icon` sets a mark beside the title, tinted by `tone`, and
 	`focusTitle` puts focus on the title rather than the first control.
+	`onclose` runs on every close, confirmed or not, once focus is back.
 	Replaces `window.confirm`, the one-off confirm modals such as
 	DeleteAlbumModal, and the typed-phrase confirmations in library management.
 -->
@@ -32,6 +33,7 @@
 		canConfirm?: boolean;
 		onconfirm: () => unknown;
 		oncancel?: () => void;
+		onclose?: () => void;
 		children?: Snippet;
 	}
 
@@ -49,6 +51,7 @@
 		canConfirm = true,
 		onconfirm,
 		oncancel,
+		onclose,
 		children
 	}: Props = $props();
 
@@ -87,6 +90,7 @@
 
 	function handleClose() {
 		if (!confirmed) oncancel?.();
+		onclose?.();
 	}
 </script>
 

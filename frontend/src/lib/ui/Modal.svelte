@@ -17,6 +17,11 @@
 	`sm` up.
 	`focusTitle` puts focus on the title when it opens, for a dialog that is
 	read before it is acted on; otherwise focus goes to its first control.
+	`onrequestclose` makes Escape, the backdrop and the close button ask the
+	caller instead of closing, for a form that confirms before it drops unsaved
+	changes. The caller closes it by setting `open` to false.
+	`overflowVisible` lets a dropdown inside reach past the box's edge, for a
+	short dialog that holds one.
 -->
 <script lang="ts">
 	import type { Snippet } from 'svelte';
@@ -41,6 +46,10 @@
 		dismissible?: boolean;
 		/** A close button beside the title; `sheet` always has one. */
 		closeButton?: boolean;
+		/** Called in place of closing on Escape, the backdrop or the close button. */
+		onrequestclose?: () => void;
+		/** Lets a dropdown inside reach past the box's edge. */
+		overflowVisible?: boolean;
 		onclose?: () => void;
 		children: Snippet;
 		actions?: Snippet;
@@ -58,6 +67,8 @@
 		focusTitle = false,
 		dismissible = true,
 		closeButton = false,
+		onrequestclose,
+		overflowVisible = false,
 		onclose,
 		children,
 		actions
@@ -106,14 +117,30 @@
 	}
 
 	function handleCancel(event: Event) {
-		if (!dismissible) event.preventDefault();
+		if (!dismissible || onrequestclose) event.preventDefault();
+		if (dismissible) onrequestclose?.();
+	}
+
+	function requestClose() {
+		if (onrequestclose) onrequestclose();
+		else dialog?.close();
+	}
+
+	function handleBackdrop(event: Event) {
+		if (!onrequestclose) return;
+		event.preventDefault();
+		onrequestclose();
 	}
 </script>
 
 {#snippet heading(className: string)}
 	<!-- The title is focusable only for focusTitle, and only by script (-1). -->
 	<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-	<h2 id={titleId} class={className} tabindex={focusTitle ? -1 : undefined}>
+	<h2
+		id={titleId}
+		class={[className, focusTitle && 'focus:outline-none']}
+		tabindex={focusTitle ? -1 : undefined}
+	>
 		{#if titleHref}
 			<a
 				href={titleHref}
@@ -153,7 +180,7 @@
 						type="button"
 						class="btn btn-square btn-ghost btn-sm"
 						aria-label="Close"
-						onclick={() => dialog?.close()}><X class="h-4 w-4" /></button
+						onclick={() => requestClose()}><X class="h-4 w-4" /></button
 					>
 				{/if}
 			</header>
@@ -173,6 +200,7 @@
 			class={[
 				'modal-box',
 				widths[size as keyof typeof widths],
+				overflowVisible && 'overflow-visible',
 				bottomSheet && 'max-sm:max-w-none pb-[calc(env(safe-area-inset-bottom)+1.5rem)] sm:pb-6'
 			]}
 		>
@@ -196,7 +224,7 @@
 						type="button"
 						class="btn btn-square btn-ghost btn-sm -mt-1 -mr-2 shrink-0"
 						aria-label="Close"
-						onclick={() => dialog?.close()}><X class="h-4 w-4" /></button
+						onclick={() => requestClose()}><X class="h-4 w-4" /></button
 					>
 				{/if}
 			</div>
@@ -212,7 +240,7 @@
 	{/if}
 	{#if dismissible}
 		<form method="dialog" class="modal-backdrop">
-			<button tabindex="-1">Close</button>
+			<button tabindex="-1" onclick={handleBackdrop}>Close</button>
 		</form>
 	{/if}
 </dialog>
