@@ -517,7 +517,7 @@ pub(crate) fn discover_inputs(rig: &AuthRig, dir: &Path, providers: Providers) -
         users: rig.deps.clone(),
         discover_warmer: false,
         clock: platform.clock.clone(),
-        warm: crate::common::bundles::cover_warm_at(&platform.db),
+        warm: crate::common::bundles::cover_warm_at(&platform.db, platform.clock.clone()),
         download_readiness: Arc::new(NoDownloadSource),
         remotes: Arc::new(remotes_resolver(platform)),
     }

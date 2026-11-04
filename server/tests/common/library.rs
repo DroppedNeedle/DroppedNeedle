@@ -325,10 +325,11 @@ impl TestSql for Db {
 /// What a port's calls answer.
 type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
-/// Library Management's outside sources holding nothing: no genres, lyrics,
-/// covers or AcoustID key, and MusicBrainz answering every stored release's
-/// tracks with no credits and its artists under their credited names.
-/// Planning over it changes no file for want of outside data.
+/// Library Management's outside sources with nothing to add: genre and
+/// lyrics lookups fail, there is no cover and no AcoustID key, and a
+/// release's extras come from the release document identification stored
+/// (each track's recording with no relations, artists under their credited
+/// names), failing for a release it did not store.
 pub struct NoEnrichment {
     releases: droppedneedle_library::identify::sqlite::SqliteIdentifyStore,
 }

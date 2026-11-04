@@ -328,18 +328,20 @@ impl CatalogSettings for TestSettings {
     }
 }
 
-/// The local catalog over the migrated database in `dir`.
-fn local_catalog(dir: &crate::common::ScratchDir) -> LocalCatalog {
-    LocalCatalog::new(
-        droppedneedle_kernel::db::Db::open_for_tests(&dir.join("app.db")).expect("database opens"),
-    )
-}
-
-/// Pages with no follow store and no plugins, their image warms queued on
-/// the jobs table in `dir`'s database.
-fn page_sources(dir: &crate::common::ScratchDir) -> droppedneedle_catalog::metadata::PageSources {
-    crate::common::bundles::quiet_page_sources(
-        &droppedneedle_kernel::db::Db::open_for_tests(&dir.join("app.db")).expect("database opens"),
+/// The catalog over `upstream` and the migrated database in `dir`, with no
+/// follow store and no plugins, its image warms queued on that database's
+/// jobs table.
+fn catalog_on(upstream: Upstream, dir: &crate::common::ScratchDir) -> Catalog {
+    let db =
+        droppedneedle_kernel::db::Db::open_for_tests(&dir.join("app.db")).expect("database opens");
+    let warm = crate::common::bundles::cover_warm_at(
+        &db,
+        Arc::new(droppedneedle_kernel::clock::SystemClock),
+    );
+    Catalog::new(
+        upstream,
+        LocalCatalog::new(db),
+        crate::common::bundles::quiet_page_sources(warm),
     )
 }
 
@@ -463,7 +465,7 @@ async fn app_seeded(
         Arc::new(TestSettings { mb_url }),
         rig.deps.clone(),
     );
-    let catalog = Catalog::new(upstream, local_catalog(&dir), page_sources(&dir));
+    let catalog = catalog_on(upstream, &dir);
     let search = SearchDeps::new(
         SearchService::new(droppedneedle_kernel::db::Db::open_for_tests(&app_db).unwrap())
             .with_remote(catalog.clone()),
@@ -630,14 +632,13 @@ async fn audiodb_art_comes_from_the_fill_under_its_key() {
         },
         audiodb_key: Mutex::new(String::new()),
     });
-    let catalog = Catalog::new(
+    let catalog = catalog_on(
         Upstream::new(
             Arc::new(fixtures.providers(&http)),
             settings.clone(),
             rig.deps.clone(),
         ),
-        local_catalog(&dir),
-        page_sources(&dir),
+        &dir,
     );
 
     let cold = catalog.artist_extended(ARTIST).await.unwrap();
@@ -1166,7 +1167,7 @@ async fn a_failed_portrait_lookup_keeps_the_short_outage_marker() {
     let rig = AuthRig::new("reads-catalog-portrait").await;
     let http = droppedneedle_kernel::http_client::HttpClientFactory::new().unwrap();
     let providers = Arc::new(fixtures.providers(&http));
-    let catalog = Catalog::new(
+    let catalog = catalog_on(
         Upstream::new(
             providers.clone(),
             Arc::new(TestSettings {
@@ -1174,8 +1175,7 @@ async fn a_failed_portrait_lookup_keeps_the_short_outage_marker() {
             }),
             rig.deps.clone(),
         ),
-        local_catalog(&dir),
-        page_sources(&dir),
+        &dir,
     );
     let config = crate::common::config_store(&dir.join("settings"));
     let artwork = ArtworkService::new(
@@ -1276,7 +1276,7 @@ async fn a_cold_artist_image_waits_out_a_busy_musicbrainz() {
     let dir = crate::common::ScratchDir::new("reads-catalog-busy-mb");
     crate::common::migrated_db(&dir.join("app.db"));
     let rig = AuthRig::new("reads-catalog-busy-mb").await;
-    let catalog = Catalog::new(
+    let catalog = catalog_on(
         Upstream::new(
             providers.clone(),
             Arc::new(TestSettings {
@@ -1284,8 +1284,7 @@ async fn a_cold_artist_image_waits_out_a_busy_musicbrainz() {
             }),
             rig.deps.clone(),
         ),
-        local_catalog(&dir),
-        page_sources(&dir),
+        &dir,
     );
 
     // One request a second, resting two more: a page would wait three.
@@ -1373,7 +1372,7 @@ async fn a_commons_portrait_answers_its_credit_as_plain_text() {
     ));
     let (app_db, dir) = crate::common::migrated_file("reads-catalog-credit");
     let rig = AuthRig::new("reads-catalog-credit").await;
-    let catalog = Catalog::new(
+    let catalog = catalog_on(
         Upstream::new(
             providers.clone(),
             Arc::new(TestSettings {
@@ -1381,8 +1380,7 @@ async fn a_commons_portrait_answers_its_credit_as_plain_text() {
             }),
             rig.deps.clone(),
         ),
-        local_catalog(&dir),
-        page_sources(&dir),
+        &dir,
     );
     let config = crate::common::config_store(&dir.join("settings"));
     let artwork = ArtworkService::new(
@@ -1528,7 +1526,7 @@ async fn a_passing_failure_is_not_cached_as_a_short_section() {
     let dir = crate::common::ScratchDir::new("reads-catalog-passing");
     crate::common::migrated_db(&dir.join("app.db"));
     let rig = AuthRig::new("reads-catalog-passing").await;
-    let catalog = Catalog::new(
+    let catalog = catalog_on(
         Upstream::new(
             providers,
             Arc::new(TestSettings {
@@ -1536,8 +1534,7 @@ async fn a_passing_failure_is_not_cached_as_a_short_section() {
             }),
             rig.deps.clone(),
         ),
-        local_catalog(&dir),
-        page_sources(&dir),
+        &dir,
     );
     tokio::time::pause();
 
@@ -1733,7 +1730,7 @@ async fn a_song_nothing_places_is_asked_again_after_a_day() {
     let dir = crate::common::ScratchDir::new("reads-catalog-song-miss");
     crate::common::migrated_db(&dir.join("app.db"));
     let rig = AuthRig::new("reads-catalog-song-miss").await;
-    let catalog = Catalog::new(
+    let catalog = catalog_on(
         Upstream::new(
             providers,
             Arc::new(TestSettings {
@@ -1741,8 +1738,7 @@ async fn a_song_nothing_places_is_asked_again_after_a_day() {
             }),
             rig.deps.clone(),
         ),
-        local_catalog(&dir),
-        page_sources(&dir),
+        &dir,
     );
     let searches = || {
         wire.sent()

@@ -24,7 +24,7 @@ impl AuthRig {
                     name: "test".to_owned(),
                     secret_sha256: sha256,
                     secret_encrypted: self.deps.crypto.encrypt(secret).expect("secret seals"),
-                    created_at: self.clock.now_unix(),
+                    created_at: self.platform.clock.now_unix(),
                     last_used_at: None,
                     last_client: None,
                 },

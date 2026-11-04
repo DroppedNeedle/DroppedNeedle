@@ -51,10 +51,9 @@ pub struct AuthRig {
     pub deps: UsersDeps,
     /// The SQLite stores behind `deps`, for seeding and assertions.
     pub auth: ProdAuth,
-    /// The clock a rig from [`AuthRig::new`] runs its platform on, for the
-    /// test to move. What the rig seeds is stamped by the platform's clock,
-    /// which the session gate reads.
-    pub clock: Arc<ManualClock>,
+    /// The clock a rig from [`AuthRig::new`] runs its platform on; a rig
+    /// from [`AuthRig::on`] has none and runs on the caller's.
+    clock: Option<Arc<ManualClock>>,
     /// The settings `deps` read live: the platform's.
     pub config: Arc<ConfigStore>,
     /// What the rig was built from, for the test's other bundles.
@@ -75,7 +74,7 @@ impl AuthRig {
             .clock(Arc::clone(&clock) as Arc<dyn Clock>)
             .build()
             .await;
-        let mut rig = Self::build(platform, clock);
+        let mut rig = Self::build(platform, Some(clock));
         rig.runtime = Some(runtime);
         rig._scratch = Some(scratch);
         rig
@@ -85,10 +84,18 @@ impl AuthRig {
     /// the test seeds. Auth, and what the rig seeds, run on the platform's
     /// clock.
     pub fn on(platform: &Platform) -> Self {
-        Self::build(platform.clone(), Arc::new(ManualClock::at(TEST_NOW * 1000)))
+        Self::build(platform.clone(), None)
     }
 
-    fn build(platform: Platform, clock: Arc<ManualClock>) -> Self {
+    /// The clock a rig from [`AuthRig::new`] runs on, for the test to move.
+    /// What the rig seeds is stamped by it, and the session gate reads it.
+    pub fn clock(&self) -> &ManualClock {
+        self.clock
+            .as_deref()
+            .expect("a rig from AuthRig::on runs on its caller's clock")
+    }
+
+    fn build(platform: Platform, clock: Option<Arc<ManualClock>>) -> Self {
         let config = Arc::clone(&platform.settings);
         config
             .save_blocking(SecuritySettings {

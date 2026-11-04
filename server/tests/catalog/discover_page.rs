@@ -603,7 +603,7 @@ async fn a_shelf_whose_read_failed_is_built_again_soon() {
     assert_eq!(fresh(&page), None, "the failed shelf is left out");
 
     script.fresh_down.store(false, Ordering::SeqCst);
-    rig.clock.advance(301_000);
+    rig.clock().advance(301_000);
     let (_, page) = call(&app, "GET", "/api/v3/discover", None).await;
     assert_eq!(page["refreshing"], true, "a rebuild started");
     let page = after_commits(&rig.platform.db, "the shelf came back", || async {
@@ -614,7 +614,7 @@ async fn a_shelf_whose_read_failed_is_built_again_soon() {
     assert_eq!(fresh(&page), Some(1));
     settled_page(&rig, &app, "the rebuild finished").await;
 
-    rig.clock.advance(301_000);
+    rig.clock().advance(301_000);
     let (_, page) = call(&app, "GET", "/api/v3/discover", None).await;
     assert_eq!(page["refreshing"], false, "a whole page is kept");
 }

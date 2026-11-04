@@ -1168,7 +1168,7 @@ async fn unreadable_spotify_settings_refuse_new_imports_and_hold_queued_ones() {
     let requeued =
         after_commits(&bundle.db, "the job goes back", || latest_in(State::Queued)).await;
     assert_eq!(requeued.attempts, 0, "the wait spent no attempt");
-    auth.clock.advance(10_000);
+    auth.clock().advance(10_000);
     let done = poll_job_done(&bundle, &user_id, "sp-playlist-1").await;
     assert_eq!(done, ImportState::Done, "queued import finishes");
 }

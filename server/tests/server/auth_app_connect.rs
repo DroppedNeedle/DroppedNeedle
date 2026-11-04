@@ -417,7 +417,7 @@ async fn app_connect_refusals() {
 
     // Expired after two minutes.
     let code = rig.code_for(&molly.id, &challenge).await;
-    rig.rig.clock.advance(CODE_TTL_SECS * 1000);
+    rig.rig.clock().advance(CODE_TTL_SECS * 1000);
     assert_eq!(
         rig.trade(trade_form(&code, &verifier)).await,
         refused("invalid_grant")

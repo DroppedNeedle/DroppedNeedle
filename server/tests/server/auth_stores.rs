@@ -44,7 +44,7 @@ const LEGACY_PASSWORD: &str = "correct horse battery staple";
 
 async fn fixture(name: &str) -> AuthRig {
     let rig = AuthRig::new(&format!("stores-{name}")).await;
-    rig.clock.set(TEST_NOW * 1000);
+    rig.clock().set(TEST_NOW * 1000);
     rig
 }
 
@@ -319,7 +319,7 @@ async fn saving_a_link_keeps_enabled_unless_told_to_enable() {
         .await
         .unwrap();
     let db = fx.runtime().db().clone();
-    let links = UserConnections::new(db.clone(), fx.clock.clone());
+    let links = UserConnections::new(db.clone(), fx.platform.clock.clone());
     let enabled = "SELECT enabled FROM user_connections";
     links.save("user-1", "listenbrainz", "first").await.unwrap();
     assert_eq!(count(&fx, enabled), 1);

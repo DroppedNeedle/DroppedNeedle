@@ -558,7 +558,10 @@ async fn journey(tag: &str, lastfm: bool) -> Measured {
             rig.deps.clone(),
         ),
         LocalCatalog::new(rig.platform.db.clone()),
-        crate::common::bundles::quiet_page_sources(&rig.platform.db),
+        crate::common::bundles::quiet_page_sources(crate::common::bundles::cover_warm_at(
+            &rig.platform.db,
+            rig.platform.clock.clone(),
+        )),
     );
     let counts = SearchCounts::new(
         &providers,
@@ -590,13 +593,13 @@ async fn journey(tag: &str, lastfm: bool) -> Measured {
     );
 
     let activity = ActivityDb::new(rig.platform.db.clone());
-    let start = rig.clock.now_ms();
+    let start = rig.clock().now_ms();
     let source = if lastfm { "lastfm" } else { "listenbrainz" };
     let mut days = BTreeMap::new();
     for (name, day) in DAYS {
         let before = snapshot();
         for hour in 0..24 {
-            rig.clock.set(start + i64::from(day * 24 + hour) * HOUR_MS);
+            rig.clock().set(start + i64::from(day * 24 + hour) * HOUR_MS);
             if matches!(hour, 0 | 5 | 12 | 19) {
                 let visit = hour / 5;
                 for feature in [Feature::Home, Feature::Discover, Feature::Queue] {
@@ -610,7 +613,7 @@ async fn journey(tag: &str, lastfm: bool) -> Measured {
                                 provider: String::new(),
                                 source: namespace.clone(),
                             },
-                            rig.clock.now_ms(),
+                            rig.clock().now_ms(),
                         )
                         .await
                         .expect("activity row");

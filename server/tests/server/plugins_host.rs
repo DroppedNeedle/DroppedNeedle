@@ -1832,7 +1832,10 @@ async fn a_plugin_that_runs_late_is_asked_again_and_a_whole_answer_is_kept() {
         LocalCatalog::new(rig.platform.db.clone()),
         droppedneedle_catalog::metadata::PageSources {
             details: Arc::new(PluginDetailsSource(Arc::clone(&rig.host))),
-            ..crate::common::bundles::quiet_page_sources(&rig.platform.db)
+            ..crate::common::bundles::quiet_page_sources(crate::common::bundles::cover_warm_at(
+                &rig.platform.db,
+                rig.platform.clock.clone(),
+            ))
         },
     );
 

@@ -24,7 +24,7 @@ use droppedneedle_catalog::metadata::{
 };
 use droppedneedle_catalog::test_support::UnconfiguredEnrichment;
 use droppedneedle_catalog::wiring::{CatalogInputs, CatalogPorts, CatalogSetup};
-use droppedneedle_kernel::clock::SystemClock;
+use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::db::Db;
 use droppedneedle_kernel::jobs::queue::JobQueue;
 use droppedneedle_kernel::platform::Platform;
@@ -207,7 +207,7 @@ pub fn catalog_setup_at(
     collections: CollectionsState,
     acquire: Option<&AcquireSetup>,
 ) -> CatalogSetup {
-    let cover_warm = cover_warm_at(&platform.db);
+    let cover_warm = cover_warm_at(&platform.db, platform.clock.clone());
     let catalog = Catalog::new(
         Upstream::new(
             Arc::new(Providers::unpaced(Arc::new(
@@ -219,7 +219,7 @@ pub fn catalog_setup_at(
         LocalCatalog::new(platform.db.clone()),
         PageSources {
             follows: droppedneedle_catalog::wiring::collections_follows(&collections),
-            ..quiet_page_sources(&platform.db)
+            ..quiet_page_sources(cover_warm.clone())
         },
     );
     let artwork = droppedneedle_catalog::wiring::artwork(platform, &inputs, catalog.clone());
@@ -245,20 +245,21 @@ pub fn catalog_setup_at(
 }
 
 /// What a catalog's pages read beyond MusicBrainz and the library, with no
-/// follow store and no plugins: an artist page queues its image warm on
-/// the jobs table in `db`, where nothing runs it.
-pub fn quiet_page_sources(db: &Db) -> PageSources {
+/// follow store and no plugins: an artist page queues its image warm
+/// through `cover_warm`.
+pub fn quiet_page_sources(cover_warm: CoverWarm) -> PageSources {
     PageSources {
         follows: Arc::new(NoFollows),
         purchase_links: Arc::new(NoPurchaseLinks),
         details: Arc::new(NoDetails),
-        cover_warm: cover_warm_at(db),
+        cover_warm,
     }
 }
 
-/// Image warms queued on the jobs table in `db`, where nothing runs them.
-pub fn cover_warm_at(db: &Db) -> CoverWarm {
-    CoverWarm::new(db.clone(), JobQueue::new(db.clone(), Arc::new(SystemClock)))
+/// Image warms queued on the jobs table in `db`, stamped by `clock`, where
+/// nothing runs them.
+pub fn cover_warm_at(db: &Db, clock: Arc<dyn Clock>) -> CoverWarm {
+    CoverWarm::new(db.clone(), JobQueue::new(db.clone(), clock))
 }
 
 /// The catalog's enrichment with no provider behind it: search results
