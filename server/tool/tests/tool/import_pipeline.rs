@@ -1178,7 +1178,8 @@ const V2_MANAGED_FIELDS: &[&str] = &[
 /// A v2 profile carries over whole: every entry keeps its mode and its
 /// clear, a field it did not list stays off, `artists` and
 /// `album_artists` follow `artist` and `album_artist`, preserved names
-/// match in any case and cover nothing else, and the section reads.
+/// match in any case and cover nothing else, and the section reads. An
+/// option v3 removed is left out, and the report names it.
 #[tokio::test]
 async fn v2_management_fields_carry_over_as_they_were() {
     use droppedneedle_kernel::runtime_config::sections::FieldMode;
@@ -1209,6 +1210,7 @@ async fn v2_management_fields_carry_over_as_they_were() {
         .unwrap();
     picard["metadata"]["fields"] = Value::Array(fields);
     picard["metadata"]["preserve_fields"] = json!(["Artist", "album", "date"]);
+    picard["artwork"]["providers"] = json!(["cover_art_archive_release"]);
 
     let fixture = Fixture::shared();
     let mut export = fixture.shell();
@@ -1228,6 +1230,14 @@ async fn v2_management_fields_carry_over_as_they_were() {
             .items
             .iter()
             .any(|item| item.key.contains(".metadata.fields")),
+        "{}",
+        report.to_json()
+    );
+    assert!(
+        report.items.iter().any(|item| {
+            item.key == "library_management.profiles[0].artwork.providers"
+                && item.outcome == "dropped_setting"
+        }),
         "{}",
         report.to_json()
     );

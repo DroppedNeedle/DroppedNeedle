@@ -449,13 +449,15 @@ machine and its data folders can run it.
   or 1 is refused. Port yours first ("Porting a v2 plugin" in
   [PLUGINS.md](../PLUGINS.md)), or ask its author to, then install it
   again from Settings > Plugins.
-- **Library Management profile options v3 does not act on.** The artwork
-  source list, size and picture-type rules, cover file naming and
-  overwriting, the ID3 version and the other per-format tag policies, genre
-  ancestry depth, source cleanup, empty folder removal, the file safety
-  switches (keep timestamps, refuse links, check the file after writing) and
-  the lyrics provider are gone. A carried profile keeps its other options.
-  The import report does not list these.
+- **Library Management options v3 does not act on.** The artwork source
+  list, the approved-only artwork switch, size and picture-type rules, cover
+  file naming and overwriting, the ID3 version and the other per-format tag
+  policies, genre ancestry depth, source cleanup, empty folder removal, the
+  file safety switches (keep timestamps, refuse links, check the file after
+  writing), the lyrics provider and the DroppedNeedle refresh switch are gone.
+  So are the folder overrides for source cleanup, keep timestamps and edition
+  acceptance, and the external refresh retry count and delay. A carried
+  profile keeps its other options. The import report names each one it drops.
 - **v2 profile share codes and files.** A Library Management profile share
   code (`DNLP1:`) or `.dnprofile` file made in v2 does not import into v3.
   Share the profile again from v3 to get a code or file v3 reads.
