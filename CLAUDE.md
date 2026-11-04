@@ -110,7 +110,8 @@ Run from the repo root. `make help` lists every target.
   implementation needs a reason beside it; cutting a dependency between two
   areas is one.
 - Wall time comes from the one kernel clock (`kernel/src/clock.rs`, passed
-  in), never `SystemTime::now()` in an area; tests use its `ManualClock`.
+  in), never `SystemTime::now()` in an area; tests use the kernel's
+  `test_support::ManualClock`.
   Files that still read the system clock are listed with a reason in
   `server/clock-outside-kernel.txt`; `source_gates.rs` fails on any other
   read and on a listed file that no longer reads it.
@@ -745,6 +746,10 @@ Run from the repo root. `make help` lists every target.
 ## Testing (brief-first, minimal, fast)
 
 - A test is a short brief saying exactly how one behavior must work.
+- Test-only code lives in the crate's one `test_support` module, or in
+  `server/tests/common` when it needs no crate internals; nothing else in
+  `src/` names the `test-support` feature except the named sites
+  (`source_gates::test_support_stays_in_named_places` lists them).
 - Write one only for what would regress silently and cost something: API
   contracts, auth, security, identity, data loss and other destructive paths,
   compat wire shapes, performance budgets. Not fakes or trivial code.
