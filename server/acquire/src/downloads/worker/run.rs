@@ -68,7 +68,7 @@ impl DownloadWorker {
     pub async fn run_once(self: &Arc<Self>, pass: u64) {
         // Settings that do not read stop the whole pass: nothing starts,
         // lands or fails over until they are saved again.
-        let Some(config) = self.inputs.config() else {
+        let Some(config) = self.settings.config() else {
             return;
         };
         let library = self.check_library().await;
@@ -76,7 +76,7 @@ impl DownloadWorker {
         let pass_ctx = Pass {
             library,
             watchdog: Watchdog::new(config.watchdog.clone()),
-            sources: self.inputs.sources(),
+            sources: self.settings.sources(),
             config,
             now: self.now_unix_f64(),
         };

@@ -14,7 +14,7 @@ use futures_util::future::BoxFuture;
 use tokio::sync::watch;
 
 use super::downloads::source_tag::SourceTag;
-use crate::downloads::worker::{DownloadWorker, SourceList, WorkerSettings};
+use crate::downloads::worker::{DownloadWorker, WorkerSettings};
 use droppedneedle_kernel::jobs::{AlreadyRunning, Supervisor};
 use droppedneedle_plugins::host::PluginHost;
 
@@ -37,12 +37,12 @@ impl Readiness {
 /// Reads [`Readiness`] from the live settings on every call.
 #[derive(Clone)]
 pub struct SourceReadiness {
-    sources: SourceList,
+    sources: Arc<WorkerSettings>,
 }
 
 impl SourceReadiness {
     /// Readiness over the worker's sources.
-    pub fn new(sources: SourceList) -> Self {
+    pub fn new(sources: Arc<WorkerSettings>) -> Self {
         Self { sources }
     }
 
@@ -75,13 +75,13 @@ pub const SOURCE_WATCH_JOB: &str = "acquire-source-watch";
 #[derive(Clone)]
 pub(crate) struct SourceNotices {
     pub(crate) settings: Arc<WorkerSettings>,
-    pub(crate) plugins: Option<Arc<PluginHost>>,
+    pub(crate) plugins: Arc<PluginHost>,
 }
 
 /// Wait for any notice to change. False when one closed.
 async fn any_changed(
     settings: &mut [watch::Receiver<i64>],
-    plugins: Option<&mut watch::Receiver<u64>>,
+    plugins: &mut watch::Receiver<u64>,
 ) -> bool {
     let mut waits: Vec<BoxFuture<'_, bool>> = settings
         .iter_mut()
@@ -89,12 +89,7 @@ async fn any_changed(
             Box::pin(async move { notice.changed().await.is_ok() }) as BoxFuture<'_, bool>
         })
         .collect();
-    if let Some(notice) = plugins {
-        waits.push(Box::pin(async move { notice.changed().await.is_ok() }));
-    }
-    if waits.is_empty() {
-        return std::future::pending().await;
-    }
+    waits.push(Box::pin(async move { plugins.changed().await.is_ok() }));
     futures_util::future::select_all(waits).await.0
 }
 
@@ -109,12 +104,12 @@ pub(crate) fn spawn_source_watch(
     probe_wake: Arc<watch::Sender<u64>>,
 ) -> Result<(), AlreadyRunning> {
     let mut settings = notices.settings.notices();
-    let mut plugins = notices.plugins.as_ref().map(|host| host.subscribe());
+    let mut plugins = notices.plugins.subscribe();
     supervisor.one_shot(SOURCE_WATCH_JOB, move |ctx| async move {
         loop {
             tokio::select! {
                 () = ctx.token().cancelled() => return Ok(()),
-                open = any_changed(&mut settings, plugins.as_mut()) => {
+                open = any_changed(&mut settings, &mut plugins) => {
                     if !open {
                         tracing::warn!("a source settings notice closed; source changes are no longer followed");
                         ctx.token().cancelled().await;

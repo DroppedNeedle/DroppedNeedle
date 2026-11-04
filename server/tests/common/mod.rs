@@ -5,6 +5,7 @@
 // Each test binary uses part of this module.
 #![allow(dead_code, unused_imports)]
 
+pub mod acquire;
 mod app;
 pub mod app_passwords;
 pub mod auth;

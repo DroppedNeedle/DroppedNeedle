@@ -949,7 +949,7 @@ impl Management {
         if let Some(release_mbid) = identity.release_mbid.as_deref()
             && let Some(mut release) = self.parts.identify_store.release(release_mbid, None)?
             && super::enrich::ensure_release_extras(
-                self.parts.enrichment.as_deref(),
+                &*self.parts.enrichment,
                 &self.parts.identify_store,
                 &pinned.profile,
                 &mut release,

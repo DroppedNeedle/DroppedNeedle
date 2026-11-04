@@ -25,13 +25,20 @@ use droppedneedle_media::stream::local_files::LibraryFiles;
 use droppedneedle_plugins::host::PluginHost;
 use droppedneedle_providers::Providers;
 
-/// Flow outcomes sent nowhere but the event hub, for rigs that build the
-/// download journal or the acquisition stores by hand.
+use super::acquire::FixedPlugin;
+
+/// Flow outcomes sent nowhere, for rigs that build the download journal
+/// or the acquisition stores by hand.
 pub fn quiet_ticks() -> Arc<dyn TickSink> {
-    Arc::new(FlowTicks::new(
-        None,
-        droppedneedle_kernel::events::EventHub::new(),
-    ))
+    Arc::new(QuietTicks)
+}
+
+struct QuietTicks;
+
+impl TickSink for QuietTicks {
+    fn emit(&self, _kind: &str, _detail: &str, _at: i64) {}
+
+    fn announce(&self, _event: FlowEvent) {}
 }
 
 /// A tick sink that keeps the key of every request announced as having
@@ -101,6 +108,27 @@ pub fn acquire_on(
     )
 }
 
+/// As [`acquire_on`], with the [`FixedPlugin`] installed and enabled as a
+/// download source, and the search review off: the bundle's worker
+/// downloads through the plugin.
+pub fn acquire_serving(
+    platform: &Platform,
+    library: &LibrarySetup,
+    landing: Arc<dyn LandingLibrary>,
+) -> (AcquireSetup, FixedPlugin) {
+    let fixed = FixedPlugin::install(platform, library.core.clone());
+    super::acquire::review_off(platform);
+    let acquire = acquire_hosted(
+        platform,
+        super::auth::AuthRig::on(platform).deps,
+        library,
+        &collections_at(platform).stores,
+        landing,
+        fixed.host.clone(),
+    );
+    (acquire, fixed)
+}
+
 /// As [`acquire_at`], with finished downloads landing through `landing`.
 pub fn acquire_landing_at(
     platform: &Platform,
@@ -109,6 +137,19 @@ pub fn acquire_landing_at(
     collections: &Stores,
     landing: Arc<dyn LandingLibrary>,
 ) -> AcquireSetup {
+    let plugins = idle_host(platform, library.core.clone());
+    acquire_hosted(platform, users, library, collections, landing, plugins)
+}
+
+/// As [`acquire_landing_at`], with plugins on `plugins`.
+pub fn acquire_hosted(
+    platform: &Platform,
+    users: UsersDeps,
+    library: &LibrarySetup,
+    collections: &Stores,
+    landing: Arc<dyn LandingLibrary>,
+    plugins: Arc<PluginHost>,
+) -> AcquireSetup {
     let outbound = super::closed_outbound();
     let providers = Arc::new(Providers::build(
         platform,
@@ -116,11 +157,7 @@ pub fn acquire_landing_at(
         droppedneedle_kernel::db::cache::CacheDb::scratch(),
     ));
     let mb_source = providers.musicbrainz.live_source(platform.settings.live());
-    let plugins = idle_host(platform, library.core.clone());
-    let ticks = Arc::new(FlowTicks::new(
-        Some(plugins.clone()),
-        platform.events.clone(),
-    ));
+    let ticks = Arc::new(FlowTicks::new(plugins.clone(), platform.events.clone()));
     AcquireSetup::build(
         platform,
         users,
@@ -290,7 +327,7 @@ pub fn media_at(
         None,
         &providers,
         Arc::new(droppedneedle_acquire::requests::mix::MixGrantHooks::new(
-            acquire.requests.mixer.clone(),
+            acquire.mixer.clone(),
         )),
         super::listening_store(platform),
         droppedneedle_kernel::jobs::queue::JobQueue::new(
@@ -476,4 +513,38 @@ pub fn settings_closed(platform: &Platform) -> droppedneedle::settings::wiring::
             &Providers::closed(),
         )),
     )
+}
+
+/// A plugin host that launches nothing, on a platform of its own over
+/// `db`'s database and folder, for rigs that build acquisition by hand.
+pub async fn idle_host_over(db: &droppedneedle_acquire::db::AcquireDb) -> Arc<PluginHost> {
+    let platform = platform_over(db).await;
+    let queue = droppedneedle_kernel::jobs::queue::JobQueue::new(
+        platform.db.clone(),
+        platform.clock.clone(),
+    );
+    idle_host(&platform, super::library::library_core(&platform, queue))
+}
+
+/// The requests state of a production acquisition bundle over `db`'s
+/// database and folder, on a platform and library of their own, for rigs
+/// that swap in their own dispatch or quota:
+/// `RequestsState { dispatch, ..requests_over(&db).await }`.
+pub async fn requests_over(
+    db: &droppedneedle_acquire::db::AcquireDb,
+) -> droppedneedle_acquire::requests::RequestsState {
+    let platform = platform_over(db).await;
+    let (library, _) = super::library::library_at(&platform);
+    acquire_at(
+        &platform,
+        super::auth::AuthRig::on(&platform).deps,
+        &library,
+        &collections_at(&platform).stores,
+    )
+    .requests
+}
+
+async fn platform_over(db: &droppedneedle_acquire::db::AcquireDb) -> Platform {
+    let dir = db.path().parent().expect("scratch dir").to_path_buf();
+    super::TestPlatform::on(db.db(), &dir).build().await
 }

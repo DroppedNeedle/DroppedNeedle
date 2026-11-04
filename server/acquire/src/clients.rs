@@ -66,8 +66,8 @@ pub struct LiveClients {
     journal: Arc<Journal>,
     built: Mutex<Option<Built>>,
     /// Plugin sources and usenet-targeting plugin indexers join the
-    /// pipeline through the host. `None` on the test bundle.
-    plugins: Option<Arc<PluginHost>>,
+    /// pipeline through the host.
+    plugins: Arc<PluginHost>,
     targets: Arc<Targets>,
 }
 
@@ -82,7 +82,7 @@ impl LiveClients {
         slskd_downloads: PathBuf,
         journal: Arc<Journal>,
         targets: Arc<Targets>,
-        plugins: Option<Arc<PluginHost>>,
+        plugins: Arc<PluginHost>,
     ) -> Self {
         Self {
             http,
@@ -108,10 +108,7 @@ impl LiveClients {
         policy: &DownloadPolicy,
     ) -> crate::downloads::worker::SourceSet {
         let built = self.current().sources.clone();
-        let Some(host) = &self.plugins else {
-            return built;
-        };
-        let keys = host.download_source_keys();
+        let keys = self.plugins.download_source_keys();
         if keys.is_empty() {
             return built;
         }
@@ -124,15 +121,13 @@ impl LiveClients {
         };
         let mut sources: Vec<Arc<dyn DownloadSource>> = built.iter().cloned().collect();
         for key in keys {
-            sources.push(Arc::new(
-                crate::plugin_source::PluginDownloadSource::new(
-                    Arc::clone(host),
-                    key,
-                    self.journal.clone(),
-                    release_policy.clone(),
-                )
-                .with_targets(self.targets.clone()),
-            ));
+            sources.push(Arc::new(crate::plugin_source::PluginDownloadSource::new(
+                Arc::clone(&self.plugins),
+                key,
+                self.journal.clone(),
+                release_policy.clone(),
+                self.targets.clone(),
+            )));
         }
         Arc::new(sources)
     }
@@ -185,24 +180,24 @@ impl LiveClients {
             && readable
             && settings.slskd.enabled
         {
-            sources.push(Arc::new(
-                SlskdSource::new(repo, self.journal.clone()).with_targets(self.targets.clone()),
-            ));
+            sources.push(Arc::new(SlskdSource::new(
+                repo,
+                self.journal.clone(),
+                self.targets.clone(),
+            )));
         }
         if let Some(queue) = sab_queue.clone()
             && readable
             && settings.sabnzbd.sabnzbd.enabled
         {
-            sources.push(Arc::new(
-                SabnzbdSource::new(
-                    queue,
-                    usenet_indexers(settings.backend, &newznab, &prowlarr, self.plugins.as_ref()),
-                    usenet_policy,
-                    self.journal.clone(),
-                    Some(settings.sabnzbd.sabnzbd.category.clone()),
-                )
-                .with_targets(self.targets.clone()),
-            ));
+            sources.push(Arc::new(SabnzbdSource::new(
+                queue,
+                usenet_indexers(settings.backend, &newznab, &prowlarr, &self.plugins),
+                usenet_policy,
+                self.journal.clone(),
+                Some(settings.sabnzbd.sabnzbd.category.clone()),
+                self.targets.clone(),
+            )));
         }
         let probe_inputs = Arc::new(ProbeInputs {
             slskd: slskd_repo,

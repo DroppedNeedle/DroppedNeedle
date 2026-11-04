@@ -1175,11 +1175,11 @@ async fn a_failed_portrait_lookup_keeps_the_short_outage_marker() {
             std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
         ),
         LocalArtwork::new(droppedneedle_kernel::db::Db::open_for_tests(&app_db).unwrap()),
-        None,
+        Arc::new(providers.coverart.clone()),
         config.live(),
-    )
-    .with_images(Arc::new(providers.images.clone()))
-    .with_artist_source(Arc::new(CatalogArtistImages(catalog)));
+        Arc::new(providers.images.clone()),
+        Arc::new(CatalogArtistImages(catalog)),
+    );
 
     let before = unix_now();
     assert!(
@@ -1380,11 +1380,11 @@ async fn a_commons_portrait_answers_its_credit_as_plain_text() {
             std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
         ),
         LocalArtwork::new(droppedneedle_kernel::db::Db::open_for_tests(&app_db).unwrap()),
-        None,
+        Arc::new(providers.coverart.clone()),
         config.live(),
-    )
-    .with_images(Arc::new(providers.images.clone()))
-    .with_artist_source(Arc::new(CatalogArtistImages(catalog)));
+        Arc::new(providers.images.clone()),
+        Arc::new(CatalogArtistImages(catalog)),
+    );
     let app = with_test_principal(
         covers::routes()
             .with_state(CoversState::new(Arc::new(artwork)))

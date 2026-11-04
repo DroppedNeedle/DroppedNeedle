@@ -28,21 +28,9 @@ pub mod sqlite;
 pub mod state;
 pub mod views;
 
-#[cfg(any(test, feature = "test-support"))]
-use axum::Router;
 use droppedneedle_kernel::mount::{Routes, routes};
 
-pub use state::RequestsState;
-
-/// Every requests route plus the follows' auto-download approval routes,
-/// in one router with no layers, for tests.
-#[cfg(any(test, feature = "test-support"))]
-pub fn requests_routes(state: RequestsState) -> Router {
-    let follows = crate::follows::routes()
-        .with_state(state.follows.clone())
-        .into_router();
-    routes().with_state(state).into_router().merge(follows)
-}
+pub use state::{MixRoutes, RequestsState};
 
 /// The requests routes. Reads and intake take any signed-in user, approval
 /// verbs an admin, edition acquire a curator.
@@ -75,11 +63,19 @@ pub fn routes() -> Routes<RequestsState> {
         .admin(routes!(reject_handler))
         .admin(routes!(mix_approvals_handler))
         .admin(routes!(approve_mix_handler))
-        .admin(routes!(reject_mix_handler))
-        .admin(routes!(revoke_mix_handler))
-        .user(routes!(refresh_mix_handler))
         .curator(routes!(acquire_edition_handler))
         .curator(routes!(edition_fetch_handler))
         .user(routes!(create_batch, list_batches))
         .user(routes!(get_batch, remove_batch))
+}
+
+/// The Weekly Mix routes that drive the mix builder: an admin's reject or
+/// revoke, which also turns the toggle off, and a user's refresh.
+pub fn mix_routes() -> Routes<MixRoutes> {
+    use views::*;
+
+    Routes::new()
+        .admin(routes!(reject_mix_handler))
+        .admin(routes!(revoke_mix_handler))
+        .user(routes!(refresh_mix_handler))
 }

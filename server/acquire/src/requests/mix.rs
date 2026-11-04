@@ -224,8 +224,7 @@ impl PersonalMixBuilder {
     }
 
     /// Builder over its ports. `requests` supplies the library database,
-    /// the approval rows and album intake; it is the state as built before
-    /// the builder, so it holds no mixer of its own.
+    /// the approval rows and album intake.
     pub fn new(
         sources: Arc<dyn MixSources>,
         prefs: ListeningStore,
@@ -824,47 +823,34 @@ fn store_fault(error: droppedneedle_catalog::collections::db::StoreError) -> Req
 
 /// The scrobble-settings hooks over the mix builder: the toggle feeds the
 /// approval queue and the prefs response reads the real grant state.
-/// Without a builder both fall back to the role-only answer.
 pub struct MixGrantHooks {
-    mixer: Option<Arc<PersonalMixBuilder>>,
+    mixer: Arc<PersonalMixBuilder>,
 }
 
 impl MixGrantHooks {
-    /// Hooks over the requests state's mix builder.
-    pub fn new(mixer: Option<Arc<PersonalMixBuilder>>) -> Self {
+    /// Hooks over the mix builder.
+    pub fn new(mixer: Arc<PersonalMixBuilder>) -> Self {
         Self { mixer }
     }
 }
 
 impl droppedneedle_media::playback::listening_routes::MixGrants for MixGrantHooks {
     fn on_toggle<'a>(&'a self, user_id: &'a str, role: Role, enabled: bool) -> BoxFuture<'a, ()> {
-        Box::pin(async move {
-            if let Some(builder) = &self.mixer {
-                builder.on_toggle(user_id, role, enabled).await;
-            }
-        })
+        Box::pin(async move { self.mixer.on_toggle(user_id, role, enabled).await })
     }
 
     fn state<'a>(&'a self, user_id: &'a str, role: Role, toggle_on: bool) -> BoxFuture<'a, String> {
         Box::pin(async move {
-            match &self.mixer {
-                Some(builder) => builder.auto_request_state(user_id, role, toggle_on).await,
-                None if toggle_on && role.is_curator() => "approved".to_owned(),
-                None => "none".to_owned(),
-            }
+            self.mixer
+                .auto_request_state(user_id, role, toggle_on)
+                .await
         })
     }
 }
 
-/// The daily sweep drives the builder; without one the sweep has nothing
-/// to do.
+/// The daily sweep drives the builder.
 impl droppedneedle_kernel::jobs::personal_mix::PersonalMixer for MixGrantHooks {
     fn run_for_all_users(&self) -> droppedneedle_kernel::jobs::BoxFuture<'_, Result<(), String>> {
-        Box::pin(async move {
-            match &self.mixer {
-                Some(builder) => builder.run_for_all_users().await.map(|_| ()),
-                None => Ok(()),
-            }
-        })
+        Box::pin(async move { self.mixer.run_for_all_users().await.map(|_| ()) })
     }
 }

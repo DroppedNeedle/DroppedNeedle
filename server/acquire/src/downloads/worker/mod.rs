@@ -49,8 +49,6 @@ use droppedneedle_providers::health::ServiceHealth;
 mod cleanup;
 mod controls;
 mod enqueue;
-#[cfg(any(test, feature = "test-support"))]
-mod fixed_source;
 mod landings;
 mod orphans;
 mod poll;
@@ -61,8 +59,6 @@ mod run;
 mod settings;
 
 pub use controls::{NextSourceError, RetryError};
-#[cfg(any(test, feature = "test-support"))]
-pub use fixed_source::FixedSource;
 pub use landings::ReimportError;
 pub use recovery::{RecoveryReport, run_startup_recovery};
 pub use run::spawn_download_worker;
@@ -134,62 +130,6 @@ impl Default for WorkerConfig {
 /// The configured sources for one pass.
 pub type SourceSet = Arc<Vec<Arc<dyn DownloadSource>>>;
 
-/// The sources turned on right now, for work outside the worker's passes
-/// (the wanted watcher's search).
-#[derive(Clone)]
-pub enum SourceList {
-    /// The sources the saved settings turn on, plugin sources included.
-    Live(Arc<WorkerSettings>),
-    /// A fixed set, for tests that script the sources.
-    Fixed(SourceSet),
-}
-
-impl SourceList {
-    /// The sources on now, or `None` while the download settings do not
-    /// read.
-    pub fn current(&self) -> Option<SourceSet> {
-        match self {
-            Self::Live(settings) => settings.readable().then(|| settings.sources()),
-            Self::Fixed(sources) => Some(sources.clone()),
-        }
-    }
-}
-
-/// Where the worker's sources and tuning come from, read once per pass.
-enum Inputs {
-    /// The saved settings.
-    Live(Arc<WorkerSettings>),
-    /// A fixed set, for tests that script the sources.
-    Fixed {
-        sources: SourceSet,
-        config: Box<WorkerConfig>,
-    },
-}
-
-impl Inputs {
-    fn sources(&self) -> SourceSet {
-        match self {
-            Self::Live(settings) => settings.sources(),
-            Self::Fixed { sources, .. } => sources.clone(),
-        }
-    }
-
-    /// `None` while a section the worker needs does not read.
-    fn config(&self) -> Option<WorkerConfig> {
-        match self {
-            Self::Live(settings) => settings.config(),
-            Self::Fixed { config, .. } => Some(WorkerConfig::clone(config)),
-        }
-    }
-
-    fn readable(&self) -> bool {
-        match self {
-            Self::Live(settings) => settings.readable(),
-            Self::Fixed { .. } => true,
-        }
-    }
-}
-
 /// Everything one pass works with: settings and sources resolved once at
 /// the start of the pass.
 struct Pass {
@@ -246,7 +186,8 @@ struct Attempt {
 /// isolated: one bad task never stops its siblings.
 pub struct DownloadWorker {
     journal: Arc<Journal>,
-    inputs: Inputs,
+    /// Sources and tuning, read once per pass.
+    settings: Arc<WorkerSettings>,
     ownership: JournalOwnership,
     poll_cache: Mutex<HashMap<String, PollMemory>>,
     /// Sources whose client stopped answering, polled again only once
@@ -254,8 +195,11 @@ pub struct DownloadWorker {
     poll_backoff: Mutex<HashMap<SourceTag, PollBackoff>>,
     enqueue_not_before: Mutex<HashMap<String, f64>>,
     unsearchable_warned: Mutex<HashSet<String>>,
-    plugins: Option<Arc<droppedneedle_plugins::host::PluginHost>>,
-    landing: Option<Arc<LandingService>>,
+    /// Download starts, completions and failures go to `subscriber`
+    /// plugins through this host.
+    plugins: Arc<droppedneedle_plugins::host::PluginHost>,
+    /// Finished downloads are imported through the landing.
+    landing: Arc<LandingService>,
     landing_waits: Mutex<HashMap<String, u32>>,
     /// Tasks whose landing runs right now, off the pass. The poll and
     /// enqueue passes leave them alone.
@@ -266,9 +210,8 @@ pub struct DownloadWorker {
     events: droppedneedle_kernel::events::EventHub,
     /// Wakes the loop early after a queue action (retry, next source).
     wake: tokio::sync::watch::Sender<u64>,
-    /// Album targets for the look before an automatic grab; without them
-    /// every source grabs its own best guess.
-    targets: Option<Arc<Targets>>,
+    /// Album targets for the look before an automatic grab.
+    targets: Arc<Targets>,
     /// Looks running off the pass, and tasks already looked at.
     reviews: review::Reviews,
     /// Where the cleanup warning is shown.
@@ -324,6 +267,17 @@ fn failover_exhausted(handled: i64, max: i64) -> bool {
     handled >= max
 }
 
+/// What the worker reaches outside the journal and its settings.
+pub struct WorkerPorts {
+    /// Finished downloads are imported through this.
+    pub landing: Arc<LandingService>,
+    /// Download starts, completions and failures go to `subscriber`
+    /// plugins through this host.
+    pub plugins: Arc<droppedneedle_plugins::host::PluginHost>,
+    /// Album targets for the search review before an automatic grab.
+    pub targets: Arc<Targets>,
+}
+
 impl DownloadWorker {
     /// Now, as the float unix seconds the journal stores.
     fn now_unix_f64(&self) -> f64 {
@@ -339,47 +293,31 @@ impl DownloadWorker {
         readiness: SourceReadiness,
         events: droppedneedle_kernel::events::EventHub,
         health: Arc<ServiceHealth>,
+        ports: WorkerPorts,
     ) -> Self {
-        Self::over(journal, Inputs::Live(settings), readiness, events, health)
-    }
-
-    fn over(
-        journal: Arc<Journal>,
-        inputs: Inputs,
-        readiness: SourceReadiness,
-        events: droppedneedle_kernel::events::EventHub,
-        health: Arc<ServiceHealth>,
-    ) -> Self {
-        let ownership = JournalOwnership::new(journal.clone(), None);
+        let ownership = JournalOwnership::new(journal.clone(), ports.landing.library().clone());
         Self {
             readiness,
             journal,
-            inputs,
+            settings,
             ownership,
             poll_cache: Mutex::new(HashMap::new()),
             poll_backoff: Mutex::new(HashMap::new()),
             enqueue_not_before: Mutex::new(HashMap::new()),
             unsearchable_warned: Mutex::new(HashSet::new()),
-            plugins: None,
-            landing: None,
+            plugins: ports.plugins,
+            landing: ports.landing,
             landing_waits: Mutex::new(HashMap::new()),
             in_flight: Arc::new(Mutex::new(HashSet::new())),
             landing_tasks: Mutex::new(Vec::new()),
             events,
             wake: tokio::sync::watch::Sender::new(0),
-            targets: None,
+            targets: ports.targets,
             reviews: review::Reviews::default(),
             health,
             library_check: Arc::new(Mutex::new(LibraryCheck::default())),
             library_wait_logged: Mutex::new(None),
         }
-    }
-
-    /// Search every source and look over the candidates before an album's
-    /// first automatic attempt (search review).
-    pub fn with_targets(mut self, targets: Arc<Targets>) -> Self {
-        self.targets = Some(targets);
-        self
     }
 
     /// The download journal the worker writes.
@@ -390,13 +328,13 @@ impl DownloadWorker {
     /// The worker tuning as saved right now, or `None` while the download
     /// settings do not read.
     pub fn current_config(&self) -> Option<WorkerConfig> {
-        self.inputs.config()
+        self.settings.config()
     }
 
     /// Whether the download settings read. While they do not, no pass runs
     /// and [`Self::sources_now`] is empty.
     pub fn settings_readable(&self) -> bool {
-        self.inputs.readable()
+        self.settings.readable()
     }
 
     /// Whether a download source is on: the answer requests and Discover
@@ -406,7 +344,7 @@ impl DownloadWorker {
     }
 
     /// Why downloads wait for the library, as the last pass found it.
-    /// `None` when they may go ahead, or when imports are not wired.
+    /// `None` when they may go ahead.
     pub fn library_wait(&self) -> Option<LibraryWait> {
         lock_check(&self.library_check).wait.clone()
     }
@@ -416,7 +354,7 @@ impl DownloadWorker {
     /// not finish in time counts as not answering, and the next pass
     /// starts none until it ends.
     async fn check_library(&self) -> Option<LibraryWait> {
-        let library = self.landing.as_ref()?.library()?.clone();
+        let library = self.landing.library().clone();
         {
             let mut state = lock_check(&self.library_check);
             if state.running {
@@ -471,10 +409,10 @@ impl DownloadWorker {
 
     /// The sources turned on right now, in the configured try order.
     pub fn sources_now(&self) -> Vec<Arc<dyn DownloadSource>> {
-        let Some(config) = self.inputs.config() else {
+        let Some(config) = self.settings.config() else {
             return Vec::new();
         };
-        let sources = self.inputs.sources();
+        let sources = self.settings.sources();
         let order = config.source_order;
         in_try_order(&sources, &order)
             .into_iter()
@@ -488,48 +426,9 @@ impl DownloadWorker {
             .send_modify(|count| *count = count.wrapping_add(1));
     }
 
-    /// Import finished downloads through the landing instead of settling
-    /// them as completed unseen.
-    pub fn with_landing(mut self, landing: Arc<LandingService>) -> Self {
-        self.ownership = JournalOwnership::new(self.journal.clone(), landing.library().cloned());
-        self.landing = Some(landing);
-        self
-    }
-
-    /// The landing, when imports are wired.
-    pub fn landing(&self) -> Option<&Arc<LandingService>> {
-        self.landing.as_ref()
-    }
-
-    /// Announce download starts, completions and failures to `subscriber`
-    /// plugins through this host.
-    pub fn with_plugin_events(
-        mut self,
-        host: Arc<droppedneedle_plugins::host::PluginHost>,
-    ) -> Self {
-        self.plugins = Some(host);
-        self
-    }
-
-    /// Worker over a fixed source list and fixed tuning.
-    pub fn fixed(
-        journal: Arc<Journal>,
-        sources: Vec<Arc<dyn DownloadSource>>,
-        config: WorkerConfig,
-        events: droppedneedle_kernel::events::EventHub,
-        health: Arc<ServiceHealth>,
-    ) -> Self {
-        let sources = Arc::new(sources);
-        Self::over(
-            journal,
-            Inputs::Fixed {
-                sources: sources.clone(),
-                config: Box::new(config),
-            },
-            SourceReadiness::new(SourceList::Fixed(sources)),
-            events,
-            health,
-        )
+    /// The landing finished downloads are imported through.
+    pub fn landing(&self) -> &Arc<LandingService> {
+        &self.landing
     }
 
     /// Run one journal write step, logging a failure with its name.

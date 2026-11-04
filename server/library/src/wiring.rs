@@ -53,15 +53,85 @@ use droppedneedle_kernel::runtime_config::{Live, Plain};
 /// Scan coordinator over the wired seams.
 pub type ScanCoordinator = LibraryScanCoordinator<LoftyTagReader>;
 
-/// The provider ports a test may put in place of the live clients.
-#[derive(Clone)]
+/// What identification and contributions ask the outside services
+/// through: [`Endpoints::live`] in production, scripted ports in a test.
 pub struct Endpoints {
-    /// What identification asks MusicBrainz and AcoustID through; `None`
-    /// builds the live clients.
-    pub identify_providers: Option<Arc<dyn super::identify::providers::IdentifyProviders>>,
-    /// What contributions ask Discogs and MusicBrainz through; `None` builds
-    /// the live clients.
-    pub contribution_providers: Option<ContribProviders>,
+    /// What identification asks MusicBrainz and AcoustID through, built
+    /// once the bundle's stores, CPU pool and roots exist.
+    pub identify: IdentifyFactory,
+    /// What contributions ask Discogs and MusicBrainz through.
+    pub contributions: ContribProviders,
+}
+
+/// Builds identification's provider port from the bundle's parts.
+pub type IdentifyFactory =
+    Box<dyn FnOnce(ProviderParts) -> Arc<dyn super::identify::providers::IdentifyProviders>>;
+
+impl Endpoints {
+    /// The live clients: MusicBrainz on the source the settings name, read
+    /// per request, kept in the one provider cache, AcoustID and Discogs
+    /// through their shared clients.
+    pub fn live(
+        providers: &droppedneedle_providers::Providers,
+        mb_source: droppedneedle_providers::musicbrainz::LiveSource,
+        clock: Arc<dyn droppedneedle_kernel::clock::Clock>,
+    ) -> Self {
+        use droppedneedle_providers::RequestPriority;
+
+        let cached = |priority: RequestPriority| {
+            super::identify::sources::CachedMusicBrainz::new(
+                &providers.musicbrainz,
+                mb_source.clone(),
+                providers.cache.clone(),
+                priority,
+            )
+        };
+        let musicbrainz = super::identify::sources::Prioritised::new(
+            cached(RequestPriority::BackgroundSync),
+            cached(RequestPriority::UserInitiated),
+        );
+        let acoustid = providers.acoustid.clone();
+        let mb_client =
+            |priority: RequestPriority| providers.musicbrainz.live(mb_source.clone(), priority);
+        // Contributions read MusicBrainz on both lanes (the curator's page
+        // and the verification worker) and Discogs through the one Discogs
+        // client.
+        let contributions = ContribProviders {
+            discogs: Arc::new(super::contrib::live::LiveDiscogsContrib::new(
+                providers.discogs.clone(),
+                clock,
+            )),
+            musicbrainz: Arc::new(super::contrib::live::LiveMusicBrainzContrib::new(
+                mb_client(RequestPriority::UserInitiated),
+                mb_client(RequestPriority::BackgroundSync),
+            )),
+        };
+        Self {
+            identify: Box::new(move |parts| {
+                let fingerprints = super::identify::sources::AcoustIdFingerprints::new(
+                    acoustid,
+                    parts.library,
+                    parts.roots,
+                    parts.cpu.clone(),
+                    parts.store.clone(),
+                );
+                Arc::new(super::identify::providers::LiveProviders::new(
+                    musicbrainz,
+                    parts.store,
+                    fingerprints,
+                    parts.cpu,
+                ))
+            }),
+            contributions,
+        }
+    }
+
+    /// Identification asks `identify` instead of building its clients.
+    pub fn identify_through(
+        identify: Arc<dyn super::identify::providers::IdentifyProviders>,
+    ) -> IdentifyFactory {
+        Box::new(move |_| identify)
+    }
 }
 
 /// Shared root-directory lookup for the space probe.
@@ -69,15 +139,12 @@ pub(crate) type RootDirs = Arc<dyn Fn() -> HashMap<String, PathBuf> + Send + Syn
 
 /// What the identify providers are built from, once the bundle's
 /// stores, CPU pool, and roots exist.
-struct ProviderParts {
+pub struct ProviderParts {
     store: Arc<SqliteIdentifyStore>,
     cpu: BlockingPool,
     roots: SharedResolver,
     library: Live<TypedLibrary>,
 }
-
-type ProviderFactory =
-    Box<dyn FnOnce(ProviderParts) -> Arc<dyn super::identify::providers::IdentifyProviders>>;
 
 /// Every library route, grouped by who may call it.
 pub fn routes() -> droppedneedle_kernel::mount::Routes<LibraryServices> {
@@ -101,9 +168,8 @@ pub type ScanCompleted = Arc<dyn Fn() + Send + Sync>;
 /// What the library calls outside itself, given at construction.
 pub struct LibraryPorts {
     /// Genres, lyrics, covers and AcoustID ids Library Management plans
-    /// with. `None` only in a test bundle with no outside sources:
-    /// planning then asks nothing.
-    pub enrichment: Option<Arc<dyn EnrichmentPort>>,
+    /// with.
+    pub enrichment: Arc<dyn EnrichmentPort>,
     /// Called after each scan run that changed the library completes
     /// (the library image refresh).
     pub scan_completed: ScanCompleted,
@@ -344,9 +410,8 @@ pub struct LibrarySetup {
     /// each other.
     pub management_settings: Arc<LibraryManagementService>,
     /// Genres, lyrics and covers Library Management plans with (the
-    /// artwork cache lives with the catalog). `None` in a test bundle with
-    /// no outside sources.
-    pub enrichment: Option<Arc<dyn EnrichmentPort>>,
+    /// artwork cache lives with the catalog).
+    pub enrichment: Arc<dyn EnrichmentPort>,
     /// The write side the fields above share, which the plugin host holds
     /// too.
     pub core: LibraryCore,
@@ -364,13 +429,13 @@ pub struct LibrarySetup {
 }
 
 impl LibrarySetup {
-    /// Build the production bundle over the live provider clients.
-    /// Identification reads MusicBrainz identity-critical and keeps the
-    /// release documents it fetches; AcoustID runs only for albums whose
-    /// tags are weak, with the key read from the settings per job. The
-    /// publisher and its journal readers still open their own connections
-    /// on the platform database's file. What the library calls outside
-    /// itself comes in `ports`.
+    /// Build the bundle. Identification and contributions ask through
+    /// `endpoints` ([`Endpoints::live`] in production); identification
+    /// keeps the release documents it fetches, and AcoustID runs only for
+    /// albums whose tags are weak, with the key read from the settings per
+    /// job. The publisher and its journal readers still open their own
+    /// connections on the platform database's file. What the library calls
+    /// outside itself comes in `ports`.
     pub fn build(
         platform: &droppedneedle_kernel::platform::Platform,
         providers: Arc<droppedneedle_providers::Providers>,
@@ -381,17 +446,10 @@ impl LibrarySetup {
     ) -> Result<Self, String> {
         use droppedneedle_providers::RequestPriority;
 
-        // MusicBrainz on the source the settings name, read per request.
-        // Identification and imports are background work; a person waiting
-        // (an edition plan, a curator's edition choice, a drop matched by
-        // hand) goes ahead of it at the limiter. Both clients count their
-        // failures toward system health, so an outage during a background
-        // lookup shows on the health dot too.
-        let mb_client =
-            |priority: RequestPriority| providers.musicbrainz.live(mb_source.clone(), priority);
-        // Identification and imports keep what MusicBrainz says about
-        // merged recording ids in the one provider cache, whatever the
-        // priority.
+        // Downloads being imported look releases up through their own
+        // clients on the same limiter and source setting, kept in the one
+        // provider cache. Imports are background work; a person waiting (a
+        // drop matched by hand) goes ahead of it at the limiter.
         let cached = |priority: RequestPriority| {
             super::identify::sources::CachedMusicBrainz::new(
                 &providers.musicbrainz,
@@ -400,61 +458,17 @@ impl LibrarySetup {
                 priority,
             )
         };
-        let musicbrainz = super::identify::sources::Prioritised::new(
-            cached(RequestPriority::BackgroundSync),
-            cached(RequestPriority::UserInitiated),
-        );
-        // Downloads being imported look releases up through their own
-        // clients on the same limiter and source setting.
         let imports: super::identify::sources::Prioritised<
             Arc<dyn super::identify::sources::ReleaseSource>,
         > = super::identify::sources::Prioritised::new(
             Arc::new(cached(RequestPriority::BackgroundSync)),
             Arc::new(cached(RequestPriority::UserInitiated)),
         );
-        // Contributions read MusicBrainz on both lanes (the curator's page
-        // and the verification worker) and Discogs through the one Discogs
-        // client.
-        let contrib = endpoints
-            .contribution_providers
-            .unwrap_or_else(|| ContribProviders {
-                discogs: Arc::new(super::contrib::live::LiveDiscogsContrib::new(
-                    providers.discogs.clone(),
-                    platform.clock.clone(),
-                )),
-                musicbrainz: Arc::new(super::contrib::live::LiveMusicBrainzContrib::new(
-                    mb_client(RequestPriority::UserInitiated),
-                    mb_client(RequestPriority::BackgroundSync),
-                )),
-            });
-        // Identification and imports look prints up through the one
-        // AcoustID client.
         let import_acoustid = providers.acoustid.clone();
-        let acoustid = providers.acoustid.clone();
-        // Identification asks the port `endpoints` gives, or the live
-        // clients when it gives none.
-        let make: ProviderFactory = match endpoints.identify_providers {
-            Some(given) => Box::new(move |_| given),
-            None => Box::new(move |parts| {
-                let fingerprints = super::identify::sources::AcoustIdFingerprints::new(
-                    acoustid,
-                    parts.library,
-                    parts.roots,
-                    parts.cpu.clone(),
-                    parts.store.clone(),
-                );
-                Arc::new(super::identify::providers::LiveProviders::new(
-                    musicbrainz,
-                    parts.store,
-                    fingerprints,
-                    parts.cpu,
-                ))
-            }),
-        };
         Self::assemble(
             platform,
-            make,
-            contrib,
+            endpoints.identify,
+            endpoints.contributions,
             queue,
             ports,
             imports,
@@ -464,7 +478,7 @@ impl LibrarySetup {
 
     fn assemble(
         platform: &droppedneedle_kernel::platform::Platform,
-        make_providers: ProviderFactory,
+        make_providers: IdentifyFactory,
         contrib_providers: ContribProviders,
         queue: droppedneedle_kernel::jobs::queue::JobQueue,
         ports: LibraryPorts,

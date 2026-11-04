@@ -18,9 +18,7 @@ use droppedneedle_acquire::downloads::queue_rows::Viewer as HeldViewer;
 use droppedneedle_acquire::downloads::sources::SourceHandle;
 use droppedneedle_acquire::downloads::state::{AttemptState, TaskStatus};
 use droppedneedle_acquire::downloads::store::{NewTask, TaskOutcome};
-use droppedneedle_acquire::downloads::worker::{
-    DownloadWorker, FixedSource, WorkerConfig, run_startup_recovery,
-};
+use droppedneedle_acquire::downloads::worker::{DownloadWorker, run_startup_recovery};
 use droppedneedle_acquire::downloads::{PlannedAlbum, ReplaceVersion, TaskPlan};
 use droppedneedle_acquire::intake::{self, Gate};
 use droppedneedle_acquire::landing::library::LibraryLanding;
@@ -49,7 +47,9 @@ use droppedneedle_providers::musicbrainz::is_valid_mbid;
 use futures_util::future::BoxFuture;
 
 use crate::common::TestPlatform;
+use crate::common::acquire::{FixedAlbums, FixedPlugin, save_policy, save_slskd, worker_with};
 use crate::common::auth::{AuthRig, test_principal, with_test_principal};
+use crate::common::bundles::acquire_serving;
 use crate::common::library::TestSql as _;
 use crate::common::library::{every_priority, library_at};
 
@@ -270,25 +270,14 @@ async fn finished_downloads_land_in_the_library_or_wait_for_review() {
             &lengths,
         ),
     ]));
-    let acquire = acquire_over(
+    let (acquire, fixed) = acquire_serving(
         &platform,
         &library,
         Arc::new(LibraryLanding::new(&library, every_priority(releases))),
     );
     let worker = |paths: Vec<PathBuf>| {
-        Arc::new(
-            DownloadWorker::fixed(
-                acquire.journal.clone(),
-                vec![crate::as_source(Arc::new(FixedSource::new(
-                    downloads.clone(),
-                    paths,
-                )))],
-                WorkerConfig::default(),
-                droppedneedle_kernel::events::EventHub::new(),
-                Default::default(),
-            )
-            .with_landing(acquire.landing.clone()),
-        )
+        fixed.serve(&downloads, &paths);
+        acquire.worker.clone()
     };
 
     // The good download, with the album request it serves.
@@ -524,7 +513,7 @@ async fn land_with_recording(
         releases: Releases(vec![good]),
         retired: RETIRED,
     });
-    let acquire = acquire_over(
+    let (acquire, fixed) = acquire_serving(
         &platform,
         &library,
         Arc::new(LibraryLanding::new(&library, every_priority(releases))),
@@ -536,19 +525,8 @@ async fn land_with_recording(
         })
         .await
         .expect("task");
-    let worker = Arc::new(
-        DownloadWorker::fixed(
-            acquire.journal.clone(),
-            vec![crate::as_source(Arc::new(FixedSource::new(
-                downloads.clone(),
-                files.clone(),
-            )))],
-            WorkerConfig::default(),
-            droppedneedle_kernel::events::EventHub::new(),
-            Default::default(),
-        )
-        .with_landing(acquire.landing.clone()),
-    );
+    fixed.serve(&downloads, &files);
+    let worker = acquire.worker.clone();
     worker.run_once(1).await;
     worker.wait_for_landings().await;
     (acquire, music, (platform, db))
@@ -973,7 +951,7 @@ async fn land_heard(
     let files = downloads(&downloads_dir);
     let lengths: Vec<Option<u64>> = files.iter().map(|path| length_ms(path)).collect();
     let releases = source(&lengths);
-    let acquire = acquire_over(
+    let (acquire, fixed) = acquire_serving(
         &platform,
         &library,
         Arc::new(LibraryLanding::new(&library, every_priority(releases))),
@@ -1018,19 +996,8 @@ async fn land_heard(
             .await;
         return (acquire, music, (platform, db));
     }
-    let worker = Arc::new(
-        DownloadWorker::fixed(
-            acquire.journal.clone(),
-            vec![crate::as_source(Arc::new(FixedSource::new(
-                downloads_dir,
-                files,
-            )))],
-            WorkerConfig::default(),
-            droppedneedle_kernel::events::EventHub::new(),
-            Default::default(),
-        )
-        .with_landing(acquire.landing.clone()),
-    );
+    fixed.serve(&downloads_dir, &files);
+    let worker = acquire.worker.clone();
     worker.run_once(1).await;
     worker.wait_for_landings().await;
     (acquire, music, (platform, db))
@@ -1237,24 +1204,13 @@ async fn landing_during(
         &["Mysterons"],
         &lengths,
     )]));
-    let acquire = acquire_over(
+    let (acquire, fixed) = acquire_serving(
         &platform,
         &library,
         Arc::new(LibraryLanding::new(&library, every_priority(releases))),
     );
-    let worker = Arc::new(
-        DownloadWorker::fixed(
-            acquire.journal.clone(),
-            vec![crate::as_source(Arc::new(FixedSource::new(
-                downloads,
-                files.clone(),
-            )))],
-            WorkerConfig::default(),
-            droppedneedle_kernel::events::EventHub::new(),
-            Default::default(),
-        )
-        .with_landing(acquire.landing.clone()),
-    );
+    fixed.serve(&downloads, &files);
+    let worker = acquire.worker.clone();
     let handle = serde_json::to_string(&SourceHandle {
         filenames: files
             .iter()
@@ -1577,25 +1533,14 @@ async fn held_files_import_as_upgrades_or_discard() {
     );
     let first = release.tracks[0].clone();
     let releases: Arc<dyn ReleaseSource> = Arc::new(Releases(vec![release]));
-    let acquire = acquire_over(
+    let (acquire, fixed) = acquire_serving(
         &platform,
         &library,
         Arc::new(LibraryLanding::new(&library, every_priority(releases))),
     );
     let worker = |paths: Vec<PathBuf>| {
-        Arc::new(
-            DownloadWorker::fixed(
-                acquire.journal.clone(),
-                vec![crate::as_source(Arc::new(FixedSource::new(
-                    dir.join("downloads"),
-                    paths,
-                )))],
-                WorkerConfig::default(),
-                droppedneedle_kernel::events::EventHub::new(),
-                Default::default(),
-            )
-            .with_landing(acquire.landing.clone()),
-        )
+        fixed.serve(&dir.join("downloads"), &paths);
+        acquire.worker.clone()
     };
 
     // The library holds an MP3 of the first track, from an earlier download.
@@ -2188,7 +2133,7 @@ async fn a_landing_waits_while_what_it_reads_does_not_read() {
         let store = crate::acquire_requests::unreadable_policy_store(&dir.join("broken-settings"));
         let landing = droppedneedle_acquire::landing::LandingService::new(
             acquire.journal.clone(),
-            None,
+            acquire.landing.library().clone(),
             store.live(),
             dir.join("held"),
         );
@@ -2673,7 +2618,7 @@ async fn a_quality_waiver_keeps_only_the_pinned_attempts_files() {
         let store = droppedneedle_acquire::settings::scratch_settings(&band).expect("settings");
         let landing = droppedneedle_acquire::landing::LandingService::new(
             acquire.journal.clone(),
-            acquire.landing.library().cloned(),
+            acquire.landing.library().clone(),
             store.live(),
             dir.join("held"),
         );
@@ -2882,6 +2827,10 @@ async fn a_plugin_download_is_confined_to_the_plugins_folders() {
             auto_accept: 0.70,
             manual_min: 0.50,
         },
+        Arc::new(droppedneedle_acquire::target::Targets::new(
+            acquire.journal.clone(),
+            Arc::new(FixedAlbums::default()),
+        )),
     );
     let handle = SourceHandle::new(SourceTag::plugin("toy"));
 
@@ -2925,56 +2874,38 @@ async fn a_plugin_download_is_confined_to_the_plugins_folders() {
     );
 }
 
-/// A worker whose SABnzbd no longer knows any job, sweeping `complete` as
-/// its finished-download folder. The guard keeps the mock serving.
+/// The bundle's worker with SABnzbd on, at a mock that no longer knows any
+/// job, its finished-download folder `complete` swept as SABnzbd's. The
+/// guard keeps the mock serving.
 async fn sab_sweeper(
+    platform: &droppedneedle_kernel::platform::Platform,
     acquire: &droppedneedle_acquire::AcquireSetup,
     complete: &Path,
 ) -> (
     Arc<DownloadWorker>,
     droppedneedle_testkit::usenet::ServerGuard,
 ) {
-    use droppedneedle_acquire::sources::SabnzbdSource;
-    use droppedneedle_acquire::usenet::policy::UsenetPolicy;
-    use droppedneedle_acquire::usenet::sabnzbd::{SabnzbdClient, SabnzbdQueue};
+    use droppedneedle_kernel::runtime_config::secret_sections::{
+        DownloadClients, SabnzbdConnection,
+    };
     use droppedneedle_testkit::usenet::{SabnzbdMock, serve_loopback};
 
     let mock = SabnzbdMock::new();
     let (base, server) = serve_loopback(mock.router()).await.expect("mock serves");
-    let policy = UsenetPolicy::v2_defaults();
-    let source = SabnzbdSource::new(
-        Arc::new(SabnzbdQueue::new(
-            SabnzbdClient::new(
-                reqwest::Client::new(),
-                &base,
-                "SABKEY",
-                3,
-                std::time::Duration::from_millis(1),
-            ),
-            &base,
-            "SABKEY",
-            complete.to_path_buf(),
-            policy.clone(),
-        )),
-        Vec::new(),
-        policy,
-        acquire.journal.clone(),
-        None,
-    );
-    let worker = Arc::new(
-        DownloadWorker::fixed(
-            acquire.journal.clone(),
-            vec![crate::as_source(Arc::new(source))],
-            WorkerConfig {
-                orphan_roots: vec![(SourceTag::Usenet, complete.to_path_buf())],
-                ..WorkerConfig::default()
+    platform
+        .settings
+        .save_secret(DownloadClients {
+            sabnzbd: SabnzbdConnection {
+                enabled: true,
+                url: base,
+                api_key: "SABKEY".into(),
+                downloads_mount: complete.to_string_lossy().into_owned(),
+                ..SabnzbdConnection::default()
             },
-            droppedneedle_kernel::events::EventHub::new(),
-            Default::default(),
-        )
-        .with_landing(acquire.landing.clone()),
-    );
-    (worker, server)
+        })
+        .await
+        .expect("sabnzbd connection saves");
+    (acquire.worker.clone(), server)
 }
 
 /// The hourly sweep of finished download folders keeps a folder while the
@@ -3056,7 +2987,7 @@ async fn the_orphan_sweep_keeps_folders_still_needed() {
             "{case}"
         );
 
-        let (worker, _server) = sab_sweeper(&acquire, &complete).await;
+        let (worker, _server) = sab_sweeper(&platform, &acquire, &complete).await;
 
         // The publish journal as a stopped server leaves it at each step.
         for (state, kept) in [
@@ -3147,7 +3078,7 @@ async fn the_orphan_sweep_keeps_folders_still_needed() {
         .await
         .expect("seed");
 
-    let (worker, _server) = sab_sweeper(&acquire, &complete).await;
+    let (worker, _server) = sab_sweeper(&platform, &acquire, &complete).await;
 
     // Pass 0 is one of the passes the hourly sweep runs on.
     worker.run_once(0).await;
@@ -3259,22 +3190,13 @@ async fn wait_rig(unmounted: bool) -> WaitRig {
         &["Mysterons", "Sour Times"],
         &lengths,
     )]));
-    let acquire = acquire_over(
+    let (acquire, fixed) = acquire_serving(
         &platform,
         &library,
         Arc::new(LibraryLanding::new(&library, every_priority(releases))),
     );
-    let source = Arc::new(FixedSource::new(downloads.clone(), files.clone()));
-    let worker = Arc::new(
-        DownloadWorker::fixed(
-            acquire.journal.clone(),
-            vec![crate::as_source(source)],
-            WorkerConfig::default(),
-            droppedneedle_kernel::events::EventHub::new(),
-            Default::default(),
-        )
-        .with_landing(acquire.landing.clone()),
-    );
+    fixed.serve(&downloads, &files);
+    let worker = acquire.worker.clone();
     let queue = DownloadQueue::new(acquire.journal.clone(), worker.clone());
     let viewer = HeldViewer {
         user_id: "u-ada".to_owned(),
@@ -3583,22 +3505,9 @@ async fn a_read_only_archive_folder_does_not_hold_downloads() {
         every_priority(Arc::new(Releases(Vec::new()))),
     ));
     assert_eq!(port.import_folder(), Some(music.clone()));
-    let acquire = acquire_over(&platform, &library, port);
-    let downloads = dir.join("downloads");
-    std::fs::create_dir_all(&downloads).expect("downloads");
-    let worker = Arc::new(
-        DownloadWorker::fixed(
-            acquire.journal.clone(),
-            vec![crate::as_source(Arc::new(FixedSource::new(
-                downloads,
-                Vec::new(),
-            )))],
-            WorkerConfig::default(),
-            droppedneedle_kernel::events::EventHub::new(),
-            Default::default(),
-        )
-        .with_landing(acquire.landing.clone()),
-    );
+    let (acquire, fixed) = acquire_serving(&platform, &library, port);
+    fixed.serve(&dir.join("downloads"), &[]);
+    let worker = acquire.worker.clone();
     acquire
         .journal
         .run("test.seed", |store| {
@@ -3779,6 +3688,7 @@ impl droppedneedle_acquire::target::lookup::AlbumLookup for Lookup {
 /// database, with scripted MusicBrainz.
 struct JoinRig {
     acquire: droppedneedle_acquire::AcquireSetup,
+    fixed: FixedPlugin,
     library: LibrarySetup,
     targets: Arc<droppedneedle_acquire::target::Targets>,
     music: PathBuf,
@@ -3808,7 +3718,7 @@ async fn join_rig(releases: Vec<Release>) -> JoinRig {
             EffectivePolicy::Automatic,
         )
         .expect("root adds");
-    let acquire = acquire_over(
+    let (acquire, fixed) = acquire_serving(
         &platform,
         &library,
         Arc::new(LibraryLanding::new(
@@ -3818,10 +3728,11 @@ async fn join_rig(releases: Vec<Release>) -> JoinRig {
     );
     let targets = Arc::new(droppedneedle_acquire::target::Targets::new(
         acquire.journal.clone(),
-        Some(Arc::new(Lookup(releases))),
+        Arc::new(Lookup(releases)),
     ));
     JoinRig {
         acquire,
+        fixed,
         library,
         targets,
         music,
@@ -4094,28 +4005,14 @@ impl JoinRig {
         path
     }
 
+    /// The bundle's worker, the plugin serving `paths`, and failed
+    /// downloads retried once their backoff ends when `retry`.
     fn worker(&self, paths: Vec<PathBuf>, retry: bool) -> Arc<DownloadWorker> {
-        let retry = droppedneedle_acquire::downloads::watchdog::RetryPolicy {
-            enabled: retry,
-            base_interval_minutes: 0.0,
-            ..Default::default()
-        };
-        Arc::new(
-            DownloadWorker::fixed(
-                self.acquire.journal.clone(),
-                vec![crate::as_source(Arc::new(FixedSource::new(
-                    self.downloads.clone(),
-                    paths,
-                )))],
-                WorkerConfig {
-                    retry,
-                    ..WorkerConfig::default()
-                },
-                droppedneedle_kernel::events::EventHub::new(),
-                Default::default(),
-            )
-            .with_landing(self.acquire.landing.clone()),
-        )
+        save_policy(&self._grounds.0.settings, |policy| {
+            policy.auto_retry_enabled = retry;
+        });
+        self.fixed.serve(&self.downloads, &paths);
+        self.acquire.worker.clone()
     }
 
     /// Run the worker until the landing of what it finds settles.
@@ -5747,7 +5644,7 @@ async fn a_failed_request_follows_its_retry_to_imported() {
         &["Mysterons", "Sour Times"],
         &lengths,
     )]));
-    let acquire = acquire_over(
+    let (acquire, fixed) = acquire_serving(
         &platform,
         &library,
         Arc::new(LibraryLanding::new(&library, every_priority(releases))),
@@ -5782,18 +5679,20 @@ async fn a_failed_request_follows_its_retry_to_imported() {
         .expect("request");
     let recorded = Arc::new(crate::common::bundles::FulfilledTicks::default());
     let journal = Arc::new(Journal::new(acquire.db.clone(), recorded.clone()));
-    let worker = Arc::new(
-        DownloadWorker::fixed(
+    fixed.serve(&downloads, &good);
+    let worker = worker_with(
+        &platform,
+        fixed.host.clone(),
+        journal.clone(),
+        &platform.settings,
+        downloads.join("slskd"),
+        Arc::new(droppedneedle_acquire::target::Targets::new(
             journal.clone(),
-            vec![crate::as_source(Arc::new(FixedSource::new(
-                downloads.clone(),
-                good.clone(),
-            )))],
-            WorkerConfig::default(),
-            droppedneedle_kernel::events::EventHub::new(),
-            Default::default(),
-        )
-        .with_landing(acquire.landing.clone()),
+            Arc::new(FixedAlbums::default()),
+        )),
+        acquire.landing.clone(),
+        Default::default(),
+        droppedneedle_kernel::events::EventHub::new(),
     );
     worker.run_once(1).await;
     worker.run_once(2).await;
@@ -6263,16 +6162,9 @@ async fn a_claimed_album_version_hold_is_left_alone() {
 async fn a_single_found_only_on_its_album_is_held_then_taken_from_the_album() {
     use droppedneedle_acquire::requests::models::{HistoryQuery, TrackIntake};
     use droppedneedle_acquire::requests::service::RequestsService;
-    use droppedneedle_acquire::slskd::{
-        DownloadPolicy, ReqwestSlskdHttp, SlskdClient, SlskdRepository,
-    };
-    use droppedneedle_acquire::sources::SlskdSource;
     use droppedneedle_acquire::target::Targets;
-    use droppedneedle_acquire::target::lookup::{
-        AlbumRelease, AlbumTrack, FixedAlbums, ReleaseCandidate,
-    };
-    use droppedneedle_testkit::slskd::{MOCK_API_KEY, MockSlskd};
-    use std::time::Duration;
+    use droppedneedle_acquire::target::lookup::{AlbumRelease, AlbumTrack, ReleaseCandidate};
+    use droppedneedle_testkit::slskd::MockSlskd;
 
     const SINGLE_GROUP: &str = "6d0b7a1e-0000-4000-8000-000000000021";
     const SINGLE_RELEASE: &str = "6d0b7a1e-0000-4000-8000-000000000022";
@@ -6376,36 +6268,18 @@ async fn a_single_found_only_on_its_album_is_held_then_taken_from_the_album() {
         })
     };
     mock.script_responses(vec![peer("collector"), peer("second"), peer("third")]);
-    let repo = SlskdRepository::new(
-        SlskdClient::new(ReqwestSlskdHttp::new(
-            reqwest::Client::new(),
-            &mock.base_url(),
-            MOCK_API_KEY,
-        )),
-        &mock.base_url(),
-        MOCK_API_KEY,
-        downloads.clone(),
-        DownloadPolicy {
-            search_timeout: Duration::from_secs(2),
-            completion_grace: Duration::from_secs(2),
-            poll_interval: Duration::from_millis(10),
-            ..DownloadPolicy::default()
-        },
-    );
-    let targets = Arc::new(Targets::new(
+    save_slskd(&platform.settings, &mock.base_url());
+    let targets = Arc::new(Targets::new(acquire.journal.clone(), Arc::new(albums)));
+    let worker = worker_with(
+        &platform,
+        crate::common::bundles::idle_host(&platform, library.core.clone()),
         acquire.journal.clone(),
-        Some(Arc::new(albums)),
-    ));
-    let source = SlskdSource::new(Arc::new(repo), acquire.journal.clone()).with_targets(targets);
-    let worker = Arc::new(
-        DownloadWorker::fixed(
-            acquire.journal.clone(),
-            vec![crate::as_source(Arc::new(source))],
-            WorkerConfig::default(),
-            droppedneedle_kernel::events::EventHub::new(),
-            Default::default(),
-        )
-        .with_landing(acquire.landing.clone()),
+        &platform.settings,
+        downloads.clone(),
+        targets,
+        acquire.landing.clone(),
+        Default::default(),
+        droppedneedle_kernel::events::EventHub::new(),
     );
     let settle = |task_id: String| {
         let worker = worker.clone();
@@ -6647,7 +6521,7 @@ async fn land_swapped(
         edition_busy: false,
         busy_once: Default::default(),
     });
-    let acquire = acquire_over(&platform, &library, port);
+    let (acquire, fixed) = acquire_serving(&platform, &library, port);
     acquire
         .journal
         .run("test.seed", |store| {
@@ -6655,19 +6529,8 @@ async fn land_swapped(
         })
         .await
         .expect("task");
-    let worker = Arc::new(
-        DownloadWorker::fixed(
-            acquire.journal.clone(),
-            vec![crate::as_source(Arc::new(FixedSource::new(
-                downloads,
-                vec![file],
-            )))],
-            WorkerConfig::default(),
-            droppedneedle_kernel::events::EventHub::new(),
-            Default::default(),
-        )
-        .with_landing(acquire.landing.clone()),
-    );
+    fixed.serve(&downloads, &[file]);
+    let worker = acquire.worker.clone();
     worker.run_once(1).await;
     worker.wait_for_landings().await;
     (acquire, music, secret, (platform, db))
@@ -7116,13 +6979,14 @@ impl IntakeCase {
             edition_busy: false,
             busy_once: Default::default(),
         });
-        let acquire = acquire_over(&platform, &library, port);
+        let (acquire, fixed) = acquire_serving(&platform, &library, port);
         let targets = Arc::new(droppedneedle_acquire::target::Targets::new(
             acquire.journal.clone(),
-            Some(Arc::new(Lookup(releases))),
+            Arc::new(Lookup(releases)),
         ));
         let rig = JoinRig {
             acquire,
+            fixed,
             library,
             targets,
             music,
@@ -7351,7 +7215,7 @@ impl IntakeCase {
             gate: row.gate,
             owner: "u-ada".to_owned(),
         };
-        let library = self.rig.acquire.landing.library().expect("library").clone();
+        let library = self.rig.acquire.landing.library().clone();
         match intake::place(library.as_ref(), &batch, pairing, None).await {
             Ok(placement) => match &placement.outcomes[0] {
                 intake::Outcome::Held { reason, .. } => Some(Seen::Held(*reason)),

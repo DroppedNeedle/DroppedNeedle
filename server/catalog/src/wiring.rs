@@ -81,11 +81,11 @@ pub fn artwork(
             Arc::clone(&platform.clock),
         ),
         LocalArtwork::new(platform.db.clone()),
-        Some(Arc::new(inputs.providers.coverart.clone())),
+        Arc::new(inputs.providers.coverart.clone()),
         platform.settings.live(),
+        Arc::new(inputs.providers.images.clone()),
+        Arc::new(metadata::precache::CatalogArtistImages(artists)),
     )
-    .with_images(Arc::new(inputs.providers.images.clone()))
-    .with_artist_source(Arc::new(metadata::precache::CatalogArtistImages(artists)))
 }
 
 impl CatalogSetup {

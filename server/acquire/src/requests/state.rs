@@ -31,30 +31,34 @@ pub struct RequestsState {
     /// album names.
     pub library: AcquireDb,
     /// The plugin host: new requests are announced to `subscriber`
-    /// plugins. `None` in tests that run the routes alone.
-    pub plugins: Option<Arc<droppedneedle_plugins::host::PluginHost>>,
-    /// The personal-mix builder. `None` when ListenBrainz has no rate
-    /// limit row, and in tests that run the routes alone.
-    pub mixer: Option<Arc<super::mix::PersonalMixBuilder>>,
+    /// plugins.
+    pub plugins: Arc<droppedneedle_plugins::host::PluginHost>,
     /// The library's edition plans: "get missing tracks" fetches only what
-    /// the chosen edition lacks. `None` in tests that run the routes alone.
-    pub edition_plans: Option<Arc<dyn droppedneedle_library::edition::port::EditionPlans>>,
+    /// the chosen edition lacks.
+    pub edition_plans: Arc<dyn droppedneedle_library::edition::port::EditionPlans>,
     /// The download policy the upgrade cutoff comes from: "get missing
     /// tracks" also asks for the edition's owned tracks below the cutoff.
-    pub upgrade_policy: Option<
-        droppedneedle_kernel::runtime_config::Live<
-            droppedneedle_kernel::runtime_config::sections::DownloadPolicy,
-        >,
+    pub upgrade_policy: droppedneedle_kernel::runtime_config::Live<
+        droppedneedle_kernel::runtime_config::sections::DownloadPolicy,
     >,
     /// Whether a download source is set up and where downloads land.
-    pub readiness: Option<AcquireReadiness>,
+    pub readiness: AcquireReadiness,
     /// The library's album removal: an admin removing a discovery batch
-    /// recycles the albums it brought in. `None` leaves them in place.
-    pub albums: Option<droppedneedle_library::removal::Mutations>,
+    /// recycles the albums it brought in.
+    pub albums: droppedneedle_library::removal::Mutations,
     /// Users' notices: a follower hears when someone else's ask starts
-    /// their followed artist's release. `None` in tests that run the
-    /// routes alone.
-    pub events: Option<droppedneedle_kernel::events::EventHub>,
+    /// their followed artist's release.
+    pub events: droppedneedle_kernel::events::EventHub,
+}
+
+/// What the Weekly Mix routes read: the requests state and the mix
+/// builder, which holds a requests state of its own to file its asks.
+#[derive(Clone)]
+pub struct MixRoutes {
+    /// The requests state.
+    pub requests: RequestsState,
+    /// The personal-mix builder.
+    pub mixer: Arc<super::mix::PersonalMixBuilder>,
 }
 
 /// What "get missing tracks" checks before it asks for anything: a
@@ -68,11 +72,33 @@ pub struct AcquireReadiness {
     pub staging_root: std::path::PathBuf,
 }
 
+/// What the requests state reaches outside its own stores.
+pub struct RequestsPorts {
+    /// See [`RequestsState::plugins`].
+    pub plugins: Arc<droppedneedle_plugins::host::PluginHost>,
+    /// See [`RequestsState::edition_plans`].
+    pub edition_plans: Arc<dyn droppedneedle_library::edition::port::EditionPlans>,
+    /// See [`RequestsState::upgrade_policy`].
+    pub upgrade_policy: droppedneedle_kernel::runtime_config::Live<
+        droppedneedle_kernel::runtime_config::sections::DownloadPolicy,
+    >,
+    /// See [`RequestsState::readiness`].
+    pub readiness: AcquireReadiness,
+    /// See [`RequestsState::albums`].
+    pub albums: droppedneedle_library::removal::Mutations,
+    /// See [`RequestsState::events`].
+    pub events: droppedneedle_kernel::events::EventHub,
+}
+
 impl RequestsState {
-    /// State over one database, one quota ledger and one dispatch, with no
-    /// ports: the routes alone. Production fills the ports in
-    /// [`crate::wiring`] before anything holds the state.
-    pub fn new(db: &AcquireDb, quota: Arc<QuotaLedger>, dispatch: Arc<DownloadDispatch>) -> Self {
+    /// State over one database, one quota ledger, one dispatch and the
+    /// ports it reaches.
+    pub fn new(
+        db: &AcquireDb,
+        quota: Arc<QuotaLedger>,
+        dispatch: Arc<DownloadDispatch>,
+        ports: RequestsPorts,
+    ) -> Self {
         Self {
             store: RequestStore::new(db.clone()),
             quota,
@@ -82,13 +108,12 @@ impl RequestsState {
             mixes: Arc::new(PersonalMixStore::new(db.clone())),
             editions: EditionStore::new(db.clone()),
             library: db.clone(),
-            plugins: None,
-            mixer: None,
-            edition_plans: None,
-            upgrade_policy: None,
-            readiness: None,
-            albums: None,
-            events: None,
+            plugins: ports.plugins,
+            edition_plans: ports.edition_plans,
+            upgrade_policy: ports.upgrade_policy,
+            readiness: ports.readiness,
+            albums: ports.albums,
+            events: ports.events,
         }
     }
 }

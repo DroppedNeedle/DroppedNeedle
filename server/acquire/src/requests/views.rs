@@ -24,7 +24,7 @@ use super::models::{
     WantedRemovalResponse, WantedResponse,
 };
 use super::service::RequestsService;
-use super::state::RequestsState;
+use super::state::{MixRoutes, RequestsState};
 
 /// Resolve the `kind` query to a request kind. Unknown values are 400.
 fn resolve_kind(query: &KindQuery) -> Result<RequestKind, RequestsError> {
@@ -338,13 +338,13 @@ pub async fn approve_mix_handler(
     responses((status = 200, body = ActionResponse))
 )]
 pub async fn reject_mix_handler(
-    State(state): State<RequestsState>,
+    State(state): State<MixRoutes>,
     admin: Admin,
     Path(user_id): Path<String>,
 ) -> Result<impl IntoResponse, ApiError> {
     Ok(Json(mix_reply(
-        RequestsService::new(&state)
-            .reject_mix(&admin, &user_id)
+        RequestsService::new(&state.requests)
+            .reject_mix(&admin, &user_id, &state.mixer)
             .await?,
     )))
 }
@@ -360,21 +360,20 @@ pub async fn reject_mix_handler(
     responses((status = 200, body = ActionResponse))
 )]
 pub async fn revoke_mix_handler(
-    State(state): State<RequestsState>,
+    State(state): State<MixRoutes>,
     admin: Admin,
     Path(user_id): Path<String>,
 ) -> Result<impl IntoResponse, ApiError> {
     Ok(Json(mix_reply(
-        RequestsService::new(&state)
-            .revoke_mix(&admin, &user_id)
+        RequestsService::new(&state.requests)
+            .revoke_mix(&admin, &user_id, &state.mixer)
             .await?,
     )))
 }
 
 /// Refresh one user's personal mix.
 /// `POST /api/v3/requests/personal-mix/refresh`. Repeat calls while a build
-/// runs answer `already_running`; unlinked users get 400, and a server
-/// without the mix builder 409.
+/// runs answer `already_running`; unlinked users get 400.
 #[utoipa::path(
     post,
     tag = "requests",
@@ -382,16 +381,15 @@ pub async fn revoke_mix_handler(
     responses(
         (status = 200, body = RefreshResponse),
         (status = 400, description = "ListenBrainz is not connected"),
-        (status = 409, description = "Weekly Mix is not available on this server"),
     )
 )]
 pub async fn refresh_mix_handler(
-    State(state): State<RequestsState>,
+    State(state): State<MixRoutes>,
     User(principal): User,
 ) -> Result<impl IntoResponse, ApiError> {
     Ok(Json(
-        RequestsService::new(&state)
-            .refresh_personal_mix(&principal)
+        RequestsService::new(&state.requests)
+            .refresh_personal_mix(&principal, &state.mixer)
             .await?,
     ))
 }

@@ -15,9 +15,7 @@ use std::time::Instant;
 use droppedneedle_acquire::db::AcquireDb;
 use droppedneedle_acquire::dispatch::DispatchOrigin;
 use droppedneedle_acquire::downloads::journal::Journal;
-use droppedneedle_acquire::downloads::worker::{
-    DownloadWorker, FixedSource, WorkerConfig, run_startup_recovery,
-};
+use droppedneedle_acquire::downloads::worker::run_startup_recovery;
 use droppedneedle_acquire::held::store::{
     EntryOrigin, GroupKey, HeldRoot, HeldRows, NewEntry, NewFile,
 };
@@ -882,17 +880,37 @@ async fn failing_cleanup_shows_on_service_health_until_it_clears() {
         })
         .await
         .unwrap();
-    let staging = db.path().parent().unwrap().join("staging");
-    let source = Arc::new(FixedSource::new(staging.join("downloads"), Vec::new()));
+    let dir = db.path().parent().unwrap().to_path_buf();
+    let platform = crate::common::TestPlatform::on(db.db(), &dir).build().await;
+    let (library, _) = crate::common::library::library_at(&platform);
+    let source = crate::common::acquire::FixedPlugin::install(&platform, library.core.clone());
+    source.serve(&dir.join("staging/downloads"), &[]);
     source.fail_discards(true);
     let health = Arc::new(ServiceHealth::new());
-    let worker = Arc::new(DownloadWorker::fixed(
-        journal,
-        vec![crate::as_source(source.clone())],
-        WorkerConfig::default(),
-        droppedneedle_kernel::events::EventHub::new(),
+    let worker = crate::common::acquire::worker_with(
+        &platform,
+        source.host.clone(),
+        journal.clone(),
+        &platform.settings,
+        dir.join("slskd"),
+        Arc::new(droppedneedle_acquire::target::Targets::new(
+            journal.clone(),
+            Arc::new(crate::common::acquire::FixedAlbums::default()),
+        )),
+        Arc::new(droppedneedle_acquire::landing::LandingService::new(
+            journal,
+            Arc::new(
+                droppedneedle_acquire::landing::library::LibraryLanding::new(
+                    &library,
+                    library.imports.releases.clone(),
+                ),
+            ),
+            platform.settings.live(),
+            dir.join("held"),
+        )),
         health.clone(),
-    ));
+        droppedneedle_kernel::events::EventHub::new(),
+    );
     // Each failed cleanup backs off; make the row due again without waiting.
     let due_now = || {
         db.write("test.due", |tx| {
@@ -1663,10 +1681,10 @@ async fn a_better_copy_on_a_flagged_album_waits_for_a_persons_import() {
     assert_eq!(held_file(&rig.db, "better.flac").0, "imported");
 }
 
-/// A pass that finds the database busy, or no library set up yet, spends
-/// no try: the entry waits for the next pass as it was, never left claimed.
+/// A pass that finds the database busy spends no try: the entry waits for
+/// the next pass as it was, never left claimed.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_busy_database_or_no_library_spends_no_retry() {
+async fn a_busy_database_spends_no_retry() {
     use droppedneedle_kernel::db::{DbConfig, DbError, Lane, LaneLimits, open_runtime};
 
     let dir = scratch_dir("held-retry-busy");
@@ -1733,26 +1751,6 @@ async fn a_busy_database_or_no_library_spends_no_retry() {
         "a busy database spends no try"
     );
 
-    // The app always hands its worker a landing; the held list over a
-    // worker without one has no library to place into.
-    let no_library = droppedneedle_acquire::held::HeldService::new(
-        acquire.journal.clone(),
-        Arc::new(DownloadWorker::fixed(
-            acquire.journal.clone(),
-            Vec::new(),
-            WorkerConfig::default(),
-            droppedneedle_kernel::events::EventHub::new(),
-            Default::default(),
-        )),
-        acquire.drops.clone(),
-        acquire.held.folders().clone(),
-    );
-    no_library.tend().await;
-    assert_eq!(
-        retry_of(&db, entry),
-        ("held".to_owned(), 0, None),
-        "no library set up spends no try"
-    );
-    drop((no_library, acquire, library, platform));
+    drop((acquire, library, platform));
     runtime.shutdown().await;
 }

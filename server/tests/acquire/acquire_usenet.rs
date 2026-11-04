@@ -12,6 +12,7 @@ use droppedneedle_acquire::usenet;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use crate::common::acquire::no_targets;
 use crate::common::bundles::quiet_ticks;
 use droppedneedle_providers::newznab::NewznabIndexers;
 use droppedneedle_providers::{ProviderEndpoints, ProviderError, Providers, RequestPriority};
@@ -1635,8 +1636,9 @@ async fn usenet_enqueue_reattaches_to_existing_job() {
             Duration::from_secs(5),
         ))],
         policy,
-        journal,
+        journal.clone(),
         None,
+        no_targets(&journal),
     );
     let handle = source.enqueue(task_id, 0).await.expect("re-attaches");
     assert_eq!(handle.job_name, job_name);

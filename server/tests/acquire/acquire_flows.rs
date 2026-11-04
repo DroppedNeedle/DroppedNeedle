@@ -11,7 +11,8 @@ use crate::common::Probe;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::common::bundles::quiet_ticks;
+use crate::common::acquire::FixedAlbums;
+use crate::common::bundles::{idle_host_over, quiet_ticks, requests_over};
 use droppedneedle_acquire::clients::LiveClients;
 use droppedneedle_acquire::db::AcquireDb;
 use droppedneedle_acquire::dispatch::{
@@ -20,7 +21,6 @@ use droppedneedle_acquire::dispatch::{
 use droppedneedle_acquire::downloads::journal::Journal;
 use droppedneedle_acquire::downloads::state::TaskStatus;
 use droppedneedle_acquire::downloads::store::{NewTask, TaskRow};
-use droppedneedle_acquire::downloads::worker::SourceList;
 use droppedneedle_acquire::downloads::worker::WorkerSettings;
 use droppedneedle_acquire::flows::{
     loops::{
@@ -183,9 +183,10 @@ async fn notices(events: &EventHub, user: &str) -> Vec<&'static str> {
     names
 }
 
-/// The production tick sink over `events`, with no plugin host.
-fn ticks(events: &EventHub) -> Arc<dyn TickSink> {
-    Arc::new(FlowTicks::new(None, events.clone()))
+/// The production tick sink over `events`, with a plugin host that
+/// launches nothing.
+async fn ticks(db: &AcquireDb, events: &EventHub) -> Arc<dyn TickSink> {
+    Arc::new(FlowTicks::new(idle_host_over(db).await, events.clone()))
 }
 
 struct Wanted {
@@ -201,7 +202,7 @@ async fn sources_over(
     db: &AcquireDb,
     settings: &ConfigStore,
     enabled: bool,
-) -> (SourceList, MockSlskd) {
+) -> (Arc<WorkerSettings>, MockSlskd) {
     let slskd = MockSlskd::start().await.expect("mock slskd starts");
     settings
         .save_secret_blocking(SlskdConnection {
@@ -223,10 +224,10 @@ async fn sources_over(
         ClientLives::new(settings),
         dir.join("slskd"),
         journal.clone(),
-        Arc::new(Targets::new(journal, None)),
-        None,
+        Arc::new(Targets::new(journal, Arc::new(FixedAlbums::default()))),
+        idle_host_over(db).await,
     ));
-    let sources = SourceList::Live(Arc::new(WorkerSettings::new(settings, clients)));
+    let sources = Arc::new(WorkerSettings::new(settings, clients));
     (sources, slskd)
 }
 
@@ -258,9 +259,9 @@ async fn wanted_with_slskd(db: &AcquireDb, slskd_on: bool) -> Wanted {
             library: library.clone(),
             targets: Arc::new(Targets::new(
                 Arc::new(Journal::new(db.clone(), quiet_ticks())),
-                None,
+                Arc::new(FixedAlbums::default()),
             )),
-            ticks: ticks(&events),
+            ticks: ticks(db, &events).await,
         },
         library,
         events,
@@ -565,18 +566,18 @@ async fn follow_poll_baselines_then_emits() {
     library.add(&["rg-owned"]);
     let settings = settings(&db);
     let downloads = dispatch(&db, &settings);
-    let requests = Arc::new(RequestsService::new(&RequestsState::new(
-        &db,
-        Arc::new(QuotaLedger::new(settings.live(), db.clone())),
-        downloads.clone(),
-    )));
+    let requests = Arc::new(RequestsService::new(&RequestsState {
+        quota: Arc::new(QuotaLedger::new(settings.live(), db.clone())),
+        dispatch: downloads.clone(),
+        ..requests_over(&db).await
+    }));
     let deps = FollowDeps {
         follows: follows.clone(),
         poll: Arc::new(poll),
         downloads,
         requests: requests.clone(),
         library,
-        ticks: ticks(&EventHub::new()),
+        ticks: ticks(&db, &EventHub::new()).await,
         preferences: settings.live(),
         today: Arc::new(|| "2024-06-01".to_owned()),
     };
@@ -686,7 +687,7 @@ async fn upgrade_sweep_gates_cap_and_active() {
         worklist: Arc::new(UpgradeWorklist::new(db.clone())),
         admins,
         downloads: dispatch(&db, &settings),
-        ticks: ticks(&EventHub::new()),
+        ticks: ticks(&db, &EventHub::new()).await,
         editions: settings.live(),
     };
     let idle = sweep_tick(NOW, &deps).await;
@@ -844,7 +845,7 @@ async fn seed_approved_follower(db: &AcquireDb) {
 /// A follow poll over `db` whose MusicBrainz page lists only `rg-old` on
 /// the first poll and adds `rg-new` (2024-06-01) from the second, with the
 /// request intake it files follow downloads through.
-fn follow_rig(db: &AcquireDb, settings: &ConfigStore) -> (FollowDeps, Arc<RequestsService>) {
+async fn follow_rig(db: &AcquireDb, settings: &ConfigStore) -> (FollowDeps, Arc<RequestsService>) {
     const MB: &str = "http://musicbrainz.test/ws/2";
     let wire = Arc::new(ScriptedWire::new());
     let json = [("content-type", "application/json")];
@@ -874,18 +875,18 @@ fn follow_rig(db: &AcquireDb, settings: &ConfigStore) -> (FollowDeps, Arc<Reques
             RequestPriority::BackgroundSync,
         ));
     let downloads = dispatch(db, settings);
-    let requests = Arc::new(RequestsService::new(&RequestsState::new(
-        db,
-        Arc::new(QuotaLedger::new(settings.live(), db.clone())),
-        downloads.clone(),
-    )));
+    let requests = Arc::new(RequestsService::new(&RequestsState {
+        quota: Arc::new(QuotaLedger::new(settings.live(), db.clone())),
+        dispatch: downloads.clone(),
+        ..requests_over(db).await
+    }));
     let deps = FollowDeps {
         follows: Follows::new(db.clone()),
         poll: Arc::new(poll),
         downloads,
         requests: requests.clone(),
         library: Arc::new(LibraryPresence::new()),
-        ticks: ticks(&EventHub::new()),
+        ticks: ticks(db, &EventHub::new()).await,
         preferences: settings.live(),
         today: Arc::new(|| "2024-06-01".to_owned()),
     };
@@ -952,7 +953,7 @@ async fn follow_downloads_wait_and_start_by_themselves() {
             .await
             .unwrap()
             .unwrap();
-        let (deps, requests) = follow_rig(&db, &settings);
+        let (deps, requests) = follow_rig(&db, &settings).await;
         follow_tick(now, &deps).await;
         let polled = follow_tick(now + 86_400, &deps).await;
         assert_eq!(polled.enqueued, 0);
@@ -1055,7 +1056,7 @@ async fn follow_downloads_wait_and_start_by_themselves() {
             .unwrap()
             .unwrap();
         let settings = settings(&db);
-        let (deps, _requests) = follow_rig(&db, &settings);
+        let (deps, _requests) = follow_rig(&db, &settings).await;
         follow_tick(NOW, &deps).await;
         let met = follow_tick(NOW + 86_400, &deps).await;
         assert_eq!(met.enqueued, 0);
@@ -1098,11 +1099,11 @@ async fn cancelling_a_wanted_download_stops_its_watch() {
     let checked = wanted_tick(watch.next_check_at as i64, &rig.deps).await;
     assert_eq!(checked.dispatched, 1);
 
-    let requests = RequestsService::new(&RequestsState::new(
-        &db,
-        Arc::new(QuotaLedger::unlimited(db.clone())),
-        rig.deps.downloads.clone(),
-    ));
+    let requests = RequestsService::new(&RequestsState {
+        quota: Arc::new(QuotaLedger::unlimited(db.clone())),
+        dispatch: rig.deps.downloads.clone(),
+        ..requests_over(&db).await
+    });
     let owner = Principal::acting_for("user-1", Role::User, None);
     let watch = rig.deps.watches.get(RG_WANTED).await.unwrap().unwrap();
     rig.slskd.reset();
@@ -1139,11 +1140,11 @@ async fn a_rejected_re_ask_stops_its_watch() {
     seed_request(&rig.deps.ledger, RG_WANTED, "failed", None).await;
     wanted_tick(NOW, &rig.deps).await;
 
-    let requests = RequestsService::new(&RequestsState::new(
-        &db,
-        Arc::new(QuotaLedger::unlimited(db.clone())),
-        rig.deps.downloads.clone(),
-    ));
+    let requests = RequestsService::new(&RequestsState {
+        quota: Arc::new(QuotaLedger::unlimited(db.clone())),
+        dispatch: rig.deps.downloads.clone(),
+        ..requests_over(&db).await
+    });
     let owner = Principal::acting_for("user-1", Role::User, None);
     let ask = AlbumIntake {
         musicbrainz_id: RG_WANTED.to_owned(),

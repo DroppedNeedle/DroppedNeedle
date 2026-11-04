@@ -136,8 +136,8 @@ pub struct ExtrasWanted {
 /// artist names).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Credits {
-    /// The profile does not need the part, the edition is a custom one,
-    /// or no outside sources are attached (a test bundle).
+    /// The profile does not need the part, or the edition is a custom
+    /// one.
     #[default]
     NotAsked,
     /// The stored document carries it, fetched within the week.
@@ -265,15 +265,12 @@ pub fn names_wanted(
 /// document and put on `release`. Never inside a transaction. A stored
 /// part is kept and used when its refetch fails.
 pub fn ensure_release_extras(
-    port: Option<&dyn EnrichmentPort>,
+    port: &dyn EnrichmentPort,
     store: &SqliteIdentifyStore,
     profile: &droppedneedle_kernel::runtime_config::sections::LibraryManagementProfile,
     release: &mut Release,
     background: bool,
 ) -> ReleaseParts {
-    let Some(port) = port else {
-        return ReleaseParts::default();
-    };
     if super::custom::is_custom(release) {
         return ReleaseParts::default();
     }
@@ -456,7 +453,7 @@ pub struct ReplayGainValues {
 /// says the album's match is an accepted exact release nobody marked as
 /// looking wrong: only then is the archive asked for that edition's cover.
 pub fn gather(
-    port: Option<&dyn EnrichmentPort>,
+    port: &dyn EnrichmentPort,
     store: &SqliteIdentifyStore,
     profile: &droppedneedle_kernel::runtime_config::sections::LibraryManagementProfile,
     release: &mut Release,
@@ -472,9 +469,6 @@ pub fn gather(
         ..AlbumExtras::default()
     };
     let release = &*release;
-    let Some(port) = port else {
-        return extras;
-    };
     let artwork = &profile.artwork;
     if artwork.embedded_enabled || artwork.external_enabled {
         let release_id = if super::custom::is_custom(release) {
@@ -537,7 +531,7 @@ pub enum LyricsAnswer {
 /// accuracy gate: title, artist, album and a length within two seconds),
 /// at background priority for an automatic run.
 pub fn lyrics(
-    port: Option<&dyn EnrichmentPort>,
+    port: &dyn EnrichmentPort,
     settings: &droppedneedle_kernel::runtime_config::sections::LyricsManagementSettings,
     release: &crate::matching::Release,
     track: &crate::matching::ReleaseTrack,
@@ -546,9 +540,6 @@ pub fn lyrics(
     if !settings.enabled || (!settings.write_plain && !settings.write_synced) {
         return LyricsAnswer::Off;
     }
-    let Some(port) = port else {
-        return LyricsAnswer::Deferred;
-    };
     let artist = if track.artists.is_empty() {
         release.artist_text()
     } else {

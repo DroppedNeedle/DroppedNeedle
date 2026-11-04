@@ -209,13 +209,13 @@ impl DownloadWorker {
                 "The download finished and is being imported.",
             ));
         }
-        let config = self.inputs.config().ok_or(NextSourceError::Conflict(
+        let config = self.settings.config().ok_or(NextSourceError::Conflict(
             crate::downloads::queue::SETTINGS_UNREADABLE,
         ))?;
         let pass = Pass {
             library: self.library_wait(),
             watchdog: Watchdog::new(config.watchdog.clone()),
-            sources: self.inputs.sources(),
+            sources: self.settings.sources(),
             config,
             now: self.now_unix_f64(),
         };

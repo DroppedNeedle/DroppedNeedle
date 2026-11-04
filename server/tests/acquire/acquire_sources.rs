@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::common::acquire::no_targets;
 use axum::Router;
 use axum::http::{StatusCode, header};
 use axum::routing::get;
@@ -148,7 +149,11 @@ async fn slskd_conforms() {
         },
     );
     let journal = journal_with_task("t-slskd", "Portishead", "Dummy").await;
-    let source = Arc::new(SlskdSource::new(Arc::new(repo), journal));
+    let source = Arc::new(SlskdSource::new(
+        Arc::new(repo),
+        journal.clone(),
+        no_targets(&journal),
+    ));
     conforms(source, SourceTag::Soulseek, "t-slskd", |_| {}).await;
 }
 
@@ -226,8 +231,9 @@ async fn sabnzbd_conforms() {
         Arc::new(queue),
         vec![Arc::new(newznab)],
         policy,
-        journal,
+        journal.clone(),
         None,
+        no_targets(&journal),
     ));
     conforms(source, SourceTag::Usenet, "t-sab", |handle| {
         // SABnzbd finishes the job into its complete folder.
@@ -291,6 +297,7 @@ async fn a_usenet_pick_grabs_through_its_indexer() {
         policy.clone(),
     );
     let client = newznab_indexers().client("dummy", "Dummy", &format!("{indexer}/api"), "NZKEY");
+    let journal = journal_with_task("t-grab", "Portishead", "Dummy").await;
     let source = SabnzbdSource::new(
         Arc::new(queue),
         vec![Arc::new(NewznabIndexer::new(
@@ -307,8 +314,9 @@ async fn a_usenet_pick_grabs_through_its_indexer() {
             WAIT,
         ))],
         policy,
-        journal_with_task("t-grab", "Portishead", "Dummy").await,
+        journal.clone(),
         None,
+        no_targets(&journal),
     );
     source.enqueue("t-grab", 0).await.expect("enqueues");
     assert_eq!(mock.state().add_file_requests.len(), 1);
@@ -444,6 +452,7 @@ async fn a_copy_turned_down_as_not_better_is_not_picked_again() {
         policy,
         journal.clone(),
         None,
+        no_targets(&journal),
     );
 
     let picked = source.enqueue("t-next", 0).await.expect("enqueues");
@@ -900,7 +909,7 @@ fn plugin_client(rig: &PluginRig, name: &str, journal: Arc<Journal>) -> PluginDo
     PluginDownloadSource::new(
         rig.host.clone(),
         format!("plugin:{name}"),
-        journal,
+        journal.clone(),
         ReleasePolicy {
             usenet: UsenetPolicy::v2_defaults(),
             ignored_terms: Vec::new(),
@@ -908,6 +917,7 @@ fn plugin_client(rig: &PluginRig, name: &str, journal: Arc<Journal>) -> PluginDo
             auto_accept: 0.70,
             manual_min: 0.50,
         },
+        no_targets(&journal),
     )
 }
 
@@ -919,10 +929,8 @@ fn plugin_client(rig: &PluginRig, name: &str, journal: Arc<Journal>) -> PluginDo
 /// the source's, or one that says nothing, blocklists the release.
 #[tokio::test]
 async fn plugins_conform() {
-    use droppedneedle_acquire::downloads::worker::{DownloadWorker, WorkerConfig};
     use droppedneedle_acquire::downloads::{AttemptState, TaskStatus};
     use droppedneedle_acquire::reason::Reason;
-    use droppedneedle_providers::health::ServiceHealth;
 
     let rig = plugin_rig().await;
     let journal = journal_with_task("t-plugin", "Test Artist", "Fixtures").await;
@@ -949,9 +957,17 @@ async fn plugins_conform() {
     assert_eq!(hits.len(), 1, "a release without an NZB link is dropped");
 
     // A plugin client's own word on whose fault a failure was.
-    let db = AcquireDb::scratch().expect("scratch db");
-    db.add_user("u1", "U", "user").await.expect("user seeds");
-    let journal = Arc::new(Journal::new(db, quiet_ticks()));
+    let worker_db = AcquireDb::scratch().expect("scratch db");
+    worker_db
+        .add_user("u1", "U", "user")
+        .await
+        .expect("user seeds");
+    let worker_dir = worker_db
+        .path()
+        .parent()
+        .expect("scratch dir")
+        .to_path_buf();
+    let journal = Arc::new(Journal::new(worker_db.clone(), quiet_ticks()));
     for fault in ["local", "source", "unknown"] {
         let task = NewTask {
             id: format!("t-{fault}"),
@@ -984,15 +1000,18 @@ async fn plugins_conform() {
             .await
             .expect("download seeds");
     }
-    let source: Arc<dyn DownloadSource> =
-        Arc::new(plugin_client(&rig, "fault-client", journal.clone()));
-    let worker = Arc::new(DownloadWorker::fixed(
+    let settings = droppedneedle_acquire::settings::scratch_settings(&worker_dir.join("settings"))
+        .expect("settings open");
+    let (worker, _) = crate::common::acquire::worker_over(
+        &worker_db,
         journal.clone(),
-        vec![source],
-        WorkerConfig::default(),
+        &settings,
+        worker_dir.join("slskd"),
+        Arc::new(crate::common::acquire::FixedAlbums::default()),
+        Some(rig.host.clone()),
         droppedneedle_kernel::events::EventHub::new(),
-        Arc::new(ServiceHealth::new()),
-    ));
+    )
+    .await;
 
     worker.run_once(1).await;
 

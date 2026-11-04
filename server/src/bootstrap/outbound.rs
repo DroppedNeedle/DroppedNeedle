@@ -192,11 +192,25 @@ impl Outbound {
         }
     }
 
-    /// The provider ports the library uses.
-    pub fn library(&self) -> droppedneedle_library::wiring::Endpoints {
-        droppedneedle_library::wiring::Endpoints {
-            identify_providers: self.identify_providers.get(),
-            contribution_providers: self.contribution_providers.get(),
+    /// The provider ports the library uses: the live clients over
+    /// `providers` and `mb_source`, or the ports given here.
+    pub fn library(
+        &self,
+        providers: &droppedneedle_providers::Providers,
+        mb_source: droppedneedle_providers::musicbrainz::LiveSource,
+        clock: Arc<dyn droppedneedle_kernel::clock::Clock>,
+    ) -> droppedneedle_library::wiring::Endpoints {
+        use droppedneedle_library::wiring::Endpoints;
+        let live = Endpoints::live(providers, mb_source, clock);
+        Endpoints {
+            identify: match self.identify_providers.get() {
+                Some(given) => Endpoints::identify_through(given),
+                None => live.identify,
+            },
+            contributions: self
+                .contribution_providers
+                .get()
+                .unwrap_or(live.contributions),
         }
     }
 }

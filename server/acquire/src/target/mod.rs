@@ -74,7 +74,7 @@ impl SearchTarget {
 /// Why a target could not be worked out.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TargetError {
-    /// Try later: MusicBrainz is down or not wired.
+    /// Try later: MusicBrainz is down.
     Unavailable(TrackReason),
     /// Our side failed: the journal, or a plan that does not read.
     LocalFault(String),
@@ -83,15 +83,14 @@ pub enum TargetError {
 /// Works out and remembers each task's target.
 pub struct Targets {
     journal: Arc<Journal>,
-    /// MusicBrainz reads; `None` on test bundles, where every lookup
-    /// waits as unavailable.
-    lookup: Option<Arc<dyn AlbumLookup>>,
+    /// MusicBrainz reads.
+    lookup: Arc<dyn AlbumLookup>,
 }
 
 impl Targets {
     /// Targets over the shared journal, reading MusicBrainz through
     /// `lookup`.
-    pub fn new(journal: Arc<Journal>, lookup: Option<Arc<dyn AlbumLookup>>) -> Self {
+    pub fn new(journal: Arc<Journal>, lookup: Arc<dyn AlbumLookup>) -> Self {
         Self { journal, lookup }
     }
 
@@ -119,11 +118,10 @@ impl Targets {
     }
 
     /// When a release group first came out, as MusicBrainz dates it.
-    /// `None` when MusicBrainz is not wired, does not know or date the
-    /// group, or the lookup failed (logged); nothing is guessed.
+    /// `None` when MusicBrainz does not know or date the group, or the
+    /// lookup failed (logged); nothing is guessed.
     pub async fn first_release_date(&self, release_group_mbid: &str) -> Option<String> {
-        let lookup = self.lookup.as_ref()?;
-        match lookup.first_release_date(release_group_mbid).await {
+        match self.lookup.first_release_date(release_group_mbid).await {
             Ok(date) => date,
             Err(error) => {
                 tracing::warn!(release_group_mbid, %error, "release group date unavailable");
@@ -133,13 +131,10 @@ impl Targets {
     }
 
     /// One edition's audio tracklist, for ranking a manual search. Empty
-    /// when MusicBrainz is not wired, down, or does not know the release;
-    /// folders are then judged on their file counts.
+    /// when MusicBrainz is down or does not know the release; folders are
+    /// then judged on their file counts.
     pub async fn edition_tracklist(&self, release_mbid: &str) -> Vec<ExpectedTrack> {
-        let Some(lookup) = self.lookup.as_ref() else {
-            return Vec::new();
-        };
-        match lookup.release(release_mbid).await {
+        match self.lookup.release(release_mbid).await {
             Ok(Some(found)) => expected_tracks(&found),
             Ok(None) => {
                 tracing::warn!(
@@ -193,11 +188,10 @@ impl Targets {
         };
         if tracklist.is_empty()
             && let Some(release_mbid) = release.as_deref()
-            && let Some(lookup) = self.lookup.as_ref()
         {
             // An album still downloads when MusicBrainz is down; it is only
             // ranked on file counts until the tracklist can be read.
-            match lookup.release(release_mbid).await {
+            match self.lookup.release(release_mbid).await {
                 Ok(Some(found)) => {
                     tracklist = expected_tracks(&found);
                     self.keep_tracklist(task, release_mbid, &found.id, &tracklist)
@@ -299,9 +293,7 @@ impl Targets {
                 }),
             });
         }
-        let lookup = self.lookup.clone().ok_or(TargetError::Unavailable(
-            TrackReason::AlbumLookupUnavailable,
-        ))?;
+        let lookup = &self.lookup;
         let recording = task
             .recording_mbid
             .as_deref()

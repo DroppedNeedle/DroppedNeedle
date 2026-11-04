@@ -36,11 +36,10 @@ use axum::{
 use droppedneedle_acquire::db::AcquireDb;
 use droppedneedle_acquire::dispatch::DownloadDispatch;
 use droppedneedle_acquire::downloads::state::{AttemptState, TaskStatus};
-use droppedneedle_acquire::downloads::worker::{DownloadWorker, WorkerConfig};
 use droppedneedle_acquire::downloads::{PlannedAlbum, ReplaceVersion};
 use droppedneedle_acquire::follows::ImportArtist;
 use droppedneedle_acquire::requests::{
-    self, RequestsState,
+    self, MixRoutes, RequestsState,
     ledger::{WantedWatch, WatchKind, WatchOutcome, WatchState},
     models::RequestKind,
     quota::{QuotaLedger, QuotaPolicy},
@@ -67,14 +66,15 @@ const MBID_B: &str = "22222222-2222-4222-8222-222222222222";
 const MBID_C: &str = "33333333-3333-4333-8333-333333333333";
 const ARTIST: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 
-/// The requests routes alone (no ports, no quota) over the download
-/// dispatch of a production acquire bundle on a scratch database. Returns
-/// the state, the database (to seed users and rows) and the dispatch (to
-/// read and settle its tasks).
+/// The requests state of a production acquire bundle on a scratch
+/// database, with Soulseek on and no quota. Returns the state, the database (to seed users
+/// and rows) and the dispatch (to read and settle its tasks).
 pub(crate) async fn requests_state() -> (RequestsState, AcquireDb, Arc<DownloadDispatch>) {
     let db = AcquireDb::scratch().expect("scratch db");
     let dir = db.path().parent().expect("scratch dir").to_path_buf();
     let platform = crate::common::TestPlatform::on(db.db(), &dir).build().await;
+    // A download source is on, so asks start at once.
+    crate::common::acquire::save_slskd(&platform.settings, "http://127.0.0.1:9");
     let (library, _) = crate::common::library::library_at(&platform);
     let acquire = crate::common::bundles::acquire_at(
         &platform,
@@ -83,7 +83,10 @@ pub(crate) async fn requests_state() -> (RequestsState, AcquireDb, Arc<DownloadD
         &crate::common::bundles::collections_at(&platform).stores,
     );
     let quota = Arc::new(QuotaLedger::unlimited(acquire.db.clone()));
-    let state = RequestsState::new(&acquire.db, quota, acquire.dispatch.clone());
+    let state = RequestsState {
+        quota,
+        ..acquire.requests.clone()
+    };
     (state, db, acquire.dispatch)
 }
 
@@ -218,8 +221,14 @@ fn saved_policy(db: &AcquireDb, policy: DownloadPolicy) -> Live<DownloadPolicy> 
     store.live()
 }
 
-/// A fresh state over the same database: what a restart sees.
-fn rebuilt(db: &AcquireDb, quota: QuotaPolicy, downloads: &Downloads) -> RequestsState {
+/// A fresh state over the same database and `state`'s ports: what a
+/// restart sees.
+fn rebuilt(
+    state: &RequestsState,
+    db: &AcquireDb,
+    quota: QuotaPolicy,
+    downloads: &Downloads,
+) -> RequestsState {
     let policy = saved_policy(
         db,
         DownloadPolicy {
@@ -230,8 +239,22 @@ fn rebuilt(db: &AcquireDb, quota: QuotaPolicy, downloads: &Downloads) -> Request
             ..DownloadPolicy::default()
         },
     );
-    let quota = Arc::new(QuotaLedger::new(policy, db.clone()));
-    RequestsState::new(db, quota, downloads.dispatch.clone())
+    RequestsState {
+        quota: Arc::new(QuotaLedger::new(policy, db.clone())),
+        dispatch: downloads.dispatch.clone(),
+        ..state.clone()
+    }
+}
+
+/// Every requests route plus the follows' auto-download approval routes.
+fn router(state: &RequestsState) -> Router {
+    let follows = droppedneedle_acquire::follows::routes()
+        .with_state(state.follows.clone())
+        .into_router();
+    requests::routes()
+        .with_state(state.clone())
+        .into_router()
+        .merge(follows)
 }
 
 async fn call(
@@ -241,7 +264,28 @@ async fn call(
     identity: Option<Who>,
     body: Option<Value>,
 ) -> (StatusCode, Value) {
-    let mut app: Router = requests::requests_routes(state.clone());
+    call_on(router(state), method, uri, identity, body).await
+}
+
+/// [`call`] on the Weekly Mix routes over `mix`.
+async fn call_mix(
+    mix: &MixRoutes,
+    method: Method,
+    uri: &str,
+    identity: Option<Who>,
+    body: Option<Value>,
+) -> (StatusCode, Value) {
+    let app = requests::mix_routes().with_state(mix.clone()).into_router();
+    call_on(app, method, uri, identity, body).await
+}
+
+async fn call_on(
+    mut app: Router,
+    method: Method,
+    uri: &str,
+    identity: Option<Who>,
+    body: Option<Value>,
+) -> (StatusCode, Value) {
     if let Some((user_id, role, name)) = identity {
         let principal = test_principal(user_id, role, "sess-test", SessionKind::Standard)
             .with_username_display(name);
@@ -340,7 +384,7 @@ async fn requests_and_approvals_survive_a_rebuild() {
     ask_auto_download(&state, ADA, ARTIST).await;
     state.wanted.enrol(watch(MBID_C, "u-ada")).await.unwrap();
 
-    let after = rebuilt(&db, QuotaPolicy::default(), &dispatch);
+    let after = rebuilt(&state, &db, QuotaPolicy::default(), &dispatch);
     let (_, approvals) = call(
         &after,
         Method::GET,
@@ -638,13 +682,23 @@ async fn cancel_and_retry_respect_owner_and_approval() {
     assert_eq!(cancelled["success"], true, "{case}: {cancelled}");
 
     let journal = dispatch.dispatch.journal().clone();
-    let worker = Arc::new(DownloadWorker::fixed(
+    let settings_dir = db
+        .path()
+        .parent()
+        .expect("scratch dir")
+        .join("worker-settings");
+    let settings =
+        droppedneedle_acquire::settings::scratch_settings(&settings_dir).expect("settings open");
+    let (worker, _) = crate::common::acquire::worker_over(
+        &db,
         journal.clone(),
-        Vec::new(),
-        WorkerConfig::default(),
-        EventHub::new(),
-        Default::default(),
-    ));
+        &settings,
+        settings_dir.join("slskd"),
+        Arc::new(crate::common::acquire::FixedAlbums::default()),
+        None,
+        droppedneedle_kernel::events::EventHub::new(),
+    )
+    .await;
     worker.run_once(1).await;
     let row = state.store.get(RequestKind::Album, MBID_A).await.unwrap();
     assert_eq!(row.unwrap().status.as_str(), "cancelled", "{case}");
@@ -728,19 +782,19 @@ pub(crate) fn unreadable_policy_store(dir: &std::path::Path) -> ConfigStore {
 #[tokio::test]
 async fn quotas_count_durable_rows_and_never_read_as_unlimited() {
     let case = "restart";
-    let (_, db, dispatch) = setup().await;
+    let (state, db, dispatch) = setup().await;
     let limited = QuotaPolicy {
         request_count: 1,
         ..QuotaPolicy::default()
     };
-    let state = rebuilt(&db, limited.clone(), &dispatch);
+    let state = rebuilt(&state, &db, limited.clone(), &dispatch);
     assert_eq!(
         ask(&state, ADA, MBID_A).await.0,
         StatusCode::ACCEPTED,
         "{case}"
     );
 
-    let state = rebuilt(&db, limited, &dispatch);
+    let state = rebuilt(&state, &db, limited, &dispatch);
     let (status, body) = ask(&state, ADA, MBID_B).await;
     assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{case}");
     assert_eq!(body["error"]["code"], "QUOTA_EXCEEDED", "{case}");
@@ -756,15 +810,18 @@ async fn quotas_count_durable_rows_and_never_read_as_unlimited() {
     // answers 500 and leaves no request or task behind. Saving the policy
     // again brings the quota back without a restart.
     let case = "unreadable policy";
-    let (_, db, dispatch) = setup().await;
+    let (base, db, dispatch) = setup().await;
     let dir = db
         .path()
         .parent()
         .expect("scratch dir")
         .join("broken-settings");
     let store = unreadable_policy_store(&dir);
-    let quota = Arc::new(QuotaLedger::new(store.live(), db.clone()));
-    let state = RequestsState::new(&db, quota, dispatch.dispatch.clone());
+    let state = RequestsState {
+        quota: Arc::new(QuotaLedger::new(store.live(), db.clone())),
+        dispatch: dispatch.dispatch.clone(),
+        ..base
+    };
 
     let (status, _) = ask(&state, ADA, MBID_A).await;
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{case}");
@@ -798,7 +855,7 @@ async fn quotas_count_durable_rows_and_never_read_as_unlimited() {
 
     // The library cap reads the real library size.
     let case = "library cap";
-    let (_, db, dispatch) = setup().await;
+    let (base, db, dispatch) = setup().await;
     db.write("test.seed_library", |tx| {
         tx.execute_batch(
             "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at)
@@ -818,6 +875,7 @@ async fn quotas_count_durable_rows_and_never_read_as_unlimited() {
     .await
     .unwrap();
     let state = rebuilt(
+        &base,
         &db,
         QuotaPolicy {
             max_library_gb: 1,
@@ -1070,7 +1128,7 @@ async fn standing_grants_wait_for_an_admin_and_follow_the_role() {
     // without a per-request approval wait, a reject turns the toggle off, and
     // the refresh route needs a ListenBrainz link.
     let case = "weekly mix";
-    let (mut state, db, dispatch) = setup().await;
+    let (state, db, dispatch) = setup().await;
     let prefs = ListeningStore::new(
         db.db().clone(),
         Arc::new(droppedneedle_kernel::runtime_config::Crypto::from_key_bytes(&[7u8; 32]).unwrap()),
@@ -1084,8 +1142,11 @@ async fn standing_grants_wait_for_an_admin_and_follow_the_role() {
         state.clone(),
         EventHub::new(),
     ));
-    state.mixer = Some(builder.clone());
-    let hooks = MixGrantHooks::new(state.mixer.clone());
+    let mix = MixRoutes {
+        requests: state.clone(),
+        mixer: builder.clone(),
+    };
+    let hooks = MixGrantHooks::new(builder.clone());
 
     prefs
         .update_prefs(
@@ -1187,7 +1248,7 @@ async fn standing_grants_wait_for_an_admin_and_follow_the_role() {
     assert_eq!(listed["granted"][0]["user_id"], "u-ada", "{case}: {listed}");
     let revoke = "/api/v3/requests/personal-mix-approvals/u-ada/revoke";
     assert_eq!(
-        call(&state, Method::POST, revoke, Some(ADMIN), None)
+        call_mix(&mix, Method::POST, revoke, Some(ADMIN), None)
             .await
             .1["success"],
         true,
@@ -1202,12 +1263,16 @@ async fn standing_grants_wait_for_an_admin_and_follow_the_role() {
 
     let refresh = "/api/v3/requests/personal-mix/refresh";
     assert_eq!(
-        call(&state, Method::POST, refresh, Some(ADA), None).await.1["status"],
+        call_mix(&mix, Method::POST, refresh, Some(ADA), None)
+            .await
+            .1["status"],
         "started",
         "{case}"
     );
     assert_eq!(
-        call(&state, Method::POST, refresh, Some(BOB), None).await.0,
+        call_mix(&mix, Method::POST, refresh, Some(BOB), None)
+            .await
+            .0,
         StatusCode::BAD_REQUEST,
         "{case}: no ListenBrainz link"
     );
@@ -1506,7 +1571,7 @@ async fn a_busy_database_leaves_an_ask_waiting_until_the_next_pass() {
     use droppedneedle_acquire::downloads::journal::Journal;
     use droppedneedle_kernel::db::{DbConfig, DbError, Lane, LaneLimits, open_runtime};
 
-    let (state, db, dispatch) = setup().await;
+    let (state, _db, dispatch) = setup().await;
     // A download journal whose writer is held, so a dispatch hears busy.
     let dir = crate::common::ScratchDir::new("requests-busy-dispatch");
     let path = dir.join("journal.db");
@@ -1535,7 +1600,10 @@ async fn a_busy_database_leaves_an_ask_waiting_until_the_next_pass() {
         Arc::new(droppedneedle_kernel::ids::UuidGenerator),
         settings.live(),
     ));
-    let busy_state = RequestsState::new(&db, state.quota.clone(), busy);
+    let busy_state = RequestsState {
+        dispatch: busy,
+        ..state.clone()
+    };
     let (entered, inside) = std::sync::mpsc::channel();
     let (let_go, release) = std::sync::mpsc::channel::<()>();
     let writer = {
@@ -1803,15 +1871,15 @@ async fn seed_edition_album(db: &AcquireDb) {
 async fn edition_setup() -> (RequestsState, AcquireDb, Downloads) {
     let (mut state, db, dispatch) = setup().await;
     seed_edition_album(&db).await;
-    state.edition_plans = Some(Arc::new(PlannedEdition { complete: false }));
-    state.upgrade_policy = Some(saved_policy(
+    state.edition_plans = Arc::new(PlannedEdition { complete: false });
+    state.upgrade_policy = saved_policy(
         &db,
         DownloadPolicy {
             upgrade_allowed: true,
             quality_cutoff: "lossless".into(),
             ..DownloadPolicy::default()
         },
-    ));
+    );
     (state, db, dispatch)
 }
 
@@ -1949,7 +2017,7 @@ async fn a_fetch_joins_the_copy_the_album_page_shows() {
     })
     .await
     .unwrap();
-    state.edition_plans = Some(Arc::new(NoPlan));
+    state.edition_plans = Arc::new(NoPlan);
     let uri = format!("/api/v3/albums/{MBID_A}/edition/acquire?album_id=al1");
     let (status, body) = call(&state, Method::POST, &uri, Some(ADMIN), None).await;
     assert_eq!(status, StatusCode::OK, "{case}: {body}");
@@ -2057,7 +2125,7 @@ async fn edition_acquire_asks_once_for_missing_and_below_cutoff_tracks() {
     // Only a version left, not asked for (upgrades off).
     let (mut state, db, dispatch) = setup().await;
     seed_edition_album(&db).await;
-    state.edition_plans = Some(Arc::new(PlannedEdition { complete: true }));
+    state.edition_plans = Arc::new(PlannedEdition { complete: true });
     let (status, body) = call(&state, Method::POST, &uri, Some(ADMIN), None).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["status"], "already_complete", "{body}");
@@ -2100,14 +2168,25 @@ impl droppedneedle_library::edition::port::EditionPlans for NoPlan {
 async fn edition_acquire_is_held_while_no_source_is_ready() {
     let (mut state, db, dispatch) = setup().await;
     seed_edition_album(&db).await;
-    state.edition_plans = Some(Arc::new(PlannedEdition { complete: false }));
+    state.edition_plans = Arc::new(PlannedEdition { complete: false });
     let staging = crate::common::ScratchDir::new("edition-held");
-    state.readiness = Some(AcquireReadiness {
-        sources: droppedneedle_acquire::readiness::SourceReadiness::new(
-            droppedneedle_acquire::downloads::worker::SourceList::Fixed(Arc::new(Vec::new())),
-        ),
+    // Sources read from settings where none is set up.
+    let settings = droppedneedle_acquire::settings::scratch_settings(&staging.join("settings"))
+        .expect("settings open");
+    let (worker, _) = crate::common::acquire::worker_over(
+        &db,
+        dispatch.dispatch.journal().clone(),
+        &settings,
+        staging.join("slskd"),
+        Arc::new(crate::common::acquire::FixedAlbums::default()),
+        None,
+        droppedneedle_kernel::events::EventHub::new(),
+    )
+    .await;
+    state.readiness = AcquireReadiness {
+        sources: worker.readiness().clone(),
         staging_root: staging.to_path_buf(),
-    });
+    };
     let uri = format!("/api/v3/albums/{MBID_A}/edition/acquire?album_id=al1");
     let (status, body) = call(&state, Method::POST, &uri, Some(ADMIN), None).await;
     assert_eq!(status, StatusCode::OK, "{body}");
@@ -2264,7 +2343,7 @@ fn fetch_tracks(body: &Value) -> Vec<(u64, u64, String)> {
 async fn an_edition_fetch_shows_its_tracks_and_retries_what_failed() {
     let (mut state, db, downloads) = setup().await;
     seed_edition_album(&db).await;
-    state.edition_plans = Some(Arc::new(LibraryPlan { db: db.clone() }));
+    state.edition_plans = Arc::new(LibraryPlan { db: db.clone() });
     let uri = format!("/api/v3/albums/{MBID_A}/edition/acquire");
     let (status, body) = call(&state, Method::GET, &uri, Some(ADMIN), None).await;
     assert_eq!(status, StatusCode::OK, "{body}");
@@ -2391,12 +2470,12 @@ fn ask_to_follow(album: &str, artist: &str, auto_download: bool) -> Value {
 // quota refuses leaves no follow behind.
 #[tokio::test]
 async fn a_request_that_asks_to_follow_follows_the_artist() {
-    let (_, db, dispatch) = setup().await;
+    let (state, db, dispatch) = setup().await;
     let limited = QuotaPolicy {
         request_count: 1,
         ..QuotaPolicy::default()
     };
-    let state = rebuilt(&db, limited, &dispatch);
+    let state = rebuilt(&state, &db, limited, &dispatch);
     let albums = "/api/v3/requests/albums";
     let no_artist = json!({
         "musicbrainz_id": MBID_C, "artist": "Artist", "album": "Album", "monitor_artist": true,

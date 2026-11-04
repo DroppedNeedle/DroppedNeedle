@@ -163,9 +163,8 @@ const FORMAT_SET_DISCARDED: &str = "Removed the held copy not in your quality se
 /// The landing service the worker calls.
 pub struct LandingService {
     journal: Arc<Journal>,
-    /// The library files land in; `None` on test bundles that import
-    /// nothing.
-    library: Option<Arc<dyn LandingLibrary>>,
+    /// The library files land in.
+    library: Arc<dyn LandingLibrary>,
     /// The quality band landed files must sit in, read per landing.
     policy: Live<DownloadPolicy>,
     held_dir: PathBuf,
@@ -221,7 +220,7 @@ struct Held<'a> {
 impl LandingService {
     pub fn new(
         journal: Arc<Journal>,
-        library: Option<Arc<dyn LandingLibrary>>,
+        library: Arc<dyn LandingLibrary>,
         policy: Live<DownloadPolicy>,
         held_dir: PathBuf,
     ) -> Self {
@@ -234,8 +233,8 @@ impl LandingService {
     }
 
     /// The library files land in.
-    pub fn library(&self) -> Option<&Arc<dyn LandingLibrary>> {
-        self.library.as_ref()
+    pub fn library(&self) -> &Arc<dyn LandingLibrary> {
+        &self.library
     }
 
     /// Land one task's files: confine, probe, check, match, then import,
@@ -251,10 +250,7 @@ impl LandingService {
         patient: bool,
     ) -> LandingReport {
         let library = self.library.clone();
-        let library_dirs = library
-            .as_ref()
-            .map(|library| library.library_dirs())
-            .unwrap_or_default();
+        let library_dirs = library.library_dirs();
         let confined = tokio::task::spawn_blocking(move || {
             let libraries = canonical_dirs(&library_dirs);
             let folders: Vec<PathBuf> = landed
@@ -315,9 +311,7 @@ impl LandingService {
         // that does not read is never taken as none: the landing waits.
         if let Some(planned) = &target.planned_album {
             target.release_mbid = Some(planned.release_mbid.trim().to_ascii_lowercase());
-        } else if let Some(library) = &library
-            && !target.release_group_mbid.is_empty()
-        {
+        } else if !target.release_group_mbid.is_empty() {
             let pin = match library.chosen_edition(&target.release_group_mbid).await {
                 Ok(pin) => pin,
                 Err(error) => {
@@ -388,17 +382,14 @@ impl LandingService {
             quality_recipe: settings.quality_recipe.clone(),
             held_tier: None,
         };
-        if target.origin == "upgrade"
-            && let Some(library) = &library
-            && !target.release_group_mbid.is_empty()
-        {
+        if target.origin == "upgrade" && !target.release_group_mbid.is_empty() {
             policy.held_tier = library
                 .held_tier(&target.release_group_mbid, target.planned_album_id())
                 .await;
         }
         let (checks, early) = check_files(&target, &landing, &policy);
-        let acted = match (early, &library) {
-            (Some(outcome), _) => {
+        let acted = match early {
+            Some(outcome) => {
                 let decision = Decision {
                     checks,
                     outcome,
@@ -408,18 +399,7 @@ impl LandingService {
                 let held = self.hold_decided(task, &target, &landing, &decision).await;
                 Acted::holding(decision, held)
             }
-            (None, None) => Acted::decided(
-                Decision {
-                    checks,
-                    outcome: Outcome::Reject(local_fault(
-                        "the library is not ready to take imports".to_owned(),
-                    )),
-                    release_mbid: None,
-                    distance: None,
-                },
-                0,
-            ),
-            (None, Some(library)) => {
+            None => {
                 let matched = find(library.as_ref(), &target, &landing).await;
                 target.album_copy_proven =
                     matching::album_copy_proven(library.as_ref(), &target, &landing, &matched)
@@ -437,7 +417,7 @@ impl LandingService {
                     Outcome::Import(plan) => {
                         let plan = plan.clone();
                         self.act(
-                            task, &target, &landing, &matched, heard, decision, plan, library,
+                            task, &target, &landing, &matched, heard, decision, plan, &library,
                         )
                         .await
                     }

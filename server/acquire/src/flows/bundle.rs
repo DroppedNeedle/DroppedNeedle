@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::db::AcquireDb;
 use crate::dispatch::DownloadDispatch;
-use crate::downloads::worker::SourceList;
+use crate::downloads::worker::WorkerSettings;
 use crate::flows::loops::{FollowDeps, SweepDeps, SyncDeps, WantedDeps};
 use crate::flows::seams::{ReleasePoll, TickSink};
 use crate::flows::stores::{AdminDirectory, LibraryPresence, UpgradeWorklist};
@@ -46,7 +46,7 @@ pub struct FlowsBundle {
 pub(crate) fn flows_bundle(
     db: &AcquireDb,
     requests: &RequestsState,
-    sources: SourceList,
+    sources: Arc<WorkerSettings>,
     dispatch: Arc<DownloadDispatch>,
     settings: &ConfigStore,
     ticks: Arc<dyn TickSink>,

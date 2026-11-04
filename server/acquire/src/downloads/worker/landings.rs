@@ -140,9 +140,6 @@ impl DownloadWorker {
         task: &TaskRow,
         attempts: &[Attempt],
     ) -> bool {
-        if self.landing.is_none() {
-            return false;
-        }
         let Some(attempt) = landable_attempt(attempts) else {
             return false;
         };
@@ -217,9 +214,7 @@ impl DownloadWorker {
         handle: &SourceHandle,
         origin: Origin,
     ) {
-        let Some(landing) = self.landing.clone() else {
-            return;
-        };
+        let landing = self.landing.clone();
         let now = self.now_unix_f64();
         let landed = match source.landed(handle).await {
             Ok(landed) => landed,
@@ -464,7 +459,7 @@ impl DownloadWorker {
         };
         // While the settings do not read no other candidate is tried. Passes
         // are skipped then, so no poll landing reaches this in practice.
-        let Some(config) = self.inputs.config() else {
+        let Some(config) = self.settings.config() else {
             return false;
         };
         handled_count(&attempts, None) < config.max_failover_attempts
@@ -600,20 +595,14 @@ impl DownloadWorker {
         self: &Arc<Self>,
         task_id: &str,
     ) -> Result<Option<TaskRow>, ReimportError> {
-        let Some(landing) = self.landing.as_ref() else {
+        let library = self.landing.library().clone();
+        let off = tokio::task::spawn_blocking(move || library.library_off())
+            .await
+            .unwrap_or(false);
+        if off {
             return Err(ReimportError::Unavailable(
-                "imports are not available yet".to_owned(),
+                droppedneedle_library::removal::LIBRARY_OFF_TEXT.to_owned(),
             ));
-        };
-        if let Some(library) = landing.library().cloned() {
-            let off = tokio::task::spawn_blocking(move || library.library_off())
-                .await
-                .unwrap_or(false);
-            if off {
-                return Err(ReimportError::Unavailable(
-                    droppedneedle_library::removal::LIBRARY_OFF_TEXT.to_owned(),
-                ));
-            }
         }
         let Some(task) = self
             .journal
@@ -638,7 +627,7 @@ impl DownloadWorker {
             return Ok(None);
         };
         let Some(source) = self
-            .inputs
+            .settings
             .sources()
             .iter()
             .find(|source| source.tag() == attempt.row.source)

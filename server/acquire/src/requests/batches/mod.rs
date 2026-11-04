@@ -359,9 +359,7 @@ impl DiscoveryBatches {
     /// state, as `admin`. Removed when the library held it; waiting while
     /// no recycle bin is known.
     async fn recycle(&self, admin: &Admin, mbid: &str) -> Result<Step, RequestsError> {
-        let Some(library) = self.requests.albums.clone() else {
-            return Ok(Step::Kept);
-        };
+        let library = self.requests.albums.clone();
         let (album, actor_id) = (mbid.to_owned(), admin.user_id().to_owned());
         let removed = tokio::task::spawn_blocking(move || {
             library.remove_album(&album, true, true, &actor_id)

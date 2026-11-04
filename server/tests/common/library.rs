@@ -227,19 +227,21 @@ pub fn library_at(platform: &Platform) -> (LibrarySetup, Arc<FakeProviders>) {
 }
 
 /// As [`library_at`], with identification asking `identify`. Contributions
-/// answer from scripts with nothing scripted, Library Management has no
-/// outside sources, and every other outside address is closed.
+/// answer from scripts with nothing scripted, Library Management's outside
+/// sources hold nothing ([`NoEnrichment`]), and every other outside address
+/// is closed.
 pub fn library_asking(platform: &Platform, identify: Arc<dyn IdentifyProviders>) -> LibrarySetup {
     library_with(platform, identify, None)
 }
 
 /// As [`library_asking`], with Library Management planning through
-/// `enrichment`.
+/// `enrichment`, or through [`NoEnrichment`] when none is given.
 pub fn library_with(
     platform: &Platform,
     identify: Arc<dyn IdentifyProviders>,
     enrichment: Option<Arc<dyn EnrichmentPort>>,
 ) -> LibrarySetup {
+    let enrichment = enrichment.unwrap_or_else(|| Arc::new(NoEnrichment::over(platform)));
     let mut outbound = super::closed_outbound();
     outbound.identify_providers = Port::given(identify);
     outbound.contribution_providers = Port::given(ScriptedContrib::default().providers());
@@ -251,12 +253,13 @@ pub fn library_with(
         platform.db.clone(),
         Arc::new(droppedneedle_kernel::clock::SystemClock),
     );
+    let endpoints = outbound.library(&providers, mb_source.clone(), platform.clock.clone());
     LibrarySetup::build(
         platform,
         providers,
         mb_source,
         queue.clone(),
-        outbound.library(),
+        endpoints,
         LibraryPorts {
             enrichment,
             scan_completed: Arc::new(|| {}),
@@ -305,5 +308,137 @@ impl TestSql for Db {
             conn.query_row(sql, [], |row| row.get(0))
                 .map_err(DbError::from)
         })
+    }
+}
+
+/// What a port's calls answer.
+type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+
+/// Library Management's outside sources holding nothing: no genres, lyrics,
+/// covers or AcoustID key, and MusicBrainz answering every stored release's
+/// tracks with no credits and its artists under their credited names.
+/// Planning over it changes no file for want of outside data.
+pub struct NoEnrichment {
+    releases: droppedneedle_library::identify::sqlite::SqliteIdentifyStore,
+}
+
+impl NoEnrichment {
+    /// Over the release documents identification keeps in `platform`'s
+    /// database.
+    pub fn over(platform: &Platform) -> Self {
+        Self {
+            releases: droppedneedle_library::identify::sqlite::SqliteIdentifyStore::new(
+                platform.db.clone(),
+                platform.clock.clone(),
+            ),
+        }
+    }
+}
+
+impl EnrichmentPort for NoEnrichment {
+    fn listenbrainz_genres<'a>(
+        &'a self,
+        _release_group_mbid: &'a str,
+        _background: bool,
+    ) -> BoxFuture<'a, Result<Vec<droppedneedle_library::management::genre::Candidate>, String>>
+    {
+        Box::pin(async { Err("no outside sources".to_owned()) })
+    }
+
+    fn lastfm_genres<'a>(
+        &'a self,
+        _artist: &'a str,
+        _album: &'a str,
+        _background: bool,
+    ) -> BoxFuture<'a, Result<Vec<droppedneedle_library::management::genre::Candidate>, String>>
+    {
+        Box::pin(async { Err("no outside sources".to_owned()) })
+    }
+
+    fn lyrics<'a>(
+        &'a self,
+        _query: &'a droppedneedle_library::management::enrich::LyricsQuery,
+        _background: bool,
+    ) -> BoxFuture<'a, Result<Option<droppedneedle_library::management::enrich::LyricsFound>, String>>
+    {
+        Box::pin(async { Err("no outside sources".to_owned()) })
+    }
+
+    fn front_cover<'a>(
+        &'a self,
+        _release_mbid: &'a str,
+        _release_group_mbid: &'a str,
+        _background: bool,
+    ) -> BoxFuture<'a, Result<Option<droppedneedle_library::management::enrich::Cover>, String>>
+    {
+        Box::pin(async { Ok(None) })
+    }
+
+    fn edition_cover<'a>(
+        &'a self,
+        _release_mbid: &'a str,
+        _background: bool,
+    ) -> BoxFuture<'a, Result<Option<droppedneedle_library::management::enrich::Cover>, String>>
+    {
+        Box::pin(async { Ok(None) })
+    }
+
+    fn release_extras<'a>(
+        &'a self,
+        release_mbid: &'a str,
+        wants: droppedneedle_library::management::enrich::ExtrasWanted,
+        _background: bool,
+    ) -> BoxFuture<'a, Result<droppedneedle_library::matching::model::ReleaseExtras, String>> {
+        use droppedneedle_library::matching::model::{
+            ArtistName, ArtistNames, RELATIONS_VERSION, RecordingRelations, ReleaseExtras,
+            ReleaseRelations,
+        };
+        let release = self
+            .releases
+            .release(release_mbid, None)
+            .map_err(|error| error.to_string());
+        Box::pin(async move {
+            let release = release?.ok_or_else(|| "release not stored".to_owned())?;
+            let relations = wants.relations.then(|| ReleaseRelations {
+                fetched_at_ms: 0,
+                version: RELATIONS_VERSION,
+                tracks: release
+                    .tracks
+                    .iter()
+                    .map(|track| {
+                        let found = RecordingRelations {
+                            recording_id: track.recording_id.clone(),
+                            ..RecordingRelations::default()
+                        };
+                        (track.id.clone(), found)
+                    })
+                    .collect(),
+            });
+            let names = wants.names.then(|| ArtistNames {
+                fetched_at_ms: 0,
+                artists: release
+                    .artists
+                    .iter()
+                    .chain(release.tracks.iter().flat_map(|track| track.artists.iter()))
+                    .map(|artist| {
+                        let name = ArtistName {
+                            name: artist.name.clone(),
+                            sort_name: artist.sort_name.clone(),
+                            aliases: None,
+                        };
+                        (artist.id.to_ascii_lowercase(), name)
+                    })
+                    .collect(),
+            });
+            Ok(ReleaseExtras { relations, names })
+        })
+    }
+
+    fn acoustid_lookup<'a>(
+        &'a self,
+        _prints: &'a [droppedneedle_library::management::enrich::AcoustIdPrint],
+        _background: bool,
+    ) -> BoxFuture<'a, droppedneedle_library::management::enrich::AcoustIdAnswer> {
+        Box::pin(async { droppedneedle_library::management::enrich::AcoustIdAnswer::NoKey })
     }
 }

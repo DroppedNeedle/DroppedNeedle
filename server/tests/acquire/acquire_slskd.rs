@@ -16,23 +16,18 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use droppedneedle_acquire::clients::LiveClients;
 use droppedneedle_acquire::db::AcquireDb;
 use droppedneedle_acquire::downloads::SourceTag;
 use droppedneedle_acquire::downloads::journal::Journal;
 use droppedneedle_acquire::downloads::sources::{DownloadSource as _, SourceHandle};
 use droppedneedle_acquire::downloads::store::NewTask;
-use droppedneedle_acquire::downloads::worker::WorkerSettings;
-use droppedneedle_acquire::downloads::worker::{DownloadWorker, SourceList};
-use droppedneedle_acquire::readiness::SourceReadiness;
-use droppedneedle_acquire::target::{SearchTarget, Targets};
-use droppedneedle_acquire::wiring::ClientLives;
-use droppedneedle_kernel::events::EventHub;
+use droppedneedle_acquire::target::SearchTarget;
 use droppedneedle_kernel::runtime_config::secret_sections::SlskdConnection;
 use droppedneedle_kernel::runtime_config::sections::{
     DownloadPolicy as KernelPolicy, QualityRecipeEntry, RecipeFormat, RecipeQuality,
 };
 
+use crate::common::acquire::{FixedAlbums, no_targets, worker_over};
 use crate::common::bundles::quiet_ticks;
 use droppedneedle_testkit::slskd::{MOCK_API_KEY, MockSlskd};
 use slskd::{
@@ -836,7 +831,11 @@ async fn failover_walks_every_peer() {
         })
         .await
         .expect("task seeds");
-    let source = SlskdSource::new(std::sync::Arc::new(repository(&mock)), journal.clone());
+    let source = SlskdSource::new(
+        std::sync::Arc::new(repository(&mock)),
+        journal.clone(),
+        no_targets(&journal),
+    );
 
     let mut peers: Vec<String> = Vec::new();
     for index in 0..10 {
@@ -920,7 +919,8 @@ fn album_peer(username: &str, extension: &str) -> serde_json::Value {
         "files": files, "lockedFiles": [], "token": 1})
 }
 
-/// A saved policy keeping one tier, with a one-entry recipe.
+/// A saved policy keeping one tier, with a one-entry recipe, each source
+/// grabbing its own best guess (no search review).
 fn one_tier_policy(tier: &str, format: RecipeFormat, quality: RecipeQuality) -> KernelPolicy {
     KernelPolicy {
         quality_min: tier.to_owned(),
@@ -934,6 +934,7 @@ fn one_tier_policy(tier: &str, format: RecipeFormat, quality: RecipeQuality) -> 
             bit_depth: None,
             sample_rate_hz: None,
         }],
+        search_review: "off".to_owned(),
         ..KernelPolicy::default()
     }
 }
@@ -1002,27 +1003,16 @@ async fn soulseek_picks_follow_the_saved_quality_policy() {
         .expect("an MP3-only policy saves");
 
     let journal = Arc::new(Journal::new(db.clone(), quiet_ticks()));
-    let http = droppedneedle_kernel::http_client::HttpClientFactory::new()
-        .expect("http client factory")
-        .shared()
-        .clone();
-    let clients = Arc::new(LiveClients::new(
-        http,
-        droppedneedle_providers::Providers::closed().newznab,
-        ClientLives::new(&settings),
+    let (worker, _) = worker_over(
+        &db,
+        journal.clone(),
+        &settings,
         dir.join("slskd"),
-        journal.clone(),
-        Arc::new(Targets::new(journal.clone(), None)),
+        Arc::new(FixedAlbums::default()),
         None,
-    ));
-    let worker_settings = Arc::new(WorkerSettings::new(&settings, clients));
-    let worker = Arc::new(DownloadWorker::new(
-        journal.clone(),
-        worker_settings.clone(),
-        SourceReadiness::new(SourceList::Live(worker_settings)),
-        EventHub::new(),
-        Default::default(),
-    ));
+        droppedneedle_kernel::events::EventHub::new(),
+    )
+    .await;
     let target = SearchTarget {
         artist: "Artist".to_owned(),
         album_title: "Album".to_owned(),
@@ -1074,7 +1064,11 @@ async fn soulseek_counts_only_readable_files_as_audio() {
     let mock = MockSlskd::start().await.expect("mock starts");
     let db = AcquireDb::scratch().expect("scratch db");
     let journal = Arc::new(Journal::new(db, quiet_ticks()));
-    let source = SlskdSource::new(Arc::new(repository(&mock)), journal);
+    let source = SlskdSource::new(
+        Arc::new(repository(&mock)),
+        journal.clone(),
+        no_targets(&journal),
+    );
     let target = SearchTarget {
         artist: "Artist".to_owned(),
         album_title: "Album".to_owned(),

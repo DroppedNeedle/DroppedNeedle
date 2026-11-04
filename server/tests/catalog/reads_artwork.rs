@@ -166,8 +166,10 @@ impl Rig {
                 std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
             ),
             LocalArtwork::new(self.runtime.db().clone()),
-            Some(Arc::new(self.archive.providers.coverart.clone())),
+            Arc::new(self.archive.providers.coverart.clone()),
             config.live(),
+            Arc::new(self.archive.providers.images.clone()),
+            Arc::new(NoArtistImages),
         );
         Arc::new(service)
     }
@@ -1030,4 +1032,23 @@ async fn the_edition_cover_is_the_releases_archive_front_only() {
         calls.iter().all(|url| !url.contains("/release-group/")),
         "never another edition's cover: {calls:?}"
     );
+}
+
+/// An artist image source that names no picture: these tests read album
+/// covers only.
+struct NoArtistImages;
+
+impl droppedneedle_catalog::artwork::ArtistImageSource for NoArtistImages {
+    fn candidates<'a>(
+        &'a self,
+        _artist_mbid: &'a str,
+        _priority: droppedneedle_providers::RequestPriority,
+    ) -> futures_util::future::BoxFuture<'a, droppedneedle_catalog::artwork::ArtistImageCandidates>
+    {
+        Box::pin(async { Default::default() })
+    }
+
+    fn fill<'a>(&'a self, _artist_mbid: &'a str) -> futures_util::future::BoxFuture<'a, bool> {
+        Box::pin(async { false })
+    }
 }

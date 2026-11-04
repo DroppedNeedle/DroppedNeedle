@@ -1,8 +1,11 @@
 //! Personal-mix auto-request approvals and the mix refresh.
 
+use std::sync::Arc;
+
 use super::RequestsService;
 use crate::requests::error::RequestsError;
 use crate::requests::ledger::{ApprovalState, MixApproval};
+use crate::requests::mix::PersonalMixBuilder;
 use crate::requests::models::{
     MixRefreshStatus, PersonalMixApprovalItem, PersonalMixApprovalsResponse, RefreshResponse,
 };
@@ -82,6 +85,7 @@ impl RequestsService {
         &self,
         admin: &Admin,
         user_id: &str,
+        mixer: &Arc<PersonalMixBuilder>,
     ) -> Result<MixDecided, RequestsError> {
         if !self
             .mixes
@@ -96,9 +100,7 @@ impl RequestsService {
             return Ok(MixDecided::NoMatch);
         }
         // A rejection also turns the user's toggle off.
-        if let Some(mixer) = &self.mixer {
-            mixer.clear_intent(user_id).await;
-        }
+        mixer.clear_intent(user_id).await;
         Ok(MixDecided::Rejected)
     }
 
@@ -107,6 +109,7 @@ impl RequestsService {
         &self,
         admin: &Admin,
         user_id: &str,
+        mixer: &Arc<PersonalMixBuilder>,
     ) -> Result<MixDecided, RequestsError> {
         if !self
             .mixes
@@ -115,9 +118,7 @@ impl RequestsService {
         {
             return Ok(MixDecided::NoMatch);
         }
-        if let Some(mixer) = &self.mixer {
-            mixer.clear_intent(user_id).await;
-        }
+        mixer.clear_intent(user_id).await;
         Ok(MixDecided::Revoked)
     }
 
@@ -128,12 +129,8 @@ impl RequestsService {
     pub async fn refresh_personal_mix(
         &self,
         principal: &Principal,
+        mixer: &Arc<PersonalMixBuilder>,
     ) -> Result<RefreshResponse, RequestsError> {
-        let Some(mixer) = &self.mixer else {
-            return Err(RequestsError::Conflict {
-                message: "Weekly Mix is not available on this server.".to_owned(),
-            });
-        };
         if !mixer.is_linked(principal.user_id()).await {
             return Err(RequestsError::InvalidInput {
                 message: "Connect ListenBrainz first to build Your Weekly Mix".to_owned(),

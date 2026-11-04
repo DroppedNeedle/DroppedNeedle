@@ -299,7 +299,7 @@ impl From<HeldError> for ApiError {
         ApiError::from(match error {
             HeldError::NotFound(_) => RequestsError::NotFound,
             HeldError::Refused(message) => RequestsError::Conflict { message },
-            error @ (HeldError::InUse | HeldError::NotSetUp) => RequestsError::Conflict {
+            error @ HeldError::InUse => RequestsError::Conflict {
                 message: error.to_string(),
             },
             HeldError::Invalid(message) => RequestsError::InvalidInput { message },

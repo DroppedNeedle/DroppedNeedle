@@ -86,7 +86,7 @@ pub(crate) struct ManagementParts {
     pub(crate) core: crate::wiring::LibraryCore,
     pub(crate) coordinator: Arc<crate::wiring::ScanCoordinator>,
     pub(crate) identify_store: Arc<crate::identify::sqlite::SqliteIdentifyStore>,
-    pub(crate) enrichment: Option<Arc<dyn super::enrich::EnrichmentPort>>,
+    pub(crate) enrichment: Arc<dyn super::enrich::EnrichmentPort>,
     pub(crate) management_settings: Arc<super::settings::service::LibraryManagementService>,
     pub(crate) publishing: crate::publish::session::Publishing,
     pub(crate) mutations: crate::removal::Mutations,

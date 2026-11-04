@@ -58,22 +58,18 @@ pub struct RequestsService {
     editions: EditionStore,
     /// The application database (library edition and names).
     library: AcquireDb,
-    /// Plugin host for `request_created` events, when there is one.
-    plugins: Option<Arc<droppedneedle_plugins::host::PluginHost>>,
-    /// The personal-mix builder, when there is one.
-    mixer: Option<Arc<super::mix::PersonalMixBuilder>>,
-    /// The library's edition plans, when wired.
-    edition_plans: Option<Arc<dyn droppedneedle_library::edition::port::EditionPlans>>,
-    /// The upgrade policy reader, when wired.
-    upgrade_policy: Option<
-        droppedneedle_kernel::runtime_config::Live<
-            droppedneedle_kernel::runtime_config::sections::DownloadPolicy,
-        >,
+    /// Plugin host for `request_created` events.
+    plugins: Arc<droppedneedle_plugins::host::PluginHost>,
+    /// The library's edition plans.
+    edition_plans: Arc<dyn droppedneedle_library::edition::port::EditionPlans>,
+    /// The upgrade policy reader.
+    upgrade_policy: droppedneedle_kernel::runtime_config::Live<
+        droppedneedle_kernel::runtime_config::sections::DownloadPolicy,
     >,
-    /// Source and disk checks, when wired.
-    readiness: Option<super::state::AcquireReadiness>,
-    /// Users' notices, when wired.
-    events: Option<droppedneedle_kernel::events::EventHub>,
+    /// Source and disk checks.
+    readiness: super::state::AcquireReadiness,
+    /// Users' notices.
+    events: droppedneedle_kernel::events::EventHub,
 }
 
 /// A dispatch read failure as a server fault (the cause goes to the log).
@@ -229,7 +225,6 @@ impl RequestsService {
             editions: state.editions.clone(),
             library: state.library.clone(),
             plugins: state.plugins.clone(),
-            mixer: state.mixer.clone(),
             edition_plans: state.edition_plans.clone(),
             upgrade_policy: state.upgrade_policy.clone(),
             readiness: state.readiness.clone(),

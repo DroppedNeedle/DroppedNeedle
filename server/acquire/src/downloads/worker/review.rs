@@ -67,7 +67,6 @@ impl DownloadWorker {
     pub(super) fn start_review(self: &Arc<Self>, pass: &Pass, task: &TaskRow) -> bool {
         if pass.config.review == ReviewMode::Off
             || task.download_type == "track"
-            || self.targets.is_none()
             || lock(&self.reviews.looked).contains(&task.id)
         {
             return false;
@@ -110,10 +109,7 @@ impl DownloadWorker {
         order: &[crate::downloads::source_tag::SourceTag],
         task: &TaskRow,
     ) -> Reviewed {
-        let Some(targets) = &self.targets else {
-            return Reviewed::Search;
-        };
-        let target = match targets.target(task).await {
+        let target = match self.targets.target(task).await {
             Ok(target) if target.track.is_none() => target,
             Ok(_) => return Reviewed::Search,
             Err(error) => {

@@ -359,12 +359,11 @@ impl RequestsService {
         now: u64,
     ) -> Result<Option<String>, RequestsError> {
         let started = self.start_one(record, principal, now).await?;
-        if let (Some(task_id), Some(owner), Some(events)) =
-            (&started, record.user_id.as_deref(), &self.events)
+        if let (Some(task_id), Some(owner)) = (&started, record.user_id.as_deref())
             && record.origin == DispatchOrigin::Follow
             && owner != principal.user_id()
         {
-            events.notify(
+            self.events.notify(
                 owner,
                 UserNotice::AutoDownloadEnqueued(AutoDownloadEnqueued {
                     artist_mbid: record.artist_mbid.clone().unwrap_or_default(),

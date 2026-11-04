@@ -7,37 +7,31 @@
 
 use crate::common::Probe;
 use std::sync::Arc;
-use std::time::Duration;
 
 use droppedneedle_acquire::db::AcquireDb;
 use droppedneedle_acquire::downloads::journal::Journal;
 use droppedneedle_acquire::downloads::sources::SourceHandle;
 use droppedneedle_acquire::downloads::store::{NewTask, TaskDetails};
-use droppedneedle_acquire::downloads::worker::{DownloadWorker, WorkerConfig};
+use droppedneedle_acquire::downloads::worker::DownloadWorker;
 use droppedneedle_acquire::flows::stores::UpgradeWorklist;
 use droppedneedle_acquire::reason::Reason;
 use droppedneedle_acquire::requests::quota::QuotaLedger;
 use droppedneedle_acquire::search_jobs::candidates::{
     CandidateNoteCode, CandidateRefusal, CandidateTier,
 };
-use droppedneedle_acquire::search_jobs::review::ReviewMode;
 use droppedneedle_acquire::search_jobs::store::{
     JobPayload, JobStatus, JobStore, NewJob, PickRefusal, PickedTask, ReviewOutcome,
 };
 use droppedneedle_acquire::search_jobs::{AlbumSearch, SearchJobError, SearchJobs, StartOutcome};
-use droppedneedle_acquire::slskd::{
-    DownloadPolicy, ReqwestSlskdHttp, SlskdClient, SlskdRepository,
-};
-use droppedneedle_acquire::sources::SlskdSource;
-use droppedneedle_acquire::target::Targets;
-use droppedneedle_acquire::target::lookup::{AlbumRelease, AlbumTrack, FixedAlbums};
+use droppedneedle_acquire::target::lookup::{AlbumRelease, AlbumTrack};
 use droppedneedle_auth::session::store::SessionKind;
 use droppedneedle_auth::{Principal, Role};
 use droppedneedle_kernel::events::model::names;
 use droppedneedle_kernel::events::{EventHub, Subscription};
-use droppedneedle_testkit::slskd::{MOCK_API_KEY, MockSlskd};
+use droppedneedle_testkit::slskd::MockSlskd;
 use serde_json::{Value, json};
 
+use crate::common::acquire::{FixedAlbums, review_off_in, save_slskd, worker_over, worker_with};
 use crate::common::auth::test_principal;
 use crate::common::bundles::quiet_ticks;
 
@@ -97,8 +91,8 @@ struct Rig {
 }
 
 /// The search service and a worker over the slskd mock, with a fixed
-/// MusicBrainz tracklist. `review` turns on the look before an automatic
-/// grab.
+/// MusicBrainz tracklist. `review` leaves the look before an automatic
+/// grab on, as saved by default.
 async fn rig(mock: &MockSlskd, review: bool) -> Rig {
     let db = AcquireDb::scratch().expect("scratch db");
     db.add_user("u1", "U", "user").await.expect("user seeds");
@@ -107,33 +101,23 @@ async fn rig(mock: &MockSlskd, review: bool) -> Rig {
     let journal = Arc::new(Journal::new(db.clone(), quiet_ticks()));
     let mut albums = FixedAlbums::default();
     albums.releases.insert(RELEASE.to_owned(), album());
-    let targets = Arc::new(Targets::new(journal.clone(), Some(Arc::new(albums))));
-    let http = ReqwestSlskdHttp::new(reqwest::Client::new(), &mock.base_url(), MOCK_API_KEY);
-    let repo = SlskdRepository::new(
-        SlskdClient::new(http),
-        &mock.base_url(),
-        MOCK_API_KEY,
-        staging.join("unused-mount"),
-        DownloadPolicy {
-            search_timeout: Duration::from_secs(2),
-            completion_grace: Duration::from_secs(2),
-            poll_interval: Duration::from_millis(10),
-            ..DownloadPolicy::default()
-        },
-    );
-    let source = SlskdSource::new(Arc::new(repo), journal.clone()).with_targets(targets.clone());
-    let events = EventHub::new();
-    let mut worker = DownloadWorker::fixed(
-        journal.clone(),
-        vec![crate::as_source(Arc::new(source))],
-        WorkerConfig::default(),
-        events.clone(),
-        Default::default(),
-    );
-    if review {
-        worker = worker.with_targets(targets.clone());
+    let settings = droppedneedle_acquire::settings::scratch_settings(&staging.join("settings"))
+        .expect("settings open");
+    save_slskd(&settings, &mock.base_url());
+    if !review {
+        review_off_in(&settings);
     }
-    let worker = Arc::new(worker);
+    let events = EventHub::new();
+    let (worker, targets) = worker_over(
+        &db,
+        journal.clone(),
+        &settings,
+        staging.join("unused-mount"),
+        Arc::new(albums),
+        None,
+        events.clone(),
+    )
+    .await;
     let jobs = Arc::new(SearchJobs::new(
         JobStore::new(db.clone()),
         worker.clone(),
@@ -762,50 +746,32 @@ async fn kept_rig_with(copies: &[Copy], saved: Value) -> KeptRig {
     )
     .expect("config.json");
     let settings = droppedneedle_acquire::settings::scratch_settings(&band).expect("settings");
-    let repo_policy = DownloadPolicy {
-        search_timeout: Duration::from_secs(2),
-        completion_grace: Duration::from_secs(2),
-        poll_interval: Duration::from_millis(10),
-        ..DownloadPolicy::from_saved(&settings.live().read().expect("policy reads"))
-    };
 
     let journal = Arc::new(Journal::new(db.clone(), quiet_ticks()));
     let landing = Arc::new(LandingService::new(
         journal.clone(),
-        Some(Arc::new(LibraryLanding::new(
-            &library,
-            every_priority(releases),
-        ))),
+        Arc::new(LibraryLanding::new(&library, every_priority(releases))),
         settings.live(),
         dir.join("held"),
     ));
-    let targets = Arc::new(Targets::new(journal.clone(), Some(Arc::new(albums))));
-    let repo = SlskdRepository::new(
-        SlskdClient::new(ReqwestSlskdHttp::new(
-            reqwest::Client::new(),
-            &mock.base_url(),
-            MOCK_API_KEY,
-        )),
-        &mock.base_url(),
-        MOCK_API_KEY,
-        downloads,
-        repo_policy,
-    );
-    let source = SlskdSource::new(Arc::new(repo), journal.clone()).with_targets(targets.clone());
+    let targets = Arc::new(droppedneedle_acquire::target::Targets::new(
+        journal.clone(),
+        Arc::new(albums),
+    ));
+    save_slskd(&settings, &mock.base_url());
+    // Each pick is the source's own, on the pass that asks for it.
+    review_off_in(&settings);
     let events = EventHub::new();
-    let worker = Arc::new(
-        DownloadWorker::fixed(
-            journal.clone(),
-            vec![crate::as_source(Arc::new(source))],
-            // Each pick is the source's own, on the pass that asks for it.
-            WorkerConfig {
-                review: ReviewMode::Off,
-                ..WorkerConfig::default()
-            },
-            events.clone(),
-            Default::default(),
-        )
-        .with_landing(landing),
+    let worker = worker_with(
+        &platform,
+        crate::common::bundles::idle_host(&platform, library.core.clone()),
+        journal.clone(),
+        &settings,
+        downloads,
+        targets.clone(),
+        landing,
+        Default::default(),
+        events.clone(),
     );
     let jobs = Arc::new(SearchJobs::new(
         JobStore::new(db.clone()),

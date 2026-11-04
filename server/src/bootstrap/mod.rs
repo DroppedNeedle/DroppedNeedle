@@ -427,7 +427,7 @@ pub(crate) async fn build_on(
     let acquire_stores = AcquireStores::open(
         p,
         Arc::new(droppedneedle_acquire::plugin_events::FlowTicks::new(
-            Some(plugin_host.clone()),
+            plugin_host.clone(),
             p.events.clone(),
         )),
     );
@@ -441,7 +441,7 @@ pub(crate) async fn build_on(
         providers.clone(),
         mb_source.clone(),
         queues.queue().clone(),
-        outbound.library(),
+        outbound.library(&providers, mb_source.clone(), p.clock.clone()),
         library_ports(
             p,
             &providers,
@@ -490,7 +490,7 @@ pub(crate) async fn build_on(
     // Your Weekly Mix: one builder behind the refresh route, the daily
     // loop and the listening-settings toggle.
     let mix_hooks = Arc::new(droppedneedle_acquire::requests::mix::MixGrantHooks::new(
-        acquire.requests.mixer.clone(),
+        acquire.mixer.clone(),
     ));
     let (media, media_workers) = MediaSetup::build(
         p,
@@ -719,7 +719,7 @@ fn library_ports(
     );
     let scans = scans.clone();
     droppedneedle_library::wiring::LibraryPorts {
-        enrichment: Some(Arc::new(enrichment)),
+        enrichment: Arc::new(enrichment),
         scan_completed: Arc::new(move || scans.bump()),
         core,
     }

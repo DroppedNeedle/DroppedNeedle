@@ -51,6 +51,13 @@ impl WorkerSettings {
             .unwrap_or_default()
     }
 
+    /// The sources on now, for work outside the worker's passes (the
+    /// wanted watcher's search), or `None` while the download settings do
+    /// not read.
+    pub fn current(&self) -> Option<SourceSet> {
+        self.readable().then(|| self.sources())
+    }
+
     /// One change notice per section the sources and tuning are read
     /// from.
     pub(crate) fn notices(&self) -> Vec<watch::Receiver<i64>> {

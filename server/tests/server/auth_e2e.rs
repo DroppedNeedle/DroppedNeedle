@@ -236,7 +236,7 @@ impl E2e {
             None,
             &providers,
             Arc::new(droppedneedle_acquire::requests::mix::MixGrantHooks::new(
-                acquire.requests.mixer.clone(),
+                acquire.mixer.clone(),
             )),
             crate::common::listening_store(p),
             droppedneedle_kernel::jobs::queue::JobQueue::new(p.db.clone(), p.clock.clone()),

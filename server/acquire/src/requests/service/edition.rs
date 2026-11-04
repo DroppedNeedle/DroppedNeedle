@@ -435,10 +435,7 @@ impl RequestsService {
             .unwrap_or_default();
         // With no source set up the queued download waits for the worker,
         // which starts it once a source is saved.
-        let waiting = self
-            .readiness
-            .as_ref()
-            .is_some_and(|readiness| !readiness.sources.can_acquire());
+        let waiting = !self.readiness.sources.can_acquire();
         let request = DispatchRequest {
             user_id: curator.user_id().to_owned(),
             target: DispatchTarget::Album {
@@ -571,8 +568,8 @@ impl RequestsService {
     }
 
     /// The library's plan for the album's chosen edition. `None` when it
-    /// cannot be read right now (MusicBrainz down, no copy with an edition,
-    /// library not wired): the whole album is fetched then, and the landing
+    /// cannot be read right now (MusicBrainz down, no copy with an edition):
+    /// the whole album is fetched then, and the landing
     /// skips what is owned.
     async fn gap(
         &self,
@@ -580,10 +577,11 @@ impl RequestsService {
         release_group_mbid: &str,
         replace_versions: bool,
     ) -> Result<Option<Gap>, RequestsError> {
-        let Some(plans) = &self.edition_plans else {
-            return Ok(None);
-        };
-        let plan = match plans.group_plan(album_id, release_group_mbid).await {
+        let plan = match self
+            .edition_plans
+            .group_plan(album_id, release_group_mbid)
+            .await
+        {
             Ok(Some(plan)) => plan,
             Ok(None) => return Ok(None),
             Err(OperationError::Unavailable(cause)) => {
@@ -622,11 +620,9 @@ impl RequestsService {
     /// The plan's kept files below the upgrade cutoff; none while upgrades
     /// are off or the qualities cannot be read.
     async fn below_cutoff(&self, plan: &EditionPlan) -> Vec<String> {
-        let Some(policy) = self.upgrade_policy.as_ref().map(|live| {
-            crate::flows::stores::UpgradePolicy::from_policy(&live.read().unwrap_or_default())
-        }) else {
-            return Vec::new();
-        };
+        let policy = crate::flows::stores::UpgradePolicy::from_policy(
+            &self.upgrade_policy.read().unwrap_or_default(),
+        );
         if !policy.upgrade_allowed {
             return Vec::new();
         }
@@ -648,10 +644,7 @@ impl RequestsService {
 
     /// Refuse when the disk downloads land on lacks room for them.
     async fn check_disk(&self, estimate: u64) -> Result<(), RequestsError> {
-        let Some(readiness) = &self.readiness else {
-            return Ok(());
-        };
-        let root = readiness.staging_root.clone();
+        let root = self.readiness.staging_root.clone();
         let free = tokio::task::spawn_blocking(move || {
             std::fs::create_dir_all(&root).ok();
             droppedneedle_library::adapters::free_bytes_for(&root)

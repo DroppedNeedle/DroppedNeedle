@@ -16,15 +16,12 @@ use droppedneedle_acquire::dispatch::{
     DispatchOrigin, DispatchOutcome, DispatchRequest, DispatchTarget, DownloadDispatch,
 };
 use droppedneedle_acquire::downloads::journal::Journal;
-use droppedneedle_acquire::downloads::worker::{
-    DownloadWorker, FixedSource, WorkerConfig, run_startup_recovery,
-};
+use droppedneedle_acquire::downloads::worker::{DownloadWorker, run_startup_recovery};
 use droppedneedle_acquire::downloads::{
     http::downloads_router,
     state::{AttemptDisposition, AttemptState, TaskStatus},
     store::{NewTask, TaskOutcome},
 };
-use droppedneedle_acquire::landing::LandingService;
 use droppedneedle_acquire::reason::Reason;
 use droppedneedle_auth::Role;
 use droppedneedle_auth::session::store::SessionKind;
@@ -33,8 +30,11 @@ use droppedneedle_kernel::ids::UuidGenerator;
 use serde_json::Value;
 use tower::ServiceExt as _;
 
+use crate::common::acquire::{FixedAlbums, review_off_in, save_slskd, worker_over};
 use crate::common::auth::{test_principal, with_test_principal};
 use crate::common::bundles::quiet_ticks;
+use droppedneedle_testkit::slskd::MockSlskd;
+use serde_json::json;
 
 /// A signed-in caller: user id and role.
 type Who = (&'static str, Role);
@@ -113,30 +113,56 @@ fn post(uri: &str, who: Who) -> (Request<Body>, Who) {
     (request, who)
 }
 
-/// A worker with the landing attached and no download client configured.
-fn worker_over(journal: &Arc<Journal>) -> Arc<DownloadWorker> {
-    let staging = staging_for(journal);
-    let landing = Arc::new(LandingService::new(
+/// The production worker over `journal`, its settings beside the scratch
+/// database, with no download client set up.
+async fn idle_worker(journal: &Arc<Journal>) -> Arc<DownloadWorker> {
+    let (worker, _) = worker_over(
+        journal.db(),
         journal.clone(),
+        &settings_beside(journal),
+        staging_for(journal).join("slskd"),
+        Arc::new(FixedAlbums::default()),
         None,
-        settings_beside(journal).live(),
-        staging.join("held"),
-    ));
-    Arc::new(
-        DownloadWorker::fixed(
-            journal.clone(),
-            Vec::new(),
-            WorkerConfig::default(),
-            droppedneedle_kernel::events::EventHub::new(),
-            Default::default(),
-        )
-        .with_landing(landing),
+        droppedneedle_kernel::events::EventHub::new(),
     )
+    .await;
+    worker
+}
+
+/// The production worker over `journal` with Soulseek on, at `mock`, and
+/// the search review off.
+async fn soulseek_worker(journal: &Arc<Journal>, mock: &MockSlskd) -> Arc<DownloadWorker> {
+    let settings = settings_beside(journal);
+    save_slskd(&settings, &mock.base_url());
+    review_off_in(&settings);
+    let (worker, _) = worker_over(
+        journal.db(),
+        journal.clone(),
+        &settings,
+        staging_for(journal).join("slskd"),
+        Arc::new(FixedAlbums::default()),
+        None,
+        droppedneedle_kernel::events::EventHub::new(),
+    )
+    .await;
+    worker
+}
+
+/// The one file every Soulseek peer of these tests offers.
+const PEER_FILE: &str = "@@music\\artist\\album\\01 Track.flac";
+
+/// A Soulseek peer offering the album as one file, [`PEER_FILE`].
+fn soulseek_peer(index: i64) -> Value {
+    json!({"username": format!("peer-{index}"), "hasFreeUploadSlot": true,
+        "uploadSpeed": 1_000_000, "queueLength": 0, "fileCount": 1, "lockedFileCount": 0,
+        "lockedFiles": [], "token": 1,
+        "files": [{"filename": PEER_FILE, "size": 30_000_000, "extension": "flac",
+                   "bitDepth": 16, "sampleRate": 44_100, "length": 200}]})
 }
 
 async fn send(journal: &Arc<Journal>, (req, who): (Request<Body>, Who)) -> (StatusCode, Value) {
     let principal = test_principal(who.0, who.1, "sess-test", SessionKind::Standard);
-    let router = downloads_router(worker_over(journal)).expect("router builds");
+    let router = downloads_router(idle_worker(journal).await).expect("router builds");
     let response = with_test_principal(router, principal)
         .oneshot(req)
         .await
@@ -329,13 +355,7 @@ async fn failed_retry_insert_retries_next_pass() {
     })
     .await
     .unwrap();
-    let worker = Arc::new(DownloadWorker::fixed(
-        journal,
-        Vec::new(),
-        WorkerConfig::default(),
-        droppedneedle_kernel::events::EventHub::new(),
-        Default::default(),
-    ));
+    let worker = idle_worker(&journal).await;
 
     worker.run_once(1).await;
     assert_eq!(task_count(&db), 1, "the injected failure blocks the insert");
@@ -410,13 +430,7 @@ async fn a_retry_stops_once_the_album_is_on_its_way_or_in() {
         })
         .await
         .unwrap();
-    let worker = Arc::new(DownloadWorker::fixed(
-        journal.clone(),
-        Vec::new(),
-        WorkerConfig::default(),
-        droppedneedle_kernel::events::EventHub::new(),
-        Default::default(),
-    ));
+    let worker = idle_worker(&journal).await;
 
     worker.run_once(1).await;
 
@@ -614,15 +628,10 @@ async fn unreadable_history_never_fails_a_partly_imported_task() {
     })
     .await
     .unwrap();
-    let staging = staging_for(&journal);
-    let source = Arc::new(FixedSource::new(staging.join("downloads"), Vec::new()));
-    let worker = Arc::new(DownloadWorker::fixed(
-        journal.clone(),
-        vec![crate::as_source(source)],
-        WorkerConfig::default(),
-        droppedneedle_kernel::events::EventHub::new(),
-        Default::default(),
-    ));
+    // A source that is on, so the pass reaches the task: with its three
+    // attempts used it would settle, but the history does not read.
+    let mock = MockSlskd::start().await.expect("mock starts");
+    let worker = soulseek_worker(&journal, &mock).await;
 
     worker.run_once(1).await;
     let row = journal.read_task("t-short").await.unwrap().unwrap();
@@ -631,125 +640,6 @@ async fn unreadable_history_never_fails_a_partly_imported_task() {
         TaskStatus::Queued,
         "an unread history settles nothing"
     );
-}
-
-/// A Soulseek source with `copies` copies, each queued at its peer. With
-/// `sending`, a polled copy reports bytes moving. Discards fail, so a
-/// discarded copy stays with cleanup.
-struct QueuedPeers {
-    copies: i64,
-    sending: bool,
-}
-
-impl droppedneedle_acquire::downloads::sources::DownloadSource for QueuedPeers {
-    fn tag(&self) -> droppedneedle_acquire::downloads::source_tag::SourceTag {
-        droppedneedle_acquire::downloads::source_tag::SourceTag::Soulseek
-    }
-
-    fn search<'a>(
-        &'a self,
-        _target: &'a droppedneedle_acquire::target::SearchTarget,
-    ) -> futures_util::future::BoxFuture<
-        'a,
-        Result<
-            Vec<droppedneedle_acquire::search_jobs::candidates::Candidate>,
-            droppedneedle_acquire::downloads::sources::SourceError,
-        >,
-    > {
-        Box::pin(async { Ok(Vec::new()) })
-    }
-
-    fn enqueue<'a>(
-        &'a self,
-        task_id: &'a str,
-        candidate_index: i64,
-    ) -> futures_util::future::BoxFuture<
-        'a,
-        Result<
-            droppedneedle_acquire::downloads::sources::SourceHandle,
-            droppedneedle_acquire::downloads::sources::SourceError,
-        >,
-    > {
-        use droppedneedle_acquire::downloads::sources::{SourceError, SourceHandle};
-        Box::pin(async move {
-            if candidate_index >= self.copies {
-                return Err(SourceError::rejected(Reason::NoSource, "no other peer"));
-            }
-            Ok(SourceHandle {
-                username: format!("peer-{candidate_index}"),
-                filenames: vec!["01.flac".to_owned()],
-                job_name: format!("{task_id}-{candidate_index}"),
-                ..SourceHandle::new(self.tag())
-            })
-        })
-    }
-
-    fn poll<'a>(
-        &'a self,
-        _handle: &'a droppedneedle_acquire::downloads::sources::SourceHandle,
-    ) -> futures_util::future::BoxFuture<
-        'a,
-        Result<
-            droppedneedle_acquire::downloads::sources::TransferProgress,
-            droppedneedle_acquire::downloads::sources::SourceError,
-        >,
-    > {
-        Box::pin(async move {
-            let progress = droppedneedle_acquire::downloads::sources::TransferProgress {
-                total_bytes: Some(1000),
-                downloaded_bytes: if self.sending { 400 } else { 0 },
-                has_active_transfer: self.sending,
-                files_total: 1,
-                ..Default::default()
-            };
-            Ok(progress)
-        })
-    }
-
-    fn landed<'a>(
-        &'a self,
-        _handle: &'a droppedneedle_acquire::downloads::sources::SourceHandle,
-    ) -> futures_util::future::BoxFuture<
-        'a,
-        Result<
-            droppedneedle_acquire::landing::Landed,
-            droppedneedle_acquire::downloads::sources::SourceError,
-        >,
-    > {
-        Box::pin(async {
-            Err(
-                droppedneedle_acquire::downloads::sources::SourceError::LocalFault(
-                    "never lands".to_owned(),
-                ),
-            )
-        })
-    }
-
-    fn discard<'a>(
-        &'a self,
-        _handle: &'a droppedneedle_acquire::downloads::sources::SourceHandle,
-    ) -> futures_util::future::BoxFuture<
-        'a,
-        Result<bool, droppedneedle_acquire::downloads::sources::SourceError>,
-    > {
-        Box::pin(async {
-            Err(
-                droppedneedle_acquire::downloads::sources::SourceError::LocalFault(
-                    "kept for the check".to_owned(),
-                ),
-            )
-        })
-    }
-
-    fn abort<'a>(
-        &'a self,
-        _handle: &'a droppedneedle_acquire::downloads::sources::SourceHandle,
-    ) -> futures_util::future::BoxFuture<
-        'a,
-        Result<bool, droppedneedle_acquire::downloads::sources::SourceError>,
-    > {
-        Box::pin(async { Ok(true) })
-    }
 }
 
 /// How the album's first copy was chosen.
@@ -832,16 +722,12 @@ async fn queued_past_the_wait(
             assert_eq!(linked, "t-slow", "the parked download takes the pick");
         }
     }
-    let worker = Arc::new(DownloadWorker::fixed(
-        journal.clone(),
-        vec![Arc::new(QueuedPeers {
-            copies,
-            sending: false,
-        })],
-        WorkerConfig::default(),
-        droppedneedle_kernel::events::EventHub::new(),
-        Default::default(),
-    ));
+    // Each of `copies` peers has the album; an enqueued copy waits in its
+    // peer's queue.
+    let mock = MockSlskd::start().await.expect("mock starts");
+    mock.script_responses((0..copies).map(soulseek_peer).collect());
+    mock.queue_enqueued(true);
+    let worker = soulseek_worker(&journal, &mock).await;
     worker.run_once(1).await;
     clock.advance(16 * 60 * 1000);
     worker.run_once(2).await;
@@ -868,13 +754,13 @@ async fn queued_past_the_wait(
 
 // A Soulseek copy queued at its peer past the preferred-quality wait gives
 // way only once the next copy is queued: with a second peer it moves, the
-// slow copy goes to cleanup and nothing is blocklisted; with one peer it
+// slow copy is cleaned up and nothing is blocklisted; with one peer it
 // keeps its place. A first copy the automatic review took gives way; one a
 // person picked does not.
 #[tokio::test]
 async fn a_queued_copy_gives_way_only_to_a_copy_that_is_queued() {
     let waiting = |index: i64| (index, "acquiring".to_owned());
-    let moved = vec![(0, "cleanup_pending".to_owned()), waiting(1)];
+    let moved = vec![(0, "complete".to_owned()), waiting(1)];
 
     let (attempts, outcome, quarantined) = queued_past_the_wait(2, Chosen::Searched).await;
     assert_eq!(
@@ -920,7 +806,9 @@ async fn a_restart_measures_a_copy_from_its_own_enqueue() {
                 "soulseek",
                 0,
                 "",
-                r#"{"source":"soulseek","username":"peer-0","filenames":["01.flac"],"job_name":"t-old-0"}"#,
+                &json!({"source": "soulseek", "username": "peer-0", "filenames": [PEER_FILE],
+                    "job_name": "t-old-0"})
+                .to_string(),
                 AttemptState::Acquiring,
                 now - 600.0,
             )?;
@@ -928,17 +816,20 @@ async fn a_restart_measures_a_copy_from_its_own_enqueue() {
         })
         .await
         .unwrap();
+    // The copy is moving bytes at its peer.
+    let mock = MockSlskd::start().await.expect("mock starts");
+    mock.script_responses(vec![soulseek_peer(0)]);
+    mock.inject_transfer_progress(
+        "peer-0",
+        PEER_FILE,
+        30_000_000,
+        12_000_000,
+        "InProgress",
+        None,
+        None,
+    );
     // A new worker has an empty poll cache, as after a restart.
-    let worker = Arc::new(DownloadWorker::fixed(
-        journal.clone(),
-        vec![Arc::new(QueuedPeers {
-            copies: 1,
-            sending: true,
-        })],
-        WorkerConfig::default(),
-        droppedneedle_kernel::events::EventHub::new(),
-        Default::default(),
-    ));
+    let worker = soulseek_worker(&journal, &mock).await;
     worker.run_once(1).await;
     let task = journal.read_task("t-old").await.unwrap().unwrap();
     assert_eq!(task.status, TaskStatus::Downloading);
@@ -1153,7 +1044,7 @@ async fn a_redirected_edition_keeps_its_plan_for_later_targets() {
         },
         calls: 0.into(),
     });
-    let targets = Targets::new(journal.clone(), Some(lookup.clone()));
+    let targets = Targets::new(journal.clone(), lookup.clone());
     let task = journal.read_task(&task_id).await.unwrap().unwrap();
     let wanted = [TrackPosition { disc: 1, track: 2 }];
 

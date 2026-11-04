@@ -18,7 +18,7 @@ use crate::dispatch::DownloadDispatch;
 use crate::downloads::journal::Journal;
 use crate::downloads::store::StoreError;
 use crate::downloads::worker::{
-    DownloadWorker, SourceList, WorkerSettings, run_startup_recovery, sabnzbd_mount,
+    DownloadWorker, WorkerPorts, WorkerSettings, run_startup_recovery, sabnzbd_mount,
 };
 use crate::drop_import::DropImports;
 use crate::drop_import::store::{DropStore, StoreError as DropStoreError};
@@ -43,9 +43,10 @@ use crate::landing::ports::LandingLibrary;
 use crate::probes::{LiveProbes, ProbeCache};
 use crate::readiness::{SourceNotices, SourceReadiness};
 use crate::requests::error::RequestsError;
+use crate::requests::mix::PersonalMixBuilder;
 use crate::requests::quota::QuotaLedger;
 use crate::requests::sqlite::WantedStore;
-use crate::requests::state::{AcquireReadiness, RequestsState};
+use crate::requests::state::{AcquireReadiness, MixRoutes, RequestsPorts, RequestsState};
 use crate::search_jobs::SearchJobs;
 use crate::search_jobs::store::JobStore;
 use crate::settings::{ConfigLidarrSettings, ConfigSpotifySettings};
@@ -192,6 +193,9 @@ pub struct AcquireSetup {
     pub db: AcquireDb,
     /// Request intake state over the durable stores.
     pub requests: RequestsState,
+    /// The personal-mix builder: the Weekly Mix routes, the listening
+    /// settings' hooks and the daily sweep drive it.
+    pub mixer: Arc<PersonalMixBuilder>,
     /// Imports deps (config-backed settings, bridged follows).
     pub imports: ImportsDeps,
     /// The one way into the download queue.
@@ -211,8 +215,8 @@ pub struct AcquireSetup {
     /// Whether a download source is on: requests, search, the queue and
     /// Discover all read this one answer.
     pub readiness: SourceReadiness,
-    /// What the readiness reads changes on: the source settings and, in
-    /// production, the plugin host.
+    /// What the readiness reads changes on: the source settings and the
+    /// plugin host.
     source_notices: SourceNotices,
     /// Asks the probe loop for a pass now.
     probe_wake: Arc<watch::Sender<u64>>,
@@ -243,7 +247,7 @@ fn drop_imports(
 ) -> Arc<DropImports> {
     Arc::new(DropImports::new(
         DropStore::new(db.clone()),
-        landing.library().cloned(),
+        landing.library().clone(),
         folders.drop.clone(),
         events.clone(),
         flows.ticks.clone(),
@@ -323,73 +327,50 @@ pub struct AcquirePorts {
     pub listening: ListeningStore,
 }
 
-/// What the Weekly Mix builder is made from.
-struct MixInputs {
+/// What the durable core reaches outside acquisition.
+struct CorePorts {
+    requests: RequestsPorts,
+    release_poll: Arc<dyn ReleasePoll>,
+    /// MusicBrainz reads the wanted watcher dates its watches with.
+    targets: Arc<Targets>,
+    /// What the Weekly Mix builder reads: ListenBrainz through the shared
+    /// providers, the listening store and the playlists it writes.
     providers: Arc<Providers>,
     listening: ListeningStore,
     playlists: droppedneedle_catalog::collections::store::playlists::PlaylistStore,
 }
 
-/// What the durable core reaches outside acquisition. The test bundle
-/// leaves most of it out.
-struct CorePorts {
-    plugins: Option<Arc<PluginHost>>,
-    edition_plans: Option<Arc<dyn EditionPlans>>,
-    readiness: Option<AcquireReadiness>,
-    release_poll: Arc<dyn ReleasePoll>,
-    mix: Option<MixInputs>,
-    /// MusicBrainz reads the wanted watcher dates its watches with.
-    targets: Arc<Targets>,
-    albums: Option<Mutations>,
-}
-
-/// The pieces shared by the production and test bundles.
+/// The durable core.
 struct Core {
     requests: RequestsState,
+    mixer: Arc<PersonalMixBuilder>,
     dispatch: Arc<DownloadDispatch>,
     journal: Arc<Journal>,
     flows: Arc<FlowsBundle>,
 }
 
-/// Build the durable core: dispatch, requests state and the flows bundle,
-/// all over the shared stores.
-#[allow(clippy::too_many_arguments)]
+/// Build the durable core: dispatch, requests state, the mix builder and
+/// the flows bundle, all over the shared stores.
 fn core(
     stores: &AcquireStores,
     ids: Arc<dyn IdGenerator>,
     settings: &ConfigStore,
     quota: Arc<QuotaLedger>,
-    sources: SourceList,
+    sources: Arc<WorkerSettings>,
     ports: CorePorts,
-    events: EventHub,
 ) -> Core {
     let db = &stores.db;
     let journal = stores.journal.clone();
     let dispatch = Arc::new(DownloadDispatch::new(journal.clone(), ids, settings.live()));
-    // Album intake as the Weekly Mix builder files it: everything but the
-    // builder itself, which intake never reaches.
-    let intake = RequestsState {
-        wanted: stores.wanted.clone(),
-        plugins: ports.plugins.clone(),
-        edition_plans: ports.edition_plans,
-        // "Get missing tracks" also asks for the edition's tracks below
-        // the upgrade cutoff, under the policy the upgrade sweep reads.
-        upgrade_policy: Some(settings.live()),
-        readiness: ports.readiness,
-        albums: ports.albums,
-        events: Some(events.clone()),
-        ..RequestsState::new(db, quota, dispatch.clone())
-    };
-    let mixer = ports.mix.map(|mix| {
-        crate::requests::mix_sources::live_builder(
-            &intake,
-            &mix.providers,
-            mix.listening,
-            mix.playlists,
-            events.clone(),
-        )
-    });
-    let requests = RequestsState { mixer, ..intake };
+    let events = ports.requests.events.clone();
+    let requests = RequestsState::new(db, quota, dispatch.clone(), ports.requests);
+    let mixer = crate::requests::mix_sources::live_builder(
+        &requests,
+        &ports.providers,
+        ports.listening,
+        ports.playlists,
+        events,
+    );
     let ticks = stores.ticks.clone();
     let flows = Arc::new(flows_bundle(
         db,
@@ -403,6 +384,7 @@ fn core(
     ));
     Core {
         requests,
+        mixer,
         dispatch,
         journal,
         flows,
@@ -416,17 +398,13 @@ pub(crate) fn usenet_indexers(
     backend: UsenetBackendSetting,
     newznab: &Arc<NewznabIndexer>,
     prowlarr: &Arc<ProwlarrIndexer>,
-    plugins: Option<&Arc<PluginHost>>,
+    plugins: &Arc<PluginHost>,
 ) -> Vec<Arc<dyn Indexer>> {
     let primary: Arc<dyn Indexer> = match backend.0 {
         UsenetBackend::Indexers => newznab.clone(),
         UsenetBackend::Prowlarr => prowlarr.clone(),
     };
-    let mut indexers = vec![primary];
-    if let Some(host) = plugins {
-        indexers.push(Arc::new(PluginIndexers::new(host.clone())));
-    }
-    indexers
+    vec![primary, Arc::new(PluginIndexers::new(plugins.clone()))]
 }
 
 /// The download folders no recycle bin may overlap: the staging folder,
@@ -511,20 +489,17 @@ impl AcquireSetup {
             ClientLives::new(&config_store),
             config.slskd_downloads_path.clone(),
             stores.journal.clone(),
-            Arc::new(Targets::new(
-                stores.journal.clone(),
-                Some(ports.album_lookup),
-            )),
-            Some(ports.plugins.clone()),
+            Arc::new(Targets::new(stores.journal.clone(), ports.album_lookup)),
+            ports.plugins.clone(),
         ));
         let events = platform.events.clone();
         let search_quota = quota.clone();
         let worker_settings = Arc::new(WorkerSettings::new(&config_store, clients.clone()));
         let probe_cache = Arc::new(ProbeCache::new(clients.clone()));
-        let readiness = SourceReadiness::new(SourceList::Live(worker_settings.clone()));
+        let readiness = SourceReadiness::new(worker_settings.clone());
         let source_notices = SourceNotices {
             settings: worker_settings.clone(),
-            plugins: Some(ports.plugins.clone()),
+            plugins: ports.plugins.clone(),
         };
         let collections = ports.collections;
         let health = ports.providers.health.clone();
@@ -535,24 +510,25 @@ impl AcquireSetup {
             ids.clone(),
             &config_store,
             quota,
-            SourceList::Live(worker_settings.clone()),
+            worker_settings.clone(),
             CorePorts {
-                plugins: Some(ports.plugins.clone()),
-                edition_plans: Some(ports.edition_plans),
-                readiness: Some(AcquireReadiness {
-                    sources: readiness.clone(),
-                    staging_root: staging_root.clone(),
-                }),
+                requests: RequestsPorts {
+                    plugins: ports.plugins.clone(),
+                    edition_plans: ports.edition_plans,
+                    upgrade_policy: config_store.live(),
+                    readiness: AcquireReadiness {
+                        sources: readiness.clone(),
+                        staging_root: staging_root.clone(),
+                    },
+                    albums: ports.albums,
+                    events: events.clone(),
+                },
                 release_poll: ports.release_poll,
-                mix: Some(MixInputs {
-                    providers: ports.providers,
-                    listening: ports.listening,
-                    playlists: collections.playlists.clone(),
-                }),
                 targets: clients.targets().clone(),
-                albums: Some(ports.albums),
+                providers: ports.providers,
+                listening: ports.listening,
+                playlists: collections.playlists.clone(),
             },
-            events.clone(),
         );
         let prune = Arc::new(PruneDeps {
             settings: config_store.live(),
@@ -600,24 +576,24 @@ impl AcquireSetup {
         // Finished downloads reach the library through its import seam.
         let landing = Arc::new(LandingService::new(
             core.journal.clone(),
-            Some(ports.library),
+            ports.library,
             config_store.live(),
             stores.folders.held.clone(),
         ));
 
         // Worker over the live sources and tuning.
-        let worker = Arc::new(
-            DownloadWorker::new(
-                core.journal.clone(),
-                worker_settings,
-                readiness.clone(),
-                events.clone(),
-                health,
-            )
-            .with_plugin_events(ports.plugins)
-            .with_targets(clients.targets().clone())
-            .with_landing(landing.clone()),
-        );
+        let worker = Arc::new(DownloadWorker::new(
+            core.journal.clone(),
+            worker_settings,
+            readiness.clone(),
+            events.clone(),
+            health,
+            WorkerPorts {
+                landing: landing.clone(),
+                plugins: ports.plugins,
+                targets: clients.targets().clone(),
+            },
+        ));
         let search_jobs = Arc::new(SearchJobs::new(
             JobStore::new(db.clone()),
             worker.clone(),
@@ -636,6 +612,7 @@ impl AcquireSetup {
         Ok(Self {
             db,
             requests: core.requests,
+            mixer: core.mixer,
             imports,
             dispatch: core.dispatch,
             journal: core.journal,
@@ -655,6 +632,14 @@ impl AcquireSetup {
             held,
             spotify_import_jobs,
         })
+    }
+
+    /// The state the Weekly Mix routes read ([`crate::requests::mix_routes`]).
+    pub fn mix_routes(&self) -> MixRoutes {
+        MixRoutes {
+            requests: self.requests.clone(),
+            mixer: self.mixer.clone(),
+        }
     }
 
     /// The state the queue and upgrade routes read

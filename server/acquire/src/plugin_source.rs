@@ -228,7 +228,9 @@ pub struct PluginDownloadSource {
     tag: SourceTag,
     journal: Arc<Journal>,
     policy: ReleasePolicy,
-    targets: Option<Arc<Targets>>,
+    /// Each task's album: a single track is fetched as part of its
+    /// album's release, and a lone-track release is the last resort.
+    targets: Arc<Targets>,
 }
 
 impl PluginDownloadSource {
@@ -238,6 +240,7 @@ impl PluginDownloadSource {
         key: String,
         journal: Arc<Journal>,
         policy: ReleasePolicy,
+        targets: Arc<Targets>,
     ) -> Self {
         let tag = SourceTag::plugin(&key);
         Self {
@@ -246,15 +249,8 @@ impl PluginDownloadSource {
             tag,
             journal,
             policy,
-            targets: None,
+            targets,
         }
-    }
-
-    /// Search each task's album: a single track is fetched as part of
-    /// its album's release, and a lone-track release is the last resort.
-    pub fn with_targets(mut self, targets: Arc<Targets>) -> Self {
-        self.targets = Some(targets);
-        self
     }
 
     /// The album's releases from this source's indexers.
@@ -428,7 +424,7 @@ impl PluginDownloadSource {
             .ok_or_else(|| {
                 SourceError::rejected(Reason::NoSource, format!("unknown download task {task_id}"))
             })?;
-        let target = super::sources::resolve_target(self.targets.as_ref(), &task).await?;
+        let target = super::sources::resolve_target(&self.targets, &task).await?;
         let blocked = super::sources::blocklist(&self.journal, &self.tag).await?;
         let skipped = super::sources::automatic_blocklist(&self.journal, &task, &self.tag).await?;
         let index = candidate_index.max(0) as usize;
@@ -493,15 +489,13 @@ impl PluginDownloadSource {
             );
             refused_any |= refused;
             pick = lone.into_iter().find(untried);
-            if pick.is_some()
-                && let Some(targets) = self.targets.as_ref()
-            {
+            if pick.is_some() {
                 let reason = match (track.no_album, album_count) {
                     (Some(reason), _) => reason,
                     (None, 0) => TrackReason::NoAlbumRelease,
                     (None, _) => TrackReason::AlbumReleasesExhausted,
                 };
-                targets.record_lone_track(&task, reason);
+                self.targets.record_lone_track(&task, reason);
             }
         }
         let pick = pick.ok_or_else(|| {

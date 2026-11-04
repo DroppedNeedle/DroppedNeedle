@@ -5,8 +5,8 @@
 //! fixed MusicBrainz answers.
 
 use std::sync::Arc;
-use std::time::Duration;
 
+use crate::common::acquire::{FixedAlbums, save_slskd, worker_over};
 use crate::common::bundles::quiet_ticks;
 use droppedneedle_acquire::db::AcquireDb;
 use droppedneedle_acquire::dispatch::{
@@ -15,17 +15,9 @@ use droppedneedle_acquire::dispatch::{
 use droppedneedle_acquire::downloads::TrackPosition;
 use droppedneedle_acquire::downloads::journal::Journal;
 use droppedneedle_acquire::downloads::sources::SourceHandle;
-use droppedneedle_acquire::downloads::worker::{DownloadWorker, WorkerConfig};
-use droppedneedle_acquire::slskd::{
-    DownloadPolicy, ReqwestSlskdHttp, SlskdClient, SlskdRepository,
-};
-use droppedneedle_acquire::sources::SlskdSource;
-use droppedneedle_acquire::target::Targets;
-use droppedneedle_acquire::target::lookup::{
-    AlbumRelease, AlbumTrack, FixedAlbums, ReleaseCandidate,
-};
+use droppedneedle_acquire::target::lookup::{AlbumRelease, AlbumTrack, ReleaseCandidate};
 use droppedneedle_kernel::ids::UuidGenerator;
-use droppedneedle_testkit::slskd::{MOCK_API_KEY, MockSlskd};
+use droppedneedle_testkit::slskd::MockSlskd;
 use serde_json::{Value, json};
 
 const RECORDING: &str = "11111111-1111-4111-8111-111111111111";
@@ -118,7 +110,7 @@ async fn track_request_fetches_one_file_from_the_album_folder() {
     let db = AcquireDb::scratch().expect("scratch db");
     db.add_user("u1", "U", "user").await.expect("user seeds");
     let staging = crate::common::ScratchDir::new("track-album-staging");
-    let journal = Arc::new(Journal::new(db, quiet_ticks()));
+    let journal = Arc::new(Journal::new(db.clone(), quiet_ticks()));
     let settings_dir = journal
         .db()
         .path()
@@ -171,29 +163,17 @@ async fn track_request_fetches_one_file_from_the_album_folder() {
         ],
     );
     albums.releases.insert(ALBUM_RELEASE.to_owned(), album());
-    let targets = Arc::new(Targets::new(journal.clone(), Some(Arc::new(albums))));
-
-    let http = ReqwestSlskdHttp::new(reqwest::Client::new(), &mock.base_url(), MOCK_API_KEY);
-    let repo = SlskdRepository::new(
-        SlskdClient::new(http),
-        &mock.base_url(),
-        MOCK_API_KEY,
-        staging.join("unused-mount"),
-        DownloadPolicy {
-            search_timeout: Duration::from_secs(2),
-            completion_grace: Duration::from_secs(2),
-            poll_interval: Duration::from_millis(10),
-            ..DownloadPolicy::default()
-        },
-    );
-    let source = SlskdSource::new(Arc::new(repo), journal.clone()).with_targets(targets);
-    let worker = Arc::new(DownloadWorker::fixed(
+    save_slskd(&settings, &mock.base_url());
+    let (worker, _) = worker_over(
+        &db,
         journal.clone(),
-        vec![crate::as_source(Arc::new(source))],
-        WorkerConfig::default(),
+        &settings,
+        staging.join("unused-mount"),
+        Arc::new(albums),
+        None,
         droppedneedle_kernel::events::EventHub::new(),
-        Default::default(),
-    ));
+    )
+    .await;
     worker.run_once(1).await;
 
     // The album was searched for, not the lone track.

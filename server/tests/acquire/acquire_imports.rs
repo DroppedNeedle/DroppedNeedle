@@ -14,14 +14,14 @@ use droppedneedle_acquire::imports;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::common::bundles::quiet_ticks;
+use crate::common::acquire::FixedAlbums;
+use crate::common::bundles::{idle_host, quiet_ticks};
 use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use droppedneedle_acquire::clients::LiveClients;
 use droppedneedle_acquire::db::AcquireDb;
 use droppedneedle_acquire::downloads::journal::Journal;
-use droppedneedle_acquire::downloads::worker::SourceList;
 use droppedneedle_acquire::downloads::worker::WorkerSettings;
 use droppedneedle_acquire::follows::Follows;
 use droppedneedle_acquire::imports::jobs::ImportState;
@@ -112,6 +112,7 @@ struct Rig {
     clients: Arc<LiveClients>,
     probe_cache: Arc<ProbeCache>,
     worker_settings: Arc<WorkerSettings>,
+    plugins: Arc<PluginHost>,
     db: Db,
 }
 
@@ -129,8 +130,9 @@ fn rig_for(auth: &AuthRig, api_base: &str, accounts_base: &str, cover_cdn: Optio
     rig_with(auth, api_base, accounts_base, cover_cdn, None, None)
 }
 
-/// [`rig_for`] with plugins, and with the import job reading its Spotify
-/// app settings from `job_settings` instead of the routes' store.
+/// [`rig_for`] with plugins (a host that launches nothing when none is
+/// given), and with the import job reading its Spotify app settings from
+/// `job_settings` instead of the routes' store.
 fn rig_with(
     auth: &AuthRig,
     api_base: &str,
@@ -172,14 +174,20 @@ fn rig_with(
     let queue = JobQueue::new(platform.db.clone(), platform.clock.clone());
     let spotify_imports = SpotifyImports::new(platform.db.clone(), queue.clone());
     let journal = Arc::new(Journal::new(db, quiet_ticks()));
+    let plugins = plugins.unwrap_or_else(|| {
+        idle_host(
+            platform,
+            crate::common::library::library_core(platform, queue.clone()),
+        )
+    });
     let clients = Arc::new(LiveClients::new(
         platform.http.shared().clone(),
         droppedneedle_providers::Providers::closed().newznab,
         ClientLives::new(&platform.settings),
         platform.config.slskd_downloads_path.clone(),
         journal.clone(),
-        Arc::new(Targets::new(journal, None)),
-        plugins,
+        Arc::new(Targets::new(journal, Arc::new(FixedAlbums::default()))),
+        plugins.clone(),
     ));
     let probe_cache = Arc::new(ProbeCache::new(clients.clone()));
     let probes = Arc::new(LiveProbes::new(probe_cache.clone()));
@@ -213,6 +221,7 @@ fn rig_with(
         clients,
         probe_cache,
         worker_settings,
+        plugins,
         db: platform.db.clone(),
     }
 }
@@ -1566,7 +1575,7 @@ async fn readiness_answers(setup: SourceSetup) -> Vec<bool> {
         None,
     );
     rig.refresh_probes().await;
-    let readiness = SourceReadiness::new(SourceList::Live(rig.worker_settings.clone()));
+    let readiness = SourceReadiness::new(rig.worker_settings.clone());
 
     let discover = IntegrationSettings::new(&auth.config, Arc::new(readiness.clone()))
         .status()
@@ -1575,13 +1584,33 @@ async fn readiness_answers(setup: SourceSetup) -> Vec<bool> {
     let platform = &auth.platform;
     let db = AcquireDb::new(platform.db.clone(), platform.clock.clone());
     let journal = Arc::new(Journal::new(db.clone(), quiet_ticks()));
-    let targets = Arc::new(Targets::new(journal.clone(), None));
+    let targets = Arc::new(Targets::new(
+        journal.clone(),
+        Arc::new(FixedAlbums::default()),
+    ));
+    let (library, _) = crate::common::library::library_at(platform);
+    let landing = Arc::new(droppedneedle_acquire::landing::LandingService::new(
+        journal.clone(),
+        Arc::new(
+            droppedneedle_acquire::landing::library::LibraryLanding::new(
+                &library,
+                library.imports.releases.clone(),
+            ),
+        ),
+        platform.settings.live(),
+        scratch.join("held"),
+    ));
     let worker = Arc::new(DownloadWorker::new(
         journal,
         rig.worker_settings.clone(),
         readiness.clone(),
         platform.events.clone(),
         Default::default(),
+        droppedneedle_acquire::downloads::worker::WorkerPorts {
+            landing,
+            plugins: rig.plugins.clone(),
+            targets: targets.clone(),
+        },
     ));
     let jobs = Arc::new(SearchJobs::new(
         JobStore::new(db.clone()),

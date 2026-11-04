@@ -254,14 +254,14 @@ fn prefers_local(settings: &Live<AdvancedSettings>) -> bool {
 pub struct ArtworkService {
     cache: ArtworkCache,
     local: LocalArtwork,
-    remote: Option<Arc<dyn RemoteCovers>>,
+    remote: Arc<dyn RemoteCovers>,
     settings: Live<AdvancedSettings>,
     flights: Singleflight<Fetched>,
     resizes: Singleflight<Option<Rendition>>,
     mosaics: Singleflight<MosaicBuild>,
     resize_permits: Arc<tokio::sync::Semaphore>,
-    images: Option<Arc<dyn RemoteImages>>,
-    artist_source: Option<Arc<dyn ArtistImageSource>>,
+    images: Arc<dyn RemoteImages>,
+    artist_source: Arc<dyn ArtistImageSource>,
     artist_flights: Singleflight<Fetched>,
     artist_permits: Arc<tokio::sync::Semaphore>,
 }
@@ -307,14 +307,17 @@ enum MosaicBuild {
 }
 
 impl ArtworkService {
-    /// Wire the service. `remote` is `None` only where no network source
-    /// should be used (tests of the local path). `settings` says, per
-    /// request, whether local art comes first.
+    /// Wire the service: album covers from `remote`, artist images named
+    /// by `artist_source` and downloaded, with AudioDB thumbnails, through
+    /// `images`. `settings` says, per request, whether local art comes
+    /// first.
     pub fn new(
         cache: ArtworkCache,
         local: LocalArtwork,
-        remote: Option<Arc<dyn RemoteCovers>>,
+        remote: Arc<dyn RemoteCovers>,
         settings: Live<AdvancedSettings>,
+        images: Arc<dyn RemoteImages>,
+        artist_source: Arc<dyn ArtistImageSource>,
     ) -> Self {
         Self {
             cache,
@@ -325,25 +328,11 @@ impl ArtworkService {
             resizes: Singleflight::new(),
             mosaics: Singleflight::new(),
             resize_permits: Arc::new(tokio::sync::Semaphore::new(RESIZE_PERMITS)),
-            images: None,
-            artist_source: None,
+            images,
+            artist_source,
             artist_flights: Singleflight::new(),
             artist_permits: Arc::new(tokio::sync::Semaphore::new(ARTIST_RESOLVE_PERMITS)),
         }
-    }
-
-    /// Download artist images and AudioDB thumbnails through `images`.
-    #[must_use]
-    pub fn with_images(mut self, images: Arc<dyn RemoteImages>) -> Self {
-        self.images = Some(images);
-        self
-    }
-
-    /// Name artist images through `source` (the catalog).
-    #[must_use]
-    pub fn with_artist_source(mut self, source: Arc<dyn ArtistImageSource>) -> Self {
-        self.artist_source = Some(source);
-        self
     }
 
     /// Whether an album's own art comes before the Cover Art Archive now,
@@ -397,10 +386,7 @@ impl ArtworkService {
     /// past any "none" marker; a stored image is kept until the cache
     /// lets it go.
     pub async fn fill_artist_image(&self, artist_mbid: &str) {
-        let Some(source) = self.artist_source.clone() else {
-            return;
-        };
-        if !source.fill(artist_mbid).await {
+        if !self.artist_source.fill(artist_mbid).await {
             return;
         }
         let key = artist_key(artist_mbid);
@@ -519,10 +505,11 @@ impl ArtworkService {
             self.cache.put_miss(&key, MISS_TTL_SECS).await;
             return;
         };
-        let Some(images) = &self.images else {
-            return;
-        };
-        match images.fetch(url, RequestPriority::BackgroundSync).await {
+        match self
+            .images
+            .fetch(url, RequestPriority::BackgroundSync)
+            .await
+        {
             ImageFetch::Found(art) => {
                 self.cache
                     .put(Some(&key), art.bytes, &art.content_type)
@@ -621,9 +608,7 @@ impl ArtworkService {
         wait: Duration,
         priority: RequestPriority,
     ) -> CoverLookup {
-        let (Some(source), Some(images)) = (self.artist_source.clone(), self.images.clone()) else {
-            return CoverLookup::Missing;
-        };
+        let (source, images) = (self.artist_source.clone(), self.images.clone());
         let flights = self.artist_flights.clone();
         let cache = self.cache.clone();
         let permits = Arc::clone(&self.artist_permits);
@@ -940,9 +925,7 @@ impl ArtworkService {
         wait: Duration,
         priority: RequestPriority,
     ) -> CoverLookup {
-        let Some(remote) = self.remote.clone() else {
-            return CoverLookup::Missing;
-        };
+        let remote = self.remote.clone();
         let key = format!("caa:{}:{mbid}:{}", entity.path(), size.label());
         match self.cache.key(&key).await {
             Some(KeyEntry::Hit { hash, content_type }) => {

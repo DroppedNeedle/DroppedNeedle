@@ -338,40 +338,14 @@ impl DownloadWorker {
                 self.record_progress(pass, task, &progress).await;
                 return;
             }
-            WatchdogOutcome::Completed if self.landing.is_some() && pass.library.is_some() => {
+            WatchdogOutcome::Completed if pass.library.is_some() => {
                 // The files wait where they are until the library folder
                 // can take them; nothing is read or decided meanwhile.
                 self.touch_poll(&task.id, now).await;
                 return;
             }
-            WatchdogOutcome::Completed if self.landing.is_some() => {
-                self.start_landing(task, attempt, source, handle, now).await;
-                return;
-            }
             WatchdogOutcome::Completed => {
-                let task_id = task.id.clone();
-                let attempt_id = attempt.id.clone();
-                self.step("downloads.complete", move |store| {
-                    store.finalize_task_and_attempt(
-                        &task_id,
-                        TaskStatus::Completed,
-                        now,
-                        None,
-                        Some(&attempt_id),
-                        false,
-                    )
-                })
-                .await;
-                if let Ok(mut cache) = self.poll_cache.lock() {
-                    cache.remove(&task.id);
-                }
-                crate::plugin_events::download_event(
-                    &self.plugins,
-                    droppedneedle_plugins::runtime::EventKind::DownloadCompleted,
-                    task,
-                    &source.tag().to_string(),
-                    "completed",
-                );
+                self.start_landing(task, attempt, source, handle, now).await;
                 return;
             }
             WatchdogOutcome::Terminal => (

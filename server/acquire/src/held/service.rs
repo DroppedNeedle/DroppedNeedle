@@ -66,9 +66,6 @@ pub enum HeldError {
     /// Another action runs on the entry now.
     #[error("This entry is already being handled. Wait a moment and refresh.")]
     InUse,
-    /// No library folder takes imports yet.
-    #[error("Imports are not set up yet. Add a library folder in settings, then try again.")]
-    NotSetUp,
     /// The request asked for something that cannot be: the sentence says
     /// what.
     #[error("{0}")]
@@ -209,11 +206,8 @@ impl HeldService {
             .await
     }
 
-    fn library(&self) -> Result<Arc<dyn LandingLibrary>, HeldError> {
-        self.worker
-            .landing()
-            .and_then(|landing| landing.library().cloned())
-            .ok_or(HeldError::NotSetUp)
+    fn library(&self) -> Arc<dyn LandingLibrary> {
+        self.worker.landing().library().clone()
     }
 
     /// Open entries with their held files, newest first: the viewer's own,
@@ -242,9 +236,7 @@ impl HeldService {
     /// checked since, or whose copies cannot be read, has none.
     pub async fn albums_to_check(&self, entries: &[Entry]) -> HashMap<i64, String> {
         let mut found = HashMap::new();
-        let Ok(library) = self.library() else {
-            return found;
-        };
+        let library = self.library();
         for entry in entries {
             let Some(group) = entry.release_group_mbid.as_deref() else {
                 continue;
@@ -561,15 +553,7 @@ impl HeldService {
         entry: &Entry,
         files: Vec<HeldFile>,
     ) -> Vec<(HeldFile, Result<Checked, String>)> {
-        let library = match self.library() {
-            Ok(library) => library,
-            Err(error) => {
-                return files
-                    .into_iter()
-                    .map(|file| (file, Err(error.to_string())))
-                    .collect();
-            }
-        };
+        let library = self.library();
         let mut out = Vec::with_capacity(files.len());
         for file in files {
             if settles_as_automatic(&file) {
@@ -874,7 +858,7 @@ impl HeldService {
         asker: Asker,
         acted: &mut Acted,
     ) -> Result<(), HeldError> {
-        let library = self.library()?;
+        let library = self.library();
         if entry.origin == EntryOrigin::Upload && files.iter().any(|file| !file.is_paired()) {
             return Err(HeldError::Refused(
                 "These files are not paired with any track yet. Pick the album with Match."
@@ -1148,7 +1132,7 @@ impl HeldService {
         group: &str,
         actor: &str,
     ) -> Result<Acted, HeldError> {
-        let library = self.library()?;
+        let library = self.library();
         let mut groups: Vec<Vec<HeldFile>> = Vec::new();
         for file in files {
             match groups
@@ -1490,7 +1474,6 @@ impl HeldService {
                     tracing::info!(entry_id, operation, "held retry waits for a busy database");
                     continue;
                 }
-                Err(HeldError::NotSetUp) => return,
                 Err(HeldError::InUse | HeldError::NotFound(_)) => continue,
                 Err(HeldError::Refused(message) | HeldError::Invalid(message)) => {
                     tracing::info!(entry_id, message, "held files still held after a retry");
@@ -1524,9 +1507,7 @@ impl HeldService {
         if pending.is_empty() {
             return;
         }
-        let Ok(library) = self.library() else {
-            return;
-        };
+        let library = self.library();
         for entry_id in pending {
             let entry = match self
                 .read("held.cut_off", move |rows| rows.entry(entry_id))

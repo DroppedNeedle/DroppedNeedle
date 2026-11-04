@@ -200,7 +200,7 @@ struct Organised {
 /// The drop-import service.
 pub struct DropImports {
     store: DropStore,
-    library: Option<Arc<dyn LandingLibrary>>,
+    library: Arc<dyn LandingLibrary>,
     root: PathBuf,
     events: EventHub,
     ticks: Arc<dyn TickSink>,
@@ -212,7 +212,7 @@ impl DropImports {
     /// own, the event sink, and the request stores it resolves.
     pub fn new(
         store: DropStore,
-        library: Option<Arc<dyn LandingLibrary>>,
+        library: Arc<dyn LandingLibrary>,
         root: PathBuf,
         events: EventHub,
         ticks: Arc<dyn TickSink>,
@@ -234,12 +234,6 @@ impl DropImports {
         self.root.join(INCOMING_DIR)
     }
 
-    fn library(&self) -> Result<Arc<dyn LandingLibrary>, DropError> {
-        self.library.clone().ok_or_else(|| {
-            DropError::Invalid("The library isn't ready yet. Try again shortly.".into())
-        })
-    }
-
     /// Register an upload as a job and start working on it in the
     /// background. `uploads` are (original name, file already on disk)
     /// pairs; they move into the job's staging folder.
@@ -252,7 +246,7 @@ impl DropImports {
         if uploads.is_empty() {
             return Err(DropError::Invalid("No files were uploaded.".into()));
         }
-        if self.library()?.library_dirs().is_empty() {
+        if self.library.library_dirs().is_empty() {
             return Err(DropError::Invalid(
                 "Set a library folder before importing.".into(),
             ));
@@ -330,7 +324,7 @@ impl DropImports {
         if group.is_empty() {
             return Err(DropError::Invalid("Pick an album to match.".into()));
         }
-        let library = self.library()?;
+        let library = self.library.clone();
         let paths: Vec<PathBuf> = files
             .iter()
             .map(|file| self.root.join(&file.path))
@@ -654,9 +648,7 @@ impl DropImports {
             .await
             .map_err(|error| error.to_string())?
             .ok_or("item vanished")?;
-        let library = self
-            .library()
-            .map_err(|_| "library port not attached".to_owned())?;
+        let library = self.library.clone();
         let landing = self.probe(library.as_ref(), paths).await;
         let unreadable = landing.unreadable.len();
         if landing.audio.is_empty() {
