@@ -32,6 +32,7 @@
 	import DegradedBanner from '$lib/shell/DegradedBanner.svelte';
 	import VersionOverlays from '$lib/shell/VersionOverlays.svelte';
 	import Footer from '$lib/shell/Footer.svelte';
+	import FritFrame from '$lib/ui/FritFrame.svelte';
 	import Toaster from '$lib/ui/Toaster.svelte';
 	import { onMount, onDestroy, untrack } from 'svelte';
 	import { cancelPendingImages } from '$lib/media/lazyImage';
@@ -57,13 +58,16 @@
 	let DiscographyModal = $state<Component | null>(null);
 	let playlistModalRef = $state<PlaylistModalHandle | undefined>(undefined);
 	let showNavigationProgress = $state(false);
-	let currentPath = $state('/');
+	let currentPath = $state(browser ? withoutBasePath(window.location.pathname) : '/');
 	let versionUpdateAvailable = $state(false);
 	let searchOpen = $state(false);
 	let moreOpen = $state(false);
 	// Settings runs as a fixed two-pane app surface: the tab rail and the content
 	// pane scroll, the document itself must not.
 	const isSettingsPane = $derived(currentPath.startsWith('/settings'));
+	// Working pages stay plain: Settings, Library Management and Downloads.
+	const PLAIN_PAGES = /^\/(settings|library\/management|downloads)(\/|$)/;
+	const framed = $derived(!PLAIN_PAGES.test(currentPath));
 
 	// Session-wide reads: the sidebar, page gates, album cards and images use them.
 	getIntegrationStatusQuery();
@@ -271,6 +275,9 @@
 			class="droppedneedle-main-content flex-1"
 			class:droppedneedle-player-visible={playerStore.isPlayerVisible}
 		>
+			{#if framed}
+				{#key currentPath}<FritFrame />{/key}
+			{/if}
 			{@render children()}
 			{#if !isSettingsPane}<Footer />{/if}
 		</div>
@@ -321,6 +328,8 @@
 	}
 
 	.droppedneedle-main-content {
+		/* holds the dot frame, behind the page inside the column's own stacking context */
+		position: relative;
 		display: flex;
 		flex-direction: column;
 		/* fill at least the viewport below the topbar so a short page's footer still anchors to the bottom */

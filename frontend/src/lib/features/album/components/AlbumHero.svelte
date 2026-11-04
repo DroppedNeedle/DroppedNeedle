@@ -2,7 +2,7 @@
 	The top of every album page, local or MusicBrainz: the cover in its
 	sleeve, a small eyebrow, the title as large as it can wrap, one meta
 	line, the details (edition plate, badges), then one row of actions. The
-	frit sits at the band's top corners, clear of the words. From 1024 a
+	page's dot frame shows through at the band's top corners. From 1024 a
 	column on the right lists the release's real facts, under a decorative
 	barcode from 1280; narrower, the same facts run as one line under the
 	details. The title is the page's only h1.
@@ -17,7 +17,6 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 	import BarcodeOrnament from '$lib/ui/BarcodeOrnament.svelte';
-	import FritEdge from '$lib/ui/FritEdge.svelte';
 	import VinylSleeve from '$lib/ui/VinylSleeve.svelte';
 
 	interface Props {
@@ -58,8 +57,6 @@
 </script>
 
 <section class="dn-album-hero" aria-labelledby="album-hero-title">
-	<FritEdge place="top-left" />
-	<FritEdge place="top-right" />
 	<div class="dn-decor dn-album-hero__wash" aria-hidden="true"></div>
 
 	<div class="dn-album-hero__inner">

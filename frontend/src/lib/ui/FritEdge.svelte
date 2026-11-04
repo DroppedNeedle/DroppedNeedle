@@ -1,33 +1,30 @@
 <!--
-	The frit: graded dots at a hero's top corner or along a page's bottom edge.
-	A corner runs down the side further than along the top, and never past
-	its parent's bottom.
-	One decorative layer that fills its nearest positioned ancestor's edge, so
-	the parent must be `relative` and keep text off that edge. Hidden from
+	The frit at one band's own top corner, for a band that carries its own
+	(the page's frame is FritFrame, mounted by the shell). A corner runs down
+	the side further than along the top, and never past its parent's bottom.
+	One decorative layer at its nearest positioned ancestor's corner, so the
+	parent must be `relative` and keep text off that corner. Hidden from
 	screen readers and pointers, gone under high contrast and forced colours,
 	and still. The dots are a mask over the theme's frit colour; a second,
-	soft mask fades them out, so the field is densest at its corner or edge
-	and thins to nothing with no edge of its own.
+	soft mask fades them out, so the field is densest at its corner and thins
+	to nothing with no edge of its own.
 -->
 <script lang="ts">
 	import { withBasePath } from '$lib/utils/basePath';
 
 	interface Props {
-		/** `bottom` runs along the bottom edge, heaviest at the two sides. */
-		place?: 'top-right' | 'top-left' | 'bottom';
+		place?: 'top-right' | 'top-left';
 		/** Layout only: size and offset. */
 		class?: string;
 	}
 
 	let { place = 'top-right', class: className = '' }: Props = $props();
-
-	const file = $derived(place === 'bottom' ? '/img/frit-edge.svg' : '/img/frit-corner.svg');
 </script>
 
 <div
 	class="dn-decor dn-frit dn-frit--{place} {className}"
 	aria-hidden="true"
-	style:--frit-url={`url("${withBasePath(file)}")`}
+	style:--frit-url={`url("${withBasePath('/img/frit-corner.svg')}")`}
 ></div>
 
 <style>
@@ -86,45 +83,6 @@
 	:global([data-theme='light']) .dn-frit--top-left {
 		background-color: color-mix(in oklab, var(--dn-frit) 55%, var(--dn-action));
 		opacity: 0.8;
-	}
-
-	/* The edge tile repeats across, its dots growing toward the bottom. Two
-	   soft ellipses from the bottom corners keep only the outer ends, so the
-	   dots thin out going up and toward the middle with no edge of their own. */
-	.dn-frit--bottom {
-		--frit-reach:
-			radial-gradient(
-				ellipse 40% 100% at 0% 100%,
-				black 0%,
-				rgb(0 0 0 / 0.55) 45%,
-				transparent 100%
-			),
-			radial-gradient(
-				ellipse 40% 100% at 100% 100%,
-				black 0%,
-				rgb(0 0 0 / 0.55) 45%,
-				transparent 100%
-			);
-		right: 0;
-		bottom: 0;
-		left: 0;
-		height: 100%;
-		mask-image: var(--frit-url), var(--frit-reach);
-		mask-size:
-			25rem 10rem,
-			100% 100%,
-			100% 100%;
-		mask-repeat: repeat-x, no-repeat, no-repeat;
-		mask-position: bottom left;
-		mask-composite: intersect, add, add;
-		-webkit-mask-image: var(--frit-url), var(--frit-reach);
-		-webkit-mask-size:
-			25rem 10rem,
-			100% 100%,
-			100% 100%;
-		-webkit-mask-repeat: repeat-x, no-repeat, no-repeat;
-		-webkit-mask-position: bottom left;
-		-webkit-mask-composite: source-in, source-over, source-over;
 	}
 
 	@media (max-width: 1023px) {

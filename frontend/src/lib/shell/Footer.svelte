@@ -1,10 +1,10 @@
 <!--
-	The page's foot: the frit rising from the bottom edge, then a plain bar
-	with the logo, the tagline, the GitHub link and the version.
+	The page's foot: a clear strip where the page's dot frame rises from the
+	bar (the shell's FritFrame), then a plain bar with the logo, the tagline,
+	the GitHub link and the version.
 -->
 <script lang="ts">
 	import GitHubIcon from '$lib/media/icons/GitHubIcon.svelte';
-	import FritEdge from '$lib/ui/FritEdge.svelte';
 	import Logo from '$lib/ui/Logo.svelte';
 	import { getVersionQuery } from '$lib/shell/version.svelte';
 
@@ -18,10 +18,8 @@
 </script>
 
 <footer class="ms-footer" aria-label="Site footer">
-	<div class="ms-footer__edge">
-		<FritEdge place="bottom" />
-	</div>
-	<div class="ms-footer__bar">
+	<div class="ms-footer__edge"></div>
+	<div class="ms-footer__bar" data-frit-floor>
 		<div class="ms-footer__inner">
 			<div class="ms-footer__brand">
 				<Logo class="ms-footer__logo" />
@@ -45,9 +43,8 @@
 		margin-top: auto;
 	}
 
-	/* the frit's own strip, so it never sits under the page's last words */
+	/* the frame's bottom fade lives here, so it never sits under the page's last words */
 	.ms-footer__edge {
-		position: relative;
 		height: 8rem;
 		margin-top: 1rem;
 	}

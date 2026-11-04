@@ -709,7 +709,8 @@ Run from the repo root. `make help` lists every target.
   `AsyncButton`, `QueryBoundary`, `RatingStars` (`quiet` in list rows), `PageShell`, `Toaster`,
   `CoverPlaceholder`, `UnsavedChangesGuard`, `Logo`, `PaperPanel` (the
   light island), and the decoration
-  `FritEdge`, `VinylSleeve`, `BarcodeOrnament`; in `src/lib/media` the one
+  `FritFrame` (the page's dot frame, mounted once by the shell), `FritEdge`,
+  `VinylSleeve`, `BarcodeOrnament`; in `src/lib/media` the one
   album and artist tile, `MediaTile` and `MediaTileSkeleton`):
   do not hand-write a button, a card, a text input, a modal, a confirm, a
   form row, a `<dialog>` or a query's loading, error and empty branches
