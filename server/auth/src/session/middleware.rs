@@ -342,8 +342,8 @@ fn warn_refused_origin(
             %source,
             %target,
             "Refused a change from a page at {source}: this server sees itself at {target}. \
-             If that page is DroppedNeedle, the reverse proxy {fault}. Fix the proxy (see the \
-             reverse proxy paragraph under Configuration in the README), or state the address \
+             If that page is DroppedNeedle, the reverse proxy {fault}. Fix the proxy (see \
+             docs/reverse-proxy-and-security.md), or state the address \
              under Settings > Security > Public address or with `droppedneedle-tool \
              public-address`."
         );

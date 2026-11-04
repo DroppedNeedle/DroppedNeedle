@@ -529,9 +529,12 @@ async fn crashes_restart_hangs_time_out_and_the_environment_is_scrubbed() {
     wait_until_back(&rig, 2).await;
 }
 
-/// Wait until the probe has restarted `restarts` times and answers again.
+/// Wait until the probe has restarted `restarts` times and answers again,
+/// bounded in wall-clock time as [`wait_for`] is: a restart waits out its
+/// backoff and a cold Python start, both slow on a loaded host.
 async fn wait_until_back(rig: &Rig, restarts: u64) {
-    for _ in 0..200 {
+    let deadline = Instant::now() + crate::common::PATIENCE;
+    loop {
         let status = rig.host.get("probe").unwrap().runtime_status().unwrap();
         if status.restarts >= restarts
             && status.state == RuntimeState::Running
@@ -544,7 +547,10 @@ async fn wait_until_back(rig: &Rig, restarts: u64) {
         {
             return;
         }
+        assert!(
+            Instant::now() < deadline,
+            "the plugin did not come back after restart {restarts}: {status:?}"
+        );
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
-    panic!("the plugin did not come back after restart {restarts}");
 }

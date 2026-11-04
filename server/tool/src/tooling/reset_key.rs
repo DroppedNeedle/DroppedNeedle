@@ -81,6 +81,13 @@ pub struct KeyReset {
 
 /// Reset the key of the stopped instance in `dirs`.
 pub async fn reset(dirs: &DataDirs) -> Result<KeyReset, ResetKeyError> {
+    // The lock creates the folder and a `.lock` file, so a folder with no
+    // database, or a v2 one, is refused before it is taken. The same checks
+    // run again under the lock.
+    check_bootable(dirs).map_err(ResetKeyError::NotV3)?;
+    if !dirs.db_path.is_file() {
+        return Err(ResetKeyError::NoDatabase(dirs.db_path.clone()));
+    }
     let _lock = DataLock::exclusive(&dirs.db_path).map_err(|error| match error {
         DataLockError::Held { path } => ResetKeyError::ServerRunning(path),
         other @ DataLockError::Io { .. } => failed(&other),
@@ -214,4 +221,29 @@ fn sync_dir(dir: &Path) -> Result<(), ResetKeyError> {
 #[cfg(not(unix))]
 fn sync_dir(_dir: &Path) -> Result<(), ResetKeyError> {
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A folder with no database is refused before the lock is taken, so
+    /// a run with the wrong environment leaves no folder or lock behind.
+    #[tokio::test]
+    async fn a_folder_with_no_database_is_left_as_it_was() {
+        let scratch =
+            droppedneedle_kernel::db::scratch::ScratchDir::new("reset-key-empty").unwrap();
+        let dirs = DataDirs {
+            config_dir: scratch.join("config"),
+            cache_dir: scratch.join("cache"),
+            db_path: scratch.join("cache").join("library.db"),
+            plugins_dir: scratch.join("plugins"),
+        };
+        let refused = reset(&dirs).await;
+        assert!(
+            matches!(refused, Err(ResetKeyError::NoDatabase(_))),
+            "{refused:?}"
+        );
+        assert!(!scratch.join("cache").exists(), "the lock made the folder");
+    }
 }

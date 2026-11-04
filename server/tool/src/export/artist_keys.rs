@@ -301,8 +301,10 @@ fn credit_name(row: &CreditRow) -> Option<String> {
 
 /// Every credit's vote. An album credit lands on its name with the
 /// album's sort name when it is the album's only credit. A track credit
-/// lands where the album credit of the same folded name does, else on its
-/// own name with the track's sort name when it is the track's only credit.
+/// lands where its own file's album credit of the same folded name does,
+/// keyed by that file's album artist sort name as the scan keys it, else
+/// on its own name with the track's sort name when it is the track's only
+/// credit.
 fn votes(conn: &Connection) -> Result<Vec<Vote>, ExportError> {
     let tracks = read_tracks(conn)?;
     let album_credits = read_credits(conn, ALBUM_ARTISTS.name, "local_album_id")?;
@@ -315,8 +317,9 @@ fn votes(conn: &Connection) -> Result<Vec<Vote>, ExportError> {
             .push(track);
     }
     let mut out = Vec::new();
-    // Per album: each credit's folded name and key, in position order.
-    let mut album_keys: HashMap<&str, Vec<(String, String)>> = HashMap::new();
+    // Per album: each credit's folded name, name and whether it is the
+    // album's only credit, in position order.
+    let mut album_names: HashMap<&str, Vec<(String, String, bool)>> = HashMap::new();
     for (album, credits) in &album_credits {
         let album_tracks = by_album.get(album.as_str()).map_or(&[][..], Vec::as_slice);
         let present = album_tracks.iter().any(|track| track.present);
@@ -326,7 +329,7 @@ fn votes(conn: &Connection) -> Result<Vec<Vote>, ExportError> {
             .map(|track| track.album_artist_sort.clone())
             .collect();
         let sort = majority(&sorts);
-        let keys = album_keys.entry(album.as_str()).or_default();
+        let names = album_names.entry(album.as_str()).or_default();
         for credit in credits {
             let Some(name) = credit_name(credit) else {
                 continue;
@@ -334,7 +337,7 @@ fn votes(conn: &Connection) -> Result<Vec<Vote>, ExportError> {
             let only = credits.len() == 1;
             let key = artist_key(&name, sort.as_deref().filter(|_| only));
             let folded = fold_text(&name);
-            keys.push((folded.clone(), key.clone()));
+            names.push((folded.clone(), name.clone(), only));
             out.push(Vote {
                 artist: credit.artist.clone(),
                 folded,
@@ -347,15 +350,20 @@ fn votes(conn: &Connection) -> Result<Vec<Vote>, ExportError> {
         let Some(track) = tracks.get(track_id) else {
             continue;
         };
-        let shared = album_keys.get(track.album.as_str());
+        let shared = album_names.get(track.album.as_str());
         for credit in credits {
             let Some(name) = credit_name(credit) else {
                 continue;
             };
             let folded = fold_text(&name);
             let key = shared
-                .and_then(|keys| keys.iter().find(|(other, _)| *other == folded))
-                .map(|(_, key)| key.clone())
+                .and_then(|names| names.iter().find(|(other, _, _)| *other == folded))
+                .map(|(_, album_name, only)| {
+                    artist_key(
+                        album_name,
+                        track.album_artist_sort.as_deref().filter(|_| *only),
+                    )
+                })
                 .unwrap_or_else(|| {
                     let only = credits.len() == 1;
                     artist_key(&name, track.artist_sort.as_deref().filter(|_| only))
@@ -811,6 +819,40 @@ mod tests {
         );
         assert_eq!(new_id.get("v2-c"), None);
         assert_eq!(outcome.kept_apart, ["Nirvana", "Nirvana"]);
+    }
+
+    /// A track credit sharing its album's credit takes the key its own
+    /// file's album artist sort gives, as the scan does, not the album's
+    /// majority.
+    #[test]
+    fn a_track_credit_keys_by_its_own_files_album_sort() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(&format!(
+            "CREATE TABLE \"{tracks}\" (id TEXT, local_album_id TEXT, availability TEXT, \
+             artist_sort TEXT, album_artist_sort TEXT); \
+             INSERT INTO \"{tracks}\" VALUES ('t1', 'al', 'indexed', NULL, 'Nirvana'), \
+             ('t2', 'al', 'indexed', NULL, 'Nirvana'), \
+             ('t3', 'al', 'indexed', NULL, 'Nirvana (US)'); \
+             CREATE TABLE \"{album}\" (local_album_id TEXT, local_artist_id TEXT, \
+             credited_name TEXT, position INTEGER); \
+             INSERT INTO \"{album}\" VALUES ('al', 'v2-a', 'Nirvana', 0); \
+             CREATE TABLE \"{track}\" (local_track_id TEXT, local_artist_id TEXT, \
+             credited_name TEXT, position INTEGER); \
+             INSERT INTO \"{track}\" VALUES ('t1', 'v2-a', 'Nirvana', 0), \
+             ('t2', 'v2-a', 'Nirvana', 0), ('t3', 'v2-a', 'Nirvana', 0);",
+            tracks = TRACKS.name,
+            album = ALBUM_ARTISTS.name,
+            track = TRACK_ARTISTS.name,
+        ))
+        .unwrap();
+        let keys: Vec<String> = votes(&conn)
+            .unwrap()
+            .into_iter()
+            .map(|vote| vote.key)
+            .collect();
+        let majority = artist_key("Nirvana", Some("Nirvana"));
+        let own = artist_key("Nirvana", Some("Nirvana (US)"));
+        assert_eq!(keys, [majority.clone(), majority.clone(), majority, own]);
     }
 
     /// A row's present tracks outvote any number of another's missing ones.

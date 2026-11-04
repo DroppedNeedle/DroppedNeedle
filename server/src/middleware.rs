@@ -92,7 +92,8 @@ pub async fn request_scope(
         .extensions_mut()
         .insert(RequestId(request_id.clone()));
     let path = request.uri().path().to_owned();
-    let head = request.method() == Method::HEAD;
+    let method = request.method().clone();
+    let head = method == Method::HEAD;
     // Read by the compat failure shape for `f` and `callback` only.
     let query = request.uri().query().map(str::to_owned);
 
@@ -113,14 +114,14 @@ pub async fn request_scope(
             let retry_after = response.headers().get(header::RETRY_AFTER).cloned();
             let fault = response.extensions_mut().remove::<Fault>();
             if is_compat_path(&path) {
-                log_fault(&request_id, status, fault.as_ref());
+                log_fault(&request_id, &method, &path, status, fault.as_ref());
                 (state.compat_failure)(&path, head, query.as_deref(), status, retry_after)
             } else {
-                native_server_error(&request_id, status, retry_after, fault)
+                native_server_error(&request_id, &method, &path, status, retry_after, fault)
             }
         }
         Err(_) => {
-            tracing::error!(%request_id, "request handler panicked");
+            tracing::error!(%request_id, %method, %path, "request handler panicked");
             if is_compat_path(&path) {
                 (state.compat_failure)(
                     &path,
@@ -143,11 +144,13 @@ pub async fn request_scope(
 /// fixed internal error. Status and `Retry-After` are kept.
 fn native_server_error(
     request_id: &str,
+    method: &Method,
+    path: &str,
     status: StatusCode,
     retry_after: Option<HeaderValue>,
     fault: Option<Fault>,
 ) -> Response {
-    log_fault(request_id, status, fault.as_ref());
+    log_fault(request_id, method, path, status, fault.as_ref());
     let mut response = match fault.as_ref().and_then(Fault::unavailable) {
         Some(variant) => {
             let answer = variant.answer();
@@ -161,20 +164,26 @@ fn native_server_error(
     response
 }
 
-/// Log a 5xx once with its request id: a closed-list answer at warn,
-/// anything else at error.
-fn log_fault(request_id: &str, status: StatusCode, fault: Option<&Fault>) {
+/// Log a 5xx once with its request id and route: a closed-list answer at
+/// warn, anything else at error.
+fn log_fault(
+    request_id: &str,
+    method: &Method,
+    path: &str,
+    status: StatusCode,
+    fault: Option<&Fault>,
+) {
     let cause = fault.and_then(Fault::cause).unwrap_or("none given");
     match fault.and_then(Fault::unavailable) {
         Some(variant) => {
             let code = variant.answer().code;
-            tracing::warn!(%request_id, %status, code, cause, "request unavailable");
+            tracing::warn!(%request_id, %method, path, %status, code, cause, "request unavailable");
         }
         None if fault.is_some() => {
-            tracing::error!(%request_id, %status, cause, "request failed");
+            tracing::error!(%request_id, %method, path, %status, cause, "request failed");
         }
         None => {
-            tracing::error!(%request_id, %status, "5xx answered with the fixed body");
+            tracing::error!(%request_id, %method, path, %status, "5xx answered with the fixed body");
         }
     }
 }

@@ -1617,44 +1617,56 @@ async fn caller_keyed_state_stays_with_its_caller() {
         assert!(status.is_success(), "{what}: {status} {body}");
     };
 
-    // Favourites and ratings, on a library album.
+    // Favourites, on a library artist, album and track, and ratings.
     app.seed(
             "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) \
              VALUES ('own-artist', 'Someone', 'someone', 'person', 0, 0); \
              INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
              album_artist_id, grouping_source, created_at, updated_at) VALUES \
-             ('own-album', 'root-1', 'g-own', 'Something', 'something', 'own-artist', 'manual', 0, 0);",
+             ('own-album', 'root-1', 'g-own', 'Something', 'something', 'own-artist', 'manual', 0, 0); \
+             INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
+             path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
+             album_title, album_title_folded, file_format, ingest_source, imported_at, \
+             membership_source, availability) VALUES ('own-track', 'own-album', 'root-1', \
+             '/music/S/one.flac', 'S/one.flac', 'h-own', 4096, 0, 's', 'One', 'one', \
+             'Something', 'something', 'flac', 'scan', 0, 'automatic', 'indexed');",
         ).await;
-    let album = "own-album";
-    let favorite = format!("/api/v3/favorites/album/{album}");
-    let hearted = "/api/v3/library/albums?favorites=true";
-    let (status, body) = call(
-        &app,
-        &ada,
-        "PUT",
-        &favorite,
-        Some(json!({"favorited": true})),
-    )
-    .await;
-    ok(status, &body, "A favourites");
-    let (status, body) = call(&app, &bob, "GET", hearted, None).await;
-    ok(status, &body, "B lists favourite albums");
-    assert_eq!(body["items"], json!([]), "B sees A's favourite album");
-    let (status, body) = call(
-        &app,
-        &bob,
-        "PUT",
-        &favorite,
-        Some(json!({"favorited": false})),
-    )
-    .await;
-    ok(status, &body, "B unfavourites");
-    let (_, body) = call(&app, &ada, "GET", hearted, None).await;
-    assert_eq!(
-        body["items"][0]["id"],
-        json!(album),
-        "B's write took A's favourite: {body}"
-    );
+    for (kind, id, list) in [
+        ("artist", "own-artist", "artists"),
+        ("album", "own-album", "albums"),
+        ("track", "own-track", "tracks"),
+    ] {
+        let favorite = format!("/api/v3/favorites/{kind}/{id}");
+        let hearted = format!("/api/v3/library/{list}?favorites=true");
+        let (status, body) = call(
+            &app,
+            &ada,
+            "PUT",
+            &favorite,
+            Some(json!({"favorited": true})),
+        )
+        .await;
+        ok(status, &body, &format!("A favourites the {kind}"));
+        let (status, body) = call(&app, &bob, "GET", &hearted, None).await;
+        ok(status, &body, &format!("B lists favourite {list}"));
+        assert_eq!(body["items"], json!([]), "B sees A's favourite {kind}");
+        let (status, body) = call(
+            &app,
+            &bob,
+            "PUT",
+            &favorite,
+            Some(json!({"favorited": false})),
+        )
+        .await;
+        ok(status, &body, &format!("B unfavourites the {kind}"));
+        let (status, body) = call(&app, &ada, "GET", &hearted, None).await;
+        ok(status, &body, &format!("A lists favourite {list}"));
+        assert_eq!(
+            body["items"][0]["id"],
+            json!(id),
+            "B's write took A's favourite {kind}: {body}"
+        );
+    }
 
     let rating = "/api/v3/ratings/album/own-album";
     let lookup = Some(json!({"album_ids": ["own-album"]}));
@@ -1665,7 +1677,8 @@ async fn caller_keyed_state_stays_with_its_caller() {
     assert_eq!(body["albums"], json!({}), "B sees A's rating");
     let (status, body) = call(&app, &bob, "PUT", rating, Some(json!({"rating": 0}))).await;
     ok(status, &body, "B clears a rating");
-    let (_, body) = call(&app, &ada, "POST", "/api/v3/ratings/lookup", lookup).await;
+    let (status, body) = call(&app, &ada, "POST", "/api/v3/ratings/lookup", lookup).await;
+    ok(status, &body, "A looks up ratings");
     assert_eq!(
         body["albums"]["own-album"],
         json!(4),
@@ -1690,7 +1703,8 @@ async fn caller_keyed_state_stays_with_its_caller() {
     );
     let (status, body) = call(&app, &bob, "PUT", mark, Some(json!({"looks_wrong": false}))).await;
     ok(status, &body, "B takes back a mark B never made");
-    let (_, body) = call(&app, &ada, "GET", edition, None).await;
+    let (status, body) = call(&app, &ada, "GET", edition, None).await;
+    ok(status, &body, "A reads the edition");
     assert_eq!(
         (
             body["looks_wrong"].clone(),
@@ -1716,7 +1730,8 @@ async fn caller_keyed_state_stays_with_its_caller() {
     ok(status, &body, "A follows");
     let (status, body) = call(&app, &ada, "PUT", &auto, Some(json!({"enabled": true}))).await;
     ok(status, &body, "A asks for auto-download");
-    let (_, adas) = call(&app, &ada, "GET", &status_uri, None).await;
+    let (status, adas) = call(&app, &ada, "GET", &status_uri, None).await;
+    ok(status, &adas, "A reads follow status");
     let (status, body) = call(&app, &bob, "GET", &status_uri, None).await;
     ok(status, &body, "B reads follow status");
     assert_eq!(
@@ -1727,7 +1742,8 @@ async fn caller_keyed_state_stays_with_its_caller() {
         (json!(false), json!("none")),
         "B sees A's follow"
     );
-    let (_, body) = call(&app, &bob, "GET", "/api/v3/following/artists", None).await;
+    let (status, body) = call(&app, &bob, "GET", "/api/v3/following/artists", None).await;
+    ok(status, &body, "B lists followed artists");
     assert!(
         !body.to_string().contains(artist),
         "B lists A's follow: {body}"
@@ -1736,7 +1752,8 @@ async fn caller_keyed_state_stays_with_its_caller() {
     assert_eq!(status, StatusCode::NOT_FOUND, "B follows nothing: {body}");
     let (status, body) = call(&app, &bob, "PUT", &follow, Some(json!({"followed": false}))).await;
     ok(status, &body, "B unfollows");
-    let (_, body) = call(&app, &ada, "GET", &status_uri, None).await;
+    let (status, body) = call(&app, &ada, "GET", &status_uri, None).await;
+    ok(status, &body, "A reads follow status");
     assert_eq!(body, adas, "B's writes changed A's follow");
 
     // Play marks: the snapshot shows everyone by design, and B's stop
@@ -1752,7 +1769,8 @@ async fn caller_keyed_state_stays_with_its_caller() {
     ok(status, &body, "A plays");
     let (status, body) = call(&app, &bob, "DELETE", "/api/v3/now-playing?device=web", None).await;
     ok(status, &body, "B stops");
-    let (_, body) = call(&app, &ada, "GET", "/api/v3/now-playing", None).await;
+    let (status, body) = call(&app, &ada, "GET", "/api/v3/now-playing", None).await;
+    ok(status, &body, "A reads now playing");
     let playing = body["sessions"].as_array().expect("sessions");
     assert!(
         playing.iter().any(|row| row["user_name"] == json!("ada")),
@@ -1774,16 +1792,19 @@ async fn caller_keyed_state_stays_with_its_caller() {
     let unhide = format!("{ledger}/{hidden_album}");
     let (status, body) = call(&app, &bob, "DELETE", &unhide, None).await;
     ok(status, &body, "B un-hides");
-    let (_, body) = call(&app, &bob, "GET", ledger, None).await;
+    let (status, body) = call(&app, &bob, "GET", ledger, None).await;
+    ok(status, &body, "B reads hidden albums");
     assert_eq!(body["items"], json!([]), "B's album stays hidden: {body}");
-    let (_, body) = call(&app, &ada, "GET", ledger, None).await;
+    let (status, body) = call(&app, &ada, "GET", ledger, None).await;
+    ok(status, &body, "A reads hidden albums");
     assert_eq!(
         body["items"][0]["release_group_mbid"], hidden_album,
         "B's un-hide took A's: {body}"
     );
     let (status, body) = call(&app, &bob, "DELETE", &unhide, None).await;
     ok(status, &body, "B un-hides again, with nothing left to take");
-    let (_, body) = call(&app, &ada, "GET", ledger, None).await;
+    let (status, body) = call(&app, &ada, "GET", ledger, None).await;
+    ok(status, &body, "A reads hidden albums");
     assert_eq!(body["items"].as_array().map(Vec::len), Some(1), "{body}");
 
     // Remote-server links and folder choices, against the mock Navidrome.
@@ -1820,7 +1841,8 @@ async fn caller_keyed_state_stays_with_its_caller() {
     );
     let (status, body) = call(&app, &bob, "DELETE", connection, None).await;
     ok(status, &body, "B unlinks");
-    let (_, body) = call(&app, &ada, "GET", connection, None).await;
+    let (status, body) = call(&app, &ada, "GET", connection, None).await;
+    ok(status, &body, "A reads the link");
     assert_eq!(
         body["connected"],
         json!(true),
@@ -1860,7 +1882,8 @@ async fn caller_keyed_state_stays_with_its_caller() {
     )
     .await;
     ok(status, &body, "B picks all folders");
-    let (_, body) = call(&app, &ada, "GET", folders, None).await;
+    let (status, body) = call(&app, &ada, "GET", folders, None).await;
+    ok(status, &body, "A reads folders");
     assert_eq!(
         body["mode"],
         json!("selected"),
