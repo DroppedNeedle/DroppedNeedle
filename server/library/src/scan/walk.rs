@@ -68,8 +68,10 @@ pub fn text_safe_posix(path: &Path) -> String {
     #[cfg(unix)]
     {
         use std::os::unix::ffi::OsStrExt;
+        // The root is put back once below, not joined as a part.
         let parts: Vec<String> = path
             .components()
+            .filter(|component| *component != std::path::Component::RootDir)
             .map(|component| {
                 let bytes = component.as_os_str().as_bytes();
                 match std::str::from_utf8(bytes) {
@@ -94,16 +96,13 @@ pub fn text_safe_posix(path: &Path) -> String {
 }
 
 fn percent_encode_bytes(bytes: &[u8]) -> String {
-    const UNRESERVED: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.~";
-    let mut out = String::new();
-    for byte in bytes {
-        if UNRESERVED.contains(byte) {
-            out.push(*byte as char);
-        } else {
-            out.push_str(&format!("%{byte:02X}"));
-        }
-    }
-    out
+    use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, percent_encode};
+    const UNRESERVED: &AsciiSet = &NON_ALPHANUMERIC
+        .remove(b'-')
+        .remove(b'_')
+        .remove(b'.')
+        .remove(b'~');
+    percent_encode(bytes, UNRESERVED).to_string()
 }
 
 /// Relativize for failure and heartbeat paths.
@@ -1635,6 +1634,19 @@ fn produce_inventory(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A name that is not UTF-8 is stored percent-encoded from its bytes,
+    /// keeping the unreserved characters: a different spelling would key
+    /// the same file as a new track. An absolute path keeps one leading
+    /// slash.
+    #[cfg(unix)]
+    #[test]
+    fn a_name_that_is_not_utf8_keys_by_its_encoded_bytes() {
+        use std::os::unix::ffi::OsStrExt;
+        let name = std::ffi::OsStr::from_bytes(b"a-b_c.d~e f\xff.flac");
+        let path = Path::new("/music").join(name);
+        assert_eq!(text_safe_posix(&path), "/music/a-b_c.d~e%20f%FF.flac");
+    }
 
     /// A file on disk is the same file the catalog holds: audio suffixes
     /// match in any case, and an NFD name keys as its NFC form. A miss

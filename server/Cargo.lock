@@ -755,6 +755,7 @@ dependencies = [
  "jiff",
  "libc",
  "lofty",
+ "percent-encoding",
  "regex",
  "rubato",
  "rusqlite",
