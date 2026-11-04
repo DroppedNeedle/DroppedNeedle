@@ -266,14 +266,15 @@ pub struct LiveProbes {
     pub skiddle: SkiddleClient,
     /// The OIDC client, which reads the issuer's discovery document.
     pub oidc: OidcClient,
-    /// The install ids presented to Plex. Without them the Plex checks
-    /// present no client id.
-    install: Option<InstallIds>,
+    /// The install ids presented to Plex.
+    install: InstallIds,
 }
 
 impl LiveProbes {
-    /// Build over the shared client and the providers' clients.
-    pub fn new(http: reqwest::Client, providers: &Providers) -> Self {
+    /// Build over the shared client and the providers' clients, presenting
+    /// this install's stored Plex client id from `install`, as every other
+    /// Plex call does.
+    pub fn new(http: reqwest::Client, providers: &Providers, install: InstallIds) -> Self {
         Self {
             http,
             musicbrainz: providers.musicbrainz.clone(),
@@ -284,15 +285,8 @@ impl LiveProbes {
             newznab: providers.newznab.clone(),
             skiddle: providers.skiddle.clone(),
             oidc: providers.oidc.clone(),
-            install: None,
+            install,
         }
-    }
-
-    /// Present this install's stored Plex client id from `ids`, as every
-    /// other Plex call does.
-    pub fn presenting(mut self, ids: InstallIds) -> Self {
-        self.install = Some(ids);
-        self
     }
 
     /// A client for submitted values, outside any user's read bound.
@@ -308,11 +302,7 @@ impl LiveProbes {
         ConnectionResolver::unsaved_client(
             &self.http,
             ResolvedConnection {
-                client_id: self
-                    .install
-                    .as_ref()
-                    .map(InstallIds::plex_client_id)
-                    .unwrap_or_default(),
+                client_id: self.install.plex_client_id(),
                 ..ResolvedConnection::unsaved(SourceName::Plex, url.to_owned(), token.to_owned())
             },
         )

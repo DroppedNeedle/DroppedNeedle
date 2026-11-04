@@ -24,6 +24,7 @@ use droppedneedle::settings::verify::{
     ProwlarrVerdict, SabnzbdMountDiagnosis, SabnzbdVerdict, VerifyProbes, VersionVerdict,
 };
 use droppedneedle::settings::wiring::SettingsSetup;
+use droppedneedle_auth::federated::settings::InstallIds;
 use droppedneedle_auth::users::roles::{Role, SessionKind};
 use droppedneedle_kernel::runtime_config::effects::Effect;
 use droppedneedle_kernel::runtime_config::mask::SECRET_MASK;
@@ -927,6 +928,8 @@ async fn live_probes_answer_honest_verdicts() {
     let lastfm_hits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let base = serve_stub(Arc::clone(&lastfm_hits)).await;
     let http = droppedneedle_kernel::http_client::HttpClientFactory::new().expect("http");
+    let dir = ScratchDir::new("live-probes");
+    let install = InstallIds::new(common::config_store(&dir));
     let probes = LiveProbes::new(
         reqwest::Client::new(),
         &droppedneedle_providers::Providers::unpaced_at(
@@ -940,11 +943,13 @@ async fn live_probes_answer_honest_verdicts() {
                 ..droppedneedle_providers::ProviderEndpoints::closed()
             },
         ),
+        install.clone(),
     );
     let dead = "http://127.0.0.1:9";
     let unreachable = LiveProbes::new(
         reqwest::Client::new(),
         &droppedneedle_providers::Providers::closed(),
+        install,
     );
 
     // A server address that does not parse names no server: the media

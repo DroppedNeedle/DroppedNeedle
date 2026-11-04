@@ -672,6 +672,7 @@ pub fn settings_closed(platform: &Platform) -> droppedneedle::settings::wiring::
         Arc::new(droppedneedle::settings::verify::LiveProbes::new(
             platform.http.shared().clone(),
             &Providers::closed(),
+            droppedneedle_auth::federated::settings::InstallIds::new(platform.settings.clone()),
         )),
     )
 }

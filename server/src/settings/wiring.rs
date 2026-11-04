@@ -92,11 +92,11 @@ impl SettingsSetup {
     /// The Verify probes production uses: keys are checked through the
     /// clients in `providers` and the platform's shared HTTP client.
     pub fn live_probes(platform: &Platform, providers: &Providers) -> Arc<dyn VerifyProbes> {
-        Arc::new(
-            LiveProbes::new(platform.http.shared().clone(), providers).presenting(
-                droppedneedle_auth::federated::settings::InstallIds::new(platform.settings.clone()),
-            ),
-        )
+        Arc::new(LiveProbes::new(
+            platform.http.shared().clone(),
+            providers,
+            droppedneedle_auth::federated::settings::InstallIds::new(platform.settings.clone()),
+        ))
     }
 
     /// The wired section service.
