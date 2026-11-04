@@ -122,11 +122,17 @@ const markupRules = [
 	}
 ];
 
-// Retired ways of doing things the app now does in one place.
+// Retired ways of doing things the app now does in one place. The browser's
+// confirm() blocks the page and cannot be styled; ConfirmDialog asks instead.
 const retiredRules = [
 	{
 		selector: "Identifier[name='createLocalStorageCache']",
 		message: 'Queries are saved to the browser only through their meta.persist.'
+	},
+	{
+		selector:
+			"CallExpression[callee.name='confirm'], CallExpression[callee.object.name=/^(window|globalThis|self)$/][callee.property.name='confirm']",
+		message: 'Ask with ConfirmDialog from $lib/ui, not the browser confirm().'
 	}
 ];
 
@@ -153,6 +159,12 @@ const TEXT_INPUT_TYPE = '/^(text|search|url|email|password|number|date|time|tel)
 const TEXT_INPUT_MESSAGE =
 	'Text inputs come from the kit: use Input, or TextField, NumberField or SecretField for a labelled row, from $lib/ui.';
 const INPUT_TAG = "SvelteElement[kind='html'][name.name='input'] > SvelteStartTag";
+// Modal (and ConfirmDialog on top of it) owns showModal, Escape, the backdrop
+// and handing focus back, so a <dialog> element is written only there.
+const dialogRule = {
+	selector: "SvelteElement[kind='html'][name.name='dialog']",
+	message: 'Dialogs come from the kit: use Modal or ConfirmDialog from $lib/ui.'
+};
 const kitRules = [
 	...kitClassRules(
 		BTN_CLASS,
@@ -170,8 +182,35 @@ const kitRules = [
 		// type="text", or type={...} that can evaluate to a text-like type
 		selector: `${INPUT_TAG} > SvelteAttribute[key.name='type'] :matches(SvelteLiteral, Literal)[value=${TEXT_INPUT_TYPE}]`,
 		message: TEXT_INPUT_MESSAGE
-	}
+	},
+	dialogRule
 ];
+
+// Hand-built dialogs not yet moved onto Modal. The list only shrinks.
+const DIALOGS_TO_MOVE = [
+	'discover/components/PlaylistDiscoveryModal.svelte',
+	'downloads/components/DiscographyDownloadModal.svelte',
+	'library/components/TagEditor.svelte',
+	'library-management/components/AlbumOrganizationDialog.svelte',
+	'library-management/components/ArtistIdentityDesk.svelte',
+	'library-management/components/LibraryManagementActivationDialog.svelte',
+	'library-management/components/LibraryManagementCollisionDialog.svelte',
+	'library-management/components/LibraryManagementDiscardPreview.svelte',
+	'library-management/components/LibraryManagementIdentityReadiness.svelte',
+	'library-management/components/LibraryManagementOperationPage.svelte',
+	'library-management/components/LibraryManagementProfileEditor.svelte',
+	'library-management/components/LibraryManagementProfileList.svelte',
+	'library-management/components/LibraryManagementProfileSharing.svelte',
+	'library-management/components/LibraryManagementPurgeDialog.svelte',
+	'library-management/components/LibraryManagementRunner.svelte',
+	'library-management/components/LibraryRepairPanel.svelte',
+	'library-management/components/LibraryRootPolicyEditor.svelte',
+	'library-management/components/LibraryScanningPanel.svelte',
+	'library-management/components/LibraryWorkDialog.svelte',
+	'playlists/components/AddToPlaylistModal.svelte',
+	'search/components/SearchDialog.svelte',
+	'settings/components/SettingsLibrary.svelte'
+].map((path) => `src/lib/features/${path}`);
 
 // In-app links and goto take their path through withBasePath
 // (lib/utils/basePath.ts), so a deployment base path is kept. A root path
@@ -344,6 +383,20 @@ export default defineConfig(
 				...markupRules,
 				...retiredRules,
 				...kitRules,
+				...linkRules
+			]
+		}
+	},
+	{
+		files: DIALOGS_TO_MOVE,
+		rules: {
+			'no-restricted-syntax': [
+				'error',
+				...queryClientRules,
+				...transportRules,
+				...markupRules,
+				...retiredRules,
+				...kitRules.filter((rule) => rule !== dialogRule),
 				...linkRules
 			]
 		}
