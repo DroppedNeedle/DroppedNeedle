@@ -189,7 +189,8 @@ fn nothing_is_wired_after_construction() {
 }
 
 /// Sites the second pass allows, by file and name (the method, or the
-/// parameter or field), each with its reason.
+/// parameter or field), each with its reason. An entry covers one site: a
+/// file with two sites of one name lists it twice.
 const LATE_ALLOWED: &[(&str, &str, &str)] = &[
     (
         "acquire/src/probes.rs",
@@ -202,9 +203,29 @@ const LATE_ALLOWED: &[(&str, &str, &str)] = &[
         "one health pass's slskd client, there only while the section sets one up",
     ),
     (
+        "acquire/src/slskd/client.rs",
+        "with_rate_limit_retry",
+        "runs one call, retrying 429s; the closure is that call, not a builder",
+    ),
+    (
         "acquire/src/usenet/sabnzbd.rs",
         "grab",
         "the release's own indexer, there only for a release found through one",
+    ),
+    (
+        "acquire/src/usenet/sabnzbd.rs",
+        "grab",
+        "the same indexer for a track, passed on to enqueue",
+    ),
+    (
+        "acquire/src/usenet/sabnzbd.rs",
+        "grab",
+        "the same indexer, which enqueue fetches the NZB through",
+    ),
+    (
+        "auth/src/session/stated.rs",
+        "config",
+        "no address list in upgrade mode, which runs before the settings are open",
     ),
     (
         "catalog/src/artwork/mod.rs",
@@ -212,9 +233,39 @@ const LATE_ALLOWED: &[(&str, &str, &str)] = &[
         "what the cover cache knows, nothing until its index is loaded",
     ),
     (
+        "catalog/src/discover/youtube.rs",
+        "client",
+        "the YouTube client, none while its quota file cannot be read, which keeps search off",
+    ),
+    (
+        "catalog/src/discover/youtube.rs",
+        "client",
+        "the same client, handed to the constructor",
+    ),
+    (
+        "compat/src/jellyfin/ids/mod.rs",
+        "exceptions",
+        "the fill loop's exception list, none until its first pass loads it",
+    ),
+    (
+        "compat/src/subsonic/value.rs",
+        "stream",
+        "a streamed audio body, there only for a stream answer",
+    ),
+    (
         "kernel/src/db/backup.rs",
         "progress",
         "a caller's progress report for one backup",
+    ),
+    (
+        "kernel/src/db/backup.rs",
+        "progress",
+        "the same report, passed on to the staging step",
+    ),
+    (
+        "kernel/src/db/backup.rs",
+        "progress",
+        "the same report, passed on to the page copy",
     ),
     (
         "kernel/src/db/checkpoint.rs",
@@ -222,9 +273,24 @@ const LATE_ALLOWED: &[(&str, &str, &str)] = &[
         "added in the one build after the relief thread's copy is taken, so that thread holds no Db",
     ),
     (
-        "kernel/src/db/read_pool.rs",
-        "cancel",
-        "a read's own cancel flag, for reads a caller can stop",
+        "kernel/src/db/checkpoint.rs",
+        "analyze",
+        "the field with_analyze fills; the relief thread's copy has none",
+    ),
+    (
+        "kernel/src/db/writer.rs",
+        "connection",
+        "the write connection while no turn holds it, taken by each turn and closed at shutdown",
+    ),
+    (
+        "kernel/src/db/writer.rs",
+        "runner",
+        "the async-write thread's channel, dropped at shutdown so the thread ends",
+    ),
+    (
+        "kernel/src/db/writer.rs",
+        "connection",
+        "the connection a turn holds, put back when the turn drops",
     ),
     (
         "kernel/src/jobs/precache.rs",
@@ -237,6 +303,16 @@ const LATE_ALLOWED: &[(&str, &str, &str)] = &[
         "the bins as one listing can tell them, none while they cannot be told",
     ),
     (
+        "library/src/publish/bin_contents.rs",
+        "sandbox",
+        "the same, for one page of the bin",
+    ),
+    (
+        "library/src/publish/bin_contents.rs",
+        "sandbox",
+        "the same, for the bin's summary",
+    ),
+    (
         "library/src/publish/publisher.rs",
         "before_place",
         "a test's hook between two publish steps; production never arms it",
@@ -247,19 +323,69 @@ const LATE_ALLOWED: &[(&str, &str, &str)] = &[
         "a test's hook between two publish steps; production never arms it",
     ),
     (
+        "library/src/publish/session.rs",
+        "cell",
+        "the open publisher, none until a publish opens the session",
+    ),
+    (
+        "library/src/publish/session.rs",
+        "session",
+        "the open session's sandbox, none once it closes",
+    ),
+    (
         "library/src/test_support/mod.rs",
         "hook",
         "the setter of a test's hook between two publish steps",
     ),
     (
-        "library/src/publish/step.rs",
-        "add_budget",
-        "one publish's deadline for an added file",
+        "library/src/test_support/mod.rs",
+        "hook",
+        "the setter of a test's other hook between two publish steps",
+    ),
+    (
+        "library/src/test_support/mod.rs",
+        "before_place",
+        "a test's hook, armed on the open publisher; tests only",
+    ),
+    (
+        "library/src/test_support/mod.rs",
+        "before_set_aside",
+        "a test's hook, armed on the open publisher; tests only",
+    ),
+    (
+        "plugins/src/host.rs",
+        "runtime",
+        "a plugin's running connection, there only while it is enabled",
+    ),
+    (
+        "providers/src/cache.rs",
+        "outcome",
+        "the answer a single-flight lookup hands its waiters, none if it panicked; not a port",
     ),
     (
         "src/app.rs",
         "state",
         "the API document is built from the routes with no app state behind them",
+    ),
+    (
+        "src/bootstrap/jobs.rs",
+        "scripted",
+        "the scripted test job kind, in test builds only",
+    ),
+    (
+        "src/security_headers.rs",
+        "settings",
+        "no settings in upgrade mode, which serves the fixed policy before the settings are open",
+    ),
+    (
+        "src/settings/library_policy_service.rs",
+        "with_saved",
+        "runs one closure on the blocking pool; not a builder",
+    ),
+    (
+        "src/upgrade_mode/mod.rs",
+        "mode",
+        "a run's place, taken when the run records how it ended and given back on drop otherwise",
     ),
 ];
 
@@ -282,18 +408,16 @@ fn no_handle_is_attached_or_left_optional() {
 }
 
 /// What is wrong with `found` against [`LATE_ALLOWED`]: a site no entry
-/// lists, a second site under an entry's file and name, and an entry
-/// that no longer matches.
+/// lists, a site past the number of entries under its file and name, and
+/// an entry that no longer matches.
 fn allowed_once(found: Vec<Late>) -> Vec<String> {
     let mut used = vec![false; LATE_ALLOWED.len()];
     let mut wrong = Vec::new();
     for late in found {
-        match LATE_ALLOWED
-            .iter()
-            .position(|(path, name, _)| late.path == *path && late.name == *name)
-        {
-            Some(at) if !used[at] => used[at] = true,
-            Some(_) => wrong.push(format!(
+        let names = |(path, name, _): &(&str, &str, &str)| late.path == *path && late.name == *name;
+        match (0..LATE_ALLOWED.len()).find(|&at| !used[at] && names(&LATE_ALLOWED[at])) {
+            Some(at) => used[at] = true,
+            None if LATE_ALLOWED.iter().any(names) => wrong.push(format!(
                 "{}:{}: {} ({}); the entry for {} covers one site, and this is another",
                 late.path, late.line, late.name, late.what, late.name
             )),
@@ -330,6 +454,8 @@ pub struct Effects { wake: Option<DownloadWake> }
 pub struct Folders { store: Box<dyn FolderStore> }
 pub struct Hook { run: Box<dyn FnMut(u32)> }
 pub struct Gateway { library: Option<CoverWarm>, hook: Option<Hook>, limits: Option<Limits> }
+pub struct Stop { flag: Arc<AtomicBool> }
+pub struct Guarded { stop: Arc<AtomicBool>, port: Arc<dyn SearchPort> }
 impl Builder {
     pub fn with_cover_warm(mut self, warm: CoverWarm) -> Self { self }
     pub fn with_job(mut self, spec: JobSpec, handler: Arc<dyn JobHandler>) -> Self { self }
@@ -352,6 +478,8 @@ fn enrich(enrichment: Option<&ProductionEnrichment>, settings: Option<&Live<Sear
 fn place(name: Option<&str>, hook: Option<&dyn Fn(&Path)>, limits: Option<&Limits>) {}
 fn report(status: Option<&Status>, reader: Option<&Reader>) {}
 fn wake(wake_up: Option<crate::effects::DownloadWake>, every: Option<Duration>) {}
+fn bound(stop: Option<Stop>, permits: Option<Arc<Semaphore>>, left: Option<Arc<AtomicUsize>>) {}
+fn guard(guarded: Option<Guarded>, budget: Option<(Instant, Arc<AtomicBool>)>) {}
 "#
         .to_owned(),
     };
@@ -364,6 +492,7 @@ fn wake(wake_up: Option<crate::effects::DownloadWake>, every: Option<Duration>) 
         found,
         [
             "enrichment",
+            "guarded",
             "library",
             "reader",
             "settings",
@@ -453,8 +582,20 @@ const MARKERS: &[&str] = &[
 /// choice, not a port.
 const CLOSURES: &[&str] = &["Fn", "FnMut", "FnOnce"];
 
-/// What an `Arc` may hold and still be plain data.
-const SHARED_DATA: &[&str] = &["str", "[", "Path", "OsStr", "Value", "serde_json::Value"];
+/// What an `Arc` may hold and still be plain data: text, paths, JSON, a
+/// shared flag or counter, and a cap on calls in flight.
+const SHARED_DATA: &[&str] = &[
+    "str",
+    "[",
+    "Path",
+    "OsStr",
+    "Value",
+    "serde_json::Value",
+    "AtomicBool",
+    "AtomicUsize",
+    "AtomicU64",
+    "Semaphore",
+];
 
 /// What the second pass knows about the workspace's types.
 struct Kinds {
