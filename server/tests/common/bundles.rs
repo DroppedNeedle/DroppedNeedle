@@ -267,21 +267,39 @@ impl DownloadReadiness for NoDownloadSource {
 
 /// The connection resolver the app builds: the per-user rows in the
 /// platform's database, sealed with its key, over the admin's server
-/// settings.
+/// settings. plex.tv is not reached: a Plex link stored without a server
+/// token uses its account token.
 pub fn remotes_resolver(
     platform: &Platform,
 ) -> droppedneedle_media::remotes::connections::ConnectionResolver {
-    use droppedneedle_media::remotes::connections::{
-        ConfigServers, ConnectionResolver, CredentialCoder, SqliteConnectionStore,
-    };
-    ConnectionResolver::new(
-        Arc::new(SqliteConnectionStore::new(
-            platform.db.clone(),
-            platform.clock.clone(),
-        )),
-        Arc::new(CredentialCoder::new(platform.crypto.clone())),
-        Arc::new(ConfigServers::new(&platform.settings)),
+    droppedneedle_media::remotes::connections::ConnectionResolver::over(
+        platform,
+        Arc::new(NoPlexTokens),
     )
+}
+
+/// A Plex server-token lookup that never answers, as if plex.tv were
+/// down: the resolver keeps the account token and stores nothing.
+pub struct NoPlexTokens;
+
+impl droppedneedle_media::remotes::connections::PlexServerTokens for NoPlexTokens {
+    fn server_token<'a>(
+        &'a self,
+        _server: &'a droppedneedle_media::remotes::connections::ServerSettings,
+        _auth_token: &'a str,
+        _priority: droppedneedle_providers::RequestPriority,
+    ) -> droppedneedle_media::remotes::source::BoxFuture<
+        'a,
+        Result<Option<String>, droppedneedle_media::remotes::source::AdapterError>,
+    > {
+        Box::pin(async {
+            Err(
+                droppedneedle_media::remotes::source::AdapterError::Transport(
+                    "plex.tv is not reached in this rig".to_owned(),
+                ),
+            )
+        })
+    }
 }
 
 /// The jobs bundle's media inputs for a rig with no media bundle: a fresh

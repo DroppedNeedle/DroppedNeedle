@@ -88,7 +88,7 @@ use droppedneedle_media::playback::listening::ListeningStore;
 use droppedneedle_media::{
     MediaSetup,
     remotes::{
-        connections::{ConnectionResolver, SignInLinks},
+        connections::{ConnectionLinks, SignInLinks},
         plex::ConfiguredPlexServer,
     },
     stream::local_files::LibraryFiles,
@@ -187,9 +187,7 @@ where
 /// per-user connections table (the rows the remotes routes read) in the
 /// platform's database. It only stores links and reads no remote server.
 pub fn sign_in_links(platform: &Platform) -> MediaLinks {
-    MediaLinks::new(Arc::new(SignInLinks::new(Arc::new(
-        ConnectionResolver::over(platform),
-    ))))
+    MediaLinks::new(Arc::new(SignInLinks::new(ConnectionLinks::over(platform))))
 }
 
 /// What [`build_with`] hands back. Every background loop stops on the one

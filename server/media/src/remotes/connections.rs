@@ -630,13 +630,21 @@ pub enum Reads {
     Background,
 }
 
+/// The per-user link rows, sealed with the data key: read, stored and
+/// removed. It reads no remote server, so a sign-in that only stores the
+/// link it was handed uses this alone.
+#[derive(Clone)]
+pub struct ConnectionLinks {
+    rows: Arc<dyn ConnectionStore>,
+    coder: Arc<CredentialCoder>,
+}
+
 /// Resolves a caller's connection for one source, stores their links, and
 /// builds the source clients.
 pub struct ConnectionResolver {
-    rows: Arc<dyn ConnectionStore>,
-    coder: Arc<CredentialCoder>,
+    links: ConnectionLinks,
     servers: Arc<ConfigServers>,
-    plex_tokens: Option<Arc<dyn PlexServerTokens>>,
+    plex_tokens: Arc<dyn PlexServerTokens>,
     /// One bound per source on the reads people trigger, in
     /// [`source_slot`] order.
     user_reads: [Arc<Semaphore>; 3],
@@ -689,33 +697,16 @@ impl std::fmt::Debug for ConnectionResolver {
 }
 
 impl ConnectionResolver {
-    /// Build a resolver over the link rows, the sealing key, and the admin
-    /// server settings.
-    pub fn new(
-        rows: Arc<dyn ConnectionStore>,
-        coder: Arc<CredentialCoder>,
-        servers: Arc<ConfigServers>,
-    ) -> Self {
+    /// The resolver over `platform`: the links in its database, over the
+    /// admin's server settings. A Plex link stored without a server token
+    /// gets one through `plex_tokens`, once.
+    pub fn over(platform: &Platform, plex_tokens: Arc<dyn PlexServerTokens>) -> Self {
         Self {
-            rows,
-            coder,
-            servers,
-            plex_tokens: None,
+            links: ConnectionLinks::over(platform),
+            servers: Arc::new(ConfigServers::new(&platform.settings)),
+            plex_tokens,
             user_reads: std::array::from_fn(|_| Arc::new(Semaphore::new(USER_READS_PER_SOURCE))),
         }
-    }
-
-    /// The resolver over `platform`: the link rows in its database, sealed
-    /// with its key, over the admin's server settings.
-    pub fn over(platform: &Platform) -> Self {
-        Self::new(
-            Arc::new(SqliteConnectionStore::new(
-                platform.db.clone(),
-                platform.clock.clone(),
-            )),
-            Arc::new(CredentialCoder::new(platform.crypto.clone())),
-            Arc::new(ConfigServers::new(&platform.settings)),
-        )
     }
 
     /// The client for `connection`, over `http`. This and
@@ -738,14 +729,6 @@ impl ConnectionResolver {
     /// [`ResolvedConnection::unsaved`]), outside any bound.
     pub fn unsaved_client(http: &reqwest::Client, connection: ResolvedConnection) -> RemoteHandle {
         build_client(http, connection, None)
-    }
-
-    /// Look up and store missing Plex server tokens through `probe`.
-    /// Without one, a Plex link lacking a server token uses its account
-    /// token.
-    pub fn with_plex_tokens(mut self, probe: Arc<dyn PlexServerTokens>) -> Self {
-        self.plex_tokens = Some(probe);
-        self
     }
 
     /// The admin's server for one source.
@@ -830,9 +813,6 @@ impl ConnectionResolver {
         link: UserLink,
         priority: RequestPriority,
     ) -> Result<UserLink, ResolveError> {
-        let Some(probe) = &self.plex_tokens else {
-            return Ok(link);
-        };
         let UserLink::Plex {
             auth_token,
             server_access_token,
@@ -850,7 +830,11 @@ impl ConnectionResolver {
                 username,
             });
         }
-        match probe.server_token(server, &auth_token, priority).await {
+        match self
+            .plex_tokens
+            .server_token(server, &auth_token, priority)
+            .await
+        {
             Ok(Some(token)) if !token.is_empty() => {
                 let link = UserLink::Plex {
                     auth_token,
@@ -880,6 +864,43 @@ impl ConnectionResolver {
     pub fn resolve_shared(&self, source: SourceName) -> Result<ResolvedConnection, ResolveError> {
         let server = self.server(source)?.ok_or(ResolveError::NotConfigured)?;
         shared("shared", source, &server)
+    }
+
+    /// The caller's stored link (see [`ConnectionLinks::link`]).
+    pub async fn link(
+        &self,
+        user_id: &str,
+        source: SourceName,
+    ) -> Result<Option<UserLink>, ResolveError> {
+        self.links.link(user_id, source).await
+    }
+
+    /// Seal and store one user's link, replacing any earlier one.
+    pub async fn save_link(&self, user_id: &str, link: &UserLink) -> Result<(), SaveError> {
+        self.links.save_link(user_id, link).await
+    }
+
+    /// Remove one user's link. False when there was none.
+    pub async fn delete_link(&self, user_id: &str, service: &str) -> Result<bool, SaveError> {
+        self.links.delete_link(user_id, service).await
+    }
+
+    /// Every linked account the user has (see [`ConnectionLinks::list_links`]).
+    pub async fn list_links(&self, user_id: &str) -> Result<Vec<LinkSummary>, ResolveError> {
+        self.links.list_links(user_id).await
+    }
+}
+
+impl ConnectionLinks {
+    /// The link rows in `platform`'s database, sealed with its key.
+    pub fn over(platform: &Platform) -> Self {
+        Self {
+            rows: Arc::new(SqliteConnectionStore::new(
+                platform.db.clone(),
+                platform.clock.clone(),
+            )),
+            coder: Arc::new(CredentialCoder::new(platform.crypto.clone())),
+        }
     }
 
     /// The caller's stored link. A row that no longer opens, or opens to
@@ -1055,25 +1076,22 @@ fn cache_scope(user_id: &str, source: SourceName, base_url: &str, credential: &s
 /// sign-in flows decide whether a failure is fatal.
 #[derive(Clone)]
 pub struct SignInLinks {
-    resolver: Arc<ConnectionResolver>,
+    links: ConnectionLinks,
 }
 
 impl SignInLinks {
-    /// Write links through the shared resolver.
-    pub fn new(resolver: Arc<ConnectionResolver>) -> Self {
-        Self { resolver }
+    /// Write links to `links`.
+    pub fn new(links: ConnectionLinks) -> Self {
+        Self { links }
     }
 
     async fn store(&self, user_id: &str, link: UserLink) -> Result<(), String> {
-        self.resolver
-            .save_link(user_id, &link)
-            .await
-            .map_err(|error| {
-                format!(
-                    "could not store the {} link: {error}",
-                    link.source().as_str()
-                )
-            })
+        self.links.save_link(user_id, &link).await.map_err(|error| {
+            format!(
+                "could not store the {} link: {error}",
+                link.source().as_str()
+            )
+        })
     }
 }
 

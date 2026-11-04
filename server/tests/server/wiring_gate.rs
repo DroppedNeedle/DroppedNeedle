@@ -121,10 +121,6 @@ const RULES: &[Rule] = &[
                 "providers/src/cache.rs",
                 "the answer a single-flight lookup hands its waiters, not a port",
             ),
-            (
-                "media/src/remotes/connections.rs",
-                "the Plex server-token lookup: the resolver that only stores sign-in links has none",
-            ),
         ],
     },
 ];

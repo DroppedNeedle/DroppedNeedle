@@ -127,12 +127,10 @@ impl MediaSetup {
         platform: &Platform,
         plextv: droppedneedle_providers::plextv::PlexTvClient,
     ) -> Arc<ConnectionResolver> {
-        Arc::new(
-            ConnectionResolver::over(platform).with_plex_tokens(Arc::new(PlexTokenProbe::new(
-                platform.http.shared().clone(),
-                plextv,
-            ))),
-        )
+        Arc::new(ConnectionResolver::over(
+            platform,
+            Arc::new(PlexTokenProbe::new(platform.http.shared().clone(), plextv)),
+        ))
     }
 
     /// Build the production bundle over `platform`. Its database backs the

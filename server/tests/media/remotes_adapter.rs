@@ -936,12 +936,10 @@ async fn plex_links_without_a_server_token_look_one_up_and_keep_it() {
         },
         droppedneedle_kernel::db::cache::CacheDb::scratch(),
     );
-    let resolver = rig
-        .resolver()
-        .with_plex_tokens(Arc::new(PlexTokenProbe::new(
-            http_client(),
-            providers.plextv.clone(),
-        )));
+    let resolver = ConnectionResolver::over(
+        &rig.platform,
+        Arc::new(PlexTokenProbe::new(http_client(), providers.plextv.clone())),
+    );
     resolver
         .save_link(
             USER_ID,
