@@ -108,21 +108,6 @@ where
     Routes::new().user(routes!(stream_get_route, stream_head_route))
 }
 
-/// The stream route at a relative path over any engine, for tests that
-/// drive it with fakes.
-#[cfg(any(test, feature = "test-support"))]
-pub fn stream_routes<E>(state: StreamState<E>) -> axum::Router
-where
-    E: StreamEngine + Send + Sync + 'static,
-{
-    axum::Router::new()
-        .route(
-            "/stream/{source}/{*key}",
-            axum::routing::get(stream_get::<E>).head(stream_head::<E>),
-        )
-        .with_state(state)
-}
-
 /// Full or ranged audio bytes.
 // The mounted form of `stream_get` over the production engine.
 #[utoipa::path(

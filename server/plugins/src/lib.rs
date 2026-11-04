@@ -37,11 +37,7 @@ pub mod panel;
 pub mod process;
 pub mod protocol;
 pub mod runtime;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
 pub mod ticks;
 pub mod wiring;
-
-/// Every `sql.rs` of this crate, one line each, for the schema test.
-#[cfg(any(test, feature = "test-support"))]
-pub fn statement_files() -> Vec<droppedneedle_kernel::db::statement::StatementFile> {
-    vec![capabilities::sql::registered()]
-}

@@ -73,19 +73,11 @@ pub mod setup;
 pub mod shared;
 pub mod sql;
 pub mod subsonic;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
 pub mod user_settings;
 
 pub use setup::CompatSetup;
 
 /// Every always-on compat loop, by name.
 pub const LOOPS: &[&str] = &[jellyfin::ids::JOB_NAME];
-
-/// Every `sql.rs` of this crate, one line each, for the schema test.
-#[cfg(any(test, feature = "test-support"))]
-pub fn statement_files() -> Vec<droppedneedle_kernel::db::statement::StatementFile> {
-    vec![
-        jellyfin::ids::sql::registered(),
-        sql::registered(),
-        user_settings::sql::registered(),
-    ]
-}

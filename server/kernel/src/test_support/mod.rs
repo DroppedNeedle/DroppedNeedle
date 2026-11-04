@@ -19,6 +19,8 @@ use rusqlite::Transaction;
 use crate::clock::Clock;
 use crate::db::statement::StatementFile;
 use crate::db::{Db, DbError, DurableLane, Lane};
+use crate::jobs::BoxFuture;
+use crate::jobs::discovery_demand::DemandTick;
 use crate::jobs::events_kick::EventsKick;
 use crate::jobs::events_watcher::WallTime;
 use crate::jobs::precache::PrecacheLimits;
@@ -69,6 +71,16 @@ impl ManualClock {
 impl Clock for ManualClock {
     fn now_ms(&self) -> i64 {
         self.now_ms.load(Ordering::SeqCst)
+    }
+}
+
+/// No warm cycle, for test states.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct NoDemand;
+
+impl DemandTick for NoDemand {
+    fn tick(&self) -> BoxFuture<'_, ()> {
+        Box::pin(async {})
     }
 }
 

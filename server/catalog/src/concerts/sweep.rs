@@ -90,7 +90,7 @@ pub struct ConcertsSweep {
     sources: Arc<Sources>,
     events: Arc<dyn ConcertsEvents>,
     clock: Arc<dyn Clock>,
-    inter_artist_delay: Duration,
+    pub(crate) inter_artist_delay: Duration,
 }
 
 impl ConcertsSweep {
@@ -110,14 +110,6 @@ impl ConcertsSweep {
             clock,
             inter_artist_delay: INTER_ARTIST_DELAY,
         }
-    }
-
-    /// Skip the pause between artists (tests).
-    #[cfg(any(test, feature = "test-support"))]
-    #[must_use]
-    pub fn without_delay(mut self) -> Self {
-        self.inter_artist_delay = Duration::ZERO;
-        self
     }
 
     /// Run one sweep. Settings and keys are read here, once per run.

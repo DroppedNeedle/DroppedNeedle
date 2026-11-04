@@ -79,14 +79,6 @@ impl ReportQueue {
         (Self { tx }, rx)
     }
 
-    /// Build a queue with no worker: every report drops immediately. For
-    /// tests that never assert what a server was sent.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn detached() -> Self {
-        let (queue, _) = Self::channel();
-        queue
-    }
-
     fn enqueue(&self, source: SourceName, op: ReportOp, report: &RemoteReport) {
         let queued = QueuedReport {
             source,

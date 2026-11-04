@@ -16,6 +16,7 @@ use axum::Router;
 use axum::body::Body;
 use axum::http::{HeaderMap, Request, StatusCode};
 use droppedneedle_auth::users::roles::{Role, SessionKind};
+use droppedneedle_media::test_support::stream_routes;
 use futures_util::StreamExt as _;
 use serde_json::Value;
 use stream::engine::{
@@ -28,7 +29,7 @@ use stream::leases::{
     CapacityExhausted, DIRECT_PRINCIPAL_LIMIT, DirectGate, GateLimits, OwnedDirectLease,
     TranscodeGate, WAIT_TIMEOUT,
 };
-use stream::routes::{StreamState, stream_routes};
+use stream::routes::StreamState;
 use stream::transcode::{StreamPlan, TranscodeError, TranscodeSettings, Transcoder};
 use tower::ServiceExt as _;
 

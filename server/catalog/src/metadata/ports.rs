@@ -32,7 +32,8 @@ pub trait FollowLookup: Send + Sync {
     ) -> BoxFuture<'a, Option<FollowState>>;
 }
 
-/// No follow store wired: every artist reads as not followed.
+/// No follow store wired: every artist reads as not followed. The radio's
+/// catalog reads albums only and runs on it.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct NoFollows;
 
@@ -84,7 +85,7 @@ pub trait PurchaseLinkSource: Send + Sync {
     ) -> BoxFuture<'a, Gathered<Vec<ExtraPurchaseLink>>>;
 }
 
-/// No purchase-link providers.
+/// No purchase-link providers, for the radio's catalog, which shows none.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct NoPurchaseLinks;
 
@@ -131,7 +132,7 @@ pub trait DetailsSource: Send + Sync {
     ) -> BoxFuture<'a, Gathered<super::models::PluginDetails>>;
 }
 
-/// No details providers.
+/// No details providers, for the radio's catalog, which shows none.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct NoDetails;
 

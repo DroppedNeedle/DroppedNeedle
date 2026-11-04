@@ -17,21 +17,9 @@ pub mod local;
 pub mod lyrics;
 pub mod metadata;
 pub mod search;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
 pub mod version;
 pub mod wiring;
 pub mod wrapped;
 pub mod youtube;
-
-/// Every `sql.rs` of this crate, one line each, for the schema test.
-#[cfg(any(test, feature = "test-support"))]
-pub fn statement_files() -> Vec<droppedneedle_kernel::db::statement::StatementFile> {
-    vec![
-        artwork::sql::registered(),
-        collections::sql::registered(),
-        concerts::sql::registered(),
-        discover::sql::registered(),
-        local::sql::registered(),
-        search::sql::registered(),
-        youtube::sql::registered(),
-    ]
-}

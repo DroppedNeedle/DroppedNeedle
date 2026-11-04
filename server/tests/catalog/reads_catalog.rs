@@ -467,7 +467,7 @@ async fn app_seeded(
     let search = SearchDeps::new(
         SearchService::new(droppedneedle_kernel::db::Db::open_for_tests(&app_db).unwrap())
             .with_remote(catalog.clone()),
-        Arc::new(search::ports::UnconfiguredEnrichment),
+        Arc::new(droppedneedle_catalog::test_support::UnconfiguredEnrichment),
     );
     let scope = TestApp::start("reads-catalog").await;
     let app = scope

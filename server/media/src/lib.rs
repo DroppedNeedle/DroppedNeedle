@@ -16,6 +16,8 @@
 pub mod playback;
 pub mod remotes;
 pub mod stream;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -286,16 +288,6 @@ pub fn routes() -> Routes<MediaSetup> {
         .merge(stream::download::routes())
         .merge(playback::routes())
         .merge(playback::listening_routes::routes())
-}
-
-/// Every `sql.rs` of this crate, one line each, for the schema test.
-#[cfg(any(test, feature = "test-support"))]
-pub fn statement_files() -> Vec<droppedneedle_kernel::db::statement::StatementFile> {
-    vec![
-        playback::sql::registered(),
-        remotes::sql::registered(),
-        stream::sql::registered(),
-    ]
 }
 
 impl FromRef<MediaSetup> for RemotesDeps {

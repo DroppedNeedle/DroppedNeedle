@@ -17,7 +17,8 @@ use droppedneedle_media::stream::engine::{
     AudioSource, MediaBody, StreamEngine, StreamFault, StreamMedia, StreamOpen,
     content_type_for_extension,
 };
-use droppedneedle_media::stream::routes::{StreamState, stream_routes};
+use droppedneedle_media::stream::routes::StreamState;
+use droppedneedle_media::test_support::stream_routes;
 use serde_json::Value;
 use tower::ServiceExt as _;
 

@@ -13,11 +13,12 @@ use axum::{
 use droppedneedle_auth::session::store::SessionKind;
 use droppedneedle_auth::users::roles::Role;
 use droppedneedle_catalog::{
-    artwork::covers::{self, CoverBytes, CoversState, FakeCoverArt},
+    artwork::covers::{self, CoverBytes, CoversState},
+    test_support::{FakeCoverArt, FakeWrappedData},
     version,
     wrapped::{
-        self, FakeWrappedData, ServerWrappedResponse, UserWrappedResponse, WrappedAlbum,
-        WrappedArtist, WrappedGenre, WrappedState, WrappedTrack, WrappedUserSummary,
+        self, ServerWrappedResponse, UserWrappedResponse, WrappedAlbum, WrappedArtist,
+        WrappedGenre, WrappedState, WrappedTrack, WrappedUserSummary,
     },
 };
 use tower::ServiceExt as _;
@@ -343,7 +344,8 @@ async fn covers_400_carries_only_caller_input() {
 /// wrapped routers.
 #[tokio::test]
 async fn covers_debug_route_stays_out() {
-    use version::{FakeReleases, VersionInfo, VersionState};
+    use droppedneedle_catalog::test_support::FakeReleases;
+    use version::{VersionInfo, VersionState};
     let releases = FakeReleases::new(
         VersionInfo {
             version: "1.2.0".to_owned(),

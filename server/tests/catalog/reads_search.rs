@@ -154,7 +154,7 @@ async fn authed_app() -> (axum::Router, PathBuf, (Held, crate::common::ScratchDi
     seed_catalog(&app_db);
     let (app, held) = app(
         app_db.clone(),
-        Arc::new(search::ports::UnconfiguredEnrichment),
+        Arc::new(droppedneedle_catalog::test_support::UnconfiguredEnrichment),
     )
     .await;
     (app, app_db, (held, dir))
@@ -591,7 +591,11 @@ async fn leak_db_failure_renders_fixed_500_with_error_id() {
     let dir = crate::common::ScratchDir::new("reads-search-no-schema");
     let app_db = dir.join("app.db");
     drop(droppedneedle_kernel::db::open_connection(&app_db).expect("empty database opens"));
-    let (app, _held) = app(app_db, Arc::new(search::ports::UnconfiguredEnrichment)).await;
+    let (app, _held) = app(
+        app_db,
+        Arc::new(droppedneedle_catalog::test_support::UnconfiguredEnrichment),
+    )
+    .await;
     let (status, headers, bytes) = call(
         app,
         Method::GET,
@@ -690,7 +694,7 @@ async fn track_search_survives_vacuum_and_a_table_rebuild() {
     );
     let (app, _held) = app(
         app_db.clone(),
-        Arc::new(search::ports::UnconfiguredEnrichment),
+        Arc::new(droppedneedle_catalog::test_support::UnconfiguredEnrichment),
     )
     .await;
     let queries = ["amber", "cobalt", "dune", "needle 1", "needle"];

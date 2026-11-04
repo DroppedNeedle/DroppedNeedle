@@ -1636,15 +1636,24 @@ const REGISTRIES: &[(&str, StatementFiles)] = &[
         droppedneedle_kernel::test_support::statement_files,
     ),
     ("auth", droppedneedle_auth::test_support::statement_files),
-    ("catalog", droppedneedle_catalog::statement_files),
+    (
+        "catalog",
+        droppedneedle_catalog::test_support::statement_files,
+    ),
     ("acquire", droppedneedle_acquire::statement_files),
     (
         "library",
         droppedneedle_library::test_support::statement_files,
     ),
-    ("plugins", droppedneedle_plugins::statement_files),
-    ("media", droppedneedle_media::statement_files),
-    ("compat", droppedneedle_compat::statement_files),
+    (
+        "plugins",
+        droppedneedle_plugins::test_support::statement_files,
+    ),
+    ("media", droppedneedle_media::test_support::statement_files),
+    (
+        "compat",
+        droppedneedle_compat::test_support::statement_files,
+    ),
     ("tool", droppedneedle_tool::statement_files),
     (".", droppedneedle::statement_files),
 ];

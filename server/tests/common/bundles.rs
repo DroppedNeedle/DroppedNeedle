@@ -22,7 +22,7 @@ use droppedneedle_catalog::metadata::{
     ports::{NoDetails, NoFollows, NoPurchaseLinks},
     upstream::{LiveCatalogSettings, Upstream},
 };
-use droppedneedle_catalog::search::ports::UnconfiguredEnrichment;
+use droppedneedle_catalog::test_support::UnconfiguredEnrichment;
 use droppedneedle_catalog::wiring::{CatalogInputs, CatalogPorts, CatalogSetup};
 use droppedneedle_kernel::clock::SystemClock;
 use droppedneedle_kernel::db::Db;
@@ -551,7 +551,7 @@ pub fn quiet_loops(
         watcher,
         precache_sources,
         mixer: Arc::new(NoMixer),
-        demand: Arc::new(droppedneedle_kernel::jobs::discovery_demand::NoDemand),
+        demand: Arc::new(droppedneedle_kernel::test_support::NoDemand),
     }
 }
 

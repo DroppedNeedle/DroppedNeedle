@@ -27,16 +27,6 @@ pub trait DemandTick: Send + Sync + 'static {
     fn tick(&self) -> BoxFuture<'_, ()>;
 }
 
-/// No warm cycle (test states).
-#[derive(Debug, Default, Clone, Copy)]
-pub struct NoDemand;
-
-impl DemandTick for NoDemand {
-    fn tick(&self) -> BoxFuture<'_, ()> {
-        Box::pin(async {})
-    }
-}
-
 /// The cadence, with a little spread.
 pub fn default_schedule() -> Schedule {
     Schedule::new(INTERVAL)

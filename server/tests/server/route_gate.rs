@@ -39,7 +39,7 @@ const ALLOWED: &[Allowed] = &[
         why: "the covers debug tooling: mounted only under cfg(debug_assertions), never documented",
     },
     Allowed {
-        path: "media/src/stream/routes.rs",
+        path: "media/src/test_support.rs",
         calls: 1,
         why: "test-support only: the stream route over a fake engine, for its slice tests",
     },
