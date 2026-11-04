@@ -6,44 +6,7 @@ import { authStore } from '$lib/stores/authStore.svelte';
 import { toastStore } from '$lib/stores/toast';
 import { setQueryDataWithPersister } from '$lib/queries/QueryClient';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
-
-export type FavoriteKind = 'album' | 'track' | 'artist';
-
-interface FavoriteVars {
-	kind: FavoriteKind;
-	itemId: string;
-	favorited: boolean;
-}
-
-type Row = Record<string, unknown>;
-
-// A field only each kind's view has, so an album never takes a
-// track's heart when two ids match.
-const KIND_FIELD: Record<FavoriteKind, string> = {
-	album: 'is_compilation',
-	artist: 'led_track_count',
-	track: 'track_number'
-};
-
-/** `data` with the item's flag set, or `data` itself when nothing in it changes. */
-function withFavorite(data: unknown, vars: FavoriteVars): unknown {
-	if (Array.isArray(data)) {
-		const next = data.map((item) => withFavorite(item, vars));
-		return next.some((item, index) => item !== data[index]) ? next : data;
-	}
-	if (!data || typeof data !== 'object') return data;
-	const row = data as Row;
-	if (row.id === vars.itemId && KIND_FIELD[vars.kind] in row && 'favorite' in row) {
-		return row.favorite === vars.favorited ? data : { ...row, favorite: vars.favorited };
-	}
-	let changed = false;
-	const next: Row = {};
-	for (const [field, value] of Object.entries(row)) {
-		next[field] = withFavorite(value, vars);
-		if (next[field] !== value) changed = true;
-	}
-	return changed ? next : data;
-}
+import { withFavorite, type FavoriteChange } from './favoriteRows';
 
 // Every cached read that carries the caller's favourite flags.
 function flaggedRoots(): QueryKey[] {
@@ -62,11 +25,11 @@ export function createSetFavoriteMutation() {
 	return createAppMutation(
 		() => ({
 			scope: { id: 'favorites' },
-			mutationFn: ({ kind, itemId, favorited }: FavoriteVars) =>
+			mutationFn: ({ kind, itemId, favorited }: FavoriteChange) =>
 				api.v3.PUT(v3('/api/v3/favorites/{kind}/{item_id}', { path: { kind, item_id: itemId } }), {
 					favorited
 				}),
-			onMutate: async (vars: FavoriteVars) => {
+			onMutate: async (vars: FavoriteChange) => {
 				const previous: [QueryKey, unknown][] = [];
 				for (const root of flaggedRoots()) {
 					await client.cancelQueries({ queryKey: root });

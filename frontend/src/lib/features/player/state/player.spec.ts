@@ -95,6 +95,7 @@ import {
 	stopPlaybackSession
 } from '$lib/features/player/playback/playbackGateway';
 import { streamUrlFor } from '$lib/features/player/playback/streamUrl';
+import { createPlaybackSource } from '$lib/features/player/playback/createSource';
 
 function makeItem(overrides: Partial<QueueItem> = {}): QueueItem {
 	const id = overrides.trackSourceId ?? `vid-${Math.random().toString(36).slice(2, 6)}`;
@@ -765,6 +766,20 @@ describe('track failure reporting', () => {
 			expect(playerStore.currentIndex).toBe(1);
 			expect(toastStore.notify).toHaveBeenCalledTimes(1);
 		}
+	});
+
+	it('picks a dropped track up where the listener was', async () => {
+		playerStore.playQueue(singleSourceItems(2));
+		await vi.advanceTimersByTimeAsync(0);
+		capturedProgressCallbacks.forEach((cb) => cb(95, 600));
+
+		fireCurrentTrackError();
+		await vi.advanceTimersByTimeAsync(0);
+
+		const reloaded = vi.mocked(createPlaybackSource).mock.results.at(-1)?.value;
+		expect(playerStore.currentIndex).toBe(0);
+		expect(reloaded.seekTo).toHaveBeenCalledWith(95);
+		expect(playerStore.progress).toBe(95);
 	});
 
 	function playFor(seconds: number): void {

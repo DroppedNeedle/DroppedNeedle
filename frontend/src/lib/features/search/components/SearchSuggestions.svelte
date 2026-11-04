@@ -6,7 +6,11 @@
 	import Input from '$lib/ui/Input.svelte';
 	import type { SearchRemoteStatus, SuggestResult } from '$lib/features/search/queries/types';
 	import { getSearchSuggestionsV3Query } from '$lib/features/search/queries/SearchV3Queries.svelte';
-	import { toSuggestResultsV1 } from '$lib/features/search/queries/SearchV3Adapters';
+	import {
+		imageMbid,
+		isLocalOnlyRow,
+		toSuggestResultsV1
+	} from '$lib/features/search/queries/SearchV3Adapters';
 
 	interface Props {
 		query: string;
@@ -64,11 +68,6 @@
 	const activeDescendant = $derived(
 		activeIndex >= 0 && activeIndex < suggestions.length ? `${id}-option-${activeIndex}` : undefined
 	);
-
-	// A local-only album uses its local id in place of a MusicBrainz id, so it has no cover to fetch.
-	function isLocalOnly(result: SuggestResult): boolean {
-		return Boolean(result.local_id && result.local_id === result.musicbrainz_id);
-	}
 
 	function handleInput() {
 		clearTimeout(debounceTimeout);
@@ -239,24 +238,24 @@
 				>
 					{#if result.type === 'artist'}
 						<ArtistImage
-							mbid={isLocalOnly(result) ? '' : result.musicbrainz_id}
+							mbid={imageMbid(result)}
 							alt={result.title}
 							size="full"
 							requestSize={250}
 							lazy={false}
 							rounded="sm"
-							available={!isLocalOnly(result)}
+							available={!isLocalOnlyRow(result)}
 							className="w-10 h-10"
 						/>
 					{:else}
 						<AlbumImage
-							mbid={isLocalOnly(result) ? '' : result.musicbrainz_id}
+							mbid={imageMbid(result)}
 							alt={result.title}
 							size="full"
 							requestSize={250}
 							lazy={false}
 							rounded="sm"
-							available={!isLocalOnly(result)}
+							available={!isLocalOnlyRow(result)}
 							retryOnError={false}
 							className="w-10 h-10"
 						/>

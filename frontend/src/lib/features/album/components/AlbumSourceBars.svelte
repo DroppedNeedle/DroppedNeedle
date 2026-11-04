@@ -34,6 +34,8 @@
 		albumLink: YouTubeLink | null;
 		jellyfinMatch: RemoteMatch | null;
 		localMatch: LocalAlbumMatch | null;
+		/** The edition plan's kept files, the count the header shows, when the album has a plan. */
+		keptCount?: number | null;
 		navidromeMatch: RemoteMatch | null;
 		plexMatch: RemoteMatch | null;
 		loadingJellyfin: boolean;
@@ -63,6 +65,7 @@
 		albumLink,
 		jellyfinMatch,
 		localMatch,
+		keptCount = null,
 		navidromeMatch,
 		plexMatch,
 		loadingJellyfin,
@@ -85,23 +88,25 @@
 		onQuotaUpdate
 	}: Props = $props();
 
-	// A track is held when a local file resolves to it by the rule the track rows
-	// use, so the count matches the rows, not every file in the album.
+	// With an edition plan the count is the plan's, as in the header. Without
+	// one, a track is held when a local file resolves to it by the rule the
+	// track rows use, so the count matches the rows, not every file in the album.
 	const localTrackMap = $derived(buildSortedTrackMap(localMatch?.tracks ?? []));
 	const localTracks = $derived([...(localMatch?.tracks ?? [])].sort(compareDiscTrack));
 	const localHeldCount = $derived(
-		buildRenderedTrackSections(tracksInfo.tracks)
-			.flatMap((section) => section.items)
-			.filter(
-				({ track, globalIndex }) =>
-					resolveSourceTrack(
-						normalizeDiscNumber(track.disc_number),
-						track.position,
-						globalIndex,
-						localTrackMap,
-						localTracks
-					) !== null
-			).length
+		keptCount ??
+			buildRenderedTrackSections(tracksInfo.tracks)
+				.flatMap((section) => section.items)
+				.filter(
+					({ track, globalIndex }) =>
+						resolveSourceTrack(
+							normalizeDiscNumber(track.disc_number),
+							track.position,
+							globalIndex,
+							localTrackMap,
+							localTracks
+						) !== null
+				).length
 	);
 </script>
 

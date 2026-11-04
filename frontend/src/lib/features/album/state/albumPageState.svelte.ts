@@ -163,7 +163,7 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 	const localMatch = $derived<LocalAlbumMatch | null>(localMatchQuery.data ?? null);
 	// The download buttons follow the admin's "Library downloads" setting.
 	const downloadAccessQuery = getDownloadAccessQuery(userId);
-	const downloadAllowed = $derived(downloadAccessQuery.data?.allowed !== false);
+	const downloadAllowed = $derived(downloadAccessQuery.data?.allowed === true);
 	const jellyfinMatch = $derived(jellyfinMatchQuery.data ?? null);
 	const navidromeMatch = $derived(navidromeMatchQuery.data ?? null);
 	const plexMatch = $derived(plexMatchQuery.data ?? null);

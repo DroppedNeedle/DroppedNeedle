@@ -62,7 +62,7 @@
 			albumName = editLink.album_name;
 			artistName = editLink.artist_name;
 			youtubeUrl = editLink.video_id ? `https://www.youtube.com/watch?v=${editLink.video_id}` : '';
-			coverUrl = getCoverUrl(editLink.cover_url, editLink.album_id);
+			coverUrl = getCoverUrl(editLink.cover_url, editLink.album_id) ?? '';
 			selectedAlbumId = editLink.album_id;
 			mode = 'manual';
 		} else if (open && !editLink) {
@@ -99,7 +99,7 @@
 	function selectAlbum(album: Album): void {
 		albumName = album.title;
 		artistName = album.artist || '';
-		coverUrl = getCoverUrl(album.cover_url, album.musicbrainz_id);
+		coverUrl = getCoverUrl(album.cover_url, album.musicbrainz_id) ?? '';
 		selectedAlbumId = album.musicbrainz_id;
 		searchTerm = '';
 		searchQuery = '';

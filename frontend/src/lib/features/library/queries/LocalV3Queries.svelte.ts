@@ -13,15 +13,14 @@ import { readNow } from '$lib/queries/readNow';
 import { STALE_LIVE } from '$lib/queries/staleTime';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { PERSIST } from '$lib/queries/persistedCache';
+import type { AlbumView } from './types';
 
 export type SuggestionTrackV3 = components['schemas']['SuggestionTrack'];
-export type LocalTrackV3 = components['schemas']['TrackView'];
-type AlbumViewV3 = components['schemas']['AlbumView'];
 
 // The card fields of a library album. The caller's favorite flag is left
 // out, so the shared local keys never cache one user's flags for the next.
 export type AlbumCardV3 = Pick<
-	AlbumViewV3,
+	AlbumView,
 	| 'id'
 	| 'title'
 	| 'artist_name'
@@ -36,7 +35,7 @@ export type AlbumCardV3 = Pick<
 	| 'date_added'
 >;
 
-function toCard(album: AlbumViewV3): AlbumCardV3 {
+function toCard(album: AlbumView): AlbumCardV3 {
 	return {
 		id: album.id,
 		title: album.title,

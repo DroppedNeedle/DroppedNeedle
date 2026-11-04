@@ -2,8 +2,8 @@ import { getApiUrl } from '$lib/api/api-utils';
 import { albumArtworkPath, coverPath } from '$lib/api/covers';
 import type { QueueItem, SourceType } from '$lib/features/player/playback/types';
 import type { components } from '$lib/api/v3/openapi';
-import type { CrateReason, CrateTrack } from '$lib/features/library/queries/types';
-import type { AlbumCardV3, LocalTrackV3, SuggestionTrackV3 } from './LocalV3Queries.svelte';
+import type { CrateReason, CrateTrack, TrackView } from '$lib/features/library/queries/types';
+import type { AlbumCardV3, SuggestionTrackV3 } from './LocalV3Queries.svelte';
 
 type SearchItemV3 = components['schemas']['SearchResultItem'];
 
@@ -113,7 +113,7 @@ export function suggestionToCrateTrack(
 
 // Queue item for one matched album track. The v3 track id is the stream
 // key, matching the discovery queue builder for local tracks.
-export function matchTrackToQueueItem(track: LocalTrackV3, coverUrl: string | null): QueueItem {
+export function matchTrackToQueueItem(track: TrackView, coverUrl: string | null): QueueItem {
 	return {
 		trackSourceId: track.id,
 		trackName: track.title,

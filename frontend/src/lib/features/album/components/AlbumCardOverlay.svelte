@@ -41,8 +41,8 @@
 	);
 
 	const downloadAccessQuery = getDownloadAccessQuery(() => authStore.user?.id);
-	// Fail-open on a missing bit (loading / legacy responses), like the header button.
-	const downloadAllowed = $derived(downloadAccessQuery.data?.allowed !== false);
+	// Download offers wait for the admin's "Library downloads" answer.
+	const downloadAllowed = $derived(downloadAccessQuery.data?.allowed === true);
 
 	function getMeta(): AlbumCardMeta {
 		return { mbid, albumName, artistName, coverUrl, artistId };

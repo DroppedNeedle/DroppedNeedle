@@ -1,9 +1,6 @@
 import type { components } from '$lib/api/v3/openapi';
 
-// Transitional v1 catalog shapes, copied verbatim from the deleted $lib/types
-// (v3 HEAD). Producers (album/library routes) still emit these; the catalog
-// slices re-home them when those surfaces migrate to v3 views. Player files
-// import from here, never from $lib/types.
+// The track and link shapes the player reads.
 export type LocalTrackInfo = {
 	track_file_id: string;
 	title: string;
@@ -30,14 +27,6 @@ export type YouTubeTrackLink = {
 };
 
 export type TrackView = components['schemas']['TrackView'];
-
-export type LocalAlbumMatch = {
-	found: boolean;
-	musicbrainz_id?: string | null;
-	tracks: LocalTrackInfo[];
-	total_size_bytes: number;
-	primary_format?: string | null;
-};
 
 export type PlaybackState =
 	'idle' | 'loading' | 'playing' | 'paused' | 'ended' | 'buffering' | 'error';

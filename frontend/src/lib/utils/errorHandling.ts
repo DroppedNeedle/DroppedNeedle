@@ -9,9 +9,8 @@ export function isAbortError(error: unknown): boolean {
 	);
 }
 
-export function getCoverUrl(coverUrl: string | null | undefined, albumId: string): string {
-	if (isValidMbid(albumId)) {
-		return coverSrc('release-group', albumId, 250);
-	}
-	return coverUrl ? getApiUrl(coverUrl) : coverSrc('release-group', albumId, 250);
+/** The release group's cover when `albumId` is a MusicBrainz id, else the given one, else none. */
+export function getCoverUrl(coverUrl: string | null | undefined, albumId: string): string | null {
+	if (isValidMbid(albumId)) return coverSrc('release-group', albumId, 250);
+	return coverUrl ? getApiUrl(coverUrl) : null;
 }

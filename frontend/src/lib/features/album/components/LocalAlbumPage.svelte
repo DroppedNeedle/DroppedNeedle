@@ -59,7 +59,7 @@
 	const hasFiles = $derived((album?.track_count ?? 0) > 0);
 	// The download buttons follow the admin's "Library downloads" setting.
 	const downloadAccessQuery = getDownloadAccessQuery(() => authStore.user?.id);
-	const downloadAllowed = $derived(downloadAccessQuery.data?.allowed !== false);
+	const downloadAllowed = $derived(downloadAccessQuery.data?.allowed === true);
 	const contributionMutation = createLibraryContributionMutation();
 
 	// One ratings read for the album and its tracks, once the tracks are in.

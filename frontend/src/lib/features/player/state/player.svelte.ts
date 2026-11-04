@@ -259,6 +259,8 @@ function createPlayerStore() {
 		if (kind !== 'retry') recovery.directFailed = false;
 		const prevProgress = progress,
 			prevItem = currentSource ? (queue[currentIndex] ?? null) : null;
+		// A reload of the same track picks up where the listener was.
+		const resumeAt = kind === 'fresh' ? 0 : prevProgress;
 		currentIndex = index;
 		playbackState = 'loading';
 		progress = 0;
@@ -299,6 +301,10 @@ function createPlayerStore() {
 				source.play();
 			}
 			await loadPromise;
+			if (isCurrent(gen) && resumeAt > 0) {
+				source.seekTo(resumeAt);
+				progress = resumeAt;
+			}
 			if (isCurrent(gen) && activeItem.sourceType === 'youtube') {
 				source.play();
 			}

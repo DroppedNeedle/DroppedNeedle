@@ -258,6 +258,7 @@
 						albumLink={state.albumLink}
 						jellyfinMatch={state.jellyfinMatch}
 						localMatch={state.localMatchForPlayback}
+						keptCount={state.editionCounts?.kept}
 						navidromeMatch={state.navidromeMatch}
 						plexMatch={state.plexMatch}
 						loadingJellyfin={state.loadingJellyfin}
