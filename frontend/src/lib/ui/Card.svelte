@@ -3,7 +3,8 @@
 	`bordered` is a framed panel, `raised` a tile in a grid. With `href` the
 	whole card is one link named by its title, so it holds no other controls.
 	A caller's `aria-*` attributes pass through, so a `section` card can be
-	named by its own heading with `aria-labelledby`.
+	named by its own heading with `aria-labelledby`. `ref` binds the card's
+	own element.
 	Replaces the hand-written `card` blocks and the rounded panels doing a
 	card's job. A heading or a row of buttons the props cannot hold uses
 	CardTitle or CardActions inside the card.
@@ -24,6 +25,7 @@
 		actions?: Snippet;
 		href?: string;
 		as?: 'div' | 'article' | 'section';
+		ref?: HTMLElement | null;
 		children?: Snippet;
 	}
 
@@ -35,6 +37,7 @@
 		actions,
 		href,
 		as = 'div',
+		ref = $bindable(null),
 		class: className = '',
 		children,
 		...rest
@@ -73,6 +76,7 @@
 
 <svelte:element
 	this={href !== undefined ? 'a' : as}
+	bind:this={ref}
 	{...rest}
 	{href}
 	class={classes}

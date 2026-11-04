@@ -4,7 +4,8 @@
 	same mask back as "keep what you have". While the value is the mask the
 	field says a secret is saved, and the first edit starts from empty so a
 	half-edited mask is never saved as the new secret. Emptying the field
-	clears the secret, as it does today.
+	clears the secret, as it does today. `revealed` lets the page show the
+	value, such as a key it just generated for the user to copy.
 	Replaces the `showKey`/`showPassword` blocks and the per-tab mask handling.
 -->
 <script lang="ts">
@@ -22,6 +23,8 @@
 		placeholder?: string;
 		disabled?: boolean;
 		autocomplete?: FullAutoFill;
+		/** Shows the value instead of dots. */
+		revealed?: boolean;
 	}
 
 	let {
@@ -32,10 +35,10 @@
 		error,
 		placeholder,
 		disabled = false,
-		autocomplete = 'off'
+		autocomplete = 'off',
+		revealed = $bindable(false)
 	}: Props = $props();
 
-	let revealed = $state(false);
 	const stored = $derived(mask !== undefined && value === mask);
 	const shown = $derived(revealed && !stored);
 

@@ -381,6 +381,21 @@ textarea {
 	touch-action: manipulation;
 }
 
+/* A checked plain checkbox fills with the primary colour. daisyUI leaves it
+   clear with a thin tick, which reads as unchecked in the light theme. */
+.checkbox:not(
+		.checkbox-secondary,
+		.checkbox-accent,
+		.checkbox-neutral,
+		.checkbox-info,
+		.checkbox-success,
+		.checkbox-warning,
+		.checkbox-error
+	):is(:checked, [aria-checked='true']) {
+	--input-color: var(--color-primary);
+	color: var(--color-primary-content);
+}
+
 /* modal titles use the display face, like the app's headings */
 .modal-box :is(h1, h2, h3) {
 	font-family: var(--font-display);

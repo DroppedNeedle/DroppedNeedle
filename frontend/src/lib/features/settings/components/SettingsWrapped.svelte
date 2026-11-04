@@ -19,7 +19,11 @@
 		createSaveWrappedSettingsMutation()
 	);
 
+	let keyShown = $state(false);
+
+	// A new key is shown, since it has to be copied into the other service.
 	function generateKey(draft: WrappedSettings) {
+		keyShown = true;
 		const bytes = crypto.getRandomValues(new Uint8Array(32));
 		draft.api_key = Array.from(bytes)
 			.map((b) => b.toString(16).padStart(2, '0'))
@@ -61,6 +65,7 @@
 						mask={SECRET_MASK}
 						placeholder="No key set"
 						bind:value={draft.api_key}
+						bind:revealed={keyShown}
 						error={section.fieldError('api_key', 'API key')}
 					/>
 

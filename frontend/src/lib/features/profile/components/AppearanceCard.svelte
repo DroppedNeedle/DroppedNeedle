@@ -2,11 +2,16 @@
 	import { SunMoon } from 'lucide-svelte';
 	import { themeStore, type ThemePreference } from '$lib/stores/theme.svelte';
 	import Card from '$lib/ui/Card.svelte';
+	import RadioCards from '$lib/ui/RadioCards.svelte';
 
-	const options: { value: ThemePreference; label: string; hint: string }[] = [
-		{ value: 'dark', label: 'Dark', hint: 'The default look.' },
-		{ value: 'light', label: 'Light', hint: 'Light surfaces with darker accents.' },
-		{ value: 'system', label: 'System', hint: "Follow this device's light or dark setting." }
+	const options: { value: ThemePreference; label: string; description: string }[] = [
+		{ value: 'dark', label: 'Dark', description: 'The default look.' },
+		{ value: 'light', label: 'Light', description: 'Light surfaces with darker accents.' },
+		{
+			value: 'system',
+			label: 'System',
+			description: "Follow this device's light or dark setting."
+		}
 	];
 </script>
 
@@ -19,26 +24,13 @@
 	</h2>
 
 	<Card variant="bordered" padding="md">
-		<fieldset class="grid gap-3 sm:grid-cols-3">
-			<legend class="sr-only">Theme</legend>
-			{#each options as option (option.value)}
-				<label
-					class="flex cursor-pointer items-start gap-3 rounded-lg border border-base-300/50 bg-base-100/30 p-4"
-				>
-					<input
-						class="radio radio-primary radio-sm mt-0.5"
-						type="radio"
-						name="theme"
-						checked={themeStore.preference === option.value}
-						onchange={() => themeStore.set(option.value)}
-					/>
-					<span>
-						<span class="block text-sm font-medium">{option.label}</span>
-						<span class="mt-1 block text-xs text-base-content/50">{option.hint}</span>
-					</span>
-				</label>
-			{/each}
-		</fieldset>
+		<RadioCards
+			label="Theme"
+			{options}
+			value={themeStore.preference}
+			onchange={(value) => themeStore.set(value)}
+			class="sm:grid-cols-3"
+		/>
 		<p class="mt-3 px-1 text-xs text-base-content/40">Saved in this browser only.</p>
 	</Card>
 </section>
