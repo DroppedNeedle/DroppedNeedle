@@ -122,6 +122,23 @@ describe('local album page track menu', () => {
 	});
 });
 
+describe('local album page back button', () => {
+	it('goes back to the page it came from, not to the album list', async () => {
+		expect.assertions(2);
+		fakeLibrary({ downloadAllowed: true });
+		const length = vi.spyOn(window.history, 'length', 'get').mockReturnValue(2);
+		const back = vi.spyOn(window.history, 'back').mockImplementation(() => {});
+		await renderWithQuery(LocalAlbumPage, { albumId: album.id });
+
+		await page.getByRole('button', { name: 'Go back' }).click();
+		expect(back).toHaveBeenCalledOnce();
+		const { goto } = await import('$app/navigation');
+		expect(goto).not.toHaveBeenCalledWith('/library/albums');
+		back.mockRestore();
+		length.mockRestore();
+	});
+});
+
 describe('local album page with a pending review', () => {
 	const pending = { ...album, pending_review_id: 'review-1' };
 	const guess: RouteData<'GET /api/v3/library/albums/{album_id}/edition'> = {

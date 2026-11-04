@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { Check, ChevronLeft, Disc3, FileUp, FolderTree, Play } from 'lucide-svelte';
+	import { Check, Disc3, FileUp, FolderTree, Play } from 'lucide-svelte';
 	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import NoFilesBadge from '$lib/features/library/components/NoFilesBadge.svelte';
 	import LocalIdentityBadge from '$lib/features/library/components/LocalIdentityBadge.svelte';
@@ -16,6 +16,7 @@
 	import AlbumHero from './AlbumHero.svelte';
 	import AlbumHeroSkeleton from './AlbumHeroSkeleton.svelte';
 	import AlbumSourceBar from './AlbumSourceBar.svelte';
+	import BackButton from '$lib/ui/BackButton.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import ContextMenu, { type MenuItem } from '$lib/ui/ContextMenu.svelte';
@@ -186,14 +187,7 @@
 <svelte:head><title>{album?.title ?? 'Album'} · Library</title></svelte:head>
 
 {#snippet back()}
-	<Button
-		variant="ghost"
-		size="sm"
-		icon={ChevronLeft}
-		onclick={() => goto(withBasePath('/library/albums'))}
-	>
-		Albums
-	</Button>
+	<BackButton fallback="/library/albums" />
 {/snippet}
 
 <div class="w-full">
