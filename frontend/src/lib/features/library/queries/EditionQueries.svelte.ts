@@ -17,6 +17,7 @@ import {
 	ratingsChanged,
 	repairsChanged
 } from '$lib/queries/effects';
+import { playerStore } from '$lib/features/player/state/player.svelte';
 import { createInfiniteQuery, createQuery, skipToken } from '@tanstack/svelte-query';
 import type { Getter } from 'runed';
 
@@ -293,6 +294,7 @@ export function createRemoveEditionExtrasMutation() {
 					expected_identity_revision: identityRevision
 				}
 			),
+		onSuccess: (result) => playerStore.dropTracks(result.removed_track_ids),
 		effects: (_data, { localId }) => {
 			const userId = authStore.user?.id;
 			return [...editionScope({ userId, localId }), albumRemovalsChanged(userId)];

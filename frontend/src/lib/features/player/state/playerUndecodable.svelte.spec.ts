@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { userEvent } from 'vitest/browser';
 
+import { api } from '$lib/api/client';
 import { setAudioElement } from '$lib/features/player/playback/audioElement';
 import type { QueueItem } from '$lib/features/player/playback/types';
 import { toastStore } from '$lib/stores/toast';
@@ -68,6 +69,8 @@ describe('a track the browser cannot play', () => {
 			refused.includes(type) ? '' : 'probably'
 		);
 		vi.spyOn(toastStore, 'notify').mockImplementation(() => {});
+		// The library still has every track here: a failure is the file's, not a removal.
+		vi.spyOn(api, 'head').mockResolvedValue(new Response(null, { status: 200 }));
 	});
 
 	afterEach(() => {

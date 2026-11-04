@@ -78,8 +78,10 @@ const MAX_PROGRESS_STEP_S = 5;
  * the same steps, and only real playback clears the count. Thirty seconds heard since the last
  * load earns the steps back, so a dropped connection on a long track retries each time. A decode
  * error after that point is the file's, and is not retried: it would fail there again, for ever.
+ * A library track that fails first asks whether the library still has it ('probing'); one it
+ * no longer has leaves the queue instead.
  */
-type RecoveryPhase = 'idle' | 'loading' | 'retrying' | 'fallingBack' | 'failed';
+type RecoveryPhase = 'idle' | 'loading' | 'probing' | 'retrying' | 'fallingBack' | 'failed';
 type LoadKind = 'fresh' | 'retry' | 'fallback';
 
 interface Recovery {
@@ -323,9 +325,50 @@ function createPlayerStore() {
 		return alternates[0] ?? null;
 	}
 
+	/**
+	 * Whether the library still has a local item: its stream answers anything but not found.
+	 * A failed check counts as still there, so the item recovers as before.
+	 */
+	async function stillInLibrary(item: QueueItem): Promise<boolean> {
+		const path = prefetchPathFor(item);
+		if (!path) return true;
+		try {
+			return (await api.head(path)).status !== 404;
+		} catch {
+			return true;
+		}
+	}
+
+	/** Removes the current item, which left the library, and plays on with the next one. */
+	function dropCurrent(trackName: string): void {
+		toastStore.notify(`"${trackName}" is no longer in the library`, 'info');
+		if (queue.length <= 1 || getNextIndex() === null) {
+			playerStore.stop();
+			return;
+		}
+		playerStore.removeFromQueue(currentIndex);
+	}
+
 	function handleTrackError(gen: number, error?: { code: string; message: string }): void {
 		// A failed load reports twice, through the source and through its promise.
-		if (!isCurrent(gen) || recovery.phase === 'failed') return;
+		if (!isCurrent(gen) || recovery.phase === 'failed' || recovery.phase === 'probing') return;
+		const item = queue[currentIndex];
+		// A first failure of a library track may mean it left the library: ask before a retry.
+		if (item?.sourceType === 'local' && recovery.phase === 'loading') {
+			const trackName = nowPlaying?.trackName ?? item.trackName ?? 'Unknown track';
+			recovery.phase = 'probing';
+			void stillInLibrary(item).then((kept) => {
+				if (!isCurrent(gen)) return;
+				recovery.phase = 'loading';
+				if (kept) recoverTrack(gen, error);
+				else dropCurrent(trackName);
+			});
+			return;
+		}
+		recoverTrack(gen, error);
+	}
+
+	function recoverTrack(gen: number, error?: { code: string; message: string }): void {
 		const index = currentIndex;
 		const item = queue[index];
 		const trackName = nowPlaying?.trackName ?? item?.trackName ?? 'Unknown track';
@@ -697,6 +740,26 @@ function createPlayerStore() {
 			shuffleOrder = r.newShuffleOrder;
 			persist();
 			showQueueMutationToast('next', items.length);
+		},
+
+		/** Takes library tracks a removal took out of the library out of the queue. */
+		dropTracks(trackIds: readonly string[]): void {
+			const gone = new Set(trackIds);
+			const isGone = (item: QueueItem | undefined) =>
+				item?.sourceType === 'local' && gone.has(item.trackSourceId);
+			// From the end, so every index still names its item; the current one goes last.
+			for (let index = queue.length - 1; index >= 0; index--) {
+				if (index === currentIndex || !isGone(queue[index])) continue;
+				const r = removeAtIndex(queue, index, currentIndex, shuffleEnabled, shuffleOrder);
+				queue = r.newQueue;
+				currentIndex = r.newIndex;
+				shuffleOrder = r.newShuffleOrder;
+			}
+			if (isGone(queue[currentIndex])) {
+				this.removeFromQueue(currentIndex);
+			} else {
+				persist();
+			}
 		},
 
 		removeFromQueue(index: number): void {

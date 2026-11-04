@@ -824,4 +824,33 @@ describe('track failure reporting', () => {
 			'warning'
 		);
 	});
+
+	it('drops a local track the library no longer has, with one notice', async () => {
+		mockApiHead.mockResolvedValue(new Response(null, { status: 404 }));
+		playerStore.playQueue(singleSourceItems(3));
+		await vi.advanceTimersByTimeAsync(0);
+
+		// One failed load reports more than once.
+		fireCurrentTrackError();
+		fireCurrentTrackError();
+		await vi.advanceTimersByTimeAsync(0);
+
+		expect(mockApiHead).toHaveBeenCalledTimes(1);
+		expect(playerStore.queue.map((item) => item.trackSourceId)).toEqual(['vid-1', 'vid-2']);
+		expect(playerStore.nowPlaying?.trackName).toBe('Track 2');
+		expect(toastStore.notify).toHaveBeenCalledTimes(1);
+		expect(toastStore.notify).toHaveBeenCalledWith('"Track 1" is no longer in the library', 'info');
+	});
+
+	it('takes the tracks a removal took out of the queue', async () => {
+		playerStore.playQueue(singleSourceItems(3));
+		await vi.advanceTimersByTimeAsync(0);
+
+		playerStore.dropTracks(['vid-0', 'vid-2', 'not-queued']);
+		await vi.advanceTimersByTimeAsync(0);
+
+		expect(playerStore.queue.map((item) => item.trackSourceId)).toEqual(['vid-1']);
+		expect(playerStore.currentIndex).toBe(0);
+		expect(playerStore.nowPlaying?.trackName).toBe('Track 2');
+	});
 });
