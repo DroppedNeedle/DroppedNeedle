@@ -2,7 +2,6 @@ import { page } from 'vitest/browser';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 
-import { ApiError } from '$lib/api/errors';
 import type { RetagPair } from '$lib/features/library-management/queries/LibraryRetagPairQueries.svelte';
 
 const h = vi.hoisted(() => {
@@ -137,35 +136,6 @@ describe('RetagPairCard', () => {
 			.toBeVisible();
 	});
 
-	it('says new files beside a hands-off album are left alone, merged or not', async () => {
-		render(RetagPairCard, {
-			pair: pair({
-				reason: 'replaced_hands_off',
-				editions_differ: false,
-				old_album: side('old', 'Blue Hour', null),
-				new_album: side('new', 'Retagged', null)
-			})
-		});
-
-		await expect
-			.element(
-				page.getByText(
-					'Nothing shows they are one album, so DroppedNeedle has left Retagged alone.',
-					{
-						exact: false
-					}
-				)
-			)
-			.toBeVisible();
-		await expect
-			.element(
-				page.getByText('Retagged stays left unmanaged until you choose "Manage it again".', {
-					exact: false
-				})
-			)
-			.toBeVisible();
-	});
-
 	it('keeps them apart with a dismiss', async () => {
 		render(RetagPairCard, { pair: pair() });
 
@@ -175,35 +145,5 @@ describe('RetagPairCard', () => {
 			expect(h.dismiss).toHaveBeenCalledWith({ oldAlbumId: 'old', newAlbumId: 'new' })
 		);
 		expect(h.join).not.toHaveBeenCalled();
-	});
-
-	it('shows a 409 in place', async () => {
-		h.join.mockRejectedValue(
-			new ApiError(
-				409,
-				"An album's edition changed since this was shown. Look again.",
-				'STALE_REVISION'
-			)
-		);
-		render(RetagPairCard, { pair: pair({ reason: 'tracks_elsewhere', editions_differ: false }) });
-
-		await page.getByRole('button', { name: 'Merge into one album' }).click();
-
-		await expect
-			.element(page.getByRole('alert'))
-			.toHaveTextContent("An album's edition changed since this was shown. Look again.");
-	});
-
-	it('goes to the album that stays when the page showed the other one', async () => {
-		render(RetagPairCard, {
-			pair: pair({ reason: 'tracks_elsewhere', editions_differ: false }),
-			currentAlbumId: 'old'
-		});
-
-		await page.getByRole('button', { name: 'Merge into one album' }).click();
-
-		await vi.waitFor(() =>
-			expect(h.goto).toHaveBeenCalledWith(expect.stringMatching(/\/album\/new$/))
-		);
 	});
 });

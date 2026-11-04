@@ -62,69 +62,73 @@ describe('selectBestSource', () => {
 });
 
 describe('buildQueueItem', () => {
-	it('builds a queue item from local track data', () => {
-		expect.assertions(6);
-		const data: TrackSourceData = {
-			trackPosition: 1,
-			trackTitle: 'Local Song',
-			trackLength: 240,
-			localTrack
-		};
-		const item = buildQueueItem(baseMeta, data);
-		expect(item).not.toBeNull();
-		expect(item!.trackName).toBe('Local Song');
-		expect(item!.sourceType).toBe('local');
-		expect(item!.albumId).toBe('album-1');
-		expect(item!.availableSources).toEqual(['local']);
-		expect(item!.duration).toBe(240);
-	});
+	it('builds a queue item from local track data, keeping its disc number', () => {
+		{
+			// Builds a queue item from local track data.
+			const data: TrackSourceData = {
+				trackPosition: 1,
+				trackTitle: 'Local Song',
+				trackLength: 240,
+				localTrack
+			};
+			const item = buildQueueItem(baseMeta, data);
+			expect(item).not.toBeNull();
+			expect(item!.trackName).toBe('Local Song');
+			expect(item!.sourceType).toBe('local');
+			expect(item!.albumId).toBe('album-1');
+			expect(item!.availableSources).toEqual(['local']);
+			expect(item!.duration).toBe(240);
+		}
 
-	it('preserves disc number on queue items', () => {
-		expect.assertions(1);
-		const item = buildQueueItem(baseMeta, {
-			trackPosition: 1,
-			discNumber: 2,
-			trackTitle: 'Disc Two Song',
-			localTrack
-		});
-		expect(item!.discNumber).toBe(2);
+		{
+			// Preserves disc number on queue items.
+			const item = buildQueueItem(baseMeta, {
+				trackPosition: 1,
+				discNumber: 2,
+				trackTitle: 'Disc Two Song',
+				localTrack
+			});
+			expect(item!.discNumber).toBe(2);
+		}
 	});
 });
 
 describe('disc-aware track helpers', () => {
-	it('builds a stable composite key from disc and track number', () => {
-		expect.assertions(2);
-		expect(getDiscTrackKey({ disc_number: 2, position: 5 })).toBe('2:5');
-		expect(getDiscTrackKey({ track_number: 3 })).toBe('1:3');
-	});
+	it('keys, sorts and carries tracks by disc before track number', () => {
+		{
+			// Builds a stable composite key from disc and track number.
+			expect(getDiscTrackKey({ disc_number: 2, position: 5 })).toBe('2:5');
+			expect(getDiscTrackKey({ track_number: 3 })).toBe('1:3');
+		}
 
-	it('sorts tracks by disc before track number', () => {
-		expect.assertions(1);
-		const sorted = [
-			{ disc_number: 2, track_number: 1 },
-			{ disc_number: 1, track_number: 3 },
-			{ disc_number: 1, track_number: 1 }
-		].sort(compareDiscTrack);
-		expect(sorted.map((track) => getDiscTrackKey(track))).toEqual(['1:1', '1:3', '2:1']);
-	});
+		{
+			// Sorts tracks by disc before track number.
+			const sorted = [
+				{ disc_number: 2, track_number: 1 },
+				{ disc_number: 1, track_number: 3 },
+				{ disc_number: 1, track_number: 1 }
+			].sort(compareDiscTrack);
+			expect(sorted.map((track) => getDiscTrackKey(track))).toEqual(['1:1', '1:3', '2:1']);
+		}
 
-	it('carries disc number through youtube queue items', () => {
-		expect.assertions(1);
-		const item = buildQueueItemFromYouTube(
-			{
-				album_id: 'album-1',
-				album_name: 'Test Album',
-				artist_name: 'Artist A',
-				track_name: 'Disc Two Song',
-				track_number: 1,
-				disc_number: 2,
-				video_id: 'video-1',
-				embed_url: 'https://example.com/embed/video-1',
-				created_at: '2024-01-01T00:00:00Z'
-			},
-			baseMeta
-		);
-		expect(item.discNumber).toBe(2);
+		{
+			// Carries disc number through youtube queue items.
+			const item = buildQueueItemFromYouTube(
+				{
+					album_id: 'album-1',
+					album_name: 'Test Album',
+					artist_name: 'Artist A',
+					track_name: 'Disc Two Song',
+					track_number: 1,
+					disc_number: 2,
+					video_id: 'video-1',
+					embed_url: 'https://example.com/embed/video-1',
+					created_at: '2024-01-01T00:00:00Z'
+				},
+				baseMeta
+			);
+			expect(item.discNumber).toBe(2);
+		}
 	});
 });
 
@@ -137,20 +141,22 @@ describe('buildRemoteQueueItems', () => {
 });
 
 describe('buildQueueItemsFromLocal', () => {
-	it('nulls coverRemoteUrl for local proxy paths', () => {
-		expect.assertions(1);
-		const items = buildQueueItemsFromLocal([localTrack], {
-			...baseMeta,
-			coverUrl: '/api/v3/covers/release-group/album-1?size=250'
-		});
-		expect(items[0].coverRemoteUrl).toBeNull();
-	});
+	it('keeps a remote https cover and drops a local proxy path', () => {
+		{
+			// Nulls coverRemoteUrl for local proxy paths.
+			const items = buildQueueItemsFromLocal([localTrack], {
+				...baseMeta,
+				coverUrl: '/api/v3/covers/release-group/album-1?size=250'
+			});
+			expect(items[0].coverRemoteUrl).toBeNull();
+		}
 
-	it('preserves coverRemoteUrl for https remote covers', () => {
-		expect.assertions(1);
-		const remoteCover = 'https://r2.theaudiodb.com/images/media/album/thumb/abc123.jpg';
-		const items = buildQueueItemsFromLocal([localTrack], { ...baseMeta, coverUrl: remoteCover });
-		expect(items[0].coverRemoteUrl).toBe(remoteCover);
+		{
+			// Preserves coverRemoteUrl for https remote covers.
+			const remoteCover = 'https://r2.theaudiodb.com/images/media/album/thumb/abc123.jpg';
+			const items = buildQueueItemsFromLocal([localTrack], { ...baseMeta, coverUrl: remoteCover });
+			expect(items[0].coverRemoteUrl).toBe(remoteCover);
+		}
 	});
 });
 
@@ -186,28 +192,30 @@ describe('buildDiscoveryQueueFromLocal', () => {
 		row_revision: 1
 	};
 
-	it('carries per-row album/artist/cover context and a local stream url', () => {
-		expect.assertions(11);
-		const [item] = buildDiscoveryQueueFromLocal([nativeTrack]);
-		expect(item.trackSourceId).toBe('file-7');
-		expect(item.trackName).toBe('Flat Song');
-		expect(item.artistName).toBe('Flat Artist');
-		expect(item.albumName).toBe('Cross Album');
-		expect(item.albumId).toBe('local-album-9');
-		expect(item.sourceType).toBe('local');
-		expect(streamUrlFor(item)).toBe('/api/v3/stream/local/file-7');
-		expect(item.coverUrl).toBe('/cover/local-album-9');
-		expect(item.format).toBe('flac');
-		expect(item.discNumber).toBe(2);
-		expect(item.duration).toBe(200);
-	});
+	it("carries each row's own context and stream, keeping the local album id and a valid disc", () => {
+		{
+			// Carries per-row album/artist/cover context and a local stream url.
+			const [item] = buildDiscoveryQueueFromLocal([nativeTrack]);
+			expect(item.trackSourceId).toBe('file-7');
+			expect(item.trackName).toBe('Flat Song');
+			expect(item.artistName).toBe('Flat Artist');
+			expect(item.albumName).toBe('Cross Album');
+			expect(item.albumId).toBe('local-album-9');
+			expect(item.sourceType).toBe('local');
+			expect(streamUrlFor(item)).toBe('/api/v3/stream/local/file-7');
+			expect(item.coverUrl).toBe('/cover/local-album-9');
+			expect(item.format).toBe('flac');
+			expect(item.discNumber).toBe(2);
+			expect(item.duration).toBe(200);
+		}
 
-	it('keeps the local album ID and normalizes an invalid disc number', () => {
-		expect.assertions(3);
-		const [item] = buildDiscoveryQueueFromLocal([{ ...nativeTrack, disc_number: 0 }]);
-		expect(item.albumId).toBe('local-album-9');
-		expect(item.coverUrl).toBe('/cover/local-album-9');
-		expect(item.discNumber).toBe(1);
+		{
+			// Keeps the local album ID and normalizes an invalid disc number.
+			const [item] = buildDiscoveryQueueFromLocal([{ ...nativeTrack, disc_number: 0 }]);
+			expect(item.albumId).toBe('local-album-9');
+			expect(item.coverUrl).toBe('/cover/local-album-9');
+			expect(item.discNumber).toBe(1);
+		}
 	});
 });
 
@@ -234,77 +242,79 @@ describe('playlistTrackToQueueItem', () => {
 		recording_mbid: null
 	};
 
-	it('maps local track to QueueItem with its stream address', () => {
-		expect.assertions(4);
-		const item = playlistTrackToQueueItem(basePlaylistTrack)!;
-		expect(item).not.toBeNull();
-		expect(item.sourceType).toBe('local');
-		expect(streamUrlFor(item)).toBe('/api/v3/stream/local/42');
-		expect(item.trackName).toBe('Test Track');
-	});
+	it('maps playlist rows to queue items, preferring a local copy, and skips rows with nothing to play', () => {
+		{
+			// Maps local track to QueueItem with its stream address.
+			const item = playlistTrackToQueueItem(basePlaylistTrack)!;
+			expect(item).not.toBeNull();
+			expect(item.sourceType).toBe('local');
+			expect(streamUrlFor(item)).toBe('/api/v3/stream/local/42');
+			expect(item.trackName).toBe('Test Track');
+		}
 
-	it('maps jellyfin track to QueueItem with its stream address', () => {
-		expect.assertions(3);
-		const track: PlaylistTrack = {
-			...basePlaylistTrack,
-			source_type: 'jellyfin',
-			track_source_id: 'jf-123',
-			format: 'opus'
-		};
-		const item = playlistTrackToQueueItem(track)!;
-		expect(item.sourceType).toBe('jellyfin');
-		expect(streamUrlFor(item)).toBe('/api/v3/stream/jellyfin/jf-123');
-		expect(item.format).toBe('opus');
-	});
+		{
+			// Maps jellyfin track to QueueItem with its stream address.
+			const track: PlaylistTrack = {
+				...basePlaylistTrack,
+				source_type: 'jellyfin',
+				track_source_id: 'jf-123',
+				format: 'opus'
+			};
+			const item = playlistTrackToQueueItem(track)!;
+			expect(item.sourceType).toBe('jellyfin');
+			expect(streamUrlFor(item)).toBe('/api/v3/stream/jellyfin/jf-123');
+			expect(item.format).toBe('opus');
+		}
 
-	it('returns null for tracks with null track_source_id', () => {
-		expect.assertions(1);
-		const track: PlaylistTrack = { ...basePlaylistTrack, track_source_id: null };
-		expect(playlistTrackToQueueItem(track)).toBeNull();
-	});
+		{
+			// Returns null for tracks with null track_source_id.
+			const track: PlaylistTrack = { ...basePlaylistTrack, track_source_id: null };
+			expect(playlistTrackToQueueItem(track)).toBeNull();
+		}
 
-	it('prefers local when library_file_id set and available_sources includes local', () => {
-		expect.assertions(4);
-		const track: PlaylistTrack = {
-			...basePlaylistTrack,
-			source_type: 'jellyfin',
-			track_source_id: 'jf-123',
-			available_sources: ['jellyfin', 'local'],
-			library_file_id: '77'
-		};
-		const item = playlistTrackToQueueItem(track)!;
-		expect(item.sourceType).toBe('local');
-		expect(item.trackSourceId).toBe('77');
-		expect(streamUrlFor(item)).toBe('/api/v3/stream/local/77');
-		expect(item.sourceIds).toEqual({ jellyfin: 'jf-123', local: '77' });
-	});
+		{
+			// Prefers local when library_file_id set and available_sources includes local.
+			const track: PlaylistTrack = {
+				...basePlaylistTrack,
+				source_type: 'jellyfin',
+				track_source_id: 'jf-123',
+				available_sources: ['jellyfin', 'local'],
+				library_file_id: '77'
+			};
+			const item = playlistTrackToQueueItem(track)!;
+			expect(item.sourceType).toBe('local');
+			expect(item.trackSourceId).toBe('77');
+			expect(streamUrlFor(item)).toBe('/api/v3/stream/local/77');
+			expect(item.sourceIds).toEqual({ jellyfin: 'jf-123', local: '77' });
+		}
 
-	it('plays linked row with empty track_source_id via library_file_id local fallback', () => {
-		expect.assertions(5);
-		const track: PlaylistTrack = {
-			...basePlaylistTrack,
-			source_type: 'spotify',
-			track_source_id: null,
-			available_sources: ['local'],
-			library_file_id: '42'
-		};
-		const item = playlistTrackToQueueItem(track)!;
-		expect(item).not.toBeNull();
-		expect(item.sourceType).toBe('local');
-		expect(item.trackSourceId).toBe('42');
-		expect(streamUrlFor(item)).toBe('/api/v3/stream/local/42');
-		expect(item.sourceIds).toEqual({ local: '42' });
-	});
+		{
+			// Plays linked row with empty track_source_id via library_file_id local fallback.
+			const track: PlaylistTrack = {
+				...basePlaylistTrack,
+				source_type: 'spotify',
+				track_source_id: null,
+				available_sources: ['local'],
+				library_file_id: '42'
+			};
+			const item = playlistTrackToQueueItem(track)!;
+			expect(item).not.toBeNull();
+			expect(item.sourceType).toBe('local');
+			expect(item.trackSourceId).toBe('42');
+			expect(streamUrlFor(item)).toBe('/api/v3/stream/local/42');
+			expect(item.sourceIds).toEqual({ local: '42' });
+		}
 
-	it('returns null for empty row with no track_source_id and no local link', () => {
-		expect.assertions(1);
-		const track: PlaylistTrack = {
-			...basePlaylistTrack,
-			track_source_id: null,
-			available_sources: [],
-			library_file_id: null
-		};
-		expect(playlistTrackToQueueItem(track)).toBeNull();
+		{
+			// Returns null for empty row with no track_source_id and no local link.
+			const track: PlaylistTrack = {
+				...basePlaylistTrack,
+				track_source_id: null,
+				available_sources: [],
+				library_file_id: null
+			};
+			expect(playlistTrackToQueueItem(track)).toBeNull();
+		}
 	});
 });
 

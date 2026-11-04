@@ -32,9 +32,6 @@ const mockV3Get = vi.mocked(api.v3.GET) as unknown as Mock<
 const mockV3Post = vi.mocked(api.v3.POST) as unknown as Mock<
 	(...args: unknown[]) => Promise<unknown>
 >;
-const mockAuthenticatedV3Post = vi.mocked(api.v3.POST) as unknown as Mock<
-	(...args: unknown[]) => Promise<unknown>
->;
 const mockCreateMutation = vi.mocked(createAppMutation);
 const mockCreateQuery = vi.mocked(createQuery);
 
@@ -74,83 +71,61 @@ describe('toAuthUser', () => {
 	});
 });
 
-describe('auth mutations', () => {
-	it('local login posts username + password to the login endpoint', async () => {
-		mockV3Post.mockResolvedValue({ user: {} });
-		createLocalLoginMutation();
+describe('auth calls', () => {
+	it('send each sign-in, setup and recovery call to its endpoint', async () => {
+		const cases: [() => unknown, unknown, unknown[]][] = [
+			[
+				createLocalLoginMutation,
+				{ username: 'jane.doe', password: 'pw' },
+				[v3('/api/v3/auth/login'), { username: 'jane.doe', password: 'pw' }]
+			],
+			// Setup leaves the email out when none is given.
+			[
+				createSetupMutation,
+				{ display_name: 'A', username: 'a.admin', password: 'pw' },
+				[v3('/api/v3/auth/setup'), { display_name: 'A', username: 'a.admin', password: 'pw' }]
+			],
+			[
+				createOidcExchangeMutation,
+				{ code: 'abc' },
+				[v3('/api/v3/auth/oidc/exchange'), { code: 'abc' }]
+			],
+			// Recovery posts the code and new password without a session.
+			[
+				createPasswordRecoveryResetMutation,
+				{
+					username: 'alice',
+					recovery_code: 'AAAA-BBBB-CCCC-DDDD-EEEE',
+					new_password: 'a new secure password'
+				},
+				[
+					'/api/v3/auth/password-recovery/reset',
+					{
+						username: 'alice',
+						recovery_code: 'AAAA-BBBB-CCCC-DDDD-EEEE',
+						new_password: 'a new secure password'
+					}
+				]
+			],
+			// An admin makes a recovery code through the signed-in client.
+			[createPasswordRecoveryCodeMutation, 'user/1', ['/api/v3/admin/users/user%2F1/recovery-code']]
+		];
+		for (const [create, input, expected] of cases) {
+			mockV3Post.mockReset();
+			mockV3Post.mockResolvedValue({ user: {} });
+			create();
 
-		await lastMutationFn()({ username: 'jane.doe', password: 'pw' });
+			await lastMutationFn()(input);
 
-		expect(mockV3Post).toHaveBeenCalledWith(v3('/api/v3/auth/login'), {
-			username: 'jane.doe',
-			password: 'pw'
-		});
-	});
+			expect(mockV3Post).toHaveBeenCalledWith(...expected);
+		}
 
-	it('setup posts username and omits email when not provided', async () => {
-		mockV3Post.mockResolvedValue({ user: {} });
-		createSetupMutation();
-
-		await lastMutationFn()({ display_name: 'A', username: 'a.admin', password: 'pw' });
-
-		expect(mockV3Post).toHaveBeenCalledWith(v3('/api/v3/auth/setup'), {
-			display_name: 'A',
-			username: 'a.admin',
-			password: 'pw'
-		});
-	});
-
-	it('oidc exchange posts the authorization code', async () => {
-		mockV3Post.mockResolvedValue({ user: {} });
-		createOidcExchangeMutation();
-
-		await lastMutationFn()({ code: 'abc' });
-
-		expect(mockV3Post).toHaveBeenCalledWith(v3('/api/v3/auth/oidc/exchange'), { code: 'abc' });
-	});
-
-	it('password recovery posts the code and new password without a session', async () => {
-		mockV3Post.mockResolvedValue(undefined);
-		createPasswordRecoveryResetMutation();
-
-		await lastMutationFn()({
-			username: 'alice',
-			recovery_code: 'AAAA-BBBB-CCCC-DDDD-EEEE',
-			new_password: 'a new secure password'
-		});
-
-		expect(mockV3Post).toHaveBeenCalledWith('/api/v3/auth/password-recovery/reset', {
-			username: 'alice',
-			recovery_code: 'AAAA-BBBB-CCCC-DDDD-EEEE',
-			new_password: 'a new secure password'
-		});
-	});
-
-	it('admin recovery-code generation uses the authenticated client', async () => {
-		mockAuthenticatedV3Post.mockResolvedValue({
-			recovery_code: 'AAAA-BBBB-CCCC-DDDD-EEEE',
-			expires_at: 1784288400
-		});
-		createPasswordRecoveryCodeMutation();
-
-		await lastMutationFn()('user/1');
-
-		expect(mockAuthenticatedV3Post).toHaveBeenCalledWith(
-			'/api/v3/admin/users/user%2F1/recovery-code'
-		);
-	});
-});
-
-describe('AuthProvidersQuery', () => {
-	it('fetches the providers endpoint via the typed v3 client', async () => {
 		mockV3Get.mockResolvedValue({ local: true, plex: false, jellyfin: false, oidc: false });
 		getAuthProvidersQuery();
-
 		const factory = mockCreateQuery.mock.calls[
 			mockCreateQuery.mock.calls.length - 1
 		][0] as unknown as () => Record<string, unknown>;
-		const opts = factory();
-		const queryFn = opts.queryFn as (ctx: { signal: AbortSignal }) => Promise<unknown>;
+		const queryFn = factory().queryFn as (ctx: { signal: AbortSignal }) => Promise<unknown>;
 		await queryFn({ signal: new AbortController().signal });
 
 		expect(mockV3Get).toHaveBeenCalledTimes(1);

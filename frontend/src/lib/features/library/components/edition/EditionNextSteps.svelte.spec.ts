@@ -78,20 +78,16 @@ beforeEach(() => {
 });
 
 describe('the Tags step of a new edition', () => {
-	it('gives no tag write in a folder that keeps its own tags, and says why', async () => {
+	it('offers the tag write only in a folder the app writes, and says why not', async () => {
 		fakeApi({});
-		await show(status({ keeps_own_tags: true }));
-
+		const kept = await show(status({ keeps_own_tags: true }));
 		await expect.element(page.getByText('keeps its own tags')).toBeVisible();
 		await expect
 			.element(page.getByRole('button', { name: 'Preview the new tags' }))
 			.not.toBeInTheDocument();
-	});
+		kept.unmount();
 
-	it('offers the tag write in a folder the app writes', async () => {
-		fakeApi({});
 		await show(status());
-
 		await expect.element(page.getByRole('button', { name: 'Preview the new tags' })).toBeVisible();
 	});
 });

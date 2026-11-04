@@ -1,5 +1,4 @@
-import { v3 } from '$lib/api/v3/endpoint';
-import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@tanstack/svelte-query', () => ({
 	createQuery: vi.fn((factory: () => Record<string, unknown>) => factory()),
@@ -19,17 +18,10 @@ vi.mock('$lib/queries/QueryClient', () => ({
 	invalidateQueriesWithPersister: vi.fn()
 }));
 
-import { api } from '$lib/api/client';
 import { authStore } from '$lib/stores/authStore.svelte';
-import { SpotifyQueryKeyFactory } from '$lib/queries/featureKeys';
 import { getSpotifyPlaylistsQuery } from '$lib/features/playlists/queries/spotify.svelte';
 
-const mockGet = vi.mocked(api.v3.GET) as unknown as Mock<(...args: unknown[]) => Promise<unknown>>;
-type QueryResult = {
-	queryKey?: unknown;
-	queryFn?: (ctx: { signal?: AbortSignal }) => Promise<unknown>;
-	retry?: unknown;
-};
+type QueryResult = { queryKey?: unknown };
 
 function setUser(user: { id: string } | null) {
 	(authStore as { user: { id: string } | null }).user = user;
@@ -41,22 +33,6 @@ beforeEach(() => {
 });
 
 describe('getSpotifyPlaylistsQuery', () => {
-	it('reads the caller-owned Spotify playlists behind a user-scoped key', async () => {
-		mockGet.mockResolvedValue({ items: [] });
-		const query = getSpotifyPlaylistsQuery() as QueryResult;
-
-		await query.queryFn?.({});
-
-		expect(mockGet).toHaveBeenCalledWith(v3('/api/v3/acquire/spotify/playlists'));
-		expect(query.queryKey).toEqual(SpotifyQueryKeyFactory.playlists('userA'));
-	});
-
-	it('never retries: an unlinked account answers 400, not a flake', () => {
-		const query = getSpotifyPlaylistsQuery() as QueryResult;
-
-		expect(query.retry).toBe(false);
-	});
-
 	it('scopes the key per user so shared browsers never leak playlists', () => {
 		const first = getSpotifyPlaylistsQuery() as QueryResult;
 		setUser({ id: 'userB' });

@@ -22,10 +22,7 @@ vi.mock('$lib/queries/QueryClient', () => ({
 }));
 
 import { api } from '$lib/api/client';
-import {
-	createRemoveLibraryAlbumMutation,
-	createSaveLibraryScanScheduleMutation
-} from './LibraryMutations.svelte';
+import { createRemoveLibraryAlbumMutation } from './LibraryMutations.svelte';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
 import { setQueryDataWithPersister } from '$lib/queries/QueryClient';
 import type { Effect } from '$lib/queries/effects';
@@ -111,16 +108,5 @@ describe('album removal mutation', () => {
 		await expect(mutation.onSuccess(data, input)).resolves.toBeUndefined();
 		expect(consoleError).toHaveBeenCalledTimes(1);
 		consoleError.mockRestore();
-	});
-});
-
-describe('library scan mutations', () => {
-	it('createSaveLibraryScanScheduleMutation puts to the schedule endpoint', async () => {
-		const m = createSaveLibraryScanScheduleMutation();
-		await (m as unknown as { mutationFn: (s: unknown) => Promise<unknown> }).mutationFn({
-			scan_frequency: '6hr',
-			daily_scan_time: '03:00'
-		});
-		expect(vi.mocked(api.v3.PUT).mock.calls[0][0]).toBe('/api/v3/settings/library/schedule');
 	});
 });

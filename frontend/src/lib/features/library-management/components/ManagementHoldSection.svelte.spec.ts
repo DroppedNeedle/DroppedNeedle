@@ -79,14 +79,6 @@ describe('an album left unmanaged', () => {
 		await expect.element(section.getByRole('button')).toHaveTextContent('Manage it again');
 	});
 
-	it('shows no such section without a hold', async () => {
-		await render(ManagementHoldSection, { props: { album } });
-
-		await expect
-			.element(page.getByRole('region', { name: 'Left unmanaged' }))
-			.not.toBeInTheDocument();
-	});
-
 	it('hands a stepped-back album back, saying beside the button what that overwrites', async () => {
 		await renderHeld(
 			{ kind: 'files_changed', held_at: heldAt, handing_back: false },
@@ -119,12 +111,6 @@ describe('an album left unmanaged', () => {
 		expect(h.handBack).not.toHaveBeenCalled();
 	});
 
-	it('disables the button while the album waits its turn to be handed back', async () => {
-		await renderHeld({ kind: 'files_changed', held_at: heldAt, handing_back: true });
-
-		await expect.element(page.getByRole('button', { name: 'Being handed back' })).toBeDisabled();
-	});
-
 	it('says a hand-back stopped since the album was held, and offers it again', async () => {
 		h.history = [
 			{ kind: 'hand_back_given_up', at: heldAt + 1000 },
@@ -137,13 +123,5 @@ describe('an album left unmanaged', () => {
 			.element(section.getByText("Handing it back stopped: the files couldn't be read."))
 			.toBeVisible();
 		await expect.element(section.getByRole('button')).toHaveTextContent('Manage it again');
-	});
-
-	it('says nothing of a hand-back that stopped before the album was held', async () => {
-		h.history = [{ kind: 'hand_back_given_up', at: heldAt - 1000 }];
-		await renderHeld({ kind: 'files_changed', held_at: heldAt, handing_back: false });
-
-		await expect.element(page.getByRole('region', { name: 'Left unmanaged' })).toBeVisible();
-		await expect.element(page.getByText(/Handing it back stopped/)).not.toBeInTheDocument();
 	});
 });

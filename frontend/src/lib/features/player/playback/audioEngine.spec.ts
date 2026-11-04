@@ -77,8 +77,8 @@ describe('AudioEngine', () => {
 	});
 
 	describe('connect', () => {
-		it('creates context, source, and 10 filters wired in chain', () => {
-			expect.assertions(6);
+		it('wires one graph of 10 filters per element, rebuilding it for another', () => {
+			expect.assertions(8);
 			engine.connect(mockAudio);
 
 			expect(mockCtx.createMediaElementSource).toHaveBeenCalledWith(mockAudio);
@@ -87,14 +87,8 @@ describe('AudioEngine', () => {
 			expect(mockSource.connect).toHaveBeenCalledWith(mockFilters[0]);
 			expect(mockFilters[8].connect).toHaveBeenCalledWith(mockFilters[9]);
 			expect(mockFilters[9].connect).toHaveBeenCalledWith(mockCtx.destination);
-		});
 
-		it('destroys and reconnects for a different element', () => {
-			expect.assertions(2);
-			engine.connect(mockAudio);
-			const otherAudio = { src: 'other' } as unknown as HTMLAudioElement;
-
-			engine.connect(otherAudio);
+			engine.connect({ src: 'other' } as unknown as HTMLAudioElement);
 
 			expect(mockSource.disconnect).toHaveBeenCalled();
 			expect(AudioContext).toHaveBeenCalledTimes(2);
@@ -114,18 +108,14 @@ describe('AudioEngine', () => {
 	});
 
 	describe('setEnabled', () => {
-		it('zeros all gains when disabled', () => {
-			expect.assertions(1);
+		it('zeros every gain when off and restores the stored ones when on', () => {
+			expect.assertions(3);
 			engine.connect(mockAudio);
 			engine.setAllGains([5, 5, 5, 5, 5, 5, 5, 5, 5, 5]);
 			engine.setEnabled(false, [5, 5, 5, 5, 5, 5, 5, 5, 5, 5]);
 
 			expect(mockFilters.every((f) => f.gain.value === 0)).toBe(true);
-		});
 
-		it('restores stored gains when enabled', () => {
-			expect.assertions(2);
-			engine.connect(mockAudio);
 			const stored = [3, -2, 1, 0, 4, -1, 2, 5, -3, 6];
 			engine.setEnabled(true, stored);
 

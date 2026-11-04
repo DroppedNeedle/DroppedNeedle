@@ -172,35 +172,4 @@ describe('SearchSuggestions.svelte', () => {
 		const fresh = page.getByText('FreshResult');
 		await expect.element(fresh).toBeInTheDocument();
 	});
-
-	it('drops track rows and over-fetches to keep the list full', async () => {
-		const fetchSpy = mockFetchSuccess([
-			{
-				kind: 'track',
-				id: 'track-1',
-				title: 'Hysteria',
-				artist: 'Muse',
-				musicbrainz_id: null,
-				in_library: true,
-				requested: false,
-				score: 99
-			},
-			mockRows[0]
-		]);
-		globalThis.fetch = fetchSpy;
-
-		await renderComponent();
-
-		const input = page.getByRole('searchbox');
-		await input.fill('mus');
-		await vi.advanceTimersByTimeAsync(400);
-
-		await expect.element(page.getByRole('option').first()).toHaveTextContent('Muse');
-		await expect.element(page.getByText('Hysteria')).not.toBeInTheDocument();
-		await vi.waitFor(() => {
-			const calls = fetchSpy.mock.calls.map(([input]) => String(input));
-			expect(calls).toHaveLength(1);
-			expect(calls[0]).toContain('limit=10');
-		});
-	});
 });

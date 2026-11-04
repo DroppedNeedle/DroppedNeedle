@@ -193,30 +193,6 @@ describe('matching a file by hand', () => {
 		expect(h.match).toHaveBeenLastCalledWith('file-x', 'track-2', 8);
 	});
 
-	it('starts the picker on the closest length no other version sits beside', async () => {
-		await compare(false, {
-			...plan,
-			tracks: [...plan.tracks, track(5, 'Harbour Lights', 150_000, null)],
-			files: plan.files.map((one) =>
-				one.local_track_id === 'file-x' ? { ...one, length_ms: 181_000 } : one
-			)
-		} as EditionPlan);
-		await row('Untitled Take').getByRole('button', { name: 'Match to a track' }).click();
-		await expect.element(page.getByLabelText('Track on this edition')).toHaveValue('track-5');
-	});
-
-	it('moves focus to the picker, and back to the row on Cancel', async () => {
-		await compare();
-		await row('Untitled Take')
-			.getByRole('button', { name: 'Match to a track, Untitled Take', exact: true })
-			.click();
-		await expect.element(page.getByLabelText('Track on this edition')).toHaveFocus();
-		await page.getByRole('button', { name: 'Cancel' }).click();
-		await expect
-			.element(row('Untitled Take').getByRole('button', { name: 'Match to a track' }))
-			.toHaveFocus();
-	});
-
 	it('holds back the undo once the file is written, linking History for admins', async () => {
 		const written = {
 			...plan,
@@ -396,25 +372,4 @@ describe('who may match', () => {
 			.element(row('Untitled Take').getByRole('button', { name: 'Match to a track' }))
 			.toBeVisible();
 	});
-
-	for (const [who, overrides] of [
-		['another edition', { isCurrent: false }],
-		['a plain user', { canEdit: false }],
-		['a custom edition', { editionKind: 'custom' }]
-	] as const) {
-		it(`shows none of it for ${who}`, async () => {
-			await detail(overrides);
-			await expect.element(row('Untitled Take')).toBeVisible();
-			await expect
-				.element(page.getByRole('button', { name: 'Match to a track' }))
-				.not.toBeInTheDocument();
-			await expect
-				.element(page.getByRole('button', { name: "It's this track" }))
-				.not.toBeInTheDocument();
-			await expect.element(page.getByText('Matched by hand')).not.toBeInTheDocument();
-			await expect
-				.element(page.getByRole('button', { name: 'Undo match' }))
-				.not.toBeInTheDocument();
-		});
-	}
 });

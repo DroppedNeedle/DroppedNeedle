@@ -120,255 +120,297 @@ function makeItems(count: number): QueueItem[] {
 	);
 }
 
+function resetPlayer(): void {
+	localStorage.clear();
+	playerStore.stop();
+	vi.clearAllMocks();
+}
+
 describe('playerStore queue methods', () => {
-	beforeEach(() => {
-		localStorage.clear();
-		playerStore.stop();
-		vi.clearAllMocks();
-	});
+	beforeEach(resetPlayer);
 
-	describe('addToQueue', () => {
-		it('appends to end of queue when queue has items', () => {
-			playerStore.playQueue(makeItems(2));
-			const newItem = makeItem({ trackName: 'New Track' });
-			playerStore.addToQueue(newItem);
-			expect(playerStore.queue).toHaveLength(3);
-			expect(playerStore.queue[2].trackName).toBe('New Track');
-		});
-	});
+	describe('queue operations', () => {
+		it('adds, inserts, removes, reorders and clears tracks, keeping the current index', () => {
+			{
+				// Appends to end of queue when queue has items.
+				resetPlayer();
+				playerStore.playQueue(makeItems(2));
+				const newItem = makeItem({ trackName: 'New Track' });
+				playerStore.addToQueue(newItem);
+				expect(playerStore.queue).toHaveLength(3);
+				expect(playerStore.queue[2].trackName).toBe('New Track');
+			}
 
-	describe('playNext', () => {
-		it('inserts after current index', () => {
-			playerStore.playQueue(makeItems(3));
-			const newItem = makeItem({ trackName: 'Inserted' });
-			playerStore.playNext(newItem);
-			expect(playerStore.queue[1].trackName).toBe('Inserted');
-			expect(playerStore.queue).toHaveLength(4);
-		});
-	});
+			{
+				// Inserts after current index.
+				resetPlayer();
+				playerStore.playQueue(makeItems(3));
+				const newItem = makeItem({ trackName: 'Inserted' });
+				playerStore.playNext(newItem);
+				expect(playerStore.queue[1].trackName).toBe('Inserted');
+				expect(playerStore.queue).toHaveLength(4);
+			}
 
-	describe('addMultipleToQueue', () => {
-		it('appends all items to existing queue', () => {
-			playerStore.playQueue(makeItems(2));
-			playerStore.addMultipleToQueue(makeItems(3));
-			expect(playerStore.queue).toHaveLength(5);
-		});
-	});
+			{
+				// Appends all items to existing queue.
+				resetPlayer();
+				playerStore.playQueue(makeItems(2));
+				playerStore.addMultipleToQueue(makeItems(3));
+				expect(playerStore.queue).toHaveLength(5);
+			}
 
-	describe('playMultipleNext', () => {
-		it('inserts all items after current index', () => {
-			playerStore.playQueue(makeItems(3));
-			const newItems = makeItems(2).map((item, i) => ({ ...item, trackName: `Inserted ${i}` }));
-			playerStore.playMultipleNext(newItems);
-			expect(playerStore.queue).toHaveLength(5);
-			expect(playerStore.queue[1].trackName).toBe('Inserted 0');
-			expect(playerStore.queue[2].trackName).toBe('Inserted 1');
-		});
-	});
+			{
+				// Inserts all items after current index.
+				resetPlayer();
+				playerStore.playQueue(makeItems(3));
+				const newItems = makeItems(2).map((item, i) => ({ ...item, trackName: `Inserted ${i}` }));
+				playerStore.playMultipleNext(newItems);
+				expect(playerStore.queue).toHaveLength(5);
+				expect(playerStore.queue[1].trackName).toBe('Inserted 0');
+				expect(playerStore.queue[2].trackName).toBe('Inserted 1');
+			}
 
-	describe('removeFromQueue', () => {
-		it('stops playback when removing only item', () => {
-			playerStore.addToQueue(makeItem());
-			playerStore.removeFromQueue(0);
-			expect(playerStore.queue).toHaveLength(0);
-			expect(playerStore.isPlayerVisible).toBe(false);
-		});
+			{
+				// Stops playback when removing only item.
+				resetPlayer();
+				playerStore.addToQueue(makeItem());
+				playerStore.removeFromQueue(0);
+				expect(playerStore.queue).toHaveLength(0);
+				expect(playerStore.isPlayerVisible).toBe(false);
+			}
 
-		it('decrements currentIndex when removing item before current', () => {
-			playerStore.playQueue(makeItems(3), 2);
-			const prevIndex = playerStore.currentIndex;
-			playerStore.removeFromQueue(0);
-			expect(playerStore.currentIndex).toBe(prevIndex - 1);
-			expect(playerStore.queue).toHaveLength(2);
-		});
-	});
+			{
+				// Decrements currentIndex when removing item before current.
+				resetPlayer();
+				playerStore.playQueue(makeItems(3), 2);
+				const prevIndex = playerStore.currentIndex;
+				playerStore.removeFromQueue(0);
+				expect(playerStore.currentIndex).toBe(prevIndex - 1);
+				expect(playerStore.queue).toHaveLength(2);
+			}
 
-	describe('reorderQueue', () => {
-		it('tracks currentIndex when current item is moved', () => {
-			playerStore.playQueue(makeItems(4));
-			expect(playerStore.currentIndex).toBe(0);
-			playerStore.reorderQueue(0, 3);
-			expect(playerStore.currentIndex).toBe(3);
-		});
+			{
+				// Tracks currentIndex when current item is moved.
+				resetPlayer();
+				playerStore.playQueue(makeItems(4));
+				expect(playerStore.currentIndex).toBe(0);
+				playerStore.reorderQueue(0, 3);
+				expect(playerStore.currentIndex).toBe(3);
+			}
 
-		it('adjusts currentIndex when item moves across it', () => {
-			playerStore.playQueue(makeItems(5), 2);
-			expect(playerStore.currentIndex).toBe(2);
-			playerStore.reorderQueue(0, 4);
-			expect(playerStore.currentIndex).toBe(1);
-		});
-	});
+			{
+				// Adjusts currentIndex when item moves across it.
+				resetPlayer();
+				playerStore.playQueue(makeItems(5), 2);
+				expect(playerStore.currentIndex).toBe(2);
+				playerStore.reorderQueue(0, 4);
+				expect(playerStore.currentIndex).toBe(1);
+			}
 
-	describe('clearQueue', () => {
-		it('keeps current track and removes all upcoming tracks', () => {
-			playerStore.playQueue(makeItems(3), 1);
-			playerStore.clearQueue();
-			expect(playerStore.queue).toHaveLength(1);
-			expect(playerStore.queue[0].trackSourceId).toBe('vid-1');
-			expect(playerStore.isPlayerVisible).toBe(true);
-			expect(playerStore.currentIndex).toBe(0);
-			expect(playerStore.upcomingQueueLength).toBe(0);
-		});
-	});
+			{
+				// Keeps current track and removes all upcoming tracks.
+				resetPlayer();
+				playerStore.playQueue(makeItems(3), 1);
+				playerStore.clearQueue();
+				expect(playerStore.queue).toHaveLength(1);
+				expect(playerStore.queue[0].trackSourceId).toBe('vid-1');
+				expect(playerStore.isPlayerVisible).toBe(true);
+				expect(playerStore.currentIndex).toBe(0);
+				expect(playerStore.upcomingQueueLength).toBe(0);
+			}
 
-	describe('upcomingQueueLength', () => {
-		it('counts remaining tracks in shuffle order', () => {
-			playerStore.playQueue(makeItems(4), 0, true);
-			playerStore.jumpToTrack(2);
-			const expectedRemaining = Math.max(
-				0,
-				playerStore.shuffleOrder.length -
-					playerStore.shuffleOrder.indexOf(playerStore.currentIndex) -
-					1
-			);
-			expect(playerStore.upcomingQueueLength).toBe(expectedRemaining);
+			{
+				// Counts remaining tracks in shuffle order.
+				resetPlayer();
+				playerStore.playQueue(makeItems(4), 0, true);
+				playerStore.jumpToTrack(2);
+				const expectedRemaining = Math.max(
+					0,
+					playerStore.shuffleOrder.length -
+						playerStore.shuffleOrder.indexOf(playerStore.currentIndex) -
+						1
+				);
+				expect(playerStore.upcomingQueueLength).toBe(expectedRemaining);
+			}
+
+			{
+				// Sets queue and starts playback at specified index.
+				resetPlayer();
+				const items = makeItems(5);
+				playerStore.playQueue(items, 2);
+				expect(playerStore.queue).toHaveLength(5);
+				expect(playerStore.currentIndex).toBe(2);
+				expect(playerStore.isPlayerVisible).toBe(true);
+			}
 		});
 	});
 
 	describe('changeTrackSource', () => {
-		it('is a no-op on current track with toast', () => {
-			playerStore.playQueue(makeItems(3));
-			const currentIdx = playerStore.currentIndex;
-			const beforeSource = playerStore.queue[currentIdx].sourceType;
-			playerStore.changeTrackSource(currentIdx, 'jellyfin');
-			expect(playerStore.queue[currentIdx].sourceType).toBe(beforeSource);
-			expect(toastStore.notify).toHaveBeenCalled();
-		});
+		it('switches the source of a queued track, never the one playing', () => {
+			{
+				// Is a no-op on current track with toast.
+				resetPlayer();
+				playerStore.playQueue(makeItems(3));
+				const currentIdx = playerStore.currentIndex;
+				const beforeSource = playerStore.queue[currentIdx].sourceType;
+				playerStore.changeTrackSource(currentIdx, 'jellyfin');
+				expect(playerStore.queue[currentIdx].sourceType).toBe(beforeSource);
+				expect(toastStore.notify).toHaveBeenCalled();
+			}
 
-		it('updates streamUrl for target source', () => {
-			playerStore.playQueue(makeItems(3));
-			playerStore.changeTrackSource(1, 'jellyfin');
-			expect(streamUrlFor(playerStore.queue[1])).toBe('/api/v3/stream/jellyfin/vid-1');
+			{
+				// Updates streamUrl for target source.
+				resetPlayer();
+				playerStore.playQueue(makeItems(3));
+				playerStore.changeTrackSource(1, 'jellyfin');
+				expect(streamUrlFor(playerStore.queue[1])).toBe('/api/v3/stream/jellyfin/vid-1');
+			}
 		});
 	});
 
 	describe('updateQueueItemByPlaylistTrackId', () => {
-		it('updates queued item matching playlistTrackId', () => {
-			expect.assertions(3);
-			const items = makeItems(3).map((item, i) => ({ ...item, playlistTrackId: `pt-${i}` }));
-			playerStore.playQueue(items);
-			playerStore.updateQueueItemByPlaylistTrackId('pt-2', 'jellyfin', 'jf-new', 'opus');
-			expect(playerStore.queue[2].sourceType).toBe('jellyfin');
-			expect(playerStore.queue[2].trackSourceId).toBe('jf-new');
-			expect(streamUrlFor(playerStore.queue[2])).toBe('/api/v3/stream/jellyfin/jf-new');
-		});
+		it('updates a queued playlist entry, never the one playing', () => {
+			{
+				// Updates queued item matching playlistTrackId.
+				resetPlayer();
+				const items = makeItems(3).map((item, i) => ({ ...item, playlistTrackId: `pt-${i}` }));
+				playerStore.playQueue(items);
+				playerStore.updateQueueItemByPlaylistTrackId('pt-2', 'jellyfin', 'jf-new', 'opus');
+				expect(playerStore.queue[2].sourceType).toBe('jellyfin');
+				expect(playerStore.queue[2].trackSourceId).toBe('jf-new');
+				expect(streamUrlFor(playerStore.queue[2])).toBe('/api/v3/stream/jellyfin/jf-new');
+			}
 
-		it('skips currently playing track', () => {
-			expect.assertions(1);
-			const items = makeItems(3).map((item, i) => ({ ...item, playlistTrackId: `pt-${i}` }));
-			playerStore.playQueue(items);
-			const currentIdx = playerStore.currentIndex;
-			const before = playerStore.queue[currentIdx].sourceType;
-			playerStore.updateQueueItemByPlaylistTrackId(`pt-${currentIdx}`, 'jellyfin', 'jf-new');
-			expect(playerStore.queue[currentIdx].sourceType).toBe(before);
-		});
-	});
-
-	describe('playQueue', () => {
-		it('sets queue and starts playback at specified index', () => {
-			const items = makeItems(5);
-			playerStore.playQueue(items, 2);
-			expect(playerStore.queue).toHaveLength(5);
-			expect(playerStore.currentIndex).toBe(2);
-			expect(playerStore.isPlayerVisible).toBe(true);
+			{
+				// Skips currently playing track.
+				resetPlayer();
+				const items = makeItems(3).map((item, i) => ({ ...item, playlistTrackId: `pt-${i}` }));
+				playerStore.playQueue(items);
+				const currentIdx = playerStore.currentIndex;
+				const before = playerStore.queue[currentIdx].sourceType;
+				playerStore.updateQueueItemByPlaylistTrackId(`pt-${currentIdx}`, 'jellyfin', 'jf-new');
+				expect(playerStore.queue[currentIdx].sourceType).toBe(before);
+			}
 		});
 	});
 
 	describe('toggleShuffle', () => {
-		it('only shuffles upcoming tracks, not played ones', () => {
-			playerStore.playQueue(makeItems(6), 0);
-			playerStore.jumpToTrack(3);
+		it('shuffles only upcoming tracks, keeping the played order', () => {
+			{
+				// Only shuffles upcoming tracks, not played ones.
+				resetPlayer();
+				playerStore.playQueue(makeItems(6), 0);
+				playerStore.jumpToTrack(3);
 
-			playerStore.toggleShuffle();
+				playerStore.toggleShuffle();
 
-			expect(playerStore.shuffleOrder).toHaveLength(6);
-			expect(playerStore.shuffleOrder.slice(0, 3)).toEqual([0, 1, 2]);
-			expect(playerStore.shuffleOrder[3]).toBe(3);
-			const upcomingPart = playerStore.shuffleOrder.slice(4);
-			expect(upcomingPart.sort()).toEqual([4, 5]);
-		});
+				expect(playerStore.shuffleOrder).toHaveLength(6);
+				expect(playerStore.shuffleOrder.slice(0, 3)).toEqual([0, 1, 2]);
+				expect(playerStore.shuffleOrder[3]).toBe(3);
+				const upcomingPart = playerStore.shuffleOrder.slice(4);
+				expect(upcomingPart.sort()).toEqual([4, 5]);
+			}
 
-		it('preserves played order when toggled at end of queue', () => {
-			playerStore.playQueue(makeItems(4), 0);
-			playerStore.jumpToTrack(3);
+			{
+				// Preserves played order when toggled at end of queue.
+				resetPlayer();
+				playerStore.playQueue(makeItems(4), 0);
+				playerStore.jumpToTrack(3);
 
-			playerStore.toggleShuffle();
-			expect(playerStore.shuffleOrder.slice(0, 3)).toEqual([0, 1, 2]);
-			expect(playerStore.shuffleOrder[3]).toBe(3);
+				playerStore.toggleShuffle();
+				expect(playerStore.shuffleOrder.slice(0, 3)).toEqual([0, 1, 2]);
+				expect(playerStore.shuffleOrder[3]).toBe(3);
+			}
 		});
 	});
 
 	describe('queueOrigin tagging', () => {
-		it('playQueue stamps items as context', () => {
-			playerStore.playQueue(makeItems(3));
-			expect(playerStore.queue.every((i) => i.queueOrigin === 'context')).toBe(true);
-		});
+		it('stamps what a queue started with as context and what was added as manual', () => {
+			{
+				// PlayQueue stamps items as context.
+				resetPlayer();
+				playerStore.playQueue(makeItems(3));
+				expect(playerStore.queue.every((i) => i.queueOrigin === 'context')).toBe(true);
+			}
 
-		it('addToQueue stamps item as manual', () => {
-			playerStore.playQueue(makeItems(2));
-			playerStore.addToQueue(makeItem({ trackName: 'Manual' }));
-			expect(playerStore.queue[2].queueOrigin).toBe('manual');
-		});
+			{
+				// AddToQueue stamps item as manual.
+				resetPlayer();
+				playerStore.playQueue(makeItems(2));
+				playerStore.addToQueue(makeItem({ trackName: 'Manual' }));
+				expect(playerStore.queue[2].queueOrigin).toBe('manual');
+			}
 
-		it('does not overwrite existing context origin on playQueue', () => {
-			const items = makeItems(2);
-			items[0].queueOrigin = 'manual';
-			playerStore.playQueue(items);
-			expect(playerStore.queue[0].queueOrigin).toBe('context');
+			{
+				// Does not overwrite existing context origin on playQueue.
+				resetPlayer();
+				const items = makeItems(2);
+				items[0].queueOrigin = 'manual';
+				playerStore.playQueue(items);
+				expect(playerStore.queue[0].queueOrigin).toBe('context');
+			}
 		});
 	});
 
 	describe('played track cleanup', () => {
-		it('removes manual tracks after advancing past them', async () => {
-			playerStore.playQueue(makeItems(2));
-			playerStore.playNext(makeItem({ trackName: 'Manual Next' }));
-			expect(playerStore.queue).toHaveLength(3);
+		it('drops played manual tracks and keeps at most three played context tracks', async () => {
+			{
+				// Removes manual tracks after advancing past them.
+				resetPlayer();
+				playerStore.playQueue(makeItems(2));
+				playerStore.playNext(makeItem({ trackName: 'Manual Next' }));
+				expect(playerStore.queue).toHaveLength(3);
 
-			playerStore.jumpToTrack(1);
-			playerStore.nextTrack();
-			await vi.waitFor(() => {
-				expect(playerStore.queue.find((i) => i.trackName === 'Manual Next')).toBeUndefined();
-			});
-		});
+				playerStore.jumpToTrack(1);
+				playerStore.nextTrack();
+				await vi.waitFor(() => {
+					expect(playerStore.queue.find((i) => i.trackName === 'Manual Next')).toBeUndefined();
+				});
+			}
 
-		it('keeps context tracks up to history cap', async () => {
-			playerStore.playQueue(makeItems(6));
+			{
+				// Keeps context tracks up to history cap.
+				resetPlayer();
+				playerStore.playQueue(makeItems(6));
 
-			playerStore.nextTrack();
-			await vi.waitFor(() => {
-				expect(playerStore.currentIndex).toBeGreaterThan(0);
-			});
-			playerStore.nextTrack();
-			await vi.waitFor(() => {
-				expect(playerStore.currentIndex).toBeGreaterThan(0);
-			});
-			playerStore.nextTrack();
-			await vi.waitFor(() => {
-				expect(playerStore.currentIndex).toBeGreaterThan(0);
-			});
-			playerStore.nextTrack();
-			await vi.waitFor(() => {
-				expect(playerStore.currentIndex).toBeGreaterThan(0);
-			});
-			playerStore.nextTrack();
-			await vi.waitFor(() => {
-				const playedCount = playerStore.currentIndex;
-				expect(playedCount).toBeLessThanOrEqual(3);
-			});
-		});
-
-		it('trims oldest context tracks beyond history cap', async () => {
-			playerStore.playQueue(makeItems(8));
-
-			for (let i = 0; i < 6; i++) {
 				playerStore.nextTrack();
 				await vi.waitFor(() => {
 					expect(playerStore.currentIndex).toBeGreaterThan(0);
 				});
+				playerStore.nextTrack();
+				await vi.waitFor(() => {
+					expect(playerStore.currentIndex).toBeGreaterThan(0);
+				});
+				playerStore.nextTrack();
+				await vi.waitFor(() => {
+					expect(playerStore.currentIndex).toBeGreaterThan(0);
+				});
+				playerStore.nextTrack();
+				await vi.waitFor(() => {
+					expect(playerStore.currentIndex).toBeGreaterThan(0);
+				});
+				playerStore.nextTrack();
+				await vi.waitFor(() => {
+					const playedCount = playerStore.currentIndex;
+					expect(playedCount).toBeLessThanOrEqual(3);
+				});
 			}
 
-			const historyBehind = playerStore.currentIndex;
-			expect(historyBehind).toBeLessThanOrEqual(3);
+			{
+				// Trims oldest context tracks beyond history cap.
+				resetPlayer();
+				playerStore.playQueue(makeItems(8));
+
+				for (let i = 0; i < 6; i++) {
+					playerStore.nextTrack();
+					await vi.waitFor(() => {
+						expect(playerStore.currentIndex).toBeGreaterThan(0);
+					});
+				}
+
+				const historyBehind = playerStore.currentIndex;
+				expect(historyBehind).toBeLessThanOrEqual(3);
+			}
 		});
 	});
 
@@ -422,26 +464,32 @@ describe('playerStore queue methods', () => {
 	});
 
 	describe('radio session lifecycle', () => {
-		it('ends the station when the player is closed', () => {
-			const launch = radioSession.beginLaunch();
-			radioSession.start(launch.generation);
-			playerStore.playQueue([makeItem({ playlistTrackId: 'radio:test artist|test track' })]);
+		it('ends the station when the player closes, never on a pause', () => {
+			{
+				// Ends the station when the player is closed.
+				resetPlayer();
+				const launch = radioSession.beginLaunch();
+				radioSession.start(launch.generation);
+				playerStore.playQueue([makeItem({ playlistTrackId: 'radio:test artist|test track' })]);
 
-			playerStore.stop();
+				playerStore.stop();
 
-			expect(radioSession.active).toBe(false);
-			expect(playerStore.queue).toHaveLength(0);
-		});
+				expect(radioSession.active).toBe(false);
+				expect(playerStore.queue).toHaveLength(0);
+			}
 
-		it('keeps the fixed station queue when playback is paused', () => {
-			const launch = radioSession.beginLaunch();
-			radioSession.start(launch.generation);
-			playerStore.playQueue([makeItem({ playlistTrackId: 'radio:test artist|test track' })]);
+			{
+				// Keeps the fixed station queue when playback is paused.
+				resetPlayer();
+				const launch = radioSession.beginLaunch();
+				radioSession.start(launch.generation);
+				playerStore.playQueue([makeItem({ playlistTrackId: 'radio:test artist|test track' })]);
 
-			playerStore.pause();
+				playerStore.pause();
 
-			expect(radioSession.active).toBe(true);
-			expect(playerStore.queue).toHaveLength(1);
+				expect(radioSession.active).toBe(true);
+				expect(playerStore.queue).toHaveLength(1);
+			}
 		});
 	});
 });
@@ -613,13 +661,13 @@ describe('beforeunload beacon', () => {
 });
 
 describe('track failure reporting', () => {
-	beforeEach(() => {
-		localStorage.clear();
-		playerStore.stop();
-		vi.clearAllMocks();
+	function resetFailures(): void {
+		resetPlayer();
 		vi.useFakeTimers();
 		mockApiHead.mockResolvedValue(new Response(null, { status: 200 }));
-	});
+	}
+
+	beforeEach(resetFailures);
 
 	afterEach(() => {
 		vi.useRealTimers();
@@ -655,23 +703,68 @@ describe('track failure reporting', () => {
 		});
 	}
 
-	it('retries the same track once, silently, before advancing', async () => {
-		playerStore.playQueue(singleSourceItems(2));
-		await vi.advanceTimersByTimeAsync(0);
+	it('retries a track once, earning the retry back only after 30 seconds heard', async () => {
+		{
+			// Retries the same track once, silently, before advancing.
+			resetFailures();
+			playerStore.playQueue(singleSourceItems(2));
+			await vi.advanceTimersByTimeAsync(0);
 
-		fireCurrentTrackError();
-		await vi.advanceTimersByTimeAsync(0);
+			fireCurrentTrackError();
+			await vi.advanceTimersByTimeAsync(0);
 
-		// Retry reloads the same track instead of skipping onward.
-		expect(playerStore.currentIndex).toBe(0);
-		expect(toastStore.notify).not.toHaveBeenCalled();
+			// Retry reloads the same track instead of skipping onward.
+			expect(playerStore.currentIndex).toBe(0);
+			expect(toastStore.notify).not.toHaveBeenCalled();
 
-		fireCurrentTrackError();
-		await vi.advanceTimersByTimeAsync(2100);
+			fireCurrentTrackError();
+			await vi.advanceTimersByTimeAsync(2100);
 
-		expect(playerStore.currentIndex).toBe(1);
-		expect(toastStore.notify).toHaveBeenCalledTimes(1);
-		expect(toastStore.notify).toHaveBeenCalledWith('Skipped "Track 1": can\'t play it', 'warning');
+			expect(playerStore.currentIndex).toBe(1);
+			expect(toastStore.notify).toHaveBeenCalledTimes(1);
+			expect(toastStore.notify).toHaveBeenCalledWith(
+				'Skipped "Track 1": can\'t play it',
+				'warning'
+			);
+		}
+
+		{
+			// Earns its retry back after 30 seconds heard, so a second drop still retries.
+			resetFailures();
+			playerStore.playQueue(singleSourceItems(2));
+			await vi.advanceTimersByTimeAsync(0);
+
+			for (let drop = 0; drop < 2; drop++) {
+				playFor(30);
+				fireCurrentTrackError();
+				await vi.advanceTimersByTimeAsync(2100);
+				expect(playerStore.currentIndex).toBe(0);
+				expect(toastStore.notify).not.toHaveBeenCalled();
+			}
+
+			fireCurrentTrackError();
+			await vi.advanceTimersByTimeAsync(2100);
+			expect(playerStore.currentIndex).toBe(1);
+		}
+
+		{
+			// Keeps spending its steps when it fails before 30 seconds or only seeks past them.
+			resetFailures();
+			playerStore.playQueue(singleSourceItems(2));
+			await vi.advanceTimersByTimeAsync(0);
+
+			playFor(29);
+			fireCurrentTrackError();
+			await vi.advanceTimersByTimeAsync(0);
+
+			playFor(5);
+			capturedProgressCallbacks.forEach((cb) => cb(500, 600));
+			fireCurrentTrackError();
+			await vi.advanceTimersByTimeAsync(2100);
+
+			expect(playerStore.currentIndex).toBe(1);
+			expect(toastStore.notify).toHaveBeenCalledTimes(1);
+		}
 	});
 
 	function playFor(seconds: number): void {
@@ -679,40 +772,6 @@ describe('track failure reporting', () => {
 			capturedProgressCallbacks.forEach((cb) => cb(t, 600));
 		}
 	}
-
-	it('earns its retry back after 30 seconds heard, so a second drop still retries', async () => {
-		playerStore.playQueue(singleSourceItems(2));
-		await vi.advanceTimersByTimeAsync(0);
-
-		for (let drop = 0; drop < 2; drop++) {
-			playFor(30);
-			fireCurrentTrackError();
-			await vi.advanceTimersByTimeAsync(2100);
-			expect(playerStore.currentIndex).toBe(0);
-			expect(toastStore.notify).not.toHaveBeenCalled();
-		}
-
-		fireCurrentTrackError();
-		await vi.advanceTimersByTimeAsync(2100);
-		expect(playerStore.currentIndex).toBe(1);
-	});
-
-	it('keeps spending its steps when it fails before 30 seconds or only seeks past them', async () => {
-		playerStore.playQueue(singleSourceItems(2));
-		await vi.advanceTimersByTimeAsync(0);
-
-		playFor(29);
-		fireCurrentTrackError();
-		await vi.advanceTimersByTimeAsync(0);
-
-		playFor(5);
-		capturedProgressCallbacks.forEach((cb) => cb(500, 600));
-		fireCurrentTrackError();
-		await vi.advanceTimersByTimeAsync(2100);
-
-		expect(playerStore.currentIndex).toBe(1);
-		expect(toastStore.notify).toHaveBeenCalledTimes(1);
-	});
 
 	it('falls back to the next available source before skipping', async () => {
 		const plexId = 'plex-part-key';

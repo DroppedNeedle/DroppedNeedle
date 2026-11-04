@@ -2,14 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { appAddress } from './appHandBack';
 
 describe('appAddress', () => {
-	it('lets through what the server lists for apps', () => {
-		expect(appAddress('com.example.player:/connect?code=a&state=b')).toBe(
-			'com.example.player:/connect?code=a&state=b'
-		);
-		expect(appAddress('https://app.example/back?code=a')).toBe('https://app.example/back?code=a');
-	});
-
-	it('refuses addresses that would run or show something here', () => {
+	it('lets through only what the server lists for apps', () => {
+		for (const value of [
+			'com.example.player:/connect?code=a&state=b',
+			'https://app.example/back?code=a'
+		]) {
+			expect(appAddress(value), value).toBe(value);
+		}
 		for (const value of [
 			'javascript:alert(1)',
 			'JavaScript:alert(1)',

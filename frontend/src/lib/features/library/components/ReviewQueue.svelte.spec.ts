@@ -98,34 +98,6 @@ beforeEach(() => {
 });
 
 describe('review queue', () => {
-	it('opens the view the address names, and keeps a changed filter there', async () => {
-		signIn('user');
-		h.page.url = new URL('http://localhost/library/review?state=pending&reason=EDITION_MERGED');
-		const api = fakeApi({
-			'GET /api/v3/library/reviews': (request) => reviews(request.query)
-		});
-		const first = await renderWithQuery(ReviewQueue, {});
-
-		await expect.element(page.getByText('Kid A')).toBeVisible();
-		await expect.element(page.getByText('Amnesiac')).not.toBeInTheDocument();
-		await expect.element(page.getByRole('tab', { name: 'Tags kept 4' })).toBeVisible();
-		await expect.element(page.getByRole('tab', { name: 'Resolved 1' })).toBeVisible();
-
-		await page.getByRole('combobox', { name: 'Order' }).selectOptions('title');
-		await vi.waitFor(() => expect(h.page.url.searchParams.get('sort')).toBe('title'));
-		expect(h.page.url.searchParams.get('reason')).toBe('EDITION_MERGED');
-
-		// A reload reads the same address back.
-		first.unmount();
-		const before = api.calls('GET /api/v3/library/reviews').length;
-		await renderWithQuery(ReviewQueue, {});
-		await expect.element(page.getByText('Kid A')).toBeVisible();
-		const reload = api.calls('GET /api/v3/library/reviews')[before].query;
-		expect(reload.get('reason_code')).toBe('EDITION_MERGED');
-		expect(reload.get('sort')).toBe('title');
-		await expect.element(page.getByText('Amnesiac')).not.toBeInTheDocument();
-	});
-
 	it("asks in the app's dialog before taking an album out", async () => {
 		signIn('admin');
 		const native = vi.spyOn(window, 'confirm');

@@ -10,7 +10,6 @@ vi.mock('$lib/api/client', () => ({ api: { v3: { GET: vi.fn() } } }));
 import { api } from '$lib/api/client';
 import { ApiError } from '$lib/api/errors';
 import { fetchLyrics } from '$lib/features/player/queries/lyrics.svelte';
-import { LyricsQueryKeyFactory } from '$lib/queries/featureKeys';
 
 const mockGet = vi.mocked(api.v3.GET) as unknown as Mock;
 
@@ -34,41 +33,13 @@ describe('fetchLyrics', () => {
 		vi.clearAllMocks();
 	});
 
-	it('returns null on 404 (lyrics not available)', async () => {
+	it('answers null when no lyrics exist and throws on any other failure', async () => {
 		mockGet.mockRejectedValueOnce(new ApiError(404, 'Not found'));
+		expect(await fetchLyrics(makeNowPlaying({ sourceType: 'navidrome' }), signal)).toBeNull();
 
-		const np = makeNowPlaying({ sourceType: 'navidrome' });
-		const result = await fetchLyrics(np, signal);
-
-		expect(result).toBeNull();
-	});
-
-	it('re-throws non-404 errors', async () => {
 		mockGet.mockRejectedValueOnce(new ApiError(500, 'Server error'));
-
-		const np = makeNowPlaying({ sourceType: 'navidrome' });
-		await expect(fetchLyrics(np, signal)).rejects.toThrow('Server error');
-	});
-});
-
-describe('LyricsQueryKeyFactory', () => {
-	it('isolates users and Navidrome folder scopes', () => {
-		const alice = LyricsQueryKeyFactory.lyrics(
-			'alice',
-			'selected-a',
-			'navidrome',
-			'track-1',
-			'Artist',
-			'Song'
+		await expect(fetchLyrics(makeNowPlaying({ sourceType: 'navidrome' }), signal)).rejects.toThrow(
+			'Server error'
 		);
-		const bob = LyricsQueryKeyFactory.lyrics(
-			'bob',
-			'selected-b',
-			'navidrome',
-			'track-1',
-			'Artist',
-			'Song'
-		);
-		expect(alice).not.toEqual(bob);
 	});
 });

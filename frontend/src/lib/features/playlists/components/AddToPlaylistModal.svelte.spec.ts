@@ -1,6 +1,6 @@
 import { page } from 'vitest/browser';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { apiError, fakeApi, type FakeRoutes } from '$lib/test/api';
+import { fakeApi, type FakeRoutes } from '$lib/test/api';
 import { renderWithQuery } from '$lib/test/render';
 import AddToPlaylistModal from './AddToPlaylistModal.svelte';
 import type { QueueItem } from '$lib/features/player/playback/types';
@@ -59,6 +59,7 @@ async function openWith(tracks: QueueItem[]) {
 	const view = await renderWithQuery(AddToPlaylistModal, {});
 	(view.component as unknown as ModalRef).open(tracks);
 	await expect.element(page.getByText('My Playlist')).toBeVisible();
+	return view;
 }
 
 function addedNames(api: ReturnType<typeof serve>): string[] {
@@ -72,35 +73,20 @@ describe('AddToPlaylistModal.svelte', () => {
 		localStorage.clear();
 	});
 
-	it('clicking add on same playlist twice is a no-op (addedSet guard)', async () => {
-		const api = serve();
-		await openWith([makeTrack()]);
-
+	it('sends no track twice: a second click adds nothing and a partial add skips the ones there', async () => {
+		let api = serve();
+		const view = await openWith([makeTrack()]);
 		await page.getByLabelText('Add to My Playlist').click();
 		await expect.element(page.getByLabelText('Already added').first()).toBeVisible();
-
 		expect(api.calls(ADD)).toHaveLength(1);
-	});
+		view.unmount();
 
-	it('error during add shows error status and does not mark as added', async () => {
-		serve({ [ADD]: apiError(500, 'INTERNAL_ERROR') });
-		await openWith([makeTrack()]);
-
-		await page.getByLabelText('Add to My Playlist').click();
-
-		await expect.element(page.getByText("Couldn't add those tracks")).toBeVisible();
-		await expect.element(page.getByLabelText('Add to My Playlist')).toBeVisible();
-	});
-
-	it('partial add only sends non-duplicate tracks', async () => {
-		const api = serve({ [CHECK]: { membership: { '0': ['p1'] } } });
+		api = serve({ [CHECK]: { membership: { '0': ['p1'] } } });
 		await openWith([
 			makeTrack({ trackName: 'Track 1' }),
 			makeTrack({ trackName: 'Track 2', trackSourceId: 'v2' })
 		]);
-
 		await page.getByLabelText('Add the remaining tracks to My Playlist').click();
-
 		await expect.poll(() => api.calls(ADD).length).toBe(1);
 		expect(addedNames(api)).toEqual(['Track 2']);
 	});

@@ -13,7 +13,7 @@ import YouTubePlayer from './YouTubePlayer.svelte';
  * browser test project does not load.
  */
 describe('YouTubePlayer policy compliance', () => {
-	it('carries no class that would hide it', async () => {
+	it('stays visible, at least 200x200, on the element the playback source looks up', async () => {
 		await render(YouTubePlayer);
 
 		const container = page.getByTestId('youtube-player');
@@ -24,21 +24,10 @@ describe('YouTubePlayer policy compliance', () => {
 		const classes = container.element().className.split(/\s+/);
 		expect(classes).not.toContain('hidden');
 		expect(classes).not.toContain('invisible');
-	});
-
-	it('reserves a viewport of at least 200x200', async () => {
-		await render(YouTubePlayer);
-
-		const container = page.getByTestId('youtube-player');
-		await expect.element(container).toBeVisible();
 
 		const style = getComputedStyle(container.element());
 		expect(Number.parseFloat(style.minWidth)).toBeGreaterThanOrEqual(200);
 		expect(Number.parseFloat(style.minHeight)).toBeGreaterThanOrEqual(200);
-	});
-
-	it('mounts the element the playback source looks up by id', async () => {
-		await render(YouTubePlayer);
 
 		await expect
 			.element(page.getByTestId('youtube-player-mount'))

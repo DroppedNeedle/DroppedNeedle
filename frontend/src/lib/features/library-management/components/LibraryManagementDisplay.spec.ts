@@ -65,29 +65,21 @@ const ALL_STABLE_CODES = [
 ];
 
 describe('managementReasonLabel', () => {
-	it('covers every stable reason code with human copy', () => {
+	it('gives every stable reason code human copy, with no loss claim and a fallback for new codes', () => {
 		expect(Object.keys(MANAGEMENT_REASON_LABELS).sort()).toEqual([...ALL_STABLE_CODES].sort());
 		for (const code of ALL_STABLE_CODES) {
 			const label = managementReasonLabel(code);
-			expect(label.length).toBeGreaterThan(0);
+			expect(label.length, code).toBeGreaterThan(0);
 			expect(label).not.toBe(code);
 			expect(label).not.toContain('_');
 		}
-	});
 
-	it('keeps the warnings-only field code free of loss claims', () => {
-		expect(managementReasonLabel('FIELD_UNSUPPORTED_BY_FORMAT')).toBe(
-			'Some fields cannot be stored in this format'
-		);
-		expect(managementReasonLabel('FIELD_UNSUPPORTED_BY_FORMAT').toLowerCase()).not.toContain(
-			'loss'
-		);
-		expect(managementReasonLabel('FIELD_UNSUPPORTED_BY_FORMAT').toLowerCase()).not.toContain(
-			'lost'
-		);
-	});
+		// The warnings-only field code claims no loss.
+		const field = managementReasonLabel('FIELD_UNSUPPORTED_BY_FORMAT');
+		expect(field).toBe('Some fields cannot be stored in this format');
+		expect(field.toLowerCase()).not.toContain('loss');
+		expect(field.toLowerCase()).not.toContain('lost');
 
-	it('falls back to title case for unknown codes', () => {
 		expect(managementReasonLabel('SOME_FUTURE_CODE')).toBe(
 			titleManagementValue('SOME_FUTURE_CODE')
 		);

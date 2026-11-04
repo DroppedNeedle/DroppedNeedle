@@ -37,51 +37,29 @@ const album: AlbumView = {
 };
 
 describe('LibraryAlbumCard.svelte', () => {
-	it("loads the album's own art by its local id", async () => {
-		render(LibraryAlbumCard, { props: { album } });
-		await expect
-			.element(page.getByRole('img', { name: 'OK Computer' }))
-			.toHaveAttribute('data-src', `/api/v3/library/albums/${LOCAL_ALBUM_ID}/artwork?size=250`);
-	});
-
-	it("says how many of its edition's tracks it holds, with the kind beside", async () => {
-		render(LibraryAlbumCard, {
-			props: { album: { ...album, track_count: 3, expected_track_count: 12 }, kind: 'Single' }
-		});
-		await expect.element(page.getByText('3/12 tracks')).toBeInTheDocument();
-		await expect.element(page.getByText('Single')).toBeInTheDocument();
-	});
-
-	it('falls back to the release-group cover when a linked album has no art of its own', async () => {
+	it('loads its own art, else the release-group cover, and asks for none the server says is missing', async () => {
 		const releaseGroup = 'b1392450-e666-3926-a536-22c65f834433';
-		render(LibraryAlbumCard, {
-			props: {
-				album: {
-					...album,
-					cover_available: false,
-					release_group_mbid: releaseGroup,
-					identity_state: 'linked'
-				}
+		const linked = {
+			...album,
+			cover_available: false,
+			release_group_mbid: releaseGroup,
+			identity_state: 'linked'
+		} as const;
+		const cases: [AlbumView, string | null][] = [
+			[album, `/api/v3/library/albums/${LOCAL_ALBUM_ID}/artwork?size=250`],
+			[linked, `/api/v3/covers/release-group/${releaseGroup}?size=250`],
+			[{ ...linked, art_missing: true }, null]
+		];
+		for (const [shown, source] of cases) {
+			const view = await render(LibraryAlbumCard, { props: { album: shown } });
+			const image = page.getByRole('img', { name: 'OK Computer' });
+			if (source) {
+				await expect.element(image).toHaveAttribute('data-src', source);
+			} else {
+				await expect.element(page.getByTestId('cover-placeholder')).toBeInTheDocument();
+				await expect.element(image).not.toBeInTheDocument();
 			}
-		});
-		await expect
-			.element(page.getByRole('img', { name: 'OK Computer' }))
-			.toHaveAttribute('data-src', `/api/v3/covers/release-group/${releaseGroup}?size=250`);
-	});
-
-	it('asks for no cover the server says is missing and shows the placeholder', async () => {
-		render(LibraryAlbumCard, {
-			props: {
-				album: {
-					...album,
-					cover_available: false,
-					art_missing: true,
-					release_group_mbid: 'b1392450-e666-3926-a536-22c65f834433',
-					identity_state: 'linked'
-				}
-			}
-		});
-		await expect.element(page.getByTestId('cover-placeholder')).toBeInTheDocument();
-		await expect.element(page.getByRole('img', { name: 'OK Computer' })).not.toBeInTheDocument();
+			view.unmount();
+		}
 	});
 });

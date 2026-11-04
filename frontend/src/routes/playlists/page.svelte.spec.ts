@@ -1,6 +1,6 @@
 import { page } from 'vitest/browser';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render } from 'vitest-browser-svelte';
+import { cleanup, render } from 'vitest-browser-svelte';
 import type { PlaylistListItemV3 } from '$lib/features/playlists/queries/PlaylistV3Queries.svelte';
 
 // The list page consumes the user-scoped TanStack query + create mutation; stub both so
@@ -86,74 +86,67 @@ describe('Playlists list page', () => {
 		mockGoto.mockReset();
 	});
 
-	it('groups owned and shared playlists into labelled sections', async () => {
-		listQuery.data = [
-			makePlaylist({ id: 'mine', name: 'My Mix', is_owner: true }),
-			makePlaylist({
-				id: 'theirs',
-				name: 'Ann Mix',
-				is_owner: false,
-				is_public: true,
-				owner_name: 'Ann Smith'
-			})
-		];
-		await render(PlaylistsPage);
+	it('offers delete exactly where the server says so, on redacted and public cards alike', async () => {
+		{
+			// Renders a redacted private card with no delete.
+			listQuery.data = [makeRedacted({ id: 'priv', track_count: 4, owner_name: 'Cara' })];
+			await render(PlaylistsPage);
 
-		await expect.element(page.getByRole('heading', { name: 'My Playlists' })).toBeVisible();
-		await expect.element(page.getByRole('heading', { name: 'Shared with you' })).toBeVisible();
-		await expect.element(page.getByText(/Shared by Ann Smith/)).toBeVisible();
-	});
+			await expect
+				.element(page.getByRole('heading', { name: 'Private', exact: true }))
+				.toBeVisible();
+			await expect.element(page.getByText('Private playlist')).toBeVisible();
+			await expect.element(page.getByText(/owned by Cara/)).toBeVisible();
+			expect(page.getByRole('button', { name: /Delete/ }).elements()).toHaveLength(0);
+		}
 
-	it('renders a redacted private card with no delete', async () => {
-		listQuery.data = [makeRedacted({ id: 'priv', track_count: 4, owner_name: 'Cara' })];
-		await render(PlaylistsPage);
+		{
+			// Marks a private playlist with no owner and offers delete where the server says so.
+			cleanup();
+			listQuery.data = [makeRedacted({ id: 'stray', owner_name: null, can_delete: true })];
+			await render(PlaylistsPage);
 
-		await expect.element(page.getByRole('heading', { name: 'Private', exact: true })).toBeVisible();
-		await expect.element(page.getByText('Private playlist')).toBeVisible();
-		await expect.element(page.getByText(/owned by Cara/)).toBeVisible();
-		expect(page.getByRole('button', { name: /Delete/ }).elements()).toHaveLength(0);
-	});
+			await expect.element(page.getByText(/No owner/)).toBeVisible();
+			await expect
+				.element(page.getByRole('button', { name: 'Delete private playlist with no owner' }))
+				.toBeVisible();
+		}
 
-	it('marks a private playlist with no owner and offers delete where the server says so', async () => {
-		listQuery.data = [makeRedacted({ id: 'stray', owner_name: null, can_delete: true })];
-		await render(PlaylistsPage);
+		{
+			// Shows delete on a public playlist with no owner where the server says so.
+			cleanup();
+			listQuery.data = [
+				makePlaylist({
+					id: 'stray',
+					name: 'Old Mix',
+					is_owner: false,
+					is_public: true,
+					owner_name: null,
+					can_delete: true
+				})
+			];
+			await render(PlaylistsPage);
 
-		await expect.element(page.getByText(/No owner/)).toBeVisible();
-		await expect
-			.element(page.getByRole('button', { name: 'Delete private playlist with no owner' }))
-			.toBeVisible();
-	});
+			await expect.element(page.getByText('No owner')).toBeVisible();
+			await expect.element(page.getByRole('button', { name: 'Delete Old Mix' })).toBeVisible();
+		}
 
-	it('shows delete on a public playlist with no owner where the server says so', async () => {
-		listQuery.data = [
-			makePlaylist({
-				id: 'stray',
-				name: 'Old Mix',
-				is_owner: false,
-				is_public: true,
-				owner_name: null,
-				can_delete: true
-			})
-		];
-		await render(PlaylistsPage);
+		{
+			// Hides the delete button on a shared (non-owned) card.
+			cleanup();
+			listQuery.data = [
+				makePlaylist({
+					id: 'theirs',
+					name: 'Ann Mix',
+					is_owner: false,
+					is_public: true,
+					owner_name: 'Ann'
+				})
+			];
+			await render(PlaylistsPage);
 
-		await expect.element(page.getByText('No owner')).toBeVisible();
-		await expect.element(page.getByRole('button', { name: 'Delete Old Mix' })).toBeVisible();
-	});
-
-	it('hides the delete button on a shared (non-owned) card', async () => {
-		listQuery.data = [
-			makePlaylist({
-				id: 'theirs',
-				name: 'Ann Mix',
-				is_owner: false,
-				is_public: true,
-				owner_name: 'Ann'
-			})
-		];
-		await render(PlaylistsPage);
-
-		await expect.element(page.getByText('Ann Mix')).toBeVisible();
-		expect(page.getByRole('button', { name: /Delete Ann Mix/ }).elements()).toHaveLength(0);
+			await expect.element(page.getByText('Ann Mix')).toBeVisible();
+			expect(page.getByRole('button', { name: /Delete Ann Mix/ }).elements()).toHaveLength(0);
+		}
 	});
 });

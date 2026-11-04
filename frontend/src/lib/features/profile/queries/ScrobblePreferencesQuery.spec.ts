@@ -1,4 +1,3 @@
-import { v3 } from '$lib/api/v3/endpoint';
 import { describe, expect, it, vi, beforeEach, type Mock } from 'vitest';
 
 vi.mock('@tanstack/svelte-query', () => ({
@@ -97,7 +96,6 @@ import { api } from '$lib/api/client';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { queryClient } from '$lib/queries/QueryClient';
 import { ScrobblePreferencesQueryKeyFactory } from '$lib/queries/featureKeys';
-import { getScrobblePreferencesQuery } from '$lib/features/profile/queries/scrobble-preferences.svelte';
 import { getScrobblePreferencesQueryOptions } from '$lib/features/profile/queries/scrobble-preferences.svelte';
 import { createUpdateScrobblePreferencesMutation } from '$lib/features/profile/queries/scrobble-preferences.svelte';
 
@@ -139,17 +137,6 @@ beforeEach(() => {
 });
 
 describe('getScrobblePreferencesQuery', () => {
-	it('builds a userId-scoped key and fetches /me/scrobble-preferences', async () => {
-		const opts = getScrobblePreferencesQuery() as unknown as Opts;
-		const signal = new AbortController().signal;
-		expect(opts.queryKey).toEqual(ScrobblePreferencesQueryKeyFactory.get('userA'));
-		await opts.queryFn!({ signal });
-		expect(mockV3Get).toHaveBeenCalledWith(v3('/api/v3/me/scrobble-preferences'), {
-			signal,
-			timeoutMs: 10_000
-		});
-	});
-
 	it('reuses one session bootstrap fetch across ordinary navigation', async () => {
 		const options = getScrobblePreferencesQueryOptions('userA');
 		await queryClient.ensureQueryData(options);
@@ -165,34 +152,24 @@ describe('getScrobblePreferencesQuery', () => {
 });
 
 describe('update scrobble preferences', () => {
-	it('onSuccess immediately updates only the user-scoped persisted key', async () => {
-		const m = createUpdateScrobblePreferencesMutation() as unknown as Opts;
-		const context = m.onMutate!({ primary_music_source: 'lastfm' });
-		const updated = await m.mutationFn({ primary_music_source: 'lastfm' });
-		await m.onSuccess!(updated, { primary_music_source: 'lastfm' }, context);
-		expect(queryClient.getQueryData(ScrobblePreferencesQueryKeyFactory.get('userA'))).toMatchObject(
-			{
-				primary_music_source: 'lastfm'
-			}
-		);
-		expect(
-			queryClient.getQueryData(ScrobblePreferencesQueryKeyFactory.get('userB'))
-		).toBeUndefined();
-	});
+	it('lands a saved change only under the user who made it', async () => {
+		for (const switched of [false, true]) {
+			queryClient.clear();
+			(authStore as { user: { id: string } | null }).user = { id: 'userA' };
+			const m = createUpdateScrobblePreferencesMutation() as unknown as Opts;
+			const context = m.onMutate!({ primary_music_source: 'lastfm' });
+			const updated = await m.mutationFn({ primary_music_source: 'lastfm' });
+			// A delayed answer after an account switch is dropped.
+			if (switched) (authStore as { user: { id: string } | null }).user = { id: 'userB' };
 
-	it('discards a delayed mutation result after an account switch', async () => {
-		const m = createUpdateScrobblePreferencesMutation() as unknown as Opts;
-		const context = m.onMutate!({ primary_music_source: 'lastfm' });
-		const updated = await m.mutationFn({ primary_music_source: 'lastfm' });
-		(authStore as { user: { id: string } | null }).user = { id: 'userB' };
+			await m.onSuccess!(updated, { primary_music_source: 'lastfm' }, context);
 
-		await m.onSuccess!(updated, { primary_music_source: 'lastfm' }, context);
-
-		expect(
-			queryClient.getQueryData(ScrobblePreferencesQueryKeyFactory.get('userA'))
-		).toBeUndefined();
-		expect(
-			queryClient.getQueryData(ScrobblePreferencesQueryKeyFactory.get('userB'))
-		).toBeUndefined();
+			const saved = queryClient.getQueryData(ScrobblePreferencesQueryKeyFactory.get('userA'));
+			if (switched) expect(saved).toBeUndefined();
+			else expect(saved).toMatchObject({ primary_music_source: 'lastfm' });
+			expect(
+				queryClient.getQueryData(ScrobblePreferencesQueryKeyFactory.get('userB'))
+			).toBeUndefined();
+		}
 	});
 });

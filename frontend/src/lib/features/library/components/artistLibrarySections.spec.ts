@@ -16,7 +16,7 @@ function album(id: string, rg: string | null, extra: Partial<AlbumView> = {}) {
 const titles = (list: { album: AlbumView }[]) => list.map((filed) => filed.album.title);
 
 describe('fileOwnedAlbums', () => {
-	it('files every owned album, whatever its type', () => {
+	it('files every owned album, whatever its type, newest first and undated last', () => {
 		const sections = fileOwnedAlbums(
 			[
 				album('studio', 'RG-1'),
@@ -42,10 +42,7 @@ describe('fileOwnedAlbums', () => {
 			'Live',
 			'Compilation'
 		]);
-	});
-
-	it('puts the newest first and undated last', () => {
-		const sections = fileOwnedAlbums(
+		const dated = fileOwnedAlbums(
 			[
 				album('old', null, { year: 1990 }),
 				album('undated', null),
@@ -53,6 +50,6 @@ describe('fileOwnedAlbums', () => {
 			],
 			[]
 		);
-		expect(titles(sections.albums)).toEqual(['new', 'old', 'undated']);
+		expect(titles(dated.albums)).toEqual(['new', 'old', 'undated']);
 	});
 });

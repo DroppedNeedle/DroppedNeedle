@@ -7,64 +7,50 @@ const q = (albumId: string): QueueItem => ({ albumId }) as QueueItem;
 const build = (...albumIds: string[]): QueueItem[] => albumIds.map(q);
 
 describe('queueHasAlbums', () => {
-	it('is false for an empty queue', () => {
-		expect(queueHasAlbums([])).toBe(false);
-	});
-
-	it('is false for a single track', () => {
-		expect(queueHasAlbums(build('a'))).toBe(false);
-	});
-
-	it('is false for unrelated singles (each a different album)', () => {
-		expect(queueHasAlbums(build('a', 'b', 'c'))).toBe(false);
-	});
-
-	it('is false for tracks with no albumId', () => {
-		expect(queueHasAlbums(build('', '', ''))).toBe(false);
-	});
-
-	it('is true when two consecutive tracks share an albumId', () => {
-		expect(queueHasAlbums(build('a', 'a', 'b'))).toBe(true);
+	it('is true only when two consecutive tracks share an albumId', () => {
+		const cases: [string, QueueItem[], boolean][] = [
+			['an empty queue', [], false],
+			['a single track', build('a'), false],
+			['unrelated singles', build('a', 'b', 'c'), false],
+			['tracks with no albumId', build('', '', ''), false],
+			['two of one album in a row', build('a', 'a', 'b'), true]
+		];
+		for (const [what, queue, expected] of cases) {
+			expect(queueHasAlbums(queue), what).toBe(expected);
+		}
 	});
 });
 
 describe('computeNextAlbumIndex', () => {
-	it('returns null for an out-of-range index', () => {
-		expect(computeNextAlbumIndex(build('a', 'a'), 5)).toBeNull();
-	});
-
-	it('jumps to the start of the next album block', () => {
-		const queue = build('a', 'a', 'b', 'b');
-		expect(computeNextAlbumIndex(queue, 0)).toBe(2);
-		expect(computeNextAlbumIndex(queue, 1)).toBe(2);
-	});
-
-	it('returns null when on the last album', () => {
-		const queue = build('a', 'a', 'b', 'b');
-		expect(computeNextAlbumIndex(queue, 2)).toBeNull();
-		expect(computeNextAlbumIndex(queue, 3)).toBeNull();
-	});
-
-	it('treats no-albumId tracks as solo blocks', () => {
-		const queue = build('', '');
-		expect(computeNextAlbumIndex(queue, 0)).toBe(1);
+	it('jumps to the next album block, with no-albumId tracks as solo blocks', () => {
+		const albums = build('a', 'a', 'b', 'b');
+		const cases: [QueueItem[], number, number | null][] = [
+			// Out of range.
+			[build('a', 'a'), 5, null],
+			[albums, 0, 2],
+			[albums, 1, 2],
+			// On the last album.
+			[albums, 2, null],
+			[albums, 3, null],
+			[build('', ''), 0, 1]
+		];
+		for (const [queue, index, expected] of cases) {
+			expect(computeNextAlbumIndex(queue, index), `${index}`).toBe(expected);
+		}
 	});
 });
 
 describe('computePreviousAlbumIndex', () => {
-	it('restarts the current album when playing mid-album', () => {
-		const queue = build('a', 'a', 'a', 'b');
-		expect(computePreviousAlbumIndex(queue, 2)).toBe(0);
-	});
-
-	it('jumps to the previous album when at the start of the current one', () => {
-		const queue = build('a', 'a', 'b', 'b');
-		expect(computePreviousAlbumIndex(queue, 2)).toBe(0);
-		expect(computePreviousAlbumIndex(queue, 3)).toBe(2);
-	});
-
-	it('returns null at the very start of the queue', () => {
-		const queue = build('a', 'a', 'b', 'b');
-		expect(computePreviousAlbumIndex(queue, 0)).toBeNull();
+	it('restarts the album mid-way, else goes to the one before, and stops at the start', () => {
+		const albums = build('a', 'a', 'b', 'b');
+		const cases: [QueueItem[], number, number | null][] = [
+			[build('a', 'a', 'a', 'b'), 2, 0],
+			[albums, 2, 0],
+			[albums, 3, 2],
+			[albums, 0, null]
+		];
+		for (const [queue, index, expected] of cases) {
+			expect(computePreviousAlbumIndex(queue, index), `${index}`).toBe(expected);
+		}
 	});
 });

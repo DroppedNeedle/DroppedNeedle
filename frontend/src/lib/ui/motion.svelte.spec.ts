@@ -22,23 +22,29 @@ describe('reduced motion', () => {
 		await reduceMotion(false);
 	});
 
-	it('stops CSS animation unless the element keeps its motion', async () => {
-		const still = pulsing();
-		const kept = pulsing('motion-keep');
-		await reduceMotion(true);
+	it('stops CSS animation and Svelte transitions, unless an element keeps its motion', async () => {
+		{
+			// Stops CSS animation unless the element keeps its motion.
+			const still = pulsing();
+			const kept = pulsing('motion-keep');
+			await reduceMotion(true);
 
-		await expect
-			.poll(() => Number.parseFloat(getComputedStyle(still).animationDuration))
-			.toBeLessThan(0.001);
-		expect(getComputedStyle(kept).animationDuration).toBe('2s');
-	});
+			await expect
+				.poll(() => Number.parseFloat(getComputedStyle(still).animationDuration))
+				.toBeLessThan(0.001);
+			expect(getComputedStyle(kept).animationDuration).toBe('2s');
+		}
 
-	it('runs Svelte transitions at once', async () => {
-		const node = document.createElement('div');
-		expect(fade(node, { duration: 400 }).duration).toBe(400);
+		{
+			// Runs Svelte transitions at once.
+			document.body.replaceChildren();
+			await reduceMotion(false);
+			const node = document.createElement('div');
+			expect(fade(node, { duration: 400 }).duration).toBe(400);
 
-		await reduceMotion(true);
+			await reduceMotion(true);
 
-		await expect.poll(() => fade(node, { duration: 400 }).duration).toBe(0);
+			await expect.poll(() => fade(node, { duration: 400 }).duration).toBe(0);
+		}
 	});
 });

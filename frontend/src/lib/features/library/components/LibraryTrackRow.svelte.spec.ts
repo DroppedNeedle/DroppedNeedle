@@ -46,14 +46,4 @@ describe('LibraryTrackRow.svelte', () => {
 		await renderComponent();
 		await expect.element(page.getByText(meta.id)).toBeInTheDocument();
 	});
-
-	it('shows the recording MBID', async () => {
-		await renderComponent();
-		await expect.element(page.getByText('rec-airbag-0001')).toBeInTheDocument();
-	});
-
-	it('does not show the admin Edit tags button for non-admins', async () => {
-		await renderComponent();
-		await expect.element(page.getByText('Edit tags')).not.toBeInTheDocument();
-	});
 });

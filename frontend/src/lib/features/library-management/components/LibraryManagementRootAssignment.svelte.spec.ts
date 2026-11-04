@@ -61,60 +61,45 @@ describe('LibraryManagementRootAssignment', () => {
 		expect(h.checkPlacement).toHaveBeenCalledWith('root-2');
 	});
 
-	it('round-trips the explicit per-root multi-disc script mode', async () => {
-		await render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
-		await page.getByRole('checkbox', { name: /Configure file organization/ }).click();
-		await page.getByText('Per-root profile overrides').click();
-		await page.getByRole('checkbox', { name: /Override selected profile values/ }).click();
+	it('saves the per-root multi-disc mode, with a script id only for the script mode', async () => {
+		for (const [chosen, scriptId] of [
+			['script', multiDiscNamingScriptId],
+			['standard', null]
+		] as const) {
+			h.update.mockClear();
+			const view = await render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
+			await page.getByRole('checkbox', { name: /Configure file organization/ }).click();
+			await page.getByText('Per-root profile overrides').click();
+			await page.getByRole('checkbox', { name: /Override selected profile values/ }).click();
 
-		const mode = page.getByRole('combobox', { name: 'Multi-disc naming' });
-		await expect.element(mode).toHaveValue('inherit');
-		await expect
-			.element(page.getByRole('combobox', { name: 'Selected multi-disc script' }))
-			.not.toBeInTheDocument();
-		await mode.selectOptions('script');
-		const selectedScript = page.getByRole('combobox', { name: 'Selected multi-disc script' });
-		await expect.element(selectedScript).toBeVisible();
-		await selectedScript.selectOptions(multiDiscNamingScriptId);
-		await page.getByRole('button', { name: 'Validate and save' }).click();
+			const mode = page.getByRole('combobox', { name: 'Multi-disc naming' });
+			await expect.element(mode).toHaveValue('inherit');
+			await expect
+				.element(page.getByRole('combobox', { name: 'Selected multi-disc script' }))
+				.not.toBeInTheDocument();
+			await mode.selectOptions(chosen);
+			if (chosen === 'script') {
+				const selectedScript = page.getByRole('combobox', { name: 'Selected multi-disc script' });
+				await expect.element(selectedScript).toBeVisible();
+				await selectedScript.selectOptions(multiDiscNamingScriptId);
+			}
+			await page.getByRole('button', { name: 'Validate and save' }).click();
 
-		expect(h.update).toHaveBeenCalledWith(
-			expect.objectContaining({
-				settings: expect.objectContaining({
-					root_assignments: [
-						expect.objectContaining({
-							overrides: expect.objectContaining({
-								multi_disc_naming_mode: 'script',
-								multi_disc_naming_script_id: multiDiscNamingScriptId
+			expect(h.update).toHaveBeenCalledWith(
+				expect.objectContaining({
+					settings: expect.objectContaining({
+						root_assignments: [
+							expect.objectContaining({
+								overrides: expect.objectContaining({
+									multi_disc_naming_mode: chosen,
+									multi_disc_naming_script_id: scriptId
+								})
 							})
-						})
-					]
+						]
+					})
 				})
-			})
-		);
-	});
-
-	it('serializes the per-root effective-standard mode without a script ID', async () => {
-		await render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
-		await page.getByRole('checkbox', { name: /Configure file organization/ }).click();
-		await page.getByText('Per-root profile overrides').click();
-		await page.getByRole('checkbox', { name: /Override selected profile values/ }).click();
-		await page.getByRole('combobox', { name: 'Multi-disc naming' }).selectOptions('standard');
-		await page.getByRole('button', { name: 'Validate and save' }).click();
-
-		expect(h.update).toHaveBeenCalledWith(
-			expect.objectContaining({
-				settings: expect.objectContaining({
-					root_assignments: [
-						expect.objectContaining({
-							overrides: expect.objectContaining({
-								multi_disc_naming_mode: 'standard',
-								multi_disc_naming_script_id: null
-							})
-						})
-					]
-				})
-			})
-		);
+			);
+			view.unmount();
+		}
 	});
 });

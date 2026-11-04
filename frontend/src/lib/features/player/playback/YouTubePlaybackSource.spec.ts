@@ -82,32 +82,19 @@ afterEach(() => {
 });
 
 describe('YouTubePlaybackSource background-play guard', () => {
-	it('pauses when the page is hidden while playing', async () => {
-		const source = await loadSource();
-
+	it('pauses while the page is hidden and resumes after, unless the user paused it', async () => {
+		let source = await loadSource();
 		setVisibility('hidden');
-
 		expect(player.pauseVideo).toHaveBeenCalledTimes(1);
-		source.destroy();
-	});
-
-	it('resumes when the page becomes visible again', async () => {
-		const source = await loadSource();
-
-		setVisibility('hidden');
 		setVisibility('visible');
-
 		expect(player.playVideo).toHaveBeenCalledTimes(1);
 		source.destroy();
-	});
 
-	it('does not resume a track the user paused themselves', async () => {
-		const source = await loadSource();
-
+		vi.clearAllMocks();
+		source = await loadSource();
 		source.pause();
 		setVisibility('hidden');
 		setVisibility('visible');
-
 		expect(player.playVideo).not.toHaveBeenCalled();
 		source.destroy();
 	});

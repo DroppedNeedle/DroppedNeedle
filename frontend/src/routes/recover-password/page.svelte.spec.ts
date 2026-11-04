@@ -29,7 +29,7 @@ describe('password recovery page', () => {
 		expect(AUTH_FREE_PATHS).toContain('/recover-password');
 	});
 
-	it('explains both administrator-issued and server-owner recovery', async () => {
+	it('explains both kinds of recovery and builds a safe host command from the username', async () => {
 		await render(RecoveryPage);
 		await expect
 			.element(page.getByRole('heading', { name: 'Recover your local account' }))
@@ -42,12 +42,8 @@ describe('password recovery page', () => {
 			.toBeVisible();
 		await expect.element(page.getByText(/recovery-code --list-admins/)).toBeVisible();
 		await expect.element(page.getByText(/Enter your username above/)).toBeVisible();
-	});
-
-	it('builds a safe host command from the entered username', async () => {
-		await render(RecoveryPage);
-		await page.getByText('Recover as server owner').click();
 		await expect.element(page.getByLabelText('Copy recovery command')).toBeDisabled();
+
 		await page.getByLabelText('Username').fill('Alice.Admin');
 
 		await expect.element(page.getByLabelText('Copy recovery command')).toBeEnabled();
@@ -71,27 +67,20 @@ describe('password recovery page', () => {
 		await expect.element(page.getByRole('heading', { name: 'Password changed' })).toBeVisible();
 	});
 
-	it('rejects mismatched passwords before calling the server', async () => {
+	it('refuses mismatched or over-long passwords before calling the server', async () => {
 		await render(RecoveryPage);
 		await page.getByLabelText('Username').fill('Alice');
 		await page.getByLabelText('Recovery code').fill('AAAA-BBBB-CCCC-DDDD-EEEE');
-		await page.getByLabelText('New password').fill('a new secure password');
-		await page.getByLabelText('Confirm password').fill('a different secure password');
-		await page.getByRole('button', { name: 'Reset password' }).click();
+		for (const [password, confirm, alert] of [
+			['a new secure password', 'a different secure password', 'Passwords do not match'],
+			['é'.repeat(257), 'é'.repeat(257), '512 bytes or fewer']
+		]) {
+			await page.getByLabelText('New password').fill(password);
+			await page.getByLabelText('Confirm password').fill(confirm);
+			await page.getByRole('button', { name: 'Reset password' }).click();
 
-		await expect.element(page.getByRole('alert')).toHaveTextContent('Passwords do not match');
-		expect(h.mutate).not.toHaveBeenCalled();
-	});
-
-	it('rejects passwords over the server byte limit before calling the server', async () => {
-		await render(RecoveryPage);
-		await page.getByLabelText('Username').fill('Alice');
-		await page.getByLabelText('Recovery code').fill('AAAA-BBBB-CCCC-DDDD-EEEE');
-		await page.getByLabelText('New password').fill('é'.repeat(257));
-		await page.getByLabelText('Confirm password').fill('é'.repeat(257));
-		await page.getByRole('button', { name: 'Reset password' }).click();
-
-		await expect.element(page.getByRole('alert')).toHaveTextContent('512 bytes or fewer');
+			await expect.element(page.getByRole('alert')).toHaveTextContent(alert);
+		}
 		expect(h.mutate).not.toHaveBeenCalled();
 	});
 });

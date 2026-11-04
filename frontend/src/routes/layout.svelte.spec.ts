@@ -271,9 +271,9 @@ describe('+layout.svelte sidebar', () => {
 		expect(shellModuleState.playerImports).toBe(0);
 	});
 
-	it('shows the Library Management destination in a labelled admin section', async () => {
+	it('shows the labelled admin section with Library Management to an admin only', async () => {
 		authStore.setUser(testUser('admin'));
-		await renderLayout();
+		const admin = await renderLayout();
 		await expect.element(page.getByText('Admin', { exact: true })).toBeInTheDocument();
 		const link = page
 			.getByTestId('app-shell')
@@ -282,9 +282,8 @@ describe('+layout.svelte sidebar', () => {
 		await expect.element(link).toBeInTheDocument();
 		await expect.element(link).toHaveAttribute('href', '/library/management');
 		await expect.element(link).toHaveAttribute('aria-label', 'Library Management');
-	});
+		admin.unmount();
 
-	it('does not expose the admin navigation section to non-administrators', async () => {
 		authStore.setUser(testUser('user'));
 		await renderLayout();
 		await expect.element(page.getByText('Admin', { exact: true })).not.toBeInTheDocument();

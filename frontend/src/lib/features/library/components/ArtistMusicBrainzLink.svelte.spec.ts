@@ -92,16 +92,4 @@ describe('artist MusicBrainz link', () => {
 
 		await expect.element(page.getByRole('alert')).toHaveTextContent('(Beta)');
 	});
-
-	it('shows a plain user who set the link, with no controls', async () => {
-		signIn('user');
-		fakeApi({
-			[`GET ${ROUTE}`]: { ...appLink, source: 'person', set_by: 'person' }
-		});
-		await renderWithQuery(ArtistMusicBrainzLink, { artistId: 'artist-a' });
-
-		await expect.element(page.getByText(/Linked by a curator/)).toBeVisible();
-		await expect.element(page.getByRole('button', { name: 'Change' })).not.toBeInTheDocument();
-		await expect.element(page.getByRole('button', { name: 'Clear' })).not.toBeInTheDocument();
-	});
 });

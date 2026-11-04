@@ -95,38 +95,45 @@ beforeEach(() => {
 });
 
 describe('LibraryRunHistory', () => {
-	it('confirms redaction and honors the streamed safe filename', async () => {
-		h.raw.mockResolvedValue(
-			new Response('{"safe":true}', {
-				status: 200,
-				headers: {
-					'content-type': 'application/json',
-					'content-disposition': 'attachment; filename="droppedneedle-library-run-opaque.json"'
-				}
-			})
-		);
-		await renderWithQuery(LibraryRunHistory, {});
-		await page.getByText('Details').first().click();
-		await page.getByRole('button', { name: /Export diagnostics for run run-safe-1/ }).click();
-		await expect
-			.element(page.getByText(/excludes credentials, raw provider responses/))
-			.toBeVisible();
-		await page.getByRole('button', { name: 'Export report' }).click();
-		expect(h.raw).toHaveBeenCalledWith('/api/v3/library/scan/runs/run-safe-1/diagnostics');
-		expect(h.anchorClick).toHaveBeenCalledOnce();
-		expect(h.toast).toHaveBeenCalledWith({ message: 'Diagnostic report ready', type: 'success' });
-	});
+	it('exports diagnostics only after a redaction notice, and fails with fixed copy', async () => {
+		for (const outcome of ['ready', 'fails'] as const) {
+			h.toast.mockClear();
+			if (outcome === 'ready') {
+				h.raw.mockResolvedValue(
+					new Response('{"safe":true}', {
+						status: 200,
+						headers: {
+							'content-type': 'application/json',
+							'content-disposition': 'attachment; filename="droppedneedle-library-run-opaque.json"'
+						}
+					})
+				);
+			} else {
+				h.raw.mockRejectedValue(new Error('/secret/path/provider-token'));
+			}
+			const view = await renderWithQuery(LibraryRunHistory, {});
+			await page.getByText('Details').first().click();
+			await page.getByRole('button', { name: /Export diagnostics for run run-safe-1/ }).click();
+			await expect
+				.element(page.getByText(/excludes credentials, raw provider responses/))
+				.toBeVisible();
+			await page.getByRole('button', { name: 'Export report' }).click();
 
-	it('uses fixed user-safe copy when an export fails', async () => {
-		h.raw.mockRejectedValue(new Error('/secret/path/provider-token'));
-		await renderWithQuery(LibraryRunHistory, {});
-		await page.getByText('Details').first().click();
-		await page.getByRole('button', { name: /Export diagnostics/ }).click();
-		await page.getByRole('button', { name: 'Export report' }).click();
-		expect(h.toast).toHaveBeenCalledWith({
-			message: 'Could not prepare the diagnostic report',
-			type: 'error'
-		});
-		expect(document.body.textContent).not.toContain('/secret/path');
+			if (outcome === 'ready') {
+				expect(h.raw).toHaveBeenCalledWith('/api/v3/library/scan/runs/run-safe-1/diagnostics');
+				expect(h.anchorClick).toHaveBeenCalledOnce();
+				expect(h.toast).toHaveBeenCalledWith({
+					message: 'Diagnostic report ready',
+					type: 'success'
+				});
+			} else {
+				expect(h.toast).toHaveBeenCalledWith({
+					message: 'Could not prepare the diagnostic report',
+					type: 'error'
+				});
+				expect(document.body.textContent).not.toContain('/secret/path');
+			}
+			view.unmount();
+		}
 	});
 });

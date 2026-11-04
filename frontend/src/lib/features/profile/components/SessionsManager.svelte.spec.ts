@@ -70,7 +70,7 @@ describe('SessionsManager', () => {
 			.toBeVisible();
 	});
 
-	it('revokes another session after an inline confirm', async () => {
+	it('revokes another session only after an inline confirm, and backing out keeps it', async () => {
 		const api = fakeApi({
 			'GET /api/v3/auth/sessions': sessions,
 			'DELETE /api/v3/auth/sessions/{id}': undefined
@@ -78,23 +78,16 @@ describe('SessionsManager', () => {
 		await renderWithQuery(SessionsManager, {});
 
 		await page.getByRole('button', { name: /revoke bedroom speaker/i }).click();
-		await page.getByRole('button', { name: 'Confirm revoke' }).click();
-
-		await expect.poll(() => api.calls('DELETE /api/v3/auth/sessions/{id}').length).toBe(1);
-		expect(api.calls('DELETE /api/v3/auth/sessions/{id}')[0]?.params).toEqual({ id: 'sess-old' });
-	});
-
-	it('lets the user back out of a revoke', async () => {
-		const api = fakeApi({ 'GET /api/v3/auth/sessions': sessions });
-		await renderWithQuery(SessionsManager, {});
-
-		await page.getByRole('button', { name: /revoke bedroom speaker/i }).click();
 		await page.getByRole('button', { name: 'Keep session' }).click();
-
 		await expect
 			.element(page.getByRole('button', { name: /revoke bedroom speaker/i }))
 			.toBeVisible();
 		expect(api.calls('DELETE /api/v3/auth/sessions/{id}')).toHaveLength(0);
+
+		await page.getByRole('button', { name: /revoke bedroom speaker/i }).click();
+		await page.getByRole('button', { name: 'Confirm revoke' }).click();
+		await expect.poll(() => api.calls('DELETE /api/v3/auth/sessions/{id}').length).toBe(1);
+		expect(api.calls('DELETE /api/v3/auth/sessions/{id}')[0]?.params).toEqual({ id: 'sess-old' });
 	});
 
 	it('shows an honest error with a retry that reads again', async () => {

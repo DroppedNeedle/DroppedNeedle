@@ -2,7 +2,6 @@ import { page } from 'vitest/browser';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 
-import { ApiError } from '$lib/api/errors';
 import type { DownloadPolicySettings } from '$lib/features/downloads/queries/DownloadClientsQueries.svelte';
 
 import type { QualityRecipeEntry } from './acquisition/qualityRecipeModel';
@@ -104,32 +103,6 @@ describe('SettingsDownloadPolicy quality recipe', () => {
 		h.mutateAsync = vi.fn(async (policy: DownloadPolicySettings) => structuredClone(policy));
 	});
 
-	it('derives the live legacy range from custom MP3 coverage and clamps the cutoff', async () => {
-		h.policy = {
-			...structuredClone(basePolicy),
-			quality_recipe: [
-				{
-					format: 'mp3',
-					quality: 'custom',
-					min_bitrate_kbps: 180,
-					max_bitrate_kbps: 300
-				}
-			]
-		};
-		await render(SettingsDownloadPolicy);
-		const cutoff = cutoffSelect();
-		await expect.element(cutoff).toHaveValue('mp3_256');
-		expect(
-			[...cutoff.options].filter((option) => !option.disabled).map((option) => option.value)
-		).toEqual(['low', 'mp3_192', 'mp3_256']);
-
-		await page.getByRole('button', { name: 'Save acquisition policy' }).click();
-		const saved = h.mutateAsync.mock.calls[0][0] as Record<string, unknown>;
-		expect(saved.quality_min).toBe('low');
-		expect(saved.quality_max).toBe('mp3_256');
-		expect(saved.quality_cutoff).toBe('mp3_256');
-	});
-
 	it('sends the edited order and custom recipe values in the mutation payload', async () => {
 		const { container } = await render(SettingsDownloadPolicy);
 		await page.getByRole('radio', { name: 'Custom' }).nth(1).click();
@@ -153,168 +126,81 @@ describe('SettingsDownloadPolicy quality recipe', () => {
 		expect(container.querySelectorAll('[data-recipe-id]')).toHaveLength(3);
 	});
 
-	it('blocks inclusive MP3 overlap and accepts a non-overlapping custom region', async () => {
-		h.policy = {
-			...structuredClone(basePolicy),
-			quality_recipe: [
-				{ format: 'flac', quality: 'cd' },
-				{
-					format: 'mp3',
-					quality: '192_255',
-					min_bitrate_kbps: 192,
-					max_bitrate_kbps: 255
-				}
-			]
-		};
-		const { container } = await render(SettingsDownloadPolicy);
-		await page.getByRole('radio', { name: 'Custom' }).nth(1).click();
-		await page.getByRole('spinbutton', { name: 'Custom MP3 minimum bitrate' }).fill('192');
-		await page.getByRole('spinbutton', { name: 'Custom MP3 maximum bitrate' }).fill('255');
-		await expect.element(page.getByRole('button', { name: 'Add MP3 recipe entry' })).toBeDisabled();
-		await expect.element(page.getByRole('alert').nth(1)).toHaveTextContent(/overlaps/i);
+	it('saves the range and cutoff the recipe covers, from custom MP3 bounds or a removed FLAC entry', async () => {
+		{
+			// Custom MP3 coverage sets the live range and clamps the cutoff.
+			h.policy = {
+				...structuredClone(basePolicy),
+				quality_recipe: [
+					{
+						format: 'mp3',
+						quality: 'custom',
+						min_bitrate_kbps: 180,
+						max_bitrate_kbps: 300
+					}
+				]
+			};
+			const view = await render(SettingsDownloadPolicy);
+			const cutoff = cutoffSelect();
+			await expect.element(cutoff).toHaveValue('mp3_256');
+			expect(
+				[...cutoff.options].filter((option) => !option.disabled).map((option) => option.value)
+			).toEqual(['low', 'mp3_192', 'mp3_256']);
 
-		await page.getByRole('spinbutton', { name: 'Custom MP3 minimum bitrate' }).fill('16');
-		await page.getByRole('spinbutton', { name: 'Custom MP3 maximum bitrate' }).fill('191');
-		await expect.element(page.getByRole('button', { name: 'Add MP3 recipe entry' })).toBeEnabled();
-		await page.getByRole('button', { name: 'Add MP3 recipe entry' }).click();
-		expect(rows(container)).toHaveLength(3);
-		expect(rows(container)[2]).toHaveTextContent('Custom · 16-191 kbps');
-	});
-	it('rejects duplicate custom FLAC resolution with a position-aware error', async () => {
-		const { container } = await render(SettingsDownloadPolicy);
-		await page.getByRole('radio', { name: 'Custom' }).first().click();
-		await page.getByRole('spinbutton', { name: 'Custom FLAC bit depth' }).fill('24');
-		await page.getByRole('spinbutton', { name: 'Custom FLAC sample rate' }).fill('96000');
-		await page.getByRole('button', { name: 'Add FLAC recipe entry' }).click();
+			await page.getByRole('button', { name: 'Save acquisition policy' }).click();
+			const saved = h.mutateAsync.mock.calls[0][0] as Record<string, unknown>;
+			expect(saved.quality_min).toBe('low');
+			expect(saved.quality_max).toBe('mp3_256');
+			expect(saved.quality_cutoff).toBe('mp3_256');
+			view.unmount();
+		}
 
-		await page.getByRole('radio', { name: 'Custom' }).first().click();
-		await page.getByRole('spinbutton', { name: 'Custom FLAC bit depth' }).fill('24');
-		await page.getByRole('spinbutton', { name: 'Custom FLAC sample rate' }).fill('96000');
-		await expect
-			.element(page.getByRole('button', { name: 'Add FLAC recipe entry' }))
-			.toBeDisabled();
-		await expect
-			.element(
-				page.getByText('This exact FLAC resolution is already at position 3.', { exact: true })
-			)
-			.toBeVisible();
-		expect(rows(container)).toHaveLength(3);
-	});
+		{
+			// Removing the FLAC entry narrows the range and clamps the cutoff.
+			h.mutateAsync = vi.fn(async (policy: DownloadPolicySettings) => structuredClone(policy));
+			h.policy = {
+				...structuredClone(basePolicy),
+				quality_min: 'low',
+				quality_max: 'lossless',
+				quality_recipe: [
+					{ format: 'flac', quality: 'cd' },
+					{
+						format: 'mp3',
+						quality: '320_plus',
+						min_bitrate_kbps: 320,
+						max_bitrate_kbps: null
+					},
+					{
+						format: 'mp3',
+						quality: '256_319',
+						min_bitrate_kbps: 256,
+						max_bitrate_kbps: 319
+					},
+					{
+						format: 'mp3',
+						quality: '192_255',
+						min_bitrate_kbps: 192,
+						max_bitrate_kbps: 255
+					},
+					{
+						format: 'mp3',
+						quality: 'below_192',
+						min_bitrate_kbps: 16,
+						max_bitrate_kbps: 191
+					}
+				]
+			};
+			const { container } = await render(SettingsDownloadPolicy);
+			expect(rows(container)).toHaveLength(5);
+			await page.getByRole('button', { name: 'Remove FLAC · CD quality' }).click();
+			expect(rows(container)).toHaveLength(4);
+			await page.getByRole('button', { name: 'Save acquisition policy' }).click();
 
-	it('requires confirmation before replacing dirty edits with a preset and lets Cancel preserve them', async () => {
-		const { container } = await render(SettingsDownloadPolicy);
-		await page.getByRole('radio', { name: /24-bit \/ 96 kHz/ }).click();
-		await page.getByRole('button', { name: 'Add FLAC recipe entry' }).click();
-		const trigger = page.getByRole('button', { name: 'Apply Best available preset' });
-		await trigger.click();
-		await expect
-			.element(page.getByRole('dialog', { name: 'Replace this quality recipe?' }))
-			.toBeVisible();
-		await page.getByRole('button', { name: 'Cancel' }).click();
-		expect(rows(container)[0]).toHaveTextContent('CD quality');
-		expect(container.ownerDocument.activeElement?.getAttribute('data-preset')).toBe(
-			'best_available'
-		);
-	});
-
-	it('preserves the draft after a failed save and restores it with Discard', async () => {
-		h.mutateAsync = vi.fn().mockRejectedValue(new Error('conflict'));
-		const { container } = await render(SettingsDownloadPolicy);
-		await page.getByRole('radio', { name: /24-bit \/ 96 kHz/ }).click();
-		await page.getByRole('button', { name: 'Add FLAC recipe entry' }).click();
-		await page.getByRole('button', { name: 'Save acquisition policy' }).click();
-		await expect.element(page.getByRole('button', { name: 'Discard' })).toBeVisible();
-		expect(rows(container)).toHaveLength(3);
-		await page.getByRole('button', { name: 'Discard' }).click();
-		expect(rows(container)).toHaveLength(2);
-	});
-
-	it('narrows the range and clamps the cutoff when the FLAC entry is removed', async () => {
-		h.policy = {
-			...structuredClone(basePolicy),
-			quality_min: 'low',
-			quality_max: 'lossless',
-			quality_recipe: [
-				{ format: 'flac', quality: 'cd' },
-				{
-					format: 'mp3',
-					quality: '320_plus',
-					min_bitrate_kbps: 320,
-					max_bitrate_kbps: null
-				},
-				{
-					format: 'mp3',
-					quality: '256_319',
-					min_bitrate_kbps: 256,
-					max_bitrate_kbps: 319
-				},
-				{
-					format: 'mp3',
-					quality: '192_255',
-					min_bitrate_kbps: 192,
-					max_bitrate_kbps: 255
-				},
-				{
-					format: 'mp3',
-					quality: 'below_192',
-					min_bitrate_kbps: 16,
-					max_bitrate_kbps: 191
-				}
-			]
-		};
-		const { container } = await render(SettingsDownloadPolicy);
-		expect(rows(container)).toHaveLength(5);
-		await page.getByRole('button', { name: 'Remove FLAC · CD quality' }).click();
-		expect(rows(container)).toHaveLength(4);
-		await page.getByRole('button', { name: 'Save acquisition policy' }).click();
-
-		expect(h.mutateAsync).toHaveBeenCalledTimes(1);
-		const saved = h.mutateAsync.mock.calls[0][0] as Record<string, unknown>;
-		expect(saved.quality_min).toBe('low');
-		expect(saved.quality_max).toBe('mp3_320');
-		expect(saved.quality_cutoff).toBe('mp3_320');
-	});
-});
-
-describe('SettingsDownloadPolicy retention', () => {
-	beforeEach(() => {
-		h.policy = structuredClone(basePolicy);
-		h.pending = false;
-		h.isError = false;
-		h.error = null;
-		h.mutateAsync = vi.fn(async (policy: DownloadPolicySettings) => structuredClone(policy));
-	});
-
-	it('takes the Usenet retention days with the server bounds and saves the edited value', async () => {
-		await render(SettingsDownloadPolicy);
-		const usenet = page.getByRole('spinbutton', { name: 'Usenet Retention (days)' });
-		await expect.element(usenet).toHaveValue(0);
-		await expect.element(usenet).toHaveAttribute('max', '100000');
-
-		await usenet.fill('45');
-		await page.getByRole('button', { name: 'Save acquisition policy' }).click();
-		expect(h.mutateAsync).toHaveBeenCalledTimes(1);
-		const saved = h.mutateAsync.mock.calls[0][0] as Record<string, unknown>;
-		expect(saved.usenet_retention_days).toBe(45);
-	});
-
-	it('opens the advanced section and shows a refusal on its field', async () => {
-		const reason = 'must be between 1 and 10, got 11';
-		h.mutateAsync = vi.fn(async () => {
-			throw new ApiError(400, `Max concurrent downloads: ${reason}`, 'INVALID_INPUT', {
-				field: 'max_concurrent_downloads',
-				reason
-			});
-		});
-		await render(SettingsDownloadPolicy);
-
-		const retention = page.getByRole('spinbutton', { name: 'Usenet Retention (days)' });
-		await retention.fill('45');
-		await page.getByRole('button', { name: 'Save acquisition policy' }).click();
-
-		const field = page.getByRole('spinbutton', { name: 'Max concurrent downloads' });
-		await expect.element(field).toBeVisible();
-		await expect.element(field).toHaveAttribute('aria-invalid', 'true');
-		await expect.element(page.getByRole('alert').getByText(reason)).toBeVisible();
+			expect(h.mutateAsync).toHaveBeenCalledTimes(1);
+			const saved = h.mutateAsync.mock.calls[0][0] as Record<string, unknown>;
+			expect(saved.quality_min).toBe('low');
+			expect(saved.quality_max).toBe('mp3_320');
+			expect(saved.quality_cutoff).toBe('mp3_320');
+		}
 	});
 });

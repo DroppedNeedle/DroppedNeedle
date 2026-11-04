@@ -8,7 +8,6 @@ import {
 	canRetry,
 	collapseRetryChains,
 	derivedDownloadStatus,
-	formatCountdown,
 	isWanted,
 	retryDisplay,
 	retryLadderState,
@@ -65,22 +64,20 @@ function task(overrides: Partial<DownloadTask> = {}): DownloadTask {
 	};
 }
 
+const NOW = 1_000_000;
+
 describe('derivedDownloadStatus', () => {
-	it('queued with no search job is "searching"', () => {
-		expect(derivedDownloadStatus(task({ status: 'queued', search_job_id: null }))).toBe(
-			'searching'
-		);
-	});
-
-	it('queued with a search job but no picked candidate is "awaiting_review"', () => {
-		expect(
-			derivedDownloadStatus(task({ status: 'queued', search_job_id: 'j', candidate_index: null }))
-		).toBe('awaiting_review');
-	});
-
-	it('treats a secured management hold as review and never offers source retry', () => {
+	it('derives searching, review and a held task that offers no retry', () => {
+		const cases: [Partial<DownloadTask>, string][] = [
+			[{ status: 'queued', search_job_id: null }, 'searching'],
+			[{ status: 'queued', search_job_id: 'j', candidate_index: null }, 'awaiting_review'],
+			// A secured management hold reads as review and never offers a source retry.
+			[{ status: 'failed', held_for_review: true }, 'awaiting_review']
+		];
+		for (const [overrides, expected] of cases) {
+			expect(derivedDownloadStatus(task(overrides)), JSON.stringify(overrides)).toBe(expected);
+		}
 		const held = task({ status: 'failed', held_for_review: true });
-		expect(derivedDownloadStatus(held)).toBe('awaiting_review');
 		expect(canRetry(held)).toBe(false);
 		expect(canReimport(held)).toBe(false);
 		expect(retryDisplay(held)).toBeNull();
@@ -103,155 +100,105 @@ describe('tabForTask', () => {
 });
 
 describe('canCancel / canRetry', () => {
-	it('allows cancel while searching/queued/downloading but not processing', () => {
-		expect(canCancel(task({ status: 'queued' }))).toBe(true); // searching
-		expect(canCancel(task({ status: 'queued', search_job_id: 'j', candidate_index: 0 }))).toBe(
-			true
-		);
-		expect(canCancel(task({ status: 'downloading' }))).toBe(true);
-		expect(canCancel(task({ status: 'processing' }))).toBe(false);
-		expect(canCancel(task({ status: 'completed' }))).toBe(false);
-	});
-
-	it('allows retry only for failed/cancelled/partial', () => {
-		expect(canRetry(task({ status: 'failed' }))).toBe(true);
-		expect(canRetry(task({ status: 'cancelled' }))).toBe(true);
-		expect(canRetry(task({ status: 'partial' }))).toBe(true);
-		expect(canRetry(task({ status: 'downloading' }))).toBe(false);
+	it('cancels while searching, queued or downloading, and retries only failed, cancelled or partial', () => {
+		const cancel: [Partial<DownloadTask>, boolean][] = [
+			[{ status: 'queued' }, true],
+			[{ status: 'queued', search_job_id: 'j', candidate_index: 0 }, true],
+			[{ status: 'downloading' }, true],
+			[{ status: 'processing' }, false],
+			[{ status: 'completed' }, false]
+		];
+		for (const [overrides, expected] of cancel) {
+			expect(canCancel(task(overrides)), JSON.stringify(overrides)).toBe(expected);
+		}
+		const retry: [DownloadTask['status'], boolean][] = [
+			['failed', true],
+			['cancelled', true],
+			['partial', true],
+			['downloading', false]
+		];
+		for (const [status, expected] of retry) {
+			expect(canRetry(task({ status })), status).toBe(expected);
+		}
 	});
 });
 
 describe('canReimport', () => {
-	it('allows reimport for failed/partial tasks that picked a candidate', () => {
-		expect(
-			canReimport(
-				task({ status: 'failed', search_job_id: 'j', candidate_index: 0, source_username: 'peer' })
-			)
-		).toBe(true);
-		expect(
-			canReimport(
-				task({ status: 'partial', search_job_id: 'j', candidate_index: 2, source_username: 'peer' })
-			)
-		).toBe(true);
-	});
-
-	it('disallows reimport for a task that never picked a candidate', () => {
-		expect(
-			canReimport(task({ status: 'failed', search_job_id: null, candidate_index: null }))
-		).toBe(false);
-	});
-
-	it('allows reimport for Usenet tasks whose username is always empty', () => {
-		expect(
-			canReimport(
-				task({
-					status: 'failed',
-					source: 'usenet',
-					search_job_id: 'j',
-					candidate_index: 0,
-					source_username: ''
-				})
-			)
-		).toBe(true);
-	});
-
-	it('disallows reimport for Soulseek tasks with an empty username', () => {
-		expect(
-			canReimport(
-				task({
-					status: 'failed',
-					source: 'soulseek',
-					search_job_id: 'j',
-					candidate_index: 0,
-					source_username: ''
-				})
-			)
-		).toBe(false);
-		expect(
-			canReimport(
-				task({
-					status: 'failed',
-					search_job_id: 'j',
-					candidate_index: 0,
-					source_username: null
-				})
-			)
-		).toBe(false);
+	it('reimports a failed or partial task that picked a candidate from a known peer or Usenet', () => {
+		const picked = { search_job_id: 'j', candidate_index: 0 };
+		const cases: [Partial<DownloadTask>, boolean][] = [
+			[{ status: 'failed', ...picked, source_username: 'peer' }, true],
+			[
+				{ status: 'partial', search_job_id: 'j', candidate_index: 2, source_username: 'peer' },
+				true
+			],
+			// Never picked a candidate.
+			[{ status: 'failed', search_job_id: null, candidate_index: null }, false],
+			// A Usenet task's username is always empty.
+			[{ status: 'failed', source: 'usenet', ...picked, source_username: '' }, true],
+			// A Soulseek task with no username cannot be reimported.
+			[{ status: 'failed', source: 'soulseek', ...picked, source_username: '' }, false],
+			[{ status: 'failed', ...picked, source_username: null }, false]
+		];
+		for (const [overrides, expected] of cases) {
+			expect(canReimport(task(overrides)), JSON.stringify(overrides)).toBe(expected);
+		}
 	});
 });
 
 describe('retryDisplay', () => {
-	const NOW = 1_000_000;
-
-	it('is "retrying" while a retry actively re-runs', () => {
-		const t = task({ status: 'downloading', retry_count: 2, retry_max: 6 });
-		expect(retryDisplay(t, NOW)).toEqual({ kind: 'retrying', attempt: 2, max: 6 });
-	});
-
-	it('is "scheduled" with the eta while waiting for the next attempt', () => {
-		const t = task({ status: 'failed', retry_count: 1, next_retry_at: NOW + 12 * 60 });
-		expect(retryDisplay(t, NOW)).toEqual({ kind: 'scheduled', etaMinutes: 12 });
-	});
-
-	it('is "failed_exhausted" for a failed task with no scheduled retry', () => {
-		const t = task({ status: 'failed', retry_count: 6, next_retry_at: null });
-		expect(retryDisplay(t, NOW)).toEqual({ kind: 'failed_exhausted' });
-	});
-
-	it('is null for a normal in-flight (non-retry) task and for partial-without-retry', () => {
-		expect(retryDisplay(task({ status: 'downloading', retry_count: 0 }), NOW)).toBeNull();
-		expect(retryDisplay(task({ status: 'partial', next_retry_at: null }), NOW)).toBeNull();
-	});
-
-	it('is null when auto-retry is off (retry_max 0): plain status, never "out of retries" or "/0"', () => {
-		expect(
-			retryDisplay(task({ status: 'failed', next_retry_at: null, retry_max: 0 }), NOW)
-		).toBeNull();
-		expect(
-			retryDisplay(task({ status: 'downloading', retry_count: 1, retry_max: 0 }), NOW)
-		).toBeNull();
+	it('says retrying, scheduled or exhausted, and nothing for a plain task or with auto-retry off', () => {
+		const cases: [Partial<DownloadTask>, ReturnType<typeof retryDisplay>][] = [
+			[
+				{ status: 'downloading', retry_count: 2, retry_max: 6 },
+				{ kind: 'retrying', attempt: 2, max: 6 }
+			],
+			[
+				{ status: 'failed', retry_count: 1, next_retry_at: NOW + 12 * 60 },
+				{ kind: 'scheduled', etaMinutes: 12 }
+			],
+			[{ status: 'failed', retry_count: 6, next_retry_at: null }, { kind: 'failed_exhausted' }],
+			[{ status: 'downloading', retry_count: 0 }, null],
+			[{ status: 'partial', next_retry_at: null }, null],
+			// Auto-retry off: a plain status, never "out of retries" or "/0".
+			[{ status: 'failed', next_retry_at: null, retry_max: 0 }, null],
+			[{ status: 'downloading', retry_count: 1, retry_max: 0 }, null]
+		];
+		for (const [overrides, expected] of cases) {
+			expect(retryDisplay(task(overrides), NOW), JSON.stringify(overrides)).toEqual(expected);
+		}
 	});
 });
 
-describe('formatCountdown', () => {
-	it('rolls over cleanly at the hour boundary (never "1h 60m")', () => {
-		expect(formatCountdown(7199)).toBe('2h 0m');
-		expect(formatCountdown(10770)).toBe('3h 0m');
-	});
-});
-
-describe('isWanted + sectionForTask + bucketSections', () => {
-	const NOW = 1_000_000;
-
-	it('a failed/partial task with a scheduled retry is wanted', () => {
-		expect(
-			isWanted(task({ status: 'failed', retry_count: 1, next_retry_at: NOW + 600 }), NOW)
-		).toBe(true);
-		expect(
-			isWanted(task({ status: 'partial', retry_count: 1, next_retry_at: NOW + 600 }), NOW)
-		).toBe(true);
-		expect(isWanted(task({ status: 'failed', next_retry_at: null }), NOW)).toBe(false);
-	});
-
-	it('routes each task to its dashboard section', () => {
-		expect(sectionForTask(task({ status: 'downloading' }), NOW)).toBe('now_spinning');
-		expect(sectionForTask(task({ status: 'processing' }), NOW)).toBe('now_spinning');
-		expect(sectionForTask(task({ status: 'queued', search_job_id: null }), NOW)).toBe('cueing'); // searching
-		expect(
-			sectionForTask(task({ status: 'queued', search_job_id: 'j', candidate_index: null }), NOW)
-		).toBe('needs_you');
-		expect(
-			sectionForTask(task({ status: 'failed', retry_count: 1, next_retry_at: NOW + 600 }), NOW)
-		).toBe('wanted');
-		expect(sectionForTask(task({ status: 'completed' }), NOW)).toBe('history');
-		expect(sectionForTask(task({ status: 'failed', next_retry_at: null }), NOW)).toBe('history'); // exhausted
-		expect(sectionForTask(task({ status: 'partial', next_retry_at: null }), NOW)).toBe('history'); // done, no retry
+describe('isWanted + sectionForTask', () => {
+	it('wants a failed or partial task with a scheduled retry, and files each task in its section', () => {
+		const scheduled = { retry_count: 1, next_retry_at: NOW + 600 };
+		const wanted: [Partial<DownloadTask>, boolean][] = [
+			[{ status: 'failed', ...scheduled }, true],
+			[{ status: 'partial', ...scheduled }, true],
+			[{ status: 'failed', next_retry_at: null }, false]
+		];
+		for (const [overrides, expected] of wanted) {
+			expect(isWanted(task(overrides), NOW), JSON.stringify(overrides)).toBe(expected);
+		}
+		const sections: [Partial<DownloadTask>, string][] = [
+			[{ status: 'downloading' }, 'now_spinning'],
+			[{ status: 'processing' }, 'now_spinning'],
+			[{ status: 'queued', search_job_id: null }, 'cueing'],
+			[{ status: 'queued', search_job_id: 'j', candidate_index: null }, 'needs_you'],
+			[{ status: 'failed', ...scheduled }, 'wanted'],
+			[{ status: 'completed' }, 'history'],
+			// Out of retries, and done with no retry.
+			[{ status: 'failed', next_retry_at: null }, 'history'],
+			[{ status: 'partial', next_retry_at: null }, 'history']
+		];
+		for (const [overrides, expected] of sections) {
+			expect(sectionForTask(task(overrides), NOW), JSON.stringify(overrides)).toBe(expected);
+		}
 	});
 });
 
 describe('retryLadderState', () => {
-	const NOW = 1_000_000;
-
 	it('reports the current rung, attempt, live countdown and elapsed fraction', () => {
 		// retry_count 1 -> waiting on rung index 1 (30m); 10m left of that 30m wait
 		const t = task({
@@ -271,38 +218,40 @@ describe('retryLadderState', () => {
 });
 
 describe('collapseRetryChains', () => {
-	it('does not merge different albums, users, or types', () => {
-		const a = task({ id: 'a', release_group_mbid: 'rg1', user_id: 'u1' });
-		const b = task({ id: 'b', release_group_mbid: 'rg2', user_id: 'u1' });
-		const c = task({ id: 'c', release_group_mbid: 'rg1', user_id: 'u2' });
-		expect(collapseRetryChains([a, b, c])).toHaveLength(3);
-	});
-
-	it('never collapses identity-less (free-text) tasks together', () => {
-		const a = task({ id: 'a', release_group_mbid: '', recording_mbid: null });
-		const b = task({ id: 'b', release_group_mbid: '', recording_mbid: null });
-		expect(collapseRetryChains([a, b])).toHaveLength(2);
-	});
-
-	it('a fresh re-request supersedes a stale higher-retry attempt of the same album', () => {
-		// The live bug: a re-request resets retry_count to 0, so a stale failed retry-7 task
-		// from yesterday must NOT outrank, and hide, today's active retry-0 download. Newest
-		// created_at wins - the higher retry_count does not.
-		const stale = task({
-			id: 'old',
-			status: 'failed',
-			retry_count: 7,
-			created_at: 100,
-			release_group_mbid: 'rg1'
-		});
-		const fresh = task({
-			id: 'new',
-			status: 'downloading',
-			retry_count: 0,
-			created_at: 200,
-			release_group_mbid: 'rg1'
-		});
-		const collapsed = collapseRetryChains([stale, fresh]);
+	it('folds only attempts of one album by one user, newest first, never identity-less tasks', () => {
+		// Different albums, users or types stay apart.
+		expect(
+			collapseRetryChains([
+				task({ id: 'a', release_group_mbid: 'rg1', user_id: 'u1' }),
+				task({ id: 'b', release_group_mbid: 'rg2', user_id: 'u1' }),
+				task({ id: 'c', release_group_mbid: 'rg1', user_id: 'u2' })
+			])
+		).toHaveLength(3);
+		// Free-text tasks have no identity to fold on.
+		expect(
+			collapseRetryChains([
+				task({ id: 'a', release_group_mbid: '', recording_mbid: null }),
+				task({ id: 'b', release_group_mbid: '', recording_mbid: null })
+			])
+		).toHaveLength(2);
+		// A re-request resets retry_count to 0, so a stale failed retry-7 task must not
+		// outrank, and hide, today's retry-0 download: the newest created_at wins.
+		const collapsed = collapseRetryChains([
+			task({
+				id: 'old',
+				status: 'failed',
+				retry_count: 7,
+				created_at: 100,
+				release_group_mbid: 'rg1'
+			}),
+			task({
+				id: 'new',
+				status: 'downloading',
+				retry_count: 0,
+				created_at: 200,
+				release_group_mbid: 'rg1'
+			})
+		]);
 		expect(collapsed).toHaveLength(1);
 		expect(collapsed[0].id).toBe('new');
 	});

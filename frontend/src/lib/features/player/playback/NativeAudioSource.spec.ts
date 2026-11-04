@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 const hoisted = vi.hoisted(() => {
 	const listeners = new Map<string, Set<EventListener>>();
@@ -63,82 +63,94 @@ vi.mock('./audioElement', () => ({
 
 import { NativeAudioSource } from './NativeAudioSource';
 
+function fresh(): void {
+	hoisted.reset();
+	hoisted.getAudioElement.mockImplementation(() => hoisted.audio as unknown as HTMLAudioElement);
+	vi.useRealTimers();
+}
+
 describe('NativeAudioSource', () => {
-	beforeEach(() => {
-		hoisted.reset();
-		hoisted.getAudioElement.mockImplementation(() => hoisted.audio as unknown as HTMLAudioElement);
-		vi.useRealTimers();
-	});
+	it('loads on canplay, and fails on a timeout, a blocked autoplay or a media error, then plays after a seek', async () => {
+		{
+			// Loads successfully on canplay.
+			fresh();
+			const source = new NativeAudioSource('local', { url: '/audio.mp3', seekable: true });
+			const loadPromise = source.load();
 
-	it('loads successfully on canplay', async () => {
-		const source = new NativeAudioSource('local', { url: '/audio.mp3', seekable: true });
-		const loadPromise = source.load();
+			expect(hoisted.audio.src).toBe('/audio.mp3');
+			hoisted.dispatch('canplay');
 
-		expect(hoisted.audio.src).toBe('/audio.mp3');
-		hoisted.dispatch('canplay');
+			await expect(loadPromise).resolves.toBeUndefined();
+		}
 
-		await expect(loadPromise).resolves.toBeUndefined();
-	});
+		{
+			// Fails load when timeout is reached.
+			fresh();
+			vi.useFakeTimers();
+			const source = new NativeAudioSource('local', { url: '/timeout.mp3', seekable: true });
+			const loadPromise = source.load();
 
-	it('fails load when timeout is reached', async () => {
-		vi.useFakeTimers();
-		const source = new NativeAudioSource('local', { url: '/timeout.mp3', seekable: true });
-		const loadPromise = source.load();
+			vi.advanceTimersByTime(15_000);
 
-		vi.advanceTimersByTime(15_000);
+			await expect(loadPromise).rejects.toThrow('load timed out');
+		}
 
-		await expect(loadPromise).rejects.toThrow('load timed out');
-	});
+		{
+			// Reports autoplay blocked when play promise rejects.
+			fresh();
+			const source = new NativeAudioSource('local', { url: '/blocked.mp3', seekable: true });
+			const onError = vi.fn();
+			source.onError(onError);
 
-	it('reports autoplay blocked when play promise rejects', async () => {
-		const source = new NativeAudioSource('local', { url: '/blocked.mp3', seekable: true });
-		const onError = vi.fn();
-		source.onError(onError);
+			hoisted.audio.play.mockImplementationOnce(() =>
+				Promise.reject(new DOMException('blocked', 'NotAllowedError'))
+			);
+			source.play();
+			await Promise.resolve();
+			await Promise.resolve();
 
-		hoisted.audio.play.mockImplementationOnce(() =>
-			Promise.reject(new DOMException('blocked', 'NotAllowedError'))
-		);
-		source.play();
-		await Promise.resolve();
-		await Promise.resolve();
+			expect(onError).toHaveBeenCalledWith(expect.objectContaining({ code: 'AUTOPLAY_BLOCKED' }));
+		}
 
-		expect(onError).toHaveBeenCalledWith(expect.objectContaining({ code: 'AUTOPLAY_BLOCKED' }));
-	});
+		{
+			// Rejects load promise on media error event.
+			fresh();
+			const source = new NativeAudioSource('local', { url: '/bad.mp3', seekable: true });
+			const onError = vi.fn();
+			source.onError(onError);
 
-	it('rejects load promise on media error event', async () => {
-		const source = new NativeAudioSource('local', { url: '/bad.mp3', seekable: true });
-		const onError = vi.fn();
-		source.onError(onError);
+			const loadPromise = source.load();
 
-		const loadPromise = source.load();
+			hoisted.audio.error = { code: 4 } as MediaError;
+			hoisted.dispatch('error');
 
-		hoisted.audio.error = { code: 4 } as MediaError;
-		hoisted.dispatch('error');
+			await expect(loadPromise).rejects.toThrow('MEDIA_ERR_SRC_NOT_SUPPORTED');
+			expect(onError).toHaveBeenCalledWith(expect.objectContaining({ code: 'UNPLAYABLE' }));
+		}
 
-		await expect(loadPromise).rejects.toThrow('MEDIA_ERR_SRC_NOT_SUPPORTED');
-		expect(onError).toHaveBeenCalledWith(expect.objectContaining({ code: 'UNPLAYABLE' }));
-	});
+		{
+			// Transitions from buffering back to playing after seek via playing event.
+			fresh();
+			const source = new NativeAudioSource('local', { url: '/seek.mp3', seekable: true });
+			const states: string[] = [];
+			source.onStateChange((s) => states.push(s));
 
-	it('transitions from buffering back to playing after seek via playing event', async () => {
-		const source = new NativeAudioSource('local', { url: '/seek.mp3', seekable: true });
-		const states: string[] = [];
-		source.onStateChange((s) => states.push(s));
+			const loadPromise = source.load();
+			hoisted.dispatch('canplay');
+			await loadPromise;
 
-		const loadPromise = source.load();
-		hoisted.dispatch('canplay');
-		await loadPromise;
+			// Asked to play is not playing: a file that cannot decode gets this far.
+			hoisted.dispatch('play');
+			expect(states).not.toContain('playing');
 
-		// Asked to play is not playing: a file that cannot decode gets this far.
-		hoisted.dispatch('play');
-		expect(states).not.toContain('playing');
+			hoisted.dispatch('playing');
+			expect(states).toContain('playing');
 
-		hoisted.dispatch('playing');
-		expect(states).toContain('playing');
+			hoisted.dispatch('waiting');
+			expect(states.at(-1)).toBe('buffering');
 
-		hoisted.dispatch('waiting');
-		expect(states.at(-1)).toBe('buffering');
-
-		hoisted.dispatch('playing');
-		expect(states.at(-1)).toBe('playing');
+			hoisted.dispatch('playing');
+			expect(states.at(-1)).toBe('playing');
+		}
 	});
 });

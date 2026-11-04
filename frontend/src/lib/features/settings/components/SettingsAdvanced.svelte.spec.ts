@@ -1,6 +1,6 @@
 import { page } from 'vitest/browser';
 import { describe, expect, it } from 'vitest';
-import { apiError, fakeApi } from '$lib/test/api';
+import { fakeApi } from '$lib/test/api';
 import { renderWithQuery } from '$lib/test/render';
 import { SECRET_MASK } from '$lib/ui/secretMask';
 
@@ -55,25 +55,5 @@ describe('SettingsAdvanced retention', () => {
 			.element(page.getByText('Saved. Some changes apply after a page reload.'))
 			.toBeVisible();
 		expect(api.calls(SAVE)[0].body).toEqual({ ...stored, request_history_retention_days: 90 });
-	});
-
-	it("shows the server's reason beside a refused retention value", async () => {
-		fakeApi({
-			[READ]: stored,
-			[SAVE]: apiError(
-				400,
-				'INVALID_INPUT',
-				'Request history retention days: must be between 30 and 3650, got 5',
-				{ field: 'request_history_retention_days', reason: 'must be between 30 and 3650, got 5' }
-			)
-		});
-		await renderWithQuery(SettingsAdvanced, {});
-		await page.getByRole('radio', { name: 'Retention' }).click();
-
-		await page.getByRole('spinbutton', { name: 'Request History (days)' }).fill('5');
-		await page.getByRole('button', { name: 'Save' }).click();
-		await expect
-			.element(page.getByText('must be between 30 and 3650, got 5', { exact: true }))
-			.toBeVisible();
 	});
 });

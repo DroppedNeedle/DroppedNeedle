@@ -22,37 +22,43 @@ const track: QueueItem = {
 
 beforeEach(() => resetPlaylistModal());
 
-it('retains the first-open request until the lazy modal registers', () => {
-	const firstOpen = vi.fn();
-	const secondOpen = vi.fn();
+it('holds the first open until the lazy modal registers, and drops it when the session resets', () => {
+	{
+		// Retains the first-open request until the lazy modal registers.
+		resetPlaylistModal();
+		const firstOpen = vi.fn();
+		const secondOpen = vi.fn();
 
-	expect(playlistModalState.shouldMount).toBe(false);
-	openGlobalPlaylistModal([track]);
-	expect(playlistModalState.shouldMount).toBe(true);
-	expect(firstOpen).not.toHaveBeenCalled();
+		expect(playlistModalState.shouldMount).toBe(false);
+		openGlobalPlaylistModal([track]);
+		expect(playlistModalState.shouldMount).toBe(true);
+		expect(firstOpen).not.toHaveBeenCalled();
 
-	const firstHandle = { open: firstOpen };
-	registerPlaylistModal(firstHandle);
-	expect(firstOpen).toHaveBeenCalledOnce();
-	expect(firstOpen).toHaveBeenCalledWith([track]);
+		const firstHandle = { open: firstOpen };
+		registerPlaylistModal(firstHandle);
+		expect(firstOpen).toHaveBeenCalledOnce();
+		expect(firstOpen).toHaveBeenCalledWith([track]);
 
-	openGlobalPlaylistModal([track, track]);
-	expect(firstOpen).toHaveBeenLastCalledWith([track, track]);
+		openGlobalPlaylistModal([track, track]);
+		expect(firstOpen).toHaveBeenLastCalledWith([track, track]);
 
-	unregisterPlaylistModal(firstHandle);
-	openGlobalPlaylistModal([track]);
-	expect(firstOpen).toHaveBeenCalledTimes(2);
-	registerPlaylistModal({ open: secondOpen });
-	expect(secondOpen).toHaveBeenCalledWith([track]);
-});
+		unregisterPlaylistModal(firstHandle);
+		openGlobalPlaylistModal([track]);
+		expect(firstOpen).toHaveBeenCalledTimes(2);
+		registerPlaylistModal({ open: secondOpen });
+		expect(secondOpen).toHaveBeenCalledWith([track]);
+	}
 
-it('drops a queued open when the authenticated session is reset', () => {
-	const nextAccountOpen = vi.fn();
+	{
+		// Drops a queued open when the authenticated session is reset.
+		resetPlaylistModal();
+		const nextAccountOpen = vi.fn();
 
-	openGlobalPlaylistModal([track]);
-	resetPlaylistModal();
-	registerPlaylistModal({ open: nextAccountOpen });
+		openGlobalPlaylistModal([track]);
+		resetPlaylistModal();
+		registerPlaylistModal({ open: nextAccountOpen });
 
-	expect(playlistModalState.shouldMount).toBe(false);
-	expect(nextAccountOpen).not.toHaveBeenCalled();
+		expect(playlistModalState.shouldMount).toBe(false);
+		expect(nextAccountOpen).not.toHaveBeenCalled();
+	}
 });

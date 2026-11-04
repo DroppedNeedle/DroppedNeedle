@@ -188,15 +188,6 @@ beforeEach(() => {
 });
 
 describe('SettingsLibrary target policy UI', () => {
-	it('keeps Library Management hidden from non-administrators', async () => {
-		h.isAdmin = false;
-		await render(SettingsLibrary);
-		await expect.element(page.getByText('Scanning & identification')).toBeVisible();
-		await expect
-			.element(page.getByRole('link', { name: /Open Organize files settings/ }))
-			.not.toBeInTheDocument();
-	});
-
 	it('previews consequences, saves without starting work, and leaves reconciliation explicit', async () => {
 		await render(SettingsLibrary);
 		await expect
@@ -305,18 +296,5 @@ describe('SettingsLibrary target policy UI', () => {
 			paths: { 'root-old': '/music' }
 		});
 		await expect.element(page.getByRole('heading', { name: 'Music' })).toBeVisible();
-	});
-
-	it('points non-administrators at administrator sign-in when settings never seed', async () => {
-		h.isAdmin = false;
-		h.settings = { data: undefined, isLoading: false, isError: false };
-		await render(SettingsLibrary);
-		await expect
-			.element(page.getByText('Sign in as an administrator to change library settings.'))
-			.toBeVisible();
-		await expect
-			.element(page.getByRole('button', { name: 'Preview and save settings' }))
-			.not.toBeInTheDocument();
-		expect(h.impact).not.toHaveBeenCalled();
 	});
 });

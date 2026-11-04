@@ -1,7 +1,5 @@
-import { QueryClientProvider } from '@tanstack/svelte-query';
 import { page } from 'vitest/browser';
 import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
-import { render } from 'vitest-browser-svelte';
 
 import type { components } from '$lib/api/v3/openapi';
 import { toAuthUser } from '$lib/features/auth/queries/types';
@@ -9,6 +7,7 @@ import { clearPersistedQueryCache } from '$lib/queries/IndexedDbPersister.svelte
 import { queryClient } from '$lib/queries/QueryClient';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { apiError, fakeApi, type RouteData } from '$lib/test/api';
+import { renderWithQuery } from '$lib/test/render';
 
 import '../../../../../app.css';
 import EditionNextSteps from './EditionNextSteps.svelte';
@@ -123,10 +122,7 @@ function serve() {
 // album through it when a write finishes, and that must not reach the read
 // of the write itself.
 function show(edition: EditionStatus = status()) {
-	onTestFinished(async () => {
-		queryClient.clear();
-		await clearPersistedQueryCache();
-	});
+	onTestFinished(clearPersistedQueryCache);
 	const props = {
 		name: '5th anniversary remaster',
 		status: edition,
@@ -142,11 +138,7 @@ function show(edition: EditionStatus = status()) {
 		tracks: null,
 		onacquire: vi.fn()
 	};
-	return render(
-		EditionNextSteps,
-		{ props },
-		{ wrapper: QueryClientProvider, wrapperProps: { client: queryClient } }
-	);
+	return renderWithQuery(EditionNextSteps, props, { client: queryClient });
 }
 
 beforeEach(() => {

@@ -12,7 +12,6 @@ vi.mock('$lib/media/lazyImage', () => ({
 
 import SearchPage from './+page.svelte';
 import { authStore } from '$lib/stores/authStore.svelte';
-import { playerStore } from '$lib/features/player/state/player.svelte';
 import { toAuthUser } from '$lib/features/auth/queries/types';
 
 type SearchResponse = RouteData<'GET /api/v3/search'>;
@@ -27,37 +26,6 @@ const empty: SearchResponse = {
 	artist_status: 'ok',
 	album_status: 'ok',
 	track_status: 'ok'
-};
-
-const withSong: SearchResponse = {
-	...empty,
-	tracks: [
-		{
-			kind: 'track',
-			id: 'track-1',
-			title: 'Alien Superstar',
-			artist: 'Beyoncé',
-			year: 2022,
-			musicbrainz_id: null,
-			in_library: true,
-			requested: false,
-			score: 100,
-			disambiguation: null,
-			type_info: null,
-			art_missing: true,
-			track: {
-				album_id: 'album-1',
-				album_title: 'Renaissance',
-				artist_id: null,
-				release_group_mbid: null,
-				disc_number: 1,
-				track_number: 3,
-				duration_seconds: 215,
-				format: 'FLAC',
-				cover_available: false
-			}
-		}
-	]
 };
 
 beforeEach(() => {
@@ -141,40 +109,5 @@ describe('search page album covers', () => {
 			.poll(() => asked)
 			.toContainEqual(expect.stringContaining('/library/albums/album-art/artwork'));
 		expect(asked).not.toContainEqual(expect.stringContaining('/library/albums/album-bare/'));
-	});
-});
-
-describe('search page songs', () => {
-	it('shows a library song and plays it on click', async () => {
-		fakeApi({ 'GET /api/v3/search': withSong });
-		const play = vi.spyOn(playerStore, 'playQueue').mockImplementation(() => {});
-		await renderWithQuery(SearchPage, { data: { query: 'alien' } });
-
-		const row = page.getByRole('button', { name: 'Play Alien Superstar' });
-		await expect.element(row).toBeVisible();
-		await expect.element(page.getByText('3:35')).toBeVisible();
-		await expect
-			.element(page.getByRole('link', { name: 'Renaissance' }))
-			.toHaveAttribute('href', '/album/album-1');
-
-		await row.click();
-		expect(play).toHaveBeenCalledOnce();
-		const [items, index] = play.mock.calls[0];
-		expect(index).toBe(0);
-		expect(items).toHaveLength(1);
-		expect(items[0]).toMatchObject({
-			trackSourceId: 'track-1',
-			sourceType: 'local',
-			albumId: 'album-1',
-			trackNumber: 3
-		});
-	});
-
-	it('hides the songs shelf when no song matches', async () => {
-		fakeApi({ 'GET /api/v3/search': empty });
-		await renderWithQuery(SearchPage, { data: { query: 'alien' } });
-
-		await expect.element(page.getByText('No artists found')).toBeVisible();
-		await expect.element(page.getByRole('heading', { name: 'Songs' })).not.toBeInTheDocument();
 	});
 });

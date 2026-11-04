@@ -1,7 +1,7 @@
 import { page } from 'vitest/browser';
 import { createSubscriber } from 'svelte/reactivity';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { render } from 'vitest-browser-svelte';
+import { cleanup, render } from 'vitest-browser-svelte';
 import type { ServiceHealthItem } from '$lib/features/settings/queries/system.svelte';
 
 type QueryData = { degraded: ServiceHealthItem[] };
@@ -105,61 +105,70 @@ describe('ServiceHealthIndicator', () => {
 		expect(toast.show.mock.calls[0][0].message).toContain('Your library is safe.');
 	});
 
-	it('does not duplicate a toast when a degraded capability polls again', async () => {
-		vi.spyOn(Date, 'now').mockReturnValue(START_TIME);
-		const initial = degradedItem(
-			'listenbrainz',
-			'stable-popularity',
-			'lastfm',
-			'Popularity is temporarily unavailable.'
-		);
-		queryState.data = { degraded: [initial] };
+	it('toasts a degraded capability once per ten minutes, through polls and flapping', async () => {
+		{
+			// Does not duplicate a toast when a degraded capability polls again.
+			vi.spyOn(Date, 'now').mockReturnValue(START_TIME);
+			const initial = degradedItem(
+				'listenbrainz',
+				'stable-popularity',
+				'lastfm',
+				'Popularity is temporarily unavailable.'
+			);
+			queryState.data = { degraded: [initial] };
 
-		await render(ServiceHealthIndicator);
-		await vi.waitFor(() => expect(toast.show).toHaveBeenCalledTimes(1));
+			await render(ServiceHealthIndicator);
+			await vi.waitFor(() => expect(toast.show).toHaveBeenCalledTimes(1));
 
-		queryState.data = {
-			degraded: [{ ...initial, message: 'Popularity is still temporarily unavailable.' }]
-		};
-		await page.getByRole('button', { name: /service status/i }).click();
-		await expect
-			.element(page.getByText('Popularity is still temporarily unavailable.'))
-			.toBeVisible();
-		await vi.waitFor(() => expect(toast.show).toHaveBeenCalledTimes(1));
-	});
+			queryState.data = {
+				degraded: [{ ...initial, message: 'Popularity is still temporarily unavailable.' }]
+			};
+			await page.getByRole('button', { name: /service status/i }).click();
+			await expect
+				.element(page.getByText('Popularity is still temporarily unavailable.'))
+				.toBeVisible();
+			await vi.waitFor(() => expect(toast.show).toHaveBeenCalledTimes(1));
+		}
 
-	it('does not re-toast a capability that heals and returns inside ten minutes', async () => {
-		vi.spyOn(Date, 'now').mockReturnValue(START_TIME);
-		const initial = degradedItem('listenbrainz', 'flapping-popularity');
-		queryState.data = { degraded: [initial] };
+		{
+			// Does not re-toast a capability that heals and returns inside ten minutes.
+			cleanup();
+			toast.show.mockClear();
+			vi.spyOn(Date, 'now').mockReturnValue(START_TIME);
+			const initial = degradedItem('listenbrainz', 'flapping-popularity');
+			queryState.data = { degraded: [initial] };
 
-		await render(ServiceHealthIndicator);
-		await vi.waitFor(() => expect(toast.show).toHaveBeenCalledTimes(1));
+			await render(ServiceHealthIndicator);
+			await vi.waitFor(() => expect(toast.show).toHaveBeenCalledTimes(1));
 
-		queryState.data = { degraded: [] };
-		await expect
-			.element(page.getByRole('button', { name: /service status/i }))
-			.not.toBeInTheDocument();
+			queryState.data = { degraded: [] };
+			await expect
+				.element(page.getByRole('button', { name: /service status/i }))
+				.not.toBeInTheDocument();
 
-		queryState.data = { degraded: [initial] };
-		await expect.element(page.getByRole('button', { name: /service status/i })).toBeVisible();
-		await vi.waitFor(() => expect(toast.show).toHaveBeenCalledTimes(1));
-	});
+			queryState.data = { degraded: [initial] };
+			await expect.element(page.getByRole('button', { name: /service status/i })).toBeVisible();
+			await vi.waitFor(() => expect(toast.show).toHaveBeenCalledTimes(1));
+		}
 
-	it('toasts again when the same capability reaches the ten-minute boundary', async () => {
-		const now = vi.spyOn(Date, 'now').mockReturnValue(START_TIME);
-		const initial = degradedItem('listenbrainz', 'slow-popularity');
-		queryState.data = { degraded: [initial] };
+		{
+			// Toasts again when the same capability reaches the ten-minute boundary.
+			cleanup();
+			toast.show.mockClear();
+			const now = vi.spyOn(Date, 'now').mockReturnValue(START_TIME);
+			const initial = degradedItem('listenbrainz', 'slow-popularity');
+			queryState.data = { degraded: [initial] };
 
-		await render(ServiceHealthIndicator);
-		await vi.waitFor(() => expect(toast.show).toHaveBeenCalledTimes(1));
+			await render(ServiceHealthIndicator);
+			await vi.waitFor(() => expect(toast.show).toHaveBeenCalledTimes(1));
 
-		now.mockReturnValue(START_TIME + NOTIFICATION_COOLDOWN);
-		queryState.data = {
-			degraded: [{ ...initial, message: 'Popularity is unavailable again.' }]
-		};
-		await page.getByRole('button', { name: /service status/i }).click();
-		await expect.element(page.getByText('Popularity is unavailable again.')).toBeVisible();
-		await vi.waitFor(() => expect(toast.show).toHaveBeenCalledTimes(2));
+			now.mockReturnValue(START_TIME + NOTIFICATION_COOLDOWN);
+			queryState.data = {
+				degraded: [{ ...initial, message: 'Popularity is unavailable again.' }]
+			};
+			await page.getByRole('button', { name: /service status/i }).click();
+			await expect.element(page.getByText('Popularity is unavailable again.')).toBeVisible();
+			await vi.waitFor(() => expect(toast.show).toHaveBeenCalledTimes(2));
+		}
 	});
 });

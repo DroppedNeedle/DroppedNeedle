@@ -300,7 +300,9 @@ describe('album detail page track removal', () => {
 	async function openRemoveFileDialog(): Promise<void> {
 		await trackRow('Infinite ❤️ Without Fulfillment').getByLabelText('More actions').click();
 		await page.getByRole('menuitem', { name: 'Remove file' }).click();
-		await expect.element(page.getByRole('dialog')).toBeVisible();
+		await expect
+			.element(page.getByRole('dialog'))
+			.toHaveTextContent('Infinite ❤️ Without Fulfillment');
 	}
 
 	it('removes the file and refetches only that album', async () => {

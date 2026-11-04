@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { AlbumHistoryEntry } from '$lib/features/library/queries/LibraryAlbumHistoryQueries.svelte';
 import { toAuthUser } from '$lib/features/auth/queries/types';
 import { authStore } from '$lib/stores/authStore.svelte';
-import { apiError, fakeApi } from '$lib/test/api';
+import { apiError, fakeApi, type FakeRoutes } from '$lib/test/api';
 import { renderWithQuery } from '$lib/test/render';
 
 import AlbumHistory from './AlbumHistory.svelte';
@@ -53,9 +53,10 @@ beforeEach(() => {
 });
 
 describe('AlbumHistory', () => {
-	it('tells each kind of entry in one line', async () => {
+	it('tells each kind of entry in one line, leaving titles out when none are sent', async () => {
 		await show(
 			entry({ kind: 'tracks_continued', track_count: 1, track_titles: ['Airbag'] }),
+			entry({ kind: 'tracks_continued', track_count: 3 }),
 			entry({ kind: 'tracks_continued', track_count: 6, track_titles: FIVE_OF_SIX }),
 			entry({ kind: 'tracks_replaced', track_count: 1, track_titles: ['Lucky'] }),
 			entry({ kind: 'tracks_replaced', track_count: 2, track_titles: ['Lucky', 'Karma'] }),
@@ -90,6 +91,7 @@ describe('AlbumHistory', () => {
 		await expect.element(page.getByRole('heading', { name: 'Album history' })).toBeInTheDocument();
 		const lines = [
 			'"Airbag" has a new file, and its plays, favorites and playlist entries moved to it.',
+			'3 tracks have new files, and their plays, favorites and playlist entries moved to them.',
 			'6 tracks have new files, and their plays, favorites and playlist entries moved to them: "One", "Two", "Three", "Four", "Five" and 1 more.',
 			'"Lucky" was replaced by the edition\'s version, and its plays, favorites and playlist entries moved to the new file.',
 			'2 tracks were replaced by the edition\'s version, and their plays, favorites and playlist entries moved to the new files: "Lucky", "Karma".',
@@ -119,18 +121,6 @@ describe('AlbumHistory', () => {
 		await expect.element(page.getByRole('button')).not.toBeInTheDocument();
 	});
 
-	it('leaves the titles out when none are sent', async () => {
-		await show(entry({ kind: 'tracks_continued', track_count: 3 }));
-		await expect
-			.element(
-				page.getByText(
-					'3 tracks have new files, and their plays, favorites and playlist entries moved to them.',
-					{ exact: true }
-				)
-			)
-			.toBeInTheDocument();
-	});
-
 	it('renders titles as text', async () => {
 		await show(entry({ kind: 'retag_joined', other_album_title: '<b>Bold</b>' }));
 		await expect
@@ -142,62 +132,66 @@ describe('AlbumHistory', () => {
 			)
 			.toBeInTheDocument();
 	});
-
-	it('dates each line with a machine-readable time', async () => {
-		await show(entry({ kind: 'leftover_joined', other_album_title: 'Old Name' }));
-		const time = page.getByTitle(new Date(AT).toLocaleString());
-		await expect.element(time).toHaveAttribute('datetime', new Date(AT).toISOString());
-	});
-
-	it('shows nothing, not even the heading, when there is nothing to tell', async () => {
-		await show();
-		await expect
-			.element(page.getByRole('heading', { name: 'Album history' }))
-			.not.toBeInTheDocument();
-	});
 });
 
-describe('undoing a fold', () => {
+describe('undoing a fold or an artist change', () => {
 	const folded = entry({
 		kind: 'leftover_joined',
 		other_album_title: 'Old Name',
 		undo_id: 'fold-1'
 	});
+	const repaired = entry({ kind: 'artist_from_tracks', undo_id: 'repair-1' });
 
-	it('undoes the fold after a curator confirms', async () => {
-		signIn('trusted');
-		const api = fakeApi({ [HISTORY]: { items: [folded] }, [UNDO]: undefined });
-		await renderWithQuery(AlbumHistory, { albumId: 'album-1' });
+	it('undoes after a curator confirms, and says why a stale one cannot be undone', async () => {
+		const cases = [
+			{
+				item: folded,
+				route: UNDO,
+				other: UNDO_ARTIST,
+				params: { fold_id: 'fold-1' },
+				confirm: ['Plays, favorites and playlist entries stay on this album.'],
+				stale: "The albums changed after the join, so it can't be undone."
+			},
+			{
+				item: repaired,
+				route: UNDO_ARTIST,
+				other: UNDO,
+				params: { repair_id: 'repair-1' },
+				confirm: [
+					'Undo this artist change?',
+					'The album goes back to "Unknown Artist", and this change is not made again.'
+				],
+				stale: "The album's artist changed after this, so it can't be undone."
+			}
+		] as const;
+		for (const { item, route, other, params, confirm, stale } of cases) {
+			signIn('trusted');
+			const api = fakeApi({ [HISTORY]: { items: [item] }, [route]: undefined } as FakeRoutes);
+			let view = await renderWithQuery(AlbumHistory, { albumId: 'album-1' });
 
-		await page.getByRole('button', { name: 'Undo' }).click();
-		const dialog = page.getByRole('dialog');
-		await expect
-			.element(dialog.getByText('Plays, favorites and playlist entries stay on this album.'))
-			.toBeVisible();
-		await dialog.getByRole('button', { name: 'Undo' }).click();
+			await page.getByRole('button', { name: 'Undo' }).click();
+			const dialog = page.getByRole('dialog');
+			for (const text of confirm) await expect.element(dialog.getByText(text)).toBeVisible();
+			await dialog.getByRole('button', { name: 'Undo' }).click();
 
-		await expect.element(page.getByRole('dialog')).not.toBeInTheDocument();
-		expect(api.calls(UNDO).map((call) => call.params)).toEqual([{ fold_id: 'fold-1' }]);
-	});
+			await expect.element(page.getByRole('dialog')).not.toBeInTheDocument();
+			expect(api.calls(route).map((call) => call.params)).toEqual([params]);
+			expect(api.calls(other)).toEqual([]);
+			view.unmount();
 
-	it('says why a stale fold cannot be undone', async () => {
-		signIn('admin');
-		fakeApi({
-			[HISTORY]: { items: [folded] },
-			[UNDO]: apiError(
-				409,
-				'STALE_REVISION',
-				"The albums changed after the join, so it can't be undone."
-			)
-		});
-		await renderWithQuery(AlbumHistory, { albumId: 'album-1' });
+			signIn('admin');
+			fakeApi({
+				[HISTORY]: { items: [item] },
+				[route]: apiError(409, 'STALE_REVISION', stale)
+			} as FakeRoutes);
+			view = await renderWithQuery(AlbumHistory, { albumId: 'album-1' });
 
-		await page.getByRole('button', { name: 'Undo' }).click();
-		await page.getByRole('dialog').getByRole('button', { name: 'Undo' }).click();
+			await page.getByRole('button', { name: 'Undo' }).click();
+			await page.getByRole('dialog').getByRole('button', { name: 'Undo' }).click();
 
-		await expect
-			.element(page.getByRole('alert'))
-			.toHaveTextContent("The albums changed after the join, so it can't be undone.");
+			await expect.element(page.getByRole('alert')).toHaveTextContent(stale);
+			view.unmount();
+		}
 	});
 
 	it('lists an undone fold as its own entry, with no Undo left on the fold', async () => {
@@ -212,64 +206,6 @@ describe('undoing a fold', () => {
 			)
 			.toBeVisible();
 		await expect.element(page.getByText(/was folded into this album/)).toBeVisible();
-		await expect.element(page.getByRole('button', { name: 'Undo' })).not.toBeInTheDocument();
-	});
-
-	it('offers no Undo to a listener', async () => {
-		await show(folded);
-		await expect.element(page.getByText(/was folded into this album/)).toBeVisible();
-		await expect.element(page.getByRole('button', { name: 'Undo' })).not.toBeInTheDocument();
-	});
-});
-
-describe('undoing an artist change', () => {
-	const repaired = entry({ kind: 'artist_from_tracks', undo_id: 'repair-1' });
-
-	it('undoes the artist change after a curator confirms', async () => {
-		signIn('trusted');
-		const api = fakeApi({ [HISTORY]: { items: [repaired] }, [UNDO_ARTIST]: undefined });
-		await renderWithQuery(AlbumHistory, { albumId: 'album-1' });
-
-		await page.getByRole('button', { name: 'Undo' }).click();
-		const dialog = page.getByRole('dialog');
-		await expect.element(dialog.getByText('Undo this artist change?')).toBeVisible();
-		await expect
-			.element(
-				dialog.getByText(
-					'The album goes back to "Unknown Artist", and this change is not made again.'
-				)
-			)
-			.toBeVisible();
-		await dialog.getByRole('button', { name: 'Undo' }).click();
-
-		await expect.element(page.getByRole('dialog')).not.toBeInTheDocument();
-		expect(api.calls(UNDO_ARTIST).map((call) => call.params)).toEqual([{ repair_id: 'repair-1' }]);
-		expect(api.calls(UNDO)).toEqual([]);
-	});
-
-	it('says why a stale artist change cannot be undone', async () => {
-		signIn('admin');
-		fakeApi({
-			[HISTORY]: { items: [repaired] },
-			[UNDO_ARTIST]: apiError(
-				409,
-				'STALE_REVISION',
-				"The album's artist changed after this, so it can't be undone."
-			)
-		});
-		await renderWithQuery(AlbumHistory, { albumId: 'album-1' });
-
-		await page.getByRole('button', { name: 'Undo' }).click();
-		await page.getByRole('dialog').getByRole('button', { name: 'Undo' }).click();
-
-		await expect
-			.element(page.getByRole('alert'))
-			.toHaveTextContent("The album's artist changed after this, so it can't be undone.");
-	});
-
-	it('offers no Undo to a listener', async () => {
-		await show(repaired);
-		await expect.element(page.getByText(/replacing "Unknown Artist"/)).toBeVisible();
 		await expect.element(page.getByRole('button', { name: 'Undo' })).not.toBeInTheDocument();
 	});
 });

@@ -47,10 +47,16 @@ function linkTo(path: string) {
 describe('settings section', () => {
 	it('keeps unsaved edits through a refetch, sends an untouched secret as its mask, then resets on save', async () => {
 		const api = fakeApi({ [ROUTE]: stored, [SAVE]: ({ body }) => body as JellyfinSettings });
-		const view = await renderWithQuery(SettingsSectionTestHarness, {});
+		const ontest = vi.fn();
+		const view = await renderWithQuery(SettingsSectionTestHarness, { ontest });
 
 		await expect.element(urlField()).toHaveValue('http://jellyfin:8096');
 		await expect.element(saveButton()).toBeDisabled();
+
+		// Test sends the stored secret back as its mask.
+		await page.getByRole('button', { name: 'Test' }).click();
+		await expect.element(page.getByText('Reached the server.')).toBeVisible();
+		expect(ontest).toHaveBeenCalledWith(expect.objectContaining({ api_key: SECRET_MASK }));
 
 		await urlField().fill('http://media.lan:8096');
 		await expect.element(saveButton()).toBeEnabled();
@@ -90,7 +96,7 @@ describe('settings section', () => {
 		await expect.element(urlField()).toHaveAttribute('aria-invalid', 'false');
 	});
 
-	it("shows a refused save's message and keeps the edit", async () => {
+	it("shows a refused save's message and keeps the edit until Discard", async () => {
 		fakeApi({
 			[ROUTE]: stored,
 			[SAVE]: apiError(400, 'INVALID_INPUT', 'The URL must start with http or https.')
@@ -103,6 +109,9 @@ describe('settings section', () => {
 		await expect.element(page.getByText('The URL must start with http or https.')).toBeVisible();
 		await expect.element(urlField()).toHaveValue('jellyfin.lan');
 		await expect.element(saveButton()).toBeEnabled();
+
+		await page.getByRole('button', { name: 'Discard' }).click();
+		await expect.element(urlField()).toHaveValue('http://jellyfin:8096');
 	});
 
 	it('asks before unsaved edits are lost to a tab switch or a link, and lets a clean form go', async () => {

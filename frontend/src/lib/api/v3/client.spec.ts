@@ -98,28 +98,23 @@ describe('v3 GET', () => {
 		);
 	});
 
-	it('rejects a POST-only endpoint at build time', async () => {
+	it('refuses calls off the contract at build time', async () => {
 		fetchMock.mockResolvedValue(jsonResponse({}));
 		const client = createV3Client(fetchMock);
 
 		// @ts-expect-error - lidarr test is POST-only
 		await client.GET(v3('/api/v3/acquire/lidarr-import/test'));
-
-		expect(fetchMock).toHaveBeenCalledTimes(1);
-	});
-
-	it('rejects plain strings at build time', async () => {
-		fetchMock.mockResolvedValue(jsonResponse({}));
-		const client = createV3Client(fetchMock);
-
 		// @ts-expect-error - plain strings carry no contract brand
 		await client.GET('/api/v3/acquire/slskd/status');
+		// @ts-expect-error - device session mint requires a body
+		await client.POST(v3('/api/v3/auth/device-sessions'));
 
-		expect(fetchMock).toHaveBeenCalledTimes(1);
+		expect(fetchMock).toHaveBeenCalledTimes(3);
 	});
+
 });
 
-describe('v3 DELETE and HEAD', () => {
+describe('v3 DELETE', () => {
 	it('resolves void for a 204 response', async () => {
 		fetchMock.mockResolvedValue(emptyResponse(204));
 		const client = createV3Client(fetchMock);
@@ -132,23 +127,9 @@ describe('v3 DELETE and HEAD', () => {
 		expectTypeOf<V3Response<'/api/v3/me/app-passwords/{id}', 'delete'>>().toEqualTypeOf<void>();
 	});
 
-	it('maps HEAD requests', async () => {
-		fetchMock.mockResolvedValue(emptyResponse(200));
-		const client = createV3Client(fetchMock);
-
-		const result: void = await client.HEAD(
-			v3('/api/v3/stream/{source}/{*key}', { path: { source: 'local', '*key': 'k' } })
-		);
-
-		expect(result).toBeUndefined();
-		expect(fetchMock).toHaveBeenCalledWith(
-			'/api/v3/stream/local/k',
-			expect.objectContaining({ method: 'HEAD' })
-		);
-	});
 });
 
-describe('v3 POST, PUT, and PATCH', () => {
+describe('v3 POST, PUT, PATCH and HEAD', () => {
 	it('sends a JSON body typed from the contract', async () => {
 		fetchMock.mockResolvedValue(jsonResponse({ token: 'tok' }));
 		const client = createV3Client(fetchMock);
@@ -177,31 +158,31 @@ describe('v3 POST, PUT, and PATCH', () => {
 		expect(fetchMock.mock.calls[0]![1]).not.toHaveProperty('body');
 	});
 
-	it('requires a body where the contract has one', async () => {
-		fetchMock.mockResolvedValue(jsonResponse({}));
+	it('maps HEAD, PUT and PATCH to their methods', async () => {
 		const client = createV3Client(fetchMock);
+		const cases: [string, string, () => Promise<unknown>][] = [
+			[
+				'HEAD',
+				'/api/v3/stream/local/k',
+				(): Promise<void> =>
+					client.HEAD(v3('/api/v3/stream/{source}/{*key}', { path: { source: 'local', '*key': 'k' } }))
+			],
+			[
+				'PUT',
+				'/api/v3/acquire/lidarr-import/config',
+				() => client.PUT(v3('/api/v3/acquire/lidarr-import/config'), { url: '', api_key: '' })
+			],
+			['PATCH', '/api/v3/me', () => client.PATCH(v3('/api/v3/me'), { display_name: 'New name' })]
+		];
+		for (const [method, url, send] of cases) {
+			fetchMock.mockReset();
+			fetchMock.mockResolvedValue(method === 'HEAD' ? emptyResponse(200) : jsonResponse({ ok: true }));
 
-		// @ts-expect-error - device session mint requires a body
-		await client.POST(v3('/api/v3/auth/device-sessions'));
+			const result = await send();
 
-		expect(fetchMock).toHaveBeenCalledTimes(1);
-	});
-
-	it('maps PUT and PATCH methods', async () => {
-		fetchMock.mockResolvedValue(jsonResponse({ ok: true }));
-		const client = createV3Client(fetchMock);
-
-		await client.PUT(v3('/api/v3/acquire/lidarr-import/config'), { url: '', api_key: '' });
-		await client.PATCH(v3('/api/v3/me'), { display_name: 'New name' });
-
-		expect(fetchMock.mock.calls[0]).toEqual([
-			'/api/v3/acquire/lidarr-import/config',
-			expect.objectContaining({ method: 'PUT' })
-		]);
-		expect(fetchMock.mock.calls[1]).toEqual([
-			'/api/v3/me',
-			expect.objectContaining({ method: 'PATCH' })
-		]);
+			expect(fetchMock).toHaveBeenCalledWith(url, expect.objectContaining({ method }));
+			if (method === 'HEAD') expect(result).toBeUndefined();
+		}
 	});
 });
 

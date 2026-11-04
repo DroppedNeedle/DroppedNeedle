@@ -81,7 +81,7 @@ const update: MusicBrainzSettingsUpdate = {
 	community_acknowledged: null
 };
 
-beforeEach(() => {
+function reset(): void {
 	vi.clearAllMocks();
 	storage.clear();
 	Object.defineProperty(globalThis, 'localStorage', {
@@ -96,42 +96,69 @@ beforeEach(() => {
 	resetMusicBrainzSourceScope();
 	mockPost.mockResolvedValue(settings);
 	mockPut.mockResolvedValue(settings);
-});
+}
+
+beforeEach(reset);
 
 afterEach(() => {
 	authStore.clear();
 });
 
 describe('MusicBrainz settings mutations', () => {
-	it('does not publish user A response after authentication switches to user B', async () => {
-		persistScope('user-b', 'community', 'community-b', 9);
-		let resolveResponse: (data: MusicBrainzSettingsResponse) => void = () => {};
-		const responsePromise = new Promise<MusicBrainzSettingsResponse>((resolve) => {
-			resolveResponse = resolve;
-		});
-		mockPut.mockReturnValueOnce(responsePromise);
+	it('publishes a saved source only while the user who saved it is signed in', async () => {
+		{
+			// Does not publish user A response after authentication switches to user B.
+			reset();
+			persistScope('user-b', 'community', 'community-b', 9);
+			let resolveResponse: (data: MusicBrainzSettingsResponse) => void = () => {};
+			const responsePromise = new Promise<MusicBrainzSettingsResponse>((resolve) => {
+				resolveResponse = resolve;
+			});
+			mockPut.mockReturnValueOnce(responsePromise);
 
-		authStore.setUser(user('user-a'));
-		const options = createSaveMusicBrainzSettingsMutation() as unknown as MutationOptions;
-		const userAContext = options.onMutate?.(update, {});
-		const request = options.mutationFn(update);
+			authStore.setUser(user('user-a'));
+			const options = createSaveMusicBrainzSettingsMutation() as unknown as MutationOptions;
+			const userAContext = options.onMutate?.(update, {});
+			const request = options.mutationFn(update);
 
-		authStore.setUser(user('user-b'));
-		resolveResponse(settings);
-		const result = await request;
-		await options.onSuccess?.(result, update, userAContext);
+			authStore.setUser(user('user-b'));
+			resolveResponse(settings);
+			const result = await request;
+			await options.onSuccess?.(result, update, userAContext);
 
-		expect(mockPut).toHaveBeenCalledWith('/api/v3/settings/musicbrainz', update);
-		expect(getMusicBrainzSourceScope()).toEqual({
-			userId: 'user-b',
-			sourceMode: 'community',
-			sourceId: 'community-b',
-			generation: 9
-		});
-		expect(storage.get(scopeStorageKey('user-b'))).toBe(
-			JSON.stringify({ sourceMode: 'community', sourceId: 'community-b', generation: 9 })
-		);
-		expect(cache.set).not.toHaveBeenCalled();
+			expect(mockPut).toHaveBeenCalledWith('/api/v3/settings/musicbrainz', update);
+			expect(getMusicBrainzSourceScope()).toEqual({
+				userId: 'user-b',
+				sourceMode: 'community',
+				sourceId: 'community-b',
+				generation: 9
+			});
+			expect(storage.get(scopeStorageKey('user-b'))).toBe(
+				JSON.stringify({ sourceMode: 'community', sourceId: 'community-b', generation: 9 })
+			);
+			expect(cache.set).not.toHaveBeenCalled();
+		}
+
+		{
+			// Publishes and persists a mutation response when the initiating user remains active.
+			reset();
+			authStore.setUser(user('user-a'));
+			const options = createSaveMusicBrainzSettingsMutation() as unknown as MutationOptions;
+			const userAContext = options.onMutate?.(update, {});
+
+			await options.onSuccess?.(settings, update, userAContext);
+
+			expect(getMusicBrainzSourceScope()).toEqual({
+				userId: 'user-a',
+				sourceMode: 'official',
+				sourceId: 'official-source',
+				generation: 1
+			});
+			expect(storage.get(scopeStorageKey('user-a'))).toBe(
+				JSON.stringify({ sourceMode: 'official', sourceId: 'official-source', generation: 1 })
+			);
+			expect(cache.set).toHaveBeenCalledOnce();
+		}
 	});
 
 	it('keeps concurrent mutation responses bound to their initiating users', async () => {
@@ -154,25 +181,6 @@ describe('MusicBrainz settings mutations', () => {
 			sourceId: 'source-b',
 			generation: 2
 		});
-	});
-
-	it('publishes and persists a mutation response when the initiating user remains active', async () => {
-		authStore.setUser(user('user-a'));
-		const options = createSaveMusicBrainzSettingsMutation() as unknown as MutationOptions;
-		const userAContext = options.onMutate?.(update, {});
-
-		await options.onSuccess?.(settings, update, userAContext);
-
-		expect(getMusicBrainzSourceScope()).toEqual({
-			userId: 'user-a',
-			sourceMode: 'official',
-			sourceId: 'official-source',
-			generation: 1
-		});
-		expect(storage.get(scopeStorageKey('user-a'))).toBe(
-			JSON.stringify({ sourceMode: 'official', sourceId: 'official-source', generation: 1 })
-		);
-		expect(cache.set).toHaveBeenCalledOnce();
 	});
 
 	it('keeps the committed source in memory when persisting the response fails', async () => {

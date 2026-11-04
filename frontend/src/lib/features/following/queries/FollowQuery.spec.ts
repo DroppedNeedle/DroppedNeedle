@@ -1,4 +1,3 @@
-import { v3 } from '$lib/api/v3/endpoint';
 import { describe, expect, it, vi, beforeEach, type Mock } from 'vitest';
 
 vi.mock('@tanstack/svelte-query', () => ({
@@ -129,53 +128,40 @@ beforeEach(() => {
 	queryClient.clear();
 });
 
-describe('follow queries hit the right endpoints with user-scoped keys', () => {
-	it('getUnseenNewReleasesCountQuery is user-scoped and disabled when logged out', async () => {
-		const opts = getUnseenNewReleasesCountQuery() as unknown as Opts & { enabled?: boolean };
-		expect(opts.queryKey).toEqual(FollowQueryKeyFactory.newReleasesUnseen('userA'));
-		expect(opts.enabled).toBe(true);
-		await opts.queryFn!({ signal: new AbortController().signal });
-		expect(mockGet.mock.calls[0][0]).toBe(v3('/api/v3/following/new-releases/unseen-count'));
-
-		auth.user = null;
-		const loggedOut = getUnseenNewReleasesCountQuery() as unknown as { enabled?: boolean };
-		expect(loggedOut.enabled).toBe(false);
-	});
-});
-
-describe('concerts queries hit the right endpoints with user-scoped keys', () => {
-	it('getUnseenConcertsCountQuery is user-scoped and disabled when logged out', async () => {
-		const opts = getUnseenConcertsCountQuery() as unknown as Opts & { enabled?: boolean };
-		expect(opts.queryKey).toEqual(FollowQueryKeyFactory.concertsUnseen('userA'));
-		expect(opts.enabled).toBe(true);
-		await opts.queryFn!({ signal: new AbortController().signal });
-		expect(mockGet.mock.calls[0][0]).toBe(v3('/api/v3/following/concerts/unseen-count'));
-
-		auth.user = null;
-		const loggedOut = getUnseenConcertsCountQuery() as unknown as { enabled?: boolean };
-		expect(loggedOut.enabled).toBe(false);
+describe('unseen counts', () => {
+	it('key each count to the signed-in user, and stay off while nobody is', () => {
+		const counts: [() => unknown, (userId: string) => readonly unknown[]][] = [
+			[getUnseenNewReleasesCountQuery, FollowQueryKeyFactory.newReleasesUnseen],
+			[getUnseenConcertsCountQuery, FollowQueryKeyFactory.concertsUnseen]
+		];
+		for (const [query, key] of counts) {
+			for (const id of ['userA', 'userB']) {
+				auth.user = { id };
+				const opts = query() as Opts & { enabled?: boolean };
+				expect(opts.queryKey).toEqual(key(id));
+				expect(opts.enabled).toBe(true);
+			}
+			auth.user = null;
+			expect((query() as { enabled?: boolean }).enabled).toBe(false);
+		}
 	});
 });
 
 describe('follow mutations', () => {
-	it('non-admin auto-download optimistically goes pending', async () => {
-		auth.isAdmin = false;
-		const m = createSetAutoDownloadMutation(() => MBID) as unknown as Opts;
-		await m.onMutate!(true);
-		const cached = queryClient.getQueryData<FollowStatus>(
-			FollowQueryKeyFactory.status('userA', MBID)
-		);
-		expect(cached?.auto_download).toBe(true);
-		expect(cached?.auto_download_state).toBe('pending');
-	});
-
-	it('admin auto-download optimistically goes approved', async () => {
-		auth.isAdmin = true;
-		const m = createSetAutoDownloadMutation(() => MBID) as unknown as Opts;
-		await m.onMutate!(true);
-		const cached = queryClient.getQueryData<FollowStatus>(
-			FollowQueryKeyFactory.status('userA', MBID)
-		);
-		expect(cached?.auto_download_state).toBe('approved');
+	it('auto-download goes pending for a user and approved for an admin before the answer', async () => {
+		for (const [isAdmin, state] of [
+			[false, 'pending'],
+			[true, 'approved']
+		] as const) {
+			queryClient.clear();
+			auth.isAdmin = isAdmin;
+			const m = createSetAutoDownloadMutation(() => MBID) as unknown as Opts;
+			await m.onMutate!(true);
+			const cached = queryClient.getQueryData<FollowStatus>(
+				FollowQueryKeyFactory.status('userA', MBID)
+			);
+			expect(cached?.auto_download).toBe(true);
+			expect(cached?.auto_download_state).toBe(state);
+		}
 	});
 });

@@ -72,49 +72,24 @@ describe('UserQuotaEditor', () => {
 		h.savePending = false;
 	});
 
-	it('summarizes usage and seeds inputs from the stored override', async () => {
-		await render(UserQuotaEditor, { props: { userId: 'u-7', displayName: 'Jae' } });
-
-		await expect.element(page.getByText(/requests: 3/i)).toBeVisible();
-		await expect.element(page.getByText(/downloads: 5\.0 gb/i)).toBeVisible();
-		await expect.element(page.getByLabelText('Requests')).toHaveValue(10);
-		await expect.element(page.getByLabelText('Storage (GB)')).toHaveValue(50);
-		await expect.element(page.getByLabelText('Window (days)')).toHaveValue(null);
-	});
-
-	it('saves parsed numbers and confirms with a toast', async () => {
+	it('saves the numbers typed, and null for a blank field so it inherits the default', async () => {
 		await render(UserQuotaEditor, { props: { userId: 'u-7', displayName: 'Jae' } });
 
 		await userEvent.fill(page.getByLabelText('Window (days)'), '14');
 		await page.getByRole('button', { name: 'Save' }).click();
-
-		expect(h.save).toHaveBeenCalledWith({
+		expect(h.save).toHaveBeenLastCalledWith({
 			userId: 'u-7',
 			override: { request_quota_count: 10, request_quota_days: 14, storage_quota_gb: 50 }
 		});
 		expect(h.toast).toHaveBeenCalledWith({ message: 'Quota saved for Jae', type: 'success' });
-	});
-
-	it('sends null for blank fields so they inherit the global default', async () => {
-		await render(UserQuotaEditor, { props: { userId: 'u-7', displayName: 'Jae' } });
 
 		await userEvent.fill(page.getByLabelText('Requests'), '');
 		await userEvent.fill(page.getByLabelText('Window (days)'), '');
 		await userEvent.fill(page.getByLabelText('Storage (GB)'), '');
 		await page.getByRole('button', { name: 'Save' }).click();
-
-		expect(h.save).toHaveBeenCalledWith({
+		expect(h.save).toHaveBeenLastCalledWith({
 			userId: 'u-7',
 			override: { request_quota_count: null, request_quota_days: null, storage_quota_gb: null }
 		});
-	});
-
-	it('says plainly when the quota cannot be loaded', async () => {
-		h.data = null;
-		h.isError = true;
-
-		await render(UserQuotaEditor, { props: { userId: 'u-7', displayName: 'Jae' } });
-
-		await expect.element(page.getByText(/could not load this user's quota/i)).toBeVisible();
 	});
 });

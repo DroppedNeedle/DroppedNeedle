@@ -112,32 +112,34 @@ function loadPage(path = '/') {
 	return load({ url: new URL(path, 'http://localhost') } as Parameters<typeof load>[0]);
 }
 
-describe('+layout load session bootstrap', () => {
-	beforeEach(() => {
-		state.apiGet.mockReset();
-		state.clear.mockReset();
-		state.markInitialized.mockReset();
-		state.ensureQueryData.mockReset();
-		state.ensureQueryData.mockResolvedValue({ primary_music_source: 'invalid' });
-		state.resetQueryCache.mockClear();
-		state.sessionCleanup.mockReset();
-		state.sessionCleanup.mockImplementation(async (options?: { clearAuth?: boolean }) => {
-			state.resetQueryCache();
-			state.musicSourceReset();
-			state.scrobbleReset();
-			storage.delete('test:last-user');
-			if (options?.clearAuth !== false) {
-				state.clear();
-				state.user = null;
-			}
-		});
-		state.musicSourceReset.mockClear();
-		state.scrobbleReset.mockClear();
-		storage.clear();
-		state.user = null;
-		state.initialized = false;
-		state.setupRequired = false;
+function reset(): void {
+	state.apiGet.mockReset();
+	state.clear.mockReset();
+	state.markInitialized.mockReset();
+	state.ensureQueryData.mockReset();
+	state.ensureQueryData.mockResolvedValue({ primary_music_source: 'invalid' });
+	state.resetQueryCache.mockClear();
+	state.sessionCleanup.mockReset();
+	state.sessionCleanup.mockImplementation(async (options?: { clearAuth?: boolean }) => {
+		state.resetQueryCache();
+		state.musicSourceReset();
+		state.scrobbleReset();
+		storage.delete('test:last-user');
+		if (options?.clearAuth !== false) {
+			state.clear();
+			state.user = null;
+		}
 	});
+	state.musicSourceReset.mockClear();
+	state.scrobbleReset.mockClear();
+	storage.clear();
+	state.user = null;
+	state.initialized = false;
+	state.setupRequired = false;
+}
+
+describe('+layout load session bootstrap', () => {
+	beforeEach(reset);
 
 	it('keeps the session intact and reports an unreachable server when /api/v3/me times out', async () => {
 		state.user = user;
@@ -231,56 +233,60 @@ describe('+layout load session bootstrap', () => {
 		expect(storage.get('test:last-user')).toBe('user-1');
 	});
 
-	it('runs setup and session hydration only once across in-app navigation', async () => {
-		state.apiGet
-			.mockResolvedValueOnce({ setup_required: false, code_required: false })
-			.mockResolvedValueOnce(user);
+	it('runs the setup check and session bootstrap once across in-app navigation', async () => {
+		{
+			// Runs setup and session hydration only once across in-app navigation.
+			reset();
+			state.apiGet
+				.mockResolvedValueOnce({ setup_required: false, code_required: false })
+				.mockResolvedValueOnce(user);
 
-		await expect(loadPage()).resolves.toEqual({ primarySource: 'listenbrainz', user });
-		await expect(loadPage()).resolves.toEqual({ primarySource: 'listenbrainz', user });
+			await expect(loadPage()).resolves.toEqual({ primarySource: 'listenbrainz', user });
+			await expect(loadPage()).resolves.toEqual({ primarySource: 'listenbrainz', user });
 
-		expect(
-			state.apiGet.mock.calls.filter(([url]) => url === '/api/v3/auth/setup/status')
-		).toHaveLength(1);
-		expect(state.apiGet.mock.calls.filter(([url]) => url === '/api/v3/me')).toHaveLength(1);
-		expect(state.apiGet.mock.calls.filter(([url]) => url === '/scrobble-preferences')).toHaveLength(
-			0
-		);
-		expect(state.ensureQueryData).toHaveBeenCalledTimes(2);
+			expect(
+				state.apiGet.mock.calls.filter(([url]) => url === '/api/v3/auth/setup/status')
+			).toHaveLength(1);
+			expect(state.apiGet.mock.calls.filter(([url]) => url === '/api/v3/me')).toHaveLength(1);
+			expect(
+				state.apiGet.mock.calls.filter(([url]) => url === '/scrobble-preferences')
+			).toHaveLength(0);
+			expect(state.ensureQueryData).toHaveBeenCalledTimes(2);
+		}
+
+		{
+			// Retains setup state across navigation without repeating bootstrap requests.
+			reset();
+			state.apiGet
+				.mockResolvedValueOnce({ setup_required: true, code_required: false })
+				.mockRejectedValueOnce(new ApiError(401, 'Unauthorized'));
+
+			await expect(loadPage('/login')).resolves.toEqual({
+				primarySource: 'listenbrainz',
+				user: null
+			});
+			await expect(loadPage()).rejects.toMatchObject({ status: 302, location: '/setup' });
+
+			expect(
+				state.apiGet.mock.calls.filter(([url]) => url === '/api/v3/auth/setup/status')
+			).toHaveLength(1);
+			expect(state.apiGet.mock.calls.filter(([url]) => url === '/api/v3/me')).toHaveLength(1);
+		}
 	});
 
-	it('retains setup state across navigation without repeating bootstrap requests', async () => {
-		state.apiGet
-			.mockResolvedValueOnce({ setup_required: true, code_required: false })
-			.mockRejectedValueOnce(new ApiError(401, 'Unauthorized'));
+	it('sends a configured setup route to sign-in, or home when signed in, with no requests', async () => {
+		for (const [signedIn, location] of [
+			[null, '/login'],
+			[user, '/']
+		] as const) {
+			reset();
+			state.initialized = true;
+			state.user = signedIn;
 
-		await expect(loadPage('/login')).resolves.toEqual({
-			primarySource: 'listenbrainz',
-			user: null
-		});
-		await expect(loadPage()).rejects.toMatchObject({ status: 302, location: '/setup' });
-
-		expect(
-			state.apiGet.mock.calls.filter(([url]) => url === '/api/v3/auth/setup/status')
-		).toHaveLength(1);
-		expect(state.apiGet.mock.calls.filter(([url]) => url === '/api/v3/me')).toHaveLength(1);
-	});
-
-	it('redirects a configured setup route to login when signed out', async () => {
-		state.initialized = true;
-
-		await expect(loadPage('/setup')).rejects.toMatchObject({ status: 302, location: '/login' });
-		expect(state.apiGet).not.toHaveBeenCalled();
-		expect(state.ensureQueryData).not.toHaveBeenCalled();
-	});
-
-	it('redirects a configured setup route home when already authenticated', async () => {
-		state.initialized = true;
-		state.user = user;
-
-		await expect(loadPage('/setup')).rejects.toMatchObject({ status: 302, location: '/' });
-		expect(state.apiGet).not.toHaveBeenCalled();
-		expect(state.ensureQueryData).not.toHaveBeenCalled();
+			await expect(loadPage('/setup')).rejects.toMatchObject({ status: 302, location });
+			expect(state.apiGet).not.toHaveBeenCalled();
+			expect(state.ensureQueryData).not.toHaveBeenCalled();
+		}
 	});
 
 	it('sends a server started on v2 data to the upgrade page, which loads without the bootstrap', async () => {

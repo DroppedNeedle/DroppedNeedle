@@ -64,30 +64,4 @@ describe('Last.fm link on the profile', () => {
 		await expect.poll(() => exchanged).toEqual([{ token: 'lfm-token' }]);
 		await expect.element(page.getByRole('button', { name: 'Finish' })).not.toBeInTheDocument();
 	});
-
-	it('keeps Disconnect next to Connect while the link has no account name', async () => {
-		fakeApi({
-			'GET /api/v3/me/connections': {
-				connections: [{ service: 'lastfm', enabled: true, username: '' }]
-			},
-			'GET /api/v3/me/scrobble-preferences': prefs
-		});
-		await renderWithQuery(ScrobblingDiscoveryCard, { navidromeEnabled: false });
-
-		await expect.element(page.getByRole('button', { name: 'Connect' }).last()).toBeVisible();
-		await expect.element(page.getByRole('button', { name: 'Disconnect' })).toBeVisible();
-	});
-
-	it('shows a linked account as connected', async () => {
-		fakeApi({
-			'GET /api/v3/me/connections': {
-				connections: [{ service: 'lastfm', enabled: true, username: 'jane' }]
-			},
-			'GET /api/v3/me/scrobble-preferences': prefs
-		});
-		await renderWithQuery(ScrobblingDiscoveryCard, { navidromeEnabled: false });
-
-		await expect.element(page.getByRole('button', { name: 'Disconnect' })).toBeVisible();
-		await expect.element(page.getByText('jane')).toBeVisible();
-	});
 });

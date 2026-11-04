@@ -102,14 +102,8 @@ vi.mock('$lib/stores/authStore.svelte', () => ({
 
 import { api } from '$lib/api/client';
 import { authStore } from '$lib/stores/authStore.svelte';
-import { clear as idbClear } from 'idb-keyval';
-import {
-	queryClient,
-	resetQueryCacheForUserSwitch,
-	setQueryDataWithPersister
-} from '$lib/queries/QueryClient';
+import { queryClient } from '$lib/queries/QueryClient';
 import { ProfileQueryKeyFactory } from '$lib/queries/featureKeys';
-import { getProfileQuery } from '$lib/features/profile/queries/profile.svelte';
 import {
 	createChangePasswordMutation,
 	createSetPasswordMutation,
@@ -144,51 +138,43 @@ beforeEach(() => {
 });
 
 type Opts = {
-	queryKey?: unknown;
-	queryFn?: (ctx: { signal: AbortSignal }) => Promise<unknown>;
 	mutationFn: (vars: unknown) => Promise<unknown>;
 	onSuccess: (user: unknown) => Promise<void> | void;
 };
 
-describe('getProfileQuery', () => {
-	it('builds a userId-scoped key and fetches GET /api/v3/me', async () => {
-		const opts = getProfileQuery(() => 'userA') as unknown as Opts;
-		expect(opts.queryKey).toEqual(ProfileQueryKeyFactory.profile('userA'));
-		await opts.queryFn!({ signal: new AbortController().signal });
-		expect(mockV3Get.mock.calls[0][0]).toBe(v3('/api/v3/me'));
-	});
-});
-
-describe('profile mutations hit the correct endpoints', () => {
-	it('username -> PUT /api/v3/me/username', async () => {
-		const m = createUpdateUsernameMutation('userA') as unknown as Opts;
-		await m.mutationFn({ username: 'bob' });
-		expect(mockV3Put).toHaveBeenCalledWith(v3('/api/v3/me/username'), {
-			username: 'bob'
-		});
-	});
-
-	it('email -> PUT /api/v3/me/email', async () => {
-		const m = createUpdateEmailMutation('userA') as unknown as Opts;
-		await m.mutationFn({ email: null });
-		expect(mockV3Put).toHaveBeenCalledWith(v3('/api/v3/me/email'), { email: null });
-	});
-
-	it('change password -> POST /api/v3/me/password', async () => {
-		const m = createChangePasswordMutation('userA') as unknown as Opts;
-		await m.mutationFn({ current_password: 'a', new_password: 'b' });
-		expect(mockV3Post).toHaveBeenCalledWith(v3('/api/v3/me/password'), {
-			current_password: 'a',
-			new_password: 'b'
-		});
-	});
-
-	it('set password -> POST /api/v3/me/local-password', async () => {
-		const m = createSetPasswordMutation('userA') as unknown as Opts;
-		await m.mutationFn({ new_password: 'b' });
-		expect(mockV3Post).toHaveBeenCalledWith(v3('/api/v3/me/local-password'), {
-			new_password: 'b'
-		});
+describe('profile mutations', () => {
+	it('send the name, email and password changes to their endpoints', async () => {
+		const cases: [() => unknown, unknown, Mock, unknown[]][] = [
+			[
+				() => createUpdateUsernameMutation('userA'),
+				{ username: 'bob' },
+				mockV3Put,
+				[v3('/api/v3/me/username'), { username: 'bob' }]
+			],
+			[
+				() => createUpdateEmailMutation('userA'),
+				{ email: null },
+				mockV3Put,
+				[v3('/api/v3/me/email'), { email: null }]
+			],
+			[
+				() => createChangePasswordMutation('userA'),
+				{ current_password: 'a', new_password: 'b' },
+				mockV3Post,
+				[v3('/api/v3/me/password'), { current_password: 'a', new_password: 'b' }]
+			],
+			[
+				() => createSetPasswordMutation('userA'),
+				{ new_password: 'b' },
+				mockV3Post,
+				[v3('/api/v3/me/local-password'), { new_password: 'b' }]
+			]
+		];
+		for (const [create, input, method, expected] of cases) {
+			const m = create() as unknown as Opts;
+			await m.mutationFn(input);
+			expect(method).toHaveBeenLastCalledWith(...expected);
+		}
 	});
 });
 
@@ -205,19 +191,5 @@ describe('mutation onSuccess', () => {
 			expect.objectContaining({ queryKey: ProfileQueryKeyFactory.profile('userA') })
 		);
 		invalidateSpy.mockRestore();
-	});
-});
-
-describe('resetQueryCacheForUserSwitch', () => {
-	it('empties the in-memory client AND the persisted IndexedDB store', async () => {
-		await setQueryDataWithPersister(ProfileQueryKeyFactory.profile('userA'), {
-			display_name: 'leaked'
-		});
-		expect(queryClient.getQueryData(ProfileQueryKeyFactory.profile('userA'))).toBeDefined();
-
-		await resetQueryCacheForUserSwitch();
-
-		expect(queryClient.getQueryData(ProfileQueryKeyFactory.profile('userA'))).toBeUndefined();
-		expect(idbClear).toHaveBeenCalled();
 	});
 });

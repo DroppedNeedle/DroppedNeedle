@@ -31,30 +31,22 @@ describe('SettingsCache', () => {
 		h.clear.mockReset();
 	});
 
-	it('clears the images after confirmation', async () => {
+	it('clears a cache only after the confirm, and declining clears nothing', async () => {
 		h.clear.mockResolvedValue({ message: 'Cleared 3 cached images' });
-
 		await render(SettingsCache);
-		await page.getByRole('button', { name: 'Clear images' }).click();
+		const dialog = page.getByRole('dialog', { name: 'Clear cache' });
+
+		await page.getByRole('button', { name: 'Clear provider data' }).click();
+		await dialog.getByRole('button', { name: 'Cancel' }).click();
+		await expect.element(dialog).not.toBeInTheDocument();
 		expect(h.clear).not.toHaveBeenCalled();
 
-		const dialog = page.getByRole('dialog', { name: 'Clear cache' });
+		await page.getByRole('button', { name: 'Clear images' }).click();
+		expect(h.clear).not.toHaveBeenCalled();
 		await dialog.getByRole('button', { name: 'Clear', exact: true }).click();
 
 		expect(h.clear).toHaveBeenCalledTimes(1);
 		expect(h.clear).toHaveBeenCalledWith({ scope: 'covers' });
 		await expect.element(page.getByRole('status')).toHaveTextContent('Cleared 3 cached images');
-	});
-
-	it('does nothing when the confirmation is declined', async () => {
-		await render(SettingsCache);
-		await page.getByRole('button', { name: 'Clear provider data' }).click();
-		await page
-			.getByRole('dialog', { name: 'Clear cache' })
-			.getByRole('button', { name: 'Cancel' })
-			.click();
-
-		await expect.element(page.getByRole('dialog', { name: 'Clear cache' })).not.toBeInTheDocument();
-		expect(h.clear).not.toHaveBeenCalled();
 	});
 });

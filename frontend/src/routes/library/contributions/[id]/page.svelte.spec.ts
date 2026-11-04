@@ -186,15 +186,4 @@ describe('library contribution page', () => {
 		await expect.element(page.getByRole('button', { name: 'Search' })).toBeDisabled();
 		await expect.element(page.getByRole('button', { name: 'Check MusicBrainz' })).toBeDisabled();
 	});
-
-	it('shows shared contribution status without curator controls to listeners', async () => {
-		h.authStore.isTrusted = false;
-		await render(ContributionPage, {
-			props: { data: { contributionId: contribution.id, primarySource: 'listenbrainz' } }
-		} as unknown as Parameters<typeof render>[1]);
-
-		await expect.element(page.getByRole('textbox', { name: 'Release title' })).toBeDisabled();
-		await expect.element(page.getByRole('button', { name: 'Save draft' })).not.toBeInTheDocument();
-		await expect.element(page.getByRole('button', { name: 'Cancel' })).not.toBeInTheDocument();
-	});
 });

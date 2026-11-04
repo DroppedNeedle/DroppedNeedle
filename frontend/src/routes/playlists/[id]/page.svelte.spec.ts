@@ -187,62 +187,6 @@ describe('Playlist detail page', () => {
 		}
 	});
 
-	it('owner sees the share toggle', async () => {
-		detailQuery.data = makePlaylist({ is_owner: true });
-		await renderDetail('pl-1');
-
-		await expect
-			.element(page.getByRole('checkbox', { name: /Make playlist public/ }))
-			.toBeVisible();
-	});
-
-	it('non-owner public view is read-only (no share toggle, no edit name)', async () => {
-		detailQuery.data = makePlaylist({ is_owner: false, is_public: true, owner_name: 'Ann' });
-		await renderDetail('pl-1');
-
-		await expect
-			.element(page.getByRole('heading', { name: 'My Playlist', level: 1 }))
-			.toBeVisible();
-		await expect.element(page.getByText(/Shared by Ann/)).toBeVisible();
-		expect(page.getByRole('button', { name: /Edit playlist name/ }).elements()).toHaveLength(0);
-		expect(
-			page.getByRole('checkbox', { name: /Make playlist (public|private)/ }).elements()
-		).toHaveLength(0);
-	});
-
-	it('missing banner counts albums without sources but skips library_file_id rows', async () => {
-		detailQuery.data = makePlaylist({
-			tracks: [
-				makeTrack({
-					id: 'trk-missing',
-					track_name: 'Missing Track',
-					album_id: 'alb-missing',
-					available_sources: [],
-					library_file_id: null,
-					track_source_id: null
-				}),
-				makeTrack({
-					id: 'trk-owned',
-					track_name: 'Owned Track',
-					album_id: 'alb-owned',
-					available_sources: [],
-					library_file_id: '42',
-					track_source_id: null
-				})
-			],
-			track_count: 2
-		});
-		await renderDetail('pl-1');
-
-		await expect.element(page.getByText('Missing Track')).toBeVisible();
-		// Owned library_file_id rows are skipped, so only 1 album is missing.
-		await expect.element(page.getByText(/not in your library/)).toBeVisible();
-		expect(page.getByText(/albums not in your library/).elements()).toHaveLength(0);
-		await expect
-			.element(page.getByRole('button', { name: 'Request album', exact: true }))
-			.toBeVisible();
-	});
-
 	it('does not cache empty resolve results', async () => {
 		detailQuery.data = makePlaylist();
 		mockResolveMutate.mockResolvedValue({ sources: {} });

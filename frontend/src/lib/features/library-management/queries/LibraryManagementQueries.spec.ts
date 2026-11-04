@@ -22,53 +22,26 @@ beforeEach(() => {
 });
 
 describe('LibraryManagementQueryKeyFactory', () => {
-	it('isolates every persisted domain by user', () => {
-		expect(LibraryManagementQueryKeyFactory.settings('admin-a')).not.toEqual(
-			LibraryManagementQueryKeyFactory.settings('admin-b')
-		);
-		expect(LibraryManagementQueryKeyFactory.preview('admin-a', 'job-1')).toEqual([
-			'user:admin-a',
-			'library-management',
-			'previews',
-			'job-1'
-		]);
-	});
+	it('keys history and plan items by every filter, never by a page cursor', () => {
+		const keys = LibraryManagementQueryKeyFactory;
+		const first = keys.operations('admin-a', { cursor: 'page-1', state: 'succeeded' });
+		expect(first).toEqual(keys.operations('admin-a', { cursor: 'page-2', state: 'succeeded' }));
+		for (const other of [
+			{ state: 'failed' },
+			{ state: 'succeeded', rootId: 'root-1' }
+		] as Parameters<typeof keys.operations>[1][]) {
+			expect(first).not.toEqual(keys.operations('admin-a', other));
+		}
 
-	it('normalizes pageable filters without putting cursors in the history identity', () => {
-		const first = LibraryManagementQueryKeyFactory.operations('admin-a', {
-			cursor: 'page-1',
-			state: 'succeeded'
-		});
-		const second = LibraryManagementQueryKeyFactory.operations('admin-a', {
-			cursor: 'page-2',
-			state: 'succeeded'
-		});
-		expect(first).toEqual(second);
-		expect(first).not.toEqual(
-			LibraryManagementQueryKeyFactory.operations('admin-a', { state: 'failed' })
-		);
-		expect(first).not.toEqual(
-			LibraryManagementQueryKeyFactory.operations('admin-a', {
-				state: 'succeeded',
-				rootId: 'root-1'
-			})
-		);
-	});
-
-	it('keeps every plan-item filter in the persisted query identity', () => {
-		const base = LibraryManagementQueryKeyFactory.previewItems('admin-a', 'job-1', {
+		const filters = {
 			artistId: 'artist-1',
 			collisionClass: 'normalized_path_collision',
 			hasRepresentationLoss: true
-		});
-		expect(base).not.toEqual(
-			LibraryManagementQueryKeyFactory.previewItems('admin-a', 'job-1', {
-				artistId: 'artist-2',
-				collisionClass: 'normalized_path_collision',
-				hasRepresentationLoss: true
-			})
+		} as const;
+		expect(keys.previewItems('admin-a', 'job-1', filters)).not.toEqual(
+			keys.previewItems('admin-a', 'job-1', { ...filters, artistId: 'artist-2' })
 		);
-		expect(LibraryManagementQueryKeyFactory.tagEditor('admin-a', 'track-1')).toEqual([
+		expect(keys.tagEditor('admin-a', 'track-1')).toEqual([
 			'user:admin-a',
 			'library-management',
 			'tag-editor',

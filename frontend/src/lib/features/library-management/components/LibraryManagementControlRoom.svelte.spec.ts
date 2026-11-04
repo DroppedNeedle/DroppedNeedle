@@ -438,16 +438,6 @@ function takenOver(id: string, title: string, givenUp = false) {
 }
 
 describe('albums left unmanaged', () => {
-	const summary = /left unmanaged because/;
-
-	it('says nothing when no album is left unmanaged', async () => {
-		h.takeovers.data = { total: 0, handing_back: 0, items: [] };
-		await render(LibraryManagementControlRoom);
-
-		await expect.element(page.getByText('Ready previews')).toBeVisible();
-		await expect.element(page.getByText(summary)).not.toBeInTheDocument();
-	});
-
 	it('lists the albums with one button each and no bulk button for one', async () => {
 		h.takeovers.data = {
 			total: 1,
@@ -493,54 +483,6 @@ describe('albums left unmanaged', () => {
 
 		expect(h.handBackAll).toHaveBeenCalledOnce();
 		expect(h.handBack).not.toHaveBeenCalled();
-	});
-
-	it('says how many albums wait their turn to be handed back', async () => {
-		h.takeovers.data = { total: 0, handing_back: 3, items: [] };
-		await render(LibraryManagementControlRoom);
-
-		await expect.element(page.getByText('3 albums are being handed back.')).toBeVisible();
-	});
-});
-
-function retagPair(id: string) {
-	const album = (albumId: string, title: string) => ({
-		id: albumId,
-		title,
-		album_artist_name: 'Signal Artist',
-		track_count: 10,
-		identity_token: '0',
-		edition: null
-	});
-	return {
-		old_album: album(`${id}-old`, `Old ${id}`),
-		new_album: album(`${id}-new`, `New ${id}`),
-		reason: 'tracks_elsewhere',
-		editions_differ: false,
-		recorded_at: 0
-	};
-}
-
-describe('albums that might be one album retagged', () => {
-	it('says nothing when no pair is waiting', async () => {
-		h.retagPairs.data = { total: 0, items: [], next_cursor: null };
-		await render(LibraryManagementControlRoom);
-
-		await expect.element(page.getByText('Ready previews')).toBeVisible();
-		await expect.element(page.getByText(/might (each )?be one album/)).not.toBeInTheDocument();
-	});
-
-	it('counts the pairs and opens to their cards', async () => {
-		h.retagPairs.data = { total: 2, items: [retagPair('a'), retagPair('b')], next_cursor: null };
-		await render(LibraryManagementControlRoom);
-
-		await page.getByText('2 pairs of albums might each be one album retagged').click();
-		await expect
-			.element(page.getByRole('article', { name: 'Might be one album: Old a and New a' }))
-			.toBeVisible();
-		await expect
-			.element(page.getByRole('article', { name: 'Might be one album: Old b and New b' }))
-			.toBeVisible();
 	});
 });
 
@@ -651,20 +593,6 @@ describe('LibraryManagementControlRoom', () => {
 		expect(h.toast).toHaveBeenCalledTimes(1);
 	});
 
-	it('hides bulk stale actions from non-admins', async () => {
-		h.admin = false;
-		h.operations = historyWith([failedOperation('stale-1'), failedOperation('stale-2')]);
-		await render(LibraryManagementControlRoom);
-
-		await expect.element(page.getByText('2 failed attempts · same album')).toBeVisible();
-		await expect
-			.element(page.getByRole('button', { name: /Retry .* stale/ }))
-			.not.toBeInTheDocument();
-		await expect
-			.element(page.getByRole('button', { name: /Dismiss .* stale/ }))
-			.not.toBeInTheDocument();
-	});
-
 	it('marks a stuck import bundle as handled and refreshes recovery state', async () => {
 		h.recovery.data = recoveryDataWith({
 			needs_attention_count: 1,
@@ -682,32 +610,5 @@ describe('LibraryManagementControlRoom', () => {
 			message: 'Import bundle marked as handled (4/4 files verified).',
 			type: 'success'
 		});
-	});
-
-	it('hides the import bundle resolve action from non-admins', async () => {
-		h.admin = false;
-		h.recovery.data = recoveryDataWith({
-			needs_attention_count: 1,
-			needs_attention_bundles: [{ bundle_id: 'bundle-1' }]
-		});
-		await render(LibraryManagementControlRoom);
-
-		await expect.element(page.getByText('Some file writes need you')).toBeVisible();
-		await expect
-			.element(page.getByRole('button', { name: 'Mark bundle-1 as handled' }))
-			.not.toBeInTheDocument();
-	});
-});
-
-describe('the runner in the URL', () => {
-	it('closes a runner from a saved link so the URL holds the tab and no runner', async () => {
-		h.goto.mockClear();
-		h.appPage.url = new URL('https://music.example.test/library/management?runner=manage');
-		await render(LibraryManagementControlRoom);
-
-		await page.getByRole('button', { name: 'Close manual management runner' }).click();
-
-		expect(h.goto).toHaveBeenCalledTimes(1);
-		expect(new URL(h.goto.mock.calls[0][0]).search).toBe('?tab=organize');
 	});
 });

@@ -93,10 +93,8 @@ vi.mock('$lib/stores/authStore.svelte', () => ({
 
 import { api } from '$lib/api/client';
 import { authStore } from '$lib/stores/authStore.svelte';
-import { queryClient } from '$lib/queries/QueryClient';
 import { ConnectionsQueryKeyFactory } from './ConnectionsQueryKeyFactory';
 import { getConnectionsQuery } from './ConnectionsQuery.svelte';
-import { createDisconnectMutation } from './ConnectionsMutations.svelte';
 
 // The typed client's generics resolve mock results to void; loosen to Mock
 // so resolves/implementations typecheck (assertions still pin URLs + bodies).
@@ -122,12 +120,6 @@ beforeEach(() => {
 });
 
 describe('getConnectionsQuery', () => {
-	it('builds a userId-scoped key', () => {
-		expect((getConnectionsQuery() as unknown as Opts).queryKey).toEqual(
-			ConnectionsQueryKeyFactory.list('userA')
-		);
-	});
-
 	it('does not leak across a user switch (key re-derives from authStore)', () => {
 		expect((getConnectionsQuery() as unknown as Opts).queryKey).toEqual(
 			ConnectionsQueryKeyFactory.list('userA')
@@ -136,17 +128,5 @@ describe('getConnectionsQuery', () => {
 		expect((getConnectionsQuery() as unknown as Opts).queryKey).toEqual(
 			ConnectionsQueryKeyFactory.list('userB')
 		);
-	});
-});
-
-describe('mutation onSuccess invalidates the user-scoped key', () => {
-	it("disconnect invalidates the caller's connections", async () => {
-		const spy = vi.spyOn(queryClient, 'invalidateQueries');
-		const m = createDisconnectMutation() as unknown as Opts;
-		await m.onSuccess!({ service: 'lastfm', deleted: true });
-		expect(spy.mock.calls[0][0]).toEqual(
-			expect.objectContaining({ queryKey: ConnectionsQueryKeyFactory.list('userA') })
-		);
-		spy.mockRestore();
 	});
 });

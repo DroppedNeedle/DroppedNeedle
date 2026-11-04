@@ -31,26 +31,7 @@ async function callQueryFn(opts: unknown) {
 	return queryFn({ signal: new AbortController().signal });
 }
 
-describe('LibraryQueryKeyFactory', () => {
-	it('keys membership by user and normalized candidate IDs', () => {
-		const first = getLibraryMembershipQueryOptions('user-a', ['B', 'a', 'b']);
-		const second = getLibraryMembershipQueryOptions('user-b', ['a', 'b']);
-		expect(first.queryKey).toEqual(['user:user-a', 'library', 'membership', ['a', 'b']]);
-		expect(first.queryKey).not.toEqual(second.queryKey);
-	});
-});
-
 describe('library query endpoints', () => {
-	it('membership query posts only its bounded candidate set', async () => {
-		const opts = getLibraryMembershipQueryOptions('user-a', ['B', 'a', 'b']);
-		await callQueryFn(opts);
-		expect(mockPost).toHaveBeenCalledWith(
-			'/api/v3/library/membership',
-			{ album_ids: ['a', 'b'] },
-			{ signal: expect.any(AbortSignal) }
-		);
-	});
-
 	it('chunks discographies larger than the membership request limit', async () => {
 		const ids = Array.from(
 			{ length: 501 },

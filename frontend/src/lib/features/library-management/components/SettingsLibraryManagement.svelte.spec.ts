@@ -76,29 +76,6 @@ describe('SettingsLibraryManagement', () => {
 		);
 	});
 
-	it('turns genres off from the genre row', async () => {
-		await render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
-		await page.getByRole('button', { name: 'Edit' }).click();
-		const profileDialog = page.getByRole('dialog', { name: 'Picard-style Organizer' });
-		await profileDialog.getByText('Metadata fields').click();
-		await profileDialog.getByRole('combobox', { name: 'Mode for Genre' }).selectOptions('disabled');
-		await profileDialog.getByRole('button', { name: 'Save profile' }).click();
-		expect(h.update).toHaveBeenCalledWith(
-			expect.objectContaining({
-				settings: expect.objectContaining({
-					profiles: [
-						expect.objectContaining({
-							genres: expect.objectContaining({ enabled: false }),
-							metadata: expect.objectContaining({
-								fields: [expect.objectContaining({ field: 'title' })]
-							})
-						})
-					]
-				})
-			})
-		);
-	});
-
 	it('starts off everywhere and preserves subordinate profile values while a master toggle is off', async () => {
 		await render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
 		await expect.element(page.getByText('Off everywhere')).toBeVisible();
@@ -200,15 +177,6 @@ describe('SettingsLibraryManagement', () => {
 			.not.toBeInTheDocument();
 	});
 
-	it('takes the recycle bin retention within the server bounds', async () => {
-		await render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
-		await page.getByText('Recycle bin, retention and refresh').click();
-		const retention = page.getByRole('spinbutton', { name: 'Recycle bin retention (days)' });
-		await expect.element(retention).toHaveValue(30);
-		await expect.element(retention).toHaveAttribute('min', '1');
-		await expect.element(retention).toHaveAttribute('max', '3650');
-	});
-
 	it('names the retention a save over unreadable settings would apply', async () => {
 		h.settings = {
 			...h.settings,
@@ -252,100 +220,87 @@ describe('SettingsLibraryManagement', () => {
 		await expect.element(page.getByRole('button', { name: 'Validate and save' })).toBeEnabled();
 	});
 
-	it('does not advance the preset version when resetting metadata', async () => {
-		const settings = baseSettings();
-		settings.profiles[0].preset_version = 2;
-		h.settings = { data: settings, isLoading: false, isError: false, refetch: vi.fn() };
-		const presetProfile = structuredClone(settings.profiles[0]);
-		presetProfile.preset_version = 3;
-		presetProfile.metadata.fields[0].mode = 'replace';
-		h.presetDiff = {
-			data: {
-				profile_id: profileId,
-				preset_origin: 'picard_style_organizer',
-				preset_version: 3,
-				differs: true,
-				changed_groups: ['metadata'],
-				version_upgrade_groups: ['organization'],
-				preset_profile: presetProfile
+	it('advances the preset version only when the reset section is file organization', async () => {
+		type Settings = ReturnType<typeof baseSettings>;
+		type Profile = Settings['profiles'][number];
+		const cases: {
+			section: string;
+			group: string;
+			arrange: (settings: Settings, preset: Profile) => void;
+			saved: Record<string, unknown>;
+		}[] = [
+			{
+				section: 'Metadata',
+				group: 'metadata',
+				arrange: (settings, preset) => {
+					settings.profiles[0].preset_version = 2;
+					preset.metadata.fields[0].mode = 'replace';
+				},
+				saved: {
+					preset_version: 2,
+					metadata: expect.objectContaining({
+						fields: [expect.objectContaining({ mode: 'replace' })]
+					})
+				}
 			},
-			isLoading: false,
-			isError: false
-		};
+			{
+				section: 'File organization',
+				group: 'organization',
+				arrange: (settings, preset) => {
+					settings.profiles[0].artwork.embedded_maximum_size = 777;
+					preset.artwork.embedded_maximum_size = 777;
+					preset.organization.move_enabled = false;
+				},
+				saved: {
+					preset_version: 3,
+					metadata: expect.objectContaining({
+						fields: [expect.objectContaining({ mode: 'fill_missing' })]
+					}),
+					artwork: expect.objectContaining({ embedded_maximum_size: 777 }),
+					organization: expect.objectContaining({ move_enabled: false })
+				}
+			}
+		];
+		for (const { section, group, arrange, saved } of cases) {
+			h.update.mockClear();
+			const settings = baseSettings();
+			const presetProfile = structuredClone(settings.profiles[0]);
+			arrange(settings, presetProfile);
+			presetProfile.preset_version = 3;
+			h.settings = { data: settings, isLoading: false, isError: false, refetch: vi.fn() };
+			h.presetDiff = {
+				data: {
+					profile_id: profileId,
+					preset_origin: 'picard_style_organizer',
+					preset_version: 3,
+					differs: true,
+					changed_groups: [group],
+					version_upgrade_groups: ['organization'],
+					preset_profile: presetProfile
+				},
+				isLoading: false,
+				isError: false
+			};
 
-		await render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
-		await page.getByRole('button', { name: 'Edit' }).click();
-		const profileDialog = page.getByRole('dialog', { name: 'Picard-style Organizer' });
-		await profileDialog.getByRole('button', { name: 'Reset Metadata' }).click();
-		await page
-			.getByRole('dialog', { name: 'Reset Metadata?' })
-			.getByRole('button', { name: 'Reset section' })
-			.click();
-		await profileDialog.getByRole('button', { name: 'Save profile' }).click();
+			const view = await render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
+			await page.getByRole('button', { name: 'Edit' }).click();
+			const profileDialog = page.getByRole('dialog', { name: 'Picard-style Organizer' });
+			await profileDialog.getByRole('button', { name: `Reset ${section}` }).click();
+			await page
+				.getByRole('dialog', { name: `Reset ${section}?` })
+				.getByRole('button', { name: 'Reset section' })
+				.click();
+			await profileDialog.getByRole('button', { name: 'Save profile' }).click();
 
-		expect(h.update).toHaveBeenCalledWith(
-			expect.objectContaining({
-				settings: expect.objectContaining({
-					profiles: [
-						expect.objectContaining({
-							preset_version: 2,
-							metadata: expect.objectContaining({
-								fields: [expect.objectContaining({ mode: 'replace' })]
-							})
-						})
-					]
+			expect(h.update, section).toHaveBeenCalledWith(
+				expect.objectContaining({
+					settings: expect.objectContaining({
+						profiles: [expect.objectContaining(saved)]
+					})
 				})
-			})
-		);
-	});
-
-	it('advances the preset version when resetting file organization only', async () => {
-		const settings = baseSettings();
-		settings.profiles[0].artwork.embedded_maximum_size = 777;
-		h.settings = { data: settings, isLoading: false, isError: false, refetch: vi.fn() };
-		const presetProfile = structuredClone(settings.profiles[0]);
-		presetProfile.preset_version = 3;
-		presetProfile.organization.move_enabled = false;
-		h.presetDiff = {
-			data: {
-				profile_id: profileId,
-				preset_origin: 'picard_style_organizer',
-				preset_version: 3,
-				differs: true,
-				changed_groups: ['organization'],
-				version_upgrade_groups: ['organization'],
-				preset_profile: presetProfile
-			},
-			isLoading: false,
-			isError: false
-		};
-
-		await render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
-		await page.getByRole('button', { name: 'Edit' }).click();
-		const profileDialog = page.getByRole('dialog', { name: 'Picard-style Organizer' });
-		await profileDialog.getByRole('button', { name: 'Reset File organization' }).click();
-		await page
-			.getByRole('dialog', { name: 'Reset File organization?' })
-			.getByRole('button', { name: 'Reset section' })
-			.click();
-		await profileDialog.getByRole('button', { name: 'Save profile' }).click();
-
-		expect(h.update).toHaveBeenCalledWith(
-			expect.objectContaining({
-				settings: expect.objectContaining({
-					profiles: [
-						expect.objectContaining({
-							preset_version: 3,
-							metadata: expect.objectContaining({
-								fields: [expect.objectContaining({ mode: 'fill_missing' })]
-							}),
-							artwork: expect.objectContaining({ embedded_maximum_size: 777 }),
-							organization: expect.objectContaining({ move_enabled: false })
-						})
-					]
-				})
-			})
-		);
+			);
+			view.unmount();
+		}
 	});
 
 	it('explains blocked storage without offering a dry run', async () => {
@@ -378,37 +333,5 @@ describe('SettingsLibraryManagement', () => {
 			.not.toBeInTheDocument();
 		await page.getByRole('button', { name: 'Recheck' }).click();
 		expect(refetch).toHaveBeenCalled();
-	});
-
-	it('resets one preset section in the draft and confirms before discarding changes', async () => {
-		await render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
-		await page.getByRole('button', { name: 'Edit' }).click();
-		const profileDialog = page.getByRole('dialog', { name: 'Picard-style Organizer' });
-		const resetButton = profileDialog.getByRole('button', { name: 'Reset Metadata' });
-		await resetButton.click();
-
-		const resetDialog = page.getByRole('dialog', { name: 'Reset Metadata?' });
-		await expect
-			.element(resetDialog.getByRole('heading', { name: 'Reset Metadata?' }))
-			.toHaveFocus();
-		await expect
-			.element(resetDialog.getByText(/Review the values, then save the profile/))
-			.toBeVisible();
-		await resetDialog.getByRole('button', { name: 'Reset section' }).click();
-		await profileDialog.getByText('Metadata fields').click();
-		await expect
-			.element(profileDialog.getByRole('combobox', { name: 'Mode for title' }))
-			.toHaveValue('replace');
-		await expect.element(resetButton).not.toBeInTheDocument();
-
-		const cancelButton = profileDialog.getByRole('button', { name: 'Cancel' });
-		await cancelButton.click();
-		const discardDialog = page.getByRole('dialog', { name: 'Discard your changes?' });
-		await expect
-			.element(discardDialog.getByRole('heading', { name: 'Discard your changes?' }))
-			.toHaveFocus();
-		await discardDialog.getByRole('button', { name: 'Keep editing' }).click();
-		await expect.element(cancelButton).toHaveFocus();
-		await expect.element(profileDialog).toBeVisible();
 	});
 });

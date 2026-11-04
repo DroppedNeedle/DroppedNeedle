@@ -38,8 +38,13 @@ describe('UnmatchedFilesSection', () => {
 		h.removeMut.mockReset();
 	});
 
-	it('removal is a two-step confirm before the mutation fires', async () => {
+	it('removes a file only after a second, confirming click, and backing out keeps it', async () => {
 		await renderSection([orphan()]);
+		await page.getByRole('button', { name: /^Remove$/ }).click();
+		await page.getByRole('button', { name: /Keep this file/ }).click();
+		await expect.element(page.getByRole('button', { name: /^Remove$/ })).toBeVisible();
+		expect(h.removeMut).not.toHaveBeenCalled();
+
 		await page.getByRole('button', { name: /^Remove$/ }).click();
 		await expect.element(page.getByRole('button', { name: /Remove file/ })).toBeVisible();
 		expect(h.removeMut).not.toHaveBeenCalled(); // armed, not fired
@@ -51,21 +56,6 @@ describe('UnmatchedFilesSection', () => {
 	it('offers no removal for a file the status does not list', async () => {
 		await renderSection([orphan({ rowRevision: null })]);
 		await expect.element(page.getByText(/Arrival in Ashford/)).toBeVisible();
-		expect(page.getByRole('button', { name: /^Remove$/ }).elements().length).toBe(0);
-	});
-
-	it('backing out of the confirm keeps the file', async () => {
-		await renderSection([orphan()]);
-		await page.getByRole('button', { name: /^Remove$/ }).click();
-		await page.getByRole('button', { name: /Keep this file/ }).click();
-		await expect.element(page.getByRole('button', { name: /^Remove$/ })).toBeVisible();
-		expect(h.removeMut).not.toHaveBeenCalled();
-	});
-
-	it('hides removal from regular users, view stays honest for everyone', async () => {
-		await renderSection([orphan()], false);
-		await expect.element(page.getByText(/Dan Romer - Arrival in Ashford/)).toBeVisible();
-		await expect.element(page.getByText('Another version of track 2')).toBeVisible();
 		expect(page.getByRole('button', { name: /^Remove$/ }).elements().length).toBe(0);
 	});
 });

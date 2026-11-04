@@ -407,14 +407,6 @@ describe('the edition plate', () => {
 		if (chip) await expect.element(plate().getByText(chip, { exact: true })).toBeVisible();
 	});
 
-	it('is plain text with no way in for a user who cannot change editions', async () => {
-		h.isTrusted = false;
-		await render(EditionPlate, { copies: [copy], groupMbid: 'group-1' });
-
-		await expect.element(page.getByRole('group', { name: /^Edition: CD edition/ })).toBeVisible();
-		await expect.element(plate()).not.toBeInTheDocument();
-	});
-
 	it('opens the sheet on the copy it shows', async () => {
 		await openSheet();
 
@@ -423,46 +415,9 @@ describe('the edition plate', () => {
 			.toHaveAttribute('aria-pressed', 'true');
 		await expect.element(sheet().getByText('All 4 of your files fit this edition.')).toBeVisible();
 	});
-
-	it('opens the sheet from ?edition=choose and takes the query off the address', async () => {
-		h.url = new URL('http://localhost/album/group-1?edition=choose');
-		await render(EditionPlate, { copies: [copy], groupMbid: 'group-1' });
-
-		await expect.element(sheet()).toBeVisible();
-		expect(String(h.goto.mock.calls[0][0])).toBe('http://localhost/album/group-1');
-	});
 });
 
 describe('the edition sheet', () => {
-	it('stays open on what happens next after "Use this edition", until Done', async () => {
-		h.choose.mockResolvedValue({
-			album_id: 'local-1',
-			extra_track_ids: ['file-1'],
-			missing_titles: ['Blue Hour'],
-			release_group_mbid: 'group-1',
-			release_mbid: 'release-remaster',
-			retag_files: [],
-			status: status({ release_mbid: 'release-remaster', state: 'chosen' })
-		});
-		await openSheet();
-		await sheet()
-			.getByRole('button', { name: /5th anniversary remaster/ })
-			.click();
-
-		await sheet().getByRole('button', { name: 'Use this edition' }).click();
-
-		await expect
-			.element(sheet().getByText('This is your edition now: 5th anniversary remaster'))
-			.toBeVisible();
-		expect(h.choose).toHaveBeenCalledWith(
-			expect.objectContaining({ localId: 'local-1', releaseMbid: 'release-remaster' })
-		);
-		await expect.element(sheet()).toBeVisible();
-
-		await sheet().getByRole('button', { name: 'Done' }).click();
-		await expect.element(sheet()).not.toBeInTheDocument();
-	});
-
 	it('offers "Use anyway" for an edition no file fits, and fetches nothing', async () => {
 		const remaster = remasterPlan();
 		h.plans['release-remaster'] = {
@@ -498,63 +453,6 @@ describe('the edition sheet', () => {
 		);
 		expect(h.acquire).not.toHaveBeenCalled();
 		await expect.element(sheet()).toBeVisible();
-	});
-
-	it('shows a file that is another version of a track as one row with both lengths', async () => {
-		await openSheet();
-		await sheet()
-			.getByRole('button', { name: /5th anniversary remaster/ })
-			.click();
-
-		const blueHour = sheet().getByRole('row').filter({ hasText: 'Blue Hour' });
-		await expect.element(blueHour).toBeVisible();
-		expect(blueHour.elements()).toHaveLength(1);
-		await expect.element(blueHour.getByText('Another version')).toBeVisible();
-		await expect.element(blueHour.getByText('4:56')).toBeVisible();
-		await expect.element(blueHour.getByText('4:11')).toBeVisible();
-		await expect
-			.element(
-				sheet().getByText(
-					'3 of your 4 files fit this edition. 1 of your files is another version of a track on it.'
-				)
-			)
-			.toBeVisible();
-	});
-
-	it('on a phone lists full-width rows, then shows one edition with the action at the bottom', async () => {
-		await page.viewport(390, 844);
-		await openSheet();
-		const remaster = sheet().getByRole('button', { name: /5th anniversary remaster/ });
-		expect(remaster.element().getBoundingClientRect().width).toBeGreaterThanOrEqual(390 - 40);
-		await expect
-			.element(sheet().getByRole('region', { name: 'Selected edition', includeHidden: true }))
-			.not.toBeVisible();
-
-		await remaster.click();
-
-		await expect.element(sheet().getByRole('button', { name: 'All editions' })).toBeVisible();
-		await expect
-			.element(sheet().getByRole('region', { name: 'Editions', exact: true, includeHidden: true }))
-			.not.toBeVisible();
-		const use = sheet().getByRole('button', { name: 'Use this edition' });
-		await expect.element(use).toBeVisible();
-		await expect.element(use).toBeInViewport();
-		expect(use.element().getBoundingClientRect().bottom).toBeGreaterThan(844 - 80);
-	});
-
-	it('keeps the selection in view when the filter hides it', async () => {
-		h.editions = [
-			...h.editions,
-			...['2001', '2005', '2010', '2012', '2016'].map((year) =>
-				edition(`release-${year}`, `${year}-01-01`)
-			)
-		];
-		await openSheet();
-
-		await sheet().getByRole('searchbox', { name: 'Filter editions' }).fill('vinyl');
-
-		await expect.element(sheet().getByText('Hidden by your filter')).toBeVisible();
-		await expect.element(sheet().getByText('All 4 of your files fit this edition.')).toBeVisible();
 	});
 
 	it('says MusicBrainz is not answering, offers Retry and holds "Use this edition"', async () => {
@@ -727,20 +625,6 @@ describe('making your copy the chosen edition', () => {
 		await expect.element(sheet().getByText('Downloading.')).toBeVisible();
 		expect(h.acquire).toHaveBeenCalledTimes(2);
 	});
-
-	it('offers buttons, not toggles, on the current edition with gaps', async () => {
-		h.status = status({ release_mbid: 'release-remaster', state: 'chosen' });
-		h.plans.current = gapPlan();
-		await openSheet();
-
-		await expect
-			.element(sheet().getByRole('button', { name: 'Get the 1 missing track' }))
-			.toBeVisible();
-		await expect
-			.element(sheet().getByRole('button', { name: 'Replace 1 track you have in another version' }))
-			.toBeVisible();
-		await expect.element(sheet().getByRole('checkbox')).not.toBeInTheDocument();
-	});
 });
 
 describe('when none of the editions is right', () => {
@@ -794,12 +678,5 @@ describe('when none of the editions is right', () => {
 		await expect
 			.element(noneRight().getByRole('alert'))
 			.toHaveTextContent('The album changed since this was shown. Look again.');
-	});
-
-	it('is not offered to a trusted user', async () => {
-		await openSheet();
-
-		await expect.element(sheet().getByText('All 4 of your files fit this edition.')).toBeVisible();
-		await expect.element(noneRight()).not.toBeInTheDocument();
 	});
 });

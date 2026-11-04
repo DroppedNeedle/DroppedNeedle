@@ -257,7 +257,8 @@ beforeEach(() => {
 });
 
 describe('LibraryScanningPanel', () => {
-	it('projects a persisted pausing state and sends the current revision', async () => {
+	it('pauses, stops and retries against the run on screen, confirming first', async () => {
+		// A persisted pausing state shows as pausing, with Stop still offered.
 		h.activity = {
 			data: { items: [activity('scan', { state: 'pausing' })] },
 			isLoading: false,
@@ -268,31 +269,32 @@ describe('LibraryScanningPanel', () => {
 			isLoading: false,
 			isError: false
 		};
-		await render(LibraryScanningPanel);
+		let view = await render(LibraryScanningPanel);
 		await expect.element(page.getByText('Pausing after the current file...')).toBeVisible();
 		await expect
 			.element(page.getByRole('button', { name: 'Pause local scan' }))
 			.not.toBeInTheDocument();
 		await expect.element(page.getByRole('button', { name: 'Stop local scan' })).toBeVisible();
-	});
+		view.unmount();
 
-	it('shows exact stop confirmation and controls the durable run', async () => {
+		// Stop names what stays, then sends the run's current revision.
 		h.activity = { data: { items: [activity('scan')] }, isLoading: false, isError: false };
 		h.runs = {
 			data: { active: run({ row_revision: 11 }), queued: null },
 			isLoading: false,
 			isError: false
 		};
-		await render(LibraryScanningPanel);
+		view = await render(LibraryScanningPanel);
 		await page.getByRole('button', { name: 'Stop local scan' }).click();
 		await expect.element(page.getByRole('heading', { name: 'Stop this scan?' })).toBeVisible();
 		await expect.element(page.getByText(/Files already indexed will stay available/)).toBeVisible();
 		await page.getByRole('button', { name: 'Stop scan' }).click();
 		expect(h.stopRun).toHaveBeenCalledWith({ runId: 'run-1', expectedRevision: 11 });
-	});
+		view.unmount();
 
-	it('previews the retry of one sub-folder before starting it', async () => {
-		h.reviews = { data: 12 };
+		// A sub-folder retry is previewed before it starts.
+		h.activity = { data: { items: [] }, isLoading: false, isError: false };
+		h.runs = { data: { active: null, queued: null }, isLoading: false, isError: false };
 		await render(LibraryScanningPanel);
 		await page.getByRole('button', { name: 'Retry identification...' }).click();
 		await expect.element(page.getByRole('heading', { name: 'Retry identification' })).toBeVisible();

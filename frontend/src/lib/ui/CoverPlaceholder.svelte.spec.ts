@@ -20,32 +20,37 @@ async function paint(props: { id?: string | null; name?: string; kind?: 'album' 
 }
 
 describe('CoverPlaceholder', () => {
-	it('gives the same id the same gradient', async () => {
-		const album = await paint({ id: ALBUM_ID, kind: 'album' });
-		const artist = await paint({ id: ALBUM_ID.toUpperCase(), kind: 'artist' });
+	it('paints one stable gradient per id, distinct between ids, from theme tokens only', async () => {
+		{
+			// Gives the same id the same gradient.
+			const album = await paint({ id: ALBUM_ID, kind: 'album' });
+			const artist = await paint({ id: ALBUM_ID.toUpperCase(), kind: 'artist' });
 
-		expect(album).not.toBe('');
-		expect(artist).toBe(album);
-	});
+			expect(album).not.toBe('');
+			expect(artist).toBe(album);
+		}
 
-	it('gives different ids different gradients', async () => {
-		const gradients = new Set([
-			await paint({ id: ALBUM_ID }),
-			await paint({ id: OTHER_ID }),
-			await paint({ id: THIRD_ID })
-		]);
+		{
+			// Gives different ids different gradients.
+			const gradients = new Set([
+				await paint({ id: ALBUM_ID }),
+				await paint({ id: OTHER_ID }),
+				await paint({ id: THIRD_ID })
+			]);
 
-		expect(gradients.size).toBe(3);
-	});
+			expect(gradients.size).toBe(3);
+		}
 
-	it('draws its colours from theme tokens only', async () => {
-		for (const props of [
-			{ id: ALBUM_ID },
-			{ id: OTHER_ID, kind: 'artist' as const },
-			{ name: 'Kind of Blue' },
-			{}
-		]) {
-			expect(await paint(props)).toMatch(TOKEN_GRADIENT);
+		{
+			// Draws its colours from theme tokens only.
+			for (const props of [
+				{ id: ALBUM_ID },
+				{ id: OTHER_ID, kind: 'artist' as const },
+				{ name: 'Kind of Blue' },
+				{}
+			]) {
+				expect(await paint(props)).toMatch(TOKEN_GRADIENT);
+			}
 		}
 	});
 });

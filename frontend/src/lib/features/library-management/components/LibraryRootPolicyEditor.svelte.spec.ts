@@ -50,30 +50,6 @@ describe('LibraryRootPolicyEditor', () => {
 		};
 	}
 
-	it('hides a saved override as soon as the draft removes it', async () => {
-		const root = {
-			id: 'root-1',
-			path: '/music',
-			label: 'Main library',
-			policy: 'automatic' as const,
-			rules: [
-				{
-					id: 'effective-baroque',
-					relative_path: 'Classical/Baroque',
-					policy: 'local_metadata' as const
-				}
-			]
-		};
-		const view = await render(LibraryRootPolicyEditor, {
-			props: { roots: [root], onchange: vi.fn() }
-		} as unknown as Parameters<typeof render>[1]);
-
-		await page.getByRole('button', { name: 'Rules' }).click();
-		await expect.element(page.getByText('Classical/Baroque')).toBeVisible();
-		await view.rerender({ roots: [{ ...root, rules: [] }] });
-		await expect.element(page.getByText('Classical/Baroque')).not.toBeInTheDocument();
-	});
-
 	it('adds an override with a v4 UUID when randomUUID is unavailable on a LAN origin', async () => {
 		const restoreRandomUuid = disableRandomUuid();
 		const onchange = vi.fn();

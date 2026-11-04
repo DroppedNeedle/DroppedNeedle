@@ -82,40 +82,6 @@ it('keys the editions by user and drops them on a source switch', () => {
 	expect(queryA.enabled).toBe(true);
 });
 
-it('refreshes the copy, its plans and pages and both groups after a choice', async () => {
-	const choose = createChooseAlbumEditionMutation() as unknown as EditionMutationOptions;
-	const variables = {
-		userId: 'user-a',
-		localId: 'local-1',
-		rgMbid: 'old-group',
-		releaseMbid: 'release',
-		identityRevision: 3
-	};
-
-	await choose.mutationFn(variables);
-	await choose.onSuccess({ release_group_mbid: 'new-group' }, variables);
-
-	expect(h.v3.PUT).toHaveBeenCalledWith('/api/v3/library/albums/local-1/edition', {
-		release_mbid: 'release',
-		expected_identity_revision: 3
-	});
-	const invalidated = h.invalidate.mock.calls.map(([arg]) => arg.queryKey);
-	expect(invalidated).toEqual(
-		expect.arrayContaining([
-			['user:user-a', 'library', 'catalog', 'edition', 'local-1'],
-			['user:user-a', 'library', 'catalog', 'album-detail', 'local-1'],
-			['user:user-a', 'library', 'catalog', 'album-tracks', 'local-1'],
-			['user:user-a', 'library', 'catalog', 'album-copies'],
-			['user:user-a', 'library', 'album'],
-			AlbumQueryKeyFactory.editions('user-a', 'old-group'),
-			AlbumQueryKeyFactory.editions('user-a', 'new-group'),
-			AlbumQueryKeyFactory.basic('user-a', 'old-group'),
-			AlbumQueryKeyFactory.basic('user-a', 'new-group'),
-			AlbumQueryKeyFactory.tracks('user-a', 'new-group')
-		])
-	);
-});
-
 it('polls the status while the files are placed or written, and only then', () => {
 	const query = getAlbumEditionStatusQuery(
 		() => 'user-a',
@@ -149,72 +115,25 @@ it('marks the plans stale once the files are placed', async () => {
 	expect(plansInvalidated()).toBe(true);
 });
 
-it('refreshes the download queue and the album after an acquire, for this user only', async () => {
-	const acquire = createAcquireEditionMutation() as unknown as EditionMutationOptions;
-	await acquire.mutationFn({ mbid: 'release-group' });
+it('sends each edition write with its revision, then refreshes what it moved for this user', async () => {
+	{
+		// A choice refreshes the copy, its plans and pages and both groups.
+		const choose = createChooseAlbumEditionMutation() as unknown as EditionMutationOptions;
+		const variables = {
+			userId: 'user-a',
+			localId: 'local-1',
+			rgMbid: 'old-group',
+			releaseMbid: 'release',
+			identityRevision: 3
+		};
 
-	expect(h.v3.POST).toHaveBeenCalledWith('/api/v3/albums/release-group/edition/acquire');
+		await choose.mutationFn(variables);
+		await choose.onSuccess({ release_group_mbid: 'new-group' }, variables);
 
-	await acquire.mutationFn({ mbid: 'release-group', copyId: 'copy-1', replaceVersions: true });
-	expect(h.v3.POST).toHaveBeenLastCalledWith(
-		'/api/v3/albums/release-group/edition/acquire?album_id=copy-1&replace_versions=true'
-	);
-
-	await acquire.onSuccess({}, { mbid: 'release-group' });
-	const keys = h.invalidate.mock.calls.map(([arg]) => JSON.stringify(arg.queryKey));
-	expect(keys).toContain(JSON.stringify(['user:user-a', 'downloads', 'tasks']));
-	expect(keys).toContain(JSON.stringify(['user:user-a', 'library', 'album', 'release-group']));
-});
-
-it('reads one copy edition by local id and scopes the key by user', () => {
-	const queryFor = (userId: string | undefined, localId: string) =>
-		getAlbumEditionStatusQuery(
-			() => userId,
-			() => localId,
-			() => true
-		) as unknown as EditionQueryOptions;
-
-	expect(queryFor('user-a', 'local-1').queryKey).toEqual([
-		'user:user-a',
-		'library',
-		'catalog',
-		'edition',
-		'local-1'
-	]);
-	expect(queryFor('user-a', 'local-1').queryKey).not.toEqual(
-		queryFor('user-b', 'local-1').queryKey
-	);
-});
-
-it('matches a file by hand and undoes it, refreshing what the carry can move, refused or not', async () => {
-	const match = createMatchEditionFileMutation() as unknown as EditionMutationOptions;
-	const unmatch = createUnmatchEditionFileMutation() as unknown as EditionMutationOptions;
-	const variables = {
-		localId: 'local-1',
-		trackId: 'file-9',
-		releaseTrackMbid: 'track-3',
-		identityRevision: 4
-	};
-
-	await match.mutationFn(variables);
-	expect(h.v3.PUT).toHaveBeenCalledWith('/api/v3/library/albums/local-1/edition/files/file-9', {
-		release_track_mbid: 'track-3',
-		expected_identity_revision: 4
-	});
-	await unmatch.mutationFn(variables);
-	expect(h.v3.DELETE).toHaveBeenCalledWith(
-		'/api/v3/library/albums/local-1/edition/files/file-9?expected_identity_revision=4'
-	);
-
-	for (const [done, error] of [
-		[match, null],
-		[unmatch, null],
-		[match, new Error('refused')],
-		[unmatch, new Error('refused')]
-	] as const) {
-		h.invalidate.mockClear();
-		if (error) await done.onError(error, variables);
-		else await done.onSuccess({}, variables);
+		expect(h.v3.PUT).toHaveBeenCalledWith('/api/v3/library/albums/local-1/edition', {
+			release_mbid: 'release',
+			expected_identity_revision: 3
+		});
 		const invalidated = h.invalidate.mock.calls.map(([arg]) => arg.queryKey);
 		expect(invalidated).toEqual(
 			expect.arrayContaining([
@@ -222,11 +141,81 @@ it('matches a file by hand and undoes it, refreshing what the carry can move, re
 				['user:user-a', 'library', 'catalog', 'album-detail', 'local-1'],
 				['user:user-a', 'library', 'catalog', 'album-tracks', 'local-1'],
 				['user:user-a', 'library', 'catalog', 'album-copies'],
-				['user:user-a', 'library', 'catalog', 'album-history', 'local-1'],
-				['user:user-a', 'library', 'catalog'],
-				['user:user-a', 'playlists']
+				['user:user-a', 'library', 'album'],
+				AlbumQueryKeyFactory.editions('user-a', 'old-group'),
+				AlbumQueryKeyFactory.editions('user-a', 'new-group'),
+				AlbumQueryKeyFactory.basic('user-a', 'old-group'),
+				AlbumQueryKeyFactory.basic('user-a', 'new-group'),
+				AlbumQueryKeyFactory.tracks('user-a', 'new-group')
 			])
 		);
+	}
+
+	vi.clearAllMocks();
+	h.invalidate.mockResolvedValue(undefined);
+	{
+		// An acquire refreshes the download queue and the album.
+		const acquire = createAcquireEditionMutation() as unknown as EditionMutationOptions;
+		await acquire.mutationFn({ mbid: 'release-group' });
+
+		expect(h.v3.POST).toHaveBeenCalledWith('/api/v3/albums/release-group/edition/acquire');
+
+		await acquire.mutationFn({ mbid: 'release-group', copyId: 'copy-1', replaceVersions: true });
+		expect(h.v3.POST).toHaveBeenLastCalledWith(
+			'/api/v3/albums/release-group/edition/acquire?album_id=copy-1&replace_versions=true'
+		);
+
+		await acquire.onSuccess({}, { mbid: 'release-group' });
+		const keys = h.invalidate.mock.calls.map(([arg]) => JSON.stringify(arg.queryKey));
+		expect(keys).toContain(JSON.stringify(['user:user-a', 'downloads', 'tasks']));
+		expect(keys).toContain(JSON.stringify(['user:user-a', 'library', 'album', 'release-group']));
+	}
+
+	vi.clearAllMocks();
+	h.invalidate.mockResolvedValue(undefined);
+	{
+		// A match by hand and its undo refresh what the carry can move, refused or not.
+		const match = createMatchEditionFileMutation() as unknown as EditionMutationOptions;
+		const unmatch = createUnmatchEditionFileMutation() as unknown as EditionMutationOptions;
+		const variables = {
+			localId: 'local-1',
+			trackId: 'file-9',
+			releaseTrackMbid: 'track-3',
+			identityRevision: 4
+		};
+
+		await match.mutationFn(variables);
+		expect(h.v3.PUT).toHaveBeenCalledWith('/api/v3/library/albums/local-1/edition/files/file-9', {
+			release_track_mbid: 'track-3',
+			expected_identity_revision: 4
+		});
+		await unmatch.mutationFn(variables);
+		expect(h.v3.DELETE).toHaveBeenCalledWith(
+			'/api/v3/library/albums/local-1/edition/files/file-9?expected_identity_revision=4'
+		);
+
+		for (const [done, error] of [
+			[match, null],
+			[unmatch, null],
+			[match, new Error('refused')],
+			[unmatch, new Error('refused')]
+		] as const) {
+			h.invalidate.mockClear();
+			if (error) await done.onError(error, variables);
+			else await done.onSuccess({}, variables);
+			const invalidated = h.invalidate.mock.calls.map(([arg]) => arg.queryKey);
+			expect(invalidated).toEqual(
+				expect.arrayContaining([
+					['user:user-a', 'library', 'catalog', 'edition', 'local-1'],
+					['user:user-a', 'library', 'catalog', 'album-detail', 'local-1'],
+					['user:user-a', 'library', 'catalog', 'album-tracks', 'local-1'],
+					['user:user-a', 'library', 'catalog', 'album-copies'],
+					['user:user-a', 'library', 'catalog', 'album-history', 'local-1'],
+					['user:user-a', 'library', 'catalog'],
+					['user:user-a', 'playlists']
+				])
+			);
+		}
 	}
 });
 

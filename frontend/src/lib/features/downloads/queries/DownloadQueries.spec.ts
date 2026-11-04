@@ -1,7 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { downloadPolicyChanged, type Effect } from '$lib/queries/effects';
-
 vi.mock('@tanstack/svelte-query', () => ({
 	createQuery: vi.fn((factory: () => unknown) => factory()),
 	queryOptions: vi.fn((opts: unknown) => opts)
@@ -53,7 +51,7 @@ import {
 	getDownloadsQueryOptions
 } from './DownloadQueries.svelte';
 import { createRequestAlbumMutation, createRequestBatchMutation } from './DownloadMutations.svelte';
-import { createSaveDownloadPolicyMutation } from './DownloadClientsQueries.svelte';
+
 describe('download queue queries', () => {
 	// Promise.withResolvers needs Node 22+; this repo runs Node 20. The deferred
 	// below keeps the same linear hand-off for the session-switch tests.
@@ -74,91 +72,72 @@ describe('download queue queries', () => {
 		mockAddRequested.mockClear();
 	});
 
-	it('declares the policy and its summary changed after saving', () => {
-		const mutation = createSaveDownloadPolicyMutation() as unknown as { effects: () => Effect[] };
-
-		expect(mutation.effects()).toEqual([downloadPolicyChanged()]);
-	});
-
-	it('keeps a 60 s safety poll on the compact summary', async () => {
-		const opts = getDownloadActivitySummaryQueryOptions() as unknown as {
+	it('polls the compact summary every 60 s and gives the detailed list no competing interval', async () => {
+		const summary = getDownloadActivitySummaryQueryOptions() as unknown as {
 			queryFn: (a: { signal?: AbortSignal }) => unknown;
-			queryKey: readonly unknown[];
 			refetchInterval: number;
 			refetchIntervalInBackground: boolean;
 			refetchOnReconnect: string;
 			refetchOnWindowFocus: string | undefined;
 			staleTime: number;
 		};
-
-		await opts.queryFn({ signal: undefined });
-
-		expect(mockGet.mock.calls.at(-1)?.[0]).toBe('/api/v3/downloads/activity-summary');
-		expect(opts.refetchInterval).toBe(60_000);
-		expect(opts.refetchIntervalInBackground).toBe(false);
-		expect(opts.refetchOnReconnect).toBe('always');
-		// no focus-'always' - invalidations + the interval own freshness
-		expect(opts.refetchOnWindowFocus).toBeUndefined();
-		expect(opts.staleTime).toBe(0);
-	});
-
-	it('does not give the detailed downloads list a competing interval', () => {
-		const opts = getDownloadsQueryOptions() as unknown as {
+		const list = getDownloadsQueryOptions() as unknown as {
 			refetchInterval?: number;
 			refetchOnWindowFocus: string | undefined;
 			refetchOnReconnect: string | undefined;
 			staleTime: number;
 		};
 
-		expect(opts.refetchInterval).toBeUndefined();
-		// neither always-flag remains; the default stale window instead
-		expect(opts.refetchOnWindowFocus).toBeUndefined();
-		expect(opts.refetchOnReconnect).toBeUndefined();
-		expect(opts.staleTime).toBeUndefined();
+		await summary.queryFn({ signal: undefined });
+
+		expect(mockGet.mock.calls.at(-1)?.[0]).toBe('/api/v3/downloads/activity-summary');
+		expect(summary).toMatchObject({
+			refetchInterval: 60_000,
+			refetchIntervalInBackground: false,
+			refetchOnReconnect: 'always',
+			staleTime: 0
+		});
+		// Invalidations and the interval own freshness, so no focus refetch.
+		expect(summary.refetchOnWindowFocus).toBeUndefined();
+		// The list keeps the default stale window and no always-flag.
+		for (const option of [
+			list.refetchInterval,
+			list.refetchOnWindowFocus,
+			list.refetchOnReconnect,
+			list.staleTime
+		]) {
+			expect(option).toBeUndefined();
+		}
 	});
 
-	it('drops single-album badge writes when the account changes before the response', async () => {
-		const { promise, resolve } = deferred<{
-			success: boolean;
-			message: string;
-			musicbrainz_id: string;
-			status: string;
-		}>();
-		mockPost.mockReturnValueOnce(promise);
-		const m = createRequestAlbumMutation() as unknown as {
-			mutationFn: (i: unknown) => Promise<{ success: boolean }>;
-		};
+	it('drops album and batch badge writes when the account changes before the response', async () => {
+		const cases: [() => unknown, unknown, unknown, Record<string, unknown>][] = [
+			[
+				createRequestAlbumMutation,
+				{ release_group_mbid: 'release-a' },
+				{ success: true, message: '', musicbrainz_id: 'release-a', status: 'pending' },
+				{ success: false }
+			],
+			[
+				createRequestBatchMutation,
+				{ items: [{ musicbrainz_id: 'release-a' }] },
+				{ success: true, message: 'ok', requested: 1, skipped: 0, overflow: 0 },
+				{ success: false, requested: 1 }
+			]
+		];
+		for (const [create, input, answer, expected] of cases) {
+			authStoreUser.current.id = 'user-1';
+			const { promise, resolve } = deferred<unknown>();
+			mockPost.mockReturnValueOnce(promise);
+			const m = create() as { mutationFn: (i: unknown) => Promise<unknown> };
 
-		const pending = m.mutationFn({ release_group_mbid: 'release-a' });
-		authStoreUser.current.id = 'user-b';
-		resolve({ success: true, message: '', musicbrainz_id: 'release-a', status: 'pending' });
+			const pending = m.mutationFn(input);
+			authStoreUser.current.id = 'user-b';
+			resolve(answer);
 
-		const result = await pending;
-		expect(result.success).toBe(false);
-		expect(mockAddRequested).not.toHaveBeenCalled();
-		expect(mockToast).not.toHaveBeenCalled();
-	});
-
-	it('drops batch badge writes when the account changes before the response', async () => {
-		const { promise, resolve } = deferred<{
-			success: boolean;
-			message: string;
-			requested: number;
-			skipped: number;
-			overflow: number;
-		}>();
-		mockPost.mockReturnValueOnce(promise);
-		const m = createRequestBatchMutation() as unknown as {
-			mutationFn: (i: unknown) => Promise<{ success: boolean; requested: number }>;
-		};
-
-		const pending = m.mutationFn({ items: [{ musicbrainz_id: 'release-a' }] });
-		authStoreUser.current.id = 'user-b';
-		resolve({ success: true, message: 'ok', requested: 1, skipped: 0, overflow: 0 });
-
-		const result = await pending;
-		expect(result).toMatchObject({ success: false, requested: 1 });
-		expect(mockAddRequested).not.toHaveBeenCalled();
-		expect(mockToast).not.toHaveBeenCalled();
+			expect(await pending).toMatchObject(expected);
+			expect(mockAddRequested).not.toHaveBeenCalled();
+			expect(mockToast).not.toHaveBeenCalled();
+		}
 	});
 });

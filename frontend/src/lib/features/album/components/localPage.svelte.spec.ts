@@ -159,172 +159,33 @@ describe('local album page with a pending review', () => {
 			})
 		);
 
-	it('shows a signed-in user why it is a guess and "Looks wrong", without the review link', async () => {
-		signIn('user');
-		fakeLibrary({ downloadAllowed: true }).use({
-			'GET /api/v3/library/albums/{id}': pending,
-			'GET /api/v3/library/albums/{album_id}/edition': guess,
-			'GET /api/v3/library/albums/{album_id}/edition/plan': apiError(404, 'NOT_FOUND', 'No plan')
-		});
-		await renderWithQuery(LocalAlbumPage, { albumId: album.id });
-		await expect.element(page.getByText('Closest we found, but some tracks differ.')).toBeVisible();
-		await expect.element(page.getByRole('button', { name: 'Looks wrong' })).toBeVisible();
-		await expect
-			.element(page.getByRole('link', { name: 'Needs you: open its review' }))
-			.not.toBeInTheDocument();
-	});
-
-	it('gives an admin the link to the review', async () => {
-		signIn('admin');
-		fakeLibrary({ downloadAllowed: true }).use({
-			'GET /api/v3/library/albums/{id}': pending,
-			'GET /api/v3/library/albums': { items: [], total: 0, next: null },
-			'GET /api/v3/library/albums/{album_id}/removals': { items: [] },
-			'GET /api/v3/library/retag-pairs': { items: [], next_cursor: null, total: 0 },
-			'GET /api/v3/library/albums/{album_id}/edition': guess,
-			'GET /api/v3/library/albums/{album_id}/edition/plan': apiError(404, 'NOT_FOUND', 'No plan')
-		});
-		await renderWithQuery(LocalAlbumPage, { albumId: album.id });
-		await expect
-			.element(page.getByRole('link', { name: 'Needs you: open its review' }))
-			.toHaveAttribute('href', expect.stringContaining('/library/review?review=review-1'));
-		await expect.element(page.getByRole('button', { name: 'Looks wrong' })).not.toBeInTheDocument();
-	});
-});
-
-describe('local album page and its edition', () => {
-	it("shows a file's note on its row and the album history below the tracks", async () => {
-		const api = fakeLibrary({ downloadAllowed: true });
-		api.use({
-			'GET /api/v3/library/albums/{album_id}/edition': {
-				album_id: album.id,
-				candidates: [],
-				edition_kind: 'release',
-				files_by_itself: true,
-				keeps_own_tags: false,
-				identifying: false,
-				identity_revision: 0,
-				placing: null,
-				reason: { code: 'CHOSEN', message: '', action: '' },
-				release_mbid: 'release-1',
-				release_group_mbid: 'group-1',
-				state: 'chosen',
-				undo_available: false,
-				writing: false,
-				disputed_tracks: [],
-				looks_wrong: false,
-				looks_wrong_count: 0
-			},
-			'GET /api/v3/library/albums/{album_id}/edition/plan': {
-				album_id: album.id,
-				artist_name: album.artist_name,
-				title: album.title,
-				release_group_mbid: 'group-1',
-				release_mbid: 'release-1',
-				identity_revision: 0,
-				is_current: true,
-				same_album: true,
-				edition: { title: album.title, disc_count: 1, track_count: 1, formats: ['CD'] },
-				kept_count: 1,
-				missing_count: 0,
-				other_version_count: 0,
-				duplicate_count: 0,
-				extra_count: 0,
-				files: [
-					{
-						local_track_id: track.id,
-						title: track.title,
-						disc_number: 1,
-						track_number: 1,
-						edition_disc_number: 1,
-						edition_position: 1,
-						fate: 'keep',
-						length_ms: 181000,
-						match_written: false,
-						matched_by_hand: false,
-						note: { code: 'TRACK_ID_CORRECTED', message: '', action: '' }
-					}
-				],
-				tracks: [
-					{
-						disc_number: 1,
-						position: 1,
-						title: track.title,
-						length_ms: 181000,
-						local_track_id: track.id,
-						recording_mbid: 'rec-1',
-						release_track_mbid: 'track-1'
-					}
-				]
-			},
-			'GET /api/v3/library/albums/{album_id}/history': {
-				items: [
-					{
-						kind: 'tracks_continued',
-						at: Date.UTC(2026, 9, 12),
-						by: null,
-						track_count: 1,
-						track_titles: ['Unmatched Song'],
-						other_album_title: null,
-						undo_id: null
-					}
-				]
+	it('shows a user why it is a guess and "Looks wrong", and an admin the review link', async () => {
+		for (const role of ['user', 'admin'] as const) {
+			signIn(role);
+			fakeLibrary({ downloadAllowed: true }).use({
+				'GET /api/v3/library/albums/{id}': pending,
+				'GET /api/v3/library/albums': { items: [], total: 0, next: null },
+				'GET /api/v3/library/albums/{album_id}/removals': { items: [] },
+				'GET /api/v3/library/retag-pairs': { items: [], next_cursor: null, total: 0 },
+				'GET /api/v3/library/albums/{album_id}/edition': guess,
+				'GET /api/v3/library/albums/{album_id}/edition/plan': apiError(404, 'NOT_FOUND', 'No plan')
+			});
+			const view = await renderWithQuery(LocalAlbumPage, { albumId: album.id });
+			const review = page.getByRole('link', { name: 'Needs you: open its review' });
+			const looksWrong = page.getByRole('button', { name: 'Looks wrong' });
+			if (role === 'user') {
+				await expect
+					.element(page.getByText('Closest we found, but some tracks differ.'))
+					.toBeVisible();
+				await expect.element(looksWrong).toBeVisible();
+				await expect.element(review).not.toBeInTheDocument();
+			} else {
+				await expect
+					.element(review)
+					.toHaveAttribute('href', expect.stringContaining('/library/review?review=review-1'));
+				await expect.element(looksWrong).not.toBeInTheDocument();
 			}
-		});
-		await renderWithQuery(LocalAlbumPage, { albumId: album.id });
-
-		const row = page.getByRole('listitem').filter({ hasText: 'Unmatched Song' }).first();
-		await expect
-			.element(
-				row.getByText(
-					"This file's track id belonged to another edition; it will be corrected when tags are written"
-				)
-			)
-			.toBeVisible();
-		const history = page.getByRole('heading', { name: 'Album history' });
-		await expect.element(history).toBeVisible();
-		const tracks = page.getByRole('heading', { name: 'Tracks', exact: true }).element();
-		expect(
-			tracks.compareDocumentPosition(history.element()) & Node.DOCUMENT_POSITION_FOLLOWING
-		).toBeTruthy();
-	});
-});
-
-describe('local album page heart', () => {
-	it("shows the album's flag, saves a change and puts back one that fails", async () => {
-		const api = fakeLibrary({ downloadAllowed: true });
-		let favorite = true;
-		api.use({
-			'GET /api/v3/library/albums/{id}': () => ({ ...album, favorite }),
-			'PUT /api/v3/favorites/{kind}/{item_id}': ({ params, body }) => {
-				favorite = (body as { favorited: boolean }).favorited;
-				return { kind: params.kind ?? '', item_id: params.item_id ?? '', favorited: favorite };
-			}
-		});
-		await renderWithQuery(LocalAlbumPage, { albumId: album.id });
-
-		const remove = page.getByRole('button', { name: 'Remove from favourites' });
-		await remove.click();
-		await expect.element(remove).not.toBeInTheDocument();
-		await expect.poll(() => api.calls('PUT /api/v3/favorites/{kind}/{item_id}').length).toBe(1);
-		const [saved] = api.calls('PUT /api/v3/favorites/{kind}/{item_id}');
-		expect([saved?.params, saved?.body]).toEqual([
-			{ kind: 'album', item_id: album.id },
-			{ favorited: false }
-		]);
-
-		let fail = () => {};
-		api.use({
-			'PUT /api/v3/favorites/{kind}/{item_id}': () =>
-				new Promise((resolve) => {
-					fail = () => resolve(apiError(500, 'INTERNAL'));
-				})
-		});
-		// The album's heart comes before the track rows'.
-		await page.getByRole('button', { name: 'Add to favourites' }).first().click();
-		await expect.element(remove).toBeVisible();
-		await expect.poll(() => api.calls('PUT /api/v3/favorites/{kind}/{item_id}').length).toBe(2);
-		fail();
-		await expect.element(remove).not.toBeInTheDocument();
+			view.unmount();
+		}
 	});
 });

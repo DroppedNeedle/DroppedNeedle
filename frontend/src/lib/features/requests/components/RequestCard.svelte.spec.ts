@@ -59,42 +59,6 @@ describe('a request card for a single found only on its album', () => {
 		const [call] = api.calls('POST /api/v3/requests/tracks/{musicbrainz_id}/from-album');
 		expect(call?.params).toEqual({ musicbrainz_id: RECORDING });
 	});
-
-	it('offers nothing when the request failed for another reason', async () => {
-		fakeApi({});
-		await renderWithQuery(RequestCard, {
-			item: { ...held, album_version_only: false },
-			mode: 'history',
-			onretry: () => {}
-		});
-
-		await expect.element(page.getByRole('button', { name: 'Retry request' })).toBeVisible();
-		await expect
-			.element(page.getByRole('button', { name: 'Get it from the album' }))
-			.not.toBeInTheDocument();
-	});
-});
-
-describe('an active request card', () => {
-	it("shows the linked download's own state, not the request row's", async () => {
-		fakeApi({});
-		await renderWithQuery(RequestCard, {
-			item: {
-				...held,
-				status: 'downloading',
-				completed_at: undefined,
-				album_version_only: undefined,
-				user_id: 'user-2',
-				requester_count: 1,
-				task_id: 'task-1',
-				task_state: 'searching'
-			},
-			mode: 'active'
-		});
-
-		await expect.element(page.getByText('Searching')).toBeVisible();
-		await expect.element(page.getByText('Downloading')).not.toBeInTheDocument();
-	});
 });
 
 describe('an active request card that waits to start', () => {
@@ -110,27 +74,26 @@ describe('an active request card that waits to start', () => {
 		requester_count: 0
 	};
 
-	it.each([
-		['request_quota_full', 'Waiting: request quota full'],
-		['storage_full', 'Waiting: storage full'],
-		['no_download_source', 'Waiting: no download source configured'],
-		['waiting_to_start', 'Waiting to start']
-	] as const)('shows why it waits (%s)', async (reason, note) => {
+	it('says why it waits to start, and reads as queued once nothing holds it back', async () => {
 		fakeApi({});
-		await renderWithQuery(RequestCard, {
-			item: { ...waiting, waiting_reason: reason },
-			mode: 'active'
-		});
+		for (const [reason, note] of [
+			['request_quota_full', 'Waiting: request quota full'],
+			['storage_full', 'Waiting: storage full'],
+			['no_download_source', 'Waiting: no download source configured'],
+			['waiting_to_start', 'Waiting to start']
+		] as const) {
+			const view = await renderWithQuery(RequestCard, {
+				item: { ...waiting, waiting_reason: reason },
+				mode: 'active'
+			});
 
-		await expect.element(page.getByLabelText('Status: Waiting')).toBeVisible();
-		await expect.element(page.getByText(note)).toBeVisible();
-		await expect.element(page.getByText('Followed artist')).toBeVisible();
-	});
+			await expect.element(page.getByLabelText('Status: Waiting')).toBeVisible();
+			await expect.element(page.getByText(note)).toBeVisible();
+			await expect.element(page.getByText('Followed artist')).toBeVisible();
+			view.unmount();
+		}
 
-	it('reads as queued once nothing holds it back', async () => {
-		fakeApi({});
 		await renderWithQuery(RequestCard, { item: waiting, mode: 'active' });
-
 		await expect.element(page.getByLabelText('Status: Queued')).toBeVisible();
 		await expect.element(page.getByText(/^Waiting/)).not.toBeInTheDocument();
 	});

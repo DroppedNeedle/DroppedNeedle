@@ -1,7 +1,7 @@
 import { page } from 'vitest/browser';
 import { createRawSnippet } from 'svelte';
 import { describe, expect, it, vi } from 'vitest';
-import { render } from 'vitest-browser-svelte';
+import { cleanup, render } from 'vitest-browser-svelte';
 
 import QueryBoundary from './QueryBoundary.svelte';
 
@@ -41,40 +41,53 @@ function renderBoundary(q: FakeQuery, withEmpty = true) {
 }
 
 describe('QueryBoundary', () => {
-	it('shows the loader while the first fetch is pending', async () => {
-		await renderBoundary(query({ isPending: true }));
+	it('shows the loader, the error with a retry, the empty state or the data, and keeps data through a failed refetch', async () => {
+		{
+			// Shows the loader while the first fetch is pending.
+			await renderBoundary(query({ isPending: true }));
 
-		await expect.element(page.getByText('Loading skeleton')).toBeVisible();
-		await expect.element(page.getByText(/Albums:/)).not.toBeInTheDocument();
-	});
+			await expect.element(page.getByText('Loading skeleton')).toBeVisible();
+			await expect.element(page.getByText(/Albums:/)).not.toBeInTheDocument();
+		}
 
-	it('shows the error with a retry that refetches', async () => {
-		const refetch = vi.fn();
-		await renderBoundary(query({ isError: true, error: new Error('boom'), refetch }));
+		{
+			// Shows the error with a retry that refetches.
+			cleanup();
+			const refetch = vi.fn();
+			await renderBoundary(query({ isError: true, error: new Error('boom'), refetch }));
 
-		await expect.element(page.getByText('Loading skeleton')).not.toBeInTheDocument();
-		await page.getByRole('button', { name: 'Try again' }).click();
+			await expect.element(page.getByText('Loading skeleton')).not.toBeInTheDocument();
+			await page.getByRole('button', { name: 'Try again' }).click();
 
-		expect(refetch).toHaveBeenCalledOnce();
-	});
+			expect(refetch).toHaveBeenCalledOnce();
+		}
 
-	it('shows the empty state for an empty result, never the data snippet', async () => {
-		await renderBoundary(query({ data: [] }));
+		{
+			// Shows the empty state for an empty result, never the data snippet.
+			cleanup();
+			await renderBoundary(query({ data: [] }));
 
-		await expect.element(page.getByText('No albums yet')).toBeVisible();
-		await expect.element(page.getByText(/Albums:/)).not.toBeInTheDocument();
-	});
+			await expect.element(page.getByText('No albums yet')).toBeVisible();
+			await expect.element(page.getByText(/Albums:/)).not.toBeInTheDocument();
+		}
 
-	it('shows the data', async () => {
-		await renderBoundary(query({ data: ['Blue Lines', 'Mezzanine'] }));
+		{
+			// Shows the data.
+			cleanup();
+			await renderBoundary(query({ data: ['Blue Lines', 'Mezzanine'] }));
 
-		await expect.element(page.getByText('Albums: Blue Lines, Mezzanine')).toBeVisible();
-	});
+			await expect.element(page.getByText('Albums: Blue Lines, Mezzanine')).toBeVisible();
+		}
 
-	it('keeps data on screen when a background refetch fails', async () => {
-		await renderBoundary(query({ data: ['Blue Lines'], isError: true, error: new Error('boom') }));
+		{
+			// Keeps data on screen when a background refetch fails.
+			cleanup();
+			await renderBoundary(
+				query({ data: ['Blue Lines'], isError: true, error: new Error('boom') })
+			);
 
-		await expect.element(page.getByText('Albums: Blue Lines')).toBeVisible();
-		await expect.element(page.getByRole('button', { name: 'Try again' })).not.toBeInTheDocument();
+			await expect.element(page.getByText('Albums: Blue Lines')).toBeVisible();
+			await expect.element(page.getByRole('button', { name: 'Try again' })).not.toBeInTheDocument();
+		}
 	});
 });

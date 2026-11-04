@@ -52,7 +52,7 @@ type QueryOptions = {
 	queryKey: readonly unknown[];
 	queryFn: (context: { signal: AbortSignal }) => Promise<MusicBrainzSettingsResponse>;
 };
-beforeEach(() => {
+function reset(): void {
 	vi.clearAllMocks();
 	storage.clear();
 	Object.defineProperty(globalThis, 'localStorage', {
@@ -70,7 +70,9 @@ beforeEach(() => {
 		source_id: 'source-a',
 		generation: 1
 	} as MusicBrainzSettingsResponse);
-});
+}
+
+beforeEach(reset);
 
 afterEach(() => {
 	authStore.clear();
@@ -83,52 +85,58 @@ describe('getMusicBrainzSettingsQuery', () => {
 		await options.queryFn({ signal });
 		expect(mockGet).toHaveBeenCalledWith('/api/v3/settings/musicbrainz', { signal });
 	});
-	it('does not publish a response to a different active user', async () => {
-		persistScope('user-b', 'community', 'community-b', 9);
-		const response = {
-			source_mode: 'official',
-			source_id: 'source-a',
-			generation: 1
-		} as MusicBrainzSettingsResponse;
-		let resolveResponse: (data: MusicBrainzSettingsResponse) => void = () => {};
-		const responsePromise = new Promise<MusicBrainzSettingsResponse>((resolve) => {
-			resolveResponse = resolve;
-		});
-		mockGet.mockReturnValueOnce(responsePromise);
+	it('publishes a read source only while the user who asked is signed in', async () => {
+		{
+			// Does not publish a response to a different active user.
+			reset();
+			persistScope('user-b', 'community', 'community-b', 9);
+			const response = {
+				source_mode: 'official',
+				source_id: 'source-a',
+				generation: 1
+			} as MusicBrainzSettingsResponse;
+			let resolveResponse: (data: MusicBrainzSettingsResponse) => void = () => {};
+			const responsePromise = new Promise<MusicBrainzSettingsResponse>((resolve) => {
+				resolveResponse = resolve;
+			});
+			mockGet.mockReturnValueOnce(responsePromise);
 
-		authStore.setUser(user('user-a'));
-		const options = getMusicBrainzSettingsQuery() as unknown as QueryOptions;
-		expect(options.queryKey).toEqual(MusicBrainzQueryKeyFactory.settings('user-a'));
-		const request = options.queryFn({ signal: new AbortController().signal });
+			authStore.setUser(user('user-a'));
+			const options = getMusicBrainzSettingsQuery() as unknown as QueryOptions;
+			expect(options.queryKey).toEqual(MusicBrainzQueryKeyFactory.settings('user-a'));
+			const request = options.queryFn({ signal: new AbortController().signal });
 
-		authStore.setUser(user('user-b'));
-		resolveResponse(response);
-		await request;
+			authStore.setUser(user('user-b'));
+			resolveResponse(response);
+			await request;
 
-		expect(getMusicBrainzSourceScope()).toEqual({
-			userId: 'user-b',
-			sourceMode: 'community',
-			sourceId: 'community-b',
-			generation: 9
-		});
-		expect(storage.get('droppedneedle:musicbrainz-source:user-b')).toBe(
-			JSON.stringify({ sourceMode: 'community', sourceId: 'community-b', generation: 9 })
-		);
-	});
+			expect(getMusicBrainzSourceScope()).toEqual({
+				userId: 'user-b',
+				sourceMode: 'community',
+				sourceId: 'community-b',
+				generation: 9
+			});
+			expect(storage.get('droppedneedle:musicbrainz-source:user-b')).toBe(
+				JSON.stringify({ sourceMode: 'community', sourceId: 'community-b', generation: 9 })
+			);
+		}
 
-	it('publishes a response when the initiating user remains active', async () => {
-		authStore.setUser(user('user-a'));
-		const options = getMusicBrainzSettingsQuery() as unknown as QueryOptions;
-		await options.queryFn({ signal: new AbortController().signal });
+		{
+			// Publishes a response when the initiating user remains active.
+			reset();
+			authStore.setUser(user('user-a'));
+			const options = getMusicBrainzSettingsQuery() as unknown as QueryOptions;
+			await options.queryFn({ signal: new AbortController().signal });
 
-		expect(getMusicBrainzSourceScope()).toEqual({
-			userId: 'user-a',
-			sourceMode: 'official',
-			sourceId: 'source-a',
-			generation: 1
-		});
-		expect(storage.get('droppedneedle:musicbrainz-source:user-a')).toBe(
-			JSON.stringify({ sourceMode: 'official', sourceId: 'source-a', generation: 1 })
-		);
+			expect(getMusicBrainzSourceScope()).toEqual({
+				userId: 'user-a',
+				sourceMode: 'official',
+				sourceId: 'source-a',
+				generation: 1
+			});
+			expect(storage.get('droppedneedle:musicbrainz-source:user-a')).toBe(
+				JSON.stringify({ sourceMode: 'official', sourceId: 'source-a', generation: 1 })
+			);
+		}
 	});
 });
