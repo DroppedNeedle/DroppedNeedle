@@ -4,6 +4,7 @@ import type { components } from '$lib/api/v3/openapi';
 import type { IntakeResponse, TrackIntakeResponse } from '$lib/features/requests/queries/types';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { readIntegrationStatus } from '$lib/features/home/queries/home.svelte';
+import { queryClient } from '$lib/queries/QueryClient';
 import { libraryStore } from '$lib/stores/library';
 import { toastStore } from '$lib/stores/toast';
 // Request-surface copy lives beside the other acquisition label mappings.
@@ -13,6 +14,7 @@ import {
 	requestStatusCopy
 } from '$lib/features/downloads/components/acquisitionLabels';
 import { albumRequestOutcome } from '$lib/features/downloads/queries/requestOutcome';
+import { DownloadQueryKeyFactory } from '$lib/features/downloads/queries/DownloadQueryKeyFactory';
 import {
 	albumStatusChanged,
 	anyDownloadChanged,
@@ -268,13 +270,38 @@ export function createStopAutoRetryMutation() {
 	}));
 }
 
+type DownloadList = components['schemas']['DownloadListResponse'];
+
+/**
+ * Whether a retry answered with a download already running instead of a new
+ * attempt. Read once the lists have refreshed: a new attempt is the owner's
+ * and shows in them; a running download is someone else's or not shown.
+ * False while the retried task is in no loaded list, as nothing can be told.
+ */
+export function retryJoinedRunning(taskId: string, answeredId: string): boolean {
+	const items = queryClient
+		.getQueriesData<DownloadList>({
+			queryKey: DownloadQueryKeyFactory.tasksPrefix(authStore.user?.id)
+		})
+		.flatMap(([, data]) => (Array.isArray(data?.items) ? data.items : []));
+	const source = items.find((task) => task.id === taskId);
+	if (!source) return false;
+	const answered = items.find((task) => task.id === answeredId);
+	return answered?.user_id !== source.user_id;
+}
+
 export function createRetryDownloadMutation() {
 	return createAppMutation(() => ({
 		effects: tasks,
 		mutationFn: (id: string) =>
 			api.v3.POST(v3('/api/v3/downloads/tasks/{task_id}/retry', { path: { task_id: id } })),
-		onSuccess: () => {
-			toastStore.show({ message: 'Download retry initiated', type: 'info' });
+		// After the lists refreshed, so a retry that joined a running download says so.
+		onSettled: (data, _error, id) => {
+			if (!data) return;
+			const message = retryJoinedRunning(id, data.task_id)
+				? 'Already downloading.'
+				: 'Download retry initiated';
+			toastStore.show({ message, type: 'info' });
 		},
 		onError: (err: unknown) =>
 			toastStore.show({ message: errorMessage(err, 'Failed to retry download'), type: 'error' })

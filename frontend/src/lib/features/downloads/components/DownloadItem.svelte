@@ -1,6 +1,7 @@
 <script lang="ts">
 	import {
 		Archive,
+		ArrowUp,
 		Clock3,
 		ExternalLink,
 		FileDown,
@@ -16,7 +17,8 @@
 		createCancelDownloadMutation,
 		createReimportDownloadMutation,
 		createRetryDownloadMutation,
-		createStopAutoRetryMutation
+		createStopAutoRetryMutation,
+		retryJoinedRunning
 	} from '$lib/features/downloads/queries/DownloadMutations.svelte';
 	import { createDownloadStream } from '$lib/features/downloads/queries/DownloadSSE.svelte';
 	import { createStartAlbumSearchMutation } from '$lib/features/downloads/queries/SearchQueries.svelte';
@@ -44,7 +46,13 @@
 	import ManualSearch from './ManualSearch.svelte';
 	import VinylProgress from './VinylProgress.svelte';
 
-	let { task }: { task: DownloadTask } = $props();
+	interface Props {
+		task: DownloadTask;
+		/** The in-flight download this one gave way to, when it is on the page. */
+		liveTaskId?: string | null;
+	}
+
+	let { task, liveTaskId = null }: Props = $props();
 
 	const cancel = createCancelDownloadMutation();
 	const retry = createRetryDownloadMutation();
@@ -112,15 +120,21 @@
 	}
 	// Once retry is clicked the row is about to move to the active queue (the failed task
 	// is superseded by a new attempt); keep the button disabled until then so a second
-	// click can't spawn a duplicate. Reset only if the retry call itself fails.
+	// click can't spawn a duplicate. Reset if the retry call fails, or if it joined a
+	// download already running: then this row stays and nothing new is coming.
 	let retried = $state(false);
 	function onRetry() {
 		retried = true;
-		retry.mutate(task.id, { onError: () => (retried = false) });
+		retry.mutate(task.id, {
+			onSuccess: (data) => {
+				if (retryJoinedRunning(task.id, data.task_id)) retried = false;
+			},
+			onError: () => (retried = false)
+		});
 	}
 </script>
 
-<Card as="article" variant="bordered" padding="sm">
+<Card as="article" variant="bordered" padding="sm" id="download-{task.id}" class="scroll-mt-24">
 	<div class="flex items-center gap-3 sm:gap-4">
 		<div class="shrink-0">
 			{#if isSearchingState}
@@ -286,7 +300,11 @@
 					{search.isPending ? 'Starting…' : 'Pick a source'}
 				</Button>
 			{/if}
-			{#if canRetry(task)}
+			{#if liveTaskId}
+				<Button variant="ghost" size="xs" icon={ArrowUp} href="#download-{liveTaskId}">
+					See the download
+				</Button>
+			{:else if canRetry(task)}
 				<Button
 					variant="ghost"
 					size="xs"

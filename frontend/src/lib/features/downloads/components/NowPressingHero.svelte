@@ -35,8 +35,9 @@
 
 <Card
 	as="section"
+	id="download-{task.id}"
 	variant="bordered"
-	class="now-pressing overflow-hidden"
+	class="now-pressing scroll-mt-24 overflow-hidden"
 	aria-label="Now pressing"
 >
 	<div class="now-pressing-glow" aria-hidden="true"></div>

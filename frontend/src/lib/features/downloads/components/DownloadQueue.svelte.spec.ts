@@ -1,11 +1,14 @@
+import { get } from 'svelte/store';
 import { page } from 'vitest/browser';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, onTestFinished } from 'vitest';
 
 import { toAuthUser } from '$lib/features/auth/queries/types';
+import { queryClient } from '$lib/queries/QueryClient';
 import { authStore } from '$lib/stores/authStore.svelte';
+import { toastStore } from '$lib/stores/toast';
 import { fakeApi } from '$lib/test/api';
 import { renderWithQuery } from '$lib/test/render';
-import type { HeldEntry, HeldFile } from '$lib/types';
+import type { DownloadTask, HeldEntry, HeldFile } from '$lib/types';
 
 import DownloadQueue from './DownloadQueue.svelte';
 
@@ -73,6 +76,62 @@ const upload: HeldEntry = {
 	]
 };
 
+function task(id: string, over: Partial<DownloadTask> = {}): DownloadTask {
+	return {
+		id,
+		user_id: 'curator-1',
+		download_type: 'album',
+		origin: 'user',
+		source: 'soulseek',
+		release_group_mbid: `rg-${id}`,
+		release_mbid: null,
+		release_track_mbid: null,
+		recording_mbid: null,
+		artist_name: 'Vela',
+		album_title: `Album ${id}`,
+		track_title: null,
+		year: 2020,
+		status: 'cancelled',
+		progress_percent: 0,
+		total_size_bytes: null,
+		downloaded_bytes: 0,
+		files_total: 0,
+		files_completed: 0,
+		files_failed: 0,
+		source_username: null,
+		search_job_id: null,
+		candidate_index: null,
+		final_path: null,
+		retry_count: 0,
+		created_at: 1,
+		updated_at: 1,
+		completed_at: null,
+		next_retry_at: null,
+		retry_max: 0,
+		retry_ladder_minutes: [],
+		acquisition_cleanup_state: 'not_tracked',
+		quality_format: null,
+		quality_bit_depth: null,
+		quality_sample_rate: null,
+		advertised_queue_depth: null,
+		queue_position_start: null,
+		queue_position_end: null,
+		remote_queued: false,
+		attempt_number: 0,
+		attempt_total: 0,
+		has_next_source: false,
+		held_for_review: false,
+		...over
+	};
+}
+
+const settled = (code: 'already_in_library' | 'already_downloading') => ({
+	code,
+	kind: 'settled' as const,
+	text: code === 'already_in_library' ? 'Already in your library.' : 'Already downloading.',
+	action: 'Nothing to do.'
+});
+
 const keptUntil = (ms: number) =>
 	`Kept until ${new Date(ms).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}`;
 
@@ -111,5 +170,83 @@ describe('the held list on the Downloads queue', () => {
 			await expect.element(card.getByRole('button', { name: 'Match…' })).toBeVisible();
 			await expect.element(card.getByRole('button', { name: 'Discard all' })).toBeVisible();
 		}
+	});
+});
+
+describe('finished downloads on the Downloads queue', () => {
+	it('files a settled stop with finished work and counts only real misses', async () => {
+		fakeApi({
+			'GET /api/v3/downloads/tasks': {
+				items: [
+					task('done', { status: 'completed' }),
+					task('owned', { reason: settled('already_in_library') }),
+					task('stopped'),
+					task('broke', { status: 'failed' })
+				],
+				page: 1,
+				page_size: 100
+			},
+			'GET /api/v3/held': { entries: [] }
+		});
+		await renderWithQuery(DownloadQueue, {});
+
+		await expect
+			.element(page.getByRole('button', { name: /^History/ }))
+			.toHaveTextContent("1 in your crate · 2 didn't make it");
+	});
+
+	it("links a stop to another user's download fetching the same album", async () => {
+		fakeApi({
+			'GET /api/v3/downloads/tasks': {
+				items: [
+					task('live', {
+						user_id: 'listener-2',
+						status: 'downloading',
+						release_group_mbid: 'RG-1',
+						created_at: 2
+					}),
+					task('waited', { release_group_mbid: 'rg-1', reason: settled('already_downloading') })
+				],
+				page: 1,
+				page_size: 100
+			},
+			'GET /api/v3/held': { entries: [] }
+		});
+		await renderWithQuery(DownloadQueue, {});
+
+		await page.getByRole('button', { name: /^History/ }).click();
+		const row = page.getByRole('article').filter({ hasText: 'Album waited' });
+		await expect
+			.element(row.getByRole('link', { name: 'See the download' }))
+			.toHaveAttribute('href', '#download-live');
+		await expect
+			.element(row.getByRole('button', { name: 'Retry download' }))
+			.not.toBeInTheDocument();
+	});
+
+	it('settles Retry when it joins a download already running', async () => {
+		fakeApi({
+			'GET /api/v3/downloads/tasks': {
+				items: [task('broke', { status: 'failed' })],
+				page: 1,
+				page_size: 100
+			},
+			'GET /api/v3/held': { entries: [] },
+			'POST /api/v3/downloads/tasks/{task_id}/retry': { success: true, task_id: 'elsewhere' }
+		});
+		onTestFinished(() => {
+			queryClient.clear();
+			toastStore.hide();
+		});
+		// The app's client: a retry refreshes the lists there before it is judged.
+		await renderWithQuery(DownloadQueue, {}, { client: queryClient });
+
+		await page.getByRole('button', { name: /^History/ }).click();
+		const retry = page.getByRole('button', { name: 'Retry download' });
+		await retry.click();
+
+		await expect.poll(() => get(toastStore)?.message).toBe('Already downloading.');
+		await expect.element(retry).toHaveTextContent(/^\s*Retry\s*$/);
+		await expect.element(retry).toBeEnabled();
 	});
 });

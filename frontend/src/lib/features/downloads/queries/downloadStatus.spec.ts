@@ -11,8 +11,7 @@ import {
 	isWanted,
 	retryDisplay,
 	retryLadderState,
-	sectionForTask,
-	tabForTask
+	sectionForTask
 } from './downloadStatus';
 
 function task(overrides: Partial<DownloadTask> = {}): DownloadTask {
@@ -81,21 +80,6 @@ describe('derivedDownloadStatus', () => {
 		expect(canRetry(held)).toBe(false);
 		expect(canReimport(held)).toBe(false);
 		expect(retryDisplay(held)).toBeNull();
-	});
-});
-
-describe('tabForTask', () => {
-	it('routes derived states to the right tab', () => {
-		expect(tabForTask(task({ status: 'queued' }))).toBe('active'); // searching
-		expect(tabForTask(task({ status: 'downloading' }))).toBe('active');
-		expect(tabForTask(task({ status: 'processing' }))).toBe('active');
-		expect(tabForTask(task({ status: 'queued', search_job_id: 'j', candidate_index: null }))).toBe(
-			'review'
-		);
-		expect(tabForTask(task({ status: 'completed' }))).toBe('completed');
-		expect(tabForTask(task({ status: 'partial' }))).toBe('completed');
-		expect(tabForTask(task({ status: 'failed' }))).toBe('failed');
-		expect(tabForTask(task({ status: 'cancelled' }))).toBe('failed');
 	});
 });
 

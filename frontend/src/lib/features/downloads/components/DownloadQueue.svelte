@@ -15,7 +15,9 @@
 	import { getQuarantineQuery } from '$lib/features/downloads/queries/QuarantineQueries.svelte';
 	import {
 		bucketSections,
-		collapseRetryChains
+		collapseRetryChains,
+		isSettled,
+		liveTwin
 	} from '$lib/features/downloads/queries/downloadStatus';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import Button from '$lib/ui/Button.svelte';
@@ -78,14 +80,24 @@
 	// "nothing at all" - no downloads, nothing held for review, and (for admins) nothing quarantined
 	const isEmpty = $derived(tasks.length === 0 && held.length === 0 && quarantineCount === 0);
 
-	// History = everything terminal. Split the counts so the header is honest about how it went.
+	// History = everything terminal. Split the counts so the header is honest about how it went:
+	// a download the app stopped because nothing was left to do is neither.
 	const crateCount = $derived(
 		sections.history.filter((t) => t.status === 'completed' || t.status === 'partial').length
 	);
-	const missedCount = $derived(sections.history.length - crateCount);
+	const missedCount = $derived(
+		sections.history.filter(
+			(t) => t.status === 'failed' || (t.status === 'cancelled' && !isSettled(t))
+		).length
+	);
 	const hasFailed = $derived(sections.history.some((t) => t.status === 'failed'));
 	const historyLabel = $derived(
-		`${crateCount} in your crate` + (missedCount > 0 ? ` · ${missedCount} didn't make it` : '')
+		[
+			crateCount > 0 ? `${crateCount} in your crate` : null,
+			missedCount > 0 ? `${missedCount} didn't make it` : null
+		]
+			.filter(Boolean)
+			.join(' · ')
 	);
 
 	const pulse = $derived(
@@ -225,7 +237,7 @@
 		<!-- HISTORY (collapsible) -->
 		{#if sections.history.length > 0}
 			<section class="space-y-3">
-				<div class="flex items-center justify-between gap-2">
+				<div class="flex flex-wrap items-center justify-between gap-2">
 					<button
 						class="dl-eyebrow flex items-center gap-1.5 hover:text-base-content/70"
 						onclick={() => (historyOpen = !historyOpen)}
@@ -271,7 +283,7 @@
 				{#if historyOpen}
 					<div class="space-y-3">
 						{#each sections.history as task (task.id)}
-							<DownloadItem {task} />
+							<DownloadItem {task} liveTaskId={liveTwin(task, tasks)?.id ?? null} />
 						{/each}
 					</div>
 				{/if}

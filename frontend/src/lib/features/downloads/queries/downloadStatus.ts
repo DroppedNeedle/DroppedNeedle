@@ -6,7 +6,6 @@
 import type { DownloadStatus, DownloadTask } from '$lib/types';
 
 export type DerivedDownloadStatus = 'searching' | 'awaiting_review' | DownloadStatus;
-export type DownloadTab = 'active' | 'review' | 'completed' | 'failed' | 'quarantine';
 
 export function derivedDownloadStatus(task: DownloadTask): DerivedDownloadStatus {
 	if (task.held_for_review) return 'awaiting_review';
@@ -30,20 +29,29 @@ export function hasActiveTask(tasks: DownloadTask[]): boolean {
 	return tasks.some((t) => isActiveDownloadStatus(t.status));
 }
 
-export type DownloadBucketTab = Exclude<DownloadTab, 'quarantine'>;
-
-export function tabForTask(task: DownloadTask): DownloadBucketTab {
-	const derived = derivedDownloadStatus(task);
-	if (derived === 'awaiting_review') return 'review';
-	if (derived === 'completed' || derived === 'partial') return 'completed';
-	if (derived === 'failed' || derived === 'cancelled') return 'failed';
-	return 'active';
+// Stopped by the app because nothing was left to do (no better copy, already
+// downloading, already in the library): finished, not a failure.
+export function isSettled(task: DownloadTask): boolean {
+	return task.status === 'cancelled' && task.reason?.kind === 'settled';
 }
 
-export function activeCount(tasks: DownloadTask[]): number {
-	let count = 0;
-	for (const task of tasks) if (tabForTask(task) === 'active') count++;
-	return count;
+// The download a task stopped as "already downloading" gave way to: the newest
+// in-flight task for the same album, or the same recording for a track, the
+// match the server makes when it stops the retry.
+export function liveTwin(task: DownloadTask, tasks: DownloadTask[]): DownloadTask | null {
+	if (!isSettled(task) || task.reason?.code !== 'already_downloading') return null;
+	const sameTarget = (other: DownloadTask) =>
+		task.download_type === 'track'
+			? !!task.recording_mbid && other.recording_mbid === task.recording_mbid
+			: !!task.release_group_mbid &&
+				other.release_group_mbid.toLowerCase() === task.release_group_mbid.toLowerCase();
+	let newest: DownloadTask | null = null;
+	for (const other of tasks) {
+		if (other.id === task.id || other.download_type !== task.download_type) continue;
+		if (!isActiveDownloadStatus(other.status) || !sameTarget(other)) continue;
+		if (!newest || other.created_at > newest.created_at) newest = other;
+	}
+	return newest;
 }
 
 // no cancel during processing: file move is unsafe to interrupt
