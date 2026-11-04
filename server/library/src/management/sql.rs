@@ -136,11 +136,14 @@ droppedneedle_kernel::sql! {
     pub(super) OVERRIDES = "SELECT id, row_revision, field_name, mode, value_json FROM library_management_overrides \
          WHERE local_album_id = ?1 OR local_track_id = ?2 \
          ORDER BY subject_kind, field_name, id";
+    /// Whether a write staged from download folder `?1` is still open:
+    /// `?2` to `?4` are the settled states, `?5` needs attention (settled
+    /// once an admin closed its bundle).
     pub(super) DOWNLOAD_PUBLISH_SETTLED = "SELECT EXISTS (SELECT 1 FROM library_publish_journal \
                  WHERE bundle_id IN (SELECT bundle_id FROM library_publish_journal \
                  WHERE substr(source_rel, 1, length(?1)) = ?1) \
-                 AND state NOT IN ('cleaned', 'compensated', 'cleanup_pending') \
-                 AND NOT (state = 'needs_attention' AND bundle_id IN \
+                 AND state NOT IN (?2, ?3, ?4) \
+                 AND NOT (state = ?5 AND bundle_id IN \
                  (SELECT bundle_id FROM library_publish_resolutions)))";
     pub(super) CLEANUP_PENDING_COUNT = "SELECT COUNT(*) FROM library_publish_journal WHERE state = 'cleanup_pending'";
     pub(super) JOURNAL_COUNTS_BY_STATE = "SELECT state, COUNT(*) AS total FROM library_publish_journal GROUP BY state ORDER BY state";

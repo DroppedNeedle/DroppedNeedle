@@ -23,7 +23,8 @@ use droppedneedle_kernel::runtime_config::sections::{
 };
 
 /// The MusicBrainz genre vocabulary: canonical spellings and
-/// aliases (the parent map rides along unused, as v2 wrote no ancestors).
+/// aliases (the parent map rides along unused: genres are written
+/// without their ancestors).
 const VOCABULARY: &str = include_str!("assets/genres.json");
 
 /// A genre a source suggests.

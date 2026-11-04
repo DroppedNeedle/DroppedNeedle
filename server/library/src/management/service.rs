@@ -200,24 +200,22 @@ impl Management {
     /// The stored settings, with every profile's field list complete even
     /// before the settings page has read and saved it back.
     pub(super) fn settings(&self) -> Result<LibraryManagement, ManagementError> {
-        let stored = self
-            .parts
+        self.parts
             .settings
             .management
             .get()
-            .map_err(|error| ManagementError::Store(error.to_string()))?;
-        let mut settings = LibraryManagement::clone(&stored);
-        crate::management::settings::complete_fields(&mut settings);
-        Ok(settings)
+            .map(|stored| completed(&stored))
+            .map_err(|error| ManagementError::Store(error.to_string()))
     }
 
     /// The stored settings as [`Self::settings`] gives them, or `None`
     /// when they do not read (logged once per revision).
     pub(super) fn readable_settings(&self) -> Option<LibraryManagement> {
-        let stored = self.parts.settings.management.read()?;
-        let mut settings = LibraryManagement::clone(&stored);
-        crate::management::settings::complete_fields(&mut settings);
-        Some(settings)
+        self.parts
+            .settings
+            .management
+            .read()
+            .map(|stored| completed(&stored))
     }
 
     pub(super) fn snapshot(&self, job_id: &str) -> Result<Snapshot, ManagementError> {
@@ -2300,6 +2298,14 @@ impl Refused {
         tracing::error!(%error, album = album_id, "{what} unreadable; album left alone");
         Self::Reason(reasons::write_failed())
     }
+}
+
+/// `stored` with every profile's field list complete, even before the
+/// settings page has read and saved it back.
+fn completed(stored: &LibraryManagement) -> LibraryManagement {
+    let mut settings = stored.clone();
+    crate::management::settings::complete_fields(&mut settings);
+    settings
 }
 
 /// The intent a preview plans with. One that does not read is the

@@ -112,11 +112,7 @@ impl LibrarySettings {
 /// database or a POSIX rule, else the host's own zone (`/etc/localtime`).
 /// One that does not resolve logs a warning and falls back to UTC.
 pub fn schedule_zone(configured: Option<&str>) -> TimeZone {
-    let resolved = match configured.map(|name| name.trim().trim_start_matches(':')) {
-        Some(name) => TimeZone::get(name).or_else(|_| TimeZone::posix(name)),
-        None => TimeZone::try_system(),
-    };
-    resolved.unwrap_or_else(|error| {
+    resolve_zone(configured).unwrap_or_else(|error| {
         tracing::warn!(
             timezone = configured.unwrap_or("system"),
             %error,
@@ -124,6 +120,15 @@ pub fn schedule_zone(configured: Option<&str>) -> TimeZone {
         );
         TimeZone::UTC
     })
+}
+
+/// [`schedule_zone`] without its fallback or warning: `Err` for a zone
+/// that does not resolve.
+pub fn resolve_zone(configured: Option<&str>) -> Result<TimeZone, jiff::Error> {
+    match configured.map(|name| name.trim().trim_start_matches(':')) {
+        Some(name) => TimeZone::get(name).or_else(|_| TimeZone::posix(name)),
+        None => TimeZone::try_system(),
+    }
 }
 
 pub(crate) fn policy(stored: IdentificationPolicy) -> EffectivePolicy {

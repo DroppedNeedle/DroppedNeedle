@@ -144,7 +144,13 @@ impl Management {
             .read_blocking("management.download_publish_settled", |conn| {
                 let unsettled: bool = conn.query_row(
                     crate::management::sql::DOWNLOAD_PUBLISH_SETTLED.text(),
-                    params![folder],
+                    params![
+                        folder,
+                        JournalState::Cleaned,
+                        JournalState::Compensated,
+                        JournalState::CleanupPending,
+                        JournalState::NeedsAttention,
+                    ],
                     |row| row.get(0),
                 )?;
                 Ok(!unsettled)

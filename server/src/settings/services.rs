@@ -682,14 +682,32 @@ fn policy_view(policy: DownloadPolicy) -> DownloadPolicyView {
     }
 }
 
-/// Server-local timezone label for the daily-scan picker: the configured
-/// `TZ`, else the system zone's name, else "UTC".
+/// Label for the zone daily scans run in, for the daily-scan picker: its
+/// IANA name, else a configured POSIX rule as written, else "server time"
+/// for a host zone with no name. A configured `TZ` that does not resolve
+/// reads "UTC", the zone scans then run in.
 pub fn server_timezone(configured: Option<&str>) -> String {
-    if let Some(tz) = configured {
-        return tz.to_owned();
+    match droppedneedle_library::settings::resolve_zone(configured) {
+        Ok(zone) => match (zone.iana_name(), configured) {
+            (Some(name), _) => name.to_owned(),
+            (None, Some(rule)) => rule.trim().trim_start_matches(':').to_owned(),
+            (None, None) => "server time".to_owned(),
+        },
+        Err(_) => "UTC".to_owned(),
     }
-    droppedneedle_library::settings::schedule_zone(None)
-        .iana_name()
-        .unwrap_or("UTC")
-        .to_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::server_timezone;
+
+    /// The label names the zone daily scans really run in: a `TZ` that
+    /// does not resolve runs them in UTC, so it reads UTC.
+    #[test]
+    fn the_timezone_label_names_the_zone_scans_run_in() {
+        assert_eq!(server_timezone(Some("Europe/London")), "Europe/London");
+        assert_eq!(server_timezone(Some(":Europe/London")), "Europe/London");
+        assert_eq!(server_timezone(Some("<+03>-3")), "<+03>-3");
+        assert_eq!(server_timezone(Some("Not/A_Zone")), "UTC");
+    }
 }
