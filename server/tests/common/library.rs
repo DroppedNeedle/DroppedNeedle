@@ -202,6 +202,16 @@ impl ScriptedContrib {
 }
 
 /// The library's services over `library`, built as the server builds them.
+/// The edition preferences a fresh install saves, over a settings store
+/// of their own under `dir`.
+pub fn default_preferences(
+    dir: &std::path::Path,
+) -> droppedneedle_library::edition_prefs::LivePreferences {
+    droppedneedle_library::edition_prefs::LivePreferences::new(&super::config_store(
+        &dir.join("edition-settings"),
+    ))
+}
+
 pub fn services(library: &LibrarySetup) -> LibraryServices {
     LibraryServices::build(library)
 }

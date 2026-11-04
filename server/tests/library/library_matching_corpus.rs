@@ -586,6 +586,7 @@ async fn recorded_albums_match_as_recorded() {
     let replay = Arc::new(Replay::load());
     let (_dir, store, providers) = live_providers(&replay, NoFingerprints);
     let service = IdentifyService::new(IdentifyDeps {
+        preferences: crate::common::library::default_preferences(&_dir),
         store,
         providers: providers.clone(),
     });

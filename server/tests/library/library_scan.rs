@@ -22,7 +22,6 @@ use droppedneedle_library::identify::providers::FakeProviders;
 use droppedneedle_library::identify::service::{IdentifyDeps, IdentifyService};
 use droppedneedle_library::identify::sqlite::SqliteIdentifyStore;
 use droppedneedle_library::repairs::hygiene;
-use droppedneedle_library::scan::ScanFailureRecord;
 use droppedneedle_library::scan::roots::PolicyRule;
 use droppedneedle_library::scan::{
     BlockingPool, Counter, EffectivePolicy, Event, FailureCode, InclusionRule, LibraryRoot,
@@ -31,6 +30,7 @@ use droppedneedle_library::scan::{
     ScannedTags, SqliteScanStore, StaticResolver, StreamRootSeam, TagReadError, TagReader,
     WatcherAction, WorkWakeups,
 };
+use droppedneedle_library::scan::{ScanEventPublisher, ScanFailureRecord};
 use droppedneedle_library::tags::TrackFile;
 use droppedneedle_library::wiring::LibrarySetup;
 use sha2::{Digest, Sha256};
@@ -779,8 +779,9 @@ fn coordinator_on<T: TagReader + 'static>(
         tags,
         Arc::new(StaticResolver::new(registry)),
         Arc::new(SystemClock),
-    )
-    .with_wakeups(WorkWakeups::new());
+        ScanEventPublisher::new(Arc::new(|_| {})),
+        WorkWakeups::new(),
+    );
     let paths = HashMap::from([("music".to_owned(), root.to_owned())]);
     (coordinator, paths)
 }
@@ -1227,8 +1228,9 @@ async fn an_end_pass_that_fails_or_runs_long_still_ends() {
         Arc::new(NullTagReader::new()),
         Arc::new(StaticResolver::new(registry)),
         clock.clone(),
-    )
-    .with_wakeups(WorkWakeups::new());
+        ScanEventPublisher::new(Arc::new(|_| {})),
+        WorkWakeups::new(),
+    );
     let paths = HashMap::from([("music".to_owned(), root.clone())]);
     coordinator.request_run(&request(&root)).expect("requested");
     let first = coordinator.run_once(&paths).await.expect("driven");
@@ -2610,8 +2612,9 @@ impl RegroupRig {
             Arc::clone(&reader),
             Arc::new(StaticResolver::new(registry)),
             Arc::new(SystemClock),
-        )
-        .with_wakeups(WorkWakeups::new());
+            ScanEventPublisher::new(Arc::new(|_| {})),
+            WorkWakeups::new(),
+        );
         Self {
             scratch,
             root,
@@ -3408,6 +3411,7 @@ async fn identify_now(rig: &RegroupRig, album: &str) -> String {
         Arc::new(SystemClock),
     ));
     let service = IdentifyService::new(IdentifyDeps {
+        preferences: crate::common::library::default_preferences(&rig.scratch),
         store: store.clone(),
         providers: Arc::new(FakeProviders::with_recall(RecallResult::default())),
     });
@@ -7980,8 +7984,9 @@ impl ArtistRig {
             Arc::new(droppedneedle_library::adapters::LoftyTagReader),
             Arc::new(StaticResolver::new(registry)),
             Arc::new(SystemClock),
-        )
-        .with_wakeups(WorkWakeups::new());
+            ScanEventPublisher::new(Arc::new(|_| {})),
+            WorkWakeups::new(),
+        );
         Self {
             scratch,
             root,

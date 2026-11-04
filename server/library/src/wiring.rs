@@ -505,16 +505,13 @@ impl LibrarySetup {
         let io = BlockingPool::new(IO_WORKERS);
         let cpu = BlockingPool::new(cpu_workers());
         let wakeups = core.wakeups.clone();
-        let coordinator = Arc::new(
-            ScanCoordinator::new(
-                scan_store.clone(),
-                io.clone(),
-                Arc::new(LoftyTagReader),
-                registry.clone(),
-                platform.clock.clone(),
-            )
-            .with_wakeups(wakeups.clone())
-            .with_events(ScanEventPublisher::new(Arc::new(move |event| {
+        let coordinator = Arc::new(ScanCoordinator::new(
+            scan_store.clone(),
+            io.clone(),
+            Arc::new(LoftyTagReader),
+            registry.clone(),
+            platform.clock.clone(),
+            ScanEventPublisher::new(Arc::new(move |event| {
                 tracing::debug!(
                     run_id = event.run_id,
                     event = event.event,
@@ -526,21 +523,20 @@ impl LibrarySetup {
                 {
                     scan_completed();
                 }
-            }))),
-        );
+            })),
+            wakeups.clone(),
+        ));
         let providers = make_providers(ProviderParts {
             store: identify_store.clone(),
             cpu: cpu.clone(),
             roots: (*registry).clone(),
             library: settings.library.clone(),
         });
-        let identify = Arc::new(
-            IdentifyService::new(IdentifyDeps {
-                store: identify_store.clone(),
-                providers,
-            })
-            .with_preferences(settings.editions.clone()),
-        );
+        let identify = Arc::new(IdentifyService::new(IdentifyDeps {
+            store: identify_store.clone(),
+            providers,
+            preferences: settings.editions.clone(),
+        }));
         let jobs = queue.clone();
         let (contrib, contrib_worker) = super::contrib::assemble(
             db,

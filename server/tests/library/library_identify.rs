@@ -62,6 +62,7 @@ fn rig_with_recall(recall: RecallResult) -> Rig {
     ));
     let providers = Arc::new(FakeProviders::with_recall(recall));
     let service = IdentifyService::new(IdentifyDeps {
+        preferences: crate::common::library::default_preferences(&dir),
         store: store.clone(),
         providers: providers.clone(),
     });
@@ -2639,6 +2640,7 @@ impl identify::providers::IdentifyProviders for DuringRecall {
 
 fn service_during_recall(rig: &Rig, recall: RecallResult, sql: &str) -> IdentifyService {
     IdentifyService::new(IdentifyDeps {
+        preferences: crate::common::library::default_preferences(&rig._dir),
         store: rig.store.clone(),
         providers: Arc::new(DuringRecall {
             recall,
@@ -3015,6 +3017,7 @@ async fn a_moved_release_names_its_own_group() {
         .result;
     assert_eq!(recall.named_group.as_deref(), Some(GROUP_B));
     let service = IdentifyService::new(IdentifyDeps {
+        preferences: crate::common::library::default_preferences(&rig._dir),
         store: rig.store.clone(),
         providers,
     });
@@ -5136,6 +5139,7 @@ async fn a_held_edition_that_cannot_be_fetched_keeps_the_album() {
         })
         .unwrap();
     let service = IdentifyService::new(IdentifyDeps {
+        preferences: crate::common::library::default_preferences(&rig._dir),
         store: rig.store.clone(),
         providers: Arc::new(HeldRecall {
             recall: recall(vec![release(
@@ -5196,6 +5200,7 @@ async fn a_merged_recording_the_held_edition_resolves_keeps_the_album() {
     held.recording_aliases
         .insert(RETIRED.to_owned(), RECORDING_2.to_owned());
     let service = IdentifyService::new(IdentifyDeps {
+        preferences: crate::common::library::default_preferences(&rig._dir),
         store: rig.store.clone(),
         providers: Arc::new(HeldRecall {
             recall: recall(vec![release(GROUP_A, RELEASE_A2, &[RECORDING_1, RETIRED])]),

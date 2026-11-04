@@ -180,6 +180,7 @@ fn rig_hearing<F: FingerprintSource + 'static>(
         std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
     ));
     let service = IdentifyService::new(IdentifyDeps {
+        preferences: crate::common::library::default_preferences(&dir),
         store: store.clone(),
         providers: Arc::new(LiveProviders::new(
             droppedneedle_library::identify::sources::Prioritised::new(
@@ -353,6 +354,7 @@ async fn heard_as_its_neighbour(
     let providers = Arc::new(FakeProviders::with_recall(recall.clone()));
     let mut rig = rig(false);
     rig.service = IdentifyService::new(IdentifyDeps {
+        preferences: crate::common::library::default_preferences(&rig._dir),
         store: rig.store.clone(),
         providers,
     });

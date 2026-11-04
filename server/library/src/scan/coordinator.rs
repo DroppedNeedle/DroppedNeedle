@@ -251,8 +251,8 @@ pub struct LibraryScanCoordinator<T: TagReader> {
     tags: Arc<T>,
     pool: BlockingPool,
     resolvers: Arc<dyn ResolverSource>,
-    events: Option<ScanEventPublisher>,
-    wakeups: Option<WorkWakeups>,
+    events: ScanEventPublisher,
+    wakeups: WorkWakeups,
     clock: Arc<dyn droppedneedle_kernel::clock::Clock>,
     idgen: Arc<dyn Fn() -> String + Send + Sync>,
     pending_control: Mutex<HashSet<String>>,
@@ -293,6 +293,8 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
         tags: Arc<T>,
         resolvers: Arc<dyn ResolverSource>,
         clock: Arc<dyn droppedneedle_kernel::clock::Clock>,
+        events: ScanEventPublisher,
+        wakeups: WorkWakeups,
     ) -> Self {
         let inventory = InventoryScanner::new(Arc::clone(&store), pool.clone(), Arc::clone(&clock));
         Self {
@@ -301,8 +303,8 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
             tags,
             pool,
             resolvers,
-            events: None,
-            wakeups: None,
+            events,
+            wakeups,
             clock,
             idgen: Arc::new(default_id),
             pending_control: Mutex::new(HashSet::new()),
@@ -310,16 +312,6 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
             drives: Mutex::new(HashMap::new()),
             dirty_turn: Mutex::new(()),
         }
-    }
-
-    pub fn with_events(mut self, events: ScanEventPublisher) -> Self {
-        self.events = Some(events);
-        self
-    }
-
-    pub fn with_wakeups(mut self, wakeups: WorkWakeups) -> Self {
-        self.wakeups = Some(wakeups);
-        self
     }
 
     pub fn store(&self) -> &Arc<SqliteScanStore> {
@@ -354,13 +346,11 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
     }
 
     fn publish(&self, run: &ScanRun, event: &str, counter: bool) {
-        if let Some(events) = &self.events {
-            match self.store.stream_revision(EventStream::Scan) {
-                Ok(revision) => {
-                    events.publish(run, revision, event, counter);
-                }
-                Err(error) => tracing::warn!(%error, event, "scan event not published"),
+        match self.store.stream_revision(EventStream::Scan) {
+            Ok(revision) => {
+                self.events.publish(run, revision, event, counter);
             }
+            Err(error) => tracing::warn!(%error, event, "scan event not published"),
         }
     }
 
@@ -449,9 +439,7 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
         if result.disposition != Disposition::Conflict {
             // Every accepted disposition wakes the supervisor. The store here has
             // no wakeups, so the coordinator wakes instead.
-            if let Some(wakeups) = &self.wakeups {
-                wakeups.notify("scan");
-            }
+            self.wakeups.notify("scan");
             match self.store.get_run(&result.run_id) {
                 Ok((run, _, _)) => self.publish(&run, "scan.requested", false),
                 Err(error) => tracing::warn!(%error, "scan request event not published"),
@@ -566,9 +554,7 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
         if run.state.is_ended() {
             self.flush_terminal();
         }
-        if let Some(wakeups) = &self.wakeups {
-            wakeups.notify("scan");
-        }
+        self.wakeups.notify("scan");
         let logged = match event {
             Event::Resume => "control_resume",
             Event::Pause => "control_pause",
@@ -1924,6 +1910,8 @@ mod tests {
             Arc::new(NullTagReader::new()),
             Arc::new(StaticResolver::new(registry)),
             Arc::new(droppedneedle_kernel::clock::SystemClock),
+            ScanEventPublisher::new(Arc::new(|_| {})),
+            WorkWakeups::new(),
         );
         (dir, coordinator)
     }

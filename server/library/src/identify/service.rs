@@ -46,13 +46,13 @@ use crate::matching::{
 pub struct IdentifyDeps {
     pub store: Arc<SqliteIdentifyStore>,
     pub providers: Arc<dyn IdentifyProviders>,
+    /// The saved edition preferences, read per attempt: they break ties
+    /// between equally fitting editions.
+    pub preferences: LivePreferences,
 }
 
 pub struct IdentifyService {
     deps: IdentifyDeps,
-    /// The saved edition preferences, read per attempt; the defaults when
-    /// none are given.
-    preferences: Option<LivePreferences>,
     /// When artist id lookups may run again after MusicBrainz could not
     /// answer. In memory only: a restart asks again at once.
     artist_hold: Mutex<LookupHold>,
@@ -128,18 +128,9 @@ impl IdentifyService {
     pub fn new(deps: IdentifyDeps) -> Self {
         Self {
             deps,
-            preferences: None,
             artist_hold: Mutex::new(LookupHold::new()),
             document_hold: Mutex::new(LookupHold::new()),
         }
-    }
-
-    /// Break ties between equally fitting editions with these saved
-    /// preferences (read on every attempt).
-    #[must_use]
-    pub fn with_preferences(mut self, preferences: LivePreferences) -> Self {
-        self.preferences = Some(preferences);
-        self
     }
 
     /// Enqueue one album, on the caller's lane. Fresh and changed work
@@ -574,13 +565,10 @@ impl IdentifyService {
         })
     }
 
-    /// The edition preferences now; the defaults only when none are wired
-    /// (tests), `None` while the saved ones do not read.
+    /// The edition preferences now, `None` while the saved ones do not
+    /// read.
     fn preferences(&self) -> Option<Preferences> {
-        match &self.preferences {
-            Some(live) => live.current(),
-            None => Some(Preferences::default()),
-        }
+        self.deps.preferences.current()
     }
 
     /// Score every recalled release and decide; a release recall already

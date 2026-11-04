@@ -19831,6 +19831,8 @@ async fn scan_held_while(
         }),
         library.registry.clone(),
         Arc::new(droppedneedle_kernel::clock::SystemClock),
+        droppedneedle_library::scan::ScanEventPublisher::new(Arc::new(|_| {})),
+        droppedneedle_library::scan::watcher::WorkWakeups::new(),
     ));
     let registry = library.core.live_registry();
     coordinator
@@ -20471,6 +20473,8 @@ async fn a_file_read_before_its_rename_is_not_listed_twice() {
         }),
         library.registry.clone(),
         Arc::new(droppedneedle_kernel::clock::SystemClock),
+        droppedneedle_library::scan::ScanEventPublisher::new(Arc::new(|_| {})),
+        droppedneedle_library::scan::watcher::WorkWakeups::new(),
     ));
     let registry = library.core.live_registry();
     coordinator

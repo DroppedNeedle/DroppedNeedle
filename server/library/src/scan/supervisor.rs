@@ -218,7 +218,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::super::coordinator::{LibraryScanCoordinator, StaticResolver};
+    use super::super::coordinator::{LibraryScanCoordinator, ScanEventPublisher, StaticResolver};
     use super::super::pool::BlockingPool;
     use super::super::roots::LibraryRoot;
     use super::super::seams::NullTagReader;
@@ -246,6 +246,8 @@ mod tests {
             Arc::new(NullTagReader::new()),
             Arc::new(StaticResolver::new(registry)),
             Arc::new(droppedneedle_kernel::clock::SystemClock),
+            ScanEventPublisher::new(Arc::new(|_| {})),
+            WorkWakeups::new(),
         );
         (dir, coordinator)
     }
@@ -266,7 +268,6 @@ mod tests {
     #[tokio::test]
     async fn dirty_marks_request_a_scan_or_clear() {
         let (_dir, coordinator) = coordinator();
-        let coordinator = coordinator.with_wakeups(WorkWakeups::new());
         let dirty = DirtyScopes::new();
         dirty.mark("r1");
         let inputs = inputs(dirty.clone());
@@ -290,7 +291,6 @@ mod tests {
     #[tokio::test]
     async fn pre_signalled_shutdown_claims_no_new_work() {
         let (_dir, coordinator) = coordinator();
-        let coordinator = coordinator.with_wakeups(WorkWakeups::new());
         let dirty = DirtyScopes::new();
         dirty.mark("r1");
         let inputs = inputs(dirty.clone());
