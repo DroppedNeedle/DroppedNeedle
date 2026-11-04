@@ -6,17 +6,19 @@
 #    a seek, using the argument shape of build_cmd in transcode.rs.
 # 2. Smoke: fresh boot, healthy, clean SIGTERM shutdown. Prints cold and
 #    warm boot time, idle RSS and shutdown time.
-# 3. Journeys: on an internal network with no route out, starts the mock
+# 3. PUID: a boot with PUID=568 hands the config and cache folders to uid 568
+#    and the server writes as it; a boot with PUID back at 1000 hands them back.
+# 4. Journeys: on an internal network with no route out, starts the mock
 #    slskd and MusicBrainz (e2e-mocks.Dockerfile), then runs each browser
 #    journey in frontend/tests/journeys against a fresh server of its own,
 #    after checking that nothing outside resolves or routes from it.
 #
 # Everything runs against containers this script starts under its own names,
 # never against an address passed in. They are removed on exit, pass or fail,
-# and use no volumes. The folders mounted are the audio fixtures, read-only,
-# for the ffmpeg check and, as the library at /music, a throwaway copy of two of
-# them, removed on exit. The journeys need the frontend dependencies and
-# Playwright's Chromium
+# as are the two volumes the PUID check makes. The folders mounted are the audio
+# fixtures, read-only, for the ffmpeg check and, as the library at /music, a
+# throwaway copy of two of them, removed on exit. The journeys need the
+# frontend dependencies and Playwright's Chromium
 # (make frontend-install frontend-browser-install).
 #
 # DN_E2E_IMAGE and DN_E2E_MOCKS_IMAGE name images already built; each one set
@@ -30,6 +32,8 @@ NAME="dn-e2e-smoke"
 APP="dn-e2e-app"
 MOCKS="dn-e2e-mocks"
 NET="dn-e2e-sealed"
+CONFIG_VOLUME="dn-e2e-config"
+CACHE_VOLUME="dn-e2e-cache"
 FFMPEG="dn-e2e-ffmpeg"
 FIXTURES="$ROOT/server/tests/fixtures/library"
 WORK=""
@@ -38,6 +42,7 @@ OUT=""
 cleanup() {
   docker rm -f "$NAME" "$APP" "$MOCKS" "$FFMPEG" >/dev/null 2>&1 || true
   docker network rm "$NET" >/dev/null 2>&1 || true
+  docker volume rm "$CONFIG_VOLUME" "$CACHE_VOLUME" >/dev/null 2>&1 || true
   if [ -n "$WORK" ]; then rm -rf "$WORK" || true; fi
   if [ -n "$OUT" ]; then rm -rf "$OUT" || true; fi
 }
@@ -53,9 +58,10 @@ elapsed() {
   awk "BEGIN { printf \"%.2f\", $2 - $1 }"
 }
 
-# Boot the container and wait for /health, printing "port boot_seconds".
+# Boot the container and wait for /health, printing "port boot_seconds". Any
+# arguments go to docker run ahead of the image.
 boot_and_wait() {
-  docker run -d --name "$NAME" -p 127.0.0.1::8688 -e RUST_LOG=info "$IMAGE" >/dev/null || fail "docker run failed"
+  docker run -d --name "$NAME" -p 127.0.0.1::8688 -e RUST_LOG=info "$@" "$IMAGE" >/dev/null || fail "docker run failed"
   START=$(date +%s.%N)
   PORT=""
   for _ in $(seq 1 60); do
@@ -241,6 +247,27 @@ EXIT_CODE=$(docker inspect "$NAME" --format '{{.State.ExitCode}}')
 docker logs "$NAME" 2>&1 | grep -q "shutdown complete" || fail "missing 'shutdown complete' log line"
 echo "exit code 0, graceful-shutdown log line present"
 docker rm -f "$NAME" >/dev/null 2>&1 || true
+
+# Fail unless the database the server wrote, and everything else in the config
+# and cache volumes, belongs to the given uid.
+data_owned_by() {
+  [ "$(docker exec "$NAME" stat -c %u /app/cache/library.db)" = "$1" ] \
+    || fail "PUID=$1: library.db is not owned by uid $1"
+  OTHERS=$(docker exec "$NAME" find /app/config /app/cache ! -user "$1")
+  [ -z "$OTHERS" ] || fail "PUID=$1: not handed over: $OTHERS"
+}
+
+echo "--- PUID ---"
+boot_and_wait -e PUID=568 -e PGID=568 \
+  -v "$CONFIG_VOLUME:/app/config" -v "$CACHE_VOLUME:/app/cache" >/dev/null
+data_owned_by 568
+docker stop -t 10 "$NAME" >/dev/null || fail "PUID=568 stop failed"
+docker rm -f "$NAME" >/dev/null || fail "PUID=568 rm failed"
+boot_and_wait -v "$CONFIG_VOLUME:/app/config" -v "$CACHE_VOLUME:/app/cache" >/dev/null
+data_owned_by 1000
+echo "PUID=568 took the data folders over, PUID=1000 took them back"
+docker rm -f "$NAME" >/dev/null 2>&1 || true
+docker volume rm "$CONFIG_VOLUME" "$CACHE_VOLUME" >/dev/null 2>&1 || true
 
 echo "--- journeys ---"
 docker network create --internal "$NET" >/dev/null || fail "network create failed"

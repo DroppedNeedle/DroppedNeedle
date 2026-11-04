@@ -78,21 +78,25 @@ if [ "$TARGET_UID" != "$PUID" ] || [ "$TARGET_GID" != "$PGID" ]; then
     echo "[init] WARNING: Requested $PUID:$PGID but running as $TARGET_UID:$TARGET_GID."
 fi
 
-# After a uid change, the files the old uid owns in the four folders the server
-# writes move to the new one. A folder the new uid already owns was handed over
-# on an earlier start and is not walked, so a recreate costs nothing. -depth
-# moves the folder itself last, so a stopped hand-over runs again. find does not
-# follow links, and chown -h changes a link itself, never its target. A folder
-# that refuses the change gets a warning, not a stop; the write check for config
-# and cache below still decides whether the start can go on.
-if [ "$OLD_UID" != "$TARGET_UID" ]; then
-    for dir in /app/config /app/cache /app/plugins /app/imports; do
-        [ "$(stat -c %u "$dir" 2>/dev/null)" = "$TARGET_UID" ] && continue
-        if ! find "$dir" -depth -user "$OLD_UID" -exec chown -h "$TARGET_UID:$TARGET_GID" {} + 2>/dev/null; then
-            echo "[init] WARNING: Could not hand $dir over to uid=$TARGET_UID (the mount may not support ownership changes)."
-        fi
-    done
-fi
+# The four folders the server writes belong to the runtime user. A folder owned
+# by another uid was left by an earlier start under another PUID (a remap, or a
+# PUID set back to the baked 1000), so the files that uid owns in it move to the
+# runtime user. A folder the runtime user already owns was handed over before
+# and is not walked, so a recreate costs nothing; a root-owned one is left to the
+# write check below. -depth moves the folder itself last, so a stopped hand-over
+# runs again. find does not follow links, and chown -h changes a link itself,
+# never its target. A folder that refuses the change gets a warning, not a stop;
+# the write check for config and cache below still decides whether the start
+# can go on.
+for dir in /app/config /app/cache /app/plugins /app/imports; do
+    PREV_UID=$(stat -c %u "$dir" 2>/dev/null) || continue
+    [ "$PREV_UID" = "$TARGET_UID" ] && continue
+    [ "$PREV_UID" = 0 ] && continue
+    echo "[init] Handing $dir over from uid=$PREV_UID to uid=$TARGET_UID."
+    if ! find "$dir" -depth -user "$PREV_UID" -exec chown -h "$TARGET_UID:$TARGET_GID" {} + 2>/dev/null; then
+        echo "[init] WARNING: Could not hand $dir over to uid=$TARGET_UID (the mount may not support ownership changes)."
+    fi
+done
 
 if is_server "$1"; then
     echo "[init] Runtime user: droppedneedle (uid=$TARGET_UID gid=$TARGET_GID)"
@@ -101,7 +105,7 @@ if is_server "$1"; then
         if check_writable "$dir" "$TARGET_UID:$TARGET_GID"; then
             continue
         fi
-        if chown droppedneedle:droppedneedle "$dir" 2>/dev/null; then
+        if chown -h droppedneedle:droppedneedle "$dir" 2>/dev/null; then
             echo "[init] Adjusted ownership of $dir; checking write access again."
         else
             echo "[init] WARNING: Could not chown $dir (the mount may not support ownership changes)."
