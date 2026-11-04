@@ -1,6 +1,6 @@
 # Requests and downloads
 
-What happens between pressing Request and the album landing in your library, and what you can do when it does not go to plan. Setting up slskd and SABnzbd is in the [README](../README.md#download-sources).
+What happens between pressing Request and the album landing in your library, and what you can do when it does not go to plan. Setting up slskd and SABnzbd is in [Download clients](download-clients.md).
 
 ## Contents
 

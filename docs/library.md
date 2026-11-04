@@ -42,6 +42,8 @@ Between scheduled scans, DroppedNeedle checks your library folders every few min
 
 A library folder that is away, such as a share that is not mounted, loses nothing: its albums' covers and lyrics come back with it.
 
+Settings > Library won't let you remove your last library path while the library still has tracks in it. Set the path to Excluded instead if you want it left alone. If a path disappears from the settings while its tracks are still in the library, the page offers to put it back.
+
 Sub-folder rules match folder names without regard to letter case or Unicode form, on every disk. On a case-sensitive disk a rule `Live` also covers a separate `live` folder: a scan treats `live/` as Excluded when the rule is Excluded, and when the rule is included under an excluded folder it walks both. If such a folder is renamed so only its capitals change, a track whose file is at the same place under the new name goes missing at the old one, and its plays, favorites and ratings move across when the match is clear. Tracks it can't tell apart stay missing at the old name with their history.
 
 A scan never follows a link. A folder replaced by a link is not read and its tracks stay as they are, on every scan and whichever folders it covers; Recent runs lists it. Put a real folder back and the next scan reads it again.
