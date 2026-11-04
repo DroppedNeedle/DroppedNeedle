@@ -320,9 +320,10 @@ impl RateLimiter {
         }
     }
 
-    /// Seconds since the limiter started, never less than zero. A clock
-    /// set back only stops buckets refilling until it passes where they
-    /// were last seen.
+    /// Seconds since the limiter started, never less than zero. After a
+    /// clock step back a bucket re-stamps at the earlier time and refills
+    /// from there; only a step back to before the limiter started holds
+    /// every bucket still until the clock passes that start again.
     fn now(&self) -> f64 {
         (self.clock.now_ms() - self.started_ms).max(0) as f64 / 1000.0
     }
