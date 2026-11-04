@@ -20,6 +20,7 @@ use crate::federated::plex_http::PlexTv;
 use crate::federated::{FederatedError, MediaLinks};
 use crate::routes::native::{AuthSessionBody, PeerAddr, login_user};
 use crate::session::cookies;
+use crate::session::middleware::CallerChecks;
 use crate::session::rate_limit::{LOGIN_USERNAME_CLASS, RateLimiter, rate_limited};
 use crate::session::stated::StatedAddresses;
 use crate::session::tokens::{hash_token, secret_eq};
@@ -94,27 +95,21 @@ pub struct OidcRouteState {
 impl OidcRouteState {
     /// Wire the state from the login service, the live settings and the
     /// account rows.
-    pub fn new(login: OidcLogin, config: SignInSettings, accounts: Users, base_path: &str) -> Self {
+    pub fn new(
+        login: OidcLogin,
+        config: SignInSettings,
+        accounts: Users,
+        base_path: &str,
+        checks: &CallerChecks,
+    ) -> Self {
         Self {
             login,
             config,
             accounts,
             base_path: base_path.to_owned(),
-            trusted_proxies: TrustedProxies::default(),
-            stated: StatedAddresses::default(),
+            trusted_proxies: checks.trusted_proxies.clone(),
+            stated: checks.stated.clone(),
         }
-    }
-
-    /// Trust the given proxies for the forwarded proto.
-    pub fn with_trusted_proxies(mut self, trusted: TrustedProxies) -> Self {
-        self.trusted_proxies = trusted;
-        self
-    }
-
-    /// Mark the cookie `Secure` for a sign-in from a stated `https` address.
-    pub fn with_stated_addresses(mut self, stated: StatedAddresses) -> Self {
-        self.stated = stated;
-        self
     }
 }
 
@@ -306,33 +301,16 @@ impl JellyfinRouteState {
         sessions: Sessions,
         accounts: Users,
         base_path: &str,
+        checks: &CallerChecks,
     ) -> Self {
         Self {
             login: JellyfinLogin::new(users, idp, links, sessions),
             accounts,
             base_path: base_path.to_owned(),
-            trusted_proxies: TrustedProxies::default(),
-            stated: StatedAddresses::default(),
-            limits: Arc::new(RateLimiter::new()),
+            trusted_proxies: checks.trusted_proxies.clone(),
+            stated: checks.stated.clone(),
+            limits: checks.limits.clone(),
         }
-    }
-
-    /// Trust the given proxies for the forwarded proto.
-    pub fn with_trusted_proxies(mut self, trusted: TrustedProxies) -> Self {
-        self.trusted_proxies = trusted;
-        self
-    }
-
-    /// Mark the cookie `Secure` for a sign-in from a stated `https` address.
-    pub fn with_stated_addresses(mut self, stated: StatedAddresses) -> Self {
-        self.stated = stated;
-        self
-    }
-
-    /// Share the app's request limiter (per-username login budget).
-    pub fn with_limits(mut self, limits: Arc<RateLimiter>) -> Self {
-        self.limits = limits;
-        self
     }
 }
 
@@ -415,25 +393,14 @@ impl PlexRouteState {
         links: MediaLinks,
         sessions: Sessions,
         base_path: &str,
+        checks: &CallerChecks,
     ) -> Self {
         Self {
             journey: PlexJourney::new(users, client, links, sessions),
             base_path: base_path.to_owned(),
-            trusted_proxies: TrustedProxies::default(),
-            stated: StatedAddresses::default(),
+            trusted_proxies: checks.trusted_proxies.clone(),
+            stated: checks.stated.clone(),
         }
-    }
-
-    /// Trust the given proxies for the forwarded proto.
-    pub fn with_trusted_proxies(mut self, trusted: TrustedProxies) -> Self {
-        self.trusted_proxies = trusted;
-        self
-    }
-
-    /// Mark the cookie `Secure` for a sign-in from a stated `https` address.
-    pub fn with_stated_addresses(mut self, stated: StatedAddresses) -> Self {
-        self.stated = stated;
-        self
     }
 }
 

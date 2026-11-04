@@ -9,6 +9,7 @@ use crate::session::extract;
 use crate::session::login::{
     INVALID_CREDENTIALS, LoginContext, LoginError, LoginRequest, LoginService,
 };
+use crate::session::middleware::CallerChecks;
 use crate::session::one_time_code::OneTimeCode;
 use crate::session::rate_limit::{LOGIN_USERNAME_CLASS, RateLimiter, rate_limited};
 use crate::session::stated::StatedAddresses;
@@ -65,11 +66,11 @@ pub struct NativeAuthState {
     pub users: UsersDeps,
     /// Deployment base path (`""` at the domain root).
     pub base_path: String,
-    /// Proxies trusted to set `X-Forwarded-*`; loopback by default (v2
-    /// parity). Gates `Secure` marking from `X-Forwarded-Proto`.
+    /// Proxies trusted to set `X-Forwarded-*`. Gates `Secure` marking from
+    /// `X-Forwarded-Proto`.
     pub trusted_proxies: TrustedProxies,
     /// The saved public addresses: a sign-in from a stated `https` one gets
-    /// a `Secure` cookie. None is stated by default.
+    /// a `Secure` cookie.
     pub stated: StatedAddresses,
     /// Request limiter; login also takes a per-username token from it.
     pub limits: Arc<RateLimiter>,
@@ -82,42 +83,26 @@ pub struct NativeAuthState {
 
 impl NativeAuthState {
     /// Wire the state from its parts. The login service is built here from
-    /// the same handles so wiring passes each dependency once.
+    /// the same handles so wiring passes each dependency once; `checks`
+    /// gives the trusted proxies, the stated addresses and the request
+    /// limiter's per-username login budget.
     pub fn new(
         sessions: Sessions,
         passwords: crate::passwords::Passwords,
         users: UsersDeps,
         base_path: &str,
         setup_code: Option<OneTimeCode>,
+        checks: &CallerChecks,
     ) -> Self {
         Self {
             login: LoginService::new(sessions, passwords, users.users.clone()),
             users,
             base_path: base_path.to_owned(),
-            trusted_proxies: TrustedProxies::default(),
-            stated: StatedAddresses::default(),
-            limits: Arc::new(RateLimiter::new()),
+            trusted_proxies: checks.trusted_proxies.clone(),
+            stated: checks.stated.clone(),
+            limits: checks.limits.clone(),
             setup_code,
         }
-    }
-
-    /// Share the app's request limiter (per-username login budget).
-    pub fn with_limits(mut self, limits: Arc<RateLimiter>) -> Self {
-        self.limits = limits;
-        self
-    }
-
-    /// Trust the given proxies for forwarded proto. Fed from deployment
-    /// config at wiring.
-    pub fn with_trusted_proxies(mut self, trusted: TrustedProxies) -> Self {
-        self.trusted_proxies = trusted;
-        self
-    }
-
-    /// Mark the cookie `Secure` for a sign-in from a stated `https` address.
-    pub fn with_stated_addresses(mut self, stated: StatedAddresses) -> Self {
-        self.stated = stated;
-        self
     }
 }
 

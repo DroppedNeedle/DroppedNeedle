@@ -21,7 +21,7 @@ use super::federated::settings::SignInSettings;
 use super::prod::ProdAuth;
 use super::routes::federated::{JellyfinRouteState, OidcRouteState, PlexRouteState};
 use super::routes::native::NativeAuthState;
-use super::session::middleware::SessionAuth;
+use super::session::middleware::{CallerChecks, SessionAuth};
 use super::session::one_time_code::OneTimeCode;
 use super::session::rate_limit::RateLimiter;
 use super::session::stated::StatedAddresses;
@@ -29,7 +29,6 @@ use super::users::UsersDeps;
 use super::users::lastfm_http::LastFmAuthHttp;
 use super::users::stores::LastFmSwitch;
 use axum::extract::FromRef;
-use droppedneedle_kernel::config::TrustedProxies;
 use droppedneedle_kernel::mount::{Routes, routes};
 use droppedneedle_kernel::platform::Platform;
 use droppedneedle_kernel::runtime_config::Live;
@@ -126,19 +125,25 @@ impl AuthSetup {
             jellyfin_directory: Arc::new(jellyfin_http.clone()),
             plex_directory: Arc::new(plex_tv.clone()),
         };
-        let limits = Arc::new(RateLimiter::new());
-        // One handle for the gate and every sign-in route: they read the
-        // same saved list and share its one warning.
-        let stated = StatedAddresses::new(config_store.live());
+        // Every forwarded header is read through the trusted proxies (the
+        // session gate's origin check, the login `Secure` cookie flag, and
+        // the client address the limiter keys on). One stated-addresses
+        // handle for the gate and every sign-in route: they read the same
+        // saved list and share its one warning.
+        let trusted = platform.config.trusted_proxies.clone();
+        let checks = CallerChecks {
+            limits: Arc::new(RateLimiter::new().with_trusted_proxies(trusted.clone())),
+            trusted_proxies: trusted,
+            stated: StatedAddresses::new(config_store.live()),
+        };
         let native = NativeAuthState::new(
             auth.sessions.clone(),
             auth.passwords.clone(),
             users.clone(),
             base_path,
             setup_code,
-        )
-        .with_limits(limits.clone())
-        .with_stated_addresses(stated.clone());
+            &checks,
+        );
         let oidc = OidcRouteState::new(
             OidcLogin::new(
                 auth.federated.clone(),
@@ -150,8 +155,8 @@ impl AuthSetup {
             sign_in.clone(),
             auth.users.clone(),
             base_path,
-        )
-        .with_stated_addresses(stated.clone());
+            &checks,
+        );
         let jellyfin = JellyfinRouteState::new(
             auth.federated.clone(),
             jellyfin_http,
@@ -159,24 +164,21 @@ impl AuthSetup {
             auth.sessions.clone(),
             auth.users.clone(),
             base_path,
-        )
-        .with_limits(limits.clone())
-        .with_stated_addresses(stated.clone());
+            &checks,
+        );
         let plex = PlexRouteState::new(
             auth.federated.clone(),
             plex_tv,
             links,
             auth.sessions.clone(),
             base_path,
-        )
-        .with_stated_addresses(stated.clone());
+            &checks,
+        );
         let app_connect = AppConnectService::new(users.clone(), config_store.live());
         Self {
             users,
-            session_auth: SessionAuth::new(auth.sessions.clone(), clock.clone())
-                .with_limits(limits.clone())
-                .with_stated_addresses(stated),
-            limits,
+            session_auth: SessionAuth::new(auth.sessions.clone(), clock.clone(), &checks),
+            limits: checks.limits,
             native,
             oidc,
             jellyfin,
@@ -185,32 +187,6 @@ impl AuthSetup {
             sign_in,
             security: config_store.live(),
         }
-        .with_trusted_proxies(platform.config.trusted_proxies.clone())
-    }
-
-    /// Trust the given reverse proxies everywhere auth reads forwarded
-    /// headers: the session gate's origin check, the login `Secure` cookie
-    /// flag, and the client address the limiter keys on
-    /// (`TRUSTED_PROXY_IPS`).
-    #[must_use]
-    fn with_trusted_proxies(mut self, trusted: TrustedProxies) -> Self {
-        let limits = Arc::new(RateLimiter::new().with_trusted_proxies(trusted.clone()));
-        self.session_auth = self
-            .session_auth
-            .with_trusted_proxies(trusted.clone())
-            .with_limits(limits.clone());
-        self.native = self
-            .native
-            .with_trusted_proxies(trusted.clone())
-            .with_limits(limits.clone());
-        self.oidc = self.oidc.with_trusted_proxies(trusted.clone());
-        self.jellyfin = self
-            .jellyfin
-            .with_trusted_proxies(trusted.clone())
-            .with_limits(limits.clone());
-        self.plex = self.plex.with_trusted_proxies(trusted);
-        self.limits = limits;
-        self
     }
 }
 

@@ -95,6 +95,20 @@ impl WarnOnce {
     }
 }
 
+/// What the session gate and every sign-in route read about a caller's
+/// connection: the proxies trusted to forward it, the saved public
+/// addresses, and the app's one request limiter. Built once at wiring.
+#[derive(Clone)]
+pub struct CallerChecks {
+    /// Proxies trusted to set `X-Forwarded-*` (`TRUSTED_PROXY_IPS`).
+    pub trusted_proxies: TrustedProxies,
+    /// The saved public addresses, read live.
+    pub stated: StatedAddresses,
+    /// The request limiter, keyed on the client address the trusted
+    /// proxies give.
+    pub limits: Arc<RateLimiter>,
+}
+
 /// Shared middleware state: the session store plus deployment facts.
 #[derive(Clone)]
 pub struct SessionAuth {
@@ -102,13 +116,12 @@ pub struct SessionAuth {
     pub store: Sessions,
     /// Wall time a token's expiry is checked against.
     pub clock: Arc<dyn Clock>,
-    /// Proxies trusted to set `X-Forwarded-*`; loopback by default (v2
-    /// parity). Off-host proxies are set from deployment config at wiring.
+    /// Proxies trusted to set `X-Forwarded-*`.
     pub trusted_proxies: TrustedProxies,
     /// Shared limiter; failed authentications are charged per client
     /// address, since the request limiter runs after this gate.
     pub limits: Arc<RateLimiter>,
-    /// The saved public addresses. None is stated by default.
+    /// The saved public addresses.
     stated: StatedAddresses,
     /// Spent by the first refused request that looks like a proxy
     /// misreporting this server's address.
@@ -129,39 +142,20 @@ impl std::fmt::Debug for SessionAuth {
 }
 
 impl SessionAuth {
-    /// Build the shared state. Trusted proxies default to loopback; use
-    /// [`SessionAuth::with_trusted_proxies`] when a proxy fronts the app.
-    pub fn new(store: Sessions, clock: Arc<dyn Clock>) -> Self {
+    /// Build the shared state over the caller `checks`: a request from a
+    /// stated public address is accepted beside the address the server
+    /// works out.
+    pub fn new(store: Sessions, clock: Arc<dyn Clock>, checks: &CallerChecks) -> Self {
         Self {
             store,
             clock,
-            trusted_proxies: TrustedProxies::default(),
-            limits: Arc::new(RateLimiter::new()),
-            stated: StatedAddresses::default(),
+            trusted_proxies: checks.trusted_proxies.clone(),
+            limits: checks.limits.clone(),
+            stated: checks.stated.clone(),
             origin_mismatch_warned: WarnOnce::default(),
             other_host_warned: WarnOnce::default(),
             unlisted_proxy_warned: WarnOnce::default(),
         }
-    }
-
-    /// Share the app's request limiter (auth-failure budget).
-    pub fn with_limits(mut self, limits: Arc<RateLimiter>) -> Self {
-        self.limits = limits;
-        self
-    }
-
-    /// Trust the given proxies for forwarded host/proto. Fed from deployment
-    /// config at wiring.
-    pub fn with_trusted_proxies(mut self, trusted: TrustedProxies) -> Self {
-        self.trusted_proxies = trusted;
-        self
-    }
-
-    /// Accept a change from the stated public addresses. Without them
-    /// only the address the server works out is accepted.
-    pub fn with_stated_addresses(mut self, stated: StatedAddresses) -> Self {
-        self.stated = stated;
-        self
     }
 }
 
