@@ -441,15 +441,18 @@ mod tests {
     }
 
     /// The edition rules: a pin beats an automatic edition under either
-    /// conflict choice; the same edition prefers the pinned row; otherwise
-    /// the choice decides.
+    /// conflict choice, and an edition carried over from v2 is a person's
+    /// choice, on the receiving album or arriving at it; the same edition
+    /// prefers the pinned row; otherwise the choice decides.
     #[test]
-    fn pins_win_and_choices_decide_the_rest() {
+    fn edition_conflicts_follow_their_rules() {
         use IdentityChoice::{Detach, RetainManual};
         let auto_own = edition("dest", "r1", "automatic");
         let pin_own = edition("dest", "r1", "manual");
+        let v2_own = edition("dest", "r1", "legacy_import");
         let pin_in = [edition("src", "r2", "manual")];
         let auto_in = [edition("src", "r2", "automatic")];
+        let v2_in = [edition("src", "r2", "legacy_import")];
         let same_pin_in = [edition("src", "r1", "manual")];
         let case = |own: Option<&Identity>, incoming: &[Identity], choice| {
             let keys: BTreeSet<String> = own
@@ -458,46 +461,62 @@ mod tests {
                 .map(Identity::key)
                 .collect();
             match decide(own, incoming, keys.len(), choice) {
-                Verdict::Nothing => "nothing",
-                Verdict::KeepOwn(_) => "keep",
-                Verdict::Take(..) => "take",
-                Verdict::DropAll(_) => "drop",
+                Verdict::Nothing => "nothing".to_owned(),
+                Verdict::KeepOwn(_) => "keep".to_owned(),
+                Verdict::Take(index, _) => format!("take {index}"),
+                Verdict::DropAll(_) => "drop".to_owned(),
             }
         };
         for choice in [Detach, RetainManual] {
-            assert_eq!(case(Some(&auto_own), &pin_in, choice), "take");
-            assert_eq!(case(Some(&pin_own), &auto_in, choice), "keep");
-            assert_eq!(case(None, &pin_in, choice), "take");
-            assert_eq!(case(Some(&auto_own), &same_pin_in, choice), "take");
+            for (label, own, incoming, expected) in [
+                ("pin over automatic", Some(&auto_own), &pin_in[..], "take 0"),
+                (
+                    "pin kept over automatic",
+                    Some(&pin_own),
+                    &auto_in[..],
+                    "keep",
+                ),
+                ("pin to an empty album", None, &pin_in[..], "take 0"),
+                (
+                    "same edition, pinned row",
+                    Some(&auto_own),
+                    &same_pin_in[..],
+                    "take 0",
+                ),
+                (
+                    "v2 kept over automatic",
+                    Some(&v2_own),
+                    &auto_in[..],
+                    "keep",
+                ),
+                ("v2 over automatic", Some(&auto_own), &v2_in[..], "take 0"),
+            ] {
+                assert_eq!(case(own, incoming, choice), expected, "{label}, {choice:?}");
+            }
         }
         let mut custom_same = edition("src", "r1", "manual");
         custom_same.custom = true;
-        assert_eq!(case(Some(&auto_own), &[custom_same], Detach), "keep");
-        assert_eq!(case(Some(&auto_own), &auto_in, Detach), "drop");
-        assert_eq!(case(Some(&auto_own), &auto_in, RetainManual), "keep");
+        assert_eq!(
+            case(Some(&auto_own), &[custom_same], Detach),
+            "keep",
+            "custom never moves"
+        );
+        assert_eq!(case(Some(&auto_own), &auto_in, Detach), "drop", "detach");
+        assert_eq!(
+            case(Some(&auto_own), &auto_in, RetainManual),
+            "keep",
+            "retain"
+        );
         let two_pins = [edition("a", "r2", "manual"), edition("b", "r3", "manual")];
-        assert_eq!(case(None, &two_pins, RetainManual), "drop");
-        assert_eq!(case(Some(&auto_own), &two_pins, RetainManual), "drop");
-    }
-
-    /// An edition carried over from v2 is a person's choice: in a merge
-    /// conflict against an automatic edition it wins under either
-    /// conflict choice, on the receiving album or arriving at it.
-    #[test]
-    fn a_v2_edition_survives_a_conflict_with_an_automatic_one() {
-        let v2_own = edition("dest", "r1", "legacy_import");
-        let auto_own = edition("dest", "r1", "automatic");
-        let v2_in = [edition("src", "r2", "legacy_import")];
-        let auto_in = [edition("src", "r2", "automatic")];
-        for choice in [IdentityChoice::Detach, IdentityChoice::RetainManual] {
-            assert!(matches!(
-                decide(Some(&v2_own), &auto_in, 2, choice),
-                Verdict::KeepOwn(_)
-            ));
-            assert!(matches!(
-                decide(Some(&auto_own), &v2_in, 2, choice),
-                Verdict::Take(0, _)
-            ));
-        }
+        assert_eq!(
+            case(None, &two_pins, RetainManual),
+            "drop",
+            "two pins, none own"
+        );
+        assert_eq!(
+            case(Some(&auto_own), &two_pins, RetainManual),
+            "drop",
+            "two pins"
+        );
     }
 }

@@ -1636,16 +1636,16 @@ fn produce_inventory(
 mod tests {
     use super::*;
 
+    /// A file on disk is the same file the catalog holds: audio suffixes
+    /// match in any case, and an NFD name keys as its NFC form. A miss
+    /// marks tracks gone.
     #[test]
-    fn audio_suffix_match_is_case_insensitive() {
+    fn walk_keys_files_by_folded_name() {
         assert!(is_audio_file(Path::new("a.FLAC")));
         assert!(is_audio_file(Path::new("a.Opus")));
         assert!(!is_audio_file(Path::new("a.txt")));
         assert!(!is_audio_file(Path::new("aflac")));
-    }
 
-    #[test]
-    fn inventory_key_normalizes_nfd_to_nfc() {
         let root = Path::new("/music");
         let nfd: String = "cafe\u{301}.flac".to_owned();
         let key = inventory_key(&Path::new("/music").join(&nfd), root);

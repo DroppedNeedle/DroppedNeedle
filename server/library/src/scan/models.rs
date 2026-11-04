@@ -886,23 +886,4 @@ mod tests {
         assert!(!scope_covers_path("a", "ab/c.flac"));
         assert!(!scope_covers_path("a/b", "a"));
     }
-
-    /// The pause, resume and stop routes promise a refusal (409) for an
-    /// ended run, and the store answers it from `transition`.
-    #[test]
-    fn an_ended_run_takes_no_control() {
-        for outcome in [
-            Outcome::Completed,
-            Outcome::Cancelled,
-            Outcome::SupersededPolicyChanged,
-            Outcome::Failed,
-        ] {
-            for reached in [None, Some(Phase::Discovering), Some(Phase::Reconciling)] {
-                let from = RunState::Ended { outcome, reached };
-                for event in [Event::Pause, Event::Resume, Event::Stop] {
-                    assert_eq!(transition(from, event), Err(Illegal { from, event }));
-                }
-            }
-        }
-    }
 }

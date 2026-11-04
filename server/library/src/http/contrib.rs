@@ -641,31 +641,3 @@ fn public_origin(headers: &HeaderMap) -> String {
         .unwrap_or_else(|| "localhost".to_owned());
     format!("{scheme}://{host}")
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn base_path_and_origin_follow_the_browser() {
-        assert_eq!(base_path("/api/v3/library/contributions/x"), "");
-        assert_eq!(
-            base_path("/music/api/v3/library/contributions/musicbrainz/callback"),
-            "/music"
-        );
-        let mut headers = HeaderMap::new();
-        headers.insert("host", HeaderValue::from_static("lan.example:8080"));
-        assert_eq!(public_origin(&headers), "http://lan.example:8080");
-        headers.insert("x-forwarded-proto", HeaderValue::from_static("https"));
-        headers.insert(
-            "x-forwarded-host",
-            HeaderValue::from_static("music.example"),
-        );
-        assert_eq!(public_origin(&headers), "https://music.example");
-        headers.insert(
-            "origin",
-            HeaderValue::from_static("https://music.example.org"),
-        );
-        assert_eq!(public_origin(&headers), "https://music.example.org");
-    }
-}

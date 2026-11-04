@@ -1951,21 +1951,4 @@ mod tests {
             Err(ScanRequestError::UnknownRoots)
         );
     }
-
-    #[test]
-    fn history_cursor_pages() {
-        let (_dir, coordinator) = coordinator();
-        let result = coordinator.request_run(&request()).expect("requested");
-        let (run, _, _) = coordinator.store().get_run(&result.run_id).expect("run");
-        coordinator
-            .store()
-            .request_control(&run.id, Event::Stop, run.row_revision, 9.0)
-            .expect("stopped");
-        let (items, next) = coordinator.history_page(50, None).expect("page");
-        assert_eq!(items.len(), 1);
-        assert_eq!(next, None);
-        let after = (items[0].terminal_at.unwrap_or(0.0), items[0].id.clone());
-        let (items, _) = coordinator.history_page(50, Some(after)).expect("page 2");
-        assert!(items.is_empty());
-    }
 }

@@ -328,74 +328,109 @@ mod tests {
         }
     }
 
+    /// `project` per mode, source and list: MusicBrainz genres are
+    /// canonicalized and capped, a source that did not answer keeps the
+    /// file's genres, fill missing and merge follow v2, and the deny list
+    /// filters.
     #[test]
-    fn musicbrainz_genres_are_canonicalized_and_capped() {
-        let settings = GenreManagementSettings {
+    fn genres_follow_mode_sources_and_lists() {
+        let replace = || settings(GenreMode::Replace, vec![GenreSource::Musicbrainz]);
+        let capped = GenreManagementSettings {
             maximum_count: 2,
-            ..settings(GenreMode::Replace, vec![GenreSource::Musicbrainz])
+            ..replace()
         };
-        let projection = project(
-            &settings,
-            &release(&[("alt rock", 3), ("Shoegaze", 2), ("jazz", 1)]),
-            &RemoteGenres::default(),
-            &["Pop".to_owned()],
-        );
-        assert_eq!(projection.genres, vec!["alternative rock", "shoegaze"]);
-        assert!(!projection.preserved_existing);
-    }
-
-    #[test]
-    fn a_deferred_source_keeps_the_files_genres() {
-        let settings = settings(
+        let deferring = settings(
             GenreMode::Replace,
             vec![GenreSource::Musicbrainz, GenreSource::Listenbrainz],
         );
-        let projection = project(
-            &settings,
-            &release(&[("rock", 3)]),
-            &RemoteGenres::default(),
-            &["Pop".to_owned()],
-        );
-        assert_eq!(projection.genres, vec!["pop"]);
-        assert_eq!(projection.deferred, vec!["listenbrainz"]);
-        assert!(projection.preserved_existing);
-    }
-
-    #[test]
-    fn fill_missing_and_merge_follow_v2() {
         let fill = settings(GenreMode::FillMissing, vec![GenreSource::Musicbrainz]);
-        let release = release(&[("rock", 3)]);
-        let kept = project(
-            &fill,
-            &release,
-            &RemoteGenres::default(),
-            &["Jazz".to_owned()],
-        );
-        assert_eq!(kept.genres, vec!["jazz"]);
-        let filled = project(&fill, &release, &RemoteGenres::default(), &[]);
-        assert_eq!(filled.genres, vec!["rock"]);
         let merge = settings(GenreMode::Merge, vec![GenreSource::Musicbrainz]);
-        let merged = project(
-            &merge,
-            &release,
-            &RemoteGenres::default(),
-            &["Jazz".to_owned()],
-        );
-        assert_eq!(merged.genres, vec!["rock", "jazz"]);
-    }
-
-    #[test]
-    fn deny_and_allow_lists_filter() {
-        let settings = GenreManagementSettings {
+        let denying = GenreManagementSettings {
             denylist: vec!["Rock".to_owned()],
-            ..settings(GenreMode::Replace, vec![GenreSource::Musicbrainz])
+            ..replace()
         };
-        let projection = project(
-            &settings,
-            &release(&[("rock", 3), ("jazz", 2)]),
-            &RemoteGenres::default(),
-            &[],
-        );
-        assert_eq!(projection.genres, vec!["jazz"]);
+        // (label, settings, release genres, the file's genres, genres,
+        // deferred sources, the file's genres kept); `None` is not checked.
+        #[allow(clippy::type_complexity)]
+        let cases: [(
+            &str,
+            &GenreManagementSettings,
+            &[(&str, u32)],
+            &[&str],
+            &[&str],
+            Option<&[&str]>,
+            Option<bool>,
+        ); 6] = [
+            (
+                "canonicalized and capped",
+                &capped,
+                &[("alt rock", 3), ("Shoegaze", 2), ("jazz", 1)],
+                &["Pop"],
+                &["alternative rock", "shoegaze"],
+                None,
+                Some(false),
+            ),
+            (
+                "a deferred source",
+                &deferring,
+                &[("rock", 3)],
+                &["Pop"],
+                &["pop"],
+                Some(&["listenbrainz"]),
+                Some(true),
+            ),
+            (
+                "fill missing, file has genres",
+                &fill,
+                &[("rock", 3)],
+                &["Jazz"],
+                &["jazz"],
+                None,
+                None,
+            ),
+            (
+                "fill missing, file has none",
+                &fill,
+                &[("rock", 3)],
+                &[],
+                &["rock"],
+                None,
+                None,
+            ),
+            (
+                "merge",
+                &merge,
+                &[("rock", 3)],
+                &["Jazz"],
+                &["rock", "jazz"],
+                None,
+                None,
+            ),
+            (
+                "deny list",
+                &denying,
+                &[("rock", 3), ("jazz", 2)],
+                &[],
+                &["jazz"],
+                None,
+                None,
+            ),
+        ];
+        for (label, settings, genres, existing, expected, deferred, preserved) in cases {
+            let existing: Vec<String> = existing.iter().map(|name| (*name).to_owned()).collect();
+            let projection = project(
+                settings,
+                &release(genres),
+                &RemoteGenres::default(),
+                &existing,
+            );
+            assert_eq!(projection.genres, expected, "{label}");
+            if let Some(deferred) = deferred {
+                assert_eq!(projection.deferred, deferred, "{label}");
+            }
+            if let Some(preserved) = preserved {
+                assert_eq!(projection.preserved_existing, preserved, "{label}");
+            }
+        }
     }
 }

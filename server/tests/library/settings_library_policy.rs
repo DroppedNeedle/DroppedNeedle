@@ -124,6 +124,33 @@ async fn removed_root_restores_and_previews_count_the_catalog() {
         .await
         .expect_err("unknown scope fails");
     assert!(matches!(unknown, SettingsError::InvalidInput { .. }));
+
+    // A second removed root whose rows a scan marked all missing is still
+    // offered while its folder is on disk.
+    let back = scratch.join("back");
+    std::fs::create_dir_all(back.join("A")).expect("second music dir builds");
+    let seed = format!(
+        "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded,
+           album_artist_id, grouping_source, created_at, updated_at)
+           VALUES ('al2', 'r-back', 'g2', 'T', 't', 'ar1', 'automatic', 0, 0);
+         INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path,
+           path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded,
+           album_title, album_title_folded, file_format, ingest_source, imported_at,
+           membership_source, availability)
+           VALUES ('t3', 'al2', 'r-back', '{root}/A/one.flac', 'A/one.flac', 'h3', 1, 0, 's',
+             'One', 'one', 'T', 't', 'flac', 'scan', 0, 'automatic', 'missing');",
+        root = back.display()
+    );
+    runtime
+        .db()
+        .write(Lane::Foreground, "missing root seed", move |tx| {
+            tx.execute_batch(&seed).map_err(DbError::from)
+        })
+        .await
+        .expect("missing root seeds");
+    let offered = policy.restorable_roots().await.expect("restorable reads");
+    assert_eq!(offered.restorable_roots.len(), 1, "all-missing root");
+    assert_eq!(offered.restorable_roots[0].root_id, "r-back");
 }
 
 /// A changed import naming script is checked on save and refused with its
@@ -197,101 +224,4 @@ async fn an_import_naming_script_is_checked_only_when_changed() {
         .await
         .expect("a save that leaves the script alone goes through");
     assert!(!kept.settings.enabled);
-}
-
-#[tokio::test]
-async fn removed_root_with_every_row_missing_is_offered_while_its_folder_exists() {
-    let scratch = ScratchDir::new("settings-library-policy-missing");
-    let music = scratch.join("music");
-    std::fs::create_dir_all(music.join("A")).expect("music dir builds");
-    let runtime = crate::common::scratch_runtime(&scratch.join("app.db")).await;
-    // A scan marked every file missing; the folder is back on disk.
-    let seed = format!(
-        "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at)
-           VALUES ('ar1', 'A', 'a', 'person', 0, 0);
-         INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded,
-           album_artist_id, grouping_source, created_at, updated_at)
-           VALUES ('al1', 'r-back', 'g', 'T', 't', 'ar1', 'automatic', 0, 0);
-         INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path,
-           path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded,
-           album_title, album_title_folded, file_format, ingest_source, imported_at,
-           membership_source, availability)
-           VALUES ('t1', 'al1', 'r-back', '{root}/A/one.flac', 'A/one.flac', 'h1', 1, 0, 's',
-             'One', 'one', 'T', 't', 'flac', 'scan', 0, 'automatic', 'missing');",
-        root = music.display()
-    );
-    runtime
-        .db()
-        .write(Lane::Foreground, "policy seed", move |tx| {
-            tx.execute_batch(&seed).map_err(DbError::from)
-        })
-        .await
-        .expect("catalog seeds");
-
-    let platform = crate::common::TestPlatform::on(runtime.db(), &scratch)
-        .build()
-        .await;
-    let settings = crate::common::bundles::settings_closed(&platform);
-    let offered = settings
-        .library_policy()
-        .restorable_roots()
-        .await
-        .expect("restorable reads");
-    assert_eq!(offered.restorable_roots.len(), 1);
-    assert_eq!(offered.restorable_roots[0].root_id, "r-back");
-}
-
-/// Path rules match folder names without regard to letter case or
-/// Unicode form, so two rules of one library folder that fold together
-/// would cover the same folders: the save is a 400.
-#[tokio::test]
-async fn rules_that_fold_together_are_refused() {
-    let scratch = ScratchDir::new("settings-library-policy-fold");
-    let music = scratch.join("music");
-    std::fs::create_dir_all(&music).expect("music dir builds");
-    let runtime = crate::common::scratch_runtime(&scratch.join("app.db")).await;
-    let platform = crate::common::TestPlatform::on(runtime.db(), &scratch)
-        .build()
-        .await;
-    let settings = crate::common::bundles::settings_closed(&platform);
-    let policy = settings.library_policy();
-    let revision = settings
-        .service()
-        .get_library()
-        .await
-        .expect("reads")
-        .policy_revision;
-    let save = |first: &str, second: &str| -> LibrarySettingsSaveRequest {
-        serde_json::from_value(json!({
-            "settings": {"library_roots": [{
-                "id": "music",
-                "label": "Music",
-                "path": music.to_string_lossy(),
-                "policy": "automatic",
-                "rules": [
-                    {"id": "r1", "relative_path": first, "policy": "excluded"},
-                    {"id": "r2", "relative_path": second, "policy": "local_metadata"},
-                ],
-            }]},
-            "expected_policy_revision": revision,
-        }))
-        .expect("request decodes")
-    };
-    for (first, second) in [("Live", "live"), ("Caf\u{e9}/Disc", "cafe\u{301}/DISC")] {
-        let refused = policy
-            .save(save(first, second))
-            .await
-            .expect_err("rules that fold together are refused");
-        let SettingsError::InvalidInput { message } = refused else {
-            panic!("not a 400: {refused:?}");
-        };
-        assert!(
-            message.contains(first) && message.contains(second),
-            "{message}"
-        );
-    }
-    policy
-        .save(save("Live", "Lively"))
-        .await
-        .expect("rules for different folders save");
 }

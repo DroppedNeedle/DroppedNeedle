@@ -866,9 +866,12 @@ mod tests {
     }
 
     /// A track total is kept as an edition hint, read from its own key or
-    /// from the "n/m" pair, and never from a track number alone.
+    /// from the "n/m" pair, and never from a track number alone. A file's
+    /// tag revision hashes its tag's `Debug` text with the edition hints
+    /// empty: reading the track total must not change that text, or every
+    /// unchanged file would read as changed on the next scan.
     #[test]
-    fn the_track_total_is_read_from_its_key_or_the_pair() {
+    fn edition_tags_read_and_keep_their_text() {
         let vorbis = tag_of(
             TagType::VorbisComments,
             &[(ItemKey::TrackNumber, "3"), (ItemKey::TrackTotal, "12")],
@@ -884,13 +887,7 @@ mod tests {
         assert_eq!(ape("3/12").track_number, 3);
         assert_eq!(ape("3").edition.total_tracks, None);
         assert_eq!(ape("3").track_number, 3);
-    }
 
-    /// A file's tag revision hashes its tag's `Debug` text with the edition
-    /// hints empty: reading the track total must not change that text, or
-    /// every unchanged file would read as changed on the next scan.
-    #[test]
-    fn an_unknown_track_total_leaves_the_debug_text_as_it_was() {
         let empty = format!("{:?}", super::EditionTags::default());
         assert_eq!(
             empty,

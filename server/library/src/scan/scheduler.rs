@@ -236,68 +236,82 @@ mod tests {
         )
     }
 
+    /// When a scan is due, anchored on the latest terminal run: manual is
+    /// never due, an interval counts from the terminal run, a daily time
+    /// fires today once passed and tomorrow after a run. A tick fires only
+    /// when due and reads a conflict as not fired.
     #[test]
-    fn interval_math_anchors_on_terminal() {
-        assert_eq!(
-            seconds_until_due(ScanFrequency::Manual, "03:00", None, 100.0, &TimeZone::UTC),
-            None
-        );
-        assert_eq!(
-            seconds_until_due(ScanFrequency::Hr1, "03:00", None, 100.0, &TimeZone::UTC),
-            Some(0.0)
-        );
-        assert_eq!(
-            seconds_until_due(
+    fn the_schedule_fires_when_due() {
+        // 2024-01-01T00:00:00Z.
+        let monday = 1_704_067_200.0;
+        for (label, frequency, terminal_at, now, expected) in [
+            ("manual", ScanFrequency::Manual, None, 100.0, None),
+            (
+                "interval, no run yet",
                 ScanFrequency::Hr1,
-                "03:00",
+                None,
+                100.0,
+                Some(0.0),
+            ),
+            (
+                "interval, running",
+                ScanFrequency::Hr1,
                 Some(0.0),
                 100.0,
-                &TimeZone::UTC
+                Some(3_500.0),
             ),
-            Some(3_500.0)
-        );
-        assert_eq!(
-            seconds_until_due(
+            (
+                "interval, elapsed",
                 ScanFrequency::Hr1,
-                "03:00",
                 Some(0.0),
                 10_000.0,
-                &TimeZone::UTC
+                Some(0.0),
             ),
-            Some(0.0)
-        );
-    }
-
-    #[test]
-    fn daily_utc_before_and_after_target() {
-        // 2024-01-01T00:00:00Z, target 03:00, no terminal yet.
-        let monday = 1_704_067_200.0;
-        assert_eq!(
-            seconds_until_due(ScanFrequency::Daily, "03:00", None, monday, &TimeZone::UTC),
-            Some(10_800.0)
-        );
-        // Past today's target with no terminal: due now.
-        assert_eq!(
-            seconds_until_due(
+            (
+                "daily, before 03:00",
                 ScanFrequency::Daily,
-                "03:00",
+                None,
+                monday,
+                Some(10_800.0),
+            ),
+            (
+                "daily, past 03:00 with no run",
+                ScanFrequency::Daily,
                 None,
                 monday + 20_000.0,
-                &TimeZone::UTC
+                Some(0.0),
             ),
-            Some(0.0)
-        );
-        // Terminal Monday noon: next due Tuesday 03:00.
-        assert_eq!(
-            seconds_until_due(
+            (
+                "daily, run Monday noon: Tuesday 03:00",
                 ScanFrequency::Daily,
-                "03:00",
                 Some(monday + 43_200.0),
                 monday + 43_200.0,
-                &TimeZone::UTC
+                Some(54_000.0),
             ),
-            Some(54_000.0)
-        );
+        ] {
+            assert_eq!(
+                seconds_until_due(frequency, "03:00", terminal_at, now, &TimeZone::UTC),
+                expected,
+                "{label}"
+            );
+        }
+
+        let settings = ScheduleSettings::new(ScanFrequency::Hr1, "03:00", TimeZone::UTC);
+        for (label, disposition, now, fired) in [
+            ("not due", Disposition::Started, 100.0, false),
+            ("due", Disposition::Started, 10_000.0, true),
+            ("due, conflict", Disposition::Conflict, 10_000.0, false),
+        ] {
+            let answer = tick(
+                |_| Ok(disposition),
+                &registry(),
+                &[],
+                &settings,
+                Some(0.0),
+                now,
+            );
+            assert_eq!(answer, fired, "{label}");
+        }
     }
 
     #[test]
@@ -310,7 +324,11 @@ mod tests {
         let scopes = scheduled_scopes(&registry(), &rules);
         // Whole root a, plus keep and other (keep/deeper is covered).
         assert_eq!(scopes.len(), 3);
-        assert!(scopes.iter().any(|scope| scope.relative_path == "."));
+        assert!(
+            scopes
+                .iter()
+                .any(|scope| scope.root_id == "a" && scope.relative_path == ".")
+        );
         assert!(scopes.iter().any(|scope| scope.relative_path == "keep"));
         assert!(scopes.iter().any(|scope| scope.relative_path == "other"));
     }
@@ -342,37 +360,5 @@ mod tests {
             .map(|scope| scope.relative_path)
             .collect();
         assert_eq!(paths, ["LIVE", "live", "Live"]);
-    }
-
-    #[test]
-    fn tick_fires_only_when_due() {
-        let settings = ScheduleSettings::new(ScanFrequency::Hr1, "03:00", TimeZone::UTC);
-        let fired = tick(
-            |_| Ok(Disposition::Started),
-            &registry(),
-            &[],
-            &settings,
-            Some(0.0),
-            100.0,
-        );
-        assert!(!fired, "interval has not elapsed");
-        let fired = tick(
-            |_| Ok(Disposition::Started),
-            &registry(),
-            &[],
-            &settings,
-            Some(0.0),
-            10_000.0,
-        );
-        assert!(fired);
-        let conflicted = tick(
-            |_| Ok(Disposition::Conflict),
-            &registry(),
-            &[],
-            &settings,
-            Some(0.0),
-            10_000.0,
-        );
-        assert!(!conflicted);
     }
 }

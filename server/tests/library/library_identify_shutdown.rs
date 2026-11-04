@@ -2,16 +2,14 @@
 //!
 //! Briefs (small seeded drains, no provider waits):
 //!
-//! - `identify_tick_pre_signalled_shutdown_attempts_nothing`: quiet
-//!   shutdown sanity, zero jobs attempted.
+//! - `identify_tick_drains_all_unless_signalled`: a shutdown already
+//!   signalled attempts nothing; with no signal every job drains.
 //! - `identify_tick_abandons_drain_after_mid_attempt_shutdown`: a
 //!   shutdown landing mid-drain stops after the running attempt; the
 //!   rest stay queued and untouched.
 //! - `identify_tick_abandons_in_flight_gate_wait_on_shutdown`: a
 //!   shutdown landing while an attempt waits yields at once instead
 //!   of waiting out the gate.
-//! - `identify_tick_without_signal_still_drains_everything`: no
-//!   signal keeps the old full-drain behavior.
 
 use std::pin::Pin;
 use std::sync::Arc;
@@ -187,8 +185,10 @@ fn job_state(library: &LibrarySetup, job_id: &str) -> JobState {
         .state
 }
 
+/// A tick under a shutdown already signalled attempts nothing and leaves
+/// every job queued; the same jobs then drain in full with no signal.
 #[tokio::test]
-async fn identify_tick_pre_signalled_shutdown_attempts_nothing() {
+async fn identify_tick_drains_all_unless_signalled() {
     let shutdown_rx = CancellationToken::new();
     let lib = Lib::open(Arc::new(EmptyRecall)).await;
     seed_jobs(&lib.library, 3);
@@ -205,6 +205,8 @@ async fn identify_tick_pre_signalled_shutdown_attempts_nothing() {
             JobState::Queued
         );
     }
+    let attempted = lib.library.identification.identify_tick().await;
+    assert_eq!(attempted, 3, "no signal keeps the full drain");
 }
 
 #[tokio::test]
@@ -271,12 +273,4 @@ async fn identify_tick_abandons_in_flight_gate_wait_on_shutdown() {
             JobState::Queued
         );
     }
-}
-
-#[tokio::test]
-async fn identify_tick_without_signal_still_drains_everything() {
-    let lib = Lib::open(Arc::new(EmptyRecall)).await;
-    seed_jobs(&lib.library, 3);
-    let attempted = lib.library.identification.identify_tick().await;
-    assert_eq!(attempted, 3, "no signal keeps the full drain");
 }

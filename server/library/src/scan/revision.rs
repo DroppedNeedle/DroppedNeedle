@@ -44,16 +44,15 @@ pub fn legacy_mtime_eps_seconds(file_mtime: f64) -> f64 {
 mod tests {
     use super::*;
 
+    /// A stat revision is spelled as v2 spelled it, and a v2 mtime compares
+    /// within v2's band, never under a microsecond; a change here reads
+    /// every upgraded file as changed.
     #[test]
-    fn revision_spelling_matches_v2() {
+    fn stat_revisions_match_v2() {
         assert_eq!(
             exact_stat_revision(2892, 1700000000123456789),
             "2892:1700000000123456789"
         );
-    }
-
-    #[test]
-    fn epsilon_band_has_microsecond_floor() {
         assert_eq!(
             legacy_mtime_eps_seconds(1_700_000_000.0),
             1e-6f64.max(4.0 * ulp(1_700_000_000.0))

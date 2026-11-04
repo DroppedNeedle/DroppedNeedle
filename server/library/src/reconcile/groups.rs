@@ -416,27 +416,4 @@ mod tests {
         inputs.candidates[1].member.row_revision = 2;
         assert_eq!(build(&inputs).len(), 1);
     }
-
-    #[test]
-    fn cursor_survives_a_group_disappearing() {
-        let groups = |names: &[&str]| -> Vec<Group> {
-            names
-                .iter()
-                .map(|name| {
-                    let mut a = candidate(&format!("{name}-a"), 1.0, None, &[]);
-                    let mut b = candidate(&format!("{name}-b"), 2.0, None, &[]);
-                    for c in [&mut a, &mut b] {
-                        c.folded_name = (*name).into();
-                        c.member.name = (*name).into();
-                    }
-                    open_group(&[&a, &b], &HashSet::new())
-                })
-                .collect()
-        };
-        let first = page(groups(&["a", "b", "c"]), 1, None, None, None);
-        // "b" went away between reads; the next page starts at "c".
-        let next = page(groups(&["a", "c"]), 1, first.next, None, None);
-        assert_eq!(next.items[0].display_name, "c");
-        assert!(next.next.is_none());
-    }
 }

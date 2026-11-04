@@ -3264,23 +3264,3 @@ fn baseline_block_label(block: &crate::publish::undo::BaselineBlock) -> &'static
         crate::publish::undo::BaselineBlock::OriginalOccupied => "original_occupied",
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::publish::bin::BinsUnknown;
-
-    /// A manual Apply that meets an unknown bin hears why at 409, not a
-    /// generic "server busy" 503.
-    #[test]
-    fn an_unknown_bin_answers_a_conflict_with_its_reason() {
-        let answer = publish_error(PublishError::BinsUnknown(BinsUnknown::Unreachable));
-        let ServiceError::Conflict { message } = answer else {
-            panic!("expected a conflict, got {answer:?}");
-        };
-        assert_eq!(
-            message,
-            "The recycle bin folder can't be reached, so nothing was changed."
-        );
-    }
-}

@@ -261,8 +261,10 @@ mod tests {
         }
     }
 
+    /// A dirty mark on a known root requests a policy-apply scan; one on a
+    /// root that is gone clears as a hint, with no scan.
     #[tokio::test]
-    async fn dirty_marks_request_a_policy_apply_scan() {
+    async fn dirty_marks_request_a_scan_or_clear() {
         let (_dir, coordinator) = coordinator();
         let coordinator = coordinator.with_wakeups(WorkWakeups::new());
         let dirty = DirtyScopes::new();
@@ -275,6 +277,14 @@ mod tests {
         let history = coordinator.history(10).unwrap();
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].trigger, ScanTrigger::PolicyApply);
+
+        let (_gone_dir, coordinator) = self::coordinator();
+        let dirty = DirtyScopes::new();
+        dirty.mark("removed-root");
+        let inputs = self::inputs(dirty.clone());
+        supervise_once(&coordinator, &inputs).await;
+        assert!(dirty.is_empty(), "unresolvable marks clear without a scan");
+        assert!(coordinator.current_runs().unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -295,17 +305,6 @@ mod tests {
                 .all(|run| run.state == super::super::models::RunState::Queued),
             "no run leaves queued under shutdown"
         );
-    }
-
-    #[tokio::test]
-    async fn unresolvable_dirty_marks_clear_as_hints() {
-        let (_dir, coordinator) = coordinator();
-        let dirty = DirtyScopes::new();
-        dirty.mark("removed-root");
-        let inputs = inputs(dirty.clone());
-        supervise_once(&coordinator, &inputs).await;
-        assert!(dirty.is_empty(), "unresolvable marks clear without a scan");
-        assert!(coordinator.current_runs().unwrap().is_empty());
     }
 
     #[tokio::test]

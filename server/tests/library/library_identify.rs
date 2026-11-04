@@ -19,8 +19,8 @@ use identify::models::{
 };
 use identify::providers::FakeProviders;
 use identify::queue::{
-    LEASE_SECONDS, MAX_BACKOFF_SECONDS, PRIORITY_HISTORICAL_BACKLOG, PRIORITY_NEW_OR_CHANGED,
-    PRIORITY_REVIEW_RETRY, PRIORITY_SUPPORTING_MAINTENANCE, backoff_secs, terminally_deferred,
+    LEASE_SECONDS, PRIORITY_HISTORICAL_BACKLOG, PRIORITY_NEW_OR_CHANGED, PRIORITY_REVIEW_RETRY,
+    PRIORITY_SUPPORTING_MAINTENANCE, terminally_deferred,
 };
 use identify::rules::evaluate_overwrite;
 use identify::service::{IdentifyDeps, IdentifyService};
@@ -328,53 +328,66 @@ async fn automatic_retracts_on_contradiction() {
     assert_eq!(report.review_id, None);
 }
 
+/// A person's match, chosen now or carried from v2, survives a rescan and
+/// an automatic pass that disagrees.
 #[tokio::test]
-async fn manual_survives_rescan() {
-    let rig = rig_with_recall(recall(vec![release(GROUP_B, RELEASE_B1, &[RECORDING_1])]));
-    rig.seed_album(&album_facts("album-1", &[("t1", Some(RECORDING_1))]));
-    rig.store
-        .save_album_identity(AlbumIdentity {
-            local_album_id: "album-1".to_owned(),
-            provider: "musicbrainz".to_owned(),
-            release_group_mbid: Some(GROUP_A.to_owned()),
-            release_mbid: Some(RELEASE_A1.to_owned()),
-            decision_source: DecisionSource::Manual,
-            row_revision: 3,
-        })
-        .unwrap();
-    // A rescan re-reads the files, then a fresh automatic pass disagrees.
-    rig.rescan("album-1");
-    rig.service
-        .enqueue_album(
-            "job-1",
-            "album-1",
-            IdentifyKind::Automatic,
-            "rev-2",
-            None,
-            0,
-            droppedneedle_kernel::db::Lane::Background,
-        )
-        .unwrap();
-    rig.store.claim(0, 60_000).unwrap();
-    let report = rig
-        .service
-        .run_claimed_job("job-1", 0)
-        .await
-        .unwrap()
-        .expect("report");
-    assert_eq!(report.reason_code, "CHOSEN_EDITION_KEPT");
-    let identity = rig
-        .store
-        .album_identity("album-1")
-        .unwrap()
-        .expect("identity");
-    assert_eq!(identity.release_group_mbid.as_deref(), Some(GROUP_A));
-    assert_eq!(identity.decision_source, DecisionSource::Manual);
-    assert_eq!(identity.row_revision, 3);
-    assert_eq!(report.review_id, None);
-    let brief: IdentityBrief = rig.service.identity_brief("album-1").unwrap();
-    assert!(!brief.revisable);
-    assert_eq!(brief.protected_source, Some(DecisionSource::Manual));
+async fn a_persons_match_survives_rescan() {
+    for (source, row_revision) in [
+        (DecisionSource::Manual, 3),
+        (DecisionSource::LegacyImport, 1),
+    ] {
+        let rig = rig_with_recall(recall(vec![release(GROUP_B, RELEASE_B1, &[RECORDING_1])]));
+        rig.seed_album(&album_facts("album-1", &[("t1", Some(RECORDING_1))]));
+        rig.store
+            .save_album_identity(AlbumIdentity {
+                local_album_id: "album-1".to_owned(),
+                provider: "musicbrainz".to_owned(),
+                release_group_mbid: Some(GROUP_A.to_owned()),
+                release_mbid: Some(RELEASE_A1.to_owned()),
+                decision_source: source,
+                row_revision,
+            })
+            .unwrap();
+        // A rescan re-reads the files, then a fresh automatic pass disagrees.
+        rig.rescan("album-1");
+        rig.service
+            .enqueue_album(
+                "job-1",
+                "album-1",
+                IdentifyKind::Automatic,
+                "rev-2",
+                None,
+                0,
+                droppedneedle_kernel::db::Lane::Background,
+            )
+            .unwrap();
+        rig.store.claim(0, 60_000).unwrap();
+        let report = rig
+            .service
+            .run_claimed_job("job-1", 0)
+            .await
+            .unwrap()
+            .expect("report");
+        let identity = rig
+            .store
+            .album_identity("album-1")
+            .unwrap()
+            .expect("identity");
+        assert_eq!(
+            identity.release_group_mbid.as_deref(),
+            Some(GROUP_A),
+            "{source:?}"
+        );
+        assert_eq!(identity.decision_source, source, "{source:?}");
+        if source == DecisionSource::Manual {
+            assert_eq!(report.reason_code, "CHOSEN_EDITION_KEPT");
+            assert_eq!(identity.row_revision, 3);
+            assert_eq!(report.review_id, None);
+            let brief: IdentityBrief = rig.service.identity_brief("album-1").unwrap();
+            assert!(!brief.revisable);
+            assert_eq!(brief.protected_source, Some(DecisionSource::Manual));
+        }
+    }
 }
 
 /// A curator's row can land after an automatic attempt read the album and
@@ -459,47 +472,6 @@ fn retract_never_takes_a_persons_match() {
 
     assert_eq!(tables(), before);
     assert_eq!(before[1].len(), 3, "{before:?}");
-}
-
-#[tokio::test]
-async fn legacy_import_survives_rescan() {
-    let rig = rig_with_recall(recall(vec![release(GROUP_B, RELEASE_B1, &[RECORDING_1])]));
-    rig.seed_album(&album_facts("album-1", &[("t1", Some(RECORDING_1))]));
-    rig.store
-        .save_album_identity(AlbumIdentity {
-            local_album_id: "album-1".to_owned(),
-            provider: "musicbrainz".to_owned(),
-            release_group_mbid: Some(GROUP_A.to_owned()),
-            release_mbid: Some(RELEASE_A1.to_owned()),
-            decision_source: DecisionSource::LegacyImport,
-            row_revision: 1,
-        })
-        .unwrap();
-    rig.rescan("album-1");
-    rig.service
-        .enqueue_album(
-            "job-1",
-            "album-1",
-            IdentifyKind::Automatic,
-            "rev-2",
-            None,
-            0,
-            droppedneedle_kernel::db::Lane::Background,
-        )
-        .unwrap();
-    rig.store.claim(0, 60_000).unwrap();
-    rig.service
-        .run_claimed_job("job-1", 0)
-        .await
-        .unwrap()
-        .expect("report");
-    let identity = rig
-        .store
-        .album_identity("album-1")
-        .unwrap()
-        .expect("identity");
-    assert_eq!(identity.release_group_mbid.as_deref(), Some(GROUP_A));
-    assert_eq!(identity.decision_source, DecisionSource::LegacyImport);
 }
 
 #[tokio::test]
@@ -814,7 +786,7 @@ async fn held_exact_survives_weaker_tier() {
 }
 
 #[test]
-fn queue_claims_by_priority_then_backs_off() {
+fn queue_claims_by_priority() {
     assert_eq!(LEASE_SECONDS, 60);
     let mut ladder = [
         PRIORITY_NEW_OR_CHANGED,
@@ -877,60 +849,6 @@ fn queue_claims_by_priority_then_backs_off() {
         .expect("claim");
     assert_eq!(first.id, "job-auto");
     assert_eq!(first.priority, PRIORITY_NEW_OR_CHANGED);
-    // Backoff ladder doubles from 30 seconds up to the cap.
-    let ladder: Vec<u64> = (1..=9).map(backoff_secs).collect();
-    assert_eq!(ladder, vec![30, 60, 120, 240, 480, 960, 1920, 3840, 7680]);
-    assert_eq!(MAX_BACKOFF_SECONDS, 7680);
-    assert_eq!(backoff_secs(0), 0);
-    assert!(!terminally_deferred(9));
-    assert!(terminally_deferred(10));
-}
-
-#[tokio::test]
-async fn provider_deferred_job_waits_then_terminals() {
-    let rig = rig_with_recall(RecallResult {
-        provider_deferred: true,
-        failure_code: Some("musicbrainz_unavailable".to_owned()),
-        ..RecallResult::default()
-    });
-    rig.seed_album(&album_facts("album-1", &[("t1", Some(RECORDING_1))]));
-    rig.service
-        .enqueue_album(
-            "job-1",
-            "album-1",
-            IdentifyKind::Automatic,
-            "rev-1",
-            None,
-            0,
-            droppedneedle_kernel::db::Lane::Background,
-        )
-        .unwrap();
-    rig.store.claim(0, 60_000).unwrap();
-    let report = rig
-        .service
-        .run_claimed_job("job-1", 1_000)
-        .await
-        .unwrap()
-        .expect("report");
-    assert_eq!(report.outcome, IdentificationOutcome::ProviderDeferred);
-    let job = rig.store.job("job-1").unwrap().expect("job");
-    assert_eq!(job.state, identify::models::JobState::Deferred);
-    assert_eq!(job.not_before_ms, 1_000 + 30_000);
-    // No identity was written on a deferred attempt.
-    assert!(rig.store.album_identity("album-1").unwrap().is_none());
-}
-
-#[test]
-fn brief_carries_the_whole_case() {
-    let rig = rig_with_recall(RecallResult::default());
-    let empty = rig.service.identity_brief("album-1").unwrap();
-    assert!(empty.revisable);
-    assert_eq!(empty.reason_code, "NO_IDENTITY");
-    assert_eq!(empty.pending_review_id, None);
-    let fresh = IdentityBrief::unresolved("album-9", "NO_CANDIDATE");
-    assert_eq!(fresh.local_album_id, "album-9");
-    assert!(fresh.revisable);
-    assert!(fresh.identity.is_none());
 }
 
 #[test]

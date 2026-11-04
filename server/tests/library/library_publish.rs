@@ -412,101 +412,143 @@ fn hidden_leftovers(dir: &std::path::Path) -> Vec<PathBuf> {
 
 // --- Seal briefs: stale state is rejected before any mutation. ---
 
-#[test]
-fn seal_rejects_stale_file() {
-    let fix = fixture("stale-file");
-    let (bundle, docs) = two_track_bundle(&fix, PlanKind::Move);
-    let (sealed, mut live) = seal(&bundle);
-    live.fingerprints.insert(
-        "track-a".to_string(),
-        FileFingerprint {
-            size: 3,
-            sha256: "changed".to_string(),
-        },
-    );
-    let mut publisher = open_publisher(&fix);
-    let err = publisher.publish(&sealed, &live, &docs).unwrap_err();
-    assert!(matches!(err, PublishError::Validation(_)), "got {err:?}");
-    assert!(matches!(
-        sealed.recheck(&live),
-        Err(SealError::StaleFile(_))
-    ));
+/// Nothing of `bundle-1` was recorded: no journal row and no operation.
+fn assert_nothing_recorded(fix: &Fixture, case: &str) {
+    let conn = open_db(fix);
     assert!(
-        fix.sandbox
-            .resolve("music", "organized/a.flac")
+        JournalStore::new(&conn)
+            .bundle("bundle-1")
             .unwrap()
-            .symlink_metadata()
-            .is_err()
+            .is_empty(),
+        "{case}: no journal row"
     );
+    let operations: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM library_publish_operations WHERE bundle_id = 'bundle-1'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(operations, 0, "{case}: no operation row");
 }
 
+/// A preview whose rechecked state changed in any one field, or an item
+/// never sealed against its rows, is refused before anything is recorded,
+/// staged or placed.
 #[test]
-fn seal_rejects_stale_identity() {
-    let fix = fixture("stale-identity");
+fn seal_refuses_stale_or_unsealed_previews() {
+    let fix = fixture("stale-preview");
     let (bundle, docs) = two_track_bundle(&fix, PlanKind::Move);
-    let (sealed, mut live) = seal(&bundle);
-    let mut changed = test_identity();
-    changed.release_track_mbid = "rt-other".to_string();
-    live.identities.insert("track-b".to_string(), changed);
+    let (sealed, fresh) = seal(&bundle);
+    let dest = fix.sandbox.resolve("music", "organized/a.flac").unwrap();
     let mut publisher = open_publisher(&fix);
-    let err = publisher.publish(&sealed, &live, &docs).unwrap_err();
-    assert!(matches!(err, PublishError::Validation(_)), "got {err:?}");
-    assert!(matches!(
-        sealed.recheck(&live),
-        Err(SealError::StaleIdentity(_))
-    ));
-}
+    #[allow(clippy::type_complexity)]
+    let cases: [(&str, fn(&mut SealRecheck), fn(&SealError) -> bool); 8] = [
+        (
+            "stale file",
+            |live| {
+                live.fingerprints.insert(
+                    "track-a".to_string(),
+                    FileFingerprint {
+                        size: 3,
+                        sha256: "changed".to_string(),
+                    },
+                );
+            },
+            |err| matches!(err, SealError::StaleFile(_)),
+        ),
+        (
+            "stale identity",
+            |live| {
+                let mut changed = test_identity();
+                changed.release_track_mbid = "rt-other".to_string();
+                live.identities.insert("track-b".to_string(), changed);
+            },
+            |err| matches!(err, SealError::StaleIdentity(_)),
+        ),
+        (
+            "stale profile",
+            |live| live.profile_revision = 8,
+            |err| matches!(err, SealError::StaleProfile(_)),
+        ),
+        (
+            "stale policy",
+            |live| live.policy_revision = 6,
+            |err| matches!(err, SealError::StalePolicy(_)),
+        ),
+        (
+            "stale override",
+            |live| {
+                live.overrides.insert("track-a".to_string(), 99);
+            },
+            |err| matches!(err, SealError::StaleProfile(text) if text.contains("override")),
+        ),
+        (
+            "stale naming",
+            |live| live.naming_revision = 8,
+            |err| matches!(err, SealError::StaleProfile(_)),
+        ),
+        (
+            "expired",
+            |live| live.today_day = 100,
+            |err| matches!(err, SealError::Expired),
+        ),
+        (
+            "bad token",
+            |live| live.token_hash = "wrong".to_string(),
+            |err| matches!(err, SealError::BadToken),
+        ),
+    ];
+    for (case, stale, expected) in cases {
+        let mut live = fresh.clone();
+        stale(&mut live);
+        let err = publisher.publish(&sealed, &live, &docs).unwrap_err();
+        assert!(
+            matches!(err, PublishError::Validation(_)),
+            "{case}: got {err:?}"
+        );
+        let refused = sealed.recheck(&live).unwrap_err();
+        assert!(expected(&refused), "{case}: got {refused:?}");
+        assert!(
+            dest.symlink_metadata().is_err(),
+            "{case}: the destination is not created"
+        );
+        assert_nothing_recorded(&fix, case);
+    }
 
-#[test]
-fn seal_rejects_stale_profile() {
-    let fix = fixture("stale-profile");
-    let (bundle, docs) = two_track_bundle(&fix, PlanKind::Move);
-    let (sealed, mut live) = seal(&bundle);
-    live.profile_revision = 8;
-    let mut publisher = open_publisher(&fix);
+    let (mut unsealed, docs) = two_track_bundle(&fix, PlanKind::Move);
+    unsealed.items[0].sealed = None;
+    let (sealed, live) = seal(&unsealed);
     let err = publisher.publish(&sealed, &live, &docs).unwrap_err();
-    assert!(matches!(err, PublishError::Validation(_)), "got {err:?}");
-    assert!(matches!(
-        sealed.recheck(&live),
-        Err(SealError::StaleProfile(_))
-    ));
-}
-
-#[test]
-fn seal_rejects_stale_policy() {
-    let fix = fixture("stale-policy");
-    let (bundle, docs) = two_track_bundle(&fix, PlanKind::Move);
-    let (sealed, mut live) = seal(&bundle);
-    live.policy_revision = 6;
-    let mut publisher = open_publisher(&fix);
-    let err = publisher.publish(&sealed, &live, &docs).unwrap_err();
-    assert!(matches!(err, PublishError::Validation(_)), "got {err:?}");
-    assert!(matches!(
-        sealed.recheck(&live),
-        Err(SealError::StalePolicy(_))
-    ));
-}
-
-#[test]
-fn seal_rejects_expired_and_bad_token() {
-    let fix = fixture("stale-token");
-    let (bundle, _) = two_track_bundle(&fix, PlanKind::Move);
-    let (sealed, mut live) = seal(&bundle);
-    live.today_day = 100;
-    assert!(matches!(sealed.recheck(&live), Err(SealError::Expired)));
-    live.today_day = 50;
-    live.token_hash = "wrong".to_string();
-    assert!(matches!(sealed.recheck(&live), Err(SealError::BadToken)));
+    assert!(
+        matches!(err, PublishError::Validation(_)),
+        "unsealed item: got {err:?}"
+    );
+    assert_nothing_recorded(&fix, "unsealed item");
 }
 
 // --- Happy path: two-file album plus sidecar commits atomically. ---
 
+/// A move of two files and a sidecar commits as one: every file lands
+/// staged, the catalog follows in one revision, a hard link to a source
+/// keeps the original bytes, and only the targeted root is probed.
 #[test]
-fn move_bundle_commits_atomically() {
+fn a_move_bundle_commits_atomically() {
     let fix = fixture("happy-move");
+    let incoming = fix.dir.join("incoming");
+    let touched = || std::fs::metadata(&incoming).unwrap().modified().unwrap();
+    let before = touched();
     let (bundle, docs) = two_track_bundle(&fix, PlanKind::Move);
+    let source = fix.sandbox.resolve("music", "staging/a.flac").unwrap();
+    let link = fix.sandbox.resolve("music", "staging/a-link.flac").unwrap();
+    std::fs::hard_link(&source, &link).unwrap();
     let (sealed, live) = seal(&bundle);
     let mut publisher = open_publisher(&fix);
+    assert_eq!(
+        fix.sandbox.placement_mode("music"),
+        PlacementMode::Unknown,
+        "nothing is probed before a bundle"
+    );
     let outcome = publisher.publish(&sealed, &live, &docs).unwrap();
     assert_eq!(outcome, PublishOutcome::Committed);
 
@@ -557,6 +599,23 @@ fn move_bundle_commits_atomically() {
     assert_eq!(at_dest, 1);
     // Nothing the server owns is left inside the music root.
     assert!(hidden_leftovers(&fix.dir.join("music")).is_empty());
+
+    // The placement probe ran only on the root the bundle targets.
+    assert_eq!(fix.sandbox.placement_mode("music"), PlacementMode::Rename);
+    assert_eq!(
+        fix.sandbox.placement_mode("incoming"),
+        PlacementMode::Unknown
+    );
+    assert_eq!(touched(), before, "the other root was never written to");
+    assert_eq!(std::fs::read_dir(&incoming).unwrap().count(), 0);
+
+    // The published file is a new inode: the source's other name still
+    // holds the original bytes.
+    assert_eq!(
+        std::fs::read(&link).unwrap(),
+        std::fs::read(fixtures_dir().join("management_full.flac")).unwrap(),
+        "the hard link keeps the original bytes"
+    );
 }
 
 // --- Crash matrix: restart resumes or compensates at every phase. ---
@@ -690,36 +749,113 @@ fn crash_at_every_phase_resumes_without_half_state() {
     }
 }
 
+/// A write in place stopped at any phase before its commit resumes: each
+/// file ends as the staged write (or the original, when no tag changed),
+/// no hidden name is left and every row is cleaned. A resume that has no
+/// backup yet records one as it sets the original aside.
 #[test]
-fn same_path_crash_keeps_original_until_commit() {
-    let fix = fixture("crash-same-path");
-    let (bundle, docs) = two_track_bundle(&fix, PlanKind::SamePath);
-    let (sealed, live) = seal(&bundle);
-    let mut publisher = open_publisher(&fix);
-    publisher.set_crash_point(Some(CrashPoint::BeforeCatalogCommit));
-    let err = publisher.publish(&sealed, &live, &docs).unwrap_err();
-    assert!(matches!(err, PublishError::InjectedCrash(_)));
-    drop(publisher);
+fn same_path_crash_at_each_phase_resumes() {
+    let original = std::fs::read(fixtures_dir().join("management_full.flac")).unwrap();
+    for (case, point, unchanged) in [
+        (
+            "before the catalog commit",
+            CrashPoint::BeforeCatalogCommit,
+            false,
+        ),
+        ("backup journaled", CrashPoint::AfterBackupJournaled, false),
+        ("after staging", CrashPoint::AfterStage, false),
+        (
+            "after staging, tags unchanged",
+            CrashPoint::AfterStage,
+            true,
+        ),
+    ] {
+        let fix = fixture("crash-same-path");
+        let (mut bundle, docs) = two_track_bundle(&fix, PlanKind::SamePath);
+        if unchanged {
+            for item in bundle.items.iter_mut() {
+                item.managed_updates = TagUpdates::new();
+            }
+        }
+        let (sealed, live) = seal(&bundle);
+        let mut publisher = open_publisher(&fix);
+        publisher.set_crash_point(Some(point));
+        let err = publisher.publish(&sealed, &live, &docs).unwrap_err();
+        assert!(
+            matches!(err, PublishError::InjectedCrash(_)),
+            "{case}: got {err:?}"
+        );
+        drop(publisher);
 
-    let db = restart(&fix);
+        let db = restart(&fix);
+        let conn = open_db(&fix);
+        let journaled = JournalStore::new(&conn).bundle("bundle-1").unwrap();
+        if point == CrashPoint::AfterBackupJournaled {
+            assert!(
+                journaled.iter().any(|journal| journal.backup.is_some()),
+                "{case}: a backup path is journaled"
+            );
+        }
+        if point == CrashPoint::AfterStage && !unchanged {
+            // No backup could exist yet: publish never reached its first
+            // rename.
+            assert_eq!(journaled.len(), 2, "{case}");
+            assert!(
+                journaled.iter().all(|journal| journal.backup.is_none()),
+                "{case}: no backup before the resume"
+            );
+        }
 
-    let conn = open_db(&fix);
-    let results = reconcile(&db, &fix.sandbox).unwrap();
-    assert_eq!(results.len(), 1);
-    for item in bundle.items.iter() {
-        let dest = fix
-            .sandbox
-            .resolve(&item.dest_root, &item.dest_rel)
-            .unwrap();
-        assert_staged(&dest, &item.track_id);
+        let results = reconcile(&db, &fix.sandbox).unwrap();
+        assert_eq!(results.len(), 1, "{case}");
+        if point != CrashPoint::BeforeCatalogCommit {
+            assert_eq!(
+                results[0].action,
+                publish::RecoveryAction::ResumedCommitted,
+                "{case}"
+            );
+        }
+        if unchanged {
+            for rel in ["staging/a.flac", "staging/b.flac"] {
+                let path = fix.sandbox.resolve("music", rel).unwrap();
+                assert_eq!(std::fs::read(&path).unwrap(), original, "{case}: {rel}");
+            }
+        } else {
+            for item in bundle.items.iter() {
+                let dest = fix
+                    .sandbox
+                    .resolve(&item.dest_root, &item.dest_rel)
+                    .unwrap();
+                assert_staged(&dest, &item.track_id);
+            }
+        }
+        assert!(hidden_leftovers(&fix.dir).is_empty(), "{case}");
+        let journals = JournalStore::new(&conn).bundle("bundle-1").unwrap();
+        assert!(
+            journals
+                .iter()
+                .all(|journal| journal.state == JournalState::Cleaned),
+            "{case}: all journals cleaned"
+        );
+        if point == CrashPoint::AfterStage && !unchanged {
+            assert_eq!(journals.len(), 2, "{case}");
+            for journal in journals.iter() {
+                // Only the resume-time backup rename could have recorded this.
+                assert!(
+                    journal.backup.is_some(),
+                    "{case}: journal {} lost its backup",
+                    journal.id
+                );
+            }
+        }
+        if point != CrashPoint::BeforeCatalogCommit && !unchanged {
+            assert_eq!(
+                read_revision(&conn).unwrap(),
+                start_revision() + 1,
+                "{case}"
+            );
+        }
     }
-    assert!(hidden_leftovers(&fix.dir).is_empty());
-    let journals = JournalStore::new(&conn).bundle("bundle-1").unwrap();
-    assert!(
-        journals
-            .iter()
-            .all(|journal| journal.state == JournalState::Cleaned)
-    );
 }
 
 /// A bundle whose library folder is not there at recovery (a share not
@@ -824,74 +960,120 @@ fn a_refused_file_unwinds_the_files_staged_before_it() {
     assert_staged(&path_a, "track-a");
 }
 
-/// A crash after the first file of an album staged leaves a bundle that
-/// looks complete on disk; recovery unwinds it instead of committing it.
-#[test]
-fn a_crash_after_the_first_file_staged_unwinds() {
-    let fix = fixture("crash-first-file-staged");
-    let (bundle, docs) = two_track_bundle(&fix, PlanKind::Move);
-    let source_a = fix.sandbox.resolve("music", "staging/a.flac").unwrap();
-    let original_a = std::fs::read(&source_a).unwrap();
-    let row_a = track_row(&open_db(&fix), "track-a");
-    let (sealed, live) = seal(&bundle);
-    let mut publisher = open_publisher(&fix);
-    publisher.set_crash_point(Some(CrashPoint::AfterFirstFileStaged));
-    let err = publisher.publish(&sealed, &live, &docs).unwrap_err();
-    assert!(matches!(err, PublishError::InjectedCrash(_)), "got {err:?}");
-    drop(publisher);
-
-    let db = restart(&fix);
-
-    let conn = open_db(&fix);
-    let results = reconcile(&db, &fix.sandbox).unwrap();
-    assert_eq!(results.len(), 1);
-    assert_eq!(results[0].action, publish::RecoveryAction::Compensated);
-    assert_eq!(std::fs::read(&source_a).unwrap(), original_a);
-    assert!(
-        std::fs::symlink_metadata(fix.sandbox.resolve("music", "organized/a.flac").unwrap())
-            .is_err()
-    );
-    assert_eq!(track_row(&conn, "track-a"), row_a);
-    assert_eq!(
-        std::fs::read(fix.sandbox.resolve("music", "staging/cover.jpg").unwrap()).unwrap(),
-        b"cover-bytes"
-    );
-    assert!(
-        std::fs::symlink_metadata(fix.sandbox.resolve("music", "organized/cover.jpg").unwrap())
-            .is_err()
-    );
-    assert!(hidden_leftovers(&fix.dir).is_empty());
-    assert!(
-        JournalStore::new(&conn)
-            .active_bundles()
-            .unwrap()
-            .is_empty()
-    );
+/// Where a bundle stopped before every file was staged.
+#[derive(Debug, Clone, Copy)]
+enum BeforeStaged {
+    /// A move of two files, stopped once the first staged: on disk it
+    /// looks complete.
+    FirstFileStaged,
+    /// A write in place stopped before its file's before-state was
+    /// captured: never finished without the snapshot its undo needs.
+    BeforeTheBeforeState,
+    /// A move stopped while its first temp was written, left in part.
+    PartWrittenTemp,
+    /// A write in place with no tag change, stopped once its temp was
+    /// written: the file at its name is the original, not a second copy.
+    UnchangedWriteAtItsTemp,
 }
 
-/// A crash before a file's before-state is captured unwinds its bundle:
-/// a write is never finished without the snapshot its undo needs.
+/// A bundle stopped before every file staged is unwound by recovery, never
+/// committed: every original is home as it was and no hidden name is left.
 #[test]
-fn a_crash_before_the_before_state_unwinds() {
-    let fix = fixture("crash-before-state");
-    let (mut bundle, docs) = two_track_bundle(&fix, PlanKind::SamePath);
-    bundle.items.truncate(1);
-    let path_a = fix.sandbox.resolve("music", "staging/a.flac").unwrap();
-    let original_a = std::fs::read(&path_a).unwrap();
-    let (sealed, live) = seal(&bundle);
-    let mut publisher = open_publisher(&fix);
-    publisher.set_crash_point(Some(CrashPoint::AfterTempWritten));
-    let err = publisher.publish(&sealed, &live, &docs).unwrap_err();
-    assert!(matches!(err, PublishError::InjectedCrash(_)), "got {err:?}");
-    drop(publisher);
+fn a_crash_before_every_file_is_staged_unwinds() {
+    let original = std::fs::read(fixtures_dir().join("management_full.flac")).unwrap();
+    for case in [
+        BeforeStaged::FirstFileStaged,
+        BeforeStaged::BeforeTheBeforeState,
+        BeforeStaged::PartWrittenTemp,
+        BeforeStaged::UnchangedWriteAtItsTemp,
+    ] {
+        let fix = fixture("crash-before-staged");
+        let kind = match case {
+            BeforeStaged::FirstFileStaged | BeforeStaged::PartWrittenTemp => PlanKind::Move,
+            BeforeStaged::BeforeTheBeforeState | BeforeStaged::UnchangedWriteAtItsTemp => {
+                PlanKind::SamePath
+            }
+        };
+        let (mut bundle, docs) = two_track_bundle(&fix, kind);
+        match case {
+            BeforeStaged::BeforeTheBeforeState => bundle.items.truncate(1),
+            BeforeStaged::UnchangedWriteAtItsTemp => {
+                for item in bundle.items.iter_mut() {
+                    item.managed_updates = TagUpdates::new();
+                }
+            }
+            BeforeStaged::FirstFileStaged | BeforeStaged::PartWrittenTemp => {}
+        }
+        let point = match case {
+            BeforeStaged::FirstFileStaged => CrashPoint::AfterFirstFileStaged,
+            _ => CrashPoint::AfterTempWritten,
+        };
+        let path_a = fix.sandbox.resolve("music", "staging/a.flac").unwrap();
+        let row_a = track_row(&open_db(&fix), "track-a");
+        let (sealed, live) = seal(&bundle);
+        let mut publisher = open_publisher(&fix);
+        publisher.set_crash_point(Some(point));
+        let err = publisher.publish(&sealed, &live, &docs).unwrap_err();
+        assert!(
+            matches!(err, PublishError::InjectedCrash(_)),
+            "{case:?}: got {err:?}"
+        );
+        drop(publisher);
+        if let BeforeStaged::PartWrittenTemp = case {
+            let journals = JournalStore::new(&open_db(&fix))
+                .bundle("bundle-1")
+                .unwrap();
+            let temp = &journals[0].staged;
+            let half = std::fs::read(temp).unwrap().len() as u64 / 2;
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(temp)
+                .unwrap()
+                .set_len(half)
+                .unwrap();
+        }
 
-    let db = restart(&fix);
-
-    let results = reconcile(&db, &fix.sandbox).unwrap();
-    assert_eq!(results.len(), 1);
-    assert_eq!(results[0].action, publish::RecoveryAction::Compensated);
-    assert_eq!(std::fs::read(&path_a).unwrap(), original_a);
-    assert!(hidden_leftovers(&fix.dir).is_empty());
+        let db = restart(&fix);
+        let conn = open_db(&fix);
+        let results = reconcile(&db, &fix.sandbox).unwrap();
+        assert_eq!(results.len(), 1, "{case:?}");
+        assert_eq!(
+            results[0].action,
+            publish::RecoveryAction::Compensated,
+            "{case:?}"
+        );
+        assert_eq!(std::fs::read(&path_a).unwrap(), original, "{case:?}");
+        assert!(hidden_leftovers(&fix.dir).is_empty(), "{case:?}");
+        if let BeforeStaged::FirstFileStaged = case {
+            assert!(
+                std::fs::symlink_metadata(
+                    fix.sandbox.resolve("music", "organized/a.flac").unwrap()
+                )
+                .is_err(),
+                "{case:?}"
+            );
+            assert_eq!(track_row(&conn, "track-a"), row_a, "{case:?}");
+            assert_eq!(
+                std::fs::read(fix.sandbox.resolve("music", "staging/cover.jpg").unwrap()).unwrap(),
+                b"cover-bytes",
+                "{case:?}"
+            );
+            assert!(
+                std::fs::symlink_metadata(
+                    fix.sandbox.resolve("music", "organized/cover.jpg").unwrap()
+                )
+                .is_err(),
+                "{case:?}"
+            );
+            assert!(
+                JournalStore::new(&conn)
+                    .active_bundles()
+                    .unwrap()
+                    .is_empty(),
+                "{case:?}"
+            );
+        }
+    }
 }
 
 /// Unwinding a file whose staged copy was never written leaves the file
@@ -1115,39 +1297,127 @@ fn leftover_pass_reports_old_unjournaled_hidden_files_and_keeps_them() {
     );
 }
 
+/// What turns up at a move's destination after it staged, before it placed.
+#[derive(Debug, Clone, Copy)]
+enum Planted {
+    /// Another program's bytes.
+    ForeignBytes,
+    /// The user's own copy of the source.
+    UsersCopy,
+    /// A symlink to a file outside the library.
+    Symlink,
+}
+
+/// A move stopped after staging whose destination then holds another file
+/// never touches that file at recovery: foreign bytes or the user's copy
+/// unwind the bundle once with the sources home, and a symlink leaves the
+/// bundle for an administrator with its target untouched.
 #[test]
-fn foreign_bytes_at_an_unplaced_dest_unwind_without_deleting() {
-    let fix = fixture("foreign-dest");
-    let (bundle, docs) = two_track_bundle(&fix, PlanKind::Move);
-    let (sealed, live) = seal(&bundle);
-    let mut publisher = open_publisher(&fix);
-    publisher.set_crash_point(Some(CrashPoint::AfterStage));
-    assert!(matches!(
-        publisher.publish(&sealed, &live, &docs),
-        Err(PublishError::InjectedCrash(_))
-    ));
-    drop(publisher);
+fn another_file_at_an_unplaced_destination_is_never_touched() {
+    use std::os::unix::fs::MetadataExt as _;
+    let original = std::fs::read(fixtures_dir().join("management_full.flac")).unwrap();
+    for case in [Planted::ForeignBytes, Planted::UsersCopy, Planted::Symlink] {
+        let fix = fixture("planted-dest");
+        let (bundle, docs) = two_track_bundle(&fix, PlanKind::Move);
+        let (sealed, live) = seal(&bundle);
+        let mut publisher = open_publisher(&fix);
+        publisher.set_crash_point(Some(CrashPoint::AfterStage));
+        let err = publisher.publish(&sealed, &live, &docs).unwrap_err();
+        assert!(
+            matches!(err, PublishError::InjectedCrash(_)),
+            "{case:?}: got {err:?}"
+        );
+        drop(publisher);
 
-    let occupier = fix.sandbox.resolve("music", "organized/a.flac").unwrap();
-    std::fs::create_dir_all(occupier.parent().unwrap()).unwrap();
-    std::fs::write(&occupier, b"external-file").unwrap();
+        let dest_a = fix.sandbox.resolve("music", "organized/a.flac").unwrap();
+        let dest_b = fix.sandbox.resolve("music", "organized/b.flac").unwrap();
+        std::fs::create_dir_all(dest_a.parent().unwrap()).unwrap();
+        let canary = fix.dir.join("canary.bin");
+        let mut copy_inode = 0;
+        match case {
+            Planted::ForeignBytes => std::fs::write(&dest_a, b"external-file").unwrap(),
+            Planted::UsersCopy => {
+                let source = fix.sandbox.resolve("music", "staging/b.flac").unwrap();
+                std::fs::copy(&source, &dest_b).unwrap();
+                copy_inode = std::fs::metadata(&dest_b).unwrap().ino();
+            }
+            Planted::Symlink => {
+                std::fs::write(&canary, b"canary").unwrap();
+                std::os::unix::fs::symlink(&canary, &dest_a).unwrap();
+            }
+        }
 
-    let db = restart(&fix);
-
-    let conn = open_db(&fix);
-    let results = reconcile(&db, &fix.sandbox).unwrap();
-    assert_eq!(results.len(), 1);
-    assert!(
-        matches!(results[0].action, publish::RecoveryAction::Compensated),
-        "got {:?}",
-        results[0].action
-    );
-    assert_eq!(std::fs::read(&occupier).unwrap(), b"external-file");
-    assert_eq!(
-        std::fs::read(fix.sandbox.resolve("music", "staging/a.flac").unwrap()).unwrap(),
-        std::fs::read(fixtures_dir().join("management_full.flac")).unwrap()
-    );
-    assert_eq!(read_revision(&conn).unwrap(), start_revision());
+        let db = restart(&fix);
+        let conn = open_db(&fix);
+        let results = reconcile(&db, &fix.sandbox).unwrap();
+        assert_eq!(results.len(), 1, "{case:?}");
+        match case {
+            Planted::ForeignBytes => {
+                assert!(
+                    matches!(results[0].action, publish::RecoveryAction::Compensated),
+                    "{case:?}: got {:?}",
+                    results[0].action
+                );
+                assert_eq!(
+                    std::fs::read(&dest_a).unwrap(),
+                    b"external-file",
+                    "{case:?}"
+                );
+                assert_eq!(
+                    std::fs::read(fix.sandbox.resolve("music", "staging/a.flac").unwrap()).unwrap(),
+                    original,
+                    "{case:?}"
+                );
+                assert_eq!(read_revision(&conn).unwrap(), start_revision(), "{case:?}");
+            }
+            Planted::UsersCopy => {
+                assert_eq!(
+                    results[0].action,
+                    publish::RecoveryAction::Compensated,
+                    "{case:?}"
+                );
+                assert!(std::fs::read(&dest_b).unwrap() == original, "{case:?}");
+                assert_eq!(
+                    std::fs::metadata(&dest_b).unwrap().ino(),
+                    copy_inode,
+                    "{case:?}: the copy is never replaced"
+                );
+                for rel in ["staging/a.flac", "staging/b.flac"] {
+                    let path = fix.sandbox.resolve("music", rel).unwrap();
+                    assert!(
+                        std::fs::read(&path).unwrap() == original,
+                        "{case:?}: {rel} is home"
+                    );
+                }
+                assert!(dest_a.symlink_metadata().is_err(), "{case:?}");
+                assert!(hidden_leftovers(&fix.dir).is_empty(), "{case:?}");
+                let journals = JournalStore::new(&conn).bundle("bundle-1").unwrap();
+                assert!(
+                    journals
+                        .iter()
+                        .all(|journal| journal.state == JournalState::Compensated),
+                    "{case:?}"
+                );
+                let again = reconcile(&db, &fix.sandbox).unwrap();
+                assert!(
+                    again.is_empty(),
+                    "{case:?}: a second pass finds nothing to do"
+                );
+            }
+            Planted::Symlink => {
+                assert!(
+                    matches!(
+                        results[0].action,
+                        publish::RecoveryAction::NeedsAttention(_)
+                    ),
+                    "{case:?}: got {:?}",
+                    results[0].action
+                );
+                assert_eq!(std::fs::read(&canary).unwrap(), b"canary", "{case:?}");
+                assert_eq!(read_revision(&conn).unwrap(), start_revision(), "{case:?}");
+            }
+        }
+    }
 }
 
 #[test]
@@ -1340,22 +1610,42 @@ fn interrupted_link_is_finished_by_recovery() {
     }
 }
 
+/// What a committed move's first destination holds when recovery runs.
+#[derive(Debug, Clone, Copy)]
+enum AtCommittedDest {
+    /// The user's newer file, with the staged copy still there.
+    UsersFile,
+    /// Nothing, with the staged copy still there.
+    Free,
+    /// A symlink to a file outside the library.
+    Symlink,
+}
+
 /// After the commit, recovery restores a missing output from a staged
 /// copy that is still there, but only onto a free name. A destination
 /// holding anything else is the user's: both files stay and the bundle
-/// waits for an administrator.
+/// waits for an administrator. A destination swapped for a symlink fails
+/// closed: the link's target keeps its bytes, the sources are not cleaned
+/// through it, and once the real output is back the next pass finishes.
 #[test]
-fn committed_output_is_restored_only_onto_a_free_name() {
-    for occupied in [true, false] {
+fn a_committed_output_is_restored_only_onto_a_free_name() {
+    for case in [
+        AtCommittedDest::UsersFile,
+        AtCommittedDest::Free,
+        AtCommittedDest::Symlink,
+    ] {
         let fix = fixture("committed-restore");
         let (bundle, docs) = two_track_bundle(&fix, PlanKind::Move);
         let (sealed, live) = seal(&bundle);
         let mut publisher = open_publisher(&fix);
         publisher.set_crash_point(Some(CrashPoint::AfterCatalogCommit));
-        assert!(matches!(
-            publisher.publish(&sealed, &live, &docs),
-            Err(PublishError::InjectedCrash(_))
-        ));
+        assert!(
+            matches!(
+                publisher.publish(&sealed, &live, &docs),
+                Err(PublishError::InjectedCrash(_))
+            ),
+            "{case:?}"
+        );
         drop(publisher);
 
         let db = restart(&fix);
@@ -1365,7 +1655,40 @@ fn committed_output_is_restored_only_onto_a_free_name() {
             .bundle("bundle-1")
             .unwrap()
             .remove(0);
-        assert_eq!(first.state, JournalState::Committed);
+        assert_eq!(first.state, JournalState::Committed, "{case:?}");
+
+        if let AtCommittedDest::Symlink = case {
+            let dest = fix.sandbox.resolve("music", "organized/a.flac").unwrap();
+            let staged_bytes = std::fs::read(&dest).unwrap();
+            std::fs::remove_file(&dest).unwrap();
+            let canary = fix.dir.join("canary.bin");
+            std::fs::write(&canary, b"canary").unwrap();
+            std::os::unix::fs::symlink(&canary, &dest).unwrap();
+
+            let results = reconcile(&db, &fix.sandbox).unwrap();
+            assert!(
+                matches!(&results[0].action, publish::RecoveryAction::Deferred(reason) if reason.contains("symlink")),
+                "{case:?}: got {results:?}"
+            );
+            assert_eq!(std::fs::read(&canary).unwrap(), b"canary", "{case:?}");
+            let source = fix.sandbox.resolve("music", "staging/a.flac").unwrap();
+            assert!(
+                source.is_file(),
+                "{case:?}: source was cleaned through a symlink"
+            );
+
+            std::fs::remove_file(&dest).unwrap();
+            std::fs::write(&dest, &staged_bytes).unwrap();
+            let results = reconcile(&db, &fix.sandbox).unwrap();
+            assert_eq!(results.len(), 1, "{case:?}");
+            assert_eq!(
+                results[0].action,
+                publish::RecoveryAction::CleanupFinished,
+                "{case:?}"
+            );
+            continue;
+        }
+
         let dest = fix
             .sandbox
             .resolve(&first.dest_root, &first.dest_rel)
@@ -1373,6 +1696,7 @@ fn committed_output_is_restored_only_onto_a_free_name() {
         let staged_bytes = std::fs::read(&dest).unwrap();
         std::fs::write(&first.staged, &staged_bytes).unwrap();
         std::fs::remove_file(&dest).unwrap();
+        let occupied = matches!(case, AtCommittedDest::UsersFile);
         if occupied {
             std::fs::write(&dest, b"users-newer-file").unwrap();
         }
@@ -1384,15 +1708,27 @@ fn committed_output_is_restored_only_onto_a_free_name() {
                     results[0].action,
                     publish::RecoveryAction::NeedsAttention(_)
                 ),
-                "got {:?}",
+                "{case:?}: got {:?}",
                 results[0].action
             );
-            assert_eq!(std::fs::read(&dest).unwrap(), b"users-newer-file");
-            assert_eq!(std::fs::read(&first.staged).unwrap(), staged_bytes);
+            assert_eq!(
+                std::fs::read(&dest).unwrap(),
+                b"users-newer-file",
+                "{case:?}"
+            );
+            assert_eq!(
+                std::fs::read(&first.staged).unwrap(),
+                staged_bytes,
+                "{case:?}"
+            );
         } else {
-            assert_eq!(results[0].action, publish::RecoveryAction::CleanupFinished);
-            assert_eq!(std::fs::read(&dest).unwrap(), staged_bytes);
-            assert!(hidden_leftovers(&fix.dir).is_empty());
+            assert_eq!(
+                results[0].action,
+                publish::RecoveryAction::CleanupFinished,
+                "{case:?}"
+            );
+            assert_eq!(std::fs::read(&dest).unwrap(), staged_bytes, "{case:?}");
+            assert!(hidden_leftovers(&fix.dir).is_empty(), "{case:?}");
         }
     }
 }
@@ -1716,53 +2052,6 @@ fn a_refused_placement_during_resume_unwinds_the_bundle() {
     );
 }
 
-/// A move whose destination already holds the user's own copy of the
-/// source is not resumable and not ambiguous. The bundle unwinds once:
-/// the copy is never touched, the source stays, and nothing is left to
-/// retry.
-#[test]
-fn a_users_copy_at_the_destination_unwinds_the_resume() {
-    use std::os::unix::fs::MetadataExt as _;
-    let original = std::fs::read(fixtures_dir().join("management_full.flac")).unwrap();
-    let fix = fixture("resume-users-copy");
-    let (bundle, docs) = two_track_bundle(&fix, PlanKind::Move);
-    let (sealed, live) = seal(&bundle);
-    let mut publisher = open_publisher(&fix);
-    publisher.set_crash_point(Some(CrashPoint::AfterStage));
-    let err = publisher.publish(&sealed, &live, &docs).unwrap_err();
-    assert!(matches!(err, PublishError::InjectedCrash(_)), "got {err:?}");
-    drop(publisher);
-
-    let source = fix.sandbox.resolve("music", "staging/b.flac").unwrap();
-    let copy = fix.sandbox.resolve("music", "organized/b.flac").unwrap();
-    std::fs::create_dir_all(copy.parent().unwrap()).unwrap();
-    std::fs::copy(&source, &copy).unwrap();
-    let inode = std::fs::metadata(&copy).unwrap().ino();
-
-    let db = restart(&fix);
-
-    let conn = open_db(&fix);
-    let results = reconcile(&db, &fix.sandbox).unwrap();
-    assert_eq!(results[0].action, publish::RecoveryAction::Compensated);
-    assert!(std::fs::read(&copy).unwrap() == original);
-    assert_eq!(std::fs::metadata(&copy).unwrap().ino(), inode);
-    for rel in ["staging/a.flac", "staging/b.flac"] {
-        let path = fix.sandbox.resolve("music", rel).unwrap();
-        assert!(std::fs::read(&path).unwrap() == original, "{rel} is home");
-    }
-    let other = fix.sandbox.resolve("music", "organized/a.flac").unwrap();
-    assert!(other.symlink_metadata().is_err());
-    assert!(hidden_leftovers(&fix.dir).is_empty());
-    let journals = JournalStore::new(&conn).bundle("bundle-1").unwrap();
-    assert!(
-        journals
-            .iter()
-            .all(|journal| journal.state == JournalState::Compensated)
-    );
-    let again = reconcile(&db, &fix.sandbox).unwrap();
-    assert!(again.is_empty(), "a second pass finds nothing to do");
-}
-
 /// A same-path row with no tag change stages the file's own bytes. When
 /// an earlier row fails the bundle before that row is placed, the unwind
 /// must not take the user's untouched file for the staged copy.
@@ -1796,71 +2085,6 @@ fn unwind_keeps_an_original_that_was_never_set_aside() {
         .unwrap();
     assert_eq!(journals[1].state, JournalState::Compensated);
     assert!(std::fs::symlink_metadata(&journals[1].staged).is_err());
-}
-
-/// A write in place with no tag change stages the original's own bytes.
-/// A crash before it is placed leaves the original and its staged copy
-/// side by side, which is not a second copy of ours: recovery finishes the
-/// write, as the publish would have.
-#[test]
-fn a_same_path_write_with_unchanged_tags_resumes_after_a_crash() {
-    let original = std::fs::read(fixtures_dir().join("management_full.flac")).unwrap();
-    let fix = fixture("resume-unchanged");
-    let (mut bundle, docs) = two_track_bundle(&fix, PlanKind::SamePath);
-    for item in bundle.items.iter_mut() {
-        item.managed_updates = TagUpdates::new();
-    }
-    let (sealed, live) = seal(&bundle);
-    let mut publisher = open_publisher(&fix);
-    publisher.set_crash_point(Some(CrashPoint::AfterStage));
-    let err = publisher.publish(&sealed, &live, &docs).unwrap_err();
-    assert!(matches!(err, PublishError::InjectedCrash(_)), "got {err:?}");
-    drop(publisher);
-
-    let db = restart(&fix);
-    let results = reconcile(&db, &fix.sandbox).unwrap();
-    assert_eq!(results[0].action, publish::RecoveryAction::ResumedCommitted);
-    for rel in ["staging/a.flac", "staging/b.flac"] {
-        let path = fix.sandbox.resolve("music", rel).unwrap();
-        assert_eq!(std::fs::read(&path).unwrap(), original, "{rel}");
-    }
-    assert!(hidden_leftovers(&fix.dir).is_empty());
-    let journals = JournalStore::new(&open_db(&fix))
-        .bundle("bundle-1")
-        .unwrap();
-    assert!(
-        journals
-            .iter()
-            .all(|journal| journal.state == JournalState::Cleaned)
-    );
-}
-
-/// The placement probe writes only under a root a bundle targets, and
-/// leaves nothing there.
-#[test]
-fn only_a_targeted_root_is_probed() {
-    let fix = fixture("probe-lazy");
-    let incoming = fix.dir.join("incoming");
-    let touched = || std::fs::metadata(&incoming).unwrap().modified().unwrap();
-    let before = touched();
-    let (bundle, docs) = two_track_bundle(&fix, PlanKind::Move);
-    let (sealed, live) = seal(&bundle);
-    let mut publisher = open_publisher(&fix);
-    assert_eq!(
-        fix.sandbox.placement_mode("music"),
-        PlacementMode::Unknown,
-        "nothing is probed before a bundle"
-    );
-    publisher.publish(&sealed, &live, &docs).unwrap();
-
-    assert_eq!(fix.sandbox.placement_mode("music"), PlacementMode::Rename);
-    assert!(hidden_leftovers(&fix.dir.join("music")).is_empty());
-    assert_eq!(
-        fix.sandbox.placement_mode("incoming"),
-        PlacementMode::Unknown
-    );
-    assert_eq!(touched(), before, "the other root was never written to");
-    assert_eq!(std::fs::read_dir(&incoming).unwrap().count(), 0);
 }
 
 /// A file neither safe step can place is left alone on a root whose
@@ -2303,7 +2527,8 @@ fn replace_cover(
 /// commit, its bytes kept for undo and, as the cover the album came with,
 /// as the track's original; the new one keeps its permission bits. A
 /// publish that unwinds puts it back; one that changed since planning is
-/// never touched.
+/// never touched, nor is one whose bin is unknown or missing. A cover
+/// Undo brings back is not recorded as generated.
 #[test]
 fn a_generated_cover_replaces_the_imported_one_through_the_bin() {
     use std::os::unix::fs::PermissionsExt as _;
@@ -2383,6 +2608,71 @@ fn a_generated_cover_replaces_the_imported_one_through_the_bin() {
     assert_eq!(std::fs::read(&path).unwrap(), b"edited-since-planning");
     assert!(!bin.exists());
     assert!(hidden_leftovers(&fix.dir).is_empty());
+
+    // The bin is checked before anything moves: while the bins are unknown
+    // the replacement waits, and a library folder with no bin refuses it.
+    let (fix, path, _, published) = replace_cover(
+        "cover-bins-unknown",
+        IMPORTED_COVER,
+        CoverRun {
+            sandbox: Some(|fix| {
+                fix.sandbox
+                    .clone()
+                    .with_bins_unknown(publish::bin::BinsUnknown::SettingsUnread)
+            }),
+            ..CoverRun::default()
+        },
+    );
+    assert!(
+        matches!(published, Err(PublishError::BinsUnknown(_))),
+        "bins unknown: {published:?}"
+    );
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        IMPORTED_COVER,
+        "bins unknown"
+    );
+    assert!(hidden_leftovers(&fix.dir).is_empty(), "bins unknown");
+
+    let (fix, path, _, published) = replace_cover(
+        "cover-no-bin",
+        IMPORTED_COVER,
+        CoverRun {
+            sandbox: Some(|fix| {
+                Sandbox::new(vec![
+                    Root::library("music", fix.dir.join("music")),
+                    Root::library("incoming", fix.dir.join("incoming")),
+                ])
+                .unwrap()
+            }),
+            ..CoverRun::default()
+        },
+    );
+    assert!(
+        matches!(published, Err(PublishError::Interrupted(_))),
+        "no bin: {published:?}"
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), IMPORTED_COVER, "no bin");
+    assert!(hidden_leftovers(&fix.dir).is_empty(), "no bin");
+
+    // A cover Undo brings back is the person's own: placed like any
+    // generated file, but recorded as nothing Library Management made, so
+    // a later "Restore originals" never takes it away.
+    let (fix, path, _, published) = replace_cover(
+        "cover-put-back",
+        IMPORTED_COVER,
+        CoverRun {
+            put_back: true,
+            ..CoverRun::default()
+        },
+    );
+    published.expect("the cover is put back");
+    assert_eq!(std::fs::read(&path).unwrap(), ARCHIVE_COVER, "put back");
+    assert_eq!(
+        outputs_follow_the_rule(&open_db(&fix)),
+        0,
+        "put back: nothing recorded"
+    );
 }
 
 /// A crash at any point of a cover replacement, from staging to the move
@@ -2421,74 +2711,6 @@ fn a_cover_replacement_loses_nothing_at_any_crash() {
         }
         assert!(hidden_leftovers(&fix.dir).is_empty(), "{crash:?}");
     }
-}
-
-/// A cover replacement checks its bin before anything moves: while the
-/// bins are unknown it waits, and a library folder with no bin refuses it.
-/// Either way the old cover stays where it is.
-#[test]
-fn a_cover_replacement_waits_for_a_bin_and_refuses_without_one() {
-    let (fix, path, _, published) = replace_cover(
-        "cover-bins-unknown",
-        IMPORTED_COVER,
-        CoverRun {
-            sandbox: Some(|fix| {
-                fix.sandbox
-                    .clone()
-                    .with_bins_unknown(publish::bin::BinsUnknown::SettingsUnread)
-            }),
-            ..CoverRun::default()
-        },
-    );
-    assert!(
-        matches!(published, Err(PublishError::BinsUnknown(_))),
-        "{published:?}"
-    );
-    assert_eq!(std::fs::read(&path).unwrap(), IMPORTED_COVER);
-    assert!(hidden_leftovers(&fix.dir).is_empty());
-
-    let (fix, path, _, published) = replace_cover(
-        "cover-no-bin",
-        IMPORTED_COVER,
-        CoverRun {
-            sandbox: Some(|fix| {
-                Sandbox::new(vec![
-                    Root::library("music", fix.dir.join("music")),
-                    Root::library("incoming", fix.dir.join("incoming")),
-                ])
-                .unwrap()
-            }),
-            ..CoverRun::default()
-        },
-    );
-    assert!(
-        matches!(published, Err(PublishError::Interrupted(_))),
-        "{published:?}"
-    );
-    assert_eq!(std::fs::read(&path).unwrap(), IMPORTED_COVER);
-    assert!(hidden_leftovers(&fix.dir).is_empty());
-}
-
-/// A cover Undo brings back is the person's own: the publish places it like
-/// any generated file, but records it as nothing Library Management made,
-/// so a later "Restore originals" never takes it away.
-#[test]
-fn a_put_back_cover_is_not_recorded_as_generated() {
-    let (fix, path, _, published) = replace_cover(
-        "cover-put-back",
-        IMPORTED_COVER,
-        CoverRun {
-            put_back: true,
-            ..CoverRun::default()
-        },
-    );
-    published.expect("the cover is put back");
-    assert_eq!(std::fs::read(&path).unwrap(), ARCHIVE_COVER);
-    assert_eq!(
-        outputs_follow_the_rule(&open_db(&fix)),
-        0,
-        "nothing recorded"
-    );
 }
 
 /// An unwind that linked a set-aside generated file back to its name and
@@ -2689,49 +2911,6 @@ fn a_replaced_file_reaches_a_bin_with_no_safe_step() {
     assert_staged(&occupier, "track-a");
     assert_eq!(std::fs::read(&entry).unwrap(), b"replaced-library-file");
     assert!(hidden_leftovers(&fix.dir).is_empty());
-}
-
-/// A library folder reached through a link into another library folder
-/// takes no file changes, and the settings page says so, by its label.
-#[test]
-fn a_left_out_folder_is_listed_in_the_settings_warnings() {
-    use droppedneedle_kernel::runtime_config::secret_sections::{
-        IdentificationPolicy, LibraryRoot as SavedRoot, TypedLibrary,
-    };
-    let fix = fixture("left-out-warning");
-    let music = fix.dir.join("music");
-    std::fs::create_dir_all(music.join("Band")).unwrap();
-    let linked = fix.dir.join("linked");
-    std::os::unix::fs::symlink(music.join("Band"), &linked).unwrap();
-    let saved = |id: &str, label: &str, path: &std::path::Path| SavedRoot {
-        id: id.to_owned(),
-        path: path.to_string_lossy().into_owned(),
-        label: label.to_owned(),
-        policy: IdentificationPolicy::Automatic,
-        rules: Vec::new(),
-    };
-
-    let warnings = droppedneedle_library::policy::availability_warnings(&TypedLibrary {
-        library_roots: vec![
-            saved("music", "Music", &music),
-            saved("linked", "Linked", &linked),
-        ],
-        ..TypedLibrary::default()
-    });
-
-    assert!(
-        warnings.contains(
-            &"Library root Linked links into another library folder, so it takes no file changes."
-                .to_owned()
-        ),
-        "{warnings:?}"
-    );
-    assert!(
-        !warnings
-            .iter()
-            .any(|warning| warning.contains("Library root Music links")),
-        "{warnings:?}"
-    );
 }
 
 /// A bin entry never reaches through a symlink below the bin's folder:
@@ -3187,43 +3366,80 @@ fn files_under(dir: &std::path::Path) -> Vec<PathBuf> {
     out
 }
 
-/// A removal that stops after the first of its two files is journaled
-/// never counts as staged in full: recovery unwinds it. Both files stay
-/// where they were, both tracks stay listed, and nothing reaches the bin.
+/// A removal of two files stopped before its commit is unwound by
+/// recovery, never committed: one stopped after its first file was
+/// journaled never counts as staged in full, and one whose unwind put a
+/// file home and stopped before it recorded so is finished as an unwind.
+/// Both files stay home, both tracks stay listed, and nothing reaches the
+/// bin.
 #[test]
-fn a_crash_after_the_first_of_two_removals_unwinds() {
-    let fix = fixture("remove-first-row");
-    write_fixture_source(&fix, "music", "staging/a.flac", "management_full.flac");
-    write_fixture_source(&fix, "music", "staging/b.flac", "management_full.flac");
-    let bundle = removal_bundle(
-        &fix,
-        &fix.sandbox,
-        "music",
-        &[("track-a", "staging/a.flac"), ("track-b", "staging/b.flac")],
-    );
-    let (sealed, live) = seal(&bundle);
-    let mut publisher = open_publisher(&fix);
-    publisher.set_crash_point(Some(CrashPoint::AfterFirstFileStaged));
-    assert!(matches!(
-        publisher.publish(&sealed, &live, &BTreeMap::new()),
-        Err(PublishError::InjectedCrash(_))
-    ));
-    drop(publisher);
-
-    reconcile(&restart(&fix), &fix.sandbox).unwrap();
-    let conn = open_db(&fix);
-    for (track, rel) in [("track-a", "staging/a.flac"), ("track-b", "staging/b.flac")] {
-        assert!(
-            fix.sandbox.resolve("music", rel).unwrap().exists(),
-            "{rel} is home"
+fn a_stopped_removal_unwinds_with_every_file_home() {
+    for (case, point) in [
+        ("after the first file", CrashPoint::AfterFirstFileStaged),
+        (
+            "unwind stopped after a file went home",
+            CrashPoint::BeforeCatalogCommit,
+        ),
+    ] {
+        let fix = fixture("remove-stopped");
+        write_fixture_source(&fix, "music", "staging/a.flac", "management_full.flac");
+        write_fixture_source(&fix, "music", "staging/b.flac", "management_full.flac");
+        let bundle = removal_bundle(
+            &fix,
+            &fix.sandbox,
+            "music",
+            &[("track-a", "staging/a.flac"), ("track-b", "staging/b.flac")],
         );
-        assert_eq!(track_row(&conn, track).1, "indexed", "{track} is listed");
+        let (sealed, live) = seal(&bundle);
+        let mut publisher = open_publisher(&fix);
+        publisher.set_crash_point(Some(point));
+        assert!(
+            matches!(
+                publisher.publish(&sealed, &live, &BTreeMap::new()),
+                Err(PublishError::InjectedCrash(_))
+            ),
+            "{case}"
+        );
+        drop(publisher);
+        if point == CrashPoint::BeforeCatalogCommit {
+            // The unwind put track-a's file home, then the process died
+            // before the row was marked compensated.
+            let rows = JournalStore::new(&open_db(&fix))
+                .bundle("bundle-r")
+                .unwrap();
+            let row_a = rows
+                .iter()
+                .find(|row| {
+                    row.replaces
+                        .as_ref()
+                        .and_then(|replaced| replaced.track_id.as_deref())
+                        == Some("track-a")
+                })
+                .unwrap();
+            assert_eq!(row_a.state, JournalState::Published, "{case}");
+            let a = fix.sandbox.resolve("music", "staging/a.flac").unwrap();
+            std::fs::rename(&row_a.staged, &a).unwrap();
+        }
+
+        reconcile(&restart(&fix), &fix.sandbox).unwrap();
+        let conn = open_db(&fix);
+        for (track, rel) in [("track-a", "staging/a.flac"), ("track-b", "staging/b.flac")] {
+            assert!(
+                fix.sandbox.resolve("music", rel).unwrap().exists(),
+                "{case}: {rel} is home"
+            );
+            assert_eq!(
+                track_row(&conn, track).1,
+                "indexed",
+                "{case}: {track} is listed"
+            );
+        }
+        assert!(
+            files_under(&fix.dir.join("bin")).is_empty(),
+            "{case}: nothing in the bin"
+        );
+        assert!(hidden_leftovers(&fix.dir).is_empty(), "{case}");
     }
-    assert!(
-        files_under(&fix.dir.join("bin")).is_empty(),
-        "nothing in the bin"
-    );
-    assert!(hidden_leftovers(&fix.dir).is_empty());
 }
 
 /// [`removal_bundle`] with `sidecars` (path, the folder it goes with when
@@ -3316,34 +3532,108 @@ fn a_removal_that_stops_or_is_refused_leaves_its_sidecars_home() {
     }
 }
 
-/// A file that went after its removal was planned fails the removal with
-/// the collision the caller reads as "changed", and the bundle is unwound.
+/// How a removed file changes after its removal was planned.
+#[derive(Debug, Clone, Copy)]
+enum RemovalChange {
+    /// The file went before the removal ran.
+    Went,
+    /// The second of two files is saved by another program as it is set
+    /// aside, after the first already was.
+    SavedAsItIsSetAside,
+    /// The file is edited in place after the removal read it, keeping its
+    /// size and modified time; its change time gives it away.
+    EditedInPlace,
+}
+
+/// A removal whose file changed since its plan fails with the collision
+/// the caller reads as "changed" and unwinds as a whole: every file is as
+/// it now is, at its own name, its track still listed, and nothing reaches
+/// the bin.
 #[test]
-fn a_removal_whose_file_went_since_its_plan_reports_a_change() {
-    let fix = fixture("remove-file-went");
-    write_fixture_source(&fix, "music", "staging/a.flac", "management_full.flac");
-    let bundle = removal_bundle(
-        &fix,
-        &fix.sandbox,
-        "music",
-        &[("track-a", "staging/a.flac")],
-    );
-    std::fs::remove_file(fix.sandbox.resolve("music", "staging/a.flac").unwrap()).unwrap();
-    let (sealed, live) = seal(&bundle);
-    let mut publisher = open_publisher(&fix);
-    let err = publisher
-        .publish(&sealed, &live, &BTreeMap::new())
-        .unwrap_err();
-    assert!(matches!(err, PublishError::Collision(_)), "got {err:?}");
-    let journals = JournalStore::new(&open_db(&fix))
-        .bundle("bundle-r")
-        .unwrap();
-    assert!(
-        journals
-            .iter()
-            .all(|journal| journal.state == JournalState::Compensated)
-    );
-    assert_eq!(track_row(&open_db(&fix), "track-a").1, "indexed");
+fn a_removal_whose_file_changed_since_its_plan_unwinds() {
+    for case in [
+        RemovalChange::Went,
+        RemovalChange::SavedAsItIsSetAside,
+        RemovalChange::EditedInPlace,
+    ] {
+        let fix = fixture("remove-changed");
+        write_fixture_source(&fix, "music", "staging/a.flac", "management_full.flac");
+        let a = fix.sandbox.resolve("music", "staging/a.flac").unwrap();
+        let a_bytes = std::fs::read(&a).unwrap();
+        let tracks: &[(&str, &str)] = match case {
+            RemovalChange::SavedAsItIsSetAside => {
+                write_fixture_source(&fix, "music", "staging/b.flac", "management_full.flac");
+                &[("track-a", "staging/a.flac"), ("track-b", "staging/b.flac")]
+            }
+            RemovalChange::Went | RemovalChange::EditedInPlace => &[("track-a", "staging/a.flac")],
+        };
+        let bundle = removal_bundle(&fix, &fix.sandbox, "music", tracks);
+        let mut edited = Vec::new();
+        match case {
+            RemovalChange::Went => std::fs::remove_file(&a).unwrap(),
+            RemovalChange::EditedInPlace => {
+                edit_keeping_size_and_mtime(&a);
+                edited = std::fs::read(&a).unwrap();
+            }
+            RemovalChange::SavedAsItIsSetAside => {}
+        }
+        let (sealed, live) = seal(&bundle);
+        let mut publisher = open_publisher(&fix);
+        if let RemovalChange::SavedAsItIsSetAside = case {
+            publisher.set_before_set_aside(Some(Box::new(|dest| {
+                if dest.ends_with("b.flac") {
+                    std::fs::write(dest, b"saved by another program").unwrap();
+                }
+            })));
+        }
+
+        let err = publisher
+            .publish(&sealed, &live, &BTreeMap::new())
+            .unwrap_err();
+
+        assert!(
+            matches!(err, PublishError::Collision(_)),
+            "{case:?}: got {err:?}"
+        );
+        let conn = open_db(&fix);
+        assert_eq!(track_row(&conn, "track-a").1, "indexed", "{case:?}");
+        assert!(hidden_leftovers(&fix.dir).is_empty(), "{case:?}");
+        match case {
+            RemovalChange::Went => {
+                let journals = JournalStore::new(&conn).bundle("bundle-r").unwrap();
+                assert!(
+                    journals
+                        .iter()
+                        .all(|journal| journal.state == JournalState::Compensated),
+                    "{case:?}: the bundle is unwound"
+                );
+            }
+            RemovalChange::SavedAsItIsSetAside => {
+                assert_eq!(
+                    std::fs::read(&a).unwrap(),
+                    a_bytes,
+                    "{case:?}: the first file is home byte for byte"
+                );
+                assert_eq!(
+                    std::fs::read(fix.sandbox.resolve("music", "staging/b.flac").unwrap()).unwrap(),
+                    b"saved by another program",
+                    "{case:?}: the changed file is as it now is"
+                );
+                assert_eq!(track_row(&conn, "track-b").1, "indexed", "{case:?}");
+                assert!(
+                    files_under(&fix.dir.join("bin")).is_empty(),
+                    "{case:?}: nothing reached the bin"
+                );
+            }
+            RemovalChange::EditedInPlace => {
+                assert_eq!(
+                    std::fs::read(&a).unwrap(),
+                    edited,
+                    "{case:?}: the file is home as edited"
+                );
+            }
+        }
+    }
 }
 
 /// Two tracks whose files are hard links to one inode go in one removal
@@ -3434,111 +3724,6 @@ fn a_removal_the_bin_cannot_take_stays_set_aside() {
     let binned = files_under(&blocker);
     assert_eq!(binned.len(), 1);
     assert_eq!(std::fs::read(&binned[0]).unwrap(), bytes);
-    assert!(hidden_leftovers(&fix.dir).is_empty());
-}
-
-/// A removal whose second file changes as it is set aside unwinds as a
-/// whole: the first file, already set aside, goes back home, the changed
-/// one stays as it is, both tracks stay listed, and nothing is binned.
-#[test]
-fn a_file_changed_during_its_removal_unwinds_the_removal() {
-    let fix = fixture("remove-changed");
-    write_fixture_source(&fix, "music", "staging/a.flac", "management_full.flac");
-    write_fixture_source(&fix, "music", "staging/b.flac", "management_full.flac");
-    let a = fix.sandbox.resolve("music", "staging/a.flac").unwrap();
-    let a_bytes = std::fs::read(&a).unwrap();
-    let bundle = removal_bundle(
-        &fix,
-        &fix.sandbox,
-        "music",
-        &[("track-a", "staging/a.flac"), ("track-b", "staging/b.flac")],
-    );
-    let (sealed, live) = seal(&bundle);
-    let mut publisher = open_publisher(&fix);
-    publisher.set_before_set_aside(Some(Box::new(|dest| {
-        if dest.ends_with("b.flac") {
-            std::fs::write(dest, b"saved by another program").unwrap();
-        }
-    })));
-
-    let err = publisher
-        .publish(&sealed, &live, &BTreeMap::new())
-        .unwrap_err();
-
-    assert!(matches!(err, PublishError::Collision(_)), "got {err:?}");
-    assert_eq!(
-        std::fs::read(&a).unwrap(),
-        a_bytes,
-        "the first file is home"
-    );
-    assert_eq!(
-        std::fs::read(fix.sandbox.resolve("music", "staging/b.flac").unwrap()).unwrap(),
-        b"saved by another program"
-    );
-    let conn = open_db(&fix);
-    assert_eq!(track_row(&conn, "track-a").1, "indexed");
-    assert_eq!(track_row(&conn, "track-b").1, "indexed");
-    assert!(
-        files_under(&fix.dir.join("bin")).is_empty(),
-        "nothing in the bin"
-    );
-    assert!(hidden_leftovers(&fix.dir).is_empty());
-}
-
-/// A removal whose unwind put a file home and stopped before it recorded
-/// so is unwound by recovery, never committed: the file stays home with
-/// its track listed, and the other file comes back too.
-#[test]
-fn a_removal_unwind_that_stopped_after_a_file_went_home_unwinds() {
-    let fix = fixture("remove-unwind-stopped");
-    write_fixture_source(&fix, "music", "staging/a.flac", "management_full.flac");
-    write_fixture_source(&fix, "music", "staging/b.flac", "management_full.flac");
-    let bundle = removal_bundle(
-        &fix,
-        &fix.sandbox,
-        "music",
-        &[("track-a", "staging/a.flac"), ("track-b", "staging/b.flac")],
-    );
-    let (sealed, live) = seal(&bundle);
-    let mut publisher = open_publisher(&fix);
-    publisher.set_crash_point(Some(CrashPoint::BeforeCatalogCommit));
-    assert!(matches!(
-        publisher.publish(&sealed, &live, &BTreeMap::new()),
-        Err(PublishError::InjectedCrash(_))
-    ));
-    drop(publisher);
-    // The unwind put track-a's file home, then the process died before
-    // the row was marked compensated.
-    let rows = JournalStore::new(&open_db(&fix))
-        .bundle("bundle-r")
-        .unwrap();
-    let row_a = rows
-        .iter()
-        .find(|row| {
-            row.replaces
-                .as_ref()
-                .and_then(|replaced| replaced.track_id.as_deref())
-                == Some("track-a")
-        })
-        .unwrap();
-    assert_eq!(row_a.state, JournalState::Published);
-    let a = fix.sandbox.resolve("music", "staging/a.flac").unwrap();
-    std::fs::rename(&row_a.staged, &a).unwrap();
-
-    reconcile(&restart(&fix), &fix.sandbox).unwrap();
-
-    let conn = open_db(&fix);
-    for (track, rel) in [("track-a", "staging/a.flac"), ("track-b", "staging/b.flac")] {
-        assert!(
-            fix.sandbox.resolve("music", rel).unwrap().exists(),
-            "{rel} is home"
-        );
-        assert_eq!(track_row(&conn, track).1, "indexed", "{track} is listed");
-    }
-    assert!(
-        files_under(&fix.dir.join("bin")).is_empty(),
-        "nothing in the bin"
-    );
     assert!(hidden_leftovers(&fix.dir).is_empty());
 }
 
@@ -3755,39 +3940,6 @@ fn edit_keeping_size_and_mtime(path: &std::path::Path) {
     file.set_modified(modified).unwrap();
 }
 
-/// A file edited in place after its removal read it, keeping its size and
-/// modified time, is not removed: the check just before it moves sees its
-/// change time, and the file stays home as it is now.
-#[test]
-fn a_file_edited_in_place_after_it_was_read_is_not_removed() {
-    let fix = fixture("remove-edited-before-move");
-    write_fixture_source(&fix, "music", "staging/a.flac", "management_full.flac");
-    let bundle = removal_bundle(
-        &fix,
-        &fix.sandbox,
-        "music",
-        &[("track-a", "staging/a.flac")],
-    );
-    let a = fix.sandbox.resolve("music", "staging/a.flac").unwrap();
-    edit_keeping_size_and_mtime(&a);
-    let edited = std::fs::read(&a).unwrap();
-    let (sealed, live) = seal(&bundle);
-    let mut publisher = open_publisher(&fix);
-
-    let err = publisher
-        .publish(&sealed, &live, &BTreeMap::new())
-        .unwrap_err();
-
-    assert!(matches!(err, PublishError::Collision(_)), "got {err:?}");
-    assert_eq!(
-        std::fs::read(&a).unwrap(),
-        edited,
-        "the file is home as edited"
-    );
-    assert_eq!(track_row(&open_db(&fix), "track-a").1, "indexed");
-    assert!(hidden_leftovers(&fix.dir).is_empty());
-}
-
 /// A set-aside file edited in place after its removal committed, keeping
 /// its size and modified time, still reaches the bin as it is now (the
 /// change is logged) instead of waiting for good: on recovery on the same
@@ -3963,22 +4115,6 @@ fn a_remove_only_root_takes_removals_only() {
     );
 }
 
-#[test]
-fn hardlinked_audio_publishes_an_independent_inode() {
-    let fix = fixture("hardlink");
-    let (bundle, docs) = two_track_bundle(&fix, PlanKind::Move);
-    let source = fix.sandbox.resolve("music", "staging/a.flac").unwrap();
-    let link = fix.sandbox.resolve("music", "staging/a-link.flac").unwrap();
-    std::fs::hard_link(&source, &link).unwrap();
-    let (sealed, live) = seal(&bundle);
-    let mut publisher = open_publisher(&fix);
-    publisher.publish(&sealed, &live, &docs).unwrap();
-    assert_eq!(
-        std::fs::read(&link).unwrap(),
-        std::fs::read(fixtures_dir().join("management_full.flac")).unwrap()
-    );
-}
-
 // --- Preservation brief: unknown, empty, and multi-valued tags plus
 // unknown native frames survive Apply through the real save wrapper. ---
 
@@ -4101,24 +4237,101 @@ fn archive_safety_blocks_hostile_manifests() {
 
 // --- Sandbox brief: every write stays under sandbox roots. ---
 
+/// A path stays below its library folder. A `..`, an absolute path, a NUL
+/// or an unknown folder is refused. The folder itself may be reached
+/// through a link, at the folder or above it, and below it no link is
+/// followed, whether the folder is a plain one or a linked one: plain
+/// `resolve` joins through a linked component, so every mutation-time
+/// site uses the refusing form. A folder that is a link to nothing
+/// refuses, and so does a path outside its folder. A remove-only folder
+/// reached through a link keeps its plain `.recycle` as a bin.
+#[cfg(unix)]
 #[test]
-fn sandbox_rejects_escapes_and_symlinks() {
-    let fix = fixture("sandbox");
-    assert!(fix.sandbox.resolve("music", "../incoming/x").is_err());
-    assert!(fix.sandbox.resolve("music", "/abs/x").is_err());
-    assert!(fix.sandbox.resolve("music", "a\0b").is_err());
-    assert!(fix.sandbox.resolve("nope", "x").is_err());
-
-    #[cfg(unix)]
-    {
-        let target = fix.dir.join("foreign");
-        std::fs::create_dir_all(&target).unwrap();
-        let link = fix.sandbox.resolve("music", "linked").unwrap();
-        std::os::unix::fs::symlink(&target, &link).unwrap();
+fn sandbox_paths_stay_below_their_roots() {
+    use std::os::unix::fs::symlink;
+    let scratch = ScratchDir::new("publish-sandbox-roots");
+    let dir = scratch.to_path_buf();
+    let real = dir.join("real");
+    for folder in ["music", "kept", "foreign"] {
+        std::fs::create_dir_all(real.join(folder)).unwrap();
+    }
+    std::fs::write(real.join("foreign/secret.flac"), b"secret").unwrap();
+    symlink(&real, dir.join("parent")).unwrap();
+    symlink(real.join("music"), dir.join("alias")).unwrap();
+    symlink(real.join("foreign"), real.join("music/linked")).unwrap();
+    symlink(
+        real.join("foreign/secret.flac"),
+        real.join("music/alias.flac"),
+    )
+    .unwrap();
+    let kept = dir.join("parent/kept");
+    for (case, root) in [
+        ("plain folder", real.join("music")),
+        ("linked above the folder", dir.join("parent/music")),
+        ("linked at the folder", dir.join("alias")),
+    ] {
+        let sandbox = publish::Sandbox::new(vec![
+            Root::library("music", &root),
+            Root::remove_only("kept", &kept),
+            Root::recycle_of("kept", &kept),
+        ])
+        .unwrap();
+        for escape in ["../kept/x", "/abs/x", "a\0b"] {
+            assert!(
+                sandbox.resolve("music", escape).is_err(),
+                "{case}: {escape:?}"
+            );
+        }
         assert!(
-            fix.sandbox
+            sandbox.resolve("nope", "x").is_err(),
+            "{case}: unknown root"
+        );
+        assert_eq!(
+            sandbox.resolve_no_symlink("music", "Band/01.flac").unwrap(),
+            root.join("Band/01.flac"),
+            "{case}"
+        );
+        assert!(
+            sandbox.resolve("music", "linked/secret.flac").is_ok(),
+            "{case}: plain resolve joins through the link"
+        );
+        for rel in ["linked/secret.flac", "alias.flac"] {
+            assert!(
+                sandbox.resolve_no_symlink("music", rel).is_err(),
+                "{case}: {rel}"
+            );
+            assert!(
+                sandbox.resolve_removal("music", rel).is_err(),
+                "{case}: {rel}"
+            );
+        }
+        assert!(
+            sandbox
                 .resolve_no_symlink("music", "linked/x.flac")
-                .is_err()
+                .is_err(),
+            "{case}: a missing file under a linked folder"
+        );
+        let entry = kept.join(".recycle/20260101T000000-0a1b2c3d/01.flac");
+        assert_eq!(
+            sandbox.ensure_under_bin(&entry).unwrap().id,
+            ".recycle:kept",
+            "{case}: the remove-only folder's bin"
+        );
+    }
+
+    symlink(dir.join("nowhere"), dir.join("dangling")).unwrap();
+    let dangling =
+        publish::Sandbox::new(vec![Root::library("music", dir.join("dangling"))]).unwrap();
+    assert!(
+        dangling
+            .resolve_no_symlink("music", "Band/01.flac")
+            .is_err()
+    );
+    let music = real.join("music");
+    for outside in [music.join("../foreign/secret.flac"), real.join("foreign")] {
+        assert!(
+            publish::paths::ensure_no_symlink_below(&music, &outside).is_err(),
+            "{outside:?}"
         );
     }
 }
@@ -4179,60 +4392,61 @@ fn undo_live(published_sha: &str) -> UndoLive {
     }
 }
 
+/// Undo writes only while every file is as the publish left it: a file
+/// edited since, a sibling moved since, or an occupied restore path blocks
+/// the whole bundle. Later external edits are never rolled back.
 #[test]
-fn undo_rejects_later_external_edits() {
+fn plan_undo_blocks_changed_moved_and_occupied() {
     let input = undo_input("published-sha");
     let live = undo_live("published-sha");
     let plan = plan_undo("op-1", std::slice::from_ref(&input), &live, &|_, _| false);
-    assert!(plan.writable());
-    assert_eq!(plan.eligible[0].restore_rel, "staging/a.flac");
+    assert!(plan.writable(), "unchanged: writable");
+    assert_eq!(plan.eligible[0].restore_rel, "staging/a.flac", "unchanged");
     assert_eq!(
         plan.eligible[0].mgmt_state_before.as_deref(),
-        Some("managed:6")
+        Some("managed:6"),
+        "unchanged"
     );
 
     let edited = undo_live("externally-retagged");
     let plan = plan_undo("op-1", std::slice::from_ref(&input), &edited, &|_, _| false);
-    assert!(!plan.writable());
+    assert!(!plan.writable(), "edited since");
     assert_eq!(
         plan.blocked,
-        vec![("track-a".to_string(), UndoBlock::ExternallyChanged)]
+        vec![("track-a".to_string(), UndoBlock::ExternallyChanged)],
+        "edited since"
     );
-}
 
-#[test]
-fn undo_bundle_stays_nonwritable_while_any_sibling_is_stale() {
-    let first = undo_input("published-sha");
     let mut second = undo_input("published-sha");
     second.track_id = "track-b".to_string();
-    let mut live = undo_live("published-sha");
-    live.fingerprints.insert(
+    let mut moved = undo_live("published-sha");
+    moved.fingerprints.insert(
         "track-b".to_string(),
         FileFingerprint {
             size: 10,
             sha256: "published-sha".to_string(),
         },
     );
-    live.locations.insert(
+    moved.locations.insert(
         "track-b".to_string(),
         ("music".to_string(), "elsewhere/b.flac".to_string()),
     );
-    live.identities
+    moved
+        .identities
         .insert("track-b".to_string(), test_identity());
-    live.overrides.insert("track-b".to_string(), 2);
-    let plan = plan_undo("op-1", &[first, second], &live, &|_, _| false);
-    assert!(!plan.writable());
-    assert_eq!(plan.blocked.len(), 1);
-    assert_eq!(plan.blocked[0].1, UndoBlock::Moved);
-}
+    moved.overrides.insert("track-b".to_string(), 2);
+    let plan = plan_undo("op-1", &[input.clone(), second], &moved, &|_, _| false);
+    assert!(!plan.writable(), "a sibling moved");
+    assert_eq!(plan.blocked.len(), 1, "a sibling moved");
+    assert_eq!(plan.blocked[0].1, UndoBlock::Moved, "a sibling moved");
 
-#[test]
-fn undo_blocks_occupied_restore_paths() {
-    let input = undo_input("published-sha");
-    let live = undo_live("published-sha");
     let plan = plan_undo("op-1", &[input], &live, &|_, _| true);
-    assert!(!plan.writable());
-    assert_eq!(plan.blocked[0].1, UndoBlock::RestoreOccupied);
+    assert!(!plan.writable(), "restore path occupied");
+    assert_eq!(
+        plan.blocked[0].1,
+        UndoBlock::RestoreOccupied,
+        "restore path occupied"
+    );
 }
 
 // --- Baseline restore and purge briefs. ---
@@ -4458,66 +4672,8 @@ fn a_crash_in_the_move_out_of_the_database_loses_no_undo_copy() {
     assert!(blobs.get(&conn, &damaged).is_err());
 }
 
-// --- Publish hardening briefs: seal coverage, gate strictness, 4xx path
-// hygiene, symlink refusal, resume backups, MP3 frame survival. ---
-
-/// An item that moves a library track but was never sealed against its
-/// rows is refused before anything is recorded or staged.
-#[test]
-fn seal_refuses_an_unsealed_item() {
-    let fix = fixture("unsealed-item");
-    let (mut bundle, docs) = two_track_bundle(&fix, PlanKind::Move);
-    bundle.items[0].sealed = None;
-    let (sealed, live) = seal(&bundle);
-    let mut publisher = open_publisher(&fix);
-    let err = publisher.publish(&sealed, &live, &docs).unwrap_err();
-    assert!(matches!(err, PublishError::Validation(_)), "got {err:?}");
-    let conn = open_db(&fix);
-    assert!(
-        JournalStore::new(&conn)
-            .bundle("bundle-1")
-            .unwrap()
-            .is_empty()
-    );
-    let operations: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM library_publish_operations WHERE bundle_id = 'bundle-1'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap();
-    assert_eq!(operations, 0);
-}
-
-#[test]
-fn seal_rejects_stale_override() {
-    let fix = fixture("stale-override");
-    let (bundle, docs) = two_track_bundle(&fix, PlanKind::Move);
-    let (sealed, mut live) = seal(&bundle);
-    live.overrides.insert("track-a".to_string(), 99);
-    let mut publisher = open_publisher(&fix);
-    let err = publisher.publish(&sealed, &live, &docs).unwrap_err();
-    assert!(matches!(err, PublishError::Validation(_)), "got {err:?}");
-    match sealed.recheck(&live) {
-        Err(SealError::StaleProfile(text)) => assert!(text.contains("override"), "{text}"),
-        other => panic!("got {other:?}"),
-    }
-}
-
-#[test]
-fn seal_rejects_stale_naming() {
-    let fix = fixture("stale-naming");
-    let (bundle, docs) = two_track_bundle(&fix, PlanKind::Move);
-    let (sealed, mut live) = seal(&bundle);
-    live.naming_revision = 8;
-    let mut publisher = open_publisher(&fix);
-    let err = publisher.publish(&sealed, &live, &docs).unwrap_err();
-    assert!(matches!(err, PublishError::Validation(_)), "got {err:?}");
-    assert!(matches!(
-        sealed.recheck(&live),
-        Err(SealError::StaleProfile(_))
-    ));
-}
+// --- Publish hardening briefs: gate strictness, 4xx path hygiene,
+// symlink refusal, MP3 frame survival. ---
 
 #[test]
 fn capability_gate_rejects_wma_and_unhandled_capabilities() {
@@ -4601,276 +4757,18 @@ fn error_messages_name_files_not_server_paths() {
     let err = publish::staging::document_from_file(&garbage).unwrap_err();
     assert!(!err.to_string().contains(&root_text), "{err}");
     assert!(err.to_string().contains("garbage.flac"), "{err}");
-}
-
-#[cfg(unix)]
-#[test]
-fn collision_gate_reports_symlink_dest_as_root_and_rel() {
-    let fix = fixture("m1-symlink");
+    // The collision gate on a symlinked destination: root and relative
+    // path only.
     let dest = fix.sandbox.resolve("music", "organized/a.flac").unwrap();
     std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
     std::os::unix::fs::symlink("target", &dest).unwrap();
     let (bundle, _) = two_track_bundle(&fix, PlanKind::Move);
     let err = CollisionGate::check_bundle(&fix.sandbox, &bundle).unwrap_err();
-    assert!(matches!(err, PublishError::UnsafePath(_)), "got {err:?}");
-    let root_text = fix.dir.to_string_lossy().into_owned();
+    assert!(
+        matches!(err, PublishError::UnsafePath(_)),
+        "collision gate: got {err:?}"
+    );
     assert!(!err.to_string().contains(&root_text), "{err}");
-}
-
-#[cfg(unix)]
-#[test]
-fn resolve_no_symlink_refuses_linked_components() {
-    let fix = fixture("m5-resolve");
-    let target = fix.dir.join("foreign");
-    std::fs::create_dir_all(&target).unwrap();
-    std::fs::write(target.join("secret.flac"), b"secret").unwrap();
-    let link = fix.sandbox.resolve("music", "linked").unwrap();
-    std::os::unix::fs::symlink(&target, &link).unwrap();
-    // Lexical resolve succeeds, proving the bypass plain resolve()
-    // allows; every mutation-time site must use the refusing form.
-    assert!(fix.sandbox.resolve("music", "linked/secret.flac").is_ok());
-    assert!(
-        fix.sandbox
-            .resolve_no_symlink("music", "linked/secret.flac")
-            .is_err()
-    );
-    let file_link = fix.sandbox.resolve("music", "alias.flac").unwrap();
-    std::os::unix::fs::symlink(target.join("secret.flac"), &file_link).unwrap();
-    assert!(
-        fix.sandbox
-            .resolve_no_symlink("music", "alias.flac")
-            .is_err()
-    );
-}
-
-/// A library folder may be reached through a link, at the folder or
-/// above it, and below it no link is followed. A folder that is a link to
-/// nothing refuses, and so does a path outside its folder. A remove-only
-/// folder reached through a link keeps its plain `.recycle` as a bin.
-#[cfg(unix)]
-#[test]
-fn a_library_folder_may_be_reached_through_a_link() {
-    use std::os::unix::fs::symlink;
-    let scratch = ScratchDir::new("publish-linked-root");
-    let dir = scratch.to_path_buf();
-    let real = dir.join("real");
-    for folder in ["music", "kept", "foreign"] {
-        std::fs::create_dir_all(real.join(folder)).unwrap();
-    }
-    std::fs::write(real.join("foreign/secret.flac"), b"secret").unwrap();
-    symlink(&real, dir.join("parent")).unwrap();
-    symlink(real.join("music"), dir.join("alias")).unwrap();
-    symlink(real.join("foreign"), real.join("music/linked")).unwrap();
-    symlink(
-        real.join("foreign/secret.flac"),
-        real.join("music/alias.flac"),
-    )
-    .unwrap();
-    let kept = dir.join("parent/kept");
-    for root in [dir.join("parent/music"), dir.join("alias")] {
-        let sandbox = publish::Sandbox::new(vec![
-            Root::library("music", &root),
-            Root::remove_only("kept", &kept),
-            Root::recycle_of("kept", &kept),
-        ])
-        .unwrap();
-        assert_eq!(
-            sandbox.resolve_no_symlink("music", "Band/01.flac").unwrap(),
-            root.join("Band/01.flac")
-        );
-        for rel in ["linked/secret.flac", "alias.flac"] {
-            assert!(sandbox.resolve_no_symlink("music", rel).is_err(), "{rel}");
-            assert!(sandbox.resolve_removal("music", rel).is_err(), "{rel}");
-        }
-        let entry = kept.join(".recycle/20260101T000000-0a1b2c3d/01.flac");
-        assert_eq!(
-            sandbox.ensure_under_bin(&entry).unwrap().id,
-            ".recycle:kept",
-            "the remove-only folder's bin"
-        );
-    }
-
-    symlink(dir.join("nowhere"), dir.join("dangling")).unwrap();
-    let dangling =
-        publish::Sandbox::new(vec![Root::library("music", dir.join("dangling"))]).unwrap();
-    assert!(
-        dangling
-            .resolve_no_symlink("music", "Band/01.flac")
-            .is_err()
-    );
-    let music = real.join("music");
-    for outside in [music.join("../foreign/secret.flac"), real.join("foreign")] {
-        assert!(
-            publish::paths::ensure_no_symlink_below(&music, &outside).is_err(),
-            "{outside:?}"
-        );
-    }
-}
-
-#[cfg(unix)]
-#[test]
-fn symlink_at_dest_flags_attention_without_touching_target() {
-    let fix = fixture("m5-symlink-dest");
-    let (bundle, docs) = two_track_bundle(&fix, PlanKind::Move);
-    let (sealed, live) = seal(&bundle);
-    let mut publisher = open_publisher(&fix);
-    publisher.set_crash_point(Some(CrashPoint::AfterStage));
-    assert!(matches!(
-        publisher.publish(&sealed, &live, &docs),
-        Err(PublishError::InjectedCrash(_))
-    ));
-    drop(publisher);
-
-    let dest = fix.sandbox.resolve("music", "organized/a.flac").unwrap();
-    std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
-    let canary = fix.dir.join("canary.bin");
-    std::fs::write(&canary, b"canary").unwrap();
-    std::os::unix::fs::symlink(&canary, &dest).unwrap();
-
-    let db = restart(&fix);
-
-    let conn = open_db(&fix);
-    let results = reconcile(&db, &fix.sandbox).unwrap();
-    assert_eq!(results.len(), 1);
-    assert!(
-        matches!(
-            results[0].action,
-            publish::RecoveryAction::NeedsAttention(_)
-        ),
-        "got {:?}",
-        results[0].action
-    );
-    assert_eq!(std::fs::read(&canary).unwrap(), b"canary");
-    assert_eq!(read_revision(&conn).unwrap(), start_revision());
-}
-
-#[cfg(unix)]
-#[test]
-fn committed_dest_swapped_for_symlink_refuses_without_touching_target() {
-    // Cleanup hardening: a committed destination swapped for a
-    // symlink must fail closed. Reconcile refuses through the
-    // symlink-refusing resolver, the link target keeps its bytes,
-    // the uncleaned sources survive, and restoring the real output
-    // lets the next pass finish cleanup.
-    let fix = fixture("m5-cleanup-symlink");
-    let (bundle, docs) = two_track_bundle(&fix, PlanKind::Move);
-    let (sealed, live) = seal(&bundle);
-    let mut publisher = open_publisher(&fix);
-    publisher.set_crash_point(Some(CrashPoint::AfterCatalogCommit));
-    assert!(matches!(
-        publisher.publish(&sealed, &live, &docs),
-        Err(PublishError::InjectedCrash(_))
-    ));
-    drop(publisher);
-
-    let dest = fix.sandbox.resolve("music", "organized/a.flac").unwrap();
-    let staged_bytes = std::fs::read(&dest).unwrap();
-    std::fs::remove_file(&dest).unwrap();
-    let canary = fix.dir.join("canary.bin");
-    std::fs::write(&canary, b"canary").unwrap();
-    std::os::unix::fs::symlink(&canary, &dest).unwrap();
-
-    let db = restart(&fix);
-
-    let results = reconcile(&db, &fix.sandbox).unwrap();
-    assert!(
-        matches!(&results[0].action, publish::RecoveryAction::Deferred(reason) if reason.contains("symlink")),
-        "got {results:?}"
-    );
-    assert_eq!(std::fs::read(&canary).unwrap(), b"canary");
-    let source = fix.sandbox.resolve("music", "staging/a.flac").unwrap();
-    assert!(source.is_file(), "source was cleaned through a symlink");
-
-    std::fs::remove_file(&dest).unwrap();
-    std::fs::write(&dest, &staged_bytes).unwrap();
-    let results = reconcile(&db, &fix.sandbox).unwrap();
-    assert_eq!(results.len(), 1);
-    assert_eq!(results[0].action, publish::RecoveryAction::CleanupFinished);
-}
-
-/// A crash after the backup path is journaled but before the original
-/// moves there resumes with the original intact and the bundle whole.
-#[test]
-fn crash_after_backup_journaled_resumes() {
-    let fix = fixture("crash-backup-journaled");
-    let (bundle, docs) = two_track_bundle(&fix, PlanKind::SamePath);
-    let (sealed, live) = seal(&bundle);
-    let mut publisher = open_publisher(&fix);
-    publisher.set_crash_point(Some(CrashPoint::AfterBackupJournaled));
-    assert!(matches!(
-        publisher.publish(&sealed, &live, &docs),
-        Err(PublishError::InjectedCrash(_))
-    ));
-    drop(publisher);
-
-    let db = restart(&fix);
-
-    let conn = open_db(&fix);
-    let journaled = JournalStore::new(&conn).bundle("bundle-1").unwrap();
-    assert!(journaled.iter().any(|journal| journal.backup.is_some()));
-    let results = reconcile(&db, &fix.sandbox).unwrap();
-    assert_eq!(results.len(), 1);
-    assert_eq!(results[0].action, publish::RecoveryAction::ResumedCommitted);
-    for item in bundle.items.iter() {
-        let dest = fix
-            .sandbox
-            .resolve(&item.dest_root, &item.dest_rel)
-            .unwrap();
-        assert_staged(&dest, &item.track_id);
-    }
-    assert!(hidden_leftovers(&fix.dir).is_empty());
-    let journals = JournalStore::new(&conn).bundle("bundle-1").unwrap();
-    assert!(
-        journals
-            .iter()
-            .all(|journal| journal.state == JournalState::Cleaned)
-    );
-    assert_eq!(read_revision(&conn).unwrap(), start_revision() + 1);
-}
-
-#[test]
-fn same_path_after_stage_resume_retains_backup() {
-    let fix = fixture("resume-backup");
-    let (bundle, docs) = two_track_bundle(&fix, PlanKind::SamePath);
-    let (sealed, live) = seal(&bundle);
-    let mut publisher = open_publisher(&fix);
-    publisher.set_crash_point(Some(CrashPoint::AfterStage));
-    assert!(matches!(
-        publisher.publish(&sealed, &live, &docs),
-        Err(PublishError::InjectedCrash(_))
-    ));
-    drop(publisher);
-
-    // No backup could exist yet: publish never reached its first rename.
-    let db = restart(&fix);
-    let conn = open_db(&fix);
-    let before = JournalStore::new(&conn).bundle("bundle-1").unwrap();
-    assert_eq!(before.len(), 2);
-    assert!(before.iter().all(|journal| journal.backup.is_none()));
-
-    let results = reconcile(&db, &fix.sandbox).unwrap();
-    assert_eq!(results.len(), 1);
-    assert_eq!(results[0].action, publish::RecoveryAction::ResumedCommitted);
-    for item in bundle.items.iter() {
-        let dest = fix
-            .sandbox
-            .resolve(&item.dest_root, &item.dest_rel)
-            .unwrap();
-        assert_staged(&dest, &item.track_id);
-    }
-    assert!(hidden_leftovers(&fix.dir).is_empty());
-    let journals = JournalStore::new(&conn).bundle("bundle-1").unwrap();
-    assert_eq!(journals.len(), 2);
-    for journal in journals.iter() {
-        assert_eq!(journal.state, JournalState::Cleaned);
-        // Only the resume-time backup rename could have recorded this.
-        assert!(
-            journal.backup.is_some(),
-            "journal {} lost its backup",
-            journal.id
-        );
-    }
-    assert_eq!(read_revision(&conn).unwrap(), start_revision() + 1);
 }
 
 /// One same-path retag of `rel`, which holds the committed FLAC fixture.
@@ -5279,10 +5177,15 @@ fn an_expired_copy_goes_and_a_young_one_stays() {
 }
 
 /// An empty bin folder may be a share that is not mounted: a copy whose
-/// entry folder is gone counts as gone only while the bin holds another
-/// entry. Until then its row is left for a later pass.
+/// entry folder is gone counts as gone only while the bin shows another
+/// entry, and until then its row is left for a later pass. The bin is
+/// looked at again under the lock, so one that empties between the first
+/// look and the lock proves nothing gone. What proves a copy gone is read
+/// before the pass deletes anything, so a pass that deletes the last other
+/// entry still marks the gone copy beside it.
 #[test]
-fn a_copy_counts_as_gone_only_beside_other_entries() {
+fn a_copy_counts_as_gone_only_while_its_bin_shows_other_entries() {
+    let case = "every entry gone";
     let fix = fixture("expiry-unmounted");
     let copies = recycle_two(&fix);
     recycled_at(&fix, "track-a", RECYCLED_OLD);
@@ -5290,22 +5193,17 @@ fn a_copy_counts_as_gone_only_beside_other_entries() {
     for copy in copies.values() {
         std::fs::remove_dir_all(copy.parent().unwrap()).unwrap();
     }
-
     let report = run_expiry(&fix, &fix.sandbox, 200);
-    assert_eq!(report.waited, 2);
-    assert_eq!(expired_at(&fix, "track-a"), None);
-    assert_eq!(expired_at(&fix, "track-b"), None);
-
+    assert_eq!(report.waited, 2, "{case}");
+    assert_eq!(expired_at(&fix, "track-a"), None, "{case}");
+    assert_eq!(expired_at(&fix, "track-b"), None, "{case}");
+    let case = "every entry gone, then another entry shows";
     std::fs::create_dir_all(fix.dir.join("bin/29990101T000000-0a0b0c0d")).unwrap();
     run_expiry(&fix, &fix.sandbox, 200);
-    assert_eq!(expired_at(&fix, "track-a"), Some(EXPIRY_NOW_MS));
-    assert_eq!(expired_at(&fix, "track-b"), Some(EXPIRY_NOW_MS));
-}
+    assert_eq!(expired_at(&fix, "track-a"), Some(EXPIRY_NOW_MS), "{case}");
+    assert_eq!(expired_at(&fix, "track-b"), Some(EXPIRY_NOW_MS), "{case}");
 
-/// The bin is looked at again under the lock: one that empties between the
-/// first look and the lock (a share dropping out) proves nothing gone.
-#[test]
-fn a_bin_that_empties_before_the_lock_marks_nothing_gone() {
+    let case = "the other entry goes before the lock";
     let fix = fixture("expiry-unmounted-late");
     let copies = recycle_two(&fix);
     recycled_at(&fix, "track-a", RECYCLED_OLD);
@@ -5313,7 +5211,6 @@ fn a_bin_that_empties_before_the_lock_marks_nothing_gone() {
     std::fs::remove_dir_all(copies["track-a"].parent().unwrap()).unwrap();
     let other = copies["track-b"].parent().unwrap().to_path_buf();
     let aside = fix.dir.join("aside");
-
     let report = publish::expiry::expire(
         &restart(&fix),
         &publish::expiry::ExpiryPass {
@@ -5330,23 +5227,16 @@ fn a_bin_that_empties_before_the_lock_marks_nothing_gone() {
         &|| true,
     )
     .unwrap();
+    assert_eq!(report.waited, 1, "{case}");
+    assert_eq!(report.gone, 0, "{case}");
+    assert_eq!(expired_at(&fix, "track-a"), None, "{case}");
 
-    assert_eq!(report.waited, 1);
-    assert_eq!(report.gone, 0);
-    assert_eq!(expired_at(&fix, "track-a"), None);
-}
-
-/// A pass that deletes the last other entry in a bin still marks a copy
-/// it found gone there: what proves a copy gone is read before the pass
-/// deletes anything.
-#[test]
-fn emptying_the_bin_marks_a_gone_copy_beside_the_one_it_deletes() {
+    let case = "the pass deletes the last other entry";
     let fix = fixture("expiry-gone-and-due");
     let copies = recycle_two(&fix);
     recycled_at(&fix, "track-a", RECYCLED_OLD);
     recycled_at(&fix, "track-b", RECYCLED_OLD + 10.0);
     std::fs::remove_dir_all(copies["track-b"].parent().unwrap()).unwrap();
-
     let report = publish::expiry::expire(
         &restart(&fix),
         &publish::expiry::ExpiryPass {
@@ -5361,11 +5251,10 @@ fn emptying_the_bin_marks_a_gone_copy_beside_the_one_it_deletes() {
         &|| true,
     )
     .unwrap();
-
-    assert_eq!((report.deleted, report.gone), (1, 1));
-    assert!(!copies["track-a"].exists());
-    assert_eq!(expired_at(&fix, "track-a"), Some(EXPIRY_NOW_MS));
-    assert_eq!(expired_at(&fix, "track-b"), Some(EXPIRY_NOW_MS));
+    assert_eq!((report.deleted, report.gone), (1, 1), "{case}");
+    assert!(!copies["track-a"].exists(), "{case}");
+    assert_eq!(expired_at(&fix, "track-a"), Some(EXPIRY_NOW_MS), "{case}");
+    assert_eq!(expired_at(&fix, "track-b"), Some(EXPIRY_NOW_MS), "{case}");
 }
 
 /// A removed file edited in place before it reached the bin, keeping its
@@ -5519,27 +5408,6 @@ fn a_copy_edited_in_the_bin_after_it_landed_is_kept() {
     assert_eq!(std::fs::read(&copies["track-a"]).unwrap(), edited);
     assert_eq!(expired_at(&fix, "track-a"), None);
     assert!(!copies["track-b"].exists(), "the unchanged copy goes");
-}
-
-/// A copy whose bytes in the bin are no longer the ones recycled is not
-/// deleted, however old, and its row stays unmarked.
-#[test]
-fn an_expired_copy_whose_bytes_changed_is_kept() {
-    let fix = fixture("expiry-changed");
-    let copies = recycle_two(&fix);
-    recycled_at(&fix, "track-a", RECYCLED_OLD);
-    recycled_at(&fix, "track-b", RECYCLED_OLD);
-    std::fs::write(&copies["track-a"], b"FIRST REMOVED FILE").unwrap();
-
-    let report = run_expiry(&fix, &fix.sandbox, 200);
-
-    assert_eq!(report.changed, 1);
-    assert_eq!(
-        std::fs::read(&copies["track-a"]).unwrap(),
-        b"FIRST REMOVED FILE"
-    );
-    assert_eq!(expired_at(&fix, "track-a"), None);
-    assert!(!copies["track-b"].exists());
 }
 
 /// A copy in a bin that is no longer set is kept, and does not hold up a
@@ -5874,19 +5742,25 @@ fn a_plugin_file_never_replaces_one() {
     assert!(hidden_leftovers(&fix.dir).is_empty());
 }
 
-/// Undo of a plugin's add takes the file away while it still holds the
-/// bytes written, once. A file changed since stays and the undo says so;
-/// an add that never landed, and the undo itself, cannot be undone.
+/// A plugin's landed files are listed under its name, page by page; one
+/// that never landed is not. Undo of an add takes the file away while it
+/// still holds the bytes written, once, and the undo is not listed as a
+/// file of its own. A file changed since stays and the undo says so; an
+/// add that never landed, and the undo itself, cannot be undone.
 #[test]
-fn a_plugins_files_list_until_taken_back() {
+fn a_plugin_file_is_listed_and_taken_back_only_while_unchanged() {
     let bytes = b"bytes a plugin wrote".as_slice();
-    let fix = fixture("plugin-files-list");
+    let fix = fixture("plugin-files");
     let mut publisher = open_publisher(&fix);
     for (id, rel) in [("add-1", "notes/one.txt"), ("add-2", "notes/two.txt")] {
         let (sealed, live) = seal(&plugin_add(id, rel, bytes));
-        publisher
-            .publish_add(&sealed, &live, bytes.to_vec())
-            .unwrap();
+        assert_eq!(
+            publisher
+                .publish_add(&sealed, &live, bytes.to_vec())
+                .unwrap(),
+            PublishOutcome::Committed,
+            "{id}"
+        );
     }
     let (sealed, live) = seal(&plugin_add("add-3", "notes/three.txt", bytes));
     publisher.set_crash_point(Some(CrashPoint::AfterTempWritten));
@@ -5914,51 +5788,6 @@ fn a_plugins_files_list_until_taken_back() {
     );
     assert!(listed("other").is_empty());
 
-    let added = publish::add::plan_take_back(&open_db(&fix), "add-1")
-        .unwrap()
-        .unwrap();
-    let (sealed, live) = seal(&PlanBundle {
-        added: Some(added),
-        ..plugin_add("undo-1", "unused", b"")
-    });
-    publisher
-        .publish_as(&sealed, &live, &BTreeMap::new(), None)
-        .unwrap();
-    assert_eq!(
-        listed("toy"),
-        [
-            row("add-1", "notes/one.txt", true),
-            row("add-2", "notes/two.txt", false)
-        ],
-        "the undo is not listed as a file of its own"
-    );
-
-    let first = publish::add::plugin_files(&open_db(&fix), "toy", None, 1).unwrap();
-    let rest = publish::add::plugin_files(
-        &open_db(&fix),
-        "toy",
-        Some((first[0].added_at, &first[0].bundle_id)),
-        10,
-    )
-    .unwrap();
-    assert_eq!(first.len() + rest.len(), 2);
-    assert_ne!(first[0].bundle_id, rest[0].bundle_id);
-}
-
-#[test]
-fn undo_takes_a_plugin_file_only_while_unchanged() {
-    let bytes = b"bytes a plugin wrote".as_slice();
-    let fix = fixture("plugin-add-undo");
-    let mut publisher = open_publisher(&fix);
-    for (id, rel) in [("add-1", "notes/one.txt"), ("add-2", "notes/two.txt")] {
-        let (sealed, live) = seal(&plugin_add(id, rel, bytes));
-        assert_eq!(
-            publisher
-                .publish_add(&sealed, &live, bytes.to_vec())
-                .unwrap(),
-            PublishOutcome::Committed
-        );
-    }
     let take_back = |publisher: &mut Publisher<FixedSpace>, id: &str, undo: &str| {
         let added = publish::add::plan_take_back(&open_db(&fix), id).unwrap()?;
         publish::add::check_take_back(&fix.sandbox, &added.file)?;
@@ -5977,6 +5806,26 @@ fn undo_takes_a_plugin_file_only_while_unchanged() {
     take_back(&mut publisher, "add-1", "undo-1").unwrap();
     assert!(one.symlink_metadata().is_err(), "the plugin's file is gone");
     assert_eq!(
+        listed("toy"),
+        [
+            row("add-1", "notes/one.txt", true),
+            row("add-2", "notes/two.txt", false)
+        ],
+        "the undo is not listed as a file of its own"
+    );
+
+    let first = publish::add::plugin_files(&open_db(&fix), "toy", None, 1).unwrap();
+    let rest = publish::add::plugin_files(
+        &open_db(&fix),
+        "toy",
+        Some((first[0].added_at, &first[0].bundle_id)),
+        10,
+    )
+    .unwrap();
+    assert_eq!(first.len() + rest.len(), 2, "two pages hold both files");
+    assert_ne!(first[0].bundle_id, rest[0].bundle_id);
+
+    assert_eq!(
         take_back(&mut publisher, "add-1", "undo-1b"),
         Err(TakeBackRefusal::AlreadyTakenBack)
     );
@@ -5993,13 +5842,6 @@ fn undo_takes_a_plugin_file_only_while_unchanged() {
     );
     assert_eq!(std::fs::read(&two).unwrap(), b"a person's edit");
 
-    let (sealed, live) = seal(&plugin_add("add-3", "notes/three.txt", bytes));
-    publisher.set_crash_point(Some(CrashPoint::AfterTempWritten));
-    publisher
-        .publish_add(&sealed, &live, bytes.to_vec())
-        .unwrap_err();
-    publisher.set_crash_point(None);
-    reconcile(&restart(&fix), &fix.sandbox).unwrap();
     assert_eq!(
         take_back(&mut publisher, "add-3", "undo-3"),
         Err(TakeBackRefusal::NotLanded)
@@ -6173,92 +6015,96 @@ fn assert_sources_home(fix: &Fixture) {
     }
 }
 
-/// A publish that unwinds removes the folders it made for its files, and
-/// never a folder that was there before, even an empty one.
-#[test]
-fn an_unwound_move_removes_only_the_folders_it_made() {
-    let fix = fixture("unwind-folders");
-    let (bundle, docs) = folder_bundle(&fix);
-    let (sealed, live) = seal(&bundle);
-    let mut publisher = open_publisher(&fix);
-    publisher.set_place_seams(no_safe_step());
-    let err = publisher.publish(&sealed, &live, &docs).unwrap_err();
-    assert!(
-        matches!(err, PublishError::NoSafePlacement(_)),
-        "got {err:?}"
-    );
-
-    assert!(fix.dir.join("music/new").symlink_metadata().is_err());
-    assert!(fix.dir.join("music/kept").is_dir());
-    assert_sources_home(&fix);
-    assert!(hidden_leftovers(&fix.dir).is_empty());
+/// How the unwind of a [`folder_bundle`] happens.
+#[derive(Debug, Clone, Copy)]
+enum FolderUnwind {
+    /// The publish itself unwinds: no step can place the files.
+    ByThePublish,
+    /// A crash while staging; recovery unwinds.
+    CrashWhileStaging(CrashPoint),
+    /// The publish's unwind stopped before removing the folders it made,
+    /// and another program then wrote into one of them; recovery finishes.
+    StoppedFolderRemoval,
 }
 
-/// A crash while a bundle stages leaves the folders its files were going
-/// to. Recovery unwinds the bundle and removes those folders, and keeps a
-/// folder that was there before.
+/// An unwind removes the folders the publish made for its files, and never
+/// a folder that was there before, even an empty one, or one that now
+/// holds another program's file. Whether the publish unwinds or recovery
+/// does after a crash or a stopped folder removal, the sources are home
+/// and nothing is left for a later pass.
 #[test]
-fn a_crash_while_staging_leaves_no_folder_it_made() {
-    for point in [
-        CrashPoint::AfterFirstFileStaged,
-        CrashPoint::AfterTempWritten,
+fn an_unwind_removes_only_the_folders_it_made() {
+    for case in [
+        FolderUnwind::ByThePublish,
+        FolderUnwind::CrashWhileStaging(CrashPoint::AfterFirstFileStaged),
+        FolderUnwind::CrashWhileStaging(CrashPoint::AfterTempWritten),
+        FolderUnwind::StoppedFolderRemoval,
     ] {
-        let fix = fixture(&format!("staging-folders-{}", point.as_str()));
-        let (bundle, docs) = folder_bundle(&fix);
+        let fix = fixture("unwind-folders");
+        let (mut bundle, docs) = folder_bundle(&fix);
+        if let FolderUnwind::StoppedFolderRemoval = case {
+            bundle.items[1].dest_rel = "other/b.flac".to_string();
+        }
         let (sealed, live) = seal(&bundle);
         let mut publisher = open_publisher(&fix);
-        publisher.set_crash_point(Some(point));
+        match case {
+            FolderUnwind::ByThePublish => publisher.set_place_seams(no_safe_step()),
+            FolderUnwind::CrashWhileStaging(point) => publisher.set_crash_point(Some(point)),
+            FolderUnwind::StoppedFolderRemoval => {
+                publisher.set_place_seams(no_safe_step());
+                publisher.set_crash_point(Some(CrashPoint::BeforeFolderRemoval));
+            }
+        }
         let err = publisher.publish(&sealed, &live, &docs).unwrap_err();
-        assert!(matches!(err, PublishError::InjectedCrash(_)), "got {err:?}");
         drop(publisher);
-        assert!(fix.dir.join("music/new/artist").is_dir(), "{point:?}");
 
-        let db = restart(&fix);
-        let results = reconcile(&db, &fix.sandbox).unwrap();
-        assert_eq!(
-            results[0].action,
-            publish::RecoveryAction::Compensated,
-            "{point:?}"
-        );
+        let stray = fix.dir.join("music/other/notes.txt");
+        if let FolderUnwind::ByThePublish = case {
+            assert!(
+                matches!(err, PublishError::NoSafePlacement(_)),
+                "{case:?}: got {err:?}"
+            );
+        } else {
+            assert!(
+                matches!(err, PublishError::InjectedCrash(_)),
+                "{case:?}: got {err:?}"
+            );
+            assert!(fix.dir.join("music/new/artist").is_dir(), "{case:?}");
+            if let FolderUnwind::StoppedFolderRemoval = case {
+                std::fs::write(&stray, b"someone else's").unwrap();
+            }
+
+            let db = restart(&fix);
+            let results = reconcile(&db, &fix.sandbox).unwrap();
+            if let FolderUnwind::StoppedFolderRemoval = case {
+                assert_eq!(results.len(), 1, "{case:?}: {results:?}");
+                assert_eq!(
+                    std::fs::read(&stray).unwrap(),
+                    b"someone else's",
+                    "{case:?}: the other program's file stays"
+                );
+            } else {
+                assert_eq!(
+                    results[0].action,
+                    publish::RecoveryAction::Compensated,
+                    "{case:?}"
+                );
+                assert!(hidden_leftovers(&fix.dir).is_empty(), "{case:?}");
+            }
+            let again = reconcile(&db, &fix.sandbox).unwrap();
+            assert!(again.is_empty(), "{case:?}: nothing left to do: {again:?}");
+        }
+
         assert!(
             fix.dir.join("music/new").symlink_metadata().is_err(),
-            "{point:?}: new/ removed"
+            "{case:?}: new/ removed"
         );
-        assert!(fix.dir.join("music/kept").is_dir(), "{point:?}");
+        assert!(fix.dir.join("music/kept").is_dir(), "{case:?}: kept/ stays");
         assert_sources_home(&fix);
-        assert!(hidden_leftovers(&fix.dir).is_empty(), "{point:?}");
-        let again = reconcile(&db, &fix.sandbox).unwrap();
-        assert!(again.is_empty(), "{point:?}: nothing left to do");
+        if let FolderUnwind::ByThePublish = case {
+            assert!(hidden_leftovers(&fix.dir).is_empty(), "{case:?}");
+        }
     }
-}
-
-/// An unwind that stopped before the folders it made were removed is
-/// finished by recovery: the empty ones go, one that now holds another
-/// program's file stays, and nothing is left for a later pass.
-#[test]
-fn a_stopped_folder_removal_is_finished_by_recovery() {
-    let fix = fixture("stopped-folder-removal");
-    let (mut bundle, docs) = folder_bundle(&fix);
-    bundle.items[1].dest_rel = "other/b.flac".to_string();
-    let (sealed, live) = seal(&bundle);
-    let mut publisher = open_publisher(&fix);
-    publisher.set_place_seams(no_safe_step());
-    publisher.set_crash_point(Some(CrashPoint::BeforeFolderRemoval));
-    let err = publisher.publish(&sealed, &live, &docs).unwrap_err();
-    assert!(matches!(err, PublishError::InjectedCrash(_)), "got {err:?}");
-    drop(publisher);
-    assert!(fix.dir.join("music/new/artist").is_dir());
-    let stray = fix.dir.join("music/other/notes.txt");
-    std::fs::write(&stray, b"someone else's").unwrap();
-
-    let db = restart(&fix);
-    let results = reconcile(&db, &fix.sandbox).unwrap();
-    assert_eq!(results.len(), 1, "{results:?}");
-    assert!(fix.dir.join("music/new").symlink_metadata().is_err());
-    assert_eq!(std::fs::read(&stray).unwrap(), b"someone else's");
-    assert_sources_home(&fix);
-    let again = reconcile(&db, &fix.sandbox).unwrap();
-    assert!(again.is_empty(), "nothing left to do: {again:?}");
 }
 
 /// A placed row whose copy an unwind took off, while its staged temp is
@@ -6292,40 +6138,6 @@ fn a_half_unwound_placed_row_unwinds() {
     );
 }
 
-/// A crash while a file's journal temp was being written leaves part of
-/// it. The row never staged, so recovery unwinds it: the part copy goes
-/// and the source stays as it was.
-#[test]
-fn a_part_written_temp_unwinds_at_recovery() {
-    let fix = fixture("part-temp");
-    let (bundle, docs) = two_track_bundle(&fix, PlanKind::Move);
-    let (sealed, live) = seal(&bundle);
-    let source = fix.sandbox.resolve("music", "staging/a.flac").unwrap();
-    let original = std::fs::read(&source).unwrap();
-    let mut publisher = open_publisher(&fix);
-    publisher.set_crash_point(Some(CrashPoint::AfterTempWritten));
-    let err = publisher.publish(&sealed, &live, &docs).unwrap_err();
-    assert!(matches!(err, PublishError::InjectedCrash(_)), "got {err:?}");
-    drop(publisher);
-    let journals = JournalStore::new(&open_db(&fix))
-        .bundle("bundle-1")
-        .unwrap();
-    let temp = &journals[0].staged;
-    let half = std::fs::read(temp).unwrap().len() as u64 / 2;
-    std::fs::OpenOptions::new()
-        .write(true)
-        .open(temp)
-        .unwrap()
-        .set_len(half)
-        .unwrap();
-
-    let db = restart(&fix);
-    let results = reconcile(&db, &fix.sandbox).unwrap();
-    assert_eq!(results[0].action, publish::RecoveryAction::Compensated);
-    assert!(hidden_leftovers(&fix.dir).is_empty());
-    assert_eq!(std::fs::read(&source).unwrap(), original);
-}
-
 /// A moved file's source is deleted only once it is read: an edit made
 /// while the move ran, which kept the file's size and put its modified
 /// time back (a tagger set to keep timestamps), is kept, not deleted.
@@ -6354,32 +6166,6 @@ fn an_edit_that_kept_size_and_time_is_never_deleted() {
     let dest = fix.sandbox.resolve("music", "organized/a.flac").unwrap();
     assert_eq!(std::fs::read(&dest).unwrap(), original);
     assert_eq!(std::fs::read(&source).unwrap(), edited, "the edit is kept");
-}
-
-/// A write in place with no tag change that stopped once its temp was
-/// written unwinds: the file at its name is the original, not a second
-/// copy, and is left as it is.
-#[test]
-fn an_unchanged_write_in_place_that_stopped_at_its_temp_unwinds() {
-    let original = std::fs::read(fixtures_dir().join("management_full.flac")).unwrap();
-    let fix = fixture("unchanged-temp");
-    let (mut bundle, docs) = two_track_bundle(&fix, PlanKind::SamePath);
-    for item in bundle.items.iter_mut() {
-        item.managed_updates = TagUpdates::new();
-    }
-    let (sealed, live) = seal(&bundle);
-    let mut publisher = open_publisher(&fix);
-    publisher.set_crash_point(Some(CrashPoint::AfterTempWritten));
-    let err = publisher.publish(&sealed, &live, &docs).unwrap_err();
-    assert!(matches!(err, PublishError::InjectedCrash(_)), "got {err:?}");
-    drop(publisher);
-
-    let db = restart(&fix);
-    let results = reconcile(&db, &fix.sandbox).unwrap();
-    assert_eq!(results[0].action, publish::RecoveryAction::Compensated);
-    assert!(hidden_leftovers(&fix.dir).is_empty());
-    let path = fix.sandbox.resolve("music", "staging/a.flac").unwrap();
-    assert_eq!(std::fs::read(&path).unwrap(), original);
 }
 
 /// The scan fence moves for every journal write a scan must not judge

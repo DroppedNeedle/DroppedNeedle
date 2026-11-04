@@ -1,19 +1,17 @@
 //! Library Management: the profile routes (create, export, import
-//! preview, import) over HTTP, and profile sharing against the golden
-//! bundle (export bytes and preview ids), name collisions on import, and
-//! refusal of malformed bundles and of bundles shared from v2.
+//! preview, import) over HTTP, profile sharing against the golden bundle,
+//! refusal of malformed bundles and of bundles shared from v2, and stored
+//! sections and profiles read as they were.
 
 use crate::common;
 
 use std::path::PathBuf;
 
 use droppedneedle_kernel::runtime_config::sections::{
-    FieldMode, LibraryManagement, LibraryManagementProfile, ManagedField, NamingScript,
-    TaggingScript,
+    LibraryManagement, LibraryManagementProfile, NamingScript, TaggingScript,
 };
 use droppedneedle_library::management::settings::{
-    export_profile_bundle, materialize_profile_bundle, normalize, parse_profile_bundle,
-    preview_materialized_profile, profile_aspects, profile_import_warnings, resolve_import_names,
+    export_profile_bundle, normalize, parse_profile_bundle, preview_materialized_profile,
 };
 
 fn fixture(name: &str) -> String {
@@ -135,88 +133,9 @@ fn a_bundle_round_trips() {
     assert_eq!(imported.profile, normalized.profiles[0]);
 }
 
-/// v2's profile shape is not v3's: a code or a document shared from v2
-/// is refused with one message saying to share it again from v3.
-#[test]
-fn a_v2_bundle_is_refused() {
-    let mut v2_document: serde_json::Value =
-        serde_json::from_str(&fixture("management_bundle_golden.document.txt"))
-            .expect("golden document is JSON");
-    v2_document["version"] = serde_json::json!(1);
-    for input in [
-        fixture("management_bundle_v2.share_code.txt"),
-        v2_document.to_string(),
-    ] {
-        let error = parse_profile_bundle(&input).expect_err("v2 bundle refused");
-        assert_eq!(
-            error.to_string(),
-            "This profile was shared from DroppedNeedle v2, which v3 cannot read. \
-             Share it again from v3."
-        );
-    }
-}
-
-#[test]
-fn preview_is_deterministic_and_names_aspects_and_warnings() {
-    let parsed = parse_profile_bundle(&fixture("management_bundle_golden.document.txt"))
-        .expect("golden parses");
-    let first = preview_materialized_profile(&parsed).expect("preview materializes");
-    let second = preview_materialized_profile(&parsed).expect("preview materializes again");
-    // Deterministic preview ids: UUIDv5 over the bundle hash, as v2 made them.
-    assert_eq!(first.profile.id, "5420ee2a-6f0d-56cc-a591-8381b1b8ef21");
-    assert_eq!(first.profile.id, second.profile.id);
-    assert_eq!(
-        first
-            .naming_scripts
-            .iter()
-            .map(|script| &script.id)
-            .collect::<Vec<_>>(),
-        second
-            .naming_scripts
-            .iter()
-            .map(|script| &script.id)
-            .collect::<Vec<_>>()
-    );
-    assert_eq!(
-        profile_aspects(&first.profile),
-        vec![
-            "Metadata tags",
-            "Genres",
-            "Artwork",
-            "Lyrics",
-            "Rename files",
-            "Move files"
-        ]
-    );
-    let warnings = profile_import_warnings(&first.profile);
-    let codes: Vec<&str> = warnings
-        .iter()
-        .map(|warning| warning.code.as_str())
-        .collect();
-    assert!(codes.contains(&"clear_missing_metadata"));
-    assert!(codes.contains(&"replace_enrichment"));
-}
-
-#[test]
-fn import_renames_collisions_and_resolves() {
-    let parsed = parse_profile_bundle(&fixture("management_bundle_golden.document.txt"))
-        .expect("golden parses");
-    let preview = preview_materialized_profile(&parsed).expect("preview materializes");
-    let mut settings = LibraryManagement::default();
-    settings.profiles.push(preview.profile.clone());
-    settings
-        .naming_scripts
-        .extend(preview.naming_scripts.clone());
-    settings
-        .tagging_scripts
-        .extend(preview.tagging_scripts.clone());
-    let resolved = resolve_import_names(&preview, &settings).expect("names resolve");
-    assert_eq!(resolved.profile.name, "Golden Export (imported)");
-    assert_eq!(resolved.naming_scripts[0].name, "Standard (imported)");
-    assert_eq!(resolved.tagging_scripts[0].name, "Tag (imported)");
-}
-
-/// Every malformed import is refused with its documented reason.
+/// Every malformed import is refused with its documented reason. v2's
+/// profile shape is not v3's: a code or a document shared from v2 is
+/// refused with one message saying to share it again from v3.
 #[test]
 fn bad_bundles_are_refused() {
     let golden = fixture("management_bundle_golden.document.txt");
@@ -256,100 +175,33 @@ fn bad_bundles_are_refused() {
         let error = parse_profile_bundle(&input).expect_err("refused");
         assert!(format!("{error:?}").contains(reason), "{reason}: {error:?}");
     }
-}
 
-#[test]
-fn materialize_refuses_legacy_settings() {
-    let parsed = parse_profile_bundle(&fixture("management_bundle_golden.document.txt"))
-        .expect("golden parses");
-    // A PortablePayload with a Preserve field trips the legacy refusal
-    // before any id mapping runs.
-    let mut legacy = parsed.clone();
-    legacy.payload.profile.metadata.fields = vec![ManagedField {
-        field: "title".to_owned(),
-        mode: FieldMode::Preserve,
-        clear_when_canonical_missing: false,
-    }];
-    let naming: std::collections::BTreeMap<String, String> =
-        [("naming-1".to_owned(), uuid::Uuid::new_v4().to_string())]
-            .into_iter()
-            .collect();
-    let tagging: std::collections::BTreeMap<String, String> =
-        [("tagging-1".to_owned(), uuid::Uuid::new_v4().to_string())]
-            .into_iter()
-            .collect();
-    let profile_id = uuid::Uuid::new_v4().to_string();
-    let error = materialize_profile_bundle(&legacy, &profile_id, &naming, &tagging)
-        .expect_err("legacy Preserve refused");
-    assert!(format!("{error:?}").contains("Legacy Preserve"));
-}
-
-/// Stored settings holding a field entry no version names read again: the
-/// entry is dropped and written back without it, and a save of what was
-/// read succeeds.
-#[test]
-fn stored_unknown_field_is_dropped_on_read() {
-    use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto};
-    use droppedneedle_library::management::settings::service::LibraryManagementService;
-    use droppedneedle_library::management::settings::{
-        PICARD_ORGANIZER_PROFILE_ID, initial_settings,
-    };
-    use std::sync::Arc;
-
-    let mut management = serde_json::to_value(initial_settings()).expect("serializes");
-    let profile = management["profiles"]
-        .as_array_mut()
-        .expect("profiles")
-        .iter_mut()
-        .find(|profile| profile["id"] == PICARD_ORGANIZER_PROFILE_ID)
-        .expect("picard profile");
-    profile["metadata"]["fields"]
-        .as_array_mut()
-        .expect("fields")
-        .push(serde_json::json!({"field": "album_mood", "mode": "replace"}));
-    let dir = common::ScratchDir::new("management-v2-field");
-    let path = dir.join("config.json");
-    std::fs::write(
-        &path,
-        serde_json::json!({ "library_management": management }).to_string(),
-    )
-    .expect("config writes");
-
-    let store = Arc::new(
-        ConfigStore::scratch(&dir, Crypto::from_key_bytes(&[7u8; 32]).expect("key"))
-            .expect("store opens"),
-    );
-    let service = LibraryManagementService::new(store);
-    let read = service.get_settings().expect("the section reads");
-    let stored: String = rusqlite::Connection::open(dir.join("settings.db"))
-        .expect("settings database opens")
-        .query_row(
-            "SELECT value_json FROM config_sections WHERE key = 'library_management'",
-            [],
-            |row| row.get(0),
-        )
-        .expect("the section is stored");
-    assert!(
-        !stored.contains("album_mood"),
-        "the read writes the section back without the field"
-    );
-    let saved = service
-        .save_settings(read.settings, &read.settings_revision)
-        .expect("what was read saves");
-    let has_unknown = saved
-        .settings
-        .profiles
-        .iter()
-        .flat_map(|profile| &profile.metadata.fields)
-        .any(|field| field.field == "album_mood");
-    assert!(!has_unknown);
+    let mut v2_document: serde_json::Value =
+        serde_json::from_str(&golden).expect("golden document is JSON");
+    v2_document["version"] = serde_json::json!(1);
+    for (label, input) in [
+        (
+            "v2 share code",
+            fixture("management_bundle_v2.share_code.txt"),
+        ),
+        ("v2 document", v2_document.to_string()),
+    ] {
+        let error = parse_profile_bundle(&input).expect_err("v2 bundle refused");
+        assert_eq!(
+            error.to_string(),
+            "This profile was shared from DroppedNeedle v2, which v3 cannot read. \
+             Share it again from v3.",
+            "{label}"
+        );
+    }
 }
 
 /// A section stored before options were removed still reads: a removed
-/// key or value never fails it, the read writes it back without them,
-/// and a folder activated against it stays activated, both where the
-/// settings page reads it and where automatic management does. A folder
-/// whose removed override changed what it does stays stale.
+/// key or value, or a field entry no version names, never fails it, the
+/// read writes it back without them, what was read saves, and a folder
+/// activated against it stays activated, both where the settings page
+/// reads it and where automatic management does. A folder whose removed
+/// override changed what it does stays stale.
 #[test]
 fn a_section_from_before_removed_options_keeps_its_activation() {
     use droppedneedle_kernel::runtime_config::sections::{
@@ -530,58 +382,82 @@ fn a_section_from_before_removed_options_keeps_its_activation() {
     for removed in ["file_behavior", "approved_only", "variations"] {
         assert!(!stored.contains(removed), "{removed} is written back out");
     }
-}
 
-/// A recycle bin set in an old `config.json`'s download policy is Library
-/// Management's after the one-time copy, over a path removals never used, and
-/// stays through the first read, which seeds the profiles. The policy no
-/// longer holds it.
-#[test]
-fn an_old_download_policy_bin_is_library_managements() {
-    use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto};
-    use droppedneedle_library::management::settings::service::LibraryManagementService;
-    use std::sync::Arc;
-
-    let dir = common::ScratchDir::new("management-moved-bin");
+    // A field entry no version names, on fresh settings: the read drops it
+    // and writes the section back without it, and what was read saves.
+    let mut management = serde_json::to_value(initial_settings()).expect("serializes");
+    let fresh_picard = management["profiles"]
+        .as_array_mut()
+        .expect("profiles")
+        .iter_mut()
+        .find(|profile| profile["id"] == PICARD_ORGANIZER_PROFILE_ID)
+        .expect("picard profile");
+    fresh_picard["metadata"]["fields"]
+        .as_array_mut()
+        .expect("fields")
+        .push(json!({"field": "album_mood", "mode": "replace"}));
+    let dir = common::ScratchDir::new("management-v2-field");
     std::fs::write(
         dir.join("config.json"),
-        serde_json::json!({
-            "download_policy": { "recycle_bin_path": "/srv/bin", "recycle_retention_days": 12 },
-            "library_management": { "recycle_bin_path": "/srv/stale" },
-        })
-        .to_string(),
+        json!({ "library_management": management }).to_string(),
     )
     .expect("config writes");
     let store = Arc::new(
         ConfigStore::scratch(&dir, Crypto::from_key_bytes(&[7u8; 32]).expect("key"))
             .expect("store opens"),
     );
-    let read = LibraryManagementService::new(store.clone())
-        .get_settings()
-        .expect("the section reads");
-    assert!(!read.settings.profiles.is_empty(), "the first read seeds");
-    assert_eq!(read.settings.recycle_bin_path, "/srv/bin");
-    assert_eq!(read.settings.recycle_retention_days, 12);
-    let policy = store
-        .stored_text("download_policy")
-        .expect("the policy is stored");
-    assert!(!policy.contains("recycle_bin_path"), "{policy}");
-    assert!(!policy.contains("recycle_retention_days"), "{policy}");
+    let service = LibraryManagementService::new(store);
+    let read = service.get_settings().expect("the section reads");
+    let stored: String = rusqlite::Connection::open(dir.join("settings.db"))
+        .expect("settings database opens")
+        .query_row(
+            "SELECT value_json FROM config_sections WHERE key = 'library_management'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("the section is stored");
+    assert!(
+        !stored.contains("album_mood"),
+        "the read writes the section back without the field"
+    );
+    let saved = service
+        .save_settings(read.settings, &read.settings_revision)
+        .expect("what was read saves");
+    let has_unknown = saved
+        .settings
+        .profiles
+        .iter()
+        .flat_map(|profile| &profile.metadata.fields)
+        .any(|field| field.field == "album_mood");
+    assert!(!has_unknown);
 }
 
-/// A null section in `config.json` holds nothing: a null Library Management
-/// still takes the policy's retention, and a null policy loses none, so
-/// nothing waits over a value that never existed.
+/// An old `config.json`'s recycle bin settings reach Library Management.
+/// A bin set in the download policy is Library Management's after the
+/// one-time copy, over a path removals never used, and stays through the
+/// first read, which seeds the profiles; the policy no longer holds it. A
+/// null section holds nothing: a null Library Management still takes the
+/// policy's retention, and a null policy loses none.
 #[test]
-fn a_null_section_in_config_json_neither_loses_nor_invents_a_retention() {
+fn config_json_carries_the_recycle_bin() {
     use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto};
     use droppedneedle_library::management::settings::service::LibraryManagementService;
     use std::sync::Arc;
 
-    for (name, document, days) in [
+    for (name, document, moved_bin, days) in [
+        (
+            "management-moved-bin",
+            serde_json::json!({
+                "download_policy": { "recycle_bin_path": "/srv/bin", "recycle_retention_days": 12 },
+                "library_management": { "recycle_bin_path": "/srv/stale" },
+            }),
+            Some("/srv/bin"),
+            12,
+        ),
         (
             "null-policy",
             serde_json::json!({ "download_policy": null }),
+            None,
             30,
         ),
         (
@@ -590,6 +466,7 @@ fn a_null_section_in_config_json_neither_loses_nor_invents_a_retention() {
                 "download_policy": { "recycle_retention_days": 365 },
                 "library_management": null,
             }),
+            None,
             365,
         ),
     ] {
@@ -599,11 +476,27 @@ fn a_null_section_in_config_json_neither_loses_nor_invents_a_retention() {
             ConfigStore::scratch(&dir, Crypto::from_key_bytes(&[7u8; 32]).expect("key"))
                 .expect("store opens"),
         );
-        let read = LibraryManagementService::new(store)
+        let read = LibraryManagementService::new(store.clone())
             .get_settings()
             .expect("the section reads");
         assert!(!read.settings_unreadable, "{name}");
         assert_eq!(read.settings.recycle_retention_days, days, "{name}");
+        let Some(bin) = moved_bin else {
+            continue;
+        };
+        assert!(
+            !read.settings.profiles.is_empty(),
+            "{name}: the first read seeds"
+        );
+        assert_eq!(read.settings.recycle_bin_path, bin, "{name}");
+        let policy = store
+            .stored_text("download_policy")
+            .expect("the policy is stored");
+        assert!(!policy.contains("recycle_bin_path"), "{name}: {policy}");
+        assert!(
+            !policy.contains("recycle_retention_days"),
+            "{name}: {policy}"
+        );
     }
 }
 
@@ -1137,10 +1030,13 @@ mod fields {
         assert_eq!(plan_with(&settings, &overrides)["isrc"], by_hand);
     }
 
-    /// Two spellings of one field: planning applied them in turn, so
-    /// replace then fill missing wrote the release's value, and still does.
+    /// Stored profile shapes complete to the modes and tags they had, so an
+    /// upgrade writes no other tags: folded spellings, preserved parents,
+    /// merge fields, a clear with no source and older script spellings.
     #[test]
-    fn folded_spellings_keep_the_strongest_mode() {
+    fn stored_profiles_complete_as_before() {
+        // Two spellings of one field: planning applied them in turn, so
+        // replace then fill missing wrote the release's value, and still does.
         let mut settings = stored(
             vec![
                 entry("album_artist", FieldMode::Replace),
@@ -1148,45 +1044,62 @@ mod fields {
             ],
             &[],
         );
-        lm::normalize(&mut settings).expect("valid");
+        lm::normalize(&mut settings).expect("folded spellings: valid");
         assert_eq!(
             modes(&settings).get("album_artist"),
-            Some(&(FieldMode::Replace, false))
+            Some(&(FieldMode::Replace, false)),
+            "folded spellings"
         );
-        assert!(!modes(&settings).contains_key("albumartist"));
-        assert_eq!(plan(&settings)["album_artist"], vec!["The Band".to_owned()]);
-    }
+        assert!(
+            !modes(&settings).contains_key("albumartist"),
+            "folded spellings"
+        );
+        assert_eq!(
+            plan(&settings)["album_artist"],
+            vec!["The Band".to_owned()],
+            "folded spellings"
+        );
 
-    /// Preserving `artist` and `year` kept artist sort and original date
-    /// too, and still does.
-    #[test]
-    fn a_preserved_parent_keeps_what_it_covered() {
+        // Preserving `artist` and `year` kept artist sort and original
+        // date too, and still does.
         let mut settings = stored_v4(&["artist", "year"]);
-        lm::normalize(&mut settings).expect("valid");
+        lm::normalize(&mut settings).expect("preserved parent: valid");
         let desired = plan(&settings);
-        assert_eq!(desired["artist_sort"], vec!["Old Sort".to_owned()]);
-        assert_eq!(desired["original_date"], vec!["1980".to_owned()]);
-        assert_eq!(desired["album_artist"], vec!["The Band".to_owned()]);
-    }
+        assert_eq!(
+            desired["artist_sort"],
+            vec!["Old Sort".to_owned()],
+            "preserved parent"
+        );
+        assert_eq!(
+            desired["original_date"],
+            vec!["1980".to_owned()],
+            "preserved parent"
+        );
+        assert_eq!(
+            desired["album_artist"],
+            vec!["The Band".to_owned()],
+            "preserved parent"
+        );
 
-    /// A complete profile preserving `album` and `date` keeps only those:
-    /// the release facts and original date have their own entries now.
-    #[test]
-    fn a_complete_profile_preserves_only_what_it_names() {
+        // A complete profile preserving `album` and `date` keeps only
+        // those: the release facts and original date have their own
+        // entries now.
         let named = vec!["album".to_owned(), "date".to_owned()];
         let mut settings = lm::initial_settings();
         for profile in &mut settings.profiles {
             profile.metadata.preserve_fields.clone_from(&named);
         }
-        lm::normalize(&mut settings).expect("valid");
+        lm::normalize(&mut settings).expect("complete profile: valid");
         for profile in &settings.profiles {
-            assert_eq!(profile.metadata.preserve_fields, named, "{}", profile.name);
+            assert_eq!(
+                profile.metadata.preserve_fields, named,
+                "complete profile: {}",
+                profile.name
+            );
         }
-    }
 
-    /// v2's mergeable fields take merge.
-    #[test]
-    fn label_and_release_type_merge() {
+        // v2's mergeable fields take merge; merge on a field that holds
+        // one value is refused.
         let mut settings = stored(
             vec![
                 entry("label", FieldMode::Merge),
@@ -1197,16 +1110,48 @@ mod fields {
         lm::normalize(&mut settings).expect("merge validates");
         assert_eq!(
             modes(&settings).get("release_type"),
-            Some(&(FieldMode::Merge, false))
+            Some(&(FieldMode::Merge, false)),
+            "merge fields"
         );
-
-        // Merge on a field that holds one value is refused.
         for field in &mut settings.profiles[0].metadata.fields {
             if field.field == "comment" {
                 field.mode = FieldMode::Merge;
             }
         }
-        assert!(lm::normalize(&mut settings).is_err());
+        assert!(
+            lm::normalize(&mut settings).is_err(),
+            "merge on a one-value field"
+        );
+
+        // A clear on a field with no source, set once each field had its
+        // own entry, survives the completion that adds the newer fields.
+        let mut settings = without_other_role_fields(false);
+        for profile in &mut settings.profiles {
+            for field in &mut profile.metadata.fields {
+                if field.field == "comment" {
+                    field.mode = FieldMode::Replace;
+                    field.clear_when_canonical_missing = true;
+                }
+            }
+        }
+        lm::normalize(&mut settings).expect("clear with no source: valid");
+        assert_eq!(
+            modes(&settings).get("comment"),
+            Some(&(FieldMode::Replace, true)),
+            "clear with no source"
+        );
+
+        // A tagging script that sets the older spellings still validates.
+        let mut settings = stored_v4(&[]);
+        settings.tagging_scripts.push(
+            serde_json::from_value::<TaggingScript>(serde_json::json!({
+                "id": "55555555-5555-4555-8555-555555555555",
+                "name": "Older names",
+                "source": "set albumartist = \"Someone\"\nset publisher = \"Label\""
+            }))
+            .expect("script"),
+        );
+        lm::normalize(&mut settings).expect("older script spellings validate");
     }
 
     /// A folder activated under the stored profile stays activated once
@@ -1290,83 +1235,46 @@ mod fields {
         settings
     }
 
-    /// A clear on a field with no source, set once each field had its own
-    /// entry, survives the completion that adds the newer fields.
+    /// The fields "Other roles" writes follow its tick. With Other off they
+    /// read as off and the profile plans what it planned before, an
+    /// engineer credit included. With Other ticked they read as replace
+    /// without clear, so the profile starts writing them, and a folder
+    /// activated under it stays current.
     #[test]
-    fn a_clear_on_a_field_with_no_source_is_kept() {
-        let mut settings = without_other_role_fields(false);
-        for profile in &mut settings.profiles {
-            for field in &mut profile.metadata.fields {
-                if field.field == "comment" {
-                    field.mode = FieldMode::Replace;
-                    field.clear_when_canonical_missing = true;
-                }
-            }
-        }
-        lm::normalize(&mut settings).expect("valid");
-        assert_eq!(
-            modes(&settings).get("comment"),
-            Some(&(FieldMode::Replace, true))
-        );
-    }
-
-    /// With Other off, the new fields read as off and the profile plans
-    /// what it planned before, an engineer credit included.
-    #[test]
-    fn without_other_the_new_fields_read_as_off() {
+    fn other_role_fields_follow_the_other_tick() {
         let stored = without_other_role_fields(false);
         let mut read = stored.clone();
-        lm::normalize(&mut read).expect("valid");
-        let modes = modes(&read);
+        lm::normalize(&mut read).expect("other off: valid");
+        let read_modes = modes(&read);
         for name in OTHER_ROLE_FIELDS {
             assert_eq!(
-                modes.get(name),
+                read_modes.get(name),
                 Some(&(FieldMode::Disabled, false)),
-                "{name}"
+                "other off: {name}"
             );
         }
         let planned = plan_engineered(&read);
-        assert_eq!(planned, plan_engineered(&stored));
-        assert!(!planned.contains_key("engineer"), "{planned:?}");
-    }
+        assert_eq!(planned, plan_engineered(&stored), "other off");
+        assert!(!planned.contains_key("engineer"), "other off: {planned:?}");
 
-    /// With Other ticked, the new fields read as replace without clear,
-    /// so the profile starts writing them, and a folder activated under it
-    /// stays current.
-    #[test]
-    fn with_other_the_new_fields_read_as_replace() {
         let mut stored = without_other_role_fields(true);
         activate(&mut stored);
-        assert!(current(&stored));
+        assert!(current(&stored), "other on");
         let mut read = stored.clone();
-        lm::normalize(&mut read).expect("valid");
-        let modes = modes(&read);
+        lm::normalize(&mut read).expect("other on: valid");
+        let read_modes = modes(&read);
         for name in OTHER_ROLE_FIELDS {
             assert_eq!(
-                modes.get(name),
+                read_modes.get(name),
                 Some(&(FieldMode::Replace, false)),
-                "{name}"
+                "other on: {name}"
             );
         }
-        assert!(current(&read), "current after a read");
+        assert!(current(&read), "other on: current after a read");
         assert_eq!(
             plan_engineered(&read)["engineer"],
-            vec!["Eve Engineer".to_owned()]
+            vec!["Eve Engineer".to_owned()],
+            "other on"
         );
-    }
-
-    /// A tagging script that sets the older spellings still validates.
-    #[test]
-    fn scripts_keep_their_spellings() {
-        let mut settings = stored_v4(&[]);
-        settings.tagging_scripts.push(
-            serde_json::from_value::<TaggingScript>(serde_json::json!({
-                "id": "55555555-5555-4555-8555-555555555555",
-                "name": "Older names",
-                "source": "set albumartist = \"Someone\"\nset publisher = \"Label\""
-            }))
-            .expect("script"),
-        );
-        lm::normalize(&mut settings).expect("the script validates");
     }
 }

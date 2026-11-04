@@ -267,14 +267,12 @@ mod tests {
         format!("({})", names.join(","))
     }
 
+    /// Every source is revisable or a person's choice, never both, spells
+    /// back to itself, and the SQL sets list exactly each side.
     #[test]
-    fn the_sql_sets_match_the_predicates() {
+    fn decision_sources_split_and_match_the_sql() {
         assert_eq!(sql::REVISABLE, set(DecisionSource::is_revisable));
         assert_eq!(sql::PERSONS, set(DecisionSource::is_persons_choice));
-    }
-
-    #[test]
-    fn every_source_is_revisable_or_a_persons_and_never_both() {
         for source in DecisionSource::ALL {
             assert_ne!(
                 source.is_revisable(),

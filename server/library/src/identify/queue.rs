@@ -221,5 +221,9 @@ mod tests {
         let ladder: Vec<u64> = (1..=9).map(backoff_secs).collect();
         assert_eq!(ladder, vec![30, 60, 120, 240, 480, 960, 1920, 3840, 7680]);
         assert_eq!(MAX_BACKOFF_SECONDS, 7680);
+        // No deferral yet waits nothing; attempt ten terminalizes.
+        assert_eq!(backoff_secs(0), 0);
+        assert!(!terminally_deferred(9));
+        assert!(terminally_deferred(10));
     }
 }

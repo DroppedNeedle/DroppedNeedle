@@ -607,10 +607,7 @@ async fn library_journey_scan_identify_review() {
     rig.reidentify(album_key).await;
     rig.identified(album_key, 1).await;
 
-    // Curator approval seals a manual identity. The candidate names only
-    // the release, so the app goes on to ask MusicBrainz for it. The script
-    // was emptied above and does not know it, so the album goes back to
-    // automatic choice on the same release. The journey waits for that.
+    // Curator approval seals a manual identity and answers with it.
     let (status, body) = app
         .call(
             "POST",
@@ -626,7 +623,6 @@ async fn library_journey_scan_identify_review() {
     assert_eq!(body["review"]["state"], json!("approved"));
     assert_eq!(body["identity"]["release_mbid"], json!(REL_1));
     assert_eq!(body["identity"]["decision_source"], json!("manual"));
-    rig.edition_settled(album_key).await;
     rig.stop().await;
 }
 
@@ -2047,34 +2043,6 @@ fn control_revision(activity: &Value) -> u64 {
     })
 }
 
-/// A run whose stored state the server does not know answers 500, never a
-/// state it made up.
-#[tokio::test]
-async fn a_run_in_an_unknown_state_is_not_read_as_another() {
-    let app = TestApp::start("lib-unknown-state").await;
-    let auth = app.login_admin().await;
-    // The database's own check is set aside to store a state no release
-    // wrote, as a damaged or foreign file could hold it.
-    app.seed(
-        "PRAGMA ignore_check_constraints = ON;
-             INSERT INTO library_scan_runs (id, kind, trigger, state, phase, aggregate_scope,
-                 queued_at, updated_at, terminal_at) VALUES
-                 ('strange', 'incremental', 'manual', 'resting', 'queued', 'all', 1.0, 1.0, 1.0);
-             PRAGMA ignore_check_constraints = OFF;",
-    )
-    .await;
-    let (status, body) = app
-        .call(
-            "GET",
-            "/api/v3/library/scan/runs/strange",
-            &[("authorization", auth.as_str())],
-            None,
-        )
-        .await;
-    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
-    app.stop().await;
-}
-
 /// A folder added on the settings page is scanned as soon as it is saved,
 /// and the scan covers that folder only.
 #[tokio::test]
@@ -2286,20 +2254,24 @@ async fn rescan(library: &LibrarySetup) {
     drain_scans(library).await;
 }
 
-/// A file moved by hand keeps its track id on the next scan, so the
-/// favorites and play history that name the track follow the file.
+/// A file moved by hand keeps its ids on the next scan: a lone file keeps
+/// its track, so the favorites and play history that name it follow the
+/// file and no second row is made; of two copies of one album in different
+/// folders (two albums, which the duplicate tools compare), the one moved
+/// keeps its own track and album.
 #[tokio::test]
-async fn moved_file_keeps_its_track() {
-    let rig = Rig::start("lib-move").await;
-    let music = rig.app.config.root_app_dir.join("music");
+async fn a_file_moved_by_hand_keeps_its_ids() {
+    let case = "one file";
+    let (_scratch, library, music) = bare_library("lib-move").await;
     let old = plant(&music, "before/01.flac", "flac_full_01.flac");
-    rig.app.add_library_folder("music", &music).await;
-    let track = rig
+    add_music_root(&library, &music).await;
+    let track = library
         .scan_store
         .track_at("music", "before/01.flac")
         .unwrap()
         .expect("track indexed");
-    rig.scan_store
+    library
+        .scan_store
         .db()
         .run_sql(&format!(
             "INSERT OR IGNORE INTO auth_users (id, display_name, role, created_at) VALUES ('listener', 'Person', 'user', 1); \
@@ -2314,14 +2286,17 @@ async fn moved_file_keeps_its_track() {
     let new = music.join("after/01.flac");
     std::fs::create_dir_all(new.parent().expect("parent")).expect("mkdir");
     std::fs::rename(&old, &new).expect("move by hand");
-    rig.app.scan_library().await;
+    rescan(&library).await;
 
     assert_eq!(
-        rig.scan_store.track_at("music", "after/01.flac").unwrap(),
+        library
+            .scan_store
+            .track_at("music", "after/01.flac")
+            .unwrap(),
         Some(track.clone()),
-        "the moved file continues its track"
+        "{case}: the moved file continues its track"
     );
-    let following = rig
+    let following = library
         .scan_store
         .db()
         .query_i64(&format!(
@@ -2332,69 +2307,68 @@ async fn moved_file_keeps_its_track() {
              AND t.relative_path = 'after/01.flac' AND t.availability = 'indexed')"
         ))
         .expect("count reads");
-    assert_eq!(following, 2, "favorite and history follow the file");
+    assert_eq!(following, 2, "{case}: favorite and history follow the file");
     assert_eq!(
-        rig.scan_store
+        library
+            .scan_store
             .db()
             .query_i64("SELECT COUNT(*) FROM local_tracks")
             .expect("count reads"),
         1,
-        "no second row for the moved file"
+        "{case}: no second row for the moved file"
     );
-    rig.stop().await;
-}
 
-/// Two copies of one album in different folders stay two albums (the
-/// duplicate tools compare them), and moving one copy keeps its own ids.
-#[tokio::test]
-async fn copies_stay_apart_and_keep_ids_when_moved() {
-    let rig = Rig::start("lib-copies").await;
-    let music = rig.app.config.root_app_dir.join("music");
+    let case = "one of two copies";
+    let (_scratch, library, music) = bare_library("lib-copies").await;
     let copy_a = plant(&music, "flac/01.flac", "flac_full_01.flac");
     let copy_b = plant(&music, "lossy/01.flac", "flac_full_01.flac");
-    rig.app.add_library_folder("music", &music).await;
-    let track_a = rig
+    add_music_root(&library, &music).await;
+    let track_a = library
         .scan_store
         .track_at("music", "flac/01.flac")
         .unwrap()
         .expect("copy a indexed");
-    let track_b = rig
+    let track_b = library
         .scan_store
         .track_at("music", "lossy/01.flac")
         .unwrap()
         .expect("copy b indexed");
-    let album_a = rig
+    let album_a = library
         .scan_store
         .album_for_track(&track_a)
         .unwrap()
         .expect("album a");
-    let album_b = rig
+    let album_b = library
         .scan_store
         .album_for_track(&track_b)
         .unwrap()
         .expect("album b");
-    assert_ne!(album_a, album_b, "copies are separate albums");
+    assert_ne!(album_a, album_b, "{case}: copies are separate albums");
 
     let moved = music.join("archive/01.flac");
     std::fs::create_dir_all(moved.parent().expect("parent")).expect("mkdir");
     std::fs::rename(&copy_b, &moved).expect("move one copy");
-    rig.app.scan_library().await;
+    rescan(&library).await;
 
     assert_eq!(
-        rig.scan_store.track_at("music", "archive/01.flac").unwrap(),
+        library
+            .scan_store
+            .track_at("music", "archive/01.flac")
+            .unwrap(),
         Some(track_b.clone()),
-        "the moved copy keeps its track"
+        "{case}: the moved copy keeps its track"
     );
     assert_eq!(
-        rig.scan_store.album_for_track(&track_b).unwrap(),
-        Some(album_b)
+        library.scan_store.album_for_track(&track_b).unwrap(),
+        Some(album_b),
+        "{case}"
     );
     assert_eq!(
-        rig.scan_store.album_for_track(&track_a).unwrap(),
-        Some(album_a)
+        library.scan_store.album_for_track(&track_a).unwrap(),
+        Some(album_a),
+        "{case}"
     );
-    assert!(copy_a.is_file());
-    rig.stop().await;
+    assert!(copy_a.is_file(), "{case}");
 }
 
 /// An album whose files went away in an earlier scan is not handed to a
@@ -2452,142 +2426,6 @@ async fn long_missing_album_is_not_taken_over() {
         .unwrap()
         .expect("album");
     assert_ne!(new_album, old_album, "a long-gone album is not reused");
-    rig.stop().await;
-}
-
-/// A share that comes up empty (unmounted) while a copy of one of its
-/// files appears in another root: the guard holds the share back, so its
-/// tracks keep their ids and stay available, and the copy gets its own row.
-/// A small root that comes up empty is held back the same way.
-#[tokio::test]
-async fn unmounted_share_keeps_its_tracks() {
-    let rig = Rig::start("lib-share-guard").await;
-    let dir = &rig.app.config.root_app_dir;
-    let local = dir.join("music");
-    let share = dir.join("share");
-    let shared = plant(&share, "album/01.flac", "flac_full_01.flac");
-    // Enough tracks for the mass-missing guard to apply.
-    for n in 2..=20 {
-        plant(&share, &format!("other/{n:02}.flac"), "flac_no_tags.flac");
-    }
-    let small = dir.join("small");
-    for n in 1..=3 {
-        plant(&small, &format!("{n:02}.flac"), "flac_no_tags.flac");
-    }
-    std::fs::create_dir_all(&local).expect("local root");
-    for (id, path) in [("share", &share), ("local", &local), ("small", &small)] {
-        rig.app.add_library_folder(id, path).await;
-    }
-    let track = rig
-        .scan_store
-        .track_at("share", "album/01.flac")
-        .unwrap()
-        .expect("share track indexed");
-
-    // The share goes dark; a copy of one of its files lands locally.
-    for root in [&share, &small] {
-        std::fs::remove_dir_all(root).expect("unmount");
-        std::fs::create_dir_all(root).expect("empty mount point");
-    }
-    plant(&local, "album/01.flac", "flac_full_01.flac");
-    assert!(!shared.exists());
-    rig.app.scan_library().await;
-
-    assert_eq!(
-        rig.scan_store.track_at("share", "album/01.flac").unwrap(),
-        Some(track.clone()),
-        "the share's track keeps its id and stays available"
-    );
-    let copy = rig
-        .scan_store
-        .track_at("local", "album/01.flac")
-        .unwrap()
-        .expect("copy indexed");
-    assert_ne!(copy, track, "the copy gets its own row");
-    assert!(
-        rig.scan_store
-            .track_at("small", "01.flac")
-            .unwrap()
-            .is_some(),
-        "an emptied small root keeps its tracks"
-    );
-    assert_eq!(
-        rig.scan_store
-            .db()
-            .query_i64("SELECT COUNT(*) FROM local_tracks WHERE availability = 'missing'")
-            .expect("count reads"),
-        0,
-        "nothing is marked missing"
-    );
-    rig.stop().await;
-}
-
-/// Retagging every track of an album to a new name keeps the album row,
-/// and with it the curator's identity.
-#[tokio::test]
-async fn retagged_album_keeps_its_identity() {
-    use droppedneedle_library::tags::TagField;
-    use droppedneedle_library::tags::save::{TagEdit, save_tags};
-
-    let rig = Rig::start("lib-retag-album").await;
-    let music = rig.app.config.root_app_dir.join("music");
-    // No release MBID here: the album is known by its tagged names.
-    let files = [
-        plant(&music, "album/01.flac", "flac_full_02.flac"),
-        plant(&music, "album/02.flac", "flac_full_02.flac"),
-    ];
-    rig.app.add_library_folder("music", &music).await;
-    let track = rig
-        .scan_store
-        .track_at("music", "album/01.flac")
-        .unwrap()
-        .expect("track indexed");
-    let album = rig
-        .scan_store
-        .album_for_track(&track)
-        .unwrap()
-        .expect("album");
-    rig.scan_store
-        .db()
-        .run_sql(&format!(
-            "INSERT INTO local_album_external_identities (local_album_id, provider, \
-             release_group_mbid, decision_source, selected_at) \
-             VALUES ('{album}', 'musicbrainz', 'rg-1', 'manual', 0);"
-        ))
-        .expect("identity seed");
-
-    for file in &files {
-        save_tags(
-            file,
-            &[TagEdit::new(TagField::Album, vec!["Renamed".to_owned()])],
-        )
-        .expect("album retagged");
-    }
-    rig.app.scan_library().await;
-
-    assert_eq!(
-        rig.scan_store.album_for_track(&track).unwrap().as_deref(),
-        Some(album.as_str()),
-        "the retagged album keeps its row"
-    );
-    assert_eq!(
-        rig.scan_store
-            .db()
-            .query_i64(&format!(
-                "SELECT COUNT(*) FROM local_albums WHERE id = '{album}' AND title = 'Renamed'"
-            ))
-            .expect("count reads"),
-        1,
-        "the kept row takes the new name"
-    );
-    assert_eq!(
-        rig.scan_store
-            .db()
-            .query_i64("SELECT COUNT(*) FROM local_albums")
-            .expect("count reads"),
-        1,
-        "no second album"
-    );
     rig.stop().await;
 }
 
@@ -4841,11 +4679,15 @@ async fn an_upgrade_held_for_one_file_keeps_that_files_old_copy() {
 
 /// "Put back" never replaces a file that now sits where the removed one
 /// was: it is refused, the newer file is untouched and the removed file
-/// stays in the recycle bin, where a later "Put back" still finds it.
+/// stays in the recycle bin, where a later "Put back" finds it once the
+/// path is free. A file that lands after the put-back checked the place is
+/// refused by the placing call itself: nothing is put back and the undo
+/// is not spent.
 #[tokio::test]
-async fn put_back_refuses_an_occupied_path() {
+async fn put_back_never_replaces_a_file_in_its_place() {
     use droppedneedle_library::removal::{MutationError, Mutations};
 
+    let case = "there before the check";
     let (scratch, library, music) = bare_library("lib-put-back").await;
     let original = plant(&music, "Band/LP/01.flac", "flac_full_01.flac");
     let removed_bytes = std::fs::read(&original).expect("removed file reads");
@@ -4879,10 +4721,10 @@ async fn put_back_refuses_an_occupied_path() {
         .removal_id
         .expect("removal id");
     let recycled = walk_files(&music.join(".recycle"));
-    assert_eq!(recycled.len(), 1, "one file in the bin");
+    assert_eq!(recycled.len(), 1, "{case}: one file in the bin");
     plant(&music, "Band/LP/01.flac", "flac_full_02.flac");
     let newer_bytes = std::fs::read(&original).expect("newer file reads");
-    assert_ne!(newer_bytes, removed_bytes);
+    assert_ne!(newer_bytes, removed_bytes, "{case}");
 
     let refused = Mutations::new(&library).put_back(&album, &action, "admin");
     assert!(
@@ -4890,28 +4732,29 @@ async fn put_back_refuses_an_occupied_path() {
             &refused,
             Err(MutationError::Conflict(reason)) if reason.code == "RESTORE_PATH_OCCUPIED"
         ),
-        "{refused:?}"
+        "{case}: {refused:?}"
     );
     drain_scans(&library).await;
     assert_eq!(
         std::fs::read(&original).expect("newer file reads"),
         newer_bytes,
-        "the newer file is untouched"
+        "{case}: the newer file is untouched"
     );
     assert_eq!(
         std::fs::read(&recycled[0]).expect("recycled copy reads"),
         removed_bytes,
-        "the removed file is still in the bin"
+        "{case}: the removed file is still in the bin"
     );
 
     std::fs::remove_file(&original).expect("newer file moved away");
     let missing = Mutations::new(&library)
         .put_back(&album, &action, "admin")
         .expect("put back once the path is free");
-    assert!(missing.is_empty(), "{missing:?}");
+    assert!(missing.is_empty(), "{case}: {missing:?}");
     assert_eq!(
         std::fs::read(&original).expect("restored file reads"),
-        removed_bytes
+        removed_bytes,
+        "{case}"
     );
     assert_eq!(
         library
@@ -4920,8 +4763,55 @@ async fn put_back_refuses_an_occupied_path() {
             .unwrap()
             .as_deref(),
         Some(track.as_str()),
-        "the track is listed again at once, under its own id"
+        "{case}: the track is listed again at once, under its own id"
     );
+
+    let case = "lands after the check";
+    let (scratch, library, music) = bare_library("lib-put-back-late").await;
+    plant(&music, "Late/01.flac", "flac_no_tags.flac");
+    plant(&music, "Late/02.flac", "flac_no_tags.flac");
+    add_music_root(&library, &music).await;
+    add_admin(&library);
+    let conn = scratch_db(&scratch);
+    let (album, tracks, paths, action) = removed_extras(&library, &music, &conn, "Late");
+    let binned = walk_files(&music.join(".recycle"));
+    assert_eq!(binned.len(), 2, "{case}");
+
+    library.publishing.set_publish_hooks(
+        Some(Box::new(|dest| {
+            std::fs::write(dest, b"someone else's file").expect("planted");
+        })),
+        None,
+    );
+    let answer = Mutations::new(&library).put_back(&album, &action, "admin");
+    library.publishing.set_publish_hooks(None, None);
+    assert!(
+        matches!(
+            &answer,
+            Err(MutationError::Conflict(reason)) if reason.code == "RESTORE_PATH_OCCUPIED"
+        ),
+        "{case}: {answer:?}"
+    );
+    assert_eq!(
+        std::fs::read(&paths[0]).expect("the file in the way"),
+        b"someone else's file",
+        "{case}"
+    );
+    assert!(!paths[1].exists(), "{case}: nothing more was placed");
+    assert_eq!(
+        walk_files(&music.join(".recycle")),
+        binned,
+        "{case}: the copies stay"
+    );
+    for track in &tracks {
+        assert_eq!(availability_of(&conn, track), "missing", "{case}");
+    }
+    assert_eq!(
+        restored_actions(&conn, &album),
+        0,
+        "{case}: the undo is not spent"
+    );
+    assert!(no_hidden_files(&music.join("Late")), "{case}");
 }
 
 /// A removal stopped at any step of its write ends, once recovery has
@@ -6101,12 +5991,15 @@ async fn a_put_back_stopped_at_any_step_ends_in_the_bin_or_home() {
     }
 }
 
-/// Recycling tracks whose files are all gone already moves no file, but
-/// still takes the tracks out of the library.
+/// Nothing to move still settles the rows: recycling tracks whose files
+/// are all gone already moves no file but takes the tracks out of the
+/// library, and putting back files all moved home by hand moves no file
+/// but lists their tracks again and spends the undo.
 #[tokio::test]
-async fn recycling_tracks_whose_files_are_gone_takes_them_out() {
+async fn nothing_to_move_still_settles_the_rows() {
     use droppedneedle_library::removal::Mutations;
 
+    let case = "files already gone";
     let (scratch, library, music) = bare_library("lib-recycle-all-gone").await;
     plant(&music, "Gone/01.flac", "flac_no_tags.flac");
     plant(&music, "Gone/02.flac", "flac_no_tags.flac");
@@ -6138,16 +6031,10 @@ async fn recycling_tracks_whose_files_are_gone_takes_them_out() {
         .recycle_album_files(&album, &tracks, "admin")
         .expect("the tracks are taken out");
     for track in &tracks {
-        assert_eq!(availability_of(&conn, track), "missing");
+        assert_eq!(availability_of(&conn, track), "missing", "{case}");
     }
-}
 
-/// Putting back files that were all moved home by hand already moves no
-/// file, but lists their tracks again and spends the undo.
-#[tokio::test]
-async fn putting_back_files_already_home_lists_them_again() {
-    use droppedneedle_library::removal::Mutations;
-
+    let case = "files already home";
     let (scratch, library, music) = bare_library("lib-put-back-all-home").await;
     plant(&music, "Home/01.flac", "flac_no_tags.flac");
     plant(&music, "Home/02.flac", "flac_no_tags.flac");
@@ -6170,70 +6057,27 @@ async fn putting_back_files_already_home_lists_them_again() {
         .put_back(&album, &action, "admin")
         .expect("the files are listed again");
     for track in &tracks {
-        assert_eq!(availability_of(&conn, track), "indexed");
+        assert_eq!(availability_of(&conn, track), "indexed", "{case}");
     }
-    assert_eq!(restored_actions(&conn, &album), 1, "the undo is spent");
+    assert_eq!(
+        restored_actions(&conn, &album),
+        1,
+        "{case}: the undo is spent"
+    );
 }
 
-/// A file that turns up where a removed file was, after the put-back
-/// checked the place and before the file lands, is never replaced: the
-/// placing call refuses it, nothing is put back, and the removed copy
-/// stays in the recycle bin.
+/// A removed file whose copy in the recycle bin cannot be used stays out
+/// and is named; the rest come back. A copy gone from the bin: each file
+/// back keeps its permission bits and modified time and its track is listed
+/// at once, the audit names the missing one, and when no copy is left
+/// nothing is put back and the undo stays. A copy changed in the bin in a
+/// way that keeps its size and modified time stays there.
 #[tokio::test]
-async fn a_file_that_lands_just_before_a_put_back_survives() {
-    use droppedneedle_library::removal::{MutationError, Mutations};
-
-    let (scratch, library, music) = bare_library("lib-put-back-late").await;
-    plant(&music, "Late/01.flac", "flac_no_tags.flac");
-    plant(&music, "Late/02.flac", "flac_no_tags.flac");
-    add_music_root(&library, &music).await;
-    add_admin(&library);
-    let conn = scratch_db(&scratch);
-    let (album, tracks, paths, action) = removed_extras(&library, &music, &conn, "Late");
-    let binned = walk_files(&music.join(".recycle"));
-    assert_eq!(binned.len(), 2);
-
-    library.publishing.set_publish_hooks(
-        Some(Box::new(|dest| {
-            std::fs::write(dest, b"someone else's file").expect("planted");
-        })),
-        None,
-    );
-    let answer = Mutations::new(&library).put_back(&album, &action, "admin");
-    library.publishing.set_publish_hooks(None, None);
-    assert!(
-        matches!(
-            &answer,
-            Err(MutationError::Conflict(reason)) if reason.code == "RESTORE_PATH_OCCUPIED"
-        ),
-        "{answer:?}"
-    );
-    assert_eq!(
-        std::fs::read(&paths[0]).expect("the file in the way"),
-        b"someone else's file"
-    );
-    assert!(!paths[1].exists(), "nothing more was placed");
-    assert_eq!(
-        walk_files(&music.join(".recycle")),
-        binned,
-        "the copies stay"
-    );
-    for track in &tracks {
-        assert_eq!(availability_of(&conn, track), "missing");
-    }
-    assert_eq!(restored_actions(&conn, &album), 0, "the undo is not spent");
-    assert!(no_hidden_files(&music.join("Late")));
-}
-
-/// A removed file whose copy is gone from the recycle bin stays out; the
-/// rest come back, each with its own permission bits and modified time
-/// and its track listed at once, and the answer and the audit name the missing one.
-/// When no copy is left, nothing is put back and the undo stays.
-#[tokio::test]
-async fn put_back_names_a_file_gone_from_the_bin() {
+async fn put_back_names_a_copy_it_cannot_use() {
     use droppedneedle_library::removal::{MutationError, Mutations};
     use std::os::unix::fs::PermissionsExt as _;
 
+    let case = "copy gone from the bin";
     let (scratch, library, music) = bare_library("lib-put-back-gone").await;
     for name in ["01.flac", "02.flac"] {
         let path = plant(&music, &format!("Gone/{name}"), "flac_no_tags.flac");
@@ -6255,8 +6099,8 @@ async fn put_back_names_a_file_gone_from_the_bin() {
     let missing = Mutations::new(&library)
         .put_back(&album, &action, "admin")
         .expect("the rest come back");
-    assert_eq!(missing, ["Gone/02.flac"]);
-    assert!(paths[0].exists() && !paths[1].exists());
+    assert_eq!(missing, ["Gone/02.flac"], "{case}");
+    assert!(paths[0].exists() && !paths[1].exists(), "{case}");
     assert_eq!(
         std::fs::metadata(&paths[0])
             .expect("home")
@@ -6264,14 +6108,14 @@ async fn put_back_names_a_file_gone_from_the_bin() {
             .mode()
             & 0o777,
         0o640,
-        "the file keeps its permission bits"
+        "{case}: the file keeps its permission bits"
     );
     assert_eq!(
         std::fs::metadata(&paths[0])
             .and_then(|meta| meta.modified())
             .expect("modified time"),
         modified,
-        "and its modified time"
+        "{case}: and its modified time"
     );
     assert_eq!(
         library
@@ -6280,9 +6124,9 @@ async fn put_back_names_a_file_gone_from_the_bin() {
             .unwrap()
             .as_deref(),
         Some(tracks[0].as_str()),
-        "listed at once, under its own id"
+        "{case}: listed at once, under its own id"
     );
-    assert_eq!(availability_of(&conn, &tracks[1]), "missing");
+    assert_eq!(availability_of(&conn, &tracks[1]), "missing", "{case}");
     let after: String = conn
         .query_row(
             "SELECT after_json FROM library_catalog_actions \
@@ -6291,7 +6135,7 @@ async fn put_back_names_a_file_gone_from_the_bin() {
             |row| row.get(0),
         )
         .expect("audit row");
-    assert!(after.contains("Gone/02.flac"), "{after}");
+    assert!(after.contains("Gone/02.flac"), "{case}: {after}");
 
     let again = Mutations::new(&library)
         .recycle_album_files(&album, std::slice::from_ref(&tracks[0]), "admin")
@@ -6308,17 +6152,11 @@ async fn put_back_names_a_file_gone_from_the_bin() {
                 &refused,
                 Err(MutationError::Conflict(reason)) if reason.code == "RECYCLED_FILES_GONE"
             ),
-            "{refused:?}"
+            "{case}: no copy left: {refused:?}"
         );
     }
-}
 
-/// A copy changed in the recycle bin in a way that keeps its size and
-/// modified time is not put back, and is named; the rest come back.
-#[tokio::test]
-async fn put_back_names_a_copy_changed_in_the_bin() {
-    use droppedneedle_library::removal::Mutations;
-
+    let case = "copy changed in the bin";
     let (scratch, library, music) = bare_library("lib-put-back-edited").await;
     plant(&music, "Edited/01.flac", "flac_no_tags.flac");
     plant(&music, "Edited/02.flac", "flac_no_tags.flac");
@@ -6355,16 +6193,16 @@ async fn put_back_names_a_copy_changed_in_the_bin() {
             [copy.to_string_lossy()],
         )
         .expect("landing stamped a tick earlier");
-    assert_eq!(stamped, 1);
+    assert_eq!(stamped, 1, "{case}");
 
     let missing = Mutations::new(&library)
         .put_back(&album, &action, "admin")
         .expect("the rest come back");
-    assert_eq!(missing, ["Edited/02.flac"]);
-    assert!(paths[0].exists() && !paths[1].exists());
-    assert_eq!(availability_of(&conn, &tracks[0]), "indexed");
-    assert_eq!(availability_of(&conn, &tracks[1]), "missing");
-    assert!(copy.exists(), "the changed copy stays in the bin");
+    assert_eq!(missing, ["Edited/02.flac"], "{case}");
+    assert!(paths[0].exists() && !paths[1].exists(), "{case}");
+    assert_eq!(availability_of(&conn, &tracks[0]), "indexed", "{case}");
+    assert_eq!(availability_of(&conn, &tracks[1]), "missing", "{case}");
+    assert!(copy.exists(), "{case}: the changed copy stays in the bin");
 }
 
 /// A removed file still waiting under its hidden name for a recycle bin
@@ -6432,12 +6270,17 @@ async fn put_back_takes_a_file_still_waiting_for_the_bin() {
 }
 
 /// A removed track whose row gave its path up to a hidden name (another
-/// file stood there for a while) gets its path back with its file: same
-/// id, listed at its old place.
+/// file stood there for a while) is put back. With no other track there,
+/// or another track now missing there (which gives the path up in turn),
+/// it gets its path back with its file: same id, listed at its old place.
+/// With its file put back by hand while another track is listed at the
+/// path, it stays as it is: the other file still comes back, once, and a
+/// second press finds nothing to do rather than refusing on every try.
 #[tokio::test]
-async fn put_back_returns_a_track_that_gave_its_path_up() {
-    use droppedneedle_library::removal::Mutations;
+async fn put_back_when_a_track_gave_its_path_up() {
+    use droppedneedle_library::removal::{MutationError, Mutations};
 
+    let case = "no other track";
     let (scratch, library, music) = bare_library("lib-put-back-gone-row").await;
     plant(&music, "Moved/01.flac", "flac_no_tags.flac");
     plant(&music, "Moved/02.flac", "flac_no_tags.flac");
@@ -6454,8 +6297,8 @@ async fn put_back_returns_a_track_that_gave_its_path_up() {
     .expect("row gives its path up");
 
     let answer = Mutations::new(&library).put_back(&album, &action, "admin");
-    assert!(answer.is_ok(), "{answer:?}");
-    assert!(paths.iter().all(|path| path.exists()));
+    assert!(answer.is_ok(), "{case}: {answer:?}");
+    assert!(paths.iter().all(|path| path.exists()), "{case}");
     for (name, track) in ["Moved/01.flac", "Moved/02.flac"].iter().zip(&tracks) {
         assert_eq!(
             library
@@ -6464,9 +6307,86 @@ async fn put_back_returns_a_track_that_gave_its_path_up() {
                 .unwrap()
                 .as_deref(),
             Some(track.as_str()),
-            "{name} is listed under its own id"
+            "{case}: {name} is listed under its own id"
         );
     }
+
+    let case = "another track missing there";
+    let (scratch, library, music) = bare_library("lib-put-back-occupant").await;
+    plant(&music, "Held/01.flac", "flac_no_tags.flac");
+    plant(&music, "Held/02.flac", "flac_no_tags.flac");
+    plant(&music, "OtherHeld/09.flac", "flac_no_tags.flac");
+    add_music_root(&library, &music).await;
+    add_admin(&library);
+    let (album, tracks, paths, action, other) =
+        removed_with_path_taken(&scratch, &library, &music, "Held", "missing");
+
+    let answer = Mutations::new(&library).put_back(&album, &action, "admin");
+    assert!(answer.is_ok(), "{case}: {answer:?}");
+    assert!(paths.iter().all(|path| path.exists()), "{case}");
+    for (name, track) in ["Held/01.flac", "Held/02.flac"].iter().zip(&tracks) {
+        assert_eq!(
+            library
+                .scan_store
+                .track_at("music", name)
+                .unwrap()
+                .as_deref(),
+            Some(track.as_str()),
+            "{case}: {name} is listed under its own id"
+        );
+    }
+    let conn = scratch_db(&scratch);
+    let (rel, availability): (String, String) = conn
+        .query_row(
+            "SELECT relative_path, availability FROM local_tracks WHERE id = ?1",
+            [&other],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("other track");
+    assert!(
+        rel.starts_with(".droppedneedle-management-gone/"),
+        "{case}: the other track gave the path up: {rel}"
+    );
+    assert_eq!(availability, "missing", "{case}");
+
+    let case = "another track listed there";
+    let (scratch, library, music) = bare_library("lib-put-back-home-other").await;
+    plant(&music, "Twin/01.flac", "flac_no_tags.flac");
+    plant(&music, "Twin/02.flac", "flac_no_tags.flac");
+    plant(&music, "OtherTwin/09.flac", "flac_no_tags.flac");
+    add_music_root(&library, &music).await;
+    add_admin(&library);
+    let (album, tracks, paths, action, other) =
+        removed_with_path_taken(&scratch, &library, &music, "Twin", "indexed");
+    let copy = walk_files(&music.join(".recycle"))
+        .into_iter()
+        .find(|copy| copy.ends_with("01.flac"))
+        .expect("01's copy");
+    // The removal took the emptied folder along; whoever moves the file
+    // home makes it again.
+    std::fs::create_dir_all(paths[0].parent().expect("folder")).expect("folder made");
+    std::fs::rename(&copy, &paths[0]).expect("moved home by hand");
+
+    let answer = Mutations::new(&library).put_back(&album, &action, "admin");
+    assert!(answer.is_ok(), "{case}: {answer:?}");
+    let conn = scratch_db(&scratch);
+    assert_eq!(availability_of(&conn, &tracks[1]), "indexed", "{case}");
+    assert_eq!(availability_of(&conn, &tracks[0]), "missing", "{case}");
+    assert_eq!(
+        library
+            .scan_store
+            .track_at("music", "Twin/01.flac")
+            .unwrap()
+            .as_deref(),
+        Some(other.as_str()),
+        "{case}: the other track keeps the path"
+    );
+    assert_eq!(restored_actions(&conn, &album), 1, "{case}");
+    let again = Mutations::new(&library).put_back(&album, &action, "admin");
+    assert!(
+        matches!(&again, Err(MutationError::NotFound(reason)) if reason.code == "NOTHING_TO_RESTORE"),
+        "{case}: {again:?}"
+    );
 }
 
 /// A link made inside the library folder after a removal is never
@@ -6555,97 +6475,6 @@ fn removed_with_path_taken(
     (album, tracks, paths, action, other)
 }
 
-/// A removed file someone put back by hand, while its track gave the path
-/// up to another track that is listed there now, stays as it is: the
-/// other file still comes back, once, and a second press finds nothing
-/// to do rather than refusing on every try.
-#[tokio::test]
-async fn a_file_back_by_hand_under_another_track_is_put_back_once() {
-    use droppedneedle_library::removal::{MutationError, Mutations};
-
-    let (scratch, library, music) = bare_library("lib-put-back-home-other").await;
-    plant(&music, "Twin/01.flac", "flac_no_tags.flac");
-    plant(&music, "Twin/02.flac", "flac_no_tags.flac");
-    plant(&music, "OtherTwin/09.flac", "flac_no_tags.flac");
-    add_music_root(&library, &music).await;
-    add_admin(&library);
-    let (album, tracks, paths, action, other) =
-        removed_with_path_taken(&scratch, &library, &music, "Twin", "indexed");
-    let copy = walk_files(&music.join(".recycle"))
-        .into_iter()
-        .find(|copy| copy.ends_with("01.flac"))
-        .expect("01's copy");
-    // The removal took the emptied folder along; whoever moves the file
-    // home makes it again.
-    std::fs::create_dir_all(paths[0].parent().expect("folder")).expect("folder made");
-    std::fs::rename(&copy, &paths[0]).expect("moved home by hand");
-
-    let answer = Mutations::new(&library).put_back(&album, &action, "admin");
-    assert!(answer.is_ok(), "{answer:?}");
-    let conn = scratch_db(&scratch);
-    assert_eq!(availability_of(&conn, &tracks[1]), "indexed");
-    assert_eq!(availability_of(&conn, &tracks[0]), "missing");
-    assert_eq!(
-        library
-            .scan_store
-            .track_at("music", "Twin/01.flac")
-            .unwrap()
-            .as_deref(),
-        Some(other.as_str()),
-        "the other track keeps the path"
-    );
-    assert_eq!(restored_actions(&conn, &album), 1);
-    let again = Mutations::new(&library).put_back(&album, &action, "admin");
-    assert!(
-        matches!(&again, Err(MutationError::NotFound(reason)) if reason.code == "NOTHING_TO_RESTORE"),
-        "{again:?}"
-    );
-}
-
-/// A removed track that gave its path up to another track now missing
-/// there takes it back: the other track gives the path up in turn.
-#[tokio::test]
-async fn put_back_moves_a_missing_track_off_the_path() {
-    use droppedneedle_library::removal::Mutations;
-
-    let (scratch, library, music) = bare_library("lib-put-back-occupant").await;
-    plant(&music, "Held/01.flac", "flac_no_tags.flac");
-    plant(&music, "Held/02.flac", "flac_no_tags.flac");
-    plant(&music, "OtherHeld/09.flac", "flac_no_tags.flac");
-    add_music_root(&library, &music).await;
-    add_admin(&library);
-    let (album, tracks, paths, action, other) =
-        removed_with_path_taken(&scratch, &library, &music, "Held", "missing");
-
-    let answer = Mutations::new(&library).put_back(&album, &action, "admin");
-    assert!(answer.is_ok(), "{answer:?}");
-    assert!(paths.iter().all(|path| path.exists()));
-    for (name, track) in ["Held/01.flac", "Held/02.flac"].iter().zip(&tracks) {
-        assert_eq!(
-            library
-                .scan_store
-                .track_at("music", name)
-                .unwrap()
-                .as_deref(),
-            Some(track.as_str()),
-            "{name} is listed under its own id"
-        );
-    }
-    let conn = scratch_db(&scratch);
-    let (rel, availability): (String, String) = conn
-        .query_row(
-            "SELECT relative_path, availability FROM local_tracks WHERE id = ?1",
-            [&other],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .expect("other track");
-    assert!(
-        rel.starts_with(".droppedneedle-management-gone/"),
-        "the other track gave the path up: {rel}"
-    );
-    assert_eq!(availability, "missing");
-}
-
 /// Two files of `folder` removed while the bin could not take them, each
 /// edited (size and modified time kept) while it waited under its hidden
 /// name, then moved into the bin. Answers what [`removed_extras`] does
@@ -6696,12 +6525,15 @@ fn removed_after_an_edit(
     (album, tracks, paths, action, edited)
 }
 
-/// A file edited just before it reached the recycle bin is put back as it
-/// was edited, since its copy is still exactly the file that landed there.
+/// Copies edited just before they reached the recycle bin are still exactly
+/// the files that landed there: a put-back returns them as edited, and a
+/// put-back that is refused leaves them as they landed, so emptying the
+/// bin still deletes them.
 #[tokio::test]
-async fn put_back_returns_a_file_edited_before_it_was_binned() {
-    use droppedneedle_library::removal::Mutations;
+async fn put_back_of_copies_edited_before_the_bin() {
+    use droppedneedle_library::removal::{MutationError, Mutations};
 
+    let case = "put back";
     let (scratch, library, music) = bare_library("lib-put-back-edited-early").await;
     plant(&music, "Early/01.flac", "flac_no_tags.flac");
     plant(&music, "Early/02.flac", "flac_no_tags.flac");
@@ -6714,28 +6546,22 @@ async fn put_back_returns_a_file_edited_before_it_was_binned() {
     let missing = Mutations::new(&library)
         .put_back(&album, &action, "admin")
         .expect("put back");
-    assert!(missing.is_empty(), "{missing:?}");
+    assert!(missing.is_empty(), "{case}: {missing:?}");
     for (path, track) in paths.iter().zip(&tracks) {
         let bytes = std::fs::read(path).expect("home");
         assert!(
             edited.contains(&bytes),
-            "{} came back edited",
+            "{case}: {} came back edited",
             path.display()
         );
-        assert_eq!(availability_of(&conn, track), "indexed");
+        assert_eq!(availability_of(&conn, track), "indexed", "{case}");
     }
     assert!(
         walk_files(&music.join(".recycle")).is_empty(),
-        "the copies left the bin"
+        "{case}: the copies left the bin"
     );
-}
 
-/// A put-back of copies edited before they reached the bin that is undone
-/// leaves them as they landed: emptying the bin still deletes them.
-#[tokio::test]
-async fn an_undone_put_back_leaves_edited_copies_to_expire() {
-    use droppedneedle_library::removal::{MutationError, Mutations};
-
+    let case = "put back refused";
     let (scratch, library, music) = bare_library("lib-put-back-edited-undone").await;
     plant(&music, "Undone/01.flac", "flac_no_tags.flac");
     plant(&music, "Undone/02.flac", "flac_no_tags.flac");
@@ -6756,9 +6582,9 @@ async fn an_undone_put_back_leaves_edited_copies_to_expire() {
             &answer,
             Err(MutationError::Conflict(reason)) if reason.code == "RESTORE_PATH_OCCUPIED"
         ),
-        "{answer:?}"
+        "{case}: {answer:?}"
     );
-    assert_eq!(walk_files(&music.join(".recycle")).len(), 2);
+    assert_eq!(walk_files(&music.join(".recycle")).len(), 2, "{case}");
 
     conn.execute(
         "UPDATE library_publish_replacements SET recycled_at = recycled_at - 10000",
@@ -6770,8 +6596,8 @@ async fn an_undone_put_back_leaves_edited_copies_to_expire() {
         .publishing
         .empty_recycle_bin(before, &|| true)
         .expect("the bin empties");
-    assert_eq!(report.deleted, 2, "{report:?}");
-    assert!(walk_files(&music.join(".recycle")).is_empty());
+    assert_eq!(report.deleted, 2, "{case}: {report:?}");
+    assert!(walk_files(&music.join(".recycle")).is_empty(), "{case}");
 }
 
 /// An admin closes a tag write that needs attention and never placed a
@@ -7844,7 +7670,10 @@ async fn edition_revision(app: &TestApp, headers: &[(&str, &str)], album: &str) 
 /// files are placed (and how often MusicBrainz failed), while the album is
 /// identified again after "Let DroppedNeedle choose", the kind of edition
 /// and its revision, and that nothing writes the files by itself in a
-/// folder managed by hand.
+/// folder managed by hand. In a folder managed automatically the app
+/// writes a chosen edition's files by itself, unless the album is left
+/// unmanaged, parked, waiting on a person or taken over; right after a
+/// choice that write is still to happen.
 #[tokio::test]
 async fn edition_status_says_what_happens_next() {
     let rig = Rig::start("lib-edition-status").await;
@@ -7917,22 +7746,9 @@ async fn edition_status_says_what_happens_next() {
     rig.resume_identification(paused_at).await;
     rig.identified(&album, 1).await;
     assert_eq!(status().await["identifying"], json!(false));
-    rig.stop().await;
-}
 
-/// In a folder managed automatically the app writes a chosen edition's
-/// files by itself, unless the album is left unmanaged; right after a
-/// choice that write is still to happen.
-#[tokio::test]
-async fn edition_status_says_when_the_app_writes_the_files() {
-    let rig = Rig::start("lib-edition-writes").await;
-    let app = &rig.app;
-    let auth = app.login_admin().await;
-    let headers = [("authorization", auth.as_str())];
-    let music = app.config.root_app_dir.join("music");
-    let (album, fit, _) = identified_album(&rig, &music, "album-a").await;
+    // The same album in a folder managed automatically.
     activate_automatic_folder(app, &headers, false).await;
-    let edition = format!("/api/v3/library/albums/{album}/edition");
     let (status, body) = app.call("GET", &edition, &headers, None).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["files_by_itself"], json!(true), "{body}");
@@ -8400,18 +8216,21 @@ async fn an_unmatched_album_in_a_keep_tags_folder_says_why() {
 /// of its tracks (same title and artist, 45 s longer, another recording)
 /// instead of listing it as an extra beside a missing track, still counts
 /// that track missing, and carries the edition's facts and the files'
-/// lengths. Any signed-in user reads the album's own plan; planning
-/// another release and searching for one are for curators.
+/// lengths. It pairs one file with one track: two files that could both be
+/// another version of one missing track are both extras. Any signed-in
+/// user reads the album's own plan; planning another release and searching
+/// for one are for curators.
 #[tokio::test]
-async fn edition_plan_names_another_version_of_a_track() {
+async fn edition_plan_pairs_another_version() {
     const OTHER: &str = "0f6e7a1c-2b3d-4e5f-8a9b-1c2d3e4f5a6b";
+    const PAIRED: &str = "2c3d4e5f-6a7b-4c8d-9e0f-1a2b3c4d5e6f";
     const STRANGER: &str = "7a8b9c0d-1e2f-4a3b-8c4d-5e6f7a8b9c0d";
     let rig = Rig::start("lib-edition-plan").await;
     let app = &rig.app;
     let auth = app.login_admin().await;
     let headers = [("authorization", auth.as_str())];
     let music = app.config.root_app_dir.join("music");
-    let (album, fit, _) = identified_album(&rig, &music, "album-p").await;
+    let (album, fit, control) = identified_album(&rig, &music, "album-p").await;
     let mut other = fit.clone();
     other.id = OTHER.to_owned();
     other.date = Some("2004-05-01".to_owned());
@@ -8530,25 +8349,25 @@ async fn edition_plan_names_another_version_of_a_track() {
         )
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    rig.stop().await;
-}
 
-/// Another version pairs one file with one track: when two files (a 4:11
-/// and a 6:02 cut, say) could both be another version of the same missing
-/// track, neither is, and both stay files the edition has no track for.
-#[tokio::test]
-async fn edition_plan_pairs_another_version_one_to_one() {
-    const OTHER: &str = "2c3d4e5f-6a7b-4c8d-9e0f-1a2b3c4d5e6f";
-    let rig = Rig::start("lib-edition-plan-pairs").await;
-    let app = &rig.app;
-    let auth = app.login_admin().await;
-    let headers = [("authorization", auth.as_str())];
-    let music = app.config.root_app_dir.join("music");
+    // Two files (a 4:11 and a 6:02 cut, say) that could both be another
+    // version of the same missing track: neither is, and both stay files
+    // the edition has no track for.
     plant(&music, "album-v/01.flac", "flac_full_01.flac");
     plant(&music, "album-v/02.flac", "flac_full_02.flac");
     plant(&music, "album-v/03.flac", "flac_full_02.flac");
-    rig.pause_identification().await;
-    app.add_library_folder("music", &music).await;
+    // Paused at the revision the resume above left, which the idle
+    // activity feed no longer shows.
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/v3/library/identification/pause",
+            &headers,
+            Some(json!({"expected_revision": control})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    app.scan_library().await;
     let tracks: Vec<String> = ["01", "02", "03"]
         .iter()
         .map(|name| {
@@ -8569,14 +8388,14 @@ async fn edition_plan_pairs_another_version_one_to_one() {
             Some(&album)
         );
     }
-    let mut other = tagged_release(&rig.identify_store, &album);
+    let mut paired = tagged_release(&rig.identify_store, &album);
     let mut seen = std::collections::HashSet::new();
-    other
+    paired
         .tracks
         .retain(|track| seen.insert(track.title.clone()));
-    assert_eq!(other.tracks.len(), 2, "one track per song");
-    other.id = OTHER.to_owned();
-    let second = other
+    assert_eq!(paired.tracks.len(), 2, "one track per song");
+    paired.id = PAIRED.to_owned();
+    let second = paired
         .tracks
         .iter_mut()
         .find(|track| track.position == 2)
@@ -8585,13 +8404,13 @@ async fn edition_plan_pairs_another_version_one_to_one() {
     second.recording_id = "b2c3d4e5-0000-4000-8000-000000000002".to_owned();
     second.length_ms = second.length_ms.map(|length| length + 45_000);
     rig.identify.set_recall(RecallResult {
-        releases: vec![other],
+        releases: vec![paired],
         ..RecallResult::default()
     });
     let (status, body) = app
         .call(
             "GET",
-            &format!("/api/v3/library/albums/{album}/edition/plan?release_mbid={OTHER}"),
+            &format!("/api/v3/library/albums/{album}/edition/plan?release_mbid={PAIRED}"),
             &headers,
             None,
         )
@@ -8605,7 +8424,7 @@ async fn edition_plan_pairs_another_version_one_to_one() {
             &body["extra_count"],
         ),
         (&json!(1), &json!(1), &json!(0), &json!(2)),
-        "{body}"
+        "two files for one track: {body}"
     );
     rig.stop().await;
 }
@@ -9277,15 +9096,21 @@ async fn a_busy_database_leaves_a_management_job_runnable() {
     runtime.shutdown().await;
 }
 
-/// A management job whose worker died mid-run, its lease run out, is
-/// requeued and finished by the management worker alone: no other
-/// feature's loop has to notice it.
-#[tokio::test]
-async fn a_management_job_whose_worker_died_is_finished_by_its_own_worker() {
+/// Each library worker recovers its own jobs, with no other library loop
+/// running: a management job whose worker died, its lease run out, is
+/// requeued and finished by a management step alone; on its own loop, the
+/// management and the repairs worker each requeue and run at their first
+/// turn a job a stopped process left running, and start a job queued
+/// later on the wakeup its queueing sent.
+#[tokio::test(flavor = "multi_thread")]
+async fn each_library_worker_recovers_and_wakes() {
+    use droppedneedle_library::jobs::{MANAGEMENT_WAKEUP, REPAIRS_WAKEUP};
     use droppedneedle_library::management::models::{Selection, SelectionKind};
     use droppedneedle_library::management::service::{Management, PreviewRequest};
     use droppedneedle_library::management::settings as lm;
+    use droppedneedle_library::repairs::models::Purpose;
 
+    let case = "management, lease run out";
     let (_scratch, library, music) = bare_library("lib-management-dead-worker").await;
     plant(&music, "incoming/dead.flac", "management_full.flac");
     add_music_root(&library, &music).await;
@@ -9345,21 +9170,14 @@ async fn a_management_job_whose_worker_died_is_finished_by_its_own_worker() {
         ))
         .expect("job held by a dead worker");
 
-    assert!(management_step(&library).await, "the job is taken again");
+    assert!(
+        management_step(&library).await,
+        "{case}: the job is taken again"
+    );
     let job = management.detail(&handle.job_id).expect("detail").job;
-    assert_eq!(job.state.as_str(), "ready", "planning finished");
-}
+    assert_eq!(job.state.as_str(), "ready", "{case}: planning finished");
 
-/// The management worker on its own loop: its first turn requeues and
-/// runs a job a stopped process left running, and a job queued later
-/// starts on the wakeup its queueing sent. No other library loop runs.
-#[tokio::test(flavor = "multi_thread")]
-async fn the_management_loop_recovers_at_start_and_wakes_on_enqueue() {
-    use droppedneedle_library::jobs::MANAGEMENT_WAKEUP;
-    use droppedneedle_library::management::models::{Selection, SelectionKind};
-    use droppedneedle_library::management::service::{Management, PreviewRequest};
-    use droppedneedle_library::management::settings as lm;
-
+    let case = "management loop";
     let scratch = Scratch {
         dir: ScratchDir::new("lib-management-loop"),
         identify: Arc::new(FakeProviders::default()),
@@ -9474,13 +9292,107 @@ async fn the_management_loop_recovers_at_start_and_wakes_on_enqueue() {
     assert_ne!(
         library.wakeups.revision(MANAGEMENT_WAKEUP),
         woken_at,
-        "queueing the job woke the worker"
+        "{case}: queueing the job woke the worker"
     );
     settled(queued).await;
 
     assert_eq!(
         platform.supervisor.running_names(),
-        vec![droppedneedle_library::management::JOB_NAME.to_owned()]
+        vec![droppedneedle_library::management::JOB_NAME.to_owned()],
+        "{case}"
+    );
+    platform
+        .supervisor
+        .shutdown(std::time::Duration::from_secs(5))
+        .await;
+
+    let case = "repairs loop";
+    let scratch = Scratch {
+        dir: ScratchDir::new("lib-repairs-loop"),
+        identify: Arc::new(FakeProviders::default()),
+        enrichment: None,
+    };
+    crate::common::migrated_db(&scratch.join("app.db"));
+    let db = droppedneedle_kernel::db::Db::open_for_tests(&scratch.join("app.db"))
+        .expect("database opens");
+    let platform = crate::common::TestPlatform::on(&db, &scratch)
+        .settings(Arc::new(
+            ConfigStore::scratch(
+                &scratch,
+                Crypto::from_key_bytes(&[7u8; 32]).expect("test key"),
+            )
+            .expect("config opens"),
+        ))
+        .build()
+        .await;
+    let library = library_with(&platform, scratch.identify.clone(), None);
+    let repairs = crate::common::library::services(&library).repairs;
+    // A recheck of an empty library: its report is ready once it runs.
+    let check = |key: &str| {
+        repairs
+            .create(
+                Purpose::ExistingMatches,
+                "admin",
+                key,
+                Vec::new(),
+                None,
+                "test-matcher".to_owned(),
+            )
+            .expect("check queued")
+            .id
+    };
+    // Waits on the job's own state, woken by each commit; the bound only
+    // stops a hang.
+    let settled = |job_id: String| {
+        let (db, mut commits) = (db.clone(), db.commits());
+        async move {
+            let wait = async {
+                loop {
+                    let state: String = db.one(
+                        "SELECT state FROM library_operation_jobs WHERE id = ?1",
+                        rusqlite::params![&job_id],
+                    );
+                    if state == "ready" {
+                        return;
+                    }
+                    commits.changed().await.expect("database open");
+                }
+            };
+            tokio::time::timeout(std::time::Duration::from_secs(60), wait)
+                .await
+                .expect("the report is ready");
+        }
+    };
+
+    // A process held the job and stopped before its lease ran out.
+    let interrupted = check("repair-interrupted");
+    db.run_sql(&format!(
+        "UPDATE library_operation_jobs SET state = 'running', lease_owner = 'stopped', \
+         lease_expires_at = unixepoch('now') + 600, heartbeat_at = unixepoch('now') \
+         WHERE id = '{interrupted}'"
+    ))
+    .expect("job held by a stopped process");
+
+    droppedneedle_library::repairs::start(
+        crate::common::library::repair_worker(&library),
+        &platform.supervisor,
+    )
+    .expect("repairs loop starts");
+    settled(interrupted).await;
+
+    let woken_at = library.wakeups.revision(REPAIRS_WAKEUP);
+    let queued = check("repair-queued");
+    assert_ne!(
+        library.wakeups.revision(REPAIRS_WAKEUP),
+        woken_at,
+        "{case}: queueing the job woke the worker"
+    );
+    settled(queued).await;
+
+    assert_eq!(
+        platform.supervisor.running_names(),
+        vec![droppedneedle_library::repairs::JOB_NAME.to_owned()],
+        "{case}"
     );
     platform
         .supervisor
@@ -9565,16 +9477,19 @@ async fn the_scan_loop_sweeps_album_art_when_a_publish_asks() {
             .expect("read joins")
         }
     };
+    // Waits on the recorded version, woken by each commit; the bound only
+    // stops a hang.
     let until_version = |version: i64| {
         let album = album.clone();
         let art = &art;
+        let mut commits = db.commits();
         async move {
             let wait = async {
                 loop {
                     if let Some(found) = art(album.clone()).await.filter(|(_, at)| *at == version) {
                         return found.0;
                     }
-                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    commits.changed().await.expect("database open");
                 }
             };
             tokio::time::timeout(std::time::Duration::from_secs(20), wait).await
@@ -9596,107 +9511,6 @@ async fn the_scan_loop_sweeps_album_art_when_a_publish_asks() {
         .expect("the sweep the publish asked for records the new cover");
     assert_ne!(first, second, "the new cover is recorded");
 
-    platform
-        .supervisor
-        .shutdown(std::time::Duration::from_secs(5))
-        .await;
-}
-
-/// The repairs worker on its own loop: its first turn requeues and
-/// finishes a repair job a stopped process left running, and a job queued
-/// later starts on the wakeup its queueing sent. No other library loop
-/// runs.
-#[tokio::test(flavor = "multi_thread")]
-async fn the_repairs_loop_recovers_at_start_and_wakes_on_enqueue() {
-    use droppedneedle_library::jobs::REPAIRS_WAKEUP;
-    use droppedneedle_library::repairs::models::Purpose;
-
-    let scratch = Scratch {
-        dir: ScratchDir::new("lib-repairs-loop"),
-        identify: Arc::new(FakeProviders::default()),
-        enrichment: None,
-    };
-    crate::common::migrated_db(&scratch.join("app.db"));
-    let db = droppedneedle_kernel::db::Db::open_for_tests(&scratch.join("app.db"))
-        .expect("database opens");
-    let platform = crate::common::TestPlatform::on(&db, &scratch)
-        .settings(Arc::new(
-            ConfigStore::scratch(
-                &scratch,
-                Crypto::from_key_bytes(&[7u8; 32]).expect("test key"),
-            )
-            .expect("config opens"),
-        ))
-        .build()
-        .await;
-    let library = library_with(&platform, scratch.identify.clone(), None);
-    let repairs = crate::common::library::services(&library).repairs;
-    // A recheck of an empty library: its report is ready once it runs.
-    let check = |key: &str| {
-        repairs
-            .create(
-                Purpose::ExistingMatches,
-                "admin",
-                key,
-                Vec::new(),
-                None,
-                "test-matcher".to_owned(),
-            )
-            .expect("check queued")
-            .id
-    };
-    // Waits on the job's own state, woken by each commit; the bound only
-    // stops a hang.
-    let settled = |job_id: String| {
-        let (db, mut commits) = (db.clone(), db.commits());
-        async move {
-            let wait = async {
-                loop {
-                    let state: String = db.one(
-                        "SELECT state FROM library_operation_jobs WHERE id = ?1",
-                        rusqlite::params![&job_id],
-                    );
-                    if state == "ready" {
-                        return;
-                    }
-                    commits.changed().await.expect("database open");
-                }
-            };
-            tokio::time::timeout(std::time::Duration::from_secs(60), wait)
-                .await
-                .expect("the report is ready");
-        }
-    };
-
-    // A process held the job and stopped before its lease ran out.
-    let interrupted = check("repair-interrupted");
-    db.run_sql(&format!(
-        "UPDATE library_operation_jobs SET state = 'running', lease_owner = 'stopped', \
-         lease_expires_at = unixepoch('now') + 600, heartbeat_at = unixepoch('now') \
-         WHERE id = '{interrupted}'"
-    ))
-    .expect("job held by a stopped process");
-
-    droppedneedle_library::repairs::start(
-        crate::common::library::repair_worker(&library),
-        &platform.supervisor,
-    )
-    .expect("repairs loop starts");
-    settled(interrupted).await;
-
-    let woken_at = library.wakeups.revision(REPAIRS_WAKEUP);
-    let queued = check("repair-queued");
-    assert_ne!(
-        library.wakeups.revision(REPAIRS_WAKEUP),
-        woken_at,
-        "queueing the job woke the worker"
-    );
-    settled(queued).await;
-
-    assert_eq!(
-        platform.supervisor.running_names(),
-        vec![droppedneedle_library::repairs::JOB_NAME.to_owned()]
-    );
     platform
         .supervisor
         .shutdown(std::time::Duration::from_secs(5))
@@ -13289,12 +13103,16 @@ async fn the_picard_profile_writes_its_fields_in_every_format() {
     }
 }
 
-/// An ISRC edited by hand after the app wrote the file is the user's: the
-/// worker looks, marks the album and writes nothing.
+/// A managed field changed by hand after the app wrote the file is the
+/// user's: an ISRC, and a picture where the profile manages pictures (and
+/// nowhere else). The worker looks, marks the album and writes nothing.
 #[tokio::test]
-async fn a_hand_edited_isrc_takes_the_album_over() {
+async fn a_hand_edit_of_a_managed_field_takes_the_album_over() {
+    use droppedneedle_library::management::enrich::{Cover, ScriptedEnrichment};
+    use droppedneedle_library::tags::save::{PictureSpec, save_tags_with_pictures};
     use droppedneedle_library::tags::{TagEdit, TagField, read_fields};
 
+    let case = "isrc";
     let managed = ManagedLibrary::start("lib-takeover-isrc", |_| {}).await;
     let (album, tracks) = managed
         .add_album_from("first", &["management_full.flac"], full_edition)
@@ -13306,9 +13124,9 @@ async fn a_hand_edited_isrc_takes_the_album_over() {
     assert_eq!(
         read_fields(&file).expect("tags read")[&TagField::Isrc],
         vec![isrc(0)],
-        "the app wrote the ISRC"
+        "{case}: the app wrote the ISRC"
     );
-    assert_eq!(managed.mark(&album), None);
+    assert_eq!(managed.mark(&album), None, "{case}");
 
     managed
         .edit_outside(
@@ -13318,8 +13136,81 @@ async fn a_hand_edited_isrc_takes_the_album_over() {
         .await;
     let edited = file_sha256(&file);
     managed.worker_looks().await;
-    assert_eq!(managed.mark(&album).as_deref(), Some("files_changed"));
-    assert_eq!(file_sha256(&file), edited, "nothing written");
+    assert_eq!(
+        managed.mark(&album).as_deref(),
+        Some("files_changed"),
+        "{case}"
+    );
+    assert_eq!(file_sha256(&file), edited, "{case}: nothing written");
+
+    let png = |colour: [u8; 3]| {
+        let mut bytes = Vec::new();
+        image::RgbImage::from_pixel(8, 8, image::Rgb(colour))
+            .write_to(
+                &mut std::io::Cursor::new(&mut bytes),
+                image::ImageFormat::Png,
+            )
+            .expect("png");
+        bytes
+    };
+    for (tag, artwork) in [("lib-takeover-art", true), ("lib-takeover-no-art", false)] {
+        let managed = ManagedLibrary::scripted(
+            tag,
+            |profile| {
+                profile.artwork.embedded_enabled = artwork;
+                // No credits are scripted here.
+                for field in &mut profile.metadata.fields {
+                    if droppedneedle_library::management::enrich::CREDIT_FIELDS
+                        .iter()
+                        .any(|(name, _)| *name == field.field)
+                    {
+                        field.mode =
+                            droppedneedle_kernel::runtime_config::sections::FieldMode::Disabled;
+                    }
+                }
+            },
+            Arc::new(ScriptedEnrichment {
+                listenbrainz: None,
+                lyrics: None,
+                cover: Some(Cover {
+                    bytes: png([30, 30, 200]),
+                    mime: "image/png".to_owned(),
+                }),
+                ..Default::default()
+            }),
+        )
+        .await;
+        let (album, tracks) = managed.add_album("first", 1).await;
+        managed.activate().await;
+        managed.look(&album).await;
+        let file = managed.path(&tracks[0]);
+
+        save_tags_with_pictures(
+            &file,
+            &[],
+            Some(&[PictureSpec {
+                kind: 3,
+                mime: "image/png".to_owned(),
+                description: String::new(),
+                data: png([200, 30, 30]),
+                info: None,
+            }]),
+        )
+        .expect("picture replaced outside the app");
+        let edited = file_sha256(&file);
+        rescan(&managed.library).await;
+        managed.worker_looks().await;
+        assert_eq!(
+            managed.mark(&album).as_deref(),
+            artwork.then_some("files_changed"),
+            "picture, artwork managed: {artwork}"
+        );
+        assert_eq!(
+            file_sha256(&file),
+            edited,
+            "picture, artwork managed: {artwork}: the picture is left alone"
+        );
+    }
 }
 
 /// A hand edit counts even when another file of the album cannot be
@@ -13509,79 +13400,6 @@ async fn an_undone_run_is_not_done_again() {
     );
     assert_eq!(file_sha256(&file), bytes, "the worker writes nothing");
     assert_eq!(managed.mark(&by_person).as_deref(), Some("run_undone"));
-}
-
-/// A picture replaced by hand takes the album over where the profile
-/// manages pictures, and nowhere else.
-#[tokio::test]
-async fn a_replaced_picture_counts_only_where_pictures_are_managed() {
-    use droppedneedle_library::management::enrich::{Cover, ScriptedEnrichment};
-    use droppedneedle_library::tags::save::{PictureSpec, save_tags_with_pictures};
-
-    let png = |colour: [u8; 3]| {
-        let mut bytes = Vec::new();
-        image::RgbImage::from_pixel(8, 8, image::Rgb(colour))
-            .write_to(
-                &mut std::io::Cursor::new(&mut bytes),
-                image::ImageFormat::Png,
-            )
-            .expect("png");
-        bytes
-    };
-    for (tag, artwork) in [("lib-takeover-art", true), ("lib-takeover-no-art", false)] {
-        let managed = ManagedLibrary::scripted(
-            tag,
-            |profile| {
-                profile.artwork.embedded_enabled = artwork;
-                // No credits are scripted here.
-                for field in &mut profile.metadata.fields {
-                    if droppedneedle_library::management::enrich::CREDIT_FIELDS
-                        .iter()
-                        .any(|(name, _)| *name == field.field)
-                    {
-                        field.mode =
-                            droppedneedle_kernel::runtime_config::sections::FieldMode::Disabled;
-                    }
-                }
-            },
-            Arc::new(ScriptedEnrichment {
-                listenbrainz: None,
-                lyrics: None,
-                cover: Some(Cover {
-                    bytes: png([30, 30, 200]),
-                    mime: "image/png".to_owned(),
-                }),
-                ..Default::default()
-            }),
-        )
-        .await;
-        let (album, tracks) = managed.add_album("first", 1).await;
-        managed.activate().await;
-        managed.look(&album).await;
-        let file = managed.path(&tracks[0]);
-
-        save_tags_with_pictures(
-            &file,
-            &[],
-            Some(&[PictureSpec {
-                kind: 3,
-                mime: "image/png".to_owned(),
-                description: String::new(),
-                data: png([200, 30, 30]),
-                info: None,
-            }]),
-        )
-        .expect("picture replaced outside the app");
-        let edited = file_sha256(&file);
-        rescan(&managed.library).await;
-        managed.worker_looks().await;
-        assert_eq!(
-            managed.mark(&album).as_deref(),
-            artwork.then_some("files_changed"),
-            "artwork managed: {artwork}"
-        );
-        assert_eq!(file_sha256(&file), edited, "the picture is left alone");
-    }
 }
 
 /// The app's step back goes with the tracks: a merge by hand carries it to
@@ -15360,39 +15178,44 @@ async fn an_import_never_lands_under_an_excluded_path() {
     assert!(snapshot_tree(&music).is_empty(), "nothing under the rule");
 }
 
-/// A management preview never moves a file under a path rule that leaves
-/// files out, the rule matching whatever the letter case.
+/// A management preview is refused where files are left out: it never moves
+/// a file under a path rule that excludes it, the rule matching whatever
+/// the letter case, and a folder set to Excluded takes no management even
+/// where a path rule inside it includes files again.
 #[tokio::test]
-async fn a_preview_never_moves_a_file_under_an_excluded_path() {
-    use droppedneedle_library::management::models::{Eligibility, SelectionKind};
-
-    let managed = ManagedLibrary::start("lib-preview-excluded-path", |_| {}).await;
-    let (album, _) = managed.add_album("first", 1).await;
-    let (_, items) = managed
-        .preview(SelectionKind::Albums, &[&album], "before")
-        .await;
-    assert!(items[0].eligibility.writes(), "{:?}", items[0].facts);
-    let dest = items[0].dest_rel.clone().expect("a destination");
-    let top = dest.split('/').next().expect("a folder");
-    assert_ne!(top, "first", "the file moves to another folder");
-
-    exclude_path(&managed.library, &top.to_uppercase());
-    let (_, items) = managed
-        .preview(SelectionKind::Albums, &[&album], "after")
-        .await;
-    assert_eq!(items[0].eligibility, Eligibility::Blocked);
-    assert_eq!(items[0].reason().expect("a reason").code, "ROOT_READ_ONLY");
-}
-
-/// A folder set to Excluded takes no management, even where a path rule
-/// inside it includes files again.
-#[tokio::test]
-async fn a_preview_under_an_excluded_folder_is_refused_inside_an_included_rule() {
+async fn a_preview_is_refused_where_files_are_left_out() {
     use droppedneedle_kernel::runtime_config::secret_sections::{
         IdentificationPolicy, LibraryPathRule, TypedLibrary,
     };
     use droppedneedle_library::management::models::{Eligibility, SelectionKind};
 
+    let case = "excluded path";
+    let managed = ManagedLibrary::start("lib-preview-excluded-path", |_| {}).await;
+    let (album, _) = managed.add_album("first", 1).await;
+    let (_, items) = managed
+        .preview(SelectionKind::Albums, &[&album], "before")
+        .await;
+    assert!(
+        items[0].eligibility.writes(),
+        "{case}: {:?}",
+        items[0].facts
+    );
+    let dest = items[0].dest_rel.clone().expect("a destination");
+    let top = dest.split('/').next().expect("a folder");
+    assert_ne!(top, "first", "{case}: the file moves to another folder");
+
+    exclude_path(&managed.library, &top.to_uppercase());
+    let (_, items) = managed
+        .preview(SelectionKind::Albums, &[&album], "after")
+        .await;
+    assert_eq!(items[0].eligibility, Eligibility::Blocked, "{case}");
+    assert_eq!(
+        items[0].reason().expect("a reason").code,
+        "ROOT_READ_ONLY",
+        "{case}"
+    );
+
+    let case = "excluded folder";
     let managed = ManagedLibrary::start("lib-preview-excluded-folder", |_| {}).await;
     let (album, _) = managed.add_album("Keep", 1).await;
     managed
@@ -15418,10 +15241,11 @@ async fn a_preview_under_an_excluded_folder_is_refused_inside_an_included_rule()
     let (_, items) = managed
         .preview(SelectionKind::Albums, &[&album], "after")
         .await;
-    assert_eq!(items[0].eligibility, Eligibility::Blocked);
+    assert_eq!(items[0].eligibility, Eligibility::Blocked, "{case}");
     assert_eq!(
         items[0].reason().expect("a reason").code,
-        "ROOT_UNAVAILABLE"
+        "ROOT_UNAVAILABLE",
+        "{case}"
     );
 }
 
@@ -15472,11 +15296,15 @@ fn join_second_track(
     )
 }
 
-/// "Get missing tracks" with one library folder, where an Excluded rule
-/// covers the path the naming script gives but not the album's own
-/// folder, places the file beside the album's files.
+/// "Get missing tracks" places the file beside the album's files: with an
+/// Excluded rule over the path the naming script gives but not the album's
+/// own folder, and with the copy in a later library folder than the one a
+/// download goes to (staged there too).
 #[tokio::test]
-async fn a_join_is_judged_by_the_folder_beside_its_copy() {
+async fn a_join_lands_beside_its_copy() {
+    use droppedneedle_kernel::runtime_config::secret_sections::TypedLibrary;
+
+    let case = "excluded rendered path";
     let managed = ManagedLibrary::start("lib-import-join-excluded-render", |_| {}).await;
     let (album, tracks) = managed.add_album("first", 2).await;
     std::fs::remove_file(managed.path(&tracks[1])).expect("file removed");
@@ -15506,22 +15334,15 @@ async fn a_join_is_judged_by_the_folder_beside_its_copy() {
     assert_eq!(
         imported.paths[0].parent(),
         Some(managed.music.join("first").as_path()),
-        "{:?}",
+        "{case}: {:?}",
         imported.paths
     );
     assert!(
         !managed.music.join(&artist).exists(),
-        "nothing under the rule"
+        "{case}: nothing under the rule"
     );
-}
 
-/// "Get missing tracks" for an album whose copy sits in a later library
-/// folder places the file beside the copy, in that folder and staged
-/// there, though a download goes to the first folder.
-#[tokio::test]
-async fn a_join_lands_beside_its_copy_in_another_library_folder() {
-    use droppedneedle_kernel::runtime_config::secret_sections::TypedLibrary;
-
+    let case = "copy in a later library folder";
     let managed = ManagedLibrary::start("lib-import-join-other-folder", |_| {}).await;
     let (album, tracks) = managed.add_album("first", 2).await;
     std::fs::remove_file(managed.path(&tracks[1])).expect("file removed");
@@ -15547,13 +15368,17 @@ async fn a_join_lands_beside_its_copy_in_another_library_folder() {
             Ok(settings)
         })
         .expect("front folder first");
-    assert_eq!(managed.library.core.live_registry().roots()[0].id, "front");
+    assert_eq!(
+        managed.library.core.live_registry().roots()[0].id,
+        "front",
+        "{case}"
+    );
 
     let imported = join_second_track(&managed, &album).expect("imported");
     assert_eq!(
         imported.paths[0].parent(),
         Some(managed.music.join("first").as_path()),
-        "{:?}",
+        "{case}: {:?}",
         imported.paths
     );
     let roots: Vec<(String, String)> = managed
@@ -15567,10 +15392,14 @@ async fn a_join_lands_beside_its_copy_in_another_library_folder() {
         .expect("query")
         .collect::<rusqlite::Result<_>>()
         .expect("rows");
-    assert_eq!(roots, vec![("music".to_owned(), "music".to_owned())]);
+    assert_eq!(
+        roots,
+        vec![("music".to_owned(), "music".to_owned())],
+        "{case}"
+    );
     assert!(
         snapshot_tree(&front).is_empty(),
-        "nothing in the first folder"
+        "{case}: nothing in the first folder"
     );
 }
 
@@ -15610,46 +15439,79 @@ async fn a_rename_in_the_app_keeps_v2s_record() {
     assert_eq!(file_sha256(&file), bytes, "nothing written");
 }
 
-/// A preview of two albums where one has a hand edit the worker has not
-/// looked at yet: that album's files are blocked and, in a folder managed
-/// automatically, the album is left unmanaged; the other album plans. The
-/// album previewed by itself plans.
+/// A profile preview or a restore of the originals over two albums, one
+/// with a hand edit the worker has not looked at yet: that album's files
+/// are blocked and, in a folder managed automatically, the album is left
+/// unmanaged; the other album plans. The album by itself plans.
 #[tokio::test]
-async fn a_wide_preview_never_writes_over_an_unnoticed_hand_edit() {
+async fn a_wide_job_never_writes_over_an_unnoticed_hand_edit() {
     use droppedneedle_library::management::models::{Eligibility, SelectionKind};
 
-    let managed = ManagedLibrary::start("lib-takeover-wide-unnoticed", |_| {}).await;
-    let (album, tracks) = managed.add_album("first", 1).await;
-    let (other, _) = managed.add_album("second", 1).await;
-    managed.activate().await;
-    managed.look(&album).await;
-    managed.look(&other).await;
-    managed
-        .edit_outside(&tracks[0], title_edit("By Hand"))
-        .await;
-    let file = managed.path(&tracks[0]);
-    let bytes = file_sha256(&file);
-
-    let (_, items) = managed
-        .preview(SelectionKind::Albums, &[&album, &other], "both")
-        .await;
-    assert_eq!(items.len(), 2);
-    for item in &items {
-        if item.album_id == album {
-            assert_eq!(item.eligibility, Eligibility::Blocked);
-            assert_eq!(item.reason().expect("a reason").code, "CHANGED_OUTSIDE");
+    for case in ["profile preview", "restore preview"] {
+        let tag = if case == "profile preview" {
+            "lib-takeover-wide-unnoticed"
         } else {
-            assert!(item.eligibility.writes(), "{:?}", item.facts);
+            "lib-takeover-wide-restore"
+        };
+        let managed = ManagedLibrary::start(tag, |_| {}).await;
+        let (album, tracks) = managed.add_album("first", 1).await;
+        let (other, _) = managed.add_album("second", 1).await;
+        managed.activate().await;
+        managed.look(&album).await;
+        managed.look(&other).await;
+        managed
+            .edit_outside(&tracks[0], title_edit("By Hand"))
+            .await;
+        let file = managed.path(&tracks[0]);
+        let bytes = file_sha256(&file);
+
+        let items = if case == "profile preview" {
+            managed
+                .preview(SelectionKind::Albums, &[&album, &other], "both")
+                .await
+                .1
+        } else {
+            managed.restore_preview(&[&album, &other], "both").await
+        };
+        assert_eq!(items.len(), 2, "{case}");
+        for item in &items {
+            if item.album_id == album {
+                assert_eq!(item.eligibility, Eligibility::Blocked, "{case}");
+                assert_eq!(
+                    item.reason().expect("a reason").code,
+                    "CHANGED_OUTSIDE",
+                    "{case}"
+                );
+            } else {
+                assert!(item.eligibility.writes(), "{case}: {:?}", item.facts);
+            }
+        }
+        assert_eq!(
+            managed.mark(&album).as_deref(),
+            Some("files_changed"),
+            "{case}"
+        );
+
+        if case == "profile preview" {
+            let (_, items) = managed
+                .preview(SelectionKind::Albums, &[&album], "own")
+                .await;
+            assert!(
+                items[0].eligibility.writes(),
+                "{case}: {:?}",
+                items[0].facts
+            );
+            assert!(items[0].diff.tags_changed, "{case}");
+            assert_eq!(file_sha256(&file), bytes, "{case}");
+        } else {
+            let items = managed.restore_preview(&[&album], "own").await;
+            assert!(
+                items[0].eligibility.writes(),
+                "{case}: {:?}",
+                items[0].facts
+            );
         }
     }
-    assert_eq!(managed.mark(&album).as_deref(), Some("files_changed"));
-
-    let (_, items) = managed
-        .preview(SelectionKind::Albums, &[&album], "own")
-        .await;
-    assert!(items[0].eligibility.writes(), "{:?}", items[0].facts);
-    assert!(items[0].diff.tags_changed);
-    assert_eq!(file_sha256(&file), bytes);
 }
 
 impl ManagedLibrary {
@@ -15689,185 +15551,118 @@ impl ManagedLibrary {
     }
 }
 
-/// In a folder managed by hand, a wide preview blocks an album with an
-/// unnoticed hand edit and leaves it unmarked. A person's run of the
-/// album by itself takes the files back, so after a change of edition a
-/// wide preview plans it again.
+/// In a folder managed by hand, a person's run of an album over a hand edit
+/// takes the files back: a wide preview before it blocks the album and
+/// leaves it unmarked, and after a change of edition plans it again.
+/// Undoing that run puts the hand edit back with the app's record from
+/// before, so a wide preview after a change of edition still blocks it.
 #[tokio::test]
-async fn a_wide_preview_in_a_manual_folder_blocks_without_marking() {
-    use droppedneedle_library::management::models::{Eligibility, SelectionKind};
-
-    let managed = ManagedLibrary::start("lib-takeover-wide-manual", |_| {}).await;
-    let (other, _) = managed.add_album("first", 1).await;
-    let (album, tracks) = managed.add_album("second", 1).await;
-    managed.worker_looks().await;
-    managed
-        .apply(SelectionKind::Albums, &[&album], "album")
-        .await;
-    managed
-        .apply(SelectionKind::Albums, &[&other], "other")
-        .await;
-    managed
-        .edit_outside(&tracks[0], title_edit("By Hand"))
-        .await;
-
-    let (_, items) = managed
-        .preview(SelectionKind::Albums, &[&album, &other], "both")
-        .await;
-    for item in items.iter().filter(|item| item.album_id == album) {
-        assert_eq!(item.eligibility, Eligibility::Blocked);
-        assert_eq!(item.reason().expect("a reason").code, "CHANGED_OUTSIDE");
-    }
-    assert_eq!(
-        managed.mark(&album),
-        None,
-        "nothing is managed by itself here"
-    );
-
-    managed.apply(SelectionKind::Albums, &[&album], "own").await;
-    let chosen: String = managed
-        .db()
-        .query_row(
-            "SELECT release_mbid FROM local_album_external_identities WHERE local_album_id = ?1",
-            [&album],
-            |row| row.get(0),
-        )
-        .expect("edition");
-    // The album's two editions differ only in their second id group.
-    let edition = if chosen.contains("-0000-") {
-        chosen.replacen("-0000-", "-0001-", 1)
-    } else {
-        chosen.replacen("-0001-", "-0000-", 1)
-    };
-    crate::common::library::operations(&managed.library)
-        .choose_edition(
-            &album,
-            &edition,
-            shown_revision(&managed.library, &album),
-            Some("admin"),
-            false,
-        )
-        .await
-        .expect("edition chosen");
-    let (_, items) = managed
-        .preview(SelectionKind::Albums, &[&album, &other], "after")
-        .await;
-    for item in items.iter().filter(|item| item.album_id == album) {
-        assert!(item.eligibility.writes(), "{:?}", item.facts);
-        assert!(item.diff.tags_changed);
-    }
-}
-
-/// Undoing a person's run of the whole profile puts the hand edit it
-/// wrote over back, and with it the app's record from before the run: in
-/// a folder managed by hand, a wide preview after a change of edition
-/// still leaves the album alone.
-#[tokio::test]
-async fn an_undone_profile_run_gives_the_hand_edit_back() {
-    undone_profile_run_gives_the_hand_edit_back("lib-takeover-undo-hand-edit").await;
-}
-
-async fn undone_profile_run_gives_the_hand_edit_back(name: &str) {
+async fn a_persons_run_over_a_hand_edit_in_a_manual_folder() {
     use droppedneedle_library::management::models::{Eligibility, SelectionKind};
     use droppedneedle_library::tags::{TagField, read_fields};
 
-    let managed = ManagedLibrary::start(name, |_| {}).await;
-    let (other, _) = managed.add_album("first", 1).await;
-    let (album, tracks) = managed.add_album("second", 1).await;
-    managed.worker_looks().await;
-    managed
-        .apply(SelectionKind::Albums, &[&album], "album")
-        .await;
-    managed
-        .apply(SelectionKind::Albums, &[&other], "other")
-        .await;
-    managed
-        .edit_outside(&tracks[0], title_edit("By Hand"))
-        .await;
-    let run = managed.apply(SelectionKind::Albums, &[&album], "own").await;
-
-    let management = managed.management();
-    let detail = management.detail(&run).expect("detail");
-    let undo = management
-        .undo_preview(&run, detail.job.row_revision, "undo", "admin")
-        .expect("undo preview");
-    assert!(
-        management_step(&managed.library).await,
-        "undo planning runs"
-    );
-    let undone = management_apply(&managed.library, &undo).await;
-    assert_eq!(undone.job.state.as_str(), "succeeded");
-    let file = managed.path(&tracks[0]);
-    assert_eq!(
-        read_fields(&file).expect("tags read")[&TagField::Title],
-        vec!["By Hand".to_owned()],
-        "the hand edit is back"
-    );
-
-    let chosen: String = managed
-        .db()
-        .query_row(
-            "SELECT release_mbid FROM local_album_external_identities WHERE local_album_id = ?1",
-            [&album],
-            |row| row.get(0),
-        )
-        .expect("edition");
-    // The album's two editions differ only in their second id group.
-    let edition = if chosen.contains("-0000-") {
-        chosen.replacen("-0000-", "-0001-", 1)
-    } else {
-        chosen.replacen("-0001-", "-0000-", 1)
-    };
-    crate::common::library::operations(&managed.library)
-        .choose_edition(
-            &album,
-            &edition,
-            shown_revision(&managed.library, &album),
-            Some("admin"),
-            false,
-        )
-        .await
-        .expect("edition chosen");
-    let (_, items) = managed
-        .preview(SelectionKind::Albums, &[&album, &other], "after")
-        .await;
-    for item in items.iter().filter(|item| item.album_id == album) {
-        assert_eq!(item.eligibility, Eligibility::Blocked);
-        assert_eq!(item.reason().expect("a reason").code, "CHANGED_OUTSIDE");
-    }
-}
-
-/// A restore of the originals over more than one album leaves out a file
-/// changed outside since the app wrote it and, in a folder managed
-/// automatically, leaves the album unmanaged; the album restored by
-/// itself goes ahead.
-#[tokio::test]
-async fn a_wide_restore_never_writes_over_an_unnoticed_hand_edit() {
-    use droppedneedle_library::management::models::Eligibility;
-
-    let managed = ManagedLibrary::start("lib-takeover-wide-restore", |_| {}).await;
-    let (album, tracks) = managed.add_album("first", 1).await;
-    let (other, _) = managed.add_album("second", 1).await;
-    managed.activate().await;
-    managed.look(&album).await;
-    managed.look(&other).await;
-    managed
-        .edit_outside(&tracks[0], title_edit("By Hand"))
-        .await;
-
-    let items = managed.restore_preview(&[&album, &other], "both").await;
-    assert_eq!(items.len(), 2);
-    for item in &items {
-        if item.album_id == album {
-            assert_eq!(item.eligibility, Eligibility::Blocked);
-            assert_eq!(item.reason().expect("a reason").code, "CHANGED_OUTSIDE");
+    for case in ["run kept", "run undone"] {
+        let tag = if case == "run kept" {
+            "lib-takeover-wide-manual"
         } else {
-            assert!(item.eligibility.writes(), "{:?}", item.facts);
+            "lib-takeover-undo-hand-edit"
+        };
+        let managed = ManagedLibrary::start(tag, |_| {}).await;
+        let (other, _) = managed.add_album("first", 1).await;
+        let (album, tracks) = managed.add_album("second", 1).await;
+        managed.worker_looks().await;
+        managed
+            .apply(SelectionKind::Albums, &[&album], "album")
+            .await;
+        managed
+            .apply(SelectionKind::Albums, &[&other], "other")
+            .await;
+        managed
+            .edit_outside(&tracks[0], title_edit("By Hand"))
+            .await;
+
+        if case == "run kept" {
+            let (_, items) = managed
+                .preview(SelectionKind::Albums, &[&album, &other], "both")
+                .await;
+            for item in items.iter().filter(|item| item.album_id == album) {
+                assert_eq!(item.eligibility, Eligibility::Blocked, "{case}");
+                assert_eq!(
+                    item.reason().expect("a reason").code,
+                    "CHANGED_OUTSIDE",
+                    "{case}"
+                );
+            }
+            assert_eq!(
+                managed.mark(&album),
+                None,
+                "{case}: nothing is managed by itself here"
+            );
+        }
+
+        let run = managed.apply(SelectionKind::Albums, &[&album], "own").await;
+        if case == "run undone" {
+            let management = managed.management();
+            let detail = management.detail(&run).expect("detail");
+            let undo = management
+                .undo_preview(&run, detail.job.row_revision, "undo", "admin")
+                .expect("undo preview");
+            assert!(
+                management_step(&managed.library).await,
+                "{case}: undo planning runs"
+            );
+            let undone = management_apply(&managed.library, &undo).await;
+            assert_eq!(undone.job.state.as_str(), "succeeded", "{case}");
+            let file = managed.path(&tracks[0]);
+            assert_eq!(
+                read_fields(&file).expect("tags read")[&TagField::Title],
+                vec!["By Hand".to_owned()],
+                "{case}: the hand edit is back"
+            );
+        }
+
+        let chosen: String = managed
+            .db()
+            .query_row(
+                "SELECT release_mbid FROM local_album_external_identities \
+                 WHERE local_album_id = ?1",
+                [&album],
+                |row| row.get(0),
+            )
+            .expect("edition");
+        // The album's two editions differ only in their second id group.
+        let edition = if chosen.contains("-0000-") {
+            chosen.replacen("-0000-", "-0001-", 1)
+        } else {
+            chosen.replacen("-0001-", "-0000-", 1)
+        };
+        crate::common::library::operations(&managed.library)
+            .choose_edition(
+                &album,
+                &edition,
+                shown_revision(&managed.library, &album),
+                Some("admin"),
+                false,
+            )
+            .await
+            .expect("edition chosen");
+        let (_, items) = managed
+            .preview(SelectionKind::Albums, &[&album, &other], "after")
+            .await;
+        for item in items.iter().filter(|item| item.album_id == album) {
+            if case == "run kept" {
+                assert!(item.eligibility.writes(), "{case}: {:?}", item.facts);
+                assert!(item.diff.tags_changed, "{case}");
+            } else {
+                assert_eq!(item.eligibility, Eligibility::Blocked, "{case}");
+                assert_eq!(
+                    item.reason().expect("a reason").code,
+                    "CHANGED_OUTSIDE",
+                    "{case}"
+                );
+            }
         }
     }
-    assert_eq!(managed.mark(&album).as_deref(), Some("files_changed"));
-    let items = managed.restore_preview(&[&album], "own").await;
-    assert!(items[0].eligibility.writes(), "{:?}", items[0].facts);
 }
 
 /// An automatic run the worker started for an album, its queue row gone,
@@ -17320,12 +17115,25 @@ fn unrelated_release(library: &LibrarySetup, album: &str) -> RecallResult {
     recall
 }
 
-/// Placing the files on an edition an album already has never gives the
-/// edition up. MusicBrainz not listing it any more, or listing it with
-/// tracks no file fits, leaves the person's match as it was and says why
-/// on the album; MusicBrainz not answering waits for another try.
+/// Files queued to be placed on a person's edition are placed only as the
+/// album now stands. The edition is never given up: MusicBrainz not listing
+/// it, listing it with tracks no file fits, or giving an answer that does
+/// not read keeps the person's match; not answering waits. A match made
+/// automatic since, or a later "leave unmanaged", drops the row unrun; a
+/// "leave unmanaged" carried by a merge is kept as the files are placed;
+/// a release listed under a newer id places them on the album's release.
 #[tokio::test]
-async fn placing_files_never_gives_the_edition_up() {
+async fn a_queued_placement_runs_as_the_album_now_stands() {
+    let exclusions = |db: &rusqlite::Connection, album: &str| -> i64 {
+        db.query_row(
+            "SELECT COUNT(*) FROM library_management_exclusions WHERE local_album_id = ?1",
+            [album],
+            |row| row.get::<_, i64>(0),
+        )
+        .expect("exclusion reads")
+    };
+
+    let case = "not listed";
     let (scratch, library, album, _) = chosen_album_at_rest("lib-place-not-listed").await;
     let mut db = scratch_db(&scratch);
     let chosen = choice_row(&db, &album);
@@ -17333,36 +17141,49 @@ async fn placing_files_never_gives_the_edition_up() {
         let tx = db.transaction().expect("transaction opens");
         assert!(
             droppedneedle_library::edition::choice::queue_placement(&tx, &album, 1.0)
-                .expect("files queued")
+                .expect("files queued"),
+            "{case}"
         );
         tx.commit().expect("queued for good");
     }
     assert_eq!(
         remap_row(&db, &album),
         Some(("place_only".to_owned(), 0)),
-        "queued twice is one row, still place_only"
+        "{case}: queued twice is one row, still place_only"
     );
     remap_once(&library, &scratch.identify, RecallResult::default()).await;
-    assert_eq!(remap_row(&db, &album), None);
-    assert_eq!(choice_row(&db, &album), chosen, "the person's match stays");
+    assert_eq!(remap_row(&db, &album), None, "{case}");
+    assert_eq!(
+        choice_row(&db, &album),
+        chosen,
+        "{case}: the person's match stays"
+    );
     assert_eq!(
         match_state(&db, &album).as_deref(),
-        Some("CHOSEN_EDITION_NOT_LISTED")
+        Some("CHOSEN_EDITION_NOT_LISTED"),
+        "{case}"
     );
 
+    let case = "fits no file";
     let (scratch, library, album, _) = chosen_album_at_rest("lib-place-fits-nothing").await;
     let db = scratch_db(&scratch);
     let chosen = choice_row(&db, &album);
     queue_remap_row(&library, &album, "place_only");
     let recall = unrelated_release(&library, &album);
     remap_once(&library, &scratch.identify, recall).await;
-    assert_eq!(remap_row(&db, &album), None);
-    assert_eq!(choice_row(&db, &album), chosen, "the person's match stays");
+    assert_eq!(remap_row(&db, &album), None, "{case}");
+    assert_eq!(
+        choice_row(&db, &album),
+        chosen,
+        "{case}: the person's match stays"
+    );
     assert_eq!(
         match_state(&db, &album).as_deref(),
-        Some("CHOSEN_EDITION_FITS_NO_FILE")
+        Some("CHOSEN_EDITION_FITS_NO_FILE"),
+        "{case}"
     );
 
+    let case = "not answering";
     let (scratch, library, album, tracks) = chosen_album_at_rest("lib-place-unavailable").await;
     let db = scratch_db(&scratch);
     queue_remap_row(&library, &album, "place_only");
@@ -17375,19 +17196,18 @@ async fn placing_files_never_gives_the_edition_up() {
         },
     )
     .await;
-    assert_eq!(remap_row(&db, &album), Some(("place_only".to_owned(), 1)));
-    assert_eq!(match_state(&db, &album), None);
+    assert_eq!(
+        remap_row(&db, &album),
+        Some(("place_only".to_owned(), 1)),
+        "{case}"
+    );
+    assert_eq!(match_state(&db, &album), None, "{case}");
     assert!(
         tracks.iter().all(|track| placement(&db, track).0.is_none()),
-        "nothing placed while MusicBrainz is away"
+        "{case}: nothing placed while MusicBrainz is away"
     );
-}
 
-/// A person's edition whose MusicBrainz answer does not read is kept: the
-/// remap waits for another try instead of handing the album back to
-/// automatic best fit.
-#[tokio::test]
-async fn a_pinned_edition_that_does_not_read_keeps_the_choice() {
+    let case = "answer does not read";
     let (scratch, library, album, tracks) = chosen_album_at_rest("lib-pin-unreadable").await;
     let db = scratch_db(&scratch);
     let chosen = choice_row(&db, &album);
@@ -17403,19 +17223,23 @@ async fn a_pinned_edition_that_does_not_read_keeps_the_choice() {
         },
     )
     .await;
-    assert_eq!(remap_row(&db, &album), Some(("album_pin".to_owned(), 1)));
-    assert_eq!(choice_row(&db, &album), chosen, "the person's match stays");
-    assert_eq!(match_state(&db, &album), None);
+    assert_eq!(
+        remap_row(&db, &album),
+        Some(("album_pin".to_owned(), 1)),
+        "{case}"
+    );
+    assert_eq!(
+        choice_row(&db, &album),
+        chosen,
+        "{case}: the person's match stays"
+    );
+    assert_eq!(match_state(&db, &album), None, "{case}");
     assert!(
         tracks.iter().all(|track| placement(&db, track).0.is_none()),
-        "nothing placed"
+        "{case}: nothing placed"
     );
-}
 
-/// Files queued to be placed on a person's edition are not placed once the
-/// album's match has been made automatic since: the row goes unrun.
-#[tokio::test]
-async fn a_match_made_automatic_since_drops_its_queued_placement() {
+    let case = "made automatic since";
     let (scratch, library, album, tracks) = chosen_album_at_rest("lib-place-made-automatic").await;
     let db = scratch_db(&scratch);
     queue_remap_row(&library, &album, "place_only");
@@ -17427,16 +17251,13 @@ async fn a_match_made_automatic_since_drops_its_queued_placement() {
     .expect("made automatic");
     let recall = fitting_release(&library, &album);
     remap_once(&library, &scratch.identify, recall).await;
-    assert_eq!(remap_row(&db, &album), None);
-    assert!(tracks.iter().all(|track| placement(&db, track).0.is_none()));
-}
+    assert_eq!(remap_row(&db, &album), None, "{case}");
+    assert!(
+        tracks.iter().all(|track| placement(&db, track).0.is_none()),
+        "{case}"
+    );
 
-/// A person's choice queued before their later "leave unmanaged" (a match
-/// naming only the release group, and an exclusion) is dropped unrun: the
-/// old release is not sealed back, the exclusion stays and no file is
-/// placed.
-#[tokio::test]
-async fn leave_unmanaged_since_drops_a_queued_choice() {
+    let case = "left unmanaged since";
     let (scratch, library, album, tracks) = chosen_album_at_rest("lib-place-left-unmanaged").await;
     let db = scratch_db(&scratch);
     queue_remap_row(&library, &album, "album_pin");
@@ -17451,29 +17272,19 @@ async fn leave_unmanaged_since_drops_a_queued_choice() {
     let left = choice_row(&db, &album);
     let recall = fitting_release(&library, &album);
     remap_once(&library, &scratch.identify, recall).await;
-    assert_eq!(remap_row(&db, &album), None);
+    assert_eq!(remap_row(&db, &album), None, "{case}");
     assert_eq!(
         choice_row(&db, &album),
         left,
-        "the old release is not sealed back"
+        "{case}: the old release is not sealed back"
     );
-    assert_eq!(
-        db.query_row(
-            "SELECT COUNT(*) FROM library_management_exclusions WHERE local_album_id = ?1",
-            [&album],
-            |row| row.get::<_, i64>(0),
-        )
-        .expect("exclusion reads"),
-        1
+    assert_eq!(exclusions(&db, &album), 1, "{case}");
+    assert!(
+        tracks.iter().all(|track| placement(&db, track).0.is_none()),
+        "{case}"
     );
-    assert!(tracks.iter().all(|track| placement(&db, track).0.is_none()));
-}
 
-/// A person's queued choice that runs after the album gained a "leave
-/// unmanaged" (carried by a merge while MusicBrainz was away) places the
-/// files and keeps the album unmanaged.
-#[tokio::test]
-async fn a_queued_choice_keeps_a_carried_leave_unmanaged() {
+    let case = "carried leave unmanaged";
     let (scratch, library, album, tracks) = chosen_album_at_rest("lib-place-keeps-hold").await;
     let db = scratch_db(&scratch);
     queue_remap_row(&library, &album, "album_pin");
@@ -17485,21 +17296,32 @@ async fn a_queued_choice_keeps_a_carried_leave_unmanaged() {
     .expect("left unmanaged");
     let recall = fitting_release(&library, &album);
     remap_once(&library, &scratch.identify, recall).await;
-    assert_eq!(remap_row(&db, &album), None);
+    assert_eq!(remap_row(&db, &album), None, "{case}");
     assert!(
         tracks
             .iter()
-            .all(|track| placement(&db, track).0.as_deref() == Some(REL_1))
+            .all(|track| placement(&db, track).0.as_deref() == Some(REL_1)),
+        "{case}"
     );
-    assert_eq!(
-        db.query_row(
-            "SELECT COUNT(*) FROM library_management_exclusions WHERE local_album_id = ?1",
-            [&album],
-            |row| row.get::<_, i64>(0),
-        )
-        .expect("exclusion reads"),
-        1
-    );
+    assert_eq!(exclusions(&db, &album), 1, "{case}");
+
+    let case = "listed under a merged id";
+    let (scratch, library, album, tracks) = chosen_album_at_rest("lib-place-merged").await;
+    let db = scratch_db(&scratch);
+    queue_remap_row(&library, &album, "album_pin");
+    let mut recall = fitting_release(&library, &album);
+    recall.releases[0].id = REL_2.to_owned();
+    recall.releases[0].old_ids = vec![REL_1.to_owned()];
+
+    remap_once(&library, &scratch.identify, recall).await;
+    assert_eq!(remap_row(&db, &album), None, "{case}");
+    for track in &tracks {
+        assert_eq!(
+            placement(&db, track).0.as_deref(),
+            Some(REL_1),
+            "{case}: on the album's release"
+        );
+    }
 }
 
 /// A curator approving a release, with the evidence for each file, makes
@@ -17616,29 +17438,6 @@ async fn an_approved_release_is_placed_and_its_undo_survives() {
     );
 }
 
-/// A chosen edition MusicBrainz now lists under a newer id: placing the
-/// files writes them on the release as the album's match names it, so
-/// what reads the album's release finds them.
-#[tokio::test]
-async fn a_choice_placed_under_a_merged_id_keeps_the_albums_release() {
-    let (scratch, library, album, tracks) = chosen_album_at_rest("lib-place-merged").await;
-    let db = scratch_db(&scratch);
-    queue_remap_row(&library, &album, "album_pin");
-    let mut recall = fitting_release(&library, &album);
-    recall.releases[0].id = REL_2.to_owned();
-    recall.releases[0].old_ids = vec![REL_1.to_owned()];
-
-    remap_once(&library, &scratch.identify, recall).await;
-    assert_eq!(remap_row(&db, &album), None);
-    for track in &tracks {
-        assert_eq!(
-            placement(&db, track).0.as_deref(),
-            Some(REL_1),
-            "on the album's release"
-        );
-    }
-}
-
 /// An album retagged by hand across two scans, whose edition a person
 /// chose and whose files the app never wrote, is joined with that edition.
 /// Placing the files on it and the automatic look that follows write no
@@ -17700,74 +17499,70 @@ async fn a_joined_album_gets_its_files_placed_and_stays_the_users() {
     assert_eq!(choice_row(&db, &new), chosen, "the match is as it was");
 }
 
-/// A dry run set aside for another one, here made before a rule was
-/// changed, can never be applied: an album retagged across two scans is
-/// joined although that dry run planned the album.
+/// A stale preview is nobody's work: an album retagged across two scans is
+/// joined although the preview planned it, whether it is a dry run set
+/// aside for another one (made before a rule was changed) or a preview
+/// left ready past its expiry.
 #[tokio::test]
-async fn a_replaced_dry_run_does_not_hold_a_join_back() {
-    let managed = ManagedLibrary::start("lib-replaced-dry-run", |_| {}).await;
-    managed.add_album("first", 1).await;
-    let (album, tracks) = managed.add_album("second", 4).await;
-    managed
-        .dry_run("set-aside", |settings| {
-            settings.preview_retention_hours = 48
-        })
-        .await;
-    managed.activate().await;
-    let db = managed.db();
-    db.execute(
-        "UPDATE local_track_external_identities SET release_mbid = 'rel-elsewhere' \
-         WHERE local_track_id IN (?1, ?2)",
-        [&tracks[0], &tracks[1]],
-    )
-    .expect("two files on another release");
-
-    managed.rename_outside(&tracks[..2], "Renamed").await;
-    let new = managed.album_of(&tracks[0]);
-    assert_ne!(new, album, "the first half sits on a row of its own");
-    managed.rename_outside(&tracks[2..], "Renamed").await;
-    assert_eq!(managed.album_of(&tracks[3]), new);
-    assert_eq!(choice_row(&db, &new).0, "manual", "joined with its match");
-}
-
-/// A preview left ready past its expiry is nobody's work: an album
-/// retagged across two scans is joined although the preview planned it.
-#[tokio::test]
-async fn an_expired_preview_does_not_hold_a_join_back() {
-    let managed = ManagedLibrary::start("lib-expired-preview", |_| {}).await;
-    managed.add_album("first", 1).await;
-    let (album, tracks) = managed.add_album("second", 4).await;
-    managed.activate().await;
-    let db = managed.db();
-    let left_ready = db
-        .execute(
-            "UPDATE library_operation_jobs SET state = 'ready', terminal_code = NULL, \
-             terminal_at = NULL WHERE id IN (SELECT job_id FROM \
-             library_management_job_snapshots WHERE proposed_settings_revision IS NOT NULL)",
-            [],
+async fn a_stale_preview_does_not_hold_a_join_back() {
+    for case in ["set aside", "expired"] {
+        let tag = if case == "set aside" {
+            "lib-replaced-dry-run"
+        } else {
+            "lib-expired-preview"
+        };
+        let managed = ManagedLibrary::start(tag, |_| {}).await;
+        managed.add_album("first", 1).await;
+        let (album, tracks) = managed.add_album("second", 4).await;
+        if case == "set aside" {
+            managed
+                .dry_run("set-aside", |settings| {
+                    settings.preview_retention_hours = 48
+                })
+                .await;
+        }
+        managed.activate().await;
+        let db = managed.db();
+        if case == "expired" {
+            let left_ready = db
+                .execute(
+                    "UPDATE library_operation_jobs SET state = 'ready', terminal_code = NULL, \
+                     terminal_at = NULL WHERE id IN (SELECT job_id FROM \
+                     library_management_job_snapshots \
+                     WHERE proposed_settings_revision IS NOT NULL)",
+                    [],
+                )
+                .expect("preview left ready");
+            assert_eq!(left_ready, 1, "{case}: one preview");
+            db.execute(
+                "UPDATE library_management_job_snapshots SET phase = 'ready', \
+                 preview_expires_at = 1, proposed_settings_revision = NULL \
+                 WHERE proposed_settings_revision IS NOT NULL",
+                [],
+            )
+            .expect("an ordinary preview, expired");
+        }
+        db.execute(
+            "UPDATE local_track_external_identities SET release_mbid = 'rel-elsewhere' \
+             WHERE local_track_id IN (?1, ?2)",
+            [&tracks[0], &tracks[1]],
         )
-        .expect("preview left ready");
-    assert_eq!(left_ready, 1, "one preview");
-    db.execute(
-        "UPDATE library_management_job_snapshots SET phase = 'ready', \
-         preview_expires_at = 1, proposed_settings_revision = NULL \
-         WHERE proposed_settings_revision IS NOT NULL",
-        [],
-    )
-    .expect("an ordinary preview, expired");
-    db.execute(
-        "UPDATE local_track_external_identities SET release_mbid = 'rel-elsewhere' \
-         WHERE local_track_id IN (?1, ?2)",
-        [&tracks[0], &tracks[1]],
-    )
-    .expect("two files on another release");
+        .expect("two files on another release");
 
-    managed.rename_outside(&tracks[..2], "Renamed").await;
-    let new = managed.album_of(&tracks[0]);
-    assert_ne!(new, album, "the first half sits on a row of its own");
-    managed.rename_outside(&tracks[2..], "Renamed").await;
-    assert_eq!(managed.album_of(&tracks[3]), new);
-    assert_eq!(choice_row(&db, &new).0, "manual", "joined with its match");
+        managed.rename_outside(&tracks[..2], "Renamed").await;
+        let new = managed.album_of(&tracks[0]);
+        assert_ne!(
+            new, album,
+            "{case}: the first half sits on a row of its own"
+        );
+        managed.rename_outside(&tracks[2..], "Renamed").await;
+        assert_eq!(managed.album_of(&tracks[3]), new, "{case}");
+        assert_eq!(
+            choice_row(&db, &new).0,
+            "manual",
+            "{case}: joined with its match"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -23581,11 +23376,14 @@ async fn acoustid_ids_come_from_a_lookup_naming_the_files_recording() {
     assert_eq!(scripted.acoustid_calls.lock().expect("calls").len(), calls);
 }
 
-/// While AcoustID is down an automatic look writes nothing and the album
-/// waits, never parked; once AcoustID answers, the id lands by itself.
+/// An automatic look with no AcoustID answer: while AcoustID is down it
+/// writes nothing and the album waits, never parked, and the id lands by
+/// itself once AcoustID answers; without a key it does not wait, and the
+/// album is written with its print and no id.
 #[tokio::test]
-async fn automatic_acoustid_waits_while_acoustid_is_down() {
+async fn automatic_acoustid_without_an_answer() {
     use droppedneedle_library::management::enrich::{ScriptedAcoustId, ScriptedEnrichment};
+    use rusqlite::OptionalExtension as _;
 
     let scripted = Arc::new(ScriptedEnrichment::default());
     let managed = ManagedLibrary::scripted("lib-acoustid-auto", |_| {}, scripted.clone()).await;
@@ -23605,7 +23403,7 @@ async fn automatic_acoustid_waits_while_acoustid_is_down() {
     assert_eq!(
         file_sha256(&file),
         before,
-        "nothing written while it is down"
+        "acoustid down: nothing written while it is down"
     );
     let reason = |managed: &ManagedLibrary| -> (String, i64, i64) {
         managed
@@ -23618,7 +23416,7 @@ async fn automatic_acoustid_waits_while_acoustid_is_down() {
             )
             .expect("the album waits")
     };
-    assert_eq!(reason(&managed).0, "ACOUSTID_UNAVAILABLE");
+    assert_eq!(reason(&managed).0, "ACOUSTID_UNAVAILABLE", "acoustid down");
     managed
         .db()
         .execute(
@@ -23629,10 +23427,14 @@ async fn automatic_acoustid_waits_while_acoustid_is_down() {
         .expect("many tries");
     managed.worker_looks().await;
     let (code, attempts, not_before) = reason(&managed);
-    assert_eq!((code.as_str(), attempts), ("ACOUSTID_UNAVAILABLE", 8));
+    assert_eq!(
+        (code.as_str(), attempts),
+        ("ACOUSTID_UNAVAILABLE", 8),
+        "acoustid down"
+    );
     assert!(
         not_before < 1_000_000_000_000_000,
-        "not parked: {not_before}"
+        "acoustid down: not parked: {not_before}"
     );
 
     let recording = managed.recording(&tracks[0]);
@@ -23653,15 +23455,11 @@ async fn automatic_acoustid_waits_while_acoustid_is_down() {
     .expect("woken");
     managed.worker_looks().await;
     let file = managed.path(&tracks[0]);
-    assert_eq!(raw_acoustid(&file, "Id"), vec![ID_A.to_owned()]);
-}
-
-/// Without a key (or with one AcoustID refuses) an automatic look does
-/// not wait: the album is written with its print and no id.
-#[tokio::test]
-async fn automatic_acoustid_without_a_key_goes_ahead() {
-    use droppedneedle_library::management::enrich::ScriptedEnrichment;
-    use rusqlite::OptionalExtension as _;
+    assert_eq!(
+        raw_acoustid(&file, "Id"),
+        vec![ID_A.to_owned()],
+        "acoustid down: lands once it answers"
+    );
 
     let scripted = Arc::new(ScriptedEnrichment::default());
     let managed = ManagedLibrary::scripted("lib-acoustid-nokey", |_| {}, scripted.clone()).await;
@@ -23678,9 +23476,10 @@ async fn automatic_acoustid_without_a_key_goes_ahead() {
     let file = managed.path(&tracks[0]);
     assert_eq!(
         raw_acoustid(&file, "Fingerprint"),
-        vec![SEEDED_PRINT.to_owned()]
+        vec![SEEDED_PRINT.to_owned()],
+        "no key"
     );
-    assert!(raw_acoustid(&file, "Id").is_empty());
+    assert!(raw_acoustid(&file, "Id").is_empty(), "no key");
     let waiting: Option<String> = managed
         .db()
         .query_row(
@@ -23691,7 +23490,7 @@ async fn automatic_acoustid_without_a_key_goes_ahead() {
         )
         .optional()
         .expect("queue read");
-    assert_eq!(waiting, None);
+    assert_eq!(waiting, None, "no key: the album does not wait");
 }
 
 /// The production AcoustID lookup beside the scripted other sources.
@@ -24207,14 +24006,16 @@ async fn a_retag_placed_where_management_is_by_hand_is_left_out_of_wide_previews
     assert_eq!(after, bytes, "nothing written");
 }
 
-/// A person's edition the app never wrote, with a second copy of a track
-/// beside the original, left over by an earlier placement with only its
-/// recording: nothing moves while both are there. The original deleted,
-/// the copy is placed on its track at that scan's end with the original's
-/// star, the original's id opens it, and the album is not left unmanaged:
-/// a finished scan saw both files. The worker then looks at it as usual.
+/// A second copy of a track beside its original is placed on the track once
+/// the original is deleted, with its star, and nothing moves while both are
+/// there. On a person's edition the copy is the person's, the original's id
+/// opens it and the album is not left unmanaged; on the app's edition it is
+/// the app's own, revisable.
 #[tokio::test]
-async fn a_copy_takes_the_place_of_a_deleted_original_on_a_chosen_edition() {
+async fn a_copy_takes_the_place_of_a_deleted_original() {
+    use droppedneedle_library::tags::save_tags;
+
+    let case = "chosen edition";
     let managed = ManagedLibrary::start("lib-place-copy-chosen", |_| {}).await;
     let (album, tracks) = managed.chosen_with_ids("chosen", 2).await;
     managed.activate().await;
@@ -24227,7 +24028,7 @@ async fn a_copy_takes_the_place_of_a_deleted_original_on_a_chosen_edition() {
     .expect("copied");
     rescan(&managed.library).await;
     let copy = indexed_at(&managed.library, "chosen/02 copy.flac");
-    assert_eq!(managed.album_of(&copy), album);
+    assert_eq!(managed.album_of(&copy), album, "{case}");
     db.execute_batch(&format!(
         "INSERT INTO local_track_external_identities (local_track_id, provider, \
          recording_mbid, decision_source, selected_at) VALUES \
@@ -24237,9 +24038,13 @@ async fn a_copy_takes_the_place_of_a_deleted_original_on_a_chosen_edition() {
     ))
     .expect("left over with its recording");
     rescan(&managed.library).await;
-    assert_eq!(placed(&db, &copy).1, None, "both there: nothing placed");
-    assert_eq!(holdings(&db, original)[1], 1, "nothing moves");
-    assert_eq!(managed.mark(&album), None);
+    assert_eq!(
+        placed(&db, &copy).1,
+        None,
+        "{case}: both there: nothing placed"
+    );
+    assert_eq!(holdings(&db, original)[1], 1, "{case}: nothing moves");
+    assert_eq!(managed.mark(&album), None, "{case}");
 
     std::fs::remove_file(managed.path(original)).expect("original deleted");
     rescan(&managed.library).await;
@@ -24251,34 +24056,36 @@ async fn a_copy_takes_the_place_of_a_deleted_original_on_a_chosen_edition() {
             Some("manual".to_owned()),
             Some(1),
             Some(2)
-        )
+        ),
+        "{case}"
     );
-    assert_eq!(holdings(&db, &copy)[1], 1);
-    assert_eq!(holdings(&db, original)[1], 0);
+    assert_eq!(holdings(&db, &copy)[1], 1, "{case}");
+    assert_eq!(holdings(&db, original)[1], 0, "{case}");
     assert_eq!(
         managed.count(&format!(
             "SELECT COUNT(*) FROM local_track_aliases WHERE alias = '{original}' \
              AND local_track_id = '{copy}'"
         )),
         1,
-        "the original's id opens the copy"
+        "{case}: the original's id opens the copy"
     );
-    assert_eq!(managed.mark(&album), None, "a finished scan saw both");
+    assert_eq!(
+        managed.mark(&album),
+        None,
+        "{case}: a finished scan saw both"
+    );
     let runs = managed.automatic_runs().len();
     managed.look(&album).await;
-    assert_eq!(managed.mark(&album), None);
+    assert_eq!(managed.mark(&album), None, "{case}");
     let after = managed.automatic_runs();
-    assert!(after.len() > runs, "the worker plans the album");
-    assert_eq!(after.last().map(|run| run.0.as_str()), Some("succeeded"));
-}
+    assert!(after.len() > runs, "{case}: the worker plans the album");
+    assert_eq!(
+        after.last().map(|run| run.0.as_str()),
+        Some("succeeded"),
+        "{case}"
+    );
 
-/// An edition the app chose, with a second copy of a track beside the
-/// original: when the original is deleted, the copy is placed on the
-/// track as the app's own, revisable, and the original's star is on it.
-#[tokio::test]
-async fn a_copy_takes_the_place_of_a_deleted_original_on_an_automatic_edition() {
-    use droppedneedle_library::tags::save_tags;
-
+    let case = "automatic edition";
     let (scratch, library, music) = bare_library("lib-place-copy-automatic").await;
     for n in 1..=3 {
         let file = plant(&music, &format!("album/{n:02}.flac"), "flac_full_02.flac");
@@ -24312,7 +24119,8 @@ async fn a_copy_takes_the_place_of_a_deleted_original_on_an_automatic_edition() 
             .album_for_track(&copy)
             .unwrap()
             .as_deref(),
-        Some(album.as_str())
+        Some(album.as_str()),
+        "{case}"
     );
     db.execute_batch(&format!(
         "INSERT OR IGNORE INTO auth_users (id, display_name, role, created_at) VALUES ('listener', 'Person', 'user', 1); \
@@ -24322,15 +24130,19 @@ async fn a_copy_takes_the_place_of_a_deleted_original_on_an_automatic_edition() 
     ))
     .expect("starred");
     rescan(&library).await;
-    assert_eq!(placed(&db, &copy).1, None, "both there: nothing placed");
+    assert_eq!(
+        placed(&db, &copy).1,
+        None,
+        "{case}: both there: nothing placed"
+    );
 
     std::fs::remove_file(music.join("album/02.flac")).expect("original deleted");
     rescan(&library).await;
     let (_, on, source, _, _) = placed(&db, &copy);
-    assert_eq!(on, Some(release_track));
-    assert_eq!(source.as_deref(), Some("automatic"));
-    assert_eq!(holdings(&db, &copy)[1], 1);
-    assert_eq!(holdings(&db, &old[1])[1], 0);
+    assert_eq!(on, Some(release_track), "{case}");
+    assert_eq!(source.as_deref(), Some("automatic"), "{case}");
+    assert_eq!(holdings(&db, &copy)[1], 1, "{case}");
+    assert_eq!(holdings(&db, &old[1])[1], 0, "{case}");
 }
 
 /// 坂本龍一, credited "Ryuichi Sakamoto", in the recorded names lookup.
@@ -27602,15 +27414,18 @@ async fn the_edition_cover_replaces_a_cover_file_and_undo_and_restore_bring_it_b
     assert_eq!(held(), own, "restore puts the album's first cover back");
 }
 
-/// The edition's cover never replaces a cover file where it may not: an
-/// album marked as looking wrong is never asked about, a folder another
-/// album's tracks share keeps its cover, and an archive that cannot answer
-/// changes no file.
+/// The edition's cover never replaces a cover file where it may not: a best
+/// guess or an album marked as looking wrong is never asked about, a shared
+/// folder keeps its cover, an archive that cannot answer changes no file,
+/// and a match marked wrong after its preview is refused at apply.
 #[tokio::test]
-async fn the_edition_cover_leaves_a_cover_alone_where_it_may_not_replace_it() {
+async fn the_edition_cover_replaces_nothing_it_may_not() {
+    use droppedneedle_kernel::runtime_config::sections::EditionPreferences;
+    use droppedneedle_library::management::enrich::Cover;
+    use droppedneedle_library::management::models::SelectionKind;
     let archive = cover_png([30, 30, 200]);
     let own = cover_png([200, 30, 30]);
-    let sources = edition_sources(Ok(Some(archive)));
+    let sources = edition_sources(Ok(Some(archive.clone())));
     let managed = ManagedLibrary::scripted(
         "lm-edition-cover-left",
         edition_cover_profile,
@@ -27619,12 +27434,27 @@ async fn the_edition_cover_leaves_a_cover_alone_where_it_may_not_replace_it() {
     .await;
     let asks = || sources.edition_asks.lock().unwrap().len();
 
+    let (guess, _) = managed.add_album("guess", 1).await;
     let (wrong, _) = managed.add_album("wrong", 1).await;
     let (shared, _) = managed.add_album("shared", 1).await;
     let (down, _) = managed.add_album("down", 1).await;
-    for folder in ["wrong", "shared", "down"] {
+    let (late, late_tracks) = managed.add_album("late", 1).await;
+    for folder in ["guess", "wrong", "shared", "down", "late"] {
         std::fs::write(managed.music.join(format!("{folder}/cover.png")), &own).unwrap();
     }
+    let store = managed.library.settings.store();
+    let mut preferences = store.get::<EditionPreferences>().expect("preferences read");
+    preferences.manage_unconfirmed = true;
+    store.save_blocking(preferences).expect("preferences saved");
+    managed
+        .library
+        .scan_store
+        .db()
+        .run_sql(&format!(
+            "INSERT INTO library_album_match_state (local_album_id, state, reason_code, \
+             updated_at) VALUES ('{guess}', 'unconfirmed', 'LOW_CONFIDENCE', 0)"
+        ))
+        .expect("a best guess");
     managed
         .library
         .scan_store
@@ -27654,8 +27484,17 @@ async fn the_edition_cover_leaves_a_cover_alone_where_it_may_not_replace_it() {
         )
         .expect("another album in the folder");
 
+    let (_, generated) = managed.run_album(&guess, "guess").await;
+    assert!(generated.is_empty(), "best guess");
+    assert_eq!(asks(), 0, "a best guess is never asked about");
+    assert_eq!(
+        std::fs::read(managed.music.join("guess/cover.png")).unwrap(),
+        own,
+        "best guess"
+    );
+
     let (_, generated) = managed.run_album(&wrong, "wrong").await;
-    assert!(generated.is_empty());
+    assert!(generated.is_empty(), "looks wrong");
     assert_eq!(
         asks(),
         0,
@@ -27663,27 +27502,78 @@ async fn the_edition_cover_leaves_a_cover_alone_where_it_may_not_replace_it() {
     );
     assert_eq!(
         std::fs::read(managed.music.join("wrong/cover.png")).unwrap(),
-        own
+        own,
+        "looks wrong"
     );
 
     let (_, generated) = managed.run_album(&shared, "shared").await;
-    assert!(generated.is_empty());
-    assert_eq!(asks(), 1);
+    assert!(generated.is_empty(), "shared folder");
+    assert_eq!(asks(), 1, "shared folder");
     assert_eq!(
         std::fs::read(managed.music.join("shared/cover.png")).unwrap(),
-        own
+        own,
+        "shared folder"
     );
 
     *sources.edition.lock().unwrap() = Some(Err("the archive answered 503".to_owned()));
     let (_, generated) = managed.run_album(&down, "down").await;
-    assert!(generated.is_empty());
-    assert_eq!(asks(), 2);
+    assert!(generated.is_empty(), "archive down");
+    assert_eq!(asks(), 2, "archive down");
     assert_eq!(
         std::fs::read(managed.music.join("down/cover.png")).unwrap(),
         own,
         "an archive that cannot answer changes no file"
     );
-    assert_eq!(managed.binned(), Vec::<Vec<u8>>::new());
+    assert_eq!(managed.binned(), Vec::<Vec<u8>>::new(), "archive down");
+
+    *sources.edition.lock().unwrap() = Some(Ok(Some(Cover {
+        bytes: archive,
+        mime: "image/png".to_owned(),
+    })));
+    let track = managed.path(&late_tracks[0]);
+    let before = file_sha256(&track);
+    let (handle, items) = managed
+        .preview(SelectionKind::Albums, &[&late], "late")
+        .await;
+    assert!(
+        items
+            .iter()
+            .flat_map(|item| &item.diff.generated)
+            .any(|file| file.destination_relative_path == "late/cover.png"),
+        "the preview replaces the cover"
+    );
+    managed
+        .library
+        .scan_store
+        .db()
+        .run_sql(&format!(
+            "INSERT INTO library_album_looks_wrong (local_album_id, user_id, created_at) \
+             VALUES ('{late}', 'admin', 1)"
+        ))
+        .expect("marked as looking wrong");
+    management_apply(&managed.library, &handle).await;
+    let results = managed
+        .management()
+        .results(&handle.job_id, -1, 50)
+        .expect("results");
+    assert!(
+        results.items.iter().any(|item| item
+            .failure
+            .as_ref()
+            .is_some_and(|reason| reason.code == "MATCH_CHANGED")),
+        "{:?}",
+        results
+            .items
+            .iter()
+            .map(|item| &item.failure)
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        std::fs::read(managed.music.join("late/cover.png")).unwrap(),
+        own,
+        "marked wrong after the preview"
+    );
+    assert_eq!(file_sha256(&track), before, "the files are left alone");
 }
 
 /// Undo of a run that replaced a cover file someone has changed since
@@ -27765,94 +27655,4 @@ async fn restore_brings_the_replaced_cover_back_when_the_archive_cover_is_gone()
         std::fs::read(&cover).expect("the original cover is back"),
         own
     );
-}
-
-/// The edition's cover follows the album's match up to the moment it is
-/// written: with unconfirmed matches managed, a best guess is never asked
-/// about and keeps its cover, and an album marked as looking wrong after
-/// its preview is refused at apply with its files left as they were.
-#[tokio::test]
-async fn the_edition_cover_is_refused_for_a_guess_and_for_a_match_marked_wrong_after_preview() {
-    use droppedneedle_kernel::runtime_config::sections::EditionPreferences;
-    use droppedneedle_library::management::models::SelectionKind;
-    let archive = cover_png([30, 30, 200]);
-    let own = cover_png([200, 30, 30]);
-    let sources = edition_sources(Ok(Some(archive)));
-    let managed = ManagedLibrary::scripted(
-        "lm-edition-cover-gate",
-        edition_cover_profile,
-        sources.clone(),
-    )
-    .await;
-    let asks = || sources.edition_asks.lock().unwrap().len();
-    let (guess, _) = managed.add_album("guess", 1).await;
-    let (late, late_tracks) = managed.add_album("late", 1).await;
-    for folder in ["guess", "late"] {
-        std::fs::write(managed.music.join(format!("{folder}/cover.png")), &own).unwrap();
-    }
-    let store = managed.library.settings.store();
-    let mut preferences = store.get::<EditionPreferences>().expect("preferences read");
-    preferences.manage_unconfirmed = true;
-    store.save_blocking(preferences).expect("preferences saved");
-    managed
-        .library
-        .scan_store
-        .db()
-        .run_sql(&format!(
-            "INSERT INTO library_album_match_state (local_album_id, state, reason_code, \
-             updated_at) VALUES ('{guess}', 'unconfirmed', 'LOW_CONFIDENCE', 0)"
-        ))
-        .expect("a best guess");
-
-    let (_, generated) = managed.run_album(&guess, "guess").await;
-    assert!(generated.is_empty());
-    assert_eq!(asks(), 0, "a best guess is never asked about");
-    assert_eq!(
-        std::fs::read(managed.music.join("guess/cover.png")).unwrap(),
-        own
-    );
-
-    let track = managed.path(&late_tracks[0]);
-    let before = file_sha256(&track);
-    let (handle, items) = managed
-        .preview(SelectionKind::Albums, &[&late], "late")
-        .await;
-    assert!(
-        items
-            .iter()
-            .flat_map(|item| &item.diff.generated)
-            .any(|file| file.destination_relative_path == "late/cover.png"),
-        "the preview replaces the cover"
-    );
-    managed
-        .library
-        .scan_store
-        .db()
-        .run_sql(&format!(
-            "INSERT INTO library_album_looks_wrong (local_album_id, user_id, created_at) \
-             VALUES ('{late}', 'admin', 1)"
-        ))
-        .expect("marked as looking wrong");
-    management_apply(&managed.library, &handle).await;
-    let results = managed
-        .management()
-        .results(&handle.job_id, -1, 50)
-        .expect("results");
-    assert!(
-        results.items.iter().any(|item| item
-            .failure
-            .as_ref()
-            .is_some_and(|reason| reason.code == "MATCH_CHANGED")),
-        "{:?}",
-        results
-            .items
-            .iter()
-            .map(|item| &item.failure)
-            .collect::<Vec<_>>()
-    );
-    assert_eq!(
-        std::fs::read(managed.music.join("late/cover.png")).unwrap(),
-        own
-    );
-    assert_eq!(file_sha256(&track), before, "the files are left alone");
 }

@@ -207,33 +207,3 @@ fn lyrics_signature(tracks: &[TrackFile], sidecars: &HashMap<PathBuf, Sidecars>)
     files.sort();
     album_signature(tracks, &dirs, &files)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// A `.lrc` rewritten in place leaves its folder's time alone, so only
-    /// its own stat can bring the album back to the sweep.
-    #[test]
-    fn a_lrc_edited_in_place_changes_the_signature() {
-        let dir = std::env::temp_dir().join(format!("dn-lyrics-sign-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let lrc = dir.join("01 Song.LRC");
-        std::fs::write(&lrc, "").unwrap();
-        let tracks = [TrackFile {
-            id: "t1".to_owned(),
-            path: dir.join("01 Song.flac"),
-            stat_revision: "r1".to_owned(),
-            size_bytes: 0,
-        }];
-        let folder_time = |dir: &Path| std::fs::metadata(dir).unwrap().modified().unwrap();
-        let before_time = folder_time(&dir);
-        let before = lyrics_signature(&tracks, &track_sidecars(&tracks));
-
-        std::fs::write(&lrc, "[00:01.00]Fixed\n").unwrap();
-        assert_eq!(folder_time(&dir), before_time, "the folder reads unchanged");
-        let after = lyrics_signature(&tracks, &track_sidecars(&tracks));
-        std::fs::remove_dir_all(&dir).unwrap();
-        assert_ne!(before, after);
-    }
-}

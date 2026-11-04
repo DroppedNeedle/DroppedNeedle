@@ -74,8 +74,7 @@ It also fails on a request with no recorded answer.
 
 ## Fingerprints
 
-Beside the recorded answers, `fingerprints_confirm_and_never_veto`
-replays it with AcoustID made to hear, in every file, a recording no
+`recorded_albums_match_as_recorded` also replays it with AcoustID made to hear, in every file, a recording no
 candidate carries (the one in `fixtures/acoustid/batch_lookup.json`),
 and in each stripped file the recording it pairs with on its release, or
 the next file's. It prints a summary per scenario.

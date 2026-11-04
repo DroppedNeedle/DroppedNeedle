@@ -23,7 +23,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use droppedneedle_library::identify::evidence::named_group;
-use droppedneedle_library::identify::models::{LocalAlbumFacts, LocalTrackFacts};
+use droppedneedle_library::identify::models::{LocalAlbumFacts, LocalTrackFacts, RecallResult};
 use droppedneedle_library::identify::providers::{IdentifyProviders, LiveProviders};
 use droppedneedle_library::identify::service::{IdentifyDeps, IdentifyService, Ranking};
 use droppedneedle_library::identify::sources::{
@@ -576,6 +576,9 @@ async fn an_untitled_album_is_found_by_its_first_track() {
     assert!(asked.iter().any(|url| url.contains("/recording?query=")));
 }
 
+/// Every album, tagged, stripped and heard, comes out as recorded, and the
+/// fingerprint scenarios (see [`fingerprint_scenarios`]) re-rank the
+/// tagged and stripped recall without a second replay.
 #[tokio::test(flavor = "multi_thread")]
 async fn recorded_albums_match_as_recorded() {
     let started = Instant::now();
@@ -595,6 +598,10 @@ async fn recorded_albums_match_as_recorded() {
     let mut table = Vec::new();
     let mut tallies = [Tally::default(), Tally::default(), Tally::default()];
     let mut heard_dirs = Vec::new();
+    let mut fingerprint_failures = Vec::new();
+    let mut fingerprint_tallies: Vec<(String, Tally)> = Vec::new();
+    // The budget times the replay; the scenario re-ranks are kept out of it.
+    let mut rerank_time = Duration::ZERO;
     for album in &albums {
         assert!(
             !album.why.is_empty(),
@@ -656,6 +663,23 @@ async fn recorded_albums_match_as_recorded() {
                 ));
             }
             let ranking = service.rank(&facts, &recall).expect("default preferences");
+            if copy != "heard" {
+                let rerank_started = Instant::now();
+                fingerprint_scenarios(
+                    &service,
+                    CorpusCopy {
+                        album,
+                        name: copy,
+                        facts: &facts,
+                        expected,
+                    },
+                    &recall,
+                    &ranking,
+                    &mut fingerprint_tallies,
+                    &mut fingerprint_failures,
+                );
+                rerank_time += rerank_started.elapsed();
+            }
             let (got, reason) = outcome(&ranking, &album.truth);
             tallies[slot].add(got.verdict, &album.truth);
             table.push(format!(
@@ -700,12 +724,18 @@ async fn recorded_albums_match_as_recorded() {
             }
         }
     }
-    let elapsed = started.elapsed();
+    let elapsed = started.elapsed().saturating_sub(rerank_time);
     println!("{}", table.join("\n"));
     println!("{}", tallies[0].line("tagged"));
     println!("{}", tallies[1].line("stripped"));
     println!("{}", tallies[2].line("heard"));
-    println!("{} albums in {elapsed:?}", albums.len());
+    for (label, tally) in &fingerprint_tallies {
+        println!("{}", tally.line(label));
+    }
+    println!(
+        "{} albums in {elapsed:?}, fingerprint scenarios in {rerank_time:?}",
+        albums.len()
+    );
     for album in lookups.keys() {
         failures.push(format!("{album}: recorded AcoustID answers for no album"));
     }
@@ -720,6 +750,11 @@ async fn recorded_albums_match_as_recorded() {
         unrecorded.len()
     );
     assert!(failures.is_empty(), "{}", failures.join("\n"));
+    assert!(
+        fingerprint_failures.is_empty(),
+        "fingerprint scenarios:\n{}",
+        fingerprint_failures.join("\n")
+    );
     assert!(elapsed < BUDGET, "the corpus took {elapsed:?}");
 }
 
@@ -849,6 +884,14 @@ fn heard(
     }
 }
 
+/// One copy of a corpus album, tagged or stripped, and its recorded row.
+struct CorpusCopy<'a> {
+    album: &'a Album,
+    name: &'a str,
+    facts: &'a LocalAlbumFacts,
+    expected: &'a Row,
+}
+
 /// A fingerprint helps a pair it confirms and counts against one only
 /// when what it heard sits on a rival candidate. Heard as a recording no
 /// candidate carries, every row, tagged and stripped, stays as recorded.
@@ -859,97 +902,84 @@ fn heard(
 /// such a track, and settles only files whose titles are unclear. Such an
 /// album confirms only when some file's measured length overruled what
 /// was heard. Nothing confirms a wrong release group.
-#[tokio::test(flavor = "multi_thread")]
-async fn fingerprints_confirm_and_never_veto() {
-    let albums = load_albums();
-    let replay = Arc::new(Replay::load());
-    let (_dir, store, providers) = live_providers(&replay, NoFingerprints);
-    let service = IdentifyService::new(IdentifyDeps {
-        store,
-        providers: providers.clone(),
-    });
-    let mut failures = Vec::new();
-    let mut tallies: Vec<(String, Tally)> = Vec::new();
-    for album in &albums {
-        let copies = [
-            ("tagged", album.facts.clone(), &album.tagged),
-            ("stripped", stripped(&album.facts), &album.stripped),
-        ];
-        for (copy, facts, expected) in copies {
-            let named = named_group(&facts, None);
-            let recall = providers
-                .recall_candidates(&facts, named.as_deref(), RequestPriority::BackgroundSync)
-                .await
-                .result;
-            let unheard = service.rank(&facts, &recall).expect("default preferences");
-            // The true release, or where the truth names no edition, the
-            // one this copy was recorded as confirming in the true group.
-            let release = album.truth.release.as_deref().or(expected
-                .release
-                .as_deref()
-                .filter(|_| expected.verdict == Verdict::Group));
-            let pairs = paired(&unheard, release);
-            let scenarios: &[Heard] = if copy == "tagged" || pairs.is_empty() {
-                &[Heard::Unplaced]
-            } else if pairs.len() < 2 {
-                &[Heard::Unplaced, Heard::Own]
-            } else {
-                &[Heard::Unplaced, Heard::Own, Heard::Next]
-            };
-            for scenario in scenarios {
-                let mut recall = recall.clone();
-                let heard = heard(&facts, &pairs, *scenario);
-                recall.fingerprint_support = heard.clone();
-                let ranking = service.rank(&facts, &recall).expect("default preferences");
-                let (got, reason) = outcome(&ranking, &album.truth);
-                let overruled = ranking
-                    .order
-                    .first()
-                    .map_or(0, |lead| ranking.matches[*lead].overruled.len());
-                let label = format!("{copy} heard {scenario:?}");
-                match tallies.iter_mut().find(|(name, _)| *name == label) {
-                    Some((_, tally)) => tally.add(got.verdict, &album.truth),
-                    None => {
-                        let mut tally = Tally::default();
-                        tally.add(got.verdict, &album.truth);
-                        tallies.push((label.clone(), tally));
-                    }
-                }
-                println!(
-                    "{:<28} {label:<24} expected {:<10} {:<8}  got {:<10} {:<8} {reason} \
-                     overruled {overruled}",
-                    album.key,
-                    expected.verdict.label(),
-                    short(expected.release.as_deref()),
-                    got.verdict.label(),
-                    short(got.release.as_deref()),
-                );
-                let fails = got.verdict == Verdict::Wrong
-                    || match scenario {
-                        Heard::Unplaced => {
-                            got.verdict != expected.verdict || got.release != expected.release
-                        }
-                        Heard::Own => got.verdict > expected.verdict,
-                        Heard::Next => {
-                            moved_off_clear_track(&ranking, &recall.releases, &pairs)
-                                || (got.verdict <= Verdict::Group && overruled == 0)
-                        }
-                    };
-                if fails {
-                    failures.push(format!(
-                        "{} ({label}): expected {} {}, got {} {} ({reason})",
-                        album.key,
-                        expected.verdict.label(),
-                        expected.release.as_deref().unwrap_or("-"),
-                        got.verdict.label(),
-                        got.release.as_deref().unwrap_or("-"),
-                    ));
-                }
+///
+/// Re-ranks the copy's recall, already replayed, under each scenario.
+fn fingerprint_scenarios(
+    service: &IdentifyService,
+    copy: CorpusCopy<'_>,
+    recall: &RecallResult,
+    unheard: &Ranking,
+    tallies: &mut Vec<(String, Tally)>,
+    failures: &mut Vec<String>,
+) {
+    let CorpusCopy {
+        album,
+        name: copy,
+        facts,
+        expected,
+    } = copy;
+    // The true release, or where the truth names no edition, the
+    // one this copy was recorded as confirming in the true group.
+    let release = album.truth.release.as_deref().or(expected
+        .release
+        .as_deref()
+        .filter(|_| expected.verdict == Verdict::Group));
+    let pairs = paired(unheard, release);
+    let scenarios: &[Heard] = if copy == "tagged" || pairs.is_empty() {
+        &[Heard::Unplaced]
+    } else if pairs.len() < 2 {
+        &[Heard::Unplaced, Heard::Own]
+    } else {
+        &[Heard::Unplaced, Heard::Own, Heard::Next]
+    };
+    for scenario in scenarios {
+        let mut recall = recall.clone();
+        let heard = heard(facts, &pairs, *scenario);
+        recall.fingerprint_support = heard.clone();
+        let ranking = service.rank(facts, &recall).expect("default preferences");
+        let (got, reason) = outcome(&ranking, &album.truth);
+        let overruled = ranking
+            .order
+            .first()
+            .map_or(0, |lead| ranking.matches[*lead].overruled.len());
+        let label = format!("{copy} heard {scenario:?}");
+        match tallies.iter_mut().find(|(name, _)| *name == label) {
+            Some((_, tally)) => tally.add(got.verdict, &album.truth),
+            None => {
+                let mut tally = Tally::default();
+                tally.add(got.verdict, &album.truth);
+                tallies.push((label.clone(), tally));
             }
         }
+        println!(
+            "{:<28} {label:<24} expected {:<10} {:<8}  got {:<10} {:<8} {reason} \
+             overruled {overruled}",
+            album.key,
+            expected.verdict.label(),
+            short(expected.release.as_deref()),
+            got.verdict.label(),
+            short(got.release.as_deref()),
+        );
+        let fails = got.verdict == Verdict::Wrong
+            || match scenario {
+                Heard::Unplaced => {
+                    got.verdict != expected.verdict || got.release != expected.release
+                }
+                Heard::Own => got.verdict > expected.verdict,
+                Heard::Next => {
+                    moved_off_clear_track(&ranking, &recall.releases, &pairs)
+                        || (got.verdict <= Verdict::Group && overruled == 0)
+                }
+            };
+        if fails {
+            failures.push(format!(
+                "{} ({label}): expected {} {}, got {} {} ({reason})",
+                album.key,
+                expected.verdict.label(),
+                expected.release.as_deref().unwrap_or("-"),
+                got.verdict.label(),
+                got.release.as_deref().unwrap_or("-"),
+            ));
+        }
     }
-    for (label, tally) in &tallies {
-        println!("{}", tally.line(label));
-    }
-    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }

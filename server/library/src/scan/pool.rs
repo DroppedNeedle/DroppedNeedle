@@ -103,8 +103,10 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
+    /// The bound keeps a scan off every core, and a job that panics (a tag
+    /// parser on a bad file) answers an error and frees its place.
     #[tokio::test]
-    async fn pool_bounds_concurrency() {
+    async fn pool_bounds_work_and_survives_a_panic() {
         let pool = BlockingPool::new(2);
         let peak = Arc::new(AtomicUsize::new(0));
         let current = Arc::new(AtomicUsize::new(0));
@@ -129,10 +131,7 @@ mod tests {
         }
         assert!(peak.load(Ordering::SeqCst) <= 2, "peak exceeded the bound");
         assert_eq!(pool.completed(), 8);
-    }
 
-    #[tokio::test]
-    async fn panicking_job_returns_an_error() {
         let pool = BlockingPool::new(1);
         let outcome = pool.run(|| -> u8 { panic!("bad file") }).await;
         assert_eq!(outcome, Err(PoolError));

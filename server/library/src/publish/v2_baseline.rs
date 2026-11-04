@@ -249,11 +249,13 @@ pub fn translate(
 mod tests {
     use super::*;
 
-    /// A FLAC snapshot as v2 wrote it (mutagen's lowercase keys, both
-    /// track-total spellings) reads as v3 reads the same file.
+    /// v2's undo snapshots read as v3 reads the same file: a FLAC as v2
+    /// wrote it (mutagen's lowercase keys, both track-total spellings), MP4
+    /// items with their kinds (`©nam` is byte 0xA9), pairs and freeforms; a
+    /// WMA snapshot is refused by name.
     #[test]
-    fn vorbis_snapshot_reads_like_the_file() {
-        let json = br#"{"snapshot_version":1,"adapter_version":"1",
+    fn v2_snapshots_translate_like_the_file() {
+        let flac = br#"{"snapshot_version":1,"adapter_version":"1",
             "probe":{"extension":".flac","admitted":true,"detected_format":"flac",
                      "detected_class":"FLAC","extension_matches":true},
             "native_tags":{"storage_kind":"vorbis_comments","entries":[
@@ -263,39 +265,56 @@ mod tests {
                 {"key":"totaltracks","values":[{"kind":"text","text":"9"}],"container":"list"},
                 {"key":"tracktotal","values":[{"kind":"text","text":"09"}],"container":"list"}
             ]}}"#;
-        let before = translate(json, "flac", "music", "In/song.flac").expect("translates");
-        let managed = before.doc.managed.named();
-        assert_eq!(managed["artist"], vec!["A".to_owned(), "B".to_owned()]);
-        assert_eq!(managed["title"], vec!["Song".to_owned()]);
-        assert_eq!(managed["total_tracks:TOTALTRACKS"], vec!["9".to_owned()]);
-        assert_eq!(managed["total_tracks:TRACKTOTAL"], vec!["09".to_owned()]);
-        assert_eq!(
-            before.doc.version,
-            crate::publish::tags_seam::TAG_DOCUMENT_VERSION
-        );
-        assert_eq!(
-            (before.source_root.as_str(), before.source_rel.as_str()),
-            ("music", "In/song.flac")
-        );
-    }
-
-    /// MP4 items keep their kinds (`©nam` is byte 0xA9), pairs and
-    /// freeforms; a WMA snapshot is refused by name.
-    #[test]
-    fn mp4_snapshot_and_wma_refusal() {
-        let json = br#"{"snapshot_version":1,"probe":{"detected_format":"m4a"},
+        let m4a = br#"{"snapshot_version":1,"probe":{"detected_format":"m4a"},
             "native_tags":{"storage_kind":"mp4_atoms","entries":[
                 {"key":"\u00a9nam","values":[{"kind":"text","text":"Song"}]},
                 {"key":"trkn","values":[{"kind":"integer_pair","integer_pair":[3,12]}]},
                 {"key":"----:com.apple.iTunes:MusicBrainz Album Id",
                  "values":[{"kind":"binary","binary":"cmVsLTE="}]}
             ]}}"#;
-        let before = translate(json, "m4a", "music", "a.m4a").expect("translates");
-        let managed = before.doc.managed.named();
-        assert_eq!(managed["title"], vec!["Song".to_owned()]);
-        assert_eq!(managed["track_number"], vec!["3".to_owned()]);
-        assert_eq!(managed["total_tracks"], vec!["12".to_owned()]);
-        assert_eq!(managed["musicbrainz_release_id"], vec!["rel-1".to_owned()]);
+        #[allow(clippy::type_complexity)]
+        let cases: [(&[u8], &str, &str, &[(&str, &[&str])]); 2] = [
+            (
+                flac,
+                "flac",
+                "In/song.flac",
+                &[
+                    ("artist", &["A", "B"]),
+                    ("title", &["Song"]),
+                    ("total_tracks:TOTALTRACKS", &["9"]),
+                    ("total_tracks:TRACKTOTAL", &["09"]),
+                ],
+            ),
+            (
+                m4a,
+                "m4a",
+                "a.m4a",
+                &[
+                    ("title", &["Song"]),
+                    ("track_number", &["3"]),
+                    ("total_tracks", &["12"]),
+                    ("musicbrainz_release_id", &["rel-1"]),
+                ],
+            ),
+        ];
+        for (json, format, rel, fields) in cases {
+            let before = translate(json, format, "music", rel).expect("translates");
+            let managed = before.doc.managed.named();
+            for (name, values) in fields {
+                let values: Vec<String> = values.iter().map(|value| (*value).to_owned()).collect();
+                assert_eq!(managed[*name], values, "{format} {name}");
+            }
+            assert_eq!(
+                before.doc.version,
+                crate::publish::tags_seam::TAG_DOCUMENT_VERSION,
+                "{format}"
+            );
+            assert_eq!(
+                (before.source_root.as_str(), before.source_rel.as_str()),
+                ("music", rel),
+                "{format}"
+            );
+        }
 
         let wma = br#"{"snapshot_version":1,"probe":{"detected_format":"wma"},
             "native_tags":{"storage_kind":"asf_attributes","entries":[]}}"#;

@@ -505,8 +505,12 @@ fn ape_tail(file: &mut File) -> std::io::Result<Vec<u8>> {
 mod tests {
     use super::*;
 
+    /// LRC stamps parse to milliseconds, plain text drops empty lines,
+    /// the byte cap holds, and a `.lrc` reads as Jellyfin reads it: a line
+    /// stamped twice is sung twice, in time order, and a stamped blank line
+    /// stays, so the line before it stops showing through the gap.
     #[test]
-    fn lrc_stamps_parse_to_milliseconds() {
+    fn lyrics_parse_and_cap() {
         assert_eq!(
             parse_lrc_line("[01:02.34] hello"),
             Some(("hello".to_owned(), vec![62_340]))
@@ -518,10 +522,7 @@ mod tests {
         assert_eq!(parse_lrc_line("[ar:Someone]"), None);
         assert_eq!(parse_lrc_line("[99:99.99] x"), None);
         assert_eq!(parse_lrc_line("no stamp"), None);
-    }
 
-    #[test]
-    fn plain_text_drops_empty_lines_and_caps_hold() {
         let plain = parse_lyrics_text("One\n\n  Two  ").unwrap().unwrap();
         assert!(!plain.synced);
         assert_eq!(
@@ -532,6 +533,26 @@ mod tests {
         assert_eq!(
             parse_lyrics(Some(&"x".repeat(MAX_LYRICS_BYTES + 1)), None),
             Err(LyricsRefused::TooManyBytes)
+        );
+
+        let dir =
+            droppedneedle_kernel::db::scratch::ScratchDir::new("lyrics-lrc").expect("scratch");
+        std::fs::write(
+            dir.path().join("song.lrc"),
+            "[ar:Someone]\n[00:12.00][00:45.00]Chorus\n[00:20.00]\n",
+        )
+        .expect("lrc writes");
+        let (source, lyrics) =
+            read_file_lyrics(&dir.path().join("song.flac")).expect("the sidecar reads");
+        assert_eq!(source, LyricsSource::Sidecar);
+        assert!(lyrics.synced);
+        assert_eq!(
+            lyrics.lines,
+            [
+                ("Chorus".to_owned(), Some(12_000)),
+                (String::new(), Some(20_000)),
+                ("Chorus".to_owned(), Some(45_000)),
+            ]
         );
     }
 }

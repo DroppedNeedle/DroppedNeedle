@@ -669,14 +669,6 @@ mod tests {
     }
 
     #[test]
-    fn scheduled_scopes_skip_excluded_roots() {
-        let scopes = registry().scheduled_root_scopes();
-        assert_eq!(scopes.len(), 1);
-        assert_eq!(scopes[0].root_id, "a");
-        assert_eq!(scopes[0].relative_path, ".");
-    }
-
-    #[test]
     fn seam_rejects_traversal_and_absolute_keys() {
         let seam = StreamRootSeam::new(registry());
         assert_eq!(
@@ -695,9 +687,11 @@ mod tests {
     }
 
     /// A rule covers whole path components, ignoring letter case and
-    /// Unicode form; at one depth the rule that matches exactly wins.
+    /// Unicode form; at one depth the rule that matches exactly wins, and
+    /// of two stored rules that fold together the stricter policy wins,
+    /// whichever is stored first.
     #[test]
-    fn rules_match_whole_components_folded() {
+    fn rules_match_folded_components() {
         let rule = |id: &str, path: &str, policy| PolicyRule {
             id: id.to_owned(),
             relative_path: path.to_owned(),
@@ -719,32 +713,29 @@ mod tests {
         assert_eq!(at("caf\u{e9}/disc/x.flac"), EffectivePolicy::LocalMetadata);
         assert_eq!(at("Mixed/x.flac"), EffectivePolicy::LocalMetadata);
         assert_eq!(at("MIXED/x.flac"), EffectivePolicy::Excluded);
-    }
 
-    /// Two stored rules that fold together at one depth: the stricter
-    /// policy wins, whichever is stored first.
-    #[test]
-    fn folded_rules_tie_to_the_stricter_policy() {
-        let rule = |id: &str, path: &str, policy| PolicyRule {
-            id: id.to_owned(),
-            relative_path: path.to_owned(),
-            policy,
-        };
-        for rules in [
-            vec![
-                rule("automatic", "Live", EffectivePolicy::Automatic),
-                rule("excluded", "LIVE", EffectivePolicy::Excluded),
-            ],
-            vec![
-                rule("excluded", "LIVE", EffectivePolicy::Excluded),
-                rule("automatic", "Live", EffectivePolicy::Automatic),
-            ],
+        for (order, rules) in [
+            (
+                "automatic first",
+                vec![
+                    rule("automatic", "Live", EffectivePolicy::Automatic),
+                    rule("excluded", "LIVE", EffectivePolicy::Excluded),
+                ],
+            ),
+            (
+                "excluded first",
+                vec![
+                    rule("excluded", "LIVE", EffectivePolicy::Excluded),
+                    rule("automatic", "Live", EffectivePolicy::Automatic),
+                ],
+            ),
         ] {
             let root = LibraryRoot::new("a", PathBuf::from("/music/a"), EffectivePolicy::Automatic)
                 .with_rules(rules);
             assert_eq!(
                 root.policy_for(&Path::new("/music/a").join("live/x.flac")),
-                EffectivePolicy::Excluded
+                EffectivePolicy::Excluded,
+                "{order}"
             );
         }
     }

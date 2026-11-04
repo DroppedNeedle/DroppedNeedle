@@ -17,7 +17,6 @@ use crate::common::{ScratchDir, TestPlatform, config_store, migrated_db};
 use droppedneedle_kernel::clock::SystemClock;
 use droppedneedle_kernel::db::{Budget, Db, LaneLimits};
 use droppedneedle_kernel::jobs::CancellationToken;
-use droppedneedle_kernel::runtime_config::secret_sections::TypedLibrary;
 use droppedneedle_library::identify::models::RecallResult;
 use droppedneedle_library::identify::providers::FakeProviders;
 use droppedneedle_library::identify::service::{IdentifyDeps, IdentifyService};
@@ -32,7 +31,6 @@ use droppedneedle_library::scan::{
     ScannedTags, SqliteScanStore, StaticResolver, StreamRootSeam, TagReadError, TagReader,
     WatcherAction, WorkWakeups,
 };
-use droppedneedle_library::service::ServiceError;
 use droppedneedle_library::wiring::LibrarySetup;
 use sha2::{Digest, Sha256};
 
@@ -146,9 +144,12 @@ fn query(library: &LibrarySetup, sql: &str) -> i64 {
 
 /// The catalog holds what the tags say, with provenance and header
 /// durations, the changed albums are offered to identification once, and
-/// neither scan nor a no-op rescan writes a byte of music.
+/// neither scan nor a no-op rescan writes a byte of music. A file keeps the
+/// tag revision scans have always stored for it, which drafts and sealed
+/// decisions compare to spot stale state.
 #[tokio::test]
 async fn scan_catalogs_tags_without_touching_files() {
+    const STORED: &str = "2b6fee3851ee5022e3d48c722ca55b1be2fc7ccede88c843fc387c8618cfe51f";
     let scratch = ScratchDir::new("scan-tags");
     let music = scratch.join("music");
     let tagged = plant(&music, "Album/01.flac", "management_full.flac");
@@ -187,6 +188,17 @@ async fn scan_catalogs_tags_without_touching_files() {
         1,
         "untagged files fall back with honest provenance"
     );
+    assert_eq!(
+        query(
+            &library,
+            &format!(
+                "SELECT COUNT(*) FROM local_tracks WHERE relative_path = 'Album/01.flac' \
+                 AND tag_revision = '{STORED}'"
+            ),
+        ),
+        1,
+        "the tag revision of an unchanged file changed"
+    );
     let albums = query(
         &library,
         "SELECT COUNT(DISTINCT local_album_id) FROM local_tracks",
@@ -204,32 +216,6 @@ async fn scan_catalogs_tags_without_touching_files() {
         "an unchanged album is not offered again"
     );
     assert_eq!(snapshot(&music), before, "scans never write music files");
-}
-
-/// Drafts and sealed decisions compare a file's tag revision to spot stale
-/// state, so a new tag the scan reads must not change it: a file whose tags
-/// did not change keeps the revision scans have always stored for it.
-#[tokio::test]
-async fn unchanged_tags_keep_their_revision() {
-    const STORED: &str = "2b6fee3851ee5022e3d48c722ca55b1be2fc7ccede88c843fc387c8618cfe51f";
-    let scratch = ScratchDir::new("scan-revision");
-    let music = scratch.join("music");
-    plant(&music, "Album/01.flac", "management_full.flac");
-    let library = bundle(&scratch).await;
-
-    let run = scan(&library).await;
-    assert_eq!(run.state.scan_state(), ScanState::Completed);
-    assert_eq!(
-        query(
-            &library,
-            &format!(
-                "SELECT COUNT(*) FROM local_tracks WHERE relative_path = 'Album/01.flac' \
-                 AND tag_revision = '{STORED}'"
-            ),
-        ),
-        1,
-        "the tag revision of an unchanged file changed"
-    );
 }
 
 /// A daily scan runs at the set time in the server's time zone (`TZ`), on
@@ -339,190 +325,204 @@ impl TagReader for DateOnlyReader {
     }
 }
 
-/// A release date, a single-disc total or a track total is stored, but
-/// edition matching reads none of them, so the album is not identified
-/// again for it.
+/// A field an older read left empty is filled by the next scan from the
+/// unchanged file, which is never written. The album is offered to
+/// identification again only when edition matching reads that field.
 #[tokio::test]
-async fn hints_matching_cannot_use_do_not_look_an_album_up_again() {
-    let scratch = ScratchDir::new("scan-edition-date");
-    let music = scratch.join("music");
-    plant(&music, "Album/01.flac", "flac_full_01.flac");
-    let (coordinator, paths) = coordinator(&music, Arc::new(DateOnlyReader));
-    let scan = || async {
-        coordinator
-            .request_run(&request(&music))
-            .expect("requested");
-        coordinator.run_once(&paths).await.expect("scan runs")
-    };
-    scan().await;
-    let db = coordinator.store().db();
-    db.run_sql(
-        "DELETE FROM local_track_edition_tags; DELETE FROM library_identify_jobs; \
-         INSERT INTO library_album_match_state (local_album_id, state, reason_code, \
-         updated_at) SELECT local_album_id, 'unmatched', 'NO_CANDIDATES', 0 FROM local_tracks",
-    )
-    .expect("carried row");
+async fn a_scan_fills_what_an_older_read_skipped() {
+    // Edition hints on a file carried over from v2 (barcode, catalog number,
+    // media): stored, nothing else in the carried row changes, and an album
+    // without a confirmed match is looked up again.
+    {
+        let (scratch, library) = carried_file("scan-edition-fill", "management_full.flac").await;
+        let music = scratch.join("music");
+        let before = snapshot(&music);
+        let db = library.scan_store.db();
 
-    scan().await;
-    let count = |sql: &str| db.query_i64(sql).expect("counts");
-    assert_eq!(
-        count(
-            "SELECT COUNT(*) FROM local_track_edition_tags \
-             WHERE release_date = '1997-03-01' AND total_discs = 1 AND total_tracks = 12"
-        ),
-        1,
-        "the row is filled"
-    );
-    assert_eq!(
-        count("SELECT COUNT(*) FROM library_identify_jobs"),
-        0,
-        "a date alone is no reason to look the album up again"
-    );
-}
+        let run = scan(&library).await;
+        assert_eq!(run.state.scan_state(), ScanState::Completed, "hints");
+        assert_eq!(count(&run, Counter::Unchanged), 1, "hints");
+        assert_eq!(count(&run, Counter::Changed), 0, "hints");
+        assert_eq!(
+            query(
+                &library,
+                "SELECT COUNT(*) FROM local_track_edition_tags WHERE barcode = '1234567890123' \
+                 AND catalog_number = 'CAT-42' AND media = 'Digital Media' \
+                 AND release_country = 'GB' AND total_tracks = 9",
+            ),
+            1,
+            "hints: the edition hints come from the file's tags"
+        );
+        assert_eq!(
+            query(
+                &library,
+                "SELECT COUNT(*) FROM local_tracks WHERE title = 'Carried'"
+            ),
+            1,
+            "hints: nothing else in the carried row changes"
+        );
+        assert_eq!(
+            query(&library, "SELECT COUNT(*) FROM library_identify_jobs"),
+            1,
+            "hints: the unmatched album is looked up again"
+        );
+        assert_eq!(
+            snapshot(&music),
+            before,
+            "hints: scans never write music files"
+        );
 
-/// A file carried over from v2 stays unchanged, so the scan never read
-/// the edition hints in its tags (barcode, catalog number, media). A scan
-/// stores them from the file's tags and changes nothing else: the carried
-/// row keeps what it holds, the file counts as unchanged and is never
-/// written, and an album without a confirmed match is offered to
-/// identification again so the hints can steer its edition.
-#[tokio::test]
-async fn a_carried_file_gets_its_edition_hints_from_its_tags() {
-    let (scratch, library) = carried_file("scan-edition-fill", "management_full.flac").await;
-    let music = scratch.join("music");
-    let before = snapshot(&music);
-    let db = library.scan_store.db();
+        db.run_sql("UPDATE local_track_edition_tags SET barcode = 'kept'")
+            .expect("marked");
+        scan(&library).await;
+        assert_eq!(
+            query(
+                &library,
+                "SELECT COUNT(*) FROM local_track_edition_tags WHERE barcode = 'kept'"
+            ),
+            1,
+            "hints: a filled file is not read again"
+        );
+    }
 
-    let run = scan(&library).await;
-    assert_eq!(run.state.scan_state(), ScanState::Completed);
-    assert_eq!(count(&run, Counter::Unchanged), 1);
-    assert_eq!(count(&run, Counter::Changed), 0);
-    assert_eq!(
-        query(
-            &library,
-            "SELECT COUNT(*) FROM local_track_edition_tags WHERE barcode = '1234567890123' \
-             AND catalog_number = 'CAT-42' AND media = 'Digital Media' \
-             AND release_country = 'GB' AND total_tracks = 9",
-        ),
-        1,
-        "the edition hints come from the file's tags"
-    );
-    assert_eq!(
-        query(
-            &library,
-            "SELECT COUNT(*) FROM local_tracks WHERE title = 'Carried'"
-        ),
-        1,
-        "nothing else in the carried row changes"
-    );
-    assert_eq!(
-        query(&library, "SELECT COUNT(*) FROM library_identify_jobs"),
-        1,
-        "the unmatched album is looked up again"
-    );
-    assert_eq!(snapshot(&music), before, "scans never write music files");
-
-    db.run_sql("UPDATE local_track_edition_tags SET barcode = 'kept'")
-        .expect("marked");
-    scan(&library).await;
-    assert_eq!(
-        query(
-            &library,
-            "SELECT COUNT(*) FROM local_track_edition_tags WHERE barcode = 'kept'"
-        ),
-        1,
-        "a filled file is not read again"
-    );
-}
-
-/// Only an MP3 can have an estimated length: lofty counts its frames from
-/// a Xing, Info or VBRI header and otherwise divides by the first frame's
-/// bitrate. The scan records which. An MP3 row that does not say yet (from
-/// before the scan recorded it) is filled by the next scan from the first
-/// frame alone, without offering the album to identification again or
-/// writing the file.
-#[tokio::test]
-async fn a_scan_records_whether_each_length_was_measured() {
-    let scratch = ScratchDir::new("scan-measured");
-    let music = scratch.join("music");
-    plant(&music, "Album/01.flac", "flac_full_01.flac");
-    plant(&music, "Album/02.mp3", "mp3_full_01.mp3");
-    plant(&music, "Album/03.mp3", "mp3_vbr_no_xing.mp3");
-    let before = snapshot(&music);
-    let library = bundle(&scratch).await;
-    let as_read = |library: &LibrarySetup| {
-        query(
-            library,
-            "SELECT COUNT(*) FROM local_tracks WHERE (relative_path, duration_measured) IN \
-             (VALUES ('Album/01.flac', 1), ('Album/02.mp3', 1), ('Album/03.mp3', 0))",
+    // A release date, a single-disc total or a track total is stored, but
+    // edition matching reads none of them, so the album is not looked up
+    // again for it.
+    {
+        let scratch = ScratchDir::new("scan-edition-date");
+        let music = scratch.join("music");
+        plant(&music, "Album/01.flac", "flac_full_01.flac");
+        let (coordinator, paths) = coordinator(&music, Arc::new(DateOnlyReader));
+        let scan = || async {
+            coordinator
+                .request_run(&request(&music))
+                .expect("requested");
+            coordinator.run_once(&paths).await.expect("scan runs")
+        };
+        scan().await;
+        let db = coordinator.store().db();
+        db.run_sql(
+            "DELETE FROM local_track_edition_tags; DELETE FROM library_identify_jobs; \
+             INSERT INTO library_album_match_state (local_album_id, state, reason_code, \
+             updated_at) SELECT local_album_id, 'unmatched', 'NO_CANDIDATES', 0 FROM local_tracks",
         )
-    };
+        .expect("carried row");
 
-    let run = scan(&library).await;
-    assert_eq!(count(&run, Counter::Indexed), 3);
-    assert_eq!(
-        as_read(&library),
-        3,
-        "a VBR MP3 without a header is estimated"
-    );
+        scan().await;
+        let count = |sql: &str| db.query_i64(sql).expect("counts");
+        assert_eq!(
+            count(
+                "SELECT COUNT(*) FROM local_track_edition_tags \
+                 WHERE release_date = '1997-03-01' AND total_discs = 1 AND total_tracks = 12"
+            ),
+            1,
+            "date: the row is filled"
+        );
+        assert_eq!(
+            count("SELECT COUNT(*) FROM library_identify_jobs"),
+            0,
+            "date: a date alone is no reason to look the album up again"
+        );
+    }
 
-    library
-        .scan_store
-        .db()
-        .run_sql("UPDATE local_tracks SET duration_measured = NULL WHERE file_format = 'mp3'")
-        .expect("rows from before the flag");
-    let jobs = query(&library, "SELECT COUNT(*) FROM library_identify_jobs");
-    let again = scan(&library).await;
-    assert_eq!(count(&again, Counter::Unchanged), 3);
-    assert_eq!(as_read(&library), 3, "the next scan fills the flag");
-    assert_eq!(
-        query(&library, "SELECT COUNT(*) FROM library_identify_jobs"),
-        jobs,
-        "the flag alone does not offer the album again"
-    );
-    assert_eq!(snapshot(&music), before, "scans never write music files");
-}
+    // Whether a length was measured: only an MP3 can be estimated (lofty
+    // counts frames from a Xing, Info or VBRI header, else divides by the
+    // first frame's bitrate). A row from before the flag is filled from the
+    // first frame alone.
+    {
+        let scratch = ScratchDir::new("scan-measured");
+        let music = scratch.join("music");
+        plant(&music, "Album/01.flac", "flac_full_01.flac");
+        plant(&music, "Album/02.mp3", "mp3_full_01.mp3");
+        plant(&music, "Album/03.mp3", "mp3_vbr_no_xing.mp3");
+        let before = snapshot(&music);
+        let library = bundle(&scratch).await;
+        let as_read = |library: &LibrarySetup| {
+            query(
+                library,
+                "SELECT COUNT(*) FROM local_tracks WHERE (relative_path, duration_measured) IN \
+                 (VALUES ('Album/01.flac', 1), ('Album/02.mp3', 1), ('Album/03.mp3', 0))",
+            )
+        };
 
-/// A file read before track totals were kept has an edition row without
-/// one. The next scan reads the unchanged file's total into that row and
-/// moves the catalog revision, which tells player apps to read the
-/// library again, with no "rescan files". A file whose tags name no total
-/// is recorded as read, so later scans leave it alone.
-#[tokio::test]
-async fn a_scan_fills_the_track_total_an_older_read_skipped() {
-    let scratch = ScratchDir::new("scan-track-total");
-    let music = scratch.join("music");
-    plant(&music, "Album/01.flac", "management_full.flac");
-    plant(&music, "Other/01.flac", "flac_no_tags.flac");
-    let library = bundle(&scratch).await;
-    scan(&library).await;
-    let total = |value: i64| {
-        query(
-            &library,
-            &format!("SELECT COUNT(*) FROM local_track_edition_tags WHERE total_tracks = {value}"),
-        )
-    };
-    assert_eq!((total(9), total(0)), (1, 1), "a new file's total is read");
-    let revision = "SELECT value FROM library_catalog_revision WHERE singleton = 1";
-    library
-        .scan_store
-        .db()
-        .run_sql("UPDATE local_track_edition_tags SET total_tracks = NULL")
-        .expect("an older read");
-    let before = query(&library, revision);
+        let run = scan(&library).await;
+        assert_eq!(count(&run, Counter::Indexed), 3, "measured");
+        assert_eq!(
+            as_read(&library),
+            3,
+            "measured: a VBR MP3 without a header is estimated"
+        );
 
-    let run = scan(&library).await;
-    assert_eq!(count(&run, Counter::Unchanged), 2);
-    assert_eq!((total(9), total(0)), (1, 1), "the scan fills both");
-    let filled = query(&library, revision);
-    assert!(filled > before, "the revision moves");
+        library
+            .scan_store
+            .db()
+            .run_sql("UPDATE local_tracks SET duration_measured = NULL WHERE file_format = 'mp3'")
+            .expect("rows from before the flag");
+        let jobs = query(&library, "SELECT COUNT(*) FROM library_identify_jobs");
+        let again = scan(&library).await;
+        assert_eq!(count(&again, Counter::Unchanged), 3, "measured");
+        assert_eq!(
+            as_read(&library),
+            3,
+            "measured: the next scan fills the flag"
+        );
+        assert_eq!(
+            query(&library, "SELECT COUNT(*) FROM library_identify_jobs"),
+            jobs,
+            "measured: the flag alone does not offer the album again"
+        );
+        assert_eq!(
+            snapshot(&music),
+            before,
+            "measured: scans never write music files"
+        );
+    }
 
-    scan(&library).await;
-    assert_eq!(
-        query(&library, revision),
-        filled,
-        "a filled row is not read again"
-    );
+    // A track total: the next scan reads it into the edition row and moves
+    // the catalog revision, which tells player apps to read the library
+    // again. A file whose tags name no total is recorded as read, so later
+    // scans leave it alone.
+    {
+        let scratch = ScratchDir::new("scan-track-total");
+        let music = scratch.join("music");
+        plant(&music, "Album/01.flac", "management_full.flac");
+        plant(&music, "Other/01.flac", "flac_no_tags.flac");
+        let library = bundle(&scratch).await;
+        scan(&library).await;
+        let total = |value: i64| {
+            query(
+                &library,
+                &format!(
+                    "SELECT COUNT(*) FROM local_track_edition_tags WHERE total_tracks = {value}"
+                ),
+            )
+        };
+        assert_eq!(
+            (total(9), total(0)),
+            (1, 1),
+            "total: a new file's total is read"
+        );
+        let revision = "SELECT value FROM library_catalog_revision WHERE singleton = 1";
+        library
+            .scan_store
+            .db()
+            .run_sql("UPDATE local_track_edition_tags SET total_tracks = NULL")
+            .expect("an older read");
+        let before = query(&library, revision);
+
+        let run = scan(&library).await;
+        assert_eq!(count(&run, Counter::Unchanged), 2, "total");
+        assert_eq!((total(9), total(0)), (1, 1), "total: the scan fills both");
+        let filled = query(&library, revision);
+        assert!(filled > before, "total: the revision moves");
+
+        scan(&library).await;
+        assert_eq!(
+            query(&library, revision),
+            filled,
+            "total: a filled row is not read again"
+        );
+    }
 }
 
 /// A vanished file is marked missing, never deleted. A scope that loses
@@ -599,8 +599,9 @@ async fn scan_folder(library: &LibrarySetup, folder: &str) -> ScanRun {
 }
 
 /// A folder the guard holds back stays held, from the start of the first
-/// scan that held it, through more held scans and through a clean scan of
-/// a narrower folder. The first scan that finds it as expected lets it go
+/// scan that held it, through more held scans, a clean scan of a narrower
+/// folder and a clean scan stopped before its end. The first scan that
+/// finishes and finds it as expected lets it go
 /// and looks again at the albums parked on the hold, and only those. A
 /// clean scan with nothing held wakes nothing.
 #[tokio::test]
@@ -697,6 +698,37 @@ async fn a_held_back_folder_is_held_until_a_scan_finds_it_again() {
         let name = format!("{n:02}.flac");
         std::fs::rename(aside.join(&name), music.join("Album").join(&name)).expect("move back");
     }
+    let registry = library.core.live_registry();
+    let stopped = library
+        .coordinator
+        .request_run(&ScanRequest {
+            kind: ScanKind::Incremental,
+            trigger: ScanTrigger::Manual,
+            scopes: registry.scheduled_root_scopes(),
+            requested_by_user_id: None,
+            policy_revision: registry.fingerprint().to_owned(),
+        })
+        .expect("scan requested");
+    let (run, _, _) = library.coordinator.snapshot(&stopped.run_id).expect("run");
+    library
+        .coordinator
+        .control(&run.id, Event::Stop, run.row_revision)
+        .expect("stop is taken");
+    for _ in 0..50 {
+        library.scans.supervisor_tick().await;
+        if library.coordinator.current().is_empty() {
+            break;
+        }
+    }
+    let (run, _, _) = library.coordinator.snapshot(&stopped.run_id).expect("run");
+    assert_eq!(run.state.scan_state(), ScanState::Cancelled);
+    assert_eq!(
+        held(&library),
+        (1, 1),
+        "a clean scan stopped before its end lets nothing go"
+    );
+    assert_eq!(due(&library, &parked), 0, "a stopped scan wakes nothing");
+
     scan(&library).await;
     assert_eq!(held(&library), (0, 0));
     assert_eq!(due(&library, &parked), 1, "looked at again");
@@ -712,27 +744,6 @@ async fn a_held_back_folder_is_held_until_a_scan_finds_it_again() {
         .expect("parked again");
     scan(&library).await;
     assert_eq!(due(&library, &parked), 0, "nothing held, nothing woken");
-}
-
-/// Tag reader that signals shutdown on one nominated read, and holds that
-/// read until the test has seen the drive abandoned.
-struct ShutdownOnRead {
-    shutdown: CancellationToken,
-    signal_at: u64,
-    reads: AtomicU64,
-    abandoned: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
-}
-
-impl TagReader for ShutdownOnRead {
-    fn read_tags(&self, _path: &Path) -> Result<ScannedTags, TagReadError> {
-        if self.reads.fetch_add(1, Ordering::SeqCst) + 1 == self.signal_at {
-            self.shutdown.cancel();
-            if let Ok(abandoned) = self.abandoned.lock() {
-                let _ = abandoned.recv();
-            }
-        }
-        Ok(ScannedTags::default())
-    }
 }
 
 fn coordinator<T: TagReader + 'static>(
@@ -781,56 +792,6 @@ fn request(root: &Path) -> ScanRequest {
         requested_by_user_id: None,
         policy_revision: "rev-1".to_owned(),
     }
-}
-
-/// A shutdown mid-index leaves the run active; the next start resumes at
-/// the first uncommitted file, so every file lands once and counts once.
-#[tokio::test]
-async fn shutdown_mid_index_resumes_without_double_counting() {
-    let scratch = ScratchDir::new("scan-resume");
-    let root = scratch.join("music");
-    std::fs::create_dir_all(&root).expect("root");
-    for n in 0..600 {
-        std::fs::write(root.join(format!("t{n:04}.flac")), b"junk").expect("plant");
-    }
-    let signal = CancellationToken::new();
-    let (resume, abandoned) = std::sync::mpsc::channel();
-    let reader = Arc::new(ShutdownOnRead {
-        shutdown: signal.clone(),
-        signal_at: 300,
-        reads: AtomicU64::new(0),
-        abandoned: std::sync::Mutex::new(abandoned),
-    });
-    let (coordinator, paths) = coordinator(&root, reader);
-    let requested = coordinator.request_run(&request(&root)).expect("requested");
-    assert!(
-        coordinator
-            .run_once_with_shutdown(&paths, &signal)
-            .await
-            .is_none(),
-        "shutdown abandons the drive"
-    );
-    drop(resume);
-    let (run, _, _) = coordinator.snapshot(&requested.run_id).expect("run");
-    assert_eq!(
-        run.state.scan_state(),
-        ScanState::Indexing,
-        "the run stays resumable"
-    );
-
-    let run = coordinator.run_once(&paths).await.expect("resumed");
-    assert_eq!(run.state.scan_state(), ScanState::Completed);
-    assert_eq!(count(&run, Counter::Total), 600);
-    assert_eq!(count(&run, Counter::Inspected), 600);
-    assert_eq!(count(&run, Counter::Indexed), 600);
-    assert_eq!(
-        coordinator
-            .store()
-            .db()
-            .query_i64("SELECT COUNT(*) FROM local_tracks")
-            .expect("count"),
-        600
-    );
 }
 
 /// Tag reader that holds one nominated read until the test lets it go,
@@ -973,12 +934,13 @@ async fn pause_resume_and_stop_settle_where_the_worker_stops() {
     );
 }
 
-/// New music shows as a scan goes: each window that writes catalog rows
-/// moves the catalog revision in its own transaction, open tabs hear of it
-/// while the scan is still running, and the move outlives a shutdown that
-/// leaves the run unfinished.
+/// A shutdown mid-index keeps what landed: each window that writes catalog
+/// rows moves the catalog revision in its own transaction, open tabs hear
+/// of it while the scan runs, and the move outlives the shutdown. The run
+/// stays active, and the next start resumes at the first uncommitted file,
+/// so every file lands once and counts once.
 #[tokio::test]
-async fn a_scan_moves_the_catalog_revision_as_it_goes() {
+async fn a_shutdown_mid_index_keeps_what_landed_and_resumes_once() {
     use droppedneedle_kernel::db::{DbConfig, open_runtime};
     use droppedneedle_kernel::events::{EventHub, revisions};
 
@@ -1095,14 +1057,33 @@ async fn a_scan_moves_the_catalog_revision_as_it_goes() {
         moved,
         "the bump outlived a shutdown before the run's end"
     );
+
+    let (coordinator, paths) =
+        coordinator_on(runtime.db().clone(), &root, Arc::new(NullTagReader::new()));
+    let run = coordinator.run_once(&paths).await.expect("resumed");
+    assert_eq!(run.id, requested.run_id, "the next start resumes the run");
+    assert_eq!(run.state.scan_state(), ScanState::Completed);
+    assert_eq!(count(&run, Counter::Total), 300);
+    assert_eq!(count(&run, Counter::Inspected), 300);
+    assert_eq!(count(&run, Counter::Indexed), 300);
+    assert_eq!(
+        coordinator
+            .store()
+            .db()
+            .query_i64("SELECT COUNT(*) FROM local_tracks")
+            .expect("count"),
+        300
+    );
+    drop(coordinator);
     runtime.shutdown().await;
 }
 
-/// A run that has ended but still owes its end passes counts as a scan
-/// in progress for the work that must never run beside one, until a drive
-/// settles it.
+/// A run stopped before it walks settles once. While it owes its end
+/// passes it counts as a scan in progress for the work that must never run
+/// beside one, until a drive settles it; starting the app again does not
+/// end a cancelled run a second time.
 #[tokio::test]
-async fn a_run_owing_its_end_passes_still_counts_as_scanning() {
+async fn a_stopped_run_settles_once() {
     let scratch = ScratchDir::new("scan-end-owed");
     let root = scratch.join("music");
     std::fs::create_dir_all(&root).expect("root");
@@ -1121,64 +1102,96 @@ async fn a_run_owing_its_end_passes_still_counts_as_scanning() {
         coordinator.current().is_empty(),
         "settled, it no longer counts"
     );
-}
 
-/// A run whose end passes fail still ends. Every file vanishes, so the
-/// mass-missing guard holds the scope back, and recording the held folder
-/// is refused at the run's end; the run completes all the same and leaves
-/// nothing for the next drive.
-#[tokio::test]
-async fn a_run_whose_end_passes_fail_still_ends() {
-    let scratch = ScratchDir::new("scan-end-fails");
-    let root = scratch.join("music");
-    std::fs::create_dir_all(&root).expect("root");
-    for n in 0..25 {
-        std::fs::write(root.join(format!("t{n:04}.flac")), b"junk").expect("plant");
-    }
-    let (coordinator, paths) = coordinator(&root, Arc::new(NullTagReader::new()));
+    // Cancelled while still waiting, then the app starts again.
     coordinator.request_run(&request(&root)).expect("requested");
-    let first = coordinator.run_once(&paths).await.expect("driven");
-    assert_eq!(first.state.scan_state(), ScanState::Completed);
-    for n in 0..25 {
-        std::fs::remove_file(root.join(format!("t{n:04}.flac"))).expect("remove");
-    }
+    let run = coordinator
+        .store()
+        .list_current()
+        .unwrap()
+        .pop()
+        .expect("the run is waiting");
+    coordinator
+        .control(&run.id, Event::Stop, run.row_revision)
+        .expect("stop is taken");
+    let count = |sql: &str| {
+        coordinator
+            .store()
+            .db()
+            .query_i64(sql)
+            .unwrap_or_else(|error| panic!("{sql}: {error}"))
+    };
+    let stamp = format!(
+        "SELECT terminal_at + row_revision FROM library_scan_runs \
+         WHERE id = '{}' AND state = 'cancelled'",
+        run.id
+    );
+    let ended = count(&stamp);
+    let later = count(&format!(
+        "SELECT terminal_at / 1000 FROM library_scan_runs WHERE id = '{}'",
+        run.id
+    )) + 3600;
     coordinator
         .store()
-        .db()
-        .run_sql(
-            "CREATE TRIGGER refuse_hold BEFORE INSERT ON library_scan_held_scopes \
-             BEGIN SELECT RAISE(ABORT, 'refused for the test'); END;",
-        )
-        .expect("trigger");
-    let requested = coordinator.request_run(&request(&root)).expect("requested");
-    let ended = coordinator.run_once(&paths).await.expect("driven");
-    assert_eq!(ended.state.scan_state(), ScanState::Completed);
-    let (stored, _, _) = coordinator.snapshot(&requested.run_id).expect("run");
-    assert_eq!(stored.state.scan_state(), ScanState::Completed);
-    let failures = coordinator
-        .store()
-        .failures(&requested.run_id)
-        .expect("failures");
-    assert!(
-        failures
-            .iter()
-            .any(|failure| failure.failure_code == FailureCode::MassMissingGuard),
-        "the guard held the scope back"
-    );
-    assert!(
-        coordinator.run_once(&paths).await.is_none(),
-        "nothing is left to drive"
-    );
+        .recover(&droppedneedle_library::scan::RunStop::never(), later as f64)
+        .unwrap();
+    assert_eq!(count(&stamp), ended, "the run row is as the cancel left it");
 }
 
-/// An end pass that keeps running out of time waits by the clock before
-/// it is tried again: a drive right after it spends no try, and a queued
-/// run stays unclaimed so no old pass lands after its windows. Once the
-/// wait is over the pass lands, then the queued run starts. Every file
-/// vanishes, so the mass-missing guard holds the scope back, and recording
-/// the held folder outlasts the write budget until the test lets it through.
+/// Every file vanishes, so the mass-missing guard holds the scope back and
+/// the run's end records the held folder. When that pass fails, the run
+/// completes all the same and leaves nothing for the next drive. When it
+/// keeps running out of time, it waits by the clock before it is tried
+/// again: a drive right after it spends no try, and a queued run stays
+/// unclaimed so no old pass lands after its windows. Once the wait is over
+/// the pass lands, then the queued run starts.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_put_off_end_pass_holds_new_runs_and_lands_after_its_wait() {
+async fn an_end_pass_that_fails_or_runs_long_still_ends() {
+    {
+        let scratch = ScratchDir::new("scan-end-fails");
+        let root = scratch.join("music");
+        std::fs::create_dir_all(&root).expect("root");
+        for n in 0..25 {
+            std::fs::write(root.join(format!("t{n:04}.flac")), b"junk").expect("plant");
+        }
+        let (coordinator, paths) = coordinator(&root, Arc::new(NullTagReader::new()));
+        coordinator.request_run(&request(&root)).expect("requested");
+        let first = coordinator.run_once(&paths).await.expect("driven");
+        assert_eq!(first.state.scan_state(), ScanState::Completed, "fails");
+        for n in 0..25 {
+            std::fs::remove_file(root.join(format!("t{n:04}.flac"))).expect("remove");
+        }
+        coordinator
+            .store()
+            .db()
+            .run_sql(
+                "CREATE TRIGGER refuse_hold BEFORE INSERT ON library_scan_held_scopes \
+                 BEGIN SELECT RAISE(ABORT, 'refused for the test'); END;",
+            )
+            .expect("trigger");
+        let requested = coordinator.request_run(&request(&root)).expect("requested");
+        let ended = coordinator.run_once(&paths).await.expect("driven");
+        assert_eq!(ended.state.scan_state(), ScanState::Completed, "fails");
+        let (stored, _, _) = coordinator.snapshot(&requested.run_id).expect("run");
+        assert_eq!(stored.state.scan_state(), ScanState::Completed, "fails");
+        let failures = coordinator
+            .store()
+            .failures(&requested.run_id)
+            .expect("failures");
+        assert!(
+            failures
+                .iter()
+                .any(|failure| failure.failure_code == FailureCode::MassMissingGuard),
+            "fails: the guard held the scope back"
+        );
+        assert!(
+            coordinator.run_once(&paths).await.is_none(),
+            "fails: nothing is left to drive"
+        );
+    }
+
+    // Recording the held folder outlasts the write budget, kept short here,
+    // until the test lets it through.
     let scratch = ScratchDir::new("scan-end-wait");
     let root = scratch.join("music");
     std::fs::create_dir_all(&root).expect("root");
@@ -1189,8 +1202,8 @@ async fn a_put_off_end_pass_holds_new_runs_and_lands_after_its_wait() {
     migrated_db(&path);
     let limits = LaneLimits {
         background: Budget {
-            warn: Duration::from_secs(1),
-            abort: Duration::from_secs(3),
+            warn: Duration::from_millis(100),
+            abort: Duration::from_millis(250),
         },
         ..LaneLimits::default()
     };
@@ -1218,7 +1231,7 @@ async fn a_put_off_end_pass_holds_new_runs_and_lands_after_its_wait() {
     let paths = HashMap::from([("music".to_owned(), root.clone())]);
     coordinator.request_run(&request(&root)).expect("requested");
     let first = coordinator.run_once(&paths).await.expect("driven");
-    assert_eq!(first.state.scan_state(), ScanState::Completed);
+    assert_eq!(first.state.scan_state(), ScanState::Completed, "runs long");
     for n in 0..25 {
         std::fs::remove_file(root.join(format!("t{n:04}.flac"))).expect("remove");
     }
@@ -1242,7 +1255,7 @@ async fn a_put_off_end_pass_holds_new_runs_and_lands_after_its_wait() {
         .expect("trigger");
     coordinator.request_run(&request(&root)).expect("requested");
     let ended = coordinator.run_once(&paths).await.expect("driven");
-    assert_eq!(ended.state.scan_state(), ScanState::Completed);
+    assert_eq!(ended.state.scan_state(), ScanState::Completed, "runs long");
     assert_eq!(held(), 0, "the slow pass has not landed");
 
     let queued = coordinator.request_run(&request(&root)).expect("queued");
@@ -1280,39 +1293,6 @@ async fn a_put_off_end_pass_holds_new_runs_and_lands_after_its_wait() {
     assert!(held() > 0, "the pass landed after its wait");
 }
 
-/// One inventory row the store refuses costs that file only: the rest of
-/// its page lands, the failure names the store error, and the scope is
-/// not trusted for missing detection.
-#[tokio::test]
-async fn a_refused_inventory_row_costs_that_file_only() {
-    let scratch = ScratchDir::new("scan-refused");
-    let root = scratch.join("music");
-    std::fs::create_dir_all(&root).expect("root");
-    for n in 0..10 {
-        std::fs::write(root.join(format!("t{n:04}.flac")), b"junk").expect("plant");
-    }
-    let (coordinator, paths) = coordinator(&root, Arc::new(NullTagReader::new()));
-    coordinator
-        .store()
-        .db()
-        .run_sql(
-            "CREATE TRIGGER refuse_one BEFORE INSERT ON library_scan_inventory \
-             WHEN NEW.relative_path = 't0003.flac' \
-             BEGIN SELECT RAISE(ABORT, 'refused for the test'); END;",
-        )
-        .expect("trigger");
-    coordinator.request_run(&request(&root)).expect("requested");
-    let run = coordinator.run_once(&paths).await.expect("driven");
-    assert_eq!(run.state.scan_state(), ScanState::Completed);
-    assert_eq!(count(&run, Counter::Indexed), 9);
-    let failures = coordinator.store().failures(&run.id).unwrap();
-    assert!(failures.iter().any(|failure| {
-        failure.failure_code == FailureCode::WalkError
-            && failure.relative_path == "t0003.flac"
-            && failure.failure_detail.contains("refused for the test")
-    }));
-}
-
 /// Scan `files` junk files in one index window. With `bad`, the catalog
 /// refuses `t0002.flac` and the catalog write of `t0005.flac` runs past
 /// the write budget, which is short here. Returns the run, its failure
@@ -1332,8 +1312,8 @@ async fn window_with_bad_files(
     migrated_db(&path);
     let limits = LaneLimits {
         background: Budget {
-            warn: Duration::from_millis(250),
-            abort: Duration::from_secs(1),
+            warn: Duration::from_millis(100),
+            abort: Duration::from_millis(250),
         },
         ..LaneLimits::default()
     };
@@ -1369,25 +1349,59 @@ async fn window_with_bad_files(
     (run, failures, tracks)
 }
 
-/// One index window holds a file the catalog refuses and a file whose
-/// catalog write runs past the write budget. Each costs that file only:
-/// the window is committed again row by row, and split by path down to
-/// the slow file, which is given up. Every other file lands, the run
-/// completes, both files are on the failure list, and the counts equal a
-/// clean scan's but for those two files, moved from indexed to errored.
+/// One bad file costs that file only. An inventory row the store refuses:
+/// the rest of its page lands, the failure names the store error, and the
+/// scope is not trusted for missing detection. An index window holding a
+/// file the catalog refuses and one whose write runs past the budget: the
+/// window is committed again row by row and split by path down to the slow
+/// file, which is given up; every other file lands, the run completes, both
+/// files are on the failure list, and the counts equal a clean scan's but
+/// for those two files, moved from indexed to errored.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_refused_and_a_slow_file_cost_those_files_only() {
+async fn one_bad_file_costs_that_file_only() {
+    {
+        let scratch = ScratchDir::new("scan-refused");
+        let root = scratch.join("music");
+        std::fs::create_dir_all(&root).expect("root");
+        for n in 0..10 {
+            std::fs::write(root.join(format!("t{n:04}.flac")), b"junk").expect("plant");
+        }
+        let (coordinator, paths) = coordinator(&root, Arc::new(NullTagReader::new()));
+        coordinator
+            .store()
+            .db()
+            .run_sql(
+                "CREATE TRIGGER refuse_one BEFORE INSERT ON library_scan_inventory \
+                 WHEN NEW.relative_path = 't0003.flac' \
+                 BEGIN SELECT RAISE(ABORT, 'refused for the test'); END;",
+            )
+            .expect("trigger");
+        coordinator.request_run(&request(&root)).expect("requested");
+        let run = coordinator.run_once(&paths).await.expect("driven");
+        assert_eq!(run.state.scan_state(), ScanState::Completed, "inventory");
+        assert_eq!(count(&run, Counter::Indexed), 9, "inventory");
+        let failures = coordinator.store().failures(&run.id).unwrap();
+        assert!(
+            failures.iter().any(|failure| {
+                failure.failure_code == FailureCode::WalkError
+                    && failure.relative_path == "t0003.flac"
+                    && failure.failure_detail.contains("refused for the test")
+            }),
+            "inventory: the failure names the file and the store error"
+        );
+    }
+
     let (clean, _, clean_tracks) = window_with_bad_files("scan-window-clean", 8, false).await;
     let (run, failures, tracks) = window_with_bad_files("scan-window-bad", 8, true).await;
-    assert_eq!(run.state.scan_state(), ScanState::Completed);
-    assert_eq!((clean_tracks, tracks), (8, 6));
+    assert_eq!(run.state.scan_state(), ScanState::Completed, "window");
+    assert_eq!((clean_tracks, tracks), (8, 6), "window");
     let mut refused: Vec<&str> = failures
         .iter()
         .filter(|failure| failure.failure_code == FailureCode::CatalogCommitFailed)
         .map(|failure| failure.relative_path.as_str())
         .collect();
     refused.sort_unstable();
-    assert_eq!(refused, ["t0002.flac", "t0005.flac"]);
+    assert_eq!(refused, ["t0002.flac", "t0005.flac"], "window");
     // Untagged, each file is an album of its own, so the two files that
     // did not land take their identification offers with them.
     let moved = |counter| match counter {
@@ -1399,7 +1413,7 @@ async fn a_refused_and_a_slow_file_cost_those_files_only() {
         assert_eq!(
             count(&run, counter),
             count(&clean, counter) + moved(counter),
-            "counter {counter:?}"
+            "window: counter {counter:?}"
         );
     }
 }
@@ -1766,182 +1780,82 @@ fn request_scopes(root: &Path, scopes: &[&str]) -> ScanRequest {
     wanted
 }
 
-/// A scope that is a link below its root is never walked, nor one reached
-/// through a link: the failure names it and its rows stay as they are.
-#[tokio::test]
-async fn a_scope_through_a_link_is_refused() {
-    let scratch = ScratchDir::new("scan-scope-link");
-    let root = scratch.join("music");
-    plant(&root, "Real/a.flac", "flac_full_01.flac");
-    plant(&root, "Door/kept.flac", "flac_full_02.flac");
-    plant(
-        &scratch.join("elsewhere"),
-        "Outside/b.flac",
-        "flac_full_01.flac",
-    );
-    let (coordinator, paths) = coordinator(&root, Arc::new(NullTagReader::new()));
-    coordinator
-        .request_run(&request_scopes(&root, &["Door"]))
-        .expect("requested");
-    coordinator.run_once(&paths).await.expect("driven");
-    assert!(indexed_at(&coordinator, "Door/kept.flac"));
-    std::fs::remove_dir_all(root.join("Door")).expect("folder gone");
-    std::os::unix::fs::symlink(scratch.join("elsewhere"), root.join("Door")).expect("link");
-
-    coordinator
-        .request_run(&request_scopes(&root, &["Door", "Door/Outside", "Real"]))
-        .expect("requested");
-    let run = coordinator.run_once(&paths).await.expect("driven");
-    assert_eq!(count(&run, Counter::Indexed), 1, "only the real folder");
-    let refused: Vec<String> = coordinator
-        .store()
-        .failures(&run.id)
-        .unwrap()
-        .into_iter()
-        .filter(|failure| failure.failure_code == FailureCode::ScopeThroughLink)
-        .map(|failure| failure.relative_path)
-        .collect();
-    assert_eq!(refused, vec!["Door".to_owned(), "Door/Outside".to_owned()]);
-    assert!(
-        indexed_at(&coordinator, "Door/kept.flac"),
-        "the row stays as it is"
-    );
-}
-
-/// Rules saved as `A/Door` then `A` ask for both: `A/Door` is refused as a
-/// link and `A` completes, and `A`'s walk did not go there, so the refused
-/// scope's rows are not judged gone. A row `A` did walk past still is.
-#[tokio::test]
-async fn a_completed_ancestor_leaves_a_refused_scopes_rows() {
-    let scratch = ScratchDir::new("scan-scope-link-ancestor");
-    let root = scratch.join("music");
-    plant(&root, "A/here.flac", "flac_full_01.flac");
-    plant(&root, "A/removed.flac", "flac_no_tags.flac");
-    plant(&root, "A/Door/kept.flac", "flac_full_02.flac");
-    let (coordinator, paths) = coordinator(&root, Arc::new(NullTagReader::new()));
-    coordinator.request_run(&request(&root)).expect("requested");
-    coordinator.run_once(&paths).await.expect("driven");
-    assert!(indexed_at(&coordinator, "A/Door/kept.flac"));
-    std::fs::remove_dir_all(root.join("A/Door")).expect("folder gone");
-    std::fs::remove_file(root.join("A/removed.flac")).expect("file gone");
-    std::fs::create_dir_all(scratch.join("elsewhere")).expect("target");
-    std::os::unix::fs::symlink(scratch.join("elsewhere"), root.join("A/Door")).expect("link");
-
-    coordinator
-        .request_run(&request_scopes(&root, &["A/Door", "A"]))
-        .expect("requested");
-    coordinator.run_once(&paths).await.expect("driven");
-    assert!(
-        indexed_at(&coordinator, "A/Door/kept.flac"),
-        "not judged gone by the scope around it"
-    );
-    assert!(!indexed_at(&coordinator, "A/removed.flac"));
-}
-
 /// A folder under an included rule renamed so only its capitals change leaves
 /// one row per file, even though every row at the old spelling went at once:
-/// the new spelling is on the disk, so this is no vanished share. Two
-/// spellings on the disk at once are both read.
+/// the new spelling is on the disk, so this is no vanished share, and a
+/// favourite on its track follows the rename. Two spellings on the disk at
+/// once are both read. Real tags are read.
 #[tokio::test]
 async fn a_rule_walks_every_spelling_and_follows_a_case_only_rename() {
     use droppedneedle_library::scan::roots::on_disk_rule_paths;
 
     let scratch = ScratchDir::new("scan-rule-spellings");
-    let root = scratch.join("music");
-    plant(&root, "Live/a.flac", "flac_full_01.flac");
-    plant(&root, "Other/b.flac", "flac_full_02.flac");
-    let (coordinator, paths) = coordinator(&root, Arc::new(NullTagReader::new()));
-    let scan_rule = async || {
-        let spellings = on_disk_rule_paths(&root, "Live");
-        let scopes: Vec<&str> = spellings.iter().map(String::as_str).collect();
-        coordinator
-            .request_run(&request_scopes(&root, &scopes))
-            .expect("requested");
-        let run = coordinator.run_once(&paths).await.expect("driven");
-        assert!(
-            coordinator.store().failures(&run.id).unwrap().is_empty(),
-            "nothing held back or refused"
-        );
-    };
-    scan_rule().await;
-    assert!(indexed_at(&coordinator, "Live/a.flac"));
-
-    std::fs::rename(root.join("Live"), root.join("live")).expect("renamed");
-    scan_rule().await;
-    assert!(indexed_at(&coordinator, "live/a.flac"));
-    assert!(
-        !indexed_at(&coordinator, "Live/a.flac"),
-        "no second row at the old spelling"
-    );
-
-    plant(&root, "Live/c.flac", "flac_no_tags.flac");
-    scan_rule().await;
-    assert!(indexed_at(&coordinator, "live/a.flac"));
-    assert!(indexed_at(&coordinator, "Live/c.flac"));
-}
-
-/// A favourite on a track under a rule follows a case-only rename of its
-/// folder, with real tags read.
-#[tokio::test]
-async fn a_case_only_rename_under_a_rule_keeps_a_favourite() {
-    use droppedneedle_library::scan::roots::on_disk_rule_paths;
-
-    let scratch = ScratchDir::new("scan-rule-rename-history");
     let music = scratch.join("music");
     plant(&music, "Live/a.flac", "flac_full_01.flac");
     plant(&music, "Other/b.flac", "flac_full_02.flac");
-    migrated_db(&scratch.join("app.db"));
-    let db = Db::open_for_tests(&scratch.join("app.db")).expect("database opens");
-    let platform = TestPlatform::on(&db, &scratch)
-        .settings(config_store(&scratch))
-        .build()
-        .await;
-    let (library, _) = library_at(&platform);
-    add_root(&library, "music", &music);
-    scan(&library).await;
+    let library = bundle(&scratch).await;
+    let scan_rule = async || {
+        let registry = library.core.live_registry();
+        let scope = registry.scheduled_root_scopes().remove(0);
+        let scopes = on_disk_rule_paths(&music, "Live")
+            .into_iter()
+            .map(|relative_path| ScanScope {
+                relative_path,
+                ..scope.clone()
+            })
+            .collect();
+        let asked = library
+            .coordinator
+            .request_run(&ScanRequest {
+                kind: ScanKind::Incremental,
+                trigger: ScanTrigger::Manual,
+                scopes,
+                requested_by_user_id: None,
+                policy_revision: registry.fingerprint().to_owned(),
+            })
+            .expect("scan requested");
+        for _ in 0..50 {
+            library.scans.supervisor_tick().await;
+            if library.coordinator.current().is_empty() {
+                break;
+            }
+        }
+        let (run, _, _) = library
+            .coordinator
+            .snapshot(&asked.run_id)
+            .expect("scanned");
+        assert!(
+            library.scan_store.failures(&run.id).unwrap().is_empty(),
+            "nothing held back or refused"
+        );
+    };
+    let indexed = |path: &str| {
+        query(
+            &library,
+            &format!(
+                "SELECT COUNT(*) FROM local_tracks WHERE relative_path = '{path}' \
+                 AND availability = 'indexed'"
+            ),
+        ) == 1
+    };
+    scan_rule().await;
+    assert!(indexed("Live/a.flac"));
     library
         .scan_store
         .db()
         .run_sql(
             "INSERT INTO auth_users (id, display_name, role, created_at) \
              VALUES ('listener', 'Listener', 'user', 0); \
-             INSERT OR IGNORE INTO auth_users (id, display_name, role, created_at) VALUES ('listener', 'Person', 'user', 1); \
              INSERT INTO catalog_user_favorites (user_id, item_kind, item_id, created_at) \
              SELECT 'listener', 'track', id, 0 FROM local_tracks \
              WHERE relative_path = 'Live/a.flac'",
         )
         .expect("favourite");
-    std::fs::rename(music.join("Live"), music.join("live")).expect("renamed");
 
-    let registry = library.core.live_registry();
-    let scope = registry.scheduled_root_scopes().remove(0);
-    let scopes = on_disk_rule_paths(&music, "Live")
-        .into_iter()
-        .map(|relative_path| ScanScope {
-            relative_path,
-            ..scope.clone()
-        })
-        .collect();
-    let asked = library
-        .coordinator
-        .request_run(&ScanRequest {
-            kind: ScanKind::Incremental,
-            trigger: ScanTrigger::Manual,
-            scopes,
-            requested_by_user_id: None,
-            policy_revision: registry.fingerprint().to_owned(),
-        })
-        .expect("scan requested");
-    for _ in 0..50 {
-        library.scans.supervisor_tick().await;
-        if library.coordinator.current().is_empty() {
-            break;
-        }
-    }
-    library
-        .coordinator
-        .snapshot(&asked.run_id)
-        .expect("scanned");
+    std::fs::rename(music.join("Live"), music.join("live")).expect("renamed");
+    scan_rule().await;
+    assert!(indexed("live/a.flac"));
+    assert!(!indexed("Live/a.flac"), "no second row at the old spelling");
     assert_eq!(
         query(
             &library,
@@ -1960,6 +1874,11 @@ async fn a_case_only_rename_under_a_rule_keeps_a_favourite() {
         1,
         "the favourite is on the row at the new name"
     );
+
+    plant(&music, "Live/c.flac", "flac_no_tags.flac");
+    scan_rule().await;
+    assert!(indexed("live/a.flac"));
+    assert!(indexed("Live/c.flac"));
 }
 
 /// `rules` of an excluded root, as the registry a rule is resolved against.
@@ -1990,9 +1909,10 @@ fn swap_for_a_link(scratch: &ScratchDir, root: &Path, relative: &str) {
 }
 
 /// A folder replaced by a link keeps its tracks on every scan: rules saved
-/// either way round, a manual scan of the rules, a rule spelled differently
-/// and a whole-root walk. The failures say it is a link. Putting the folder
-/// back reads it again.
+/// either way round, a manual scan of the rules, a rule spelled differently,
+/// a whole-root walk and scopes asked for through the link. The failures say
+/// it is a link, while a row the walk around it went past is still judged
+/// gone. Putting the folder back reads it again.
 #[tokio::test]
 async fn a_folder_replaced_by_a_link_keeps_its_tracks_on_every_scan() {
     use droppedneedle_library::scan::scheduled_scopes;
@@ -2001,12 +1921,16 @@ async fn a_folder_replaced_by_a_link_keeps_its_tracks_on_every_scan() {
     let scratch = ScratchDir::new("scan-link-every-scan");
     let root = scratch.join("music");
     plant(&root, "A/here.flac", "flac_full_01.flac");
+    plant(&root, "A/removed.flac", "flac_no_tags.flac");
     let kept = plant(&root, "A/Door/kept.flac", "flac_full_02.flac");
     let bytes = std::fs::read(&kept).expect("read");
     let (coordinator, paths) = coordinator(&root, Arc::new(NullTagReader::new()));
     coordinator.request_run(&request(&root)).expect("requested");
     coordinator.run_once(&paths).await.expect("driven");
+    assert!(indexed_at(&coordinator, "A/Door/kept.flac"));
+    assert!(indexed_at(&coordinator, "A/removed.flac"));
     swap_for_a_link(&scratch, &root, "A/Door");
+    std::fs::remove_file(root.join("A/removed.flac")).expect("file gone");
 
     let inclusion = |rules: &[(&str, &str)]| -> Vec<InclusionRule> {
         rules
@@ -2050,6 +1974,10 @@ async fn a_folder_replaced_by_a_link_keeps_its_tracks_on_every_scan() {
         coordinator.request_run(&wanted).expect("requested");
         let run = coordinator.run_once(&paths).await.expect("driven");
         assert!(indexed_at(&coordinator, "A/Door/kept.flac"), "{way}");
+        assert!(
+            !indexed_at(&coordinator, "A/removed.flac"),
+            "{way}: a row the walk around the link went past is gone"
+        );
         let failures = coordinator.store().failures(&run.id).unwrap();
         assert!(
             failures.iter().any(|failure| {
@@ -2059,6 +1987,44 @@ async fn a_folder_replaced_by_a_link_keeps_its_tracks_on_every_scan() {
             "{way}: {failures:?}"
         );
     }
+
+    // Scopes asked for at the link and through it, beside a real folder:
+    // only the real folder is walked and both link scopes are refused.
+    plant(&root, "Real/a.flac", "flac_full_01.flac");
+    plant(
+        &scratch.join("elsewhere"),
+        "Outside/b.flac",
+        "flac_full_01.flac",
+    );
+    coordinator
+        .request_run(&request_scopes(
+            &root,
+            &["A/Door", "A/Door/Outside", "Real"],
+        ))
+        .expect("requested");
+    let run = coordinator.run_once(&paths).await.expect("driven");
+    assert_eq!(
+        count(&run, Counter::Indexed),
+        1,
+        "through the link: only the real folder"
+    );
+    let refused: Vec<String> = coordinator
+        .store()
+        .failures(&run.id)
+        .unwrap()
+        .into_iter()
+        .filter(|failure| failure.failure_code == FailureCode::ScopeThroughLink)
+        .map(|failure| failure.relative_path)
+        .collect();
+    assert_eq!(
+        refused,
+        vec!["A/Door".to_owned(), "A/Door/Outside".to_owned()],
+        "through the link"
+    );
+    assert!(
+        indexed_at(&coordinator, "A/Door/kept.flac"),
+        "through the link: the row stays as it is"
+    );
 
     std::fs::remove_file(root.join("A/Door")).expect("link gone");
     std::fs::create_dir_all(root.join("A/Door")).expect("folder back");
@@ -2266,39 +2232,6 @@ async fn a_scope_that_cannot_be_checked_keeps_its_rows() {
     );
 }
 
-/// A file link in the losing folder pointing at a file in the winner's
-/// folder adds no second row: the file stays the winner's.
-#[tokio::test]
-async fn a_file_link_in_the_losing_folder_is_not_indexed_there() {
-    let scratch = ScratchDir::new("scan-overlap-file-link");
-    plant(&scratch.join("loose"), "b.flac", "flac_full_01.flac");
-    plant(&scratch.join("music"), "Band/a.flac", "flac_full_01.flac");
-    std::os::unix::fs::symlink(
-        scratch.join("music/Band/a.flac"),
-        scratch.join("loose/link.flac"),
-    )
-    .expect("file link");
-    let library = outer_library(&scratch).await;
-    add_root(&library, "music", &scratch.join("music"));
-    scan(&library).await;
-    assert_eq!(
-        query(
-            &library,
-            "SELECT COUNT(*) FROM local_tracks WHERE relative_path LIKE '%a.flac' \
-             AND availability = 'indexed'"
-        ),
-        1,
-    );
-    assert_eq!(
-        query(
-            &library,
-            "SELECT COUNT(*) FROM local_tracks WHERE root_id = 'music' \
-             AND relative_path = 'Band/a.flac' AND availability = 'indexed'"
-        ),
-        1,
-    );
-}
-
 /// Symlinks never lead out of a root: the walk audits them and the stream
 /// seam refuses them. A root reached through a symlink still treats its
 /// own in-root links as inside.
@@ -2491,56 +2424,6 @@ async fn sweeps_keep_art_and_lyrics_while_files_are_away() {
         .expect("folder time sets");
     sweep(&library);
     assert_eq!(rows(&library), before, "an empty stub clears nothing");
-}
-
-/// A scan request the store cannot record is an error. It used to answer
-/// a "conflict" naming a run id that was never written.
-#[tokio::test]
-async fn unrecorded_scan_request_is_an_error() {
-    let scratch = ScratchDir::new("scan-unrecorded");
-    let music = scratch.join("music");
-    std::fs::create_dir_all(&music).expect("root");
-    let library = bundle(&scratch).await;
-    let revision = library.core.policy_revision().expect("policy revision");
-    // No such user in this database: the auth_users reference fails.
-    let refused = library
-        .scans
-        .request_scan_run(ScanKind::Incremental, &[], &revision, "no-such-user")
-        .expect_err("not recorded");
-    assert!(
-        matches!(refused, ServiceError::Internal { .. }),
-        "{refused:?}"
-    );
-}
-
-/// Saved library settings that no longer pass validation still load with
-/// the revision the page shows, and a scan request carrying it is taken.
-#[tokio::test]
-async fn a_scan_request_is_taken_while_saved_settings_need_fixing() {
-    let scratch = ScratchDir::new("scan-settings-need-fixing");
-    std::fs::create_dir_all(scratch.join("music")).expect("root");
-    let library = bundle(&scratch).await;
-    library
-        .settings
-        .store()
-        .update_secret_blocking::<TypedLibrary, String, _>(|stored| {
-            let mut settings = stored.into_inner();
-            settings.library_roots[0].label = String::new();
-            Ok(settings)
-        })
-        .expect("stored as is");
-    library
-        .db
-        .run_sql(
-            "INSERT INTO auth_users (id, display_name, role, created_at) \
-             VALUES ('admin-1', 'Admin', 'admin', 0);",
-        )
-        .expect("admin");
-    let revision = library.core.policy_revision().expect("policy revision");
-    library
-        .scans
-        .request_scan_run(ScanKind::Incremental, &[], &revision, "admin-1")
-        .expect("scan taken");
 }
 
 /// What happens between two scan windows: a listener, a curator or a
@@ -2938,12 +2821,40 @@ async fn retagged_album_keeps_its_match_when_played_mid_scan() {
     );
 }
 
-/// A management preview someone made of the new row while the scan was
-/// half way through the album names that row and its revisions. The scan
-/// does not rewrite it: both rows stay, every play and favorite stays
-/// where it was, and the pair is recorded and logged, once a reason.
+/// Work on the new row made while the scan was half way through the album
+/// names that row and its revisions, and the scan does not rewrite it. A
+/// preview still ready: both rows stay, every play and favorite stays where
+/// it was, and the pair is recorded and logged, once a reason. A plan item
+/// of a finished job keeps the follow within the scan from deleting the new
+/// row; the end of the same scan joins the old row into it instead, with no
+/// plan row changed and no pair left.
 #[tokio::test]
-async fn retag_with_a_plan_on_the_new_row_is_left_apart_and_logged() {
+async fn work_on_the_new_row_mid_scan_settles_the_join() {
+    {
+        let (rig, album) = retag_across_two_windows("scan-across-finished-plan", |album| {
+            plan_on(&new_row(album), "plan", "succeeded")
+        })
+        .await;
+        let case = "finished work";
+        let new_row = rig.album_of("a/t000.flac");
+        assert_ne!(new_row, album, "{case}");
+        assert_eq!(rig.retired_into(&album), Some(new_row.clone()), "{case}");
+        assert_eq!(
+            match_of(&rig, &new_row),
+            matched("rel-1", "manual"),
+            "{case}"
+        );
+        assert_eq!(
+            rig.count(&format!(
+                "SELECT COUNT(*) FROM library_management_plan_items \
+                 WHERE local_album_id = '{new_row}' AND expected_album_revision = 1"
+            )),
+            1,
+            "{case}: the plan item is as it was made"
+        );
+        assert_eq!(retag_pairs(&rig), vec![], "{case}");
+    }
+
     retag_warnings();
     let (rig, album) = retag_across_two_windows("scan-regroup-planned", |album| {
         let new_row = new_row(album);
@@ -2970,33 +2881,45 @@ async fn retag_with_a_plan_on_the_new_row_is_left_apart_and_logged() {
     })
     .await;
 
+    let case = "a ready preview";
     let new_row = rig.album_of("a/t000.flac");
-    assert_ne!(new_row, album, "the retag was not followed");
+    assert_ne!(new_row, album, "{case}: the retag was not followed");
     assert_eq!(
         rig.count(&format!(
             "SELECT COUNT(*) FROM library_management_plan_items \
              WHERE local_album_id = '{new_row}' AND expected_album_revision = 1"
         )),
         1,
-        "the plan item is as it was made"
+        "{case}: the plan item is as it was made"
     );
     assert_eq!(
         rig.listener_rows(&new_row),
         (3, 3),
-        "the play, the favorite and the playlist entry still name the new row"
+        "{case}: the play, the favorite and the playlist entry still name the new row"
     );
-    assert!(warned_both_kept(&album, &new_row), "the log names both");
+    assert!(
+        warned_both_kept(&album, &new_row),
+        "{case}: the log names both"
+    );
     // The end of the scan tries the join that keeps the new row instead,
     // and the preview still open there refuses it as live work.
-    assert_eq!(retag_pairs(&rig), open_pair(&album, &new_row, "live_work"));
+    assert_eq!(
+        retag_pairs(&rig),
+        open_pair(&album, &new_row, "live_work"),
+        "{case}"
+    );
 
     let warned = warnings_naming(&album, &new_row);
     rig.scan().await;
-    assert_eq!(retag_pairs(&rig).len(), 1, "a later scan records it once");
+    assert_eq!(
+        retag_pairs(&rig).len(),
+        1,
+        "{case}: a later scan records it once"
+    );
     assert_eq!(
         warnings_naming(&album, &new_row),
         warned,
-        "and says it once"
+        "{case}: and says it once"
     );
 }
 
@@ -3309,61 +3232,104 @@ fn count_new_row_jobs_at(
     seen
 }
 
-/// A scan stopped half way through a retagged album leaves the album in
-/// two rows for good. The new one is held back while the scan runs and
-/// offered for identification when the scan ends.
+/// The half of a retagged album a scan has moved is held back from
+/// identification while the scan is on it, and offered once it settles:
+/// when a stopped scan ends (the album stays in two rows for good), when
+/// the rest went somewhere else (offered in the window that emptied the old
+/// album), and when a person emptied the old album by hand mid-scan, which
+/// no window sees (offered when the run ends).
 #[tokio::test]
-async fn stopped_scan_offers_the_half_retagged_album() {
-    let (mut rig, files, album) = big_album("scan-regroup-stopped").await;
-    let after = rig.after.clone();
-    rig.tag(&files, &after);
-    let coordinator = Arc::clone(&rig.coordinator);
-    let waiting = count_new_row_jobs_at(&rig, &album, SECOND_WINDOW, move || {
-        let run = coordinator
-            .store()
-            .list_current()
-            .unwrap()
-            .pop()
-            .expect("the scan is running");
-        coordinator
-            .control(&run.id, Event::Stop, run.row_revision)
-            .expect("stop is taken");
-    });
-    let run = rig.scan_to_its_end().await;
-    assert_eq!(run.state.scan_state(), ScanState::Cancelled);
+async fn the_held_half_of_a_retag_is_offered_once_it_settles() {
+    {
+        let (mut rig, files, album) = big_album("scan-regroup-stopped").await;
+        let after = rig.after.clone();
+        rig.tag(&files, &after);
+        let coordinator = Arc::clone(&rig.coordinator);
+        let waiting = count_new_row_jobs_at(&rig, &album, SECOND_WINDOW, move || {
+            let run = coordinator
+                .store()
+                .list_current()
+                .unwrap()
+                .pop()
+                .expect("the scan is running");
+            coordinator
+                .control(&run.id, Event::Stop, run.row_revision)
+                .expect("stop is taken");
+        });
+        let run = rig.scan_to_its_end().await;
+        assert_eq!(run.state.scan_state(), ScanState::Cancelled, "stopped");
 
-    let new_row = rig.album_of("a/t000.flac");
-    assert_ne!(new_row, album);
-    assert_eq!(rig.album_of("a/t299.flac"), album, "the retag is half done");
-    assert_eq!(
-        *waiting.lock().expect("cell"),
-        Some(0),
-        "not offered while the scan was on it"
-    );
-    assert_eq!(rig.queued_jobs(&new_row), 1, "offered when the scan ended");
-}
+        let new_row = rig.album_of("a/t000.flac");
+        assert_ne!(new_row, album, "stopped");
+        assert_eq!(
+            rig.album_of("a/t299.flac"),
+            album,
+            "stopped: the retag is half done"
+        );
+        assert_eq!(
+            *waiting.lock().expect("cell"),
+            Some(0),
+            "stopped: not offered while the scan was on it"
+        );
+        assert_eq!(
+            rig.queued_jobs(&new_row),
+            1,
+            "stopped: offered when the scan ended"
+        );
+    }
 
-/// When the rest of the old album goes somewhere else, the old album is
-/// empty but nothing follows: the tracks went two ways. The album held
-/// back since the first window is offered in the window that settled it.
-#[tokio::test]
-async fn album_split_two_ways_offers_the_held_half() {
-    let (mut rig, files, album) = big_album("scan-regroup-two-ways").await;
+    {
+        let (mut rig, files, album) = big_album("scan-regroup-two-ways").await;
+        let after = rig.after.clone();
+        rig.tag(&files[..256], &after);
+        rig.tag(&files[256..], "scan-regroup-two-ways third");
+        let waiting = count_new_row_jobs_at(&rig, &album, LAST_FILE, || {});
+        rig.scan().await;
+
+        let new_row = rig.album_of("a/t000.flac");
+        assert_ne!(new_row, album, "two ways");
+        assert_ne!(rig.album_of("a/t299.flac"), new_row, "two ways");
+        assert_eq!(
+            *waiting.lock().expect("cell"),
+            Some(0),
+            "two ways: not offered while the old album still held tracks"
+        );
+        assert_eq!(
+            rig.queued_jobs(&new_row),
+            1,
+            "two ways: offered once it emptied"
+        );
+    }
+
+    let (mut rig, files, album) = big_album("scan-regroup-emptied-by-hand").await;
     let after = rig.after.clone();
+    let before = rig.before.clone();
     rig.tag(&files[..256], &after);
-    rig.tag(&files[256..], "scan-regroup-two-ways third");
-    let waiting = count_new_row_jobs_at(&rig, &album, LAST_FILE, || {});
+    rig.tag(&files[256..], &before);
+    let new_row_sql = new_row(&album);
+    rig.meanwhile_sql(format!(
+        "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+         album_artist_name, album_artist_name_folded, album_artist_id, grouping_source, \
+         created_at, updated_at) SELECT 'third', root_id, 'third', 'Third', 'third', \
+         album_artist_name, album_artist_name_folded, album_artist_id, 'automatic', 0, 0 \
+         FROM local_albums WHERE id = '{album}' AND {new_row_sql} IS NOT NULL; \
+         UPDATE local_tracks SET local_album_id = 'third', membership_source = 'manual', \
+         membership_locked = 1 WHERE local_album_id = '{album}' AND {new_row_sql} IS NOT NULL;"
+    ));
     rig.scan().await;
 
     let new_row = rig.album_of("a/t000.flac");
-    assert_ne!(new_row, album);
-    assert_ne!(rig.album_of("a/t299.flac"), new_row);
+    assert_ne!(new_row, album, "by hand");
     assert_eq!(
-        *waiting.lock().expect("cell"),
-        Some(0),
-        "not offered while the old album still held tracks"
+        rig.album_of("a/t299.flac"),
+        "third",
+        "by hand: the rest was moved by hand"
     );
-    assert_eq!(rig.queued_jobs(&new_row), 1, "offered once it emptied");
+    assert_eq!(
+        rig.queued_jobs(&new_row),
+        1,
+        "by hand: offered when the scan ended"
+    );
 }
 
 /// A match written on an album, as SQL. `album` is a SQL expression.
@@ -3481,48 +3447,59 @@ fn hanging_rows(rig: &RegroupRig, album: &str) -> [i64; 6] {
     })
 }
 
-/// An automatic match that landed on the new row mid-scan (a job already
-/// running when the retag began) gives way to the match a person chose
-/// for the album. Everything the job left with it goes too, and a later
-/// identification pass leaves the person's match as it is.
+/// A match written on the new row while a scan is half way through a
+/// retagged album, against the match the old row holds, lands on the row
+/// that stays, or both rows stay apart when people chose differently.
 #[tokio::test]
-async fn automatic_match_made_mid_scan_yields_to_a_chosen_one() {
-    let (rig, album) = retag_with_matches(
-        "scan-regroup-auto-vs-chosen",
-        Some(("manual", "rel-1")),
-        |new_row| {
-            format!(
-                "{} {}",
-                match_sql(new_row, "automatic", "rel-half"),
-                automatic_leftovers(new_row, "half")
-            )
-        },
-    )
-    .await;
+async fn match_made_mid_scan_lands_on_the_row_that_stays() {
+    // An automatic match that landed on the new row mid-scan (a job already
+    // running when the retag began) gives way to the match a person chose
+    // for the album. Everything the job left with it goes too, and a later
+    // identification pass leaves the person's match as it is.
+    {
+        let (rig, album) = retag_with_matches(
+            "scan-regroup-auto-vs-chosen",
+            Some(("manual", "rel-1")),
+            |new_row| {
+                format!(
+                    "{} {}",
+                    match_sql(new_row, "automatic", "rel-half"),
+                    automatic_leftovers(new_row, "half")
+                )
+            },
+        )
+        .await;
 
-    assert_eq!(rig.album_of("a/t000.flac"), album);
-    assert_eq!(rig.count("SELECT COUNT(*) FROM local_albums"), 1);
-    assert_eq!(match_of(&rig, &album), matched("rel-1", "manual"));
-    assert_eq!(
-        hanging_rows(&rig, &album),
-        [0, 0, 0, 1, 1, 0],
-        "only a fresh look by automatic management, and the files waiting to be \
-         placed on the chosen edition, are left"
-    );
-    assert_eq!(placements_queued(&rig, &album), vec!["rel-1".to_owned()]);
-    assert_eq!(identify_now(&rig, &album).await, "CHOSEN_EDITION_KEPT");
-    assert_eq!(match_of(&rig, &album), matched("rel-1", "manual"));
-}
+        let case = "automatic yields to chosen";
+        assert_eq!(rig.album_of("a/t000.flac"), album, "{case}");
+        assert_eq!(rig.count("SELECT COUNT(*) FROM local_albums"), 1, "{case}");
+        assert_eq!(match_of(&rig, &album), matched("rel-1", "manual"), "{case}");
+        assert_eq!(
+            hanging_rows(&rig, &album),
+            [0, 0, 0, 1, 1, 0],
+            "{case}: only a fresh look by automatic management, and the files waiting \
+             to be placed on the chosen edition, are left"
+        );
+        assert_eq!(
+            placements_queued(&rig, &album),
+            vec!["rel-1".to_owned()],
+            "{case}"
+        );
+        assert_eq!(
+            identify_now(&rig, &album).await,
+            "CHOSEN_EDITION_KEPT",
+            "{case}"
+        );
+        assert_eq!(match_of(&rig, &album), matched("rel-1", "manual"), "{case}");
+    }
 
-/// An automatic match that landed on the new row mid-scan is the later
-/// verdict on the files as they are now tagged. It replaces an automatic
-/// match on the old row (or fills an empty one) with its flag, stays
-/// revisable, and the whole album is offered again in the same window.
-/// Undo rows and proofs made for either earlier match are gone, a review
-/// still waiting on half the album is gone, and a review a person closed
-/// is kept.
-#[tokio::test]
-async fn automatic_match_made_mid_scan_replaces_a_revisable_one() {
+    // An automatic match that landed on the new row mid-scan is the later
+    // verdict on the files as they are now tagged. It replaces an automatic
+    // match on the old row (or fills an empty one) with its flag, stays
+    // revisable, and the whole album is offered again in the same window.
+    // Undo rows and proofs made for either earlier match are gone, a review
+    // still waiting on half the album is gone, and a review a person closed
+    // is kept.
     for (name, old) in [
         ("scan-regroup-auto-vs-auto", Some(("automatic", "rel-1"))),
         ("scan-regroup-auto-vs-none", None),
@@ -3574,15 +3551,12 @@ async fn automatic_match_made_mid_scan_replaces_a_revisable_one() {
         );
         assert_eq!(rig.queued_jobs(&album), 1, "{name}: offered whole");
     }
-}
 
-/// A match a person chose (or one imported from v2) for the new row
-/// mid-scan becomes the album's match when the old row held none or an
-/// automatic one. The edition still waiting to be placed on the files is
-/// queued for the kept row, the undo made for the new row is dropped, and
-/// a later identification pass leaves the match as it is.
-#[tokio::test]
-async fn chosen_match_made_mid_scan_moves_to_the_kept_row() {
+    // A match a person chose (or one imported from v2) for the new row
+    // mid-scan becomes the album's match when the old row held none or an
+    // automatic one. The edition still waiting to be placed on the files is
+    // queued for the kept row, the undo made for the new row is dropped, and
+    // a later identification pass leaves the match as it is.
     for (name, old, source) in [
         (
             "scan-regroup-chosen-vs-auto",
@@ -3621,6 +3595,136 @@ async fn chosen_match_made_mid_scan_moves_to_the_kept_row() {
         );
         assert_eq!(match_of(&rig, &album), matched("rel-new", source), "{name}");
     }
+
+    // The same release chosen by a person on both rows is one choice: the
+    // kept row's match stays exactly as it was and the new row's goes.
+    {
+        let (rig, album) = retag_with_matches(
+            "scan-regroup-chosen-same",
+            Some(("manual", "rel-1")),
+            |new_row| match_sql(new_row, "legacy_import", "rel-1"),
+        )
+        .await;
+
+        let case = "same release chosen on both";
+        assert_eq!(rig.album_of("a/t000.flac"), album, "{case}");
+        assert_eq!(rig.count("SELECT COUNT(*) FROM local_albums"), 1, "{case}");
+        assert_eq!(match_of(&rig, &album), matched("rel-1", "manual"), "{case}");
+        assert_eq!(
+            rig.count(&format!(
+                "SELECT row_revision FROM local_album_external_identities \
+                 WHERE local_album_id = '{album}'"
+            )),
+            4,
+            "{case}: the kept match was not rewritten"
+        );
+        assert_eq!(
+            identify_now(&rig, &album).await,
+            "CHOSEN_EDITION_KEPT",
+            "{case}"
+        );
+        assert_eq!(match_of(&rig, &album), matched("rel-1", "manual"), "{case}");
+    }
+
+    // Different releases chosen by people on the two rows are not the scan's
+    // to pick between: both rows stay with their own match, nothing a
+    // listener made moves, and the pair is recorded and logged.
+    {
+        retag_warnings();
+        let (mut rig, files, album) = big_album("scan-regroup-chosen-differ").await;
+        rig.run(&match_sql(&format!("'{album}'"), "manual", "rel-1"));
+        let after = rig.after.clone();
+        rig.tag(&files, &after);
+        rig.meanwhile_sql(format!(
+            "{} {}",
+            listener_acts(&album),
+            match_sql(&new_row(&album), "manual", "rel-2")
+        ));
+        rig.scan().await;
+
+        let case = "different releases chosen";
+        let new_row = rig.album_of("a/t000.flac");
+        assert_ne!(new_row, album, "{case}: the retag was not followed");
+        assert_eq!(match_of(&rig, &album), matched("rel-1", "manual"), "{case}");
+        assert_eq!(
+            match_of(&rig, &new_row),
+            matched("rel-2", "manual"),
+            "{case}"
+        );
+        assert_eq!(
+            rig.listener_rows(&new_row),
+            (3, 3),
+            "{case}: the play, the favorite and the playlist entry still name the new row"
+        );
+        assert!(
+            warned_both_kept(&album, &new_row),
+            "{case}: the log names both"
+        );
+        assert_eq!(
+            retag_pairs(&rig),
+            open_pair(&album, &new_row, "chosen_matches_differ"),
+            "{case}"
+        );
+    }
+
+    // A match carried over from v2 that names only the release group, and a
+    // release of that group a person chose for the new row mid-scan, are one
+    // album. It is followed, and the match that names the release is kept.
+    {
+        let (mut rig, files, album) = big_album("scan-regroup-imported-group").await;
+        rig.run(&format!(
+            "INSERT INTO local_album_external_identities (local_album_id, provider, \
+             release_group_mbid, decision_source, selected_at, row_revision) \
+             VALUES ('{album}', 'musicbrainz', 'rg-rel-1', 'legacy_import', 0, 4);"
+        ));
+        let after = rig.after.clone();
+        rig.tag(&files, &after);
+        rig.meanwhile_sql(match_sql(&new_row(&album), "manual", "rel-1"));
+        rig.scan().await;
+
+        let case = "imported group and a chosen release of it";
+        assert_eq!(rig.album_of("a/t000.flac"), album, "{case}: followed");
+        assert_eq!(rig.count("SELECT COUNT(*) FROM local_albums"), 1, "{case}");
+        assert_eq!(match_of(&rig, &album), matched("rel-1", "manual"), "{case}");
+    }
+
+    // "Leave unmanaged" and a custom edition are stored as a match a person
+    // made that names no release. Against a release a person chose for the
+    // other row that is a different choice, of the same release group or
+    // not: both rows stay as they are and the pair is recorded.
+    let (mut rig, files, album) = big_album("scan-regroup-no-release").await;
+    rig.run(&format!(
+        "INSERT INTO local_album_external_identities (local_album_id, provider, \
+         release_group_mbid, decision_source, selected_at, row_revision) \
+         VALUES ('{album}', 'musicbrainz', 'rg-rel-1', 'manual', 0, 4);"
+    ));
+    let after = rig.after.clone();
+    rig.tag(&files, &after);
+    rig.meanwhile_sql(match_sql(&new_row(&album), "legacy_import", "rel-1"));
+    rig.scan().await;
+
+    let case = "no-release choice and a chosen release";
+    let new_row = rig.album_of("a/t000.flac");
+    assert_ne!(new_row, album, "{case}: not followed");
+    assert_eq!(
+        retag_pairs(&rig),
+        open_pair(&album, &new_row, "chosen_matches_differ"),
+        "{case}"
+    );
+    assert_eq!(
+        rig.count(&format!(
+            "SELECT COUNT(*) FROM local_album_external_identities \
+             WHERE local_album_id = '{album}' AND release_mbid IS NULL \
+             AND decision_source = 'manual' AND row_revision = 4"
+        )),
+        1,
+        "{case}: the choice on the old row is untouched"
+    );
+    assert_eq!(
+        match_of(&rig, &new_row),
+        matched("rel-1", "legacy_import"),
+        "{case}"
+    );
 }
 
 /// Every track of the album (a SQL expression) placed on `release`, as an
@@ -3653,10 +3757,11 @@ fn placements_queued(rig: &RegroupRig, album: &str) -> Vec<String> {
 
 /// A person's release that a follow leaves on the kept row while the
 /// files sit on another release is queued to have the files placed on it,
-/// and nothing else: one `place_only` row naming the release. No row when
-/// the files already sit on it, and none for an automatic match.
+/// and nothing else: one `place_only` row naming the release, within one
+/// scan or for an album joined across two. No row when the files already
+/// sit on it, and none for an automatic match.
 #[tokio::test]
-async fn followed_album_queues_its_files_for_a_chosen_release() {
+async fn a_followed_album_queues_its_files_for_a_chosen_release() {
     for (name, tracks, arriving, queued) in [
         (
             "scan-regroup-place-chosen",
@@ -3691,98 +3796,33 @@ async fn followed_album_queues_its_files_for_a_chosen_release() {
             "{name}: no other row"
         );
     }
-}
 
-/// The same release chosen by a person on both rows is one choice: the
-/// kept row's match stays exactly as it was and the new row's goes.
-#[tokio::test]
-async fn same_release_chosen_on_both_rows_is_kept_once() {
-    let (rig, album) = retag_with_matches(
-        "scan-regroup-chosen-same",
-        Some(("manual", "rel-1")),
-        |new_row| match_sql(new_row, "legacy_import", "rel-1"),
+    let (rig, old, new) = two_sittings(
+        "scan-across-place-chosen",
+        |album| {
+            let quoted = format!("'{album}'");
+            format!(
+                "{} {}",
+                match_sql(&quoted, "manual", "rel-1"),
+                tracks_on(&quoted, "rel-2")
+            )
+        },
+        |_, _| String::new(),
     )
     .await;
-
-    assert_eq!(rig.album_of("a/t000.flac"), album);
-    assert_eq!(rig.count("SELECT COUNT(*) FROM local_albums"), 1);
-    assert_eq!(match_of(&rig, &album), matched("rel-1", "manual"));
+    let case = "joined across two scans";
+    assert_eq!(rig.retired_into(&old), Some(new.clone()), "{case}");
+    assert_eq!(match_of(&rig, &new), matched("rel-1", "manual"), "{case}");
     assert_eq!(
-        rig.count(&format!(
-            "SELECT row_revision FROM local_album_external_identities \
-             WHERE local_album_id = '{album}'"
-        )),
-        4,
-        "the kept match was not rewritten"
+        placements_queued(&rig, &new),
+        vec!["rel-1".to_owned()],
+        "{case}"
     );
-    assert_eq!(identify_now(&rig, &album).await, "CHOSEN_EDITION_KEPT");
-    assert_eq!(match_of(&rig, &album), matched("rel-1", "manual"));
-}
-
-/// Different releases chosen by people on the two rows are not the scan's
-/// to pick between: both rows stay with their own match, nothing a
-/// listener made moves, and the pair is recorded and logged.
-#[tokio::test]
-async fn different_releases_chosen_on_the_two_rows_stay_apart() {
-    retag_warnings();
-    let (mut rig, files, album) = big_album("scan-regroup-chosen-differ").await;
-    rig.run(&match_sql(&format!("'{album}'"), "manual", "rel-1"));
-    let after = rig.after.clone();
-    rig.tag(&files, &after);
-    rig.meanwhile_sql(format!(
-        "{} {}",
-        listener_acts(&album),
-        match_sql(&new_row(&album), "manual", "rel-2")
-    ));
-    rig.scan().await;
-
-    let new_row = rig.album_of("a/t000.flac");
-    assert_ne!(new_row, album, "the retag was not followed");
-    assert_eq!(match_of(&rig, &album), matched("rel-1", "manual"));
-    assert_eq!(match_of(&rig, &new_row), matched("rel-2", "manual"));
     assert_eq!(
-        rig.listener_rows(&new_row),
-        (3, 3),
-        "the play, the favorite and the playlist entry still name the new row"
+        rig.count("SELECT COUNT(*) FROM library_edition_remap_queue"),
+        1,
+        "{case}"
     );
-    assert!(warned_both_kept(&album, &new_row), "the log names both");
-    assert_eq!(
-        retag_pairs(&rig),
-        open_pair(&album, &new_row, "chosen_matches_differ")
-    );
-}
-
-/// A person who empties the old album by hand while the scan is half way
-/// through its retag leaves nothing for the scan to settle: no window
-/// sees the old album lose its last track. The half the scan did move was
-/// held back all the same, and is offered when the run ends.
-#[tokio::test]
-async fn held_album_is_offered_though_the_old_album_was_emptied_by_hand() {
-    let (mut rig, files, album) = big_album("scan-regroup-emptied-by-hand").await;
-    let after = rig.after.clone();
-    let before = rig.before.clone();
-    rig.tag(&files[..256], &after);
-    rig.tag(&files[256..], &before);
-    let new_row_sql = new_row(&album);
-    rig.meanwhile_sql(format!(
-        "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
-         album_artist_name, album_artist_name_folded, album_artist_id, grouping_source, \
-         created_at, updated_at) SELECT 'third', root_id, 'third', 'Third', 'third', \
-         album_artist_name, album_artist_name_folded, album_artist_id, 'automatic', 0, 0 \
-         FROM local_albums WHERE id = '{album}' AND {new_row_sql} IS NOT NULL; \
-         UPDATE local_tracks SET local_album_id = 'third', membership_source = 'manual', \
-         membership_locked = 1 WHERE local_album_id = '{album}' AND {new_row_sql} IS NOT NULL;"
-    ));
-    rig.scan().await;
-
-    let new_row = rig.album_of("a/t000.flac");
-    assert_ne!(new_row, album);
-    assert_eq!(
-        rig.album_of("a/t299.flac"),
-        "third",
-        "the rest was moved by hand"
-    );
-    assert_eq!(rig.queued_jobs(&new_row), 1, "offered when the scan ended");
 }
 
 /// Once a retagged album has been followed, its row is an ordinary album
@@ -3837,40 +3877,6 @@ async fn cleanup_does_not_skip_the_survivor_of_a_finished_follow() {
     );
 }
 
-/// A scan cancelled while it was still waiting is over. Starting the app
-/// again does not end it a second time.
-#[tokio::test]
-async fn run_cancelled_while_queued_is_not_ended_again_at_startup() {
-    let rig = RegroupRig::new("scan-cancelled-queued");
-    rig.coordinator
-        .request_run(&request(&rig.root))
-        .expect("requested");
-    let run = rig
-        .coordinator
-        .store()
-        .list_current()
-        .unwrap()
-        .pop()
-        .expect("the run is waiting");
-    rig.coordinator
-        .control(&run.id, Event::Stop, run.row_revision)
-        .expect("stop is taken");
-    let stamp = "SELECT terminal_at + row_revision \
-                 FROM library_scan_runs WHERE state = 'cancelled'";
-    let ended = rig.count(stamp);
-
-    let later = rig.count("SELECT terminal_at / 1000 FROM library_scan_runs") + 3600;
-    rig.coordinator
-        .store()
-        .recover(&droppedneedle_library::scan::RunStop::never(), later as f64)
-        .unwrap();
-    assert_eq!(
-        rig.count(stamp),
-        ended,
-        "the run row is as the cancel left it"
-    );
-}
-
 /// A scanned album of `count` files in one folder, small enough to be
 /// read in one window, with a match a person chose. Returns the rig, the
 /// files and the album.
@@ -3903,84 +3909,165 @@ impl RegroupRig {
     }
 }
 
-/// Files deleted long ago leave their track rows on the album for good.
-/// They do not keep the album from being followed when the files that are
-/// left are retagged together: the album keeps its row and its match, the
-/// missing tracks stay on it, and it is offered for identification under
-/// its new name.
+/// What is left of an album, retagged together, is followed: the album
+/// keeps its row and its match under the new name, and the tracks that
+/// stayed behind stay on it. Files deleted long ago do not hold it back,
+/// nor does a track a person excluded, nor a file added in the same go
+/// (the kept row takes it), nor most of the album gone once the rest has
+/// been gone a day.
 #[tokio::test]
-async fn album_missing_a_few_tracks_is_followed() {
-    let (mut rig, files, album) = chosen_album("scan-regroup-few-missing", 12).await;
-    rig.lose(&files[9..]).await;
-    rig.run("DELETE FROM library_identify_jobs");
+async fn what_is_left_of_an_album_retagged_together_is_followed() {
+    // A few files deleted long ago: offered for identification under the
+    // new name.
+    {
+        let (mut rig, files, album) = chosen_album("scan-regroup-few-missing", 12).await;
+        rig.lose(&files[9..]).await;
+        rig.run("DELETE FROM library_identify_jobs");
 
-    let after = rig.after.clone();
-    rig.tag(&files[..9], &after);
-    rig.scan().await;
+        let after = rig.after.clone();
+        rig.tag(&files[..9], &after);
+        rig.scan().await;
 
-    assert_eq!(rig.album_of("a/t000.flac"), album, "followed");
-    assert_eq!(rig.count("SELECT COUNT(*) FROM local_albums"), 1);
-    assert_eq!(
-        rig.rows_on(&album),
-        12,
-        "the three missing tracks are on the kept album"
-    );
-    assert_eq!(
-        rig.count(&format!(
-            "SELECT COUNT(*) FROM local_albums a JOIN local_album_external_identities i \
-             ON i.local_album_id = a.id WHERE a.id = '{album}' AND a.title = '{after}' \
-             AND i.release_mbid = 'rel-1' AND i.decision_source = 'manual' \
-             AND i.row_revision = 1"
-        )),
-        1,
-        "the kept row has the new name and the very match it had"
-    );
-    assert_eq!(rig.queued_jobs(&album), 1, "offered again");
-}
+        let case = "a few missing";
+        assert_eq!(rig.album_of("a/t000.flac"), album, "{case}: followed");
+        assert_eq!(rig.count("SELECT COUNT(*) FROM local_albums"), 1, "{case}");
+        assert_eq!(
+            rig.rows_on(&album),
+            12,
+            "{case}: the three missing tracks are on the kept album"
+        );
+        assert_eq!(
+            rig.count(&format!(
+                "SELECT COUNT(*) FROM local_albums a JOIN local_album_external_identities i \
+                 ON i.local_album_id = a.id WHERE a.id = '{album}' AND a.title = '{after}' \
+                 AND i.release_mbid = 'rel-1' AND i.decision_source = 'manual' \
+                 AND i.row_revision = 1"
+            )),
+            1,
+            "{case}: the kept row has the new name and the very match it had"
+        );
+        assert_eq!(rig.queued_jobs(&album), 1, "{case}: offered again");
+    }
 
-/// A track a person excluded does not keep its album from being followed
-/// either.
-#[tokio::test]
-async fn excluded_track_does_not_hold_its_album() {
-    let (mut rig, files, album) = chosen_album("scan-regroup-excluded", 10).await;
-    rig.run(
-        "UPDATE local_tracks SET availability = 'excluded', manual_excluded = 1, \
-         excluded_at = 0 WHERE relative_path = 'a/t009.flac'",
-    );
+    {
+        let (mut rig, files, album) = chosen_album("scan-regroup-excluded", 10).await;
+        rig.run(
+            "UPDATE local_tracks SET availability = 'excluded', manual_excluded = 1, \
+             excluded_at = 0 WHERE relative_path = 'a/t009.flac'",
+        );
 
-    let after = rig.after.clone();
-    rig.tag(&files[..9], &after);
-    rig.scan().await;
+        let after = rig.after.clone();
+        rig.tag(&files[..9], &after);
+        rig.scan().await;
 
-    assert_eq!(rig.album_of("a/t000.flac"), album, "followed");
-    assert_eq!(rig.count("SELECT COUNT(*) FROM local_albums"), 1);
-    assert_eq!(rig.rows_on(&album), 10);
-    assert_eq!(match_of(&rig, &album), matched("rel-1", "manual"));
+        let case = "an excluded track";
+        assert_eq!(rig.album_of("a/t000.flac"), album, "{case}: followed");
+        assert_eq!(rig.count("SELECT COUNT(*) FROM local_albums"), 1, "{case}");
+        assert_eq!(rig.rows_on(&album), 10, "{case}");
+        assert_eq!(match_of(&rig, &album), matched("rel-1", "manual"), "{case}");
+    }
+
+    // A file added with the retag: nothing is recorded.
+    {
+        let (mut rig, mut files, album) = chosen_album("scan-regroup-file-added", 10).await;
+        files.push("a/t010.flac".to_owned());
+        let after = rig.after.clone();
+        rig.tag(&files, &after);
+        rig.scan().await;
+
+        let case = "a file added";
+        assert_eq!(rig.album_of("a/t000.flac"), album, "{case}: followed");
+        assert_eq!(rig.album_of("a/t010.flac"), album, "{case}");
+        assert_eq!(rig.count("SELECT COUNT(*) FROM local_albums"), 1, "{case}");
+        assert_eq!(rig.rows_on(&album), 11, "{case}");
+        assert_eq!(retag_pairs(&rig), vec![], "{case}");
+        assert_eq!(match_of(&rig, &album), matched("rel-1", "manual"), "{case}");
+    }
+
+    // Most of the album gone for over a day: nothing is recorded. A tie is
+    // followed too.
+    for (name, count, kept) in [
+        ("scan-regroup-mostly-missing", 12, 5),
+        ("scan-regroup-missing-tie", 2, 1),
+    ] {
+        let (mut rig, files, album) = chosen_album(name, count).await;
+        rig.lose(&files[kept..]).await;
+        rig.age_missing(OVER_A_DAY);
+        let after = rig.after.clone();
+        rig.tag(&files[..kept], &after);
+        rig.scan().await;
+
+        assert_eq!(rig.album_of("a/t000.flac"), album, "{name}: followed");
+        assert_eq!(rig.count("SELECT COUNT(*) FROM local_albums"), 1, "{name}");
+        assert_eq!(rig.rows_on(&album), count as i64, "{name}");
+        assert_eq!(
+            rig.count(&format!(
+                "SELECT COUNT(*) FROM local_albums a JOIN local_album_external_identities i \
+                 ON i.local_album_id = a.id WHERE a.id = '{album}' AND a.title = '{after}' \
+                 AND i.release_mbid = 'rel-1' AND i.decision_source = 'manual' \
+                 AND i.row_revision = 1"
+            )),
+            1,
+            "{name}: the kept row has the new name and the very match it had"
+        );
+        assert_eq!(retag_pairs(&rig), vec![], "{name}");
+    }
 }
 
 /// Files a scan does not see may only be out of reach for a moment (a
-/// share that dropped out, files taken away to be re-encoded). In the scan
-/// that finds them gone they still hold their album: the files retagged
-/// in that same scan do not walk off with the album's row and its match,
-/// even when they are most of the album, and nothing is recorded.
+/// share that dropped out, files taken away to be re-encoded). They still
+/// hold their album, even when they are most of it: in the scan that finds
+/// them gone, and while tracks gone for less than a day are half the album
+/// or more. The retagged files do not walk off with the album's row and its
+/// match, and nothing is recorded. Files added with the retag never left
+/// the album, so they do not count towards it.
 #[tokio::test]
-async fn files_gone_in_this_very_scan_still_hold_their_album() {
-    let (mut rig, files, album) = chosen_album("scan-regroup-unreachable", 15).await;
-    for relative in &files[9..] {
-        std::fs::remove_file(rig.root.join(relative)).expect("file removed");
-    }
-    let after = rig.after.clone();
-    rig.tag(&files[..9], &after);
-    rig.scan().await;
+async fn files_that_may_be_away_still_hold_their_album() {
+    {
+        let (mut rig, files, album) = chosen_album("scan-regroup-unreachable", 15).await;
+        for relative in &files[9..] {
+            std::fs::remove_file(rig.root.join(relative)).expect("file removed");
+        }
+        let after = rig.after.clone();
+        rig.tag(&files[..9], &after);
+        rig.scan().await;
 
-    let new_row = rig.album_of("a/t000.flac");
-    assert_ne!(new_row, album, "not followed");
-    assert_eq!(rig.rows_on(&album), 6);
-    assert_eq!(rig.rows_on(&new_row), 9);
-    assert_eq!(retag_pairs(&rig), vec![]);
-    assert_eq!(match_of(&rig, &album), matched("rel-1", "manual"));
-    assert_eq!(match_of(&rig, &new_row), None);
-    assert_eq!(rig.queued_jobs(&new_row), 1, "offered when the scan ended");
+        let case = "gone in this very scan";
+        let new_row = rig.album_of("a/t000.flac");
+        assert_ne!(new_row, album, "{case}: not followed");
+        assert_eq!(rig.rows_on(&album), 6, "{case}");
+        assert_eq!(rig.rows_on(&new_row), 9, "{case}");
+        assert_eq!(retag_pairs(&rig), vec![], "{case}");
+        assert_eq!(match_of(&rig, &album), matched("rel-1", "manual"), "{case}");
+        assert_eq!(match_of(&rig, &new_row), None, "{case}");
+        assert_eq!(
+            rig.queued_jobs(&new_row),
+            1,
+            "{case}: offered when the scan ended"
+        );
+    }
+
+    for (name, added) in [
+        ("scan-regroup-missing-recent", 0),
+        ("scan-regroup-missing-recent-added", 3),
+    ] {
+        let (mut rig, files, album) = chosen_album(name, 12).await;
+        rig.lose(&files[5..]).await;
+        rig.age_missing(3_600);
+        let mut retagged = files[..5].to_vec();
+        retagged.extend((0..added).map(|n| format!("a/n{n}.flac")));
+        let after = rig.after.clone();
+        rig.tag(&retagged, &after);
+        rig.scan().await;
+
+        let new_row = rig.album_of("a/t000.flac");
+        assert_ne!(new_row, album, "{name}: not followed");
+        assert_eq!(rig.rows_on(&album), 7, "{name}");
+        assert_eq!(rig.rows_on(&new_row), 5 + added, "{name}");
+        assert_eq!(retag_pairs(&rig), vec![], "{name}");
+        assert_eq!(match_of(&rig, &album), matched("rel-1", "manual"), "{name}");
+        assert_eq!(match_of(&rig, &new_row), None, "{name}");
+    }
 }
 
 /// A file that comes back with the tags it had keeps its track row, and
@@ -4013,27 +4100,6 @@ async fn returned_file_keeps_its_track_and_is_filed_by_its_tags() {
         "the same track"
     );
     assert_ne!(rig.album_of("a/t011.flac"), album);
-    assert_eq!(match_of(&rig, &album), matched("rel-1", "manual"));
-}
-
-/// A match carried over from v2 that names only the release group, and a
-/// release of that group a person chose for the new row mid-scan, are one
-/// album. It is followed, and the match that names the release is kept.
-#[tokio::test]
-async fn imported_group_match_and_a_chosen_release_of_it_are_one_album() {
-    let (mut rig, files, album) = big_album("scan-regroup-imported-group").await;
-    rig.run(&format!(
-        "INSERT INTO local_album_external_identities (local_album_id, provider, \
-         release_group_mbid, decision_source, selected_at, row_revision) \
-         VALUES ('{album}', 'musicbrainz', 'rg-rel-1', 'legacy_import', 0, 4);"
-    ));
-    let after = rig.after.clone();
-    rig.tag(&files, &after);
-    rig.meanwhile_sql(match_sql(&new_row(&album), "manual", "rel-1"));
-    rig.scan().await;
-
-    assert_eq!(rig.album_of("a/t000.flac"), album, "followed");
-    assert_eq!(rig.count("SELECT COUNT(*) FROM local_albums"), 1);
     assert_eq!(match_of(&rig, &album), matched("rel-1", "manual"));
 }
 
@@ -4083,89 +4149,6 @@ impl RegroupRig {
 /// A day and a second.
 const OVER_A_DAY: i64 = 86_401;
 
-/// What is left of an album that lost most of its tracks is followed when
-/// it is retagged, once the tracks left behind have been gone a day: the
-/// album keeps its row and its match under the new name, the missing
-/// tracks stay on it, and nothing is recorded. A tie is followed too.
-#[tokio::test]
-async fn mostly_missing_album_is_followed_once_the_rest_is_long_gone() {
-    for (name, count, kept) in [
-        ("scan-regroup-mostly-missing", 12, 5),
-        ("scan-regroup-missing-tie", 2, 1),
-    ] {
-        let (mut rig, files, album) = chosen_album(name, count).await;
-        rig.lose(&files[kept..]).await;
-        rig.age_missing(OVER_A_DAY);
-        let after = rig.after.clone();
-        rig.tag(&files[..kept], &after);
-        rig.scan().await;
-
-        assert_eq!(rig.album_of("a/t000.flac"), album, "{name}: followed");
-        assert_eq!(rig.count("SELECT COUNT(*) FROM local_albums"), 1, "{name}");
-        assert_eq!(rig.rows_on(&album), count as i64, "{name}");
-        assert_eq!(
-            rig.count(&format!(
-                "SELECT COUNT(*) FROM local_albums a JOIN local_album_external_identities i \
-                 ON i.local_album_id = a.id WHERE a.id = '{album}' AND a.title = '{after}' \
-                 AND i.release_mbid = 'rel-1' AND i.decision_source = 'manual' \
-                 AND i.row_revision = 1"
-            )),
-            1,
-            "{name}: the kept row has the new name and the very match it had"
-        );
-        assert_eq!(retag_pairs(&rig), vec![], "{name}");
-    }
-}
-
-/// Tracks gone for less than a day may only be out of reach. When they
-/// are half the album or more, the retagged files do not take the album's
-/// row and match: nothing is followed and nothing is recorded. Files
-/// added with the retag never left the album, so they do not count
-/// towards it.
-#[tokio::test]
-async fn mostly_missing_album_waits_a_day() {
-    for (name, added) in [
-        ("scan-regroup-missing-recent", 0),
-        ("scan-regroup-missing-recent-added", 3),
-    ] {
-        let (mut rig, files, album) = chosen_album(name, 12).await;
-        rig.lose(&files[5..]).await;
-        rig.age_missing(3_600);
-        let mut retagged = files[..5].to_vec();
-        retagged.extend((0..added).map(|n| format!("a/n{n}.flac")));
-        let after = rig.after.clone();
-        rig.tag(&retagged, &after);
-        rig.scan().await;
-
-        let new_row = rig.album_of("a/t000.flac");
-        assert_ne!(new_row, album, "{name}: not followed");
-        assert_eq!(rig.rows_on(&album), 7, "{name}");
-        assert_eq!(rig.rows_on(&new_row), 5 + added, "{name}");
-        assert_eq!(retag_pairs(&rig), vec![], "{name}");
-        assert_eq!(match_of(&rig, &album), matched("rel-1", "manual"), "{name}");
-        assert_eq!(match_of(&rig, &new_row), None, "{name}");
-    }
-}
-
-/// An album retagged to a new name with a file added in the same go is
-/// followed: the kept row takes the added file too, and nothing is
-/// recorded.
-#[tokio::test]
-async fn retag_with_a_file_added_is_followed() {
-    let (mut rig, mut files, album) = chosen_album("scan-regroup-file-added", 10).await;
-    files.push("a/t010.flac".to_owned());
-    let after = rig.after.clone();
-    rig.tag(&files, &after);
-    rig.scan().await;
-
-    assert_eq!(rig.album_of("a/t000.flac"), album, "followed");
-    assert_eq!(rig.album_of("a/t010.flac"), album);
-    assert_eq!(rig.count("SELECT COUNT(*) FROM local_albums"), 1);
-    assert_eq!(rig.rows_on(&album), 11);
-    assert_eq!(retag_pairs(&rig), vec![]);
-    assert_eq!(match_of(&rig, &album), matched("rel-1", "manual"));
-}
-
 /// A four-file album, `prepare` run on it (SQL, given the album id), then
 /// retagged whole and followed. Returns the rig and the album.
 async fn followed_album(name: &str, prepare: impl FnOnce(&str) -> String) -> (RegroupRig, String) {
@@ -4187,27 +4170,13 @@ async fn followed_album(name: &str, prepare: impl FnOnce(&str) -> String) -> (Re
 
 /// A followed album whose edition a person chose, and none of whose files
 /// the app has a record of, is stamped in the scan's own write, so that
-/// automatic management leaves the hand retag alone. Queueing the album
-/// again keeps the stamp.
+/// automatic management leaves the hand retag alone; queueing the album
+/// again keeps the stamp. No stamp when the edition is the app's own
+/// guess, when there is no match at all (it is identified from its new
+/// tags), or when the app has a record of a file, written by v3 or carried
+/// over from v2.
 #[tokio::test]
-async fn followed_album_with_a_chosen_edition_is_stamped() {
-    let (rig, album) = followed_album("scan-regroup-stamp", |album| {
-        match_sql(&format!("'{album}'"), "manual", "rel-1")
-    })
-    .await;
-    assert!(rig.stamped(&album));
-
-    let conn = droppedneedle_kernel::db::open_connection(&rig.db()).expect("side connection opens");
-    droppedneedle_library::management::automatic::queue(&conn, &album, 2.0e9)
-        .expect("queued again");
-    assert!(rig.stamped(&album), "queueing again keeps the stamp");
-}
-
-/// No stamp on a followed album whose edition is the app's own guess, one
-/// with no match at all (it is identified from its new tags), or one with
-/// a file the app has a record of, written by v3 or carried over from v2.
-#[tokio::test]
-async fn followed_album_is_stamped_only_for_a_chosen_edition_the_app_never_wrote() {
+async fn a_followed_album_is_stamped_only_for_a_hand_retag() {
     fn chosen_with_state(album: &str, columns: &str, values: &str) -> String {
         format!(
             "{} INSERT INTO library_track_management_state (local_track_id, {columns}) \
@@ -4216,6 +4185,21 @@ async fn followed_album_is_stamped_only_for_a_chosen_edition_the_app_never_wrote
             match_sql(&format!("'{album}'"), "manual", "rel-1")
         )
     }
+
+    let (rig, album) = followed_album("scan-regroup-stamp", |album| {
+        match_sql(&format!("'{album}'"), "manual", "rel-1")
+    })
+    .await;
+    assert!(rig.stamped(&album), "chosen edition: stamped");
+
+    let conn = droppedneedle_kernel::db::open_connection(&rig.db()).expect("side connection opens");
+    droppedneedle_library::management::automatic::queue(&conn, &album, 2.0e9)
+        .expect("queued again");
+    assert!(
+        rig.stamped(&album),
+        "chosen edition: queueing again keeps the stamp"
+    );
+
     type Prepare = fn(&str) -> String;
     let cases: [(&str, Prepare); 4] = [
         ("scan-regroup-stamp-automatic", |album| {
@@ -4242,94 +4226,98 @@ async fn followed_album_is_stamped_only_for_a_chosen_edition_the_app_never_wrote
     }
 }
 
-/// Files retagged into an album that was already there are a person
-/// joining two albums. Nothing is followed and nothing is recorded.
+/// Files retagged into another album are a person joining albums. Nothing
+/// is followed, joined or recorded, and the matches stay: files retagged
+/// into an album that was already there, two albums retagged into one new
+/// album in one scan (the new row is this scan's, but the tracks on it that
+/// came from the other album are not), and two albums retagged into one new
+/// album over two scans, whichever album's files the scan reads first.
 #[tokio::test]
-async fn retag_into_an_album_that_was_there_is_not_a_pair() {
-    let mut rig = RegroupRig::new("scan-regroup-joined");
-    let files: Vec<String> = (0..10).map(|n| format!("a/t{n:03}.flac")).collect();
-    let there: Vec<String> = (0..3).map(|n| format!("a/u{n}.flac")).collect();
-    let (before, after) = (rig.before.clone(), rig.after.clone());
-    rig.tag(&files, &before);
-    rig.tag(&there, &after);
-    rig.scan().await;
-    let album = rig.album_of("a/t000.flac");
-    let other = rig.album_of("a/u0.flac");
-    assert_ne!(album, other);
-    rig.accept_match(&album);
+async fn albums_a_retag_joins_are_not_followed() {
+    {
+        let mut rig = RegroupRig::new("scan-regroup-joined");
+        let files: Vec<String> = (0..10).map(|n| format!("a/t{n:03}.flac")).collect();
+        let there: Vec<String> = (0..3).map(|n| format!("a/u{n}.flac")).collect();
+        let (before, after) = (rig.before.clone(), rig.after.clone());
+        rig.tag(&files, &before);
+        rig.tag(&there, &after);
+        rig.scan().await;
+        let case = "into an album that was there";
+        let album = rig.album_of("a/t000.flac");
+        let other = rig.album_of("a/u0.flac");
+        assert_ne!(album, other, "{case}");
+        rig.accept_match(&album);
 
-    rig.tag(&files, &after);
-    rig.scan().await;
+        rig.tag(&files, &after);
+        rig.scan().await;
 
-    assert_eq!(rig.album_of("a/t000.flac"), other);
-    assert_eq!(retag_pairs(&rig), vec![]);
-    assert_eq!(match_of(&rig, &album), matched("rel-1", "manual"));
-    assert_eq!(match_of(&rig, &other), None);
-}
+        assert_eq!(rig.album_of("a/t000.flac"), other, "{case}");
+        assert_eq!(retag_pairs(&rig), vec![], "{case}");
+        assert_eq!(match_of(&rig, &album), matched("rel-1", "manual"), "{case}");
+        assert_eq!(match_of(&rig, &other), None, "{case}");
+    }
 
-/// Two albums retagged into one new album in the same scan are a person
-/// joining them too: the new row is this scan's, but the tracks on it
-/// that came from the other album are not. Neither album is followed and
-/// neither is recorded as a pair.
-#[tokio::test]
-async fn two_albums_retagged_into_a_new_one_are_not_pairs() {
-    let mut rig = RegroupRig::new("scan-regroup-two-into-one");
-    let first: Vec<String> = (0..10).map(|n| format!("a/t{n:03}.flac")).collect();
-    let second: Vec<String> = (0..10).map(|n| format!("a/u{n}.flac")).collect();
-    let (before, after) = (rig.before.clone(), rig.after.clone());
-    rig.tag(&first, &before);
-    rig.tag(&second, "scan-regroup-two-into-one other");
-    rig.scan().await;
-    let (one, other) = (rig.album_of("a/t000.flac"), rig.album_of("a/u0.flac"));
-    assert_ne!(one, other);
-    rig.accept_match(&one);
-    rig.accept_match(&other);
+    {
+        let mut rig = RegroupRig::new("scan-regroup-two-into-one");
+        let first: Vec<String> = (0..10).map(|n| format!("a/t{n:03}.flac")).collect();
+        let second: Vec<String> = (0..10).map(|n| format!("a/u{n}.flac")).collect();
+        let (before, after) = (rig.before.clone(), rig.after.clone());
+        rig.tag(&first, &before);
+        rig.tag(&second, "scan-regroup-two-into-one other");
+        rig.scan().await;
+        let case = "two into a new one";
+        let (one, other) = (rig.album_of("a/t000.flac"), rig.album_of("a/u0.flac"));
+        assert_ne!(one, other, "{case}");
+        rig.accept_match(&one);
+        rig.accept_match(&other);
 
-    rig.tag(&first, &after);
-    rig.tag(&second, &after);
-    rig.scan().await;
+        rig.tag(&first, &after);
+        rig.tag(&second, &after);
+        rig.scan().await;
 
-    let joined = rig.album_of("a/t000.flac");
-    assert_eq!(rig.album_of("a/u0.flac"), joined);
-    assert!(joined != one && joined != other, "neither was followed");
-    assert_eq!(retag_pairs(&rig), vec![]);
-    assert_eq!(match_of(&rig, &one), matched("rel-1", "manual"));
-    assert_eq!(match_of(&rig, &other), matched("rel-1", "manual"));
-}
+        let joined = rig.album_of("a/t000.flac");
+        assert_eq!(rig.album_of("a/u0.flac"), joined, "{case}");
+        assert!(
+            joined != one && joined != other,
+            "{case}: neither was followed"
+        );
+        assert_eq!(retag_pairs(&rig), vec![], "{case}");
+        assert_eq!(match_of(&rig, &one), matched("rel-1", "manual"), "{case}");
+        assert_eq!(match_of(&rig, &other), matched("rel-1", "manual"), "{case}");
+    }
 
-/// "Leave unmanaged" and a custom edition are stored as a match a person
-/// made that names no release. Against a release a person chose for the
-/// other row that is a different choice, of the same release group or
-/// not: both rows stay as they are and the pair is recorded.
-#[tokio::test]
-async fn no_release_choice_and_a_chosen_release_stay_apart() {
-    let (mut rig, files, album) = big_album("scan-regroup-no-release").await;
-    rig.run(&format!(
-        "INSERT INTO local_album_external_identities (local_album_id, provider, \
-         release_group_mbid, decision_source, selected_at, row_revision) \
-         VALUES ('{album}', 'musicbrainz', 'rg-rel-1', 'manual', 0, 4);"
-    ));
-    let after = rig.after.clone();
-    rig.tag(&files, &after);
-    rig.meanwhile_sql(match_sql(&new_row(&album), "legacy_import", "rel-1"));
-    rig.scan().await;
+    for (name, prefixes) in [
+        ("scan-across-two-into-one", ["t", "u"]),
+        ("scan-across-two-into-one-reversed", ["u", "t"]),
+    ] {
+        let mut rig = RegroupRig::new(name);
+        let first: Vec<String> = (0..4)
+            .map(|n| format!("a/{}{n}.flac", prefixes[0]))
+            .collect();
+        let second: Vec<String> = (0..4)
+            .map(|n| format!("a/{}{n}.flac", prefixes[1]))
+            .collect();
+        let (before, after) = (rig.before.clone(), rig.after.clone());
+        rig.tag(&first, &before);
+        rig.tag(&second, &format!("{name} other"));
+        rig.scan().await;
+        let (one, other) = (rig.album_of(&first[0]), rig.album_of(&second[0]));
+        rig.accept_match(&one);
 
-    let new_row = rig.album_of("a/t000.flac");
-    assert_ne!(new_row, album, "not followed");
-    assert_eq!(
-        retag_pairs(&rig),
-        open_pair(&album, &new_row, "chosen_matches_differ")
-    );
-    assert_eq!(
-        rig.count(&format!(
-            "SELECT COUNT(*) FROM local_album_external_identities \
-             WHERE local_album_id = '{album}' AND release_mbid IS NULL \
-             AND decision_source = 'manual' AND row_revision = 4"
-        )),
-        1,
-        "the choice on the old row is untouched"
-    );
-    assert_eq!(match_of(&rig, &new_row), matched("rel-1", "legacy_import"));
+        rig.tag(&first[..2], &after);
+        rig.tag(&second[..2], &after);
+        rig.scan().await;
+        rig.tag(&first[2..], &after);
+        rig.tag(&second[2..], &after);
+        rig.scan().await;
+
+        let joined = rig.album_of(&first[3]);
+        assert_eq!(rig.album_of(&second[3]), joined, "{name}");
+        assert_eq!(rig.retired_into(&one), None, "{name}");
+        assert_eq!(rig.retired_into(&other), None, "{name}");
+        assert_eq!(retag_pairs(&rig), vec![], "{name}");
+        assert_eq!(match_of(&rig, &one), matched("rel-1", "manual"), "{name}");
+    }
 }
 
 /// A user for rows that must name a person.
@@ -4747,62 +4735,90 @@ async fn match_across_two_scans_lands_on_the_row_that_stays() {
     assert_eq!(match_of(&rig, &new), None);
 }
 
-/// A person's release that moves from the old row onto the new row of an
-/// album joined across two scans, whose files sit on another release, is
-/// queued to have the files placed on it, and nothing else.
+/// A join across scans waits for the rest of the album. Seven of ten files
+/// retagged and the other three deleted in one sitting: the scan that sees
+/// it waits (files gone in that very scan still hold their album), and the
+/// next one joins it. Three of fifteen retagged while the other twelve are
+/// away: until the twelve have been gone a day nothing is joined or
+/// recorded and the match stays where it is; after that the next scan
+/// joins the album, and when the twelve come back first nothing is joined.
+/// Retagged over two scans with a file added: joined, the added file on the
+/// row that stays, nothing recorded; files added do not count towards the
+/// wait.
 #[tokio::test]
-async fn album_joined_across_scans_queues_its_files_for_a_chosen_release() {
-    let (rig, old, new) = two_sittings(
-        "scan-across-place-chosen",
-        |album| {
-            let quoted = format!("'{album}'");
-            format!(
-                "{} {}",
-                match_sql(&quoted, "manual", "rel-1"),
-                tracks_on(&quoted, "rel-2")
-            )
-        },
-        |_, _| String::new(),
-    )
-    .await;
-    assert_eq!(rig.retired_into(&old), Some(new.clone()));
-    assert_eq!(match_of(&rig, &new), matched("rel-1", "manual"));
-    assert_eq!(placements_queued(&rig, &new), vec!["rel-1".to_owned()]);
-    assert_eq!(
-        rig.count("SELECT COUNT(*) FROM library_edition_remap_queue"),
-        1
-    );
-}
+async fn a_join_across_scans_waits_for_the_rest() {
+    {
+        let (mut rig, files, album) = chosen_album("scan-across-keep-seven", 10).await;
+        for relative in &files[7..] {
+            std::fs::remove_file(rig.root.join(relative)).expect("file removed");
+        }
+        let after = rig.after.clone();
+        rig.tag(&files[..7], &after);
+        rig.scan().await;
+        let case = "keep seven, delete three";
+        let new_row = rig.album_of("a/t000.flac");
+        assert_ne!(new_row, album, "{case}");
+        assert_eq!(
+            rig.retired_into(&album),
+            None,
+            "{case}: nothing at the first end"
+        );
 
-/// Seven of ten files retagged and the other three deleted in one
-/// sitting: the scan that sees it waits (files gone in that very scan
-/// still hold their album), and the next one joins it.
-#[tokio::test]
-async fn retag_what_you_keep_and_delete_the_rest_is_joined_a_scan_later() {
-    let (mut rig, files, album) = chosen_album("scan-across-keep-seven", 10).await;
-    for relative in &files[7..] {
-        std::fs::remove_file(rig.root.join(relative)).expect("file removed");
+        rig.scan().await;
+        assert_eq!(
+            rig.retired_into(&album),
+            Some(new_row.clone()),
+            "{case}: joined"
+        );
+        assert_eq!(rig.rows_on(&new_row), 10, "{case}");
+        assert_eq!(
+            match_of(&rig, &new_row),
+            matched("rel-1", "manual"),
+            "{case}"
+        );
+        assert_eq!(retag_pairs(&rig), vec![], "{case}");
     }
-    let after = rig.after.clone();
-    rig.tag(&files[..7], &after);
-    rig.scan().await;
-    let new_row = rig.album_of("a/t000.flac");
-    assert_ne!(new_row, album);
-    assert_eq!(rig.retired_into(&album), None, "nothing at the first end");
 
-    rig.scan().await;
-    assert_eq!(rig.retired_into(&album), Some(new_row.clone()), "joined");
-    assert_eq!(rig.rows_on(&new_row), 10);
-    assert_eq!(match_of(&rig, &new_row), matched("rel-1", "manual"));
-    assert_eq!(retag_pairs(&rig), vec![]);
-}
+    {
+        let (mut rig, files, album) = chosen_album("scan-across-added", 6).await;
+        let after = rig.after.clone();
+        rig.tag(&files[..3], &after);
+        rig.scan().await;
+        let mut rest = files[3..].to_vec();
+        rest.push("a/n0.flac".to_owned());
+        rig.tag(&rest, &after);
+        rig.scan().await;
+        let case = "a file added";
+        let new_row = rig.album_of("a/t000.flac");
+        assert_eq!(rig.retired_into(&album), Some(new_row.clone()), "{case}");
+        assert_eq!(rig.album_of("a/n0.flac"), new_row, "{case}");
+        assert_eq!(rig.rows_on(&new_row), 7, "{case}");
+        assert_eq!(retag_pairs(&rig), vec![], "{case}");
+    }
 
-/// Three of fifteen files retagged while the other twelve are away. Until
-/// the twelve have been gone a day nothing is joined or recorded and the
-/// match stays where it is; after that the next scan joins the album.
-/// When the twelve come back first, nothing is joined.
-#[tokio::test]
-async fn few_retagged_while_the_rest_is_away_wait_a_day() {
+    {
+        // Five of twelve retagged over two scans with three added, while
+        // the other seven have been gone an hour: not joined.
+        let (mut rig, files, album) = chosen_album("scan-across-added-waits", 12).await;
+        rig.lose(&files[5..]).await;
+        rig.age_missing(3_600);
+        let after = rig.after.clone();
+        rig.tag(&files[..2], &after);
+        rig.scan().await;
+        let mut rest = files[2..5].to_vec();
+        rest.extend((0..3).map(|n| format!("a/n{n}.flac")));
+        rig.tag(&rest, &after);
+        rig.scan().await;
+        let case = "added files do not count";
+        assert_eq!(
+            rig.retired_into(&album),
+            None,
+            "{case}: waits for the seven"
+        );
+        assert_eq!(retag_pairs(&rig), vec![], "{case}");
+        assert_eq!(match_of(&rig, &album), matched("rel-1", "manual"), "{case}");
+    }
+
     for (name, back) in [
         ("scan-across-rest-away", false),
         ("scan-across-rest-back", true),
@@ -5006,9 +5022,9 @@ async fn albums_joined_by_hand_earlier_are_not_joined_to_a_later_rename() {
     assert!(!rig.stamped(&renamed));
 }
 
-/// A pair a person dismissed is their answer about that album: renaming the
-/// other album over two sittings later does not join the first one to the
-/// new name.
+/// A pair a person dismissed is their answer about that album: it is never
+/// joined and stays dismissed, and renaming the other album over two
+/// sittings later does not join the first one to the new name.
 #[tokio::test]
 async fn dismissed_album_is_not_joined_by_a_later_rename() {
     let (mut rig, old, new) = two_sittings(
@@ -5024,6 +5040,16 @@ async fn dismissed_album_is_not_joined_by_a_later_rename() {
     )
     .await;
     assert_eq!(rig.retired_into(&old), None);
+    assert_eq!(
+        retag_pairs(&rig),
+        vec![(
+            old.clone(),
+            new.clone(),
+            "tracks_elsewhere".to_owned(),
+            "dismissed".to_owned()
+        )],
+        "the pair stays dismissed"
+    );
     rig.run(&favorite(&new));
     let files: Vec<String> = (0..6).map(|n| format!("a/t{n:03}.flac")).collect();
     let last = "scan-across-dismissed-then-renamed last";
@@ -5039,60 +5065,69 @@ async fn dismissed_album_is_not_joined_by_a_later_rename() {
 
 /// A dismissed pair ends once its tracks are back on its old album: the
 /// person's answer was about a split that is undone. A later rename of
-/// that album over two sittings is joined like any other.
+/// that album over two sittings is joined like any other. The same when
+/// the pair's new album was merged into another since: the tracks leaving
+/// that album for the old one end the pair.
 #[tokio::test]
 async fn dismissed_pair_ends_when_its_tracks_come_back() {
-    let (mut rig, files, old) = plain_album("scan-across-dismissed-then-back", 6).await;
-    rig.run(&favorite(&old));
-    rig.run("DELETE FROM library_identify_jobs");
-    let after = rig.after.clone();
-    rig.tag(&files[..3], &after);
-    rig.scan().await;
-    let new = rig.album_of("a/t000.flac");
-    assert_ne!(new, old, "the split half sits on a row of its own");
-    assert_eq!(rig.album_of("a/t005.flac"), old);
-    rig.run(&format!(
-        "DELETE FROM library_retag_pairs; \
-         INSERT INTO library_retag_pairs (old_album_id, new_album_id, reason, state, \
-         recorded_at, updated_at) VALUES ('{old}', '{new}', 'tracks_elsewhere', \
-         'dismissed', 0, 0);"
-    ));
-    // Played or starred while apart, so the emptied row stays.
-    rig.run(&favorite(&new));
+    {
+        let (mut rig, files, old) = plain_album("scan-across-dismissed-then-back", 6).await;
+        rig.run(&favorite(&old));
+        rig.run("DELETE FROM library_identify_jobs");
+        let after = rig.after.clone();
+        rig.tag(&files[..3], &after);
+        rig.scan().await;
+        let case = "back from the new album";
+        let new = rig.album_of("a/t000.flac");
+        assert_ne!(new, old, "{case}: the split half sits on a row of its own");
+        assert_eq!(rig.album_of("a/t005.flac"), old, "{case}");
+        rig.run(&format!(
+            "DELETE FROM library_retag_pairs; \
+             INSERT INTO library_retag_pairs (old_album_id, new_album_id, reason, state, \
+             recorded_at, updated_at) VALUES ('{old}', '{new}', 'tracks_elsewhere', \
+             'dismissed', 0, 0);"
+        ));
+        // Played or starred while apart, so the emptied row stays.
+        rig.run(&favorite(&new));
 
-    let before = rig.before.clone();
-    rig.tag(&files[..3], &before);
-    rig.scan().await;
-    assert_eq!(rig.album_of("a/t000.flac"), old, "the tracks are back");
-    assert_eq!(
-        rig.count(&format!(
-            "SELECT COUNT(*) FROM library_catalog_actions WHERE local_album_id = '{old}' \
-             AND action_kind = 'retag_dismissal_ended' \
-             AND json_extract(before_json, '$.from_album_id') = '{new}'"
-        )),
-        1,
-        "the old album's history says the answer was dropped"
-    );
+        let before = rig.before.clone();
+        rig.tag(&files[..3], &before);
+        rig.scan().await;
+        assert_eq!(
+            rig.album_of("a/t000.flac"),
+            old,
+            "{case}: the tracks are back"
+        );
+        assert_eq!(
+            rig.count(&format!(
+                "SELECT COUNT(*) FROM library_catalog_actions WHERE local_album_id = '{old}' \
+                 AND action_kind = 'retag_dismissal_ended' \
+                 AND json_extract(before_json, '$.from_album_id') = '{new}'"
+            )),
+            1,
+            "{case}: the old album's history says the answer was dropped"
+        );
 
-    let last = "scan-across-dismissed-then-back last";
-    rig.tag(&files[..3], last);
-    rig.scan().await;
-    rig.tag(&files[3..], last);
-    rig.scan().await;
-    let renamed = rig.album_of("a/t000.flac");
-    assert_eq!(rig.album_of("a/t005.flac"), renamed);
-    assert_eq!(
-        rig.retired_into(&old),
-        Some(renamed),
-        "the rename is joined"
-    );
-    assert_eq!(retag_pairs(&rig), Vec::new(), "the dismissed pair ended");
-}
+        let last = "scan-across-dismissed-then-back last";
+        rig.tag(&files[..3], last);
+        rig.scan().await;
+        rig.tag(&files[3..], last);
+        rig.scan().await;
+        let renamed = rig.album_of("a/t000.flac");
+        assert_eq!(rig.album_of("a/t005.flac"), renamed, "{case}");
+        assert_eq!(
+            rig.retired_into(&old),
+            Some(renamed),
+            "{case}: the rename is joined"
+        );
+        assert_eq!(
+            retag_pairs(&rig),
+            Vec::new(),
+            "{case}: the dismissed pair ended"
+        );
+    }
 
-/// The same when the pair's new album was merged into another since: the
-/// tracks leaving that album for the old one end the pair.
-#[tokio::test]
-async fn dismissed_pair_ends_when_its_tracks_come_back_from_a_merge() {
+    let case = "back from a merge";
     let mut rig = RegroupRig::new("scan-across-dismissed-merged-back");
     let files: Vec<String> = (0..6).map(|n| format!("a/t{n:03}.flac")).collect();
     let extra = vec!["a/z.flac".to_owned()];
@@ -5109,7 +5144,7 @@ async fn dismissed_pair_ends_when_its_tracks_come_back_from_a_merge() {
     rig.tag(&files[..3], &after);
     rig.scan().await;
     let new = rig.album_of("a/t000.flac");
-    assert_ne!(new, old, "the split half sits on a row of its own");
+    assert_ne!(new, old, "{case}: the split half sits on a row of its own");
     rig.run(&format!(
         "DELETE FROM library_retag_pairs; \
          INSERT INTO library_retag_pairs (old_album_id, new_album_id, reason, state, \
@@ -5122,14 +5157,18 @@ async fn dismissed_pair_ends_when_its_tracks_come_back_from_a_merge() {
     std::fs::remove_file(rig.root.join("a/z.flac")).expect("removed");
     rig.tag(&files[..3], third);
     rig.scan().await;
-    assert_eq!(rig.album_of("a/t000.flac"), merged_into);
+    assert_eq!(rig.album_of("a/t000.flac"), merged_into, "{case}");
     rig.run(&format!(
         "UPDATE local_albums SET retired_into_album_id = '{merged_into}' WHERE id = '{new}'"
     ));
 
     rig.tag(&files[..3], &before);
     rig.scan().await;
-    assert_eq!(rig.album_of("a/t000.flac"), old, "the tracks are back");
+    assert_eq!(
+        rig.album_of("a/t000.flac"),
+        old,
+        "{case}: the tracks are back"
+    );
 
     let last = "scan-across-dismissed-merged-back last";
     rig.tag(&files[..3], last);
@@ -5137,13 +5176,17 @@ async fn dismissed_pair_ends_when_its_tracks_come_back_from_a_merge() {
     rig.tag(&files[3..], last);
     rig.scan().await;
     let renamed = rig.album_of("a/t000.flac");
-    assert_eq!(rig.album_of("a/t005.flac"), renamed);
+    assert_eq!(rig.album_of("a/t005.flac"), renamed, "{case}");
     assert_eq!(
         rig.retired_into(&old),
         Some(renamed),
-        "the rename is joined"
+        "{case}: the rename is joined"
     );
-    assert_eq!(retag_pairs(&rig), Vec::new(), "the dismissed pair ended");
+    assert_eq!(
+        retag_pairs(&rig),
+        Vec::new(),
+        "{case}: the dismissed pair ended"
+    );
 }
 
 /// A track judged by when it left the album would make an album that was
@@ -5177,104 +5220,6 @@ async fn track_that_moved_on_again_does_not_make_an_older_album_a_piece() {
     assert_eq!(match_of(&rig, &unrelated), None);
 }
 
-/// Two albums retagged into one new album over two scans are a person
-/// joining them: neither is joined to it nor recorded, whichever album's
-/// files the scan reads first.
-#[tokio::test]
-async fn two_albums_retagged_into_one_over_two_scans_are_not_joined() {
-    for (name, prefixes) in [
-        ("scan-across-two-into-one", ["t", "u"]),
-        ("scan-across-two-into-one-reversed", ["u", "t"]),
-    ] {
-        let mut rig = RegroupRig::new(name);
-        let first: Vec<String> = (0..4)
-            .map(|n| format!("a/{}{n}.flac", prefixes[0]))
-            .collect();
-        let second: Vec<String> = (0..4)
-            .map(|n| format!("a/{}{n}.flac", prefixes[1]))
-            .collect();
-        let (before, after) = (rig.before.clone(), rig.after.clone());
-        rig.tag(&first, &before);
-        rig.tag(&second, &format!("{name} other"));
-        rig.scan().await;
-        let (one, other) = (rig.album_of(&first[0]), rig.album_of(&second[0]));
-        rig.accept_match(&one);
-
-        rig.tag(&first[..2], &after);
-        rig.tag(&second[..2], &after);
-        rig.scan().await;
-        rig.tag(&first[2..], &after);
-        rig.tag(&second[2..], &after);
-        rig.scan().await;
-
-        let joined = rig.album_of(&first[3]);
-        assert_eq!(rig.album_of(&second[3]), joined, "{name}");
-        assert_eq!(rig.retired_into(&one), None, "{name}");
-        assert_eq!(rig.retired_into(&other), None, "{name}");
-        assert_eq!(retag_pairs(&rig), vec![], "{name}");
-        assert_eq!(match_of(&rig, &one), matched("rel-1", "manual"), "{name}");
-    }
-}
-
-/// Retagged over two scans with a file added: joined, the added file on
-/// the row that stays, nothing recorded. Files added do not count towards
-/// the wait: five of twelve retagged over two scans with three added,
-/// while the other seven have been gone an hour, is not joined.
-#[tokio::test]
-async fn retag_over_two_scans_with_a_file_added() {
-    let (mut rig, files, album) = chosen_album("scan-across-added", 6).await;
-    let after = rig.after.clone();
-    rig.tag(&files[..3], &after);
-    rig.scan().await;
-    let mut rest = files[3..].to_vec();
-    rest.push("a/n0.flac".to_owned());
-    rig.tag(&rest, &after);
-    rig.scan().await;
-    let new_row = rig.album_of("a/t000.flac");
-    assert_eq!(rig.retired_into(&album), Some(new_row.clone()));
-    assert_eq!(rig.album_of("a/n0.flac"), new_row);
-    assert_eq!(rig.rows_on(&new_row), 7);
-    assert_eq!(retag_pairs(&rig), vec![]);
-
-    let (mut rig, files, album) = chosen_album("scan-across-added-waits", 12).await;
-    rig.lose(&files[5..]).await;
-    rig.age_missing(3_600);
-    let after = rig.after.clone();
-    rig.tag(&files[..2], &after);
-    rig.scan().await;
-    let mut rest = files[2..5].to_vec();
-    rest.extend((0..3).map(|n| format!("a/n{n}.flac")));
-    rig.tag(&rest, &after);
-    rig.scan().await;
-    assert_eq!(rig.retired_into(&album), None, "waits for the seven");
-    assert_eq!(retag_pairs(&rig), vec![]);
-    assert_eq!(match_of(&rig, &album), matched("rel-1", "manual"));
-}
-
-/// A plan item of a finished job on the new row keeps the follow within
-/// the scan from deleting that row. The end of the same scan joins the old
-/// row into it instead: no plan row changes and no pair is left.
-#[tokio::test]
-async fn finished_work_on_the_new_row_is_joined_at_the_end_of_the_scan() {
-    let (rig, album) = retag_across_two_windows("scan-across-finished-plan", |album| {
-        plan_on(&new_row(album), "plan", "succeeded")
-    })
-    .await;
-    let new_row = rig.album_of("a/t000.flac");
-    assert_ne!(new_row, album);
-    assert_eq!(rig.retired_into(&album), Some(new_row.clone()));
-    assert_eq!(match_of(&rig, &new_row), matched("rel-1", "manual"));
-    assert_eq!(
-        rig.count(&format!(
-            "SELECT COUNT(*) FROM library_management_plan_items \
-             WHERE local_album_id = '{new_row}' AND expected_album_revision = 1"
-        )),
-        1,
-        "the plan item is as it was made"
-    );
-    assert_eq!(retag_pairs(&rig), vec![]);
-}
-
 /// A preview left ready on the old row stops the join and is recorded as
 /// live work. Once the preview is discarded, the next scan's end joins
 /// the two and the pair goes.
@@ -5306,9 +5251,10 @@ async fn ready_preview_on_the_old_row_waits_until_it_is_discarded() {
 /// A store error while joining keeps both rows and is recorded once, with
 /// one warning. The end of the same scan tries again, as a join, and
 /// fails the same way: still one row, no second warning. Once the store
-/// works, the next scan's end joins them and the pair goes.
+/// works, the next scan's end joins them and the pair goes. The same holds
+/// for the first half of a retag the error left unstamped.
 #[tokio::test]
-async fn store_error_is_recorded_once_and_tried_again() {
+async fn a_store_error_is_recorded_once_and_tried_again() {
     retag_warnings();
     let (mut rig, files, album) = chosen_album("scan-across-store-error", 4).await;
     rig.run(
@@ -5319,20 +5265,49 @@ async fn store_error_is_recorded_once_and_tried_again() {
     let after = rig.after.clone();
     rig.tag(&files, &after);
     rig.scan().await;
+    let case = "whole retag";
     let new_row = rig.album_of("a/t000.flac");
-    assert_ne!(new_row, album);
+    assert_ne!(new_row, album, "{case}");
     assert_eq!(
         retag_pairs(&rig),
-        open_pair(&album, &new_row, "store_error")
+        open_pair(&album, &new_row, "store_error"),
+        "{case}"
     );
-    assert_eq!(warnings_naming(&album, &new_row), 1);
+    assert_eq!(warnings_naming(&album, &new_row), 1, "{case}");
 
     rig.run("DROP TRIGGER refuse_stamp");
     rig.scan().await;
-    assert_eq!(rig.retired_into(&album), Some(new_row.clone()));
-    assert_eq!(retag_pairs(&rig), vec![]);
-    assert!(rig.stamped(&new_row));
-    assert_eq!(warnings_naming(&album, &new_row), 1);
+    assert_eq!(rig.retired_into(&album), Some(new_row.clone()), "{case}");
+    assert_eq!(retag_pairs(&rig), vec![], "{case}");
+    assert!(rig.stamped(&new_row), "{case}");
+    assert_eq!(warnings_naming(&album, &new_row), 1, "{case}");
+
+    // The first half of a retag, left unstamped by the same error: recorded
+    // as a pair, and the end of a later scan tries it again while the old
+    // album is still held. It lands, and the pair goes.
+    let (mut rig, files, album) = chosen_album("scan-across-first-half-error", 6).await;
+    rig.run(
+        "CREATE TRIGGER refuse_stamp BEFORE UPDATE OF retag_followed_at \
+         ON library_management_automatic_queue WHEN NEW.retag_followed_at IS NOT NULL \
+         BEGIN SELECT RAISE(ABORT, 'refused for the test'); END;",
+    );
+    let after = rig.after.clone();
+    rig.tag(&files[..3], &after);
+    rig.scan().await;
+    let case = "first half";
+    let half = rig.album_of("a/t000.flac");
+    assert!(!rig.stamped(&half), "{case}");
+    assert_eq!(
+        retag_pairs(&rig),
+        open_pair(&album, &half, "store_error"),
+        "{case}"
+    );
+
+    rig.run("DROP TRIGGER refuse_stamp");
+    rig.scan().await;
+    assert!(rig.stamped(&half), "{case}");
+    assert_eq!(retag_pairs(&rig), vec![], "{case}");
+    assert_eq!(rig.retired_into(&album), None, "{case}");
 }
 
 /// The first half moved to another folder by the app between the two
@@ -5512,36 +5487,108 @@ async fn first_half_with_a_match_a_person_chose_is_left_to_them() {
     );
 }
 
-/// A store error while leaving the first half the way the old album was is
-/// recorded as a pair, and the end of a later scan tries it again while the
-/// old album is still held: it lands, and the pair goes.
+/// Hands-off marks reach the first half of a retag once. The half of an
+/// album marked "leave unmanaged" that a first sitting retagged is left
+/// unmanaged too when that scan ends, with an audit action saying so; the
+/// app's taken-over mark goes the same way. Once per pair: handed back
+/// there, a later scan that moves more of the album does not put either
+/// back, and a mark set on the old album since is not copied. A taken-over
+/// mark set on the old row between the sittings is on the row that stays
+/// after the join, with the time it was noticed. None of them, nor a chosen
+/// release, reaches an album with tracks of its own that one of the
+/// album's tracks was retagged into.
 #[tokio::test]
-async fn first_half_left_unstamped_by_a_store_error_is_tried_again() {
-    let (mut rig, files, album) = chosen_album("scan-across-first-half-error", 6).await;
-    rig.run(
-        "CREATE TRIGGER refuse_stamp BEFORE UPDATE OF retag_followed_at \
-         ON library_management_automatic_queue WHEN NEW.retag_followed_at IS NOT NULL \
-         BEGIN SELECT RAISE(ABORT, 'refused for the test'); END;",
-    );
-    let after = rig.after.clone();
-    rig.tag(&files[..3], &after);
-    rig.scan().await;
-    let half = rig.album_of("a/t000.flac");
-    assert!(!rig.stamped(&half));
-    assert_eq!(retag_pairs(&rig), open_pair(&album, &half, "store_error"));
+async fn hands_off_marks_reach_the_first_half_once() {
+    {
+        let (mut rig, files, album) = plain_album("scan-across-leave-unmanaged", 6).await;
+        rig.run(&format!(
+            "INSERT INTO library_management_exclusions (local_album_id, reason, \
+             excluded_by_user_id, excluded_at) VALUES ('{album}', 'by hand', 'u1', 5);"
+        ));
+        let after = rig.after.clone();
+        rig.tag(&files[..2], &after);
+        rig.scan().await;
+        let case = "leave unmanaged";
+        let new_row = rig.album_of("a/t000.flac");
+        let excluded = format!(
+            "SELECT COUNT(*) FROM library_management_exclusions WHERE local_album_id = '{new_row}'"
+        );
+        assert_eq!(rig.count(&excluded), 1, "{case}");
+        assert_eq!(
+            rig.count(&format!(
+                "SELECT COUNT(*) FROM library_catalog_actions WHERE local_album_id = '{new_row}' \
+                 AND action_kind = 'retag_first_half'"
+            )),
+            1,
+            "{case}"
+        );
 
-    rig.run("DROP TRIGGER refuse_stamp");
-    rig.scan().await;
-    assert!(rig.stamped(&half));
-    assert_eq!(retag_pairs(&rig), vec![]);
-    assert_eq!(rig.retired_into(&album), None);
-}
+        rig.run(&format!(
+            "DELETE FROM library_management_exclusions WHERE local_album_id = '{new_row}'; \
+             INSERT INTO library_album_takeovers (local_album_id, cause, noticed_at) \
+             VALUES ('{album}', 'files_changed', 1234);"
+        ));
+        rig.tag(&files[2..4], &after);
+        rig.scan().await;
+        assert_eq!(rig.album_of("a/t003.flac"), new_row, "{case}");
+        assert_eq!(rig.count(&excluded), 0, "{case}: not put back");
+        assert_eq!(
+            rig.count(&format!(
+                "SELECT COUNT(*) FROM library_album_takeovers WHERE local_album_id = '{new_row}'"
+            )),
+            0,
+            "{case}: a later mark is not copied"
+        );
+    }
 
-/// "Leave unmanaged", a taken-over mark and a chosen release on an album
-/// do not reach an album with tracks of its own that one of its tracks
-/// was retagged into.
-#[tokio::test]
-async fn track_retagged_into_another_album_takes_nothing_with_it() {
+    {
+        let (mut rig, files, album) = plain_album("scan-across-mark", 6).await;
+        rig.run(&format!(
+            "INSERT INTO library_album_takeovers (local_album_id, cause, noticed_at) \
+             VALUES ('{album}', 'files_changed', 1234);"
+        ));
+        let after = rig.after.clone();
+        rig.tag(&files[..2], &after);
+        rig.scan().await;
+        let case = "taken-over mark";
+        let new_row = rig.album_of("a/t000.flac");
+        let mark = format!(
+            "SELECT COUNT(*) FROM library_album_takeovers WHERE local_album_id = '{new_row}' \
+             AND noticed_at = 1234"
+        );
+        assert_eq!(rig.count(&mark), 1, "{case}");
+        rig.run(&format!(
+            "DELETE FROM library_album_takeovers WHERE local_album_id = '{new_row}'"
+        ));
+        rig.tag(&files[2..4], &after);
+        rig.scan().await;
+        assert_eq!(rig.count(&mark), 0, "{case}: handed back, not put back");
+    }
+
+    {
+        let (rig, old, new) = two_sittings(
+            "scan-across-mark-joined",
+            |_| String::new(),
+            |old, _| {
+                format!(
+                    "INSERT INTO library_album_takeovers (local_album_id, cause, noticed_at) \
+                     VALUES ('{old}', 'files_changed', 1234);"
+                )
+            },
+        )
+        .await;
+        let case = "taken-over mark set between the sittings";
+        assert_eq!(rig.retired_into(&old), Some(new.clone()), "{case}");
+        assert_eq!(
+            rig.count(&format!(
+                "SELECT COUNT(*) FROM library_album_takeovers WHERE local_album_id = '{new}' \
+                 AND noticed_at = 1234"
+            )),
+            1,
+            "{case}"
+        );
+    }
+
     let (mut rig, files, album) = chosen_album("scan-across-into-other", 6).await;
     rig.run(PERSON);
     rig.run(&format!(
@@ -5557,109 +5604,17 @@ async fn track_retagged_into_another_album_takes_nothing_with_it() {
     let target = rig.album_of("a/u0.flac");
     rig.tag(&files[5..], elsewhere);
     rig.scan().await;
-    assert_eq!(rig.album_of("a/t005.flac"), target);
-    assert!(!rig.stamped(&target));
+    let case = "into another album";
+    assert_eq!(rig.album_of("a/t005.flac"), target, "{case}");
+    assert!(!rig.stamped(&target), "{case}");
     assert_eq!(
         rig.count(&format!(
             "SELECT (SELECT COUNT(*) FROM library_management_exclusions \
              WHERE local_album_id = '{target}') + (SELECT COUNT(*) FROM library_album_takeovers \
              WHERE local_album_id = '{target}')"
         )),
-        0
-    );
-}
-
-/// The half of an album marked "leave unmanaged" that a first sitting
-/// retagged is left unmanaged too when that scan ends, with an audit
-/// action saying so. Once per pair: lifted there, a later scan that moves
-/// more of the album does not put it back, and a mark set on the old
-/// album since is not copied.
-#[tokio::test]
-async fn leave_unmanaged_reaches_the_first_half_once() {
-    let (mut rig, files, album) = plain_album("scan-across-leave-unmanaged", 6).await;
-    rig.run(&format!(
-        "INSERT INTO library_management_exclusions (local_album_id, reason, \
-         excluded_by_user_id, excluded_at) VALUES ('{album}', 'by hand', 'u1', 5);"
-    ));
-    let after = rig.after.clone();
-    rig.tag(&files[..2], &after);
-    rig.scan().await;
-    let new_row = rig.album_of("a/t000.flac");
-    let excluded = format!(
-        "SELECT COUNT(*) FROM library_management_exclusions WHERE local_album_id = '{new_row}'"
-    );
-    assert_eq!(rig.count(&excluded), 1);
-    assert_eq!(
-        rig.count(&format!(
-            "SELECT COUNT(*) FROM library_catalog_actions WHERE local_album_id = '{new_row}' \
-             AND action_kind = 'retag_first_half'"
-        )),
-        1
-    );
-
-    rig.run(&format!(
-        "DELETE FROM library_management_exclusions WHERE local_album_id = '{new_row}'; \
-         INSERT INTO library_album_takeovers (local_album_id, cause, noticed_at) \
-         VALUES ('{album}', 'files_changed', 1234);"
-    ));
-    rig.tag(&files[2..4], &after);
-    rig.scan().await;
-    assert_eq!(rig.album_of("a/t003.flac"), new_row);
-    assert_eq!(rig.count(&excluded), 0, "not put back");
-    assert_eq!(
-        rig.count(&format!(
-            "SELECT COUNT(*) FROM library_album_takeovers WHERE local_album_id = '{new_row}'"
-        )),
         0,
-        "a later mark is not copied"
-    );
-}
-
-/// The app's taken-over mark: the half a first sitting retagged has it
-/// when that scan ends, and handed back there, a later scan does not put
-/// it back. Set on the old row between the sittings, the row that stays
-/// after the join has it, with the time it was noticed.
-#[tokio::test]
-async fn taken_over_mark_follows_the_retag() {
-    let (mut rig, files, album) = plain_album("scan-across-mark", 6).await;
-    rig.run(&format!(
-        "INSERT INTO library_album_takeovers (local_album_id, cause, noticed_at) \
-         VALUES ('{album}', 'files_changed', 1234);"
-    ));
-    let after = rig.after.clone();
-    rig.tag(&files[..2], &after);
-    rig.scan().await;
-    let new_row = rig.album_of("a/t000.flac");
-    let mark = format!(
-        "SELECT COUNT(*) FROM library_album_takeovers WHERE local_album_id = '{new_row}' \
-         AND noticed_at = 1234"
-    );
-    assert_eq!(rig.count(&mark), 1);
-    rig.run(&format!(
-        "DELETE FROM library_album_takeovers WHERE local_album_id = '{new_row}'"
-    ));
-    rig.tag(&files[2..4], &after);
-    rig.scan().await;
-    assert_eq!(rig.count(&mark), 0, "handed back, not put back");
-
-    let (rig, old, new) = two_sittings(
-        "scan-across-mark-joined",
-        |_| String::new(),
-        |old, _| {
-            format!(
-                "INSERT INTO library_album_takeovers (local_album_id, cause, noticed_at) \
-                 VALUES ('{old}', 'files_changed', 1234);"
-            )
-        },
-    )
-    .await;
-    assert_eq!(rig.retired_into(&old), Some(new.clone()));
-    assert_eq!(
-        rig.count(&format!(
-            "SELECT COUNT(*) FROM library_album_takeovers WHERE local_album_id = '{new}' \
-             AND noticed_at = 1234"
-        )),
-        1
+        "{case}"
     );
 }
 
@@ -5691,33 +5646,6 @@ async fn new_rows_override_stands_after_the_join() {
     assert_eq!(
         rig.text("SELECT local_album_id FROM library_management_overrides WHERE id = 'old'"),
         Some(old)
-    );
-}
-
-/// A pair a person dismissed is never joined.
-#[tokio::test]
-async fn dismissed_pair_is_never_joined() {
-    let (rig, old, new) = two_sittings(
-        "scan-across-dismissed",
-        |_| String::new(),
-        |old, new| {
-            format!(
-                "INSERT INTO library_retag_pairs (old_album_id, new_album_id, reason, state, \
-                 recorded_at, updated_at) VALUES ('{old}', '{new}', 'tracks_elsewhere', \
-                 'dismissed', 0, 0);"
-            )
-        },
-    )
-    .await;
-    assert_eq!(rig.retired_into(&old), None);
-    assert_eq!(
-        retag_pairs(&rig),
-        vec![(
-            old,
-            new,
-            "tracks_elsewhere".to_owned(),
-            "dismissed".to_owned()
-        )]
     );
 }
 
@@ -5822,7 +5750,8 @@ async fn hand_merge_removes_an_open_pair() {
 
 /// A reset grouping that makes a new album credits it to the row a scan
 /// of the file keys, the name row, not an older row of the same name that
-/// is linked to another artist. Nobody's favourite moves.
+/// is linked to another artist, and the credit carries no artist id.
+/// Nobody's favourite moves.
 #[tokio::test]
 async fn a_reset_album_is_credited_as_a_scan_keys_it() {
     let scratch = ScratchDir::new("scan-reset-artist");
@@ -5875,7 +5804,11 @@ async fn a_reset_album_is_credited_as_a_scan_keys_it() {
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .expect("reset album credit");
-    assert_eq!(credited, (name_row.clone(), name_row.clone()));
+    assert_eq!(
+        credited,
+        (name_row.clone(), name_row.clone()),
+        "the name row is credited"
+    );
     for artist in ["twin", name_row.as_str()] {
         assert_eq!(
             query(
@@ -5889,14 +5822,11 @@ async fn a_reset_album_is_credited_as_a_scan_keys_it() {
             "{artist} keeps its favourite"
         );
     }
-}
 
-/// A reset album's credit carries no artist id: the stored album artist id
-/// is only the file's first one, so for "A & B" it would name A alone. The
-/// album stays on the "A & B" name row, not on A's row, and the next scan
-/// writes the ids the file holds.
-#[tokio::test]
-async fn a_reset_album_credit_carries_no_artist_id() {
+    // The credit carries no artist id: the stored album artist id is only
+    // the file's first one, so for "A & B" it would name A alone. The album
+    // stays on the "A & B" name row, not on A's row, and the next scan
+    // writes the ids the file holds.
     const ID_A: &str = "aaaaaaaa-1111-4111-8111-00000000000a";
     let scratch = ScratchDir::new("scan-reset-joined");
     let music = scratch.join("music");
@@ -5924,7 +5854,7 @@ async fn a_reset_album_credit_carries_no_artist_id() {
         .expect("seeds");
     reset_grouping(&library, &album, &track);
     let reset = store.album_for_track(&track).unwrap().expect("reset album");
-    assert_ne!(reset, album, "the reset made a new album");
+    assert_ne!(reset, album, "joined credit: the reset made a new album");
     let db = droppedneedle_kernel::db::open_connection(&scratch.join("app.db")).expect("db opens");
     let credited: (String, String, Option<String>) = db
         .query_row(
@@ -5935,9 +5865,9 @@ async fn a_reset_album_credit_carries_no_artist_id() {
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .expect("reset album credit");
-    assert_ne!(credited.0, "ar-a", "not filed under A alone");
-    assert_eq!(credited.1, "A & B");
-    assert_eq!(credited.2, None, "no id on the album credit");
+    assert_ne!(credited.0, "ar-a", "joined credit: not filed under A alone");
+    assert_eq!(credited.1, "A & B", "joined credit");
+    assert_eq!(credited.2, None, "joined credit: no id on the album credit");
 }
 
 /// Reset `track` on `album` back to automatic grouping, as an admin.
@@ -6729,12 +6659,14 @@ async fn tell(name: &str, story: Story) -> (RegroupRig, String, String, String, 
 /// next scan with no file changed: the old album retired into the new one
 /// and the star on the new track. So is one whose scan stopped after it
 /// read the new files and before it marked the old ones missing: the next
-/// scan marks them and joins.
+/// scan marks them and joins. Without proof that the new album's files
+/// replaced the old album's, nothing is joined or recorded and the star
+/// stays on the old track; the plain story, each condition lifted, joins.
 #[tokio::test]
-async fn an_album_replaced_on_its_edition_is_joined_at_the_run_end() {
-    let (rig, old, new, o, n) = tell("join-run-end", Story::default()).await;
-    rig.assert_joined(&old, &new, (&o, &n), "plain");
-    assert_eq!(rig.continuations(), 1);
+async fn an_album_is_not_joined_without_proof_it_was_replaced() {
+    let (rig, old, new, o, n) = tell("join-refused-twin", Story::default()).await;
+    rig.assert_joined(&old, &new, (&o, &n), "the plain story");
+    assert_eq!(rig.continuations(), 1, "the plain story");
 
     let interrupted = Story {
         interrupted: true,
@@ -6742,15 +6674,6 @@ async fn an_album_replaced_on_its_edition_is_joined_at_the_run_end() {
     };
     let (rig, old, new, o, n) = tell("join-run-end-interrupted", interrupted).await;
     rig.assert_joined(&old, &new, (&o, &n), "interrupted");
-}
-
-/// Without proof that the new album's files replaced the old album's,
-/// nothing is joined or recorded and the star stays on the old track. The
-/// plain story, each condition lifted, joins.
-#[tokio::test]
-async fn an_album_is_not_joined_without_proof_it_was_replaced() {
-    let (rig, old, new, o, n) = tell("join-refused-twin", Story::default()).await;
-    rig.assert_joined(&old, &new, (&o, &n), "the plain story");
 
     let refusals = [
         (
@@ -8485,62 +8408,91 @@ async fn a_group_marked_distinct_is_not_merged() {
 /// MusicBrainz's `[unknown]` artist, which stands for no one artist.
 const UNKNOWN_MBID: &str = "125ec42a-7229-4250-afc5-e057484327fe";
 
-/// Two differently named artists whose files both carry MusicBrainz's
-/// `[unknown]` id keep a row each after the scan and its run end, and
-/// neither credit stores the id: a special-purpose id is never proof.
+/// MusicBrainz's special-purpose artist ids are never proof. Two
+/// differently named artists whose files both carry the `[unknown]` id
+/// keep a row each after the scan and its run end, and neither credit
+/// stores the id; rows whose credits already store it, as files scanned
+/// before it was dropped left them, stay apart at the run end. A Various
+/// Artists id goes by name: the album credit takes the name row, keeps no
+/// id, and the Various Artists record is left alone.
 #[tokio::test]
-async fn a_placeholder_artist_id_keeps_two_artists_apart() {
-    let rig = ArtistRig::new("artist-placeholder");
-    rig.put(
-        "A/01.flac",
-        "Album A",
-        listed(&["Oh"], &[UNKNOWN_MBID]),
-        listed(&["Oh"], &[UNKNOWN_MBID]),
-    );
-    rig.put(
-        "B/01.flac",
-        "Album B",
-        listed(&["En"], &[UNKNOWN_MBID]),
-        listed(&["En"], &[UNKNOWN_MBID]),
-    );
-    rig.scan().await;
-    let oh = rig.track_artist("A/01.flac", 0);
-    let en = rig.track_artist("B/01.flac", 0);
-    assert_ne!(oh, en);
-    assert_eq!(rig.name(&oh), "Oh");
-    assert_eq!(rig.name(&en), "En");
-    assert_eq!(rig.retired_into(&oh), None);
-    assert_eq!(rig.retired_into(&en), None);
-    assert_eq!(
-        rig.count(&format!(
-            "SELECT (SELECT COUNT(*) FROM local_track_artists WHERE artist_mbid = '{UNKNOWN_MBID}') \
-             + (SELECT COUNT(*) FROM local_album_artists WHERE artist_mbid = '{UNKNOWN_MBID}')"
-        )),
-        0
-    );
-}
+async fn special_purpose_artist_ids_are_never_proof() {
+    {
+        let case = "unknown in the files";
+        let rig = ArtistRig::new("artist-placeholder");
+        rig.put(
+            "A/01.flac",
+            "Album A",
+            listed(&["Oh"], &[UNKNOWN_MBID]),
+            listed(&["Oh"], &[UNKNOWN_MBID]),
+        );
+        rig.put(
+            "B/01.flac",
+            "Album B",
+            listed(&["En"], &[UNKNOWN_MBID]),
+            listed(&["En"], &[UNKNOWN_MBID]),
+        );
+        rig.scan().await;
+        let oh = rig.track_artist("A/01.flac", 0);
+        let en = rig.track_artist("B/01.flac", 0);
+        assert_ne!(oh, en, "{case}");
+        assert_eq!(rig.name(&oh), "Oh", "{case}");
+        assert_eq!(rig.name(&en), "En", "{case}");
+        assert_eq!(rig.retired_into(&oh), None, "{case}");
+        assert_eq!(rig.retired_into(&en), None, "{case}");
+        assert_eq!(
+            rig.count(&format!(
+                "SELECT (SELECT COUNT(*) FROM local_track_artists WHERE artist_mbid = '{UNKNOWN_MBID}') \
+                 + (SELECT COUNT(*) FROM local_album_artists WHERE artist_mbid = '{UNKNOWN_MBID}')"
+            )),
+            0,
+            "{case}"
+        );
+    }
 
-/// Rows whose credits already store the `[unknown]` id, as files scanned
-/// before it was dropped left them, stay apart at the run end.
-#[tokio::test]
-async fn rows_holding_a_placeholder_id_are_not_merged() {
-    let rig = ArtistRig::new("artist-placeholder-stored");
-    rig.put("A/01.flac", "Album A", plain(&["Oh"]), plain(&["Oh"]));
-    rig.put("B/01.flac", "Album B", plain(&["En"]), plain(&["En"]));
+    {
+        let case = "unknown stored on the rows";
+        let rig = ArtistRig::new("artist-placeholder-stored");
+        rig.put("A/01.flac", "Album A", plain(&["Oh"]), plain(&["Oh"]));
+        rig.put("B/01.flac", "Album B", plain(&["En"]), plain(&["En"]));
+        rig.scan().await;
+        let oh = rig.track_artist("A/01.flac", 0);
+        let en = rig.track_artist("B/01.flac", 0);
+        assert_ne!(oh, en, "{case}");
+        rig.run(&format!(
+            "UPDATE local_track_artists SET artist_mbid = '{UNKNOWN_MBID}' \
+             WHERE local_artist_id IN ('{oh}', '{en}'); \
+             UPDATE local_album_artists SET artist_mbid = '{UNKNOWN_MBID}' \
+             WHERE local_artist_id IN ('{oh}', '{en}');"
+        ));
+        rig.scan().await;
+        assert_eq!(rig.retired_into(&oh), None, "{case}");
+        assert_eq!(rig.retired_into(&en), None, "{case}");
+        assert_eq!(rig.merges(), 0, "{case}");
+    }
+
+    let case = "various artists";
+    let rig = ArtistRig::new("artist-various");
+    let sentinel = "SELECT row_revision FROM local_artists \
+                    WHERE id = '00000000-0000-4000-8000-000000000001'";
+    let before = rig.count(sentinel);
+    rig.put(
+        "V/01.flac",
+        "Album V",
+        listed(&["Various Artists"], &[VARIOUS_ARTISTS_MBID]),
+        listed(&["Vee"], &[MBID_X]),
+    );
     rig.scan().await;
-    let oh = rig.track_artist("A/01.flac", 0);
-    let en = rig.track_artist("B/01.flac", 0);
-    assert_ne!(oh, en);
-    rig.run(&format!(
-        "UPDATE local_track_artists SET artist_mbid = '{UNKNOWN_MBID}' \
-         WHERE local_artist_id IN ('{oh}', '{en}'); \
-         UPDATE local_album_artists SET artist_mbid = '{UNKNOWN_MBID}' \
-         WHERE local_artist_id IN ('{oh}', '{en}');"
-    ));
-    rig.scan().await;
-    assert_eq!(rig.retired_into(&oh), None);
-    assert_eq!(rig.retired_into(&en), None);
-    assert_eq!(rig.merges(), 0);
+    let (credit, album_artist) = rig.album_artist("V/01.flac");
+    assert_eq!(credit, album_artist, "{case}");
+    assert_ne!(credit, "00000000-0000-4000-8000-000000000001", "{case}");
+    assert_eq!(rig.name(&credit), "Various Artists", "{case}");
+    assert_eq!(
+        rig.count("SELECT COUNT(*) FROM local_album_artists WHERE artist_mbid IS NOT NULL"),
+        0,
+        "{case}"
+    );
+    assert_eq!(rig.count(sentinel), before, "{case}");
 }
 
 /// A merge the store refuses is rolled back with one warning and the run
@@ -8584,60 +8536,187 @@ async fn a_refused_merge_waits_for_the_next_run() {
     assert_eq!(rig.merges(), 1);
 }
 
-/// ARTIST "Ay feat. Bee" with one id, no ARTISTS list, while the row "Ay"
-/// is proven to be that id: the credit stays on its own row and "Ay" is
-/// not renamed.
+/// A credit lands on the row its ids prove, and only that far. Each case
+/// is its own rig, since names repeat between them.
 #[tokio::test]
-async fn a_joined_credit_with_one_id_keeps_its_own_row() {
-    let rig = ArtistRig::new("artist-joined");
-    rig.put(
-        "A/01.flac",
-        "Album A",
-        listed(&["Ay"], &[MBID_X]),
-        listed(&["Ay"], &[MBID_X]),
-    );
-    let joined = Side {
-        names: &["Ay feat. Bee"],
-        ids: &[MBID_X],
-        sort: None,
-        listed: false,
-    };
-    rig.put("F/01.flac", "Album F", plain(&["Ay feat. Bee"]), joined);
-    rig.scan().await;
-    let own = rig.track_artist("A/01.flac", 0);
-    let feat = rig.track_artist("F/01.flac", 0);
-    assert_ne!(own, feat);
-    assert_eq!(rig.name(&own), "Ay");
-    assert_eq!(rig.name(&feat), "Ay feat. Bee");
-}
+async fn a_credit_lands_on_the_row_its_ids_prove() {
+    // ARTIST "Ay feat. Bee" with one id, no ARTISTS list, while the row
+    // "Ay" is proven to be that id: the credit stays on its own row and
+    // "Ay" is not renamed.
+    {
+        let case = "a joined credit with one id";
+        let rig = ArtistRig::new("artist-joined");
+        rig.put(
+            "A/01.flac",
+            "Album A",
+            listed(&["Ay"], &[MBID_X]),
+            listed(&["Ay"], &[MBID_X]),
+        );
+        let joined = Side {
+            names: &["Ay feat. Bee"],
+            ids: &[MBID_X],
+            sort: None,
+            listed: false,
+        };
+        rig.put("F/01.flac", "Album F", plain(&["Ay feat. Bee"]), joined);
+        rig.scan().await;
+        let own = rig.track_artist("A/01.flac", 0);
+        let feat = rig.track_artist("F/01.flac", 0);
+        assert_ne!(own, feat, "{case}");
+        assert_eq!(rig.name(&own), "Ay", "{case}");
+        assert_eq!(rig.name(&feat), "Ay feat. Bee", "{case}");
+    }
 
-/// Ids that do not line up with the names (fewer ids than names, or an
-/// id that is not a UUID) prove nothing: the credits go by name.
-#[tokio::test]
-async fn ids_that_do_not_line_up_go_by_name() {
-    let rig = ArtistRig::new("artist-unaligned");
-    rig.put(
-        "P/01.flac",
-        "Album P",
-        plain(&["Pe"]),
-        listed(&["Pe", "Cue"], &[MBID_X]),
-    );
-    rig.put(
-        "R/01.flac",
-        "Album R",
-        plain(&["Ar"]),
-        listed(&["Ar"], &["a/b"]),
-    );
+    // Ids that do not line up with the names (fewer ids than names, or an
+    // id that is not a UUID) prove nothing: the credits go by name.
+    {
+        let case = "ids that do not line up";
+        let rig = ArtistRig::new("artist-unaligned");
+        rig.put(
+            "P/01.flac",
+            "Album P",
+            plain(&["Pe"]),
+            listed(&["Pe", "Cue"], &[MBID_X]),
+        );
+        rig.put(
+            "R/01.flac",
+            "Album R",
+            plain(&["Ar"]),
+            listed(&["Ar"], &["a/b"]),
+        );
+        rig.scan().await;
+        let pe = rig.track_artist("P/01.flac", 0);
+        assert_eq!(rig.name(&pe), "Pe", "{case}");
+        assert_eq!(rig.album_artist("P/01.flac").0, pe, "{case}");
+        assert_eq!(rig.name(&rig.track_artist("P/01.flac", 1)), "Cue", "{case}");
+        assert_eq!(rig.name(&rig.track_artist("R/01.flac", 0)), "Ar", "{case}");
+        assert_eq!(
+            rig.count("SELECT COUNT(*) FROM local_track_artists WHERE artist_mbid IS NOT NULL"),
+            0,
+            "{case}"
+        );
+    }
+
+    // Two artists who share a name but not their MusicBrainz id get a row
+    // each.
+    {
+        let case = "two artists with one name";
+        let rig = ArtistRig::new("artist-same-name");
+        rig.put(
+            "J1/01.flac",
+            "Album J1",
+            listed(&["Jay"], &[MBID_X]),
+            listed(&["Jay"], &[MBID_X]),
+        );
+        rig.put(
+            "J2/01.flac",
+            "Album J2",
+            listed(&["Jay"], &[MBID_Y]),
+            listed(&["Jay"], &[MBID_Y]),
+        );
+        rig.scan().await;
+        let one = rig.track_artist("J1/01.flac", 0);
+        let two = rig.track_artist("J2/01.flac", 0);
+        assert_ne!(one, two, "{case}");
+        assert_eq!(rig.name(&two), "Jay", "{case}");
+        assert_eq!(rig.album_artist("J2/01.flac"), (two.clone(), two), "{case}");
+    }
+
+    // ARTISTS with id x and only ALBUMARTIST, while the row the name keys
+    // to is proven to be another artist y: the album credit and the album's
+    // artist go with the track credit to x's row, not to y's by name.
+    {
+        let case = "an album artist without an id";
+        let rig = ArtistRig::new("artist-album-side");
+        rig.put(
+            "Y/01.flac",
+            "Album Y",
+            listed(&["Foo"], &[MBID_Y]),
+            listed(&["Foo"], &[MBID_Y]),
+        );
+        rig.put(
+            "X/01.flac",
+            "Album X",
+            plain(&["Foo"]),
+            listed(&["Foo"], &[MBID_X]),
+        );
+        rig.scan().await;
+        let y = rig.track_artist("Y/01.flac", 0);
+        let x = rig.track_artist("X/01.flac", 0);
+        assert_ne!(x, y, "{case}");
+        assert_eq!(rig.album_artist("X/01.flac"), (x.clone(), x), "{case}");
+    }
+
+    // One file carrying another artist's id (a copy-paste slip) lands on
+    // that artist's row but does not rename it while its own files use its
+    // name.
+    {
+        let case = "one stray id";
+        let rig = ArtistRig::new("artist-stray-id");
+        let bar = listed(&["Bar"], &[MBID_X]);
+        rig.put("B/01.flac", "Album B", bar, bar);
+        rig.put("B/02.flac", "Album B", bar, bar);
+        let foo = listed(&["Foo"], &[MBID_X]);
+        rig.put("F/01.flac", "Album F", foo, foo);
+        rig.scan().await;
+        let bar_row = rig.track_artist("B/01.flac", 0);
+        assert_eq!(rig.track_artist("F/01.flac", 0), bar_row, "{case}");
+        assert_eq!(rig.name(&bar_row), "Bar", "{case}");
+    }
+
+    // One file whose album artist "Jay" has id z and whose track artist
+    // "Jay" has id x credits two rows: one file never puts two ids on one
+    // row.
+    {
+        let case = "two ids in one file";
+        let rig = ArtistRig::new("artist-two-ids-one-file");
+        rig.put(
+            "K/01.flac",
+            "Album K",
+            listed(&["Jay"], &[MBID_Z]),
+            listed(&["Jay"], &[MBID_X]),
+        );
+        rig.scan().await;
+        let (album, _) = rig.album_artist("K/01.flac");
+        let track = rig.track_artist("K/01.flac", 0);
+        assert_ne!(album, track, "{case}");
+    }
+
+    // A file carrying the id the app linked a row to lands on that row
+    // under the file's name, and the row takes the name.
+    {
+        let case = "the automatically linked id";
+        let rig = ArtistRig::new("artist-automatic-lands");
+        rig.put("A/01.flac", "Album A", plain(&["Oh"]), plain(&["Oh"]));
+        rig.scan().await;
+        let linked = rig.track_artist("A/01.flac", 0);
+        rig.link_by(&linked, MBID_X, "automatic");
+        let pe = listed(&["Pe"], &[MBID_X]);
+        rig.put("A/01.flac", "Album A", pe, pe);
+        rig.scan().await;
+        assert_eq!(rig.track_artist("A/01.flac", 0), linked, "{case}");
+        assert_eq!(
+            rig.album_artist("A/01.flac"),
+            (linked.clone(), linked.clone()),
+            "{case}"
+        );
+        assert_eq!(rig.name(&linked), "Pe", "{case}");
+    }
+
+    // A file named like a row the app linked, carrying another id, does not
+    // land on that row.
+    let case = "another id than the automatic link";
+    let rig = ArtistRig::new("artist-automatic-other");
+    rig.put("A/01.flac", "Album A", plain(&["Oh"]), plain(&["Oh"]));
     rig.scan().await;
-    let pe = rig.track_artist("P/01.flac", 0);
-    assert_eq!(rig.name(&pe), "Pe");
-    assert_eq!(rig.album_artist("P/01.flac").0, pe);
-    assert_eq!(rig.name(&rig.track_artist("P/01.flac", 1)), "Cue");
-    assert_eq!(rig.name(&rig.track_artist("R/01.flac", 0)), "Ar");
-    assert_eq!(
-        rig.count("SELECT COUNT(*) FROM local_track_artists WHERE artist_mbid IS NOT NULL"),
-        0
-    );
+    let linked = rig.track_artist("A/01.flac", 0);
+    rig.link_by(&linked, MBID_X, "automatic");
+    let oh = listed(&["Oh"], &[MBID_Y]);
+    rig.put("B/01.flac", "Album B", oh, oh);
+    rig.scan().await;
+    assert_ne!(rig.track_artist("B/01.flac", 0), linked, "{case}");
+    assert_ne!(rig.album_artist("B/01.flac").0, linked, "{case}");
+    assert_eq!(rig.track_artist("A/01.flac", 0), linked, "{case}");
 }
 
 /// An album whose match is accepted, tagged with no artist ids, is
@@ -8710,66 +8789,6 @@ async fn a_changed_sort_name_keeps_one_artist_row() {
         settled,
         "unchanged credits leave the state alone"
     );
-}
-
-/// A Various Artists id proves nothing: the album credit takes the name
-/// row, keeps no id, and the Various Artists record is left alone.
-#[tokio::test]
-async fn a_various_artists_id_goes_by_name() {
-    let rig = ArtistRig::new("artist-various");
-    let sentinel = "SELECT row_revision FROM local_artists \
-                    WHERE id = '00000000-0000-4000-8000-000000000001'";
-    let before = rig.count(sentinel);
-    rig.put(
-        "V/01.flac",
-        "Album V",
-        listed(&["Various Artists"], &[VARIOUS_ARTISTS_MBID]),
-        listed(&["Vee"], &[MBID_X]),
-    );
-    rig.scan().await;
-    let (credit, album_artist) = rig.album_artist("V/01.flac");
-    assert_eq!(credit, album_artist);
-    assert_ne!(credit, "00000000-0000-4000-8000-000000000001");
-    assert_eq!(rig.name(&credit), "Various Artists");
-    assert_eq!(
-        rig.count("SELECT COUNT(*) FROM local_album_artists WHERE artist_mbid IS NOT NULL"),
-        0
-    );
-    assert_eq!(rig.count(sentinel), before);
-}
-
-/// A name change in a file without artist ids makes a new row, as it
-/// always has: names prove nothing. The album, kept by its release id,
-/// takes the new row as its artist along with its credit.
-#[tokio::test]
-async fn a_name_change_without_ids_makes_a_new_row() {
-    const RELEASE: &str = "bbbbbbbb-0000-4000-8000-000000000001";
-    let rig = ArtistRig::new("artist-renamed-plain");
-    rig.put_on(
-        "G/01.flac",
-        "Album G",
-        Some(RELEASE),
-        plain(&["Ex"]),
-        plain(&["Ex"]),
-    );
-    rig.scan().await;
-    let old = rig.track_artist("G/01.flac", 0);
-    let album = "SELECT local_album_id FROM local_tracks WHERE relative_path = 'G/01.flac'";
-    let before = rig.text(album);
-    rig.put_on(
-        "G/01.flac",
-        "Album G",
-        Some(RELEASE),
-        plain(&["Wy"]),
-        plain(&["Wy"]),
-    );
-    rig.scan().await;
-    let new = rig.track_artist("G/01.flac", 0);
-    assert_ne!(new, old);
-    assert_eq!(rig.name(&new), "Wy");
-    assert_eq!(rig.name(&old), "Ex");
-    assert_eq!(rig.text(album), before, "the same album");
-    assert_eq!(rig.album_artist("G/01.flac"), (new.clone(), new));
 }
 
 /// One side of a file naming `name` with this sort name and no id.
@@ -8882,119 +8901,185 @@ async fn a_sort_name_change_carries_the_old_row_over() {
     );
 }
 
-/// A retag that renames an artist, with no ids, leaves the old row and
-/// its favorite where they are and offers the two rows in the duplicate
-/// artists list, the new one as the record to keep.
+/// A rename without proof is offered in the duplicate artists list, never
+/// merged: the old row and its favorite stay where they are.
 #[tokio::test]
-async fn a_renamed_artist_is_offered_not_merged() {
-    let rig = ArtistRig::new("artist-follow-rename");
-    rig.put("A/01.flac", "Album A", plain(&["Oh"]), plain(&["Oh"]));
-    rig.scan().await;
-    let old = rig.track_artist("A/01.flac", 0);
-    rig.listen("listener", &old);
+async fn a_rename_without_proof_is_offered_not_merged() {
+    // A retag that renames an artist, with no ids: the two rows are offered,
+    // the new one as the record to keep.
+    {
+        let case = "renamed";
+        let rig = ArtistRig::new("artist-follow-rename");
+        rig.put("A/01.flac", "Album A", plain(&["Oh"]), plain(&["Oh"]));
+        rig.scan().await;
+        let old = rig.track_artist("A/01.flac", 0);
+        rig.listen("listener", &old);
 
-    rig.put("A/01.flac", "Album A", plain(&["Ox"]), plain(&["Ox"]));
-    rig.scan().await;
-    let new = rig.track_artist("A/01.flac", 0);
-    assert_ne!(new, old);
-    assert_eq!(rig.retired_into(&old), None);
-    assert_eq!(
-        rig.count(&format!(
-            "SELECT COUNT(*) FROM catalog_user_favorites WHERE item_id = '{old}'"
-        )),
-        1
-    );
-    assert_eq!(
-        open_groups(&rig),
-        vec![(
-            "credits_moved",
-            sorted_ids(&[&old, &new]),
-            Some(new.clone()),
-        )]
-    );
-}
-
-/// Moves of one pair recorded both by name and with an id are still one
-/// destination: the list offers the two rows once, the new one to keep.
-#[tokio::test]
-async fn a_pair_moved_by_name_and_by_id_is_one_destination() {
-    let rig = ArtistRig::new("artist-follow-both-kinds");
-    rig.put("A/01.flac", "Album A", plain(&["Oh"]), plain(&["Oh"]));
-    rig.scan().await;
-    let old = rig.track_artist("A/01.flac", 0);
-    rig.listen("listener", &old);
-    rig.put("A/01.flac", "Album A", plain(&["Ox"]), plain(&["Ox"]));
-    rig.scan().await;
-    let new = rig.track_artist("A/01.flac", 0);
-    rig.run(&format!(
-        "INSERT INTO local_artist_merge_candidates (id, left_artist_id, right_artist_id, \
-         reason_code, created_at, updated_at) \
-         VALUES ('moved-with-id:{old}:{new}', '{old}', '{new}', 'CREDITS_MOVED_WITH_ID', 1, 1)"
-    ));
-
-    assert_eq!(
-        open_groups(&rig),
-        vec![(
-            "credits_moved",
-            sorted_ids(&[&old, &new]),
-            Some(new.clone()),
-        )]
-    );
-}
-
-/// A retag that splits an artist's albums between two sort names leaves
-/// the old row unmerged, and the list offers it with both new rows as one
-/// group.
-#[tokio::test]
-async fn credits_split_across_two_rows_are_offered_as_one_group() {
-    let rig = ArtistRig::new("artist-follow-split");
-    rig.put("A/01.flac", "Album A", plain(&["Oh"]), plain(&["Oh"]));
-    rig.put("B/01.flac", "Album B", plain(&["Oh"]), plain(&["Oh"]));
-    rig.scan().await;
-    let old = rig.track_artist("A/01.flac", 0);
-    rig.listen("listener", &old);
-
-    let one = sorted(&["Oh"], "Oh, The");
-    let two = sorted(&["Oh"], "Oh Band");
-    rig.put("A/01.flac", "Album A", one, one);
-    rig.put("B/01.flac", "Album B", two, two);
-    rig.scan().await;
-    let first = rig.track_artist("A/01.flac", 0);
-    let second = rig.track_artist("B/01.flac", 0);
-    assert_ne!(first, second);
-    assert_eq!(rig.retired_into(&old), None);
-    let groups = open_groups(&rig);
-    assert_eq!(groups.len(), 1, "{groups:?}");
-    assert_eq!(groups[0].1, sorted_ids(&[&old, &first, &second]));
-}
-
-/// A sort-name change of a row a person linked is not merged by name;
-/// the list offers the old row with the new one.
-#[tokio::test]
-async fn a_linked_row_left_empty_by_a_sort_change_is_offered() {
-    let rig = ArtistRig::new("artist-follow-linked");
-    let tag = |sort: &'static str| {
-        rig.put(
-            "A/01.flac",
-            "Album A",
-            sorted(&["Oh"], sort),
-            sorted(&["Oh"], sort),
+        rig.put("A/01.flac", "Album A", plain(&["Ox"]), plain(&["Ox"]));
+        rig.scan().await;
+        let new = rig.track_artist("A/01.flac", 0);
+        assert_ne!(new, old, "{case}");
+        assert_eq!(rig.retired_into(&old), None, "{case}");
+        assert_eq!(
+            rig.count(&format!(
+                "SELECT COUNT(*) FROM catalog_user_favorites WHERE item_id = '{old}'"
+            )),
+            1,
+            "{case}"
         );
-    };
-    tag("Oh, The");
-    rig.scan().await;
-    let old = rig.track_artist("A/01.flac", 0);
-    rig.listen("listener", &old);
-    rig.link(&old, MBID_X);
+        assert_eq!(
+            open_groups(&rig),
+            vec![(
+                "credits_moved",
+                sorted_ids(&[&old, &new]),
+                Some(new.clone()),
+            )],
+            "{case}"
+        );
+    }
 
-    tag("Oh Band");
+    // Moves of one pair recorded both by name and with an id are still one
+    // destination: the list offers the two rows once, the new one to keep.
+    {
+        let case = "moved by name and by id";
+        let rig = ArtistRig::new("artist-follow-both-kinds");
+        rig.put("A/01.flac", "Album A", plain(&["Oh"]), plain(&["Oh"]));
+        rig.scan().await;
+        let old = rig.track_artist("A/01.flac", 0);
+        rig.listen("listener", &old);
+        rig.put("A/01.flac", "Album A", plain(&["Ox"]), plain(&["Ox"]));
+        rig.scan().await;
+        let new = rig.track_artist("A/01.flac", 0);
+        rig.run(&format!(
+            "INSERT INTO local_artist_merge_candidates (id, left_artist_id, right_artist_id, \
+             reason_code, created_at, updated_at) \
+             VALUES ('moved-with-id:{old}:{new}', '{old}', '{new}', 'CREDITS_MOVED_WITH_ID', 1, 1)"
+        ));
+
+        assert_eq!(
+            open_groups(&rig),
+            vec![(
+                "credits_moved",
+                sorted_ids(&[&old, &new]),
+                Some(new.clone()),
+            )],
+            "{case}"
+        );
+    }
+
+    // A retag that splits an artist's albums between two sort names leaves
+    // the old row unmerged, and the list offers it with both new rows as one
+    // group.
+    {
+        let case = "split across two rows";
+        let rig = ArtistRig::new("artist-follow-split");
+        rig.put("A/01.flac", "Album A", plain(&["Oh"]), plain(&["Oh"]));
+        rig.put("B/01.flac", "Album B", plain(&["Oh"]), plain(&["Oh"]));
+        rig.scan().await;
+        let old = rig.track_artist("A/01.flac", 0);
+        rig.listen("listener", &old);
+
+        let one = sorted(&["Oh"], "Oh, The");
+        let two = sorted(&["Oh"], "Oh Band");
+        rig.put("A/01.flac", "Album A", one, one);
+        rig.put("B/01.flac", "Album B", two, two);
+        rig.scan().await;
+        let first = rig.track_artist("A/01.flac", 0);
+        let second = rig.track_artist("B/01.flac", 0);
+        assert_ne!(first, second, "{case}");
+        assert_eq!(rig.retired_into(&old), None, "{case}");
+        let groups = open_groups(&rig);
+        assert_eq!(groups.len(), 1, "{case}: {groups:?}");
+        assert_eq!(groups[0].1, sorted_ids(&[&old, &first, &second]), "{case}");
+    }
+
+    // A sort-name change of a row a person linked is not merged by name;
+    // the list offers the old row with the new one.
+    {
+        let case = "a linked row left empty by a sort change";
+        let rig = ArtistRig::new("artist-follow-linked");
+        let tag = |sort: &'static str| {
+            rig.put(
+                "A/01.flac",
+                "Album A",
+                sorted(&["Oh"], sort),
+                sorted(&["Oh"], sort),
+            );
+        };
+        tag("Oh, The");
+        rig.scan().await;
+        let old = rig.track_artist("A/01.flac", 0);
+        rig.listen("listener", &old);
+        rig.link(&old, MBID_X);
+
+        tag("Oh Band");
+        rig.scan().await;
+        let new = rig.track_artist("A/01.flac", 0);
+        assert_ne!(new, old, "{case}");
+        assert_eq!(rig.retired_into(&old), None, "{case}");
+        let groups = open_groups(&rig);
+        assert_eq!(groups.len(), 1, "{case}: {groups:?}");
+        assert_eq!(groups[0].1, sorted_ids(&[&old, &new]), "{case}");
+    }
+
+    // A retag from "Oh" to "Ox" with a featured artist records the move by
+    // position: Oh is not merged, and the list offers Oh and Ox as one group.
+    {
+        let case = "renamed with a featured artist";
+        let rig = ArtistRig::new("artist-follow-rename-featured");
+        rig.put("A/01.flac", "Album A", plain(&["Oh"]), plain(&["Oh"]));
+        rig.scan().await;
+        let old = rig.track_artist("A/01.flac", 0);
+        rig.listen("listener", &old);
+
+        let featured = listed(&["Ox", "Y"], &[]);
+        rig.put("A/01.flac", "Album A", featured, featured);
+        rig.scan().await;
+        let new = rig.track_artist("A/01.flac", 0);
+        assert_eq!(rig.name(&new), "Ox", "{case}");
+        assert_eq!(rig.retired_into(&old), None, "{case}");
+        assert_eq!(
+            open_groups(&rig),
+            vec![(
+                "credits_moved",
+                sorted_ids(&[&old, &new]),
+                Some(new.clone()),
+            )],
+            "{case}"
+        );
+    }
+
+    // A name change in a file without artist ids makes a new row, as it
+    // always has: names prove nothing. The album, kept by its release id,
+    // takes the new row as its artist along with its credit.
+    const RELEASE: &str = "bbbbbbbb-0000-4000-8000-000000000001";
+    let case = "a name change without ids";
+    let rig = ArtistRig::new("artist-renamed-plain");
+    rig.put_on(
+        "G/01.flac",
+        "Album G",
+        Some(RELEASE),
+        plain(&["Ex"]),
+        plain(&["Ex"]),
+    );
     rig.scan().await;
-    let new = rig.track_artist("A/01.flac", 0);
-    assert_ne!(new, old);
-    assert_eq!(rig.retired_into(&old), None);
-    let groups = open_groups(&rig);
-    assert_eq!(groups.len(), 1, "{groups:?}");
-    assert_eq!(groups[0].1, sorted_ids(&[&old, &new]));
+    let old = rig.track_artist("G/01.flac", 0);
+    let album = "SELECT local_album_id FROM local_tracks WHERE relative_path = 'G/01.flac'";
+    let before = rig.text(album);
+    rig.put_on(
+        "G/01.flac",
+        "Album G",
+        Some(RELEASE),
+        plain(&["Wy"]),
+        plain(&["Wy"]),
+    );
+    rig.scan().await;
+    let new = rig.track_artist("G/01.flac", 0);
+    assert_ne!(new, old, "{case}");
+    assert_eq!(rig.name(&new), "Wy", "{case}");
+    assert_eq!(rig.name(&old), "Ex", "{case}");
+    assert_eq!(rig.text(album), before, "{case}: the same album");
+    assert_eq!(rig.album_artist("G/01.flac"), (new.clone(), new), "{case}");
 }
 
 /// A retag from "Oh" to "OH" with a featured artist records the credit
@@ -9044,32 +9129,6 @@ async fn a_case_change_with_a_featured_artist_carries_the_old_row_over() {
              ON t.local_album_id = c.local_album_id WHERE t.relative_path = 'A/01.flac'"
         ),
         1
-    );
-}
-
-/// A retag from "Oh" to "Ox" with a featured artist records the move by
-/// position: Oh is not merged, and the list offers Oh and Ox as one group.
-#[tokio::test]
-async fn a_rename_with_a_featured_artist_is_offered_not_merged() {
-    let rig = ArtistRig::new("artist-follow-rename-featured");
-    rig.put("A/01.flac", "Album A", plain(&["Oh"]), plain(&["Oh"]));
-    rig.scan().await;
-    let old = rig.track_artist("A/01.flac", 0);
-    rig.listen("listener", &old);
-
-    let featured = listed(&["Ox", "Y"], &[]);
-    rig.put("A/01.flac", "Album A", featured, featured);
-    rig.scan().await;
-    let new = rig.track_artist("A/01.flac", 0);
-    assert_eq!(rig.name(&new), "Ox");
-    assert_eq!(rig.retired_into(&old), None);
-    assert_eq!(
-        open_groups(&rig),
-        vec![(
-            "credits_moved",
-            sorted_ids(&[&old, &new]),
-            Some(new.clone()),
-        )]
     );
 }
 
@@ -9147,31 +9206,6 @@ async fn a_moved_track_continues_whichever_folder_is_read_first() {
     }
 }
 
-/// Two artists who share a name but not their MusicBrainz id get a row
-/// each.
-#[tokio::test]
-async fn two_artists_with_one_name_get_two_rows() {
-    let rig = ArtistRig::new("artist-same-name");
-    rig.put(
-        "J1/01.flac",
-        "Album J1",
-        listed(&["Jay"], &[MBID_X]),
-        listed(&["Jay"], &[MBID_X]),
-    );
-    rig.put(
-        "J2/01.flac",
-        "Album J2",
-        listed(&["Jay"], &[MBID_Y]),
-        listed(&["Jay"], &[MBID_Y]),
-    );
-    rig.scan().await;
-    let one = rig.track_artist("J1/01.flac", 0);
-    let two = rig.track_artist("J2/01.flac", 0);
-    assert_ne!(one, two);
-    assert_eq!(rig.name(&two), "Jay");
-    assert_eq!(rig.album_artist("J2/01.flac"), (two.clone(), two));
-}
-
 /// After a person merges artist A (files with id a) into artist B
 /// (linked to b), files of both read again credit B, and no row is made
 /// for A's name or id.
@@ -9207,121 +9241,66 @@ async fn a_persons_merge_holds_when_the_files_are_read_again() {
     assert_eq!(rig.count("SELECT COUNT(*) FROM local_artists"), rows);
 }
 
-/// ARTISTS with id x and only ALBUMARTIST, while the row the name keys to
-/// is proven to be another artist y: the album credit and the album's
-/// artist go with the track credit to x's row, not to y's by name.
-#[tokio::test]
-async fn an_album_artist_without_an_id_follows_the_track_credit() {
-    let rig = ArtistRig::new("artist-album-side");
-    rig.put(
-        "Y/01.flac",
-        "Album Y",
-        listed(&["Foo"], &[MBID_Y]),
-        listed(&["Foo"], &[MBID_Y]),
-    );
-    rig.put(
-        "X/01.flac",
-        "Album X",
-        plain(&["Foo"]),
-        listed(&["Foo"], &[MBID_X]),
-    );
-    rig.scan().await;
-    let y = rig.track_artist("Y/01.flac", 0);
-    let x = rig.track_artist("X/01.flac", 0);
-    assert_ne!(x, y);
-    assert_eq!(rig.album_artist("X/01.flac"), (x.clone(), x));
-}
-
-/// One file carrying another artist's id (a copy-paste slip) lands on
-/// that artist's row but does not rename it while its own files use its
-/// name.
-#[tokio::test]
-async fn one_stray_id_does_not_rename_an_artist() {
-    let rig = ArtistRig::new("artist-stray-id");
-    let bar = listed(&["Bar"], &[MBID_X]);
-    rig.put("B/01.flac", "Album B", bar, bar);
-    rig.put("B/02.flac", "Album B", bar, bar);
-    let foo = listed(&["Foo"], &[MBID_X]);
-    rig.put("F/01.flac", "Album F", foo, foo);
-    rig.scan().await;
-    let bar_row = rig.track_artist("B/01.flac", 0);
-    assert_eq!(rig.track_artist("F/01.flac", 0), bar_row);
-    assert_eq!(rig.name(&bar_row), "Bar");
-}
-
 /// An artist proven only by its own files (no link) keeps its row when
 /// every file is renamed with its id: the row takes the new name and
-/// sort name, and its favorite and play stay with it.
+/// sort name, and its favorite and play stay with it. Renamed by an outside
+/// tagger that also moves its files (new folder, new album artist), it
+/// takes the new name in the scan that reads them: the old paths, still
+/// indexed until that scan ends, do not hold the old name, and neither does
+/// a file of the artist already missing.
 #[tokio::test]
-async fn a_renamed_artist_proven_by_its_files_keeps_its_row() {
-    let rig = ArtistRig::new("artist-renamed-by-id");
-    let old = listed(&["Old"], &[MBID_X]);
-    rig.put("R/01.flac", "Album R", old, old);
-    rig.put("R/02.flac", "Album R", old, old);
-    rig.scan().await;
-    let artist = rig.track_artist("R/01.flac", 0);
-    rig.listen("listener", &artist);
-    let new = Side {
-        names: &["New"],
-        ids: &[MBID_X],
-        sort: Some("New, The"),
-        listed: true,
-    };
-    rig.put("R/01.flac", "Album R", new, new);
-    rig.put("R/02.flac", "Album R", new, new);
-    rig.scan().await;
-    assert_eq!(rig.track_artist("R/01.flac", 0), artist);
-    assert_eq!(rig.track_artist("R/02.flac", 0), artist);
-    assert_eq!(
-        rig.album_artist("R/02.flac"),
-        (artist.clone(), artist.clone())
-    );
-    assert_eq!(
-        rig.text(&format!(
-            "SELECT display_name || ' / ' || sort_name FROM local_artists WHERE id = '{artist}'"
-        )),
-        Some("New / New, The".to_owned())
-    );
-    assert_eq!(
-        rig.count(&format!(
-            "SELECT (SELECT COUNT(*) FROM catalog_user_favorites WHERE item_id = '{artist}') \
-             + (SELECT COUNT(*) FROM library_play_history WHERE local_artist_id = '{artist}')"
-        )),
-        2
-    );
-    assert_eq!(
-        rig.count(
-            "SELECT COUNT(*) FROM local_artists WHERE display_name = 'Old' \
-             AND retired_into_artist_id IS NULL"
-        ),
-        0
-    );
-}
+async fn an_artist_renamed_with_its_id_keeps_its_row() {
+    {
+        let case = "renamed in place";
+        let rig = ArtistRig::new("artist-renamed-by-id");
+        let old = listed(&["Old"], &[MBID_X]);
+        rig.put("R/01.flac", "Album R", old, old);
+        rig.put("R/02.flac", "Album R", old, old);
+        rig.scan().await;
+        let artist = rig.track_artist("R/01.flac", 0);
+        rig.listen("listener", &artist);
+        let new = Side {
+            names: &["New"],
+            ids: &[MBID_X],
+            sort: Some("New, The"),
+            listed: true,
+        };
+        rig.put("R/01.flac", "Album R", new, new);
+        rig.put("R/02.flac", "Album R", new, new);
+        rig.scan().await;
+        assert_eq!(rig.track_artist("R/01.flac", 0), artist, "{case}");
+        assert_eq!(rig.track_artist("R/02.flac", 0), artist, "{case}");
+        assert_eq!(
+            rig.album_artist("R/02.flac"),
+            (artist.clone(), artist.clone()),
+            "{case}"
+        );
+        assert_eq!(
+            rig.text(&format!(
+                "SELECT display_name || ' / ' || sort_name FROM local_artists WHERE id = '{artist}'"
+            )),
+            Some("New / New, The".to_owned()),
+            "{case}"
+        );
+        assert_eq!(
+            rig.count(&format!(
+                "SELECT (SELECT COUNT(*) FROM catalog_user_favorites WHERE item_id = '{artist}') \
+                 + (SELECT COUNT(*) FROM library_play_history WHERE local_artist_id = '{artist}')"
+            )),
+            2,
+            "{case}"
+        );
+        assert_eq!(
+            rig.count(
+                "SELECT COUNT(*) FROM local_artists WHERE display_name = 'Old' \
+                 AND retired_into_artist_id IS NULL"
+            ),
+            0,
+            "{case}"
+        );
+    }
 
-/// One file whose album artist "Jay" has id z and whose track artist
-/// "Jay" has id x credits two rows: one file never puts two ids on one
-/// row.
-#[tokio::test]
-async fn one_file_never_puts_two_ids_on_one_row() {
-    let rig = ArtistRig::new("artist-two-ids-one-file");
-    rig.put(
-        "K/01.flac",
-        "Album K",
-        listed(&["Jay"], &[MBID_Z]),
-        listed(&["Jay"], &[MBID_X]),
-    );
-    rig.scan().await;
-    let (album, _) = rig.album_artist("K/01.flac");
-    let track = rig.track_artist("K/01.flac", 0);
-    assert_ne!(album, track);
-}
-
-/// An artist renamed by an outside tagger that also moves its files (new
-/// folder, new album artist) takes the new name in the scan that reads
-/// them: the old paths, still indexed until that scan ends, do not hold
-/// the old name, and neither does a file of the artist already missing.
-#[tokio::test]
-async fn an_artist_renamed_and_moved_by_a_tagger_takes_the_new_name() {
+    let case = "renamed and moved by a tagger";
     let rig = ArtistRig::new("artist-renamed-moved");
     let foo = listed(&["Foo"], &[MBID_X]);
     rig.put("Foo/A/01.flac", "Album A", foo, foo);
@@ -9333,7 +9312,8 @@ async fn an_artist_renamed_and_moved_by_a_tagger_takes_the_new_name() {
     rig.scan().await;
     assert_eq!(
         rig.text("SELECT availability FROM local_tracks WHERE relative_path = 'Foo/B/01.flac'"),
-        Some("missing".to_owned())
+        Some("missing".to_owned()),
+        "{case}"
     );
 
     let bar = listed(&["Bar"], &[MBID_X]);
@@ -9347,9 +9327,9 @@ async fn an_artist_renamed_and_moved_by_a_tagger_takes_the_new_name() {
         rig.put(&format!("Bar/A/{file}"), "Album A", bar, bar);
     }
     rig.scan().await;
-    assert_eq!(rig.track_artist("Bar/A/01.flac", 0), artist);
-    assert_eq!(rig.track_artist("Bar/A/02.flac", 0), artist);
-    assert_eq!(rig.name(&artist), "Bar");
+    assert_eq!(rig.track_artist("Bar/A/01.flac", 0), artist, "{case}");
+    assert_eq!(rig.track_artist("Bar/A/02.flac", 0), artist, "{case}");
+    assert_eq!(rig.name(&artist), "Bar", "{case}");
 }
 
 /// A row the app linked from its matched album takes in, at the run end,
@@ -9392,91 +9372,48 @@ async fn an_automatic_link_merges_only_when_fully_proven() {
 
 /// A row proven only by its matched album and a row proven only by its
 /// files, neither linked, are merged at one run end, the younger into the
-/// older.
+/// older. With a file of the older row on an unmatched album, that row is
+/// not proven on every credit, so it takes in no other row.
 #[tokio::test]
 async fn rows_proven_by_an_album_and_by_files_merge_at_the_run_end() {
-    let rig = ArtistRig::new("artist-proof-merge");
-    rig.put("A/01.flac", "Album A", plain(&["Pe"]), plain(&["Pe"]));
-    rig.scan().await;
-    let older = rig.track_artist("A/01.flac", 0);
-    rig.match_album("A/01.flac", MBID_X, "Pe");
-    // As when another row held the id while the album was matched.
-    rig.run(&format!(
-        "DELETE FROM local_artist_external_identities WHERE local_artist_id = '{older}'"
-    ));
-    let en = listed(&["En"], &[MBID_X]);
-    rig.put("B/01.flac", "Album B", en, en);
-    rig.scan().await;
-    let younger = rig
-        .text("SELECT id FROM local_artists WHERE display_name = 'En'")
-        .expect("the files' row");
-    assert_ne!(younger, older);
-    assert_eq!(rig.retired_into(&younger), Some(older.clone()));
-    assert_eq!(rig.retired_into(&older), None);
-    assert_eq!(rig.track_artist("B/01.flac", 0), older);
-    assert_eq!(rig.merges(), 1);
-}
-
-/// The same, with a file of the older row on an unmatched album: that row
-/// is not proven on every credit, so it takes in no other row.
-#[tokio::test]
-async fn a_row_its_album_proves_only_in_part_takes_in_no_other_row() {
-    let rig = ArtistRig::new("artist-proof-partial");
-    rig.put("A/01.flac", "Album A", plain(&["Pe"]), plain(&["Pe"]));
-    rig.put("U/01.flac", "Album U", plain(&["Pe"]), plain(&["Pe"]));
-    rig.scan().await;
-    let older = rig.track_artist("A/01.flac", 0);
-    assert_eq!(rig.track_artist("U/01.flac", 0), older);
-    rig.match_album("A/01.flac", MBID_X, "Pe");
-    rig.run(&format!(
-        "DELETE FROM local_artist_external_identities WHERE local_artist_id = '{older}'"
-    ));
-    let en = listed(&["En"], &[MBID_X]);
-    rig.put("B/01.flac", "Album B", en, en);
-    rig.scan().await;
-    let younger = rig
-        .text("SELECT id FROM local_artists WHERE display_name = 'En'")
-        .expect("the files' row");
-    assert_eq!(rig.retired_into(&younger), None);
-    assert_eq!(rig.retired_into(&older), None);
-    assert_eq!(rig.merges(), 0);
-}
-
-/// A file carrying the id the app linked a row to lands on that row
-/// under the file's name, and the row takes the name.
-#[tokio::test]
-async fn a_file_with_an_automatically_linked_id_lands_on_its_row() {
-    let rig = ArtistRig::new("artist-automatic-lands");
-    rig.put("A/01.flac", "Album A", plain(&["Oh"]), plain(&["Oh"]));
-    rig.scan().await;
-    let linked = rig.track_artist("A/01.flac", 0);
-    rig.link_by(&linked, MBID_X, "automatic");
-    let pe = listed(&["Pe"], &[MBID_X]);
-    rig.put("A/01.flac", "Album A", pe, pe);
-    rig.scan().await;
-    assert_eq!(rig.track_artist("A/01.flac", 0), linked);
-    assert_eq!(
-        rig.album_artist("A/01.flac"),
-        (linked.clone(), linked.clone())
-    );
-    assert_eq!(rig.name(&linked), "Pe");
-}
-
-/// A file named like a row the app linked, carrying another id, does not
-/// land on that row.
-#[tokio::test]
-async fn a_file_with_another_id_stays_off_an_automatically_linked_row() {
-    let rig = ArtistRig::new("artist-automatic-other");
-    rig.put("A/01.flac", "Album A", plain(&["Oh"]), plain(&["Oh"]));
-    rig.scan().await;
-    let linked = rig.track_artist("A/01.flac", 0);
-    rig.link_by(&linked, MBID_X, "automatic");
-    let oh = listed(&["Oh"], &[MBID_Y]);
-    rig.put("B/01.flac", "Album B", oh, oh);
-    rig.scan().await;
-    assert_ne!(rig.track_artist("B/01.flac", 0), linked);
-    assert_ne!(rig.album_artist("B/01.flac").0, linked);
-    assert_eq!(rig.track_artist("A/01.flac", 0), linked);
+    for partly in [false, true] {
+        let case = if partly { "proven in part" } else { "proven" };
+        let rig = ArtistRig::new(if partly {
+            "artist-proof-partial"
+        } else {
+            "artist-proof-merge"
+        });
+        rig.put("A/01.flac", "Album A", plain(&["Pe"]), plain(&["Pe"]));
+        if partly {
+            rig.put("U/01.flac", "Album U", plain(&["Pe"]), plain(&["Pe"]));
+        }
+        rig.scan().await;
+        let older = rig.track_artist("A/01.flac", 0);
+        if partly {
+            assert_eq!(rig.track_artist("U/01.flac", 0), older, "{case}");
+        }
+        rig.match_album("A/01.flac", MBID_X, "Pe");
+        // As when another row held the id while the album was matched.
+        rig.run(&format!(
+            "DELETE FROM local_artist_external_identities WHERE local_artist_id = '{older}'"
+        ));
+        let en = listed(&["En"], &[MBID_X]);
+        rig.put("B/01.flac", "Album B", en, en);
+        rig.scan().await;
+        let younger = rig
+            .text("SELECT id FROM local_artists WHERE display_name = 'En'")
+            .expect("the files' row");
+        assert_eq!(rig.retired_into(&older), None, "{case}");
+        if partly {
+            assert_eq!(rig.retired_into(&younger), None, "{case}");
+            assert_eq!(rig.merges(), 0, "{case}");
+        } else {
+            assert_ne!(younger, older, "{case}");
+            assert_eq!(rig.retired_into(&younger), Some(older.clone()), "{case}");
+            assert_eq!(rig.track_artist("B/01.flac", 0), older, "{case}");
+            assert_eq!(rig.merges(), 1, "{case}");
+        }
+    }
 }
 
 /// How a hands-off brief's old album is kept from the app.
@@ -9674,7 +9611,8 @@ async fn moved_story(name: &str, story: Move) -> (RegroupRig, String, String) {
 /// New files that appear beside an album a person keeps from the app, in
 /// the scan that sees that album's files go, are held from automatic
 /// writes as that album's replacement; when the old album is empty and
-/// the only one they fit, the two are offered as a pair.
+/// the only one they fit, the two are offered as a pair. Lifting any one
+/// condition of that story holds and records nothing.
 #[tokio::test]
 async fn new_files_beside_a_hands_off_album_are_held() {
     let rows = [
@@ -9744,46 +9682,9 @@ async fn new_files_beside_a_hands_off_album_are_held() {
         assert_eq!(rig.retired_into(&old), None, "{case}");
     }
 
-    // Half of twenty files retagged and renamed beside, the rest deleted:
-    // the mass-missing guard holds the scope back and the old rows stay
-    // indexed. Held, with no pair while the old album still has rows.
-    let (mut rig, _, files) = kept_album("hands-off-held-guard", 20).await;
-    let after = rig.after.clone();
-    let landed = rig.move_into(&files[..10], "x/new", "", &after, None);
-    for file in &files[10..] {
-        std::fs::remove_file(rig.root.join(file)).expect("removed");
-    }
-    rig.scan().await;
-    assert_eq!(
-        rig.count(
-            "SELECT COUNT(*) FROM library_scan_failures WHERE failure_code = 'MASS_MISSING_GUARD'"
-        ),
-        1,
-        "the guard held the scope back"
-    );
-    assert_eq!(rig.held(), vec![rig.album_of(&landed[0])], "guard");
-    assert!(rig.hands_off_pairs().is_empty(), "guard");
-
-    // Held once: a second run end writes nothing more, and a hand-back
-    // (the mark lifted) is not undone by a later scan.
-    let (rig, old, new) = moved_story("hands-off-held-once", Move::default()).await;
-    assert_eq!(rig.hands_off_actions(), 1);
-    rig.scan().await;
-    assert_eq!(rig.hands_off_actions(), 1);
-    assert_eq!(rig.hands_off_pairs(), vec![pair(&old, &new)]);
-    rig.run(&format!(
-        "DELETE FROM library_album_takeovers WHERE local_album_id = '{new}'"
-    ));
-    rig.scan().await;
-    assert!(rig.held().is_empty());
-    assert_eq!(rig.hands_off_actions(), 1);
-}
-
-/// Each row lifts one condition of the plain story ("moved beside it"),
-/// which holds: nothing is held or recorded.
-#[tokio::test]
-async fn new_files_are_not_held_without_the_signal() {
-    let rows = [
+    // Each row lifts one condition of the plain story ("moved beside it"),
+    // which holds: nothing is held or recorded.
+    let not_held = [
         (
             "an automatic match, nothing kept",
             Move {
@@ -9821,12 +9722,46 @@ async fn new_files_are_not_held_without_the_signal() {
             },
         ),
     ];
-    for (index, (case, story)) in rows.into_iter().enumerate() {
+    for (index, (case, story)) in not_held.into_iter().enumerate() {
         let (rig, _, _) = moved_story(&format!("hands-off-not-{index}"), story).await;
         assert!(rig.held().is_empty(), "{case}");
         assert!(rig.hands_off_pairs().is_empty(), "{case}");
         assert_eq!(rig.hands_off_actions(), 0, "{case}");
     }
+
+    // Half of twenty files retagged and renamed beside, the rest deleted:
+    // the mass-missing guard holds the scope back and the old rows stay
+    // indexed. Held, with no pair while the old album still has rows.
+    let (mut rig, _, files) = kept_album("hands-off-held-guard", 20).await;
+    let after = rig.after.clone();
+    let landed = rig.move_into(&files[..10], "x/new", "", &after, None);
+    for file in &files[10..] {
+        std::fs::remove_file(rig.root.join(file)).expect("removed");
+    }
+    rig.scan().await;
+    assert_eq!(
+        rig.count(
+            "SELECT COUNT(*) FROM library_scan_failures WHERE failure_code = 'MASS_MISSING_GUARD'"
+        ),
+        1,
+        "the guard held the scope back"
+    );
+    assert_eq!(rig.held(), vec![rig.album_of(&landed[0])], "guard");
+    assert!(rig.hands_off_pairs().is_empty(), "guard");
+
+    // Held once: a second run end writes nothing more, and a hand-back
+    // (the mark lifted) is not undone by a later scan.
+    let (rig, old, new) = moved_story("hands-off-held-once", Move::default()).await;
+    assert_eq!(rig.hands_off_actions(), 1);
+    rig.scan().await;
+    assert_eq!(rig.hands_off_actions(), 1);
+    assert_eq!(rig.hands_off_pairs(), vec![pair(&old, &new)]);
+    rig.run(&format!(
+        "DELETE FROM library_album_takeovers WHERE local_album_id = '{new}'"
+    ));
+    rig.scan().await;
+    assert!(rig.held().is_empty());
+    assert_eq!(rig.hands_off_actions(), 1);
 }
 
 /// A hands-off album of `count` files in `x/old`, in a rig with a filler
@@ -10957,43 +10892,49 @@ fn waiting_scopes(library: &LibrarySetup) -> Vec<(String, String)> {
 
 /// Changing a file in one of a thousand folders asks, once the batching
 /// window has passed, for one scan of that folder alone, however many
-/// changes the burst held.
+/// changes the burst held. What the watcher saw outlives a restart: with
+/// nothing changed the first poll asks for no scan, and a change made while
+/// the server was down is still found.
 #[tokio::test]
-async fn the_folder_watcher_scans_only_the_folder_that_changed() {
-    let scratch = ScratchDir::new("watch-one-folder");
-    let music = scratch.join("music");
-    for n in 0..1000 {
-        let folder = music.join(format!("Artist/{n:04}"));
-        std::fs::create_dir_all(&folder).expect("mkdir");
-        std::fs::write(folder.join("cover.jpg"), b"x").expect("write");
+async fn the_folder_watcher_scans_the_changed_folder_across_a_restart() {
+    {
+        let scratch = ScratchDir::new("watch-one-folder");
+        let music = scratch.join("music");
+        for n in 0..1000 {
+            let folder = music.join(format!("Artist/{n:04}"));
+            std::fs::create_dir_all(&folder).expect("mkdir");
+            std::fs::write(folder.join("cover.jpg"), b"x").expect("write");
+        }
+        let clock = Arc::new(droppedneedle_kernel::clock::ManualClock::at(
+            1_700_000_000_000,
+        ));
+        let (_platform, library) = watched(&scratch, clock.clone()).await;
+        let first = library.scans.watcher_tick().await;
+        assert!(
+            matches!(first, WatcherAction::Idle { .. }),
+            "one folder: {first:?}"
+        );
+
+        std::fs::write(music.join("Artist/0537/cover.jpg"), b"changed").expect("change");
+        let batching = library.scans.watcher_tick().await;
+        assert!(
+            matches!(batching, WatcherAction::Batching { .. }),
+            "one folder: {batching:?}"
+        );
+        std::fs::write(music.join("Artist/0537/notes.txt"), b"more").expect("change");
+        clock.advance(61_000);
+        assert_eq!(
+            library.scans.watcher_tick().await,
+            WatcherAction::Due,
+            "one folder"
+        );
+        assert_eq!(
+            waiting_scopes(&library),
+            [("music".to_owned(), "Artist/0537".to_owned())],
+            "one folder"
+        );
     }
-    let clock = Arc::new(droppedneedle_kernel::clock::ManualClock::at(
-        1_700_000_000_000,
-    ));
-    let (_platform, library) = watched(&scratch, clock.clone()).await;
-    let first = library.scans.watcher_tick().await;
-    assert!(matches!(first, WatcherAction::Idle { .. }), "{first:?}");
 
-    std::fs::write(music.join("Artist/0537/cover.jpg"), b"changed").expect("change");
-    let batching = library.scans.watcher_tick().await;
-    assert!(
-        matches!(batching, WatcherAction::Batching { .. }),
-        "{batching:?}"
-    );
-    std::fs::write(music.join("Artist/0537/notes.txt"), b"more").expect("change");
-    clock.advance(61_000);
-    assert_eq!(library.scans.watcher_tick().await, WatcherAction::Due);
-    assert_eq!(
-        waiting_scopes(&library),
-        [("music".to_owned(), "Artist/0537".to_owned())]
-    );
-}
-
-/// What the watcher saw outlives a restart: with nothing changed the first
-/// poll asks for no scan, and a change made while the server was down is
-/// still found.
-#[tokio::test]
-async fn the_folder_watcher_remembers_the_tree_across_a_restart() {
     let scratch = ScratchDir::new("watch-restart");
     let music = scratch.join("music");
     std::fs::create_dir_all(music.join("A")).expect("mkdir");

@@ -556,7 +556,8 @@ mod tests {
     /// Each Picard 2.13.3 naming rule on recorded MusicBrainz answers:
     /// Ryuichi Sakamoto + Shiro Takatani's _async surround_ (坂本龍一,
     /// credited "Ryuichi Sakamoto", has aliases; 高谷史郎 has none) and
-    /// Utada Hikaru's _Fantôme_ (featured artists, regional aliases).
+    /// Utada Hikaru's _Fantôme_ (featured artists, regional aliases), and
+    /// Picard's sort-name reversal.
     #[test]
     fn artist_names_follow_picard() {
         let sakamoto = recorded("release_names_sakamoto.json");
@@ -755,11 +756,8 @@ mod tests {
             credit(&missing, None, &settings(Credited, false, &["en"])),
             credited
         );
-    }
 
-    /// Picard's sort-name reversal, for a name outside the Latin script.
-    #[test]
-    fn a_sort_name_reverses_as_picard_does() {
+        // Picard's sort-name reversal, for a name outside the Latin script.
         for (name, sort, expected) in [
             ("坂本龍一", "Sakamoto, Ryuichi", "Ryuichi Sakamoto"),
             ("名", "A, B & C, D", "B A & D C"),

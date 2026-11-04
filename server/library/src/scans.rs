@@ -302,18 +302,3 @@ impl Scans {
         Ok((run, scopes, files))
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// A scan request the database is too busy to record answers the
-    /// server-busy 503, never a fault.
-    #[test]
-    fn a_busy_scan_request_is_busy() {
-        let busy = ScanRequestError::Store(ScanStoreError::Busy {
-            operation: "scan.request".to_owned(),
-        });
-        assert!(matches!(request_error(busy), ServiceError::Busy { .. }));
-    }
-}

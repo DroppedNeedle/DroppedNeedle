@@ -9,7 +9,6 @@
 
 use droppedneedle_library::contrib;
 
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use contrib::error::ContribError;
@@ -22,7 +21,7 @@ use contrib::sqlite::SqliteContributions;
 use contrib::worker::{Claim, SPEC, VERIFY, Verdict, VerificationWorker};
 use droppedneedle_kernel::clock::ManualClock;
 use droppedneedle_kernel::db::{Db, Lane};
-use droppedneedle_kernel::jobs::queue::{Handlers, JobQueue, Outcome, runner, start_runners};
+use droppedneedle_kernel::jobs::queue::{JobQueue, Outcome};
 use droppedneedle_library::contrib::attachment::MatchingAttachmentEvidence;
 use droppedneedle_providers::RequestPriority;
 use futures_util::future::BoxFuture;
@@ -470,96 +469,284 @@ async fn to_checked(rig: &Rig) -> ContributionRecord {
 // Lifecycle briefs
 // ---------------------------------------------------------------------------
 
+/// The service's refusals, each on a rig of its own: an album with an exact
+/// release, a changed value still marked local, a moved or dropped track,
+/// a duplicate check on an incomplete draft, an attach outside the check's
+/// result, a seed before the check, with a bad base URL or after the
+/// release got linked, and a search too short or too long. The search
+/// also defaults its query and runs at user priority.
 #[tokio::test]
-async fn brief_create_rejects_exact_release() {
-    let rig = Rig::new();
-    rig.seed_album_identity(ALBUM, MBID_GROUP, MBID_RELEASE);
-    let error = rig.service.create(ALBUM, ACTOR).await.unwrap_err();
-    assert_eq!(
-        error,
-        ContribError::State("This local album already has an exact MusicBrainz release.".into())
-    );
-}
+async fn contribution_refusals() {
+    {
+        let rig = Rig::new();
+        rig.seed_album_identity(ALBUM, MBID_GROUP, MBID_RELEASE);
+        let error = rig.service.create(ALBUM, ACTOR).await.unwrap_err();
+        assert_eq!(
+            error,
+            ContribError::State(
+                "This local album already has an exact MusicBrainz release.".into()
+            ),
+            "exact release"
+        );
+    }
 
-#[tokio::test]
-async fn brief_create_then_update_reaches_ready() {
-    let rig = Rig::new();
-    let created = rig.service.create(ALBUM, ACTOR).await.unwrap();
-    assert_eq!(created.state, ContributionState::Draft);
-    assert_eq!(created.local_snapshot.media.len(), 1);
-    assert_eq!(created.draft.media[0].tracks.len(), 2);
-    // Same album, second create returns the still-open contribution.
-    let again = rig.service.create(ALBUM, ACTOR).await.unwrap();
-    assert_eq!(again.id, created.id);
-    let ready = rig
-        .service
-        .update(&created.id, created.row_revision, &created.draft, ACTOR)
-        .await
-        .unwrap();
-    assert_eq!(ready.state, ContributionState::Ready);
-    assert!(ready.validation.is_empty());
-    assert!(
-        ready
-            .next_actions
-            .contains(&ContributionNextAction::RunDuplicateCheck)
-    );
-}
+    {
+        let rig = Rig::new();
+        let created = rig.service.create(ALBUM, ACTOR).await.unwrap();
+        // Changed value still marked `local` is rejected...
+        let mut bad = created.draft.clone();
+        bad.title = ReleaseTextField::local(Some("Renamed".to_string()));
+        let error = rig
+            .service
+            .update(&created.id, created.row_revision, &bad, ACTOR)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error,
+            ContribError::Validation("A changed value must be marked as entered here.".into()),
+            "provenance"
+        );
+        // ...but passes once marked entered-here.
+        let mut good = created.draft.clone();
+        good.title = entered("Renamed");
+        let updated = rig
+            .service
+            .update(&created.id, created.row_revision, &good, ACTOR)
+            .await
+            .unwrap();
+        assert_eq!(updated.draft.title.text(), "Renamed", "provenance");
+        assert_eq!(updated.state, ContributionState::Ready, "provenance");
+    }
 
-#[tokio::test]
-async fn brief_update_provenance_guards() {
-    let rig = Rig::new();
-    let created = rig.service.create(ALBUM, ACTOR).await.unwrap();
-    // Changed value still marked `local` is rejected...
-    let mut bad = created.draft.clone();
-    bad.title = ReleaseTextField::local(Some("Renamed".to_string()));
-    let error = rig
-        .service
-        .update(&created.id, created.row_revision, &bad, ACTOR)
-        .await
-        .unwrap_err();
-    assert_eq!(
-        error,
-        ContribError::Validation("A changed value must be marked as entered here.".into())
-    );
-    // ...but passes once marked entered-here.
-    let mut good = created.draft.clone();
-    good.title = entered("Renamed");
-    let updated = rig
-        .service
-        .update(&created.id, created.row_revision, &good, ACTOR)
-        .await
-        .unwrap();
-    assert_eq!(updated.draft.title.text(), "Renamed");
-    assert_eq!(updated.state, ContributionState::Ready);
-}
+    {
+        let rig = Rig::new();
+        let created = rig.service.create(ALBUM, ACTOR).await.unwrap();
+        let mut moved = created.draft.clone();
+        moved.media[0].tracks.swap(0, 1);
+        moved.media[0].tracks[0].track_number = 99;
+        let error = rig
+            .service
+            .update(&created.id, created.row_revision, &moved, ACTOR)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error,
+            ContribError::Validation("Track positions cannot be changed in this step.".into()),
+            "moved track"
+        );
+        let mut dropped = created.draft.clone();
+        dropped.media[0].tracks.pop();
+        let error = rig
+            .service
+            .update(&created.id, created.row_revision, &dropped, ACTOR)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error,
+            ContribError::Validation(
+                "The contribution track list does not match the album.".into()
+            ),
+            "dropped track"
+        );
+    }
 
-#[tokio::test]
-async fn brief_track_list_and_positions_immutable() {
-    let rig = Rig::new();
-    let created = rig.service.create(ALBUM, ACTOR).await.unwrap();
-    let mut moved = created.draft.clone();
-    moved.media[0].tracks.swap(0, 1);
-    moved.media[0].tracks[0].track_number = 99;
-    let error = rig
-        .service
-        .update(&created.id, created.row_revision, &moved, ACTOR)
-        .await
-        .unwrap_err();
-    assert_eq!(
-        error,
-        ContribError::Validation("Track positions cannot be changed in this step.".into())
-    );
-    let mut dropped = created.draft.clone();
-    dropped.media[0].tracks.pop();
-    let error = rig
-        .service
-        .update(&created.id, created.row_revision, &dropped, ACTOR)
-        .await
-        .unwrap_err();
-    assert_eq!(
-        error,
-        ContribError::Validation("The contribution track list does not match the album.".into())
-    );
+    {
+        let rig = Rig::new();
+        let created = rig.service.create(ALBUM, ACTOR).await.unwrap();
+        let error = rig
+            .service
+            .check_duplicates(&created.id, created.row_revision, ACTOR, false)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error,
+            ContribError::State(
+                "Complete the contribution draft before checking MusicBrainz.".into()
+            ),
+            "check on a draft"
+        );
+    }
+
+    {
+        let rig = Rig::new();
+        let checked = to_checked(&rig).await;
+        let error = rig
+            .service
+            .attach_existing(&checked.id, MBID_RELEASE, checked.row_revision, ACTOR)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error,
+            ContribError::ResultMismatch(
+                "That release is not in the current duplicate-check result.".into()
+            ),
+            "attach outside the result"
+        );
+    }
+
+    {
+        let rig = Rig::new();
+        let ready = to_ready(&rig).await;
+        let error = rig
+            .service
+            .create_seed(
+                &ready.id,
+                ready.row_revision,
+                ACTOR,
+                "https://needle.example.com",
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error,
+            ContribError::DuplicateCheckRequired(
+                "Run the MusicBrainz duplicate check first.".into()
+            ),
+            "seed before the check"
+        );
+        let checked = to_checked(&rig).await;
+        let error = rig
+            .service
+            .create_seed(
+                &checked.id,
+                checked.row_revision,
+                ACTOR,
+                "https://user@evil.example",
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error,
+            ContribError::Validation("The public DroppedNeedle URL is not valid.".into()),
+            "seed base URL"
+        );
+        // Fresh-link race: the release got linked after the check -> abort.
+        rig.discogs.insert_release(discogs_release());
+        let release = discogs_release();
+        rig.musicbrainz.insert_resolution(
+            &release.canonical_release_url,
+            UrlRelation::Release,
+            MusicBrainzUrlResolution {
+                resource_url: release.canonical_release_url.clone(),
+                release_mbids: vec![MBID_RELEASE.to_string()],
+                release_group_mbids: Vec::new(),
+            },
+        );
+        to_ready(&rig).await;
+        // A second album, to avoid the still-open contribution above. Its
+        // artist has no MusicBrainz identity: one MusicBrainz artist belongs
+        // to one local artist.
+        rig.seed_album("album-2", "artist-2", 3, ["u1", "u2"]);
+        let created = rig.service.create("album-2", ACTOR).await.unwrap();
+        let ready2 = rig
+            .service
+            .update(&created.id, created.row_revision, &created.draft, ACTOR)
+            .await
+            .unwrap();
+        let selected = rig
+            .service
+            .select_discogs(&ready2.id, "12345", ready2.row_revision, ACTOR)
+            .await
+            .unwrap();
+        let edited = rig
+            .service
+            .update(&selected.id, selected.row_revision, &selected.draft, ACTOR)
+            .await
+            .unwrap();
+        // Bypass the check's exact hit by scripting empty at check time...
+        rig.musicbrainz.insert_resolution(
+            &release.canonical_release_url,
+            UrlRelation::Release,
+            MusicBrainzUrlResolution {
+                resource_url: release.canonical_release_url.clone(),
+                release_mbids: Vec::new(),
+                release_group_mbids: Vec::new(),
+            },
+        );
+        let checked = rig
+            .service
+            .check_duplicates(&edited.id, edited.row_revision, ACTOR, false)
+            .await
+            .unwrap();
+        // ...then the link lands before seeding.
+        rig.musicbrainz.insert_resolution(
+            &release.canonical_release_url,
+            UrlRelation::Release,
+            MusicBrainzUrlResolution {
+                resource_url: release.canonical_release_url.clone(),
+                release_mbids: vec![MBID_RELEASE.to_string()],
+                release_group_mbids: Vec::new(),
+            },
+        );
+        let error = rig
+            .service
+            .create_seed(
+                &checked.id,
+                checked.row_revision,
+                ACTOR,
+                "https://needle.example.com",
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error,
+            ContribError::ExactDuplicate(
+                "This Discogs release is now linked to MusicBrainz. Run the duplicate check again."
+                    .into()
+            ),
+            "fresh-link race"
+        );
+    }
+
+    {
+        let rig = Rig::new();
+        rig.discogs
+            .set_search_results(vec![DiscogsReleaseCandidate {
+                release_id: "12345".to_string(),
+                title: "Test Album".to_string(),
+                artist_name: "Test Artist".to_string(),
+                canonical_url: "https://www.discogs.com/release/12345".to_string(),
+                year: Some(2024),
+                country: None,
+                label: None,
+                catalogue_number: None,
+                track_count: None,
+                master_id: None,
+                fetched_at: NOW,
+                ..Default::default()
+            }]);
+        let ready = to_ready(&rig).await;
+        let hits = rig.service.search_discogs(&ready.id, None).await.unwrap();
+        assert_eq!(hits.len(), 1, "default search");
+        assert_eq!(
+            rig.discogs.queries(),
+            vec!["Test Artist Test Album".to_string()],
+            "default search"
+        );
+        let error = rig
+            .service
+            .search_discogs(&ready.id, Some("x"))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error,
+            ContribError::Validation("Enter a release title, artist, barcode, URL, or ID.".into()),
+            "short search"
+        );
+        let error = rig
+            .service
+            .search_discogs(&ready.id, Some(&"y".repeat(201)))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error,
+            ContribError::Validation("The Discogs search is too long.".into()),
+            "long search"
+        );
+        for call in rig.discogs.calls() {
+            assert_eq!(call.priority, RequestPriority::UserInitiated, "search");
+        }
+    }
 }
 
 #[tokio::test]
@@ -601,54 +788,6 @@ async fn brief_stale_marks_on_read_and_rebuilds_fresh() {
 // ---------------------------------------------------------------------------
 // Discogs source briefs
 // ---------------------------------------------------------------------------
-
-#[tokio::test]
-async fn brief_search_defaults_and_validates() {
-    let rig = Rig::new();
-    rig.discogs
-        .set_search_results(vec![DiscogsReleaseCandidate {
-            release_id: "12345".to_string(),
-            title: "Test Album".to_string(),
-            artist_name: "Test Artist".to_string(),
-            canonical_url: "https://www.discogs.com/release/12345".to_string(),
-            year: Some(2024),
-            country: None,
-            label: None,
-            catalogue_number: None,
-            track_count: None,
-            master_id: None,
-            fetched_at: NOW,
-            ..Default::default()
-        }]);
-    let ready = to_ready(&rig).await;
-    let hits = rig.service.search_discogs(&ready.id, None).await.unwrap();
-    assert_eq!(hits.len(), 1);
-    assert_eq!(
-        rig.discogs.queries(),
-        vec!["Test Artist Test Album".to_string()]
-    );
-    let error = rig
-        .service
-        .search_discogs(&ready.id, Some("x"))
-        .await
-        .unwrap_err();
-    assert_eq!(
-        error,
-        ContribError::Validation("Enter a release title, artist, barcode, URL, or ID.".into())
-    );
-    let error = rig
-        .service
-        .search_discogs(&ready.id, Some(&"y".repeat(201)))
-        .await
-        .unwrap_err();
-    assert_eq!(
-        error,
-        ContribError::Validation("The Discogs search is too long.".into())
-    );
-    for call in rig.discogs.calls() {
-        assert_eq!(call.priority, RequestPriority::UserInitiated);
-    }
-}
 
 #[tokio::test]
 async fn brief_select_aligns_and_expiry_redacts() {
@@ -792,41 +931,6 @@ async fn brief_duplicate_check_orders_evidence_and_forces_review() {
 }
 
 #[tokio::test]
-async fn brief_duplicate_check_clean_stays_ready() {
-    let rig = Rig::new();
-    let checked = to_checked(&rig).await;
-    assert_eq!(checked.state, ContributionState::Ready);
-    assert!(
-        checked
-            .duplicate_result
-            .as_ref()
-            .unwrap()
-            .candidates
-            .is_empty()
-    );
-    assert!(
-        checked
-            .next_actions
-            .contains(&ContributionNextAction::SeedMusicbrainz)
-    );
-}
-
-#[tokio::test]
-async fn brief_duplicate_check_needs_valid_draft_and_fresh_source() {
-    let rig = Rig::new();
-    let created = rig.service.create(ALBUM, ACTOR).await.unwrap();
-    let error = rig
-        .service
-        .check_duplicates(&created.id, created.row_revision, ACTOR, false)
-        .await
-        .unwrap_err();
-    assert_eq!(
-        error,
-        ContribError::State("Complete the contribution draft before checking MusicBrainz.".into())
-    );
-}
-
-#[tokio::test]
 async fn brief_attach_existing_links_and_scopes_invalidation() {
     let rig = Rig::new();
     rig.discogs.insert_release(discogs_release());
@@ -898,23 +1002,6 @@ async fn brief_attach_existing_links_and_scopes_invalidation() {
             .all(|c| c.priority == RequestPriority::UserInitiated)
     );
     assert!(verify_calls.iter().any(|c| c.bypass_cache)); // attach bypasses
-}
-
-#[tokio::test]
-async fn brief_attach_rejects_ambiguous_and_unknown() {
-    let rig = Rig::new();
-    let checked = to_checked(&rig).await;
-    let error = rig
-        .service
-        .attach_existing(&checked.id, MBID_RELEASE, checked.row_revision, ACTOR)
-        .await
-        .unwrap_err();
-    assert_eq!(
-        error,
-        ContribError::ResultMismatch(
-            "That release is not in the current duplicate-check result.".into()
-        )
-    );
 }
 
 /// Attach the album to `MBID_RELEASE`, whose artist is `MBID_ARTIST`, the
@@ -1356,121 +1443,52 @@ async fn brief_seed_builds_exact_editor_form() {
     assert_eq!(seeded.state, ContributionState::Seeded);
 }
 
+/// The whole path through the mocked editor: the draft reaches Ready, a
+/// second create returns the open contribution, a clean duplicate check
+/// stays Ready and seedable, then the editor's callback and the worker
+/// link the album as a manual identity.
 #[tokio::test]
-async fn brief_seed_guards_duplicates_race_and_base_url() {
+async fn brief_full_submission_roundtrip_through_mocked_editor() {
     let rig = Rig::new();
-    let ready = to_ready(&rig).await;
-    let error = rig
-        .service
-        .create_seed(
-            &ready.id,
-            ready.row_revision,
-            ACTOR,
-            "https://needle.example.com",
-        )
-        .await
-        .unwrap_err();
-    assert_eq!(
-        error,
-        ContribError::DuplicateCheckRequired("Run the MusicBrainz duplicate check first.".into())
-    );
-    let checked = to_checked(&rig).await;
-    let error = rig
-        .service
-        .create_seed(
-            &checked.id,
-            checked.row_revision,
-            ACTOR,
-            "https://user@evil.example",
-        )
-        .await
-        .unwrap_err();
-    assert_eq!(
-        error,
-        ContribError::Validation("The public DroppedNeedle URL is not valid.".into())
-    );
-    // Fresh-link race: the release got linked after the check -> abort.
-    rig.discogs.insert_release(discogs_release());
-    let release = discogs_release();
-    rig.musicbrainz.insert_resolution(
-        &release.canonical_release_url,
-        UrlRelation::Release,
-        MusicBrainzUrlResolution {
-            resource_url: release.canonical_release_url.clone(),
-            release_mbids: vec![MBID_RELEASE.to_string()],
-            release_group_mbids: Vec::new(),
-        },
-    );
-    let ready = to_ready(&rig).await;
-    // A second album, to avoid the still-open contribution above. Its
-    // artist has no MusicBrainz identity: one MusicBrainz artist belongs to
-    // one local artist.
-    rig.seed_album("album-2", "artist-2", 3, ["u1", "u2"]);
-    let created = rig.service.create("album-2", ACTOR).await.unwrap();
-    let ready2 = rig
+    let created = rig.service.create(ALBUM, ACTOR).await.unwrap();
+    assert_eq!(created.state, ContributionState::Draft);
+    assert_eq!(created.local_snapshot.media.len(), 1);
+    assert_eq!(created.draft.media[0].tracks.len(), 2);
+    // Same album, second create returns the still-open contribution.
+    let again = rig.service.create(ALBUM, ACTOR).await.unwrap();
+    assert_eq!(again.id, created.id);
+    let ready = rig
         .service
         .update(&created.id, created.row_revision, &created.draft, ACTOR)
         .await
         .unwrap();
-    let _ = ready;
-    let selected = rig
-        .service
-        .select_discogs(&ready2.id, "12345", ready2.row_revision, ACTOR)
-        .await
-        .unwrap();
-    let edited = rig
-        .service
-        .update(&selected.id, selected.row_revision, &selected.draft, ACTOR)
-        .await
-        .unwrap();
-    // Bypass the check's exact hit by scripting empty at check time...
-    rig.musicbrainz.insert_resolution(
-        &release.canonical_release_url,
-        UrlRelation::Release,
-        MusicBrainzUrlResolution {
-            resource_url: release.canonical_release_url.clone(),
-            release_mbids: Vec::new(),
-            release_group_mbids: Vec::new(),
-        },
+    assert_eq!(ready.state, ContributionState::Ready);
+    assert!(ready.validation.is_empty());
+    assert!(
+        ready
+            .next_actions
+            .contains(&ContributionNextAction::RunDuplicateCheck)
     );
+    // A clean duplicate check stays ready and offers the seed.
     let checked = rig
         .service
-        .check_duplicates(&edited.id, edited.row_revision, ACTOR, false)
+        .check_duplicates(&ready.id, ready.row_revision, ACTOR, false)
         .await
         .unwrap();
-    // ...then the link lands before seeding.
-    rig.musicbrainz.insert_resolution(
-        &release.canonical_release_url,
-        UrlRelation::Release,
-        MusicBrainzUrlResolution {
-            resource_url: release.canonical_release_url.clone(),
-            release_mbids: vec![MBID_RELEASE.to_string()],
-            release_group_mbids: Vec::new(),
-        },
+    assert_eq!(checked.state, ContributionState::Ready);
+    assert!(
+        checked
+            .duplicate_result
+            .as_ref()
+            .unwrap()
+            .candidates
+            .is_empty()
     );
-    let error = rig
-        .service
-        .create_seed(
-            &checked.id,
-            checked.row_revision,
-            ACTOR,
-            "https://needle.example.com",
-        )
-        .await
-        .unwrap_err();
-    assert_eq!(
-        error,
-        ContribError::ExactDuplicate(
-            "This Discogs release is now linked to MusicBrainz. Run the duplicate check again."
-                .into()
-        )
+    assert!(
+        checked
+            .next_actions
+            .contains(&ContributionNextAction::SeedMusicbrainz)
     );
-}
-
-#[tokio::test]
-async fn brief_full_submission_roundtrip_through_mocked_editor() {
-    let rig = Rig::new();
-    let checked = to_checked(&rig).await;
     let seed = rig
         .service
         .create_seed(
@@ -1542,6 +1560,9 @@ async fn brief_full_submission_roundtrip_through_mocked_editor() {
     );
 }
 
+/// The callback refuses a token of the wrong shape (too short, too long, a
+/// space) as invalid and a well-shaped unknown one as expired, refuses a
+/// bad release id, and takes a token once.
 #[tokio::test]
 async fn brief_callback_rejects_bad_and_reused_tokens() {
     let rig = Rig::new();
@@ -1559,24 +1580,33 @@ async fn brief_callback_rejects_bad_and_reused_tokens() {
     let editor = FakeReleaseEditor::new();
     editor.script_next_mbid(MBID_RELEASE);
     let submission = editor.submit(&seed).unwrap();
-    let error = rig
-        .service
-        .consume_callback(Some("short"), Some(MBID_RELEASE))
-        .await
-        .unwrap_err();
-    assert_eq!(
-        error,
-        ContribError::Validation("The MusicBrainz callback token is invalid.".into())
-    );
-    let error = rig
-        .service
-        .consume_callback(Some(&"a".repeat(40)), Some(MBID_RELEASE))
-        .await
-        .unwrap_err();
-    assert_eq!(
-        error,
-        ContribError::Missing("Contribution callback is invalid or expired.".into())
-    );
+    let invalid = ContribError::Validation("The MusicBrainz callback token is invalid.".into());
+    let unknown = ContribError::Missing("Contribution callback is invalid or expired.".into());
+    for (label, token, well_shaped) in [
+        ("32 characters", "a".repeat(32), true),
+        (
+            "every allowed character",
+            "aB-_0AZaz09-_aB-_0AZaz09-_aB1234".to_owned(),
+            true,
+        ),
+        ("40 characters", "a".repeat(40), true),
+        ("short", "short".to_owned(), false),
+        ("129 characters", "a".repeat(129), false),
+        (
+            "a space",
+            "has space in token 01234567890123456789".to_owned(),
+            false,
+        ),
+    ] {
+        assert_eq!(valid_callback_token(&token), well_shaped, "{label}");
+        let error = rig
+            .service
+            .consume_callback(Some(&token), Some(MBID_RELEASE))
+            .await
+            .unwrap_err();
+        let expected = if well_shaped { &unknown } else { &invalid };
+        assert_eq!(&error, expected, "{label}");
+    }
     let error = rig
         .service
         .consume_callback(Some(&submission.callback_token), Some("not-a-mbid"))
@@ -1678,61 +1708,82 @@ async fn brief_worker_retries_with_backoff_then_reviews() {
     assert_eq!(retried.state, ContributionState::Verifying);
 }
 
-#[tokio::test]
-async fn brief_worker_unmappable_payload_reviews_immediately() {
+/// A verifying contribution whose one worker run hears `answer`.
+async fn verify_once(
+    answer: Result<Option<MusicBrainzVerifiedRelease>, ProviderFailure>,
+) -> (Rig, ContributionRecord, Option<VerificationOutcome>) {
     let rig = Rig::new();
     let verifying = to_verifying(&rig).await;
-    rig.musicbrainz
-        .insert_verification(MBID_RELEASE, Err(ProviderFailure::Unmappable));
+    rig.musicbrainz.insert_verification(MBID_RELEASE, answer);
     let outcome = outcome(rig.worker().run_once().await.unwrap());
-    assert_eq!(outcome, Some(VerificationOutcome::NeedsReview));
+    (rig, verifying, outcome)
+}
+
+/// An answer the worker cannot use goes straight to review with its
+/// reason: an unmappable payload, another release, and the named release
+/// contradicting the album, which writes no identity.
+#[tokio::test]
+async fn worker_sends_bad_answers_to_review() {
+    let (rig, verifying, outcome) = verify_once(Err(ProviderFailure::Unmappable)).await;
+    assert_eq!(
+        outcome,
+        Some(VerificationOutcome::NeedsReview),
+        "unmappable payload"
+    );
     let jobs = rig.jobs_for(&verifying.id);
-    assert_eq!(jobs[0].state, "done");
+    assert_eq!(jobs[0].state, "done", "unmappable payload");
     assert_eq!(
         rig.raw(&verifying.id)
             .await
             .last_verification_failure
             .as_deref(),
-        Some(UNMAPPABLE_PROVIDER_PAYLOAD)
+        Some(UNMAPPABLE_PROVIDER_PAYLOAD),
+        "unmappable payload"
     );
     // No evidence ran on the payload failure: the attempt has no candidate.
     let attempts = rig.attempts();
-    assert_eq!(attempts[0].reason, UNMAPPABLE_PROVIDER_PAYLOAD);
-    assert_eq!(attempts[0].candidate_count, 0);
-}
-
-#[tokio::test]
-async fn brief_worker_release_mismatch_reviews() {
-    let rig = Rig::new();
-    let _verifying = to_verifying(&rig).await;
-    rig.musicbrainz.insert_verification(
-        MBID_RELEASE,
-        Ok(Some(verified_release(MBID_OTHER, MBID_GROUP))),
+    assert_eq!(
+        attempts[0].reason, UNMAPPABLE_PROVIDER_PAYLOAD,
+        "unmappable payload"
     );
-    let outcome = outcome(rig.worker().run_once().await.unwrap());
-    assert_eq!(outcome, Some(VerificationOutcome::NeedsReview));
-    assert_eq!(outcome.unwrap().as_str(), "needs_review");
-    let attempts = rig.attempts();
-    assert_eq!(attempts[0].reason, FAILURE_RETURNED_RELEASE_MISMATCH);
-}
+    assert_eq!(attempts[0].candidate_count, 0, "unmappable payload");
 
-#[tokio::test]
-async fn brief_worker_contradiction_reviews_with_reason() {
-    let rig = Rig::new();
-    let _verifying = to_verifying(&rig).await;
+    let (rig, _verifying, outcome) =
+        verify_once(Ok(Some(verified_release(MBID_OTHER, MBID_GROUP)))).await;
+    assert_eq!(
+        outcome,
+        Some(VerificationOutcome::NeedsReview),
+        "release mismatch"
+    );
+    assert_eq!(
+        outcome.unwrap().as_str(),
+        "needs_review",
+        "release mismatch"
+    );
+    let attempts = rig.attempts();
+    assert_eq!(
+        attempts[0].reason, FAILURE_RETURNED_RELEASE_MISMATCH,
+        "release mismatch"
+    );
+
     // MusicBrainz returns the named release, but it is another album.
     let mut other = verified_release(MBID_RELEASE, MBID_GROUP);
     other.title = "Unrelated Record".to_string();
     other.artist_name = "Somebody Else".to_string();
-    rig.musicbrainz
-        .insert_verification(MBID_RELEASE, Ok(Some(other)));
-    let outcome = outcome(rig.worker().run_once().await.unwrap());
-    assert_eq!(outcome, Some(VerificationOutcome::NeedsReview));
+    let (rig, _verifying, outcome) = verify_once(Ok(Some(other))).await;
+    assert_eq!(
+        outcome,
+        Some(VerificationOutcome::NeedsReview),
+        "contradiction"
+    );
     let attempts = rig.attempts();
-    assert_eq!(attempts[0].state, "needs_review");
-    assert_eq!(attempts[0].reason, "ATTACHMENT_NAME_MISMATCH");
-    assert_eq!(attempts[0].candidate_count, 1);
-    assert!(rig.album_identity(ALBUM).is_none());
+    assert_eq!(attempts[0].state, "needs_review", "contradiction");
+    assert_eq!(
+        attempts[0].reason, "ATTACHMENT_NAME_MISMATCH",
+        "contradiction"
+    );
+    assert_eq!(attempts[0].candidate_count, 1, "contradiction");
+    assert!(rig.album_identity(ALBUM).is_none(), "contradiction");
 }
 
 #[tokio::test]
@@ -1803,153 +1854,85 @@ async fn brief_worker_skips_non_verifying() {
     assert_eq!(verdict.job, Outcome::Done);
 }
 
-/// The jobs module runs verification as the server registers it: the
-/// runner links the contribution, then stops with the supervisor.
-#[tokio::test]
-async fn brief_worker_runner_links_then_shuts_down() {
-    let rig = Rig::new();
-    let verifying = to_verifying(&rig).await;
-    rig.musicbrainz.insert_verification(
-        MBID_RELEASE,
-        Ok(Some(verified_release(MBID_RELEASE, MBID_GROUP))),
-    );
-    let supervisor = droppedneedle_kernel::jobs::Supervisor::start(
-        rig.handle.clone(),
-        Arc::new(droppedneedle_kernel::clock::SystemClock),
-        droppedneedle_kernel::jobs::CancellationToken::new(),
-    )
-    .await
-    .unwrap();
-    start_runners(
-        rig.store.queue(),
-        &supervisor,
-        Handlers::default().with(SPEC, rig.worker().handler()),
-    )
-    .unwrap();
-    // The runner's store calls run on blocking threads, so the bound is
-    // wall-clock time.
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-    let mut linked = rig.service.get(&verifying.id).await.unwrap();
-    while linked.state != ContributionState::Linked && std::time::Instant::now() < deadline {
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-        linked = rig.service.get(&verifying.id).await.unwrap();
-    }
-    assert_eq!(
-        linked.state,
-        ContributionState::Linked,
-        "the runner should link the contribution"
-    );
-    let jobs = rig.jobs_for(&verifying.id);
-    assert_eq!(jobs.len(), 1);
-    assert_eq!(jobs[0].state, "done");
-    supervisor.token().cancel();
-    let name = runner::runner_name(VERIFY);
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-    while supervisor.is_running(&name) {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "the runner should shut down"
-        );
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-    }
-    supervisor
-        .shutdown(std::time::Duration::from_secs(30))
-        .await;
-}
-
 // ---------------------------------------------------------------------------
 // Pure-rule briefs
 // ---------------------------------------------------------------------------
 
+/// What a curator pastes for a Discogs or MusicBrainz release: the id it
+/// names, or the message that says what to enter.
 #[test]
-fn brief_parse_discogs_ids() {
-    assert_eq!(parse_discogs_release_id("12345").unwrap(), "12345");
-    assert_eq!(parse_discogs_release_id("  007 ").unwrap(), "7");
-    assert_eq!(
-        parse_discogs_release_id("https://www.discogs.com/release/12345-Artist-Title/").unwrap(),
-        "12345"
-    );
-    assert_eq!(
-        parse_discogs_release_id("https://discogs.com/master/999")
-            .unwrap_err()
-            .message(),
-        "Enter an exact Discogs release URL, not a master URL."
-    );
-    assert_eq!(
-        parse_discogs_release_id("https://discogs.com/release/0123")
-            .unwrap_err()
-            .message(),
-        "Enter an exact Discogs release URL, not a master URL."
-    );
-    assert_eq!(
-        parse_discogs_release_id("http://discogs.com/release/1")
-            .unwrap_err()
-            .message(),
-        "Enter a valid Discogs release URL or numeric ID."
-    );
-    assert_eq!(
-        parse_discogs_release_id("https://discogs.com/release/1?x=1")
-            .unwrap_err()
-            .message(),
-        "Enter a valid Discogs release URL or numeric ID."
-    );
-    assert_eq!(
-        parse_discogs_release_id("https://discogs.com:443/release/1")
-            .unwrap_err()
-            .message(),
-        "Enter a valid Discogs release URL or numeric ID."
-    );
-}
-
-#[test]
-fn brief_parse_musicbrainz_ids() {
-    assert_eq!(
-        parse_musicbrainz_release_id(" 11111111-1111-4111-8111-111111111111 ").unwrap(),
-        MBID_RELEASE
-    );
-    assert_eq!(
-        parse_musicbrainz_release_id(
-            "HTTPS://musicbrainz.org/release/11111111-1111-4111-8111-111111111111"
-        )
-        .unwrap_err()
-        .message(),
-        "Enter a MusicBrainz release MBID or release URL."
-    );
-    assert_eq!(
-        parse_musicbrainz_release_id(
-            "https://musicbrainz.org/release/11111111-1111-4111-8111-111111111111/"
-        )
-        .unwrap(),
-        MBID_RELEASE
-    );
-    assert_eq!(
-        parse_musicbrainz_release_id(
-            "https://musicbrainz.org/release/11111111-1111-4111-8111-111111111111?x=1"
-        )
-        .unwrap_err()
-        .message(),
-        "Enter a MusicBrainz release MBID or release URL."
-    );
-    assert_eq!(
-        parse_musicbrainz_release_id("not-a-mbid")
-            .unwrap_err()
-            .message(),
-        "Enter a MusicBrainz release MBID or release URL."
-    );
+fn release_ids_parse_or_refuse() {
+    type Parser = fn(&str) -> Result<String, String>;
+    let discogs: Parser =
+        |input| parse_discogs_release_id(input).map_err(|error| error.message().to_owned());
+    let musicbrainz: Parser =
+        |input| parse_musicbrainz_release_id(input).map_err(|error| error.message().to_owned());
+    const NOT_MASTER: &str = "Enter an exact Discogs release URL, not a master URL.";
+    const DISCOGS_INVALID: &str = "Enter a valid Discogs release URL or numeric ID.";
+    const MB_INVALID: &str = "Enter a MusicBrainz release MBID or release URL.";
     // Uppercase MBIDs normalize to lowercase (v2 UUID round-trip).
-    assert_eq!(
-        parse_musicbrainz_release_id(
-            "11111111-1111-4111-8111-111111111111"
-                .to_uppercase()
-                .as_str()
-        )
-        .unwrap(),
-        MBID_RELEASE
-    );
+    let uppercase = MBID_RELEASE.to_uppercase();
+    let cases: [(Parser, &str, Result<&str, &str>); 14] = [
+        (discogs, "12345", Ok("12345")),
+        (discogs, "  007 ", Ok("7")),
+        (
+            discogs,
+            "https://www.discogs.com/release/12345-Artist-Title/",
+            Ok("12345"),
+        ),
+        (discogs, "https://discogs.com/master/999", Err(NOT_MASTER)),
+        (discogs, "https://discogs.com/release/0123", Err(NOT_MASTER)),
+        (
+            discogs,
+            "http://discogs.com/release/1",
+            Err(DISCOGS_INVALID),
+        ),
+        (
+            discogs,
+            "https://discogs.com/release/1?x=1",
+            Err(DISCOGS_INVALID),
+        ),
+        (
+            discogs,
+            "https://discogs.com:443/release/1",
+            Err(DISCOGS_INVALID),
+        ),
+        (
+            musicbrainz,
+            " 11111111-1111-4111-8111-111111111111 ",
+            Ok(MBID_RELEASE),
+        ),
+        (
+            musicbrainz,
+            "HTTPS://musicbrainz.org/release/11111111-1111-4111-8111-111111111111",
+            Err(MB_INVALID),
+        ),
+        (
+            musicbrainz,
+            "https://musicbrainz.org/release/11111111-1111-4111-8111-111111111111/",
+            Ok(MBID_RELEASE),
+        ),
+        (
+            musicbrainz,
+            "https://musicbrainz.org/release/11111111-1111-4111-8111-111111111111?x=1",
+            Err(MB_INVALID),
+        ),
+        (musicbrainz, "not-a-mbid", Err(MB_INVALID)),
+        (musicbrainz, uppercase.as_str(), Ok(MBID_RELEASE)),
+    ];
+    for (parse, input, expected) in cases {
+        assert_eq!(
+            parse(input),
+            expected.map(str::to_owned).map_err(str::to_owned),
+            "{input}"
+        );
+    }
 }
 
+/// Track alignment against a Discogs release, and the difflib ratio it
+/// reads, pinned against CPython difflib (an independent oracle).
 #[test]
-fn brief_sequence_ratio_matches_difflib_spots() {
+fn tracks_align_like_v2() {
     assert_eq!(sequence_matcher_ratio("", ""), 1.0);
     assert_eq!(sequence_matcher_ratio("abc", ""), 0.0);
     assert_eq!(sequence_matcher_ratio("abc", "abc"), 1.0);
@@ -1964,20 +1947,7 @@ fn brief_sequence_ratio_matches_difflib_spots() {
         sequence_matcher_ratio("kitten", "sitting"),
         sequence_matcher_ratio("sitting", "kitten")
     );
-}
 
-#[test]
-fn brief_retry_delay_schedule() {
-    assert_eq!(verification_retry_delay_seconds(1, None), 15.0);
-    assert_eq!(verification_retry_delay_seconds(2, None), 30.0);
-    assert_eq!(verification_retry_delay_seconds(7, None), 600.0); // capped
-    assert_eq!(verification_retry_delay_seconds(1, Some(120.0)), 120.0);
-    assert_eq!(verification_retry_delay_seconds(1, Some(f64::NAN)), 15.0);
-    assert_eq!(verification_retry_delay_seconds(1, Some(-5.0)), 15.0);
-}
-
-#[test]
-fn brief_alignment_classes() {
     let rig_snapshot = LocalReleaseSnapshot {
         schema_version: 1,
         local_album_id: ALBUM.to_string(),
@@ -2030,86 +2000,4 @@ fn brief_alignment_classes() {
         AlignmentClassification::Unmatched
     );
     assert!(alignments[1].provider_position.is_none());
-}
-
-#[test]
-fn brief_callback_token_shape() {
-    assert!(valid_callback_token(&"a".repeat(32)));
-    assert!(valid_callback_token("aB-_0AZaz09-_aB-_0AZaz09-_aB1234"));
-    assert!(!valid_callback_token("short"));
-    assert!(!valid_callback_token(&"a".repeat(129)));
-    assert!(!valid_callback_token(
-        "has space in token 01234567890123456789"
-    ));
-}
-
-#[test]
-fn brief_seed_field_helpers() {
-    let mut fields = HashMap::new();
-    fields.insert("t1".to_string(), "rec-1".to_string());
-    let draft = ReleaseDraft::default();
-    let snapshot = LocalReleaseSnapshot {
-        schema_version: 1,
-        local_album_id: ALBUM.to_string(),
-        local_artist_id: ARTIST.to_string(),
-        album_row_revision: 1,
-        input_revision: "r".to_string(),
-        title: String::new(),
-        album_artist_name: String::new(),
-        artist_kind: "person".to_string(),
-        musicbrainz_artist_id: None,
-        musicbrainz_release_group_id: None,
-        musicbrainz_release_id: None,
-        release_date: None,
-        year: None,
-        is_compilation: false,
-        captured_at: NOW,
-        media: Vec::new(),
-    };
-    let seed_fields = musicbrainz_seed_fields(
-        &draft,
-        &snapshot,
-        None,
-        None,
-        &fields,
-        "https://cb.example/x",
-    );
-    assert_eq!(seed_fields.first().unwrap().name, "name");
-    assert_eq!(seed_fields.last().unwrap().name, "redirect_uri");
-    // Multiple discovered groups seed nothing (ambiguous, v2 quirk).
-    let duplicate = DuplicateCheckResult {
-        schema_version: 1,
-        checked_at: NOW,
-        input_revision: "r".to_string(),
-        candidates: vec![
-            DuplicateCandidate {
-                release_mbid: None,
-                release_group_mbid: Some("g1".to_string()),
-                title: String::new(),
-                artist_name: String::new(),
-                evidence_kind: DuplicateEvidenceKind::ReleaseGroup,
-                exact: false,
-                differences: Vec::new(),
-            },
-            DuplicateCandidate {
-                release_mbid: None,
-                release_group_mbid: Some("g2".to_string()),
-                title: String::new(),
-                artist_name: String::new(),
-                evidence_kind: DuplicateEvidenceKind::ReleaseGroup,
-                exact: false,
-                differences: Vec::new(),
-            },
-        ],
-        different_edition_confirmed: false,
-    };
-    let seed_fields = musicbrainz_seed_fields(
-        &draft,
-        &snapshot,
-        Some(&duplicate),
-        None,
-        &fields,
-        "https://cb.example/x",
-    );
-    assert!(seed_fields.iter().all(|f| f.name != "release_group"));
 }

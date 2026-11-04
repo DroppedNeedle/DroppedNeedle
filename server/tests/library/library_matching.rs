@@ -601,12 +601,16 @@ async fn edition_with_the_closest_tracklist_wins() {
     );
 }
 
-/// An outage is never "no candidate": the job defers and retries.
+/// An outage is never "no candidate": the job defers and retries after
+/// the first step of the backoff.
 #[tokio::test]
 async fn musicbrainz_outage_defers_the_job() {
     let rig = rig(true);
     let report = identify(&rig, album(&[("Lamplight", 214, None)])).await;
     assert_eq!(report.outcome, IdentificationOutcome::ProviderDeferred);
+    let job = rig.store.job("job-1").unwrap().expect("job");
+    assert_eq!(job.state, identify::models::JobState::Deferred);
+    assert_eq!(job.not_before_ms, 30_000, "first attempt waits 30 s");
     assert!(rig.store.album_identity("album-1").unwrap().is_none());
 }
 
@@ -741,11 +745,15 @@ async fn an_unreadable_search_hit_does_not_hold_up_the_album() {
     assert_eq!(identity.decision_source, DecisionSource::Automatic);
 }
 
-/// When MusicBrainz refuses every candidate it was asked for, the job
-/// waits as for an outage, under its own code: nothing is matched or
-/// marked unmatched.
+/// Unread releases are not evidence: when MusicBrainz refuses every
+/// candidate, or the only readable hit is an unrelated release that fits
+/// nothing, the job waits as for an outage under its own code, and nothing
+/// is matched or marked unmatched.
 #[tokio::test]
-async fn every_candidate_unreadable_defers_the_job() {
+async fn unreadable_releases_defer_the_job() {
+    const UNRELATED: &str = "c0ffee00-0000-4000-8000-00000000c009";
+    let mut cases = Vec::new();
+
     let rig = rig_with(
         with(
             routes(),
@@ -762,26 +770,9 @@ async fn every_candidate_unreadable_defers_the_job() {
         ),
         false,
     );
-
     let report = identify(&rig, remaster_files()).await;
+    cases.push(("every candidate unreadable", rig, report));
 
-    assert_eq!(report.outcome, IdentificationOutcome::ProviderDeferred);
-    assert_eq!(report.job.state, identify::models::JobState::Deferred);
-    assert_eq!(
-        report.job.failure_code.as_deref(),
-        Some("releases_unreadable")
-    );
-    assert!(rig.store.album_identity("album-1").unwrap().is_none());
-    assert!(rig.store.match_flag("album-1").unwrap().is_none());
-}
-
-/// Search finds the release the files are, which MusicBrainz will not
-/// give in a readable form, and one unrelated release that fits nothing.
-/// Matching nothing is not evidence while the right release is unread:
-/// the job waits as for an outage and the album is not marked unmatched.
-#[tokio::test]
-async fn an_unreadable_hit_beside_an_unrelated_one_defers_the_job() {
-    const UNRELATED: &str = "c0ffee00-0000-4000-8000-00000000c009";
     let json = |name: &str| -> serde_json::Value {
         serde_json::from_slice(&fixture(name)).expect("fixture decodes")
     };
@@ -835,16 +826,31 @@ async fn an_unreadable_hit_beside_an_unrelated_one_defers_the_job() {
     ];
 
     let report = identify(&rig, album(&files)).await;
-
     assert_eq!(asked_release(&rig, UNRELATED), 1);
-    assert_eq!(report.outcome, IdentificationOutcome::ProviderDeferred);
-    assert_eq!(report.job.state, identify::models::JobState::Deferred);
-    assert_eq!(
-        report.job.failure_code.as_deref(),
-        Some("releases_unreadable")
-    );
-    assert!(rig.store.album_identity("album-1").unwrap().is_none());
-    assert!(rig.store.match_flag("album-1").unwrap().is_none());
+    cases.push(("an unreadable hit beside an unrelated one", rig, report));
+
+    for (case, rig, report) in cases {
+        assert_eq!(
+            report.outcome,
+            IdentificationOutcome::ProviderDeferred,
+            "{case}"
+        );
+        assert_eq!(
+            report.job.state,
+            identify::models::JobState::Deferred,
+            "{case}"
+        );
+        assert_eq!(
+            report.job.failure_code.as_deref(),
+            Some("releases_unreadable"),
+            "{case}"
+        );
+        assert!(
+            rig.store.album_identity("album-1").unwrap().is_none(),
+            "{case}"
+        );
+        assert!(rig.store.match_flag("album-1").unwrap().is_none(), "{case}");
+    }
 }
 
 /// Random Access Memories (Daft Punk), as two of its editions: the

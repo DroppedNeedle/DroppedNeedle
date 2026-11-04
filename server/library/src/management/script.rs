@@ -1276,10 +1276,13 @@ mod tests {
             .collect()
     }
 
+    /// `render_path` over a source, variables and the compatibility
+    /// settings: the Picard template renders and cleans, an empty
+    /// component or a bad format is refused, and a `..` value is replaced,
+    /// never followed.
     #[test]
-    fn picard_template_renders_and_cleans() {
-        let source = crate::management::settings::PICARD_MULTI_DISC_NAMING_SOURCE;
-        let variables = vars(&[
+    fn paths_render_or_are_refused() {
+        let picard = vars(&[
             ("albumartist", Value::Text("AC/DC".into())),
             ("album", Value::Text("Back in Black".into())),
             ("year", Value::Text("1980".into())),
@@ -1290,42 +1293,52 @@ mod tests {
             ("title", Value::Text("What: Now?".into())),
             ("ext", Value::Text("flac".into())),
         ]);
-        let path = render_path(
-            source,
-            &variables,
-            &PathCompatibilitySettings::default(),
-            "/m",
-        )
-        .expect("renders");
-        assert_eq!(
-            path,
-            "AC_DC/Back in Black (1980)/CD 02/07 - What_ Now_.flac"
-        );
-    }
-
-    #[test]
-    fn empty_component_and_bad_format_are_reported() {
-        let compat = PathCompatibilitySettings::default();
-        let empty = render_path("{album}/{title}", &Variables::new(), &compat, "/m");
-        assert!(empty.is_err());
-        let bad = render_path(
-            "{track:02d}",
-            &vars(&[("track", Value::Text("x".into()))]),
-            &compat,
-            "/m",
-        )
-        .expect_err("not a number");
-        assert!(bad.message.contains("whole number"));
-    }
-
-    #[test]
-    fn a_dots_value_is_replaced_never_followed() {
+        let none = Variables::new();
+        let not_a_number = vars(&[("track", Value::Text("x".into()))]);
         let dots = vars(&[("album", Value::Text("..".into()))]);
-        let mut compat = PathCompatibilitySettings::default();
-        let path = render_path("{album}/x", &dots, &compat, "/m").expect("renders");
-        assert_eq!(path, "_/x");
-        compat.windows_compatible = false;
-        assert!(render_path("{album}/x", &dots, &compat, "/m").is_err());
+        // `Err(Some(text))`: refused with a message holding `text`.
+        #[allow(clippy::type_complexity)]
+        let cases: [(&str, &str, &Variables, bool, Result<&str, Option<&str>>); 5] = [
+            (
+                "picard template",
+                crate::management::settings::PICARD_MULTI_DISC_NAMING_SOURCE,
+                &picard,
+                true,
+                Ok("AC_DC/Back in Black (1980)/CD 02/07 - What_ Now_.flac"),
+            ),
+            ("empty component", "{album}/{title}", &none, true, Err(None)),
+            (
+                "bad format",
+                "{track:02d}",
+                &not_a_number,
+                true,
+                Err(Some("whole number")),
+            ),
+            ("dots", "{album}/x", &dots, true, Ok("_/x")),
+            (
+                "dots, not windows-safe",
+                "{album}/x",
+                &dots,
+                false,
+                Err(None),
+            ),
+        ];
+        for (label, source, variables, windows_compatible, expected) in cases {
+            let compat = PathCompatibilitySettings {
+                windows_compatible,
+                ..PathCompatibilitySettings::default()
+            };
+            let rendered = render_path(source, variables, &compat, "/m");
+            match expected {
+                Ok(path) => assert_eq!(rendered.expect(label), path, "{label}"),
+                Err(text) => {
+                    let error = rendered.expect_err(label);
+                    if let Some(text) = text {
+                        assert!(error.message.contains(text), "{label}: {}", error.message);
+                    }
+                }
+            }
+        }
     }
 
     #[test]

@@ -300,8 +300,10 @@ fn flac_strip_comments(path: &Path) {
 // Extension routing: WMA unrecognized everywhere
 // ---------------------------------------------------------------------------
 
+/// v2's extensions route to their formats except WMA, which every entry
+/// point (read, probe, fingerprint, cover, save) refuses as unrecognized.
 #[test]
-fn routing_recognizes_v2_set_minus_wma() {
+fn extension_routing_refuses_wma() {
     for (name, format) in [
         ("a.flac", AudioFormat::Flac),
         ("a.mp3", AudioFormat::Mp3),
@@ -311,32 +313,12 @@ fn routing_recognizes_v2_set_minus_wma() {
         ("a.aac", AudioFormat::Aac),
         ("a.wav", AudioFormat::Wav),
     ] {
-        assert_eq!(format_for_path(Path::new(name)).unwrap(), format);
+        assert_eq!(format_for_path(Path::new(name)).unwrap(), format, "{name}");
     }
-    assert!(format_for_path(Path::new("a.WMA")).is_err());
-    assert!(format_for_path(Path::new("a.wma")).is_err());
-    assert!(format_for_path(Path::new("a.txt")).is_err());
-}
+    for name in ["a.WMA", "a.wma", "a.txt"] {
+        assert!(format_for_path(Path::new(name)).is_err(), "{name}");
+    }
 
-/// A tag item lofty cannot parse (a release date holding a web
-/// address) is dropped on read, so the file is still catalogued; a save
-/// still refuses it and leaves the file as it was.
-#[test]
-fn an_unparsable_tag_item_does_not_hide_the_file() {
-    let frames = vec![
-        ("TIT2", latin1(&["Probe"])),
-        ("TDRL", latin1(&["www.example.com"])),
-    ];
-    let (_dir, path) = raw_id3_mp3("unparsable-item", 3, &frames);
-    let (tag, _) = tags::read_tags(&path).unwrap();
-    assert_eq!(tag.title, "Probe");
-    let before = std::fs::read(&path).unwrap();
-    assert!(tags::save_tags(&path, &[TagEdit::set_title("New")]).is_err());
-    assert_eq!(std::fs::read(&path).unwrap(), before);
-}
-
-#[test]
-fn wma_is_unrecognized_on_every_entry() {
     let path = fixture("management_full.wma");
     let error = tags::read_tags(&path).unwrap_err();
     assert!(error.is_unrecognized());
@@ -362,166 +344,195 @@ fn wma_is_unrecognized_on_every_entry() {
 // Tag reads
 // ---------------------------------------------------------------------------
 
+/// Each fixture reads the values it was tagged with, its MusicBrainz ids
+/// included (they feed identity); the tagged ones carry a cover.
 #[test]
-fn read_flac_full() {
-    let (tag, _): (AudioTag, _) = tags::read_tags(&fixture("flac_full_01.flac")).unwrap();
-    assert_eq!(tag.title, "Airbag");
-    assert_eq!(tag.artist, "Radiohead");
-    assert_eq!(tag.album, "OK Computer");
-    assert_eq!(tag.album_artist.as_deref(), Some("Radiohead"));
-    assert_eq!(tag.track_number, 1);
-    assert_eq!(tag.disc_number, 1);
-    assert_eq!(tag.year, Some(1997));
-    assert_eq!(tag.genre.as_deref(), Some("Alternative Rock"));
+fn fixtures_read_their_tags() {
+    let read = |name: &str| -> AudioTag { tags::read_tags(&fixture(name)).unwrap().0 };
+
+    let name = "flac_full_01.flac";
+    let tag = read(name);
+    assert_eq!(tag.title, "Airbag", "{name}");
+    assert_eq!(tag.artist, "Radiohead", "{name}");
+    assert_eq!(tag.album, "OK Computer", "{name}");
+    assert_eq!(tag.album_artist.as_deref(), Some("Radiohead"), "{name}");
+    assert_eq!(tag.track_number, 1, "{name}");
+    assert_eq!(tag.disc_number, 1, "{name}");
+    assert_eq!(tag.year, Some(1997), "{name}");
+    assert_eq!(tag.genre.as_deref(), Some("Alternative Rock"), "{name}");
     assert_eq!(
         tag.musicbrainz_release_group_id.as_deref(),
-        Some("b1392450-e666-3926-a536-22c65f834433")
+        Some("b1392450-e666-3926-a536-22c65f834433"),
+        "{name}"
     );
     assert_eq!(
         tag.musicbrainz_release_id.as_deref(),
-        Some("0da3b3e3-1111-4444-8888-aaaaaaaaaaaa")
+        Some("0da3b3e3-1111-4444-8888-aaaaaaaaaaaa"),
+        "{name}"
     );
     assert_eq!(
         tag.musicbrainz_recording_id.as_deref(),
-        Some("rec-airbag-0001")
+        Some("rec-airbag-0001"),
+        "{name}"
     );
     assert_eq!(
         tag.musicbrainz_artist_id.as_deref(),
-        Some("a74b1b7f-71a5-4011-9441-d0b5e4122711")
+        Some("a74b1b7f-71a5-4011-9441-d0b5e4122711"),
+        "{name}"
     );
-    assert_eq!(tag.acoustid_id.as_deref(), Some("ac-airbag-0001"));
-    assert!(!tag.compilation);
+    assert_eq!(tag.acoustid_id.as_deref(), Some("ac-airbag-0001"), "{name}");
+    assert!(!tag.compilation, "{name}");
     // A DATE with no original date is not a release date.
-    assert_eq!(tag.edition.release_date, None);
-}
+    assert_eq!(tag.edition.release_date, None, "{name}");
 
-#[test]
-fn read_flac_edge_cases() {
-    let (cjk, _) = tags::read_tags(&fixture("flac_cjk_01.flac")).unwrap();
-    assert_eq!(cjk.title, "桃源へ");
-    assert_eq!(cjk.artist, "ユキ");
-    assert_eq!(cjk.album, "望厚");
+    let name = "flac_cjk_01.flac";
+    let cjk = read(name);
+    assert_eq!(cjk.title, "桃源へ", "{name}");
+    assert_eq!(cjk.artist, "ユキ", "{name}");
+    assert_eq!(cjk.album, "望厚", "{name}");
 
-    let (compilation, _) = tags::read_tags(&fixture("flac_compilation_01.flac")).unwrap();
-    assert!(compilation.compilation);
-    assert_eq!(compilation.album_artist.as_deref(), Some("Various Artists"));
+    let name = "flac_compilation_01.flac";
+    let compilation = read(name);
+    assert!(compilation.compilation, "{name}");
+    assert_eq!(
+        compilation.album_artist.as_deref(),
+        Some("Various Artists"),
+        "{name}"
+    );
 
-    let (only_release, _) = tags::read_tags(&fixture("flac_only_release_mbid.flac")).unwrap();
+    let name = "flac_only_release_mbid.flac";
+    let only_release = read(name);
     assert_eq!(
         only_release.musicbrainz_release_id.as_deref(),
-        Some("rel-only-0001")
+        Some("rel-only-0001"),
+        "{name}"
     );
-    assert_eq!(only_release.musicbrainz_release_group_id, None);
+    assert_eq!(only_release.musicbrainz_release_group_id, None, "{name}");
 
-    let (bare, _) = tags::read_tags(&fixture("flac_no_tags.flac")).unwrap();
-    assert_eq!(bare.title, "");
-    assert_eq!(bare.artist, "");
-    assert_eq!(bare.album, "");
-    assert_eq!(bare.track_number, 0);
-    assert_eq!(bare.disc_number, 1);
-}
+    let name = "flac_no_tags.flac";
+    let bare = read(name);
+    assert_eq!(bare.title, "", "{name}");
+    assert_eq!(bare.artist, "", "{name}");
+    assert_eq!(bare.album, "", "{name}");
+    assert_eq!(bare.track_number, 0, "{name}");
+    assert_eq!(bare.disc_number, 1, "{name}");
 
-#[test]
-fn read_mp3_full() {
-    let (tag, _) = tags::read_tags(&fixture("mp3_full_01.mp3")).unwrap();
-    assert_eq!(tag.title, "One");
-    assert_eq!(tag.artist, "U2");
-    assert_eq!(tag.album, "Achtung Baby");
-    assert_eq!(tag.track_number, 3);
-    assert_eq!(tag.year, Some(1991));
-    assert_eq!(tag.edition.release_date, None);
-    assert_eq!(tag.genre.as_deref(), Some("Rock"));
+    let name = "mp3_full_01.mp3";
+    let tag = read(name);
+    assert_eq!(tag.title, "One", "{name}");
+    assert_eq!(tag.artist, "U2", "{name}");
+    assert_eq!(tag.album, "Achtung Baby", "{name}");
+    assert_eq!(tag.track_number, 3, "{name}");
+    assert_eq!(tag.year, Some(1991), "{name}");
+    assert_eq!(tag.edition.release_date, None, "{name}");
+    assert_eq!(tag.genre.as_deref(), Some("Rock"), "{name}");
     assert_eq!(
         tag.musicbrainz_recording_id.as_deref(),
-        Some("rec-one-0003")
+        Some("rec-one-0003"),
+        "{name}"
     );
     assert_eq!(
         tag.musicbrainz_release_group_id.as_deref(),
-        Some("rg-achtung-0001")
+        Some("rg-achtung-0001"),
+        "{name}"
     );
-}
 
-#[test]
-fn read_m4a_full() {
-    let (tag, _) = tags::read_tags(&fixture("m4a_full_01.m4a")).unwrap();
-    assert_eq!(tag.title, "Teardrop");
-    assert_eq!(tag.artist, "Massive Attack");
-    assert_eq!(tag.album, "Mezzanine");
-    assert_eq!(tag.track_number, 4);
-    assert_eq!(tag.year, Some(1998));
+    let name = "m4a_full_01.m4a";
+    let tag = read(name);
+    assert_eq!(tag.title, "Teardrop", "{name}");
+    assert_eq!(tag.artist, "Massive Attack", "{name}");
+    assert_eq!(tag.album, "Mezzanine", "{name}");
+    assert_eq!(tag.track_number, 4, "{name}");
+    assert_eq!(tag.year, Some(1998), "{name}");
     // An MP4 ©day is the release date.
-    assert_eq!(tag.edition.release_date.as_deref(), Some("1998"));
+    assert_eq!(tag.edition.release_date.as_deref(), Some("1998"), "{name}");
     assert_eq!(
         tag.musicbrainz_recording_id.as_deref(),
-        Some("rec-teardrop-0004")
+        Some("rec-teardrop-0004"),
+        "{name}"
     );
     assert_eq!(
         tag.musicbrainz_release_group_id.as_deref(),
-        Some("rg-mezzanine-0001")
+        Some("rg-mezzanine-0001"),
+        "{name}"
     );
-}
 
-#[test]
-fn read_management_mp3() {
-    let (tag, _) = tags::read_tags(&fixture("management_full.mp3")).unwrap();
-    assert_eq!(tag.title, "Management Track");
-    assert_eq!(tag.artist, "Alpha feat. Beta");
-    assert_eq!(tag.album, "Management Album");
-    assert_eq!(tag.album_artist.as_deref(), Some("Alpha"));
-    assert_eq!(tag.track_number, 2);
-    assert_eq!(tag.disc_number, 1);
-    assert_eq!(tag.year, Some(2024));
-    assert!(tag.compilation);
-    assert_eq!(tag.genres, vec!["Electronic", "Ambient"]);
-    assert_eq!(tag.genre.as_deref(), Some("Electronic; Ambient"));
-    assert_eq!(tag.title_sort.as_deref(), Some("Management Track, The"));
-    assert_eq!(tag.artist_sort.as_deref(), Some("Alpha, The"));
-    assert_eq!(tag.disc_subtitle.as_deref(), Some("Main Programme"));
-    assert_eq!(tag.original_release_date.as_deref(), Some("2020"));
+    let name = "management_full.mp3";
+    let tag = read(name);
+    assert_eq!(tag.title, "Management Track", "{name}");
+    assert_eq!(tag.artist, "Alpha feat. Beta", "{name}");
+    assert_eq!(tag.album, "Management Album", "{name}");
+    assert_eq!(tag.album_artist.as_deref(), Some("Alpha"), "{name}");
+    assert_eq!(tag.track_number, 2, "{name}");
+    assert_eq!(tag.disc_number, 1, "{name}");
+    assert_eq!(tag.year, Some(2024), "{name}");
+    assert!(tag.compilation, "{name}");
+    assert_eq!(tag.genres, vec!["Electronic", "Ambient"], "{name}");
+    assert_eq!(tag.genre.as_deref(), Some("Electronic; Ambient"), "{name}");
+    assert_eq!(
+        tag.title_sort.as_deref(),
+        Some("Management Track, The"),
+        "{name}"
+    );
+    assert_eq!(tag.artist_sort.as_deref(), Some("Alpha, The"), "{name}");
+    assert_eq!(
+        tag.disc_subtitle.as_deref(),
+        Some("Main Programme"),
+        "{name}"
+    );
+    assert_eq!(tag.original_release_date.as_deref(), Some("2020"), "{name}");
     // Picard's layout: the date beside an earlier original date.
-    assert_eq!(tag.edition.release_date.as_deref(), Some("2024-03-02"));
-    assert_eq!(tag.artists.len(), 2);
+    assert_eq!(
+        tag.edition.release_date.as_deref(),
+        Some("2024-03-02"),
+        "{name}"
+    );
+    assert_eq!(tag.artists.len(), 2, "{name}");
     let credit: &AudioArtistCredit = &tag.artists[0];
-    assert_eq!(credit.name, "Alpha");
+    assert_eq!(credit.name, "Alpha", "{name}");
     assert_eq!(
         credit.musicbrainz_artist_id.as_deref(),
-        Some("10000000-0000-4000-8000-000000000005")
+        Some("10000000-0000-4000-8000-000000000005"),
+        "{name}"
     );
     assert_eq!(
         tag.musicbrainz_recording_id.as_deref(),
-        Some("10000000-0000-4000-8000-000000000003")
+        Some("10000000-0000-4000-8000-000000000003"),
+        "{name}"
     );
     assert_eq!(
         tag.musicbrainz_release_track_id.as_deref(),
-        Some("10000000-0000-4000-8000-000000000004")
+        Some("10000000-0000-4000-8000-000000000004"),
+        "{name}"
     );
     assert_eq!(
-        id3_work(&fixture("management_full.mp3")).as_deref(),
-        Some("Example Work")
+        id3_work(&fixture(name)).as_deref(),
+        Some("Example Work"),
+        "{name}"
     );
-}
 
-#[test]
-fn read_management_flac() {
-    let (tag, _) = tags::read_tags(&fixture("management_full.flac")).unwrap();
-    assert_eq!(tag.title, "Management Track");
-    assert_eq!(tag.artists.len(), 2);
-    assert_eq!(tag.genres, vec!["Electronic", "Ambient"]);
-    assert_eq!(tag.track_number, 2);
-    assert_eq!(tag.year, Some(2024));
-    assert!(tag.compilation);
-    assert_eq!(tag.release_type.as_deref(), Some("Album"));
-    assert_eq!(tag.edition.release_date.as_deref(), Some("2024-03-02"));
+    let name = "management_full.flac";
+    let tag = read(name);
+    assert_eq!(tag.title, "Management Track", "{name}");
+    assert_eq!(tag.artists.len(), 2, "{name}");
+    assert_eq!(tag.genres, vec!["Electronic", "Ambient"], "{name}");
+    assert_eq!(tag.track_number, 2, "{name}");
+    assert_eq!(tag.year, Some(2024), "{name}");
+    assert!(tag.compilation, "{name}");
+    assert_eq!(tag.release_type.as_deref(), Some("Album"), "{name}");
+    assert_eq!(
+        tag.edition.release_date.as_deref(),
+        Some("2024-03-02"),
+        "{name}"
+    );
     assert_eq!(
         tag.musicbrainz_recording_id.as_deref(),
-        Some("10000000-0000-4000-8000-000000000003")
+        Some("10000000-0000-4000-8000-000000000003"),
+        "{name}"
     );
-}
 
-#[test]
-fn read_management_ogg_opus() {
     for name in ["management_full.ogg", "management_full.opus"] {
-        let (tag, _) = tags::read_tags(&fixture(name)).unwrap();
+        let tag = read(name);
         assert_eq!(tag.title, "Management Track", "{name}");
         assert_eq!(tag.artists.len(), 2, "{name}");
         assert_eq!(tag.genres, vec!["Electronic", "Ambient"], "{name}");
@@ -536,29 +547,82 @@ fn read_management_ogg_opus() {
             "{name}"
         );
     }
-}
 
-#[test]
-fn read_management_m4a() {
-    let (tag, _) = tags::read_tags(&fixture("management_full.m4a")).unwrap();
-    assert_eq!(tag.title, "Management Track");
-    assert_eq!(tag.artist, "Alpha feat. Beta");
-    assert_eq!(tag.track_number, 2);
-    assert_eq!(tag.disc_number, 1);
-    assert_eq!(tag.year, Some(2024));
-    assert!(tag.compilation);
-    assert_eq!(tag.artists.len(), 2);
-    assert_eq!(tag.genres, vec!["Electronic", "Ambient"]);
-    assert_eq!(tag.artist_sort.as_deref(), Some("Alpha, The"));
-    assert_eq!(tag.disc_subtitle.as_deref(), Some("Main Programme"));
-    assert_eq!(tag.edition.release_date.as_deref(), Some("2024-03-02"));
+    let name = "management_full.m4a";
+    let tag = read(name);
+    assert_eq!(tag.title, "Management Track", "{name}");
+    assert_eq!(tag.artist, "Alpha feat. Beta", "{name}");
+    assert_eq!(tag.track_number, 2, "{name}");
+    assert_eq!(tag.disc_number, 1, "{name}");
+    assert_eq!(tag.year, Some(2024), "{name}");
+    assert!(tag.compilation, "{name}");
+    assert_eq!(tag.artists.len(), 2, "{name}");
+    assert_eq!(tag.genres, vec!["Electronic", "Ambient"], "{name}");
+    assert_eq!(tag.artist_sort.as_deref(), Some("Alpha, The"), "{name}");
+    assert_eq!(
+        tag.disc_subtitle.as_deref(),
+        Some("Main Programme"),
+        "{name}"
+    );
+    assert_eq!(
+        tag.edition.release_date.as_deref(),
+        Some("2024-03-02"),
+        "{name}"
+    );
     assert_eq!(
         tag.musicbrainz_recording_id.as_deref(),
-        Some("10000000-0000-4000-8000-000000000003")
+        Some("10000000-0000-4000-8000-000000000003"),
+        "{name}"
     );
     assert_eq!(
         tag.musicbrainz_release_track_id.as_deref(),
-        Some("10000000-0000-4000-8000-000000000004")
+        Some("10000000-0000-4000-8000-000000000004"),
+        "{name}"
+    );
+
+    let name = "management_full.wav";
+    let id3 = read(name);
+    assert_eq!(id3.title, "Management Track", "{name}");
+    assert_eq!(id3.track_number, 2, "{name}");
+    assert_eq!(
+        id3.musicbrainz_recording_id.as_deref(),
+        Some("10000000-0000-4000-8000-000000000003"),
+        "{name}"
+    );
+
+    let name = "management_full_riff.wav";
+    let riff = read(name);
+    assert_eq!(riff.title, "RIFF Management Track", "{name}");
+    assert_eq!(riff.artist, "Alpha feat. Beta", "{name}");
+    assert_eq!(riff.album, "RIFF Management Album", "{name}");
+    assert_eq!(riff.track_number, 2, "{name}");
+    assert_eq!(riff.year, Some(2024), "{name}");
+    assert_eq!(riff.genre.as_deref(), Some("Electronic"), "{name}");
+
+    // AAC tag reads are best effort: core fields only.
+    let name = "management_full.aac";
+    let tag = read(name);
+    assert_eq!(tag.title, "Management Track", "{name}");
+    assert_eq!(tag.artist, "Alpha feat. Beta", "{name}");
+    assert_eq!(tag.album, "Management Album", "{name}");
+    assert_eq!(tag.track_number, 2, "{name}");
+    assert_eq!(tag.disc_number, 1, "{name}");
+
+    for name in [
+        "management_full.mp3",
+        "management_full.flac",
+        "management_full.m4a",
+        "management_full.ogg",
+        "management_full.opus",
+    ] {
+        let art = tags::read_cover_art(&fixture(name)).unwrap();
+        assert!(art.is_some(), "{name} should carry cover art");
+        assert!(!art.unwrap().is_empty(), "{name}");
+    }
+    assert_eq!(
+        tags::read_cover_art(&fixture("flac_no_tags.flac")).unwrap(),
+        None,
+        "flac_no_tags.flac"
     );
 }
 
@@ -598,55 +662,6 @@ fn artist_lists_say_where_their_names_came_from() {
     );
 }
 
-#[test]
-fn read_management_wav_pair() {
-    let (id3, _) = tags::read_tags(&fixture("management_full.wav")).unwrap();
-    assert_eq!(id3.title, "Management Track");
-    assert_eq!(id3.track_number, 2);
-    assert_eq!(
-        id3.musicbrainz_recording_id.as_deref(),
-        Some("10000000-0000-4000-8000-000000000003")
-    );
-
-    let (riff, _) = tags::read_tags(&fixture("management_full_riff.wav")).unwrap();
-    assert_eq!(riff.title, "RIFF Management Track");
-    assert_eq!(riff.artist, "Alpha feat. Beta");
-    assert_eq!(riff.album, "RIFF Management Album");
-    assert_eq!(riff.track_number, 2);
-    assert_eq!(riff.year, Some(2024));
-    assert_eq!(riff.genre.as_deref(), Some("Electronic"));
-}
-
-#[test]
-fn read_management_aac_best_effort() {
-    // AAC tag reads are best effort: core fields only.
-    let (tag, _) = tags::read_tags(&fixture("management_full.aac")).unwrap();
-    assert_eq!(tag.title, "Management Track");
-    assert_eq!(tag.artist, "Alpha feat. Beta");
-    assert_eq!(tag.album, "Management Album");
-    assert_eq!(tag.track_number, 2);
-    assert_eq!(tag.disc_number, 1);
-}
-
-#[test]
-fn read_cover_art() {
-    for name in [
-        "management_full.mp3",
-        "management_full.flac",
-        "management_full.m4a",
-        "management_full.ogg",
-        "management_full.opus",
-    ] {
-        let art = tags::read_cover_art(&fixture(name)).unwrap();
-        assert!(art.is_some(), "{name} should carry cover art");
-        assert!(!art.unwrap().is_empty(), "{name}");
-    }
-    assert_eq!(
-        tags::read_cover_art(&fixture("flac_no_tags.flac")).unwrap(),
-        None
-    );
-}
-
 // ---------------------------------------------------------------------------
 // Probe
 // ---------------------------------------------------------------------------
@@ -664,8 +679,10 @@ const ORACLE_DURATIONS: &[(&str, f64)] = &[
     ("m4a_full_01.m4a", 0.3232),
 ];
 
+/// Probe numbers per fixture: durations near the mutagen oracle, sample
+/// rates, bit depths (none for lossy containers), bitrates and sizes.
 #[test]
-fn probe_matches_oracle_durations() {
+fn probe_reads_each_fixture() {
     for (name, oracle) in ORACLE_DURATIONS {
         let info = tags::probe(&fixture(name)).unwrap();
         let drift = (info.duration_seconds - oracle).abs() / oracle;
@@ -676,21 +693,18 @@ fn probe_matches_oracle_durations() {
         );
         assert_eq!(info.channels, 2, "{name}");
     }
-}
 
-#[test]
-fn probe_rates_and_depths() {
     let flac: AudioInfo = tags::probe(&fixture("management_full.flac")).unwrap();
-    assert_eq!(flac.sample_rate, 44100);
-    assert_eq!(flac.bit_depth, Some(16));
-    assert_eq!(flac.file_format, "flac");
+    assert_eq!(flac.sample_rate, 44100, "flac");
+    assert_eq!(flac.bit_depth, Some(16), "flac");
+    assert_eq!(flac.file_format, "flac", "flac");
 
     let opus = tags::probe(&fixture("management_full.opus")).unwrap();
-    assert_eq!(opus.sample_rate, 48000);
-    assert_eq!(opus.bit_depth, None);
+    assert_eq!(opus.sample_rate, 48000, "opus");
+    assert_eq!(opus.bit_depth, None, "opus");
 
     let wav = tags::probe(&fixture("management_full.wav")).unwrap();
-    assert_eq!(wav.bit_depth, Some(16));
+    assert_eq!(wav.bit_depth, Some(16), "wav");
 
     // Lossy containers suppress bit depth, including AAC-backed M4A.
     for name in [
@@ -706,16 +720,13 @@ fn probe_rates_and_depths() {
     let size = std::fs::metadata(fixture("management_full.flac"))
         .unwrap()
         .len();
-    assert_eq!(flac.file_size_bytes, size);
-}
+    assert_eq!(flac.file_size_bytes, size, "flac");
 
-#[test]
-fn probe_adts_uses_demux_count() {
-    // Mutagen cannot even parse this file (length 0); the demux-count
-    // fallback must still land in a sane band.
+    // ADTS: mutagen cannot even parse this file (length 0); the
+    // demux-count fallback must still land in a sane band.
     let info = tags::probe(&fixture("management_full.aac")).unwrap();
-    assert_eq!(info.sample_rate, 44100);
-    assert_eq!(info.channels, 2);
+    assert_eq!(info.sample_rate, 44100, "aac");
+    assert_eq!(info.channels, 2, "aac");
     assert!(
         (0.2..0.5).contains(&info.duration_seconds),
         "ADTS duration {}",
@@ -771,14 +782,16 @@ fn fingerprint_is_deterministic_and_well_formed() {
 // Save wrapper: preservation round-trips
 // ---------------------------------------------------------------------------
 
+/// A title save, per format, keeps unknown and custom tags, the vendor,
+/// the total spellings, the cover and the audio; an untagged FLAC gains
+/// its title.
 #[test]
-fn save_mp3_preserves_everything_but_the_title() {
+fn title_save_keeps_other_tags_and_audio() {
+    // MP3: unknown frames planted by splicing raw frames (lofty's own save
+    // cannot plant them while #732 is open).
     let (_scratch, path) = temp_copy("management_full.mp3", "mp3-roundtrip");
     let before = std::fs::read(&path).unwrap();
     let audio_before = mp3_audio_tail(&before).to_vec();
-
-    // Plant unknown frames by splicing
-    // raw frames (lofty's own save cannot plant them while #732 is open).
     let mut txxx = vec![3u8];
     txxx.extend_from_slice(b"ZZZ_UNHEARD_OF\0mystery");
     let mut wxxx = vec![3u8];
@@ -791,26 +804,29 @@ fn save_mp3_preserves_everything_but_the_title() {
     );
 
     let report: SaveReport = tags::save_tags(&path, &[TagEdit::set_title("WRAP TITLE")]).unwrap();
-    assert_eq!(report.id3_version.as_deref(), Some("2.4"));
+    assert_eq!(report.id3_version.as_deref(), Some("2.4"), "mp3");
 
     let (tag, _) = tags::read_tags(&path).unwrap();
-    assert_eq!(tag.title, "WRAP TITLE");
-    assert_eq!(tag.artist, "Alpha feat. Beta");
-    assert_eq!(tag.artists.len(), 2);
-    assert_eq!(tag.genres, vec!["Electronic", "Ambient"]);
+    assert_eq!(tag.title, "WRAP TITLE", "mp3");
+    assert_eq!(tag.artist, "Alpha feat. Beta", "mp3");
+    assert_eq!(tag.artists.len(), 2, "mp3");
+    assert_eq!(tag.genres, vec!["Electronic", "Ambient"], "mp3");
     assert_eq!(
         tag.musicbrainz_recording_id.as_deref(),
-        Some("10000000-0000-4000-8000-000000000003")
+        Some("10000000-0000-4000-8000-000000000003"),
+        "mp3"
     );
     // Sentinels: WORK, CUSTOM_KEEP, unknowns, multi-values, desc case.
-    assert_eq!(id3_work(&path).as_deref(), Some("Example Work"));
+    assert_eq!(id3_work(&path).as_deref(), Some("Example Work"), "mp3");
     assert_eq!(
         id3_user_text(&path, "CUSTOM_KEEP"),
-        vec!["opaque local value".to_owned()]
+        vec!["opaque local value".to_owned()],
+        "mp3"
     );
     assert_eq!(
         id3_user_text(&path, "ZZZ_UNHEARD_OF"),
-        vec!["mystery".to_owned()]
+        vec!["mystery".to_owned()],
+        "mp3"
     );
     // Multi-values and description case on the wire: lofty's native
     // view renames known descriptions and truncates several text
@@ -824,55 +840,54 @@ fn save_mp3_preserves_everything_but_the_title() {
     ] {
         assert!(
             saved.windows(needle.len()).any(|window| window == needle),
-            "missing {needle:?}"
+            "mp3: missing {needle:?}"
         );
     }
-    let report_bytes = std::fs::read(&path).unwrap();
-    let byte_report = inspect_id3_bytes(&report_bytes).unwrap();
-    assert!(byte_report.frame_ids.contains(&"PRIV".to_owned()));
-    assert!(byte_report.frame_ids.contains(&"WXXX".to_owned()));
+    let byte_report = inspect_id3_bytes(&saved).unwrap();
+    assert!(byte_report.frame_ids.contains(&"PRIV".to_owned()), "mp3");
+    assert!(byte_report.frame_ids.contains(&"WXXX".to_owned()), "mp3");
     // Cover and audio untouched.
     let art_before = tags::read_cover_art(&fixture("management_full.mp3")).unwrap();
-    assert_eq!(tags::read_cover_art(&path).unwrap(), art_before);
-    assert_eq!(mp3_audio_tail(&std::fs::read(&path).unwrap()), audio_before);
-}
+    assert_eq!(tags::read_cover_art(&path).unwrap(), art_before, "mp3");
+    assert_eq!(
+        mp3_audio_tail(&std::fs::read(&path).unwrap()),
+        audio_before,
+        "mp3"
+    );
 
-#[test]
-fn save_flac_preserves_vendor_spelling_and_unknowns() {
+    // FLAC: an unknown field planted by splicing the raw pair (a lofty
+    // save would drop the unknowns it cannot see).
     let (_scratch, path) = temp_copy("management_full.flac", "flac-roundtrip");
     let audio_before = flac_audio_tail(&std::fs::read(&path).unwrap()).to_vec();
     let vendor_before = vorbis_vendor(&path);
-
-    // Plant an unknown field by splicing the raw pair
-    // (a lofty save would drop the unknowns it cannot see).
     flac_inject_pairs(&path, &[("ZZZ_UNHEARD_OF_FIELD", "mystery")]);
 
     tags::save_tags(&path, &[TagEdit::set_title("WRAP TITLE")]).unwrap();
 
     let (tag, _) = tags::read_tags(&path).unwrap();
-    assert_eq!(tag.title, "WRAP TITLE");
-    assert_eq!(tag.artists.len(), 2);
+    assert_eq!(tag.title, "WRAP TITLE", "flac");
+    assert_eq!(tag.artists.len(), 2, "flac");
     assert_eq!(
         vorbis_values(&path, "CUSTOM_KEEP"),
-        vec!["opaque local value"]
+        vec!["opaque local value"],
+        "flac"
     );
     assert_eq!(
         vorbis_values(&path, "ZZZ_UNHEARD_OF_FIELD"),
-        vec!["mystery"]
+        vec!["mystery"],
+        "flac"
     );
     // TOTALTRACKS/TOTALDISCS spelling, not lofty's TRACKTOTAL/DISCTOTAL.
-    assert_eq!(vorbis_values(&path, "TOTALTRACKS"), vec!["9"]);
-    assert_eq!(vorbis_values(&path, "TOTALDISCS"), vec!["2"]);
-    assert!(vorbis_values(&path, "TRACKTOTAL").is_empty());
-    assert_eq!(vorbis_vendor(&path), vendor_before);
+    assert_eq!(vorbis_values(&path, "TOTALTRACKS"), vec!["9"], "flac");
+    assert_eq!(vorbis_values(&path, "TOTALDISCS"), vec!["2"], "flac");
+    assert!(vorbis_values(&path, "TRACKTOTAL").is_empty(), "flac");
+    assert_eq!(vorbis_vendor(&path), vendor_before, "flac");
     assert_eq!(
         flac_audio_tail(&std::fs::read(&path).unwrap()),
-        audio_before
+        audio_before,
+        "flac"
     );
-}
 
-#[test]
-fn save_ogg_opus_m4a_round_trip() {
     for name in [
         "management_full.ogg",
         "management_full.opus",
@@ -899,14 +914,13 @@ fn save_ogg_opus_m4a_round_trip() {
             "{name}"
         );
     }
-}
 
-#[test]
-fn save_m4a_audio_bytes_identical() {
-    let (_scratch, path) = temp_copy("management_full.m4a", "m4a-audio");
-    let audio_before = m4a_mdat(&std::fs::read(&path).unwrap()).to_vec();
-    tags::save_tags(&path, &[TagEdit::set_title("WRAP TITLE")]).unwrap();
-    assert_eq!(m4a_mdat(&std::fs::read(&path).unwrap()), audio_before);
+    // A FLAC with no comment block at all gains one holding the title.
+    let (_scratch, path) = temp_copy("management_full.flac", "untagged");
+    flac_strip_comments(&path);
+    tags::save_tags(&path, &[TagEdit::set_title("Fresh Title")]).unwrap();
+    let (tag, _) = tags::read_tags(&path).unwrap();
+    assert_eq!(tag.title, "Fresh Title", "untagged flac");
 }
 
 // ---------------------------------------------------------------------------
@@ -1120,71 +1134,70 @@ fn mixed_v23_frames_move_to_their_v24_homes() {
     assert_eq!(mp3_audio_tail(&std::fs::read(&path).unwrap()), audio);
 }
 
-/// A v2.3 date that agrees with the v2.4 one (its year) gives way to it.
+/// A v2.3 date beside its v2.4 frame gives way when it agrees (its year)
+/// and stays when it conflicts, the date reading the v2.4 one; the
+/// preview's notes say the tag is saved as v2.4 and name each conflict.
 #[test]
-fn mixed_v23_agreeing_dates_give_way() {
+fn mixed_v23_date_pairs() {
+    let first = "Its ID3v2.3 tag also holds newer ID3v2.4 tags, so it is saved as ID3v2.4.";
+    let notes = |path: &Path| {
+        tags::save::tags_kept(path, PicturesPlan::Untouched)
+            .unwrap()
+            .upgrade_notes
+    };
+
+    // Agreeing dates.
     let (_scratch, path) = mixed_v23_with(
         "mixed-agree",
         &[("TYER", &latin1(&["2024"])), ("TORY", &latin1(&["2020"]))],
     );
+    assert_eq!(notes(&path), vec![first.to_owned()], "agreeing");
     tags::save_tags(&path, &[TagEdit::set_title("Agreed")]).unwrap();
     let (major, view) = id3_view(&path);
-    assert_eq!(major, 4);
+    assert_eq!(major, 4, "agreeing");
     for gone in ["TYER", "TORY"] {
-        assert!(view.iter().all(|(key, _)| key != gone), "{gone}");
+        assert!(view.iter().all(|(key, _)| key != gone), "agreeing: {gone}");
     }
-    assert_eq!(id3_text_values(&path, "TDRC"), texts(&["2024-03-02"]));
-    assert_eq!(id3_text_values(&path, "TDOR"), texts(&["2020"]));
-}
-
-/// Two different dates both stay, and the date reads the v2.4 one.
-#[test]
-fn mixed_v23_conflicting_dates_both_stay() {
-    let (_scratch, path) = mixed_v23_with("mixed-conflict", &[("TYER", &latin1(&["2023"]))]);
-    tags::save_tags(&path, &[TagEdit::set_title("Conflict")]).unwrap();
-    assert_eq!(id3_frames(&path).0, 4);
-    assert_eq!(id3_text_values(&path, "TDRC"), texts(&["2024-03-02"]));
-    assert_eq!(id3_text_values(&path, "TYER"), texts(&["2023"]));
     assert_eq!(
-        tags::read_fields(&path).unwrap()[&TagField::Date],
-        texts(&["2024-03-02"])
+        id3_text_values(&path, "TDRC"),
+        texts(&["2024-03-02"]),
+        "agreeing"
     );
-}
+    assert_eq!(id3_text_values(&path, "TDOR"), texts(&["2020"]), "agreeing");
 
-/// What the preview says about a mixed tag: that it is saved as v2.4,
-/// and each value it holds twice.
-#[test]
-fn mixed_v23_upgrade_notes() {
-    let first = "Its ID3v2.3 tag also holds newer ID3v2.4 tags, so it is saved as ID3v2.4.";
-    let (_scratch, path) = mixed_v23_with("mixed-notes", &[("TYER", &latin1(&["2023"]))]);
+    // Conflicting dates.
+    let (_scratch, path) = mixed_v23_with("mixed-conflict", &[("TYER", &latin1(&["2023"]))]);
     assert_eq!(
-        tags::save::tags_kept(&path, PicturesPlan::Untouched)
-            .unwrap()
-            .upgrade_notes,
+        notes(&path),
         vec![
             first.to_owned(),
             "It holds two different recording dates (TDRC 2024-03-02, TYER 2023). It now \
              reads as 2024-03-02; the other value stays in its own frame, which most players \
              ignore."
                 .to_owned(),
-        ]
+        ],
+        "conflicting"
     );
-    let (_scratch, path) = mixed_v23_with(
-        "mixed-notes-agree",
-        &[("TYER", &latin1(&["2024"])), ("TORY", &latin1(&["2020"]))],
+    tags::save_tags(&path, &[TagEdit::set_title("Conflict")]).unwrap();
+    assert_eq!(id3_frames(&path).0, 4, "conflicting");
+    assert_eq!(
+        id3_text_values(&path, "TDRC"),
+        texts(&["2024-03-02"]),
+        "conflicting"
     );
     assert_eq!(
-        tags::save::tags_kept(&path, PicturesPlan::Untouched)
-            .unwrap()
-            .upgrade_notes,
-        vec![first.to_owned()]
+        id3_text_values(&path, "TYER"),
+        texts(&["2023"]),
+        "conflicting"
     );
-    assert!(
-        tags::save::tags_kept(&fixture("management_full.mp3"), PicturesPlan::Untouched)
-            .unwrap()
-            .upgrade_notes
-            .is_empty()
+    assert_eq!(
+        tags::read_fields(&path).unwrap()[&TagField::Date],
+        texts(&["2024-03-02"]),
+        "conflicting"
     );
+
+    // A plain v2.4 tag gets no notes.
+    assert!(notes(&fixture("management_full.mp3")).is_empty(), "v2.4");
 }
 
 /// Frames with no v2.4 home, and the frames lofty writes again itself,
@@ -1385,39 +1398,6 @@ fn save_pure_v23_stays_v23() {
     assert_eq!(mp3_audio_tail(&bytes), audio);
 }
 
-#[test]
-fn save_drops_the_empty_values_of_a_fixture() {
-    // flac_no_tags.flac is not tag-free: it carries empty TITLE/ARTIST/
-    // ALBUM values, which read as absent and go with the save.
-    let (_scratch, path) = temp_copy("flac_no_tags.flac", "no-tags");
-    let fields = tags::read_fields(&path).unwrap();
-    for field in [TagField::Title, TagField::Artist, TagField::Album] {
-        assert!(!fields.contains_key(&field), "{field:?}");
-    }
-    assert_eq!(
-        tags::save::tags_kept(&path, PicturesPlan::Untouched)
-            .unwrap()
-            .refusal,
-        None
-    );
-    tags::save_tags(&path, &[TagEdit::set_title("Fresh Title")]).unwrap();
-    assert_eq!(
-        vorbis_values(&path, "TITLE"),
-        vec!["Fresh Title".to_owned()]
-    );
-    assert!(vorbis_values(&path, "ARTIST").is_empty());
-    assert!(vorbis_values(&path, "ALBUM").is_empty());
-}
-
-#[test]
-fn save_untagged_flac_gains_a_title() {
-    let (_scratch, path) = temp_copy("management_full.flac", "untagged");
-    flac_strip_comments(&path);
-    tags::save_tags(&path, &[TagEdit::set_title("Fresh Title")]).unwrap();
-    let (tag, _) = tags::read_tags(&path).unwrap();
-    assert_eq!(tag.title, "Fresh Title");
-}
-
 // ---------------------------------------------------------------------------
 // Save wrapper: loud refusals, originals untouched
 // ---------------------------------------------------------------------------
@@ -1433,10 +1413,14 @@ fn save_refused(name: &str, test: &str, edits: &[TagEdit]) -> (Refusal, Vec<u8>,
     (refusal, before, after)
 }
 
-/// A total the file spells both ways is updated under both spellings;
-/// a file using neither gets Picard's.
+/// A total the file spells both ways is updated under both spellings, and
+/// a file using neither gets Picard's. Where the spellings disagree, each
+/// is recorded and a replay of that document puts each back to its own
+/// value.
 #[test]
-fn vorbis_totals_update_every_spelling() {
+fn vorbis_total_spellings_update_and_restore() {
+    use droppedneedle_library::publish::staging;
+
     let (_scratch, path) = temp_copy("management_full.flac", "totals");
     flac_inject_pairs(&path, &[("TRACKTOTAL", "9")]);
     tags::save_tags(
@@ -1447,17 +1431,11 @@ fn vorbis_totals_update_every_spelling() {
         ],
     )
     .unwrap();
-    assert_eq!(vorbis_values(&path, "TOTALTRACKS"), vec!["12"]);
-    assert_eq!(vorbis_values(&path, "TRACKTOTAL"), vec!["12"]);
-    assert_eq!(vorbis_values(&path, "TOTALDISCS"), vec!["3"]);
-    assert!(vorbis_values(&path, "DISCTOTAL").is_empty());
-}
+    assert_eq!(vorbis_values(&path, "TOTALTRACKS"), vec!["12"], "update");
+    assert_eq!(vorbis_values(&path, "TRACKTOTAL"), vec!["12"], "update");
+    assert_eq!(vorbis_values(&path, "TOTALDISCS"), vec!["3"], "update");
+    assert!(vorbis_values(&path, "DISCTOTAL").is_empty(), "update");
 
-/// A file whose total spellings disagree records each one, and replaying
-/// that document puts each spelling back to its own value.
-#[test]
-fn vorbis_spellings_restore_their_own_values() {
-    use droppedneedle_library::publish::staging;
     let (_scratch, path) = temp_copy("management_full.flac", "spellings");
     flac_inject_pairs(&path, &[("TOTALTRACKS", "12"), ("TRACKTOTAL", "9")]);
     let baseline = staging::document_from_file(&path).unwrap();
@@ -1465,7 +1443,8 @@ fn vorbis_spellings_restore_their_own_values() {
         baseline
             .managed
             .get(&TagTarget::Spelling(TagField::TrackTotal, "TRACKTOTAL")),
-        Some(&vec!["9".to_owned()])
+        Some(&vec!["9".to_owned()]),
+        "restore"
     );
     let totals = vorbis_values(&path, "TOTALTRACKS");
     tags::save_tags(
@@ -1473,11 +1452,11 @@ fn vorbis_spellings_restore_their_own_values() {
         &[TagEdit::new(TagField::TrackTotal, vec!["15".to_owned()])],
     )
     .unwrap();
-    assert_eq!(vorbis_values(&path, "TRACKTOTAL"), vec!["15"]);
+    assert_eq!(vorbis_values(&path, "TRACKTOTAL"), vec!["15"], "restore");
     let edits = staging::tag_edits(&baseline.managed);
     tags::save_tags(&path, &edits).unwrap();
-    assert_eq!(vorbis_values(&path, "TOTALTRACKS"), totals);
-    assert_eq!(vorbis_values(&path, "TRACKTOTAL"), vec!["9"]);
+    assert_eq!(vorbis_values(&path, "TOTALTRACKS"), totals, "restore");
+    assert_eq!(vorbis_values(&path, "TRACKTOTAL"), vec!["9"], "restore");
 }
 
 /// A restore removes fields the baseline lacked, except ones the file
@@ -1503,13 +1482,32 @@ fn restore_updates_spare_opaque_and_older_baselines() {
     assert_eq!(updates, baseline.managed);
 }
 
-/// A restore from a document recorded before the credit fields existed
-/// leaves them as the file holds them: a version 4 document listed only
-/// some as native items (never the TIPL and TMCL pairs or the movement
-/// frames), and a version 2 document lists none.
+/// A restore from a document older than some fields never removes the
+/// tags it did not list. Before the credit fields existed, a version 4
+/// document listed only some as native items (never the TIPL and TMCL
+/// pairs or the movement frames), and a version 2 document lists none.
+/// A version 5 document, recorded before engineer, mixer, DJ-mixer, writer
+/// and director were fields, listed their Vorbis, `TXXX` and MP4 tags as
+/// native items and their `TIPL` and `IPLS` pairs not at all, whatever
+/// spelling the file holds. A native item a later run changed goes back
+/// to its value.
 #[test]
-fn older_baselines_keep_the_credit_tags() {
-    use droppedneedle_library::publish::staging;
+fn older_baselines_keep_tags_they_never_listed() {
+    use droppedneedle_library::publish::{TagDocument, staging};
+    // Saves a title (and `later`) over `path`, then restores it from
+    // `baseline` as an undo would.
+    let restore_from = |path: &Path, baseline: &TagDocument, later: &[TagEdit]| {
+        let mut edits = vec![TagEdit::set_title("Later")];
+        edits.extend_from_slice(later);
+        tags::save_tags(path, &edits).unwrap();
+        let current = staging::document_from_file(path).unwrap();
+        let name = path.file_name().unwrap().to_str().unwrap();
+        let updates = staging::restore_updates(baseline, &current, name);
+        let edits = staging::tag_edits(&updates);
+        tags::save_tags(path, &edits).unwrap();
+    };
+
+    // Versions 4 and 2, before the credit fields.
     let (_scratch, path) = temp_copy("management_full.mp3", "old-baseline");
     id3_inject_frames(
         &path,
@@ -1561,24 +1559,18 @@ fn older_baselines_keep_the_credit_tags() {
         if version < 4 {
             baseline.custom.clear();
         }
-        tags::save_tags(&path, &[TagEdit::set_title("Later")]).unwrap();
-        let current = staging::document_from_file(&path).unwrap();
-        let updates = staging::restore_updates(&baseline, &current, "a.mp3");
-        let edits = staging::tag_edits(&updates);
-        tags::save_tags(&path, &edits).unwrap();
+        restore_from(&path, &baseline, &[]);
         assert_eq!(held(&path), original, "version {version}");
-        assert_eq!(id3_text_values(&path, "TIT2"), texts(&["Management Track"]));
+        assert_eq!(
+            id3_text_values(&path, "TIT2"),
+            texts(&["Management Track"]),
+            "version {version}"
+        );
     }
-}
 
-/// A restore from a version 5 document, recorded before engineer, mixer,
-/// DJ-mixer, writer and director were fields, never removes their tags,
-/// whatever spelling the file holds: it listed their Vorbis, `TXXX` and
-/// MP4 tags as native items and their `TIPL` and `IPLS` pairs not at
-/// all. A native item a later run changed goes back to its value.
-#[test]
-fn version_5_baselines_keep_the_other_role_tags() {
-    use droppedneedle_library::publish::staging;
+    // Version 5, before the other roles. Restores `path` from its document
+    // as the version 5 reader recorded it (`native` names the items it
+    // listed), after `later` was saved.
     let other_roles = [
         TagField::Engineer,
         TagField::Mixer,
@@ -1586,8 +1578,6 @@ fn version_5_baselines_keep_the_other_role_tags() {
         TagField::Writer,
         TagField::Director,
     ];
-    // Restores `path` from its document as the version 5 reader recorded
-    // it (`native` names the items it listed), after `later` was saved.
     let restore = |path: &Path, native: &[(TagField, &str)], later: &[TagEdit]| {
         let mut baseline = staging::document_from_file(path).unwrap();
         for field in other_roles {
@@ -1599,14 +1589,7 @@ fn version_5_baselines_keep_the_other_role_tags() {
             }
         }
         baseline.version = 5;
-        let mut edits = vec![TagEdit::set_title("Later")];
-        edits.extend_from_slice(later);
-        tags::save_tags(path, &edits).unwrap();
-        let current = staging::document_from_file(path).unwrap();
-        let name = path.file_name().unwrap().to_str().unwrap();
-        let updates = staging::restore_updates(&baseline, &current, name);
-        let edits = staging::tag_edits(&updates);
-        tags::save_tags(path, &edits).unwrap();
+        restore_from(path, &baseline, later);
     };
 
     // MP3 v2.4: TIPL engineer and mix pairs, and Picard's TXXX:Writer.
@@ -1720,34 +1703,162 @@ fn verbatim_values_round_trip() {
     }
 }
 
+/// Every refused save leaves the file byte for byte as it was: a value
+/// its field cannot hold, a read-only container, a credit MP4 has no home
+/// for, a NUL that would split a credit or comment, a v2.3 performer
+/// playing an involved role, an item lofty cannot parse, and an edit of
+/// a Vorbis key spelled two ways.
 #[test]
-fn save_refuses_values_a_field_cannot_hold() {
+fn save_refusals_leave_the_file_as_it_was() {
+    const MP3: &str = "management_full.mp3";
+    const M4A: &str = "management_full.m4a";
+    // (case, fixture, edit, refused as read-only rather than unencodable)
     let cases = [
         (
             "timestamp",
+            MP3,
             TagEdit::new(TagField::Date, vec!["FUZZ".to_owned()]),
+            false,
         ),
         (
             "count",
+            MP3,
             TagEdit::new(TagField::TrackNumber, vec!["abc".to_owned()]),
+            false,
         ),
         (
             "single",
+            MP3,
             TagEdit::new(
                 TagField::MusicBrainzReleaseId,
                 vec!["one".to_owned(), "two".to_owned()],
             ),
+            false,
         ),
-        ("blank", TagEdit::new(TagField::Title, vec![String::new()])),
+        (
+            "blank",
+            MP3,
+            TagEdit::new(TagField::Title, vec![String::new()]),
+            false,
+        ),
+        (
+            "aac-read-only",
+            "management_full.aac",
+            TagEdit::set_title("WRAP TITLE"),
+            true,
+        ),
+        (
+            "wav-read-only",
+            "management_full.wav",
+            TagEdit::set_title("WRAP TITLE"),
+            true,
+        ),
+        (
+            "m4a-performer",
+            M4A,
+            TagEdit::new(TagField::Performer, texts(PERFORMERS)),
+            false,
+        ),
+        (
+            "m4a-arranger",
+            M4A,
+            TagEdit::new(TagField::Arranger, texts(&["Arlo Arranger"])),
+            false,
+        ),
+        (
+            "nul-producer",
+            MP3,
+            TagEdit::new(TagField::Producer, texts(&["A\u{0}B"])),
+            false,
+        ),
+        (
+            "nul-performer",
+            MP3,
+            TagEdit::new(TagField::Performer, texts(&["A\u{0}B (guitar)"])),
+            false,
+        ),
+        (
+            "nul-comment",
+            MP3,
+            TagEdit::new(TagField::Comment, texts(&["a\u{0}b"])),
+            false,
+        ),
     ];
-    for (test, edit) in cases {
-        let (refusal, before, after) = save_refused("management_full.mp3", test, &[edit]);
-        assert!(
-            matches!(refusal, Refusal::UnencodableItem { .. }),
-            "{test}: {refusal:?}"
-        );
-        assert_eq!(before, after, "{test}");
+    for (case, name, edit, read_only) in cases {
+        let (refusal, before, after) = save_refused(name, case, &[edit]);
+        let expected = if read_only {
+            matches!(refusal, Refusal::ReadOnlyFormat { .. })
+        } else {
+            matches!(refusal, Refusal::UnencodableItem { .. })
+        };
+        assert!(expected, "{case}: {refusal:?}");
+        assert_eq!(before, after, "{case}");
     }
+    // MP4 has nothing to remove, so clearing its performers is no refusal.
+    let (_m4a, m4a) = temp_copy(M4A, "performer-clear");
+    tags::save_tags(&m4a, &[TagEdit::new(TagField::Performer, Vec::new())]).unwrap();
+
+    // v2.3 keeps every credit in IPLS, where a producer is not a musician:
+    // a performer playing "producer" is refused, not filed as a producer.
+    let (_scratch, path) = pure_v23_copy("v23-involved");
+    let before = std::fs::read(&path).unwrap();
+    let result = tags::save_tags(
+        &path,
+        &[TagEdit::new(
+            TagField::Performer,
+            texts(&["Bob (producer)"]),
+        )],
+    );
+    assert!(
+        matches!(
+            result,
+            Err(TagsError::SaveRefused {
+                refusal: Refusal::UnencodableItem { .. },
+                ..
+            })
+        ),
+        "v2.3 involved role: {result:?}"
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), before, "v2.3 involved role");
+
+    // A tag item lofty cannot parse (a release date holding a web address)
+    // is dropped on read, so the file is still catalogued; a save still
+    // refuses it.
+    let frames = vec![
+        ("TIT2", latin1(&["Probe"])),
+        ("TDRL", latin1(&["www.example.com"])),
+    ];
+    let (_dir, path) = raw_id3_mp3("unparsable-item", 3, &frames);
+    let (tag, _) = tags::read_tags(&path).unwrap();
+    assert_eq!(tag.title, "Probe", "unparsable item");
+    let before = std::fs::read(&path).unwrap();
+    assert!(
+        tags::save_tags(&path, &[TagEdit::set_title("New")]).is_err(),
+        "unparsable item"
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), before, "unparsable item");
+
+    // A Vorbis key spelled two ways is never listed, and an edit of one
+    // spelling is refused rather than touching the other.
+    let (_scratch, path) = temp_copy("management_full.flac", "vorbis-case");
+    flac_inject_pairs(&path, &[("Mood", "Calm"), ("MOOD", "Bright")]);
+    let native = tags::save::read_document(&path).unwrap().native;
+    assert!(
+        native
+            .keys()
+            .all(|key| !key.eq_ignore_ascii_case("vorbis:mood")),
+        "vorbis case variants: {native:?}"
+    );
+    let before = std::fs::read(&path).unwrap();
+    assert!(
+        tags::save_tags(&path, &[TagEdit::native("vorbis:MOOD", Vec::new())]).is_err(),
+        "vorbis case variants"
+    );
+    assert_eq!(
+        before,
+        std::fs::read(&path).unwrap(),
+        "vorbis case variants"
+    );
 }
 
 /// Picard's tag set as the publisher writes it for one release track.
@@ -1902,9 +2013,12 @@ fn picard_tag_set_round_trips_per_format() {
 }
 
 /// Native items outside the managed fields are listed, removed and put
-/// back verbatim: what a scrub and its undo do.
+/// back verbatim: what a scrub and its undo do. ID3 comment, URL and
+/// private frames are native items too, and a scrub of some leaves the
+/// rest.
 #[test]
 fn native_items_scrub_and_restore() {
+    use tags::save::read_document;
     for (name, key) in [
         ("management_full.flac", "vorbis:MOOD"),
         ("management_full.mp3", "id3:TBPM"),
@@ -1912,7 +2026,7 @@ fn native_items_scrub_and_restore() {
     ] {
         let (_scratch, path) = temp_copy(name, "native");
         let values = vec!["Someone".to_owned()];
-        let native = |path: &Path| tags::save::read_document(path).unwrap().native;
+        let native = |path: &Path| read_document(path).unwrap().native;
         tags::save_tags(&path, &[TagEdit::native(key, values.clone())])
             .unwrap_or_else(|error| panic!("{name}: {error}"));
         assert_eq!(native(&path).get(key), Some(&values), "{name}");
@@ -1923,32 +2037,62 @@ fn native_items_scrub_and_restore() {
             .unwrap_or_else(|error| panic!("{name}: {error}"));
         assert_eq!(native(&path).get(key), Some(&values), "{name}");
     }
+
+    // ID3 COMM, PRIV and WOAR: a scrub of two keeps the third, and a
+    // restore writes the same bytes back.
+    let (_scratch, path) = temp_copy("management_full.mp3", "raw-frames");
+    let encode =
+        |bytes: &[u8]| base64::Engine::encode(&base64::engine::general_purpose::STANDARD, bytes);
+    let comment = encode(b"\x03engnote\x00a note");
+    let private = encode(b"owner.example\x00\x01\x02\x03");
+    let link = encode(b"https://example.org/artist");
+    tags::save_tags(
+        &path,
+        &[
+            TagEdit::native("id3:COMM", vec![comment.clone()]),
+            TagEdit::native("id3:PRIV", vec![private.clone()]),
+            TagEdit::native("id3:WOAR", vec![link.clone()]),
+        ],
+    )
+    .unwrap();
+    let held = read_document(&path).unwrap().native;
+    assert_eq!(held.get("id3:COMM"), Some(&vec![comment.clone()]), "COMM");
+    assert_eq!(held.get("id3:PRIV"), Some(&vec![private.clone()]), "PRIV");
+    assert_eq!(held.get("id3:WOAR"), Some(&vec![link.clone()]), "WOAR");
+    tags::save_tags(
+        &path,
+        &[
+            TagEdit::native("id3:PRIV", Vec::new()),
+            TagEdit::native("id3:WOAR", Vec::new()),
+        ],
+    )
+    .unwrap();
+    let scrubbed = read_document(&path).unwrap().native;
+    assert!(!scrubbed.contains_key("id3:PRIV"), "PRIV scrubbed");
+    assert!(!scrubbed.contains_key("id3:WOAR"), "WOAR scrubbed");
+    assert_eq!(scrubbed.get("id3:COMM"), Some(&vec![comment]), "COMM kept");
+    tags::save_tags(
+        &path,
+        &[
+            TagEdit::native("id3:PRIV", vec![private.clone()]),
+            TagEdit::native("id3:WOAR", vec![link.clone()]),
+        ],
+    )
+    .unwrap();
+    let restored = read_document(&path).unwrap().native;
+    assert_eq!(
+        restored.get("id3:PRIV"),
+        Some(&vec![private]),
+        "PRIV restored"
+    );
+    assert_eq!(restored.get("id3:WOAR"), Some(&vec![link]), "WOAR restored");
 }
 
-/// ReplayGain analysis decodes each writable format (the fixtures are
-/// digital silence, so they measure no loudness and no peak; a lossy
-/// decoder may leave float dust far below one 24-bit step).
+/// Embedded pictures are replaced as a set and read back byte for byte,
+/// and a restore puts them back; FLAC picture-block facts go back as they
+/// were, not recomputed.
 #[test]
-fn loudness_measures_the_fixtures() {
-    use tags::loudness::analyse;
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
-    for name in [
-        "management_full.flac",
-        "management_full.mp3",
-        "management_full.ogg",
-        "management_full.opus",
-        "management_full.m4a",
-    ] {
-        let measured = analyse(&fixture(name), deadline).expect(name);
-        assert_eq!(measured.loudness(), None, "{name}");
-        assert!(measured.peak < 1e-9, "{name}: {}", measured.peak);
-        assert_eq!(tags::loudness::peak_text(measured.peak), "0.000000");
-    }
-}
-
-/// Embedded pictures are replaced as a set and read back byte for byte.
-#[test]
-fn pictures_replace_and_read_back() {
+fn pictures_replace_and_restore() {
     use tags::save::{PictureSpec, read_document, save_tags_with_pictures};
     let png = {
         let mut bytes = Vec::new();
@@ -1996,32 +2140,22 @@ fn pictures_replace_and_read_back() {
             assert_eq!(restored, before, "{name}");
         }
     }
-}
 
-/// FLAC picture-block facts go back as they were, not recomputed.
-#[test]
-fn flac_picture_facts_survive_a_restore() {
-    use tags::save::{PictureSpec, read_document, save_tags_with_pictures};
-    let png = {
-        let mut bytes = Vec::new();
-        image::RgbImage::new(4, 4)
-            .write_to(
-                &mut std::io::Cursor::new(&mut bytes),
-                image::ImageFormat::Png,
-            )
-            .unwrap();
-        bytes
-    };
+    // Odd FLAC picture facts are written as given, not recomputed.
     let odd = PictureSpec {
         kind: 4,
         mime: "image/png".to_owned(),
         description: "back".to_owned(),
-        data: png,
+        data: front.data.clone(),
         info: Some([7, 9, 16, 0]),
     };
     let (_scratch, path) = temp_copy("management_full.flac", "picture-facts");
     save_tags_with_pictures(&path, &[], Some(std::slice::from_ref(&odd))).unwrap();
-    assert_eq!(read_document(&path).unwrap().pictures, vec![odd]);
+    assert_eq!(
+        read_document(&path).unwrap().pictures,
+        vec![odd],
+        "flac picture facts"
+    );
 }
 
 /// A frame over the listing cap is never listed, so a scrub of its id
@@ -2095,74 +2229,6 @@ fn id3_large_frame_survives_scrub_and_undo() {
     );
 }
 
-/// A Vorbis key spelled two ways is never listed, and an edit of one
-/// spelling is refused rather than touching the other.
-#[test]
-fn vorbis_case_variants_are_left_alone() {
-    use tags::save::read_document;
-    let (_scratch, path) = temp_copy("management_full.flac", "vorbis-case");
-    flac_inject_pairs(&path, &[("Mood", "Calm"), ("MOOD", "Bright")]);
-    let native = read_document(&path).unwrap().native;
-    assert!(
-        native
-            .keys()
-            .all(|key| !key.eq_ignore_ascii_case("vorbis:mood")),
-        "{native:?}"
-    );
-    let before = std::fs::read(&path).unwrap();
-    assert!(tags::save_tags(&path, &[TagEdit::native("vorbis:MOOD", Vec::new())]).is_err());
-    assert_eq!(before, std::fs::read(&path).unwrap());
-}
-
-/// ID3 comment, URL and private frames are native items: a scrub can
-/// remove them and a restore writes the same bytes back.
-#[test]
-fn id3_raw_frames_scrub_and_restore() {
-    use tags::save::read_document;
-    let (_scratch, path) = temp_copy("management_full.mp3", "raw-frames");
-    let encode =
-        |bytes: &[u8]| base64::Engine::encode(&base64::engine::general_purpose::STANDARD, bytes);
-    let comment = encode(b"\x03engnote\x00a note");
-    let private = encode(b"owner.example\x00\x01\x02\x03");
-    let link = encode(b"https://example.org/artist");
-    tags::save_tags(
-        &path,
-        &[
-            TagEdit::native("id3:COMM", vec![comment.clone()]),
-            TagEdit::native("id3:PRIV", vec![private.clone()]),
-            TagEdit::native("id3:WOAR", vec![link.clone()]),
-        ],
-    )
-    .unwrap();
-    let held = read_document(&path).unwrap().native;
-    assert_eq!(held.get("id3:COMM"), Some(&vec![comment.clone()]));
-    assert_eq!(held.get("id3:PRIV"), Some(&vec![private.clone()]));
-    assert_eq!(held.get("id3:WOAR"), Some(&vec![link.clone()]));
-    tags::save_tags(
-        &path,
-        &[
-            TagEdit::native("id3:PRIV", Vec::new()),
-            TagEdit::native("id3:WOAR", Vec::new()),
-        ],
-    )
-    .unwrap();
-    let scrubbed = read_document(&path).unwrap().native;
-    assert!(!scrubbed.contains_key("id3:PRIV"));
-    assert!(!scrubbed.contains_key("id3:WOAR"));
-    assert_eq!(scrubbed.get("id3:COMM"), Some(&vec![comment]));
-    tags::save_tags(
-        &path,
-        &[
-            TagEdit::native("id3:PRIV", vec![private.clone()]),
-            TagEdit::native("id3:WOAR", vec![link.clone()]),
-        ],
-    )
-    .unwrap();
-    let restored = read_document(&path).unwrap().native;
-    assert_eq!(restored.get("id3:PRIV"), Some(&vec![private]));
-    assert_eq!(restored.get("id3:WOAR"), Some(&vec![link]));
-}
-
 /// An empty comment reads as absent, so a save drops it and keeps every
 /// other comment, and a replay of the read document (what an undo
 /// writes) saves cleanly.
@@ -2198,19 +2264,6 @@ fn save_drops_empty_vorbis_values() {
     let title = before.values[&TagField::Title].clone();
     tags::save_tags(&path, &[TagEdit::new(TagField::Title, title.clone())]).unwrap();
     assert_eq!(vorbis_key_values(&path, "TITLE"), title);
-}
-
-#[test]
-fn save_refuses_read_only_containers() {
-    for name in ["management_full.aac", "management_full.wav"] {
-        let (refusal, before, after) =
-            save_refused(name, "readonly", &[TagEdit::set_title("WRAP TITLE")]);
-        assert!(
-            matches!(refusal, Refusal::ReadOnlyFormat { .. }),
-            "{name}: {refusal:?}"
-        );
-        assert_eq!(before, after, "{name}");
-    }
 }
 
 #[test]
@@ -2781,8 +2834,32 @@ fn credits_round_trip(path: &Path, edits: &[TagEdit], check: &dyn Fn(&Path)) {
     assert_eq!(audio_bytes(path), audio, "{name}: audio changed");
 }
 
+/// A pure ID3v2.3 tag over the fixture's audio.
+fn pure_v23_copy(test: &str) -> (ScratchDir, PathBuf) {
+    let audio = mp3_audio_tail(&std::fs::read(fixture("management_full.mp3")).unwrap()).to_vec();
+    let mut tag = id3v2_bytes(
+        3,
+        &[
+            ("TIT2", b"Management Track"),
+            ("TPE1", b"Alpha feat. Beta"),
+            ("TYER", b"2024"),
+            ("TRCK", b"2"),
+        ],
+    );
+    tag.extend_from_slice(&audio);
+    let dir = ScratchDir::new(test);
+    let path = dir.join("pure_v23.mp3");
+    std::fs::write(&path, &tag).unwrap();
+    (dir, path)
+}
+
+/// Every credit, work, comment and AcoustID field, and the other roles
+/// (engineer, mixer, DJ-mixer, writer, director), lands in its Picard home
+/// per format (Vorbis comments, ID3v2.4, a clean ID3v2.3 tag, MP4 atoms),
+/// reads back as written, survives a later title save, and leaves the
+/// audio (an MP4's `mdat`) byte for byte.
 #[test]
-fn credit_fields_land_in_vorbis_comments() {
+fn credit_fields_land_in_their_homes() {
     for name in [
         "management_full.flac",
         "management_full.ogg",
@@ -2825,14 +2902,12 @@ fn credit_fields_land_in_vorbis_comments() {
             assert_eq!(fields.get(&edit.field), Some(&edit.values), "{name}");
         }
     }
-}
 
-#[test]
-fn credit_fields_land_in_id3v24() {
+    // ID3v2.4.
     let (_scratch, path) = temp_copy("management_full.mp3", "credits-v24");
     let edits = credit_edits();
     let check = |path: &Path| {
-        assert_eq!(id3_frames(path).0, 4);
+        assert_eq!(id3_frames(path).0, 4, "v2.4");
         for (description, field) in [
             ("ALBUMARTISTS", TagField::AlbumArtists),
             ("WORK", TagField::Work),
@@ -2843,7 +2918,7 @@ fn credit_fields_land_in_id3v24() {
             assert_eq!(
                 id3_txxx_values(path, description),
                 value_of(&edits, field),
-                "{description}"
+                "v2.4: {description}"
             );
         }
         for (id, field) in [
@@ -2855,11 +2930,18 @@ fn credit_fields_land_in_id3v24() {
             ("TCOP", TagField::Copyright),
             ("TENC", TagField::EncodedBy),
         ] {
-            assert_eq!(id3_text_values(path, id), value_of(&edits, field), "{id}");
+            assert_eq!(
+                id3_text_values(path, id),
+                value_of(&edits, field),
+                "v2.4: {id}"
+            );
         }
-        assert!(id3_frames(path).1.iter().all(|(id, _)| id != "TIT1"));
-        assert_eq!(id3_text_values(path, "MVIN"), texts(&["2/4"]));
-        assert_eq!(id3_people(path, "TMCL"), performer_pairs());
+        assert!(
+            id3_frames(path).1.iter().all(|(id, _)| id != "TIT1"),
+            "v2.4"
+        );
+        assert_eq!(id3_text_values(path, "MVIN"), texts(&["2/4"]), "v2.4");
+        assert_eq!(id3_people(path, "TMCL"), performer_pairs(), "v2.4");
         // The fixture's producer pair is replaced in place; the arranger
         // pair is added after it.
         assert_eq!(
@@ -2868,7 +2950,8 @@ fn credit_fields_land_in_id3v24() {
                 pair("producer", "Pia Producer"),
                 pair("producer", "Pete Producer"),
                 pair("arranger", "Arlo Arranger"),
-            ]
+            ],
+            "v2.4"
         );
         assert_eq!(
             id3_comments(path),
@@ -2876,7 +2959,8 @@ fn credit_fields_land_in_id3v24() {
                 "eng".to_owned(),
                 String::new(),
                 "A comment, with ünïcode".to_owned()
-            )]
+            )],
+            "v2.4"
         );
     };
     credits_round_trip(&path, &edits, &check);
@@ -2885,43 +2969,23 @@ fn credit_fields_land_in_id3v24() {
         assert_eq!(
             fields.get(&edit.field),
             Some(&edit.values),
-            "{:?}",
+            "v2.4: {:?}",
             edit.field
         );
     }
-}
 
-/// A pure ID3v2.3 tag over the fixture's audio.
-fn pure_v23_copy(test: &str) -> (ScratchDir, PathBuf) {
-    let audio = mp3_audio_tail(&std::fs::read(fixture("management_full.mp3")).unwrap()).to_vec();
-    let mut tag = id3v2_bytes(
-        3,
-        &[
-            ("TIT2", b"Management Track"),
-            ("TPE1", b"Alpha feat. Beta"),
-            ("TYER", b"2024"),
-            ("TRCK", b"2"),
-        ],
-    );
-    tag.extend_from_slice(&audio);
-    let dir = ScratchDir::new(test);
-    let path = dir.join("pure_v23.mp3");
-    std::fs::write(&path, &tag).unwrap();
-    (dir, path)
-}
-
-/// lofty 0.25's v2.3 writer keeps `MVNM`, `MVIN`, `TCOP`, `TENC`, `TEXT`,
-/// `TPE3`, `TPE4` and `TCOM`, and the wrapper builds `IPLS` and `COMM`
-/// itself: every field lands in its Picard home and the tag stays a
-/// clean v2.3 tag.
-#[test]
-fn credit_fields_land_in_id3v23() {
+    // ID3v2.3: lofty 0.25's v2.3 writer keeps `MVNM`, `MVIN`, `TCOP`,
+    // `TENC`, `TEXT`, `TPE3`, `TPE4` and `TCOM`, and the wrapper builds
+    // `IPLS` and `COMM` itself; the tag stays a clean v2.3 tag.
     let (_scratch, path) = pure_v23_copy("tags-credits-v23");
-    let edits = credit_edits();
     let check = |path: &Path| {
-        assert_eq!(id3_frames(path).0, 3);
+        assert_eq!(id3_frames(path).0, 3, "v2.3");
         let bytes = std::fs::read(path).unwrap();
-        assert_eq!(mixed_v23_detail(&inspect_id3_bytes(&bytes).unwrap()), None);
+        assert_eq!(
+            mixed_v23_detail(&inspect_id3_bytes(&bytes).unwrap()),
+            None,
+            "v2.3"
+        );
         // v2.3 holds one text value per frame: several are joined with '/'.
         let joined = |field: TagField| vec![value_of(&edits, field).join("/")];
         for (description, field) in [
@@ -2934,7 +2998,7 @@ fn credit_fields_land_in_id3v23() {
             assert_eq!(
                 id3_txxx_values(path, description),
                 joined(field),
-                "{description}"
+                "v2.3: {description}"
             );
         }
         for (id, field) in [
@@ -2946,23 +3010,24 @@ fn credit_fields_land_in_id3v23() {
             ("TCOP", TagField::Copyright),
             ("TENC", TagField::EncodedBy),
         ] {
-            assert_eq!(id3_text_values(path, id), joined(field), "{id}");
+            assert_eq!(id3_text_values(path, id), joined(field), "v2.3: {id}");
         }
-        assert_eq!(id3_text_values(path, "MVIN"), texts(&["2/4"]));
+        assert_eq!(id3_text_values(path, "MVIN"), texts(&["2/4"]), "v2.3");
         let mut ipls = performer_pairs();
         ipls.extend([
             pair("arranger", "Arlo Arranger"),
             pair("producer", "Pia Producer"),
             pair("producer", "Pete Producer"),
         ]);
-        assert_eq!(id3_people(path, "IPLS"), ipls);
+        assert_eq!(id3_people(path, "IPLS"), ipls, "v2.3");
         assert_eq!(
             id3_comments(path),
             vec![(
                 "eng".to_owned(),
                 String::new(),
                 "A comment, with ünïcode".to_owned()
-            )]
+            )],
+            "v2.3"
         );
     };
     credits_round_trip(&path, &edits, &check);
@@ -2975,12 +3040,10 @@ fn credit_fields_land_in_id3v23() {
         TagField::MovementNumber,
         TagField::MovementCount,
     ] {
-        assert_eq!(fields[&field], value_of(&edits, field), "{field:?}");
+        assert_eq!(fields[&field], value_of(&edits, field), "v2.3: {field:?}");
     }
-}
 
-#[test]
-fn credit_fields_land_in_mp4_atoms() {
+    // MP4, which has no home for performers or arrangers.
     let (_scratch, path) = temp_copy("management_full.m4a", "credits-m4a");
     let edits: Vec<TagEdit> = credit_edits()
         .into_iter()
@@ -2995,7 +3058,11 @@ fn credit_fields_land_in_mp4_atoms() {
             (b"cprt", TagField::Copyright),
             (b"\xa9too", TagField::EncodedBy),
         ] {
-            assert_eq!(mp4_text(path, kind), value_of(&edits, field), "{field:?}");
+            assert_eq!(
+                mp4_text(path, kind),
+                value_of(&edits, field),
+                "m4a: {field:?}"
+            );
         }
         for (name, field) in [
             ("ALBUMARTISTS", TagField::AlbumArtists),
@@ -3007,57 +3074,148 @@ fn credit_fields_land_in_mp4_atoms() {
             ("Acoustid Id", TagField::AcoustIdId),
             ("Acoustid Fingerprint", TagField::AcoustIdFingerprint),
         ] {
-            assert_eq!(mp4_freeform(path, name), value_of(&edits, field), "{name}");
+            assert_eq!(
+                mp4_freeform(path, name),
+                value_of(&edits, field),
+                "m4a: {name}"
+            );
         }
-        assert_eq!(mp4_integers(path, b"\xa9mvi"), vec![2]);
-        assert_eq!(mp4_integers(path, b"\xa9mvc"), vec![4]);
+        assert_eq!(mp4_integers(path, b"\xa9mvi"), vec![2], "m4a");
+        assert_eq!(mp4_integers(path, b"\xa9mvc"), vec![4], "m4a");
     };
+    // `credits_round_trip` also holds the `mdat` byte for byte.
     credits_round_trip(&path, &edits, &check);
     let fields = tags::read_fields(&path).unwrap();
     for edit in &edits {
         assert_eq!(
             fields.get(&edit.field),
             Some(&edit.values),
-            "{:?}",
+            "m4a: {:?}",
             edit.field
         );
     }
-}
 
-/// Musician credits round-trip with their instruments; MP4 has no home
-/// for performers or arrangers and refuses them, with nothing to remove.
-#[test]
-fn performers_round_trip_and_mp4_refuses() {
-    let performers = TagEdit::new(TagField::Performer, texts(PERFORMERS));
-    let (_v24, mp3) = temp_copy("management_full.mp3", "performers");
-    let (_v23, v23) = pure_v23_copy("tags-performers-v23");
-    let (_flac, flac) = temp_copy("management_full.flac", "performers");
-    for path in [&mp3, &v23, &flac] {
-        tags::save_tags(path, std::slice::from_ref(&performers)).unwrap();
+    // Engineer, mixer, DJ-mixer, writer and director, in every format.
+    let many = |field: TagField, values: &[&str]| TagEdit::new(field, texts(values));
+    let edits = vec![
+        many(TagField::Engineer, &["Eve Engineer", "Ed Engineer"]),
+        many(TagField::Mixer, &["Max Mixer"]),
+        many(TagField::DjMixer, &["Dee Jay"]),
+        many(TagField::Writer, &["Wanda Writer", "Will Writer"]),
+        many(TagField::Director, &["Dora Director"]),
+    ];
+    let read_back = |path: &Path| {
+        let fields = tags::read_fields(path).unwrap();
+        for edit in &edits {
+            assert_eq!(
+                fields.get(&edit.field),
+                Some(&edit.values),
+                "{}: {:?}",
+                path.display(),
+                edit.field
+            );
+        }
+    };
+    let people = |role_of: &dyn Fn(TagField) -> &'static str| {
+        let mut pairs = Vec::new();
+        for field in [TagField::Engineer, TagField::Mixer, TagField::DjMixer] {
+            for name in value_of(&edits, field) {
+                pairs.push((role_of(field).to_owned(), name));
+            }
+        }
+        pairs
+    };
+    let role_of = |field: TagField| match field {
+        TagField::Engineer => "engineer",
+        TagField::Mixer => "mix",
+        _ => "DJ-mix",
+    };
+
+    for name in ["management_full.flac", "management_full.ogg"] {
+        let (_scratch, path) = temp_copy(name, "other-roles-vorbis");
+        let check = |path: &Path| {
+            for (key, field) in [
+                ("ENGINEER", TagField::Engineer),
+                ("MIXER", TagField::Mixer),
+                ("DJMIXER", TagField::DjMixer),
+                ("WRITER", TagField::Writer),
+                ("DIRECTOR", TagField::Director),
+            ] {
+                assert_eq!(
+                    vorbis_key_values(path, key),
+                    value_of(&edits, field),
+                    "other roles {name}: {key}"
+                );
+            }
+        };
+        credits_round_trip(&path, &edits, &check);
+        read_back(&path);
+    }
+
+    let (_scratch, mp3) = temp_copy("management_full.mp3", "other-roles-v24");
+    let check = |path: &Path| {
+        assert_eq!(id3_frames(path).0, 4, "other roles v2.4");
+        let mut tipl = vec![pair("producer", "Example Producer")];
+        tipl.extend(people(&role_of));
+        assert_eq!(id3_people(path, "TIPL"), tipl, "other roles v2.4");
         assert_eq!(
-            tags::read_fields(path).unwrap()[&TagField::Performer],
-            texts(PERFORMERS),
-            "{}",
-            path.display()
+            id3_txxx_values(path, "Writer"),
+            value_of(&edits, TagField::Writer),
+            "other roles v2.4"
         );
-    }
-    assert_eq!(vorbis_key_values(&flac, "PERFORMER"), texts(PERFORMERS));
-    assert_eq!(id3_people(&mp3, "TMCL"), performer_pairs());
-    assert_eq!(id3_people(&v23, "IPLS"), performer_pairs());
+        assert_eq!(
+            id3_txxx_values(path, "DIRECTOR"),
+            value_of(&edits, TagField::Director),
+            "other roles v2.4"
+        );
+    };
+    credits_round_trip(&mp3, &edits, &check);
+    read_back(&mp3);
 
-    for edit in [
-        performers,
-        TagEdit::new(TagField::Arranger, texts(&["Arlo Arranger"])),
-    ] {
-        let (refusal, before, after) = save_refused("management_full.m4a", "credit-m4a", &[edit]);
-        assert!(
-            matches!(refusal, Refusal::UnencodableItem { .. }),
-            "{refusal:?}"
+    // ID3v2.3: the pairs in IPLS, and writer as one "/"-joined value.
+    let (_scratch, v23) = pure_v23_copy("other-roles-v23");
+    let check = |path: &Path| {
+        assert_eq!(id3_frames(path).0, 3, "other roles v2.3");
+        assert_eq!(
+            id3_people(path, "IPLS"),
+            people(&role_of),
+            "other roles v2.3"
         );
-        assert_eq!(before, after);
-    }
-    let (_m4a, m4a) = temp_copy("management_full.m4a", "performer-clear");
-    tags::save_tags(&m4a, &[TagEdit::new(TagField::Performer, Vec::new())]).unwrap();
+        assert_eq!(
+            id3_txxx_values(path, "Writer"),
+            texts(&["Wanda Writer/Will Writer"]),
+            "other roles v2.3"
+        );
+        assert_eq!(
+            id3_txxx_values(path, "DIRECTOR"),
+            value_of(&edits, TagField::Director),
+            "other roles v2.3"
+        );
+    };
+    credits_round_trip(&v23, &edits, &check);
+
+    let (_scratch, m4a) = temp_copy("management_full.m4a", "other-roles-m4a");
+    let check = |path: &Path| {
+        for (name, field) in [
+            ("ENGINEER", TagField::Engineer),
+            ("MIXER", TagField::Mixer),
+            ("DJMIXER", TagField::DjMixer),
+            ("writer", TagField::Writer),
+        ] {
+            assert_eq!(
+                mp4_freeform(path, name),
+                value_of(&edits, field),
+                "other roles m4a: {name}"
+            );
+        }
+        assert_eq!(
+            mp4_text(path, b"\xa9dir"),
+            value_of(&edits, TagField::Director),
+            "other roles m4a"
+        );
+    };
+    credits_round_trip(&m4a, &edits, &check);
+    read_back(&m4a);
 }
 
 /// The fixtures v2's generator tagged read their credits, work and
@@ -3113,11 +3271,63 @@ fn management_fixtures_read_their_credits() {
     }
 }
 
-/// Edits of producer, comment and composer leave a foreign `TIPL` pair,
-/// an iTunNORM `COMM`, an unknown `TXXX`, an unknown Vorbis key and an
-/// unknown MP4 freeform as they were, in order.
+/// The fixture MP3 with its `TIPL` swapped for `tipl` and `extra` frames
+/// after it, as a v2.4 tag, and its audio.
+fn mp3_with_tipl(
+    test: &str,
+    tipl: &[u8],
+    extra: &[(&str, &[u8])],
+) -> (ScratchDir, PathBuf, Vec<u8>) {
+    let (scratch, mp3) = temp_copy("management_full.mp3", test);
+    let audio = mp3_audio_tail(&std::fs::read(&mp3).unwrap()).to_vec();
+    let mut frames: Vec<(String, Vec<u8>)> = id3_frames(&mp3)
+        .1
+        .into_iter()
+        .filter(|(id, _)| id != "TIPL")
+        .collect();
+    frames.push(("TIPL".to_owned(), tipl.to_vec()));
+    for (id, payload) in extra {
+        frames.push(((*id).to_owned(), payload.to_vec()));
+    }
+    let refs: Vec<(&str, &[u8])> = frames
+        .iter()
+        .map(|(id, payload)| (id.as_str(), payload.as_slice()))
+        .collect();
+    let mut bytes = id3v24_raw(&refs);
+    bytes.extend_from_slice(&audio);
+    std::fs::write(&mp3, &bytes).unwrap();
+    (scratch, mp3, audio)
+}
+
+/// The ID3 frames of `path` but those `skip` names, sorted: text frames by
+/// their values, any other by its payload.
+fn id3_frames_but(path: &Path, skip: impl Fn(&str, &[u8]) -> bool) -> Vec<(String, Vec<String>)> {
+    let mut frames: Vec<(String, Vec<String>)> = id3_frames(path)
+        .1
+        .into_iter()
+        .filter(|(id, payload)| !skip(id.as_str(), payload.as_slice()))
+        .map(|(id, payload)| {
+            let decoded = if id.starts_with('T') {
+                id3_strings(&payload)
+            } else {
+                vec![format!("{payload:?}")]
+            };
+            (id, decoded)
+        })
+        .collect();
+    frames.sort();
+    frames
+}
+
+/// An edit of one role leaves its neighbours as they were, in order, and
+/// the audio too. Producer, comment and composer edits keep a foreign
+/// `TIPL` pair, an iTunNORM `COMM`, an unknown `TXXX`, an unknown Vorbis
+/// key and an unknown MP4 freeform. An engineer edit replaces only the
+/// engineer pairs (a `mastering` pair, a producer and v2.3 musician
+/// credits stay), and a writer edit updates another tagger's
+/// `TXXX:WRITER` in place, as one frame.
 #[test]
-fn credit_edits_leave_neighbours_alone() {
+fn role_edits_leave_neighbours_alone() {
     let edits = [
         TagEdit::new(TagField::Producer, texts(&["New Producer"])),
         TagEdit::new(TagField::Comment, texts(&["New comment"])),
@@ -3126,45 +3336,17 @@ fn credit_edits_leave_neighbours_alone() {
 
     // MP3: the fixture's TIPL swapped for one with neighbours, plus an
     // iTunNORM comment and an unknown TXXX.
-    let (_scratch, mp3) = temp_copy("management_full.mp3", "neighbours");
-    let audio = mp3_audio_tail(&std::fs::read(&mp3).unwrap()).to_vec();
-    let mut frames: Vec<(String, Vec<u8>)> = id3_frames(&mp3)
-        .1
-        .into_iter()
-        .filter(|(id, _)| id != "TIPL")
-        .collect();
-    frames.push((
-        "TIPL".to_owned(),
-        b"\x03engineer\x00Eve Engineer\x00producer\x00Example Producer\x00mix\x00Max Mixer\x00"
-            .to_vec(),
-    ));
     let itunnorm = b"\x00engiTunNORM\x00 00000A1B 00000C2D".to_vec();
-    frames.push(("COMM".to_owned(), itunnorm.clone()));
-    frames.push(("TXXX".to_owned(), b"\x03ZZZ_UNHEARD_OF\x00mystery".to_vec()));
-    let refs: Vec<(&str, &[u8])> = frames
-        .iter()
-        .map(|(id, payload)| (id.as_str(), payload.as_slice()))
-        .collect();
-    let mut bytes = id3v24_raw(&refs);
-    bytes.extend_from_slice(&audio);
-    std::fs::write(&mp3, &bytes).unwrap();
-    let untouched = |path: &Path| {
-        let mut frames: Vec<(String, Vec<String>)> = id3_frames(path)
-            .1
-            .into_iter()
-            .filter(|(id, _)| !matches!(id.as_str(), "TIPL" | "COMM" | "TCOM"))
-            .map(|(id, payload)| {
-                let decoded = if id.starts_with('T') {
-                    id3_strings(&payload)
-                } else {
-                    vec![format!("{payload:?}")]
-                };
-                (id, decoded)
-            })
-            .collect();
-        frames.sort();
-        frames
-    };
+    let (_scratch, mp3, audio) = mp3_with_tipl(
+        "neighbours",
+        b"\x03engineer\x00Eve Engineer\x00producer\x00Example Producer\x00mix\x00Max Mixer\x00",
+        &[
+            ("COMM", &itunnorm),
+            ("TXXX", b"\x03ZZZ_UNHEARD_OF\x00mystery"),
+        ],
+    );
+    let untouched =
+        |path: &Path| id3_frames_but(path, |id, _| matches!(id, "TIPL" | "COMM" | "TCOM"));
     let before = untouched(&mp3);
     tags::save_tags(&mp3, &edits).unwrap();
     assert_eq!(
@@ -3173,7 +3355,8 @@ fn credit_edits_leave_neighbours_alone() {
             pair("engineer", "Eve Engineer"),
             pair("producer", "New Producer"),
             pair("mix", "Max Mixer"),
-        ]
+        ],
+        "credits mp3"
     );
     let comments: Vec<Vec<u8>> = id3_frames(&mp3)
         .1
@@ -3181,17 +3364,24 @@ fn credit_edits_leave_neighbours_alone() {
         .filter(|(id, _)| id == "COMM")
         .map(|(_, payload)| payload)
         .collect();
-    assert_eq!(comments.len(), 2);
+    assert_eq!(comments.len(), 2, "credits mp3");
     assert!(comments.contains(&itunnorm), "iTunNORM changed");
-    assert!(id3_comments(&mp3).contains(&(
-        "eng".to_owned(),
-        String::new(),
-        "New comment".to_owned()
-    )));
-    assert_eq!(id3_text_values(&mp3, "TCOM"), texts(&["New Composer"]));
-    assert_eq!(id3_txxx_values(&mp3, "ZZZ_UNHEARD_OF"), texts(&["mystery"]));
-    assert_eq!(untouched(&mp3), before);
-    assert_eq!(audio_bytes(&mp3), audio);
+    assert!(
+        id3_comments(&mp3).contains(&("eng".to_owned(), String::new(), "New comment".to_owned())),
+        "credits mp3"
+    );
+    assert_eq!(
+        id3_text_values(&mp3, "TCOM"),
+        texts(&["New Composer"]),
+        "credits mp3"
+    );
+    assert_eq!(
+        id3_txxx_values(&mp3, "ZZZ_UNHEARD_OF"),
+        texts(&["mystery"]),
+        "credits mp3"
+    );
+    assert_eq!(untouched(&mp3), before, "credits mp3");
+    assert_eq!(audio_bytes(&mp3), audio, "credits mp3");
 
     // FLAC: an unknown key beside CUSTOM_KEEP; every untouched pair keeps
     // its place.
@@ -3206,12 +3396,17 @@ fn credit_edits_leave_neighbours_alone() {
     };
     let before = rest(&flac);
     tags::save_tags(&flac, &edits).unwrap();
-    assert_eq!(rest(&flac), before);
+    assert_eq!(rest(&flac), before, "credits flac");
     assert_eq!(
         vorbis_key_values(&flac, "PRODUCER"),
-        texts(&["New Producer"])
+        texts(&["New Producer"]),
+        "credits flac"
     );
-    assert_eq!(vorbis_key_values(&flac, "COMMENT"), texts(&["New comment"]));
+    assert_eq!(
+        vorbis_key_values(&flac, "COMMENT"),
+        texts(&["New comment"]),
+        "credits flac"
+    );
 
     // M4A: the fixture's unknown freeform and every other atom stay, in
     // their order.
@@ -3246,158 +3441,30 @@ fn credit_edits_leave_neighbours_alone() {
     };
     let before = rest(&m4a);
     tags::save_tags(&m4a, &edits).unwrap();
-    assert_eq!(rest(&m4a), before);
+    assert_eq!(rest(&m4a), before, "credits m4a");
     assert_eq!(
         mp4_freeform(&m4a, "CUSTOM_KEEP"),
-        texts(&["opaque local value"])
+        texts(&["opaque local value"]),
+        "credits m4a"
     );
-    assert_eq!(mp4_freeform(&m4a, "PRODUCER"), texts(&["New Producer"]));
-}
+    assert_eq!(
+        mp4_freeform(&m4a, "PRODUCER"),
+        texts(&["New Producer"]),
+        "credits m4a"
+    );
 
-/// Engineer, mixer, DJ-mixer, writer and director land in Picard's home
-/// for each format and read back as written; a later title edit leaves
-/// them, and the audio, as they were.
-#[test]
-fn other_role_fields_land_in_their_homes() {
-    let many = |field: TagField, values: &[&str]| TagEdit::new(field, texts(values));
-    let edits = vec![
-        many(TagField::Engineer, &["Eve Engineer", "Ed Engineer"]),
-        many(TagField::Mixer, &["Max Mixer"]),
-        many(TagField::DjMixer, &["Dee Jay"]),
-        many(TagField::Writer, &["Wanda Writer", "Will Writer"]),
-        many(TagField::Director, &["Dora Director"]),
-    ];
-    let read_back = |path: &Path| {
-        let fields = tags::read_fields(path).unwrap();
-        for edit in &edits {
-            assert_eq!(
-                fields.get(&edit.field),
-                Some(&edit.values),
-                "{}: {:?}",
-                path.display(),
-                edit.field
-            );
-        }
-    };
-    let people = |role_of: &dyn Fn(TagField) -> &'static str| {
-        let mut pairs = Vec::new();
-        for field in [TagField::Engineer, TagField::Mixer, TagField::DjMixer] {
-            for name in value_of(&edits, field) {
-                pairs.push((role_of(field).to_owned(), name));
-            }
-        }
-        pairs
-    };
-    let role_of = |field: TagField| match field {
-        TagField::Engineer => "engineer",
-        TagField::Mixer => "mix",
-        _ => "DJ-mix",
-    };
-
-    for name in ["management_full.flac", "management_full.ogg"] {
-        let (_scratch, path) = temp_copy(name, "other-roles-vorbis");
-        let check = |path: &Path| {
-            for (key, field) in [
-                ("ENGINEER", TagField::Engineer),
-                ("MIXER", TagField::Mixer),
-                ("DJMIXER", TagField::DjMixer),
-                ("WRITER", TagField::Writer),
-                ("DIRECTOR", TagField::Director),
-            ] {
-                assert_eq!(
-                    vorbis_key_values(path, key),
-                    value_of(&edits, field),
-                    "{name}: {key}"
-                );
-            }
-        };
-        credits_round_trip(&path, &edits, &check);
-        read_back(&path);
-    }
-
-    let (_scratch, mp3) = temp_copy("management_full.mp3", "other-roles-v24");
-    let check = |path: &Path| {
-        assert_eq!(id3_frames(path).0, 4);
-        let mut tipl = vec![pair("producer", "Example Producer")];
-        tipl.extend(people(&role_of));
-        assert_eq!(id3_people(path, "TIPL"), tipl);
-        assert_eq!(
-            id3_txxx_values(path, "Writer"),
-            value_of(&edits, TagField::Writer)
-        );
-        assert_eq!(
-            id3_txxx_values(path, "DIRECTOR"),
-            value_of(&edits, TagField::Director)
-        );
-    };
-    credits_round_trip(&mp3, &edits, &check);
-    read_back(&mp3);
-
-    // ID3v2.3: the pairs in IPLS, and writer as one "/"-joined value.
-    let (_scratch, v23) = pure_v23_copy("other-roles-v23");
-    let check = |path: &Path| {
-        assert_eq!(id3_frames(path).0, 3);
-        assert_eq!(id3_people(path, "IPLS"), people(&role_of));
-        assert_eq!(
-            id3_txxx_values(path, "Writer"),
-            texts(&["Wanda Writer/Will Writer"])
-        );
-        assert_eq!(
-            id3_txxx_values(path, "DIRECTOR"),
-            value_of(&edits, TagField::Director)
-        );
-    };
-    credits_round_trip(&v23, &edits, &check);
-
-    let (_scratch, m4a) = temp_copy("management_full.m4a", "other-roles-m4a");
-    let check = |path: &Path| {
-        for (name, field) in [
-            ("ENGINEER", TagField::Engineer),
-            ("MIXER", TagField::Mixer),
-            ("DJMIXER", TagField::DjMixer),
-            ("writer", TagField::Writer),
-        ] {
-            assert_eq!(mp4_freeform(path, name), value_of(&edits, field), "{name}");
-        }
-        assert_eq!(
-            mp4_text(path, b"\xa9dir"),
-            value_of(&edits, TagField::Director)
-        );
-    };
-    credits_round_trip(&m4a, &edits, &check);
-    read_back(&m4a);
-}
-
-/// An engineer edit replaces only the engineer pairs: a `mastering`
-/// pair, a producer, v2.3 musician credits and an unknown `TXXX` stay as
-/// they were, and so does the audio. A writer edit updates another
-/// tagger's `TXXX:WRITER` in place, as one frame.
-#[test]
-fn other_role_edits_leave_neighbours_alone() {
+    // Engineer and writer: a TIPL with a mastering pair and a producer, an
+    // unknown TXXX and another tagger's TXXX:WRITER.
     let engineer = TagEdit::new(TagField::Engineer, texts(&["New Engineer"]));
     let writer = TagEdit::new(TagField::Writer, texts(&["New Writer"]));
-
-    let (_scratch, mp3) = temp_copy("management_full.mp3", "other-roles-neighbours");
-    let audio = mp3_audio_tail(&std::fs::read(&mp3).unwrap()).to_vec();
-    let mut frames: Vec<(String, Vec<u8>)> = id3_frames(&mp3)
-        .1
-        .into_iter()
-        .filter(|(id, _)| id != "TIPL")
-        .collect();
-    frames.push((
-        "TIPL".to_owned(),
-        b"\x03mastering\x00Mo Master\x00engineer\x00Old Engineer\x00producer\x00Example Producer\x00"
-            .to_vec(),
-    ));
-    frames.push(("TXXX".to_owned(), b"\x03ZZZ_UNHEARD_OF\x00mystery".to_vec()));
-    frames.push(("TXXX".to_owned(), b"\x03WRITER\x00Old Writer".to_vec()));
-    let refs: Vec<(&str, &[u8])> = frames
-        .iter()
-        .map(|(id, payload)| (id.as_str(), payload.as_slice()))
-        .collect();
-    let mut bytes = id3v24_raw(&refs);
-    bytes.extend_from_slice(&audio);
-    std::fs::write(&mp3, &bytes).unwrap();
+    let (_scratch, mp3, audio) = mp3_with_tipl(
+        "other-roles-neighbours",
+        b"\x03mastering\x00Mo Master\x00engineer\x00Old Engineer\x00producer\x00Example Producer\x00",
+        &[
+            ("TXXX", b"\x03ZZZ_UNHEARD_OF\x00mystery"),
+            ("TXXX", b"\x03WRITER\x00Old Writer"),
+        ],
+    );
     let writer_frames = |path: &Path| -> Vec<Vec<String>> {
         id3_frames(path)
             .1
@@ -3408,24 +3475,9 @@ fn other_role_edits_leave_neighbours_alone() {
             .collect()
     };
     let untouched = |path: &Path| {
-        let mut frames: Vec<(String, Vec<String>)> = id3_frames(path)
-            .1
-            .into_iter()
-            .filter(|(id, payload)| {
-                id != "TIPL"
-                    && !(id == "TXXX" && id3_strings(payload)[0].eq_ignore_ascii_case("writer"))
-            })
-            .map(|(id, payload)| {
-                let decoded = if id.starts_with('T') {
-                    id3_strings(&payload)
-                } else {
-                    vec![format!("{payload:?}")]
-                };
-                (id, decoded)
-            })
-            .collect();
-        frames.sort();
-        frames
+        id3_frames_but(path, |id, payload| {
+            id == "TIPL" || (id == "TXXX" && id3_strings(payload)[0].eq_ignore_ascii_case("writer"))
+        })
     };
     let before = untouched(&mp3);
     tags::save_tags(&mp3, &[engineer.clone(), writer]).unwrap();
@@ -3435,12 +3487,21 @@ fn other_role_edits_leave_neighbours_alone() {
             pair("mastering", "Mo Master"),
             pair("engineer", "New Engineer"),
             pair("producer", "Example Producer"),
-        ]
+        ],
+        "other roles mp3"
     );
-    assert_eq!(writer_frames(&mp3), vec![texts(&["WRITER", "New Writer"])]);
-    assert_eq!(id3_txxx_values(&mp3, "ZZZ_UNHEARD_OF"), texts(&["mystery"]));
-    assert_eq!(untouched(&mp3), before);
-    assert_eq!(audio_bytes(&mp3), audio);
+    assert_eq!(
+        writer_frames(&mp3),
+        vec![texts(&["WRITER", "New Writer"])],
+        "other roles mp3"
+    );
+    assert_eq!(
+        id3_txxx_values(&mp3, "ZZZ_UNHEARD_OF"),
+        texts(&["mystery"]),
+        "other roles mp3"
+    );
+    assert_eq!(untouched(&mp3), before, "other roles mp3");
+    assert_eq!(audio_bytes(&mp3), audio, "other roles mp3");
 
     let ipls = latin1(&[
         "guitar",
@@ -3462,10 +3523,11 @@ fn other_role_edits_leave_neighbours_alone() {
             pair("guitar", "A"),
             pair("engineer", "New Engineer"),
             pair("lead vocals", "B"),
-        ]
+        ],
+        "other roles v2.3"
     );
-    assert_eq!(id3_frames(&v23).0, 3);
-    assert_eq!(audio_bytes(&v23), audio);
+    assert_eq!(id3_frames(&v23).0, 3, "other roles v2.3");
+    assert_eq!(audio_bytes(&v23), audio, "other roles v2.3");
 }
 
 /// An undo recorded before these fields existed names their tags as
@@ -3654,24 +3716,6 @@ fn v24_tipl_musicians_read_as_performers() {
     );
 }
 
-/// A NUL inside a credit or comment would split it into other strings;
-/// it is refused before anything is written.
-#[test]
-fn nul_in_credits_and_comments_is_refused() {
-    for edit in [
-        TagEdit::new(TagField::Producer, texts(&["A\u{0}B"])),
-        TagEdit::new(TagField::Performer, texts(&["A\u{0}B (guitar)"])),
-        TagEdit::new(TagField::Comment, texts(&["a\u{0}b"])),
-    ] {
-        let (refusal, before, after) = save_refused("management_full.mp3", "nul-credit", &[edit]);
-        assert!(
-            matches!(refusal, Refusal::UnencodableItem { .. }),
-            "{refusal:?}"
-        );
-        assert_eq!(before, after);
-    }
-}
-
 /// lofty writes a v2.3 `IPLS` with one little-endian byte-order mark for
 /// the whole frame. Its names read as written, survive an unrelated
 /// edit byte for byte, and survive a producer edit.
@@ -3702,33 +3746,6 @@ fn lofty_v23_ipls_keeps_its_names() {
         id3_people(&path, "IPLS"),
         vec![pair("guitar", "Ána"), pair("producer", "New Producer")]
     );
-}
-
-/// v2.3 keeps every credit in `IPLS`, where a producer is not a
-/// musician: a performer playing "producer" is refused, not filed as a
-/// producer credit.
-#[test]
-fn v23_performer_with_an_involved_role_is_refused() {
-    let (_scratch, path) = pure_v23_copy("v23-involved");
-    let before = std::fs::read(&path).unwrap();
-    let result = tags::save_tags(
-        &path,
-        &[TagEdit::new(
-            TagField::Performer,
-            texts(&["Bob (producer)"]),
-        )],
-    );
-    assert!(
-        matches!(
-            result,
-            Err(TagsError::SaveRefused {
-                refusal: Refusal::UnencodableItem { .. },
-                ..
-            })
-        ),
-        "{result:?}"
-    );
-    assert_eq!(std::fs::read(&path).unwrap(), before);
 }
 
 /// A write of as many values as the role held keeps its pairs in their
@@ -3925,11 +3942,16 @@ fn title_save_keeps_frames_lofty_rewrites() {
     }
 }
 
-/// A tag holding two frames the writer keeps only once (identical
-/// pictures, two play counters, two `UFID`s of one owner) is refused at
-/// preview in words, and a save leaves the file as it was.
+/// What the writer would merge is refused by the pictures plan. Two frames
+/// it keeps only once (identical pictures, two play counters, two `UFID`s
+/// of one owner) are refused at preview in words, and a save leaves the
+/// file as it was. Two APICs differing only in text encoding, which the
+/// writer's single encoding would merge so an undo could never put both
+/// back, and two FLAC file icons, of which lofty's picture writer keeps
+/// one, are refused only when a save writes pictures; a save that leaves
+/// them alone keeps both.
 #[test]
-fn frames_kept_only_once_are_refused_before_saving() {
+fn kept_frame_refusals_by_pictures_plan() {
     let cases: Vec<(&str, Vec<u8>, Vec<u8>)> = vec![
         (
             "APIC",
@@ -3948,60 +3970,51 @@ fn frames_kept_only_once_are_refused_before_saving() {
             .unwrap();
         assert!(message.contains(&format!("two {id} frames")), "{message}");
         let before = std::fs::read(&path).unwrap();
-        assert!(matches!(
-            tags::save_tags(&path, &[TagEdit::set_title("New")]),
-            Err(TagsError::SaveRefused { .. })
-        ));
+        assert!(
+            matches!(
+                tags::save_tags(&path, &[TagEdit::set_title("New")]),
+                Err(TagsError::SaveRefused { .. })
+            ),
+            "{id}"
+        );
         assert_eq!(std::fs::read(&path).unwrap(), before, "{id}");
     }
-}
 
-/// Two APICs that differ only in text encoding read as two equal pictures,
-/// and the writer's single encoding would merge them, so an undo could
-/// never put both back. A write of pictures is refused; a save that leaves
-/// them alone is not.
-#[test]
-fn pictures_differing_only_in_encoding_are_refused_when_written() {
+    let refusal =
+        |path: &Path, plan: PicturesPlan| tags::save::tags_kept(path, plan).unwrap().refusal;
+
+    // APICs differing only in text encoding read as two equal pictures.
     let frames = vec![
         ("TIT2", latin1(&["Probe"])),
         ("APIC", b"\0image/png\0\x03\0abc".to_vec()),
         ("APIC", b"\x03image/png\0\x03\0abc".to_vec()),
     ];
     let (_dir, path) = raw_id3_mp3("encoding-apic", 3, &frames);
-    let message = tags::save::tags_kept(&path, PicturesPlan::Written)
-        .unwrap()
-        .refusal
-        .unwrap();
+    let message = refusal(&path, PicturesPlan::Written).unwrap();
     assert!(message.contains("same picture twice"), "{message}");
     assert_eq!(
-        tags::save::tags_kept(&path, PicturesPlan::Untouched)
-            .unwrap()
-            .refusal,
-        None
+        refusal(&path, PicturesPlan::Untouched),
+        None,
+        "encoding apic"
     );
-}
 
-/// lofty's picture writer keeps one FLAC picture of type 1 or 2. A file
-/// holding two is refused when a save writes pictures, and keeps both
-/// through a save that leaves them alone.
-#[test]
-fn two_file_icons_are_refused_only_when_pictures_are_written() {
+    // Two FLAC pictures of type 1 (file icon).
     let (_scratch, path) = temp_copy("management_two_icons.flac", "two-icons");
-    let message = tags::save::tags_kept(&path, PicturesPlan::Written)
-        .unwrap()
-        .refusal
-        .unwrap();
+    let message = refusal(&path, PicturesPlan::Written).unwrap();
     assert!(message.contains("two file icon pictures"), "{message}");
-    assert_eq!(
-        tags::save::tags_kept(&path, PicturesPlan::Untouched)
-            .unwrap()
-            .refusal,
-        None
-    );
+    assert_eq!(refusal(&path, PicturesPlan::Untouched), None, "two icons");
     let before = tags::save::read_document(&path).unwrap().pictures;
-    assert_eq!(before.iter().filter(|picture| picture.kind == 1).count(), 2);
+    assert_eq!(
+        before.iter().filter(|picture| picture.kind == 1).count(),
+        2,
+        "two icons"
+    );
     tags::save_tags(&path, &[TagEdit::set_title("New")]).unwrap();
-    assert_eq!(tags::save::read_document(&path).unwrap().pictures, before);
+    assert_eq!(
+        tags::save::read_document(&path).unwrap().pictures,
+        before,
+        "two icons"
+    );
 }
 
 /// Zero padding between an MP3's ID3v2 tag and its first frame, outside
@@ -4106,34 +4119,6 @@ fn chapters_move_to_v24_readable() {
         })
         .collect();
     assert_eq!(pictures, vec![picture]);
-}
-
-// ---------------------------------------------------------------------------
-// Lyrics
-// ---------------------------------------------------------------------------
-
-/// A `.lrc` reads as Jellyfin reads it: a line stamped twice is sung twice,
-/// in time order, and a stamped blank line stays, so the line before it
-/// stops showing through the gap.
-#[test]
-fn lrc_repeated_stamps_expand_and_blank_timed_lines_stay() {
-    let (dir, audio) = temp_copy("flac_full_01.flac", "lyrics-lrc");
-    std::fs::write(
-        dir.join("flac_full_01.lrc"),
-        "[ar:Someone]\n[00:12.00][00:45.00]Chorus\n[00:20.00]\n",
-    )
-    .unwrap();
-    let (source, lyrics) = tags::lyrics::read_file_lyrics(&audio).unwrap();
-    assert_eq!(source, tags::lyrics::LyricsSource::Sidecar);
-    assert!(lyrics.synced);
-    assert_eq!(
-        lyrics.lines,
-        [
-            ("Chorus".to_owned(), Some(12_000)),
-            (String::new(), Some(20_000)),
-            ("Chorus".to_owned(), Some(45_000)),
-        ]
-    );
 }
 
 // ---------------------------------------------------------------------------

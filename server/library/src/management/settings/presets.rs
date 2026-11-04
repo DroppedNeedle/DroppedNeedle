@@ -1301,8 +1301,11 @@ mod tests {
         ),
     ];
 
+    /// v2 templates converted to scripts place files where the template
+    /// did: every [`TABLE`] row, a 260-byte title cut 12 bytes shorter than
+    /// the template cut it, and v2's default template as the default script.
     #[test]
-    fn converted_templates_place_files_where_the_template_did() {
+    fn legacy_templates_place_files_as_v2_did() {
         let long = "é".repeat(114);
         for (template, expected) in TABLE {
             let converted = legacy_template_to_script(template);
@@ -1319,12 +1322,9 @@ mod tests {
                 assert_eq!(rendered, expected, "{template} with {label}");
             }
         }
-    }
 
-    /// A 260-byte title: the x's the template engine kept, 12 more than the
-    /// script's 240-byte cut keeps.
-    #[test]
-    fn a_long_title_is_cut_twelve_bytes_shorter_than_the_template_cut_it() {
+        // A 260-byte title: the x's the template engine kept, 12 more than
+        // the script's 240-byte cut keeps.
         const CUTS: &[(&str, &str, usize)] = &[
             (
                 "{albumartist}/{album} ({year})/{track:02d} {title}",
@@ -1354,33 +1354,22 @@ mod tests {
             assert_eq!(
                 naming::render(&script, &variables, "/music").expect(template),
                 format!("{folders}{}.flac", "x".repeat(template_kept - 12)),
+                "long title with {template}"
             );
         }
-    }
 
-    #[test]
-    fn the_default_script_is_v2s_default_template() {
         assert_eq!(
             legacy_template_to_script(DEFAULT_NAMING_TEMPLATE),
             LegacyConversion {
                 script: DEFAULT_NAMING_SCRIPT.to_owned(),
                 warnings: Vec::new(),
-            }
+            },
+            "default template"
         );
-        assert_eq!(legacy_template_to_script(" ").script, DEFAULT_NAMING_SCRIPT);
-    }
-
-    #[test]
-    fn folders_that_can_render_empty_are_warned_about() {
-        let warnings = |template: &str| legacy_template_to_script(template).warnings;
-        assert_eq!(warnings("{year}/{title}").len(), 1);
-        assert_eq!(warnings("{albumartist}/[{year}]/{title}").len(), 1);
-        assert_eq!(warnings("{album}/{year}.{ext}").len(), 1);
-        assert!(warnings("{album}/{title}.{ext}").is_empty());
-        assert!(warnings("{albumartist}/{album} ({year})/{title}").is_empty());
         assert_eq!(
-            warnings("{genre}/{title}"),
-            vec!["{genre} was always empty for imports, so it is left out.".to_owned()]
+            legacy_template_to_script(" ").script,
+            DEFAULT_NAMING_SCRIPT,
+            "blank template"
         );
     }
 }

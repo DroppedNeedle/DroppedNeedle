@@ -470,8 +470,10 @@ pub fn parse_names_from_path(relative_path: &str) -> ParsedNames {
 mod tests {
     use super::*;
 
+    /// Disc folders fold into their album's folder, and a file with no
+    /// tags falls back to the common Artist/Artist - Album (Year) layout.
     #[test]
-    fn disc_folders_fold_into_their_album() {
+    fn folder_and_file_names_parse() {
         assert!(is_disc_directory("CD1"));
         assert!(is_disc_directory("Disc 02"));
         assert!(is_disc_directory("(vol. 3)"));
@@ -493,10 +495,7 @@ mod tests {
         assert_eq!(grouping_directory("CD2/01.flac"), ".");
         assert_eq!(grouping_directory("A/Album/01.flac"), "A/Album");
         assert_eq!(grouping_directory("01.flac"), ".");
-    }
 
-    #[test]
-    fn filename_fallback_parses_the_common_layout() {
         let parsed = parse_names_for_row("Artist/Artist - Album (1999)/CD1/03 - Title.flac");
         assert_eq!(parsed.artist.as_deref(), Some("Artist"));
         assert_eq!(parsed.album.as_deref(), Some("Album"));

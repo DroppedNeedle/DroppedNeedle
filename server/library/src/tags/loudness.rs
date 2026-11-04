@@ -310,8 +310,12 @@ mod tests {
             .collect()
     }
 
+    /// The meter reads a reference tone as R128 says and silence as no
+    /// loudness, and analysis decodes each writable format: the fixtures
+    /// are digital silence, so they measure no loudness and no peak (a
+    /// lossy decoder may leave float dust far below one 24-bit step).
     #[test]
-    fn a_full_scale_tone_measures_as_r128_says() {
+    fn loudness_measures_as_r128_says() {
         // EBU Tech 3341: a 997 Hz stereo sine at -23 dBFS reads -23 LUFS.
         let amplitude = 10f32.powf(-23.0 / 20.0);
         let mut meter = Meter::new(48_000, 2);
@@ -321,12 +325,26 @@ mod tests {
         assert!((loudness - -23.0).abs() < 0.1, "{loudness}");
         assert_eq!(gain_text(loudness), "5.00 dB");
         assert!((measured.peak - f64::from(amplitude)).abs() < 1e-3);
-    }
 
-    #[test]
-    fn silence_has_no_loudness() {
         let mut meter = Meter::new(44_100, 2);
         meter.feed(&vec![0.0; 44_100 * 2 * 3]);
-        assert_eq!(meter.finish().loudness(), None);
+        assert_eq!(meter.finish().loudness(), None, "silence");
+
+        let deadline = Instant::now() + Duration::from_secs(60);
+        for name in [
+            "management_full.flac",
+            "management_full.mp3",
+            "management_full.ogg",
+            "management_full.opus",
+            "management_full.m4a",
+        ] {
+            let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../tests/fixtures/library")
+                .join(name);
+            let measured = analyse(&path, deadline).expect(name);
+            assert_eq!(measured.loudness(), None, "{name}");
+            assert!(measured.peak < 1e-9, "{name}: {}", measured.peak);
+            assert_eq!(peak_text(measured.peak), "0.000000", "{name}");
+        }
     }
 }
