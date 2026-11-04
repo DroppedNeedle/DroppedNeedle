@@ -7,6 +7,49 @@ Your music files are not touched. Your library comes across as v2 knew it.
 Albums and songs keep their ids, and an artist's v2 id still opens it. v3
 checks the library against your files on its first scan.
 
+## Before you upgrade
+
+- **Callback addresses.** v2 was called back on three `/api/v1` addresses.
+  v3 answers none of them, so they stop working with the upgrade. The
+  upgrade lists each one your v2 uses, with its new address, and waits
+  until you say they are changed (see [Upgrade](#upgrade), step 6):
+  - Single sign-on (OIDC): add the v3 redirect URI, ending in
+    `/api/v3/auth/oidc/callback` instead of `/api/v1/auth/oidc/callback`,
+    to the client at your provider. When v2's address ends in
+    `/api/v1/auth/oidc/callback`, the upgrade changes it under Settings >
+    Security for you; when it ends in a path of your reverse proxy's, the
+    upgrade keeps it, so enter the new one there after the upgrade. Check
+    before you upgrade that at least
+    one admin can also sign in with a username and password. If single
+    sign-on breaks and nobody can sign in, see [Locked out](#locked-out)
+    below.
+  - Spotify playlist import: add the v3 redirect URI, ending in
+    `/api/v3/acquire/spotify/auth/callback`, to your app in the Spotify
+    developer dashboard. Spotify takes only https addresses, or a
+    loopback one such as `http://127.0.0.1`, so a plain-http address on
+    your local network cannot be added.
+  - MusicBrainz contributions: an edit open in MusicBrainz's release
+    editor returns to v2's address, so it cannot come back to v3. Finish
+    it in v2 first, or start it again from v3.
+
+  Spotify and single sign-on providers such as Authentik, Authelia, Pocket
+  ID, Google and Microsoft Entra ID let one client list more than one
+  redirect address. Add the v3 address before you upgrade, and remove v2's
+  once v3 signs in. If your provider allows only one, change it as you run
+  the upgrade, not before.
+- **`CONFIG_FILE_PATH`.** Remove it from your compose file if you set it:
+  v3 refuses to start with it. Set `CONFIG_DIR` to that file's folder
+  instead.
+- **Unraid data folder.** v3 refuses to start with its database on a FUSE
+  mount, and Unraid's `/mnt/user` paths are one unless the share is set to
+  exclusive access. v2 ran there, so an existing install keeps that path.
+  Before the v3 container first starts, either set the `appdata` share to
+  exclusive access, or, with the container stopped, move the data folder's
+  contents to a pool path such as `/mnt/cache/appdata/droppedneedle/cache`
+  and point the container's `/app/cache` at it.
+- **What changed.** [What changed in v3](v3-changes.md) lists what v2 did
+  that v3 removed, changed or moved.
+
 ## Upgrade
 
 1. Stop v2:
@@ -226,6 +269,14 @@ these. Each command then writes one JSON object a line to stdout: `step` and
 `check` line, or a `failed` line when it is called wrongly or cannot start.
 The usual text goes to stderr.
 
+## Locked out
+
+If nobody can sign in to v3 (single sign-on fails and no admin remembers a
+password), stop the server and make a one-time password recovery code on
+the host with `droppedneedle-tool recovery-code USERNAME`.
+[Forgotten passwords and recovery](accounts-and-sign-in.md#forgotten-passwords-and-recovery)
+has the commands, and covers accounts that never had a password.
+
 ## What moves across
 
 - User accounts and roles. Passwords keep working, no resets.
@@ -355,269 +406,6 @@ report lists it too (`left_behind`). In short:
   each one as needing porting. Port it, install it again from Settings >
   Plugins, then switch it on.
 
-## What changed from v2
-
-Things v2 did that v3 does differently or no longer does. Read this before
-you upgrade.
-
-### Before you upgrade
-
-- **Callback addresses.** v2 was called back on three `/api/v1` addresses.
-  v3 answers none of them, so they stop working with the upgrade. The
-  upgrade lists each one your v2 uses, with its new address, and waits
-  until you say they are changed (see [Upgrade](#upgrade), step 6):
-  - Single sign-on (OIDC): add the v3 redirect URI, ending in
-    `/api/v3/auth/oidc/callback` instead of `/api/v1/auth/oidc/callback`,
-    to the client at your provider. When v2's address ends in
-    `/api/v1/auth/oidc/callback`, the upgrade changes it under Settings >
-    Security for you; when it ends in a path of your reverse proxy's, the
-    upgrade keeps it, so enter the new one there after the upgrade. Check
-    before you upgrade that at least
-    one admin can also sign in with a username and password. If single
-    sign-on breaks and nobody can sign in, see [Locked out](#locked-out)
-    below.
-  - Spotify playlist import: add the v3 redirect URI, ending in
-    `/api/v3/acquire/spotify/auth/callback`, to your app in the Spotify
-    developer dashboard. Spotify takes only https addresses, or a
-    loopback one such as `http://127.0.0.1`, so a plain-http address on
-    your local network cannot be added.
-  - MusicBrainz contributions: an edit open in MusicBrainz's release
-    editor returns to v2's address, so it cannot come back to v3. Finish
-    it in v2 first, or start it again from v3.
-
-  Spotify and single sign-on providers such as Authentik, Authelia, Pocket
-  ID, Google and Microsoft Entra ID let one client list more than one
-  redirect address. Add the v3 address before you upgrade, and remove v2's
-  once v3 signs in. If your provider allows only one, change it as you run
-  the upgrade, not before.
-- **`CONFIG_FILE_PATH`.** Remove it from your compose file if you set it:
-  v3 refuses to start with it. Set `CONFIG_DIR` to that file's folder
-  instead.
-
-- **Unraid data folder.** v3 refuses to start with its database on a FUSE
-  mount, and Unraid's `/mnt/user` paths are one unless the share is set to
-  exclusive access. v2 ran there, so an existing install keeps that path.
-  Before the v3 container first starts, either set the `appdata` share to
-  exclusive access, or, with the container stopped, move the data folder's
-  contents to a pool path such as `/mnt/cache/appdata/droppedneedle/cache`
-  and point the container's `/app/cache` at it.
-
-### Locked out
-
-If nobody can sign in to v3 (single sign-on fails and no admin remembers a
-password), make a password recovery code on the host:
-
-```sh
-docker compose stop droppedneedle
-docker compose run --rm droppedneedle droppedneedle-tool recovery-code USERNAME
-docker compose up -d droppedneedle
-```
-
-`droppedneedle` is the service name in your compose file. Use yours if it
-differs. Stop the server first: the command refuses to run while it is up. It
-prints a one-time code. Open "Forgot password?" on the sign-in page and
-enter the username, the code and a new password within 15 minutes.
-
-`USERNAME` is the account's DroppedNeedle username, which can differ from
-the name it has with your single sign-on provider. To see the admin
-usernames (again with the server stopped):
-
-```sh
-docker compose run --rm droppedneedle droppedneedle-tool recovery-code --list-admins
-```
-
-An account that only ever signed in through single sign-on, Plex or
-Jellyfin has no password yet. The command says so, and the code then
-gives the account its first password; its other sign-in stays linked.
-Only this command can do that. A recovery code an admin makes under
-Settings > Users is for accounts that already have a password.
-
-The command asks for no password of its own: anyone with access to the
-machine and its data folders can run it.
-
-### Removed
-
-- **The v2 API.** Nothing under `/api/v1` answers in v3. A script that
-  called it has to move to `/api/v3`, whose shapes differ.
-- **Free Music.** v2 had its own download client for Creative Commons and
-  public-domain music from the Internet Archive. v3 has none. Its settings
-  tab and its downloads list are gone. Music it already downloaded stays in
-  your library. If Free Music was your only source, set up slskd, Usenet or
-  a plugin source.
-- **v2 plugins.** v2 plugins do not load in v3. Only plugins written for
-  plugin API version 2 are accepted, and a manifest with `api_version` 0
-  or 1 is refused. Port yours first ("Porting a v2 plugin" in
-  [PLUGINS.md](../PLUGINS.md)), or ask its author to, then install it
-  again from Settings > Plugins.
-- **Library Management options v3 does not act on.** The artwork source
-  list, the approved-only artwork switch, size and picture-type rules, cover
-  file naming and overwriting, the ID3 version and the other per-format tag
-  policies, genre ancestry depth, source cleanup, empty folder removal, the
-  file safety switches (keep timestamps, refuse links, check the file after
-  writing), the lyrics provider and the DroppedNeedle refresh switch are gone.
-  So are the folder overrides for source cleanup, keep timestamps and edition
-  acceptance, and the external refresh retry count and delay. A carried
-  profile keeps its other options. The import report names each one it drops.
-- **v2 profile share codes and files.** A Library Management profile share
-  code (`DNLP1:`) or `.dnprofile` file made in v2 does not import into v3.
-  Share the profile again from v3 to get a code or file v3 reads.
-- **Wanted watches going dormant.** v2 stopped checking a watch once it was
-  older than "Go dormant after (days)", 365 by default, until someone
-  resumed it. v3 keeps checking a watch until the album arrives or someone
-  stops it, and the setting is gone. A watch that was dormant starts
-  watching again and is checked on the first pass. Stop the watches you no
-  longer want.
-- **"Restart under current policy".** v2 saved the quality policy each
-  download started with and could restart a download under the policy in
-  force now (`POST /api/v1/downloads/<id>/restart-with-current-policy`). v3
-  saves no policy per download. It reads the current policy as it works, so
-  a policy change already applies to what is waiting. Nothing to do.
-- **Similar-songs modes for Subsonic and Jellyfin apps.** v2's Connect Apps
-  settings offered three: local only, related artists from MusicBrainz, and
-  Last.fm or ListenBrainz when linked. v3 always answers from your own
-  library and has no setting. If you used one of the other two modes, the
-  similar songs your apps show will change.
-- **The staged "Match exact edition" job.** v2 downloaded a complete exact
-  release as a job with its own steps: a space check, a download, a preview,
-  then Apply, with retry, recheck and cancel along the way. In v3 you choose
-  the edition on the album page and press one button to get the tracks it is
-  missing. The album page shows what is being fetched and what failed, and
-  lets you retry or stop it.
-- **The AudioDB daily sweep.** v2 went through your library once a day
-  fetching artist and album images from TheAudioDB, and queued what you
-  browsed for the same. v3 fetches them after a library scan and when you
-  press "Refresh library images" under Settings > Cache. An artist image is
-  also fetched when a page first needs it. Nothing to do. A page you have
-  never opened may take a moment longer to show its images.
-- **Cache tab buttons and tiles.** v2's cache was split into memory, disk
-  metadata and library parts, each with its own count and its own clear
-  button. Those parts no longer exist. Settings > Cache in v3 counts cached
-  provider answers per source and cached images, shows the database size,
-  and clears the provider data or the images.
-  Provider answers are kept in `metadata-cache.db` and survive a restart;
-  saving a setting never clears them.
-- **Settings nothing used, and the cache and pacing knobs.** These v2
-  settings are gone. Most were never read; the cache lifetimes and the
-  library image pacing now use fixed values equal to v2's defaults. An
-  import of a v2 export carrying them goes ahead, and its report lists
-  each one as `dropped_setting`. The server-wide home page section settings
-  are not exported at all, so they show under `left_behind` instead.
-  - The server-wide primary music source. Each person's own choice stays
-    in their profile; a discovery section with no source named asks
-    ListenBrainz first.
-  - Settings > Advanced: every server and browser cache lifetime
-    (including TheAudioDB's), the memory and disk cache limits, the HTTP
-    timeouts and pool size, the library image batch sizes, delays and
-    workers, the image refresh's stall and run timeouts, the Discover
-    queue's lifetime, card details cache and status polling interval, the
-    genre section lifetime, request concurrency and the orphan cover
-    cadence.
-  - Settings > Download Client: slskd's verification setting and SABnzbd's
-    client type and post-processing level. slskd's own copies of the
-    quality, scoring, timeout, retry and concurrency settings are not listed:
-    they move into the download policy on an install that has none, and v2
-    did not read them on one that has.
-  - Download policy: "Verify downloads", the Usenet release age before
-    blocklisting, the source selection mode and the target bitrate of a
-    custom MP3 recipe step.
-  - The server-wide scrobble targets (each user's own scrobble switches
-    stay), the server-wide home page section settings (each user's own
-    section choices stay), "Scrobble to Plex" (a Plex track
-    that ends is always reported), Connect Apps' exact-track approval flag,
-    MusicBrainz's concurrent searches, and the scan schedule's stored "last
-    scan" (it now comes from the scan history).
-
-  The outbound HTTP timeouts are environment variables, `HTTP_TIMEOUT` and
-  `HTTP_CONNECT_TIMEOUT`, as before.
-- **5 and 10 minute scan schedules.** v3 has neither. A schedule of either
-  becomes 30 minutes.
-- **Max connections.** v2 had a "max connections" setting for outbound HTTP,
-  also read from `HTTP_MAX_CONNECTIONS`. v3 has neither. The nearest is the
-  `HTTP_MAX_KEEPALIVE` environment variable, the number of idle connections
-  kept per host. Remove `HTTP_MAX_CONNECTIONS` from your compose file if you
-  set it; v3 ignores it.
-- **slskd concurrency variables.** v2 read
-  `DOWNLOAD_CLIENT_CONCURRENT_SEARCHES` and
-  `DOWNLOAD_CLIENT_CONCURRENT_ENQUEUES`, both 1 by default, to limit how
-  hard it pushed slskd. v3 ignores them. It waits and tries again when slskd
-  answers that it is busy. Remove them from your compose file if you set them.
-
-### Changed
-
-- **Held downloads expire.** v2 kept a held download until you acted on it.
-  v3 removes a held file or upload 90 days after it was held. Ones carried
-  from v2 get 90 days from the upgrade.
-- **Quality settings.** A v2 quality range becomes the matching quality
-  recipe, with FLAC at every resolution for "lossless". A policy capped at
-  16-bit and 48 kHz or lower, as v2's default was from August 2026, gets FLAC
-  up to CD quality instead, so a 24-bit folder is not downloaded automatically,
-  as v2 refused it. Automatic downloads take only what the recipe lists, even
-  if v2 had "FLAC and MP3 only" turned off: you can still pick another format
-  by hand, and one that lands anyway is held for you. The other lossless caps
-  and preferences, the lossy bitrate bounds and the unknown-quality setting
-  are not applied, and the import report names any you had changed.
-- **Reverse proxy headers.** v2 accepted a change from the web UI whatever
-  address the page was on. v3 only accepts it from the address it believes
-  it is served at, so your proxy has to tell it the truth. List the proxy
-  in `TRUSTED_PROXY_IPS`, have it send `X-Forwarded-Proto`, and pass the
-  `Host` header as the browser sent it, port included: in nginx,
-  `proxy_set_header Host $http_host;` rather than `$host`. If saving
-  anything in the web UI answers `403 Origin not allowed` after the
-  upgrade, this is why, and the log names both addresses the first time.
-  The fix is to pass the browser's `Host` (or send it as
-  `X-Forwarded-Host`) and `X-Forwarded-Proto` through. If you cannot
-  change the proxy, state the address under Settings > Security > Public
-  address, or on the host with `droppedneedle-tool public-address`:
-  [Reverse proxy and security](reverse-proxy-and-security.md#public-address)
-  has the steps.
-- **Content-security policy.** v2 sent none. v3 tells the browser what
-  the web UI may load and run, and enforces it. You may notice it in two
-  places: a dashboard that shows DroppedNeedle in a frame (below), and a
-  reverse proxy that rewrites the page or injects a script, such as
-  Cloudflare's Rocket Loader, which leaves a blank page whose browser
-  console names the policy. The switch is under Settings > Security >
-  Content-security policy, and on the host with `droppedneedle-tool
-  content-security-policy` when the page is blank:
-  [Reverse proxy and security](reverse-proxy-and-security.md#content-security-policy)
-  has the steps.
-- **Showing DroppedNeedle in a dashboard.** v2 could be shown in a frame
-  by any page. v3 refuses that by default. If you open DroppedNeedle inside
-  a dashboard such as Homarr or Organizr, add the dashboard's address under
-  Settings > Security > Content-security policy > "Allowed to frame
-  DroppedNeedle" after upgrading. A dashboard on another site (not a
-  subdomain of the same domain, nor the same host on another port) shows
-  the sign-in page even then, because the browser does not send the
-  sign-in cookie to a frame there.
-- **Performer tags.** v3 writes performer credits the way Picard does:
-  "Name (instrument)", and an instrument list in ID3. The first time v3
-  writes performer credits to an album v2 managed, it rewrites the ones v2
-  wrote in that form. Like every managed change, the run can be undone.
-- **MP3 tags that mix ID3v2.3 and v2.4.** An MP3 keeps its ID3 version,
-  except an ID3v2.3 tag that also holds ID3v2.4 frames. Picard and iTunes
-  write sort names that way, so most MP3s they tagged count as mixed. The
-  first time v3 writes such a file it saves the whole tag as ID3v2.4, so
-  every tag keeps its own frame; the preview says so for each file. There
-  is no switch to keep ID3v2.3, and a few old players read only ID3v2.3.
-  Undo and "Restore original state" put the values back; the tag stays
-  ID3v2.4.
-- **Other people's public playlists in music apps.** In v2 Subsonic and
-  Jellyfin apps listed them next to your own. In v3 apps list your own
-  playlists only, for every user, until you turn on the switch under
-  Profile > Connect Apps. An app that saved a public playlist's id can still
-  open it, and the web UI lists what it did before.
-
-### Moved
-
-- **Recycle bin.** The recycle bin folder and how long removed files are
-  kept moved from the download settings to Library Management. The upgrade
-  carries the folder your removals used; the report names any path it
-  dropped.
-- **Playlist "request missing" for scripts.** v2 had a server route,
-  `POST /api/v1/playlists/<id>/request-missing`. The button on the playlist
-  page works as before, but v3 has no such route: the page works out the
-  missing albums itself and sends them to `POST /api/v3/requests/batches`.
-  A script that called the old route has to do the same.
-
 ## Library Management originals
 
 v3 never changes a file whose v2 original did not come across. If the
@@ -725,236 +513,13 @@ v2 answers only on its own callback addresses. If you changed them at your
 single sign-on provider or in the Spotify dashboard and removed v2's, put
 v2's back there.
 
-## Advanced: export and import by hand
+## What changed in v3, and upgrading by hand
 
-The upgrade command runs an export, a check, a dry run and an import for
-you. Each is also a command of its own, for moving to another machine, for
-building the v3 data directory somewhere else, or for looking at the export
-before you import it.
-
-Paths below:
-
-- `V2_ROOT`: your v2 data directory (it holds `config/` and `cache/`).
-- `BACKUP_DIR`: a copy of `V2_ROOT` you take in step 1.
-- `V3_ROOT`: a new, empty directory for v3.
-- `WORK`: a scratch directory for the export file and reports.
-- `V2_VERSION`: the v2 image tag or commit you ran, e.g. `v2.9.1`.
-
-The examples run the tool with `docker run`, passing your own user and group
-ids so the files it writes belong to you. Mount whatever directories each
-command needs.
-
-### 1. Stop v2 and take a copy
-
-```sh
-docker stop droppedneedle
-cp -a V2_ROOT BACKUP_DIR
-```
-
-Never copy a running v2 database; stop it first.
-
-### 2. Pick a passphrase
-
-The export seals your secrets with a passphrase. Put it in a file only your
-user can read:
-
-```sh
-printf '%s' 'a long passphrase' > WORK/passphrase.txt
-chmod 600 WORK/passphrase.txt
-```
-
-The tool reads the passphrase from that file, never from the command line.
-
-### 3. Export
-
-```sh
-docker run --rm -e PUID=$(id -u) -e PGID=$(id -g) \
-  -v V2_ROOT:/v2:ro -v WORK:/work droppedneedle/droppedneedle:latest \
-  droppedneedle-tool export --v2-root /v2 --out /work/export.json \
-  --v2-commit V2_VERSION --passphrase-file /work/passphrase.txt
-```
-
-This writes two files: `export.json` and `export.bundle.sqlite` next to it.
-The bundle holds the playlists, history and other user data; the JSON holds
-the accounts, settings and every secret, sealed. Keep the two together.
-Both are readable only by you, and both hold private data, so delete them
-once you are done.
-
-Like the upgrade, the export first lists the callback addresses that
-change and stops with exit code 3 until you run it with
-`--callbacks-changed` (see
-[Upgrading from the command line](#upgrading-from-the-command-line)). Pass
-`-e BASE_PATH=...` if v3 runs under a base path, so the addresses it prints
-are right.
-
-If v2's key file (`config/.env`) is missing, or its key does not decrypt
-your stored secrets, the export refuses rather than writing a broken file.
-Restore `config/.env` from your backup and try again.
-
-### 4. Validate
-
-```sh
-docker run --rm -e PUID=$(id -u) -e PGID=$(id -g) \
-  -v V2_ROOT:/v2:ro -v WORK:/work droppedneedle/droppedneedle:latest \
-  droppedneedle-tool validate /work/export.json --v2-root /v2
-```
-
-A clean file ends with `valid: N warning(s)`. Two warnings are normal:
-`REVOKED_APP_PASSWORD_KEPT` (revoked app passwords stay revoked) and
-`DANGLING_REVIEWER` (an approval whose reviewer no longer exists; the
-reviewer field is cleared on import).
-
-Above that it prints what stays behind in v2: one line per table with a row
-count and the reason, then one per setting by name. Read it: this is the
-moment to decide whether anything there matters to you before you move.
-
-If it reports `DANGLING_USER_REF`, v2 has follows or approvals that point at
-deleted users. Remove them from `V2_ROOT` (not the backup) and export again:
-
-```sh
-sqlite3 V2_ROOT/cache/library.db \
-  "DELETE FROM user_followed_artists WHERE user_id NOT IN (SELECT id FROM auth_users);
-   DELETE FROM auto_download_approvals WHERE user_id NOT IN (SELECT id FROM auth_users);"
-```
-
-### 5. Dry run
-
-```sh
-mkdir -p V3_ROOT/config V3_ROOT/cache
-docker run --rm -e PUID=$(id -u) -e PGID=$(id -g) \
-  -v V2_ROOT:/v2:ro -v V3_ROOT:/v3 -v WORK:/work droppedneedle/droppedneedle:latest \
-  droppedneedle-tool dry-run --file /work/export.json \
-  --db /v3/cache/library.db --config-dir /v3/config \
-  --passphrase-file /work/passphrase.txt --v2-config /v2/config/config.json \
-  > WORK/dryrun.json
-```
-
-It should exit 0, and `exit.code` in the report should be `OK` or
-`OK_WITH_DROPS`. The report counts what would be imported per kind of
-record. A dry run writes no records.
-
-### 6. Import
-
-Do this before v3 has ever run on `V3_ROOT`, so nobody has signed in to v3
-yet (see "Each kind of data moves once" below). Use the same command with
-`import` instead of `dry-run`:
-
-```sh
-docker run --rm -e PUID=$(id -u) -e PGID=$(id -g) \
-  -v V2_ROOT:/v2:ro -v V3_ROOT:/v3 -v WORK:/work droppedneedle/droppedneedle:latest \
-  droppedneedle-tool import --file /work/export.json \
-  --db /v3/cache/library.db --config-dir /v3/config \
-  --passphrase-file /work/passphrase.txt --v2-config /v2/config/config.json \
-  > WORK/import.json
-```
-
-The counts match the dry run. Running the import again is safe: it changes
-nothing the second time. If an import stops partway (a crash, a full disk),
-run the same command again: everything already imported stays, and it picks
-up at the first part it had not finished. The tool refuses to run while a
-server has the target database open.
-
-Profile pictures land in `V3_ROOT/cache/avatars`, the folder that holds the
-database. If your v3 cache lives somewhere else, add
-`--cache-dir /path/to/cache`.
-
-`pending_links` in the report counts the song, album and artist ids the user
-data named before the library itself came across. The report's
-`library_link` notes say how many of them now point at your library and how
-many name something v2 had already lost.
-
-Settings v2 had nothing saved for are listed under `settings_defaulted` in
-`WORK/import.json`; they start at v3's defaults. Settings v3 no longer has
-are listed under `left_behind` and as `dropped_setting` notes. Check both
-lists for anything you expected to keep.
-
-v3 keeps its settings in the database, beside the accounts, so the import
-writes no `config.json`. `V3_ROOT/config` holds the key file
-`data_enc.key`, which seals every stored password and API key.
-
-### Backups and restore
-
-A backup of the v3 database (the ones in `cache/backups`, or a copy that
-`droppedneedle-tool restore` puts back) holds the settings as well. Keep
-`config/data_enc.key` with it, and put it back beside a restored database:
-without it, v3 refuses to start on that database rather than lose the
-stored secrets. The database remembers which key it belongs to, so a key
-file from another instance or another backup is refused as well.
-
-The copies Undo and "Restore original state" need live in the `undo` folder
-beside the database, and each backup copies the ones it names into
-`cache/backups/undo`, which all kept backups share. Copy the whole
-`backups` folder when you move backups elsewhere, not only the `.db`
-files: `droppedneedle-tool restore` reads the copies from the `undo`
-folder next to the backup and puts them back beside the restored
-database. A copy that is missing there does not stop the restore; it is
-listed, and Undo then leaves out only the file that needed it.
-
-`droppedneedle-tool restore --backup <file> --target-dir <dir>` writes the
-database under the name the server uses: `library.db`, or the file name
-`LIBRARY_DB_PATH` gives, so run it with the same environment as the
-server. The target folder must be empty apart from the server's lock
-files. The restore refuses a folder holding anything it cannot read,
-saying which folder and why, so fix its permissions or pick a new folder.
-It never replaces a file: the database takes its name through a hard
-link, and on a filesystem without hard links (vfat, exFAT) through a
-rename that checks the name is free first; the report then has a `note`
-saying so. A restore that stops before the database is in place leaves
-its own marker and temporary files, which the next restore into that
-folder clears; once the database is in place, a later restore into that
-folder refuses. The server, the host commands and `import` refuse a
-folder holding that marker but no database, so run the restore again
-first; a marker left beside a finished database does not stop the
-server, which logs that it can be deleted. The restore also refuses a
-target folder on a network filesystem, as the server does, and a backup
-whose `-wal` file holds writes the copy would leave out.
-
-Backups leave out `metadata-cache.db` on purpose: it holds only provider
-answers that are fetched again when needed.
-
-If that key is lost for good, stop the server and run `droppedneedle-tool
-reset-key --yes`. It gives the instance a new key and clears every stored
-password and API key: the secrets in Settings, every app password, and every
-user's link to Plex, Jellyfin, Navidrome, Spotify, ListenBrainz and Last.fm.
-It prints the settings it cleared so you know what to enter again. It replaces
-a lost key and does not change the Jellyfin ids of what you already have:
-stored album and artist ids survive the reset, so Finamp and Jellify keep
-their pins and downloads, and only items added afterwards get ids under the
-new key. Whoever holds the old key can still work out the picture ids of
-albums and artists stored before the reset. Subsonic picture, corrections and
-transcode links made before the reset stop opening. The replaced key is kept
-as `config/data_enc.key.old` (or `.old.1`, `.old.2` when that name is taken).
-The command refuses, changing nothing, while the key file still belongs to the
-database.
-
-### 7. Start v3
-
-Point your compose file's `/app/config` and `/app/cache` volumes at
-`V3_ROOT/config` and `V3_ROOT/cache`, set `PUID`/`PGID` to the same ids you
-used above, then start it. See
-[docker-compose.example.yml](../docker-compose.example.yml).
-
-```sh
-docker compose up -d
-curl -f http://localhost:8688/health
-```
-
-Then go through the checks under "After the upgrade" above.
-
-### Each kind of data moves once
-
-The import remembers, per v2 instance, which kinds of data it has brought
-across: playlists, history, requests and so on. Running the same import again
-changes nothing. Importing a newer export of the same v2 instance later brings
-only the kinds that never came across before, so a playlist you deleted in v3
-does not come back. Its settings do replace v3's, so a setting you changed in
-v3 goes back to the v2 value. If you want a clean second try, start again from
-an empty `V3_ROOT`.
-
-Import before anyone signs in to v3. Someone who signs in first and, say,
-uploads an avatar or links Last.fm keeps what they set up in v3, and the
-import leaves their v2 version out.
-
+- [What changed in v3](v3-changes.md): what v2 did that v3 removed, changed
+  or moved. Read it before you upgrade.
+- [Upgrading from v2 by hand](upgrading-by-hand.md): the export, validate,
+  dry run and import steps the upgrade runs for you, for moving to another
+  machine or looking at the export first.
 
 ## If something fails
 
@@ -974,7 +539,7 @@ import leaves their v2 version out.
 | `V2_KEY_NOT_FOUND` | v2's `config/.env` is missing | Put it back from a copy of your own, then run again |
 | `V2_KEY_MISMATCH` | The key in `config/.env` does not decrypt your stored secrets | Use the `config/.env` that v2 actually ran with |
 | `V2_WAL_PRESENT` | v2's database still has writes in its `-wal` file | If v2 is still running, stop it first. Otherwise start v2 once and stop it cleanly, then run again |
-| `DANGLING_USER_REF` | Orphan follows or approvals in v2 | The upgrade removes them itself. By hand: the step 4 cleanup, then export again |
+| `DANGLING_USER_REF` | Orphan follows or approvals in v2 | The upgrade removes them itself. By hand: the cleanup in [Validate](upgrading-by-hand.md#4-validate), then export again |
 | `INSTANCE_MISMATCH` | The export came from a different v2 instance | Export from the right `V2_ROOT` |
 | `ENVELOPE_AUTH_FAILED` | Wrong passphrase | Re-run with the right passphrase file; no records were imported |
 | `CHECKSUM_MISMATCH` | The export file was changed or truncated | Export again; do not edit the file |
@@ -984,5 +549,5 @@ import leaves their v2 version out.
 | `BUNDLE_COLUMN_MISSING` | Your v2 is too old to have a value v3 needs for some data | Update v2 to its last release, start and stop it once, then upgrade again |
 | `target database is locked` | A server has the v3 database open | Stop it and re-run |
 | `is held by another process` | A server, or another import, has the v3 data open | Stop it and re-run |
-| `the key file ... is missing` or `does not belong to the database` | The database's `data_enc.key` is not in the config folder | Nothing was changed. Put back the `data_enc.key` saved with the database, or set `CONFIG_DIR` to its folder. Only if it is lost for good: `reset-key --yes` (see "Backups and restore") |
+| `the key file ... is missing` or `does not belong to the database` | The database's `data_enc.key` is not in the config folder | Nothing was changed. Put back the `data_enc.key` saved with the database, or set `CONFIG_DIR` to its folder. Only if it is lost for good: `reset-key --yes` (see [The key file](backups-and-restore.md#the-key-file)) |
 | `a reset-key did not finish` | `reset-key` was stopped partway | Run `reset-key --yes` again to finish it |
