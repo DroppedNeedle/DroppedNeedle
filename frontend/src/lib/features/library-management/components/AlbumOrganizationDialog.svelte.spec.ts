@@ -114,9 +114,8 @@ vi.mock('$lib/features/library/queries/LibraryCatalogMutations.svelte', () => ({
 
 import AlbumOrganizationDialog from './AlbumOrganizationDialog.svelte';
 
-async function openSplitAndPreview(): Promise<void> {
-	await page.getByText('Album organization').click();
-	await page.getByRole('button', { name: 'Split album...' }).click();
+async function openSplitAndPreview(dialog: { start: (action: 'split') => void }): Promise<void> {
+	dialog.start('split');
 	await page.getByRole('checkbox', { name: /1.1 Track 1/ }).click();
 	await page.getByRole('button', { name: 'Preview changes' }).click();
 }
@@ -133,10 +132,10 @@ beforeEach(() => {
 describe('AlbumOrganizationDialog', () => {
 	it('keeps a stale grouping open and returns to Preview', async () => {
 		h.apply.mockRejectedValue(new Error('stale revision'));
-		await render(AlbumOrganizationDialog, {
+		const view = await render(AlbumOrganizationDialog, {
 			props: { album, tracks }
 		} as unknown as Parameters<typeof render>[1]);
-		await openSplitAndPreview();
+		await openSplitAndPreview(view.component as unknown as { start: (action: 'split') => void });
 		await page.getByRole('checkbox', { name: /preserves files and tags/ }).click();
 		await page.getByRole('button', { name: 'Apply split album' }).click();
 		await expect.element(page.getByText(/local grouping changed after this preview/)).toBeVisible();

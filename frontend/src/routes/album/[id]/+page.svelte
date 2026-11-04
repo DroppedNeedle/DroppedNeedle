@@ -10,6 +10,7 @@
 	import { albumHref } from '$lib/utils/entityRoutes';
 	import LocalAlbumPage from '$lib/features/album/components/LocalAlbumPage.svelte';
 	import ProviderAlbumPage from '$lib/features/album/components/ProviderAlbumPage.svelte';
+	import AlbumHeroSkeleton from '$lib/features/album/components/AlbumHeroSkeleton.svelte';
 
 	interface Props {
 		data: { albumId: string };
@@ -46,16 +47,7 @@
 </script>
 
 {#if !statusSettled || localQuery.isLoading || shouldRedirect}
-	<div class="w-full max-w-7xl mx-auto px-2 py-4 sm:px-4 sm:py-8 lg:px-8">
-		<div class="grid gap-6 lg:grid-cols-[20rem_1fr]">
-			<div class="skeleton aspect-square w-full rounded-box"></div>
-			<div class="space-y-4 self-end">
-				<div class="skeleton h-12 w-3/4"></div>
-				<div class="skeleton h-6 w-1/2"></div>
-				<div class="skeleton h-12 w-48"></div>
-			</div>
-		</div>
-	</div>
+	<AlbumHeroSkeleton tracks />
 {:else if localAlbum && (!providerAlbumId || matchedElsewhere)}
 	<LocalAlbumPage albumId={localAlbum.id} />
 {:else}

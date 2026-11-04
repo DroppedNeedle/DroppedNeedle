@@ -12,10 +12,12 @@
 		onchange: (favorite: boolean) => void;
 		/** 'sm' on rows, 'md' in headers, as RatingStars. */
 		size?: 'sm' | 'md';
+		/** As RatingStars' `quiet`: an unset heart in the line colour until its row lifts it. */
+		quiet?: boolean;
 		class?: string;
 	}
 
-	let { favorite, onchange, size = 'sm', class: className = '' }: Props = $props();
+	let { favorite, onchange, size = 'sm', quiet = false, class: className = '' }: Props = $props();
 </script>
 
 <IconButton
@@ -24,8 +26,10 @@
 	size={size === 'md' ? 'sm' : 'xs'}
 	variant={favorite ? 'danger-ghost' : 'ghost'}
 	label={favorite ? 'Remove from favourites' : 'Add to favourites'}
-	class="{favorite ? '[&_svg]:fill-current' : ''} {size === 'md'
-		? '[&_svg]:size-5'
-		: ''} {className}"
+	class="{favorite
+		? '[&_svg]:fill-current'
+		: quiet
+			? '[&_svg]:text-[color:var(--dn-quiet-ink,var(--dn-line))]'
+			: ''} {size === 'md' ? '[&_svg]:size-5' : ''} {className}"
 	onclick={() => onchange(!favorite)}
 />

@@ -108,13 +108,13 @@
 </script>
 
 {#if !hasLink && !apiConfigured}{:else if generating}
-	<Button variant="ghost" size="sm" class="shrink-0" loading aria-label="Generating link">
+	<Button variant="ghost" size="xs" class="shrink-0" loading aria-label="Generating link">
 		<YouTubeIcon class="h-4 w-4" />
 	</Button>
 {:else}
 	<Button
 		variant={hasLink ? 'danger' : 'ghost'}
-		size="sm"
+		size="xs"
 		icon={hasLink ? Play : Download}
 		class="shrink-0 {hasLink ? '[&_svg]:fill-current' : ''}"
 		onclick={handleClick}

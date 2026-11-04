@@ -138,6 +138,13 @@
 		getTrackContextMenuItems
 	}: Props = $props();
 
+	// Rows line their titles up behind a format column once any track has a file.
+	const reserveFormat = $derived(
+		libraryTracksByPosition.size > 0 ||
+			libraryTracksByRecording.size > 0 ||
+			(editionRows?.size ?? 0) > 0
+	);
+
 	const expandedRows = new SvelteSet<number>();
 	function toggleRow(idx: number) {
 		if (expandedRows.has(idx)) expandedRows.delete(idx);
@@ -185,345 +192,365 @@
 	}
 </script>
 
-<div class="bg-base-200 rounded-box overflow-visible">
-	<ul class="list">
-		{#each renderedTrackSections as section (section.discNumber)}
-			{#if renderedTrackSections.length > 1}
-				<li class="list-row min-h-0 cursor-default px-3 sm:px-4 pt-4 pb-2">
-					<div
-						class="inline-flex items-center gap-2 rounded-full border border-base-content/10 bg-base-100/80 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] opacity-70"
-					>
-						<span class="h-1.5 w-1.5 rounded-full bg-accent"></span>
-						Disc {section.discNumber}
-					</div>
-				</li>
-			{/if}
-			{#each section.items as row (row.globalIndex)}
-				{@const track = row.track}
-				{@const trackDiscNumber = normalizeDiscNumber(track.disc_number)}
-				{@const tl = trackLinkMap.get(getDiscTrackKey(track)) ?? null}
-				{@const jellyfinTrack = resolveSourceTrack(
-					trackDiscNumber,
-					track.position,
-					row.globalIndex,
-					jellyfinTrackMap,
-					jellyfinTracks
-				)}
-				{@const localTrack = resolveSourceTrack(
-					trackDiscNumber,
-					track.position,
-					row.globalIndex,
-					localTrackMap,
-					localTracks
-				)}
-				{@const navidromeTrack = resolveSourceTrack(
-					trackDiscNumber,
-					track.position,
-					row.globalIndex,
-					navidromeTrackMap,
-					navidromeTracks
-				)}
-				{@const plexTrack = resolveSourceTrack(
-					trackDiscNumber,
-					track.position,
-					row.globalIndex,
-					plexTrackMap,
-					plexTracks
-				)}
-				{@const isCurrentlyPlaying =
-					playerStore.nowPlaying?.albumId === album.musicbrainz_id &&
-					(playerStore.currentQueueItem?.discNumber ?? 1) === trackDiscNumber &&
-					playerStore.currentQueueItem?.trackNumber === track.position &&
-					playerStore.isPlaying}
-				{@const showJellyfinBtn = jellyfinEnabled && jellyfinMatch?.found}
-				{@const showLocalBtn = localfilesEnabled && localMatch?.found}
-				{@const showNavidromeBtn = navidromeEnabled && navidromeMatch?.found}
-				{@const showPlexBtn = plexEnabled && plexMatch?.found}
-				{@const hasAnySource =
-					tl !== null ||
-					jellyfinTrack !== null ||
-					localTrack !== null ||
-					navidromeTrack !== null ||
-					plexTrack !== null}
-				{@const showPreview = !hasAnySource}
-				{@const editionRow =
-					editionRows?.get(
+<ul class="divide-y divide-paper-border/70">
+	{#each renderedTrackSections as section (section.discNumber)}
+		{#if renderedTrackSections.length > 1}
+			<li
+				class="bg-base-300/60 px-3 pt-3 pb-1.5 font-mono text-xs font-bold tracking-[0.18em] text-muted uppercase sm:px-4"
+			>
+				Disc {section.discNumber}
+			</li>
+		{/if}
+		{#each section.items as row (row.globalIndex)}
+			{@const track = row.track}
+			{@const trackDiscNumber = normalizeDiscNumber(track.disc_number)}
+			{@const tl = trackLinkMap.get(getDiscTrackKey(track)) ?? null}
+			{@const jellyfinTrack = resolveSourceTrack(
+				trackDiscNumber,
+				track.position,
+				row.globalIndex,
+				jellyfinTrackMap,
+				jellyfinTracks
+			)}
+			{@const localTrack = resolveSourceTrack(
+				trackDiscNumber,
+				track.position,
+				row.globalIndex,
+				localTrackMap,
+				localTracks
+			)}
+			{@const navidromeTrack = resolveSourceTrack(
+				trackDiscNumber,
+				track.position,
+				row.globalIndex,
+				navidromeTrackMap,
+				navidromeTracks
+			)}
+			{@const plexTrack = resolveSourceTrack(
+				trackDiscNumber,
+				track.position,
+				row.globalIndex,
+				plexTrackMap,
+				plexTracks
+			)}
+			{@const isCurrentlyPlaying =
+				playerStore.nowPlaying?.albumId === album.musicbrainz_id &&
+				(playerStore.currentQueueItem?.discNumber ?? 1) === trackDiscNumber &&
+				playerStore.currentQueueItem?.trackNumber === track.position &&
+				playerStore.isPlaying}
+			{@const showJellyfinBtn = jellyfinEnabled && jellyfinMatch?.found}
+			{@const showLocalBtn = localfilesEnabled && localMatch?.found}
+			{@const showNavidromeBtn = navidromeEnabled && navidromeMatch?.found}
+			{@const showPlexBtn = plexEnabled && plexMatch?.found}
+			{@const hasAnySource =
+				tl !== null ||
+				jellyfinTrack !== null ||
+				localTrack !== null ||
+				navidromeTrack !== null ||
+				plexTrack !== null}
+			{@const showPreview = !hasAnySource}
+			{@const editionRow =
+				editionRows?.get(
+					getDiscTrackKey({ disc_number: trackDiscNumber, track_number: track.position })
+				) ?? null}
+			{@const libMeta = editionRow
+				? (editionRow.file ?? undefined)
+				: ((track.recording_id ? libraryTracksByRecording.get(track.recording_id) : undefined) ??
+					libraryTracksByPosition.get(
 						getDiscTrackKey({ disc_number: trackDiscNumber, track_number: track.position })
-					) ?? null}
-				{@const libMeta = editionRow
-					? (editionRow.file ?? undefined)
-					: ((track.recording_id ? libraryTracksByRecording.get(track.recording_id) : undefined) ??
-						libraryTracksByPosition.get(
-							getDiscTrackKey({ disc_number: trackDiscNumber, track_number: track.position })
-						))}
-				{@const heldMeta = libMeta
-					? undefined
-					: ((track.recording_id ? heldByRecording.get(track.recording_id) : undefined) ??
-						heldByPosition.get(
-							getDiscTrackKey({ disc_number: trackDiscNumber, track_number: track.position })
-						))}
-				{@const trackTask = track.recording_id
-					? (trackDownloadTasks.get(track.recording_id) ?? null)
-					: null}
-				{@const showTrackDownload = !libMeta && !!trackTask}
-				{@const showRequest = !libMeta && !trackTask && !heldMeta && !!track.recording_id}
-				{@const upgradeRecordingId = track.recording_id ?? libMeta?.recording_mbid ?? null}
-				{@const showUpgrade =
-					!!libMeta?.below_cutoff &&
-					authStore.isTrusted &&
-					!!upgradeRecordingId &&
-					!trackTask &&
-					integrations.current.download_client}
-				{@const rateTrack = libMeta && onRateTrack ? onRateTrack : null}
-				<li
-					class="list-row group transition-colors p-3 sm:p-4 {isCurrentlyPlaying
-						? 'bg-accent/12'
-						: 'hover:bg-base-300/50'}"
-				>
-					<div class="list-col-grow flex items-center gap-4 w-full">
-						<div
-							class="font-medium w-8 text-center shrink-0 {isCurrentlyPlaying
-								? 'text-accent'
-								: 'text-muted'}"
-						>
-							{#if isCurrentlyPlaying}
-								<NowPlayingIndicator />
-							{:else}
-								{track.position}
-							{/if}
-						</div>
-
-						{#if libMeta}
-							<div class="shrink-0">
-								<LibraryFormatBadge format={libMeta.format} size="badge-xs" />
-							</div>
+					))}
+			{@const heldMeta = libMeta
+				? undefined
+				: ((track.recording_id ? heldByRecording.get(track.recording_id) : undefined) ??
+					heldByPosition.get(
+						getDiscTrackKey({ disc_number: trackDiscNumber, track_number: track.position })
+					))}
+			{@const trackTask = track.recording_id
+				? (trackDownloadTasks.get(track.recording_id) ?? null)
+				: null}
+			{@const showTrackDownload = !libMeta && !!trackTask}
+			{@const showRequest = !libMeta && !trackTask && !heldMeta && !!track.recording_id}
+			{@const upgradeRecordingId = track.recording_id ?? libMeta?.recording_mbid ?? null}
+			{@const showUpgrade =
+				!!libMeta?.below_cutoff &&
+				authStore.isTrusted &&
+				!!upgradeRecordingId &&
+				!trackTask &&
+				integrations.current.download_client}
+			{@const rateTrack = libMeta && onRateTrack ? onRateTrack : null}
+			<li
+				class="px-2 py-0.5 transition-colors hover:[--dn-quiet-ink:currentColor] focus-within:[--dn-quiet-ink:currentColor] sm:px-4 {isCurrentlyPlaying
+					? 'bg-selected'
+					: 'hover:bg-base-content/4'}"
+			>
+				<!-- One line from 640 up. Narrower, the format, length and status
+				     drop to a line under the title so the title keeps its room. -->
+				<div class="flex min-h-9 w-full flex-wrap items-center gap-x-2 sm:flex-nowrap sm:gap-x-3">
+					<div
+						class="w-6 shrink-0 text-center text-sm tabular-nums {isCurrentlyPlaying
+							? 'text-primary'
+							: 'text-muted'}"
+					>
+						{#if isCurrentlyPlaying}
+							<NowPlayingIndicator color="bg-primary" />
+						{:else}
+							{track.position}
 						{/if}
+					</div>
 
-						<div class="flex-1 min-w-0">
-							<div class="font-medium truncate {isCurrentlyPlaying ? 'text-accent' : ''}">
-								{track.title}
-							</div>
-							{#if libMeta?.artist_name && libMeta.artist_name !== album.artist_name}
-								<div class="truncate text-xs text-muted">{libMeta.artist_name}</div>
-							{/if}
+					<div class="order-2 min-w-0 flex-1 py-1">
+						<div class="text-[0.9375rem] leading-snug font-semibold break-words">
+							{track.title}
 						</div>
-
-						{#if editionRow?.missing}
-							{#if editionRow.fetchState === 'waiting' || editionRow.fetchState === 'fetching'}
-								<span class="badge badge-sm badge-info badge-outline shrink-0">Fetching</span>
-							{:else if editionRow.fetchState === 'failed'}
-								<span class="badge badge-sm badge-error badge-outline shrink-0">Failed</span>
-							{:else if editionRow.fetchState === 'held'}
-								<span class="badge badge-sm badge-warning badge-outline shrink-0">Held</span>
-							{:else}
-								<span class="badge badge-sm badge-warning badge-outline shrink-0">Missing</span>
-							{/if}
+						{#if libMeta?.artist_name && libMeta.artist_name !== album.artist_name}
+							<div class="text-xs text-muted">{libMeta.artist_name}</div>
 						{/if}
-						{#if rateTrack && libMeta}
-							<div class="hidden items-center sm:flex">
-								<RatingStars
-									value={trackRatings[libMeta.id] ?? 0}
-									label={track.title}
-									onchange={(rating) => rateTrack(libMeta.id, rating)}
-								/>
-								{#if onFavoriteTrack}
-									<FavoriteHeart
-										favorite={libMeta.favorite ?? false}
-										onchange={(favorite) => onFavoriteTrack(libMeta.id, favorite)}
-									/>
+						{#if isCurrentlyPlaying}
+							<div class="text-xs font-semibold text-primary" aria-hidden="true">Now playing</div>
+						{/if}
+					</div>
+
+					<div
+						class="order-last flex basis-full items-center gap-2 pb-1 pl-8 empty:hidden sm:contents"
+					>
+						{#if libMeta || reserveFormat}
+							<div class="shrink-0 sm:order-1 sm:w-11">
+								{#if libMeta}
+									<LibraryFormatBadge format={libMeta.format} size="badge-xs" />
 								{/if}
 							</div>
 						{/if}
-						<div class="text-muted text-sm shrink-0">
+						{#if editionRow?.missing}
+							<span class="shrink-0 sm:order-3">
+								{#if editionRow.fetchState === 'waiting' || editionRow.fetchState === 'fetching'}
+									<span class="badge badge-sm badge-info badge-outline">Fetching</span>
+								{:else if editionRow.fetchState === 'failed'}
+									<span class="badge badge-sm badge-error badge-outline">Failed</span>
+								{:else if editionRow.fetchState === 'held'}
+									<span class="badge badge-sm badge-warning badge-outline">Held</span>
+								{:else}
+									<span class="badge badge-sm badge-warning badge-outline">Missing</span>
+								{/if}
+							</span>
+						{/if}
+						<div
+							class="shrink-0 text-xs text-muted tabular-nums sm:order-5 sm:w-10 sm:text-right sm:text-sm sm:text-base-content"
+						>
 							{formatDuration(editionRow ? editionRow.lengthMs : track.length)}
 						</div>
-
-						<div class="text-muted text-xs tabular-nums shrink-0 w-16 text-right">
-							{localTrack && localTrack.size_bytes > 0 ? formatBytes(localTrack.size_bytes) : '—'}
+					</div>
+					{#if rateTrack && libMeta}
+						<div class="order-4 hidden shrink-0 items-center md:flex">
+							<RatingStars
+								quiet
+								value={trackRatings[libMeta.id] ?? 0}
+								label={track.title}
+								onchange={(rating) => rateTrack(libMeta.id, rating)}
+							/>
+							{#if onFavoriteTrack}
+								<FavoriteHeart
+									quiet
+									favorite={libMeta.favorite ?? false}
+									onchange={(favorite) => onFavoriteTrack(libMeta.id, favorite)}
+								/>
+							{/if}
 						</div>
+					{/if}
+					<div class="order-6 hidden w-16 shrink-0 text-right text-sm tabular-nums sm:block">
+						{localTrack && localTrack.size_bytes > 0 ? formatBytes(localTrack.size_bytes) : '—'}
+					</div>
 
-						{#if youtubeEnabled || showPreview || showJellyfinBtn || showLocalBtn || showNavidromeBtn || showPlexBtn || showRequest || showTrackDownload || heldMeta || showUpgrade}
-							<div class="flex items-center gap-1.5 shrink-0 ml-auto">
-								{#if showTrackDownload && trackTask}
-									<TrackDownloadStatus task={trackTask} />
-								{/if}
-								{#if heldMeta}
+					{#if youtubeEnabled || showPreview || showJellyfinBtn || showLocalBtn || showNavidromeBtn || showPlexBtn || showRequest || showTrackDownload || heldMeta || showUpgrade}
+						<div class="order-7 ml-auto flex shrink-0 items-center gap-1">
+							{#if showTrackDownload && trackTask}
+								<TrackDownloadStatus task={trackTask} />
+							{/if}
+							{#if heldMeta}
+								<Button
+									variant="ghost"
+									size="xs"
+									onclick={() => toggleHeld(row.globalIndex)}
+									aria-expanded={heldOpen.has(row.globalIndex)}
+									title={heldMeta.file.reason_text}
+								>
+									<TriangleAlert class="size-3.5 text-warning" aria-hidden="true" /> held
+								</Button>
+							{/if}
+							{#if showRequest && track.recording_id}
+								<TrackRequestButton
+									recordingMbid={track.recording_id}
+									trackTitle={track.title}
+									artistName={album.artist_name}
+									albumMbid={releaseGroupMbid || album.musicbrainz_id}
+									albumTitle={album.title}
+									durationSeconds={track.length ? Math.round(track.length / 1000) : null}
+									artistMbid={album.artist_id}
+									{releaseMbid}
+								/>
+							{/if}
+							{#if showUpgrade && upgradeRecordingId}
+								{#if upgradeQueuedRecordings.has(upgradeRecordingId)}
+									<span
+										class="inline-flex h-6 items-center gap-1 px-2 text-xs font-semibold text-success"
+									>
+										<Check class="h-3.5 w-3.5" /> queued
+									</span>
+								{:else}
 									<Button
 										variant="ghost"
 										size="xs"
-										onclick={() => toggleHeld(row.globalIndex)}
-										aria-expanded={heldOpen.has(row.globalIndex)}
-										title={heldMeta.file.reason_text}
+										icon={TrendingUp}
+										disabled={upgradeTrack.isPending}
+										onclick={() =>
+											void handleTrackUpgrade(upgradeRecordingId, track.title, track.length)}
+										title="Below your quality cutoff - find a better copy"
 									>
-										<TriangleAlert class="size-3.5 text-warning" aria-hidden="true" /> held
+										upgrade
 									</Button>
 								{/if}
-								{#if showRequest && track.recording_id}
-									<TrackRequestButton
-										recordingMbid={track.recording_id}
-										trackTitle={track.title}
-										artistName={album.artist_name}
-										albumMbid={releaseGroupMbid || album.musicbrainz_id}
-										albumTitle={album.title}
-										durationSeconds={track.length ? Math.round(track.length / 1000) : null}
-										artistMbid={album.artist_id}
-										{releaseMbid}
-									/>
-								{/if}
-								{#if showUpgrade && upgradeRecordingId}
-									{#if upgradeQueuedRecordings.has(upgradeRecordingId)}
-										<span
-											class="inline-flex h-6 items-center gap-1 px-2 text-xs font-semibold text-success"
-										>
-											<Check class="h-3.5 w-3.5" /> queued
-										</span>
-									{:else}
-										<Button
-											variant="ghost"
-											size="xs"
-											icon={TrendingUp}
-											disabled={upgradeTrack.isPending}
-											onclick={() =>
-												void handleTrackUpgrade(upgradeRecordingId, track.title, track.length)}
-											title="Below your quality cutoff - find a better copy"
-										>
-											upgrade
-										</Button>
-									{/if}
-								{/if}
-								{#if showPreview}
-									<SampleButton
-										sampleKey={`track:${album.artist_name}|${track.title}`}
-										artist={album.artist_name}
-										title={track.title}
-										kind="track"
-										size="xs"
-										albumMbid={album.musicbrainz_id}
-										artistMbid={album.artist_id}
-										coverUrl={album.cover_url ?? null}
-									/>
-								{/if}
+							{/if}
+							{#if showPreview}
+								<SampleButton
+									sampleKey={`track:${album.artist_name}|${track.title}`}
+									artist={album.artist_name}
+									title={track.title}
+									kind="track"
+									size="xs"
+									albumMbid={album.musicbrainz_id}
+									artistMbid={album.artist_id}
+									coverUrl={album.cover_url ?? null}
+								/>
+							{/if}
 
-								{#if youtubeEnabled}
-									<TrackPlayButton
-										trackNumber={track.position}
-										discNumber={trackDiscNumber}
-										trackName={track.title}
-										trackLink={tl}
-										allTrackLinks={trackLinks}
-										albumId={album.musicbrainz_id}
-										albumName={album.title}
-										artistName={album.artist_name}
-										coverUrl={album.cover_url ?? null}
-										artistId={album.artist_id}
-										apiConfigured={youtubeApiConfigured}
-										onGenerated={onTrackGenerated}
-										{onQuotaUpdate}
-									/>
-								{/if}
+							{#if youtubeEnabled}
+								<TrackPlayButton
+									trackNumber={track.position}
+									discNumber={trackDiscNumber}
+									trackName={track.title}
+									trackLink={tl}
+									allTrackLinks={trackLinks}
+									albumId={album.musicbrainz_id}
+									albumName={album.title}
+									artistName={album.artist_name}
+									coverUrl={album.cover_url ?? null}
+									artistId={album.artist_id}
+									apiConfigured={youtubeApiConfigured}
+									onGenerated={onTrackGenerated}
+									{onQuotaUpdate}
+								/>
+							{/if}
 
-								{#if showJellyfinBtn}
-									<TrackSourceButton
-										available={jellyfinTrack !== null}
-										sourceColor="rgb(var(--brand-jellyfin))"
-										onclick={() =>
-											onPlaySourceTrack('jellyfin', track.position, trackDiscNumber, track.title)}
-										ariaLabel={jellyfinTrack ? 'Play on Jellyfin' : 'Not available on Jellyfin'}
-									>
-										{#snippet icon()}
-											<JellyfinIcon class="h-4 w-4" />
-										{/snippet}
-									</TrackSourceButton>
-								{/if}
+							{#if showJellyfinBtn}
+								<TrackSourceButton
+									available={jellyfinTrack !== null}
+									sourceColor="rgb(var(--brand-jellyfin))"
+									onclick={() =>
+										onPlaySourceTrack('jellyfin', track.position, trackDiscNumber, track.title)}
+									ariaLabel={jellyfinTrack ? 'Play on Jellyfin' : 'Not available on Jellyfin'}
+								>
+									{#snippet icon()}
+										<JellyfinIcon class="h-4 w-4" />
+									{/snippet}
+								</TrackSourceButton>
+							{/if}
 
-								{#if showLocalBtn}
-									<TrackSourceButton
-										available={localTrack !== null}
-										sourceColor="rgb(var(--brand-localfiles))"
-										onclick={() =>
-											onPlaySourceTrack('local', track.position, trackDiscNumber, track.title)}
-										ariaLabel={localTrack ? 'Play local file' : 'Not available locally'}
-									>
-										{#snippet icon()}
-											<LocalFilesIcon class="h-4 w-4" />
-										{/snippet}
-									</TrackSourceButton>
-								{/if}
+							{#if showLocalBtn}
+								<TrackSourceButton
+									available={localTrack !== null}
+									sourceColor="var(--color-accent)"
+									onclick={() =>
+										onPlaySourceTrack('local', track.position, trackDiscNumber, track.title)}
+									ariaLabel={localTrack ? 'Play local file' : 'Not available locally'}
+								>
+									{#snippet icon()}
+										<LocalFilesIcon class="h-4 w-4" />
+									{/snippet}
+								</TrackSourceButton>
+							{/if}
 
-								{#if showNavidromeBtn}
-									<TrackSourceButton
-										available={navidromeTrack !== null}
-										sourceColor="rgb(var(--brand-navidrome))"
-										onclick={() =>
-											onPlaySourceTrack('navidrome', track.position, trackDiscNumber, track.title)}
-										ariaLabel={navidromeTrack ? 'Play on Navidrome' : 'Not available on Navidrome'}
-									>
-										{#snippet icon()}
-											<NavidromeIcon class="h-4 w-4" />
-										{/snippet}
-									</TrackSourceButton>
-								{/if}
+							{#if showNavidromeBtn}
+								<TrackSourceButton
+									available={navidromeTrack !== null}
+									sourceColor="rgb(var(--brand-navidrome))"
+									onclick={() =>
+										onPlaySourceTrack('navidrome', track.position, trackDiscNumber, track.title)}
+									ariaLabel={navidromeTrack ? 'Play on Navidrome' : 'Not available on Navidrome'}
+								>
+									{#snippet icon()}
+										<NavidromeIcon class="h-4 w-4" />
+									{/snippet}
+								</TrackSourceButton>
+							{/if}
 
-								{#if showPlexBtn}
-									<TrackSourceButton
-										available={plexTrack !== null}
-										sourceColor="rgb(var(--brand-plex))"
-										onclick={() =>
-											onPlaySourceTrack('plex', track.position, trackDiscNumber, track.title)}
-										ariaLabel={plexTrack ? 'Play on Plex' : 'Not available on Plex'}
-									>
-										{#snippet icon()}
-											<PlexIcon class="h-4 w-4" />
-										{/snippet}
-									</TrackSourceButton>
-								{/if}
+							{#if showPlexBtn}
+								<TrackSourceButton
+									available={plexTrack !== null}
+									sourceColor="rgb(var(--brand-plex))"
+									onclick={() =>
+										onPlaySourceTrack('plex', track.position, trackDiscNumber, track.title)}
+									ariaLabel={plexTrack ? 'Play on Plex' : 'Not available on Plex'}
+								>
+									{#snippet icon()}
+										<PlexIcon class="h-4 w-4" />
+									{/snippet}
+								</TrackSourceButton>
+							{/if}
 
-								<div>
-									<ContextMenu
-										items={getTrackContextMenuItems(
-											track,
-											localTrack,
-											jellyfinTrack,
-											navidromeTrack,
-											plexTrack
-										)}
-										position="end"
-										size="xs"
-									/>
-								</div>
+							<div>
+								<ContextMenu
+									size="xs"
+									items={getTrackContextMenuItems(
+										track,
+										localTrack,
+										jellyfinTrack,
+										navidromeTrack,
+										plexTrack
+									)}
+									position="end"
+								/>
 							</div>
-						{/if}
+						</div>
+					{/if}
 
-						{#if libMeta}
-							<IconButton
-								size="xs"
-								icon={expandedRows.has(row.globalIndex) ? ChevronUp : ChevronDown}
-								label={expandedRows.has(row.globalIndex)
-									? 'Hide file details'
-									: 'Show file details'}
-								class="shrink-0"
-								onclick={() => toggleRow(row.globalIndex)}
-							/>
+					{#if libMeta}
+						<IconButton
+							size="xs"
+							icon={expandedRows.has(row.globalIndex) ? ChevronUp : ChevronDown}
+							label={expandedRows.has(row.globalIndex) ? 'Hide file details' : 'Show file details'}
+							class="order-8 shrink-0"
+							onclick={() => toggleRow(row.globalIndex)}
+						/>
+					{/if}
+				</div>
+				{#if editionRow?.yourVersionMs || editionRow?.note}
+					<!-- Under the title, on a line of its own so a phone keeps it readable. -->
+					<div
+						class="flex flex-col items-start pb-1 pl-8 text-xs {reserveFormat
+							? 'sm:pl-[5.75rem]'
+							: 'sm:pl-9'}"
+					>
+						{#if editionRow?.yourVersionMs}
+							<span class="text-muted">Your version {formatDuration(editionRow.yourVersionMs)}</span
+							>
+						{/if}
+						{#if editionRow?.note}
+							<span class="text-info">{editionRow.note}</span>
 						{/if}
 					</div>
-					{#if editionRow?.yourVersionMs || editionRow?.note || rateTrack}
-						<!-- Under the title, on a line of its own so a phone keeps it readable. -->
-						<div
-							class="list-col-wrap -mt-2 flex flex-col items-start pl-12 text-xs {editionRow?.yourVersionMs ||
-							editionRow?.note
-								? ''
-								: 'sm:hidden'}"
-						>
-							{#if editionRow?.yourVersionMs}
-								<span class="text-muted"
-									>Your version {formatDuration(editionRow.yourVersionMs)}</span
+				{/if}
+			</li>
+			{#if libMeta && expandedRows.has(row.globalIndex)}
+				<li>
+					{#if rateTrack || localTrack}
+						<!-- What the row leaves out on a narrow screen. -->
+						<div class="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 pt-2 text-xs md:hidden">
+							{#if localTrack && localTrack.size_bytes > 0}
+								<span class="sm:hidden"
+									><span class="text-muted">Size:</span> {formatBytes(localTrack.size_bytes)}</span
 								>
 							{/if}
-							{#if editionRow?.note}
-								<span class="text-info">{editionRow.note}</span>
-							{/if}
-							{#if rateTrack && libMeta}
-								<div class="flex items-center sm:hidden">
+							{#if rateTrack}
+								<div class="flex items-center">
 									<RatingStars
 										value={trackRatings[libMeta.id] ?? 0}
 										label={track.title}
@@ -539,25 +566,16 @@
 							{/if}
 						</div>
 					{/if}
+					<LibraryTrackRow meta={libMeta} />
 				</li>
-				{#if libMeta && expandedRows.has(row.globalIndex)}
-					<li class="list-row p-0">
-						<LibraryTrackRow meta={libMeta} />
-					</li>
-				{/if}
-				{#if heldMeta && heldOpen.has(row.globalIndex)}
-					<li class="list-row p-0">
-						<div class="w-full px-3 pb-3 sm:px-4">
-							<HeldFileRow
-								entry={heldMeta.entry}
-								file={heldMeta.file}
-								showTitle={false}
-								showExpiry
-							/>
-						</div>
-					</li>
-				{/if}
-			{/each}
+			{/if}
+			{#if heldMeta && heldOpen.has(row.globalIndex)}
+				<li>
+					<div class="w-full px-3 pb-3 sm:px-4">
+						<HeldFileRow entry={heldMeta.entry} file={heldMeta.file} showTitle={false} showExpiry />
+					</div>
+				</li>
+			{/if}
 		{/each}
-	</ul>
-</div>
+	{/each}
+</ul>

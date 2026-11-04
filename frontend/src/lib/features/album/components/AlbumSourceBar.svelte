@@ -4,7 +4,6 @@
 	import ContextMenu from '$lib/ui/ContextMenu.svelte';
 	import type { MenuItem } from '$lib/ui/ContextMenu.svelte';
 	import Button from '$lib/ui/Button.svelte';
-	import Card from '$lib/ui/Card.svelte';
 
 	interface Props {
 		sourceLabel: string;
@@ -57,41 +56,40 @@
 	});
 </script>
 
-<Card variant="bordered" padding="md">
-	<div class="flex items-center gap-3 flex-wrap">
-		<div class="flex items-center gap-2 mr-1">
-			<span style:color={sourceColor}>
-				{@render icon()}
-			</span>
-			<span class="text-sm font-bold">{sourceLabel}</span>
-			{#if hasAnyTracks}
-				<span class="badge badge-sm badge-neutral">{trackCount}/{totalTracks}</span>
-			{/if}
-			{#if extraBadge}
-				<span class="badge badge-sm badge-ghost uppercase">{extraBadge}</span>
-			{/if}
-		</div>
-
+<!-- A head row on the track panel: the source, how many tracks it has, then
+     its Play All, Shuffle and menu. -->
+<div class="flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2.5 sm:px-4">
+	<div class="mr-1 flex min-w-0 items-center gap-2">
+		<span class="shrink-0" style:color={sourceColor}>
+			{@render icon()}
+		</span>
+		<span class="text-sm font-bold">{sourceLabel}</span>
 		{#if hasAnyTracks}
-			<div class="flex items-center gap-2 flex-wrap ml-auto">
-				<Button
-					variant="primary"
-					size="sm"
-					icon={Play}
-					class="[&_svg]:fill-current"
-					onclick={onPlayAll}
-				>
-					Play All
-				</Button>
-
-				<Button variant="ghost" size="sm" icon={Shuffle} onclick={onShuffle}>Shuffle</Button>
-
-				{#if hasBulkActions}
-					<div class="ml-auto">
-						<ContextMenu items={menuItems} position="end" size="sm" />
-					</div>
-				{/if}
-			</div>
+			<span
+				class="inline-flex h-6 items-center rounded-full bg-base-content px-2.5 text-xs font-bold text-base-100 tabular-nums"
+				>{trackCount}/{totalTracks}</span
+			>
+		{/if}
+		{#if extraBadge}
+			<span class="text-sm font-medium text-muted uppercase">{extraBadge}</span>
 		{/if}
 	</div>
-</Card>
+
+	{#if hasAnyTracks}
+		<div class="ml-auto flex items-center gap-1.5">
+			<Button
+				variant="primary"
+				size="sm"
+				icon={Play}
+				class="[&_svg]:fill-current"
+				onclick={onPlayAll}
+			>
+				Play All
+			</Button>
+			<Button variant="ghost" size="sm" icon={Shuffle} onclick={onShuffle}>Shuffle</Button>
+			{#if hasBulkActions}
+				<ContextMenu items={menuItems} position="end" size="sm" />
+			{/if}
+		</div>
+	{/if}
+</div>

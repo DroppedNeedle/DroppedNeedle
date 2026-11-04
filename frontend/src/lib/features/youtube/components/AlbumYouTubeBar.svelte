@@ -22,7 +22,6 @@
 		YouTubeQuotaStatus
 	} from '$lib/features/youtube/queries/types';
 	import Button from '$lib/ui/Button.svelte';
-	import Card from '$lib/ui/Card.svelte';
 	import ConfirmDialog from '$lib/ui/ConfirmDialog.svelte';
 
 	interface Props {
@@ -196,17 +195,21 @@
 	}
 </script>
 
-<Card variant="bordered" padding="md">
-	<div class="flex items-center gap-3 flex-wrap">
-		<div class="flex items-center gap-2 mr-1">
-			<YouTubeIcon class="h-5 w-5 text-red-500" />
+<!-- A head row on the album's track panel, beside the other sources. -->
+<div class="px-3 py-2.5 sm:px-4">
+	<div class="flex flex-wrap items-center gap-x-3 gap-y-2">
+		<div class="mr-1 flex items-center gap-2">
+			<YouTubeIcon class="h-5 w-5 text-error" />
 			<span class="text-sm font-bold">YouTube</span>
 			{#if hasAnyTrackLinks}
-				<span class="badge badge-sm badge-neutral">{generatedCount}/{tracks.length}</span>
+				<span
+					class="inline-flex h-6 items-center rounded-full bg-base-content px-2.5 text-xs font-bold text-base-100 tabular-nums"
+					>{generatedCount}/{tracks.length}</span
+				>
 			{/if}
 		</div>
 
-		<div class="flex gap-2 flex-wrap">
+		<div class="ml-auto flex flex-wrap gap-1.5">
 			{#if hasAnyTrackLinks}
 				<Button
 					variant="primary"
@@ -274,7 +277,7 @@
 			</Button>
 		</div>
 	</div>
-</Card>
+</div>
 
 <ConfirmDialog
 	bind:open={confirmingTracks}

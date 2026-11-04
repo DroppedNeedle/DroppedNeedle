@@ -39,7 +39,7 @@
 </script>
 
 <div class="mb-8">
-	<h3 class="text-lg font-semibold mb-3">{title}</h3>
+	<h3 class="mb-3 text-xl font-bold">{title}</h3>
 
 	{#if loading}
 		<CarouselSkeleton count={6} cardWidth="w-36" />

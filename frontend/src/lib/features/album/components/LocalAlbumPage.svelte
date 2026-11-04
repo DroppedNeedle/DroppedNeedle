@@ -1,8 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { ChevronLeft, Disc3, FileUp, ListMusic, Play, Shuffle } from 'lucide-svelte';
+	import { Check, ChevronLeft, Disc3, FileUp, FolderTree, Play } from 'lucide-svelte';
 	import AlbumImage from '$lib/media/AlbumImage.svelte';
-	import LibraryFormatBadge from '$lib/features/library/components/LibraryFormatBadge.svelte';
 	import NoFilesBadge from '$lib/features/library/components/NoFilesBadge.svelte';
 	import LocalIdentityBadge from '$lib/features/library/components/LocalIdentityBadge.svelte';
 	import ManagementHoldSection from '$lib/features/library-management/components/ManagementHoldSection.svelte';
@@ -12,10 +11,18 @@
 	import EditionPlate from '$lib/features/library/components/edition/EditionPlate.svelte';
 	import AlbumOrganizationDialog from '$lib/features/library-management/components/AlbumOrganizationDialog.svelte';
 	import LocalAlbumTrackList from '$lib/features/library/components/LocalAlbumTrackList.svelte';
+	import LocalFilesIcon from '$lib/media/icons/LocalFilesIcon.svelte';
 	import AlbumDownloadButton from './AlbumDownloadButton.svelte';
+	import AlbumHero from './AlbumHero.svelte';
+	import AlbumHeroSkeleton from './AlbumHeroSkeleton.svelte';
+	import AlbumSourceBar from './AlbumSourceBar.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
+	import ContextMenu, { type MenuItem } from '$lib/ui/ContextMenu.svelte';
+	import PaperPanel from '$lib/ui/PaperPanel.svelte';
 	import RatingStars from '$lib/ui/RatingStars.svelte';
+	import StatusChip from '$lib/ui/StatusChip.svelte';
+	import { formatTotalDurationSec } from '$lib/utils/formatting';
 	import {
 		getRatingsQuery,
 		ratingOf,
@@ -30,7 +37,6 @@
 	} from '$lib/features/library/queries/EditionQueries.svelte';
 	import { notesByFile } from './albumEdition';
 	import AddToPlaylistModal from '$lib/features/playlists/components/AddToPlaylistModal.svelte';
-	import type { MenuItem } from '$lib/ui/ContextMenu.svelte';
 	import { getTrackContextMenuItems } from './albumPlaybackHandlers';
 	import type { QueueItem } from '$lib/features/player/playback/types';
 	import { authStore } from '$lib/stores/authStore.svelte';
@@ -126,6 +132,47 @@
 		);
 	}
 
+	const formatLabel = $derived.by(() => {
+		const format = album?.format?.toLowerCase();
+		if (!format) return null;
+		return format === 'mixed' ? 'Mixed formats' : format.toUpperCase();
+	});
+
+	let organization = $state<{
+		start: (action: 'split' | 'merge' | 'move' | 'reset') => void;
+	} | null>(null);
+
+	// The hero's menu: Album organization's four actions for admins, and the
+	// MusicBrainz contribution for a curator on a local-only album.
+	const menuItems = $derived.by(() => {
+		const items: MenuItem[] = [];
+		if (authStore.isAdmin) {
+			items.push(
+				{ label: 'Split album...', icon: FolderTree, onclick: () => organization?.start('split') },
+				{
+					label: 'Merge with another local album...',
+					icon: FolderTree,
+					onclick: () => organization?.start('merge')
+				},
+				{ label: 'Move tracks...', icon: FolderTree, onclick: () => organization?.start('move') },
+				{
+					label: 'Reset manual grouping...',
+					icon: FolderTree,
+					onclick: () => organization?.start('reset')
+				}
+			);
+		}
+		if (authStore.isTrusted && album?.identity_state === 'local_only') {
+			items.push({
+				label: album.contribution_id ? 'Contribution in progress' : 'Contribute to MusicBrainz',
+				icon: FileUp,
+				disabled: contributionMutation.isPending,
+				onclick: openContribution
+			});
+		}
+		return items;
+	});
+
 	function openContribution(): void {
 		if (!album) return;
 		if (album.contribution_id) {
@@ -138,67 +185,62 @@
 
 <svelte:head><title>{album?.title ?? 'Album'} · Library</title></svelte:head>
 
-<main class="container mx-auto p-4 md:p-6 lg:p-8">
+{#snippet back()}
 	<Button
 		variant="ghost"
 		size="sm"
 		icon={ChevronLeft}
-		class="mb-5"
 		onclick={() => goto(withBasePath('/library/albums'))}
 	>
 		Albums
 	</Button>
+{/snippet}
 
+<div class="w-full">
 	{#if albumQuery.isLoading}
-		<div class="grid gap-6 md:grid-cols-[16rem_1fr]">
-			<div class="skeleton aspect-square w-full rounded-2xl"></div>
-			<div class="space-y-3">
-				<div class="skeleton h-10 w-2/3"></div>
-				<div class="skeleton h-5 w-1/3"></div>
-				<div class="skeleton h-32 w-full"></div>
+		<AlbumHeroSkeleton tracks />
+	{:else if albumQuery.isError || !album}
+		<div class="dn-album-page">
+			{@render back()}
+			<div class="alert alert-error mt-4">
+				<span>Couldn't load this album.</span>
+				<Button size="sm" onclick={() => albumQuery.refetch()}>Retry</Button>
 			</div>
 		</div>
-	{:else if albumQuery.isError || !album}
-		<div class="alert alert-error">
-			<span>Couldn't load this album.</span>
-			<Button size="sm" onclick={() => albumQuery.refetch()}>Retry</Button>
-		</div>
 	{:else}
-		<header class="grid gap-6 md:grid-cols-[16rem_1fr] md:items-end">
-			<AlbumImage
-				albumId={album.id}
-				mbid={album.release_group_mbid ?? ''}
-				available={album.cover_available}
-				artMissing={album.art_missing}
-				alt={`Cover for ${album.title}`}
-				size="full"
-				requestSize={500}
-				priority
-				className="aspect-square w-full rounded-2xl shadow-xl"
-			/>
-			<div class="min-w-0">
-				<div class="flex flex-wrap items-center gap-2">
-					{#if hasFiles}<LibraryFormatBadge format={album.format} />{:else}<NoFilesBadge />{/if}
-					{#if album.is_compilation}<span class="badge badge-ghost">Compilation</span>{/if}
-				</div>
-				<h1 class="mt-3 text-3xl font-black tracking-tight sm:text-5xl">{album.title}</h1>
-				<a
-					href={artistHref(album.artist_mbid ?? album.artist_id)}
-					class="mt-2 inline-block text-lg text-muted hover:underline"
+		<AlbumHero eyebrow={album.is_compilation ? 'Compilation' : 'Album'} title={album.title} {back}>
+			{#snippet cover()}
+				<AlbumImage
+					albumId={album.id}
+					mbid={album.release_group_mbid ?? ''}
+					available={album.cover_available}
+					artMissing={album.art_missing}
+					alt={`Album cover for ${album.title} by ${album.artist_name || 'Unknown album artist'}`}
+					size="full"
+					requestSize={500}
+					priority
+					rounded="none"
+					className="aspect-square w-full"
+				/>
+			{/snippet}
+
+			{#snippet meta()}
+				<a href={artistHref(album.artist_mbid ?? album.artist_id)} class="font-bold hover:underline"
 					>{album.artist_name || 'Unknown album artist'}</a
 				>
-				<LocalIdentityBadge
-					state={album.identity_state}
-					releaseMbid={album.release_mbid}
-					subject="album"
-					showDescription
-					className="mt-3"
-				/>
-				<p class="mt-2 text-sm text-muted">
-					{album.year ?? 'Year unknown'} · {album.track_count}
-					{album.track_count === 1 ? 'track' : 'tracks'}
-				</p>
-				<div class="mt-2 -ml-1 flex items-center">
+				<span class="opacity-50" aria-hidden="true">•</span>
+				<span>{album.year ?? 'Year unknown'}</span>
+				<span class="opacity-50" aria-hidden="true">•</span>
+				<span>{album.track_count} {album.track_count === 1 ? 'track' : 'tracks'}</span>
+				{#if album.total_duration_seconds}
+					<span class="opacity-50" aria-hidden="true">•</span>
+					<span>{formatTotalDurationSec(album.total_duration_seconds)}</span>
+				{/if}
+				{#if hasFiles && formatLabel}
+					<span class="opacity-50" aria-hidden="true">•</span>
+					<span>{formatLabel}</span>
+				{/if}
+				<span class="flex items-center">
 					<RatingStars
 						size="md"
 						value={ratingOf(ratingsQuery.data, 'album', album.id)}
@@ -210,95 +252,137 @@
 						favorite={album.favorite ?? false}
 						onchange={(favorited) => heart.mutate({ kind: 'album', itemId: album.id, favorited })}
 					/>
+				</span>
+			{/snippet}
+
+			{#snippet details()}
+				<div class="flex flex-wrap items-center gap-2">
+					{#if !hasFiles}<NoFilesBadge />{/if}
+					<LocalIdentityBadge
+						state={album.identity_state}
+						releaseMbid={album.release_mbid}
+						subject="album"
+						showDescription
+					/>
 				</div>
-				<div class="mt-4">
-					<EditionPlate copies={[album]} />
-				</div>
-				<div class="mt-5 flex flex-wrap items-center gap-2">
-					{#if hasFiles}
-						<Button
-							variant="primary"
-							icon={Play}
-							class="[&_svg]:fill-current"
-							disabled={!tracks.length}
-							onclick={() => play(false)}>Play</Button
-						>
-						<Button
-							variant="ghost"
-							icon={Shuffle}
-							disabled={!tracks.length}
-							onclick={() => play(true)}>Shuffle</Button
-						>
-						<AlbumDownloadButton
-							albumId={album.id}
-							mbid={null}
-							totalSizeBytes={album.total_size_bytes}
-							trackCount={tracks.length}
-							{downloadAllowed}
+				<EditionPlate copies={[album]} />
+			{/snippet}
+
+			{#snippet actions()}
+				{#if hasFiles}
+					<Button
+						variant="primary"
+						icon={Play}
+						class="min-w-28 [&_svg]:fill-current"
+						disabled={!tracks.length}
+						onclick={() => play(false)}>Play</Button
+					>
+					<StatusChip size="md" icon={Check}>In Library</StatusChip>
+					<AlbumDownloadButton
+						albumId={album.id}
+						mbid={null}
+						totalSizeBytes={album.total_size_bytes}
+						trackCount={tracks.length}
+						{downloadAllowed}
+					/>
+				{/if}
+				{#if menuItems.length > 0}
+					<ContextMenu items={menuItems} trigger="button" label="More album actions" />
+				{/if}
+			{/snippet}
+		</AlbumHero>
+
+		<div class="dn-album-page space-y-8 pt-0">
+			<section class="space-y-3" aria-labelledby="local-tracks-title">
+				<h2 id="local-tracks-title" class="text-2xl text-base-content sm:text-3xl">Tracks</h2>
+				{#if tracksQuery.isLoading}
+					<PaperPanel>
+						<ul class="divide-y divide-paper-border" aria-busy="true">
+							{#each Array(8) as _, index (index)}
+								<li class="flex items-center gap-4 px-4 py-3">
+									<div class="skeleton h-4 w-6"></div>
+									<div class="skeleton h-4 flex-1"></div>
+									<div class="skeleton h-4 w-12"></div>
+								</li>
+							{/each}
+						</ul>
+					</PaperPanel>
+				{:else if tracksQuery.isError}
+					<div class="alert alert-error">Couldn't load tracks.</div>
+				{:else if !tracks.length}
+					<Card class="text-center text-muted">
+						<Disc3 class="mx-auto h-8 w-8 opacity-30" />
+						<p>No playable tracks are attached to this album.</p>
+					</Card>
+				{:else}
+					<PaperPanel>
+						{#snippet head()}
+							<AlbumSourceBar
+								sourceLabel="Local Files"
+								sourceColor="var(--color-accent)"
+								trackCount={tracks.length}
+								totalTracks={tracks.length}
+								extraBadge={formatLabel}
+								onPlayAll={() => play(false)}
+								onShuffle={() => play(true)}
+							>
+								{#snippet icon()}
+									<LocalFilesIcon class="h-5 w-5" />
+								{/snippet}
+							</AlbumSourceBar>
+						{/snippet}
+						<LocalAlbumTrackList
+							{tracks}
+							framed={false}
+							notes={fileNotes}
+							getTrackMenuItems={getLocalTrackMenuItems}
+							trackRatings={ratingsQuery.data?.tracks}
+							onRateTrack={(trackId, rating) =>
+								rate.mutate({ kind: 'track', itemId: trackId, rating })}
+							onFavoriteTrack={(trackId, favorited) =>
+								heart.mutate({ kind: 'track', itemId: trackId, favorited })}
 						/>
-					{/if}
-					{#if authStore.isTrusted && album.identity_state === 'local_only'}
-						<Button
-							variant="ghost"
-							icon={FileUp}
-							disabled={contributionMutation.isPending}
-							onclick={openContribution}
-						>
-							{album.contribution_id ? 'Contribution in progress' : 'Contribute to MusicBrainz'}
-						</Button>
-					{/if}
-					{#if authStore.isAdmin}<AlbumOrganizationDialog {album} {tracks} />{/if}
-				</div>
-			</div>
-		</header>
+					</PaperPanel>
+				{/if}
+			</section>
 
-		{#if authStore.isAdmin}
-			<div class="mt-6"><ManagementHoldSection {album} /></div>
-		{/if}
-
-		{#if authStore.isTrusted}
-			<RecycledRemovals
-				class="mt-6"
-				albumId={album.id}
-				releaseGroupMbid={album.release_group_mbid}
-			/>
-		{/if}
-
-		{#if authStore.isAdmin}
-			<AlbumRetagPairs {albumId} class="mt-6" />
-		{/if}
-
-		<section class="mt-8" aria-labelledby="local-tracks-title">
-			<div class="flex items-center gap-2">
-				<ListMusic class="h-5 w-5 text-primary" />
-				<h2 id="local-tracks-title" class="text-xl font-bold">Tracks</h2>
-			</div>
-			{#if tracksQuery.isLoading}
-				<div class="mt-3 space-y-2">
-					{#each Array(8) as _, index (index)}<div class="skeleton h-14 w-full"></div>{/each}
-				</div>
-			{:else if tracksQuery.isError}
-				<div class="alert alert-error mt-3">Couldn't load tracks.</div>
-			{:else if !tracks.length}
-				<Card class="mt-3 text-center text-muted">
-					<Disc3 class="mx-auto h-8 w-8 opacity-30" />
-					<p>No playable tracks are attached to this album.</p>
-				</Card>
-			{:else}
-				<LocalAlbumTrackList
-					{tracks}
-					notes={fileNotes}
-					getTrackMenuItems={getLocalTrackMenuItems}
-					trackRatings={ratingsQuery.data?.tracks}
-					onRateTrack={(trackId, rating) => rate.mutate({ kind: 'track', itemId: trackId, rating })}
-					onFavoriteTrack={(trackId, favorited) =>
-						heart.mutate({ kind: 'track', itemId: trackId, favorited })}
-				/>
+			{#if authStore.isAdmin}
+				<ManagementHoldSection {album} />
 			{/if}
-		</section>
 
-		<AlbumHistory {albumId} />
+			{#if authStore.isTrusted}
+				<RecycledRemovals albumId={album.id} releaseGroupMbid={album.release_group_mbid} />
+			{/if}
 
+			{#if authStore.isAdmin}
+				<AlbumRetagPairs {albumId} />
+			{/if}
+
+			<AlbumHistory {albumId} />
+		</div>
+
+		{#if authStore.isAdmin}
+			<AlbumOrganizationDialog bind:this={organization} {album} {tracks} />
+		{/if}
 		<AddToPlaylistModal bind:this={playlistModal} />
 	{/if}
-</main>
+</div>
+
+<style>
+	.dn-album-page {
+		width: 100%;
+		max-width: 80rem;
+		margin: 0 auto;
+		padding: 1rem 1rem 2rem;
+	}
+	@media (min-width: 768px) {
+		.dn-album-page {
+			padding-inline: 1.5rem;
+		}
+	}
+	@media (min-width: 1024px) {
+		.dn-album-page {
+			padding-inline: 2rem;
+		}
+	}
+</style>

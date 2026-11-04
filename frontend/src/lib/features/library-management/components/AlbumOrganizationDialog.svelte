@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { ChevronDown, FolderTree } from 'lucide-svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import Input from '$lib/ui/Input.svelte';
@@ -68,7 +67,8 @@
 					: resetApply
 	);
 
-	function open(next: Action): void {
+	/** Opens the dialog on one of the four actions; the page's menu lists them. */
+	export function start(next: Action): void {
 		action = next;
 		selectedTrackIds = next === 'reset' || next === 'merge' ? tracks.map((track) => track.id) : [];
 		targetSearch = '';
@@ -175,20 +175,6 @@
 					: 'Reset manual grouping'
 	);
 </script>
-
-<details class="dropdown dropdown-end">
-	<Button as="summary" variant="ghost" size="sm" icon={FolderTree}>
-		Album organization <ChevronDown class="h-3.5 w-3.5" aria-hidden="true" />
-	</Button>
-	<ul class="menu dropdown-content z-30 mt-2 w-64 rounded-box bg-base-100 p-2 shadow-xl">
-		<li><button onclick={() => open('split')}>Split album...</button></li>
-		<li>
-			<button onclick={() => open('merge')}>Merge with another local album...</button>
-		</li>
-		<li><button onclick={() => open('move')}>Move tracks...</button></li>
-		<li><button onclick={() => open('reset')}>Reset manual grouping...</button></li>
-	</ul>
-</details>
 
 <Modal
 	bind:open={shown}

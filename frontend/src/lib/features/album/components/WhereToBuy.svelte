@@ -87,11 +87,11 @@
 
 <!-- Always renders: worst case it offers the Bandcamp search.
      One line collapsed, above the track list; expand for every store + groups. -->
-<Card as="section" padding="sm" aria-label="Where to buy">
+<Card as="section" variant="bordered" padding="sm" aria-label="Where to buy">
 	<div class="flex flex-wrap items-center gap-2">
 		<div class="flex items-center gap-1.5">
 			<ShoppingBag class="h-4 w-4 text-primary" aria-hidden="true" />
-			<h2 class="text-sm font-semibold">Where to buy</h2>
+			<h2 class="text-sm font-bold tracking-wide uppercase">Where to buy</h2>
 		</div>
 
 		{#if optionsQuery.isLoading}

@@ -17,7 +17,7 @@
 {#if available}
 	<!-- Each source keeps its own colour, which the kit's variants do not cover. -->
 	<Button
-		size="sm"
+		size="xs"
 		icon={Play}
 		class="shrink-0 [&_svg]:fill-current"
 		style="--btn-color: {sourceColor}; background-color: var(--btn-color); color: oklch(98% 0 0);"
@@ -28,7 +28,7 @@
 	</Button>
 {:else}
 	<span
-		class="inline-flex h-8 min-w-8 shrink-0 items-center justify-center px-3 text-sm opacity-30"
+		class="inline-flex h-6 min-w-8 shrink-0 items-center justify-center px-2 text-sm opacity-40"
 		aria-label="Not available"
 	>
 		—

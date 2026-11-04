@@ -1,20 +1,21 @@
 <script lang="ts">
-	import { coverSrc } from '$lib/api/covers';
 	import type { AlbumBasicInfo, AlbumTracksInfo } from '$lib/features/album/queries/types';
 	import type { DownloadTask, HeldFile } from '$lib/features/downloads/queries/types';
 	import type { AlbumView } from '$lib/features/library/queries/types';
 	import AlbumImage from '$lib/media/AlbumImage.svelte';
-	import HeroBackdrop from '$lib/media/HeroBackdrop.svelte';
 	import AlbumDownloadStatus from '$lib/features/downloads/components/AlbumDownloadStatus.svelte';
 	import { formatTotalDuration } from '$lib/utils/formatting';
+	import type { Snippet } from 'svelte';
 	import {
 		Check,
-		Trash2,
 		Clock,
+		Disc3,
+		FolderSync,
+		Play,
 		Plus,
 		RefreshCw,
-		Disc3,
 		Square,
+		Trash2,
 		TrendingUp,
 		TriangleAlert
 	} from 'lucide-svelte';
@@ -31,8 +32,10 @@
 	} from '$lib/features/library/components/edition/editionSheetState.svelte';
 	import AlbumDownloadButton from './AlbumDownloadButton.svelte';
 	import Button from '$lib/ui/Button.svelte';
-	import IconButton from '$lib/ui/IconButton.svelte';
+	import ContextMenu, { type MenuItem } from '$lib/ui/ContextMenu.svelte';
 	import RatingStars from '$lib/ui/RatingStars.svelte';
+	import StatusChip from '$lib/ui/StatusChip.svelte';
+	import AlbumHero, { type AlbumFact } from './AlbumHero.svelte';
 	import FavoriteHeart from '$lib/features/library/components/FavoriteHeart.svelte';
 
 	interface Props {
@@ -66,6 +69,11 @@
 		favorite?: boolean;
 		/** Heart or unheart the local album. The heart shows beside the stars. */
 		onfavorite?: (favorite: boolean) => void;
+		/** Plays the album from its first source with tracks; no Play without it. */
+		onplay?: () => void;
+		/** The formats the files are in, e.g. "FLAC". */
+		formats?: string | null;
+		back?: Snippet;
 		onrequest: () => void;
 		ondelete: () => void;
 		onrefresh: () => void;
@@ -96,6 +104,9 @@
 		onrate,
 		favorite = false,
 		onfavorite,
+		onplay,
+		formats = null,
+		back,
 		onrequest,
 		ondelete,
 		onrefresh,
@@ -181,270 +192,180 @@
 	// moved the copy off this page.
 	const showPlate = $derived(localCopies.length > 0 || editionSheet.open || !!editionPick);
 
-	let backdropUrl = $derived(
-		album.musicbrainz_id
-			? coverSrc('release-group', album.musicbrainz_id, 500)
-			: album.cover_url || album.album_thumb_url || null
-	);
+	const owned = $derived(inLibrary || libraryInLibrary);
+	const canRemove = $derived(authStore.isAdmin && (owned || isRequested));
+
+	const facts = $derived.by(() => {
+		const list: AlbumFact[] = [];
+		if (tracksInfo?.label) list.push({ label: 'Label', value: tracksInfo.label });
+		if (tracksInfo?.country) list.push({ label: 'Country', value: tracksInfo.country });
+		if (album.release_date) list.push({ label: 'Released', value: album.release_date });
+		if (tracksInfo?.barcode) list.push({ label: 'Barcode', value: tracksInfo.barcode });
+		return list;
+	});
+
+	const menuItems = $derived.by(() => {
+		const items: MenuItem[] = [];
+		if (inLibrary || isRequested) {
+			items.push({
+				label: refreshing ? 'Refreshing...' : 'Refresh album status',
+				icon: RefreshCw,
+				disabled: refreshing,
+				onclick: onrefresh
+			});
+		}
+		if (libraryInLibrary && authStore.isAdmin) {
+			items.push({
+				label: rescan.isPending ? 'Rescanning...' : 'Rescan',
+				icon: FolderSync,
+				disabled: rescan.isPending,
+				onclick: () => void handleRescan()
+			});
+		}
+		if (libraryInLibrary && authStore.isTrusted && libraryBelowCutoff && downloadClientConfigured) {
+			items.push({
+				label: upgradeQueued ? 'Upgrade queued' : 'Upgrade quality',
+				icon: TrendingUp,
+				disabled: upgrade.isPending || upgradeQueued,
+				onclick: () => void handleUpgrade()
+			});
+		}
+		if (canRemove) {
+			items.push({ label: 'Remove', icon: Trash2, className: 'text-error', onclick: ondelete });
+		}
+		return items;
+	});
 </script>
 
-<div class="album-hero group relative rounded-2xl transition-all duration-500">
-	<!-- The clip lives on this backdrop-only layer, NOT the card: overflow-hidden on
-	     the card would trap the Edition dropdown menu inside it. -->
-	<div class="absolute inset-0 overflow-hidden rounded-2xl">
-		<HeroBackdrop
-			imageUrl={backdropUrl}
-			opacity={0.1}
-			hoverOpacity={0.15}
-			blur={3}
-			hoverBlur={2}
-			position="full"
+<AlbumHero
+	eyebrow={album.type || 'Album'}
+	title={album.title}
+	note={album.disambiguation}
+	{facts}
+	{back}
+>
+	{#snippet cover()}
+		<AlbumImage
+			mbid={album.musicbrainz_id}
+			customUrl={album.cover_url}
+			remoteUrl={album.album_thumb_url ?? null}
+			alt={`Album cover for ${album.title} by ${album.artist_name}`}
+			size="full"
+			requestSize={500}
+			priority
+			rounded="none"
+			className="aspect-square w-full"
 		/>
-	</div>
+	{/snippet}
 
-	<div class="relative z-10 flex flex-col lg:flex-row gap-6 lg:gap-8 p-4 sm:p-6 lg:p-8">
-		{#if inLibrary || isRequested}
-			<IconButton
-				size="sm"
-				icon={RefreshCw}
-				label="Refresh album status"
-				class="absolute top-3 right-3 z-20"
-				loading={refreshing}
-				onclick={onrefresh}
+	{#snippet meta()}
+		<button type="button" onclick={onartistclick} class="font-bold hover:underline">
+			{album.artist_name}
+		</button>
+		{#if album.year}
+			<span class="opacity-50" aria-hidden="true">•</span>
+			<span title="First released">{album.year}</span>
+		{/if}
+		{#if tracksInfo && tracksInfo.total_tracks > 0}
+			<span class="opacity-50" aria-hidden="true">•</span>
+			<span>{tracksInfo.total_tracks} {tracksInfo.total_tracks === 1 ? 'track' : 'tracks'}</span>
+		{:else if loadingTracks}
+			<span class="opacity-50" aria-hidden="true">•</span>
+			<span class="skeleton inline-block h-4 w-16"></span>
+		{/if}
+		{#if tracksInfo?.total_length}
+			<span class="opacity-50" aria-hidden="true">•</span>
+			<span>{formatTotalDuration(tracksInfo.total_length)}</span>
+		{/if}
+		{#if formats}
+			<span class="opacity-50" aria-hidden="true">•</span>
+			<span>{formats}</span>
+		{/if}
+		{#if onrate}
+			<span class="flex items-center">
+				<RatingStars size="md" value={rating} label={album.title} onchange={onrate} />
+				{#if onfavorite}
+					<FavoriteHeart size="md" {favorite} onchange={onfavorite} />
+				{/if}
+			</span>
+		{/if}
+	{/snippet}
+
+	{#snippet details()}
+		{#if localCopies.length > 0 && localCopies.every((copy) => copy.track_count === 0)}
+			<NoFilesBadge />
+		{/if}
+		{#if showPlate}
+			<EditionPlate
+				copies={localCopies}
+				groupMbid={releaseGroupMbid || album.musicbrainz_id}
+				request={editionPick ?? undefined}
 			/>
 		{/if}
-		<div class="w-full lg:w-64 xl:w-80 flex-shrink-0">
-			<AlbumImage
-				mbid={album.musicbrainz_id}
-				customUrl={album.cover_url}
-				remoteUrl={album.album_thumb_url ?? null}
-				alt={album.title}
-				size="hero"
-				priority
-				rounded="xl"
-				className="w-full aspect-square shadow-2xl"
+	{/snippet}
+
+	{#snippet actions()}
+		{#if onplay}
+			<Button variant="primary" icon={Play} class="min-w-28 [&_svg]:fill-current" onclick={onplay}>
+				Play
+			</Button>
+		{/if}
+		{#if owned}
+			{#if libraryUnmatchedOnly}
+				<StatusChip tone="error" size="md" icon={TriangleAlert}>Unmatched files only</StatusChip>
+			{:else if libraryComplete || !editionCounts}
+				<StatusChip size="md" icon={Check}>In Library</StatusChip>
+			{:else}
+				<StatusChip tone="warning" size="md" icon={Check}>
+					In Library · {editionCounts.kept}/{editionCounts.total}
+				</StatusChip>
+			{/if}
+			<AlbumDownloadButton
+				albumId={localCopies[0]?.id || null}
+				mbid={localCopies[0]?.id ? null : releaseGroupMbid || album.musicbrainz_id || null}
+				totalSizeBytes={localCopies[0]?.total_size_bytes ?? null}
+				trackCount={libraryTrackCount}
+				{downloadAllowed}
 			/>
-		</div>
-
-		<div class="flex-1 flex flex-col lg:justify-end space-y-4">
-			<div class="text-xs sm:text-sm font-semibold uppercase tracking-wider opacity-70">
-				{album.type || 'Album'}
-			</div>
-
-			<h1 class="hero-title text-3xl sm:text-4xl lg:text-5xl xl:text-6xl font-bold leading-tight">
-				{album.title}
-			</h1>
-
-			{#if album.disambiguation}
-				<p class="text-sm opacity-60 italic">({album.disambiguation})</p>
+		{:else if isRequested}
+			{#if !headerDownloadTask}
+				<StatusChip tone="warning" size="md" icon={Clock}>Requested</StatusChip>
 			{/if}
-
-			<div class="flex flex-wrap items-center gap-2 text-sm">
-				<button
-					type="button"
-					onclick={onartistclick}
-					class="font-semibold hover:underline cursor-pointer"
-				>
-					{album.artist_name}
-				</button>
-
-				{#if album.year}
-					<span class="opacity-50">•</span>
-					<span title="First released">{album.year}</span>
+		{:else}
+			<Button
+				variant={onplay ? 'outline' : 'primary'}
+				icon={Plus}
+				loading={requesting}
+				onclick={() => onrequest()}
+			>
+				{requesting ? 'Requesting...' : 'Add to Library'}
+			</Button>
+		{/if}
+		{#if !inLibrary}
+			<Button
+				variant="outline"
+				active={headerSampling}
+				onclick={toggleHeaderSample}
+				title="Hear 30-second samples of this album before you grab it"
+			>
+				{#if headerSampling && deckSampler.status === 'loading'}
+					<span class="loading loading-spinner loading-sm"></span>
+				{:else if headerSampling}
+					<Square class="size-4" fill="currentColor" />
+				{:else}
+					<Disc3 class="size-4" />
 				{/if}
+				{headerSampling ? 'Stop sample' : 'Sample'}
+			</Button>
+		{/if}
+		{#if menuItems.length > 0}
+			<ContextMenu items={menuItems} trigger="button" label="More album actions" />
+		{/if}
+	{/snippet}
 
-				{#if tracksInfo && tracksInfo.total_tracks > 0}
-					<span class="opacity-50">•</span>
-					<span>{tracksInfo.total_tracks} {tracksInfo.total_tracks === 1 ? 'track' : 'tracks'}</span
-					>
-				{:else if loadingTracks}
-					<span class="opacity-50">•</span>
-					<span class="skeleton w-16 h-4 inline-block"></span>
-				{/if}
-
-				{#if tracksInfo?.total_length}
-					<span class="opacity-50">•</span>
-					<span>{formatTotalDuration(tracksInfo.total_length)}</span>
-				{/if}
-			</div>
-
-			{#if onrate}
-				<div class="-ml-1 flex items-center self-start">
-					<RatingStars size="md" value={rating} label={album.title} onchange={onrate} />
-					{#if onfavorite}
-						<FavoriteHeart size="md" {favorite} onchange={onfavorite} />
-					{/if}
-				</div>
-			{/if}
-
-			{#if localCopies.length > 0 && localCopies.every((copy) => copy.track_count === 0)}
-				<NoFilesBadge className="self-start" />
-			{/if}
-
-			{#if showPlate}
-				<EditionPlate
-					copies={localCopies}
-					groupMbid={releaseGroupMbid || album.musicbrainz_id}
-					request={editionPick ?? undefined}
-				/>
-			{/if}
-
-			{#if libraryInLibrary}
-				<div class="flex flex-wrap items-center gap-2">
-					<span
-						class="badge badge-sm gap-1 {libraryComplete
-							? 'badge-success'
-							: libraryUnmatchedOnly
-								? 'badge-error'
-								: 'badge-warning'}"
-					>
-						<Disc3 class="h-3.5 w-3.5" />
-						{libraryComplete
-							? 'In Library'
-							: libraryUnmatchedOnly
-								? 'Unmatched files'
-								: editionCounts
-									? `${editionCounts.kept}/${editionCounts.total}`
-									: `${libraryTrackCount}/${mbTrackCount}`}
-					</span>
-					{#if authStore.isAdmin}
-						<Button
-							variant="ghost"
-							size="xs"
-							icon={RefreshCw}
-							loading={rescan.isPending}
-							onclick={handleRescan}
-						>
-							Rescan
-						</Button>
-					{/if}
-					{#if authStore.isTrusted && libraryBelowCutoff && downloadClientConfigured}
-						<Button
-							variant="ghost"
-							size="xs"
-							icon={TrendingUp}
-							onclick={handleUpgrade}
-							disabled={upgrade.isPending || upgradeQueued}
-							title="Some tracks are below your quality cutoff - find a better copy"
-						>
-							{upgradeQueued ? 'Upgrade queued' : 'Upgrade quality'}
-						</Button>
-					{/if}
-				</div>
-			{/if}
-
-			<div class="flex flex-wrap gap-x-4 gap-y-2 text-xs sm:text-sm opacity-70">
-				{#if tracksInfo?.label}
-					<div>
-						<span class="font-semibold">Label:</span>
-						{tracksInfo.label}
-					</div>
-				{/if}
-				{#if tracksInfo?.country}
-					<div>
-						<span class="font-semibold">Country:</span>
-						{tracksInfo.country}
-					</div>
-				{/if}
-				{#if tracksInfo?.barcode}
-					<div>
-						<span class="font-semibold">Barcode:</span>
-						{tracksInfo.barcode}
-					</div>
-				{/if}
-			</div>
-
-			<div class="pt-4 flex flex-col gap-3">
-				{#if headerDownloadTask}
-					<AlbumDownloadStatus task={headerDownloadTask} {heldFiles} />
-				{/if}
-				<div class="flex flex-wrap items-start gap-3">
-					{#if inLibrary || libraryInLibrary}
-						{#if libraryUnmatchedOnly}
-							<div class="badge badge-error h-8 gap-2 px-3">
-								<TriangleAlert class="h-4 w-4" />
-								Unmatched files only
-							</div>
-						{:else}
-							<div class="badge h-8 gap-2 border-none bg-accent px-3 text-accent-content">
-								<Check class="h-4 w-4" />
-								{libraryComplete || !editionCounts
-									? 'In Library'
-									: `In Library • ${editionCounts.kept}/${editionCounts.total}`}
-							</div>
-						{/if}
-						<AlbumDownloadButton
-							albumId={localCopies[0]?.id || null}
-							mbid={localCopies[0]?.id ? null : releaseGroupMbid || album.musicbrainz_id || null}
-							totalSizeBytes={localCopies[0]?.total_size_bytes ?? null}
-							trackCount={libraryTrackCount}
-							{downloadAllowed}
-							size="sm"
-						/>
-						{#if authStore.isAdmin}
-							<Button variant="danger-ghost" size="sm" icon={Trash2} onclick={ondelete}>
-								Remove
-							</Button>
-						{/if}
-					{:else if isRequested}
-						{#if !headerDownloadTask}
-							<div class="badge badge-lg badge-warning gap-2">
-								<Clock class="h-4 w-4" />
-								Requested
-							</div>
-						{/if}
-						{#if authStore.isAdmin}
-							<Button variant="danger-ghost" size="sm" icon={Trash2} onclick={ondelete}>
-								Remove
-							</Button>
-						{/if}
-					{:else}
-						<Button
-							variant="primary"
-							size="lg"
-							icon={Plus}
-							loading={requesting}
-							onclick={() => onrequest()}
-						>
-							{requesting ? 'Requesting...' : 'Add to Library'}
-						</Button>
-					{/if}
-					{#if !inLibrary}
-						<Button
-							variant="outline"
-							size="lg"
-							active={headerSampling}
-							onclick={toggleHeaderSample}
-							title="Hear 30-second samples of this album before you grab it"
-						>
-							{#if headerSampling && deckSampler.status === 'loading'}
-								<span class="loading loading-spinner loading-sm"></span>
-							{:else if headerSampling}
-								<Square class="h-4 w-4" fill="currentColor" />
-							{:else}
-								<Disc3 class="h-5 w-5" />
-							{/if}
-							{headerSampling ? 'Stop sample' : 'Sample'}
-						</Button>
-					{/if}
-				</div>
-			</div>
-		</div>
-	</div>
-</div>
-
-<style>
-	.album-hero {
-		--hero-glow-color: var(--brand-hero);
-		border: 1px solid rgb(var(--brand-hero) / 0.06);
-		animation: hero-glow 4s ease-in-out infinite;
-	}
-	.album-hero:hover {
-		border-color: rgb(var(--brand-hero) / 0.15);
-	}
-	@media (prefers-reduced-motion: reduce) {
-		.album-hero {
-			animation: none;
-		}
-	}
-</style>
+	{#snippet status()}
+		{#if headerDownloadTask}
+			<AlbumDownloadStatus task={headerDownloadTask} {heldFiles} />
+		{/if}
+	{/snippet}
+</AlbumHero>

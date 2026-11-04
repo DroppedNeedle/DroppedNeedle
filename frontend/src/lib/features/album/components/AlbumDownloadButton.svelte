@@ -3,7 +3,7 @@
 	import { Download } from 'lucide-svelte';
 	import { downloadAlbumArchive } from '$lib/features/album/components/downloadActions';
 	import { formatBytes } from '$lib/utils/formatting';
-	import Button, { type ButtonSize } from '$lib/ui/Button.svelte';
+	import Button, { type ButtonSize, type ButtonVariant } from '$lib/ui/Button.svelte';
 
 	interface Props {
 		/** Library string id (preferred); when null the RG-MBID variant is used. */
@@ -17,9 +17,18 @@
 		/** Server-computed permission bit; false renders nothing. */
 		downloadAllowed: boolean;
 		size?: ButtonSize;
+		variant?: ButtonVariant;
 	}
 
-	let { albumId, mbid, totalSizeBytes, trackCount, downloadAllowed, size = 'md' }: Props = $props();
+	let {
+		albumId,
+		mbid,
+		totalSizeBytes,
+		trackCount,
+		downloadAllowed,
+		size = 'md',
+		variant = 'outline'
+	}: Props = $props();
 
 	const href = $derived(
 		albumId
@@ -47,15 +56,18 @@
 
 {#if href && downloadAllowed}
 	<Button
-		variant="primary"
+		{variant}
 		{size}
 		icon={Download}
 		loading={pending}
 		disabled={trackCount === 0}
-		title={trackCount === 0 ? 'No local files to archive' : undefined}
+		title={trackCount === 0 ? 'No local files to archive' : caption}
 		onclick={() => void handleDownload()}
 	>
-		<span>{pending ? 'Preparing…' : 'Download album'}</span>
-		<span class="text-xs font-normal opacity-70">{caption}</span>
+		{#if pending}
+			Preparing…
+		{:else}
+			Download<span class="sr-only"> album, {caption}</span>
+		{/if}
 	</Button>
 {/if}
