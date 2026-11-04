@@ -173,6 +173,31 @@ describe('the held list on the Downloads queue', () => {
 	});
 });
 
+describe('a held file retried by itself', () => {
+	it('says when it is next tried', async () => {
+		const at = new Date(year + 1, 0, 2, 9, 30);
+		const day = at.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+		const time = at.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+		fakeApi({
+			'GET /api/v3/downloads/tasks': { items: [], page: 1, page_size: 100 },
+			'GET /api/v3/held': {
+				entries: [
+					{
+						...download,
+						next_retry_at: at.getTime(),
+						files: [file(1, { reason: 'target_occupied', actions: ['retry'] })]
+					}
+				]
+			}
+		});
+		await renderWithQuery(DownloadQueue, {});
+
+		await expect
+			.element(page.getByText(`Tries again by itself on ${day} at ${time}`))
+			.toBeVisible();
+	});
+});
+
 describe('finished downloads on the Downloads queue', () => {
 	it('files a settled stop with finished work and counts only real misses', async () => {
 		fakeApi({

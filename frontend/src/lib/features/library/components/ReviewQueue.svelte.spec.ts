@@ -110,7 +110,19 @@ describe('review queue', () => {
 				warnings: []
 			},
 			'GET /api/v3/library/albums/{album_id}/edition': EDITION,
-			'GET /api/v3/library/albums/{album_id}/history': { items: [] },
+			'GET /api/v3/library/albums/{album_id}/history': {
+				items: [
+					{
+						kind: 'edition_changed',
+						at: 1,
+						by: null,
+						track_count: 0,
+						track_titles: [],
+						other_album_title: null,
+						undo_id: null
+					}
+				]
+			},
 			'GET /api/v3/library/reviews/jobs': { jobs: [] },
 			'POST /api/v3/library/reviews/{id}/exclude': {
 				...REVIEWS[0],
@@ -121,6 +133,11 @@ describe('review queue', () => {
 		await renderWithQuery(ReviewQueue, {});
 
 		await page.getByRole('button', { name: /Kid A/ }).click();
+		// The opened review shows what it rests on: the album's edition and its history.
+		await expect.element(page.getByText('Not identified', { exact: true })).toBeVisible();
+		await expect
+			.element(page.getByText('DroppedNeedle moved this album to another edition.'))
+			.toBeVisible();
 		await page.getByRole('button', { name: 'Take out of library' }).click();
 		const dialog = page.getByRole('dialog', { name: 'Take out of library?' });
 		await expect.element(dialog).toBeVisible();
@@ -134,6 +151,45 @@ describe('review queue', () => {
 			expected_revision: 3
 		});
 		expect(native).not.toHaveBeenCalled();
+	});
+
+	it('keeps the reason in the address when the order changes, and counts each view', async () => {
+		signIn('user');
+		h.page.url = new URL('http://localhost/library/review?state=pending&reason=EDITION_MERGED');
+		const api = fakeApi({
+			'GET /api/v3/library/reviews': (request) => reviews(request.query),
+			'GET /api/v3/library/reviews/jobs': { jobs: [] }
+		});
+		await renderWithQuery(ReviewQueue, {});
+
+		await expect.element(page.getByRole('button', { name: /Kid A/ })).toBeVisible();
+		await page.getByRole('combobox', { name: 'Order' }).selectOptions('title');
+		await vi.waitFor(() => {
+			const url = new URL(h.goto.mock.lastCall?.[0] as URL);
+			expect(url.searchParams.get('sort')).toBe('title');
+			expect(url.searchParams.get('reason')).toBe('EDITION_MERGED');
+			expect(url.searchParams.get('state')).toBe('pending');
+		});
+		await vi.waitFor(() =>
+			expect(
+				api
+					.calls('GET /api/v3/library/reviews')
+					.some(
+						(call) =>
+							call.query.get('sort') === 'title' &&
+							call.query.get('reason_code') === 'EDITION_MERGED'
+					)
+			).toBe(true)
+		);
+		for (const [view, count] of [
+			['Open', '2'],
+			['Tags kept', '4'],
+			['Excluded', '0'],
+			['Resolved', '1'],
+			['All', '7']
+		]) {
+			await expect.element(page.getByRole('tab', { name: view })).toHaveTextContent(count);
+		}
 	});
 
 	it('uses the release every selected review shares for all of them', async () => {

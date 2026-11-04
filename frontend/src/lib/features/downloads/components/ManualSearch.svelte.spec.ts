@@ -49,7 +49,7 @@ const job: Job = {
 	tracks_total: 11,
 	candidate_count: 2,
 	candidates: [
-		candidate(0),
+		candidate(0, { score: 0.87 }),
 		candidate(1, {
 			title: 'Dummy [MP3]',
 			username: 'mp3peer',
@@ -78,13 +78,17 @@ beforeEach(() => {
 });
 
 describe('picking a source by hand', () => {
-	it('asks before picking a candidate outside the download settings', async () => {
+	it("shows a candidate's score and format, and asks before an outside pick", async () => {
 		const api = fakeApi({
 			'GET /api/v3/downloads/search/{job_id}': job,
 			'GET /api/v3/plugins/sources': { sources: [] },
 			'POST /api/v3/downloads/search/{job_id}/pick': { task_id: 'task-1' }
 		});
 		await renderWithQuery(ManualSearch, { jobId: 'job-1' });
+
+		const scored = page.getByRole('article').filter({ hasText: 'collector' });
+		await expect.element(scored.getByText('score 87%')).toBeVisible();
+		await expect.element(scored.getByText('FLAC 16-bit', { exact: true })).toBeVisible();
 
 		const refused = page.getByRole('article').filter({ hasText: 'mp3peer' });
 		await expect.element(refused.getByText('Not in your quality settings')).toBeVisible();
