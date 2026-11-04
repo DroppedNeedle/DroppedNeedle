@@ -29,9 +29,9 @@ use droppedneedle_library::scan::{
     SqliteScanStore, StreamRootSeam, TagReadError, TagReader, WatcherAction, WorkWakeups,
 };
 use droppedneedle_library::scan::{ScanEventPublisher, ScanFailureRecord};
+use droppedneedle_library::tags::TrackFile;
 use droppedneedle_library::test_support::FakeProviders;
 use droppedneedle_library::test_support::{NullTagReader, StaticResolver};
-use droppedneedle_library::tags::TrackFile;
 use droppedneedle_library::wiring::LibrarySetup;
 use sha2::{Digest, Sha256};
 
