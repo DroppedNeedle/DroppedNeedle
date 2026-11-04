@@ -5,8 +5,9 @@
 //! unit test modules aside, and fails on the shapes a late binding takes: a
 //! `OnceLock` slot, a `*Slot` type, a handle behind a lock waiting to be
 //! filled, a `set_*` or `attach_*` method that takes a shared handle
-//! through `&self`, a static that holds state, the warning a slot logs
-//! when it is filled twice, and a port held as an `Option` a test bundle
+//! through `&self`, a `with_*` method that takes a port after the builder
+//! returned, a static that holds state, the warning a slot logs when it is
+//! filled twice, and a port held or passed as an `Option` a test bundle
 //! leaves empty.
 //!
 //! The few process-wide caches and run-time handles that stay are listed
@@ -97,6 +98,7 @@ const RULES: &[Rule] = &[
         what: "a setter that takes a shared handle after construction",
         patterns: &[
             r"(?s)\bfn\s+(?:set|attach)\w*\s*(?:<[^>]*>)?\s*\(\s*&self\s*,\s*\w+\s*:\s*(?:Option<\s*)?(?:(?:\w+::)*Arc<|Box<\s*dyn\b|&\s*(?:'\w+\s+)?dyn\b|impl\b)",
+            r"(?s)\bfn\s+with_\w*\s*(?:<[^>]*>)?\s*\(\s*(?:mut\s+)?self\s*,\s*\w+\s*:\s*(?:Option<\s*)?(?:(?:(?:std::)?sync::)?(?:Arc|Box)<\s*dyn\b|impl\b)",
         ],
         allowed: &[],
     },
@@ -106,11 +108,13 @@ const RULES: &[Rule] = &[
         allowed: &[],
     },
     Rule {
-        what: "a port held as an Option a bundle may leave empty",
+        what: "a port held or passed as an Option a bundle may leave empty",
         patterns: &[
             r"\bOption<\s*(?:(?:std::)?sync::)?(?:Arc|Box)<\s*dyn\b",
             r"\bOption<\s*(?:\w+::)*\w*Port\s*>",
             r"\bOption<\s*(?:(?:std::)?sync::)?Arc<\s*(?:\w+::)*(?:PluginHost|LandingService|Targets|PersonalMixBuilder)\s*>",
+            r"\b\w+\s*:\s*Option<\s*&\s*(?:'\w+\s+)?(?:(?:std::)?sync::)?Arc<",
+            r"\b\w+\s*:\s*Option<\s*&\s*(?:'\w+\s+)?dyn\s+(?:\w+::)*\w*Port\b",
         ],
         allowed: &[
             (
