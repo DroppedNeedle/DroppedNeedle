@@ -18,6 +18,10 @@
 //! id. `DN_SCAN_ONE_ARTIST=1` credits every file to one artist, which
 //! shows whether placing a credit grows with the size of its artist.
 //!
+//! It also prints the indexing rate at each quarter of the run, from the
+//! track row count sampled every 250 ms: a rate that falls as rows pile up
+//! points at a lookup that grows with the catalog.
+//!
 //! The tree and the database live under the temp dir (`TMPDIR`) and are
 //! removed when the test ends. The files were just written, so the page
 //! cache is warm: the number covers the walk, the tag reads and the
@@ -161,6 +165,12 @@ async fn full_scan_throughput() {
     let roots = library.core.live_registry();
 
     let started = Instant::now();
+    let sampling = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let sampler = {
+        let db = library.scan_store.db().clone();
+        let sampling = sampling.clone();
+        std::thread::spawn(move || sample_rows(&db, started, &sampling))
+    };
     let requested = library
         .coordinator
         .request_run(&ScanRequest {
@@ -173,6 +183,8 @@ async fn full_scan_throughput() {
         .expect("scan requested");
     while library.scans.supervisor_tick().await && !library.coordinator.current().is_empty() {}
     let elapsed = started.elapsed().as_secs_f64();
+    sampling.store(false, std::sync::atomic::Ordering::Relaxed);
+    let mut samples = sampler.join().expect("row sampler ends");
     let wal_at_end = std::fs::metadata(scratch.join("app.db-wal")).map_or(0, |meta| meta.len());
 
     let run = library
@@ -188,6 +200,7 @@ async fn full_scan_throughput() {
             .unwrap_or_else(|error| panic!("{sql}: {error}"))
     };
     let indexed = query("SELECT COUNT(*) FROM local_tracks WHERE availability = 'indexed'");
+    samples.push((elapsed, indexed));
     let albums = query("SELECT COUNT(DISTINCT local_album_id) FROM local_tracks");
     let database_bytes =
         query("SELECT page_count * page_size FROM pragma_page_count(), pragma_page_size()");
@@ -209,6 +222,7 @@ async fn full_scan_throughput() {
         "  WAL file      {:.1} MB at the end",
         wal_at_end as f64 / 1e6
     );
+    print_index_rates(&samples, files);
 
     assert_eq!(run.state.scan_state(), ScanState::Completed);
     assert_eq!(run.counters.get(Counter::Indexed), files as i64);
@@ -217,4 +231,55 @@ async fn full_scan_throughput() {
     supervisor.shutdown(Duration::from_secs(5)).await;
     drop(library);
     runtime.shutdown().await;
+}
+
+/// How often the sampler counts the catalog's track rows.
+const SAMPLE_EVERY: Duration = Duration::from_millis(250);
+
+/// The track row count against time since `started`, until `sampling`
+/// turns false.
+fn sample_rows(
+    db: &droppedneedle_kernel::db::Db,
+    started: Instant,
+    sampling: &std::sync::atomic::AtomicBool,
+) -> Vec<(f64, i64)> {
+    let mut samples = Vec::new();
+    while sampling.load(std::sync::atomic::Ordering::Relaxed) {
+        if let Ok(rows) = db.query_i64("SELECT COUNT(*) FROM local_tracks") {
+            samples.push((started.elapsed().as_secs_f64(), rows));
+        }
+        std::thread::sleep(SAMPLE_EVERY);
+    }
+    samples
+}
+
+/// The time the catalog first held `rows` track rows, between samples.
+fn time_at(samples: &[(f64, i64)], rows: i64) -> Option<f64> {
+    let after = samples.iter().position(|(_, count)| *count >= rows)?;
+    let (t1, n1) = samples[after];
+    let Some(&(t0, n0)) = after.checked_sub(1).map(|before| &samples[before]) else {
+        return Some(t1);
+    };
+    Some(t0 + (t1 - t0) * (rows - n0) as f64 / (n1 - n0) as f64)
+}
+
+/// Files indexed a second at each quarter of the catalog: the rate over the
+/// 5% of the files around that point (the first and last 5% at the ends).
+fn print_index_rates(samples: &[(f64, i64)], files: usize) {
+    let files = files as i64;
+    let span = (files / 20).max(1);
+    println!("  indexing rate by track rows already in the catalog");
+    for quarter in 0..=4 {
+        let mark = files * quarter / 4;
+        let from = (mark - span / 2).clamp(1, files - span);
+        let to = from + span;
+        if let (Some(t0), Some(t1)) = (time_at(samples, from), time_at(samples, to))
+            && t1 > t0
+        {
+            println!(
+                "    {mark:>7} rows  {:>6.0} files/s",
+                span as f64 / (t1 - t0)
+            );
+        }
+    }
 }

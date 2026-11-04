@@ -316,6 +316,10 @@ const SHIPPED: &[(&str, &str)] = &[
         "0136_acquire_held_reasons.sql",
         "52c71063cc661dc3c72195099a8c4ba31cfb430e3d25030a0ad12824483c30f0",
     ),
+    (
+        "0137_library_scan_indexes.sql",
+        "5fe5a1867a748067bc2576d474c08c9eb87a587125d58f88e3f01a1fbfd31a84",
+    ),
 ];
 
 /// The files in `server/migrations/`, by name.
@@ -391,9 +395,10 @@ fn migrations_stamp_their_own_version_in_order() {
 
 /// Every stamp the runner can meet, on a copy of a fresh database restamped:
 /// an empty file takes the baseline; a database the old chain left at its
-/// last number crosses the bridge, loses `_sqlx_migrations` and ends equal to a
-/// fresh one; an older stamp and one newer than the binary are refused with
-/// the file unchanged; and a second run changes nothing.
+/// last number (the baseline's schema) crosses the bridge, loses
+/// `_sqlx_migrations`, takes the later files and ends equal to a fresh one;
+/// an older stamp and one newer than the binary are refused with the file
+/// unchanged; and a second run changes nothing.
 #[test]
 fn the_runner_takes_each_stamp_it_can_meet() {
     let dir = ScratchDir::new("runner-stamps");
@@ -406,10 +411,13 @@ fn the_runner_takes_each_stamp_it_can_meet() {
         "an empty file takes the baseline"
     );
     let fresh_schema = schema_rows(&read(&fresh));
+    // The old chain's last schema is the baseline's.
+    let baseline = dir.join("baseline.db");
+    migrate_file(&baseline, &Chain::new(&MIGRATIONS[..1], None)).unwrap();
 
     let restamped = |name: &str, stamp: i64, bookkeeping: bool| {
         let path = dir.join(name);
-        std::fs::copy(&fresh, &path).unwrap();
+        std::fs::copy(if bookkeeping { &baseline } else { &fresh }, &path).unwrap();
         let connection = read(&path);
         if bookkeeping {
             // The old chain's bookkeeping table `_sqlx_migrations`, as its
@@ -484,6 +492,7 @@ fn the_runner_takes_each_stamp_it_can_meet() {
 fn held_reasons_narrow_and_every_held_row_is_kept() {
     let dir = ScratchDir::new("held-reasons");
     let baseline = Chain::new(&MIGRATIONS[..1], None);
+    let to_136 = Chain::new(&MIGRATIONS[..2], None);
     let held_at_135 = |name: &str, reason: &str| {
         let path = dir.join(name);
         let connection = migrate(Connection::open(&path).unwrap(), &baseline).unwrap();
@@ -532,7 +541,7 @@ fn held_reasons_narrow_and_every_held_row_is_kept() {
     let connection = Connection::open(&kept).unwrap();
     let (before_row, before_schema) = (row(&connection), others(&connection));
     drop(connection);
-    migrate_file(&kept, &CHAIN).unwrap();
+    migrate_file(&kept, &to_136).unwrap();
     let connection = Connection::open(&kept).unwrap();
     assert_eq!(scalar(&connection, "PRAGMA user_version"), 136);
     assert_eq!(
@@ -553,7 +562,7 @@ fn held_reasons_narrow_and_every_held_row_is_kept() {
     drop(connection);
 
     let outside = held_at_135("outside.db", "corrupt");
-    migrate_file(&outside, &CHAIN).unwrap();
+    migrate_file(&outside, &to_136).unwrap();
     let connection = Connection::open(&outside).unwrap();
     assert_eq!(scalar(&connection, "PRAGMA user_version"), 136);
     assert_eq!(
@@ -563,6 +572,101 @@ fn held_reasons_narrow_and_every_held_row_is_kept() {
             []
         ),
         ["held_by_earlier_version:a/01.flac"]
+    );
+}
+
+/// 0137 makes the retired-albums index partial (only retired rows) and
+/// indexes a run's album moves by track. Rows are untouched and nothing
+/// else in the schema changes.
+#[test]
+fn scan_indexes_upgrade_and_keep_every_row() {
+    let dir = ScratchDir::new("scan-indexes");
+    let path = dir.join("app.db");
+    let connection = migrate(
+        Connection::open(&path).unwrap(),
+        &Chain::new(&MIGRATIONS[..2], None),
+    )
+    .unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 136);
+    connection
+        .execute_batch(
+            "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded,
+                 album_artist_id, grouping_source, retired_into_album_id, created_at,
+                 updated_at)
+             VALUES ('live', 'r', 'k1', 'A', 'a', '00000000-0000-4000-8000-000000000002',
+                 'automatic', NULL, 1, 1),
+                ('gone', 'r', 'k2', 'B', 'b', '00000000-0000-4000-8000-000000000002',
+                 'automatic', 'live', 2, 2);
+             INSERT INTO library_scan_runs (id, kind, trigger, state, phase, aggregate_scope,
+                 queued_at, updated_at)
+             VALUES ('run', 'incremental', 'manual', 'completed', 'reconciling', '[]', 1, 1);
+             INSERT INTO library_scan_album_moves VALUES ('run', 'r', 'a/01.flac', 't1', 'gone');",
+        )
+        .unwrap();
+    let rows = |connection: &Connection| {
+        texts(
+            connection,
+            "SELECT id || ':' || COALESCE(retired_into_album_id, '-') FROM local_albums
+             UNION ALL SELECT run_id || ':' || relative_path || ':' || local_track_id || ':'
+                 || previous_album_id FROM library_scan_album_moves ORDER BY 1",
+            [],
+        )
+    };
+    let changed = [
+        "idx_local_albums_retired",
+        "idx_library_scan_album_moves_track",
+    ];
+    let others = |connection: &Connection| {
+        let mut rows = schema_rows(connection);
+        rows.retain(|(_, name, _, _)| !changed.contains(&name.as_str()));
+        rows
+    };
+    let (before_rows, before_schema) = (rows(&connection), others(&connection));
+    drop(connection);
+
+    migrate_file(&path, &CHAIN).unwrap();
+    let connection = Connection::open(&path).unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 137);
+    assert_eq!(rows(&connection), before_rows, "rows are untouched");
+    assert_eq!(others(&connection), before_schema, "nothing else changes");
+    let shape = |index: &str| {
+        let partial = texts(
+            &connection,
+            "SELECT tbl_name || ' ' || partial FROM sqlite_master
+             JOIN pragma_index_list(tbl_name) ON pragma_index_list.name = sqlite_master.name
+             WHERE sqlite_master.name = ?1",
+            [index],
+        );
+        let columns = texts(
+            &connection,
+            "SELECT name FROM pragma_index_info(?1) ORDER BY seqno",
+            [index],
+        );
+        (partial, columns)
+    };
+    assert_eq!(
+        shape("idx_local_albums_retired"),
+        (
+            vec!["local_albums 1".to_owned()],
+            vec!["retired_into_album_id".to_owned()]
+        )
+    );
+    assert_eq!(
+        texts(
+            &connection,
+            "SELECT id FROM local_albums INDEXED BY idx_local_albums_retired
+             WHERE retired_into_album_id = 'live'",
+            []
+        ),
+        ["gone"],
+        "the partial index holds the retired rows"
+    );
+    assert_eq!(
+        shape("idx_library_scan_album_moves_track"),
+        (
+            vec!["library_scan_album_moves 0".to_owned()],
+            vec!["run_id".to_owned(), "local_track_id".to_owned()]
+        )
     );
 }
 
@@ -958,7 +1062,8 @@ fn every_table_has_one_owner() {
 /// Every foreign key has an index whose leading columns are the key's
 /// columns: without one, deleting or rekeying a parent row scans the
 /// child table once per row. A primary key or unique index counts; a
-/// partial index does not.
+/// partial index counts only when it leaves out just the rows whose
+/// leading column is null, which no parent's lookup reads.
 #[test]
 fn every_foreign_key_is_indexed() {
     let connection = migrated();
@@ -978,21 +1083,44 @@ fn every_foreign_key_is_indexed() {
         for (id, column) in keys {
             by_key.entry(id).or_default().push(column);
         }
-        let indexes = texts(
-            &connection,
-            "SELECT name FROM pragma_index_list(?1) WHERE partial = 0",
-            [&table],
-        );
+        let indexes: Vec<(String, bool)> = connection
+            .prepare("SELECT name, partial FROM pragma_index_list(?1)")
+            .unwrap()
+            .query_map([&table], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
         let mut leading = Vec::new();
-        for index in indexes {
-            let columns: Vec<Option<String>> = connection
+        for (index, partial) in indexes {
+            let columns: Vec<String> = connection
                 .prepare("SELECT name FROM pragma_index_info(?1) ORDER BY seqno")
                 .unwrap()
-                .query_map([&index], |row| row.get(0))
+                .query_map([&index], |row| row.get::<_, Option<String>>(0))
                 .unwrap()
-                .collect::<Result<_, _>>()
-                .unwrap();
-            leading.push(columns.into_iter().flatten().collect::<Vec<_>>());
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+                .into_iter()
+                .flatten()
+                .collect();
+            if partial {
+                let text = texts(
+                    &connection,
+                    "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?1",
+                    [&index],
+                )
+                .concat()
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+                .to_lowercase();
+                let not_null = columns
+                    .first()
+                    .is_some_and(|first| text.ends_with(&format!("where {first} is not null")));
+                if !not_null {
+                    continue;
+                }
+            }
+            leading.push(columns);
         }
         // An INTEGER PRIMARY KEY is the rowid and has no index of its own.
         leading.push(texts(
@@ -1796,6 +1924,60 @@ fn registered_statements_reach_tracks_by_key() {
     assert!(
         wrong.is_empty(),
         "statements that walk the track table with no statistics:\n{}",
+        wrong.join("\n")
+    );
+}
+
+/// With no statistics (every first scan), the scan's per-file album lookup
+/// and the run end's moved-track check reach their rows by key. The album
+/// lookup never walks the live albums (`retired_into_album_id IS NULL`
+/// holds for nearly all of them), and the moved-track check never walks
+/// every move of the run for each track. Either walk grows with the rows
+/// already there: the first made a 100,000-file first scan five times
+/// slower by its end, the second makes a large retag's run end quadratic.
+#[test]
+fn scan_lookups_reach_albums_and_moves_by_key() {
+    let dir = crate::common::ScratchDir::new("scan-plans");
+    let path = dir.join("app.db");
+    crate::common::migrated_db(&path);
+    let app = rusqlite::Connection::open(&path).expect("template copy opens");
+    let walks = [
+        (
+            "droppedneedle_library::scan::sql::ALBUMS_FOR_GROUPING",
+            Regex::new(r"^SCAN local_albums|idx_local_albums_retired").unwrap(),
+        ),
+        (
+            "droppedneedle_library::scan::sql::DEPARTED_FROM",
+            Regex::new(r"^SEARCH m USING (?:COVERING )?INDEX \w+ \(run_id=\?\)$").unwrap(),
+        ),
+    ];
+    let texts: BTreeMap<&str, String> = droppedneedle_library::statement_files()
+        .into_iter()
+        .flat_map(|file| file.declared)
+        .filter_map(|declared| match declared {
+            Declared::Statement(one) => Some((one.name(), one.text().to_owned())),
+            _ => None,
+        })
+        .collect();
+    let mut wrong = Vec::new();
+    for (name, walk) in &walks {
+        let text = texts
+            .get(name)
+            .unwrap_or_else(|| panic!("{name} is registered"));
+        let mut statement = app
+            .prepare(&format!("EXPLAIN QUERY PLAN {text}"))
+            .expect("registered statement prepares");
+        let mut rows = statement.raw_query();
+        while let Some(row) = rows.next().expect("plan row reads") {
+            let detail: String = row.get(3).expect("plan detail reads");
+            if walk.is_match(&detail) {
+                wrong.push(format!("{name}: {detail}"));
+            }
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "scan lookups that walk:\n{}",
         wrong.join("\n")
     );
 }

@@ -25,6 +25,7 @@ macro_rules! migration {
 pub static MIGRATIONS: &[Migration<'static>] = &[
     migration!(135, "0135_baseline.sql"),
     migration!(136, "0136_acquire_held_reasons.sql"),
+    migration!(137, "0137_library_scan_indexes.sql"),
 ];
 
 /// The stamp of a database made by the migration chain the baseline

@@ -228,13 +228,16 @@ async fn after_a_fresh_start_setup_asks_for_the_code_logged_at_boot() {
 /// written, the backups folder included.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn database_one_version_behind_is_backed_up_before_migrating() {
-    use droppedneedle_kernel::schema::{BRIDGE_FROM, latest_version};
+    use droppedneedle_kernel::db::{Chain, migrate_file};
+    use droppedneedle_kernel::schema::{BRIDGE_FROM, MIGRATIONS, latest_version};
 
     let dir = scratch("upgrade");
     let db_path = dir.join("cache").join("library.db");
     let backups_dir = dir.join("cache").join("backups");
     std::fs::create_dir_all(db_path.parent().unwrap()).unwrap();
-    crate::common::migrated_db(&db_path);
+    // The old chain's last schema is the baseline: later migrations must
+    // still run across the bridge.
+    migrate_file(&db_path, &Chain::new(&MIGRATIONS[..1], None)).unwrap();
     let restamp = |stamp: i64| {
         let connection = rusqlite::Connection::open(&db_path).unwrap();
         connection

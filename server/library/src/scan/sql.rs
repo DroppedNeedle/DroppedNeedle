@@ -276,8 +276,10 @@ droppedneedle_kernel::sql! {
                  AND retired_into_album_id IS NULL AND title_folded = ?2 \
                  AND COALESCE(album_artist_name_folded, '') = ?3)";
     pub(super) ALBUM_HAS_GROUPING_KEY = "SELECT EXISTS(SELECT 1 FROM local_albums WHERE id = ?1 AND grouping_key = ?2)";
+    /// Run once per file. The unary plus keeps `retired_into_album_id IS NULL`,
+    /// true of nearly every album, from ever being taken as an index key.
     pub(super) ALBUMS_FOR_GROUPING = "SELECT id, grouping_key = ?1 AS exact FROM local_albums \
-             WHERE retired_into_album_id IS NULL AND (grouping_key = ?1 \
+             WHERE +retired_into_album_id IS NULL AND (grouping_key = ?1 \
              OR (?2 IS NOT NULL AND title_folded = ?3 AND album_artist_name_folded = ?4 \
                AND (grouping_key = ?2 OR (?2 = 'mbid:' AND grouping_key LIKE 'mbid:%')))) \
              ORDER BY created_at, id";
