@@ -56,7 +56,3 @@ export const createOidcAuthorizeMutation = () =>
 		effects: () => [],
 		mutationFn: (): Promise<OidcAuthorizeResponse> => api.v3.POST(v3('/api/v3/auth/oidc/authorize'))
 	}));
-
-// Plex sign-in rides the single v3 Plex flow ($lib/queries/plex): the login
-// page mints pins via createPlexStartMutation, so no v1 pin mutation lives
-// here anymore.

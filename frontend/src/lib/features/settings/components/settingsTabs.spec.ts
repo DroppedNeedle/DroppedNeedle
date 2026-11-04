@@ -30,7 +30,10 @@ describe('settings tab loader', () => {
 		expect(state.libraryLoads).toBe(0);
 		expect(state.userLoads).toBe(0);
 
-		await expect(loadSettingsTab('library', false)).resolves.not.toBeNull();
+		await expect(loadSettingsTab('library', false)).resolves.toBeNull();
+		expect(state.libraryLoads).toBe(0);
+
+		await expect(loadSettingsTab('library', true)).resolves.not.toBeNull();
 		expect(state.libraryLoads).toBe(1);
 		expect(state.userLoads).toBe(0);
 
@@ -51,4 +54,11 @@ describe('settings tab loader', () => {
 it('hides MusicBrainz for non-admin route tabs while retaining admin visibility', () => {
 	expect(isSettingsTabVisible('musicbrainz', false)).toBe(false);
 	expect(isSettingsTabVisible('musicbrainz', true)).toBe(true);
+});
+
+it('shows a member only the tabs they can use', () => {
+	for (const tab of ['home', 'discover']) expect(isSettingsTabVisible(tab, false)).toBe(true);
+	for (const tab of ['library', 'connect-apps', 'sidebar', 'music-source', 'about']) {
+		expect(isSettingsTabVisible(tab, false)).toBe(false);
+	}
 });

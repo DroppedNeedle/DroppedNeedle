@@ -14,11 +14,13 @@ export interface ServiceErrorView {
 
 /**
  * Names of the outside services, by the key the server reports them under:
- * an error's `details.provider` and a rate row's or cache source's name.
+ * an error's `details.provider`, a rate row's or cache source's name, and a
+ * service health entry.
  */
 export const PROVIDER_NAMES: Readonly<Record<string, string>> = {
 	musicbrainz: 'MusicBrainz',
 	brainzmash: 'BrainzMash',
+	'musicbrainz-brainzmash': 'BrainzMash',
 	'musicbrainz-mirror': 'MusicBrainz mirror',
 	listenbrainz: 'ListenBrainz',
 	lastfm: 'Last.fm',

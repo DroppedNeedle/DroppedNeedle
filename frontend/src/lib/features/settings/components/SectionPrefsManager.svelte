@@ -7,6 +7,7 @@
 		getSectionPrefsQuery,
 		saveSectionPrefs
 	} from '$lib/features/settings/queries/section-prefs.svelte';
+	import { authStore } from '$lib/stores/authStore.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import { withBasePath } from '$lib/utils/basePath';
 	import Button from '$lib/ui/Button.svelte';
@@ -98,11 +99,17 @@
 		scheduleSave();
 	}
 
-	// Mirrors getSettingsLink in ServicePromptCard.svelte: per-user scrobble links live on /profile.
-	function getConnectLink(requires: string): string {
-		if (requires === 'lastfm' || requires === 'listenbrainz')
-			return withBasePath('/profile#scrobbling');
-		return withBasePath(`/settings?tab=${requires}`);
+	// Scrobble accounts are each user's own, on /profile. Anything else is
+	// an admin's settings tab, so a member is told to ask instead.
+	function connectLink(requires: string): { href: string; label: string } | null {
+		if (requires === 'lastfm') {
+			return { href: withBasePath('/profile#scrobbling'), label: 'Connect Last.fm' };
+		}
+		if (requires === 'listenbrainz') {
+			return { href: withBasePath('/profile#scrobbling'), label: 'Connect ListenBrainz' };
+		}
+		if (!authStore.isAdmin) return null;
+		return { href: withBasePath(`/settings?tab=${requires}`), label: 'Open settings' };
 	}
 
 	onDestroy(() => {
@@ -178,17 +185,18 @@
 									disabled={!section.available}
 								/>
 								{#if !section.available && section.requires}
-									<a
-										href={getConnectLink(section.requires)}
-										class="link mt-1 inline-flex items-center gap-1 text-xs text-primary/80"
-									>
-										Connect {section.requires === 'listenbrainz'
-											? 'ListenBrainz'
-											: section.requires === 'lastfm'
-												? 'Last.fm'
-												: section.requires}
-										<ExternalLink class="h-3 w-3" />
-									</a>
+									{@const link = connectLink(section.requires)}
+									{#if link}
+										<a
+											href={link.href}
+											class="link mt-1 inline-flex items-center gap-1 text-xs text-primary/80"
+										>
+											{link.label}
+											<ExternalLink class="h-3 w-3" />
+										</a>
+									{:else}
+										<p class="mt-1 text-xs text-base-content/60">Ask an admin to set this up.</p>
+									{/if}
 								{/if}
 							</div>
 						{/each}

@@ -8,8 +8,7 @@ import { createAppMutation, userQuotaChanged } from '$lib/queries/effects';
 import { AuthQueryKeyFactory } from '$lib/features/auth/queries/AuthQueryKeyFactory';
 import { STALE_LIVE } from '$lib/queries/staleTime';
 
-// Per-user request/storage quotas (CollectionManagement Feature C, admin-only).
-// v3 names the override block `quota_override` (v1 `override`).
+// Per-user request and storage quotas, which only an admin reads and sets.
 
 export type UserQuotaOverride = components['schemas']['QuotaOverrideBody'];
 

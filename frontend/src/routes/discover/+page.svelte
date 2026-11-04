@@ -24,6 +24,7 @@
 	import Button from '$lib/ui/Button.svelte';
 	import { isDismissed } from '$lib/features/discover/state/dismissedPrompts';
 	import { withBasePath } from '$lib/utils/basePath';
+	import { authStore } from '$lib/stores/authStore.svelte';
 	import {
 		EyeOff,
 		Compass,
@@ -520,7 +521,11 @@
 									Connect a music service to get recommendations. The more you connect, the better
 									they get.
 								</p>
-								<Button variant="primary" href={withBasePath('/settings')}>Connect Services</Button>
+								<Button
+									variant="primary"
+									href={withBasePath(authStore.isAdmin ? '/settings' : '/profile#scrobbling')}
+									>Connect Services</Button
+								>
 							</div>
 						{:else if !hasContent && degradedSources.length > 0}
 							<div class="flex flex-col items-center justify-center py-12 sm:py-16">

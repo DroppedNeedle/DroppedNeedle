@@ -9,6 +9,7 @@
 	import { Activity, TriangleAlert } from 'lucide-svelte';
 	import { getSystemHealthQuery } from '$lib/features/settings/queries/system.svelte';
 	import { toastStore } from '$lib/stores/toast';
+	import { PROVIDER_NAMES } from '$lib/utils/serviceError';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import type { ServiceHealthItem } from '$lib/features/settings/queries/system.svelte';
 
@@ -16,14 +17,15 @@
 	const degraded = $derived<ServiceHealthItem[]>(query.data?.degraded ?? []);
 	const hasDegradation = $derived(degraded.length > 0);
 
+	// Health entries that are not an outside service, or that people know by
+	// what they show rather than where it comes from.
+	const healthNames: Record<string, string> = {
+		wikidata: 'Wikipedia',
+		acquisition_cleanup: 'Download cleanup'
+	};
+
 	function serviceLabel(s: string): string {
-		if (s === 'listenbrainz') return 'ListenBrainz';
-		if (s === 'lastfm') return 'Last.fm';
-		if (s === 'musicbrainz') return 'MusicBrainz';
-		if (s === 'audiodb') return 'TheAudioDB';
-		if (s === 'wikidata') return 'Wikipedia';
-		if (s === 'acquisition_cleanup') return 'Download cleanup';
-		return s.charAt(0).toUpperCase() + s.slice(1);
+		return healthNames[s] ?? PROVIDER_NAMES[s] ?? s.charAt(0).toUpperCase() + s.slice(1);
 	}
 
 	function fallbackLabel(f: string | null | undefined): string | null {

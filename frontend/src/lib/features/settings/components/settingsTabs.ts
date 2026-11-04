@@ -3,34 +3,12 @@ import type { Component } from 'svelte';
 type SettingsModule = { default: Component };
 type SettingsLoader = () => Promise<SettingsModule>;
 
-const adminTabs = new Set([
-	'download-client',
-	'indexers',
-	'lidarr-import',
-	'lastfm',
-	'listenbrainz',
-	'spotify',
-	'events',
-	'get-it',
-	'editions',
-	'plugins',
-	'security',
-	'diagnostics',
-	'wrapped',
-	'users',
-	'backups',
-	'musicbrainz',
-	'jellyfin',
-	'navidrome',
-	'plex',
-	'youtube',
-	'settings',
-	'cache',
-	'advanced'
-]);
+// Members see only Home and Discover: the pages their Customise buttons
+// open. Every other tab is an admin's.
+const memberTabs = new Set(['home', 'discover']);
 
 export function isSettingsTabVisible(id: string, isAdmin: boolean): boolean {
-	return isAdmin || !adminTabs.has(id);
+	return isAdmin || memberTabs.has(id);
 }
 
 const settingsTabLoaders: Record<string, SettingsLoader> = {
