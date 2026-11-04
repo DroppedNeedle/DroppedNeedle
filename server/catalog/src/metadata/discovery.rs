@@ -327,7 +327,12 @@ impl Catalog {
             }
             if lastfm
                 && !self
-                    .held(&self.section_key(ListenSource::Lastfm, mbid, count, section))
+                    .held::<SectionRows>(&self.section_key(
+                        ListenSource::Lastfm,
+                        mbid,
+                        count,
+                        section,
+                    ))
                     .await
             {
                 return false;

@@ -140,14 +140,10 @@ impl Catalog {
             .await
     }
 
-    /// Whether any answer is held under `key`, fresh or stale. Never
-    /// dials out.
-    async fn held(&self, key: &CacheKey) -> bool {
-        self.upstream()
-            .cache()
-            .peek::<serde::de::IgnoredAny>(key)
-            .await
-            .is_some()
+    /// Whether an answer that reads as `T` is held under `key`, fresh or
+    /// stale; a row that does not read is not held. Never dials out.
+    async fn held<T: DeserializeOwned>(&self, key: &CacheKey) -> bool {
+        self.upstream().cache().peek::<T>(key).await.is_some()
     }
 
     /// Plugin details for one artist or album, cached for an hour per

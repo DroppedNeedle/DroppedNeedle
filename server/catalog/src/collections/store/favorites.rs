@@ -79,13 +79,14 @@ impl FavoriteStore {
             .await
     }
 
-    /// When each of `ids` was favorited, for the ones that are.
+    /// When each of `ids` was favorited, in unix seconds, for the ones
+    /// that are.
     pub async fn starred_at(
         &self,
         user_id: &str,
         kind: &str,
         ids: &[String],
-    ) -> Result<HashMap<String, f64>, StoreError> {
+    ) -> Result<HashMap<String, i64>, StoreError> {
         let mut out = HashMap::new();
         if ids.is_empty() {
             return Ok(out);
@@ -101,7 +102,8 @@ impl FavoriteStore {
                     let rows = conn
                         .prepare(&text)?
                         .query_map(params_from_iter(binds), |row| {
-                            Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?))
+                            let row = sql::Starred::read(row)?;
+                            Ok((row.item_id, row.created_at.0.div_euclid(1000)))
                         })?
                         .collect::<rusqlite::Result<Vec<_>>>()?;
                     Ok(rows)

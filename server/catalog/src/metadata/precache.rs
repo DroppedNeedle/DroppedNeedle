@@ -64,8 +64,11 @@ impl Catalog {
     /// a visit refreshes a stale page, so the precache fills only what is
     /// missing.
     async fn artist_page_cached(&self, mbid: &str) -> bool {
-        self.held(&self.artist_detail_key(mbid)).await
-            && self.held(&self.release_groups_key(mbid)).await
+        self.held::<super::artist::ArtistDetail>(&self.artist_detail_key(mbid))
+            .await
+            && self
+                .held::<super::artist::ReleaseGroupList>(&self.release_groups_key(mbid))
+                .await
     }
 
     /// Fetch and cache the artist page's data.
@@ -107,7 +110,8 @@ impl Catalog {
 
     /// Whether the album page's MusicBrainz data is held, fresh or stale.
     async fn album_page_cached(&self, mbid: &str) -> bool {
-        self.held(&self.group_key(mbid)).await
+        self.held::<super::album::GroupDetail>(&self.group_key(mbid))
+            .await
     }
 
     /// Fetch and cache the album page's data.

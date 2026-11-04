@@ -6,6 +6,7 @@
 #![allow(unused_parens, clippy::double_parens)]
 
 use droppedneedle_kernel::db::statement::ListLen;
+use droppedneedle_kernel::db::time::Millis;
 
 use droppedneedle_library::owns_group;
 
@@ -158,6 +159,10 @@ droppedneedle_kernel::sql! {
     }
     /// When each of some items was favorited: item id, then the time.
     family STARRED_AT = starred_at;
+    pub(super) row Starred for family [starred_at] {
+        item_id: String,
+        created_at: Millis,
+    }
     /// Favorite one item; an existing row keeps its date.
     pub(super) ADD_FAVORITE = "INSERT INTO catalog_user_favorites \
          (user_id, item_kind, item_id, created_at) VALUES (?1, ?2, ?3, ?4) \
@@ -247,7 +252,7 @@ fn marks(len: ListLen) -> String {
 /// `STARRED_AT`: the user, the kind, then the ids.
 pub(super) fn starred_at(ids: ListLen) -> String {
     format!(
-        "SELECT item_id, created_at / 1000.0 FROM catalog_user_favorites \
+        "SELECT item_id, created_at FROM catalog_user_favorites \
          WHERE user_id = ? AND item_kind = ? AND item_id IN ({})",
         marks(ids)
     )

@@ -462,7 +462,8 @@ impl Catalog {
 
     /// Whether TheAudioDB's answer for the artist is held, fresh or stale.
     pub(super) async fn artist_images_known(&self, mbid: &str) -> bool {
-        self.held(&self.audiodb_artist_key(mbid)).await
+        self.held::<ArtistImages>(&self.audiodb_artist_key(mbid))
+            .await
     }
 
     /// TheAudioDB images as a settled answer: `Some(None)` when AudioDB has

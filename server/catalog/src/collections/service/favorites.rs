@@ -128,9 +128,6 @@ impl CollectionsService<'_> {
             .stores
             .favorites
             .starred_at(user_id, kind, ids)
-            .await?
-            .into_iter()
-            .map(|(id, at)| (id, at as i64))
-            .collect())
+            .await?)
     }
 }
