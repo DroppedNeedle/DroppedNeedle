@@ -698,7 +698,9 @@ Run from the repo root. `make help` lists every target.
   draft, dirty, save, test and mask-means-keep in one place, with the
   unsaved-changes guard; a tab never hand-writes that state.
 - Stores hold client and session state only.
-- UI: Tailwind v4 with DaisyUI tokens in `src/app.css`, no new hex colors.
+- UI: Tailwind v4 with the daisyUI themes and the named colours (muted,
+  title, action, paper, focus, edge, line) in `src/theme.css`, no new hex
+  colors elsewhere.
   Build on `src/lib/ui` (`Button`, `IconButton`, `Card`, `Input`, `Modal`,
   `CardTitle`, `CardActions`, `ConfirmDialog`, `Field`, `TextField`,
   `NumberField`, `SecretField`, `PasswordField`, `SelectField`, `TextAreaField`,
